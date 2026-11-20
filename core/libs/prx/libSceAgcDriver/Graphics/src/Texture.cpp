@@ -2612,7 +2612,8 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     // stamped); an untracked unit is stored whole by that write-back, and a unit pending in both
     // images takes the old order (store, then this image re-uploads it).
     auto alias = scoped ? std::shared_ptr<StorageTexture>{} : pendingAlias();
-    if (alias != nullptr && !(ProvedClearKeys(descriptor, guestBytes, keyProof) == DccKeys::Uncompressed && HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr)) alias = nullptr;
+    const auto aliasKeys = alias != nullptr ? ProvedClearKeyState(descriptor, guestBytes, keyProof) : DccKeyState{};
+    if (alias != nullptr && !(aliasKeys.keys == DccKeys::Uncompressed && aliasKeys.mixedSignature == 0 && HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr)) alias = nullptr;
     if (alias != nullptr) {
         std::vector<std::uint8_t> aliasStamped(trackedLayers);
         if (!GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), alias->layerGeneration, aliasStamped)) alias = nullptr;
@@ -2689,6 +2690,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     bool cpuWrote = false;
     bool direct = false;
     DccKeys keys = uploadedKeys;
+    std::uint64_t nextMixedSignature = uploadedMixedSignature;
     {
         const auto equalsOriginal = [&] {
             // Named for the [hooksync] attribution: the compare goes through the flush hook.
@@ -2743,9 +2745,11 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
             }
         };
         const auto keysStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        keys = handOverKeys.has_value() ? *handOverKeys : ProvedKeys();
+        const auto keyState = handOverKeys.has_value() ? DccKeyState{*handOverKeys, 0} : ProvedKeyState();
+        keys = keyState.keys;
+        nextMixedSignature = keyState.mixedSignature;
         if (profile && descriptor.dccAddress != 0) LookupOutcomes::Add(LookupOutcomes::DccScan, keysStart);
-        if (keys != uploadedKeys) {
+        if (keys != uploadedKeys || keyState.mixedSignature != uploadedMixedSignature) {
             changed.assign(trackedLayers, true);
             unchanged = false;
             keysChanged = true;
@@ -2900,7 +2904,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     // drop rule. Debug aid: APS5_KEYFLIP_DROP=1 drops as before.
     static const bool keyFlipDrop = std::getenv("APS5_KEYFLIP_DROP") != nullptr;
     static const bool traceKeys = std::getenv("APS5_TRACE_DCC_KEYS") != nullptr;
-    const bool keyFlip = keysChanged && blockUnits && !keyFlipDrop && (IsDccClear(uploadedKeys) || uploadedKeys == DccKeys::ClearSingle) && keys == DccKeys::Uncompressed && stampedBlocks.size() >= trackedLayers;
+    const bool keyFlip = keysChanged && blockUnits && !keyFlipDrop && (IsDccClear(uploadedKeys) || uploadedKeys == DccKeys::ClearSingle || uploadedMixedClear()) && keys == DccKeys::Uncompressed && nextMixedSignature == 0 && stampedBlocks.size() >= trackedLayers;
     if (traceKeys && keysChanged) {
         std::size_t pendingUnits = 0, stampedUnits = 0;
         for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
@@ -2934,7 +2938,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         stored[layer] = true;
         anyStored = true;
     }
-    if (anyStored && !keysChanged && descriptor.dccAddress != 0 && (IsDccClear(uploadedKeys) || uploadedKeys == DccKeys::ClearSingle)) stored.assign(trackedLayers, true);
+    if (anyStored && !keysChanged && descriptor.dccAddress != 0 && (IsDccClear(uploadedKeys) || uploadedKeys == DccKeys::ClearSingle || uploadedMixedClear())) stored.assign(trackedLayers, true);
     if (pendingResults) {
         static std::atomic<int> reports{0};
         if (reports.fetch_add(1) < 8) std::fprintf(stderr, "[gpu] storage image 0x%llx: guest memory changed while GPU results were pending; keeping the CPU's blocks\n", static_cast<unsigned long long>(descriptor.baseAddress));
@@ -2964,17 +2968,28 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         upload(&changed);
     } else {
         uploadedKeys = keys;
+        uploadedMixedSignature = nextMixedSignature;
     }
     return false;
 }
 
+DccKeyState StorageTexture::ProvedKeyState() const {
+    if (descriptor.dccAddress != 0 && uploadedKeys == DccKeys::Uncompressed) {
+        if (const auto keys = WaitForKeyWriters(descriptor, guestBytes)) {
+            if (*keys != DccKeys::Mixed || !MixedKeyClearEnabled()) {
+                keyProof = PendingKeyProof(descriptor, guestBytes, *keys);
+                if (IsDccClear(filledKeys) && *keys != filledKeys && !anyLayerPending()) filledKeys = DccKeys::Uncompressed;
+                return {*keys, 0};
+            }
+        }
+    }
+    const auto state = ProvedClearKeyState(descriptor, guestBytes, keyProof);
+    if (IsDccClear(filledKeys) && (state.keys != filledKeys || state.mixedSignature != 0) && !anyLayerPending()) filledKeys = DccKeys::Uncompressed;
+    return state;
+}
+
 DccKeys StorageTexture::ProvedKeys() const {
-    std::optional<DccKeys> keys;
-    if (descriptor.dccAddress != 0 && uploadedKeys == DccKeys::Uncompressed) keys = WaitForKeyWriters(descriptor, guestBytes);
-    if (keys.has_value()) keyProof = PendingKeyProof(descriptor, guestBytes, *keys);
-    else keys = ProvedClearKeys(descriptor, guestBytes, keyProof);
-    if (IsDccClear(filledKeys) && *keys != filledKeys && !anyLayerPending()) filledKeys = DccKeys::Uncompressed;
-    return *keys;
+    return ProvedKeyState().keys;
 }
 
 std::uint64_t StorageTexture::SinglePassMoves() {
@@ -3027,7 +3042,7 @@ const char* StorageTexture::RefreshObligation(std::uint32_t first, std::uint32_t
 
 bool StorageTexture::refreshProved() {
     if (refreshProof.generation == 0) return false;
-    if (generation != refreshProof.generation || uploadedKeys != refreshProof.keys || !GuestMemory::GpuMutex().HeldByThisThread()) return false;
+    if (generation != refreshProof.generation || uploadedKeys != refreshProof.keys || uploadedMixedSignature != refreshProof.mixedSignature || !GuestMemory::GpuMutex().HeldByThisThread()) return false;
     const auto bytes = static_cast<std::size_t>(guestBytes);
     std::array<GuestMemory::UnchangedQuery, 2> queries{};
     std::size_t used = 0;
@@ -3035,7 +3050,7 @@ bool StorageTexture::refreshProved() {
     queries[used++] = {descriptor.baseAddress, bytes, generation};
     if (descriptor.dccAddress != 0) {
         const auto keyCount = static_cast<std::size_t>(guestBytes / 256);
-        if (keyCount == 0 || keyProof.generation != refreshProof.keyGeneration || keyProof.keys != uploadedKeys || !PendingKeyProofHolds(descriptor, guestBytes, keyProof)) return false;
+        if (keyCount == 0 || keyProof.generation != refreshProof.keyGeneration || keyProof.keys != uploadedKeys || keyProof.mixedSignature != uploadedMixedSignature || !PendingKeyProofHolds(descriptor, guestBytes, keyProof)) return false;
         if (GuestMemory::CollectWrites(descriptor.dccAddress, keyCount) == 0) return false;
         queries[used++] = {descriptor.dccAddress, keyCount, keyProof.generation};
     }
@@ -3051,10 +3066,10 @@ bool StorageTexture::refreshProved() {
 void StorageTexture::takeRefreshProof(bool aliased) {
     refreshProof = {};
     if (aliased || generation == 0 || !GuestMemory::GpuMutex().HeldByThisThread()) return;
-    if (descriptor.dccAddress != 0 && (keyProof.generation == 0 || keyProof.keys != uploadedKeys)) return;
+    if (descriptor.dccAddress != 0 && (keyProof.generation == 0 || keyProof.keys != uploadedKeys || keyProof.mixedSignature != uploadedMixedSignature)) return;
     const auto serial = PendingSerial();
     if (otherPendingOverlaps()) return;
-    refreshProof = {generation, serial, keyProof.generation, uploadedKeys};
+    refreshProof = {generation, serial, keyProof.generation, uploadedKeys, uploadedMixedSignature};
 }
 
 std::uint64_t StorageTexture::RefreshesProved() {
@@ -3077,21 +3092,21 @@ bool StorageTexture::ServesKeysAt(std::uint64_t dccAddress) const {
     const bool locked = GuestMemory::GpuMutex().HeldByThisThread();
     const auto readFollowed = [&] {
         DccKeyProof unlocked;
-        return ProvedClearKeys(descriptor, guestBytes, locked ? keyProof : unlocked);
+        return ProvedClearKeyState(descriptor, guestBytes, locked ? keyProof : unlocked);
     };
     const auto readNamed = [&] {
         auto named = descriptor;
         named.dccAddress = dccAddress;
         DccKeyProof unlocked;
-        if (!locked) return ProvedClearKeys(named, guestBytes, unlocked);
+        if (!locked) return ProvedClearKeyState(named, guestBytes, unlocked);
         auto slot = std::find_if(foreignKeyProofs.begin(), foreignKeyProofs.end(), [&](const ForeignKeyProof& entry) { return entry.dccAddress == dccAddress; });
         if (slot == foreignKeyProofs.end()) {
             slot = foreignKeyProofs.begin() + nextForeignKeyProof++ % foreignKeyProofs.size();
             *slot = ForeignKeyProof{dccAddress, {}};
         }
-        return ProvedClearKeys(named, guestBytes, slot->proof);
+        return ProvedClearKeyState(named, guestBytes, slot->proof);
     };
-    return KeysServeSurface(descriptor.dccAddress, uploadedKeys, filledKeys, dccAddress, readFollowed, readNamed);
+    return KeysServeSurface(descriptor.dccAddress, uploadedKeys, uploadedMixedSignature, filledKeys, dccAddress, readFollowed, readNamed);
 }
 
 namespace {
@@ -3510,7 +3525,9 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         if (unsettled) anyBaselineDue.store(true, std::memory_order_relaxed);
         refreshGeneration();
     };
-    uploadedKeys = ProvedClearKeys(descriptor, guestBytes, keyProof);
+    const auto keyState = ProvedClearKeyState(descriptor, guestBytes, keyProof);
+    uploadedKeys = keyState.keys;
+    uploadedMixedSignature = keyState.mixedSignature;
     filledKeys = DccKeys::Uncompressed;
     VkClearColorValue clearValue{};
     const bool fastClear = IsDccClear(uploadedKeys) || uploadedKeys == DccKeys::ClearSingle;
@@ -3573,6 +3590,9 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         if (profile) LookupOutcomes::Add(LookupOutcomes::UploadClear, start);
         return;
     }
+    const auto mixedClear = uploadedKeys == DccKeys::Uncompressed && uploadedMixedSignature != 0 ? MixedKeyClearRuns(descriptor, guestBytes) : std::nullopt;
+    if (uploadedMixedSignature != 0) uploadedMixedSignature = mixedClear.has_value() ? mixedClear->signature : 0;
+    const MixedKeyClear* const mixedFill = mixedClear.has_value() && !mixedClear->runs.empty() ? &*mixedClear : nullptr;
     std::vector<ImportSegment> segments;
     if (uploadedKeys == DccKeys::Uncompressed) {
         if (const auto* whole = HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) segments.push_back({whole, descriptor.baseAddress, descriptor.baseAddress + guestBytes});
@@ -3592,7 +3612,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         // A whole-surface upload of a block-unit image goes through the windows too when a unit
         // shadow holds part of the surface (the detile then reads the slabs; a new image has no
         // layout yet); a partial one always does.
-        if (blockUnits && (segments.size() > 1 || layers != nullptr || AnyShadowedOverlaps(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)))) {
+        if (blockUnits && (segments.size() > 1 || layers != nullptr || mixedFill != nullptr || AnyShadowedOverlaps(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)))) {
             std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
             if (layers != nullptr) {
                 for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
@@ -3603,7 +3623,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
                 forgetBorrowed(0, trackedLayers);
                 runs.emplace_back(0, guestBytes);
             }
-            const auto uploadedBytes = uploadWindows(segments, runs, layers == nullptr && version == 0);
+            const auto uploadedBytes = uploadWindows(segments, runs, layers == nullptr && version == 0, mixedFill);
             countStorageUpload(1, uploadedBytes);
             if (layers != nullptr) {
                 partialUploads.fetch_add(1, std::memory_order_relaxed);
@@ -3624,6 +3644,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             }
         }
         const bool direct = singlePass();
+        auto cleared = mixedFill != nullptr ? std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT) : nullptr;
         auto linear = direct ? nullptr : std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         detiler.BeginBatch();
         auto* recorder = Recorder::Active();
@@ -3635,12 +3656,13 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             recorder->FlushStoresOverlapping(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
             commands = recorder->Commands();
             timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageUpload);
+            if (cleared) recorder->Keep(cleared, cleared->Size());
             if (linear) recorder->Keep(linear, linear->Size());
             // The image itself must outlive the recorded copy: the cache may evict it right after.
             if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
             // The detile reads the tiled bytes from the import when the batch runs.
             recorder->NotePendingRead(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), Recorder::ReadKind::StorageUpload);
-            Recorder::CountBarriers(Recorder::CommandClass::StorageUpload, direct ? 2 : 3);
+            Recorder::CountBarriers(Recorder::CommandClass::StorageUpload, (direct ? 2 : 3) + (cleared ? 2 : 0));
             if (Recorder::BarrierValidate()) {
                 const std::pair<std::uint64_t, std::uint64_t> read{descriptor.baseAddress, descriptor.baseAddress + guestBytes};
                 const std::pair<VkImage, bool> written{image, true};
@@ -3651,6 +3673,19 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             commands = batch->Handle();
         }
         const auto importOffset = HostImportOffset(*import, descriptor.baseAddress);
+        const auto sourceBuffer = cleared ? cleared->Handle() : import->buffer;
+        const auto sourceOffset = cleared ? std::uint64_t{0} : importOffset;
+        if (cleared) {
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+            CopyBuffer(context, commands, import->buffer, importOffset, cleared->Handle(), 0, guestBytes);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            const auto fillBuffer = context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer");
+            for (const auto& [first, last] : mixedClear->runs) {
+                const auto begin = static_cast<std::uint64_t>(first) * 256;
+                const auto end = std::min<std::uint64_t>(static_cast<std::uint64_t>(last) * 256, guestBytes);
+                if (begin < end && ((end - begin) & 3) == 0) fillBuffer(commands, cleared->Handle(), begin, end - begin, mixedClear->pattern);
+            }
+        }
         if (direct) {
             recordDirectUploadBarrier(commands, layers == nullptr);
             for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
@@ -3658,7 +3693,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
                 for (std::uint32_t level = 0; level < mips.size(); ++level) {
                     if (!geometry.HasLayer(level, layer)) continue;
                     const auto& mip = mips[level];
-                    detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, import->buffer, importOffset + geometry.GuestOffset(layer, mip), elementLayerView(level, layer), mip, false, layer, {.pipeBankXor = descriptor.pipeBankXor});
+                    detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, sourceBuffer, sourceOffset + geometry.GuestOffset(layer, mip), elementLayerView(level, layer), mip, false, layer, {.pipeBankXor = descriptor.pipeBankXor});
                 }
             }
             recordDirectUploadDone(commands);
@@ -3677,7 +3712,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             for (std::uint32_t level = 0; level < mips.size(); ++level) {
                 if (!geometry.HasLayer(level, layer)) continue;
                 const auto& mip = mips[level];
-                detiler.Dispatch(commands, descriptor.tileMode, elementBytes, import->buffer, importOffset + geometry.GuestOffset(layer, mip), linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, mip, false, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
+                detiler.Dispatch(commands, descriptor.tileMode, elementBytes, sourceBuffer, sourceOffset + geometry.GuestOffset(layer, mip), linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, mip, false, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
             }
         }
         const auto linearRead = WholeBufferBarrier(linear->Handle(), VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
@@ -3735,10 +3770,14 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
                 for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
                     if (!cpuLayers[layer]) continue;
                     const auto offset = geometry.GuestLayerOffset(layer);
-                    std::memcpy(staging.Bytes().data() + offset, original.data() + offset, static_cast<std::size_t>(geometry.layerBytes));
+                    auto slice = staging.Bytes().subspan(static_cast<std::size_t>(offset), static_cast<std::size_t>(geometry.layerBytes));
+                    std::memcpy(slice.data(), original.data() + offset, slice.size());
+                    if (mixedClear.has_value()) ApplyMixedKeyClear(*mixedClear, slice, offset);
                 }
-            } else if (uploadedKeys == DccKeys::Uncompressed) std::memcpy(staging.Bytes().data(), original.data(), original.size());
-            else ReadTextureSurface(descriptor, uploadedKeys, staging.Bytes().first(original.size()));
+            } else if (uploadedKeys == DccKeys::Uncompressed) {
+                std::memcpy(staging.Bytes().data(), original.data(), original.size());
+                if (mixedClear.has_value()) ApplyMixedKeyClear(*mixedClear, staging.Bytes().first(original.size()));
+            } else ReadTextureSurface(descriptor, uploadedKeys, staging.Bytes().first(original.size()));
             DeviceBuffer tiled(context, original.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
             DeviceBuffer linear(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             detiler.BeginBatch();
@@ -4082,7 +4121,7 @@ void StorageTexture::recordDirectUploadDone(VkCommandBuffer commands) {
     context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &written);
 }
 
-std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segments, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, bool discard) {
+std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segments, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, bool discard, const MixedKeyClear* mixedClear) {
     const auto elementBytes = BytesPerElement(descriptor.format);
     // Each run's pieces by source (a unit shadow's slab while fresh, else the import), the tail
     // blocks moved whole by one window each; the windows are built per piece.
@@ -4096,7 +4135,7 @@ std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segme
             if (tailBlocks.empty() || tailBlocks.back().first != sliceBegin) tailBlocks.emplace_back(sliceBegin, sliceBegin + mip.tiledSize);
         }
     }
-    const bool gather = segments.size() > 1;
+    const bool gather = segments.size() > 1 || mixedClear != nullptr;
     std::vector<ShadowRun> sources, gathered;
     if (!gather) {
         sources = ShadowSources(context, *segments.front().import, descriptor.baseAddress, runs, tailBlocks);
@@ -4167,6 +4206,19 @@ std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segme
         }
         throw std::runtime_error("AGC graphics: storage image window has no source");
     };
+    std::vector<std::pair<VkDeviceSize, VkDeviceSize>> mixedFills;
+    if (gather && mixedClear != nullptr) {
+        for (const auto& source : sources) {
+            for (const auto& [first, last] : mixedClear->runs) {
+                const auto begin = std::max(source.begin, static_cast<std::uint64_t>(first) * 256);
+                const auto end = std::min(source.end, static_cast<std::uint64_t>(last) * 256);
+                if (begin >= end) continue;
+                const auto offset = source.offset + (begin - source.begin);
+                const auto size = end - begin;
+                if ((offset & 3) == 0 && (size & 3) == 0) mixedFills.emplace_back(offset, size);
+            }
+        }
+    }
     // One linear buffer for every window, each at a 256-byte position (the detiler's descriptor
     // offsets are aligned by the dispatch).
     std::vector<std::uint64_t> positions;
@@ -4201,7 +4253,7 @@ std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segme
         }
         if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
         if (!reads.empty()) recorder->NotePendingReads(reads, Recorder::ReadKind::StorageUpload);
-        Recorder::CountBarriers(Recorder::CommandClass::StorageUpload, (direct ? 2 : 3) + (gather ? 2 : 0));
+        Recorder::CountBarriers(Recorder::CommandClass::StorageUpload, (direct ? 2 : 3) + (gather ? (mixedFills.empty() ? 2 : 3) : 0));
         if (Recorder::BarrierValidate()) {
             const std::pair<VkImage, bool> written{image, true};
             recorder->NoteAccess(Recorder::CommandClass::StorageUpload, Recorder::Access{reads, {}, std::span(&written, 1), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT});
@@ -4215,6 +4267,11 @@ std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segme
     if (gather) {
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
         for (const auto& [buffer, copies] : gatherCopies) context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, buffer, gatherBuffer->Handle(), static_cast<std::uint32_t>(copies.size()), copies.data());
+        if (!mixedFills.empty()) {
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            const auto fillBuffer = context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer");
+            for (const auto& [offset, size] : mixedFills) fillBuffer(commands, gatherBuffer->Handle(), offset, size, mixedClear->pattern);
+        }
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
     }
     if (direct) {
@@ -4699,18 +4756,21 @@ bool StorageTexture::keysFillMatches(std::uint64_t address, std::size_t bytes, b
 
 bool StorageTexture::keysReplacedByClear() const {
     const auto keyCount = DccKeyBytes(guestBytes);
-    if (keyCount == 0 || keyCount != DccKeyCount(descriptor, guestBytes) || keyProof.generation == 0 || keyProof.keys != uploadedKeys || !GuestMemory::GpuMutex().HeldByThisThread()) return false;
+    if (keyCount == 0 || keyCount != DccKeyCount(descriptor, guestBytes) || keyProof.generation == 0 || keyProof.keys != uploadedKeys || keyProof.mixedSignature != uploadedMixedSignature || !GuestMemory::GpuMutex().HeldByThisThread()) return false;
     if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->PendingWriteOverlaps(descriptor.dccAddress, keyCount)) return false;
     if (!GuestMemory::CpuWroteSince(descriptor.dccAddress, keyCount, keyProof.generation)) return false;
     const auto keys = ReadDccKeys(descriptor.dccAddress, guestBytes);
-    return IsDccClear(keys) && keys != uploadedKeys;
+    return IsDccClear(keys) && (keys != uploadedKeys || uploadedMixedClear());
 }
 
 void StorageTexture::MarkDirty() {
-    if (descriptor.dccAddress != 0 && (IsDccClear(uploadedKeys) || uploadedKeys == DccKeys::ClearSingle) && !IsDccClear(filledKeys)) {
+    if (descriptor.dccAddress != 0 && (IsDccClear(uploadedKeys) || uploadedKeys == DccKeys::ClearSingle || uploadedMixedClear()) && !IsDccClear(filledKeys)) {
         traceKeyStore("first write", descriptor, guestBytes);
         if (!keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
         uploadedKeys = DccKeys::Uncompressed;
+        uploadedMixedSignature = 0;
+        keyProof = {};
+        refreshProof = {};
     }
     markLayersPending(0, trackedLayers);
 }
@@ -5214,7 +5274,7 @@ void StorageTexture::appendStoredLayers(std::uint64_t address, std::size_t bytes
     constexpr std::uint64_t block = 65536;
     constexpr std::size_t runs = 8;
     const auto start = ranges.size();
-    const bool all = readTrapped.load(std::memory_order_acquire) || (descriptor.dccAddress != 0 && (uploadedKeys != DccKeys::Uncompressed || descriptor.mipCount > 1)) || (blockUnits && !BlockWriteBackEach());
+    const bool all = readTrapped.load(std::memory_order_acquire) || (descriptor.dccAddress != 0 && (uploadedKeys != DccKeys::Uncompressed || uploadedMixedClear() || descriptor.mipCount > 1)) || (blockUnits && !BlockWriteBackEach());
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
         if (!layerPending[layer]) continue;
         const auto begin = layerBegin(layer);
@@ -5237,7 +5297,7 @@ void StorageTexture::appendStoredLayers(std::uint64_t address, std::size_t bytes
 
 bool StorageTexture::storesWhole() const {
     if (descriptor.dccAddress == 0) return false;
-    if (uploadedKeys != DccKeys::Uncompressed) return true;
+    if (uploadedKeys != DccKeys::Uncompressed || uploadedMixedClear()) return true;
     if (descriptor.mipCount <= 1) return false;
     auto& live = Live();
     std::lock_guard lock(live.mutex);
@@ -6928,6 +6988,9 @@ std::size_t StorageTexture::NoteKeysFill(std::uint64_t address, std::size_t byte
         if (traceKeys && IsDccClear(keys)) std::fprintf(stderr, "[dcc-keys] %s key fill over 0x%llx+0x%llx (uploaded %s, dirty %d)\n", DccKeysName(keys), static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes), DccKeysName(texture->uploadedKeys), texture->dirty ? 1 : 0);
         if (refillDisabled || !IsDccClear(keys) || texture->uploadedKeys != keys) continue;
         texture->uploadedKeys = DccKeys::Uncompressed;
+        texture->uploadedMixedSignature = 0;
+        texture->keyProof = {};
+        texture->refreshProof = {};
     }
     return covered;
 }
@@ -7014,8 +7077,10 @@ bool StorageTexture::clearByKeysFill(DccKeys keys, std::uint8_t key) {
     cancelStoredSaves();
     releaseUnheldOriginal();
     uploadedKeys = keys;
+    uploadedMixedSignature = 0;
     filledKeys = DccKeys::Uncompressed;
     keyProof = {};
+    refreshProof = {};
     forgetBorrowed(0, trackedLayers);
     forgetUnwatchHash(0, trackedLayers);
     const auto now = GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
@@ -7163,6 +7228,9 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
         releaseUnheldOriginal();
     }
     uploadedKeys = DccKeys::Uncompressed;
+    uploadedMixedSignature = 0;
+    keyProof = {};
+    refreshProof = {};
     if (layer != WholeImage && trackedLayers > 1) {
         // The cleared layer's units alone: their stamps above lie below this generation, the other
         // units keep theirs (their pages are consumed by their own collects).
@@ -7307,6 +7375,9 @@ void StorageTexture::MarkWholeWritten() {
         captureGuestBytes(nullptr);
     }
     uploadedKeys = DccKeys::Uncompressed;
+    uploadedMixedSignature = 0;
+    keyProof = {};
+    refreshProof = {};
     const auto now = GuestMemory::CollectWritesUncached(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) layerGeneration[layer] = collectedLayerGeneration(layer, now, true);
     refreshGeneration();
@@ -7332,6 +7403,9 @@ void StorageTexture::MarkUnitsWritten(const std::vector<bool>& units) {
         captureGuestBytes(&units);
     }
     uploadedKeys = DccKeys::Uncompressed;
+    uploadedMixedSignature = 0;
+    keyProof = {};
+    refreshProof = {};
     for (const auto& [begin, end] : runs) {
         const auto first = static_cast<std::uint32_t>(begin / trackedLayerBytes);
         const auto count = static_cast<std::uint32_t>((end - begin + trackedLayerBytes - 1) / trackedLayerBytes);
@@ -7588,10 +7662,10 @@ StorageTexture::CreationHandOver StorageTexture::PrepareCreation(const Context& 
 
 void StorageTexture::AdoptHandOver(CreationHandOver handOver) {
     if (!handOver.handed) return;
-    if (!blockUnits || trackedLayerBytes != 65536 || uploadedKeys != handOver.keys || anyLayerPending()) {
+    if (!blockUnits || trackedLayerBytes != 65536 || uploadedKeys != handOver.keys || uploadedMixedClear() || anyLayerPending()) {
         FlushPending(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), this, "storage image creation", PublishScope::None);
         if (handOver.detached != nullptr) handOver.detached->Flush();
-        if (uploadedKeys != handOver.keys) Refresh();
+        if (uploadedKeys != handOver.keys || uploadedMixedClear()) Refresh();
         return;
     }
     const auto begin = descriptor.baseAddress;
@@ -7634,7 +7708,7 @@ std::shared_ptr<StorageTexture> StorageTexture::pendingAlias() const {
         const auto oneSlice = [](const GuestTextureResource& resource) { return resource.dimension == TextureDimension::k2D || (resource.dimension == TextureDimension::k2DArray && resource.depthOrLastArray == 0); };
         const bool sameDimension = mine.dimension == theirs.dimension || (oneSlice(mine) && oneSlice(theirs));
         const bool sameShape = mine.width == theirs.width && mine.height == theirs.height && mine.depthOrLastArray == theirs.depthOrLastArray && mine.baseArray == theirs.baseArray && mine.mipCount == theirs.mipCount && mine.tileMode == theirs.tileMode && sameDimension && BytesPerElement(mine.format) == BytesPerElement(theirs.format) && geometry.imageLayers == candidate->geometry.imageLayers && geometry.imageDepth == candidate->geometry.imageDepth && trackedLayers == candidate->trackedLayers;
-        if (sameShape && candidate->Cached() && candidate->uploadedKeys == DccKeys::Uncompressed) return candidate;
+        if (sameShape && candidate->Cached() && candidate->uploadedKeys == DccKeys::Uncompressed && !candidate->uploadedMixedClear()) return candidate;
     }
     return nullptr;
 }
@@ -8036,8 +8110,11 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             if (profile) Profile().storageGpu += timer.lap();
             forgetStored();
             traceKeyStore("block write-back", descriptor, guestBytes);
-            if (!IsDccClear(filledKeys) && uploadedKeys != DccKeys::Uncompressed && !keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
+            if (!IsDccClear(filledKeys) && (uploadedKeys != DccKeys::Uncompressed || uploadedMixedClear()) && !keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
             uploadedKeys = DccKeys::Uncompressed;
+            uploadedMixedSignature = 0;
+            keyProof = {};
+            refreshProof = {};
             for (const auto& [from, to] : keep) GuestMemory::MarkWritten(from, static_cast<std::size_t>(to - from));
             settle(true);
             commitStoredSave(saveUnits);
@@ -8051,6 +8128,9 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             if (profile) Profile().storageGpu += timer.lap();
             forgetStored();
             uploadedKeys = DccKeys::Uncompressed;
+            uploadedMixedSignature = 0;
+            keyProof = {};
+            refreshProof = {};
             std::vector<std::pair<std::uint64_t, std::uint64_t>> stamps;
             for (const auto& [from, to] : stores) {
                 if (!stamps.empty() && from / block <= (stamps.back().second - 1) / block + 1) stamps.back().second = to;
@@ -8210,8 +8290,11 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         // metadata is host-imported (no CPU wait for the title's key-writing kernels), else a CPU
         // store (APS5_CPU_DCC_KEYS=1 keeps the CPU store; see DccMetadata.hpp).
         traceKeyStore("layer write-back", descriptor, guestBytes);
-        if (!IsDccClear(filledKeys) && uploadedKeys != DccKeys::Uncompressed && !keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
+        if (!IsDccClear(filledKeys) && (uploadedKeys != DccKeys::Uncompressed || uploadedMixedClear()) && !keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
         uploadedKeys = DccKeys::Uncompressed;
+        uploadedMixedSignature = 0;
+        keyProof = {};
+        refreshProof = {};
         for (const auto& [from, to] : keep) GuestMemory::MarkWritten(from, static_cast<std::size_t>(to - from));
         // The walk covers this surface's pages only: an adjacent image's later CPU write is stamped
         // newer than this value when its own range is collected. No CPU wrote the pages here
@@ -8355,8 +8438,11 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     // The texels now hold the whole image, so later reads must see them rather than a fast clear
     // (the keys may be host-imported although the texels were not: then a recorded fill, else a CPU store).
     traceKeyStore("cpu write-back", descriptor, guestBytes);
-    if (!IsDccClear(filledKeys) && uploadedKeys != DccKeys::Uncompressed && !keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
+    if (!IsDccClear(filledKeys) && (uploadedKeys != DccKeys::Uncompressed || uploadedMixedClear()) && !keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
     uploadedKeys = DccKeys::Uncompressed;
+    uploadedMixedSignature = 0;
+    keyProof = {};
+    refreshProof = {};
     // The store above is the only write to these pages, so `original` is current at a fresh
     // generation, unless blocks were kept for the CPU: then the image is stale there.
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {

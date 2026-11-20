@@ -4070,10 +4070,10 @@ std::shared_ptr<Graphics::StorageTexture> PresentableResident(const Graphics::Co
     return resident;
 }
 
-Graphics::DccKeys ResidentKeys(const Graphics::StorageTexture& resident) {
+Graphics::DccKeyState ResidentKeyState(const Graphics::StorageTexture& resident) {
     const auto& own = resident.Descriptor();
     GuestMemory::CollectWritesUncached(own.dccAddress, Graphics::DccKeyBytes(resident.GuestBytes()));
-    return Graphics::ProvedClearKeys(own, resident.GuestBytes(), resident.KeyProof());
+    return Graphics::ProvedClearKeyState(own, resident.GuestBytes(), resident.KeyProof());
 }
 
 bool ResidentServesDisplay(const Graphics::StorageTexture& resident, const DisplayBuffer& buffer) {
@@ -4084,11 +4084,13 @@ bool ResidentServesDisplay(const Graphics::StorageTexture& resident, const Displ
         throw std::runtime_error(message);
     }
     if (Graphics::IsDccClear(resident.FilledKeys()) && resident.FilledKeys() == keys) return false;
-    return Graphics::KeysServeSurface(resident.Descriptor().dccAddress, resident.UploadedKeys(), resident.FilledKeys(), buffer.dccAddress, [&] { return ResidentKeys(resident); }, [&] { return keys; });
+    return Graphics::KeysServeSurface(resident.Descriptor().dccAddress, resident.UploadedKeys(), resident.UploadedMixedSignature(), resident.FilledKeys(), buffer.dccAddress, [&] { return ResidentKeyState(resident); }, [&] { return Graphics::DccKeyState{keys, 0}; });
 }
 
 bool ResidentKeysMoved(const Graphics::StorageTexture& resident) {
-    return resident.Descriptor().dccAddress != 0 && ResidentKeys(resident) != resident.UploadedKeys();
+    if (resident.Descriptor().dccAddress == 0) return false;
+    const auto state = ResidentKeyState(resident);
+    return state.keys != resident.UploadedKeys() || state.mixedSignature != resident.UploadedMixedSignature();
 }
 
 VkClearColorValue PqClearValue(const DisplayBuffer& buffer) {
