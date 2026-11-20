@@ -597,6 +597,19 @@ void TestMemoryPool() {
     const int hit = sceHttpCacheCreateRequest(exchange.cache, InitialUser);
     Require(hit > 0);
     result = -1;
+    size = 0;
+    Require(sceHttpCacheRetrieveWithMemoryPool(hit, &query, nullptr, nullptr, &result, nullptr, &size, 0) == 0 && result == 1);
+    Require(size > pool.size());
+    std::array<std::uint8_t, 512> hitPool;
+    hitPool.fill(0xa5);
+    Require(sceHttpCacheRetrieveWithMemoryPool(hit, &query, &response, nullptr, &result, hitPool.data(), &size, hitPool.size()) == 0 && result == 1);
+    Require(response.statusCode == 200 && response.contentLength == 1 && response.headerCount == 1);
+    Require(response.headers == reinterpret_cast<const Header*>(hitPool.data()));
+    Require(std::strcmp(response.headers[0].name, "Cache-Control") == 0);
+    Require(std::strcmp(response.headers[0].value, "max-age=600") == 0);
+    Require(hitPool.back() == 0);
+    result = -1;
+    size = 7;
     Require(sceHttpCacheRetrieveWithMemoryPool(hit, &query, nullptr, nullptr, &result, pool.data(), &size, pool.size()) == InvalidValue && result == 1);
     Require(pool[0] == 0xa5 && pool[15] == 0xa5 && size == 7 && ReadAll(hit) == "a");
     Require(sceHttpCacheDeleteRequest(hit) == 0);
@@ -658,6 +671,36 @@ void TestMemoryPool() {
     Require(std::strcmp(response.headers[2].value, "value") == 0);
     Require(responsePool.back() == 0);
     Require(sceHttpCacheDeleteRequest(pooled) == 0);
+
+    Cached(exchange, "http://pool/d", {{"Cache-Control", "max-age=60, stale-while-revalidate=600"}, {"ETag", "d1"}}, "data");
+    Advance(120);
+    const int pooledRevalidation = sceHttpCacheCreateRequest(exchange.cache, InitialUser);
+    Require(pooledRevalidation > 0);
+    const Request queryD{0, 0, "http://pool/d", 0, nullptr};
+    size = 0;
+    Require(sceHttpCacheRetrieveWithMemoryPool(pooledRevalidation, &queryD, nullptr, nullptr, &result, nullptr, &size, 0) == 0 && result == 2);
+    const std::size_t poolRequired = size;
+    std::array<std::uint8_t, 512> revalidationPool;
+    revalidationPool.fill(0xa5);
+    Response staleResponse{};
+    Request revalidationNext{};
+    Require(sceHttpCacheRetrieveWithMemoryPool(pooledRevalidation, &queryD, &staleResponse, &revalidationNext, &result,
+                                               revalidationPool.data(), &size, revalidationPool.size()) == 0 && result == 2);
+    Require(size == poolRequired && revalidationNext.method == 0 && revalidationNext.headerCount == 1);
+    Require(std::strcmp(revalidationNext.headers[0].name, "If-None-Match") == 0);
+    Require(std::strcmp(revalidationNext.headers[0].value, "d1") == 0);
+    Require(std::strcmp(revalidationNext.url, "http://pool/d") == 0);
+    const std::size_t nextHeaderSize = revalidationNext.headerCount * sizeof(Header)
+        + std::strlen(revalidationNext.headers[0].name) + 1
+        + std::strlen(revalidationNext.headers[0].value) + 1;
+    const std::size_t nextRequestSize = nextHeaderSize + std::strlen(revalidationNext.url) + 1;
+    Require(poolRequired > nextRequestSize);
+    Require(staleResponse.statusCode == 200 && staleResponse.contentLength == 4 && staleResponse.headerCount == 4);
+    Require(staleResponse.headers == reinterpret_cast<const Header*>(revalidationPool.data() + nextRequestSize));
+    Require(std::strcmp(staleResponse.headers[0].name, "Cache-Control") == 0);
+    Require(std::strcmp(staleResponse.headers[2].name, "Warning") == 0);
+    Require(std::strcmp(staleResponse.headers[2].value, "110 - \"Response is Stale\"") == 0);
+    Require(sceHttpCacheDeleteRequest(pooledRevalidation) == 0);
     Require(sceHttpCacheTerm(exchange.cache) == 0);
 }
 
