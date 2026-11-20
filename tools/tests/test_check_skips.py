@@ -367,6 +367,61 @@ class DeviceSkipPolicyTests(unittest.TestCase):
                         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                         self.assertIn("error: guest_video_out_high_frame_rate skipped", result.stdout)
 
+    def test_high_refresh_skip_is_expected_alongside_device_log_lines(self):
+        reason = "current display does not provide 120 Hz"
+        log = "\n".join((
+            "[time] scheduler tick raised to 0.5 ms (was 0.50 ms, now 0.50 ms, timed waits fine, timers fire 518 us late)",
+            "[src/HostCpu.cpp:220 operator()] host CPU has SSE2 AVX AVX2",
+            "[src/VulkanDevice.cpp:2666 VulkanDevice] Vulkan device ready device=0x2 queue=0x3 family=0",
+            "[write-watch] host imports resolve write protection: yes",
+            "[gpu] open /dev/udmabuf: No such file or directory; using a fallback",
+            "[src/VulkanDevice.cpp:2758 VulkanDevice] Swapchain created swapchain=0x4 extent=1152x648 images=4",
+            "[shader-disk-cache] cache (source version 5110620204023565, format 60)",
+            "[videoout] HDR output available: peak 1000.0 nits, full frame 600.0 nits, black 0.0050 nits",
+            "[videoout] HDR output unavailable (display in HDR: no, surface offers HDR10: yes)",
+            f"skipped, {reason}",
+        ))
+        reports = (
+            f'<skipped/><system-out>{log}</system-out>',
+            f'<skipped message="{reason}"/><system-out>{log}</system-out>',
+            f'<skipped/><system-out>{log}</system-out><system-err>[gpu] teardown</system-err>',
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report in reports:
+                junit.write_text(f'<testsuite><testcase name="guest_video_out_high_frame_rate">{report}</testcase></testsuite>', encoding="utf-8")
+                for job in ("linux", "windows"):
+                    with self.subTest(job=job, report=report):
+                        result = subprocess.run(
+                            [sys.executable, "-I", str(TOOL), str(junit), "--job", job],
+                            capture_output=True, encoding="utf-8")
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertIn("1 test(s) skipped, all expected", result.stdout)
+
+    def test_bracketed_line_cannot_hide_a_second_skip_reason(self):
+        reason = "current display does not provide 120 Hz"
+        reports = (
+            f'<skipped/><system-out>[probe] skipped, flaky\nskipped, {reason}</system-out>',
+            f'<skipped/><system-out>skipped, {reason}\n[probe] skipped, flaky</system-out>',
+            f'<skipped message="{reason}"/><system-err>[probe] skipped, flaky</system-err>',
+            f'<skipped/><system-out>skipped, {reason}\n[probe] unexpected failure detail</system-out>',
+            f'<skipped/><system-out>[probe] unexpected failure detail\nskipped, {reason}</system-out>',
+            f'<skipped message="{reason}"/><system-err>[probe] unexpected failure detail</system-err>',
+            f'<skipped message="{reason}"/><system-err>[videoout] unexpected failure detail</system-err>',
+            f'<skipped message="{reason}"/><system-err>[videoout] HDR output unavailable (display in HDR: no, surface offers HDR10: yes): unexpected error</system-err>',
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report in reports:
+                junit.write_text(f'<testsuite><testcase name="guest_video_out_high_frame_rate">{report}</testcase></testsuite>', encoding="utf-8")
+                for job in ("linux", "windows"):
+                    with self.subTest(job=job, report=report):
+                        result = subprocess.run(
+                            [sys.executable, "-I", str(TOOL), str(junit), "--job", job],
+                            capture_output=True, encoding="utf-8")
+                        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                        self.assertIn("error: guest_video_out_high_frame_rate skipped", result.stdout)
+
     def test_unknown_display_reasons_stay_unexpected_in_both_jobs(self):
         reasons = (
             "current display is broken",
