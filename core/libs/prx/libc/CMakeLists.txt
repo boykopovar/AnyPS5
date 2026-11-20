@@ -175,6 +175,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GetSubOpt.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VectorAlgorithms.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/MathGamma.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedExtendedPrecision.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Bessel.cpp
@@ -263,6 +264,8 @@ function(run_report_stamp_components root)
 endfunction()
 cmake_language(EVAL CODE "cmake_language(DEFER DIRECTORY [[${CMAKE_SOURCE_DIR}]] CALL run_report_stamp_components [[${runReportRevisionRoot}]])")
 
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/MathGamma.cpp
+        TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
         TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedExtendedPrecision.cpp
