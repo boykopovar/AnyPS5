@@ -12,6 +12,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "SceTypes.hpp"
 #include "tests/TemporaryFile.hpp"
 #include <algorithm>
@@ -27,6 +28,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -222,10 +224,11 @@ void testDriverCapture(const std::filesystem::path& directory) {
     const auto index = lines(directory / SubmissionCapture::IndexName);
     check(index.size() == 8 && index[0] == SubmissionCapture::Magic && index[1] == SubmissionCapture::Columns, "the index does not hold its two header lines and one line per submission");
     const auto computeLine = fields(index[3]);
-    check(computeLine.size() == 10 && computeLine[0] == "1" && computeLine[1] == "0x20" && computeLine[2] == "compute" && computeLine[6] == "submit" && computeLine[7] == "submission_000001.bin" && computeLine[9] == "-", "the index line of the compute submission is " + index[3]);
-    check(index[4].starts_with("2 0x0 graphics ") && index[4].ends_with(" 0 suspend - - -"), "the index line of the suspend point is " + index[4]);
+    check(computeLine.size() == 11 && computeLine[0] == "1" && computeLine[1] == "0x20" && computeLine[2] == "compute" && computeLine[6] == "submit" && computeLine[7] == "submission_000001.bin" && computeLine[9] == "-" && computeLine[10] == "ps5",
+          "the index line of the compute submission is " + index[3]);
+    check(index[4].starts_with("2 0x0 graphics ") && index[4].ends_with(" 0 suspend - - - ps5"), "the index line of the suspend point is " + index[4]);
     const auto waitsLine = fields(index[5]);
-    check(waitsLine.size() == 10 && waitsLine[0] == "3", "the index line of the graphics waits is " + index[5]);
+    check(waitsLine.size() == 11 && waitsLine[0] == "3", "the index line of the graphics waits is " + index[5]);
     const auto conditionalEnd = condition + 5 + WriteDataWords;
     check(waitsLine[9] == std::to_string(condition) + ":" + std::to_string(conditionalEnd), "the index does not list the COND_EXEC range: " + index[5]);
 
@@ -624,17 +627,17 @@ void replaceField(const std::filesystem::path& directory, std::size_t field, con
     check(output.good(), "cannot rewrite the index to corrupt");
 }
 
-void dropHeldColumns(const std::filesystem::path& directory) {
+void dropColumns(const std::filesystem::path& directory, std::string_view columns, std::size_t kept) {
     const auto index = lines(directory / SubmissionCapture::IndexName);
     std::ofstream output(directory / SubmissionCapture::IndexName, std::ios::binary | std::ios::trunc);
-    output << index.at(0) << '\n' << SubmissionCapture::ColumnsWithoutHeld << '\n';
+    output << index.at(0) << '\n' << columns << '\n';
     for (std::size_t line = 2; line < index.size(); ++line) {
         const auto values = fields(index[line]);
-        check(values.size() == 10, "the index line to rewrite does not have 10 fields: " + index[line]);
-        for (std::size_t i = 0; i < 8; ++i) output << (i == 0 ? "" : " ") << values[i];
+        check(values.size() == 11, "the index line to rewrite does not have 11 fields: " + index[line]);
+        for (std::size_t i = 0; i < kept; ++i) output << (i == 0 ? "" : " ") << values[i];
         output << '\n';
     }
-    check(output.good(), "cannot rewrite the index without its held and conditional columns");
+    check(output.good(), "cannot rewrite the index without its last columns");
 }
 
 void testIndexWithoutHeld(const std::filesystem::path& directory) {
@@ -646,7 +649,7 @@ void testIndexWithoutHeld(const std::filesystem::path& directory) {
     sceAgcDcbWaitRegMem(graphics.Buffer(), Bits32, Equal, 0, 0, &guardedLabel, One, 0xffffffffu, 0);
     sceAgcAcbWaitRegMem(compute.Buffer(), Bits32, Equal, 0, &otherLabel, One, 0xffffffffu, 0);
     writeCapture(directory, {planned(0, 1, graphics), planned(0x20, 2, compute)});
-    dropHeldColumns(directory);
+    dropColumns(directory, SubmissionCapture::ColumnsWithoutHeld, 8);
     const auto captured = SubmissionCapture::ReadIndex(directory);
     check(captured.size() == 2 && !captured[0].heldKnown && !captured[0].conditionalKnown, "an index without the held and conditional columns is read as if it had them");
     const auto analysis = AgcDriver::Pm4Analysis::Analyze(directory);
@@ -662,9 +665,77 @@ void testIndexWithoutHeld(const std::filesystem::path& directory) {
           "the report does not show the waits of unknown outcome:\n" + text);
 }
 
+struct GcnPacketForms {
+    GcnPacketForms() { ShaderRecompiler::SetGcnGuestShaders(true); }
+    ~GcnPacketForms() { ShaderRecompiler::SetGcnGuestShaders(false); }
+    GcnPacketForms(const GcnPacketForms&) = delete;
+    GcnPacketForms& operator=(const GcnPacketForms&) = delete;
+};
+
+void testPacketForms(const std::filesystem::path& directory) {
+    constexpr std::size_t FormsField = 10;
+    alignas(8) static std::uint32_t label = 0;
+    alignas(8) static std::uint64_t counter = 0;
+    constexpr std::uint32_t Value = 0x150;
+    std::vector<std::uint32_t> commands{0xc0054900u, 0x0000062fu, (1u << 29u) | (3u << 24u), static_cast<std::uint32_t>(at(&label)), static_cast<std::uint32_t>(at(&label) >> 32u), Value, 0,
+                                        0xc0054900u, 0x0000062fu, (4u << 29u) | (3u << 24u), static_cast<std::uint32_t>(at(&counter)), static_cast<std::uint32_t>(at(&counter) >> 32u), 0, 0};
+    Commands wait;
+    sceAgcDcbWaitRegMem(wait.Buffer(), Bits32, Equal, 0, 0, &label, Value, 0xffffffffu, 0);
+    const auto waitWords = wait.Words();
+    commands.insert(commands.end(), waitWords.begin(), waitWords.end());
+    Commands store;
+    sceAgcDcbWriteData(store.Buffer(), GraphicsMemory, 0, at(&otherLabel), &One, 1, 0, 1);
+    const auto storeWords = store.Words();
+    const auto mixed = directory / "mixed";
+    {
+        SubmissionCapture capture(mixed);
+        auto before = SubmissionCapture::Prepare(0, SubmissionKind::Submit, storeWords, {});
+        capture.Take(before, 1, 1000, {});
+        capture.Write(before);
+        const GcnPacketForms forms;
+        auto after = SubmissionCapture::Prepare(0, SubmissionKind::Submit, commands, {});
+        capture.Take(after, 2, 2000, {});
+        capture.Write(after);
+    }
+    const auto index = lines(mixed / SubmissionCapture::IndexName);
+    check(index.size() == 4 && fields(index[2]).at(FormsField) == "ps5" && fields(index[3]).at(FormsField) == "ps4", "the index does not record the packet forms of each submission:\n" + index.at(2) + "\n" + index.at(3));
+    const auto captured = SubmissionCapture::ReadIndex(mixed);
+    check(captured.size() == 2 && !captured[0].gcn && captured[1].gcn, "the packet forms read from the index differ from the written ones");
+    check(names(SubmissionCapture::Read(mixed)[1]) == std::vector<std::string>{"RELEASE_MEM", "RELEASE_MEM", "SET_UCONFIG_REG", "WAIT_REG_MEM", "SET_UCONFIG_REG"}, "decoded packets of the submission with PS4 packet forms");
+    const auto analysis = AgcDriver::Pm4Analysis::Analyze(mixed);
+    check(!ShaderRecompiler::GcnGuestShaders(), "the analysis of a submission with PS4 packet forms left them on");
+    const auto& released = waitOn(analysis, &label);
+    check(released.verdict == WaitReport::Verdict::Released, "a wait for the value of a PS4 RELEASE_MEM is not released: " + verdict(released));
+    const auto [code, text] = report(mixed);
+    check(code == 0, "the report of a capture with PS4 packet forms fails:\n" + text);
+
+    const auto ps5 = directory / "ps5";
+    writeCapture(ps5, {{0, 1, SubmissionKind::Submit, commands, {}, {}}});
+    const auto withoutForms = directory / "without-forms";
+    {
+        const GcnPacketForms forms;
+        writeCapture(withoutForms, {{0, 1, SubmissionKind::Submit, commands, {}, {}}});
+    }
+    dropColumns(withoutForms, SubmissionCapture::ColumnsWithoutForms, 10);
+    const auto old = SubmissionCapture::ReadIndex(withoutForms);
+    check(old.size() == 1 && old[0].heldKnown && old[0].conditionalKnown && !old[0].gcn, "an index without the forms column is not read with the PS5 packet forms");
+    const GcnPacketForms forms;
+    for (const auto& path : {ps5, withoutForms}) {
+        bool rejected = false;
+        try {
+            AgcDriver::Pm4Analysis::Analyze(path);
+        } catch (const std::exception& error) {
+            rejected = std::string(error.what()).find("invalid packet size") != std::string::npos;
+        }
+        check(rejected, "the analysis accepts a 7-dword RELEASE_MEM in a submission with PS5 packet forms: " + path.string());
+        check(ShaderRecompiler::GcnGuestShaders(), "the analysis of a submission with PS5 packet forms did not restore the PS4 packet forms");
+    }
+}
+
 void testCorrupt(const std::filesystem::path& directory) {
     constexpr std::size_t HeldField = 8;
     constexpr std::size_t ConditionalField = 9;
+    constexpr std::size_t FormsField = 10;
     Commands waitOnly;
     sceAgcDcbWaitRegMem(waitOnly.Buffer(), Bits32, Equal, 0, 0, &syntheticLabel, One, 0xffffffffu, 0);
     const auto expectThrow = [&](const std::vector<Planned>& submissions, std::size_t field, const std::string& value, const std::string& what) {
@@ -682,6 +753,7 @@ void testCorrupt(const std::filesystem::path& directory) {
     expectThrow({{0, 1, SubmissionKind::Submit, {0xc0044700u, 0x00000528u, static_cast<std::uint32_t>(at(&syntheticLabel)), 0x40000000u, 1, 0}, {}, {}}}, 0, {}, "an EVENT_WRITE_EOP the driver rejects");
     expectThrow({planned(0, 1, waitOnly)}, HeldField, "0", "a wait held at submit that marks no wait packet");
     expectThrow({planned(0, 1, waitOnly)}, ConditionalField, "4:11", "a conditional range that starts at no COND_EXEC");
+    expectThrow({planned(0, 1, waitOnly)}, FormsField, "gcn", "packet forms other than ps4 and ps5");
 }
 
 }
@@ -710,6 +782,7 @@ int main() {
         testHeldAtSubmit(scratch / "held");
         testRewindValidWithoutTail(scratch / "rewind-valid");
         testIndexWithoutHeld(scratch / "without-held");
+        testPacketForms(scratch / "forms");
         testCorrupt(scratch / "corrupt");
         std::filesystem::remove_all(scratch);
         testFailedWrite(directory);
