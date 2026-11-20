@@ -782,8 +782,8 @@ struct PageStates {
     void initialize();
 
     PageSpan* spanOf(std::uintptr_t address) {
-        if (arena.covers(address)) return &arena;
         if (image.covers(address)) return &image;
+        if (arena.covers(address)) return &arena;
         return nullptr;
     }
 
@@ -800,6 +800,7 @@ struct PageStates {
             const std::uint8_t value = readable ? static_cast<std::uint8_t>(PageReadable | (writable ? PageWritable : 0u)) : PageInaccessible;
             const auto first = std::max(base, span->base);
             const auto last = std::min(regionEnd, span->base + span->size);
+            if (span == &arena && GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(first, static_cast<std::size_t>(last - first))) continue;
             span->store(first, last, value);
             if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() != generation || accessSerial.load(std::memory_order_acquire) != access) span->forget(first, static_cast<std::size_t>(last - first));
         }
