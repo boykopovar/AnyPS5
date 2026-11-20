@@ -331,6 +331,8 @@ class CheckSkipsTests(unittest.TestCase):
             "[gpu] open /dev/udmabuf: No such file or directory; using a fallback",
             "[src/VulkanDevice.cpp:2758 VulkanDevice] Swapchain created swapchain=0x4 extent=1152x648 images=4",
             "[shader-disk-cache] cache (source version 5110620204023565, format 60)",
+            "[videoout] HDR output available: peak 1000.0 nits, full frame 600.0 nits, black 0.0050 nits",
+            "[videoout] HDR output unavailable (display in HDR: no, surface offers HDR10: yes)",
             f"skipped, {reason}",
         ))
         reports = (
@@ -359,6 +361,8 @@ class CheckSkipsTests(unittest.TestCase):
             f'<skipped/><system-out>skipped, {reason}\n[probe] unexpected failure detail</system-out>',
             f'<skipped/><system-out>[probe] unexpected failure detail\nskipped, {reason}</system-out>',
             f'<skipped message="{reason}"/><system-err>[probe] unexpected failure detail</system-err>',
+            f'<skipped message="{reason}"/><system-err>[videoout] unexpected failure detail</system-err>',
+            f'<skipped message="{reason}"/><system-err>[videoout] HDR output unavailable (display in HDR: no, surface offers HDR10: yes): unexpected error</system-err>',
         )
         with tempfile.TemporaryDirectory() as directory:
             junit = Path(directory) / "junit.xml"
