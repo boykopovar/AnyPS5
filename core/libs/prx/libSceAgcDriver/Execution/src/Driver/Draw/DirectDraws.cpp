@@ -1181,6 +1181,7 @@ std::optional<Counter> Driver::resolveDirectStages(const LeanDrawJob& job, const
     resolved.decode = Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::LeanPrepare) ? refreshedDecode(shape.decode, job.words) : LeanRefreshedDecode(*shape.decode, job.words);
     const auto& decode = *resolved.decode;
     const auto& graphics = decode.state;
+    if (graphics.provokingVertexMode == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT && !device.ProvokingVertexLast() && device.Target().tessellation.has_value()) return Counter::FallbackShape;
     const auto& programs = decode.programs;
     const auto& roles = decode.roles;
     const auto count = programs.size();

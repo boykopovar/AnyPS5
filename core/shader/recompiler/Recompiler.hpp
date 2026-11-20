@@ -504,6 +504,7 @@ struct GraphicsCompileContext {
     std::optional<TessellationConfiguration> tessellation;
     GraphicsDrawParameters draw;
     std::optional<MeshBarycentricLayout> meshBarycentrics;
+    bool emulateBarycentrics = false;
 };
 
 struct RecompileRequest {

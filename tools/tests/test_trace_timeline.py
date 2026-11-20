@@ -47,6 +47,96 @@ class TimelineTests(unittest.TestCase):
         slices = trace_timeline.window_slices(trace_of(self.items), 0, 10000, threads=["presenter"])
         self.assertEqual([slice_["name"] for slice_ in slices], ["Driver.Present"])
 
+    def test_cli_thread_filter_preserves_the_default_window_end(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+        for start, expected in ((0, "window 0.000 to 9.000 ms, 1 threads, 2 bars"),
+                                (8, "window 8.000 to 9.000 ms, 0 threads, 0 bars")):
+            with self.subTest(start=start):
+                out = path.with_name(f"capture-{start}.html")
+                done = subprocess.run([sys.executable, trace_timeline.__file__, str(path), "-o", str(out),
+                                       "--thread", "queue worker", "--from-ms", str(start)],
+                                      capture_output=True, text=True, timeout=5)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                page = out.read_text(encoding="utf-8")
+                self.assertIn(expected, page)
+                self.assertNotIn("Driver.Present", page)
+
+    def test_cli_default_window_includes_events_after_the_last_slice(self):
+        trailing_events = [
+            {"name": "present", "ph": "i", "ts": 12000, "tid": 2, "args": {"present": 1}},
+            {"name": "trace buffer full", "ph": "i", "ts": 13000, "tid": 2, "args": {"events_lost": 8}},
+            {"name": "presenter folded", "ph": "C", "ts": 14000, "tid": 2, "args": {"ms": 2}},
+        ]
+        path = Path(self.tmp.name) / "capture.json"
+        out = path.with_suffix(".html")
+        for event in trailing_events:
+            with self.subTest(event=event["name"]):
+                path.write_text(json.dumps(document(self.items + [event])), encoding="utf-8")
+                done = subprocess.run([sys.executable, trace_timeline.__file__, str(path), "-o", str(out),
+                                       "--thread", "queue worker", "--from-ms", "10"],
+                                      capture_output=True, text=True, timeout=5)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                window_end_ms = event["ts"] / 1000
+                self.assertIn(f"window 10.000 to {window_end_ms:.3f} ms, 0 threads, 0 bars", out.read_text(encoding="utf-8"))
+
+    def test_cli_reports_event_loss_in_plain_and_compressed_captures(self):
+        capture = document(self.items + [
+            {"name": "thread_name", "ph": "M", "tid": 3, "args": {"name": "<worker&>"}},
+            {"name": "trace buffer full", "ph": "i", "ts": 1500, "tid": 1, "args": {"events_lost": 8}},
+            {"name": "trace buffer full", "ph": "i", "ts": 8000, "tid": 3, "args": {"events_lost": 3}},
+        ])
+        for compressed in (False, True):
+            with self.subTest(compressed=compressed):
+                path = Path(self.tmp.name) / ("capture.json.gz" if compressed else "capture.json")
+                opener = gzip.open if compressed else open
+                with opener(path, "wt", encoding="utf-8") as handle:
+                    json.dump(capture, handle)
+                before = path.read_bytes()
+                out = Path(self.tmp.name) / "capture.html"
+                done = subprocess.run([sys.executable, trace_timeline.__file__, str(path), "-o", str(out), "--max-slices", "1"],
+                                      capture_output=True, text=True, timeout=5)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                text = out.read_text(encoding="utf-8")
+                self.assertIn("Incomplete trace: 11 events lost", text)
+                self.assertIn("Gaps may contain unrecorded work", text)
+                self.assertIn("queue worker (tid 1): buffer full at 1.500 ms; 8 events lost across the capture", text)
+                self.assertIn("&lt;worker&amp;&gt; (tid 3): buffer full at 8.000 ms; 3 events lost across the capture", text)
+                self.assertNotIn("<worker&>", text)
+                self.assertIn("2 shorter slices left out by --max-slices", text)
+                self.assertEqual(path.read_bytes(), before)
+
+    def test_cli_loss_warning_respects_threads_and_covers_the_capture(self):
+        for lost, thread, bounds, expected in ((8, "queue worker", [], True), (8, "presenter", [], False),
+                                                (0, None, [], False), (8, None, ["--from-ms", "2", "--to-ms", "6"], True)):
+            with self.subTest(lost=lost, thread=thread, bounds=bounds):
+                path = Path(self.tmp.name) / "capture.json"
+                path.write_text(json.dumps(document(self.items + [
+                    {"name": "trace buffer full", "ph": "i", "ts": 1500, "tid": 1, "args": {"events_lost": lost}},
+                ])), encoding="utf-8")
+                out = Path(self.tmp.name) / "capture.html"
+                options = ["--thread", thread] if thread else []
+                done = subprocess.run([sys.executable, trace_timeline.__file__, str(path), "-o", str(out), *options, *bounds],
+                                      capture_output=True, text=True, timeout=5)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                text = out.read_text(encoding="utf-8")
+                self.assertEqual("Incomplete trace:" in text, expected)
+                self.assertEqual("events lost across the capture" in text, expected)
+
+    def test_cli_reports_loss_on_a_thread_without_retained_slices(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps([
+            {"name": "trace buffer full", "ph": "i", "ts": 1500, "tid": 9, "args": {"events_lost": 8}},
+        ]), encoding="utf-8")
+        out = Path(self.tmp.name) / "capture.html"
+        done = subprocess.run([sys.executable, trace_timeline.__file__, str(path), "-o", str(out), "--thread", "tid 9"],
+                              capture_output=True, text=True, timeout=5)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        text = out.read_text(encoding="utf-8")
+        self.assertIn("Incomplete trace: 8 events lost", text)
+        self.assertIn("tid 9: buffer full at 1.500 ms; 8 events lost across the capture", text)
+        self.assertIn("window 0.000 to 1.500 ms, 0 threads, 0 bars", text)
+
     def test_layout_places_bars_and_gives_tiny_slices_a_pixel(self):
         items = [complete(1, "Driver.Packet", 0, 5000), complete(1, "Tiny", 6000, 1)]
         laid = trace_timeline.layout(trace_timeline_slices(items), 0, 10000, 1000)
@@ -157,6 +247,19 @@ class TimelineTests(unittest.TestCase):
                 self.assertEqual(done.returncode, 2, done.stderr)
                 self.assertIn(option, done.stderr)
                 self.assertFalse(out.exists())
+
+    def test_the_cli_reports_a_non_ascii_output_path_as_utf8(self):
+        directory = Path(self.tmp.name) / "界"
+        directory.mkdir()
+        path = directory / "a.json"
+        path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+        out = directory / "a.html"
+        environment = dict(os.environ, PYTHONIOENCODING="cp1252")
+        done = subprocess.run([sys.executable, str(Path(trace_timeline.__file__)), str(path), "-o", str(out)],
+                              capture_output=True, env=environment)
+        self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
+        self.assertEqual(done.stdout.decode("utf-8"), f"wrote {out}\n".replace("\n", os.linesep))
+        self.assertIn("<svg", out.read_text(encoding="utf-8"))
 
 
     def check_input_alias(self, path, output=None, cwd=None):

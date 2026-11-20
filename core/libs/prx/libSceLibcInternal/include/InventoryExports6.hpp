@@ -1,6 +1,8 @@
 #pragma once
 
+#include "prx/libc/include/GuestLocale.hpp"
 #include "SceTypes.hpp"
+#include <cstddef>
 
 extern "C" {
 
@@ -15,7 +17,7 @@ void APS5_VABI _ZNSt7codecvtIwc9_MbstatetED0Ev_nid_postfix(void* self);
 int APS5_VABI _ZNSt8numpunctIcEC1EPKcmb_nid_postfix();
 int APS5_VABI _reclaim_telldir_nid_postfix();
 int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE9_EndwriteEv_nid_postfix();
-int APS5_VABI _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix();
+std::size_t APS5_VABI _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
 int APS5_VABI _ZNSt10moneypunctIwLb1EED0Ev_nid_postfix();
 int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE9underflowEv_nid_postfix();
 int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE7seekoffElNSt5_IosbIiE8_SeekdirENS4_9_OpenmodeE_nid_postfix();
@@ -24,7 +26,6 @@ int APS5_VABI _ZNSt7_MpunctIwEC2Emb_nid_postfix();
 int APS5_VABI _ZNSt6locale7_LocimpC2Eb_nid_postfix();
 int APS5_VABI _ZNSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2Em_nid_postfix();
 int APS5_VABI _ZNSt13basic_filebufIcSt11char_traitsIcEE5imbueERKSt6locale_nid_postfix();
-int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT0_S5_mPKT__nid_postfix();
 int APS5_VABI sceLibcPafMspaceGetFooterValue_nid_postfix();
 int APS5_VABI sceLibcInternalMemoryGetWakeAddr_nid_postfix();
 int APS5_VABI _ZNSt7_MpunctIcED0Ev_nid_postfix();
