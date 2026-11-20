@@ -410,10 +410,6 @@ int APS5_VABI _ZN3JSC12CachePayloadD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF13StringBuilder6resizeEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC2VM29scopedArgumentsTableSpaceSlowEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1519,10 +1515,6 @@ int APS5_VABI _ZN3WTF24acquireLineBreakIteratorENS_10StringViewERKNS_10AtomStrin
 }
 
 int APS5_VABI _ZN3WTF24releaseLineBreakIteratorEP14UBreakIterator() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF25createCanonicalUUIDStringEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
