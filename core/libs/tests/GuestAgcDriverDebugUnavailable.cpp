@@ -40,6 +40,10 @@ int main() {
     Require(sceAgcDriverSysSubmitFlipHandleProxy() == 0);
     Require(sceAgcDriverUserDataImmediateWrite() == 0 && sceAgcDriverUserDataImmediateWritePacket() == 0);
 
+    Require(sceAgcDriverIsCoredumpValid() == 0);
+    Require(sceAgdSetApplicationGpuDebug() == static_cast<int>(0x8A6C0047));
+    Require(sceAgdGetApplicationGpuDebug() == 0 && sceAgdGetSystemGpuDebug() == 0);
+
     std::uint32_t coredumpMode = 0xA5A5A5A5u;
     Require(sceAgcDriverGetCoredumpMode(nullptr) == static_cast<int>(0x8A6D0003));
     Require(sceAgcDriverGetCoredumpMode(&coredumpMode) == 0 && coredumpMode == 0);
