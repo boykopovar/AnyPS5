@@ -42,8 +42,8 @@ int main() {
 
     WKMessageListenerSendReply(ref1, replyRef);
     Require(listener1->replied);
-    Require(listener1->reply != nullptr);
-    Require(WKGetTypeID(NKWebKit::ToRef(listener1->reply.Get())) == WKStringGetTypeID());
+    Require(static_cast<bool>(listener1->reply));
+    Require(WKGetTypeID(static_cast<const void*>(listener1->reply.Get())) == WKStringGetTypeID());
 
     auto listener2 = NKWebKit::Make<NKWebKit::MessageListener>();
     const void* ref2 = NKWebKit::ToRef(listener2);
