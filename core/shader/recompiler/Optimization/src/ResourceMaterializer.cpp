@@ -1118,10 +1118,15 @@ private:
         std::uint64_t low = std::numeric_limits<std::uint64_t>::max();
         std::uint64_t high = 0;
         for (std::uint32_t record = 0; record < records.keys; record++) {
-            const auto byte = static_cast<std::uint32_t>(record * stride + column.offset + column.addend);
+            const auto byte = static_cast<std::uint64_t>(record) * stride + column.offset + column.addend;
+            const auto tailByte = byte + (column.dwordCount - 1u) * sizeof(std::uint32_t);
+            if (byte > 0xffffffffu || tailByte > 0xffffffffu) {
+                records.states[record] = RecordState::Carried;
+                continue;
+            }
             const auto address = records.base + byte;
-            const auto tail = records.base + static_cast<std::uint32_t>(byte + (column.dwordCount - 1u) * sizeof(std::uint32_t));
-            if (tail < address || !AddressAccessible(address) || !AddressAccessible(tail)) {
+            const auto tail = records.base + tailByte;
+            if (!AddressAccessible(address) || !AddressAccessible(tail)) {
                 records.states[record] = RecordState::Unmapped;
                 continue;
             }
