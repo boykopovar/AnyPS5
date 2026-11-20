@@ -13,6 +13,13 @@ namespace Elfpatcher {
 
 namespace {
 
+bool sameRelroHeader(const Domain::ProgramHeader& first, const Domain::ProgramHeader& second) {
+    return first.Flags == second.Flags && first.Offset == second.Offset &&
+        first.MappedAddress == second.MappedAddress && first.PhysicalAddress == second.PhysicalAddress &&
+        first.FileSize == second.FileSize && first.MemorySize == second.MemorySize &&
+        first.Alignment == second.Alignment;
+}
+
 constexpr std::size_t kExtendedProgramHeaderCount = 0xffff;
 
 bool hasWritableLoadCoverage(
@@ -47,13 +54,6 @@ bool hasWritableLoadCoverage(
         if (coveredUntil >= relroEnd) return true;
     }
     return false;
-}
-
-bool sameRelroHeader(const Domain::ProgramHeader& first, const Domain::ProgramHeader& second) {
-    return first.Flags == second.Flags && first.Offset == second.Offset &&
-        first.MappedAddress == second.MappedAddress && first.PhysicalAddress == second.PhysicalAddress &&
-        first.FileSize == second.FileSize && first.MemorySize == second.MemorySize &&
-        first.Alignment == second.Alignment;
 }
 
 }
@@ -154,15 +154,15 @@ std::vector<Domain::ProgramHeader> ProgramHeaderLayoutBuilder::_keptHeaders(cons
     std::vector<Domain::ProgramHeader> kept;
     for (const auto& ph : originalHeaders) {
         if (_segmentFilter->ShouldSkip(ph)) continue;
+        if (ph.Type == PT_GNU_RELRO && !hasWritableLoadCoverage(originalHeaders, ph)) continue;
+        if (ph.Type == PT_GNU_STACK && &ph != lastStackPtr) continue;
         if (ph.Type == PT_GNU_RELRO) {
-            if (!hasWritableLoadCoverage(originalHeaders, ph)) continue;
             if (keptRelro) {
                 if (sameRelroHeader(*keptRelro, ph)) continue;
                 throw Domain::RelinkerException("Multiple RELRO ranges are not supported on Linux output: the loader only protects one PT_GNU_RELRO segment");
             }
             keptRelro = &ph;
         }
-        if (ph.Type == PT_GNU_STACK && &ph != lastStackPtr) continue;
         kept.push_back(ph);
     }
     return kept;
