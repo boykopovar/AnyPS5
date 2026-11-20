@@ -2199,16 +2199,16 @@ int APS5_VABI lutimes_nid_postfix(const char* path, const KernelTimeval* times) 
 
 int APS5_VABI sceKernelFutimes(int d, const KernelTimeval* times) {
     KernelTimeval local[2];
-    if (!CopyInTimes(times, local)) return SCE_KERNEL_ERROR_EFAULT;
+    if (times != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(local, times, sizeof(local))) return SCE_KERNEL_ERROR_EFAULT;
+        for (int i = 0; i < 2; ++i) {
+            if (local[i].tv_usec < 0 || local[i].tv_usec >= 1000000) return SceErrorFromErrno(GUEST_EINVAL);
+        }
+    }
     if (File::IsVirtualDirectoryDescriptor(d)) return SceErrorFromErrno(GUEST_EISDIR);
     if (GuestSockets::IsOpen(d)) return SceErrorFromErrno(GUEST_EINVAL);
     File::RefuseArchivedFile(d, "futimes");
-    if (times != nullptr) {
-        for (int i = 0; i < 2; ++i) {
-            if (times[i].tv_usec < 0 || times[i].tv_usec >= 1000000) return SceErrorFromErrno(GUEST_EINVAL);
-        }
-    }
-    if (NativeFutimes(d, times) != 0) return SceErrorFromErrno(errno);
+    if (NativeFutimes(d, times != nullptr ? local : nullptr) != 0) return SceErrorFromErrno(errno);
     return 0;
 }
 
