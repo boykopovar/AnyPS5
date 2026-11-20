@@ -1047,6 +1047,9 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         return cachedTexture(context, words, window, components, 0, depthCompare, VK_IMAGE_VIEW_TYPE_2D, layerRows);
     }
     if (guestBytes == 0) guestBytes = SurfaceGuestBytes(resource);
+    const auto residency = depthCompare || layerRows || SrgbExpandsToRgba8(context, resource.format) ? std::nullopt : MinLodResidentLevels(resource);
+    const bool residentLevels = residency.has_value() && residency->bytes < guestBytes;
+    if (residentLevels) guestBytes = residency->bytes;
     if (guestBytes >= (1ull << 30u)) {
         static std::atomic<std::uint64_t> large{0};
         const auto count = large.fetch_add(1) + 1;
@@ -1119,7 +1122,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     // import, recorded behind the producer, so no bytes are read or compared on the CPU and nothing
     // waits for the producer. A fast-cleared surface (keys) is viewed only through an image whose own
     // descriptor carries the DCC address (below); it stays a snapshot otherwise, its texels not read.
-    if ((!depthCompare || depthCopy) && !layerRows && source == nullptr && !clearThroughKeys && SampledFromStorageEligible(context, resource, guestBytes)) {
+    if ((!depthCompare || depthCopy) && !layerRows && source == nullptr && !clearThroughKeys && !residentLevels && SampledFromStorageEligible(context, resource, guestBytes)) {
 
         keys = scanKeys();
         if (*keys == DccKeys::Uncompressed) {
@@ -1285,7 +1288,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     }
     const auto clear = source == nullptr ? SampledClearColor(context, resource, *keys, depthCompare) : std::nullopt;
     static const bool sampledImport = std::getenv("APS5_NO_SAMPLED_IMPORT") == nullptr;
-    const bool gpuWritten = sampledImport && source == nullptr && !clear && !depthCompare && !layerRows && !slabs.has_value() && *keys == DccKeys::Uncompressed && Recorder::SnapshotWriteOverlaps(address, bytes);
+    const bool gpuWritten = sampledImport && source == nullptr && !clear && !depthCompare && !layerRows && !residentLevels && !slabs.has_value() && *keys == DccKeys::Uncompressed && Recorder::SnapshotWriteOverlaps(address, bytes);
     const auto gpuSources = gpuWritten ? ExistingHostImportCopies(context, address, bytes) : std::vector<HostImportCopy>{};
     if (source != nullptr || clear.has_value() || !gpuSources.empty()) parkSnapshot(cache, recycled);
     CachedTexture entry{key, address, std::vector<std::byte>{}, nullptr, *keys, snapshotGeneration};
