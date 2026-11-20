@@ -1675,10 +1675,6 @@ int APS5_VABI _ZN6icu_6818Normalizer2Factory10getNFCImplER10UErrorCode_nid_postf
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucnv_openCCSID_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6810Normalizer7currentEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

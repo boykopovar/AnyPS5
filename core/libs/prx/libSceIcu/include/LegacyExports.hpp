@@ -401,7 +401,6 @@ int APS5_VABI _ZN6icu_6815MaybeStackArrayIcLi40EEC1Ei10UErrorCode_nid_postfix();
 int APS5_VABI uloc_getDisplayKeyword_nid_postfix();
 int APS5_VABI _ZN6icu_686Locale10getGermanyEv_nid_postfix();
 int APS5_VABI _ZN6icu_6818Normalizer2Factory10getNFCImplER10UErrorCode_nid_postfix();
-int APS5_VABI ucnv_openCCSID_nid_postfix();
 int APS5_VABI _ZN6icu_6810Normalizer7currentEv_nid_postfix();
 int APS5_VABI _ZNK6icu_6815Normalizer2Impl20getFCD16FromNormDataEi_nid_postfix();
 int APS5_VABI _ZN6icu_6822SimpleLocaleKeyFactoryC2EPNS_7UObjectERKNS_13UnicodeStringEii_nid_postfix();
