@@ -23072,23 +23072,7 @@ int APS5_VABI _ZN7WebCore8JSPath2DaSERKS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore8PositionC1EPNS_4NodeENS0_10AnchorTypeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore8PositionC1EPNS_4NodeEjNS0_10AnchorTypeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore8PositionC1EPNS_4NodeEjNS0_25LegacyEditingPositionFlagE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore8PositionC2EPNS_4NodeENS0_10AnchorTypeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore8PositionC2EPNS_4NodeEjNS0_10AnchorTypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -28710,10 +28694,6 @@ int APS5_VABI _ZNK7WebCore8Location4hostEv() {
 }
 
 int APS5_VABI _ZNK7WebCore8Position10downstreamENS_27EditingBoundaryCrossingRuleE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore8Position13containerNodeEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
