@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
@@ -33,13 +34,20 @@ struct Case {
     Bounds bounds;
     bool covered;
     const char* what;
+    VkCompareOp compare = VK_COMPARE_OP_ALWAYS;
 };
 
-alignas(4096) std::array<std::array<float, Harness::Width * Harness::Height>, 16> Depths{};
-alignas(256) std::array<std::array<std::array<float, 4>, 3>, 64> VertexSets{};
+enum class Emulation { Native, DepthTest, PixelProgram };
+
+constexpr const char* EmulationName(Emulation emulation) {
+    return emulation == Emulation::Native ? "native" : emulation == Emulation::DepthTest ? "emulated by a depth test" : "emulated in the pixel program";
+}
+
+alignas(4096) std::array<std::array<float, Harness::Width * Harness::Height>, 20> Depths{};
+alignas(256) std::array<std::array<std::array<float, 4>, 3>, 160> VertexSets{};
 std::size_t vertexSets = 0;
 
-std::uint32_t Draw(AgcDriver::VulkanDevice& device, std::uint64_t depth, float z, std::optional<Bounds> bounds, bool emulate) {
+std::uint32_t Draw(AgcDriver::VulkanDevice& device, std::uint64_t depth, float z, std::optional<Bounds> bounds, Emulation emulation, VkCompareOp compare = VK_COMPARE_OP_ALWAYS) {
     Require(vertexSets < VertexSets.size(), "the test ran out of vertex sets");
     auto& vertices = VertexSets[vertexSets++];
     vertices = {{{-1.0f, -1.0f, z, 1.0f}, {3.0f, -1.0f, z, 1.0f}, {-1.0f, 3.0f, z, 1.0f}}};
@@ -51,9 +59,9 @@ std::uint32_t Draw(AgcDriver::VulkanDevice& device, std::uint64_t depth, float z
     state.colors = {state.color};
     state.hasColorTarget = true;
     state.depth = AgcDriver::Graphics::DepthTarget{depth, 0, {Harness::Width, Harness::Height}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
-    state.depthTest = !bounds.has_value();
+    state.depthTest = !bounds.has_value() || emulation != Emulation::DepthTest;
     state.depthWrite = !bounds.has_value();
-    state.depthCompare = VK_COMPARE_OP_ALWAYS;
+    state.depthCompare = bounds ? compare : VK_COMPARE_OP_ALWAYS;
     if (bounds) {
         state.depthBoundsTest = true;
         state.minDepthBounds = bounds->min;
@@ -77,12 +85,14 @@ std::uint32_t Draw(AgcDriver::VulkanDevice& device, std::uint64_t depth, float z
     pixel.posY = true;
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
-    if (bounds && emulate) {
+    if (bounds && emulation != Emulation::Native) {
         auto context = device.graphicsContext();
         context.depthBounds = false;
         context.depthRangeUnrestricted = false;
         AgcDriver::Graphics::ApplyDepthBoundsEmulation(context, state, pixel);
         Require(!state.depthBoundsTest && state.depthTest && !state.depthWrite, "the depth bounds test was not emulated");
+        Require(state.depthBoundsDiscard == (emulation == Emulation::PixelProgram), "the depth bounds test was emulated another way than the case expects");
+        if (state.depthBoundsDiscard) pixel.depthBoundsDiscard = {true, AgcDriver::Graphics::DepthBoundsSourceWords(*state.depth)};
     }
 
     auto target = device.Target();
@@ -133,7 +143,7 @@ int main() {
         const auto context = device->graphicsContext();
         const float below = std::nextafter(0.25f, 0.0f);
         const float above = std::nextafter(0.25f, 1.0f);
-        const std::array<Case, 12> cases{{
+        const std::array<Case, 20> cases{{
             {0.25f, {0.0f, 0.25f}, true, "stored 0.25, upper bound equal to it"},
             {0.25f, {0.0f, below}, false, "stored 0.25, upper bound one step below it"},
             {0.25f, {0.25f, 1.0f}, true, "stored 0.25, lower bound equal to it"},
@@ -146,25 +156,36 @@ int main() {
             {1.0f, {0.0f, 1.0f}, true, "stored 1 inside [0, 1]"},
             {1.0f, {0.0f, 0.5f}, false, "stored 1 outside [0, 0.5]"},
             {0.75f, {0.5f, 1.0f}, true, "stored 0.75 inside [0.5, 1]"},
+            {0.25f, {0.125f, 0.375f}, true, "stored 0.25 inside [0.125, 0.375]"},
+            {0.25f, {0.25f, 0.25f}, true, "stored 0.25 inside [0.25, 0.25]"},
+            {0.25f, {above, 0.375f}, false, "stored 0.25 below [0.25 + one step, 0.375]"},
+            {0.25f, {0.125f, below}, false, "stored 0.25 above [0.125, 0.25 - one step]"},
+            {0.5f, {0.125f, 0.375f}, false, "stored 0.5 above [0.125, 0.375]"},
+            {0.0f, {0.125f, 0.375f}, false, "stored 0 below [0.125, 0.375]"},
+            {0.25f, {0.125f, 0.375f}, true, "stored 0.25 inside [0.125, 0.375] under a GREATER_OR_EQUAL depth test it passes", VK_COMPARE_OP_GREATER_OR_EQUAL},
+            {0.75f, {0.625f, 0.875f}, false, "stored 0.75 inside [0.625, 0.875] under a GREATER_OR_EQUAL depth test it fails", VK_COMPARE_OP_GREATER_OR_EQUAL},
         }};
         std::size_t compared = 0;
+        std::size_t fixedFunction = 0;
         for (std::size_t index = 0; index < cases.size(); ++index) {
             const auto& test = cases[index];
             const auto depth = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Depths[index].data()));
-            Require(Draw(*device, depth, test.stored, std::nullopt, false) == Harness::Covered, "the draw that stores the depth did not cover the target");
             const auto expected = test.covered ? Harness::Covered : 0u;
-            for (const bool emulate : {true, false}) {
-                if (!emulate && !context.depthBounds) continue;
-                const auto passed = Draw(*device, depth, 0.5f, test.bounds, emulate);
+            const bool oneSided = test.compare == VK_COMPARE_OP_ALWAYS && (test.bounds.min <= 0.0f || test.bounds.max >= 1.0f);
+            for (const auto emulation : {Emulation::DepthTest, Emulation::PixelProgram, Emulation::Native}) {
+                if ((emulation == Emulation::DepthTest && !oneSided) || (emulation == Emulation::Native && !context.depthBounds)) continue;
+                Require(Draw(*device, depth, test.stored, std::nullopt, emulation) == Harness::Covered, "the draw that stores the depth did not cover the target");
+                const auto passed = Draw(*device, depth, 0.5f, test.bounds, emulation, test.compare);
                 if (passed != expected) {
-                    char detail[256];
-                    std::snprintf(detail, sizeof(detail), "%s (%s): %u of %u pixels passed, expected %s", test.what, emulate ? "emulated" : "native", passed, Harness::Covered, test.covered ? "all" : "none");
+                    char detail[320];
+                    std::snprintf(detail, sizeof(detail), "%s (%s): %u of %u pixels passed, expected %s", test.what, EmulationName(emulation), passed, Harness::Covered, test.covered ? "all" : "none");
                     throw std::runtime_error(detail);
                 }
-                if (!emulate) ++compared;
+                if (emulation == Emulation::Native) ++compared;
+                if (emulation == Emulation::DepthTest) ++fixedFunction;
             }
         }
-        std::printf("depth bounds emulation draw tests passed (%zu cases, %zu compared with the native test)\n", cases.size(), compared);
+        std::printf("depth bounds emulation draw tests passed (%zu cases, %zu by a depth test, all in the pixel program, %zu compared with the native test)\n", cases.size(), fixedFunction, compared);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

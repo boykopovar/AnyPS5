@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdlib>
@@ -210,6 +211,10 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
     Graphics::ApplyViewportIndex(context, product->state);
     Graphics::ApplyDepthRemap(context, product->state);
     Graphics::ApplyDepthBoundsEmulation(context, product->state, product->pixel);
+    if (product->state.depthBoundsDiscard) {
+        require(std::ranges::any_of(product->programs, [](const DrawProgram& program) { return program.binary.stage == ShaderRecompiler::ShaderStage::Fragment; }), "the depth bounds test without a pixel program needs the depthBounds feature");
+        product->pixel.depthBoundsDiscard = {true, Graphics::DepthBoundsSourceWords(*product->state.depth)};
+    }
     static const bool readOnlyDepthBoundsCompare = [] {
         const auto* value = std::getenv("APS5_READONLY_DEPTH_BOUNDS_COMPARE");
         return value != nullptr && std::string_view(value) == "1";

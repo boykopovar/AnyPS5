@@ -184,6 +184,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             pixelStorage.mergeDepthStencilTests = merge.depthStencilTests;
         }
         pixelStorage.sampleOrder = pixel.sampleOrder;
+        pixelStorage.depthBoundsDiscard = pixel.depthBoundsDiscard.enabled;
         ShaderStageInputInfo result;
         result.pixel = &pixelStorage;
         return result;

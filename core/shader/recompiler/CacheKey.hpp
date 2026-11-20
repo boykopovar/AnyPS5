@@ -265,6 +265,7 @@ private:
             append(key, blend.constants);
         }
         append(key, value.sampleOrder);
+        append(key, value.depthBoundsDiscard.enabled);
     }
 
     static void append(std::vector<std::uint64_t>& key, const ShaderVertexResourceDestination& value) {
