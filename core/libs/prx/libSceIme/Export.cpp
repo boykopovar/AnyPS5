@@ -575,9 +575,24 @@ int APS5_VABI sceImeFilterText(char16_t* dst, int32_t* out_length, uint32_t capa
     return static_cast<int>(ime_filter::FilterText(dst, out_length, capacity, param, src, src_length));
 }
 
-int APS5_VABI sceImeCheckFilterText(const void* param) {
-    (void)param;
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceImeCheckFilterText(char16_t* text, std::uint8_t repair) {
+    if (!text) return -3;
+    constexpr std::size_t maxLength = 0x98;
+    for (std::size_t index = 0; index < maxLength; ++index) {
+        char16_t character = 0;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&character, text + index, sizeof(character));
+        errno = savedErrno;
+        if (!copied) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        if (character == 0) return 0;
+    }
+    if (!repair) return -2;
+    constexpr char16_t terminator = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(text + maxLength, &terminator, sizeof(terminator));
+    errno = savedErrno;
+    if (!copied) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return 0;
 }
 
 void APS5_VABI sceImeParamInit(Param* param) {

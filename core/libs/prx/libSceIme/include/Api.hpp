@@ -37,7 +37,7 @@ int APS5_VABI sceImeKeyboardGetResourceId(int32_t userId, KeyboardResourceIdArra
 int APS5_VABI sceImeKeyboardOpen(int32_t userId, const KeyboardParam* param);
 int APS5_VABI sceImeKeyboardSetMode(int32_t userId, uint32_t mode);
 int APS5_VABI sceImeFilterText(char16_t* dst, int32_t* outLength, uint32_t capacity, const ime_filter::FilterParam* param, const char16_t* src, uint32_t srcLength);
-int APS5_VABI sceImeCheckFilterText(const void* param);
+int APS5_VABI sceImeCheckFilterText(char16_t* text, std::uint8_t repair);
 void APS5_VABI sceImeParamInit(Param* param);
 int APS5_VABI sceImeSetCaret(const Caret* caret);
 int APS5_VABI sceImeSetConsecutiveClauseConversionEnabled(std::uint8_t enabled);
