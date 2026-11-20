@@ -34,6 +34,18 @@ void CheckArguments() {
     Require(sceShellUIUtilGetAppUrl("a", longText.c_str(), output, 16, &size) == InvalidArgument, "GetAppUrl: long parameter");
     Require(sceShellUIUtilGetAppUrl("a", "p", output, 0x1001, &size) == InvalidArgument, "GetAppUrl: capacity");
     Require(sceShellUIUtilGetAppUrl("a", "p", nullptr, 16, &size) == InvalidArgument, "GetAppUrl: null output");
+    errno = 71;
+    Require(sceShellUIUtilGetAppUrl(reinterpret_cast<const char*>(0x10), "p", output, 16, &size) == InvalidArgument, "GetAppUrl: unreadable application");
+    Require(errno == 71, "GetAppUrl: errno preserved for application");
+    errno = 71;
+    Require(sceShellUIUtilGetAppUrl("a", reinterpret_cast<const char*>(0x10), output, 16, &size) == InvalidArgument, "GetAppUrl: unreadable parameter");
+    Require(errno == 71, "GetAppUrl: errno preserved for parameter");
+    errno = 71;
+    Require(sceShellUIUtilGetAppUrl("a", "p", reinterpret_cast<char*>(0x10), 16, &size) == InvalidArgument, "GetAppUrl: unwritable output");
+    Require(errno == 71, "GetAppUrl: errno preserved for output");
+    errno = 71;
+    Require(sceShellUIUtilGetAppUrl("a", "p", output, 16, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument, "GetAppUrl: unwritable outputSize");
+    Require(errno == 71, "GetAppUrl: errno preserved for outputSize");
     Require(sceShellUIUtilGetAppUrl(longestText.c_str(), longestText.c_str(), nullptr, 0, nullptr) == NotInitialized,
         "GetAppUrl: the longest strings, no output, before Initialize");
     Require(sceShellUIUtilGetAppUrl("a", "p", output, 0x1000, nullptr) == NotInitialized, "GetAppUrl: capacity 0x1000");
@@ -46,6 +58,9 @@ void CheckArguments() {
     Require(sceShellUIUtilLaunchByUri(nullptr, LaunchParameter(good)) == InvalidArgument, "LaunchByUri: null uri");
     Require(sceShellUIUtilLaunchByUri("u", nullptr) == InvalidArgument, "LaunchByUri: null parameter");
     errno = 71;
+    Require(sceShellUIUtilLaunchByUri(reinterpret_cast<const char*>(0x10), LaunchParameter(good)) == InvalidArgument, "LaunchByUri: unreadable uri");
+    Require(errno == 71, "LaunchByUri: errno preserved for uri");
+    errno = 71;
     Require(sceShellUIUtilLaunchByUri("u", reinterpret_cast<const ShellUIUtilLaunchParameter*>(0x10)) == InvalidArgument, "LaunchByUri: unreadable parameter");
     Require(errno == 71, "LaunchByUri: errno preserved");
     Require(sceShellUIUtilLaunchByUri(longText.c_str(), LaunchParameter(good)) == InvalidArgument, "LaunchByUri: long uri");
@@ -55,6 +70,9 @@ void CheckArguments() {
     Require(sceShellUIUtilLaunchTask(1, nullptr, taskOutput.data(), 0x1000) == InvalidArgument, "LaunchTask: null uri");
     Require(sceShellUIUtilLaunchTask(1, "u", taskOutput.data(), 0xFFF) == InvalidArgument, "LaunchTask: capacity");
     Require(sceShellUIUtilLaunchTask(1, "u", nullptr, 0x1000) == InvalidArgument, "LaunchTask: null output");
+    errno = 71;
+    Require(sceShellUIUtilLaunchTask(1, reinterpret_cast<const char*>(0x10), taskOutput.data(), 0x1000) == InvalidArgument, "LaunchTask: unreadable uri");
+    Require(errno == 71, "LaunchTask: errno preserved for uri");
     errno = 71;
     Require(sceShellUIUtilLaunchTask(1, "u", reinterpret_cast<char*>(0x10), 0x1000) == InvalidArgument, "LaunchTask: unwritable output");
     Require(errno == 71, "LaunchTask: errno preserved");
