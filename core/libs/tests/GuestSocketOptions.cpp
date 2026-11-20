@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -17,8 +18,19 @@ namespace {
 
 constexpr int Stream = 1;
 constexpr int Datagram = 2;
+constexpr int SequencedPacket = 5;
+
+struct LocalCredentials {
+    std::uint32_t version;
+    std::uint32_t user;
+    std::int16_t groupCount;
+    std::uint32_t groups[16];
+    std::uint64_t unused;
+};
+static_assert(sizeof(LocalCredentials) == 88);
 constexpr int SolSocket = 0xffff;
 constexpr int SoAcceptConnection = 0x2;
+constexpr int SoReuseAddr = 0x4;
 constexpr int SoDebug = 0x1;
 constexpr int SoKeepAlive = 0x8;
 constexpr int SoBroadcast = 0x20;
@@ -94,6 +106,7 @@ void ReportsTypeAndListening() {
     const int stream = socket_nid_postfix(2, Stream, 0);
     const int datagram = socket_nid_postfix(2, Datagram, 0);
     Require(stream >= 0 && datagram >= 0, "socket failed");
+    Require(GetInt(stream, SoError) == 0, "SO_ERROR of a fresh socket must be 0");
     Require(GetInt(stream, SoType) == Stream, "SO_TYPE of a stream socket must be SOCK_STREAM (1)");
     Require(GetInt(datagram, SoType) == Datagram, "SO_TYPE of a datagram socket must be SOCK_DGRAM (2)");
     Require(GetInt(stream, SoAcceptConnection) == 0, "SO_ACCEPTCONN must be 0 before listen");
@@ -161,7 +174,7 @@ void BooleanOptionsReportTheirBit() {
     Require(GetInt(datagram, SoBroadcast) == SoBroadcast, "SO_BROADCAST reads back as its bit");
     SetInt(stream, SoNoSigpipe, 1);
     Require(GetInt(stream, SoNoSigpipe) == SoNoSigpipe, "SO_NOSIGPIPE reads back as its bit");
-    for (const int option : {SoReusePort, SoDebug, SoUseLoopback, SoTimestamp, 0x2000, 0x10000}) {
+    for (const int option : {SoReuseAddr, SoReusePort, SoDebug, SoUseLoopback, SoTimestamp, 0x2000, 0x10000}) {
         Require(GetInt(stream, option) == 0, "a kept flag starts off");
         SetInt(stream, option, 5);
         Require(GetInt(stream, option) == option, "a kept flag reads back as its bit");
@@ -183,6 +196,7 @@ void BooleanOptionsReportTheirBit() {
         }
     const unsigned char narrowFlag = 1;
     Require(SetFails(stream, SolSocket, SoDebug, &narrowFlag, 1, ErrorInvalid), "a flag shorter than an int must fail with EINVAL (22)");
+    Require(SetFails(stream, SolSocket, SoReuseAddr, &narrowFlag, 1, ErrorInvalid), "a flag shorter than an int must fail with EINVAL (22)");
     Require(close_nid_postfix(stream) == 0 && close_nid_postfix(datagram) == 0, "close failed");
 }
 
@@ -457,6 +471,14 @@ void MulticastMembership() {
     Require(setsockopt_nid_postfix(datagram, 0, IpMulticastInterface, anyIndex.data(), anyIndex.size()) == 0, "an ip_mreqn without an index selects the default interface");
     size = address.size();
     Require(getsockopt_nid_postfix(datagram, 0, IpMulticastInterface, address.data(), &size) == 0 && address == std::array<std::uint8_t, 4>{}, "the default interface reads back as INADDR_ANY");
+    const std::array<std::uint8_t, 12> addressWithoutIndex{224, 0, 0, 251, 127, 0, 0, 1, 0, 0, 0, 0};
+    Require(setsockopt_nid_postfix(datagram, 0, IpMulticastInterface, addressWithoutIndex.data(), addressWithoutIndex.size()) == 0, "an ip_mreqn with index 0 clears the interface whatever its addresses, as inp_set_multicast_if does");
+    std::array<std::uint8_t, 12> request{};
+    request.fill(0xaa);
+    size = request.size();
+    Require(getsockopt_nid_postfix(datagram, 0, IpMulticastInterface, request.data(), &size) == 0 && size == 12 && request == std::array<std::uint8_t, 12>{}, "an ip_mreqn read with no interface selected is all zeros, as inp_getmoptions returns");
+    const std::array<std::uint8_t, 12> negativeIndex{0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff};
+    Require(SetFails(datagram, 0, IpMulticastInterface, negativeIndex.data(), negativeIndex.size(), ErrorInvalid), "a negative ip_mreqn index must fail with EINVAL (22)");
     Require(SetFails(datagram, 0, IpMulticastInterface, loopback.data(), 2, ErrorInvalid), "a short IP_MULTICAST_IF must fail with EINVAL (22)");
     Require(close_nid_postfix(datagram) == 0 && close_nid_postfix(stream) == 0, "close failed");
 }
@@ -538,7 +560,52 @@ void UnknownLevelsFollowFreeBsd() {
     size = sizeof(value);
     Require(getsockopt_nid_postfix(pair[0], 0, 77, &value, &size) == -1 && *__error_nid_postfix() == 45, "getsockopt of an unknown option at level 0 on an AF_UNIX socket must fail with EOPNOTSUPP (45)");
     Require(SetFails(pair[0], 0, 1, &one, sizeof(one), 45), "setting LOCAL_PEERCRED on an AF_UNIX socket must fail with EOPNOTSUPP (45)");
-    for (const int descriptor : {stream, datagram, stream6, datagram6, pair[0], pair[1]}) Require(close_nid_postfix(descriptor) == 0, "close failed");
+    std::uint32_t original[16]{};
+    const int originalCount = getgroups_nid_postfix(16, original);
+    Require(originalCount >= 1, "getgroups failed");
+    std::uint32_t many[17]{};
+    for (std::uint32_t index = 0; index < 17; ++index) many[index] = index;
+#if defined(_WIN32) || defined(__APPLE__)
+    const int connectedTypes[]{Stream};
+#else
+    const int connectedTypes[]{Stream, SequencedPacket};
+#endif
+    for (const int type : connectedTypes) {
+        Require(setgroups_nid_postfix(17, many) == 0, "setgroups failed");
+        int connected[2]{-1, -1};
+        Require(socketpair_nid_postfix(1, type, 0, connected) == 0, "socketpair failed");
+        const std::uint32_t changed[2]{0, 5};
+        Require(setgroups_nid_postfix(2, changed) == 0, "setgroups failed");
+        for (const int end : connected) {
+            unsigned char bytes[88];
+            std::memset(bytes, 0xff, sizeof(bytes));
+            size = sizeof(bytes);
+            Require(getsockopt_nid_postfix(end, 0, 1, bytes, &size) == 0 && size == sizeof(bytes), "LOCAL_PEERCRED on a stream or sequenced-packet socketpair must succeed, as kern_socketpair calls unp_copy_peercred");
+            LocalCredentials credentials{};
+            std::memcpy(&credentials, bytes, sizeof(credentials));
+            Require(credentials.version == 0 && credentials.user == 0 && credentials.groupCount == 16 && std::equal(many, many + 16, credentials.groups), "LOCAL_PEERCRED must report the first 16 groups the pair was made with, as cru2x copies");
+            Require(bytes[10] == 0 && bytes[11] == 0 && bytes[76] == 0 && bytes[77] == 0 && bytes[78] == 0 && bytes[79] == 0 && credentials.unused == 0, "LOCAL_PEERCRED must clear the xucred padding, as cru2x starts with bzero");
+            std::uint32_t version = 0xffffffffu;
+            size = sizeof(version);
+            Require(getsockopt_nid_postfix(end, 0, 1, &version, &size) == 0 && size == sizeof(version) && version == 0, "a short LOCAL_PEERCRED read must copy only the bytes asked for");
+        }
+        for (const int end : connected) Require(close_nid_postfix(end) == 0, "close failed");
+    }
+    Require(setgroups_nid_postfix(originalCount, original) == 0, "setgroups failed");
+    LocalCredentials credentials{};
+    for (const int option : {2, 4}) {
+        value = -1;
+        size = sizeof(value);
+        Require(getsockopt_nid_postfix(pair[1], 0, option, &value, &size) == 0 && value == 0 && size == sizeof(value), "LOCAL_CREDS and LOCAL_CONNWAIT must read 0 on a socketpair");
+        value = -1;
+        size = 2;
+        Require(getsockopt_nid_postfix(pair[1], 0, option, &value, &size) == 0 && size == 2 && (value & 0xffff) == 0 && (value >> 16) == -1, "a short LOCAL_CREDS or LOCAL_CONNWAIT read must copy only the bytes asked for, as sooptcopyout does");
+    }
+    int datagramPair[2]{-1, -1};
+    Require(socketpair_nid_postfix(1, Datagram, 0, datagramPair) == 0, "socketpair failed");
+    size = sizeof(credentials);
+    Require(getsockopt_nid_postfix(datagramPair[0], 0, 1, &credentials, &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "LOCAL_PEERCRED on a datagram socketpair must fail with EINVAL (22)");
+    for (const int descriptor : {stream, datagram, stream6, datagram6, pair[0], pair[1], datagramPair[0], datagramPair[1]}) Require(close_nid_postfix(descriptor) == 0, "close failed");
 }
 
 }

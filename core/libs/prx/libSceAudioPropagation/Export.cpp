@@ -271,7 +271,7 @@ PathState validatedPath(Registry& state, AudioPropagationHandle path, const Audi
         const auto& point = replacement.points[index];
         requireDescriptor(&point.desc, PathPointId, sizeof(PathPoint), function);
         require(std::isfinite(point.gain) && point.gain >= 0.0f && std::isfinite(point.position[0]) && std::isfinite(point.position[1]) && std::isfinite(point.position[2]), function);
-        if (point.room != 0) require(requireObject(state, point.room, Kind::Room, function).system == system, function);
+        if (point.material != 0) require(requireObject(state, point.material, Kind::Material, function).system == system, function);
     }
     return PathState{replacement, gain};
 }
@@ -537,6 +537,16 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPath(AudioPropagationHan
     if (!outPath) return ErrorNullPointer;
     if (index >= MaxPaths) return ErrorInvalidArgument;
     if (!copyGuestOut(outPath, state.sourcePaths.at(source)[index])) return ErrorNullPointer;
+    return 0;
+}
+
+std::int32_t APS5_VABI sceAudioPropagationSourceQueryAudioPaths(AudioPropagationHandle source, std::uint64_t* paths, std::size_t size) {
+    auto& state = registry();
+    std::lock_guard lock(state.mutex);
+    const auto found = state.objects.find(source);
+    if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
+    if (!paths) return ErrorNullPointer;
+    static_cast<void>(size);
     return 0;
 }
 

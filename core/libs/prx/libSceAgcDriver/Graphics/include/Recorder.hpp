@@ -58,6 +58,7 @@ public:
         ReferenceFront,
         ReferenceBack,
         ColorWriteMask,
+        DepthBiasEnable,
         SlotCount
     };
     static constexpr std::uint32_t Mask(Slot slot) { return 1u << slot; }
@@ -91,6 +92,7 @@ public:
     void SetStencilWriteMask(const Context& context, VkStencilFaceFlags faces, std::uint32_t mask);
     void SetStencilReference(const Context& context, VkStencilFaceFlags faces, std::uint32_t reference);
     void SetColorWriteMasks(const Context& context, std::span<const VkColorComponentFlags> masks);
+    void SetDepthBiasEnable(const Context& context, VkBool32 enable);
 
 private:
     struct StencilOps {
@@ -134,6 +136,7 @@ private:
     std::array<std::uint32_t, 2> writeMasks{};
     std::array<std::uint32_t, 2> references{};
     ColorWriteMasks colorWriteMasks{};
+    VkBool32 depthBiasEnable = 0;
 };
 
 // Accumulates GPU work across guest commands so the CPU does not wait for each one. Dispatches and the
