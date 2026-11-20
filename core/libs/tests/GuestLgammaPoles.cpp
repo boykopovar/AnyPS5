@@ -39,7 +39,10 @@ int main() {
                     const long double result = lgammal_nid_postfix(input);
                     const int flags = fetestexcept_nid_postfix(0x3f);
                     Require(std::isinf(result) && !std::signbit(result));
-                    Require(flags == (pending | FE_DIVBYZERO));
+                    if (flags != (pending | FE_DIVBYZERO)) {
+                        std::fprintf(stderr, "lgammal(%La): flags 0x%x, expected 0x%x (x87 status 0x%x, MXCSR 0x%x, precision 0x%x, rounding 0x%x)\n", input, static_cast<unsigned>(flags), static_cast<unsigned>(pending | FE_DIVBYZERO), static_cast<unsigned>(GuestCpu::X87Status()), static_cast<unsigned>(GuestCpu::Mxcsr()), precision, static_cast<unsigned>(rounding));
+                        Require(false);
+                    }
                     Require(*__error_nid_postfix() == 34);
                     Require(signgam_nid_postfix == 7);
                     Require(GuestCpu::X87Control() == control);
