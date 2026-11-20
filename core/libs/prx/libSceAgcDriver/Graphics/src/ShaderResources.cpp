@@ -4592,7 +4592,10 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     // else by the same lookups as the build (which refresh or replace them as guest memory changed):
     // they must hand back the very objects the set's views belong to. The build appended them stage
     // by stage, binding by binding, so the walk repeats that order.
+    std::shared_ptr<Texture> walkMismatch;
+    std::size_t walkMismatchAt = 0;
     const auto fullWalk = [&] {
+        walkMismatch.reset();
         lastFullWalk = std::chrono::steady_clock::now();
         walkImportGeneration = HostImportSetGeneration();
         lookupLog().clear();
@@ -4614,7 +4617,12 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                         const VkComponentMapping components = ViewComponents(resource);
                         const VkImageViewType multisampleViewType = binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
                         const bool depthCompare = !binding.imageDepthCompare.empty() && binding.imageDepthCompare.at(element);
-                        if (textureIndex >= textures.size() || cachedTexture(context, words, resource, components, 0, depthCompare, multisampleViewType, layerRowsBinding(binding.imageShape, resource, depthCompare)) != textures[textureIndex]) return false;
+                        if (textureIndex >= textures.size()) return false;
+                        if (auto got = cachedTexture(context, words, resource, components, 0, depthCompare, multisampleViewType, layerRowsBinding(binding.imageShape, resource, depthCompare)); got != textures[textureIndex]) {
+                            walkMismatch = std::move(got);
+                            walkMismatchAt = textureIndex;
+                            return false;
+                        }
                         ++textureIndex;
                     }
                 } else if (binding.kind == ShaderRecompiler::DescriptorKind::StorageImage) {
@@ -4638,7 +4646,11 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
             const auto words = firstLayerWords(raw, images.imageShapes.at(element), narrowed, false);
             const auto resource = DecodeTextureResource(words);
             const VkImageViewType multisampleViewType = images.imageShapes.at(element) == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
-            return cachedTexture(context, words, resource, ViewComponents(resource), 0, images.imageDepthCompare.at(element), multisampleViewType) == textures[textureIndex];
+            auto got = cachedTexture(context, words, resource, ViewComponents(resource), 0, images.imageDepthCompare.at(element), multisampleViewType);
+            if (got == textures[textureIndex]) return true;
+            walkMismatch = std::move(got);
+            walkMismatchAt = textureIndex;
+            return false;
         };
         for (const auto& table : tableStages) {
             if (table.elementTextures.empty()) continue;
@@ -4764,14 +4776,37 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                 if (surface.source != nullptr) versions.emplace_back(surface.source, surface.source->Version());
             }
             for (const auto& image : storageTextures) versions.emplace_back(image.get(), image->Version());
+            struct WrittenTag {};
+            auto& written = ThreadScratch<std::vector<std::uint64_t>, WrittenTag>();
+            written.clear();
+            for (const auto& entry : versions) written.push_back(GuestMemory::CollectWrites(entry.first->Descriptor().baseAddress, static_cast<std::size_t>(entry.first->GuestBytes())));
             const bool same = fullWalk();
-            const auto moved = std::find_if(versions.begin(), versions.end(), [](const auto& entry) { return entry.first->Version() != entry.second; });
-            if (!same || moved != versions.end()) {
+            bool uploadedUnwritten = false;
+            bool uploadedWritten = false;
+            for (std::size_t k = 0; k < versions.size(); ++k) {
+                if (versions[k].first->Version() == versions[k].second) continue;
+                const auto address = versions[k].first->Descriptor().baseAddress;
+                const auto bytes = static_cast<std::size_t>(versions[k].first->GuestBytes());
+                if (written[k] != 0 && !GuestMemory::UnchangedSince(address, bytes, written[k])) uploadedWritten = true;
+                else uploadedUnwritten = true;
+            }
+            const auto sameTexels = [&] {
+                if (walkMismatch == nullptr || walkMismatchAt >= textures.size() || textures[walkMismatchAt] == nullptr) return false;
+                const auto& viewed = walkMismatch->SharedStorageSource();
+                return validatedTextures[walkMismatchAt].source == nullptr && textures[walkMismatchAt]->SharedStorageSource() == nullptr && viewed != nullptr && !viewed->Dirty();
+            };
+            if ((!same && !sameTexels()) || uploadedUnwritten) {
                 std::fprintf(stderr, "[rescache] APS5_VERIFY_PROOFS: the T1 proof (%s) disagrees with the full walk (%s)\n", ownRefreshed ? "own-object refresh" : "accepted overlap", !same ? "another object" : "an upload");
                 std::fflush(stderr);
                 std::abort();
             }
-            if (profile) Revalidations().proofsVerified.fetch_add(1, std::memory_order_relaxed);
+            if (!same || uploadedWritten) {
+                static std::array<std::atomic<std::uint64_t>, 2> tolerated{};
+                const auto count = tolerated[!same ? 0 : 1].fetch_add(1, std::memory_order_relaxed) + 1;
+                if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[rescache] APS5_VERIFY_PROOFS: the full walk %s, the same texels as the proof's objects; %llu such walks\n", !same ? "views a storage image with no results pending where the proof keeps a snapshot" : "uploads memory the CPU wrote during the walk", static_cast<unsigned long long>(count));
+            } else if (profile) {
+                Revalidations().proofsVerified.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     }
     // (2) The imported buffers the set reads in place: results of storage images pending in them go
