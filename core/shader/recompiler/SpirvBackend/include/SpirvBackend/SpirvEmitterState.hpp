@@ -323,6 +323,7 @@ public:
 
     void Emplace(const IrValue* value, std::uint32_t id) {
         if (Find(value) != nullptr) return;
+        if (added != nullptr) added->push_back(value);
         const std::uint32_t index = value->Id();
         if (index >= slots.size()) slots.resize(std::max<std::size_t>(std::size_t{index} + 1u, slots.size() * 2u));
         if (slots[index].key == nullptr) {
@@ -330,6 +331,10 @@ public:
             return;
         }
         overflow.emplace(value, id);
+    }
+
+    void RecordAdded(std::vector<const IrValue*>* values) {
+        added = values;
     }
 
     void Erase(const IrValue* value) {
@@ -349,6 +354,7 @@ private:
 
     std::vector<Slot> slots;
     std::unordered_map<const IrValue*, std::uint32_t> overflow;
+    std::vector<const IrValue*>* added = nullptr;
 };
 
 struct SpirvValueEmitContext {

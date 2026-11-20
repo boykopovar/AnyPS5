@@ -1029,7 +1029,8 @@ bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>
         members.erase(region[first++]);
     }
     const auto suffix = std::span(region).subspan(first);
-    auto exact = ctx;
+    std::vector<const IrValue*> fastDefined;
+    ctx.definitions.RecordAdded(&fastDefined);
     auto& state = ctx.state;
     const auto exceptional = state.module.AllocateId();
     const auto merge = state.module.AllocateId();
@@ -1062,13 +1063,29 @@ bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>
         state.module.AddFunction(spv::OpBranchConditional, special, exceptional, merge);
     }
     EmitLabel(state, exceptional);
-    for (const auto* value : suffix) EmitDirectInstruction(exact, *value);
+    ctx.definitions.RecordAdded(nullptr);
+    std::vector<std::pair<const IrValue*, std::uint32_t>> fastIds;
+    fastIds.reserve(fastDefined.size());
+    for (const auto* value : fastDefined) {
+        fastIds.emplace_back(value, *ctx.definitions.Find(value));
+        ctx.definitions.Erase(value);
+    }
+    std::vector<const IrValue*> exactDefined;
+    ctx.definitions.RecordAdded(&exactDefined);
+    for (const auto* value : suffix) EmitDirectInstruction(ctx, *value);
+    std::vector<std::uint32_t> exactIds;
+    exactIds.reserve(suffix.size());
+    for (const auto* output : suffix) exactIds.push_back(ctx.Def(output));
+    ctx.definitions.RecordAdded(nullptr);
+    for (const auto* value : exactDefined) ctx.definitions.Erase(value);
+    for (const auto& [value, id] : fastIds) ctx.definitions.Emplace(value, id);
     const auto exactLabel = state.currentLabel;
     state.module.AddFunction(spv::OpBranch, merge);
     EmitLabel(state, merge);
-    for (const auto* output : suffix) {
+    for (std::size_t index = 0; index < suffix.size(); ++index) {
+        const auto* output = suffix[index];
         const auto result = state.module.AllocateId();
-        state.module.AddFunction(spv::OpPhi, TypeId(state, output->Type()), result, ctx.Def(output), fastLabel, exact.Def(output), exactLabel);
+        state.module.AddFunction(spv::OpPhi, TypeId(state, output->Type()), result, ctx.Def(output), fastLabel, exactIds[index], exactLabel);
         ctx.definitions.Erase(output);
         ctx.definitions.Emplace(output, result);
     }
