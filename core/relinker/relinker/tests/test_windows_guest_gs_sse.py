@@ -31,6 +31,8 @@ FAMILIES = {
 ALIGNED = ("movaps", "movapd", "movdqa")
 RBX = 0x1234567812345678
 RSI = 0x2234567822345678
+BORROWED_RBX = 8
+BORROWED_RBX_SCALE = {"borrow-rbx-base": 1, "borrow-rbx-index": 4}
 
 
 def pattern(offset, size):
@@ -77,6 +79,10 @@ def operation(name, store, reg, form="direct", rex_w=False):
         return head + bytes((0x44 | field, 0x88, 0xe0))
     if form == "rsp":
         return head + bytes((0x04 | field, 0x0c))
+    if form == "borrow-rbx-base":
+        return head + bytes((0x03 | field,))
+    if form == "borrow-rbx-index":
+        return head + bytes((0x04 | field, 0x9a))
     if form in ("rip", "eip"):
         return head + bytes((0x05 | field,)) + bytes(4)
     return head + bytes((0x02 | field,))
@@ -93,6 +99,8 @@ def program(name, store, reg, offset, form, avx, borrowed=False, rex_w=False, op
     if form == "rsp":
         code += bytes.fromhex("48 89 e1 48 f7 d9 48 81 c1") + struct.pack("<i", offset)
     code += bytes.fromhex("48 c7 44 24 80 78 56 34 12 48 c7 44 24 f8 21 43 65 07 31 c0 f9 fd")
+    if form in BORROWED_RBX_SCALE:
+        code += bytes.fromhex("65 ff 02 bb") + struct.pack("<I", BORROWED_RBX)
     site = len(code)
     if borrowed:
         op = bytes.fromhex("65 ff 02") + follower_builder(0xf3, 0x7f if store else 0x6f, reg, 4096)
@@ -139,6 +147,9 @@ def cases(group):
             yield name, False, 12, 0, "direct", "normal", False, True
         for name in ALIGNED:
             yield name, False, 12, -1, "direct", "shifted", False, False
+        for form in BORROWED_RBX_SCALE:
+            for store in (False, True):
+                yield "movups", store, 4, 0, form, "normal", False, False
     if group == "faults":
         for name in ("movups", "movdqu", "movss", "movsd", "movq", "movhpd"):
             width = FAMILIES[name][4]
@@ -158,20 +169,23 @@ def cases(group):
 
 def validate(values, case, avx):
     name, store, reg, offset, form, mode, borrowed, _ = case
+    rbx_scale = BORROWED_RBX_SCALE.get(form)
     first, vectors, headers, edge = map(bytes.fromhex, values[:4])
     assert len(first) == 64 and len(vectors) == 512 and len(headers) == 48 and len(edge) == 64, values
     assert struct.unpack_from("<Q", headers)[0] & 0x401 == 0x401, (case, "flags")
-    assert struct.unpack_from("<QQ", headers, 8) == (RBX, RSI), (case, "scratch registers")
+    assert struct.unpack_from("<QQ", headers, 8) == (RBX if rbx_scale is None else BORROWED_RBX, RSI), (case, "scratch registers")
     assert struct.unpack_from("<I", headers, 24)[0] == 0xdfb5, (case, "MXCSR")
     assert struct.unpack_from("<QQ", headers, 32) == (0x12345678, 0x7654321), (case, "red zone")
     expected = bytearray(pattern(0x200, 512))
     for index in range(16):
         expected[index * 32:index * 32 + (32 if avx else 16)] = pattern(0x800 + index * 32, 32 if avx else 16)
     initial = bytearray(pattern(0, 8192))
-    if borrowed:
+    if borrowed or rbx_scale is not None:
         struct.pack_into("<I", initial, 0, (struct.unpack_from("<I", initial)[0] + 1) & 0xffffffff)
     _, _, _, _, width, kind, _ = FAMILIES[name]
     address = 4096 if borrowed else 0 if mode in ("align", "align-base", "shifted") else offset
+    if rbx_scale is not None:
+        address += BORROWED_RBX * rbx_scale
     source = pattern(address, width) if address < 0 else initial[address:address + width]
     if form == "rip":
         source = pattern(0, width)
@@ -195,7 +209,9 @@ def validate(values, case, avx):
     assert first == initial[:64] and edge == initial[0xfe0:0x1020], (case, "store footprint", first.hex(), edge.hex())
     assert int(values[5]) == (2 if mode == "twice" else 1 if mode in ("read", "write", "skip", "align", "align-base") else 0), (case, "fault count", values[5])
     flags = struct.unpack_from("<Q", headers)[0] & 0xcd5
-    if not borrowed:
+    if rbx_scale is not None:
+        assert flags == 0x401, (case, "flags after borrowed register write", flags)
+    elif not borrowed:
         assert flags == 0x445, (case, "arithmetic/direction flags", flags)
     normalized = bytearray(headers)
     struct.pack_into("<Q", normalized, 0, flags)
@@ -295,7 +311,11 @@ def main():
             body, site, resume = program(name, store, reg, offset, form, avx, borrowed, rex_w)
             source.write_bytes(fixture(body))
             convert = subprocess.run([str(args.relinker.resolve()), "--skip-sce-module", "--windows", str(source), str(output)], capture_output=True, text=True, timeout=10)
-            assert convert.returncode == 0 and pe_bytes_at(output.read_bytes(), 0x11000 + site - (3 if borrowed else 0), 1) == b"\xe9", (case, convert)
+            assert convert.returncode == 0, (case, convert)
+            pe = output.read_bytes()
+            assert pe_bytes_at(pe, 0x11000 + site - (3 if borrowed else 0), 1) == b"\xe9", (case, "GS replay jump")
+            if form in BORROWED_RBX_SCALE:
+                assert pe_bytes_at(pe, 0x11000 + site - 8, 1) == b"\xe9" and b"APS5GGM1" in pe, (case, "borrowed register write")
             bias = 0x1000 if args.native else 0x11000
             run = subprocess.run([str(args.runner.resolve()), str(source if args.native else output), hex(bias), mode, hex(bias + (resume if mode == "eip" else site)), hex(bias + resume), "store" if store else "load"], capture_output=True, text=True, timeout=10)
             assert run.returncode == 0, (case, run.returncode, run.stdout, run.stderr)
