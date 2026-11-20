@@ -95,8 +95,13 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
     target_include_directories(guest_freetype_arithmetic_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_arithmetic_tests PRIVATE libSceFreeType freetype libc)
     configure_windows_unwind(guest_freetype_arithmetic_tests)
+    set(arithmetic_test_args)
+    if(ANYPS5_USE_SYSTEM_DEPS)
+        list(APPEND arithmetic_test_args --system-freetype)
+    endif()
     add_test(NAME guest_freetype_arithmetic COMMAND ${Python3_EXECUTABLE}
-        ${LIBS_INCLUDE_DIR}/tests/test_guest_freetype_arithmetic.py $<TARGET_FILE:guest_freetype_arithmetic_tests>)
+        ${LIBS_INCLUDE_DIR}/tests/test_guest_freetype_arithmetic.py $<TARGET_FILE:guest_freetype_arithmetic_tests>
+        ${arithmetic_test_args})
     set_tests_properties(guest_freetype_arithmetic PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_freetype_arithmetic PROPERTIES ENVIRONMENT_MODIFICATION

@@ -42,7 +42,16 @@ def oracle(a, b, c):
     return tuple(signed(value) for value in (muldiv, mulfix, divfix, rounded, ceiling, floor))
 
 
+def native_mulfix(a, b):
+    product = signed(a * b)
+    return signed(product + SCALE // 2 - (product < 0)) // SCALE
+
+
 def main():
+    executable, *options = sys.argv[1:]
+    system_freetype = options == ["--system-freetype"]
+    if options and not system_freetype:
+        raise SystemExit("usage: test_guest_freetype_arithmetic.py EXECUTABLE [--system-freetype]")
     boundaries = sorted({
         -(1 << 63), -(1 << 63) + 1, -(1 << 48), -(1 << 32) - 1, -(1 << 32),
         -(1 << 31) - 1, -(1 << 31), -(1 << 31) + 1, -SCALE - 1, -SCALE,
@@ -74,8 +83,8 @@ def main():
             raise AssertionError((args, oracle(*args), expected))
     cases.extend(known)
     data = "".join(f"{a} {b} {c}\n" for a, b, c in cases)
-    result = subprocess.run([sys.argv[1]], input=data, text=True, capture_output=True, check=True, timeout=25)
-    preamble, marker, payload = result.stdout.partition("FT_ARITHMETIC ")
+    result = subprocess.run([executable], input=data, text=True, capture_output=True, check=True, timeout=25)
+    _, marker, payload = result.stdout.partition("FT_ARITHMETIC ")
     if not marker:
         raise AssertionError(result.stdout)
     lines = payload.splitlines()
@@ -87,13 +96,20 @@ def main():
         expected = oracle(*args)
         if len(actual) != (12 if host_width == 8 else 6):
             raise AssertionError((args, actual))
-        for index, value in enumerate(actual):
-            if value != expected[index % 6]:
-                source = "guest" if index < 6 else "native LP64"
-                raise AssertionError((source, NAMES[index % 6], args, value, expected[index % 6]))
+        for name, value, wanted in zip(NAMES, actual[:6], expected):
+            if value != wanted:
+                raise AssertionError(("guest", name, args, value, wanted))
+        for name, value, wanted in zip(NAMES, actual[6:], expected):
+            if name == "FT_MulFix":
+                if system_freetype and value == wanted:
+                    continue
+                wanted = native_mulfix(*args[:2])
+            if value != wanted:
+                raise AssertionError(("native LP64", name, args, value, wanted))
     print(f"{len(cases)} input triples; {len(cases) * 6} guest results match the arbitrary-precision oracle")
     if host_width == 8:
-        print("All results also match bundled native LP64 FreeType")
+        source = "system" if system_freetype else "bundled"
+        print(f"{len(cases) * 6} native LP64 results from {source} FreeType match the native oracle")
 
 
 if __name__ == "__main__":
