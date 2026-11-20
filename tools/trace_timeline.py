@@ -9,9 +9,9 @@ from pathlib import Path
 import trace_digest
 
 DESCRIPTION = """Timeline of an APS5_TRACE_FRAMES / APS5_TRACE_SECONDS capture (aps5-trace-*.json.gz) as one standalone
-HTML file: one row per thread, one bar per traced slice, placed on the capture's time axis. Hover a bar for its name and
-duration. Slices are clipped to --from-ms and --to-ms. At most --max-slices bars are drawn, longest first, and the page
-says how many were left out.
+HTML file: one row per thread, one bar per traced slice, placed on the capture's time axis. Hover a bar for its name,
+duration and thread ID. Slices are clipped to --from-ms and --to-ms. At most --max-slices bars are drawn, longest
+first, and the page says how many were left out.
 
 The page reports buffer-full losses for the selected threads over the full capture, including losses outside the
 displayed window. Gaps may contain unrecorded work."""
@@ -43,8 +43,9 @@ def layout(slices, start_us, end_us, width_px, max_slices=5000):
     for slice_ in kept:
         x = LABEL_WIDTH + (slice_["ts"] - start_us) / span * width_px
         w = max(slice_["dur"] / span * width_px, 1.0)
-        bars.append({"thread": slice_["thread"], "name": slice_["name"], "ms": slice_["dur"] / 1000.0,
-                     "x": x, "w": w, "y": row_of[(slice_["thread"], slice_["tid"])] * ROW_HEIGHT})
+        bars.append({"thread": slice_["thread"], "tid": slice_["tid"], "name": slice_["name"],
+                     "ms": slice_["dur"] / 1000.0, "x": x, "w": w,
+                     "y": row_of[(slice_["thread"], slice_["tid"])] * ROW_HEIGHT})
     return {"threads": [name for name, _ in rows], "bars": bars, "left_out": len(slices) - len(kept), "width": width_px + LABEL_WIDTH}
 
 
@@ -54,7 +55,7 @@ def svg(laid):
     for row, name in enumerate(laid["threads"]):
         parts.append(f'<text x="2" y="{row * ROW_HEIGHT + 13}" font-size="11">{html.escape(name)}</text>')
     for bar in laid["bars"]:
-        title = html.escape(f'{bar["name"]} ({bar["ms"]:.3f} ms)')
+        title = html.escape(f'{bar["name"]} ({bar["ms"]:.3f} ms), tid {bar["tid"]}')
         parts.append(f'<rect x="{bar["x"]:.2f}" y="{bar["y"] + 2}" width="{bar["w"]:.2f}" height="{ROW_HEIGHT - 4}" fill="#4a7fc1"><title>{title}</title></rect>')
     parts.append("</svg>")
     return "".join(parts)
