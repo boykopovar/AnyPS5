@@ -986,7 +986,6 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     }
 #endif
 
-    // Debug aid: APS5_DUMP_SPIRV=<hex code address> (or "all") writes the final SPIR-V module to spirv-<stage>-<address>.spv.
     {
         static const std::string list = [] { const char* text = std::getenv("APS5_DUMP_SPIRV"); return text ? std::string(text) : std::string(); }();
         if (!list.empty()) {
