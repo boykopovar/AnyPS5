@@ -38,12 +38,12 @@ void CheckImage() {
         auto* surface = cairo_image_surface_create(format, 37, 11);
         Require(surface && cairo_surface_status(surface) == 0, "image surface creation failed");
         Expect(surface, 37, 11, "image surface size mismatch");
-        cairo_surface_destroy(surface);
+        cairo_surface_destroy_nid_postfix(surface);
     }
     auto* empty = cairo_image_surface_create(0, 0, 5);
     Require(empty && cairo_surface_status(empty) == 0, "empty image surface creation failed");
     Expect(empty, 0, 5, "zero-width image surface size mismatch");
-    cairo_surface_destroy(empty);
+    cairo_surface_destroy_nid_postfix(empty);
 }
 
 void CheckSubsurface() {
@@ -51,17 +51,17 @@ void CheckSubsurface() {
     Require(target && cairo_surface_status(target) == 0, "target surface creation failed");
     auto* subsurface = cairo_surface_create_for_rectangle(target, 2, 3, 8, 9);
     Require(subsurface && cairo_surface_status(subsurface) == 0, "subsurface creation failed");
-    Require(cairo_surface_get_type(subsurface) == 0, "subsurface does not report its target type");
+    Require(cairo_surface_get_type_nid_postfix(subsurface) == 0, "subsurface does not report its target type");
     Expect(subsurface, 0, 0, "subsurface without an image backend is not empty");
-    cairo_surface_destroy(subsurface);
-    cairo_surface_destroy(target);
+    cairo_surface_destroy_nid_postfix(subsurface);
+    cairo_surface_destroy_nid_postfix(target);
 }
 
 void CheckErrorSurface() {
     auto* surface = cairo_image_surface_create(0, -1, 5);
     Require(surface && cairo_surface_status(surface) != 0, "invalid size did not give an error surface");
     Expect(surface, 0, 0, "error surface is not empty");
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
 }
 
 }

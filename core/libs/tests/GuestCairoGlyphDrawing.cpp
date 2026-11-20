@@ -73,7 +73,7 @@ void Show() {
     CairoContext* context = cairo_create(target);
     cairo_show_glyphs(context, glyphs.data(), static_cast<int>(glyphs.size()));
     assert(aps5_cairo_status(Backend(context)) == CAIRO_STATUS_SUCCESS);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
     assert(Covered(target) > 40);
 
     cairo_surface_t* expected = aps5_cairo_image_surface_create(CAIRO_FORMAT_ARGB32, Width, Height);
@@ -87,13 +87,13 @@ void Show() {
     CairoSurface* single = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, Width, Height);
     context = cairo_create(single);
     cairo_show_glyphs(context, glyphs.data(), 1);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
     const std::size_t first = Covered(single);
     assert(first > 0 && first < Covered(target));
-    cairo_surface_destroy(single);
+    cairo_surface_destroy_nid_postfix(single);
 
     aps5_cairo_surface_destroy(expected);
-    cairo_surface_destroy(target);
+    cairo_surface_destroy_nid_postfix(target);
 }
 
 void ShowErrors() {
@@ -104,21 +104,21 @@ void ShowErrors() {
     assert(aps5_cairo_status(Backend(context)) == CAIRO_STATUS_SUCCESS);
     cairo_show_glyphs(context, glyphs.data(), -1);
     assert(aps5_cairo_status(Backend(context)) == CAIRO_STATUS_NEGATIVE_COUNT);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 
     context = cairo_create(target);
     cairo_show_glyphs(context, nullptr, 2);
     assert(aps5_cairo_status(Backend(context)) == CAIRO_STATUS_NULL_POINTER);
     cairo_show_glyphs(context, glyphs.data(), static_cast<int>(glyphs.size()));
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 
     context = cairo_create(target);
     cairo_set_source(context, nullptr);
     cairo_show_glyphs(context, glyphs.data(), static_cast<int>(glyphs.size()));
     assert(aps5_cairo_status(Backend(context)) == CAIRO_STATUS_NULL_POINTER);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
     assert(Covered(target) == 0);
-    cairo_surface_destroy(target);
+    cairo_surface_destroy_nid_postfix(target);
 }
 
 void Path() {
@@ -176,13 +176,13 @@ void Path() {
     assert(!cairo_has_current_point(context));
     cairo_glyph_path(context, glyphs.data(), -3);
     assert(aps5_cairo_status(Backend(context)) == CAIRO_STATUS_NEGATIVE_COUNT);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 
     context = cairo_create(target);
     cairo_glyph_path(context, nullptr, 1);
     assert(aps5_cairo_status(Backend(context)) == CAIRO_STATUS_NULL_POINTER);
-    cairo_destroy(context);
-    cairo_surface_destroy(target);
+    cairo_destroy_nid_postfix(context);
+    cairo_surface_destroy_nid_postfix(target);
 }
 
 }

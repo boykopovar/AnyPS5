@@ -52,11 +52,11 @@ int APS5_VABI cairo_image_surface_get_format(CairoSurface* surface) {
     return aps5_cairo_image_surface_get_format(Backend(surface));
 }
 
-int APS5_VABI cairo_image_surface_get_width(CairoSurface* surface) {
+int APS5_VABI cairo_image_surface_get_width_nid_postfix(CairoSurface* surface) {
     return aps5_cairo_image_surface_get_width(Backend(surface));
 }
 
-int APS5_VABI cairo_image_surface_get_height(CairoSurface* surface) {
+int APS5_VABI cairo_image_surface_get_height_nid_postfix(CairoSurface* surface) {
     return aps5_cairo_image_surface_get_height(Backend(surface));
 }
 
@@ -78,11 +78,11 @@ CairoSurface* APS5_VABI cairo_surface_create_for_rectangle(CairoSurface* target,
     return Guest(aps5_cairo_surface_create_for_rectangle(Backend(target), x, y, width, height));
 }
 
-CairoSurface* APS5_VABI cairo_surface_reference(CairoSurface* surface) {
+CairoSurface* APS5_VABI cairo_surface_reference_nid_postfix(CairoSurface* surface) {
     return Guest(aps5_cairo_surface_reference(Backend(surface)));
 }
 
-void APS5_VABI cairo_surface_destroy(CairoSurface* surface) {
+void APS5_VABI cairo_surface_destroy_nid_postfix(CairoSurface* surface) {
     aps5_cairo_surface_destroy(Backend(surface));
 }
 
@@ -94,7 +94,7 @@ int APS5_VABI cairo_surface_get_content(CairoSurface* surface) {
     return aps5_cairo_surface_get_content(Backend(surface));
 }
 
-int APS5_VABI cairo_surface_get_type(CairoSurface* surface) {
+int APS5_VABI cairo_surface_get_type_nid_postfix(CairoSurface* surface) {
     return aps5_cairo_surface_get_type(Backend(surface));
 }
 

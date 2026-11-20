@@ -87,9 +87,9 @@ void Compare(const Case& test) {
         Check(nonzero > 0, "nonempty text modifies the image");
     }
 
-    cairo_destroy(guest);
+    cairo_destroy_nid_postfix(guest);
     aps5_cairo_destroy(native);
-    cairo_surface_destroy(guestSurface);
+    cairo_surface_destroy_nid_postfix(guestSurface);
     aps5_cairo_surface_destroy(nativeSurface);
 }
 
@@ -125,8 +125,8 @@ void CheckRejectedGuestStrings() {
     std::size_t nonzero = 0;
     for (std::size_t i = 0; i < 160u * 64u * 4u; ++i) nonzero += pixels[i] != 0;
     Check(nonzero != 0, "failed guest strings do not poison valid rendering");
-    cairo_destroy(context);
-    cairo_surface_destroy(surface);
+    cairo_destroy_nid_postfix(context);
+    cairo_surface_destroy_nid_postfix(surface);
 }
 
 } // namespace

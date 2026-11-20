@@ -59,8 +59,8 @@ namespace {
 constexpr int CairoSurfaceTypeImage = 0;
 
 WebCore::IntSize CairoSurfaceSize(CairoSurface* surface) {
-    if (cairo_surface_get_type(surface) != CairoSurfaceTypeImage) return {};
-    return {cairo_image_surface_get_width(surface), cairo_image_surface_get_height(surface)};
+    if (cairo_surface_get_type_nid_postfix(surface) != CairoSurfaceTypeImage) return {};
+    return {cairo_image_surface_get_width_nid_postfix(surface), cairo_image_surface_get_height_nid_postfix(surface)};
 }
 
 }

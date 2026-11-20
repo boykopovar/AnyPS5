@@ -22,7 +22,7 @@ void Require(bool condition, std::source_location location = std::source_locatio
     std::abort();
 }
 
-using Surface = std::unique_ptr<CairoSurface, decltype(&cairo_surface_destroy)>;
+using Surface = std::unique_ptr<CairoSurface, decltype(&cairo_surface_destroy_nid_postfix)>;
 
 struct Stream {
     std::vector<std::uint8_t> bytes;
@@ -70,7 +70,7 @@ int APS5_VABI Supply(void* closure, unsigned char* data, unsigned length) {
 
 Surface Borrow(void* pixels, int format, int width, int height, int stride) {
     return Surface(cairo_image_surface_create_for_data(static_cast<unsigned char*>(pixels), format, width, height, stride),
-                   cairo_surface_destroy);
+                   cairo_surface_destroy_nid_postfix);
 }
 
 void CheckImage(CairoSurface* surface, unsigned width, unsigned height, unsigned bitDepth,
@@ -133,9 +133,9 @@ void CheckSubsurfaces() {
     for (unsigned i = 0; i < pixels.size(); ++i) pixels[i] = (i + 1) << 16;
     auto root = Borrow(pixels.data(), 1, 4, 4, 16);
     cairo_surface_set_device_scale(root.get(), 2, 2);
-    Surface crop(cairo_surface_create_for_rectangle(root.get(), 0.5, 0.5, 1, 1), cairo_surface_destroy);
-    Surface nested(cairo_surface_create_for_rectangle(crop.get(), 0.5, 0.5, 1, 1), cairo_surface_destroy);
-    Surface edge(cairo_surface_create_for_rectangle(root.get(), -0.5, -0.5, 1, 1), cairo_surface_destroy);
+    Surface crop(cairo_surface_create_for_rectangle(root.get(), 0.5, 0.5, 1, 1), cairo_surface_destroy_nid_postfix);
+    Surface nested(cairo_surface_create_for_rectangle(crop.get(), 0.5, 0.5, 1, 1), cairo_surface_destroy_nid_postfix);
+    Surface edge(cairo_surface_create_for_rectangle(root.get(), -0.5, -0.5, 1, 1), cairo_surface_destroy_nid_postfix);
     cairo_surface_set_device_scale(root.get(), 1, 1);
     root.reset();
     CheckImage(crop.get(), 2, 2, 8, Rgb, {6, 0, 0, 255, 7, 0, 0, 255, 10, 0, 0, 255, 11, 0, 0, 255});
@@ -146,12 +146,12 @@ void CheckSubsurfaces() {
 
 void CheckFailures() {
     for (int width : {0, -1}) {
-        Surface surface(cairo_image_surface_create(1, width, 1), cairo_surface_destroy);
+        Surface surface(cairo_image_surface_create(1, width, 1), cairo_surface_destroy_nid_postfix);
         Stream stream;
         Require(cairo_surface_write_to_png_stream(surface.get(), Collect, &stream) == (width == 0 ? 11 : 32));
         Require(stream.calls == 0 && stream.bytes.empty());
     }
-    Surface surface(cairo_image_surface_create(0, 3, 2), cairo_surface_destroy);
+    Surface surface(cairo_image_surface_create(0, 3, 2), cairo_surface_destroy_nid_postfix);
     for (const unsigned rejected : {1u, 4u, 10u}) {
         Stream stream{{}, 0, rejected, rejected == 4 ? 1 : 11};
         Require(cairo_surface_write_to_png_stream(surface.get(), Collect, &stream) == stream.error);
@@ -167,10 +167,10 @@ void CheckRead() {
     InputStream stream{rgba};
     const auto length = rgba.size();
     rgba.push_back(0x5a);
-    Surface surface(cairo_image_surface_create_from_png_stream(Read, &stream), cairo_surface_destroy);
+    Surface surface(cairo_image_surface_create_from_png_stream(Read, &stream), cairo_surface_destroy_nid_postfix);
     Require(stream.position == length && cairo_surface_status(surface.get()) == 0);
     Require(cairo_image_surface_get_format(surface.get()) == 0);
-    Require(cairo_image_surface_get_width(surface.get()) == 2 && cairo_image_surface_get_height(surface.get()) == 1);
+    Require(cairo_image_surface_get_width_nid_postfix(surface.get()) == 2 && cairo_image_surface_get_height_nid_postfix(surface.get()) == 1);
     std::array<std::uint32_t, 2> words{};
     std::memcpy(words.data(), cairo_image_surface_get_data(surface.get()), sizeof(words));
     Require(words == std::array<std::uint32_t, 2>{0x80402010, 0});
@@ -211,12 +211,12 @@ void CheckRoundTrip(std::vector<std::uint32_t> pixels, int format, int readForma
     Stream stream;
     Require(cairo_surface_write_to_png_stream(surface.get(), Collect, &stream) == 0);
     Source source{&stream.bytes};
-    Surface read(cairo_image_surface_create_from_png_stream(Supply, &source), cairo_surface_destroy);
+    Surface read(cairo_image_surface_create_from_png_stream(Supply, &source), cairo_surface_destroy_nid_postfix);
     Require(cairo_surface_status(read.get()) == 0);
     Require(source.position == stream.bytes.size());
     Require(cairo_image_surface_get_format(read.get()) == readFormat);
-    Require(cairo_image_surface_get_width(read.get()) == static_cast<int>(expected.size()));
-    Require(cairo_image_surface_get_height(read.get()) == 1);
+    Require(cairo_image_surface_get_width_nid_postfix(read.get()) == static_cast<int>(expected.size()));
+    Require(cairo_image_surface_get_height_nid_postfix(read.get()) == 1);
     std::vector<std::uint32_t> actual(expected.size());
     std::memcpy(actual.data(), cairo_image_surface_get_data(read.get()), actual.size() * 4);
     Require(actual == expected);
@@ -227,18 +227,18 @@ void CheckReading() {
     CheckRoundTrip({0xff010203, 0xff040506}, 1, 1, {0xff010203, 0xff040506});
     CheckRoundTrip({0x04eb0d00}, 2, 1, {0xff000000, 0xff0d0d0d, 0xffebebeb, 0xff040404});
 
-    Surface surface(cairo_image_surface_create(0, 3, 2), cairo_surface_destroy);
+    Surface surface(cairo_image_surface_create(0, 3, 2), cairo_surface_destroy_nid_postfix);
     Stream stream;
     Require(cairo_surface_write_to_png_stream(surface.get(), Collect, &stream) == 0);
     for (const unsigned failCall : {1u, 2u, 3u}) {
         Source source{&stream.bytes, 0, 0, failCall};
-        Surface failed(cairo_image_surface_create_from_png_stream(Supply, &source), cairo_surface_destroy);
+        Surface failed(cairo_image_surface_create_from_png_stream(Supply, &source), cairo_surface_destroy_nid_postfix);
         Require(cairo_surface_status(failed.get()) == 10);
         Require(source.calls == failCall);
     }
     const std::vector<std::uint8_t> truncated(stream.bytes.begin(), stream.bytes.end() - 13);
     Source source{&truncated};
-    Surface failed(cairo_image_surface_create_from_png_stream(Supply, &source), cairo_surface_destroy);
+    Surface failed(cairo_image_surface_create_from_png_stream(Supply, &source), cairo_surface_destroy_nid_postfix);
     Require(cairo_surface_status(failed.get()) == 10);
 }
 

@@ -50,7 +50,7 @@ void CheckSurface() {
     _ZN3WTF12refIfNotNullI14_cairo_surfaceEEvPT_(surface);
     _ZN3WTF12refIfNotNullI14_cairo_surfaceEEvPT_(surface);
     _ZN3WTF14derefIfNotNullI14_cairo_surfaceEEvPT_(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     Require(released == 0, "surface released while a reference remains");
     Require(cairo_surface_status(surface) == 0, "surface unusable while referenced");
     _ZN3WTF14derefIfNotNullI14_cairo_surfaceEEvPT_(surface);
@@ -61,9 +61,9 @@ void CheckContext() {
     auto* surface = TrackedSurface();
     auto* context = cairo_create(surface);
     Require(context != nullptr, "context creation failed");
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     _ZN3WTF12refIfNotNullI6_cairoEEvPT_(context);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
     Require(released == 0, "context released while a reference remains");
     Require(cairo_get_target(context) == surface, "context lost its target");
     _ZN3WTF14derefIfNotNullI6_cairoEEvPT_(context);

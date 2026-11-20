@@ -103,11 +103,11 @@ CairoContext* APS5_VABI cairo_create(CairoSurface* target) {
     return Guest(aps5_cairo_create(reinterpret_cast<cairo_surface_t*>(target)));
 }
 
-CairoContext* APS5_VABI cairo_reference(CairoContext* context) {
+CairoContext* APS5_VABI cairo_reference_nid_postfix(CairoContext* context) {
     return Guest(aps5_cairo_reference(Backend(context)));
 }
 
-void APS5_VABI cairo_destroy(CairoContext* context) {
+void APS5_VABI cairo_destroy_nid_postfix(CairoContext* context) {
     aps5_cairo_destroy(Backend(context));
 }
 

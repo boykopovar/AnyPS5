@@ -36,8 +36,8 @@ Canvas Make(int width, int height) {
 }
 
 void Release(Canvas canvas) {
-    cairo_destroy(canvas.context);
-    cairo_surface_destroy(canvas.surface);
+    cairo_destroy_nid_postfix(canvas.context);
+    cairo_surface_destroy_nid_postfix(canvas.surface);
 }
 
 int Status(CairoContext* context) {

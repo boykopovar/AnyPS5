@@ -27,15 +27,15 @@ void CheckContextLifetime() {
         CairoContext* context = cairo_create(target);
         assert(context);
         assert(cairo_get_target(context) == target);
-        cairo_surface_destroy(target);
+        cairo_surface_destroy_nid_postfix(target);
 
-        assert(cairo_reference(context) == context);
-        cairo_destroy(context);
+        assert(cairo_reference_nid_postfix(context) == context);
+        cairo_destroy_nid_postfix(context);
         assert(cairo_surface_status(cairo_get_target(context)) == 0);
-        cairo_destroy(context);
+        cairo_destroy_nid_postfix(context);
     }
-    cairo_destroy(nullptr);
-    cairo_reference(nullptr);
+    cairo_destroy_nid_postfix(nullptr);
+    cairo_reference_nid_postfix(nullptr);
     CairoContext* nil = cairo_create(nullptr);
     assert(nil);
     assert(cairo_get_target(nil) != nullptr);
@@ -44,25 +44,25 @@ void CheckContextLifetime() {
     cairo_get_matrix(nil, &nilMatrix);
     Near(nilMatrix.xx, 1);
     Near(nilMatrix.yy, 1);
-    assert(cairo_reference(nil) == nil);
+    assert(cairo_reference_nid_postfix(nil) == nil);
     cairo_save(nil);
     cairo_restore(nil);
-    cairo_destroy(nil);
-    cairo_destroy(nil);
+    cairo_destroy_nid_postfix(nil);
+    cairo_destroy_nid_postfix(nil);
 
     CairoSurface* invalid = cairo_image_surface_create(-1, 2, 2);
     CairoContext* erroneous = cairo_create(invalid);
     assert(erroneous);
     assert(cairo_get_target(erroneous) == invalid);
-    cairo_surface_destroy(invalid);
+    cairo_surface_destroy_nid_postfix(invalid);
     assert(cairo_surface_status(cairo_get_target(erroneous)) == 16);
-    cairo_destroy(erroneous);
+    cairo_destroy_nid_postfix(erroneous);
 }
 
 void CheckMatrixTransformAndSaveRestore() {
     CairoSurface* surface = cairo_image_surface_create(0, 10, 10);
     CairoContext* context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
 
     CairoMatrix current{};
     cairo_get_matrix(context, &current);
@@ -129,13 +129,13 @@ void CheckMatrixTransformAndSaveRestore() {
     Near(current.yy, 1);
     Near(current.x0, 0);
     Near(current.y0, 0);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 }
 
 void CheckMatrixAliasingAndErrorState() {
     CairoSurface* surface = cairo_image_surface_create(0, 1, 1);
     CairoContext* context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     CairoMatrix shift{1, 0, 0, 1, 4, 8};
     cairo_set_matrix(context, &shift);
     cairo_transform(context, &shift);
@@ -143,11 +143,11 @@ void CheckMatrixAliasingAndErrorState() {
     cairo_get_matrix(context, &actual);
     Near(actual.x0, 8);
     Near(actual.y0, 16);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 
     surface = cairo_image_surface_create(0, 1, 1);
     context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     cairo_scale(context, 0, 1);
     assert(cairo_surface_status(cairo_get_target(context)) == 1);
     CairoMatrix failedMatrix{42, 42, 42, 42, 42, 42};
@@ -157,31 +157,31 @@ void CheckMatrixAliasingAndErrorState() {
     Near(failedMatrix.x0, 0);
     cairo_translate(context, 10, 20);
     cairo_save(context);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 
     surface = cairo_image_surface_create(0, 1, 1);
     context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     cairo_restore(context);
     assert(cairo_surface_status(cairo_get_target(context)) == 1);
     cairo_get_matrix(context, &failedMatrix);
     Near(failedMatrix.xx, 1);
     Near(failedMatrix.yy, 1);
     cairo_save(context);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 
     surface = cairo_image_surface_create(0, 1, 1);
     context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     cairo_scale(context, std::numeric_limits<double>::infinity(), 1);
     cairo_get_matrix(context, &failedMatrix);
     Near(failedMatrix.xx, 1);
     Near(failedMatrix.yy, 1);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 
     surface = cairo_image_surface_create(0, 1, 1);
     context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     CairoMatrix infiniteOrigin{1, 0, 0, 1, std::numeric_limits<double>::infinity(), 0};
     cairo_set_matrix(context, &infiniteOrigin);
     cairo_get_matrix(context, &failedMatrix);
@@ -190,15 +190,15 @@ void CheckMatrixAliasingAndErrorState() {
     cairo_translate(context, std::numeric_limits<double>::infinity(), 0);
     cairo_get_matrix(context, &failedMatrix);
     assert(std::isinf(failedMatrix.x0) && std::isnan(failedMatrix.y0));
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 
     surface = cairo_image_surface_create(0, 1, 1);
     context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     cairo_scale(context, 1e200, 1e200);
     cairo_get_matrix(context, &failedMatrix);
     assert(failedMatrix.xx == 1e200 && failedMatrix.yy == 1e200);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 }
 
 void CheckConcurrentContexts() {
@@ -206,12 +206,12 @@ void CheckConcurrentContexts() {
         for (int i = 0; i < 2048; ++i) {
             CairoSurface* surface = cairo_image_surface_create(0, 8, 8);
             CairoContext* context = cairo_create(surface);
-            cairo_surface_destroy(surface);
+            cairo_surface_destroy_nid_postfix(surface);
             cairo_save(context);
             cairo_translate(context, i, 1);
             cairo_restore(context);
             assert(cairo_surface_status(cairo_get_target(context)) == 0);
-            cairo_destroy(context);
+            cairo_destroy_nid_postfix(context);
         }
     };
     std::thread first(work);

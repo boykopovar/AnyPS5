@@ -70,12 +70,12 @@ std::vector<unsigned char> Draw(const Values* values) {
     if (values) Set(context, *values);
     cairo_show_glyphs(context, glyphs.data(), static_cast<int>(glyphs.size()));
     assert(Status(context) == StatusSuccess);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
     cairo_surface_flush(surface);
     const auto size = static_cast<std::size_t>(cairo_image_surface_get_stride(surface)) * Height;
     std::vector<unsigned char> pixels(size);
     std::memcpy(pixels.data(), cairo_image_surface_get_data(surface), size);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     return pixels;
 }
 
@@ -128,8 +128,8 @@ void ValuesTest() {
     Set(context, defaults);
     assert(Read(context) == defaults);
     assert(Status(context) == StatusSuccess);
-    cairo_destroy(context);
-    cairo_surface_destroy(surface);
+    cairo_destroy_nid_postfix(context);
+    cairo_surface_destroy_nid_postfix(surface);
 }
 
 void RenderTest() {
@@ -166,15 +166,15 @@ void ErrorsTest() {
     Set(context, {CAIRO_ANTIALIAS_NONE, CAIRO_SUBPIXEL_ORDER_RGB, CAIRO_HINT_STYLE_FULL, CAIRO_HINT_METRICS_ON});
     assert(Status(context) == StatusNullPointer);
     assert(Read(context) == defaults);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 
     context = cairo_create(surface);
     cairo_font_options_t* nil = cairo_font_options_copy(nullptr);
     cairo_set_font_options(context, nil);
     assert(Status(context) == StatusNoMemory);
     assert(Read(context) == defaults);
-    cairo_destroy(context);
-    cairo_surface_destroy(surface);
+    cairo_destroy_nid_postfix(context);
+    cairo_surface_destroy_nid_postfix(surface);
 }
 
 }

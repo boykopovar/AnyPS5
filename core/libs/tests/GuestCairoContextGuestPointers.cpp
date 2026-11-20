@@ -104,7 +104,7 @@ CairoContext* CreateContext() {
     CairoSurface* surface = cairo_image_surface_create(0, 16, 16);
     CHECK(surface != nullptr);
     CairoContext* context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     CHECK(context != nullptr);
     return context;
 }
@@ -122,7 +122,7 @@ void LongDashes() {
     cairo_get_dash(context, retrieved.data(), &offset);
     CHECK(retrieved == dashes);
     CHECK(Close(offset, 2.5));
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 }
 
 void InvalidDashFromCairo() {
@@ -132,7 +132,7 @@ void InvalidDashFromCairo() {
     CairoContext* context = CreateContext();
     cairo_set_dash(context, dashes.data(), count, 0.0);
     CHECK(aps5_cairo_status(reinterpret_cast<cairo_t*>(context)) == CAIRO_STATUS_INVALID_DASH);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 }
 
 struct GuardedDoubles {
@@ -190,7 +190,7 @@ void UnreadableDashTail() {
     double offset = -1.0;
     cairo_get_dash(context, retrieved.data(), &offset);
     CHECK(std::equal(retrieved.begin(), retrieved.end(), guarded.data));
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 }
 
 } // namespace
@@ -199,7 +199,7 @@ int main() {
     CairoSurface* surface = cairo_image_surface_create(0, 128, 128);
     CHECK(surface != nullptr);
     CairoContext* context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     CHECK(context != nullptr);
 
     const std::array<double, 6> seeded{2.0, 0.0, 0.0, 3.0, 10.0, -5.0};
@@ -297,7 +297,7 @@ int main() {
     cairo_clip_extents(context, &x1, &y1, &x2, &y2);
     CHECK(Close(x1, 0.0) && Close(y1, 0.0) && Close(x2, 128.0) && Close(y2, 128.0));
 
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 
     LongDashes();
     InvalidDashFromCairo();
