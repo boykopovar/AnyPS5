@@ -207,10 +207,8 @@ void _loadInputs(StubBodyBuilder& body, const ReciprocalOperands& operands, cons
     const auto& memory = *operands.Memory;
     if (operands.Scalar)
         body.Load(s.Input, memory, kPacked, kMovd, 0, operands.Vex);
-    else if (!operands.Vex)
-        body.Load(s.Input, memory, kPacked, kMovdqa);
     else
-        body.Load(s.Input, memory, kScalar, kMovdqa, 0, true);
+        body.Load(s.Input, memory, kScalar, kMovdqa, 0, operands.Vex);
     if (operands.Wide)
         body.Load(s.High, memory, kScalar, kMovdqa, 16, true);
 }

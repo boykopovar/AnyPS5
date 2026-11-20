@@ -289,7 +289,7 @@ struct Memory {
 void memoryForms() {
     for (const bool squareRoot : {false, true}) {
         const std::uint8_t op = squareRoot ? 0x52 : 0x53;
-        for (const auto& form : {Memory{{0x0F, op, 0x10}, 4, 0, false, false}, Memory{{0xC5, 0xF8, op, 0x10}, 4, 0, true, false}, Memory{{0xC5, 0xFC, op, 0x10}, 8, 0, true, false},
+        for (const auto& form : {Memory{{0x0F, op, 0x10}, 4, 0, false, false}, Memory{{0x0F, op, 0x50, 0x04}, 4, 1, false, false}, Memory{{0x0F, op, 0x50, 0x0C}, 4, 3, false, false}, Memory{{0xC5, 0xF8, op, 0x10}, 4, 0, true, false}, Memory{{0xC5, 0xFC, op, 0x10}, 8, 0, true, false},
                                  Memory{{0xF3, 0x0F, op, 0x50, 0x04}, 1, 1, false, false}, Memory{{0xC5, 0xEA, op, 0x50, 0x08}, 1, 2, true, false},
                                  Memory{{0x0F, op, 0x54, 0x24, 0xE8}, 4, 2, false, true}, Memory{{0xC5, 0xFC, op, 0x54, 0x24, 0xE0}, 8, 0, true, true}}) {
             const Stub stub(form.Site, 2);
