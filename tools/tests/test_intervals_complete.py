@@ -43,6 +43,25 @@ class FeatureTests(unittest.TestCase):
         result = self.cli("trace_intervals_csv.py", path, "--require-complete")
         self.assertEqual((result.returncode, result.stdout), (2, ""))
 
+    def test_strict_export_requires_adjacent_intervals(self):
+        from test_trace_digest import interval_line
+        path = self.root / "aps5-summary.jsonl"
+        first = interval_line(0.0, 30.012, 20, 5)
+        for start, end, first_present in ((30.012, 60.024, 1800), (0.0, 30.008, 0), (60.024, 90.036, 3600)):
+            with self.subTest(start=start):
+                second = interval_line(start, end, 20, 5)
+                second["window"]["first_present"] = first_present
+                path.write_text("\n".join(map(json.dumps, (first, second))) + "\n", encoding="utf-8")
+                ordinary = self.cli("trace_intervals_csv.py", path)
+                strict = self.cli("trace_intervals_csv.py", path, "--require-complete")
+                self.assertEqual(ordinary.returncode, 0, ordinary.stderr)
+                if start == first["interval_end_s"]:
+                    self.assertEqual(strict.returncode, 0, strict.stderr)
+                    self.assertEqual(strict.stdout, ordinary.stdout)
+                else:
+                    self.assertEqual((strict.returncode, strict.stdout), (2, ""), strict.stderr)
+                    self.assertIn("interval 2 starts at", strict.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -105,20 +105,22 @@ TSlot LoadTimeGetSlot(const GuestLocale::TimeGetVtable* vtable, TSlot GuestLocal
 }
 
 template<typename TChar>
-std::vector<TChar> CopyGuestTable(const TChar* table, const char* caller) {
+std::vector<TChar> CopyGuestTable(const TChar* table, std::size_t nulMarkedFields, const char* caller) {
     GuestFormat<TChar> source(table, SIZE_MAX, caller, "facet table");
     std::vector<TChar> copy;
+    const bool nulMarked = source[0] == TChar{};
+    std::size_t terminators = 0;
     for (std::size_t index = 0;; ++index) {
         const TChar character = source[index];
         copy.push_back(character);
-        if (character == TChar{}) return copy;
+        if (character == TChar{} && (!nulMarked || terminators++ == nulMarkedFields)) return copy;
     }
 }
 
 template<typename TChar>
 std::vector<TChar> CopyFacetTable(const TChar* table, const char* caller) {
     RequireArgument(table != nullptr, caller);
-    return CopyGuestTable(table, caller);
+    return CopyGuestTable(table, 0, caller);
 }
 
 static_assert(sizeof(char16_t) == sizeof(std::uint16_t));
@@ -448,9 +450,7 @@ int GetLocaleText(GuestLocale::InputIterator& first, const GuestLocale::InputIte
         return -2;
     }
     const TChar sep = ptr[0];
-    if (sep == TChar{}) {
-        return -2;
-    }
+    const bool nulMarked = sep == TChar{};
     std::vector<std::size_t> fieldStarts;
     for (std::size_t off = 0; ptr[off] != TChar{}; ++off) {
         if (ptr[off] == sep) {
@@ -470,6 +470,11 @@ int GetLocaleText(GuestLocale::InputIterator& first, const GuestLocale::InputIte
     }
     while (fieldStarts.size() < numFields) {
         fieldStarts.push_back(nulOff);
+        if (nulMarked) {
+            do {
+                ++nulOff;
+            } while (ptr[nulOff] != TChar{});
+        }
     }
 
     std::string skip(numFields, '\0');
@@ -1093,14 +1098,16 @@ GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwS
     return DoGetFmtImpl<std::uint16_t>(self, first, last, stream, state, time, fmtfirst, __func__);
 }
 
-int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT0_S5_mPKT__nid_postfix(GuestLocale::InputIterator* first, GuestLocale::InputIterator last, std::size_t numFields, const char* ptr) {
-    if (first == nullptr || ptr == nullptr) {
+int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT0_S5_mPKT__nid_postfix(GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, std::size_t numFields, const char* ptr) {
+    if (first == nullptr || last == nullptr || ptr == nullptr) {
         return -2;
     }
-    const std::vector<char> table = CopyGuestTable(ptr, __func__);
+    const std::vector<char> table = CopyGuestTable(ptr, numFields, __func__);
     GuestLocale::InputIterator current = Load<GuestLocale::InputIterator>(first, __func__, "iterator");
-    const int result = GetLocaleText<char>(current, &last, numFields, table.data());
+    GuestLocale::InputIterator end = Load<GuestLocale::InputIterator>(last, __func__, "iterator");
+    const int result = GetLocaleText<char>(current, &end, numFields, table.data());
     Store(first, current, __func__, "iterator");
+    Store(last, end, __func__, "iterator");
     return result;
 }
 

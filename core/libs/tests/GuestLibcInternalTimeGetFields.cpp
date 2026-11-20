@@ -1279,7 +1279,7 @@ void WarmUpHostExceptionRuntime() {
 }
 
 void CheckGroup7Getloctxt(bool hasLibrary) {
-    using GetloctxtFn = int (APS5_VABI*)(GuestLocale::InputIterator*, GuestLocale::InputIterator, std::size_t, const char*);
+    using GetloctxtFn = int (APS5_VABI*)(GuestLocale::InputIterator*, GuestLocale::InputIterator*, std::size_t, const char*);
     GetloctxtFn fn = &_ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT0_S5_mPKT__nid_postfix;
     if (hasLibrary) {
         auto resolved = ResolveExport<GetloctxtFn>("_ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT0_S5_mPKT__nid_postfix");
@@ -1295,7 +1295,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("Feb", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, monthsTable);
+        int res = fn(&first, &endIter, 0, monthsTable);
         Require(res == 2, "_Getloctxt Feb -> 2");
         Require((first.words[1] & 0xffu) == 0, "Feb cache flag 0");
         Require(first.words[0] == 0, "Feb iterator at eof");
@@ -1305,7 +1305,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("feb", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, monthsTable);
+        int res = fn(&first, &endIter, 0, monthsTable);
         Require(res == 2, "_Getloctxt feb -> 2");
     }
 
@@ -1313,7 +1313,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("FEB", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, monthsTable);
+        int res = fn(&first, &endIter, 0, monthsTable);
         Require(res == 2, "_Getloctxt FEB -> 2");
     }
 
@@ -1321,7 +1321,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("February", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, monthsTable);
+        int res = fn(&first, &endIter, 0, monthsTable);
         Require(res == 3, "_Getloctxt February -> 3");
     }
 
@@ -1329,7 +1329,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("Febx", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, monthsTable);
+        int res = fn(&first, &endIter, 0, monthsTable);
         Require(res == 2, "_Getloctxt Febx -> 2");
         Require((first.words[1] & 0xffu) != 0, "Febx cached flag set");
         Require(static_cast<char>((first.words[1] >> 8) & 0xffu) == 'x', "Febx cached x");
@@ -1339,7 +1339,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("Feb 3", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, monthsTable);
+        int res = fn(&first, &endIter, 0, monthsTable);
         Require(res == 2, "_Getloctxt Feb 3 -> 2");
         Require((first.words[1] & 0xffu) != 0, "Feb 3 cached flag set");
         Require(static_cast<char>((first.words[1] >> 8) & 0xffu) == ' ', "Feb 3 cached space");
@@ -1349,7 +1349,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("Febru", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, monthsTable);
+        int res = fn(&first, &endIter, 0, monthsTable);
         Require(res == -1, "_Getloctxt Febru -> -1");
     }
 
@@ -1357,7 +1357,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("Janua", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, monthsTable);
+        int res = fn(&first, &endIter, 0, monthsTable);
         Require(res == -1, "_Getloctxt Janua -> -1");
     }
 
@@ -1365,7 +1365,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("Ja", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, monthsTable);
+        int res = fn(&first, &endIter, 0, monthsTable);
         Require(res == -1, "_Getloctxt Ja -> -1");
     }
 
@@ -1373,7 +1373,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("Xyz", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, monthsTable);
+        int res = fn(&first, &endIter, 0, monthsTable);
         Require(res == -2, "_Getloctxt Xyz -> -2");
         Require((first.words[1] & 0xffu) != 0, "Xyz cached flag set");
         Require(static_cast<char>((first.words[1] >> 8) & 0xffu) == 'X', "Xyz cached X");
@@ -1383,13 +1383,13 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, monthsTable);
+        int res = fn(&first, &endIter, 0, monthsTable);
         Require(res == -2, "_Getloctxt empty buffer -> -2");
     }
 
     {
         GuestLocale::InputIterator nullIter{{0, 0}};
-        int res = fn(&nullIter, endIter, 0, monthsTable);
+        int res = fn(&nullIter, &endIter, 0, monthsTable);
         Require(res == -2, "_Getloctxt null buffer -> -2");
         Require(nullIter.words[0] == 0 && nullIter.words[1] == 0, "null buffer unchanged");
     }
@@ -1398,7 +1398,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("mar", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, ":MAR:Apr");
+        int res = fn(&first, &endIter, 0, ":MAR:Apr");
         Require(res == 0, "_Getloctxt mar -> 0");
     }
 
@@ -1406,7 +1406,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("pm", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, ":AM:PM");
+        int res = fn(&first, &endIter, 0, ":AM:PM");
         Require(res == 1, "_Getloctxt pm -> 1");
     }
 
@@ -1414,7 +1414,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("p", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, ":AM:PM");
+        int res = fn(&first, &endIter, 0, ":AM:PM");
         Require(res == -1, "_Getloctxt p -> -1");
     }
 
@@ -1422,7 +1422,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("ab", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, ",a,ab,abc");
+        int res = fn(&first, &endIter, 0, ",a,ab,abc");
         Require(res == 1, "_Getloctxt ab -> 1");
     }
 
@@ -1430,7 +1430,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("abc", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, ",a,ab,abc");
+        int res = fn(&first, &endIter, 0, ",a,ab,abc");
         Require(res == 2, "_Getloctxt abc -> 2");
     }
 
@@ -1438,7 +1438,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("abd", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, ",a,ab,abc");
+        int res = fn(&first, &endIter, 0, ",a,ab,abc");
         Require(res == 1, "_Getloctxt abd -> 1");
         Require((first.words[1] & 0xffu) != 0, "abd cached flag set");
         Require(static_cast<char>((first.words[1] >> 8) & 0xffu) == 'd', "abd cached d");
@@ -1448,7 +1448,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("a", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, ",a,ab,abc");
+        int res = fn(&first, &endIter, 0, ",a,ab,abc");
         Require(res == 0, "_Getloctxt a -> 0");
     }
 
@@ -1456,7 +1456,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("\xc9t\xe9", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, ":\xe9t\xe9:\xc9t\xe9");
+        int res = fn(&first, &endIter, 0, ":\xe9t\xe9:\xc9t\xe9");
         Require(res == 1, "_Getloctxt accented match -> 1");
     }
 
@@ -1464,7 +1464,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("\xe9t\xe9", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, ":\xc9t\xe9");
+        int res = fn(&first, &endIter, 0, ":\xc9t\xe9");
         Require(res == -2, "_Getloctxt accented mismatch -> -2");
     }
 
@@ -1472,7 +1472,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("Feb", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, "");
+        int res = fn(&first, &endIter, 0, "");
         Require(res == -2, "_Getloctxt empty table -> -2");
     }
 
@@ -1480,7 +1480,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("Feb", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, ":");
+        int res = fn(&first, &endIter, 0, ":");
         Require(res == 0, "_Getloctxt table : -> 0");
     }
 
@@ -1488,7 +1488,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("Jan", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 0, "Jan:Feb");
+        int res = fn(&first, &endIter, 0, "Jan:Feb");
         Require(res == -2, "_Getloctxt Jan:Feb separator J -> -2");
     }
 
@@ -1496,7 +1496,7 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("Jan", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 2, ":Jan:January");
+        int res = fn(&first, &endIter, 2, ":Jan:January");
         Require(res == 0, "_Getloctxt count 2 -> 0");
     }
 
@@ -1504,34 +1504,61 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("Jan", true);
         GuestLocale::InputIterator first = sb.Begin();
-        int res = fn(&first, endIter, 5, ":Jan:January");
+        int res = fn(&first, &endIter, 5, ":Jan:January");
         Require(res == 0, "_Getloctxt count 5 -> 0");
     }
 
     {
-        InputStreambuf<char> sb{};
-        sb.Setup("Jan", true);
-        GuestLocale::InputIterator first = sb.Begin();
-        Require(fn(nullptr, endIter, 0, monthsTable) == -2, "null first -> -2");
-        Require(fn(&first, endIter, 0, nullptr) == -2, "null ptr -> -2");
+        static constexpr char boolTable[] = "\0false\0true";
+        static constexpr char emptyFirst[] = "\0\0on";
+        struct MarkedCase {
+            const char* table;
+            std::size_t count;
+            const char* input;
+            int result;
+            char next;
+        };
+        for (const MarkedCase& item : {MarkedCase{boolTable, 2, "false", 0, '\0'}, MarkedCase{boolTable, 2, "true", 1, '\0'}, MarkedCase{boolTable, 2, "TRUE", 1, '\0'},
+                 MarkedCase{boolTable, 2, "False", 0, '\0'}, MarkedCase{boolTable, 2, "truex", 1, 'x'}, MarkedCase{boolTable, 2, "false 1", 0, ' '},
+                 MarkedCase{boolTable, 2, "tru", -1, '\0'}, MarkedCase{boolTable, 2, "f", -1, '\0'}, MarkedCase{boolTable, 2, "trux", -1, 'x'},
+                 MarkedCase{boolTable, 2, "yes", -2, 'y'}, MarkedCase{boolTable, 0, "true", -2, 't'}, MarkedCase{boolTable, 1, "true", -2, 't'},
+                 MarkedCase{boolTable, 1, "false", 0, '\0'}, MarkedCase{emptyFirst, 2, "x", 0, 'x'}, MarkedCase{emptyFirst, 2, "on", 1, '\0'},
+                 MarkedCase{emptyFirst, 2, "o", -1, '\0'}}) {
+            InputStreambuf<char> sb{};
+            sb.Setup(item.input, true);
+            GuestLocale::InputIterator first = sb.Begin();
+            Require(fn(&first, &endIter, item.count, item.table) == item.result, "_Getloctxt NUL-marked table result");
+            Require(sb.RemainingFirst() == item.next, "_Getloctxt NUL-marked table consumption");
+        }
     }
 
     {
         InputStreambuf<char> sb{};
         sb.Setup("Jan", true);
         GuestLocale::InputIterator first = sb.Begin();
-        Require(Throws([&] { fn(&first, endIter, SIZE_MAX, ":Jan"); }), "SIZE_MAX throws length_error");
+        Require(fn(nullptr, &endIter, 0, monthsTable) == -2, "null first -> -2");
+        Require(fn(&first, &endIter, 0, nullptr) == -2, "null ptr -> -2");
+        Require(fn(&first, nullptr, 0, monthsTable) == -2, "null last -> -2");
     }
 
     {
         InputStreambuf<char> sb{};
         sb.Setup("Jan", true);
-        RequireInvalid([&] { fn(Inaccessible<GuestLocale::InputIterator*>(), endIter, 0, monthsTable); }, "unreadable iterator");
+        GuestLocale::InputIterator first = sb.Begin();
+        Require(Throws([&] { fn(&first, &endIter, SIZE_MAX, ":Jan"); }), "SIZE_MAX throws length_error");
+    }
+
+    {
+        InputStreambuf<char> sb{};
+        sb.Setup("Jan", true);
+        RequireInvalid([&] { fn(Inaccessible<GuestLocale::InputIterator*>(), &endIter, 0, monthsTable); }, "unreadable iterator");
+        GuestLocale::InputIterator first = sb.Begin();
+        RequireInvalid([&] { fn(&first, Inaccessible<GuestLocale::InputIterator*>(), 0, monthsTable); }, "unreadable iterator");
         GuardedPages iteratorPages;
         auto* readOnlyFirst = iteratorPages.Last<GuestLocale::InputIterator>(1);
         *readOnlyFirst = sb.Begin();
         iteratorPages.ReadOnly();
-        RequireInvalid([&] { fn(readOnlyFirst, endIter, 0, monthsTable); }, "unwritable iterator");
+        RequireInvalid([&] { fn(readOnlyFirst, &endIter, 0, monthsTable); }, "unwritable iterator");
     }
 
     {
@@ -1542,12 +1569,23 @@ void CheckGroup7Getloctxt(bool hasLibrary) {
         InputStreambuf<char> sb{};
         sb.Setup("Feb", true);
         GuestLocale::InputIterator first = sb.Begin();
-        Require(fn(&first, endIter, 0, tableAtGuard) == 1, "_Getloctxt reads a table that ends at a guard page");
+        Require(fn(&first, &endIter, 0, tableAtGuard) == 1, "_Getloctxt reads a table that ends at a guard page");
         char* unterminatedTable = tablePages.Last<char>(4);
         std::memcpy(unterminatedTable, ":Jan", 4);
         sb.Setup("Jan", true);
         first = sb.Begin();
-        RequireInvalid([&] { fn(&first, endIter, 0, unterminatedTable); }, "unreadable facet table");
+        RequireInvalid([&] { fn(&first, &endIter, 0, unterminatedTable); }, "unreadable facet table");
+        constexpr std::string_view markedTable{"\0false\0true", 12};
+        char* markedAtGuard = tablePages.Last<char>(markedTable.size());
+        std::memcpy(markedAtGuard, markedTable.data(), markedTable.size());
+        sb.Setup("true", true);
+        first = sb.Begin();
+        Require(fn(&first, &endIter, 2, markedAtGuard) == 1, "_Getloctxt reads a NUL-marked table that ends at a guard page");
+        char* unterminatedMarked = tablePages.Last<char>(10);
+        std::memcpy(unterminatedMarked, markedTable.data(), 10);
+        sb.Setup("true", true);
+        first = sb.Begin();
+        RequireInvalid([&] { fn(&first, &endIter, 2, unterminatedMarked); }, "unreadable facet table");
     }
 }
 
