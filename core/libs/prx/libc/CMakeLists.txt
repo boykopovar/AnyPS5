@@ -237,6 +237,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/RealPath.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/CxxAbiSupport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Threads.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxCondition.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Backtrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Radix64.cpp
@@ -277,6 +278,16 @@ target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/BinaryWordIo.cpp)
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/LegacySignals.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SigvecExport.cpp)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_libcxx_condition_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxCondition.cpp)
+    target_include_directories(guest_libcxx_condition_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libcxx_condition_tests PRIVATE libc libkernel)
+    configure_windows_unwind(guest_libcxx_condition_tests)
+    add_test(NAME guest_libcxx_condition COMMAND guest_libcxx_condition_tests)
+    set_tests_properties(guest_libcxx_condition PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libcxx_condition PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_sigvec_tests ${LIBS_INCLUDE_DIR}/tests/GuestSigvec.cpp)
     target_include_directories(guest_sigvec_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_sigvec_tests PRIVATE libc libkernel)
