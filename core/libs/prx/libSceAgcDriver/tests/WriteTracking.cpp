@@ -2138,6 +2138,50 @@ void CheckWriteAfterFreshReport() {
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, Block);
     munmap(memory, Block);
 }
+
+struct LinkInCollectWindow {
+    std::uintptr_t low;
+    std::uintptr_t high;
+    bool linked = false;
+    bool aliased = false;
+    bool throughHigh = false;
+};
+
+void LinkAndWriteAfterFirstReport(void* context, std::uintptr_t begin, std::uintptr_t end) {
+    auto& probe = *static_cast<LinkInCollectWindow*>(context);
+    if (!probe.linked) {
+        probe.linked = true;
+        probe.aliased = GuestWriteWatch::GuestWriteWatchAlias_nid_postfix(reinterpret_cast<void*>(probe.low), reinterpret_cast<void*>(probe.high), Block);
+        *reinterpret_cast<volatile std::uint8_t*>(probe.low + 0x1100) = 0x22;
+        return;
+    }
+    probe.throughHigh = probe.throughHigh || (begin <= probe.high + 0x1100 && probe.high + 0x1100 < end);
+}
+
+void IgnoreReport(void*, std::uintptr_t, std::uintptr_t) {
+}
+
+void CheckLinkDuringCollect() {
+    const int file = memfd_create("aps5-link-during-collect", 0);
+    Require(file >= 0 && ftruncate(file, Block) == 0, "cannot create the link window backing");
+    void* raw = mmap(nullptr, 3 * Block, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(raw != MAP_FAILED, "cannot reserve the link window");
+    const auto low = (reinterpret_cast<std::uintptr_t>(raw) + Block - 1) & ~static_cast<std::uintptr_t>(Block - 1);
+    const auto high = low + Block;
+    for (const auto view : {low, high}) {
+        Require(mmap(reinterpret_cast<void*>(view), Block, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, file, 0) != MAP_FAILED, "cannot map a link window view");
+        std::memset(reinterpret_cast<void*>(view), 0, Block);
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(reinterpret_cast<void*>(view), Block);
+    }
+    Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(high, Block, &IgnoreReport, nullptr), "cannot arm the second view");
+    LinkInCollectWindow probe{low, high};
+    Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(low, Block, &LinkAndWriteAfterFirstReport, &probe), "cannot collect the first view");
+    Require(probe.linked && probe.aliased, "the views were not linked during the collect");
+    Require(probe.throughHigh, "a store through a view linked during a collect was not reported at its alias");
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<void*>(low), 2 * Block);
+    munmap(raw, 3 * Block);
+    close(file);
+}
 #endif
 
 void CheckImportWindowFootprint() {
@@ -2792,6 +2836,7 @@ int main(int argc, char** argv) {
 #if defined(__linux__)
         CheckImportWindowOverAlias();
         CheckWriteAfterFreshReport();
+        CheckLinkDuringCollect();
 #endif
         CheckStoreAcrossImports();
         CheckImportWindowFootprint();
