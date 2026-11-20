@@ -37,6 +37,7 @@ void TestDirectories() {
     Require(ensure(Make("/nkwebkit-sqlite/databases/origin")));
     Require(std::filesystem::is_directory(root / "databases" / "origin"));
     Require(ensure(Make("/nkwebkit-sqlite/databases/origin")));
+    RemovePathAlias_nid_no_patch("/nkwebkit-sqlite");
     std::error_code error;
     std::filesystem::remove_all(root, error);
 }
