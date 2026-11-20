@@ -1839,6 +1839,9 @@ int APS5_VABI __std_atomic_wait_direct_32_nid_postfix(const void* storage, std::
 int APS5_VABI __std_atomic_wait_direct_64_nid_postfix(const void* storage, std::uint64_t expected, std::uint64_t milliseconds);
 void APS5_VABI __std_atomic_notify_one_direct_nid_postfix(const void* storage);
 void APS5_VABI __std_atomic_notify_all_direct_nid_postfix(const void* storage);
+std::int64_t APS5_VABI _ZNSt3__123__libcpp_atomic_monitorEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEE_nid_postfix(const std::int64_t* storage);
+void APS5_VABI _ZNSt3__120__libcpp_atomic_waitEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEEl_nid_postfix(const std::int64_t* storage, std::int64_t expected);
+void APS5_VABI _ZNSt3__123__cxx_atomic_notify_oneEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEE_nid_postfix(const std::int64_t* storage);
 const char* APS5_VABI _ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(int value);
 void APS5_VABI _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_PKc_nid_postfix(GuestLocale::SceV2Locinfo* self, const char* localeName);
 void APS5_VABI _ZNSt8__sce_v28_Locinfo13_Locinfo_dtorEPS0__nid_postfix(GuestLocale::SceV2Locinfo* self);

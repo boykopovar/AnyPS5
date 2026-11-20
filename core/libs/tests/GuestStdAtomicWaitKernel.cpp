@@ -111,5 +111,22 @@ int main() {
     __std_atomic_notify_all_direct_nid_postfix(&wide);
     directWideWaiter.join();
     Require(wideWoken.load(), "notify all wakes the 64-bit waiter");
+
+    alignas(8) std::int64_t libcxx = -5;
+    Require(_ZNSt3__123__libcpp_atomic_monitorEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEE_nid_postfix(&libcxx) == -5,
+            "libc++ monitor reads the initial value");
+    _ZNSt3__120__libcpp_atomic_waitEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEEl_nid_postfix(&libcxx, -4);
+    std::atomic<bool> libcxxWoken{false};
+    std::thread libcxxWaiter([&] {
+        _ZNSt3__120__libcpp_atomic_waitEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEEl_nid_postfix(&libcxx, -5);
+        libcxxWoken.store(true);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(!libcxxWoken.load(), "libc++ waiter blocks while the value matches");
+    std::atomic_ref<std::int64_t>(libcxx).store(6);
+    _ZNSt3__123__cxx_atomic_notify_oneEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEE_nid_postfix(&libcxx);
+    libcxxWaiter.join();
+    Require(libcxxWoken.load() && _ZNSt3__123__libcpp_atomic_monitorEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEE_nid_postfix(&libcxx) == 6,
+            "libc++ notify one wakes the waiter after a changed value");
     return 0;
 }
