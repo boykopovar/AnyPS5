@@ -88,10 +88,62 @@ void TestNullArgumentsThrow() {
 
 }
 
+using PacketReady = void (APS5_VABI*)(void* function, const std::uint8_t* data, std::size_t size);
+using BlockLengthFunction = std::size_t (APS5_VABI*)(const WebRtcRtcpPli* pli);
+using CreateFunction = bool (APS5_VABI*)(const WebRtcRtcpPli* pli, std::uint8_t* packet, std::size_t* index, std::size_t maxLength, void* function, PacketReady call);
+
+std::vector<std::uint8_t> sent;
+
+void APS5_VABI Send(void* function, const std::uint8_t* data, std::size_t size) {
+    Require(function == &sent);
+    sent.assign(data, data + size);
+}
+
+void* Slot(const WebRtcRtcpPli& pli, int slot) {
+    return static_cast<void* const*>(pli.vtable)[slot];
+}
+
+void TestConstructor() {
+    WebRtcRtcpPli pli = Filled();
+    _ZN6webrtc4rtcp3PliC1Ev_nid_postfix(&pli);
+    Require(pli.vtable != nullptr && pli.senderSsrc == 0 && pli.mediaSsrc == 0);
+    Require(Slot(pli, 0) == reinterpret_cast<void*>(&_ZN6webrtc4rtcp3PliD1Ev_nid_postfix));
+    Require(Slot(pli, 1) != nullptr);
+    Require(reinterpret_cast<BlockLengthFunction>(Slot(pli, 2))(&pli) == 12);
+    RequireInvalidArgument([] { _ZN6webrtc4rtcp3PliC1Ev_nid_postfix(nullptr); });
+}
+
+void TestCreate() {
+    WebRtcRtcpPli pli = Filled();
+    _ZN6webrtc4rtcp3PliC1Ev_nid_postfix(&pli);
+    pli.senderSsrc = 0x12345678;
+    pli.mediaSsrc = 0x9ABCDEF0;
+    const auto create = reinterpret_cast<CreateFunction>(Slot(pli, 3));
+    std::uint8_t packet[24] = {};
+    std::size_t index = 0;
+    Require(create(&pli, packet, &index, sizeof(packet), nullptr, nullptr));
+    const std::uint8_t expected[12] = {0x81, 206, 0, 2, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0};
+    Require(index == 12 && std::memcmp(packet, expected, sizeof(expected)) == 0);
+
+    index = 0;
+    Require(!create(&pli, packet, &index, 11, nullptr, nullptr) && index == 0);
+
+    index = 12;
+    sent.clear();
+    Require(create(&pli, packet, &index, 20, &sent, &Send));
+    Require(sent.size() == 12 && std::memcmp(sent.data(), expected, sizeof(expected)) == 0);
+    Require(index == 12 && std::memcmp(packet, expected, sizeof(expected)) == 0);
+
+    index = 12;
+    RequireInvalidArgument([&] { create(&pli, packet, &index, 20, nullptr, nullptr); });
+}
+
 int main() {
     TestPli();
     TestLongerPayloadReadsTheCommonFeedbackOnly();
     TestShortPayloadLeavesThePacketUntouched();
     TestNullArgumentsThrow();
+    TestConstructor();
+    TestCreate();
     return 0;
 }

@@ -41,19 +41,79 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/Api.hpp"
 
 #include <cstdint>
 #include <stdexcept>
 
 namespace {
 
+constexpr std::size_t HeaderLength = 4;
+constexpr std::size_t BlockLength = HeaderLength + WebRtcRtcpCommonFeedbackSize;
+constexpr std::uint8_t PacketType = 206;
+constexpr std::uint8_t FeedbackMessageType = 1;
+
+using PacketReady = void (APS5_VABI*)(void* function, const std::uint8_t* data, std::size_t size);
+
 std::uint32_t ReadBigEndian(const std::uint8_t* bytes) {
     return (static_cast<std::uint32_t>(bytes[0]) << 24) | (static_cast<std::uint32_t>(bytes[1]) << 16) | (static_cast<std::uint32_t>(bytes[2]) << 8) | bytes[3];
 }
 
+void WriteBigEndian(std::uint8_t* bytes, std::uint32_t value) {
+    bytes[0] = static_cast<std::uint8_t>(value >> 24);
+    bytes[1] = static_cast<std::uint8_t>(value >> 16);
+    bytes[2] = static_cast<std::uint8_t>(value >> 8);
+    bytes[3] = static_cast<std::uint8_t>(value);
+}
+
+std::size_t APS5_VABI PliBlockLength_nid_no_patch(const WebRtcRtcpPli*) {
+    return BlockLength;
+}
+
+bool APS5_VABI PliCreate_nid_no_patch(const WebRtcRtcpPli* pli, std::uint8_t* packet, std::size_t* index, std::size_t maxLength, void* function, PacketReady call) {
+    while (*index + BlockLength > maxLength) {
+        if (*index == 0)
+            return false;
+        if (!call)
+            throw std::invalid_argument("Pli::Create needs a callback to send a full buffer");
+        call(function, packet, *index);
+        *index = 0;
+    }
+    packet[*index] = static_cast<std::uint8_t>((2 << 6) | FeedbackMessageType);
+    packet[*index + 1] = PacketType;
+    packet[*index + 2] = 0;
+    packet[*index + 3] = static_cast<std::uint8_t>(WebRtcRtcpCommonFeedbackSize / 4);
+    *index += HeaderLength;
+    WriteBigEndian(packet + *index, pli->senderSsrc);
+    WriteBigEndian(packet + *index + 4, pli->mediaSsrc);
+    *index += WebRtcRtcpCommonFeedbackSize;
+    return true;
+}
+
+void APS5_VABI DeletePli_nid_no_patch(WebRtcRtcpPli* pli) {
+    _ZN6webrtc4rtcp3PliD1Ev_nid_postfix(pli);
+    _ZdlPv_nid_postfix(pli);
+}
+
+void* const Vtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN6webrtc4rtcp3PliD1Ev_nid_postfix),
+    reinterpret_cast<void*>(&DeletePli_nid_no_patch),
+    reinterpret_cast<void*>(&PliBlockLength_nid_no_patch),
+    reinterpret_cast<void*>(&PliCreate_nid_no_patch),
+};
+
 }
 
 extern "C" {
+
+void APS5_VABI _ZN6webrtc4rtcp3PliC1Ev_nid_postfix(WebRtcRtcpPli* pli) {
+    if (!pli)
+        throw std::invalid_argument("Pli constructor requires a packet object");
+    pli->vtable = Vtable + 2;
+    pli->senderSsrc = 0;
+    pli->mediaSsrc = 0;
+}
 
 bool APS5_VABI _ZN6webrtc4rtcp3Pli5ParseERKNS0_12CommonHeaderE_nid_postfix(WebRtcRtcpPli* pli, const WebRtcRtcpCommonHeader* packet) {
     if (!pli)
