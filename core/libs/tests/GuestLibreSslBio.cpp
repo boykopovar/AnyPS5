@@ -855,6 +855,11 @@ void TestFileAndSocket() {
     Require(ERR_get_error_nid_postfix() == 0, "clean EOF does not queue LibreSSL errors");
     Require(BIO_ctrl_nid_postfix(file, 1, 0, nullptr) == 0, "file reset returns fseek success status");
     Require(file->method->read(file, buffer, 3) == 3 && std::memcmp(buffer, "abc", 3) == 0, "read after file BIO reset");
+    Require(BIO_ctrl_nid_postfix(file, 1, 1, nullptr) == 0, "file reset seeks to its offset argument");
+    Require(file->method->read(file, buffer, 3) == 2 && std::memcmp(buffer, "bc", 2) == 0, "read after file BIO reset to an offset");
+    Require(BIO_ctrl_nid_postfix(file, 1, -1, nullptr) == -1, "file reset to a negative offset reports the fseek failure");
+    Require(BIO_ctrl_nid_postfix(file, 1, 2, nullptr) == 0, "file reset after a failed one");
+    Require(file->method->read(file, buffer, 3) == 1 && buffer[0] == 'c', "read after the second offset reset");
     FileStream* queried = nullptr;
     Require(BIO_ctrl_nid_postfix(file, 107, 0, &queried) == 1 && queried == &stream, "get guest file pointer");
     Require(BIO_free_nid_postfix(file) == 1, "free BIO without closing file");
@@ -867,6 +872,19 @@ void TestFileAndSocket() {
     Bio* ownedBio = BIO_new_fp_nid_postfix(&owned, 1);
     Require(ownedBio && BIO_ctrl_nid_postfix(ownedBio, 8, 0, nullptr) == 1, "owned guest file BIO");
     Require(BIO_free_nid_postfix(ownedBio) == 1 && !owned.IsOpen(), "owned BIO closes guest file");
+
+    Bio* unopened = BIO_new_nid_postfix(fileMethod);
+    Require(unopened && unopened->data == nullptr, "file BIO without a stream");
+    Require(BIO_ctrl_nid_postfix(unopened, 11, 0, nullptr) == 1, "flush without a stream returns one");
+    Require(BIO_free_nid_postfix(unopened) == 1, "free file BIO without a stream");
+    std::FILE* closedNative = std::tmpfile();
+    Require(closedNative != nullptr, "open temporary file to close under a BIO");
+    FileStream closedStream(closedNative);
+    Bio* closedBio = BIO_new_fp_nid_postfix(&closedStream, 0);
+    Require(closedBio != nullptr, "file BIO around a stream that will be closed");
+    Require(fclose_nid_postfix(&closedStream) == 0 && fflush_nid_postfix(&closedStream) == -1, "flushing the closed stream fails");
+    Require(BIO_ctrl_nid_postfix(closedBio, 11, 0, nullptr) == 1, "flush returns one when fflush fails");
+    Require(BIO_free_nid_postfix(closedBio) == 1, "free file BIO around the closed stream");
 
     int descriptors[2]{-1, -1};
 #ifdef _WIN32
