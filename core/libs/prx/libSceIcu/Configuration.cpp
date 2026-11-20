@@ -130,12 +130,7 @@ const char* APS5_VABI u_getTimeZoneFilesDirectory_nid_postfix(std::int32_t* stat
 void APS5_VABI u_setTimeZoneFilesDirectory_nid_postfix(const char* path, std::int32_t* status) {
     if (Icu::Failure(status)) return;
     const std::lock_guard lock(DirectoryLock);
-    TimeZoneDirectory.clear();
-    if (!path) {
-        *status = Icu::IllegalArgument;
-        return;
-    }
-    TimeZoneDirectory = path;
+    TimeZoneDirectory = path ? path : "";
 }
 
 
