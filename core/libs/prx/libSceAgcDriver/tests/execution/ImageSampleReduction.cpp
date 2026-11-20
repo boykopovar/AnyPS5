@@ -142,14 +142,14 @@ bool Safe(float coordinate) {
     return true;
 }
 
-void FillInput() {
+void FillInput(float evenLod, float oddLod) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const float u = (static_cast<float>((tid * 5u + 1u) % 12u) - 1.7f) / 8.0f;
         const float v = (static_cast<float>((tid * 7u + 3u) % 12u) - 1.7f) / 8.0f;
         Require(Safe(u) && Safe(v), "image sample reduction: thread " + std::to_string(tid) + " samples too close to a texel boundary");
         Input[tid * 3u + 0u] = u;
         Input[tid * 3u + 1u] = v;
-        Input[tid * 3u + 2u] = tid % 2u == 0u ? 0.25f : 0.75f;
+        Input[tid * 3u + 2u] = tid % 2u == 0u ? evenLod : oddLod;
     }
 }
 
@@ -177,7 +177,12 @@ float Expected(std::uint32_t tid, const Sampler& sampler) {
             for (int dx = 0; dx < 2; ++dx) footprint.push_back(Texel(level, x + dx, y + dy));
         }
     };
-    gather(sampler.mip == MipPoint && lod > 0.5f ? 1u : 0u);
+    if (sampler.mip == MipLinear) {
+        gather(0u);
+        gather(1u);
+    } else {
+        gather(sampler.mip == MipPoint && lod > 0.5f ? 1u : 0u);
+    }
     return sampler.reduction == ReductionMin ? *std::min_element(footprint.begin(), footprint.end()) : *std::max_element(footprint.begin(), footprint.end());
 }
 
@@ -285,7 +290,7 @@ int main() {
         if (!device) return VulkanTestSkipped;
         FillTexels();
         FillColors();
-        FillInput();
+        FillInput(0.25f, 0.75f);
         const Sampler minBilinear{ReductionMin, FilterBilinear, MipPoint};
         const auto loaded = Compile(*device, Format32Float, minBilinear, LoadedCode);
         Require(PairedSamplers(loaded, Format32Float) == 1u && PairedSamplers(loaded, Format8888UNorm) == 0u, "image_load of 8_8_8_8 next to a min sampler: wrong image-sampler pairs");
@@ -308,6 +313,12 @@ int main() {
         Run(*device, {ReductionMax, FilterAnisoBilinear, MipNone, Aniso2x}, "max, 2x anisotropic bilinear, no mip");
         Gather(*device, {ReductionMin, FilterBilinear, MipPoint}, "gather4_lz, min");
         Gather(*device, {ReductionMax, FilterBilinear, MipPoint}, "gather4_lz, max");
+        FillInput(0.25f, 0.375f);
+        Run(*device, {ReductionMin, FilterBilinear, MipLinear}, "min, bilinear, linear mip");
+        Run(*device, {ReductionMax, FilterBilinear, MipLinear}, "max, bilinear, linear mip");
+        Run(*device, {ReductionMin, FilterPoint, MipLinear}, "min, point, linear mip");
+        Run(*device, {ReductionMax, FilterPoint, MipLinear}, "max, point, linear mip");
+        FillInput(0.25f, 0.75f);
         RunWithColors(*device, loaded, LoadedCode, false, "min 32_FLOAT, image_load 8_8_8_8");
         try {
             RunWithColors(*device, sampled, SampledCode, true, "min 32_FLOAT and 8_8_8_8");

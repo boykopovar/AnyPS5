@@ -174,11 +174,19 @@ void RunSamplerReductionTests(const Fields& base) {
     noMip.mipFilter = 0;
     Require(DecodeSamplerResource(pack(noMip)).reductionMode == VK_SAMPLER_REDUCTION_MODE_MAX_EXT, "a max sampler without mip filtering was not decoded");
     Fields linearMip = base;
-    linearMip.filterMode = 1;
-    rejectFields(linearMip, "min or max reduction with a linear mip filter");
-    linearMip.xyMagFilter = 0;
-    linearMip.xyMinFilter = 0;
-    rejectFields(linearMip, "min or max reduction with a linear mip filter");
+    linearMip.mipFilter = 2;
+    for (std::uint32_t mode = 1; mode < modes.size(); ++mode) {
+        for (const std::uint32_t filter : {0u, 1u}) {
+            linearMip.filterMode = mode;
+            linearMip.xyMagFilter = filter;
+            linearMip.xyMinFilter = filter;
+            const auto decoded = DecodeSamplerResource(pack(linearMip));
+            Require(decoded.reductionMode == modes.at(mode) && decoded.mipmapMode == VK_SAMPLER_MIPMAP_MODE_LINEAR, "a min or max sampler with a linear mip filter decoded incorrectly");
+            const auto created = createSampler(context, decoded);
+            Require(created.reductionMode == modes.at(mode), "a min or max sampler with a linear mip filter did not chain its reduction mode");
+            Require(Sampler(context, decoded).RequiresFilterMinmax(), "a min or max sampler with a linear mip filter does not require min/max filtering");
+        }
+    }
 
     Fields badFilterMode = base;
     badFilterMode.filterMode = 3;
@@ -205,9 +213,6 @@ void RunSamplerReductionTests(const Fields& base) {
     context.limits.maxSamplerAnisotropy = 1.0f;
     anisoReduction.filterMode = 0;
     Require(DecodeSamplerResource(pack(anisoReduction)).anisotropyEnable, "anisotropic weighted-average sampler was rejected");
-    anisoReduction.filterMode = 1;
-    anisoReduction.mipFilter = 2;
-    rejectFields(anisoReduction, "min or max reduction with a linear mip filter");
 
     auto compared = captured;
     compared.compareEnable = true;

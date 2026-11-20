@@ -34,7 +34,7 @@ namespace AgcDriver::Graphics {
         VkSamplerReductionModeCreateInfoEXT reduction{VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO_EXT, nullptr, descriptor.reductionMode};
         if (descriptor.reductionMode != VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT) {
             info.pNext = &reduction;
-            requiresFilterMinmax = descriptor.magFilter == VK_FILTER_LINEAR || descriptor.minFilter == VK_FILTER_LINEAR;
+            requiresFilterMinmax = descriptor.magFilter == VK_FILTER_LINEAR || descriptor.minFilter == VK_FILTER_LINEAR || descriptor.mipmapMode == VK_SAMPLER_MIPMAP_MODE_LINEAR;
         }
         info.magFilter = descriptor.magFilter;
         info.minFilter = descriptor.minFilter;
