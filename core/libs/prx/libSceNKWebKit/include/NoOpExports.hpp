@@ -55,7 +55,6 @@ void APS5_VABI WKIconDatabaseRetainIconForURL();
 void APS5_VABI WKIconDatabaseSetIconDataForIconURL();
 void APS5_VABI WKIconDatabaseSetIconDatabaseClient();
 void APS5_VABI WKIconDatabaseSetIconURLForPageURL();
-void APS5_VABI WKPreferencesSetAccelerated2DCanvasEnabled();
 void APS5_VABI WKPreferencesSetQTKitEnabled();
 void APS5_VABI WKWebsiteDataStoreClearAllDeviceOrientationPermissions();
 void APS5_VABI WKWebsiteDataStoreReinitializeAppBoundDomains();

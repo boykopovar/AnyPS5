@@ -445,7 +445,6 @@ int APS5_VABI WKPluginInformationPathKey();
 int APS5_VABI WKPluginInformationPluginURLKey();
 int APS5_VABI WKPluginInformationPluginspageAttributeURLKey();
 int APS5_VABI WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey();
-int APS5_VABI WKPreferencesGetAccelerated2DCanvasEnabled();
 int APS5_VABI WKPreferencesGetQTKitEnabled();
 int APS5_VABI WKProtectionSpaceCopyCertificateInfo();
 int APS5_VABI WKRegistrableDomainCreate();
