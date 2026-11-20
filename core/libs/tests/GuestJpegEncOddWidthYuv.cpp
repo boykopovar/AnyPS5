@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Jpeg.hpp"
 #include "turbojpeg.h"
+#include <algorithm>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
@@ -15,10 +16,13 @@ static void Require(bool value) { if (!value) std::abort(); }
 alignas(4) static unsigned char oddMin[8 * 36 + 64];
 alignas(4) static unsigned char oddWide[8 * 40 + 64];
 alignas(4) static unsigned char rgbaOdd[17 * 8 * 4 + 64];
+alignas(4) static unsigned char rgbaOddWide[17 * 8 * 4 + 64];
 static unsigned char jpeg[4096];
 
 constexpr std::uint32_t kWidth = 17;
 constexpr std::uint32_t kHeight = 8;
+constexpr std::uint32_t kRgbaMinPitch = kWidth * 4;
+constexpr std::uint32_t kRgbaWidePitch = 72;
 
 static bool IsJpeg(const unsigned char* data, std::uint32_t size) {
     return size > 4 && data[0] == 0xFF && data[1] == 0xD8 && data[size - 2] == 0xFF && data[size - 1] == 0xD9;
@@ -28,6 +32,46 @@ static std::uint8_t ColumnLuma(std::size_t x) {
     const bool evenPair = (x / 2) % 2 == 0;
     if ((x & 1u) == 0) return evenPair ? 80 : 120;
     return evenPair ? 120 : 80;
+}
+
+static std::uint8_t RgbaColor(std::uint32_t x, std::uint32_t y, int component) {
+    const std::uint32_t k = static_cast<std::uint32_t>(component);
+    const std::uint32_t value = 24 + ((x / 2) * (17 + 13 * k) + (y / 2) * (29 + 7 * k) + 31 * k) % 176;
+    return static_cast<std::uint8_t>(value);
+}
+
+static std::vector<std::uint8_t> RgbaReference() {
+    std::vector<std::uint8_t> pixels(kWidth * kHeight * 3);
+    for (std::uint32_t y = 0; y < kHeight; ++y) {
+        for (std::uint32_t x = 0; x < kWidth; ++x) {
+            for (int component = 0; component < 3; ++component) {
+                pixels[((y * kWidth + x) * 3) + component] = RgbaColor(x, y, component);
+            }
+        }
+    }
+    return pixels;
+}
+
+static void FillRgba(unsigned char* buffer, std::size_t size, std::uint32_t pitch, std::uint8_t padSeed, std::uint8_t alphaSeed) {
+    for (std::size_t i = 0; i < size; ++i) {
+        buffer[i] = static_cast<unsigned char>(1 + (padSeed + i) % 255);
+    }
+    for (std::uint32_t y = 0; y < kHeight; ++y) {
+        unsigned char* row = buffer + static_cast<std::size_t>(y) * pitch;
+        for (std::uint32_t x = 0; x < kWidth; ++x) {
+            row[x * 4 + 0] = RgbaColor(x, y, 0);
+            row[x * 4 + 1] = RgbaColor(x, y, 1);
+            row[x * 4 + 2] = RgbaColor(x, y, 2);
+            row[x * 4 + 3] = static_cast<unsigned char>(1 + (alphaSeed + y) % 255);
+        }
+    }
+}
+
+static bool HasVariation(const std::vector<std::uint8_t>& pixels) {
+    for (std::size_t i = 1; i < pixels.size(); ++i) {
+        if (pixels[i] != pixels[0]) return true;
+    }
+    return false;
 }
 
 static void FillYuyvBuffer(unsigned char* buffer, std::size_t size, std::uint32_t pitch) {
@@ -83,9 +127,9 @@ static JpegEncEncodeParam YuyvParam(unsigned char* image, std::size_t imageSize,
     return param;
 }
 
-static JpegEncEncodeParam RgbaParam(std::uint32_t pitch) {
+static JpegEncEncodeParam RgbaParam(unsigned char* image, std::uint32_t pitch) {
     JpegEncEncodeParam param{};
-    param.image = rgbaOdd;
+    param.image = image;
     param.jpeg = jpeg;
     param.image_size = sizeof(rgbaOdd);
     param.jpeg_size = sizeof(jpeg);
@@ -199,16 +243,32 @@ int main() {
     const JpegEncEncodeParam shortPitch = YuyvParam(oddMin, sizeof(oddMin), 32);
     Require(sceJpegEncEncode(handle, &shortPitch, &info) == invalidParam);
 
-    for (std::size_t i = 0; i < sizeof(rgbaOdd); ++i) {
-        rgbaOdd[i] = i % 4 == 3 ? 255 : 96;
-    }
-    const JpegEncEncodeParam rgbaShort = RgbaParam(64);
+    FillRgba(rgbaOdd, sizeof(rgbaOdd), kRgbaMinPitch, 17, 33);
+    FillRgba(rgbaOddWide, sizeof(rgbaOddWide), kRgbaWidePitch, 173, 199);
+    const std::vector<unsigned char> tightBefore(rgbaOdd, rgbaOdd + sizeof(rgbaOdd));
+    const std::vector<unsigned char> wideBefore(rgbaOddWide, rgbaOddWide + sizeof(rgbaOddWide));
+
+    const JpegEncEncodeParam rgbaShort = RgbaParam(rgbaOdd, 64);
     info = {};
     Require(sceJpegEncEncode(handle, &rgbaShort, &info) == invalidParam);
-    const JpegEncEncodeParam rgbaMin = RgbaParam(68);
+
     info = {};
+    const JpegEncEncodeParam rgbaMin = RgbaParam(rgbaOdd, kRgbaMinPitch);
     Require(sceJpegEncEncode(handle, &rgbaMin, &info) == static_cast<std::int32_t>(info.size) && info.size > 0);
-    Require(DecodeOutput(info).size() == kWidth * kHeight * 3);
+    const auto decodedRgbaMin = DecodeOutput(info);
+
+    info = {};
+    const JpegEncEncodeParam rgbaWide = RgbaParam(rgbaOddWide, kRgbaWidePitch);
+    Require(sceJpegEncEncode(handle, &rgbaWide, &info) == static_cast<std::int32_t>(info.size) && info.size > 0);
+    const auto decodedRgbaWide = DecodeOutput(info);
+
+    const auto rgbaReference = RgbaReference();
+    Require(decodedRgbaMin == decodedRgbaWide);
+    Require(AverageError(rgbaReference, decodedRgbaMin) < 20);
+    Require(AverageError(rgbaReference, decodedRgbaWide) < 20);
+    Require(HasVariation(decodedRgbaWide));
+    Require(std::equal(tightBefore.begin(), tightBefore.end(), rgbaOdd));
+    Require(std::equal(wideBefore.begin(), wideBefore.end(), rgbaOddWide));
 
     CheckYcbcrSamples(handle);
     Require(sceJpegEncDelete(handle) == 0);
