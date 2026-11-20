@@ -545,11 +545,17 @@ int main(int argc, char** argv) {
     void** list = nullptr;
     const std::int64_t count = sceUsbdGetDeviceList(&list);
     Require(count >= 0 && list != nullptr && list[count] == nullptr, "device list is not a null-terminated array of the reported length");
+    std::uint8_t* const guardedDescriptor = PageBeforeGuard();
+    const std::size_t pageSize = GuardedPageSize();
     for (std::int64_t index = 0; index < count; ++index) {
         std::uint8_t deviceDescriptor[18] = {};
         Require(sceUsbdGetDeviceDescriptor(list[index], deviceDescriptor) == 0 && deviceDescriptor[0] == 18 && deviceDescriptor[1] == 1, "listed device has no device descriptor");
         errno = 71;
         Require(sceUsbdGetDeviceDescriptor(list[index], reinterpret_cast<void*>(0x10)) == invalidArgument && errno == 71, "unwritable device descriptor output accepted");
+        std::uint8_t* const straddling = guardedDescriptor + pageSize - 10;
+        std::memset(straddling, 0xa5, 10);
+        Require(sceUsbdGetDeviceDescriptor(list[index], straddling) == invalidArgument && errno == 71, "device descriptor output running into a guard page accepted");
+        Require(std::all_of(straddling, straddling + 10, [](std::uint8_t value) { return value == 0xa5; }), "device descriptor output was partly written before it failed");
         Require(sceUsbdRefDevice(list[index]) == list[index], "listed device was not referenced");
         sceUsbdUnrefDevice(list[index]);
 

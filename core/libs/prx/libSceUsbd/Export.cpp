@@ -657,7 +657,7 @@ std::int32_t APS5_VABI sceUsbdGetDeviceDescriptor(void* device, void* descriptor
     libusb_device_descriptor host{};
     const int result = libusb_get_device_descriptor(KnownDevice(device, __func__), &host);
     if (result != 0) return ToGuestError(result);
-    if (!GuestCopyOut_nid_no_patch(descriptor, &host, sizeof(host))) return SCE_USBD_ERROR_INVALID_ARG;
+    if (!GuestOutputWritable(descriptor, sizeof(host)) || !GuestCopyOut_nid_no_patch(descriptor, &host, sizeof(host))) return SCE_USBD_ERROR_INVALID_ARG;
     return 0;
 }
 
