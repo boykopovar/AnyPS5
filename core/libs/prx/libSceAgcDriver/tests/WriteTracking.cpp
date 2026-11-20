@@ -208,6 +208,43 @@ void CheckStoredOverUsesPageEvidence() {
     Require(!StoredOver(base + Page, Page, before), "a page-local CPU write made an untouched page in the same block count as stored over");
 }
 
+#ifdef _WIN32
+std::atomic<int> storeWalks{0};
+std::atomic<std::uint8_t*> storeWalkWrite{nullptr};
+
+void WriteInSecondWalk(int point) {
+    if (point == 1 && storeWalks.fetch_add(1) == 1) *storeWalkWrite.load() = 0x7e;
+}
+
+void CheckStoredOverSeesWriteBesideDriverStore() {
+    constexpr std::size_t Page = 4096;
+    auto* memory = static_cast<std::uint8_t*>(AllocateWatched(Block));
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, Block);
+    const auto before = CollectWrites(base, Block);
+    Require(before != 0, "the stored-over beside-store fixture was not collected");
+
+    const std::vector<std::byte> original(3 * Page, std::byte{0x11});
+    auto current = original;
+    current[0x10] = std::byte{0x5a};
+    storeWalks = 0;
+    storeWalkWrite = memory + 2 * Page + 0x20;
+    struct ResetHook {
+        ~ResetHook() { SetObservationHookForTest(nullptr); }
+    } reset;
+    SetObservationHookForTest(&WriteInSecondWalk);
+    WriteChanged(base, current, original);
+    SetObservationHookForTest(nullptr);
+    Require(storeWalks.load() == 2 && memory[2 * Page + 0x20] == 0x7e && memory[0x10] == 0x5a, "the write-back and the write during it did not both happen");
+
+    Require(StoredOver(base, Page, before), "a driver store was not reported as stored over");
+    Require(StoredOver(base + 2 * Page, Page, before), "a CPU write made during a driver store, in a page the store did not change, was not reported as stored over");
+    Require(!UnchangedSince(base + 2 * Page, Page, before), "a CPU write made during a driver store, in a page the store did not change, reads as unchanged");
+    Require(!UnchangedSinceLastCollect(base + 2 * Page, Page, before), "a CPU write made during a driver store, in a page the store did not change, reads as unchanged since the last collect");
+    Require(!StoredOver(base + Page, Page, before), "a page neither the store nor the write touched was reported as stored over");
+}
+#endif
+
 void CheckRepeatedNeighbourStores() {
     void* memory = AllocateWatched(3 * Block);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
@@ -2723,6 +2760,9 @@ int main(int argc, char** argv) {
 #endif
         CheckSharedBlock();
         CheckStoredOverUsesPageEvidence();
+#ifdef _WIN32
+        CheckStoredOverSeesWriteBesideDriverStore();
+#endif
         CheckRepeatedNeighbourStores();
         CheckStoredAllSince();
         CheckSharedBlockProofs();
