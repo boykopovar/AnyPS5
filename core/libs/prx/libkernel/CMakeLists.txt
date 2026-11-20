@@ -56,7 +56,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/LibcxxPlainMutexForwards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Pselect.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Socket.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Udp.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/SocketOptions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/AddressConversion.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/SocketConnect.cpp
@@ -3488,3 +3488,19 @@ list(SORT libkernelTestFragments)
 foreach(libkernelTestFragment IN LISTS libkernelTestFragments)
     include(${libkernelTestFragment})
 endforeach()
+
+# --- small-size libraries split from Udp.cpp ---
+add_library(libkernel_Udp_Chunk01 STATIC Socket/src/chunks/Udp_Chunk01.cpp)
+add_library(libkernel_Udp_Chunk02 STATIC Socket/src/chunks/Udp_Chunk02.cpp)
+add_library(libkernel_Udp_Chunk03 STATIC Socket/src/chunks/Udp_Chunk03.cpp)
+add_library(libkernel_Udp_Chunk04 STATIC Socket/src/chunks/Udp_Chunk04.cpp)
+add_library(libkernel_Udp_Chunk05 STATIC Socket/src/chunks/Udp_Chunk05.cpp)
+target_link_libraries(libkernel PUBLIC libkernel_Udp_Chunk01 libkernel_Udp_Chunk02 libkernel_Udp_Chunk03 libkernel_Udp_Chunk04 libkernel_Udp_Chunk05)
+get_target_property(libkernel_incdirs libkernel INCLUDE_DIRECTORIES)
+if(libkernel_incdirs)
+    target_include_directories(libkernel_Udp_Chunk01 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_Udp_Chunk02 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_Udp_Chunk03 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_Udp_Chunk04 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_Udp_Chunk05 PRIVATE ${libkernel_incdirs})
+endif()

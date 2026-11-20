@@ -175,7 +175,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StringExtensions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GetSubOpt.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VectorAlgorithms.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedExtendedPrecision.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Bessel.cpp
@@ -2805,3 +2805,33 @@ list(SORT libcTestFragments)
 foreach(libcTestFragment IN LISTS libcTestFragments)
     include(${libcTestFragment})
 endforeach()
+
+# --- small-size libraries split from Math.cpp ---
+add_library(libc_Math_Chunk01 STATIC src/chunks/Math_Chunk01.cpp)
+add_library(libc_Math_Chunk02 STATIC src/chunks/Math_Chunk02.cpp)
+add_library(libc_Math_Chunk03 STATIC src/chunks/Math_Chunk03.cpp)
+add_library(libc_Math_Chunk04 STATIC src/chunks/Math_Chunk04.cpp)
+add_library(libc_Math_Chunk05 STATIC src/chunks/Math_Chunk05.cpp)
+add_library(libc_Math_Chunk06 STATIC src/chunks/Math_Chunk06.cpp)
+add_library(libc_Math_Chunk07 STATIC src/chunks/Math_Chunk07.cpp)
+add_library(libc_Math_Chunk08 STATIC src/chunks/Math_Chunk08.cpp)
+add_library(libc_Math_Chunk09 STATIC src/chunks/Math_Chunk09.cpp)
+add_library(libc_Math_Chunk10 STATIC src/chunks/Math_Chunk10.cpp)
+add_library(libc_Math_Chunk11 STATIC src/chunks/Math_Chunk11.cpp)
+add_library(libc_Math_Chunk12 STATIC src/chunks/Math_Chunk12.cpp)
+target_link_libraries(libc PUBLIC libc_Math_Chunk01 libc_Math_Chunk02 libc_Math_Chunk03 libc_Math_Chunk04 libc_Math_Chunk05 libc_Math_Chunk06 libc_Math_Chunk07 libc_Math_Chunk08 libc_Math_Chunk09 libc_Math_Chunk10 libc_Math_Chunk11 libc_Math_Chunk12)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_Math_Chunk01 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk02 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk03 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk04 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk05 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk06 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk07 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk08 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk09 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk10 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk11 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk12 PRIVATE ${libc_incdirs})
+endif()
