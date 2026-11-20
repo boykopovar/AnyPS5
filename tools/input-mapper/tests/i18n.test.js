@@ -76,6 +76,9 @@ test('Portuguese diagnostics keep action and type tokens', () => {
     assert.equal(diagnostic('pt-BR', 'Cross: duplicate KEY:F will be omitted.'), 'Cross: duplicado KEY:F será omitido.');
     assert.equal(diagnostic('pt-BR', 'Composition and dead keys are ambiguous. Select an SDL key from the list.'), 'A composição e as teclas mortas são ambíguas. Escolha uma tecla SDL na lista.');
     assert.equal(diagnostic('pt-BR', 'Unexpected diagnostic'), 'Unexpected diagnostic');
+    assert.equal(diagnostic('pt-BR', 'ToggleActions has an empty action name.'), 'ToggleActions contém um nome de ação vazio.');
+    assert.equal(diagnostic('pt-BR', "ToggleActions: unknown action 'Jump'."), "ToggleActions: ação 'Jump' desconhecida.");
+    assert.equal(diagnostic('pt-BR', "ToggleActions only lists pad buttons, not 'LeftStickUp'."), "ToggleActions aceita apenas botões do controle, não 'LeftStickUp'.");
 });
 
 test('French diagnostics keep action, setting and type tokens', () => {
@@ -90,6 +93,9 @@ test('French diagnostics keep action, setting and type tokens', () => {
     assert.equal(diagnostic('fr', 'KEY:C controls TogglePerformanceOverlay and Circle (built-in).'), 'KEY:C déclenche TogglePerformanceOverlay et Circle (par défaut).');
     assert.equal(diagnostic('fr', 'KEY:Keypad : controls Triangle and L1.'), 'KEY:Keypad : déclenche Triangle et L1.');
     assert.equal(diagnostic('fr', 'Expected Action = TYPE:VALUE.'), 'Format attendu : Action = TYPE:VALUE.');
+    assert.equal(diagnostic('fr', 'ToggleActions has an empty action name.'), 'ToggleActions contient un nom d’action vide.');
+    assert.equal(diagnostic('fr', "ToggleActions: unknown action 'Jump'."), "ToggleActions : action 'Jump' inconnue.");
+    assert.equal(diagnostic('fr', "ToggleActions only lists pad buttons, not 'LeftStickUp'."), "ToggleActions n’accepte que des boutons de manette, pas 'LeftStickUp'.");
     assert.equal(diagnostic('fr', captureKey({key: 'Dead', code: 'BracketRight'}).error), 'Les touches mortes et de composition sont ambiguës. Choisissez une touche SDL dans la liste.');
     assert.equal(diagnostic('fr', 'Unexpected diagnostic'), 'Unexpected diagnostic');
     assert.equal(diagnostic('fr', 'Le fichier INI doit faire moins de 1 MiB.'), 'Le fichier INI doit faire moins de 1 MiB.');
