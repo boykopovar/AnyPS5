@@ -215,12 +215,12 @@ void VerifyGeometryConfiguration() {
     const auto replay = serializer.Deserialize(encoded);
     Require(replay.request.graphics && replay.request.graphics->geometry == geometry);
     Require(serializer.Serialize(replay.request) == encoded);
-    auto version64 = DecodeBase64(encoded);
-    Require(version64[4] == 65u);
-    version64.resize(version64.size() - (1u + 6u * 4u + 8u + 2u * 29u));
-    version64[4] = 64u;
-    const auto replay64 = serializer.Deserialize(EncodeBase64(version64));
-    Require(replay64.request.graphics && !replay64.request.graphics->geometry);
+    auto version65 = DecodeBase64(encoded);
+    Require(version65[4] == 66u);
+    version65.resize(version65.size() - (1u + 6u * 4u + 8u + 2u * 29u));
+    version65[4] = 65u;
+    const auto replay65 = serializer.Deserialize(EncodeBase64(version65));
+    Require(replay65.request.graphics && !replay65.request.graphics->geometry);
 }
 
 void VerifyTessellationOnChip() {
@@ -234,20 +234,20 @@ void VerifyTessellationOnChip() {
         const auto replay = serializer.Deserialize(encoded);
         Require(replay.request.graphics && replay.request.graphics->tessellation && replay.request.graphics->tessellation->onChip == onChip && !replay.request.graphics->tessellationConstants);
         Require(serializer.Serialize(replay.request) == encoded);
-        auto version62 = DecodeBase64(encoded);
-        Require(version62[4] == 65u && version62.back() == 0u && version62[version62.size() - 2u] == 0u && version62[version62.size() - 3u] == (onChip ? 1u : 0u));
-        version62.pop_back();
-        version62[4] = 64u;
-        const auto replay64 = serializer.Deserialize(EncodeBase64(version62));
-        Require(replay64.request.graphics && replay64.request.graphics->tessellation && replay64.request.graphics->tessellation->onChip == onChip && !replay64.request.graphics->tessellationConstants && !replay64.request.graphics->geometry);
-        version62.pop_back();
-        version62[4] = 63u;
-        const auto replay63 = serializer.Deserialize(EncodeBase64(version62));
-        Require(replay63.request.graphics && replay63.request.graphics->tessellation && replay63.request.graphics->tessellation->onChip == onChip && !replay63.request.graphics->tessellationConstants);
-        version62.pop_back();
-        version62[4] = 62u;
-        const auto replay62 = serializer.Deserialize(EncodeBase64(version62));
-        Require(replay62.request.graphics && replay62.request.graphics->tessellation && !replay62.request.graphics->tessellation->onChip);
+        auto older = DecodeBase64(encoded);
+        Require(older[4] == 66u && older.back() == 0u && older[older.size() - 2u] == 0u && older[older.size() - 3u] == (onChip ? 1u : 0u));
+        older.pop_back();
+        older[4] = 65u;
+        const auto replay65 = serializer.Deserialize(EncodeBase64(older));
+        Require(replay65.request.graphics && replay65.request.graphics->tessellation && replay65.request.graphics->tessellation->onChip == onChip && !replay65.request.graphics->tessellationConstants && !replay65.request.graphics->geometry);
+        older.pop_back();
+        older[4] = 64u;
+        const auto replay64 = serializer.Deserialize(EncodeBase64(older));
+        Require(replay64.request.graphics && replay64.request.graphics->tessellation && replay64.request.graphics->tessellation->onChip == onChip && !replay64.request.graphics->tessellationConstants);
+        older.pop_back();
+        older[4] = 63u;
+        const auto replay63 = serializer.Deserialize(EncodeBase64(older));
+        Require(replay63.request.graphics && replay63.request.graphics->tessellation && !replay63.request.graphics->tessellation->onChip);
     }
     ShaderRecompiler::RecompileRequest request{};
     request.graphics.emplace();
@@ -273,7 +273,7 @@ void VerifyTessellationOnChip() {
 
 std::string SerializeVersion56(const ShaderRecompiler::RecompileRequest& request) {
     auto bytes = DecodeBase64(ShaderRecompiler::RequestSerializer{}.Serialize(request));
-    Require(bytes.size() > 14u && bytes[4] == 65u && (!request.graphics || !request.graphics->geometry));
+    Require(bytes.size() > 14u && bytes[4] == 66u && (!request.graphics || !request.graphics->geometry));
     bytes.resize(bytes.size() - 6u - (request.graphics ? 1u : 0u) - (request.graphics && request.graphics->tessellation ? 2u : 0u));
     bytes[4] = 56u;
     return EncodeBase64(bytes);
@@ -297,7 +297,7 @@ void VerifyTargetOptions() {
                     Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
                     Require(serializer.Serialize(replay.request) == encoded);
                     auto bytes = DecodeBase64(encoded);
-                    Require(bytes[4] == 65u && bytes.back() == 0u);
+                    Require(bytes[4] == 66u && bytes.back() == 0u);
                     for (std::size_t missing = 1u; missing <= 6u; ++missing) {
                         auto truncated = bytes;
                         truncated.resize(truncated.size() - missing);
@@ -309,6 +309,10 @@ void VerifyTargetOptions() {
                         }
                         Require(rejected);
                     }
+                    auto legacy62Bytes = bytes;
+                    legacy62Bytes[4] = 62u;
+                    const auto legacy62 = serializer.Deserialize(EncodeBase64(legacy62Bytes));
+                    Require(legacy62.request.target.fixedPushSlots == fixed && legacy62.request.target.maxImageArrayLayers == layers && !legacy62.request.graphics.has_value());
                     bytes.pop_back();
                     bytes[4] = 57u;
                     const auto legacy57 = serializer.Deserialize(EncodeBase64(bytes));
@@ -336,7 +340,11 @@ void VerifyTargetOptions() {
             }
         }
     }
-    auto trailing = DecodeBase64(serializer.Serialize(ShaderRecompiler::RecompileRequest{}));
+    ShaderRecompiler::RecompileRequest emulated{};
+    emulated.graphics = ShaderRecompiler::GraphicsCompileContext{};
+    emulated.graphics->emulateBarycentrics = true;
+    auto trailing = DecodeBase64(serializer.Serialize(emulated));
+    Require(trailing.back() == 1u && serializer.Deserialize(EncodeBase64(trailing)).request.graphics->emulateBarycentrics);
     trailing.push_back(2u);
     bool rejected = false;
     try {
@@ -847,7 +855,7 @@ int VerifyVersion56Compatibility() {
         version40[4] = 40u;
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
-        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 66u}) {
+        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 67u}) {
             auto future = bytes;
             future[4] = unwritten;
             bool futureRejected = false;
@@ -963,7 +971,7 @@ int VerifyVersion56Compatibility() {
         Require(replay35.request.target.spannedWaves == spanned && !replay35.request.target.float32FlushToZero);
         request.target.spannedAnySubgroup = spanned;
         const auto current = DecodeBase64(serializer.Serialize(request));
-        Require(current[4] == 65u && current.back() == (spanned ? 1u : 0u));
+        Require(current[4] == 66u && current.back() == (spanned ? 1u : 0u));
         Require(serializer.Deserialize(EncodeBase64(current)).request.target.spannedAnySubgroup == spanned);
         auto version57 = current;
         version57[4] = 57u;

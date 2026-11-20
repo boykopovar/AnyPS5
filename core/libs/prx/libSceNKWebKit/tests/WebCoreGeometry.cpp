@@ -370,8 +370,11 @@ static void TestColor() {
     _ZN7WebCore5ColoraSEOS0_(&cMoveAssign, std::move(cAssign));
     Require(cMoveAssign.m_colorAndFlags == c1.m_colorAndFlags);
 
-    WebCore::Color cAlpha = _ZNK7WebCore5Color14colorWithAlphaEf(&c1, 0.5f);
+    WebCore::Color cAlpha;
+    cAlpha.m_colorAndFlags = 0xFFFFFFFFull;
+    Require(_ZNK7WebCore5Color14colorWithAlphaEf(&cAlpha, &c1, 0.5f) == &cAlpha);
     Require((cAlpha.m_colorAndFlags & 0xFF) == 128);
+    Require(((cAlpha.m_colorAndFlags ^ c1.m_colorAndFlags) & 0xFFFFFF00ull) == 0);
 
     WebCore::Color cWhite;
     cWhite.m_colorAndFlags = 0xFFFFFFFFull;
@@ -383,11 +386,14 @@ static void TestColor() {
     Require(AlmostEqual(_ZNK7WebCore5Color9lightnessEv(&cBlack), 0.0));
     Require(AlmostEqual(_ZNK7WebCore5Color9luminanceEv(&cBlack), 0.0));
 
-    WebCore::Color cDarkened = _ZNK7WebCore5Color8darkenedEv(&cWhite);
-    Require(((cDarkened.m_colorAndFlags >> 24) & 0xFF) < 255);
+    WebCore::Color cDarkened;
+    Require(_ZNK7WebCore5Color8darkenedEv(&cDarkened, &cWhite) == &cDarkened);
+    Require((cDarkened.m_colorAndFlags & 0xFFFFFFFFull) == 0xABABABFFull);
 
-    WebCore::Color cLightened = _ZNK7WebCore5Color9lightenedEv(&cBlack);
-    Require(((cLightened.m_colorAndFlags >> 24) & 0xFF) > 0);
+    WebCore::Color cLightened;
+    cLightened.m_colorAndFlags = 0xFFFFFFFFull;
+    Require(_ZNK7WebCore5Color9lightenedEv(&cLightened, &cBlack) == &cLightened);
+    Require((cLightened.m_colorAndFlags & 0xFFFFFFFFull) == 0x545454FFull);
 }
 
 static void TestAffineTransform() {
@@ -517,6 +523,28 @@ static void TestTransformationMatrix() {
     WebCore::TransformationMatrix rotMat;
     _ZN7WebCore20TransformationMatrix6rotateEd(&rotMat, 90.0);
     Require(AlmostEqual(rotMat.m_matrix[0][1], 1.0));
+
+    for (const double turns : {360.0, -360.0, 720.0, 3600.0, 0.0, -0.0}) {
+        WebCore::TransformationMatrix turned;
+        Require(&_ZN7WebCore20TransformationMatrix6rotateEd(&turned, turns) == &turned);
+        Require(turned.m_matrix[0][0] == 1.0 && turned.m_matrix[0][1] == 0.0);
+        Require(turned.m_matrix[1][0] == 0.0 && turned.m_matrix[1][1] == 1.0);
+        const WebCore::IntRect whole{WebCore::IntPoint{0, 0}, WebCore::IntSize{100, 100}};
+        const WebCore::IntRect mapped = _ZNK7WebCore20TransformationMatrix7mapRectERKNS_7IntRectE(&turned, whole);
+        Require(mapped.m_location.m_x == 0 && mapped.m_location.m_y == 0);
+        Require(mapped.m_size.m_width == 100 && mapped.m_size.m_height == 100);
+    }
+    WebCore::TransformationMatrix sheared;
+    _ZN7WebCore20TransformationMatrix4skewEdd(&sheared, 30.0, 45.0);
+    const WebCore::TransformationMatrix shearedBefore = sheared;
+    _ZN7WebCore20TransformationMatrix6rotateEd(&sheared, 360.0);
+    for (int row = 0; row < 4; ++row)
+        for (int column = 0; column < 4; ++column)
+            Require(sheared.m_matrix[row][column] == shearedBefore.m_matrix[row][column]);
+    WebCore::TransformationMatrix half;
+    _ZN7WebCore20TransformationMatrix6rotateEd(&half, 180.0);
+    Require(half.m_matrix[0][0] == -1.0 && half.m_matrix[1][1] == -1.0);
+    Require(half.m_matrix[0][1] != 0.0 && AlmostEqual(half.m_matrix[0][1], 0.0));
 
     WebCore::TransformationMatrix rot3dMat;
     _ZN7WebCore20TransformationMatrix8rotate3dEddd(&rot3dMat, 0.0, 90.0, 0.0);

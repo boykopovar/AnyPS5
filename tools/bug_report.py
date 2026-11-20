@@ -15,7 +15,12 @@ IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
 def redact(text, *, home, user, host):
     if home and len(home) >= 3:
-        text = text.replace(home, "~")
+        if re.match(r"^(?:[a-zA-Z]:[\\/]|\\\\)", home):
+            parts = re.split(r"[\\/]", home.rstrip("\\/"))
+            pattern = r"[\\/]".join(re.escape(part) for part in parts)
+            text = re.sub(pattern + r"(?![\w-]|\.+[\w-])", "~", text, flags=re.IGNORECASE)
+        elif home.rstrip("/"):
+            text = re.sub(re.escape(home.rstrip("/")) + r"(?![\w-]|\.+[\w-])", "~", text)
     if user and len(user) >= 2:
         text = re.sub(r"(?<![\w-])" + re.escape(user) + r"(?![\w-])", "<user>", text)
     if host and len(host) >= 2:
@@ -29,7 +34,13 @@ def redact_report(value, identity):
     if isinstance(value, list):
         return [redact_report(item, identity) for item in value]
     if isinstance(value, dict):
-        return {key: redact_report(item, identity) for key, item in value.items()}
+        result = {}
+        for key, item in value.items():
+            redacted_key = redact_report(key, identity)
+            if redacted_key in result:
+                raise ValueError("duplicate JSON object keys after redaction")
+            result[redacted_key] = redact_report(item, identity)
+        return result
     return value
 
 
@@ -38,6 +49,7 @@ README = """AnyPS5 bug report
 anyps5-report.json  the run report of the last run, redacted
 anyps5.log          the log of the run (ANYPS5_LOG_FILE), redacted
 anyps5-input.ini    the input mapping in use, redacted
+anyps5-settings.txt the ANYPS5_ and APS5_ environment variables of the run, redacted
 host.txt            operating system, machine and Python version
 README.txt          this file
 
@@ -47,21 +59,38 @@ attach the bundle to a public report.
 """
 
 
-def make_bundle(report, out, *, home, user, host, log=None, input_config=None):
+def settings_text(environ, identity):
+    lines = [f"{name}={redact(value, **identity)}" for name, value in sorted(environ.items()) if name.startswith(("ANYPS5_", "APS5_"))]
+    return "\n".join(lines) + ("\n" if lines else "No ANYPS5_ or APS5_ variables were set.\n")
+
+
+def host_text():
+    return (
+        f"os: {platform.system()} {platform.release()}\n"
+        f"machine: {platform.machine()}\n"
+        f"processor: {platform.processor() or 'unknown'}\n"
+        f"logical cpus: {os.cpu_count() or 'unknown'}\n"
+        f"python: {platform.python_version()}\n"
+    )
+
+
+def make_bundle(report, out, *, home, user, host, log=None, input_config=None, settings=None):
     report = Path(report)
     out = Path(out)
     if out.exists():
         raise FileExistsError(f"{out} already exists")
-    data = json.loads(report.read_text(encoding="utf-8"))
+    data = json.loads(report.read_text(encoding="utf-8-sig"))
     identity = {"home": home, "user": user, "host": host}
     members = {"anyps5-report.json": json.dumps(redact_report(data, identity), indent=2) + "\n"}
     if log is not None and Path(log).is_file():
         members["anyps5.log"] = redact(Path(log).read_text(encoding="utf-8", errors="replace"), **identity)
     if input_config is not None and Path(input_config).is_file():
         members["anyps5-input.ini"] = redact(Path(input_config).read_text(encoding="utf-8", errors="replace"), **identity)
-    members["host.txt"] = f"os: {platform.system()}\nmachine: {platform.machine()}\npython: {platform.python_version()}\n"
+    if settings is not None:
+        members["anyps5-settings.txt"] = redact(settings, **identity)
+    members["host.txt"] = host_text()
     members["README.txt"] = README
-    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+    with zipfile.ZipFile(out, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
         for name, content in members.items():
             bundle.writestr(name, content.encode("utf-8"))
     return sorted(members)
@@ -87,7 +116,8 @@ def main(argv=None):
         print(f"bug_report: no run report at {args.report}", file=sys.stderr)
         return 1
     try:
-        names = make_bundle(args.report, args.out, log=args.log, input_config=args.input_config, **identities())
+        ident = identities()
+        names = make_bundle(args.report, args.out, log=args.log, input_config=args.input_config, settings=settings_text(os.environ, ident), **ident)
     except (OSError, ValueError, RecursionError) as error:
         print(f"bug_report: {error}", file=sys.stderr)
         return 1

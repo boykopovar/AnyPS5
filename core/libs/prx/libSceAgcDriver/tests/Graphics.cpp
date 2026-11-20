@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
@@ -241,6 +242,27 @@ void PolygonPrimitiveTests() {
     Require(indexedState.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN && indexedState.primitiveRestart, "indexed polygon decoding did not keep primitive restart");
 }
 
+void VertexControlTests() {
+    const auto vertexControl = [](std::uint32_t word) {
+        auto queue = makeState();
+        queue.context[0x1b3] = 2;
+        queue.context[0x1b4] = 2;
+        queue.context[0x2f9] = word;
+        return queue;
+    };
+    for (const auto word : {0x29u, 0x2bu, 0x2du, 0x2fu}) {
+        const auto queue = vertexControl(word);
+        const auto rejection = AgcDriver::Graphics::DrawRejection(queue, false);
+        Require(rejection.empty(), "a PA_SU_VTX_CNTL rounding mode failed the draw precheck: " + rejection);
+        static_cast<void>(AgcDriver::Graphics::DecodeState(queue));
+    }
+    for (const auto word : {0x28u, 0x2cu, 0x21u, 0x25u, 0x31u, 0x39u, 0x69u}) {
+        const auto queue = vertexControl(word);
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).find("nonstandard pixel center or vertex quantization") != std::string::npos, "the draw precheck accepted an unsupported PA_SU_VTX_CNTL");
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "nonstandard pixel center or vertex quantization");
+    }
+}
+
 void vertexPointListTests() {
     const auto pointState = [](std::uint32_t control, std::uint32_t size, std::uint32_t limits) {
         auto queue = makeState();
@@ -328,6 +350,25 @@ void retainedPixelStageTests() {
         Require(!PixelProgramSkipped(queue), "an enabled high render target lost its pixel program");
         queue.context[0x8e] = queue.context[0x8f] = 0;
     }
+    queue.context[0x8e] = queue.context[0x8f] = 0xffffffffu;
+    Require(!PixelProgramSkipped(queue), "a pixel program writing a bound color target was skipped");
+    const std::uint32_t boundInfo = queue.context.at(0x31c);
+    for (std::uint32_t slot = 0; slot < 8; ++slot) queue.context[0x31c + 0xfu * slot] = 0;
+    Require(PixelProgramSkipped(queue), "reset-value color masks ran an unused pixel program with no color target bound");
+    Require(DrawRejection(queue, true).empty(), "an unused pixel program under reset-value color masks with no color target bound was rejected");
+    queue.context[0x203] = 0x400;
+    Require(!PixelProgramSkipped(queue), "EXEC_ON_NOOP was skipped with no color target bound");
+    queue.context[0x203] = 0;
+    queue.context[0x31c + 0xfu * 7u] = boundInfo;
+    Require(!PixelProgramSkipped(queue), "a pixel program writing a bound high color target was skipped");
+    queue.context[0x31c + 0xfu * 7u] = 0;
+    queue.context[0x31c] = boundInfo;
+    queue.context[0x8e] = queue.context[0x8f] = 0xf0u;
+    Require(PixelProgramSkipped(queue), "color masks enabling only a target without a format ran an unused pixel program beside a bound target");
+    queue.context[0x31c + 0xfu] = boundInfo;
+    Require(!PixelProgramSkipped(queue), "a pixel program writing the second bound color target was skipped");
+    queue.context[0x31c + 0xfu] = 0;
+    queue.context[0x8e] = queue.context[0x8f] = 0;
     queue.context[0x3] = 0;
     queue.context[0xb4] = std::bit_cast<std::uint32_t>(0.0f);
     queue.context[0xb5] = std::bit_cast<std::uint32_t>(1.0f);
@@ -2377,6 +2418,12 @@ void ReversedComponentOrderBlendTests() {
         const auto separate = DecodeState(constantQueue(0x60130001u));
         Require(separate.reversedBlend == 0u && separate.blends.at(0).srcColorBlendFactor == VK_BLEND_FACTOR_CONSTANT_COLOR && separate.blends.at(0).dstColorBlendFactor == VK_BLEND_FACTOR_ZERO && separate.blends.at(0).srcAlphaBlendFactor == VK_BLEND_FACTOR_ONE && separate.blends.at(0).dstAlphaBlendFactor == VK_BLEND_FACTOR_ZERO, "a constant alpha factor of the alpha equation did not reach the host color equation of the reversed target");
         Require(separate.blendConstants[0] == constants[3] && separate.blendConstants[1] == 1.0f && separate.blendConstants[2] == 1.0f, "the host blend constants of a constant alpha factor do not weigh the alpha channel alone");
+        auto nanRgb = constantQueue(0x60130001u);
+        for (std::uint32_t i = 0; i < 3; ++i) nanRgb.context[0x105 + i] = 0x7fc00000u;
+        Require(DecodeState(nanRgb).blendConstants[0] == constants[3], "a reversed target's constant alpha factor read unused RGB CB_BLEND registers");
+        nanRgb.context[0x1e0] = 0x40000504u;
+        nanRgb.context[0x108] = 0x7fc00000u;
+        Require(DecodeState(nanRgb).blendConstants == std::array<float, 4>{}, "a non-constant reversed target blend read CB_BLEND registers");
         const auto colored = DecodeState(constantQueue(0x40000e0du));
         Require(colored.blends.at(0).srcColorBlendFactor == VK_BLEND_FACTOR_CONSTANT_COLOR && colored.blends.at(0).dstColorBlendFactor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR && colored.blends.at(0).srcAlphaBlendFactor == VK_BLEND_FACTOR_CONSTANT_ALPHA && colored.blends.at(0).dstAlphaBlendFactor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA, "a constant color factor and its complement did not share the host blend constants");
         for (std::uint32_t component = 0; component < 4; ++component) Require(colored.blendConstants[component] == constantOf(component), "the blend constants of a reversed target did not follow its component mapping");
@@ -2550,12 +2597,49 @@ void Color565TargetTests() {
     Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.375f, 0.25f, 0.125f, 0.5f}, "a 5_6_5 target with the standard component order did not exchange the constants of a ONE_MINUS_CONSTANT_COLOR destination factor");
     queue.context[0x8e] = 0x3u;
     const auto partial = AgcDriver::Graphics::DecodeState(queue).blendConstants;
-    Require(partial[1] == 0.25f && partial[2] == 0.125f && partial[3] == 0.5f, "a 5_6_5 target with the standard component order writing only X and Y did not take the constants of its written channels from their exports");
+    Require(partial == std::array<float, 4>{0.0f, 0.25f, 0.125f, 0.0f}, "a 5_6_5 target with the standard component order writing only X and Y did not take the constants of its written channels from their exports");
+    for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = 0x7fc00000u;
+    queue.context[0x1e0] = 0x40000504u;
+    Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{}, "non-constant blending read unused CB_BLEND registers");
+    queue.context[0x1e0] = 0x40000d4du;
+    Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{}, "MIN blending read unused CB_BLEND registers");
+    queue.context[0x8e] = 0x2u;
+    queue.context[0x1e0] = (1u << 30u) | 13u;
+    queue.context[0x106] = std::bit_cast<std::uint32_t>(0.25f);
+    Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.0f, 0.25f, 0.0f, 0.0f}, "masked constant blending read masked-off CB_BLEND registers");
+    queue.context[0x8e] = 0x7u;
+    queue.context[0x107] = 0;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "non-finite register at DWORD 261");
+    queue.context[0x8e] = 0xfu;
+    queue.context[0x1e0] = 0x40001413u;
+    queue.context[0x108] = std::bit_cast<std::uint32_t>(0.5f);
+    Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.5f}, "constant alpha blending read unused RGB CB_BLEND registers");
+    queue.context[0x108] = 0x7f800000u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "non-finite register at DWORD 264");
     queue.context[0x8e] = 0xfu;
     queue.context[0x1e0] = 0;
     for (const auto& [number, swap] : {std::pair{1u, 2u}, std::pair{4u, 0u}, std::pair{0u, 1u}, std::pair{0u, 3u}}) {
         info(number, swap);
         expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported color format 16 number type " + std::to_string(number) + " component swap " + std::to_string(swap));
+    }
+}
+
+void SingleChannelSwapBlendTests() {
+    auto queue = makeState();
+    for (const auto swap : {1u, 2u}) {
+        queue.context[0x31c] = (queue.context[0x31c] & ~((0x1fu << 2u) | (7u << 8u) | (3u << 11u))) | (1u << 2u) | (swap << 11u);
+        queue.context[0x8e] = 0xfu;
+        for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = std::bit_cast<std::uint32_t>(float(i + 1) / 8.0f);
+        queue.context[0x1e0] = (1u << 30u) | 13u;
+        Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.125f, 0.25f, 0.375f, 0.5f}, "a one-channel target with component swap did not keep the constant-colour blend registers");
+        queue.context[0x1e0] = (1u << 30u) | (14u << 8u);
+        Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.125f, 0.25f, 0.375f, 0.5f}, "a one-channel target with component swap did not keep the destination constant-colour blend registers");
+        queue.context[0x1e0] = 0x6001000du;
+        queue.context[0x105] = 0x7fc00000u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "non-finite register at DWORD 261");
+        for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = 0x7fc00000u;
+        queue.context[0x1e0] = 0x40000504u;
+        Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{}, "non-constant blending on a swapped one-channel target read unused CB_BLEND registers");
     }
 }
 
@@ -2937,6 +3021,17 @@ void DepthStencilTests() {
     queue.context[0x31b] = 1u | (1u << 13u);
     const auto slice = AgcDriver::Graphics::DecodeState(queue);
     Require(slice.color.address == sliced + 1024u && slice.color.bytes == 1024u, "a color view of one slice did not move the target by one slice");
+    {
+        alignas(256) std::array<std::uint8_t, 8> sliceKeyMemory{};
+        const auto sliceKeys = reinterpret_cast<std::uintptr_t>(sliceKeyMemory.data());
+        auto keyed = queue;
+        keyed.context[0x31c] |= 0x10000000;
+        keyed.context[0x325] = static_cast<std::uint32_t>(sliceKeys >> 8u);
+        keyed.context[0x3a8] = static_cast<std::uint32_t>(sliceKeys >> 40u);
+        Require(AgcDriver::Graphics::DecodeState(keyed).color.dccAddress == sliceKeys + 1024u / 256u, "a color view of one slice did not move the target's DCC keys by one slice's keys");
+        keyed.context[0x31b] = 1u << 13u;
+        Require(AgcDriver::Graphics::DecodeState(keyed).color.dccAddress == sliceKeys, "a color view from the first slice moved the target's DCC keys");
+    }
     queue.context[0x3b8] = 0x09000001;
     const auto arraySlice = AgcDriver::Graphics::DecodeState(queue);
     Require(arraySlice.color.address == sliced + 1024u && arraySlice.color.bytes == 1024u && arraySlice.color.depth == 1u, "a color view of one slice of a 2D array target did not move the target by one slice");
@@ -3497,6 +3592,19 @@ void DepthBoundsBiasTests() {
     state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.depthBias && state.depthBiasSlope == 2.0f && state.depthBiasConstant == 4.0f && state.depthBiasClamp == 0.5f, "depth bias decode changed");
     Require(!state.depthBiasPerFace, "equal front and back depth bias must draw both faces in one pass");
+    auto d16Bias = queue;
+    d16Bias.context[0x010] = (d16Bias.context.at(0x010) & ~3u) | 1u;
+    d16Bias.context[0x011] = 0;
+    d16Bias.context[0x2de] = 0x1e9u;
+    auto scaledBias = AgcDriver::Graphics::DecodeState(d16Bias);
+    Require(scaledBias.depthBias && scaledBias.depthBiasSlope == 2.0f && scaledBias.depthBiasConstant == 4.0f / 256.0f && scaledBias.depthBiasClamp == 0.5f, "a D16 target with float bias units scaled the constant bias the wrong way");
+    d16Bias.context[0x2de] = 0xf0u;
+    scaledBias = AgcDriver::Graphics::DecodeState(d16Bias);
+    Require(scaledBias.depthBias && scaledBias.depthBiasSlope == 2.0f && scaledBias.depthBiasConstant == 4.0f && scaledBias.depthBiasClamp == 0.5f, "a D16 target with 16-bit bias units changed the constant bias");
+    auto downBias = queue;
+    downBias.context[0x2de] = 0xf0u;
+    scaledBias = AgcDriver::Graphics::DecodeState(downBias);
+    Require(scaledBias.depthBias && scaledBias.depthBiasConstant == 1024.0f, "a float target with 16-bit bias units scaled the constant bias the wrong way");
     queue.context[0x2e2] = bits(-64.0f);
     queue.context[0x2e3] = bits(8.0f);
     state = AgcDriver::Graphics::DecodeState(queue);
@@ -4669,11 +4777,21 @@ void multisampleTests() {
     }
     queue.context[0x32b] = queue.context[0x31c] ^ (1u << 8u);
     expectFailure([&] { DecodeColorMetadataPass(queue); }, "different formats or extents");
-    for (const auto [packedInfo, name] : {std::pair{6u << 2u, "10_11_11 unorm"}, std::pair{(7u << 2u) | (7u << 8u) | (2u << 11u) | 0x40000u, "11_11_10 float"}}) {
-        auto packed = rasterizedResolve;
-        for (const auto offset : {0x31cu, 0x32bu}) packed.context[offset] = (packed.context[offset] & ~0x41f7cu) | packedInfo;
-        expectFailure([&] { DecodeColorMetadataPass(packed); }, std::string("CB resolves of ") + name + " color targets");
-    }
+    auto packed = rasterizedResolve;
+    for (const auto offset : {0x31cu, 0x32bu}) packed.context[offset] = (packed.context[offset] & ~0x41f7cu) | (6u << 2u);
+    expectFailure([&] { DecodeColorMetadataPass(packed); }, "CB resolves of 10_11_11 unorm color targets");
+    for (const auto offset : {0x31cu, 0x32bu}) packed.context[offset] = (packed.context[offset] & ~0x41f7cu) | (7u << 2u) | (7u << 8u) | (2u << 11u) | 0x40000u;
+    const auto floatPass = DecodeColorMetadataPass(packed);
+    Require(floatPass.has_value() && floatPass->mode == ColorMetadataPass::Mode::Resolve && floatPass->source.has_value() && floatPass->source->packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 && floatPass->source->samples == 2 && floatPass->targets.size() == 1, "a CB resolve of an 11_11_10 float target was refused");
+    auto swapped = packed;
+    swapped.context[0x32b] &= ~(3u << 11u);
+    expectFailure([&] { DecodeColorMetadataPass(swapped); }, "11_11_10 float color targets of different layouts");
+    auto unormDestination = packed;
+    unormDestination.context[0x32b] = (unormDestination.context[0x32b] & ~0x41f7cu) | (6u << 2u);
+    expectFailure([&] { DecodeColorMetadataPass(unormDestination); }, "11_11_10 float color targets of different layouts");
+    auto unormSource = packed;
+    unormSource.context[0x31c] = (unormSource.context[0x31c] & ~0x41f7cu) | (6u << 2u);
+    expectFailure([&] { DecodeColorMetadataPass(unormSource); }, "11_11_10 float color targets of different layouts");
     auto uintSource = rasterizedResolve;
     for (const auto offset : {0x31cu, 0x32bu}) uintSource.context[offset] = (uintSource.context[offset] & ~0x700u) | (4u << 8u);
     const auto uintPass = DecodeColorMetadataPass(uintSource);
@@ -5938,14 +6056,38 @@ void InitialContextTests() {
     Require(queue.context.at(0x3) == 0 && queue.context.at(0x8) == 0 && queue.context.at(0x9) == 0x3f800000, "depth bounds overlap render override");
     Require(queue.context.at(0x2dc) == 0xaa00 && queue.context.at(0x313) == 0x6000 && queue.context.at(0x2f9) == 0x2d, "initial raster controls are incomplete");
     Require(queue.context.at(0x30e) == 0xffffffff && queue.context.at(0x30f) == 0xffffffff, "initial sample mask excludes samples");
-    Require(queue.context.at(0x206) == 0, "the initial viewport control is not its reset value");
-    Require(queue.context.at(0x8e) == 0xffffffffu && queue.context.at(0x8f) == 0xffffffffu, "the initial color masks are not their reset values");
+    Require(queue.context.at(0x206) == 0x43f, "the initial viewport control does not apply the viewport transform");
+    Require(queue.context.at(0x8e) == 0 && queue.context.at(0x8f) == 0, "the initial color masks write color");
     queue.userConfig[0x242] = 4;
     for (const auto offset : {0x2d5u, 0x204u, 0x8eu, 0x8fu, 0x1c3u, 0x1c5u, 0x31cu, 0x3b0u, 0x3b8u, 0x318u, 0x390u, 0x10fu, 0x110u, 0x111u, 0x112u, 0x113u, 0x114u, 0xb4u, 0xb5u}) queue.context.at(offset) = configured.context.at(offset);
     const auto state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.color.address == reinterpret_cast<std::uintptr_t>(colorMemory.data()) && state.color.bytes == colorMemory.size(), "sparse guest setup lost its render target");
-    Require(state.viewport.x == 0.0f && state.viewport.y == 0.0f && state.viewport.width == static_cast<float>(state.renderExtent.width) && state.viewport.height == static_cast<float>(state.renderExtent.height), "a draw without a viewport transform did not get a viewport covering its render target");
-    Require(AgcDriver::Graphics::DrawRejection(queue, false).find("PA_CL_VTE_CNTL") == std::string::npos, "a draw with the reset viewport control was rejected for its viewport control");
+    const auto scaleX = std::bit_cast<float>(static_cast<std::uint32_t>(queue.context.at(0x10f)));
+    const auto offsetX = std::bit_cast<float>(static_cast<std::uint32_t>(queue.context.at(0x110)));
+    const auto scaleY = std::bit_cast<float>(static_cast<std::uint32_t>(queue.context.at(0x111)));
+    const auto offsetY = std::bit_cast<float>(static_cast<std::uint32_t>(queue.context.at(0x112)));
+    Require(state.viewport.x == offsetX - scaleX && state.viewport.y == offsetY - scaleY && state.viewport.width == 2 * scaleX && state.viewport.height == 2 * scaleY, "a draw with the initial viewport control lost its viewport transform");
+    {
+        queue.context[0x111] = std::bit_cast<std::uint32_t>(-scaleY);
+        const auto flipped = AgcDriver::Graphics::DecodeState(queue);
+        Require(flipped.viewport.y == offsetY + scaleY && flipped.viewport.height == -2 * scaleY, "a negative Y scale was dropped for a draw with the initial viewport control");
+        queue.context[0x111] = std::bit_cast<std::uint32_t>(scaleY);
+    }
+    Require(queue.context.at(0x206) == 0x43f, "initial homogeneous viewport mode changed");
+    queue.context[0x206] = 0;
+    {
+        const auto programmed = AgcDriver::Graphics::DecodeState(queue);
+        Require(programmed.viewport.x == offsetX - scaleX && programmed.viewport.y == offsetY - scaleY && programmed.viewport.width == 2 * scaleX && programmed.viewport.height == 2 * scaleY, "a draw that wrote a zero viewport control lost its programmed viewport transform");
+        std::array<std::uint32_t, 6> words{};
+        for (std::uint32_t word = 0; word < 6; ++word) {
+            words[word] = queue.context.at(0x10f + word);
+            queue.context[0x10f + word] = word % 2 == 0 ? 0x3f800000u : 0u;
+        }
+        const auto untransformed = AgcDriver::Graphics::DecodeState(queue);
+        Require(untransformed.viewport.x == 0.0f && untransformed.viewport.y == 0.0f && untransformed.viewport.width == static_cast<float>(untransformed.renderExtent.width) && untransformed.viewport.height == static_cast<float>(untransformed.renderExtent.height), "a draw without a viewport transform did not get a viewport covering its render target");
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).find("PA_CL_VTE_CNTL") == std::string::npos, "a draw with the viewport transform disabled was rejected for its viewport control");
+        for (std::uint32_t word = 0; word < 6; ++word) queue.context[0x10f + word] = words[word];
+    }
     for (const auto control : {0x3fu, 0x43eu, 0x53fu, 0x63fu, 0x8000043fu}) {
         queue.context[0x206] = control;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "PA_CL_VTE_CNTL=0x");
@@ -5957,7 +6099,7 @@ void InitialContextTests() {
     queue.context.erase(0x2dc);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "missing register");
     queue.ClearContext();
-    Require(queue.context.at(0x2dc) == 0xaa00 && queue.context.at(0x318) == 0 && queue.context.at(0x8e) == 0xffffffffu && queue.context.at(0x206) == 0, "clear did not restore controls, color masks and viewport control");
+    Require(queue.context.at(0x2dc) == 0xaa00 && queue.context.at(0x318) == 0 && queue.context.at(0x8e) == 0 && queue.context.at(0x206) == 0x43f, "clear did not restore controls, color masks and viewport control");
     Require(!queue.context.contains(0xdead), "unknown context register acquired a default");
 }
 
@@ -6060,6 +6202,9 @@ struct MockVulkan {
     std::map<VkPipelineLayout, VkPipelineLayoutCreateFlags> pipelineLayoutFlags;
     std::map<VkPipelineLayout, std::vector<VkPushConstantRange>> pipelineLayoutPushRanges;
     std::map<VkGraphicsPipelineLibraryFlagsEXT, VkPipelineLayout> libraryLayouts;
+    std::vector<VkFormat> shaderLibraryDepthFormats;
+    std::vector<bool> fragmentLibraryMultisample;
+    std::vector<bool> preRasterizationBiasEnableDynamic;
     std::uint32_t pipelineCreateCount = 0;
     std::vector<std::array<std::uint32_t, 3>> pipelineSpecializations;
     VkPipeline boundPipeline = VK_NULL_HANDLE;
@@ -6325,6 +6470,15 @@ VKAPI_ATTR VkResult VKAPI_CALL mockCreateGraphicsPipelines(VkDevice, VkPipelineC
     const auto* library = static_cast<const VkGraphicsPipelineLibraryCreateInfoEXT*>(infos[0].pNext);
     Require(library != nullptr && library->sType == VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, "missing graphics pipeline library description");
     mock.libraryLayouts[library->flags] = infos[0].layout;
+    if (library->flags == VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT || library->flags == VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT) {
+        auto format = VK_FORMAT_MAX_ENUM;
+        for (auto* next = static_cast<const VkBaseInStructure*>(infos[0].pNext); next != nullptr; next = next->pNext) {
+            if (next->sType == VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR) format = reinterpret_cast<const VkPipelineRenderingCreateInfoKHR*>(next)->depthAttachmentFormat;
+        }
+        mock.shaderLibraryDepthFormats.push_back(format);
+    }
+    if (library->flags == VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT) mock.fragmentLibraryMultisample.push_back(infos[0].pMultisampleState != nullptr);
+    if (library->flags == VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT && infos[0].pDynamicState != nullptr) mock.preRasterizationBiasEnableDynamic.push_back(std::ranges::count(std::span(infos[0].pDynamicState->pDynamicStates, infos[0].pDynamicState->dynamicStateCount), VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE) == 1);
     *pipelines = makeHandle<VkPipeline>();
     ++mock.live;
     return VK_SUCCESS;
@@ -8701,6 +8855,24 @@ void sampledTextureBudgetTests() {
     Require(SampledTextureBudget(memory, &reported, 1 * GiB) == 2 * GiB, "a heap whose other users leave no room does not keep the 2 GiB floor");
     {
         using AgcDriver::Graphics::StorageTextureBudget;
+        auto card = memory;
+        card.memoryHeaps[2].size = 12 * GiB;
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT level{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        level.heapBudget[2] = 10112 * MiB;
+        level.heapUsage[2] = (2769 + 3007 + 1282) * MiB;
+        Require(SampledTextureBudget(card, &level, (3007 + 1282) * MiB, 1282 * MiB) == 3007 * MiB, "the fixture no longer shows a 12 GiB card with 1282 MiB of storage images holding the sampled cache at 3007 MiB");
+        Require(SampledTextureBudget(card, &level, (3007 + 1282) * MiB, 1282 * MiB, true) == 5173 * MiB, "the demand budget did not give the sampled cache what the storage images held, 256 MiB of slack and a sixteenth of headroom leave");
+        level.heapUsage[2] = (2769 + 5173 + 1282) * MiB;
+        Require(SampledTextureBudget(card, &level, (5173 + 1282) * MiB, 1282 * MiB, true) == 5173 * MiB, "the demand budget of the sampled cache moved when the cache filled it");
+        Require(StorageTextureBudget(card, &level, 5173 * MiB, 1282 * MiB) == 906 * MiB, "the fixture no longer shows a full sampled cache squeezing the storage cache below the 1282 MiB it holds");
+        Require(StorageTextureBudget(card, &level, 5173 * MiB, 1282 * MiB, true) == 4663 * MiB, "the demand budget of the storage cache counted more of the sampled cache than its 2 GiB floor");
+        level.heapUsage[2] = (2769 + 5173 + 4000) * MiB;
+        Require(SampledTextureBudget(card, &level, (5173 + 4000) * MiB, 4000 * MiB, true) == 2455 * MiB, "the demand budget of the sampled cache did not yield to storage images that grew");
+        level.heapUsage[2] = (9000 + 1282) * MiB;
+        Require(SampledTextureBudget(card, &level, 1282 * MiB, 1282 * MiB, true) == 2 * GiB && StorageTextureBudget(card, &level, 0, 1282 * MiB, true) == 512 * MiB, "the demand budgets lost their floors on a heap other users fill");
+    }
+    {
+        using AgcDriver::Graphics::StorageTextureBudget;
         auto small = memory;
         small.memoryHeaps[2].size = 8 * GiB;
         VkPhysicalDeviceMemoryBudgetPropertiesEXT example{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
@@ -9344,7 +9516,7 @@ void sampleLocationGridFallbackTests() {
         }
         ClearPipelineLibraries(context.device);
         Require(mock.live == 0, "sample location grid fallback tests leaked Vulkan objects");
-        Require(pipelineSampleLocations.size() == (libraries ? 2u : 1u) && passSampleLocations.size() == (libraries ? 0u : depth ? 2u : 1u), "the pipeline or render pass did not take its sample locations once per library or attachment");
+        Require(pipelineSampleLocations.size() == 1u && passSampleLocations.size() == (libraries ? 0u : depth ? 2u : 1u), "the pipeline, its output library or its render pass did not take its sample locations once per pipeline, output library or attachment");
         auto uses = pipelineSampleLocations;
         uses.insert(uses.end(), passSampleLocations.begin(), passSampleLocations.end());
         return uses;
@@ -9864,6 +10036,94 @@ void pipelineLibrarySetTests() {
         ClearPipelineLibraries(context.device);
         Require(mock.live == 0, "shader library tests leaked Vulkan objects");
     }
+}
+
+void pipelineLibraryNarrowKeyTests() {
+    using namespace AgcDriver::Graphics;
+    for (const bool wide : {false, true}) {
+        for (const auto shading : {0u, 1u, 2u}) {
+            const bool perSample = shading != 0u;
+            mock = MockVulkan{};
+            RuntimeSwitches::Assign(RuntimeSwitch::WideLibraryKeys, wide);
+            auto context = mockContext();
+            context.graphicsPipelineLibrary = true;
+            context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT;
+            context.limits.framebufferDepthSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT;
+            ShaderRecompiler::RecompileResult vertex, fragment;
+            vertex.spirv = makeModule({});
+            auto fragmentWords = makeModule({.fragment = true, .rectParameters = true, .sampleId = shading == 1u});
+            if (shading == 2u) {
+                for (std::size_t at = 5; at < fragmentWords.size(); at += fragmentWords[at] >> 16u) {
+                    if (static_cast<spv::Op>(fragmentWords[at] & 0xffffu) != spv::OpDecorate || fragmentWords[at + 2] != spv::DecorationLocation) continue;
+                    const std::array<std::uint32_t, 3> sampled{(3u << 16u) | spv::OpDecorate, fragmentWords[at + 1], spv::DecorationSample};
+                    fragmentWords.insert(fragmentWords.begin() + static_cast<std::ptrdiff_t>(at), sampled.begin(), sampled.end());
+                    break;
+                }
+            }
+            fragment.spirv = fragmentWords;
+            vertex.variantId = 301;
+            fragment.variantId = 302;
+            const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+            const PipelineSetLayouts resources{makeHandle<VkDescriptorSetLayout>(), VK_NULL_HANDLE, false, {}, {}};
+            State guessed{};
+            State drawn{};
+            drawn.samples = 4;
+            drawn.depth = DepthTarget{0, 0, {64, 64}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+            drawn.depth->samples = 4;
+            drawn.depthTest = true;
+            drawn.depthCompare = VK_COMPARE_OP_LESS;
+            for (const auto* state : {&guessed, &drawn, &guessed, &drawn}) Require(Pipeline::Prebuild(context, *state, VertexInputLayout{}, resources, shaders), "graphics pipeline library prebuild was skipped");
+            const auto built = PipelineLibraryCountersOf(context.device).built;
+            const bool narrow = !wide;
+            Require(built[0] == 1 && built[3] == 2, "a depth target and sample count changed the vertex input parts or did not change the output parts");
+            Require(built[1] == (narrow ? 1u : 2u), narrow ? "a depth format split the pre-rasterization library" : "wide library keys stopped keying the pre-rasterization library by depth format");
+            Require(built[2] == (narrow && !perSample ? 1u : 2u), narrow && !perSample ? "a fragment shader that does not shade per sample was keyed by depth format or sample count" : "a fragment shader library that takes the multisample state was shared across sample counts");
+            const bool undefined = std::ranges::all_of(mock.shaderLibraryDepthFormats, [](VkFormat format) { return format == VK_FORMAT_UNDEFINED; });
+            Require(mock.shaderLibraryDepthFormats.size() == built[1] + built[2] && undefined == narrow, narrow ? "a shader library was given the depth format the spec ignores" : "wide library keys dropped the depth format from a shader library");
+            const bool multisample = !narrow || perSample;
+            Require(mock.fragmentLibraryMultisample.size() == built[2] && std::ranges::all_of(mock.fragmentLibraryMultisample, [&](bool given) { return given == multisample; }), multisample ? "a fragment shader library that shades per sample lost its multisample state" : "a fragment shader library that does not shade per sample was given the multisample state");
+            ClearPipelineLibraries(context.device);
+            Require(mock.live == 0, "narrow library key tests leaked Vulkan objects");
+        }
+    }
+    RuntimeSwitches::Assign(RuntimeSwitch::WideLibraryKeys, false);
+}
+
+void pipelineLibraryDynamicDepthBiasTests() {
+    using namespace AgcDriver::Graphics;
+    for (const bool wide : {false, true}) {
+        for (const bool dynamic : {false, true}) {
+            mock = MockVulkan{};
+            RuntimeSwitches::Assign(RuntimeSwitch::WideLibraryKeys, wide);
+            auto context = mockContext();
+            context.graphicsPipelineLibrary = true;
+            context.dynamicDepthBiasEnable = dynamic;
+            context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+            ShaderRecompiler::RecompileResult vertex, fragment;
+            vertex.spirv = makeModule({});
+            fragment.spirv = makeModule({.fragment = true});
+            vertex.variantId = 311;
+            fragment.variantId = 312;
+            const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+            const PipelineSetLayouts resources{makeHandle<VkDescriptorSetLayout>(), VK_NULL_HANDLE, false, {}, {}};
+            State flat{};
+            flat.depth = DepthTarget{0, 0, {64, 64}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+            flat.depthTest = true;
+            flat.depthCompare = VK_COMPARE_OP_LESS;
+            auto biased = flat;
+            biased.depthBias = true;
+            biased.depthBiasConstant = 4.0f;
+            biased.depthBiasSlope = 1.0f;
+            for (const auto* state : {&flat, &biased, &flat, &biased}) Require(Pipeline::Prebuild(context, *state, VertexInputLayout{}, resources, shaders), "graphics pipeline library prebuild was skipped");
+            const auto built = PipelineLibraryCountersOf(context.device).built;
+            const bool shared = !wide && dynamic;
+            Require(built[1] == (shared ? 1u : 2u), shared ? "a depth bias enable split the pre-rasterization library although the device sets it per draw" : "a pre-rasterization library that bakes the depth bias enable was shared across it");
+            Require(mock.preRasterizationBiasEnableDynamic.size() == built[1] && std::ranges::all_of(mock.preRasterizationBiasEnableDynamic, [&](bool given) { return given == shared; }), shared ? "a narrow pre-rasterization library baked the depth bias enable" : "a pre-rasterization library made the depth bias enable dynamic without narrow keys and the device feature");
+            ClearPipelineLibraries(context.device);
+            Require(mock.live == 0, "dynamic depth bias library tests leaked Vulkan objects");
+        }
+    }
+    RuntimeSwitches::Assign(RuntimeSwitch::WideLibraryKeys, false);
 }
 
 void pipelineLibraryClearWaitsForBuildTests() {
@@ -10406,7 +10666,7 @@ void registeredReadableCoverTests() {
     const auto base = reinterpret_cast<std::uint64_t>(memory);
     const auto add = [&](std::size_t index, bool readable) {
         auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
-        GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, memory + index * block, block, readable, readable, true);
+        GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, memory + index * block, block, readable, readable, readable);
         GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
     };
     const auto remove = [&](std::size_t index) {
@@ -10429,6 +10689,18 @@ void registeredReadableCoverTests() {
     Require(!RegisteredReadableCovers(base, 0), "an empty range must not be covered");
     for (std::size_t index = 0; index < 4; ++index) remove(index);
     Require(!RegisteredReadableCovers(base, block), "a removed allocation must not be covered");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(memory, block, false, false, true, true);
+        mutation.Add(memory + block, block, false, false, true, false);
+    }
+    std::vector<RegisteredPiece> pieces;
+    Require(RegisteredReadableCovers(base, block, &pieces) && pieces.size() == 1 && pieces[0].writable && pieces[0].gpu, "a gpu-rw allocation without cpu access must be covered as writable");
+    Require(RegisteredReadableCovers(base + block, block, &pieces) && pieces.size() == 1 && !pieces[0].writable && pieces[0].gpu, "a gpu-read allocation without cpu access must be covered as read-only");
+    Require(RegisteredReadableCovers(base, 2 * block, &pieces) && pieces.size() == 2, "adjacent gpu-only allocations must be covered together");
+    Require(RegisteredReadableEnd(base) == base + block, "RegisteredReadableEnd missed a gpu-only allocation");
+    remove(0);
+    remove(1);
     ::operator delete(memory, std::align_val_t{block});
 }
 
@@ -10515,7 +10787,8 @@ void rectListTests() {
     auto explicitInterpolation = BuildRectListShaders(vertex, fragment, target);
     Require(!explicitInterpolation.control.spirv.empty() && !explicitInterpolation.evaluation.spirv.empty(), "rect-list shaders for an explicitly interpolated parameter are empty");
     fragment.fragmentParameters[0].custom = true;
-    expectFailure([&] { static_cast<void>(BuildRectListShaders(vertex, fragment, target)); }, "per-vertex interpolation");
+    const auto passThrough = BuildRectListShaders(vertex, fragment, target);
+    Require(std::ranges::equal(passThrough.control.spirv.Words(), explicitInterpolation.control.spirv.Words()) && std::ranges::equal(passThrough.evaluation.spirv.Words(), explicitInterpolation.evaluation.spirv.Words()), "a pass-through parameter read per vertex does not pass the rectangle's corners like an explicitly interpolated one");
     fragment.fragmentParameters[0].perVertex = false;
     fragment.fragmentParameters[0].custom = false;
     vertex.parameterExports.clear();
@@ -11711,6 +11984,74 @@ void ProvokingVertexTests() {
     ValidateProvokingVertex(supported, rectangle, flatShaders);
     last.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_MAX_ENUM_EXT;
     expectFailure([&] { ValidateProvokingVertex(supported, last); }, "invalid provoking vertex mode");
+}
+
+void LastVertexPatchTests() {
+    using namespace AgcDriver::Graphics;
+    auto base = DecodeState(makeState());
+    base.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
+    base.stages = {};
+    base.stages.path = ShaderPath::Vertex;
+    base.rectList = false;
+    base.primitiveRestart = false;
+    base.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    const auto module = [](std::initializer_list<std::uint32_t> instructions) {
+        std::vector<std::uint32_t> words{spv::MagicNumber, 0x10300u, 0u, 4u, 0u};
+        words.insert(words.end(), instructions);
+        return words;
+    };
+    ShaderRecompiler::RecompileResult vertex{};
+    vertex.spirv = module({});
+    ShaderRecompiler::RecompileResult fragment{};
+    fragment.spirv = module({});
+    fragment.fragmentParameters = {{0, 0, true, false}};
+    const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+    const auto patches = [&](const State& state, bool provokingVertexLast = false, bool tessellation = true, bool primitiveListRestart = false, bool indexed = false) {
+        return LastVertexPatches(state, shaders, provokingVertexLast, tessellation, primitiveListRestart, indexed);
+    };
+    Require(patches(base), "an observed last provoking vertex on a device without provokingVertexLast did not take the tessellation patches");
+    Require(!patches(base, true), "a device with provokingVertexLast took the tessellation patches");
+    Require(!patches(base, false, false), "a device without tessellation took the tessellation patches");
+    auto state = base;
+    state.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
+    Require(!patches(state), "a first provoking vertex took the tessellation patches");
+    fragment.fragmentParameters = {{0, 0, false, false}};
+    Require(!patches(base), "a pixel shader that does not observe the provoking vertex took the tessellation patches");
+    for (std::uint32_t read = 0; read < 4; ++read) {
+        fragment.fragmentParameters = {{0, 0, false, false}, {1, 1, read == 0, read == 1, read == 2, read == 3, false}};
+        Require(patches(base), "a pixel shader input that observes the provoking vertex did not take the tessellation patches");
+    }
+    fragment.fragmentParameters = {{0, 0, true, false}};
+    for (const std::uint32_t builtIn : {static_cast<std::uint32_t>(spv::BuiltInLayer), static_cast<std::uint32_t>(spv::BuiltInViewportIndex)}) {
+        vertex.spirv = module({(4u << 16u) | spv::OpDecorate, 1u, spv::DecorationBuiltIn, builtIn});
+        Require(!patches(base), "a vertex shader that writes the layer or viewport took the tessellation patches");
+    }
+    vertex.spirv = module({});
+    for (const auto topology : {VK_PRIMITIVE_TOPOLOGY_POINT_LIST, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, VK_PRIMITIVE_TOPOLOGY_LINE_STRIP, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, VK_PRIMITIVE_TOPOLOGY_PATCH_LIST}) {
+        state = base;
+        state.topology = topology;
+        Require(!patches(state), "a topology the tessellation patches do not draw took them");
+    }
+    state = base;
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    Require(patches(state) && patches(state, false, true, false, true), "a triangle strip did not take the tessellation patches");
+    state.primitiveRestart = true;
+    Require(patches(state) && !patches(state, false, true, false, true), "primitive restart in a triangle strip took the wrong path");
+    state = base;
+    state.primitiveRestart = true;
+    Require(patches(state) && !patches(state, false, true, true), "primitive restart in a triangle list took the wrong path");
+    state = base;
+    state.rectList = true;
+    Require(!patches(state), "a rect list took the triangle tessellation patches");
+    state = base;
+    state.stages.path = ShaderPath::Geometry;
+    Require(!patches(state), "a mesh path draw took the vertex tessellation patches");
+    state = base;
+    state.stages.tessellation = ShaderRecompiler::TessellationConfiguration{};
+    Require(!patches(state), "a tessellated draw took the barycentric tessellation patches");
+    Require(!LastVertexPatches(base, std::span(shaders).first(1), false, true, false, false), "a draw without a pixel shader took the tessellation patches");
+    const std::array<CompiledShader, 2> missing{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, nullptr, 0}}};
+    Require(!LastVertexPatches(base, missing, false, true, false, false), "a draw without a compiled pixel shader took the tessellation patches");
 }
 
 void UnobservedProvokingVertexTests() {
@@ -13856,6 +14197,55 @@ void pipelineStoreLazyBufferPoolTests() {
     Require(mock.live == 0, "lazy buffer pool pipeline tests leaked Vulkan objects");
 }
 
+void pipelineDeferredBuildTests() {
+    using namespace AgcDriver::Graphics;
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.device = makeHandle<VkDevice>();
+    context.graphicsPipelineLibrary = true;
+    context.pipelineLinkTimeOptimization = false;
+    context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    auto vertex = std::make_unique<ShaderRecompiler::RecompileResult>();
+    ShaderRecompiler::RecompileResult fragment;
+    vertex->spirv = makeModule({});
+    fragment.spirv = makeModule({.fragment = true});
+    vertex->variantId = 401;
+    fragment.variantId = 402;
+    std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, vertex.get(), 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+    auto mainKey = std::make_unique<std::array<std::uint32_t, 1>>(std::array<std::uint32_t, 1>{51});
+    std::array<std::uint32_t, 1> fragmentKey{52};
+    const auto mainLayout = makeHandle<VkDescriptorSetLayout>();
+    const auto fragmentLayout = makeHandle<VkDescriptorSetLayout>();
+    Require(DefersPipelineBuild(shaders), "APS5_ASYNC_PIPELINE_WORDS=1 did not defer a pipeline with SPIR-V");
+    const auto created = mock.pipelineCreateCount;
+    std::uint64_t hash = 1;
+    {
+        const PipelineSetLayouts resources{mainLayout, fragmentLayout, true, *mainKey, fragmentKey};
+        Require(ResidentPipelineOrDeferredBuild(context, State{}, VertexInputLayout{}, resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &hash) == nullptr && hash == 0, "a cold deferred pipeline was returned before its build");
+    }
+    const auto copiedVertex = *vertex;
+    vertex.reset();
+    mainKey.reset();
+    shaders[0].program = &copiedVertex;
+    const std::array<std::uint32_t, 1> sameMainKey{51};
+    const PipelineSetLayouts resources{mainLayout, fragmentLayout, true, sameMainKey, fragmentKey};
+    std::shared_ptr<Pipeline> resident;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while ((resident = ResidentPipelineOrDeferredBuild(context, State{}, VertexInputLayout{}, resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &hash)) == nullptr) {
+        Require(std::chrono::steady_clock::now() < deadline, "a deferred pipeline build never became resident");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    Require(mock.pipelineCreateCount > created, "the deferred build created no pipeline");
+    const auto built = mock.pipelineCreateCount;
+    Require(CachedPipeline(context, State{}, VertexInputLayout{}, resources, shaders) == resident && mock.pipelineCreateCount == built, "the deferred build stored a pipeline under another key than the draw's");
+    VertexInputLayout other;
+    other.bindings.push_back({0, 16u, VK_VERTEX_INPUT_RATE_VERTEX});
+    Require(ResidentPipelineOrDeferredBuild(context, State{}, other, resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, nullptr) == nullptr, "a second cold configuration was returned before its build");
+    ClearCachedPipelines(context.device);
+    resident.reset();
+    Require(mock.live == 0, "deferred pipeline builds leaked Vulkan objects past ClearCachedPipelines");
+}
+
 // The pipeline store's bound without a GPU: 1536 configurations cycled through the default 1024
 // entries keep coming back after their eviction, so the bound doubles and a later pass finds every
 // pipeline resident; a bound set with APS5_PIPELINE_STORE_ENTRIES never moves.
@@ -14648,7 +15038,10 @@ void commandStateTests() {
     const std::array<VkDynamicState, 1> colorWriteMask{VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT};
     const auto maskSlot = CommandState::DynamicSlots(colorWriteMask);
     Require(maskSlot == CommandState::Mask(Slot::ColorWriteMask), "the color write mask dynamic state mapped to another slot");
-    Require((library | maskSlot) == (1u << CommandState::SlotCount) - 1u && (library & maskSlot) == 0, "the pipeline library's dynamic states and the color write mask do not cover every tracked slot");
+    const std::array<VkDynamicState, 1> depthBiasEnable{VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE};
+    const auto biasEnableSlot = CommandState::DynamicSlots(depthBiasEnable);
+    Require(biasEnableSlot == CommandState::Mask(Slot::DepthBiasEnable), "the depth bias enable dynamic state mapped to another slot");
+    Require((library | maskSlot | biasEnableSlot) == (1u << CommandState::SlotCount) - 1u && (library & (maskSlot | biasEnableSlot)) == 0, "the pipeline library's dynamic states, the color write mask and the depth bias enable do not cover every tracked slot");
     Require(fixed == (CommandState::Mask(Slot::Viewport) | CommandState::Mask(Slot::Scissor)), "the viewport and scissor dynamic states mapped to other slots");
     const std::array<VkDynamicState, 2> unmodelled{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_LINE_WIDTH};
     bool rejected = false;
@@ -14676,6 +15069,21 @@ void commandStateTests() {
         tracker.SetCullMode(context, 1u);
         tracker.SetCullMode(context, 1u);
         expectStateLog({stateLine("cull", 1u)}, "a cull mode after invalidation");
+    }
+
+    {
+        CommandState tracker;
+        tracker.Begin(commands);
+        tracker.BindPipeline(context, pipelineA, library | biasEnableSlot);
+        for (const auto enable : {1u, 1u, 0u, 0u}) tracker.SetDepthBiasEnable(context, enable);
+        tracker.BindPipeline(context, pipelineB, library | biasEnableSlot);
+        tracker.SetDepthBiasEnable(context, 0u);
+        Require(tracker.Known(Slot::DepthBiasEnable), "binding another pipeline with a dynamic depth bias enable forgot it");
+        tracker.BindPipeline(context, pipelineC, library);
+        Require(!tracker.Known(Slot::DepthBiasEnable), "binding a pipeline with a static depth bias enable kept it known");
+        tracker.BindPipeline(context, pipelineA, library | biasEnableSlot);
+        tracker.SetDepthBiasEnable(context, 0u);
+        expectStateLog({stateLine("bind", 0u, pipelineA), stateLine("biasenable", 1u), stateLine("biasenable", 0u), stateLine("bind", 0u, pipelineB), stateLine("bind", 0u, pipelineC), stateLine("bind", 0u, pipelineA), stateLine("biasenable", 0u)}, "depth bias enables across binds of pipelines that make it dynamic or static");
     }
 
     {
@@ -15091,6 +15499,12 @@ int main(int argc, char** argv) {
             std::cout << "pipeline journal recipe, record and replay tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-library-narrow-keys") {
+            pipelineLibraryNarrowKeyTests();
+            pipelineLibraryDynamicDepthBiasTests();
+            std::cout << "shader pipeline libraries are keyed only by the state their subset reads\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-library-clear-waits-for-build") {
             pipelineLibraryClearWaitsForBuildTests();
             std::cout << "pipeline library clear waits for active part builds\n";
@@ -15111,6 +15525,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-growth") {
             pipelineStoreGrowthTests(std::getenv("APS5_PIPELINE_STORE_ENTRIES") != nullptr);
             std::cout << "pipeline store bound follows the evicted pipelines that come back\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-deferred-build") {
+            pipelineDeferredBuildTests();
+            std::cout << "deferred pipeline builds skip cold draws and store the draw's pipeline\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-touch") {
@@ -15368,6 +15787,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--unobserved-provoking-vertex") {
             UnobservedProvokingVertexTests();
+            LastVertexPatchTests();
             ProvokingVertexTests();
             std::cout << "Unobserved provoking vertex checks passed\n";
             return 0;
@@ -15384,6 +15804,11 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--dual-source-blend-state") {
             DualSourceBlendTests();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--vertex-control-state") {
+            VertexControlTests();
+            std::cout << "Vertex control state checks passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--depth-bounds-state") {
@@ -15429,6 +15854,8 @@ int main(int argc, char** argv) {
         pipelineStoreLazyBufferPoolTests();
         retainedPixelStageTests();
         pipelineLibrarySetTests();
+        pipelineLibraryNarrowKeyTests();
+        pipelineLibraryDynamicDepthBiasTests();
         pipelineLibraryClearWaitsForBuildTests();
         tessellationPipelineLibraryCacheTests();
         framebufferOwnerTests();
@@ -15471,6 +15898,7 @@ int main(int argc, char** argv) {
         DisabledColorTests();
         OpaqueDestinationAlphaTests();
         Color565TargetTests();
+        SingleChannelSwapBlendTests();
         Color1555TargetTests();
         BlendBypassTests();
         UnclampedNormalizedColorTests();
@@ -15507,6 +15935,7 @@ int main(int argc, char** argv) {
         NggVertexWorkgroupTests();
         inactiveVertexPointSizeTests();
         PolygonPrimitiveTests();
+        VertexControlTests();
         vertexPointListTests();
         TuningFieldTests();
         ShaderDeclaredPixelInputTests();
