@@ -1,9 +1,11 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "prx/libc/include/Api.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 
@@ -27,13 +29,27 @@ static void APS5_VABI Destroy(TestStream*) {
     std::abort();
 }
 
+static bool IsNanText(const char* text) {
+    while (*text) {
+        if ((*text == 'n' || *text == 'N') && (text[1] == 'a' || text[1] == 'A') && (text[2] == 'n' || text[2] == 'N')) {
+            return true;
+        }
+        ++text;
+    }
+    return false;
+}
+
 static void APS5_VABI Vprintf(TestStream* self, const char* format, VaList* arguments) {
     char buffer[128];
     Require(vsnprintf_nid_postfix(buffer, sizeof(buffer), format, arguments) >= 0);
     *self->log += '[';
     *self->log += self->tag;
     *self->log += ':';
-    *self->log += buffer;
+    if (!std::strcmp(format, "%lf") && IsNanText(buffer)) {
+        *self->log += "<nan>";
+    } else {
+        *self->log += buffer;
+    }
     *self->log += ']';
 }
 
@@ -146,6 +162,28 @@ int main() {
             == "<A[B:{]A><A[B:0][B:/][B:1][B: = ]A><A[B:inf][B:}]A>");
     Require(DumpMedia(WTF::MediaTime(-1, 1, WTF::MediaTime::Valid | WTF::MediaTime::NegativeInfinite))
             == "<A[B:{]A><A[B:-1][B:/][B:1][B: = ]A><A[B:-inf][B:}]A>");
+    {
+        const WTF::MediaTime& time = _ZN3WTF9MediaTime14indefiniteTimeEv();
+        Require(std::isnan(_ZNK3WTF9MediaTime8toDoubleEv(&time)));
+        Require(DumpMedia(time) == "<A[B:{]A><A[B:0][B:/][B:1][B: = ]A><A[B:<nan>][B:}]A>");
+    }
+    {
+        const WTF::MediaTime& time = _ZN3WTF9MediaTime11invalidTimeEv();
+        Require(std::isnan(_ZNK3WTF9MediaTime8toDoubleEv(&time)));
+        Require(DumpMedia(time) == "<A[B:{]A><A[B:-1][B:/][B:1][B: = ]A><A[B:<nan>][B:}]A>");
+    }
+    {
+        WTF::MediaTime time(0, 0, WTF::MediaTime::Valid | WTF::MediaTime::Indefinite | WTF::MediaTime::DoubleValue);
+        time.m_timeValueAsDouble = 12.5;
+        Require(std::isnan(_ZNK3WTF9MediaTime8toDoubleEv(&time)));
+        Require(DumpMedia(time) == "<A[B:{]A><A[B:<nan>][B:}]A>");
+    }
+    {
+        WTF::MediaTime time(0, 0, WTF::MediaTime::DoubleValue);
+        time.m_timeValueAsDouble = 12.5;
+        Require(std::isnan(_ZNK3WTF9MediaTime8toDoubleEv(&time)));
+        Require(DumpMedia(time) == "<A[B:{]A><A[B:<nan>][B:}]A>");
+    }
 
     {
         Streams streams;
