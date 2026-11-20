@@ -10,8 +10,8 @@
 
 ## change `_FQuadph`, `_FRint`, `_FSincos`
 
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FQuadph`, `_FSincos`, `_FTan`, `_FTgamma`
+- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FSincos`, `_FTan`, `_FTgamma`
 
 ## change `_LQuadph`, `_LRint`, `_LSincos`
 
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_LPlsw`, `_LPmsw`, `_LPow`, `_LQuad`, `_LQuadph`, `_LSincos`, `_LTan`
+- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_LPlsw`, `_LPmsw`, `_LPow`, `_LSincos`, `_LTan`
