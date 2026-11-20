@@ -273,3 +273,11 @@ void RegisterPersistenceAllocator_nid_no_patch(const PersistenceAllocator* alloc
 }
 
 }
+
+namespace Jsc::WtfAbi {
+
+const PersistenceAllocator* RegisteredFastMalloc() {
+    return registeredPersistenceAllocator.load(std::memory_order_acquire);
+}
+
+} // namespace Jsc::WtfAbi

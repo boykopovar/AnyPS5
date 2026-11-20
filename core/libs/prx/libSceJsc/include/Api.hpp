@@ -90,7 +90,6 @@ int APS5_VABI _ZN3JSC2VM16weakSetSpaceSlowEv();
 int APS5_VABI _ZN3JSC17checkModuleSyntaxEPNS_14JSGlobalObjectERKNS_10SourceCodeERNS_11ParserErrorE();
 int APS5_VABI _ZN9Inspector14InspectorAgentD1Ev();
 int APS5_VABI _ZN9Inspector22InspectorDebuggerAgentnaEm();
-int APS5_VABI _ZN3WTF15base64URLDecodeERKNS_6StringENS_33SignedOrUnsignedCharVectorAdapterE();
 int APS5_VABI _ZN9Inspector20DOMBackendDispatcher24setEventListenerDisabledElON3WTF6RefPtrINS1_8JSONImpl6ObjectENS1_13DumbPtrTraitsIS4_EEEE();
 void APS5_VABI _ZN9Inspector32TimelineBackendDispatcherHandlerD1Ev(void*);
 void APS5_VABI _ZN9Inspector22InspectorDebuggerAgent27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE(void*, void*, void*);

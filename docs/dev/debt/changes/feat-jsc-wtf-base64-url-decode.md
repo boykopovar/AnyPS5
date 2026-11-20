@@ -1,0 +1,5 @@
+# libSceJsc
+
+## add Functional
+
+- [WTF::base64URLDecode](../../../core/libs/prx/libSceJsc/src/WtfBase64.cpp) (libSceJsc) - not compared with a console module; the console WTF version is unverified. Follows pinned [Base64.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/Base64.cpp#L183-L307) with `base64URLDecMap` and no options: any code unit outside the URL alphabet, a space included, fails; padding is counted but not validated; a decoded length of 4n+1 sextets fails. The adapter is passed by value as 16 bytes, `Vector` pointer then signed flag; the `Vector` is `{buffer, capacity, size}` with no inline buffer. As in WTF, the old buffer is freed, a nonempty input grows the `Vector` to `max(length, 16)` bytes, and on failure it keeps the sextets read so far. Buffers come from the libSceNKWebKit `fastMalloc` registered for `Persistence::Encoder`; without it, any input that needs a buffer throws. Closes when: compared with a console module.
