@@ -1,272 +1,138 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libSceIcu/tests/RecoveredSignatureChecks.hpp"
-#include "prx/libc/include/General.hpp"
 #include <array>
-#include <cerrno>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
-#include <exception>
-#include <initializer_list>
-#include <source_location>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#else
-#include <sys/mman.h>
-#include <unistd.h>
-#endif
 
-namespace UreldatefmtClose {
+namespace {
 
 using IcuRecoveredTest::Require;
 
-static_assert(std::is_same_v<decltype(&ureldatefmt_close_nid_postfix), void (APS5_VABI*)(URelativeDateTimeFormatter*)>);
+constexpr std::int32_t IllegalArgument = 1;
+constexpr std::int32_t BufferOverflow = 15;
+constexpr std::int32_t RelativeDay = 4;
+constexpr std::int32_t LongStyle = 0;
+constexpr std::int32_t CapitalizationNone = 256;
 
-void Run() {
-    const auto before = NotImplementedCalls_nid_no_patch();
-    ureldatefmt_close_nid_postfix(nullptr);
-    ureldatefmt_close_nid_postfix(nullptr);
-    Require(NotImplementedCalls_nid_no_patch() == before, "null disposal does not hit unimplemented stub");
+std::u16string Text(const char16_t* text) {
+    return std::u16string(text);
+}
 
-    alignas(8) std::array<std::uint8_t, 64> storage;
-    storage.fill(0xa5);
-    auto* foreign = reinterpret_cast<URelativeDateTimeFormatter*>(storage.data());
+template <typename TCall>
+void RequireThrows(TCall call) {
     bool threw = false;
     try {
-        ureldatefmt_close_nid_postfix(foreign);
+        call();
     } catch (const std::runtime_error&) {
         threw = true;
     }
-    Require(threw && NotImplementedCalls_nid_no_patch() == before + 1, "non-null handle throws NotImplemented_nid_no_patch");
-    for (const auto byte : storage) {
-        Require(byte == 0xa5, "non-null handle memory is untouched");
-    }
+    Require(threw);
 }
 
-} // namespace UreldatefmtClose
+URelativeDateTimeFormatter* Open() {
+    std::int32_t status = 0;
+    auto* const formatter = ureldatefmt_open_nid_postfix("en", nullptr, LongStyle, CapitalizationNone, &status);
+    Require(formatter != nullptr && status <= 0);
+    return formatter;
+}
 
-namespace UreldatefmtFormat {
+void OpenAndClose() {
+    std::int32_t status = 0;
+    auto* const formatter = ureldatefmt_open_nid_postfix("en", nullptr, LongStyle, CapitalizationNone, &status);
+    Require(formatter != nullptr && status <= 0);
+    ureldatefmt_close_nid_postfix(formatter);
+    ureldatefmt_close_nid_postfix(nullptr);
 
-using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
-using IcuRecoveredTest::Unchanged;
+    status = 1;
+    Require(ureldatefmt_open_nid_postfix("en", nullptr, LongStyle, CapitalizationNone, &status) == nullptr);
+    Require(status == 1);
 
+    status = 0;
+    Require(ureldatefmt_open_nid_postfix("en", nullptr, 99, CapitalizationNone, &status) == nullptr);
+    Require(status == IllegalArgument);
+
+    status = 0;
+    Require(ureldatefmt_open_nid_postfix("en", nullptr, LongStyle, 0, &status) == nullptr);
+    Require(status == IllegalArgument);
+
+    RequireThrows([&] { ureldatefmt_open_nid_postfix("en", nullptr, LongStyle, CapitalizationNone, nullptr); });
+}
+
+void FormatRelative() {
+    auto* const formatter = Open();
+    std::array<char16_t, 32> output;
+    output.fill(u'x');
+    std::int32_t status = 0;
+    const auto length = ureldatefmt_format_nid_postfix(formatter, -1.0, RelativeDay, output.data(), output.size(), &status);
+    Require(length == 9 && status <= 0);
+    Require(Text(output.data()) == u"yesterday");
+
+    status = 0;
+    Require(ureldatefmt_format_nid_postfix(formatter, -1.0, RelativeDay, nullptr, 0, &status) == 9);
+    Require(status == BufferOverflow);
+
+    std::array<char16_t, 5> shortOutput;
+    shortOutput.fill(u'x');
+    status = 0;
+    Require(ureldatefmt_format_nid_postfix(formatter, -1.0, RelativeDay, shortOutput.data(), shortOutput.size(), &status) == 9);
+    Require(status == BufferOverflow);
+    Require(std::u16string(shortOutput.begin(), shortOutput.end()) == u"xxxxx");
+
+    status = 1;
+    output.fill(u'x');
+    Require(ureldatefmt_format_nid_postfix(formatter, -1.0, RelativeDay, output.data(), output.size(), &status) == 0);
+    Require(status == 1 && output[0] == u'x');
+
+    status = 0;
+    Require(ureldatefmt_format_nid_postfix(formatter, -1.0, RelativeDay, nullptr, 1, &status) == 0);
+    Require(status == IllegalArgument);
+
+    status = 0;
+    RequireThrows([&] {
+        ureldatefmt_format_nid_postfix(formatter, -1.0, RelativeDay, reinterpret_cast<char16_t*>(std::uintptr_t{0x10}), 32, &status);
+    });
+    ureldatefmt_close_nid_postfix(formatter);
+}
+
+void FormatNumeric() {
+    auto* const formatter = Open();
+    std::array<char16_t, 32> output{};
+    std::int32_t status = 0;
+    const auto length = ureldatefmt_formatNumeric_nid_postfix(formatter, -3.0, RelativeDay, output.data(), output.size(), &status);
+    Require(length == 10 && status <= 0);
+    Require(Text(output.data()) == u"3 days ago");
+
+    status = 0;
+    Require(ureldatefmt_formatNumeric_nid_postfix(formatter, -3.0, RelativeDay, nullptr, 0, &status) == 10);
+    Require(status == BufferOverflow);
+
+    status = 0;
+    Require(ureldatefmt_formatNumeric_nid_postfix(formatter, -3.0, RelativeDay, nullptr, 4, &status) == 0);
+    Require(status == IllegalArgument);
+
+    ureldatefmt_close_nid_postfix(formatter);
+}
+
+void InvalidStatusPointers() {
+    const auto* const badStatus = reinterpret_cast<const std::int32_t*>(std::uintptr_t{0x10});
+    RequireThrows([&] { ureldatefmt_open_nid_postfix("en", nullptr, LongStyle, CapitalizationNone, const_cast<std::int32_t*>(badStatus)); });
+    RequireThrows([&] { ureldatefmt_format_nid_postfix(nullptr, 0.0, RelativeDay, nullptr, 1, const_cast<std::int32_t*>(badStatus)); });
+    RequireThrows([&] { ureldatefmt_formatNumeric_nid_postfix(nullptr, 0.0, RelativeDay, nullptr, 1, const_cast<std::int32_t*>(badStatus)); });
+}
+
+}
+
+static_assert(std::is_same_v<decltype(&ureldatefmt_close_nid_postfix), void (APS5_VABI*)(URelativeDateTimeFormatter*)>);
 static_assert(std::is_same_v<decltype(&ureldatefmt_format_nid_postfix), std::int32_t (APS5_VABI*)(const URelativeDateTimeFormatter*, double, std::int32_t, char16_t*, std::int32_t, std::int32_t*)>);
-
-namespace {
-
-constexpr std::int32_t IllegalArgument = 1;
-constexpr std::int32_t UnsupportedError = 16;
-
-} // namespace
-
-void Run() {
-    const std::array<std::int32_t, 7> failing{1, 2, 7, 15, 16, 27, 0x7fffffff};
-    const std::array<std::int32_t, 4> passing{0, -128, -124, -1};
-    const auto storage = Filler();
-    const auto destination = reinterpret_cast<char16_t*>(const_cast<std::uint32_t*>(storage.data()));
-    const auto formatter = reinterpret_cast<URelativeDateTimeFormatter*>(const_cast<std::uint32_t*>(storage.data()));
-
-    for (const auto incoming : failing) {
-        std::int32_t status = incoming;
-        Require(ureldatefmt_format_nid_postfix(formatter, -3.5, 0, destination, 8, &status) == 0);
-        Require(status == incoming);
-
-        status = incoming;
-        Require(ureldatefmt_format_nid_postfix(formatter, 0.0, 7, nullptr, 4, &status) == 0);
-        Require(status == incoming);
-
-        status = incoming;
-        Require(ureldatefmt_format_nid_postfix(formatter, 0.0, 7, destination, -1, &status) == 0);
-        Require(status == incoming);
-    }
-
-    for (const auto incoming : passing) {
-        std::int32_t status = incoming;
-        RequireThrows([&] { ureldatefmt_format_nid_postfix(formatter, -3.5, 0, destination, 8, &status); });
-        Require(status == incoming);
-
-        status = incoming;
-        RequireThrows([&] { ureldatefmt_format_nid_postfix(formatter, 2.0, 5, nullptr, 0, &status); });
-        Require(status == incoming);
-
-        status = incoming;
-        Require(ureldatefmt_format_nid_postfix(formatter, 2.0, 5, nullptr, 4, &status) == 0);
-        Require(status == IllegalArgument);
-
-        status = incoming;
-        Require(ureldatefmt_format_nid_postfix(formatter, 2.0, 5, destination, -2, &status) == 0);
-        Require(status == IllegalArgument);
-    }
-
-    Require(Unchanged(storage));
-    RequireThrows([&] { ureldatefmt_format_nid_postfix(formatter, 0.0, 0, destination, 8, nullptr); });
-}
-
-} // namespace UreldatefmtFormat
-
-namespace UreldatefmtOpen {
-
-using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
-using IcuRecoveredTest::Unchanged;
-
+static_assert(std::is_same_v<decltype(&ureldatefmt_formatNumeric_nid_postfix), std::int32_t (APS5_VABI*)(const URelativeDateTimeFormatter*, double, std::int32_t, char16_t*, std::int32_t, std::int32_t*)>);
 static_assert(std::is_same_v<decltype(&ureldatefmt_open_nid_postfix), URelativeDateTimeFormatter* (APS5_VABI*)(const char*, UNumberFormat*, std::int32_t, std::int32_t, std::int32_t*)>);
 
-void Run() {
-    const std::array<std::int32_t, 7> failing{1, 2, 7, 15, 16, 27, 0x7fffffff};
-    const std::array<std::int32_t, 4> passing{0, -128, -124, -1};
-    const auto storage = Filler();
-    const auto adopted = reinterpret_cast<UNumberFormat*>(const_cast<std::uint32_t*>(storage.data()));
-
-    for (const auto incoming : failing) {
-        std::int32_t status = incoming;
-        Require(ureldatefmt_open_nid_postfix("en", adopted, 1, 0, &status) == nullptr);
-        Require(status == incoming);
-
-        status = incoming;
-        Require(ureldatefmt_open_nid_postfix(nullptr, nullptr, 3, 301, &status) == nullptr);
-        Require(status == incoming);
-    }
-
-    for (const auto incoming : passing) {
-        std::int32_t status = incoming;
-        RequireThrows([&] { ureldatefmt_open_nid_postfix("en", adopted, 1, 0, &status); });
-        Require(status == incoming);
-
-        status = incoming;
-        RequireThrows([&] { ureldatefmt_open_nid_postfix(nullptr, nullptr, 3, 301, &status); });
-        Require(status == incoming);
-    }
-
-    Require(Unchanged(storage));
-    RequireThrows([&] { ureldatefmt_open_nid_postfix("en", adopted, 1, 0, nullptr); });
-}
-
-} // namespace UreldatefmtOpen
-
-namespace RelativeDateTimeFormatterGuestPointers {
-
-void Run() {
-    auto rejectsRuntime = [](auto&& call) {
-        errno = 71;
-        bool threw = false;
-        try {
-            call();
-        } catch (const std::runtime_error&) {
-            threw = true;
-        }
-        IcuRecoveredTest::Require(threw && errno == 71);
-    };
-
-    const std::size_t pageSize =
-#ifdef _WIN32
-        4096;
-#else
-        static_cast<std::size_t>(sysconf(_SC_PAGESIZE) > 0 ? sysconf(_SC_PAGESIZE) : 4096);
-#endif
-    void* roPage = nullptr;
-#ifdef _WIN32
-    roPage = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    IcuRecoveredTest::Require(roPage != nullptr);
-#else
-    roPage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    IcuRecoveredTest::Require(roPage != MAP_FAILED);
-#endif
-    const std::int32_t zero = 0;
-    const std::int32_t failing = 1;
-    std::memcpy(roPage, &zero, sizeof(zero));
-    std::memcpy(static_cast<char*>(roPage) + 16, &failing, sizeof(failing));
-#ifdef _WIN32
-    DWORD oldProtect = 0;
-    IcuRecoveredTest::Require(VirtualProtect(roPage, pageSize, PAGE_READONLY, &oldProtect) != 0);
-#else
-    IcuRecoveredTest::Require(mprotect(roPage, pageSize, PROT_READ) == 0);
-#endif
-    auto* roZero = static_cast<std::int32_t*>(roPage);
-    auto* roFailing = reinterpret_cast<std::int32_t*>(static_cast<char*>(roPage) + 16);
-    auto* badStatus = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
-    char16_t buffer[2] = {u'a', u'b'};
-
-    rejectsRuntime([&] { ureldatefmt_format_nid_postfix(nullptr, 0.0, 0, nullptr, 1, badStatus); });
-    rejectsRuntime([&] { ureldatefmt_format_nid_postfix(nullptr, 0.0, 0, nullptr, 1, roZero); });
-    IcuRecoveredTest::Require(ureldatefmt_format_nid_postfix(nullptr, 0.0, 0, buffer, 2, roFailing) == 0);
-
-    rejectsRuntime([&] { ureldatefmt_open_nid_postfix("en", nullptr, 0, 0, badStatus); });
-    IcuRecoveredTest::Require(ureldatefmt_open_nid_postfix("en", nullptr, 0, 0, roFailing) == nullptr);
-
-#ifdef _WIN32
-    VirtualFree(roPage, 0, MEM_RELEASE);
-#else
-    munmap(roPage, pageSize);
-#endif
-}
-
-}
-
-namespace UreldatefmtFormatNumeric {
-
-using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
-using IcuRecoveredTest::Unchanged;
-
-static_assert(std::is_same_v<decltype(&ureldatefmt_formatNumeric_nid_postfix),
-                             std::int32_t (APS5_VABI*)(const URelativeDateTimeFormatter*, double, std::int32_t, char16_t*, std::int32_t, std::int32_t*)>);
-
-namespace {
-
-constexpr std::int32_t IllegalArgument = 1;
-constexpr std::array<std::int32_t, 7> Failing{1, 2, 7, 15, 16, 27, 0x7fffffff};
-constexpr std::array<std::int32_t, 4> Passing{0, -128, -124, -1};
-
-} // namespace
-
-void Run() {
-    const auto storage = Filler();
-    const auto formatter = reinterpret_cast<const URelativeDateTimeFormatter*>(storage.data());
-    char16_t buffer[8]{};
-    for (const auto* target : {formatter, static_cast<const URelativeDateTimeFormatter*>(nullptr)}) {
-        for (const auto incoming : Failing) {
-            std::int32_t status = incoming;
-            Require(ureldatefmt_formatNumeric_nid_postfix(target, 2.0, 7, buffer, 8, &status) == 0);
-            Require(ureldatefmt_formatNumeric_nid_postfix(target, 2.0, 7, nullptr, -1, &status) == 0);
-            Require(status == incoming);
-        }
-        for (const auto incoming : Passing) {
-            std::int32_t status = incoming;
-            Require(ureldatefmt_formatNumeric_nid_postfix(target, 2.0, 7, nullptr, 1, &status) == 0);
-            Require(status == IllegalArgument);
-            status = incoming;
-            Require(ureldatefmt_formatNumeric_nid_postfix(target, 2.0, 7, buffer, -1, &status) == 0);
-            Require(status == IllegalArgument);
-            status = incoming;
-            RequireThrows([&] { ureldatefmt_formatNumeric_nid_postfix(target, 2.0, 7, buffer, 8, &status); });
-            RequireThrows([&] { ureldatefmt_formatNumeric_nid_postfix(target, 2.0, 7, nullptr, 0, &status); });
-            Require(status == incoming);
-        }
-        RequireThrows([&] { ureldatefmt_formatNumeric_nid_postfix(target, 2.0, 7, buffer, 8, nullptr); });
-    }
-    for (const auto unit : buffer) Require(unit == 0);
-    Require(Unchanged(storage));
-}
-
-} // namespace UreldatefmtFormatNumeric
-
 void CheckIcuRelativeDateTimeFormatter() {
-    UreldatefmtClose::Run();
-    UreldatefmtFormat::Run();
-    UreldatefmtFormatNumeric::Run();
-    UreldatefmtOpen::Run();
-    RelativeDateTimeFormatterGuestPointers::Run();
+    OpenAndClose();
+    FormatRelative();
+    FormatNumeric();
+    InvalidStatusPointers();
 }

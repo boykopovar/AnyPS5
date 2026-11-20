@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
+#include <unicode/urename.h>
 #include <vector>
 
 extern "C" {
@@ -31,6 +32,13 @@ void WriteStatus(std::int32_t* status, std::int32_t previous, std::int32_t value
     const bool ok = GuestCopyOut_nid_no_patch(status, &value, sizeof(value));
     errno = savedErrno;
     if (!ok) NotImplemented_nid_no_patch(caller);
+}
+
+bool CopyResult(char16_t* destination, const char16_t* source, std::size_t units) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, units * sizeof(char16_t));
+    errno = savedErrno;
+    return copied;
 }
 
 bool Failure(std::int32_t* status, std::int32_t& value, const char* caller) {
@@ -67,7 +75,7 @@ std::int32_t Format(const URelativeDateTimeFormatter* formatter, double offset, 
     const std::int32_t written = format(formatter, offset, unit, output.data(), outputCapacity, &outputStatus);
     const auto outputUnits = written < 0 ? std::size_t{0} :
         static_cast<std::size_t>(written < outputCapacity ? written + 1 : outputCapacity);
-    if (outputUnits && !GuestCopyOut_nid_no_patch(result, output.data(), outputUnits * sizeof(char16_t)))
+    if (outputStatus <= 0 && outputUnits && !CopyResult(result, output.data(), outputUnits))
         NotImplemented_nid_no_patch(caller);
     WriteStatus(status, previous, outputStatus, caller);
     return written;

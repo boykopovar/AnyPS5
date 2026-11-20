@@ -10,10 +10,6 @@
 
 ## add Functional
 
-- [ureldatefmt_formatNumeric](../../../core/libs/prx/libSceIcu/RelativeDateTimeFormatter.cpp) implements only the early returns of ICU 68.2 [reldatefmt.cpp](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/i18n/reldatefmt.cpp) (1301-1327), the same as `ureldatefmt_format`: 0 with the status untouched for a failing `UErrorCode` (above zero), and 0 with `U_ILLEGAL_ARGUMENT_ERROR` for a result buffer and capacity that disagree, checked before the formatter is read. Valid calls, a null `UErrorCode` and every path that needs a `URelativeDateTimeFormatter` object throw `NotImplemented_nid_no_patch`. Unverified on a console. Closes when: those are implemented and compared with the console.
-
-## add Functional
-
 - [udtitvfmt_resultAsValue](../../../core/libs/prx/libSceIcu/DateIntervalFormat.cpp) implements only the early returns of ICU 68.2 ([formattedval_impl.h](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/i18n/formattedval_impl.h) 266-270, `IcuCApiHelper::validate` in [capi_helper.h](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/capi_helper.h) 52-66): null with the status untouched for a failing `UErrorCode` (above zero), and null with `U_ILLEGAL_ARGUMENT_ERROR` for a null result. A non-null result, whose magic number is read next, and a null `UErrorCode` throw `NotImplemented_nid_no_patch`. Unverified on a console. Closes when: those are implemented and compared with the console.
 
 ## add Functional
