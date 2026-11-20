@@ -34,7 +34,6 @@ static constexpr int ERROR_TIMEOUT = static_cast<int>(0x817B1079);
 static constexpr int ERROR_ABORTED = static_cast<int>(0x817B1080);
 static constexpr int ERROR_HTTP_INVALID_VALUE = static_cast<int>(0x804311FE);
 static constexpr int SSL_ERROR_INVALID_ID = static_cast<int>(0x8095F006);
-static constexpr int ERROR_NETWORK = static_cast<int>(0x80431063);
 static constexpr int ERROR_NOT_CONNECTED = static_cast<int>(0x817B1065);
 static constexpr int ERROR_UNSUPPORTED_SCHEME = static_cast<int>(0x817B1061);
 static constexpr std::uint32_t WEBSOCKET_MIN_PERIOD = 1000000;
@@ -356,7 +355,8 @@ int APS5_VABI sceHttp2ReadDataAsync(int req_id, void* data, size_t size, void* k
         ? std::optional<Http2AsyncOption>(*static_cast<const Http2AsyncOption*>(kqueue_option)) : std::nullopt;
     {
         std::lock_guard lock(state->mutex);
-        if (!state->deleted && !state->retired) ++state->inFlight[1];
+        if (state->deleted || state->retired) return ERROR_INVALID_ID;
+        ++state->inFlight[1];
     }
     std::thread([request, state, async, data, size, req_id] {
         int result = 0;
@@ -387,7 +387,8 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
         if (!request) return ERROR_INVALID_ID;
         {
             std::lock_guard lock(state->mutex);
-            if (!state->deleted && !state->retired) ++state->inFlight[0];
+            if (state->deleted || state->retired) return ERROR_INVALID_ID;
+            ++state->inFlight[0];
         }
         CompleteAsync(state, __func__, req_id, async ? &*async : nullptr, 0, request->Send(post_data, size), {});
         return 0;
@@ -398,7 +399,8 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
     if (size) body.assign(static_cast<const std::uint8_t*>(post_data), static_cast<const std::uint8_t*>(post_data) + size);
     {
         std::lock_guard lock(state->mutex);
-        if (!state->deleted && !state->retired) ++state->inFlight[0];
+        if (state->deleted || state->retired) return ERROR_INVALID_ID;
+        ++state->inFlight[0];
     }
     std::thread([request, state, async, body = std::move(body), req_id]() mutable {
         int result = 0;
