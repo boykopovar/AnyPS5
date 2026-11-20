@@ -427,8 +427,11 @@ bool CopyGuestToGuest(void* destination, const void* source, std::size_t size) {
 }
 
 bool VirtualFunction(const void* self, void*& function) {
-    const void* const* vtable = nullptr;
-    return CopyIn(&vtable, self, sizeof(vtable)) && CopyIn(&function, vtable + 2, sizeof(function));
+    constexpr std::uintptr_t entryOffset = 2 * sizeof(void*);
+    std::uintptr_t vtable = 0;
+    if (!CopyIn(&vtable, self, sizeof(vtable)) || vtable > UINTPTR_MAX - entryOffset) return false;
+    const auto* entry = reinterpret_cast<const void*>(vtable + entryOffset);
+    return Readable(entry, sizeof(function)) && CopyIn(&function, entry, sizeof(function));
 }
 
 int StreamRead(NpStreamReader* self, void* handle, void* out, std::size_t size, std::size_t* read) {

@@ -2255,6 +2255,24 @@ void TestStreamGuestPointers() {
                     static_cast<NpStreamCtx*>(unmapped), "ab", 2, &count) == NpInvalidArgument &&
                 context.bytes == 0 && errno == 71,
         "a stream write through an unmapped writer or context is refused");
+
+    GuardedPage vtablePage;
+    const auto* const* shortVtable = reinterpret_cast<const void* const*>(vtablePage.End() - 2 * sizeof(void*));
+    const auto* const* wrappingVtable = reinterpret_cast<const void* const*>(UINTPTR_MAX - sizeof(void*));
+    const NpStreamReader shortReader {shortVtable};
+    const NpStreamReader wrappingReader {wrappingVtable};
+    const NpStreamWriter shortWriter {shortVtable};
+    SumContext shortContext {{shortVtable}, 0, 0, 0};
+    Require(_ZN3sce2np12StreamReader4ReadEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(const_cast<NpStreamReader*>(&shortReader), nullptr, &context.base,
+                out.data(), 4, &count) == NpInvalidArgument &&
+                _ZN3sce2np12StreamReader4ReadEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(const_cast<NpStreamReader*>(&wrappingReader), nullptr, &context.base,
+                    out.data(), 4, &count) == NpInvalidArgument &&
+                _ZN3sce2np12StreamWriter5WriteEPNS0_6HandleEPNS0_9StreamCtxEPKvmPm(const_cast<NpStreamWriter*>(&shortWriter), nullptr, &context.base,
+                    "ab", 2, &count) == NpInvalidArgument &&
+                _ZN3sce2np12StreamReader4ReadEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(reinterpret_cast<NpStreamReader*>(&reader), nullptr,
+                    &shortContext.base, out.data(), 4, &count) == NpInvalidArgument &&
+                context.bytes == 0,
+        "a readable stream object whose vtable entry lies in an unmapped page or past the address space is refused");
 }
 
 void TestCommIdObjects() {
