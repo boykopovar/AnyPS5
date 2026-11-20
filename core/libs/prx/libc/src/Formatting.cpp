@@ -63,6 +63,7 @@ bool RequiresGuestFormatting(const char* format) {
         const std::string length(lengthStart, format);
         if (*format && LibcDetail::ApplicableLength(length, *format) != length) return true;
         if (*format && std::strchr("aAeEfFgG", *format)) return true;
+        if (*format == 'n') return true;
         if (precision && *format == 's') return true;
         if (*format) ++format;
     }
@@ -604,7 +605,7 @@ int ScanGuestStream(FileStream* stream, const char* format, NextPointer nextPoin
     if (!stream->SwitchToReading()) return EOF;
     const int result = ScanSource(StreamSource(native), format, secure, nextPointer, nextCapacity);
     stream->SyncStatus();
-    if (!secure) stream->KeepDirectoryReadError(result == -1);
+    stream->KeepDirectoryReadError(result == -1);
     return result;
 }
 
