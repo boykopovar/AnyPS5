@@ -202,7 +202,6 @@ void TestInvalidFilterModes() {
 
 void TestLodBiasBounds() {
     auto context = BaseContext();
-    // A bias past SamplerLodBiasShaderThreshold (15) is applied in the shader, so test one between the device limit and that threshold.
     context.limits.maxSamplerLodBias = 14.0f;
     auto high = BaseDescriptor();
     high.lodBias = 14.5f;

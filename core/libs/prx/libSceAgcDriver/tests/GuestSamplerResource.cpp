@@ -384,12 +384,13 @@ void RunSamplerParameterBoundsTests(const Fields& base) {
     badMin.minFilter = static_cast<VkFilter>(99);
     reject([&] { createSampler(context, badMin); }, "invalid min filter");
 
+    context.limits.maxSamplerLodBias = 14.0f;
     auto badLodHigh = valid;
-    badLodHigh.lodBias = 16.0f;
+    badLodHigh.lodBias = 14.5f;
     reject([&] { createSampler(context, badLodHigh); }, "requests a LOD bias beyond the device limit");
 
     auto badLodLow = valid;
-    badLodLow.lodBias = -16.0f;
+    badLodLow.lodBias = -14.5f;
     reject([&] { createSampler(context, badLodLow); }, "requests a LOD bias beyond the device limit");
 
     auto nanLod = valid;
