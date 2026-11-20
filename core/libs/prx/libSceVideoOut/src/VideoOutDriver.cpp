@@ -342,6 +342,7 @@ VideoOutDriver& VideoOutDriver::Get() {
 VideoOutDriver::VideoOutDriver() {
     OnMainThread([] {
         SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+        SDL_SetHint(SDL_HINT_IME_SUPPORT_EXTENDED_TEXT, "1");
 #ifdef _WIN32
         SDL_SetHintWithPriority(SDL_HINT_DIRECTINPUT_ENABLED, "0", SDL_HINT_DEFAULT);
         if (std::getenv("APS5_NO_WGI") != nullptr) SDL_SetHintWithPriority(SDL_HINT_JOYSTICK_WGI, "0", SDL_HINT_DEFAULT);
@@ -828,6 +829,10 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 while (SDL_PollEvent(&event)) {
                     if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE) windowCloseSeen = true;
                     if (event.type == SDL_QUIT) return true;
+                    if (event.type == SDL_TEXTEDITING_EXT && window.Handle() == nullptr) {
+                        SDL_free(event.editExt.text);
+                        continue;
+                    }
                     const bool padOwnedMouse = padInput->MouseModeEnabled();
                     padInput->HandleEvent(event, window);
                     if (window.Handle() != nullptr) {
