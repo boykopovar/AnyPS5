@@ -13,6 +13,7 @@
 #include <memory>
 #include <new>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 namespace NKWebKit {
@@ -367,6 +368,8 @@ struct Length {
     Length(LengthType t) : m_intValue(0), m_type(t) {}
     Length(int val, LengthType t, bool quirk = false)
         : m_intValue(val), m_type(t), m_hasQuirk(quirk), m_isFloat(false) {}
+    Length(float val, LengthType t)
+        : m_floatValue(val), m_type(t), m_isFloat(true) {}
 
     LengthType type() const { return m_type; }
     int value() const { return m_intValue; }
@@ -473,6 +476,66 @@ struct BasicComponentTransferFilterOperation : public FilterOperation {
 };
 
 static_assert(sizeof(BasicComponentTransferFilterOperation) == 24);
+
+struct TransformOperation {
+    enum class Type : std::uint8_t {
+        ScaleX,
+        ScaleY,
+        Scale,
+        TranslateX,
+        TranslateY,
+        Translate,
+        RotateX,
+        RotateY,
+        Rotate,
+        SkewX,
+        SkewY,
+        Skew,
+        Matrix,
+        ScaleZ,
+        Scale3D,
+        TranslateZ,
+        Translate3D,
+        RotateZ,
+        Rotate3D,
+        Matrix3D,
+        Perspective,
+        Identity,
+        None
+    };
+
+    using OperationType = Type;
+
+    const void* m_vptr{nullptr};
+    mutable std::uint32_t m_refCount{1};
+    Type m_type{Type::None};
+    std::uint8_t m_pad[3]{0, 0, 0};
+
+    Type type() const { return m_type; }
+    bool isSameType(const TransformOperation& other) const { return m_type == other.m_type; }
+    void ref() const { ++m_refCount; }
+    void deref() const;
+};
+
+struct TranslateTransformOperation : TransformOperation {
+    Length m_x;
+    Length m_y;
+    Length m_z;
+};
+
+struct TransformOperationRef {
+    TransformOperation* m_ptr{nullptr};
+
+    TransformOperationRef() = default;
+    TransformOperationRef(TransformOperation* ptr) : m_ptr(ptr) {}
+};
+
+static_assert(sizeof(TransformOperation) == 16);
+static_assert(offsetof(TransformOperation, m_refCount) == 8);
+static_assert(offsetof(TransformOperation, m_type) == 12);
+static_assert(sizeof(TranslateTransformOperation) == 40);
+static_assert(sizeof(TransformOperationRef) == 8);
+static_assert(std::is_trivially_copyable_v<TransformOperationRef>);
 
 class Region {
 public:
