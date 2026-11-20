@@ -439,8 +439,22 @@ void CheckTagStatus() {
 
     std::memset(buffer, 'Z', sizeof(buffer));
     status = 0;
-    if (uloc_toLanguageTag("en@foo", buffer, sizeof(buffer), 0, &status) != 2) TagFail("en@foo", "malformed keyword length");
-    if (status != 3 || std::memcmp(buffer, "enZ", 3) != 0) TagFail("en@foo", "malformed keyword status");
+    if (uloc_toLanguageTag("en@a=b;c", buffer, sizeof(buffer), 0, &status) != 0) TagFail("en@a=b;c", "malformed keyword length");
+    if (status != kIllegalArgument || buffer[0] != 'Z') TagFail("en@a=b;c", "malformed keyword status");
+
+    char variant[32];
+    std::memset(variant, 'Z', sizeof(variant));
+    status = 0;
+    if (uloc_toLanguageTag("en@foo", variant, sizeof(variant), 0, &status) != 17) TagFail("en@foo", "POSIX variant length");
+    if (status != 0 || std::strcmp(variant, "en-x-lvariant-foo") != 0) TagFail("en@foo", "POSIX variant output");
+    std::memset(variant, 'Z', sizeof(variant));
+    status = 0;
+    if (uloc_toLanguageTag("en_GB@EURO", variant, sizeof(variant), 0, &status) != 21) TagFail("en_GB@EURO", "POSIX variant length");
+    if (status != 0 || std::strcmp(variant, "en-GB-x-lvariant-euro") != 0) TagFail("en_GB@EURO", "POSIX variant output");
+    std::memset(variant, 'Z', sizeof(variant));
+    status = 0;
+    if (uloc_toLanguageTag("en@foo", variant, sizeof(variant), 1, &status) != 2) TagFail("en@foo", "strict POSIX variant length");
+    if (status != kIllegalArgument || std::memcmp(variant, "enZ", 3) != 0) TagFail("en@foo", "strict POSIX variant output");
 
     status = 0;
     try {
