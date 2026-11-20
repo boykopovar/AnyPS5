@@ -242,6 +242,23 @@ static void Properties() {
     pair.Compare();
 }
 
+struct UnicodeUserData {
+    int calls = 0;
+    int destroys = 0;
+};
+
+static hb_unicode_general_category_t TrackingGeneralCategory(hb_unicode_funcs_t*, hb_codepoint_t unicode, void* userData) {
+    auto* data = static_cast<UnicodeUserData*>(userData);
+    ++data->calls;
+    if (unicode == 'A') return HB_UNICODE_GENERAL_CATEGORY_UPPERCASE_LETTER;
+    return HB_UNICODE_GENERAL_CATEGORY_OTHER_LETTER;
+}
+
+static void DestroyUnicodeUserData(void* userData) {
+    auto* data = static_cast<UnicodeUserData*>(userData);
+    ++data->destroys;
+}
+
 static void Lifetime() {
     hb_buffer_destroy_nid_postfix(nullptr);
     BufferPair first;
@@ -280,6 +297,67 @@ static void Lifetime() {
     first.Compare(true);
     const auto* resetPositions = hb_buffer_get_glyph_positions_nid_postfix(first.guest, nullptr);
     Require(resetPositions[0].x_advance == 0 && resetPositions[0].y_offset == 0);
+
+    UnicodeUserData guestTracker;
+    UnicodeUserData nativeTracker;
+    auto* guestCustom = hb_unicode_funcs_create(hb_unicode_funcs_get_default());
+    hb_unicode_funcs_set_general_category_func(guestCustom, TrackingGeneralCategory, &guestTracker, DestroyUnicodeUserData);
+    hb_unicode_funcs_make_immutable(guestCustom);
+
+    auto* nativeCustom = hb_unicode_funcs_create(hb_unicode_funcs_get_default());
+    hb_unicode_funcs_set_general_category_func(nativeCustom, TrackingGeneralCategory, &nativeTracker, DestroyUnicodeUserData);
+    hb_unicode_funcs_make_immutable(nativeCustom);
+
+    auto* g1 = hb_buffer_create_nid_postfix();
+    auto* g2 = hb_buffer_create_nid_postfix();
+    auto* n1 = hb_buffer_create();
+    auto* n2 = hb_buffer_create();
+
+    auto* defaultGuestFuncs = hb_buffer_get_unicode_funcs(g1);
+    auto* defaultNativeFuncs = hb_buffer_get_unicode_funcs(n1);
+
+    hb_buffer_set_unicode_funcs_nid_postfix(g1, guestCustom);
+    hb_buffer_set_unicode_funcs_nid_postfix(g2, guestCustom);
+    hb_buffer_set_unicode_funcs(n1, nativeCustom);
+    hb_buffer_set_unicode_funcs(n2, nativeCustom);
+
+    Require(hb_buffer_get_unicode_funcs(g1) == guestCustom);
+    Require(hb_buffer_get_unicode_funcs(g2) == guestCustom);
+    Require(hb_buffer_get_unicode_funcs(n1) == nativeCustom);
+    Require(hb_buffer_get_unicode_funcs(n2) == nativeCustom);
+
+    hb_unicode_funcs_destroy(guestCustom);
+    hb_unicode_funcs_destroy(nativeCustom);
+    Require(guestTracker.destroys == 0);
+    Require(nativeTracker.destroys == 0);
+
+    Require(hb_unicode_general_category(hb_buffer_get_unicode_funcs(g1), 'A') == HB_UNICODE_GENERAL_CATEGORY_UPPERCASE_LETTER);
+    Require(hb_unicode_general_category(hb_buffer_get_unicode_funcs(n1), 'A') == HB_UNICODE_GENERAL_CATEGORY_UPPERCASE_LETTER);
+    Require(guestTracker.calls > 0);
+    Require(nativeTracker.calls > 0);
+    Require(guestTracker.calls == nativeTracker.calls);
+
+    hb_buffer_reset_nid_postfix(g1);
+    hb_buffer_reset(n1);
+    Require(hb_buffer_get_unicode_funcs(g1) != guestCustom);
+    Require(hb_buffer_get_unicode_funcs(n1) != nativeCustom);
+    Require(hb_buffer_get_unicode_funcs(g1) == defaultGuestFuncs);
+    Require(hb_buffer_get_unicode_funcs(n1) == defaultNativeFuncs);
+
+    Require(hb_buffer_get_unicode_funcs(g2) == guestCustom);
+    Require(hb_buffer_get_unicode_funcs(n2) == nativeCustom);
+    Require(guestTracker.destroys == 0);
+    Require(nativeTracker.destroys == 0);
+
+    hb_buffer_destroy_nid_postfix(g2);
+    hb_buffer_destroy(n2);
+    Require(guestTracker.destroys == 1);
+    Require(nativeTracker.destroys == 1);
+
+    hb_buffer_destroy_nid_postfix(g1);
+    hb_buffer_destroy(n1);
+    Require(guestTracker.destroys == 1);
+    Require(nativeTracker.destroys == 1);
 }
 
 int main(int argc, char** argv) {

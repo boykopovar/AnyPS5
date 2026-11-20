@@ -202,6 +202,8 @@ void InvalidArguments() {
     Rejects([&] { utf8_back1SafeBody_nid_postfix(nullptr, 0, 0); });
     Rejects([&] { utf8_appendCharSafeBody_nid_postfix(nullptr, 0, 4, 0x10000, nullptr); });
     Rejects([&] { utf8_appendCharSafeBody_nid_postfix(text.data(), -1, 4, 0x80, nullptr); });
+    Require(utf8_appendCharSafeBody_nid_postfix(text.data(), 0, 4, 0x10000, reinterpret_cast<std::int8_t*>(0x10)) == 4);
+    Rejects([&] { utf8_appendCharSafeBody_nid_postfix(text.data(), 0, 3, 0x10000, reinterpret_cast<std::int8_t*>(0x10)); });
     index = -1;
     Rejects([&] { utf8_nextCharSafeBody_nid_postfix(text.data(), &index, 4, 0xf0, -1); });
     index = 3;
