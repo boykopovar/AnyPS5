@@ -399,7 +399,13 @@ int APS5_VABI scePadOpenExt(int userId, int type, int index, const void* param) 
  return PAD_ERROR_DEVICE_NOT_CONNECTED;
 }
 
-int APS5_VABI scePadReadExt(std::int32_t handle, PadDataExtended* data, std::int32_t count) { NotImplemented_nid_no_patch(__func__); return 0; }
+int APS5_VABI scePadReadExt(std::int32_t handle, PadDataExtended* data, std::int32_t count) {
+	if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+	if (data == nullptr || count < 1 || count > 64) return PAD_ERROR_INVALID_ARG;
+	if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+	NotImplemented_nid_no_patch(__func__);
+	return 0;
+}
 
 int APS5_VABI scePadGetFeatureReport(std::int32_t handle, std::uint8_t reportId, void* data, std::size_t size) { NotImplemented_nid_no_patch(__func__); return 0; }
 

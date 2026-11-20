@@ -199,12 +199,17 @@ static void CheckTouchContact(int handle) {
     Require(scePadReadState(handle, reinterpret_cast<PadData*>(std::uintptr_t{0x10})) == PAD_ERROR_INVALID_ARG);
     Require(errno == 71);
     Require(scePadRead_nid_postfix(handle, nullptr, 1) == PAD_ERROR_INVALID_ARG);
+    Require(scePadReadExt(handle, nullptr, 1) == PAD_ERROR_INVALID_ARG);
+    Require(scePadReadExt(handle, reinterpret_cast<PadDataExtended*>(std::uintptr_t{0x10}), 0) == PAD_ERROR_INVALID_ARG);
+    Require(scePadReadExt(handle, reinterpret_cast<PadDataExtended*>(std::uintptr_t{0x10}), 65) == PAD_ERROR_INVALID_ARG);
     for (const int invalid : {-9999, -100, -2, -1, 0, handle + 1, 9999}) {
         Require(scePadReadState(invalid, nullptr) == PAD_ERROR_INVALID_ARG);
         Require(scePadRead_nid_postfix(invalid, nullptr, 1) == PAD_ERROR_INVALID_ARG);
+        Require(scePadReadExt(invalid, nullptr, 1) == PAD_ERROR_INVALID_ARG);
         PadData invalidData{};
         Require(scePadReadState(invalid, &invalidData) == PAD_ERROR_INVALID_HANDLE);
         Require(scePadRead_nid_postfix(invalid, &invalidData, 1) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadReadExt(invalid, reinterpret_cast<PadDataExtended*>(std::uintptr_t{0x10}), 1) == PAD_ERROR_INVALID_HANDLE);
     }
     PadInputState touch;
     touch.buttons = static_cast<std::uint32_t>(Pad::PadButton::TouchPad);
@@ -1807,6 +1812,7 @@ int main() {
     Require(scePadRead_nid_postfix(earlyPad, &earlyPadData, 1) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadReadState(earlyPad, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadReadState(0x999, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadReadExt(earlyPad, nullptr, 1) == PAD_ERROR_NOT_INITIALIZED);
     for (const int earlyHandle : {earlyPad, 0x999}) {
         std::memset(&earlyPadData, 0x5a, sizeof(earlyPadData));
         Require(scePadReadState(earlyHandle, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED && HoldsDefaults(earlyPadData));
