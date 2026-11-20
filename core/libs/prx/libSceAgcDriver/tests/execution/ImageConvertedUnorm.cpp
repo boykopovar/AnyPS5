@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
@@ -861,6 +862,7 @@ bool SameDepth24(std::uint32_t bits, std::uint32_t depth) {
 }
 
 void CheckDepth24(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
+    const bool usesFloatFallback = AgcDriver::Graphics::SampledTextureFormat(device.graphicsContext(), 141u) == VK_FORMAT_R32_SFLOAT;
     const auto depthTexel = [](std::uint32_t index) {
         constexpr auto firstPower = LoadWidth / 2u;
         return index >= firstPower && index < firstPower + 24u ? 1u << (index - firstPower) : LoadTexel(index);
@@ -872,7 +874,7 @@ void CheckDepth24(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     Run(device, LoadXyzw, TextureDescriptor(texels, 141u, SwizzleXYZW, LoadWidth), {}, LoadGroups);
     for (std::uint32_t index = 0; index < LoadWidth; ++index) {
         const auto depth = depthTexel(index) & 0xffffffu;
-        if (std::getenv("APS5_NO_D24S8") != nullptr) {
+        if (usesFloatFallback) {
             const auto expected = static_cast<float>(static_cast<double>(depth) / 16777215.0);
             Require(Output[index * 4u] == std::bit_cast<std::uint32_t>(expected), "R32_SFLOAT fallback rounded depth incorrectly for " + Hex(depth));
         }
