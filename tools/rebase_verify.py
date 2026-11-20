@@ -20,7 +20,7 @@ def default_onto(root, name=None):
     if name:
         return name
     for candidate in CANDIDATES:
-        if subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}"],
+        if subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "--quiet", f"{candidate}^0"],
                           capture_output=True).returncode == 0:
             return candidate
     raise ValueError(f"no base branch found ({', '.join(CANDIDATES)}); fetch the upstream remote or pass --onto")
@@ -39,14 +39,14 @@ def changed_lines(root, base, tip):
     added = collections.defaultdict(collections.Counter)
     deleted = collections.defaultdict(collections.Counter)
     old_path, new_path, in_hunk = None, None, False
-    for line in git(root, "diff", "-U0", "--no-renames", "--no-color", "--no-ext-diff", "--no-textconv",
-                    "--src-prefix=a/", "--dst-prefix=b/", base, tip).splitlines():
+    for line in git(root, "diff", "-U0", "--no-renames", "--no-relative", "--no-color", "--no-ext-diff", "--no-textconv",
+                    "--src-prefix=a/", "--dst-prefix=b/", base, tip).split("\n"):
         if line.startswith("diff --git "):
             old_path, new_path, in_hunk = None, None, False
         elif not in_hunk and line.startswith("--- "):
-            old_path = line[6:] if line.startswith("--- a/") else None
+            old_path = line[6:].removesuffix("\t") if line.startswith("--- a/") else None
         elif not in_hunk and line.startswith("+++ "):
-            new_path = line[6:] if line.startswith("+++ b/") else None
+            new_path = line[6:].removesuffix("\t") if line.startswith("+++ b/") else None
         elif line.startswith("@@"):
             in_hunk = True
         elif in_hunk and line.startswith("+") and new_path is not None:

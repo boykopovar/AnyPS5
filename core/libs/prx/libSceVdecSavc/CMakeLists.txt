@@ -1,0 +1,15 @@
+add_library(libSceVdecSavc SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceVdecSavc PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceVdecSavc)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_sdec_query_memory_tests ${LIBS_INCLUDE_DIR}/tests/GuestSdecQueryMemory.cpp)
+    target_include_directories(guest_sdec_query_memory_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sdec_query_memory_tests PRIVATE libSceVdecSavc libc)
+    configure_windows_unwind(guest_sdec_query_memory_tests)
+    add_test(NAME guest_sdec_query_memory COMMAND guest_sdec_query_memory_tests)
+    if(WIN32)
+        set_tests_properties(guest_sdec_query_memory PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVdecSavc>")
+    endif()
+endif()

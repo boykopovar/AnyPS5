@@ -76,6 +76,7 @@ enum class IrOpcode : std::uint16_t {
     UnlinkedCall,
     WindowLaneGuard,
     DescriptorFault,
+    SplitStateGuard,
     GetUserData,
     GetShaderBase,
     ShaderClock,
@@ -99,6 +100,8 @@ enum class IrOpcode : std::uint16_t {
     SetVectorRegister,
     LoadVectorWindow,
     StoreVectorWindow,
+    LoadSplitState,
+    StoreSplitState,
     GetGotoVariable,
     SetGotoVariable,
     GetScc,
@@ -497,6 +500,7 @@ enum class IrOpcode : std::uint16_t {
     InstPrefetch,
     SelectU32,
     ImageBvhIntersectRay,
+    NanPropagateF32,
     Count
 };
 

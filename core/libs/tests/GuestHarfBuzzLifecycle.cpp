@@ -7,6 +7,8 @@
 
 #include <array>
 #include <bit>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -14,6 +16,7 @@
 #include <filesystem>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -144,6 +147,34 @@ static void CheckBlobBoundaries(const Api& api) {
     try { api.blob(nullptr, 1, HB_MEMORY_MODE_DUPLICATE, &owner, Destroy); }
     catch (const std::exception&) { threw = true; }
     Require(threw && owner.destroyed == 0);
+}
+
+static void CheckSubBlobLifetime(const Api& api) {
+    std::array<char, 8> data{'s', 'u', 'b', '\0', 'b', 'l', 'o', 'b'};
+    const auto original = data;
+    Owner owner{0, &api, true};
+    auto* parent = api.blob(data.data(), data.size(), HB_MEMORY_MODE_READONLY, &owner, Destroy);
+    Require(parent != nullptr && owner.destroyed == 0);
+    CheckData(parent, original.data(), original.size());
+
+    auto* first = hb_blob_create_sub_blob(parent, 1, 4);
+    auto* second = hb_blob_create_sub_blob(parent, 5, 10);
+    Require(first != nullptr && second != nullptr && first != parent && second != parent && first != second);
+    CheckData(first, original.data() + 1, 4);
+    CheckData(second, original.data() + 5, 3);
+    Require(owner.destroyed == 0);
+
+    hb_blob_destroy(parent);
+    Require(owner.destroyed == 0);
+    CheckData(first, original.data() + 1, 4);
+    CheckData(second, original.data() + 5, 3);
+
+    hb_blob_destroy(first);
+    Require(owner.destroyed == 0);
+    CheckData(second, original.data() + 5, 3);
+
+    hb_blob_destroy(second);
+    Require(owner.destroyed == 1);
 }
 
 struct FaceState {
@@ -291,6 +322,18 @@ static void CheckCachedFace(const Api& api, const FreeTypeApi& ft) {
         catch (const std::exception&) { threw = true; }
         Require(threw);
     }
+
+    auto rejectsRuntime = [](auto&& call) {
+        errno = 71;
+        bool threw = false;
+        try { call(); }
+        catch (const std::runtime_error&) { threw = true; }
+        Require(threw && errno == 71);
+    };
+    rejectsRuntime([&] { api.cachedFace(reinterpret_cast<FreeType::GuestFaceRec*>(std::uintptr_t{0x10})); });
+    FreeType::GuestFaceRec badOwner{};
+    badOwner.internal = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    rejectsRuntime([&] { api.cachedFace(&badOwner); });
 }
 
 static auto OpenModule(const char* path) {
@@ -326,6 +369,7 @@ int main(int argc, char** argv) try {
         Import<decltype(FreeTypeApi::setPixelSizes)>(freeType, patched ? "lJxMIwj81SQ" : "FT_Set_Pixel_Sizes_nid_postfix")};
     CheckBlobModes(api);
     CheckBlobBoundaries(api);
+    CheckSubBlobLifetime(api);
     CheckFaceLifetime(api);
     CheckEmptyFaces(api);
     CheckCachedFace(api, ft);

@@ -212,6 +212,17 @@ std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std:
         const auto group = EmitBuiltinU32(state, StageInputKind::WorkgroupId, component);
         return EmitBinaryU32(state, spv::OpIAdd, local, EmitBinaryU32(state, spv::OpIMul, group, ConstantU32(state, size)));
     }
+    if (state.splitState && (kind == StageInputKind::WorkgroupId || kind == StageInputKind::GlobalInvocationId)) {
+        const auto counts = [&](std::uint32_t axis) { return LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupCountDword + axis)); };
+        const auto linear = EmitAddU32(state, LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupBaseDword)), EmitInputComponentU32(state, StageInputKind::WorkgroupId, 0u));
+        auto divided = linear;
+        for (std::uint32_t axis = 0; axis < component; ++axis) divided = EmitBinaryU32(state, spv::OpUDiv, divided, counts(axis));
+        const auto group = component == 2u ? divided : EmitBinaryU32(state, spv::OpUMod, divided, counts(component));
+        if (kind == StageInputKind::WorkgroupId) return group;
+        const auto local = WorkgroupLocalSize(state, *ShaderWorkgroupInput(state));
+        const auto raw = EmitBinaryU32(state, spv::OpISub, EmitInputComponentU32(state, kind, component), EmitBinaryU32(state, spv::OpIMul, EmitInputComponentU32(state, StageInputKind::WorkgroupId, component), ConstantU32(state, local[component])));
+        return EmitAddU32(state, raw, EmitBinaryU32(state, spv::OpIMul, group, ConstantU32(state, local[component])));
+    }
     if (StageOf(state) == IrShaderStage::Compute && (kind == StageInputKind::WorkgroupId || kind == StageInputKind::GlobalInvocationId)) {
         const auto offset = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::WorkgroupOffsetBase + component, 0u);
         const auto value = EmitInputComponentU32(state, kind, component);
@@ -458,7 +469,7 @@ std::uint32_t PackExport(SpirvEmitterState& state, IrBufferFormat format, std::u
     return packed;
 }
 
-std::uint32_t SelectExportPacking(SpirvEmitterState& state, std::uint32_t target, std::uint32_t color, bool half) {
+std::uint32_t SelectExportPacking(SpirvEmitterState& state, std::uint32_t target, std::uint32_t color, std::uint32_t mode) {
     const auto packing = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ExportPackingBase + target, static_cast<std::uint32_t>(ColorExportPacking::None));
     const auto unorm = EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::Unorm10_11_11));
     const auto floating = EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::Float11_11_10));
@@ -466,15 +477,21 @@ std::uint32_t SelectExportPacking(SpirvEmitterState& state, std::uint32_t target
     const auto wide = Select(state, TypeU32(state), floating, PackExport(state, IrBufferFormat::Format10_11_11Float, color), PackExport(state, IrBufferFormat::Format11_11_10UNorm, color));
     const auto word = Select(state, TypeU32(state), small, PackExport(state, IrBufferFormat::Format4_4_4_4UNorm, color), wide);
     const auto packed = Binary(state, spv::OpLogicalOr, TypeBool(state), Binary(state, spv::OpLogicalOr, TypeBool(state), unorm, floating), small);
-    const auto limit = half ? Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::UintClamp8)), ConstantU32(state, 0xffu), Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::UintClamp16)), ConstantU32(state, 0xffffu), ConstantU32(state, 0xffffffffu))) : 0u;
+    const bool clamp = mode == 2u || mode == 4u || mode == 9u;
+    const bool mask = mode == 1u;
+    const auto eight = clamp ? ColorExportPacking::UintClamp8 : ColorExportPacking::UintMask8;
+    const auto sixteen = clamp ? ColorExportPacking::UintClamp16 : ColorExportPacking::UintMask16;
+    const auto limit = clamp || mask ? Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(eight)), ConstantU32(state, 0xffu), Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(sixteen)), ConstantU32(state, 0xffffu), ConstantU32(state, 0xffffffffu))) : 0u;
     std::array<std::uint32_t, 4> components{};
     for (std::uint32_t component = 0; component < components.size(); ++component) {
         auto unpacked = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), unpacked, color, component);
-        if (half) {
+        if (clamp) {
             const auto clamped = state.module.AllocateId();
             state.module.AddFunction(spv::OpExtInst, TypeU32(state), clamped, GlslStd450(state), GLSLstd450UMin, Unary(state, spv::OpBitcast, TypeU32(state), unpacked), limit);
             unpacked = Unary(state, spv::OpBitcast, TypeF32(state), clamped);
+        } else if (mask) {
+            unpacked = Unary(state, spv::OpBitcast, TypeF32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), Unary(state, spv::OpBitcast, TypeU32(state), unpacked), limit));
         }
         components[component] = Select(state, TypeF32(state), packed, component == 0u ? Unary(state, spv::OpBitcast, TypeF32(state), word) : ConstantF32(state, 0u), unpacked);
     }
@@ -880,7 +897,8 @@ void EmitAuxPositionExport(SpirvValueEmitContext& ctx, std::uint32_t data, const
             if (output.viewport) {
                 const auto viewport = state.module.AllocateId();
                 state.module.AddFunction(spv::OpBitFieldUExtract, TypeU32(state), viewport, raw, ConstantU32(state, 16u), ConstantU32(state, 4u));
-                state.module.AddFunction(spv::OpStore, state.viewportIndexVariable, viewport);
+                const auto pointer = state.program.Resources().stage == IrShaderStage::Mesh ? MeshOutputPointer(state, StageOutputKind::ViewportIndex) : state.viewportIndexVariable;
+                state.module.AddFunction(spv::OpStore, pointer, viewport);
             }
             continue;
         }
@@ -1080,8 +1098,12 @@ bool IsMeshDistance(StageOutputKind kind) {
     return kind == StageOutputKind::ClipDistance || kind == StageOutputKind::CullDistance;
 }
 
+bool IsMeshPrimitiveOutput(StageOutputKind kind) {
+    return kind == StageOutputKind::Layer || kind == StageOutputKind::ViewportIndex;
+}
+
 std::uint32_t MeshOutputType(SpirvEmitterState& state, StageOutputKind kind) {
-    if (kind == StageOutputKind::Layer) {
+    if (IsMeshPrimitiveOutput(kind)) {
         return TypeU32(state);
     }
     return IsMeshDistance(kind) || kind == StageOutputKind::PointSize ? TypeF32(state) : TypeF32Vector(state, 4u);
@@ -1291,22 +1313,23 @@ void DefineMeshOutputs(SpirvEmitterState& state) {
             output.meshDataVariable = MeshArray(state, spv::StorageClassPrivate, TypeF32(state), state.laneCount);
             continue;
         }
-        if (output.kind != StageOutputKind::Position && output.kind != StageOutputKind::Parameter && output.kind != StageOutputKind::Layer && output.kind != StageOutputKind::PointSize) {
+        if (output.kind != StageOutputKind::Position && output.kind != StageOutputKind::Parameter && !IsMeshPrimitiveOutput(output.kind) && output.kind != StageOutputKind::PointSize) {
             throw std::runtime_error("unsupported mesh output kind");
         }
         const auto type = MeshOutputType(state, output.kind);
-        const bool shared = output.kind == StageOutputKind::Layer;
+        const bool shared = IsMeshPrimitiveOutput(output.kind);
         output.meshDataVariable = MeshArray(state, shared ? spv::StorageClassWorkgroup : spv::StorageClassPrivate, type, shared ? mesh.maxVertices : state.laneCount);
         if (state.meshBarycentricVertex && output.kind == StageOutputKind::Parameter && std::ranges::find(state.meshExportedLocations, output.location) == state.meshExportedLocations.end()) {
             continue;
         }
-        const auto layerBlock = output.kind == StageOutputKind::Layer ? state.module.DecoratedType(spv::OpTypeStruct, {{spv::OpMemberDecorate, {0u, spv::DecorationBuiltIn, spv::BuiltInLayer}}, {spv::OpMemberDecorate, {0u, spv::DecorationPerPrimitiveEXT}}, {spv::OpDecorate, {spv::DecorationBlock}}}, type) : 0u;
-        output.variableId = MeshArray(state, spv::StorageClassOutput, output.kind == StageOutputKind::Layer ? layerBlock : type, output.kind == StageOutputKind::Layer ? mesh.maxPrimitives : mesh.maxVertices);
+        const auto primitiveBuiltIn = output.kind == StageOutputKind::Layer ? spv::BuiltInLayer : spv::BuiltInViewportIndex;
+        const auto primitiveBlock = shared ? state.module.DecoratedType(spv::OpTypeStruct, {{spv::OpMemberDecorate, {0u, spv::DecorationBuiltIn, static_cast<std::uint32_t>(primitiveBuiltIn)}}, {spv::OpMemberDecorate, {0u, spv::DecorationPerPrimitiveEXT}}, {spv::OpDecorate, {spv::DecorationBlock}}}, type) : 0u;
+        output.variableId = MeshArray(state, spv::StorageClassOutput, shared ? primitiveBlock : type, shared ? mesh.maxPrimitives : mesh.maxVertices);
         state.interfaceVariables.push_back(output.variableId);
         state.module.AddName(output.variableId, output.debugName);
         if (output.kind == StageOutputKind::Parameter) {
             state.module.AddAnnotation(spv::OpDecorate, output.variableId, spv::DecorationLocation, output.location);
-        } else if (output.kind != StageOutputKind::Layer) {
+        } else if (!shared) {
             state.module.AddAnnotation(spv::OpDecorate, output.variableId, spv::DecorationBuiltIn, output.kind == StageOutputKind::PointSize ? spv::BuiltInPointSize : spv::BuiltInPosition);
         }
         if (output.kind == StageOutputKind::Position) {
@@ -1500,7 +1523,7 @@ void EmitMeshEntryPoint(SpirvEmitterState& state) {
         state.module.AddFunction(spv::OpULessThan, TypeBool(state), isVertex, index, vertices);
         EmitIfCondition(state, isVertex, [&]() {
             for (const auto& output : state.outputs) {
-                if (output.kind == StageOutputKind::Layer || output.variableId == 0u) {
+                if (IsMeshPrimitiveOutput(output.kind) || output.variableId == 0u) {
                     continue;
                 }
                 const auto type = MeshOutputType(state, output.kind);
@@ -1558,6 +1581,15 @@ void EmitMeshEntryPoint(SpirvEmitterState& state) {
             const auto culled = state.module.AllocateId();
             state.module.AddFunction(spv::OpINotEqual, TypeBool(state), culled, nullBit, ConstantU32(state, 0u));
             auto decision = culled;
+            for (const auto& output : state.outputs) {
+                if (output.kind != StageOutputKind::ViewportIndex) {
+                    continue;
+                }
+                const auto viewport = MeshLoad(state, output.meshDataVariable, spv::StorageClassWorkgroup, TypeU32(state), vertex.at(state.inputInfo.vertex->mesh.provokingVertex));
+                const auto pointer = state.module.AllocateId();
+                state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassOutput, TypeU32(state)), pointer, output.variableId, index, ConstantU32(state, 0u));
+                state.module.AddFunction(spv::OpStore, pointer, viewport);
+            }
             for (const auto& output : state.outputs) {
                 if (output.kind != StageOutputKind::Layer) {
                     continue;
@@ -1645,7 +1677,7 @@ std::uint32_t MeshOutputPointer(SpirvEmitterState& state, StageOutputKind kind, 
     if (output == state.outputs.end()) {
         throw std::runtime_error("mesh export has no output binding");
     }
-    const bool shared = kind == StageOutputKind::Layer;
+    const bool shared = IsMeshPrimitiveOutput(kind);
     return MeshElement(state, output->meshDataVariable, shared ? spv::StorageClassWorkgroup : spv::StorageClassPrivate, MeshOutputType(state, kind), shared ? EmitLocalInvocationIndex(state) : ConstantU32(state, state.laneHalf));
 }
 
@@ -1955,6 +1987,20 @@ void EmitProgram(SpirvEmitterState& state) {
         if (lane.scratchU32Variable != 0u) {
             state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, TypeU32(state)), lane.scratchU32Variable, spv::StorageClassFunction);
         }
+    }
+    if (state.splitState) {
+        const auto count = [&](std::uint32_t axis) { return LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupCountDword + axis)); };
+        const auto groups = EmitBinaryU32(state, spv::OpIMul, EmitBinaryU32(state, spv::OpIMul, count(0u), count(1u)), count(2u));
+        const auto linear = EmitAddU32(state, LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupBaseDword)), EmitInputComponentU32(state, StageInputKind::WorkgroupId, 0u));
+        const auto outside = state.module.AllocateId();
+        state.module.AddFunction(spv::OpUGreaterThanEqual, TypeBool(state), outside, linear, groups);
+        const auto stop = state.module.AllocateId();
+        const auto run = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelectionMerge, run, spv::SelectionControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, outside, stop, run);
+        EmitLabel(state, stop);
+        state.module.AddFunction(spv::OpReturn);
+        EmitLabel(state, run);
     }
     EmitLdsBufferBase(state);
     EmitScratchPoolAcquire(state);
@@ -2388,7 +2434,7 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
                 if (uintOutput || mode == 5u || mode == 6u) FailEmit(std::string(merge->blend.enabled ? "blending into an unclamped normalized color target" : "a partial write of a packed color target") + " cannot take an integer or 16-bit normalized export");
                 MergeColorTarget(state, static_cast<std::size_t>(merge - merges.begin()), value);
             }
-            if (!uintOutput && mode != 5u && mode != 6u) value = SelectExportPacking(state, exp.index, value, mode == 4u);
+            if (!uintOutput && mode != 5u && mode != 6u) value = SelectExportPacking(state, exp.index, value, mode);
         }
         if (exp.kind == ExportTargetKind::Position) {
             if (state.inputInfo.vertex == nullptr) {

@@ -55,13 +55,14 @@ bool IsRuntimeSelect(IrOpcode opcode) {
     return opcode == IrOpcode::SelectU1 || opcode == IrOpcode::SelectU32 || opcode == IrOpcode::SelectF32;
 }
 
-bool ActiveMaskImplies(const IrValue* mask, const IrValue* condition) {
+bool ActiveMaskImplies(const IrResourcePlan& program, const IrValue* mask, const IrValue* condition) {
     if (mask == nullptr || condition == nullptr) return false;
     mask = mask->Resolve();
     condition = condition->Resolve();
     if (mask == condition) return true;
+    if (EquivalentValue(program, mask, condition)) return true;
     if (mask->Opcode() == IrOpcode::LogicalAnd && mask->ArgumentCount() == 2) {
-        return ActiveMaskImplies(mask->Argument(0), condition) || ActiveMaskImplies(mask->Argument(1), condition);
+        return ActiveMaskImplies(program, mask->Argument(0), condition) || ActiveMaskImplies(program, mask->Argument(1), condition);
     }
     return false;
 }
@@ -119,6 +120,7 @@ bool IsRuntimeUniformOp(IrOpcode opcode) {
         case IrOpcode::FPOrdGreaterThanEqual32:
         case IrOpcode::FPIsNan32:
         case IrOpcode::FPMul32:
+        case IrOpcode::NanPropagateF32:
         case IrOpcode::FPTrunc32: return true;
         default: return false;
     }
