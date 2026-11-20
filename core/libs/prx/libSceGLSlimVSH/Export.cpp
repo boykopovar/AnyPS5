@@ -337,6 +337,10 @@ int APS5_VABI sceSlimglIPCEnd() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+int APS5_VABI sceSlimglSupportServerProcess() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceSlimglIPCSetup() {
     return 0;
 }
