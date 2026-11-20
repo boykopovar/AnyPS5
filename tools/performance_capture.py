@@ -5,6 +5,7 @@ import os
 import re
 import stat
 import zlib
+from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -208,6 +209,14 @@ def validate_trace(raw, summary, process):
         raise ValueError("native trace present times differ from its summary window")
     if trace.losses and not summary["trace_dropped"]:
         raise ValueError("native trace reports event losses absent from its summary")
+    if "trace_dropped_threads" in summary:
+        lost_by_name = Counter()
+        for tid, _, lost in trace.losses:
+            lost_by_name[trace.name(tid)] += lost
+        reported = {name: thread["events_lost"] for name, thread in summary["trace_dropped_threads"].items()
+                    if thread.get("events_lost")}
+        if lost_by_name != reported:
+            raise ValueError("native trace event loss counts differ from its summary")
     return trace
 
 
