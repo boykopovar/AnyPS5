@@ -107,11 +107,11 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
     auto module = LoadLibraryA(argv[1]);
     Require(module != nullptr, "load library");
-    report = reinterpret_cast<Report>(GetProcAddress(module, "_ZSt6_ThrowRKSt9exception"));
+    report = reinterpret_cast<Report>(GetProcAddress(module, "libSceLibcInternalInventory_245_nid_no_patch"));
 #else
     auto* module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
     Require(module != nullptr, "load library");
-    report = reinterpret_cast<Report>(dlsym(module, "_ZSt6_ThrowRKSt9exception"));
+    report = reinterpret_cast<Report>(dlsym(module, "libSceLibcInternalInventory_245_nid_no_patch"));
 #endif
     Require(report != nullptr, "resolve exception report entry");
     Reject(nullptr);

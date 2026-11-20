@@ -26,7 +26,7 @@ void RequireAbort(const char* message, const char* expected) {
     if (child == 0) {
         close(pipeEnds[0]);
         dup2(pipeEnds[1], 2);
-        _ZSt10_Rng_abortPKc(message);
+        libSceLibcInternalInventory_237_nid_no_patch(message);
     }
     close(pipeEnds[1]);
     char output[256] = {};
@@ -45,7 +45,7 @@ void RequireAbort(const char* message, const char* expected) {
 int main() {
     bool threw = false;
     try {
-        _ZSt10_Rng_abortPKc(nullptr);
+        libSceLibcInternalInventory_237_nid_no_patch(nullptr);
     } catch (const std::exception&) {
         threw = true;
     }
