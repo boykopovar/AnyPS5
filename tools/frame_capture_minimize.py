@@ -171,10 +171,8 @@ class Minimizer:
                         break
                 if changed:
                     continue
-                for part in partitions:
+                for part in partitions if len(partitions) > 2 else ():
                     candidate = list(part)
-                    if len(candidate) == len(current):
-                        continue
                     discarded = set(current) - set(candidate)
                     calls = removed_calls | (discarded if is_call else set())
                     chunks = removed_chunks | (discarded if not is_call else set())
