@@ -338,4 +338,8 @@ void APS5_VABI FT_CMap_Done_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+void APS5_VABI FT_CMap_New_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
