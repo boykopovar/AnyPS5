@@ -447,14 +447,16 @@ int APS5_VABI sceVideoOutSysHdmiMonitorInfoIsMorpheus() {
 }
 
 void APS5_VABI sceVideoOutSysInitMode(void* mode) {
-    std::memset(mode, 0xFF, 0x20);
+    auto* const target = mode;
+    std::memset(target, 0xFF, 0x20);
     const std::uint32_t size = 0x20;
-    std::memcpy(mode, &size, sizeof(size));
+    std::memcpy(target, &size, sizeof(size));
 }
 
 int APS5_VABI sceVideoOutSysIsModeS3d(const void* mode) {
+    const auto* const src = static_cast<const std::uint8_t*>(mode);
     std::uint64_t value;
-    std::memcpy(&value, static_cast<const std::uint8_t*>(mode) + 0x10, sizeof(value));
+    std::memcpy(&value, src + 0x10, sizeof(value));
     return value - 0xA0u < 2u || value == 0xFFFFFFFF81FFFFFFull ? 1 : 0;
 }
 
@@ -479,7 +481,8 @@ int APS5_VABI sceVideoOutSysIsUserStatusVr() {
 }
 
 int APS5_VABI sceVideoOutSysModeIsHdr(const void* mode) {
-    const auto value = static_cast<const std::uint8_t*>(mode)[6];
+    const auto* const src = static_cast<const std::uint8_t*>(mode);
+    const auto value = src[6];
     return static_cast<std::uint8_t>(value - 12u) < 6u ? 1 : 0;
 }
 
