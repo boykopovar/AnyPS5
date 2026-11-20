@@ -1,4 +1,4 @@
-// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WTF/wtf/PrintStream.h, PrintStream.cpp, BitVector.cpp, Threading.cpp and MetaAllocator.cpp
+// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WTF/wtf/PrintStream.h, PrintStream.cpp, BitVector.cpp, Threading.cpp, MetaAllocator.cpp and Source/JavaScriptCore/heap/FreeList.cpp
 /*
  * Copyright (C) 2008-2023 Apple Inc. All rights reserved.
  *
@@ -38,6 +38,7 @@
 
 namespace {
 
+using NKWebKit::WtfDumpAbi::FreeList;
 using NKWebKit::WtfDumpAbi::MetaAllocatorHandle;
 using NKWebKit::WtfDumpAbi::PrintStream;
 
@@ -77,6 +78,14 @@ void PrintInternal(PrintStream& out, const void* pointer) {
     Printf_nid_no_patch(out, "%p", pointer);
 }
 
+void PrintInternal(PrintStream& out, unsigned value) {
+    Printf_nid_no_patch(out, "%u", value);
+}
+
+void PrintInternal(PrintStream& out, std::uint64_t value) {
+    Printf_nid_no_patch(out, "%lu", value);
+}
+
 template<typename... TValues>
 void Print(PrintStream& out, const TValues&... values) {
     PrintStream* stream = Slot<BeginFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamBegin)(&out);
@@ -101,6 +110,15 @@ std::size_t BitCount(const WTF::BitVector& vector) {
 }  // namespace
 
 extern "C" {
+
+void APS5_VABI _ZNK3JSC8FreeList4dumpERN3WTF11PrintStreamE(const FreeList* self, PrintStream* out) {
+    if (!self || !out) throw std::invalid_argument(__func__);
+    const void* nextInterval = self->nextInterval;
+    const void* intervalStart = self->intervalStart;
+    const void* intervalEnd = self->intervalEnd;
+    Print(*out, "{nextInterval = ", nextInterval, ", secret = ", self->secret, ", intervalStart = ", intervalStart,
+          ", intervalEnd = ", intervalEnd, ", originalSize = ", self->originalSize, "}");
+}
 
 void APS5_VABI _ZNK3WTF19MetaAllocatorHandle4dumpERNS_11PrintStreamE(const MetaAllocatorHandle* self, PrintStream* out) {
     if (!self || !out) throw std::invalid_argument(__func__);

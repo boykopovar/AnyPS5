@@ -4686,7 +4686,6 @@ int APS5_VABI _ZNK3JSC7JSValue19toWTFStringSlowCaseEPNS_14JSGlobalObjectE();
 int APS5_VABI _ZNK3JSC7JSValue20toIntegerPreserveNaNEPNS_14JSGlobalObjectE();
 int APS5_VABI _ZNK3JSC7JSValue4dumpERN3WTF11PrintStreamE();
 int APS5_VABI _ZNK3JSC8Bindings10RootObject12globalObjectEv();
-int APS5_VABI _ZNK3JSC8FreeList4dumpERN3WTF11PrintStreamE();
 int APS5_VABI _ZNK3JSC8JSObject11hasPropertyEPNS_14JSGlobalObjectENS_12PropertyNameE();
 int APS5_VABI _ZNK3JSC8JSObject11hasPropertyEPNS_14JSGlobalObjectEj();
 int APS5_VABI _ZNK3JSC8JSObject11toPrimitiveEPNS_14JSGlobalObjectENS_22PreferredPrimitiveTypeE();

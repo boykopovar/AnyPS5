@@ -120,6 +120,22 @@ int main() {
     }
 
     {
+        char cells[128]{};
+        NKWebKit::WtfDumpAbi::FreeList list{cells + 32, cells + 96, cells + 96, 18446744073709551615ull, 4294967295u, 48};
+        Streams streams;
+        _ZNK3JSC8FreeList4dumpERN3WTF11PrintStreamE(&list, streams.Out());
+        Require(streams.log == "<A[B:{nextInterval = ][B:" + Pointer(cells + 96) + "][B:, secret = ][B:18446744073709551615][B:, intervalStart = ][B:"
+                + Pointer(cells + 32) + "][B:, intervalEnd = ][B:" + Pointer(cells + 96) + "][B:, originalSize = ][B:4294967295][B:}]A>");
+    }
+    {
+        NKWebKit::WtfDumpAbi::FreeList list{nullptr, nullptr, reinterpret_cast<void*>(std::uintptr_t{1}), 0, 0, 0};
+        Streams streams;
+        _ZNK3JSC8FreeList4dumpERN3WTF11PrintStreamE(&list, streams.Out());
+        Require(streams.log == "<A[B:{nextInterval = ][B:" + Pointer(reinterpret_cast<void*>(std::uintptr_t{1})) + "][B:, secret = ][B:0][B:, intervalStart = ][B:"
+                + Pointer(nullptr) + "][B:, intervalEnd = ][B:" + Pointer(nullptr) + "][B:, originalSize = ][B:0][B:}]A>");
+    }
+
+    {
         WTF::BitVector vector{(std::uintptr_t{1} << 63) | 0b1011};
         std::string bits = "11-1";
         bits.append(59, '-');
@@ -152,11 +168,14 @@ int main() {
         Streams streams;
         unsigned char thread[8]{};
         NKWebKit::WtfDumpAbi::MetaAllocatorHandle handle{};
+        NKWebKit::WtfDumpAbi::FreeList list{};
         WTF::BitVector inlineVector{std::uintptr_t{1} << 63};
         WTF::BitVector emptyValue{0};
         WTF::BitVector deletedValue{1};
         Require(Throws([&] { _ZNK3WTF19MetaAllocatorHandle4dumpERNS_11PrintStreamE(nullptr, streams.Out()); }));
         Require(Throws([&] { _ZNK3WTF19MetaAllocatorHandle4dumpERNS_11PrintStreamE(&handle, nullptr); }));
+        Require(Throws([&] { _ZNK3JSC8FreeList4dumpERN3WTF11PrintStreamE(nullptr, streams.Out()); }));
+        Require(Throws([&] { _ZNK3JSC8FreeList4dumpERN3WTF11PrintStreamE(&list, nullptr); }));
         Require(Throws([&] { _ZNK3WTF6Thread4dumpERNS_11PrintStreamE(nullptr, streams.Out()); }));
         Require(Throws([&] { _ZNK3WTF6Thread4dumpERNS_11PrintStreamE(thread, nullptr); }));
         Require(Throws([&] { _ZNK3WTF9BitVector4dumpERNS_11PrintStreamE(nullptr, streams.Out()); }));

@@ -25812,10 +25812,6 @@ int APS5_VABI _ZNK3JSC8Bindings10RootObject12globalObjectEv() {
 }
 
 
-int APS5_VABI _ZNK3JSC8FreeList4dumpERN3WTF11PrintStreamE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3JSC8JSObject11hasPropertyEPNS_14JSGlobalObjectENS_12PropertyNameE() {
     NotImplemented_nid_no_patch(__func__);
 }
