@@ -1,3 +1,4 @@
+import collections
 import contextlib
 import errno
 import io
@@ -68,6 +69,13 @@ def build_pe(path, with_symbols=True, with_exports=False, second_code=False, tim
         image[0x800:0x800 + len(symbols)] = symbols
         image[0x800 + len(symbols):0x800 + len(symbols) + len(strings)] = strings
     Path(path).write_bytes(bytes(image))
+
+
+class FakeSymbolizer:
+    modules = {}
+
+    def frame(self, frame):
+        return frame.upper()
 
 
 class SymbolizeSamplesTests(unittest.TestCase):
@@ -1679,6 +1687,103 @@ class MappedExportTests(unittest.TestCase):
         self.data[0xAFE:0xB08] = b"ab_beyond\0"
         with self.assertRaisesRegex(ValueError, "address space"):
             self.module()
+
+
+class WindowHelperTests(unittest.TestCase):
+    def test_subtract_keeps_only_positive_differences(self):
+        later = collections.Counter({"a": 3, "b": 1})
+        earlier = collections.Counter({"a": 1, "b": 1, "c": 2})
+        self.assertEqual(symbolize_samples.subtract(later, earlier), collections.Counter({"a": 2}))
+
+    def test_sample_counts_splits_self_and_inclusive_counts(self):
+        samples = symbolize_samples.Samples()
+        samples.stacks = collections.Counter({"main;work": 3, "main;idle": 1})
+        total, self_counts, inclusive = symbolize_samples.sample_counts(FakeSymbolizer(), samples)
+        self.assertEqual(total, 4)
+        self.assertEqual(self_counts, collections.Counter({"WORK": 3, "IDLE": 1}))
+        self.assertEqual(inclusive, collections.Counter({"MAIN": 4, "WORK": 3, "IDLE": 1}))
+
+    def test_summarize_lists_the_hottest_self_symbol_with_its_share(self):
+        samples = symbolize_samples.Samples()
+        samples.stacks = collections.Counter({"main;work": 3, "main;idle": 1})
+        lines = symbolize_samples.summarize(FakeSymbolizer(), samples, top=1)
+        self.assertEqual(lines[0], "4 samples")
+        self.assertIn("hottest by self:", lines)
+        self.assertTrue(any("75.0%" in line and "WORK" in line for line in lines))
+        self.assertFalse(any("IDLE" in line for line in lines))
+
+    def test_json_report_lists_totals_and_symbols(self):
+        samples = symbolize_samples.Samples()
+        samples.stacks = collections.Counter({"main;work": 3, "main;idle": 1})
+        report = symbolize_samples.json_report(FakeSymbolizer(), samples, top=1)
+        self.assertEqual(report["samples"], 4)
+        self.assertEqual(report["self"], [{"symbol": "WORK", "count": 3}])
+        self.assertEqual(report["modules"], [])
+class HeaderWindowTests(unittest.TestCase):
+    def test_read_headers_marks_a_repeated_module_name_as_ambiguous(self):
+        lines = ["# module libA 0x10 0x20", "# module libB 0x1 0x2", "# module liba 0x9 0x9", "not a header"]
+        self.assertEqual(symbolize_samples.read_headers(lines), {"liba": False, "libb": (1, 2)})
+
+    def test_window_subtracts_counters_and_keeps_the_later_headers(self):
+        later = symbolize_samples.Samples()
+        earlier = symbolize_samples.Samples()
+        later.headers = {"liba": (1, 2)}
+        later.stacks = collections.Counter({"s": 5})
+        earlier.stacks = collections.Counter({"s": 2})
+        result = symbolize_samples.window(later, earlier)
+        self.assertEqual(result.stacks, collections.Counter({"s": 3}))
+        self.assertEqual(result.headers, {"liba": (1, 2)})
+
+    def test_validate_window_needs_module_records_in_both_captures(self):
+        later = symbolize_samples.Samples()
+        earlier = symbolize_samples.Samples()
+        later.self_counts = collections.Counter({("libA", 4): 1})
+        earlier.self_counts = collections.Counter({("libA", 4): 1})
+        with self.assertRaisesRegex(ValueError, "needs module records in both captures"):
+            symbolize_samples.validate_window(later, earlier)
+        earlier.headers = {"liba": (1, 2)}
+        later.headers = {"liba": (1, 3)}
+        with self.assertRaisesRegex(ValueError, "module identity differs"):
+            symbolize_samples.validate_window(later, earlier)
+
+    def test_validate_window_refuses_counters_that_decrease(self):
+        later = symbolize_samples.Samples()
+        earlier = symbolize_samples.Samples()
+        earlier.stacks = collections.Counter({"s": 5})
+        later.stacks = collections.Counter({"s": 3})
+        with self.assertRaisesRegex(ValueError, "cumulative sample counters decreased"):
+            symbolize_samples.validate_window(later, earlier)
+        later.stacks = collections.Counter({"s": 7})
+        symbolize_samples.validate_window(later, earlier)
+class SampleFileLoadTests(unittest.TestCase):
+    def write(self, text):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "samples.txt"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_load_reads_collapsed_stacks_and_their_format(self):
+        samples = symbolize_samples.load(self.write("main;work 3\nmain;idle 1\n"))
+        self.assertEqual(samples.stacks, collections.Counter({"main;work": 3, "main;idle": 1}))
+        self.assertEqual(samples.capture_format, "collapsed")
+
+    def test_load_refuses_collapsed_and_address_records_in_one_capture(self):
+        path = self.write("main;work 3\nlibA 0x10 2 3\n")
+        with self.assertRaisesRegex(ValueError, "cannot mix collapsed-stack and address records"):
+            symbolize_samples.load(path)
+
+    def test_load_reads_address_records_and_refuses_a_non_hex_offset(self):
+        samples = symbolize_samples.load(self.write("# module libA 0x10 0x20\nlibA 0x10 2 5\n"))
+        self.assertEqual(samples.self_counts[("libA", "0x10")], 2)
+        self.assertEqual(samples.inclusive[("libA", "0x10")], 5)
+        self.assertEqual(samples.headers, {"liba": (0x10, 0x20)})
+        with self.assertRaisesRegex(ValueError, "hexadecimal offset"):
+            symbolize_samples.load(self.write("libA 10 2 5\n"))
+
+    def test_load_refuses_a_thread_filter_without_thread_headings(self):
+        with self.assertRaisesRegex(ValueError, "thread filtering requires thread headings"):
+            symbolize_samples.load(self.write("libA 0x10 2 5\n"), thread="1")
 
 
 if __name__ == "__main__":
