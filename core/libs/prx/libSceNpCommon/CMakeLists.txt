@@ -53,4 +53,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_np_common_rtc PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCommon>")
     endif()
+
+    add_test_executable(guest_np_common_debug_dump_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpCommonDebugDump.cpp)
+    target_include_directories(guest_np_common_debug_dump_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_common_debug_dump_tests PRIVATE libSceNpCommon libkernel libc)
+    configure_windows_unwind(guest_np_common_debug_dump_tests)
+    add_test(NAME guest_np_common_debug_dump COMMAND guest_np_common_debug_dump_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_common_debug_dump PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCommon>")
+    endif()
 endif()
