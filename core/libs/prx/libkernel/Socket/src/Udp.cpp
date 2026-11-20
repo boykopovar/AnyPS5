@@ -1685,6 +1685,31 @@ extern "C" bool KernelLookupSocketNative_nid_no_patch(int descriptor, std::share
     return KernelFindSocketNative_nid_no_patch(descriptor, owner, native);
 }
 
+int APS5_VABI sockatmark_nid_postfix(int descriptor) {
+    std::shared_ptr<void> owner;
+    std::uintptr_t native = 0;
+    if (!KernelLookupSocketNative_nid_no_patch(descriptor, &owner, &native))
+        return Fail(descriptor >= 0 && DescriptorIsOpen_nid_no_patch(descriptor) ? 38 : 9);
+    const auto socket = static_cast<NativeSocket>(native);
+    int type = 0;
+#ifdef _WIN32
+    int length = sizeof(type);
+    if (::getsockopt(socket, SOL_SOCKET, SO_TYPE, reinterpret_cast<char*>(&type), &length) != 0) return Fail(NativeError());
+#else
+    socklen_t length = sizeof(type);
+    if (::getsockopt(socket, SOL_SOCKET, SO_TYPE, &type, &length) != 0) return Fail(NativeError());
+#endif
+    if (type == SOCK_DGRAM) return 0;
+#ifdef _WIN32
+    unsigned long atmark = 0;
+    if (::ioctlsocket(socket, SIOCATMARK, &atmark) != 0) return Fail(NativeError());
+#else
+    int atmark = 0;
+    if (::ioctl(socket, SIOCATMARK, &atmark) != 0) return Fail(NativeError());
+#endif
+    return atmark != 0;
+}
+
 extern "C" bool KernelDescribeSocket_nid_no_patch(int descriptor, KernelSocketPoll::Description* description) {
     const auto socket = Find(descriptor);
     if (!socket) return false;
