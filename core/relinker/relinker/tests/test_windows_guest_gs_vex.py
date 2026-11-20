@@ -57,6 +57,8 @@ def cases(group):
                 yield name, False, 12, -1, "direct", "shifted", False, False, wide, True
             for store in (False, True):
                 yield "movdqu", store, 12, 0, "direct", "normal", True, False, wide, False
+            for vex3 in (False, True):
+                yield "movdqu", False, 12, 0, "rip", "normal", True, False, wide, vex3
             for form in ("absolute", "rbx-base", "rsi-index"):
                 for store in (False, True):
                     yield "movdqu", store, 12, 0, form, "normal", False, False, wide, True
@@ -184,6 +186,8 @@ def main():
             def build_operation(n, st, r, f, w):
                 return operation(n, st, r, f, w, wide, vex3)
             def build_follower(prefix, opcode, r, displacement):
+                if form == "rip":
+                    return build_operation(name, store, r, form, rex_w)[1:]
                 return bytes((0xc5, (0x7a if r >= 8 else 0xfa) | (4 if wide else 0), opcode, 0x87 | (r & 7) << 3)) + struct.pack("<i", displacement)
             body, site, resume = sse.program(name, store, reg, offset, form, True, borrowed, rex_w, build_operation, build_follower, 32 if wide else 16)
             if form in ("rbx-base", "rsi-index"):
