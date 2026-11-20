@@ -42,6 +42,7 @@ test('search uses configured alternatives in place of built-ins', () => {
     assert.deepEqual(actionsForInput('PAD:L1+R1', entries), new Set(['Screenshot']));
     assert.deepEqual(actionsForInput('J', [...entries, binding('Options', 'KEY', 'J')]), new Set(['Square', 'Options']));
     assert.deepEqual(actionsForInput('F7', [...entries, binding('ToggleMouse', 'KEY', '')]), new Set());
+    assert.deepEqual(actionsForInput('PAD:R1+L1', entries), new Set(['Screenshot']));
 });
 
 test('action names and pad button categories agree with the current native parser', () => {
@@ -139,6 +140,14 @@ test('unknown, malformed and duplicate controller remaps report their line', () 
     assert.throws(() => serialize([], [], [{button: 'leftx', destination: 'Cross'}]), /Unknown SDL controller button/);
     assert.throws(() => serialize([], [], [{button: 'a', destination: 'Cross+Circle'}]), /expected a PlayStation button or None/);
     assert.throws(() => serialize([], [], [{button: 'a', destination: 'Cross'}, {button: 'A', destination: 'None'}]), /set more than once/);
+});
+
+test('binding errors name the action without the spaces around it', () => {
+    assert.deepEqual(parseIni('Cross = KEY:\n  Cross  = PAD:x\nFoo bar = KEY:A\n').errors, [
+        {line: 1, message: 'Cross: Unknown or empty KEY value.'},
+        {line: 2, message: 'Cross: Cross cannot use PAD.'},
+        {line: 3, message: 'Foo bar: Unknown or empty action.'}
+    ]);
 });
 
 test('setting names canonicalize like the native parser', () => {
@@ -280,7 +289,7 @@ test('new utility actions import and round trip without accepting unsupported so
     }
 });
 
-test('ShowPadStatus is a keyboard-only action with an F9 default that conflicts like any built-in', () => {
+test('ShowPadStatus is an emulator action with an F9 default that conflicts like any built-in', () => {
     assert.deepEqual(defaults.ShowPadStatus, ['KEY:F9']);
     assert.deepEqual(typesForAction('ShowPadStatus'), ['KEY', 'PAD']);
     assert.equal(serialize([binding('ShowPadStatus', 'KEY', 'F4')]), 'ShowPadStatus = KEY:F4\n');

@@ -310,6 +310,12 @@ constexpr std::uint32_t PixelShaderIteratesSamples = 0x10000u;
 constexpr std::uint32_t PixelSampleCoverageInput = 0x4000u;
 constexpr std::uint32_t PixelSampleRateInputs = 0x2011u;
 constexpr std::uint32_t ScreenOffsetMask = ~0x01ff01ffu;
+constexpr std::uint32_t VertexRoundModeMask = 0x6u;
+constexpr std::uint32_t HalfPixelCenterSubpixel256 = 0x29u;
+
+bool vertexControlSupported(std::uint32_t word) {
+    return (word & ~VertexRoundModeMask) == HalfPixelCenterSubpixel256;
+}
 // Bits 26/27 (ZCLIP_NEAR/FAR_DISABLE) become depth clamping; bit 19 selects the [0, 1] clip space;
 // bit 16 disables clipping.
 constexpr std::uint32_t ClipControlMask = ~(0x10000u | 0x80000u | 0x01000000u | 0x0c000000u);
@@ -1814,7 +1820,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     zero(cx, 0x8d, ScreenOffsetMask, "reserved PA_SU_HARDWARE_SCREEN_OFFSET bits");
     Require(read(cx, 0x83) == 0xffffu, "clip rectangles are unsupported");
     Require((read(cx, 0x8c) & 0xfu) == 0xau, "nonstandard triangle edge rules are unsupported");
-    Require(read(cx, 0x2f9) == 0x2du, "nonstandard pixel center or vertex quantization is unsupported");
+    Require(vertexControlSupported(read(cx, 0x2f9)), "nonstandard pixel center or vertex quantization is unsupported");
     if (auto reason = sampleMaskRejection(queue, read(cx, 0x2f8), read(cx, 0x30e), read(cx, 0x30f)); !reason.empty()) throw std::runtime_error(reason);
     const auto viewportControl = read(cx, 0x206);
     if (viewportControl != 0x43fu && viewportControl != 0u) throw std::runtime_error(vteMessage(viewportControl));
@@ -2597,8 +2603,10 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     }
     Require(color.tileMode != ColorTileMode::D64KBX || (color.pipeBankXor & ~0xcf00u) == 0, "unsupported display color pipe/bank XOR column bits");
     color.arrayAddress = color.arrayLastSlice != 0 ? color.surfaceAddress : 0;
+    std::uint64_t sliceBytes = 0;
     if (slice != 0 && !volume) {
-        color.surfaceAddress += slice * ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
+        sliceBytes = ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
+        color.surfaceAddress += slice * sliceBytes;
         if (color.arrayLastSlice == 0 && ColorTileModeIsXor(color.tileMode)) {
             const auto* equation = FindTextureSwizzleEquation(static_cast<std::uint32_t>(color.tileMode), color.elementBytes);
             Require(equation != nullptr, "a sliced color target has no swizzle equation");
@@ -2677,6 +2685,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
             color.dccAddress = dccBase;
             color.dccAlphaOnMsb = DccAlphaOnMsb(color.format, swap);
             color.dccPipeAligned = ((attrib3 >> 30u) & 1u) != 0;
+            if (sliceBytes != 0) color.dccAddress += slice * (color.dccPipeAligned ? DccKeyCount(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, sliceBytes) : DccKeyBytes(sliceBytes));
             if (color.samples > 1) {
                 if (!allowMultisampleDcc) Require(color.tileMode == ColorTileMode::RenderTarget && color.dccAddress != 0 && color.dccPipeAligned && !volume && color.arrayLastSlice == 0 && slice == 0, "multisampled DCC targets require pipe-aligned single-layer SW_64KB_R_X");
                 color.dccControl = read(cx, 0x31e + stride);
@@ -2793,7 +2802,8 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
         Require(destination.samples == 1, "CB resolve into a multisampled target is unsupported");
         Require(destination.cmaskAddress == 0, "CB resolve into a fast-clear color target is unsupported (the resolve does not update its CMASK)");
         Require(source.format == destination.format && source.extent.width == destination.extent.width && source.extent.height == destination.extent.height, "CB resolve between different formats or extents is unsupported");
-        if (WordPacked(source.packing)) throw std::runtime_error("AGC graphics: CB resolves of " + std::string(PackedColorTargetName(source.packing)) + " color targets are unsupported");
+        if (source.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 || destination.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10) Require(source.packing == destination.packing && source.componentMapping == destination.componentMapping, "CB resolve between 11_11_10 float color targets of different layouts is unsupported");
+        if (WordPacked(source.packing) && source.packing != ShaderRecompiler::ColorExportPacking::Float11_11_10) throw std::runtime_error("AGC graphics: CB resolves of " + std::string(PackedColorTargetName(source.packing)) + " color targets are unsupported");
         requireCovered(destination);
         pass.source = source;
         pass.targets.push_back(destination);
@@ -2938,7 +2948,7 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     if (auto reason = nonzero(cx, 0x8d, ScreenOffsetMask, "reserved PA_SU_HARDWARE_SCREEN_OFFSET bits"); !reason.empty()) return reason;
     if (value(cx, 0x83, word) && word != 0xffffu) return require(false, "clip rectangles are unsupported");
     if (value(cx, 0x8c, word) && (word & 0xfu) != 0xau) return require(false, "nonstandard triangle edge rules are unsupported");
-    if (value(cx, 0x2f9, word) && word != 0x2du) return require(false, "nonstandard pixel center or vertex quantization is unsupported");
+    if (value(cx, 0x2f9, word) && !vertexControlSupported(word)) return require(false, "nonstandard pixel center or vertex quantization is unsupported");
     if (value(cx, 0x313, word) && (word & ~0x001f6000u) != 0 && word != 0x6001u) return conservativeMessage(word);
     std::uint32_t config = 0, other = 0;
     if (value(cx, 0x2f8, config) && value(cx, 0x30e, word) && value(cx, 0x30f, other)) {

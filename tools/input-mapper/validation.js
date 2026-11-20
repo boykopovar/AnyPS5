@@ -198,7 +198,7 @@ export function parseIni(text) {
             errors.push({line: index + 1, message: 'Expected Action = TYPE:VALUE.'});
             return;
         }
-        const entry = {action: name, type: source.slice(0, colon), value: source.slice(colon + 1)};
+        const entry = {action: name.trim(), type: source.slice(0, colon), value: source.slice(colon + 1)};
         const result = validate([entry]);
         if (result.errors.length) {
             errors.push(...result.errors.map(error => ({line: index + 1, message: error.message})));

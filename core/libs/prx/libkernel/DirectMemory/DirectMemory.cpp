@@ -219,6 +219,7 @@ static void MapUnmappedPages(void* addr, size_t len) {
 namespace {
 
 constexpr int GuestMapFixedFlag = 0x10;
+constexpr int GuestProtGpuWrite = 0x20;
 constexpr int GuestProtGpuReadWrite = 0x30;
 constexpr int GuestProtCpuExecute = 0x4;
 
@@ -1035,7 +1036,7 @@ bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, 
     if (physStart >= 0) RequireAliasesUnpinned(mutation, static_cast<std::uint64_t>(physStart), len);
     Trace("remap fixed %p+0x%zx prot=0x%x phys=0x%llx", addr, len, prot, static_cast<long long>(physStart));
     const auto nativeProtection = LinuxProtFromSce(prot);
-    mutation.Protect(addr, len, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0, [&] {
+    mutation.Protect(addr, len, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0, (prot & GuestProtGpuWrite) != 0, [&] {
         const auto address = reinterpret_cast<std::uintptr_t>(addr);
 #if defined(__linux__)
         ForgetFlexibleFiles(address, address + len);
@@ -1365,7 +1366,7 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
     void* mapped = MapAligned(*addr, len, PROT_NONE, flags, alignment);
     try {
         AddMapping(reinterpret_cast<std::uintptr_t>(mapped), len, static_cast<std::uint64_t>(physStart), LinuxProtFromSce(prot));
-        mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0);
+        mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0, (prot & GuestProtGpuWrite) != 0);
         if ((prot & GuestProtGpuReadWrite) != 0) mutation.NoteGpuMapping(mapped, len);
     } catch (...) {
         EraseMappings(reinterpret_cast<std::uintptr_t>(mapped), reinterpret_cast<std::uintptr_t>(mapped) + len);
@@ -1398,7 +1399,7 @@ static int MapAnonymous(void** addr, size_t len, int prot, int flags, size_t ali
 #if defined(__linux__)
         if (t_mapFlexible && !zero) BackFlexibleMapping(mapped, len, prot);
 #endif
-        mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0);
+        mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0, (prot & GuestProtGpuWrite) != 0);
         if ((prot & GuestProtGpuReadWrite) != 0) mutation.NoteGpuMapping(mapped, len);
     } catch (...) {
         Unmap(mapped, len);
@@ -1771,7 +1772,7 @@ int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) 
     if (requireMappedStart && (spans.empty() || spans.front().first != pointer)) return SCE_KERNEL_ERROR_EINVAL;
     for (const auto& [span, spanBytes] : spans) mutation.RequireUnpinned(span, spanBytes);
     for (const auto& [span, spanBytes] : spans) {
-        mutation.Protect(span, spanBytes, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0, [&] {
+        mutation.Protect(span, spanBytes, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0, (prot & GuestProtGpuWrite) != 0, [&] {
 #ifdef __APPLE__
             if (const int error = GuestWriteWatch::GuestWriteWatchProtect_nid_postfix(const_cast<void*>(span), spanBytes, nativeProtection); error != 0)
                 throw std::system_error(error, std::generic_category(), "mprotect failed");
