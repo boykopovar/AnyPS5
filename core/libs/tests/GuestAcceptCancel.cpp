@@ -9,7 +9,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <filesystem>
 #ifdef _WIN32
@@ -87,6 +89,7 @@ struct State {
     int accepted = -1;
     int error = 0;
     int installFault = 0;
+    bool peerCopyException = false;
     std::size_t nativeExpected = 0;
     bool counted = false;
     bool countDisposal = false;
@@ -177,9 +180,14 @@ static void* APS5_VABI Acceptor(void* opaque) {
     if (state.handoff) GuestSocketAcceptObserverForTest_nid_no_patch(ObserveHandoff);
     state.ready.store(true);
     if (state.pending) Require(Observe([&] { return state.release.load(); }), "pending release");
-    if (!state.jump || setjmp_nid_postfix(state.jumpBuffer.data()) == 0)
-        state.accepted = state.alias ? _accept_nid_postfix(state.listener, nullptr, nullptr) :
-            accept_nid_postfix(state.listener, state.peer.data(), &state.peerSize);
+    try {
+        if (!state.jump || setjmp_nid_postfix(state.jumpBuffer.data()) == 0)
+            state.accepted = state.alias ? _accept_nid_postfix(state.listener, nullptr, nullptr) :
+                accept_nid_postfix(state.listener, state.peer.data(), &state.peerSize);
+    } catch (const std::runtime_error& error) {
+        if (state.installFault != 3 || std::string_view(error.what()) != "accept test: peer address copy failed") throw;
+        state.peerCopyException = true;
+    }
     GuestSocketAcceptObserverForTest_nid_no_patch(nullptr);
     if (state.accepted >= 0) {
         state.acceptedFlags = fcntl_nid_postfix(state.accepted, 3);
@@ -208,7 +216,9 @@ int main(int argc, char** argv) {
     state.handoffReuse = scenario == "handoff_reuse";
     state.jump = scenario == "handoff_jump";
     state.flags = scenario == "flags";
-    state.installFault = scenario == "install_reserve_failure" ? 1 : scenario == "install_map_failure" ? 2 : 0;
+    if (scenario == "install_reserve_failure") state.installFault = 1;
+    if (scenario == "install_map_failure") state.installFault = 2;
+    if (scenario == "install_copyout_exception") state.installFault = 3;
     state.countDisposal = state.installFault || scenario == "handoff_cancel" || scenario == "handoff_jump";
     state.handoff = state.handoff || state.installFault;
     state.listener = socket_nid_postfix(2, 1, 0);
@@ -259,7 +269,9 @@ int main(int argc, char** argv) {
         Require((state.acceptedFlags & 4) == (state.flags ? 4 : 0), "accepted nonblocking flags");
     }
     if (state.installFault) {
-        Require(state.accepted == -1 && state.error == (state.installFault == 1 ? 24 : 12), "accepted installation failure errno");
+        Require(state.accepted == -1, "failed installation returned a descriptor");
+        if (state.installFault == 3) Require(state.peerCopyException, "peer address exception did not propagate");
+        else Require(state.error == (state.installFault == 1 ? 24 : 12), "accepted installation failure errno");
         Require(state.peerSize == state.peer.size() && state.peer == decltype(state.peer){},
             "failed installation wrote the peer address");
     }

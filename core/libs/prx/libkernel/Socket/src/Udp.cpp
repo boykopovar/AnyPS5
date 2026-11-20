@@ -478,7 +478,16 @@ void ReleaseNumber(int number) {
     ::close(number);
 }
 #endif
-int Install(std::shared_ptr<Socket> socket) {
+struct AcceptedPeerAddress {
+    void* address;
+    std::uint32_t* length;
+    unsigned char name[28];
+    std::uint32_t size;
+};
+
+bool ReportAddress(void* address, std::uint32_t* addressLength, const void* name, std::uint32_t size);
+
+int Install(std::shared_ptr<Socket> socket, const AcceptedPeerAddress* peer = nullptr) {
     if (acceptInstallFault == 1) { acceptInstallFault = 0; return Fail(24); }
 #ifdef _WIN32
     unsigned long nonblocking = 1;
@@ -488,14 +497,35 @@ int Install(std::shared_ptr<Socket> socket) {
     socket->transfer = TransferForNativeOwner;
     const int number = ReserveNumber(socket->value);
     if (number < 0) return -1;
+    std::optional<GuestDescriptorAccess> descriptorLock;
+    struct Reservation {
+        int number;
+        ~Reservation() { if (number >= 0) ReleaseNumber(number); }
+    } reservation{number};
     try {
         if (acceptInstallFault == 2) { acceptInstallFault = 0; throw std::bad_alloc(); }
-        std::lock_guard lock(socketsMutex);
-        sockets.insert_or_assign(number, std::move(socket));
+        if (peer) {
+            descriptorLock.emplace(number, GuestDescriptorAccess::Mode::Change);
+            decltype(sockets) staged;
+            auto entry = staged.extract(staged.emplace(number, std::move(socket)).first);
+            if (acceptInstallFault == 3) {
+                acceptInstallFault = 0;
+                throw std::runtime_error("accept test: peer address copy failed");
+            }
+            if (!ReportAddress(peer->address, peer->length, peer->name, peer->size)) return Fail(14);
+            std::lock_guard lock(socketsMutex);
+            if (!sockets.insert(std::move(entry)).inserted) {
+                reservation.number = -1;
+                throw std::logic_error("accept: reserved descriptor already registered");
+            }
+        } else {
+            std::lock_guard lock(socketsMutex);
+            sockets.insert_or_assign(number, std::move(socket));
+        }
     } catch (const std::bad_alloc&) {
-        ReleaseNumber(number);
         return Fail(12);
     }
+    reservation.number = -1;
     return number;
 }
 std::atomic<const KernelSocketPoll::Forwards*> socketForwards{nullptr};
@@ -2219,13 +2249,11 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
             }
         }
         if (result >= 0) {
-            const int acceptedDescriptor = Install(std::static_pointer_cast<Socket>(restart.ReleaseResult()));
-            if (acceptedDescriptor < 0 || !address) return acceptedDescriptor;
-            unsigned char name[28]{};
-            GuestAddress(peer, name, &capacity);
-            if (ReportAddress(address, length, name, capacity)) return acceptedDescriptor;
-            GuestSockets::Close(acceptedDescriptor);
-            return Fail(14);
+            auto accepted = std::static_pointer_cast<Socket>(restart.ReleaseResult());
+            if (!address) return Install(std::move(accepted));
+            AcceptedPeerAddress output{address, length, {}, capacity};
+            GuestAddress(peer, output.name, &output.size);
+            return Install(std::move(accepted), &output);
         }
         if (ThreadCancel::Requested()) { restart.Clear(); ThreadCancel::Check(); }
         if (!restart.Ready()) return static_cast<int>(result);
