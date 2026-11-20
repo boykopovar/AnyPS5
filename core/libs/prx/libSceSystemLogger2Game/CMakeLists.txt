@@ -1,0 +1,16 @@
+add_library(libSceSystemLogger2Game SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceSystemLogger2Game PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceSystemLogger2Game PRIVATE libSceSystemLogger2 libc)
+configure_windows_unwind(libSceSystemLogger2Game)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_system_logger2_game_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemLogger2Game.cpp)
+    target_include_directories(guest_system_logger2_game_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_logger2_game_tests PRIVATE libSceSystemLogger2Game libc)
+    configure_windows_unwind(guest_system_logger2_game_tests)
+    add_test(NAME guest_system_logger2_game COMMAND guest_system_logger2_game_tests)
+    if(WIN32)
+        set_tests_properties(guest_system_logger2_game PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemLogger2Game>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemLogger2>")
+    endif()
+endif()
