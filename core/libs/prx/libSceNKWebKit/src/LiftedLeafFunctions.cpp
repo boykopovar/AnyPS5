@@ -43,9 +43,6 @@ std::uint64_t APS5_VABI _ZN3JSC13RuntimeMethod15subspaceForImplERNS_2VME(std::ui
     return (std::uint64_t{0x53b8} + v1);
 }
 
-void APS5_VABI _ZN3JSC17MarkingConstraint17quickWorkEstimateERNS_11SlotVisitorE() {
-}
-
 std::uint32_t APS5_VABI _ZN3JSC20failNextNewCodeBlockEPNS_14JSGlobalObjectE(std::uint64_t a0) {
     const std::uint64_t v1 = Read<std::uint64_t>(a0 + 0x38);
     Write<std::uint8_t>(v1 + 0xc5d1, std::uint8_t{0x1});
