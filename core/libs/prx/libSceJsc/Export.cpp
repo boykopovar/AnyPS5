@@ -1358,10 +1358,6 @@ int APS5_VABI _ZN3JSC8evaluateEPNS_14JSGlobalObjectERKNS_10SourceCodeENS_7JSValu
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC9CallFrame15isAnyWasmCalleeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC9CodeCache5writeERNS_2VME() {
     NotImplemented_nid_no_patch(__func__);
 }
