@@ -86,14 +86,8 @@ std::int32_t APS5_VABI ureldatefmt_format_nid_postfix(const URelativeDateTimeFor
     return Format(formatter, offset, unit, result, resultCapacity, status, ::ureldatefmt_format, __func__);
 }
 
-std::int32_t APS5_VABI ureldatefmt_formatNumeric_nid_postfix(const URelativeDateTimeFormatter*, double, std::int32_t, char16_t* result, std::int32_t resultCapacity, std::int32_t* status) {
-    std::int32_t previous = 0;
-    if (Failure(status, previous, __func__)) return 0;
-    if (result == nullptr ? resultCapacity != 0 : resultCapacity < 0) {
-        WriteStatus(status, previous, Icu::IllegalArgument, __func__);
-        return 0;
-    }
-    NotImplemented_nid_no_patch(__func__);
+std::int32_t APS5_VABI ureldatefmt_formatNumeric_nid_postfix(const URelativeDateTimeFormatter* formatter, double offset, std::int32_t unit, char16_t* result, std::int32_t resultCapacity, std::int32_t* status) {
+    return Format(formatter, offset, unit, result, resultCapacity, status, ::ureldatefmt_formatNumeric, __func__);
 }
 
 URelativeDateTimeFormatter* APS5_VABI ureldatefmt_open_nid_postfix(const char* locale, UNumberFormat* formatter, std::int32_t width, std::int32_t context, std::int32_t* status) {
