@@ -23,4 +23,5 @@
 #include "prx/libSceJsc/include/WtfStringSearchExports.hpp"
 #include "prx/libSceJsc/include/WtfUnicodeExports.hpp"
 #include "prx/libSceJsc/include/WtfUrlExports.hpp"
+#include "prx/libSceJsc/include/YarrRegularExpressionExports.hpp"
 #include "prx/libSceJsc/include/YarrFlagsExports.hpp"
