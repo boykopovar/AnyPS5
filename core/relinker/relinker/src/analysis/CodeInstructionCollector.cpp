@@ -334,20 +334,21 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
     const auto inFunction = [&](std::uint64_t address) { const auto after = functions.upper_bound(address); return after != functions.begin() && address < std::prev(after)->second; };
     const auto reachesPortIo = [&](std::uint64_t address) {
         const Codegen::X64InstructionDecoder probe;
-        for (std::size_t count = 0; count < 256; ++count) {
-            const auto code = codeAt(address);
-            if (code.empty()) return false;
+        const auto code = codeAt(address);
+        std::size_t offset = 0;
+        for (std::size_t count = 0; count < 256 && offset < code.size(); ++count) {
+            const auto available = code.size() - offset;
             Codegen::DecodedInstructionInfo info;
             try {
-                info = probe.DecodeInstruction(code.data(), code.size());
+                info = probe.DecodeInstruction(code.data() + offset, available);
             } catch (const Codegen::CodegenException&) {
                 return false;
             }
-            if (info.Length == 0 || info.Length > code.size() || info.OpcodeOffset >= info.Length) return false;
-            const auto opcode = code[info.OpcodeOffset];
+            if (info.Length == 0 || info.Length > available || info.OpcodeOffset >= info.Length) return false;
+            const auto opcode = code[offset + info.OpcodeOffset];
             if ((opcode >= 0x6c && opcode <= 0x6f) || (opcode >= 0xe4 && opcode <= 0xe7) || (opcode >= 0xec && opcode <= 0xef)) return true;
             if (info.FlowKind != Codegen::ControlFlowKind::Sequential && info.FlowKind != Codegen::ControlFlowKind::ConditionalBranch) return false;
-            address += info.Length;
+            offset += info.Length;
         }
         return false;
     };

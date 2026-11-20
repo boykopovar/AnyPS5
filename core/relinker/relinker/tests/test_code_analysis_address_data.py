@@ -23,6 +23,9 @@ GS_CALLBACK = bytes.fromhex("65 48 8b 00 c3")
 GS_TRAP = bytes.fromhex("0f 0b 90 90")
 STRINGS = TEXT + 0x60
 OPTION_STRINGS = b"rc4(8x,int)\0rc4(8x,char)\0rc4(16x,int)\0RC4 for x86_64, CRYPTOGAMS by <https://github.com/dot-asm>\0"
+SEGMENT_END = TEXT + 0x100 - 4
+NEXT_TEXT_OFFSET = 0xB00
+PORT_IO = bytes.fromhex("ec c3")
 
 
 def unwind(image, functions):
@@ -70,11 +73,15 @@ CALLBACK_USES = (
 )
 
 
-def module(table, first=None, strings=b""):
+def module(table, first=None, strings=b"", edge=b"", next_segment=b""):
     first = first or first_function()
     image = guest_fixture(b"")
-    image.extend(bytes(0x100))
-    struct.pack_into("<H", image, 56, 5)
+    image.extend(bytes(0x100 + len(next_segment)))
+    struct.pack_into("<H", image, 56, 6 if next_segment else 5)
+    if next_segment:
+        struct.pack_into("<IIQQQQQQ", image, 64 + 5 * 56, PT_LOAD, 5, NEXT_TEXT_OFFSET, TEXT + 0x100, TEXT + 0x100,
+                         len(next_segment), len(next_segment), 0x100)
+        image[NEXT_TEXT_OFFSET:NEXT_TEXT_OFFSET + len(next_segment)] = next_segment
     header_size = unwind(image, [(FIRST, 0x18), (SECOND, 0x8)])
     struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, PT_LOAD, 4, UNWIND_OFFSET, UNWIND, UNWIND, 0x100, 0x100, 0x100)
     struct.pack_into("<IIQQQQQQ", image, 64 + 4 * 56, PT_GNU_EH_FRAME, 4, UNWIND_OFFSET, UNWIND, UNWIND, header_size, header_size, 4)
@@ -84,6 +91,7 @@ def module(table, first=None, strings=b""):
     text[TABLE - TEXT:TABLE - TEXT + len(table)] = table
     text[CALLBACK - TEXT:CALLBACK - TEXT + len(GS_CALLBACK)] = GS_CALLBACK
     text[STRINGS - TEXT:STRINGS - TEXT + len(strings)] = strings
+    text[SEGMENT_END - TEXT:SEGMENT_END - TEXT + len(edge)] = edge
     text[SECOND - TEXT] = 0xC3
     return image
 
@@ -119,6 +127,9 @@ def main():
             assert code[STRINGS - FIRST:STRINGS - FIRST + len(OPTION_STRINGS)] == OPTION_STRINGS, (system, code.hex())
             code = convert(relinker, work, "callback-returned-" + system, module(b"", returned(CALLBACK)), flags, returned(CALLBACK))
             assert code[CALLBACK - FIRST:CALLBACK - FIRST + len(GS_TRAP)] == GS_TRAP, (system, code.hex())
+            code = convert(relinker, work, "callback-before-next-segment-" + system,
+                           module(b"", returned(SEGMENT_END), edge=GS_CALLBACK[:4], next_segment=PORT_IO), flags, returned(SEGMENT_END))
+            assert code[SEGMENT_END - FIRST:SEGMENT_END - FIRST + len(GS_TRAP)] == GS_TRAP, (system, code.hex())
             for name, first in CALLBACK_USES:
                 code = convert(relinker, work, name + "-" + system, module(b"", first), flags, first)
                 assert code[CALLBACK - FIRST:CALLBACK - FIRST + len(GS_TRAP)] == GS_TRAP, (name, system, code.hex())
