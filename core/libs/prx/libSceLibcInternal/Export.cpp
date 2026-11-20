@@ -200,11 +200,6 @@ int APS5_VABI _ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE8_P
     return 0;
 }
 
-int APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLibcInternalPending4_103_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -695,11 +690,6 @@ int APS5_VABI _FHypot_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _FLogpoly_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _FQuad_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1116,11 +1106,6 @@ int APS5_VABI _LHypot_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _LLogpoly_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _LQuad_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1176,11 +1161,6 @@ int APS5_VABI _Locterm_nid_postfix() {
 }
 
 int APS5_VABI _Locvar_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Logpoly_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
