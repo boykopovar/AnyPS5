@@ -7,6 +7,7 @@
 #include <cstring>
 #if defined(_WIN32)
 #include <windows.h>
+#include <filesystem>
 #else
 #include <dlfcn.h>
 #endif
@@ -184,6 +185,26 @@ void CheckUnreadableOutputs() {
     Require(rejected, "Self accepted an unreadable count output");
 }
 
+#if defined(_WIN32)
+void CheckUnicodeModulePath() {
+    std::wstring source(32768, L'\0');
+    const auto length = GetModuleFileNameW(nullptr, source.data(), static_cast<DWORD>(source.size()));
+    Require(length != 0 && length < source.size(), "cannot locate test executable");
+    const auto directory = std::filesystem::temp_directory_path();
+    wchar_t name[MAX_PATH]{};
+    Require(GetTempFileNameW(directory.c_str(), L"\u96EA", 0, name) != 0, "cannot create temporary module name");
+    const bool copied = CopyFileW(source.c_str(), name, FALSE) != 0;
+    const auto module = copied ? LoadLibraryExW(name, nullptr, DONT_RESOLVE_DLL_REFERENCES) : nullptr;
+    const auto actual = module ? BacktraceModulePath_nid_no_patch(module, 1) : std::string{};
+    if (module) FreeLibrary(module);
+    DeleteFileW(name);
+    Require(module != nullptr, "cannot load temporary module");
+    const auto expected = std::filesystem::path(name).filename().u8string();
+    Require(actual.substr(actual.find_last_of("/\\") + 1) == std::string(expected.begin(), expected.end()),
+            "backtrace module name does not preserve Unicode");
+}
+#endif
+
 void CheckNullArguments() {
     int count = -1;
     std::size_t size = 0;
@@ -197,6 +218,9 @@ void CheckNullArguments() {
 }
 
 int main() {
+#if defined(_WIN32)
+    CheckUnicodeModulePath();
+#endif
     CheckNullArguments();
     CheckBacktrace();
     CheckUnreadableOutputs();

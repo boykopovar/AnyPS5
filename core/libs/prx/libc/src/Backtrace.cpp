@@ -16,16 +16,19 @@
 extern "C" {
 
 std::string BacktraceModulePath_nid_no_patch(HMODULE handle, std::size_t initialCapacity) {
-    std::string module;
+    std::wstring module;
     std::size_t capacity = initialCapacity == 0 ? 1 : initialCapacity;
     while (true) {
         module.resize(capacity);
         SetLastError(ERROR_SUCCESS);
-        const DWORD length = GetModuleFileNameA(handle, module.data(), static_cast<DWORD>(module.size()));
+        const DWORD length = GetModuleFileNameW(handle, module.data(), static_cast<DWORD>(module.size()));
         if (length == 0) return {};
         if (length < capacity && GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
-            module.resize(length);
-            return module;
+            const int bytes = WideCharToMultiByte(CP_UTF8, 0, module.data(), static_cast<int>(length), nullptr, 0, nullptr, nullptr);
+            if (bytes == 0) return {};
+            std::string utf8(bytes, '\0');
+            if (!WideCharToMultiByte(CP_UTF8, 0, module.data(), static_cast<int>(length), utf8.data(), bytes, nullptr, nullptr)) return {};
+            return utf8;
         }
         if (capacity >= 32768) return {};
         capacity *= 2;
