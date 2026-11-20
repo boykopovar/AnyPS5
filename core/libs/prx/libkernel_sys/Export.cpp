@@ -699,6 +699,7 @@ static int FollowLinkPath(const std::filesystem::path& source, std::filesystem::
 static int LinkSourceError(const std::filesystem::path& source) {
     std::error_code error;
     const auto status = std::filesystem::status(source, error);
+    if (error && error != std::errc::no_such_file_or_directory && error != std::errc::not_a_directory) return GuestError(error);
     if (!std::filesystem::exists(status)) {
 #ifdef _WIN32
         std::filesystem::path target;
@@ -711,8 +712,13 @@ static int LinkSourceError(const std::filesystem::path& source) {
 
 static int LinkDestinationError(const std::filesystem::path& destination) {
     std::error_code error;
-    if (std::filesystem::exists(std::filesystem::symlink_status(destination, error))) return GuestEexist;
-    if (!std::filesystem::is_directory(destination.parent_path(), error)) return HasNonDirectoryPrefix(destination) ? GuestEnotdir : GuestEnoent;
+    const auto status = std::filesystem::symlink_status(destination, error);
+    if (error && error != std::errc::no_such_file_or_directory && error != std::errc::not_a_directory) return GuestError(error);
+    if (std::filesystem::exists(status)) return GuestEexist;
+    error.clear();
+    const bool parentIsDirectory = std::filesystem::is_directory(destination.parent_path(), error);
+    if (error && error != std::errc::no_such_file_or_directory && error != std::errc::not_a_directory) return GuestError(error);
+    if (!parentIsDirectory) return HasNonDirectoryPrefix(destination) ? GuestEnotdir : GuestEnoent;
     return 0;
 }
 
