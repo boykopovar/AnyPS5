@@ -6,7 +6,6 @@ struct UCPMap;
 
 namespace Icu {
 using CharTypeRange = std::int8_t (APS5_VABI*)(const void*, std::int32_t, std::int32_t, std::int32_t);
-bool PropertyNeedsData(std::int32_t property);
 } // namespace Icu
 
 extern "C" {

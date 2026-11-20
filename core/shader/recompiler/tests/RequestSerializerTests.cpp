@@ -202,7 +202,7 @@ void VerifyTessellationInstancePatches() {
 
 std::string SerializeVersion56(const ShaderRecompiler::RecompileRequest& request) {
     auto bytes = DecodeBase64(ShaderRecompiler::RequestSerializer{}.Serialize(request));
-    Require(bytes.size() > 18u && bytes[4] == 63u);
+    Require(bytes.size() > 18u && bytes[4] == 64u);
     bytes.resize(bytes.size() - 10u);
     bytes[4] = 56u;
     return EncodeBase64(bytes);
@@ -219,9 +219,13 @@ void VerifyPointSpriteControl() {
     Require(serializer.Serialize(replay.request) == encoded);
     auto bytes = DecodeBase64(encoded);
     bytes.resize(bytes.size() - 4u);
-    bytes[4] = 62u;
-    const auto version62 = serializer.Deserialize(EncodeBase64(bytes));
-    Require(version62.request.context.pixel.has_value() && version62.request.context.pixel->pointSpriteControl == 0u);
+    bytes[4] = 63u;
+    const auto version63 = serializer.Deserialize(EncodeBase64(bytes));
+    Require(version63.request.context.pixel.has_value() && version63.request.context.pixel->pointSpriteControl == 0u);
+    bytes.pop_back();
+    bytes[4] = 57u;
+    const auto version57 = serializer.Deserialize(EncodeBase64(bytes));
+    Require(version57.request.context.pixel.has_value() && version57.request.context.pixel->pointSpriteControl == 0u);
 }
 
 void VerifyTargetOptions() {
@@ -242,7 +246,7 @@ void VerifyTargetOptions() {
                     Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
                     Require(serializer.Serialize(replay.request) == encoded);
                     auto bytes = DecodeBase64(encoded);
-                    Require(bytes[4] == 63u && bytes[bytes.size() - 5u] == 0u);
+                    Require(bytes[4] == 64u && bytes.back() == 0u);
                     for (std::size_t missing = 1u; missing <= 10u; ++missing) {
                         auto truncated = bytes;
                         truncated.resize(truncated.size() - missing);
@@ -254,8 +258,12 @@ void VerifyTargetOptions() {
                         }
                         Require(rejected);
                     }
-                    bytes.resize(bytes.size() - 4u);
-                    bytes.pop_back();
+                    auto legacy62Bytes = bytes;
+                    legacy62Bytes.resize(legacy62Bytes.size() - 4u);
+                    legacy62Bytes[4] = 62u;
+                    const auto legacy62 = serializer.Deserialize(EncodeBase64(legacy62Bytes));
+                    Require(legacy62.request.target.fixedPushSlots == fixed && legacy62.request.target.maxImageArrayLayers == layers && !legacy62.request.graphics.has_value());
+                    bytes.resize(bytes.size() - 5u);
                     bytes[4] = 57u;
                     const auto legacy57 = serializer.Deserialize(EncodeBase64(bytes));
                     Require(legacy57.request.target.fixedPushSlots == fixed && legacy57.request.target.maxImageArrayLayers == layers && !legacy57.request.target.spannedAnySubgroup);
@@ -282,7 +290,11 @@ void VerifyTargetOptions() {
             }
         }
     }
-    auto trailing = DecodeBase64(serializer.Serialize(ShaderRecompiler::RecompileRequest{}));
+    ShaderRecompiler::RecompileRequest emulated{};
+    emulated.graphics = ShaderRecompiler::GraphicsCompileContext{};
+    emulated.graphics->emulateBarycentrics = true;
+    auto trailing = DecodeBase64(serializer.Serialize(emulated));
+    Require(trailing.back() == 1u && serializer.Deserialize(EncodeBase64(trailing)).request.graphics->emulateBarycentrics);
     trailing.push_back(2u);
     bool rejected = false;
     try {
@@ -793,7 +805,7 @@ int VerifyVersion56Compatibility() {
         version40[4] = 40u;
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
-        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 64u}) {
+        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 65u}) {
             auto future = bytes;
             future[4] = unwritten;
             bool futureRejected = false;
@@ -908,10 +920,10 @@ int VerifyVersion56Compatibility() {
         const auto replay35 = serializer.Deserialize(EncodeBase64(version35));
         Require(replay35.request.target.spannedWaves == spanned && !replay35.request.target.float32FlushToZero);
         request.target.spannedAnySubgroup = spanned;
-        const auto version63 = DecodeBase64(serializer.Serialize(request));
-        Require(version63[4] == 63u && version63[version63.size() - 5u] == (spanned ? 1u : 0u));
-        Require(serializer.Deserialize(EncodeBase64(version63)).request.target.spannedAnySubgroup == spanned);
-        auto version57 = version63;
+        const auto version62 = DecodeBase64(serializer.Serialize(request));
+        Require(version62[4] == 64u && version62[version62.size() - 5u] == (spanned ? 1u : 0u));
+        Require(serializer.Deserialize(EncodeBase64(version62)).request.target.spannedAnySubgroup == spanned);
+        auto version57 = version62;
         version57[4] = 57u;
         version57.resize(version57.size() - 5u);
         const auto replay57 = serializer.Deserialize(EncodeBase64(version57));

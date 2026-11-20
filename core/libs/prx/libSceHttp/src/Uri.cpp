@@ -11,6 +11,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
+#include "prx/libSceHttp/src/GuestAccess.hpp"
 
 namespace {
 
@@ -300,11 +301,14 @@ int APS5_VABI sceHttpUriEscape(char* out, size_t* require, size_t prepare, const
 
     static constexpr char hex[] = "0123456789ABCDEF";
     std::string escaped;
-    for (const char* c = in; *c; ++c) {
-        const auto value = static_cast<unsigned char>(*c);
+    for (const char* c = in; ; ++c) {
+        char character = 0;
+        if (!HttpGuest::CopyIn(&character, c, sizeof(character))) return ERROR_INVALID_VALUE;
+        if (character == '\0') break;
+        const auto value = static_cast<unsigned char>(character);
         if ((value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') || (value >= '0' && value <= '9')
             || value == '-' || value == '_' || value == '.' || value == '~') {
-            escaped.push_back(*c);
+            escaped.push_back(character);
         } else {
             escaped.push_back('%');
             escaped.push_back(hex[value >> 4]);
@@ -316,8 +320,10 @@ int APS5_VABI sceHttpUriEscape(char* out, size_t* require, size_t prepare, const
 
 int APS5_VABI sceHttpUriUnescape(char* out, size_t* requiredSize, size_t capacity, const char* input) {
     if (!input || (!out && !requiredSize)) return ERROR_INVALID_VALUE;
+    std::string copied;
+    if (!CopyGuestCString(input, copied)) return ERROR_INVALID_VALUE;
 
-    const std::string_view source(input);
+    const std::string_view source(copied);
     const auto decode = [](const char* digits, unsigned int& value) {
         const auto result = std::from_chars(digits, digits + 2, value, 16);
         return result.ec == std::errc{} && result.ptr == digits + 2;
@@ -345,9 +351,8 @@ int APS5_VABI sceHttpUriUnescape(char* out, size_t* requiredSize, size_t capacit
         }
     }
 
-    size_t written = 0;
+    std::string unescaped;
     for (size_t index = 0; index < source.size(); ++index) {
-        if (out && written >= capacity) return ERROR_OUT_OF_MEMORY;
         char value = source[index];
         if (value == '%') {
             unsigned int decoded = 0;
@@ -355,14 +360,17 @@ int APS5_VABI sceHttpUriUnescape(char* out, size_t* requiredSize, size_t capacit
             value = static_cast<char>(decoded);
             index += 2;
         }
-        if (out) out[written] = value;
-        ++written;
+        unescaped.push_back(value);
     }
     if (out) {
-        if (written >= capacity) return ERROR_OUT_OF_MEMORY;
-        out[written] = '\0';
+        if (unescaped.size() >= capacity) {
+            if (capacity != 0 && !WriteGuestBytes(out, unescaped.data(), capacity)) return ERROR_INVALID_VALUE;
+            return ERROR_OUT_OF_MEMORY;
+        }
+        if (!WriteGuestBytes(out, unescaped.c_str(), unescaped.size() + 1)) return ERROR_INVALID_VALUE;
     }
-    if (requiredSize) *requiredSize = written + 1;
+    const size_t size = unescaped.size() + 1;
+    if (requiredSize && !WriteGuestBytes(requiredSize, &size, sizeof(size))) return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -445,7 +453,8 @@ int APS5_VABI sceHttpUriParse(SceHttpUriElement* out, const char* src_url, void*
         if (!written) return ERROR_INVALID_VALUE;
         next += spaces[i] + 1;
     }
-    SceHttpUriElement element{};
+    SceHttpUriElement element;
+    std::memset(static_cast<void*>(&element), 0, sizeof(element));
     element.opaque = parts.opaque;
     element.scheme = strings[0];
     element.username = strings[1];
@@ -469,8 +478,7 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
 
     if (write) {
         if (!ZeroGuest(pool, prepare)) return ERROR_INVALID_VALUE;
-        const SceHttpUriElement cleared{};
-        if (!WriteGuestBytes(out, &cleared, sizeof(cleared))) return ERROR_INVALID_VALUE;
+        if (!ZeroGuest(out, sizeof(SceHttpUriElement))) return ERROR_INVALID_VALUE;
     }
     SceHttpUriElement source{};
     const int savedErrno = errno;
@@ -504,7 +512,8 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
         if (!WriteGuestBytes(next, segment.data(), segment.size())) return ERROR_INVALID_VALUE;
         next += lengths[i] + 1;
     }
-    SceHttpUriElement element{};
+    SceHttpUriElement element;
+    std::memset(static_cast<void*>(&element), 0, sizeof(element));
     element.scheme = strings[0];
     element.hostname = strings[1];
     element.path = strings[2];
@@ -519,8 +528,14 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
 int APS5_VABI sceHttpUriSweepPath(char* dst, const char* src, size_t srcSize) {
     if (srcSize == 0) return 0;
     if (!dst || !src) return ERROR_INVALID_VALUE;
-    std::string source(srcSize, '\0');
-    if (!GuestCopyIn_nid_no_patch(source.data(), src, srcSize)) return ERROR_INVALID_VALUE;
+    constexpr size_t Chunk = 64 * 1024;
+    std::string source;
+    for (size_t done = 0; done < srcSize;) {
+        const size_t step = std::min(Chunk, srcSize - done);
+        source.resize(done + step);
+        if (!GuestCopyIn_nid_no_patch(source.data() + done, src + done, step)) return ERROR_INVALID_VALUE;
+        done += step;
+    }
     const size_t touched = source[0] == '/' ? std::max<size_t>(srcSize, 2) : srcSize;
     std::string swept(touched, '\0');
     if (!GuestCopyIn_nid_no_patch(swept.data(), dst, touched)) return ERROR_INVALID_VALUE;

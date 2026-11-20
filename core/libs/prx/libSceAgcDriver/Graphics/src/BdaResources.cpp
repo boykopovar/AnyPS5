@@ -481,11 +481,11 @@ void BdaResources::checkFault(const BdaResources& record) const {
     ShaderRecompiler::BdaAbi::Fault report{};
     std::memcpy(&report, record.faultBytes().data(), sizeof(report));
     if (report.state == ShaderRecompiler::BdaAbi::FaultState::Empty) {
-        Require(static_cast<std::uint32_t>(report.reason) == 0 && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.otherFaults == 0, "BDA fault record has data without publication");
+        Require(static_cast<std::uint32_t>(report.reason) == 0 && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.claim == 0, "BDA fault record has data without publication");
         if (!reportOnly) checkSrtGuard(record);
         return;
     }
-    Require(report.state == ShaderRecompiler::BdaAbi::FaultState::Ready && report.otherFaults <= 1, "incomplete or invalid BDA fault record");
+    Require(report.state == ShaderRecompiler::BdaAbi::FaultState::Ready && (report.claim & ~(ShaderRecompiler::BdaAbi::FaultClaimed | ShaderRecompiler::BdaAbi::FaultClaimOtherFaults)) == 0, "incomplete or invalid BDA fault record");
     Require(report.reason != ShaderRecompiler::BdaAbi::FaultReason::InvalidRectangle, "rect-list requires finite nondegenerate axis-aligned positions with equal positive W");
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::LoopLimit) {
         // APS5_LOOP_GUARD: the shader left a loop that ran past the guard; the dispatch result is kept.
@@ -518,6 +518,10 @@ void BdaResources::checkFault(const BdaResources& record) const {
         message << "shader stage " << report.stage << " called address 0x" << std::hex << report.address << " at program counter 0x" << report.instruction << ", which no linked callee of that call matches";
         throw std::runtime_error(message.str());
     }
+    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::SplitState) {
+        message << "shader stage " << report.stage << ": a split table call part resumed a lane whose s" << report.bytes << " holds 0x" << std::hex << (report.address & 0xffffffffu) << ", but the part was compiled for the value 0x" << (report.address >> 32u) << " that the program sets before the loop, because only callees write that register";
+        throw std::runtime_error(message.str());
+    }
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::WindowLaneSpill) {
         message << "shader stage " << report.stage << ": a relative write stored " << report.bytes << " in lane " << (report.address >> 32u) << " of vector window slot " << (report.address & 0xffffffffu) << ", which holds a scalar spilled with v_writelane_b32 that a later v_readlane_b32 was replaced with";
         throw std::runtime_error(message.str());
@@ -536,7 +540,7 @@ void BdaResources::checkFault(const BdaResources& record) const {
         }
     }
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::Unaligned) {
-        if (report.otherFaults == 0) throw BdaUnalignedAccess(message.str(), report.instruction);
+        if (ShaderRecompiler::BdaAbi::OtherFaults(report) == 0) throw BdaUnalignedAccess(message.str(), report.instruction);
         message << "; a fault of another kind was recorded in the same dispatch";
     }
     throw std::runtime_error(message.str());
