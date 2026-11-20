@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_SONYCRT_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_SONYCRT_HPP
 
+#include <bit>
 #include <cfenv>
 #include <cerrno>
 #include <climits>
@@ -312,10 +313,11 @@ inline std::size_t SonyMbstowcs(std::uint16_t* dest, const char* src, std::size_
 }
 
 inline int SonyFpclassifyd(double value) {
-    if (std::isnan(value)) return 2;
-    if (std::isinf(value)) return 1;
-    if (value == 0.0) return 0;
-    if (std::fpclassify(value) == FP_SUBNORMAL) return -2;
+    const std::uint64_t magnitude = std::bit_cast<std::uint64_t>(value) & 0x7fffffffffffffffull;
+    if (magnitude > 0x7ff0000000000000ull) return 2;
+    if (magnitude == 0x7ff0000000000000ull) return 1;
+    if (magnitude == 0) return 0;
+    if (magnitude < 0x0010000000000000ull) return -2;
     return -1;
 }
 
