@@ -1,10 +1,14 @@
 add_png_decoder(decoder_png libc)
+include(${CMAKE_SOURCE_DIR}/cmake/LibPng.cmake)
 
 add_library(libScePngDec SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
 target_include_directories(libScePngDec PRIVATE ${LIBS_INCLUDE_DIR})
 set_target_properties(libScePngDec PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(libScePngDec)
-target_link_libraries(libScePngDec PRIVATE decoder_png)
+target_link_libraries(libScePngDec PRIVATE decoder_png png_backend)
+if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(libScePngDec PRIVATE "LINKER:--exclude-libs,$<TARGET_FILE_NAME:png_backend>")
+endif()
 
 if(BUILD_TESTING)
     set(PNG_DEC_DELETE_MODULE_DIR ${CMAKE_CURRENT_BINARY_DIR}/delete-modules)
