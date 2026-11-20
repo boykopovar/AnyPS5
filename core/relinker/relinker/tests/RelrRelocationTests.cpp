@@ -78,6 +78,10 @@ int main() try {
     Require(fixture.Read().size() == 2 && fixture.Read().at(0x400) == 0xd00);
     fixture.SetWords({0x800, 0x202});
     Require(fixture.Read().size() == 2 && fixture.Read().at(0x202) == 0x0b08000000000000ull);
+    fixture.SetWords({0x800, 0x204});
+    Require(fixture.Read().size() == 2 && fixture.Read().at(0x204) == 0x00000b0800000000ull);
+    fixture.SetWords({0x800, 0x206});
+    Require(fixture.Read().size() == 2 && fixture.Read().at(0x206) == 0x000000000b080000ull);
     fixture.SetWords({0x2000});
     Require(fixture.Read().at(0x2000) == 0);
     fixture.SetWords({0x1ffc});
