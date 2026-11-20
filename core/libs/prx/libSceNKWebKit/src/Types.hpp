@@ -356,6 +356,19 @@ public:
     bool clientConfigured = false;
 };
 
+class UserMediaPermissionCheck final : public ObjectOf<ObjectType::UserMediaPermissionCheck> {
+public:
+    bool completed = false;
+    Retained<String> userMediaID;
+    bool allowed = false;
+
+    void SetUserMediaAccessInfo(Retained<String> id, bool isAllowed) {
+        completed = true;
+        userMediaID = std::move(id);
+        allowed = isAllowed;
+    }
+};
+
 class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
 public:
     bool decided = false;
