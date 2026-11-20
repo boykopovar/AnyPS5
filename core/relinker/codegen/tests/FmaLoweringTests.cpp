@@ -21,9 +21,9 @@ void require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
 
-Bytes fma(std::uint8_t opcode, std::uint8_t dst, std::uint8_t second, std::uint8_t third, bool wide256, bool wideW = false) {
+Bytes fma(std::uint8_t opcode, std::uint8_t dst, std::uint8_t second, std::uint8_t third, bool wide256) {
     return {0xC4, static_cast<std::uint8_t>(((dst & 8) ? 0 : 0x80) | 0x40 | ((third & 8) ? 0 : 0x20) | 2),
-        static_cast<std::uint8_t>((wideW ? 0x80 : 0) | ((~second & 15) << 3) | (wide256 ? 4 : 0) | 1), opcode,
+        static_cast<std::uint8_t>(((~second & 15) << 3) | (wide256 ? 4 : 0) | 1), opcode,
         static_cast<std::uint8_t>(0xC0 | ((dst & 7) << 3) | (third & 7))};
 }
 
@@ -68,7 +68,6 @@ void decoding() {
                 "FMA opcode " + std::to_string(form.Opcode) + " was not decoded");
             const auto suffix = std::string(form.Order == FmaOrder::Order132 ? "132" : form.Order == FmaOrder::Order213 ? "213" : "231") + (form.Scalar ? "SS" : "PS");
             require(std::string(operands->Name).ends_with(suffix), "FMA opcode " + std::to_string(form.Opcode) + " is named " + operands->Name);
-            require(!Codegen::DecodeFma(fma(form.Opcode, 9, 4, 12, wide, true).data(), 5), "a double-precision FMA was lowered");
             const auto loaded = fmaFromRax(form.Opcode, 3, 7, wide);
             const auto memory = Codegen::DecodeFma(loaded.data(), loaded.size());
             require(memory && memory->Memory && memory->Destination == 3 && memory->Second == 7, "a memory FMA lost an operand");
@@ -98,7 +97,6 @@ void matching() {
         require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && match->RelocatableWindow && !match->Optional && match->InstructionName.starts_with("VF"),
             "AVX mode did not lower FMA opcode " + std::to_string(form.Opcode) + " through a movable stub");
     }
-    require(!avx->Match(fma(0xA8, 0, 1, 2, true, true).data(), 5), "AVX mode lowered a double-precision FMA");
 }
 
 #if LOWERING_EXECUTION_AVAILABLE

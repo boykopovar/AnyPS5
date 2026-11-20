@@ -83,17 +83,18 @@ const char* _operationName(const FmaOperation operation) {
     throw CodegenException("unknown FMA operation");
 }
 
-const char* _name(const FmaOperation operation, const FmaOrder order, const bool scalar) {
+const char* _name(const FmaOperation operation, const FmaOrder order, const bool scalar, const bool precise) {
     static const auto names = [] {
-        std::array<std::string, 36> table{};
+        std::array<std::string, 72> table{};
         for (std::size_t operationIndex = 0; operationIndex < 6; ++operationIndex)
             for (std::size_t orderIndex = 0; orderIndex < 3; ++orderIndex)
                 for (std::size_t scalarIndex = 0; scalarIndex < 2; ++scalarIndex)
-                    table[operationIndex * 6 + orderIndex * 2 + scalarIndex] = std::string(_operationName(static_cast<FmaOperation>(operationIndex))) +
-                        (orderIndex == 0 ? "132" : orderIndex == 1 ? "213" : "231") + (scalarIndex != 0 ? "SS" : "PS");
+                    for (std::size_t preciseIndex = 0; preciseIndex < 2; ++preciseIndex)
+                        table[operationIndex * 12 + orderIndex * 4 + scalarIndex * 2 + preciseIndex] = std::string(_operationName(static_cast<FmaOperation>(operationIndex))) +
+                            (orderIndex == 0 ? "132" : orderIndex == 1 ? "213" : "231") + (scalarIndex != 0 ? "S" : "P") + (preciseIndex != 0 ? "D" : "S");
         return table;
     }();
-    return names[static_cast<std::size_t>(operation) * 6 + static_cast<std::size_t>(order) * 2 + (scalar ? 1 : 0)].c_str();
+    return names[static_cast<std::size_t>(operation) * 12 + static_cast<std::size_t>(order) * 4 + (scalar ? 2 : 0) + (precise ? 1 : 0)].c_str();
 }
 
 std::optional<std::array<std::uint32_t, 4>> _addendSigns(const FmaOperation operation) {
@@ -267,7 +268,7 @@ std::uint8_t _quarter(StubBodyBuilder& body, ScratchPool& pool, const FmaOperand
 
 std::optional<FmaOperands> DecodeFma(const std::uint8_t* data, const std::size_t length) {
     const auto instruction = Decode(data, length);
-    if (!instruction || instruction->Map != Map0F38 || instruction->Prefix != Prefix66 || instruction->Wide)
+    if (!instruction || instruction->Map != Map0F38 || instruction->Prefix != Prefix66)
         return std::nullopt;
     const auto high = static_cast<std::uint8_t>(instruction->Opcode & 0xF0);
     const auto low = static_cast<std::uint8_t>(instruction->Opcode & 0x0F);
@@ -287,12 +288,16 @@ std::optional<FmaOperands> DecodeFma(const std::uint8_t* data, const std::size_t
     case 0xE: operation = FmaOperation::NegatedMultiplySubtract; break;
     default: operation = FmaOperation::NegatedMultiplySubtract; scalar = true; break;
     }
-    const auto* name = _name(operation, order, scalar);
+    const auto* name = _name(operation, order, scalar, instruction->Wide);
     if (instruction->End != length) throw CodegenException(std::string(name) + " has trailing bytes");
-    return FmaOperands{name, operation, order, scalar, !scalar && instruction->Vector256, instruction->Reg, instruction->Vvvv, instruction->Rm, instruction->Memory};
+    return FmaOperands{name, operation, order, scalar, !scalar && instruction->Vector256, instruction->Wide, instruction->Reg, instruction->Vvvv, instruction->Rm, instruction->Memory};
 }
 
 void EmitFma(StubBodyBuilder& body, const FmaOperands& operands) {
+    if (operands.Double) {
+        EmitFmaDouble(body, operands);
+        return;
+    }
     std::array<bool, 16> used{};
     used[operands.Destination] = true;
     used[operands.Second] = true;
