@@ -34,6 +34,7 @@
 #include "prx/libSceNKWebKit/include/NoOpExports.hpp"
 #include "prx/libSceNKWebKit/include/ProtoCallFrameExports.hpp"
 #include "prx/libSceNKWebKit/include/ParsedContentRangeExports.hpp"
+#include "prx/libSceNKWebKit/include/ParsedContentTypeExports.hpp"
 #include "prx/libSceNKWebKit/include/QualifiedNameExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceResponseExports.hpp"

@@ -5148,7 +5148,6 @@ int APS5_VABI _ZNK7WebCore17JSDOMGlobalObject13worldIsNormalEv();
 int APS5_VABI _ZNK7WebCore17JSDOMGlobalObject22scriptExecutionContextEv();
 int APS5_VABI _ZNK7WebCore17MouseRelatedEvent1xEv();
 int APS5_VABI _ZNK7WebCore17MouseRelatedEvent29locationInRootViewCoordinatesEv();
-int APS5_VABI _ZNK7WebCore17ParsedContentType9serializeEv();
 int APS5_VABI _ZNK7WebCore17ResourceErrorBase12isolatedCopyEv();
 int APS5_VABI _ZNK7WebCore17ResourceErrorBase8lazyInitEv();
 int APS5_VABI _ZNK7WebCore17SMILTimeContainer19animationFrameDelayEv();

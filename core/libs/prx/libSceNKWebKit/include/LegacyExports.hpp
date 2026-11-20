@@ -641,7 +641,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_HME4a24OKUo_nid_no_patch();
 int APS5_VABI libSceNKWebKitLegacyUnknown_HRCfQVxjVQ4_nid_no_patch();
 int APS5_VABI _ZN7WebCore26IdentityTransformOperationD0Ev();
 int APS5_VABI _ZNK7WebCore11MediaSample15isNonDisplayingEv();
-int APS5_VABI _ZN7WebCore17ParsedContentType6createERKN3WTF6StringENS_4ModeE();
 int APS5_VABI libSceNKWebKitLegacyUnknown_HW0KT3iPct8_nid_no_patch();
 int APS5_VABI _ZN7WebCore10ScrollView5paintERNS_15GraphicsContextERKNS_7IntRectENS_6Widget25SecurityOriginPaintPolicyEPNS_18EventRegionContextE();
 int APS5_VABI libSceNKWebKitLegacyUnknown_HXFeUnyqnHE_nid_no_patch();
