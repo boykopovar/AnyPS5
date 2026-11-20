@@ -1570,10 +1570,6 @@ int APS5_VABI _ZN3WTF24releaseLineBreakIteratorEP14UBreakIterator() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF25createCanonicalUUIDStringEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE() {
     NotImplemented_nid_no_patch(__func__);
 }

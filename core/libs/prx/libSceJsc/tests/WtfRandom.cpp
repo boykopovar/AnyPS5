@@ -1,9 +1,14 @@
 #include "prx/libSceJsc/libSceJsc.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <set>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -64,8 +69,45 @@ static void TestRandomNumbers() {
     Check(orBits == ~0u && andBits == 0, "cryptographicallyRandomNumber uses all 32 bits", __LINE__);
 }
 
+static void TestCanonicalUuids() {
+    ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
+    std::set<std::string> values;
+    for (unsigned sample = 0; sample < 256; ++sample) {
+        Jsc::WtfAbi::StringImpl* result = nullptr;
+        Check(_ZN3WTF25createCanonicalUUIDStringEv(&result) == &result, "UUID return storage", __LINE__);
+        Check(result != nullptr, "UUID string allocation", __LINE__);
+        Check(result->length == 36, "UUID string length", __LINE__);
+        Check(result->refCount == 2, "UUID string initial reference count", __LINE__);
+        Check(result->hashAndFlags == Jsc::WtfAbi::StringImplFlag8Bit, "UUID owned Latin-1 string", __LINE__);
+        Check(result->data == reinterpret_cast<const unsigned char*>(result) + 20, "UUID inline characters", __LINE__);
+        std::string text(static_cast<const char*>(result->data), result->length);
+        for (unsigned index = 0; index < text.size(); ++index) {
+            const char character = text[index];
+            if (index == 8 || index == 13 || index == 18 || index == 23) {
+                Check(character == '-', "UUID separators", __LINE__);
+            } else {
+                Check((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f'), "UUID lowercase hexadecimal", __LINE__);
+            }
+        }
+        Check(text[14] == '4', "UUID version 4", __LINE__);
+        Check(text[19] == '8' || text[19] == '9' || text[19] == 'a' || text[19] == 'b', "UUID variant", __LINE__);
+        Check(values.insert(text).second, "UUID values vary", __LINE__);
+        free_nid_postfix(result);
+    }
+    for (auto* output : {static_cast<Jsc::WtfAbi::StringImpl**>(nullptr), reinterpret_cast<Jsc::WtfAbi::StringImpl**>(1)}) {
+        bool rejected = false;
+        try {
+            _ZN3WTF25createCanonicalUUIDStringEv(output);
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        Check(rejected, "invalid UUID return storage rejected", __LINE__);
+    }
+}
+
 int main() {
     TestIdentifiers();
     TestRandomNumbers();
+    TestCanonicalUuids();
     return 0;
 }
