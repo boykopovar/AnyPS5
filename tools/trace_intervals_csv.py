@@ -22,11 +22,11 @@ def render(result, spreadsheet_safe=False):
     for index, interval in enumerate(result["intervals"]):
         worker = interval["busiest_worker"] or {}
         phase = interval["top_phase"] or {}
-        row = {key: interval[key] for key in ("start_s", "end_s", "presents", "gpu_busy_ms_per_present", "trace_dropped")}
+        row = {key: interval[key] for key in ("start_s", "end_s", "presents", "gpu_busy_ms_per_present")}
         row.update({key + "_ms": interval["frame_ms"][key] for key in ("p50", "p90", "p99", "max")})
         row.update(interval=index + 1, busiest_worker=cell(worker.get("thread")), busiest_worker_pct=worker.get("pct"),
                    top_phase=cell(phase.get("name")), top_phase_ms_per_frame=phase.get("ms_per_frame"),
-                   identity_changed=index in changed)
+                   trace_dropped=str(interval["trace_dropped"]), identity_changed=str(index in changed))
         writer.writerow(row)
     return output.getvalue()
 
