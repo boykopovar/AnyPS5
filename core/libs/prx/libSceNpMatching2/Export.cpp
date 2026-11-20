@@ -599,7 +599,6 @@ int APS5_VABI sceNpMatching2SignalingGetPeerNetInfo(void) {
 int APS5_VABI sceNpMatching2SignalingGetPeerNetInfoResult(void) {
     std::lock_guard lock(matching2Mutex);
     if (!matching2Initialized) return SCE_NP_MATCHING2_SIGNALING_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

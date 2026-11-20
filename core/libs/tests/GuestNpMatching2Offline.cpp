@@ -281,6 +281,7 @@ int main() {
     init.size = 0x30;
     Require(sceNpMatching2Initialize(&init) == 0, "sceNpMatching2Initialize", "initialization failed");
     Require(sceNpMatching2SignalingGetPeerNetInfo() == 0, "sceNpMatching2SignalingGetPeerNetInfo", "a call after initialization did not return success");
+    Require(sceNpMatching2SignalingGetPeerNetInfoResult() == 0, "sceNpMatching2SignalingGetPeerNetInfoResult", "a call after initialization did not return success");
     Require(sceNpMatching2Initialize(&init) == AlreadyInitialized, "sceNpMatching2Initialize", "initializing when already initialized did not return ALREADY_INITIALIZED");
     Require(sceNpMatching2Initialize(nullptr) == AlreadyInitialized, "sceNpMatching2Initialize", "the parameter was checked before the initialization state");
     Require(sceNpMatching2SignalingGetLocalNetInfo(nullptr) == InvalidArgument, "sceNpMatching2SignalingGetLocalNetInfo", "a null info was not refused with INVALID_ARGUMENT");
@@ -393,6 +394,7 @@ int main() {
     Require(sceNpMatching2SignalingGetLocalNetInfo(nullptr) == SignalingNotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "a call after termination with null did not return the signaling NOT_INITIALIZED");
     Require(sceNpMatching2SignalingGetLocalNetInfo(inaccessibleNetInfo) == SignalingNotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "an inaccessible pointer after termination did not return the signaling NOT_INITIALIZED without reading");
     Require(sceNpMatching2SignalingGetPeerNetInfo() == SignalingNotInitialized, "sceNpMatching2SignalingGetPeerNetInfo", "a call after termination did not return the signaling NOT_INITIALIZED");
+    Require(sceNpMatching2SignalingGetPeerNetInfoResult() == SignalingNotInitialized, "sceNpMatching2SignalingGetPeerNetInfoResult", "a call after termination did not return the signaling NOT_INITIALIZED");
     NpMatching2SignalingNetInfo postTermInfo{};
     postTermInfo.size = 0;
     Require(sceNpMatching2SignalingGetLocalNetInfo(&postTermInfo) == SignalingNotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "an invalid size after termination did not return the signaling NOT_INITIALIZED");
