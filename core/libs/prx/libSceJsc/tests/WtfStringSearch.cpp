@@ -304,7 +304,8 @@ void TestInvalidArguments() {
     StringView view = View("Hello");
     Check(ThrowsInvalidArgument([&] { _ZNK3WTF10StringView8containsEPKc(&view, nullptr); }), __LINE__);
     Check(ThrowsInvalidArgument([&] { _ZN3WTF10protocolIsENS_10StringViewEPKc(View("http:"), nullptr); }), __LINE__);
-    Check(!_ZN3WTF10protocolIsENS_10StringViewEPKc(View(" "), nullptr), __LINE__);
+    Check(ThrowsInvalidArgument([&] { _ZN3WTF10protocolIsENS_10StringViewEPKc(View(" "), nullptr); }), __LINE__);
+    Check(ThrowsInvalidArgument([&] { _ZN3WTF10protocolIsENS_10StringViewEPKc(View(""), nullptr); }), __LINE__);
 }
 
 void TestDefaultWritingDirection() {
