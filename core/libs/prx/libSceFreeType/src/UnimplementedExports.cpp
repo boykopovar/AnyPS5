@@ -358,4 +358,8 @@ void APS5_VABI FT_Glyph_Transform_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+void APS5_VABI ft_stub_set_char_sizes_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
