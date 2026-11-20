@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "BindlessImageAbi.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <chrono>
@@ -109,6 +110,53 @@ bool forEachInstruction(std::span<const std::uint32_t> words, const TVisit& visi
     return true;
 }
 
+std::unordered_set<std::uint32_t> heapHeaderPointers(std::span<const std::uint32_t> words) {
+    std::unordered_map<std::uint32_t, std::uint32_t> sets;
+    std::unordered_map<std::uint32_t, std::uint32_t> bindings;
+    std::unordered_map<std::uint32_t, std::span<const std::uint32_t>> definitions;
+    forEachInstruction(words, [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
+        if (opcode == spv::OpDecorate && instruction.size() == 4 && instruction[2] == spv::DecorationDescriptorSet) sets[instruction[1]] = instruction[3];
+        if (opcode == spv::OpDecorate && instruction.size() == 4 && instruction[2] == spv::DecorationBinding) bindings[instruction[1]] = instruction[3];
+        const bool defined = opcode == spv::OpAccessChain || opcode == spv::OpInBoundsAccessChain || opcode == spv::OpLoad || opcode == spv::OpUConvert || opcode == spv::OpShiftLeftLogical || opcode == spv::OpBitwiseOr || opcode == spv::OpIAdd || opcode == spv::OpConvertUToPtr;
+        if (defined && instruction.size() > 3) definitions[instruction[2]] = instruction;
+    });
+    const auto definition = [&](std::uint32_t id, spv::Op opcode, std::size_t operands) -> std::span<const std::uint32_t> {
+        const auto found = definitions.find(id);
+        if (found == definitions.end() || (found->second[0] & 0xffffu) != static_cast<std::uint32_t>(opcode) || found->second.size() != 3u + operands) return {};
+        return found->second;
+    };
+    const auto headerVariable = [&](std::uint32_t id) {
+        const auto set = sets.find(id);
+        const auto binding = bindings.find(id);
+        return set != sets.end() && binding != bindings.end() && set->second == ShaderRecompiler::BindlessImageAbi::HeapDescriptorSet && binding->second == ShaderRecompiler::BindlessImageAbi::HeaderBinding;
+    };
+    const auto headerWide = [&](std::uint32_t id) {
+        const auto widened = definition(id, spv::OpUConvert, 1u);
+        if (widened.empty()) return false;
+        const auto load = definitions.find(widened[3]);
+        if (load == definitions.end() || (load->second[0] & 0xffffu) != spv::OpLoad || load->second.size() < 4u) return false;
+        const auto chain = definitions.find(load->second[3]);
+        if (chain == definitions.end() || ((chain->second[0] & 0xffffu) != spv::OpAccessChain && (chain->second[0] & 0xffffu) != spv::OpInBoundsAccessChain)) return false;
+        return headerVariable(chain->second[3]);
+    };
+    const auto headerAddress = [&](std::uint32_t id) {
+        const auto joined = definition(id, spv::OpBitwiseOr, 2u);
+        if (joined.empty()) return false;
+        for (std::size_t low = 3; low < 5; ++low) {
+            const auto high = definition(joined[low == 3 ? 4 : 3], spv::OpShiftLeftLogical, 2u);
+            if (headerWide(joined[low]) && !high.empty() && headerWide(high[3])) return true;
+        }
+        return false;
+    };
+    std::unordered_set<std::uint32_t> result;
+    for (const auto& [id, instruction] : definitions) {
+        if ((instruction[0] & 0xffffu) != spv::OpConvertUToPtr || instruction.size() != 4u) continue;
+        const auto sum = definition(instruction[3], spv::OpIAdd, 2u);
+        if (!sum.empty() && (headerAddress(sum[3]) || headerAddress(sum[4]))) result.insert(id);
+    }
+    return result;
+}
+
 bool storesThroughAddressesCached(const ShaderRecompiler::SharedSpirv& spirv) {
     static std::mutex mutex;
     static std::map<std::pair<std::uint64_t, std::uint64_t>, bool> known;
@@ -157,11 +205,12 @@ bool SpirvStoresThroughAddresses(std::span<const std::uint32_t> words) {
     forEachInstruction(words, [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
         if (instruction.size() > 2 && !definesNoPointerValue(opcode) && pointerTypes.contains(instruction[1])) pointers.insert(instruction[2]);
     });
+    const auto heapHeader = heapHeaderPointers(words);
     bool stores = false;
     forEachInstruction(words, [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
         const auto pointer = pointerOperandStored(opcode, instruction);
         const bool extendedWithPointer = opcode == spv::OpExtInst && std::any_of(instruction.begin() + static_cast<std::ptrdiff_t>(std::min<std::size_t>(5u, instruction.size())), instruction.end(), [&](std::uint32_t operand) { return pointers.contains(operand); });
-        stores = stores || extendedWithPointer || (pointer != 0 && pointers.contains(pointer));
+        stores = stores || extendedWithPointer || (pointer != 0 && pointers.contains(pointer) && !heapHeader.contains(pointer));
     });
     return stores;
 }
