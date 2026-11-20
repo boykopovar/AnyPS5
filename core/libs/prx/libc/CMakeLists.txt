@@ -241,6 +241,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/CxxAbiSupport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Threads.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxCondition.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Backtrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Radix64.cpp
@@ -2834,4 +2835,16 @@ if(libc_incdirs)
     target_include_directories(libc_Math_Chunk10 PRIVATE ${libc_incdirs})
     target_include_directories(libc_Math_Chunk11 PRIVATE ${libc_incdirs})
     target_include_directories(libc_Math_Chunk12 PRIVATE ${libc_incdirs})
+endif()
+
+# --- small-size libraries split from Threads.cpp ---
+add_library(libc_Threads_Chunk01 STATIC src/chunks/Threads_Chunk01.cpp)
+add_library(libc_Threads_Chunk02 STATIC src/chunks/Threads_Chunk02.cpp)
+add_library(libc_Threads_Chunk03 STATIC src/chunks/Threads_Chunk03.cpp)
+target_link_libraries(libc PUBLIC libc_Threads_Chunk01 libc_Threads_Chunk02 libc_Threads_Chunk03)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_Threads_Chunk01 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Threads_Chunk02 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Threads_Chunk03 PRIVATE ${libc_incdirs})
 endif()

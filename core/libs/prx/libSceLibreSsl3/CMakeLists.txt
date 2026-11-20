@@ -971,7 +971,7 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PemKeys.cpp)
+target_sources(libSceLibreSsl3 PRIVATE )
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl3_pem_keys_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/PemKeys.cpp)
@@ -1070,7 +1070,7 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509V3ExtConfNid.cpp)
+target_sources(libSceLibreSsl3 PRIVATE )
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl3_x509v3_ext_conf_nid_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/X509V3ExtConfNid.cpp)
@@ -1220,4 +1220,22 @@ if(BUILD_TESTING)
         set_tests_properties(guest_libressl3_default_verify_paths PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
+# --- small-size libraries split from PemKeys.cpp ---
+add_library(libSceLibreSsl3_PemKeys_Chunk01 STATIC src/chunks/PemKeys_Chunk01.cpp)
+add_library(libSceLibreSsl3_PemKeys_Chunk02 STATIC src/chunks/PemKeys_Chunk02.cpp)
+target_link_libraries(libSceLibreSsl3 PUBLIC libSceLibreSsl3_PemKeys_Chunk01 libSceLibreSsl3_PemKeys_Chunk02)
+get_target_property(libSceLibreSsl3_incdirs libSceLibreSsl3 INCLUDE_DIRECTORIES)
+if(libSceLibreSsl3_incdirs)
+    target_include_directories(libSceLibreSsl3_PemKeys_Chunk01 PRIVATE ${libSceLibreSsl3_incdirs})
+    target_include_directories(libSceLibreSsl3_PemKeys_Chunk02 PRIVATE ${libSceLibreSsl3_incdirs})
+endif()
+
+# --- small-size libraries split from X509V3ExtConfNid.cpp ---
+add_library(libSceLibreSsl3_X509V3ExtConfNid_Chunk01 STATIC src/chunks/X509V3ExtConfNid_Chunk01.cpp)
+add_library(libSceLibreSsl3_X509V3ExtConfNid_Chunk02 STATIC src/chunks/X509V3ExtConfNid_Chunk02.cpp)
+target_link_libraries(libSceLibreSsl3 PUBLIC libSceLibreSsl3_X509V3ExtConfNid_Chunk01 libSceLibreSsl3_X509V3ExtConfNid_Chunk02)
+get_target_property(libSceLibreSsl3_incdirs libSceLibreSsl3 INCLUDE_DIRECTORIES)
+if(libSceLibreSsl3_incdirs)
+    target_include_directories(libSceLibreSsl3_X509V3ExtConfNid_Chunk01 PRIVATE ${libSceLibreSsl3_incdirs})
+    target_include_directories(libSceLibreSsl3_X509V3ExtConfNid_Chunk02 PRIVATE ${libSceLibreSsl3_incdirs})
 endif()

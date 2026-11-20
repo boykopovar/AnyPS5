@@ -423,8 +423,8 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PerformanceTraceThread.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/TraceFile.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ThreadPriority.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/GuestMemory.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ShaderMemory.cpp
+        
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/BdaFeatures.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/SubgroupClock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/HostReport.cpp
@@ -459,13 +459,13 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineCache.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineJournal.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/RuntimeSwitches.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Resources.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DeferredDestruction.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MemoryAccounting.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PlaceholderImages.cpp
         
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ParallelCompare.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderInputState.cpp
+        
+        
         
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderAddressResources.cpp
         
@@ -1423,4 +1423,58 @@ if(libSceAgcDriver_incdirs)
     target_include_directories(libSceAgcDriver_Recorder_Chunk10 PRIVATE ${libSceAgcDriver_incdirs})
     target_include_directories(libSceAgcDriver_Recorder_Chunk11 PRIVATE ${libSceAgcDriver_incdirs})
     target_include_directories(libSceAgcDriver_Recorder_Chunk12 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from GuestMemory.cpp ---
+add_library(libSceAgcDriver_GuestMemory_Chunk01 STATIC Execution/src/chunks/GuestMemory_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_GuestMemory_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_GuestMemory_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from ShaderMemory.cpp ---
+add_library(libSceAgcDriver_ShaderMemory_Chunk01 STATIC Execution/src/chunks/ShaderMemory_Chunk01.cpp)
+add_library(libSceAgcDriver_ShaderMemory_Chunk02 STATIC Execution/src/chunks/ShaderMemory_Chunk02.cpp)
+add_library(libSceAgcDriver_ShaderMemory_Chunk03 STATIC Execution/src/chunks/ShaderMemory_Chunk03.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_ShaderMemory_Chunk01 libSceAgcDriver_ShaderMemory_Chunk02 libSceAgcDriver_ShaderMemory_Chunk03)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_ShaderMemory_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderMemory_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderMemory_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from Resources.cpp ---
+add_library(libSceAgcDriver_Resources_Chunk01 STATIC Graphics/src/chunks/Resources_Chunk01.cpp)
+add_library(libSceAgcDriver_Resources_Chunk02 STATIC Graphics/src/chunks/Resources_Chunk02.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_Resources_Chunk01 libSceAgcDriver_Resources_Chunk02)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_Resources_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Resources_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from MemoryAccounting.cpp ---
+add_library(libSceAgcDriver_MemoryAccounting_Chunk01 STATIC Graphics/src/chunks/MemoryAccounting_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_MemoryAccounting_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_MemoryAccounting_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from ParallelCompare.cpp ---
+add_library(libSceAgcDriver_ParallelCompare_Chunk01 STATIC Graphics/src/chunks/ParallelCompare_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_ParallelCompare_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_ParallelCompare_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from ShaderInputState.cpp ---
+add_library(libSceAgcDriver_ShaderInputState_Chunk01 STATIC Graphics/src/chunks/ShaderInputState_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_ShaderInputState_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_ShaderInputState_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
 endif()
