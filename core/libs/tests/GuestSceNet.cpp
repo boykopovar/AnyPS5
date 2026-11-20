@@ -2969,6 +2969,93 @@ static void CheckDatagramDisconnect() {
     for (const int descriptor : {peer, other, dissolved}) Require(sceNetSocketClose(descriptor) == 0);
 }
 
+static void RequireGuestType(int socket, int type) {
+    int value = 0;
+    std::uint32_t size = sizeof(value);
+    Require(sceNetGetsockopt(socket, 0xffff, 0x1008, &value, &size) == 0 && size == sizeof(value) && value == type);
+    std::array<std::uint8_t, 0xa0> record{};
+    Require(sceNetGetSockInfo(socket, record.data(), 1, 0) == 1 && record[0x28] == type);
+}
+
+static void RequireSocketOption(int socket, int option, int expected) {
+    int value = -1;
+    std::uint32_t size = sizeof(value);
+    Require(sceNetGetsockopt(socket, 0xffff, option, &value, &size) == 0 && size == sizeof(value) && value == expected);
+}
+
+static void CheckPeerSocketTypes() {
+    Require(Failed(sceNetSocket("peer", 2, 6, 17), 43));
+    Require(Failed(sceNetSocket("peer", 2, 6, 6), 43));
+    const int stream = sceNetSocket("peer", 2, 10, 0);
+    const int streamTcp = sceNetSocket("peer", 2, 10, 6);
+    Require(stream >= 0 && streamTcp >= 0);
+    RequireGuestType(stream, 10);
+    RequireGuestType(streamTcp, 10);
+    Require(sceNetSocketClose(stream) == 0 && sceNetSocketClose(streamTcp) == 0);
+
+    const int datagram = sceNetSocket("UDPP2P", 2, 6, 0);
+    Require(datagram >= 0);
+    RequireGuestType(datagram, 6);
+    const int one = 1;
+    const int zero = 0;
+    const int buffer = 0x20000;
+    Require(sceNetSetsockopt(datagram, 0xffff, 0x20, &one, sizeof(one)) == 0);
+    Require(sceNetSetsockopt(datagram, 0xffff, 0x4, &zero, sizeof(zero)) == 0);
+    Require(sceNetSetsockopt(datagram, 0xffff, 0x200, &zero, sizeof(zero)) == 0);
+    Require(sceNetSetsockopt(datagram, 0xffff, 0x1002, &buffer, sizeof(buffer)) == 0);
+    Require(sceNetSetsockopt(datagram, 0xffff, 0x1001, &buffer, sizeof(buffer)) == 0);
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1, 0x1e, 0x61};
+    Require(sceNetBind_nid_postfix(datagram, address.data(), address.size()) == 0);
+    Require(sceNetSetsockopt(datagram, 0xffff, 0x1200, &one, sizeof(one)) == 0);
+    address.fill(0xa5);
+    std::uint32_t size = address.size();
+    Require(sceNetGetsockname(datagram, address.data(), &size) == 0 && size == address.size());
+    Require(address[0] == 16 && address[1] == 2 && (address[2] != 0 || address[3] != 0));
+    Require(address[4] == 127 && address[7] == 1 && address[8] == 0x1e && address[9] == 0x61);
+    Require(std::all_of(address.begin() + 10, address.end(), [](auto byte) { return byte == 0; }));
+    std::array<char, 1024> received{};
+    Require(Failed(sceNetRecvfrom(datagram, received.data(), received.size(), 0, nullptr, nullptr), 35));
+    RequireSocketOption(datagram, 0x20000, 0);
+    RequireSocketOption(datagram, 0x40000, 0);
+    Require(sceNetSetsockopt(datagram, 0xffff, 0x20000, &one, sizeof(one)) == 0);
+    RequireSocketOption(datagram, 0x20000, 1);
+    RequireSocketOption(datagram, 0x40000, 0);
+    Require(sceNetSetsockopt(datagram, 0xffff, 0x40000, &one, sizeof(one)) == 0);
+    Require(sceNetSetsockopt(datagram, 0xffff, 0x20000, &zero, sizeof(zero)) == 0);
+    RequireSocketOption(datagram, 0x20000, 0);
+    RequireSocketOption(datagram, 0x40000, 1);
+    Require(Failed(sceNetSetsockopt(datagram, 0xffff, 0x20000, &one, 1), 22));
+    Require(sceNetSocketClose(datagram) == 0);
+
+    Require(Failed(sceNetSocket("peer", 2, 10, 17), 43));
+    const int unbound = sceNetSocket("peer", 2, 10, 0);
+    Require(unbound >= 0);
+    std::array<std::uint8_t, 16> loopback{16, 2, 0, 0, 127, 0, 0, 1};
+    const char payload = 0;
+    Require(Throws([&] { sceNetBind_nid_postfix(unbound, loopback.data(), loopback.size()); }));
+    Require(Throws([&] { sceNetListen(unbound, 1); }));
+    Require(Throws([&] { sceNetAccept(unbound, nullptr, nullptr); }));
+    Require(Throws([&] { sceNetConnect(unbound, loopback.data(), loopback.size()); }));
+    Require(Throws([&] { sceNetSend(unbound, &payload, 1, 0); }));
+    Require(sceNetSocketClose(unbound) == 0);
+
+    const int receiver = sceNetSocket("peer", 2, 6, 0);
+    const int sender = sceNetSocket("plain", 2, 2, 0);
+    Require(receiver >= 0 && sender >= 0);
+    Require(sceNetBind_nid_postfix(receiver, loopback.data(), loopback.size()) == 0);
+    std::uint32_t loopbackSize = loopback.size();
+    Require(sceNetGetsockname(receiver, loopback.data(), &loopbackSize) == 0 && loopbackSize == loopback.size());
+    Require(Throws([&] { sceNetConnect(receiver, loopback.data(), loopback.size()); }));
+    Require(Throws([&] { sceNetSend(receiver, &payload, 1, 0); }));
+    Require(Throws([&] { sceNetSendto(receiver, &payload, 1, 0, loopback.data(), loopback.size()); }));
+    char incoming = 1;
+    Require(sceNetSendto(sender, &payload, 1, 0, loopback.data(), loopback.size()) == 1);
+    Require(Throws([&] { sceNetRecvfrom(receiver, &incoming, 1, 0, nullptr, nullptr); }));
+    Require(sceNetSendto(sender, &payload, 1, 0, loopback.data(), loopback.size()) == 1);
+    Require(Throws([&] { sceNetRecv(receiver, &incoming, 1, 0); }));
+    Require(sceNetSocketClose(sender) == 0 && sceNetSocketClose(receiver) == 0);
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "--inet-pton-source-faults") == 0) {
         CheckInetPtonSourceFaults();
@@ -3691,6 +3778,7 @@ int main(int argc, char** argv) {
         Require(sceNetCtlCheckCallbackForNpToolkit() == 0 && toolkit.calls == 2);
         Require(sceNetCtlUnregisterCallbackForNpToolkit(cid) == 0);
     }
+    CheckPeerSocketTypes();
     if (ipv6Unavailable) {
         std::puts("skipped the IPv6 socket checks, the host has no usable IPv6 loopback");
         return 77;
