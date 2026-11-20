@@ -482,7 +482,8 @@ Parts Parse(const char* locale) {
         parts.language += "-" + ChangeCase(tokens[1], false);
         index = 2;
     }
-    if (parts.language == "und" || parts.language == "root") parts.language.clear();
+    const bool undetermined = parts.language == "und" && (tokens.size() > 1 || encoding == std::string_view::npos);
+    if (undetermined || ChangeCase(input, false) == "root") parts.language.clear();
     if (parts.language.size() == 3) parts.language = ShortCode(Languages, parts.language);
     if (index < tokens.size()) ++parts.fields;
     if (index < tokens.size() && IsScript(tokens[index])) {

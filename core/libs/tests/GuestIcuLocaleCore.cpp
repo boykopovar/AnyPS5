@@ -135,6 +135,8 @@ int main() {
         {"x-foo", "x-foo"}, {"I_Enochian", "i-enochian"}, {"x-foo_US", "x-foo"}, {"X-", "x-"},
         {"i-klingon-Latn-DE", "i-klingon"}, {"x", "x"}, {"i.utf8", "i"},
         {"i-hakka_MT_XEMXIJA", "i-hakka"}, {"I-hakka_MX", "i-hakka"}, {"X-KLINGON_us_SANJOSE", "x-klingon"},
+        {"ROOT", ""}, {"root@kw=foo", "root"}, {"root_US", "root"}, {"Root-Latn", "root"}, {"root.utf8", "root"},
+        {"UND", ""}, {"und_US", ""}, {"Und-Latn", ""}, {"und@kw=foo", ""}, {"und.utf8", "und"}, {"undx", "undx"},
     });
     Check(uloc_getCountry, true, {
         {"en", ""}, {"en_US", "US"}, {"en-US", "US"}, {"zh_Hant_TW", "TW"},
@@ -142,7 +144,7 @@ int main() {
         {"en__POSIX", ""}, {"sr_Latn_RS@currency=EUR", "RS"}, {"eng_USA", "US"},
         {"de-deu", "DE"}, {"zho_Hant_TWN", "TW"}, {"sr_Latn_SRB", "RS"}, {"en_XYZ", "XYZ"},
         {"en_XEA", "XEA"}, {"en_a1", "A1"}, {"en_12", "12"}, {"en_1ab", "1AB"},
-        {"en__US", ""}, {"en_Latn__US", ""}, {"x-foo_US", "US"}, {"i-klingon-Latn-DE", "DE"},
+        {"en__US", ""}, {"en_Latn__US", ""}, {"x-foo_US", "US"}, {"i-klingon-Latn-DE", "DE"}, {"root_US", "US"}, {"und_US", "US"},
         {"I-hakka_MX", "MX"}, {"X-KLINGON_us_SANJOSE", "US"},
     });
     Check(uloc_getScript, true, {
@@ -161,6 +163,8 @@ int main() {
         {"x-elmer", ""}, {"en-a-bbb-x-foo", "en"}, {"i-klingon@currency=EUR", "i-klingon"},
         {"x-private@currency=EUR", "x-private"}, {"x_foo", "x-foo"}, {"i-klingon.utf8", "i-klingon.utf8"},
         {"zh_YUE", "zh_YUE"}, {"art_LOJBAN", "art__LOJBAN"},
+        {"root@kw=foo", "root"}, {"root_US", "root_US"}, {"root.utf8", "root.utf8"}, {"und.utf8", "und.utf8"},
+        {"und_US", "_US"}, {"und@kw=foo", ""},
         {"no@ny", "no@ny"}, {"no-no.utf32@B", "no_NO.utf32@B"}, {"qz-qz@Euro", "qz_QZ@Euro"},
         {"en_GB@EURO", "en_GB@EURO"}, {"no-no-ny.utf8@B", "no_NO_NY.utf8@B"}, {"mr@", "mr@"},
         {"en@a;b", "en@a;b"}, {"en@a;b=c", "en"}, {"en@currency=EUR", "en"},
@@ -180,6 +184,8 @@ int main() {
         {"en@a=1;  ", "en@a=1"}, {"en@a;b=c", "en"}, {"en@a=b=c;d==", "en@a=b=c;d=="},
         {"en@abcdefghijklmnopqrstuvwx=1", "en@abcdefghijklmnopqrstuvwx=1"},
         {"no@ny", "no__NY"}, {"no-no.utf32@B", "no_NO_B"}, {"qz-qz@Euro", "qz_QZ_EURO"},
+        {"root@kw=foo", "root@kw=foo"}, {"ROOT@kw=foo", "root@kw=foo"}, {"root_US", "root_US"}, {"root.utf8", "root"},
+        {"und.utf8", "und"}, {"und_US", "_US"}, {"und@kw=foo", "@kw=foo"}, {"@calendar=gregorian", "@calendar=gregorian"},
         {"en_GB@EURO", "en_GB_EURO"}, {"no-no-ny.utf8@B", "no_NO_NY_B"}, {"en@", "en__"},
         {"en_Latn@FOO", "en_Latn_FOO"}, {"en_Latn_US@FOO", "en_Latn_US_FOO"}, {"en_POSIX@FOO", "en__POSIX_FOO"},
         {"en_US_POSIX@", "en_US_POSIX"}, {"art@lojban", "jbo"}, {"zh@yue", "zh__YUE"}, {"en@a;b", "en__A;B"},
