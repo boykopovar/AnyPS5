@@ -206,8 +206,6 @@ int APS5_VABI WKContextSetHistoryClient();
 int APS5_VABI WKContextSetInitializationUserDataForInjectedBundle();
 int APS5_VABI WKContextSetInjectedBundleClient();
 int APS5_VABI WKContextSetInvalidMessageFunction();
-int APS5_VABI WKContextStartMemorySampler();
-int APS5_VABI WKContextStopMemorySampler();
 void APS5_VABI WKCookieManagerDeleteAllCookiesModifiedAfterDate();
 void APS5_VABI WKCookieManagerDeleteCookiesForHostname();
 void APS5_VABI WKCookieManagerGetHTTPCookieAcceptPolicy();

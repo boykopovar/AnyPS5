@@ -8684,14 +8684,6 @@ int APS5_VABI WKContextSetInvalidMessageFunction() {
 
 
 
-int APS5_VABI WKContextStartMemorySampler() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKContextStopMemorySampler() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 int APS5_VABI WKFormSubmissionListenerContinue() {
     NotImplemented_nid_no_patch(__func__);
