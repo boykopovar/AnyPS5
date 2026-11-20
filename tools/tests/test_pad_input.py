@@ -349,6 +349,23 @@ class PadInputTests(unittest.TestCase):
         self.assertEqual(self.path.read_text(encoding="utf-8"), original)
         self.assertEqual(list(self.root.iterdir()), [self.path])
 
+    @unittest.skipUnless(os.name == "nt", "Windows replaces a command file held open for reading")
+    def test_queue_succeeds_while_command_file_is_open_for_reading(self):
+        import ctypes
+        self.path.write_bytes(b"1 0 50\n")
+        ucrt = ctypes.CDLL("ucrtbase")
+        ucrt._wfopen.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+        ucrt._wfopen.restype = ctypes.c_void_p
+        ucrt.fclose.argtypes = [ctypes.c_void_p]
+        reader = ucrt._wfopen(str(self.path), "rb")
+        self.assertTrue(reader)
+        try:
+            self.assertEqual(self.queue(1000, "cross"), [1000, 16384, 300])
+        finally:
+            ucrt.fclose(reader)
+        self.assertEqual(self.path.read_bytes(), b"1000 16384 300\n")
+        self.assertEqual(list(self.root.iterdir()), [self.path])
+
     def test_missing_parent_directory_reports_error(self):
         missing = self.root / "nonexistent" / "command"
         errors = io.StringIO()

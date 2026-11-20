@@ -114,6 +114,15 @@ def next_sequence(path):
     return sequence
 
 
+def rewrite_in_place(path, text):
+    data = text.encode("utf-8")
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_BINARY)
+    with os.fdopen(descriptor, "r+b") as output:
+        output.write(data)
+        output.flush()
+        output.truncate(len(data))
+
+
 def button_mask(value):
     names = value.split("+")
     if any(name not in BUTTONS for name in names) or ("release" in names and len(names) > 1) or len(set(names)) != len(names):
@@ -165,6 +174,7 @@ def main():
             metadata = args.path.stat()
         except FileNotFoundError:
             pass
+    command = f"{sequence} {mask} {args.hold_ms}{sticks}{touch}\n"
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", dir=args.path.parent, delete=False) as output:
@@ -173,8 +183,13 @@ def main():
                 if os.geteuid() == 0:
                     os.fchown(output.fileno(), metadata.st_uid, metadata.st_gid)
                 os.fchmod(output.fileno(), stat.S_IMODE(metadata.st_mode))
-            output.write(f"{sequence} {mask} {args.hold_ms}{sticks}{touch}\n")
-        os.replace(temporary, args.path)
+            output.write(command)
+        try:
+            os.replace(temporary, args.path)
+        except PermissionError as error:
+            if os.name != "nt" or getattr(error, "winerror", None) != 5:
+                raise
+            rewrite_in_place(args.path, command)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
