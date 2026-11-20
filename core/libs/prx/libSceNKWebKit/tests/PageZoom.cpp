@@ -51,42 +51,48 @@ int main() {
 
     WKPageSetPageZoomFactor(pageRef, 0.0);
     Require(WKPageGetPageZoomFactor(pageRef) == 1.25);
+    WKPageSetPageZoomFactor(pageRef, -0.0);
+    Require(WKPageGetPageZoomFactor(pageRef) == 1.25);
     WKPageSetPageZoomFactor(pageRef, -0.5);
     Require(WKPageGetPageZoomFactor(pageRef) == 1.25);
+    WKPageSetPageZoomFactor(pageRef, -std::numeric_limits<double>::infinity());
+    Require(WKPageGetPageZoomFactor(pageRef) == 1.25);
+    Require(WKPageGetTextZoomFactor(pageRef) == 1.75);
 
     WKPageSetTextZoomFactor(pageRef, 0.0);
-    Require(WKPageGetTextZoomFactor(pageRef) == 1.75);
+    Require(WKPageGetTextZoomFactor(pageRef) == 0.0);
     WKPageSetTextZoomFactor(pageRef, -1.0);
-    Require(WKPageGetTextZoomFactor(pageRef) == 1.75);
+    Require(WKPageGetTextZoomFactor(pageRef) == -1.0);
+    Require(WKPageGetPageZoomFactor(pageRef) == 1.25);
 
     WKPageSetPageAndTextZoomFactors(pageRef, -1.0, 2.5);
-    Require(WKPageGetPageZoomFactor(pageRef) == 1.25);
-    Require(WKPageGetTextZoomFactor(pageRef) == 1.75);
+    Require(WKPageGetPageZoomFactor(pageRef) == -1.0);
+    Require(WKPageGetTextZoomFactor(pageRef) == 2.5);
 
     WKPageSetPageAndTextZoomFactors(pageRef, 2.5, 0.0);
-    Require(WKPageGetPageZoomFactor(pageRef) == 1.25);
-    Require(WKPageGetTextZoomFactor(pageRef) == 1.75);
+    Require(WKPageGetPageZoomFactor(pageRef) == 2.5);
+    Require(WKPageGetTextZoomFactor(pageRef) == 0.0);
 
     const double nanValue = std::numeric_limits<double>::quiet_NaN();
     const double infValue = std::numeric_limits<double>::infinity();
 
     WKPageSetPageZoomFactor(pageRef, nanValue);
-    Require(WKPageGetPageZoomFactor(pageRef) == 1.25);
+    Require(std::isnan(WKPageGetPageZoomFactor(pageRef)));
     WKPageSetPageZoomFactor(pageRef, infValue);
-    Require(WKPageGetPageZoomFactor(pageRef) == 1.25);
+    Require(WKPageGetPageZoomFactor(pageRef) == infValue);
 
     WKPageSetTextZoomFactor(pageRef, nanValue);
-    Require(WKPageGetTextZoomFactor(pageRef) == 1.75);
+    Require(std::isnan(WKPageGetTextZoomFactor(pageRef)));
     WKPageSetTextZoomFactor(pageRef, infValue);
-    Require(WKPageGetTextZoomFactor(pageRef) == 1.75);
+    Require(WKPageGetTextZoomFactor(pageRef) == infValue);
 
     WKPageSetPageAndTextZoomFactors(pageRef, nanValue, 2.5);
-    Require(WKPageGetPageZoomFactor(pageRef) == 1.25);
-    Require(WKPageGetTextZoomFactor(pageRef) == 1.75);
+    Require(std::isnan(WKPageGetPageZoomFactor(pageRef)));
+    Require(WKPageGetTextZoomFactor(pageRef) == 2.5);
 
-    WKPageSetPageAndTextZoomFactors(pageRef, 2.5, infValue);
-    Require(WKPageGetPageZoomFactor(pageRef) == 1.25);
-    Require(WKPageGetTextZoomFactor(pageRef) == 1.75);
+    WKPageSetPageAndTextZoomFactors(pageRef, 2.5, -infValue);
+    Require(WKPageGetPageZoomFactor(pageRef) == 2.5);
+    Require(WKPageGetTextZoomFactor(pageRef) == -infValue);
 
     RequireInvalidArgument([] { WKPageGetPageZoomFactor(nullptr); });
     RequireInvalidArgument([] { WKPageGetTextZoomFactor(nullptr); });

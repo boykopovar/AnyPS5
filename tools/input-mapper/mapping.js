@@ -26,8 +26,13 @@ export const defaults = {
 };
 
 export function actionsForInput(search, bindings) {
-    const query = search.trim().toLowerCase();
+    let query = search.trim().toLowerCase();
     if (!query) return new Set();
+    if (query.startsWith('pad:')) {
+        const chord = canonicalChord(query.slice(4));
+        if (chord === undefined) return new Set();
+        query = `pad:${chord.toLowerCase()}`;
+    }
     const keyboardQuery = `key:${query}`;
     return new Set(actions.filter(action => {
         const custom = bindings.filter(binding => binding.action === action);
@@ -39,6 +44,12 @@ export function actionsForInput(search, bindings) {
             return input === query || input === keyboardQuery;
         });
     }));
+}
+
+export function inputFilename(titleId) {
+    if (titleId === '') return 'anyps5-input.ini';
+    if (typeof titleId !== 'string' || titleId.length > 32 || /[^A-Za-z0-9_-]/u.test(titleId)) return undefined;
+    return `anyps5-input.${titleId}.ini`;
 }
 
 export function typesForAction(action) {

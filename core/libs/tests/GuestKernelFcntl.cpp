@@ -12,7 +12,10 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
-#ifndef _WIN32
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#else
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -641,6 +644,32 @@ static void StandardInputFlags() {
     Require(fcntl_nid_postfix(0, GetDescriptorFlags) == 0);
 }
 
+static void RequireNoDeviceType(int device) {
+    for (const auto call : {ioctl_nid_postfix, _ioctl_nid_postfix}) {
+        int type = 0x5a5a5a5a;
+        Require(call(device, DeviceTypeRequest, &type) == 0 && type == 0);
+        RequireFailure(call(device, DeviceTypeRequest, nullptr), GuestEfault);
+        RequireFailure(call(device, DeviceTypeRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    }
+}
+
+static void CharacterDevicesHaveNoDeviceType() {
+#ifdef _WIN32
+    const int device = ::_open("NUL", _O_RDONLY | _O_BINARY);
+#else
+    const int device = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+#endif
+    Require(device >= 0);
+    RequireNoDeviceType(device);
+    Require(close_nid_postfix(device) == 0);
+#ifndef _WIN32
+    const int terminal = ::posix_openpt(O_RDWR | O_NOCTTY);
+    Require(terminal >= 0 && ::isatty(terminal) == 1);
+    RequireNoDeviceType(terminal);
+    Require(close_nid_postfix(terminal) == 0);
+#endif
+}
+
 int main() {
     SocketsKeepTheirPath();
     FileFlagsRoundTrip();
@@ -654,5 +683,6 @@ int main() {
     HostOnlyDescriptorsAreNotOpenAndSharedMemoryIs();
 #endif
     StandardInputFlags();
+    CharacterDevicesHaveNoDeviceType();
     return 0;
 }
