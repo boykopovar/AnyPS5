@@ -28,7 +28,7 @@
 | `sceSlimglCompositorSetIndirectCompositionCommand` | `BrNgn7z6A40` |
 | `sceSlimglCompositorSetIndirectRenderTargetConfigCommand` | `iyTnezpw1jE` |
 
-- [sceSlimglClientStartIPC and sceSlimglIPCSetup](../../../core/libs/prx/libSceGLSlimVSH/Export.cpp) (`QvXbiLqpn6c`, `F4pQ5tsDo74`) - their prototypes are unverified and they keep the no-parameter declarations. In firmware 13.42 both bodies are `xor %eax,%eax; ret`: they return 0 without reading an argument or setting up any IPC, and so do these. Read from disassembly, not measured on a console.
+- [sceSlimglClientStartIPC and sceSlimglIPCSetup](../../../core/libs/prx/libSceGLSlimVSH/Export.cpp) (`QvXbiLqpn6c`, `F4pQ5tsDo74`) - their prototypes are unverified and they keep the no-parameter declarations. In firmware 13.42 both bodies are `xor %eax,%eax; ret`: they return 0 without reading an argument or setting up any IPC, and so do these: a payload process on a PS5 Pro (firmware 13.60) returned 0 from both, loading the module with `dlopen` alone.
 
 ### Additional callable exports
 

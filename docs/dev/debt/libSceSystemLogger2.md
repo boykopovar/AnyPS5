@@ -8,7 +8,7 @@
 
 ### Silent stubs
 
-- [sceSystemLogger2Terminate](../../../core/libs/prx/libSceSystemLogger2/Export.cpp) (libSceSystemLogger2) - returns 0 and leaves the initialized flag alone, because the fw 13.40 export is a bare `xor %eax,%eax; ret`. Only `sceSystemLogger2TerminateWithResourceRelease` stops the logger.
+- [sceSystemLogger2Terminate](../../../core/libs/prx/libSceSystemLogger2/Export.cpp) (libSceSystemLogger2) - returns 0 and leaves the initialized flag alone: the fw 13.40 export is a bare `xor %eax,%eax; ret`, and a payload process on a PS5 Pro (firmware 13.60) returned 0 from it as well. Only `sceSystemLogger2TerminateWithResourceRelease` stops the logger.
 
 ### Console service
 

@@ -11,7 +11,7 @@
 ### Unknown function info
 
 - [FcCharSet and FcMatrix exports](../../../core/libs/prx/libfontconfig/Export.cpp) (libfontconfig) - `FcCharSetCreate`, `FcCharSetDestroy`, `FcCharSetAddChar`, `FcCharSetMerge`, `FcCharSetSubtractCount` and `FcMatrixMultiply` follow the public [fontconfig.h](https://gitlab.freedesktop.org/fontconfig/fontconfig/-/blob/2.12.6/fontconfig/fontconfig.h), [fccharset.c](https://gitlab.freedesktop.org/fontconfig/fontconfig/-/blob/2.12.6/src/fccharset.c) and [fcmatrix.c](https://gitlab.freedesktop.org/fontconfig/fontconfig/-/blob/2.12.6/src/fcmatrix.c). The module's fontconfig version is unknown and no console or title caller was read. Cached constant character sets are not modeled.
-- [FcConfigGetCurrent and FcInitBringUptoDate](../../../core/libs/prx/libfontconfig/Export.cpp) (libfontconfig, NIDs `2M54M-SKV-k` and `Ck9k-L7rz-I`) - return what firmware 13.42's `system_ex/common_ex/lib/libfontconfig.sprx` returns, read from disassembly, not measured on a console: `FcConfigGetCurrent` is `xor %eax,%eax; ret` (no current configuration, NULL) and `FcInitBringUptoDate` is `mov $0x1,%eax; ret` (FcTrue). Neither reads arguments or state in that module.
+- [FcConfigGetCurrent and FcInitBringUptoDate](../../../core/libs/prx/libfontconfig/Export.cpp) (libfontconfig, NIDs `2M54M-SKV-k` and `Ck9k-L7rz-I`) - return what firmware 13.42's `system_ex/common_ex/lib/libfontconfig.sprx` returns, read from disassembly and confirmed on a console: `FcConfigGetCurrent` is `xor %eax,%eax; ret` (no current configuration, NULL) and `FcInitBringUptoDate` is `mov $0x1,%eax; ret` (FcTrue). Neither reads arguments or state in that module, and a payload process on a PS5 Pro (firmware 13.60) answered NULL and 1 respectively.
 
 ### Functional
 
