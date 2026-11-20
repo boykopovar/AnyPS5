@@ -53,7 +53,9 @@ constexpr float Filled = 0.25f;
 constexpr float Passed = 0.75f;
 constexpr std::size_t DepthSliceBytes = LayerBytes;
 constexpr std::size_t StoredDepthOffset = SurfaceBytes + DepthSliceBytes * Layers;
-constexpr std::size_t BlockBytes = StoredDepthOffset + DepthSliceBytes * Layers;
+constexpr std::size_t PitchedDepthOffset = StoredDepthOffset + DepthSliceBytes * Layers;
+constexpr std::size_t DepthSlicePitch = DepthSliceBytes * 2u;
+constexpr std::size_t BlockBytes = PitchedDepthOffset + DepthSlicePitch * Layers;
 constexpr std::size_t HtileSliceBytes = ((Side + 1023u) / 1024u) * ((Side + 511u) / 512u) * 32768u;
 
 alignas(256) std::array<std::uint32_t, HtileSliceBytes * Layers / 4u> Htile{};
@@ -172,6 +174,7 @@ struct Pass {
     std::span<const std::uint32_t> pixelCode;
     bool htiled = true;
     std::uint64_t depthBase = 0;
+    std::uint64_t slicePitch = 0;
 };
 
 void Draw(AgcDriver::VulkanDevice& device, std::uint64_t surface, const Pass& pass) {
@@ -207,10 +210,12 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint64_t surface, const Pass& pa
     state.renderLayers = pass.layers;
     state.layerExports = pass.layers == 1 ? 0u : 1u << 18u;
     const auto depthBase = pass.depthBase != 0 ? pass.depthBase : DepthAddress;
-    state.depth = AgcDriver::Graphics::DepthTarget{depthBase + pass.slice * DepthSliceBytes, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, pass.htiled ? AddressOf(Htile.data()) + pass.slice * HtileSliceBytes : 0u, false};
+    const std::uint64_t slicePitch = pass.slicePitch != 0 ? pass.slicePitch : DepthSliceBytes;
+    state.depth = AgcDriver::Graphics::DepthTarget{depthBase + pass.slice * slicePitch, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, pass.htiled ? AddressOf(Htile.data()) + pass.slice * HtileSliceBytes : 0u, false};
     state.depth->firstSlice = pass.slice;
     state.depth->lastSlice = pass.slice + pass.layers - 1u;
     state.depth->layers = pass.layers;
+    state.depth->depthSlicePitch = static_cast<std::uint32_t>(pass.slicePitch);
     state.depthTest = pass.depthTest;
     state.depthWrite = pass.depthWrite;
     state.depthCompare = pass.compare;
@@ -375,6 +380,26 @@ void StoredSliceFill(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     }
 }
 
+void PitchedSlices(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
+    const auto surface = AddressOf(texels);
+    const auto depth = surface + PitchedDepthOffset;
+    std::fill_n(reinterpret_cast<std::uint32_t*>(texels), SurfaceBytes / 4u, 0u);
+    AgcDriver::GuestMemory::CollectWrites(surface, SurfaceBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    std::array<float, Layers> depths{};
+    for (std::uint32_t layer = 0; layer < Layers; ++layer) depths[layer] = static_cast<float>(layer + 1u) / 8.0f;
+    Quads(Layers, false, depths);
+    Draw(device, surface, {0, Layers, true, true, VK_COMPARE_OP_ALWAYS, FillPixelCode, false, depth, DepthSlicePitch});
+    const std::array<float, Layers> unused{};
+    for (const std::uint32_t slice : {3u, 5u}) {
+        Quads(1, false, unused);
+        Draw(device, surface, {slice, 1, false, false, VK_COMPARE_OP_ALWAYS, FillPixelCode, false, depth, DepthSlicePitch});
+        Quads(1, true, unused);
+        Draw(device, surface, {slice, 1, true, false, VK_COMPARE_OP_LESS, PassPixelCode, false, depth, DepthSlicePitch});
+        Expect(device, surface, slice, 4u * (slice + 1u), "a draw into depth slice " + std::to_string(slice) + " alone, one slice pitch of two slices' size from the previous slice, after a layered draw");
+    }
+}
+
 void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     const auto surface = AddressOf(texels);
     DepthAddress = surface + SurfaceBytes;
@@ -418,6 +443,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     AgcDriver::Graphics::StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
     device.WaitIdle();
     StoredSliceFill(device, texels);
+    PitchedSlices(device, texels);
 }
 
 }

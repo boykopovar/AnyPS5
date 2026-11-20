@@ -2996,6 +2996,15 @@ void DepthStencilTests() {
         layeredDepth.context[0x207] = 0;
         const auto unlayered = AgcDriver::Graphics::DecodeState(layeredDepth);
         Require(unlayered.depth && unlayered.depth->layers == 1u && unlayered.renderLayers == 1u, "a depth view of two slices without a layer export became layered");
+        layeredDepth.context[0x207] = 1u << 18u;
+        layeredDepth.context[0x010] = 0x80010181;
+        layeredDepth.context[0x007] = 0x00ff00ff;
+        layeredDepth.context[0x002] = 1u << 13u;
+        const auto mipped = AgcDriver::Graphics::DecodeState(layeredDepth);
+        Require(mipped.depth && mipped.depth->layers == 2u && mipped.depth->depthSlicePitch > AgcDriver::Graphics::DepthSliceBytes(mipped.depth->extent, 2u), "a layered depth view of a surface with a second mip level did not carry the slice pitch of the whole mip chain");
+        layeredDepth.context[0x002] = 1u | (2u << 13u);
+        const auto mippedShifted = AgcDriver::Graphics::DecodeState(layeredDepth);
+        Require(mippedShifted.depth && mippedShifted.depth->layers == 2u && mippedShifted.depth->depthSlicePitch == mipped.depth->depthSlicePitch && mippedShifted.depth->address == mipped.depth->address + mipped.depth->depthSlicePitch, "a layered depth view from slice 1 of a surface with a second mip level did not start one slice pitch further");
     }
     queue.context[0x207] = 0;
     const auto sliced = reinterpret_cast<std::uintptr_t>(sliceMemory.data());
