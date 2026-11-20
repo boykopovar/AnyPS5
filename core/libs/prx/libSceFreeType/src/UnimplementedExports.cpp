@@ -178,4 +178,8 @@ void APS5_VABI FTA_Remove_Module_autofitter_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+void APS5_VABI FTA_Remove_Module_bdf_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
