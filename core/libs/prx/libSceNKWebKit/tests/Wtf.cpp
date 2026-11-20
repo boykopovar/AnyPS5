@@ -593,6 +593,21 @@ static void TestWebCorePure() {
     Require(ir.m_location.m_y == 21);
     Require(ir.m_size.m_width == 100);
     Require(ir.m_size.m_height == 51);
+
+    constexpr int lowest = std::numeric_limits<int>::min();
+    constexpr int highest = std::numeric_limits<int>::max();
+    const FloatRect huge{FloatPoint{3.0e9f, -3.0e9f}, FloatSize{4.0e9f, std::numeric_limits<float>::infinity()}};
+    const IntRect clamped = _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(huge);
+    Require(clamped.m_location.m_x == highest && clamped.m_location.m_y == lowest);
+    Require(clamped.m_size.m_width == highest && clamped.m_size.m_height == highest);
+    const FloatRect edge{FloatPoint{2147483648.0f, -2147483648.0f}, FloatSize{2147483520.0f, -0.5f}};
+    const IntRect atEdge = _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(edge);
+    Require(atEdge.m_location.m_x == highest && atEdge.m_location.m_y == lowest);
+    Require(atEdge.m_size.m_width == 2147483520 && atEdge.m_size.m_height == -1);
+    const FloatRect unordered{FloatPoint{std::numeric_limits<float>::quiet_NaN(), 0.5f}, FloatSize{-2.5f, 2.5f}};
+    const IntRect fromNaN = _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(unordered);
+    Require(fromNaN.m_location.m_x == lowest && fromNaN.m_location.m_y == 1);
+    Require(fromNaN.m_size.m_width == -3 && fromNaN.m_size.m_height == 3);
 }
 
 static void TestJscAndPal() {
