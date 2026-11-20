@@ -136,7 +136,7 @@ int main() {
             sizeof(std::int32_t), CompareInts, nullptr);
         Require(twoAbsent < 0 && ~twoAbsent == 1, "the search mishandled an absent key in a two-element range");
     }
-    Require(utrace_getLevel_nid_postfix() >= 0, "the trace level starts negative");
+    Require(utrace_getLevel_nid_postfix() == 0, "the trace level does not start at UTRACE_ERROR");
     utrace_setLevel_nid_postfix(-5);
     Require(utrace_getLevel_nid_postfix() == -1, "the trace level was not clamped down");
     utrace_setLevel_nid_postfix(100);

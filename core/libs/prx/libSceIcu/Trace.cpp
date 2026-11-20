@@ -17,7 +17,7 @@ UTraceEntry EntryFunction = nullptr;
 UTraceExit ExitFunction = nullptr;
 UTraceData DataFunction = nullptr;
 const void* TraceContext = nullptr;
-std::int32_t TraceLevel = 8;
+std::int32_t TraceLevel = 0;
 
 constexpr std::int32_t TraceOff = -1;
 constexpr std::int32_t TraceVerbose = 9;
