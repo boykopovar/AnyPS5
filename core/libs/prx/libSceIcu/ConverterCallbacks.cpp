@@ -83,22 +83,68 @@ struct GuestToU {
     const void* context = nullptr;
 };
 
+GuestFromU ReadFromU(const ConverterCallBack* callBack) {
+    std::lock_guard lock(converterCallBacksMutex);
+    return {callBack->fromU, callBack->fromUContext};
+}
+
+GuestToU ReadToU(const ConverterCallBack* callBack) {
+    std::lock_guard lock(converterCallBacksMutex);
+    return {callBack->toU, callBack->toUContext};
+}
+
+void WriteFromU(ConverterCallBack* callBack, Icu::ConverterFromUCallback action, const void* context) {
+    std::lock_guard lock(converterCallBacksMutex);
+    callBack->fromU = action;
+    callBack->fromUContext = context;
+}
+
+void WriteToU(ConverterCallBack* callBack, Icu::ConverterToUCallback action, const void* context) {
+    std::lock_guard lock(converterCallBacksMutex);
+    callBack->toU = action;
+    callBack->toUContext = context;
+}
+
+void ClearFromU(UConverter* converter) {
+    std::lock_guard lock(converterCallBacksMutex);
+    for (const auto& candidate : converterCallBacks)
+        if (candidate->converter == converter && !candidate->toUnicode) {
+            candidate->fromU = nullptr;
+            candidate->fromUContext = nullptr;
+            return;
+        }
+}
+
+void ClearToU(UConverter* converter) {
+    std::lock_guard lock(converterCallBacksMutex);
+    for (const auto& candidate : converterCallBacks)
+        if (candidate->converter == converter && candidate->toUnicode) {
+            candidate->toU = nullptr;
+            candidate->toUContext = nullptr;
+            return;
+        }
+}
+
 void U_CALLCONV ForwardFromU(const void* context, UConverterFromUnicodeArgs* arguments, const UChar* codeUnits,
                              std::int32_t length, UChar32 codePoint, UConverterCallbackReason reason,
                              UErrorCode* error) {
     const auto* callBack = static_cast<const ConverterCallBack*>(context);
-    if (!callBack || !callBack->fromU) return;
-    callBack->fromU(callBack->fromUContext, reinterpret_cast<Icu::ConverterFromUnicodeArgs*>(arguments),
-                    reinterpret_cast<const char16_t*>(codeUnits), length, static_cast<std::int32_t>(codePoint),
-                    static_cast<std::int32_t>(reason), reinterpret_cast<std::int32_t*>(error));
+    if (!callBack) return;
+    const GuestFromU guest = ReadFromU(callBack);
+    if (!guest.action) return;
+    guest.action(guest.context, reinterpret_cast<Icu::ConverterFromUnicodeArgs*>(arguments),
+                 reinterpret_cast<const char16_t*>(codeUnits), length, static_cast<std::int32_t>(codePoint),
+                 static_cast<std::int32_t>(reason), reinterpret_cast<std::int32_t*>(error));
 }
 
 void U_CALLCONV ForwardToU(const void* context, UConverterToUnicodeArgs* arguments, const char* codeUnits,
                            std::int32_t length, UConverterCallbackReason reason, UErrorCode* error) {
     const auto* callBack = static_cast<const ConverterCallBack*>(context);
-    if (!callBack || !callBack->toU) return;
-    callBack->toU(callBack->toUContext, reinterpret_cast<Icu::ConverterToUnicodeArgs*>(arguments), codeUnits, length,
-                  static_cast<std::int32_t>(reason), reinterpret_cast<std::int32_t*>(error));
+    if (!callBack) return;
+    const GuestToU guest = ReadToU(callBack);
+    if (!guest.action) return;
+    guest.action(guest.context, reinterpret_cast<Icu::ConverterToUnicodeArgs*>(arguments), codeUnits, length,
+                 static_cast<std::int32_t>(reason), reinterpret_cast<std::int32_t*>(error));
 }
 
 std::int32_t ReadStatus(std::int32_t* error, const char* caller) {
@@ -241,9 +287,9 @@ void APS5_VABI ucnv_setFromUCallBack(UConverter* converter, Icu::ConverterFromUC
     U_ICU_ENTRY_POINT_RENAME(ucnv_setFromUCallBack)(converter, newAction ? ForwardFromU : nullptr, installed,
                                                     &hostOldAction, &hostOldContext, &status);
     const GuestFromU previous = TranslateFromU(hostOldAction, hostOldContext);
-    if (callBack) {
-        callBack->fromU = newAction;
-        callBack->fromUContext = newContext;
+    if (U_SUCCESS(status)) {
+        if (callBack) WriteFromU(callBack, newAction, newContext);
+        else ClearFromU(converter);
     }
     if (oldAction) WriteOutput(oldAction, &previous.action, sizeof(previous.action), __func__);
     if (oldContext) WriteOutput(oldContext, &previous.context, sizeof(previous.context), __func__);
@@ -274,9 +320,9 @@ void APS5_VABI ucnv_setToUCallBack(UConverter* converter, Icu::ConverterToUCallb
     U_ICU_ENTRY_POINT_RENAME(ucnv_setToUCallBack)(converter, newAction ? ForwardToU : nullptr, installed,
                                                   &hostOldAction, &hostOldContext, &status);
     const GuestToU previous = TranslateToU(hostOldAction, hostOldContext);
-    if (callBack) {
-        callBack->toU = newAction;
-        callBack->toUContext = newContext;
+    if (U_SUCCESS(status)) {
+        if (callBack) WriteToU(callBack, newAction, newContext);
+        else ClearToU(converter);
     }
     if (oldAction) WriteOutput(oldAction, &previous.action, sizeof(previous.action), __func__);
     if (oldContext) WriteOutput(oldContext, &previous.context, sizeof(previous.context), __func__);
