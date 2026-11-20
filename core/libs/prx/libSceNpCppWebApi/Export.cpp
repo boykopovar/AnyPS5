@@ -1817,8 +1817,12 @@ static VectorBody* VectorBodyFor(IntrusivePtr* self, const std::int32_t elementK
         allocation.release();
         return body;
     }
-    body = const_cast<VectorBody*>(HostVectorBody(self, elementKind, function));
-    if (body == nullptr) NotImplemented_nid_no_patch(function);
+    if (self->deleter == &DestroyVectorBody) {
+        if (!TaggedVectorObject(body) || body->elementKind != elementKind) NotImplemented_nid_no_patch(function);
+    } else {
+        body = const_cast<VectorBody*>(HostVectorBody(self, elementKind, function));
+        if (body == nullptr) NotImplemented_nid_no_patch(function);
+    }
     try {
         RememberVectorHandle(self);
     } catch (const std::bad_alloc&) {
