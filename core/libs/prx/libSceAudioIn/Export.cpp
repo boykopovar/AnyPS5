@@ -1,4 +1,5 @@
 #include "prx/libSceAudioIn/include/AudioIn.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libSceAudioIn/AudioInCapture.hpp"
 #include "prx/libSceAudioIn/AudioInDeviceSelection.hpp"
 #include <cstdint>
@@ -245,6 +246,11 @@ int APS5_VABI sceAudioInInput(int handle, void* dest) {
 int APS5_VABI sceAudioInOpen(int user_id, uint32_t type, uint32_t index, uint32_t len, uint32_t freq, uint32_t param) {
     (void)user_id;
     if (const int error = checkArguments(type, index, len, freq); error != 0) return error;
+    if (sceKernelIsPs4Process()) {
+        if (freq != 16000) return AUDIO_IN_ERROR_INVALID_FREQ;
+        if (len != 0x100) return AUDIO_IN_ERROR_INVALID_SIZE;
+        if (param > 1) return AUDIO_IN_ERROR_INVALID_PARAM;
+    }
     return openPort(len, freq, param);
 }
 

@@ -42,6 +42,7 @@ test('search uses configured alternatives in place of built-ins', () => {
     assert.deepEqual(actionsForInput('PAD:L1+R1', entries), new Set(['Screenshot']));
     assert.deepEqual(actionsForInput('J', [...entries, binding('Options', 'KEY', 'J')]), new Set(['Square', 'Options']));
     assert.deepEqual(actionsForInput('F7', [...entries, binding('ToggleMouse', 'KEY', '')]), new Set());
+    assert.deepEqual(actionsForInput('PAD:R1+L1', entries), new Set(['Screenshot']));
 });
 
 test('action names and pad button categories agree with the current native parser', () => {
@@ -280,7 +281,7 @@ test('new utility actions import and round trip without accepting unsupported so
     }
 });
 
-test('ShowPadStatus is a keyboard-only action with an F9 default that conflicts like any built-in', () => {
+test('ShowPadStatus is an emulator action with an F9 default that conflicts like any built-in', () => {
     assert.deepEqual(defaults.ShowPadStatus, ['KEY:F9']);
     assert.deepEqual(typesForAction('ShowPadStatus'), ['KEY', 'PAD']);
     assert.equal(serialize([binding('ShowPadStatus', 'KEY', 'F4')]), 'ShowPadStatus = KEY:F4\n');
