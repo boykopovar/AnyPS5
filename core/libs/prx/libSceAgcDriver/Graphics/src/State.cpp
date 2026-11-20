@@ -310,6 +310,12 @@ constexpr std::uint32_t PixelShaderIteratesSamples = 0x10000u;
 constexpr std::uint32_t PixelSampleCoverageInput = 0x4000u;
 constexpr std::uint32_t PixelSampleRateInputs = 0x2011u;
 constexpr std::uint32_t ScreenOffsetMask = ~0x01ff01ffu;
+constexpr std::uint32_t VertexRoundModeMask = 0x6u;
+constexpr std::uint32_t HalfPixelCenterSubpixel256 = 0x29u;
+
+bool vertexControlSupported(std::uint32_t word) {
+    return (word & ~VertexRoundModeMask) == HalfPixelCenterSubpixel256;
+}
 // Bits 26/27 (ZCLIP_NEAR/FAR_DISABLE) become depth clamping; bit 19 selects the [0, 1] clip space;
 // bit 16 disables clipping.
 constexpr std::uint32_t ClipControlMask = ~(0x10000u | 0x80000u | 0x01000000u | 0x0c000000u);
@@ -613,16 +619,18 @@ void decodeDepthBias(const Registers& cx, std::uint32_t raster, State& result) {
     const bool perFace = front && back && (frontBias != backBias || read(cx, 0x2e0) != read(cx, 0x2e2) || read(cx, 0x2e1) != read(cx, 0x2e3));
     const bool d16 = result.depth->format == VK_FORMAT_D16_UNORM || result.depth->format == VK_FORMAT_D16_UNORM_S8_UINT;
     const auto format = find(cx, 0x2de) == cx.end() ? (d16 ? 0xf0u : 0x1e9u) : read(cx, 0x2de);
-    if (format != (d16 ? 0xf0u : 0x1e9u)) throw std::runtime_error("AGC graphics: " + zeroMessage(0x2de, format, "depth bias in units other than the depth format"));
+    const bool bias16 = format == 0xf0u;
+    if (!bias16 && format != 0x1e9u) throw std::runtime_error("AGC graphics: " + zeroMessage(0x2de, format, "depth bias in units other than the depth format"));
+    const float constantScale = bias16 == d16 ? 1.0f : (d16 ? 1.0f / 256.0f : 256.0f);
     const auto scale = front && frontBias ? 0x2e0u : 0x2e2u;
     result.depthBias = true;
     result.depthBiasSlope = frontBias || !perFace ? readFloat(cx, scale) / 16.0f : 0.0f;
-    result.depthBiasConstant = frontBias || !perFace ? readFloat(cx, scale + 1u) : 0.0f;
+    result.depthBiasConstant = (frontBias || !perFace ? readFloat(cx, scale + 1u) : 0.0f) * constantScale;
     result.depthBiasClamp = readFloat(cx, 0x2df);
     if (!perFace) return;
     result.depthBiasPerFace = true;
     result.backDepthBiasSlope = backBias ? readFloat(cx, 0x2e2) / 16.0f : 0.0f;
-    result.backDepthBiasConstant = backBias ? readFloat(cx, 0x2e3) : 0.0f;
+    result.backDepthBiasConstant = backBias ? readFloat(cx, 0x2e3) * constantScale : 0.0f;
 }
 
 bool depthPassThrough(std::uint32_t depthControl) {
@@ -1814,7 +1822,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     zero(cx, 0x8d, ScreenOffsetMask, "reserved PA_SU_HARDWARE_SCREEN_OFFSET bits");
     Require(read(cx, 0x83) == 0xffffu, "clip rectangles are unsupported");
     Require((read(cx, 0x8c) & 0xfu) == 0xau, "nonstandard triangle edge rules are unsupported");
-    Require(read(cx, 0x2f9) == 0x2du, "nonstandard pixel center or vertex quantization is unsupported");
+    Require(vertexControlSupported(read(cx, 0x2f9)), "nonstandard pixel center or vertex quantization is unsupported");
     if (auto reason = sampleMaskRejection(queue, read(cx, 0x2f8), read(cx, 0x30e), read(cx, 0x30f)); !reason.empty()) throw std::runtime_error(reason);
     const auto viewportControl = read(cx, 0x206);
     if (viewportControl != 0x43fu && viewportControl != 0u) throw std::runtime_error(vteMessage(viewportControl));
@@ -2420,6 +2428,7 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     ColorTarget color{};
     color.slot = slot;
     const auto info = read(cx, 0x31c + stride);
+    color.fmaskCompression = (info & 0x4000u) != 0u;
     const auto number = (info >> 8u) & 7u;
     const auto swap = (info >> 11u) & 3u;
     const auto decoded = DecodeColorFormat((info >> 2u) & 0x1fu, number, swap);
@@ -2501,6 +2510,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     ColorTarget color{};
     color.slot = slot;
     const auto info = read(cx, 0x31c + stride);
+    color.fmaskCompression = (info & 0x4000u) != 0u;
     const auto number = (info >> 8u) & 7u;
     const auto swap = (info >> 11u) & 3u;
     APS5_LOG_OUT_DEBUG("Color %u info=0x%x number=%u swap=%u", slot, info, number, swap);
@@ -2597,8 +2607,10 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     }
     Require(color.tileMode != ColorTileMode::D64KBX || (color.pipeBankXor & ~0xcf00u) == 0, "unsupported display color pipe/bank XOR column bits");
     color.arrayAddress = color.arrayLastSlice != 0 ? color.surfaceAddress : 0;
+    std::uint64_t sliceBytes = 0;
     if (slice != 0 && !volume) {
-        color.surfaceAddress += slice * ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
+        sliceBytes = ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
+        color.surfaceAddress += slice * sliceBytes;
         if (color.arrayLastSlice == 0 && ColorTileModeIsXor(color.tileMode)) {
             const auto* equation = FindTextureSwizzleEquation(static_cast<std::uint32_t>(color.tileMode), color.elementBytes);
             Require(equation != nullptr, "a sliced color target has no swizzle equation");
@@ -2631,7 +2643,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
         }
         const auto cmaskHigh = find(cx, 0x398 + slot);
         const auto cmask = ((cmaskHigh == cx.end() ? 0ull : static_cast<std::uint64_t>(cmaskHigh->second & 0xffu)) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x31f + stride)) << 8u);
-        Require((info & 0x6000u) == 0 || cmask != 0, "CMASK fast clears or FMASK compression without a CMASK address are unsupported");
+        Require((info & 0x2000u) == 0 || cmask != 0, "CMASK fast clears without a CMASK address are unsupported");
         if (cmask != 0) {
             std::size_t precedingBlocks = 0;
             std::size_t totalBlocks = static_cast<std::size_t>((color.surfaceExtent.width + 1023u) / 1024u) * ((color.surfaceExtent.height + 511u) / 512u);
@@ -2677,6 +2689,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
             color.dccAddress = dccBase;
             color.dccAlphaOnMsb = DccAlphaOnMsb(color.format, swap);
             color.dccPipeAligned = ((attrib3 >> 30u) & 1u) != 0;
+            if (sliceBytes != 0) color.dccAddress += slice * (color.dccPipeAligned ? DccKeyCount(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, sliceBytes) : DccKeyBytes(sliceBytes));
             if (color.samples > 1) {
                 if (!allowMultisampleDcc) Require(color.tileMode == ColorTileMode::RenderTarget && color.dccAddress != 0 && color.dccPipeAligned && !volume && color.arrayLastSlice == 0 && slice == 0, "multisampled DCC targets require pipe-aligned single-layer SW_64KB_R_X");
                 color.dccControl = read(cx, 0x31e + stride);
@@ -2793,7 +2806,8 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
         Require(destination.samples == 1, "CB resolve into a multisampled target is unsupported");
         Require(destination.cmaskAddress == 0, "CB resolve into a fast-clear color target is unsupported (the resolve does not update its CMASK)");
         Require(source.format == destination.format && source.extent.width == destination.extent.width && source.extent.height == destination.extent.height, "CB resolve between different formats or extents is unsupported");
-        if (WordPacked(source.packing)) throw std::runtime_error("AGC graphics: CB resolves of " + std::string(PackedColorTargetName(source.packing)) + " color targets are unsupported");
+        if (source.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 || destination.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10) Require(source.packing == destination.packing && source.componentMapping == destination.componentMapping, "CB resolve between 11_11_10 float color targets of different layouts is unsupported");
+        if (WordPacked(source.packing) && source.packing != ShaderRecompiler::ColorExportPacking::Float11_11_10) throw std::runtime_error("AGC graphics: CB resolves of " + std::string(PackedColorTargetName(source.packing)) + " color targets are unsupported");
         requireCovered(destination);
         pass.source = source;
         pass.targets.push_back(destination);
@@ -2938,7 +2952,7 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     if (auto reason = nonzero(cx, 0x8d, ScreenOffsetMask, "reserved PA_SU_HARDWARE_SCREEN_OFFSET bits"); !reason.empty()) return reason;
     if (value(cx, 0x83, word) && word != 0xffffu) return require(false, "clip rectangles are unsupported");
     if (value(cx, 0x8c, word) && (word & 0xfu) != 0xau) return require(false, "nonstandard triangle edge rules are unsupported");
-    if (value(cx, 0x2f9, word) && word != 0x2du) return require(false, "nonstandard pixel center or vertex quantization is unsupported");
+    if (value(cx, 0x2f9, word) && !vertexControlSupported(word)) return require(false, "nonstandard pixel center or vertex quantization is unsupported");
     if (value(cx, 0x313, word) && (word & ~0x001f6000u) != 0 && word != 0x6001u) return conservativeMessage(word);
     std::uint32_t config = 0, other = 0;
     if (value(cx, 0x2f8, config) && value(cx, 0x30e, word) && value(cx, 0x30f, other)) {
