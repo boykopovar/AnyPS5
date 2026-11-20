@@ -151,6 +151,9 @@ int main() {
     const int asyncReq2 = sceNpAuthCreateAsyncRequest(nullptr);
     Require(asyncReq > syncReq2);
     Require(asyncReq2 > asyncReq);
+    errno = 71;
+    Require(sceNpAuthCreateAsyncRequest(reinterpret_cast<const void*>(0x10)) == invalidArgument);
+    Require(errno == 71);
 
     alignas(8) char param[16] = {};
     alignas(8) char token[16] = {};
@@ -183,14 +186,38 @@ int main() {
     Require(sceNpAuthGetIdTokenV3(syncReq, nullptr, token) == invalidArgument);
     Require(sceNpAuthGetIdTokenV3(syncReq, param, nullptr) == invalidArgument);
     Require(sceNpAuthGetIdTokenV3(syncReq, nullptr, nullptr) == invalidArgument);
+    Require(sceNpAuthGetIdToken(syncReq, reinterpret_cast<const void*>(0x10), token) == invalidArgument);
+    Require(sceNpAuthGetIdToken(syncReq, param, reinterpret_cast<void*>(0x10)) == invalidArgument);
+    Require(sceNpAuthGetIdTokenV3(syncReq, reinterpret_cast<const void*>(0x10), token) == invalidArgument);
+    Require(sceNpAuthGetIdTokenV3(syncReq, param, reinterpret_cast<void*>(0x10)) == invalidArgument);
+    errno = 71;
+    Require(sceNpAuthGetIdTokenV3(syncReq, reinterpret_cast<const void*>(0x10), token) == invalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNpAuthGetIdTokenV3(syncReq, param, reinterpret_cast<void*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     Require(sceNpAuthGetIdToken(syncReq, param, token) == signedOut);
     Require(sceNpAuthGetIdToken(syncReq, param, token) == invalidArgument);
     Require(sceNpAuthGetIdTokenV3(syncReq, param, token) == invalidArgument);
 
     Require(sceNpAuthGetAuthorizationCode(syncReq2, nullptr, authCode) == invalidArgument);
     Require(sceNpAuthGetAuthorizationCode(syncReq2, param, nullptr) == invalidArgument);
+    Require(sceNpAuthGetAuthorizationCode(syncReq2, reinterpret_cast<const void*>(0x10), authCode) == invalidArgument);
+    Require(sceNpAuthGetAuthorizationCode(syncReq2, param, reinterpret_cast<void*>(0x10)) == invalidArgument);
     Require(sceNpAuthGetAuthorizationCodeV3(syncReq, nullptr, authCode, &issuerId) == invalidArgument);
     Require(sceNpAuthGetAuthorizationCodeV3(syncReq, param, nullptr, &issuerId) == invalidArgument);
+    Require(sceNpAuthGetAuthorizationCodeV3(syncReq, reinterpret_cast<const void*>(0x10), authCode, &issuerId) == invalidArgument);
+    Require(sceNpAuthGetAuthorizationCodeV3(syncReq, param, reinterpret_cast<void*>(0x10), &issuerId) == invalidArgument);
+    Require(sceNpAuthGetAuthorizationCodeV3(syncReq, param, authCode, reinterpret_cast<int*>(0x10)) == invalidArgument);
+    errno = 71;
+    Require(sceNpAuthGetAuthorizationCodeV3(syncReq, reinterpret_cast<const void*>(0x10), authCode, &issuerId) == invalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNpAuthGetAuthorizationCodeV3(syncReq, param, reinterpret_cast<void*>(0x10), &issuerId) == invalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNpAuthGetAuthorizationCodeV3(syncReq, param, authCode, reinterpret_cast<int*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     Require(sceNpAuthGetAuthorizationCode(syncReq2, param, authCode) == signedOut);
     Require(sceNpAuthGetAuthorizationCode(syncReq2, param, authCode) == invalidArgument);
     Require(sceNpAuthGetAuthorizationCodeV3(syncReq2, param, authCode, &issuerId) == invalidArgument);
@@ -258,6 +285,8 @@ int main() {
     const int syncReqA = sceNpAuthCreateRequest();
     Require(sceNpAuthGetIdTokenA(syncReqA, nullptr, token) == invalidArgument);
     Require(sceNpAuthGetIdTokenA(syncReqA, param, nullptr) == invalidArgument);
+    Require(sceNpAuthGetIdTokenA(syncReqA, reinterpret_cast<const void*>(0x10), token) == invalidArgument);
+    Require(sceNpAuthGetIdTokenA(syncReqA, param, reinterpret_cast<void*>(0x10)) == invalidArgument);
     Require(sceNpAuthGetIdTokenA(syncReqA, param, token) == signedOut);
     Require(sceNpAuthGetIdTokenA(syncReqA, param, token) == invalidArgument);
     Require(sceNpAuthGetIdTokenA(unknownReq, param, token) == requestNotFound);
@@ -265,6 +294,9 @@ int main() {
     const int syncReqAuthA = sceNpAuthCreateRequest();
     Require(sceNpAuthGetAuthorizationCodeA(syncReqAuthA, nullptr, authCode, &issuerId) == invalidArgument);
     Require(sceNpAuthGetAuthorizationCodeA(syncReqAuthA, param, nullptr, &issuerId) == invalidArgument);
+    Require(sceNpAuthGetAuthorizationCodeA(syncReqAuthA, reinterpret_cast<const void*>(0x10), authCode, &issuerId) == invalidArgument);
+    Require(sceNpAuthGetAuthorizationCodeA(syncReqAuthA, param, reinterpret_cast<void*>(0x10), &issuerId) == invalidArgument);
+    Require(sceNpAuthGetAuthorizationCodeA(syncReqAuthA, param, authCode, reinterpret_cast<int*>(0x10)) == invalidArgument);
     Require(sceNpAuthGetAuthorizationCodeA(syncReqAuthA, param, authCode, nullptr) == signedOut);
     Require(sceNpAuthGetAuthorizationCodeA(syncReqAuthA, param, authCode, &issuerId) == invalidArgument);
     Require(sceNpAuthGetAuthorizationCodeA(unknownReq, param, authCode, &issuerId) == requestNotFound);

@@ -51,6 +51,23 @@ bool CopyOutResult(int* result, int value) {
  return copied;
 }
 
+bool IsValidGuestRead(const void* pointer, std::size_t size) {
+ if (pointer == nullptr) return false;
+ const int savedErrno = errno;
+ std::uint8_t probe = 0;
+ const bool readable = GuestCopyIn_nid_no_patch(&probe, pointer, size != 0 ? 1 : 0);
+ errno = savedErrno;
+ return readable;
+}
+
+bool IsValidGuestWrite(void* pointer, std::size_t size) {
+ if (pointer == nullptr) return false;
+ const int savedErrno = errno;
+ const bool writable = GuestWritable_nid_no_patch(pointer, size != 0 ? size : 1);
+ errno = savedErrno;
+ return writable;
+}
+
 }
 
 extern "C" {
@@ -70,7 +87,7 @@ int APS5_VABI sceNpAuthAbortRequest(int req_id) {
 }
 
 int APS5_VABI sceNpAuthCreateAsyncRequest(const void* param) {
- (void)param;
+ if (param != nullptr && !IsValidGuestRead(param, 1)) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  return CreateRequest(true);
 }
 
@@ -109,7 +126,8 @@ int APS5_VABI sceNpAuthGetAuthorizedAppCode(std::int32_t requestId, const NpAuth
 
 int APS5_VABI sceNpAuthGetAuthorizationCodeV3(int req_id, const void* param, void* auth_code, int* issuer_id) {
  (void)issuer_id;
- if (!param || !auth_code) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
+ if (!param || !auth_code || !IsValidGuestRead(param, 1) || !IsValidGuestWrite(auth_code, 1)) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
+ if (issuer_id != nullptr && !IsValidGuestWrite(issuer_id, sizeof(*issuer_id))) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  std::lock_guard lock(g_requestMutex);
  auto it = g_requests.find(req_id);
  if (it == g_requests.end()) return ORBIS_NP_AUTH_ERROR_REQUEST_NOT_FOUND;
@@ -127,7 +145,7 @@ int APS5_VABI sceNpAuthGetAuthorizationCodeV3(int req_id, const void* param, voi
 }
 
 int APS5_VABI sceNpAuthGetIdTokenV3(int req_id, const void* param, void* id_token) {
- if (!param || !id_token) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
+ if (!param || !id_token || !IsValidGuestRead(param, 1) || !IsValidGuestWrite(id_token, 1)) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  std::lock_guard lock(g_requestMutex);
  auto it = g_requests.find(req_id);
  if (it == g_requests.end()) return ORBIS_NP_AUTH_ERROR_REQUEST_NOT_FOUND;
