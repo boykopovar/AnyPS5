@@ -95,6 +95,11 @@ struct Header {
     std::size_t size;
 };
 
+struct Frame {
+    bool indefinite;
+    std::size_t end;
+};
+
 template <typename T>
 bool CopyGuestIn(T& destination, const T* source) {
     const int savedErrno = errno;
@@ -189,55 +194,36 @@ bool ParseHeader(const unsigned char* data, std::size_t available, Header& heade
     return true;
 }
 
+std::size_t DefiniteBoundary(const std::vector<Frame>& frames) {
+    std::size_t boundary = std::numeric_limits<std::size_t>::max();
+    for (const auto& frame : frames) {
+        if (!frame.indefinite) boundary = std::min(boundary, frame.end);
+    }
+    return boundary;
+}
+
+bool PopCompletedFrames(std::vector<Frame>& frames, std::size_t offset) {
+    while (!frames.empty() && !frames.back().indefinite) {
+        if (offset > frames.back().end) return false;
+        if (offset < frames.back().end) break;
+        frames.pop_back();
+    }
+    return true;
+}
+
 bool ReadObject(LibreSsl::Bio* bio, std::vector<unsigned char>& bytes) {
     ERR_clear_error_nid_postfix();
     bytes.clear();
-    std::size_t want = HeaderSize;
     std::size_t offset = 0;
     std::size_t length = 0;
-    int indefiniteDepth = 0;
-    for (;;) {
-        const std::size_t available = length - offset;
-        if (want >= available) {
-            const std::size_t request = want - available;
-            if (request > static_cast<std::size_t>(std::numeric_limits<int>::max()) || length > static_cast<std::size_t>(std::numeric_limits<int>::max()) - request) {
-                PutError(Asn1Library, TooLong);
-                return false;
-            }
-            bytes.resize(length + request);
-            const int read = BioRead(bio, reinterpret_cast<char*>(bytes.data() + length), static_cast<int>(request));
-            if (read < 0 && available == 0) {
-                PutError(Asn1Library, NotEnoughData);
-                return false;
-            }
-            if (read > 0) length += static_cast<std::size_t>(read);
-        }
-        Header header{};
-        if (!ParseHeader(bytes.data() + offset, length - offset, header)) {
-            PutError(Asn1Library, HeaderTooLong);
-            return false;
-        }
-        offset += header.size;
-        if (header.indefinite) {
-            if (indefiniteDepth == std::numeric_limits<int>::max()) {
-                PutError(Asn1Library, HeaderTooLong);
-                return false;
-            }
-            ++indefiniteDepth;
-            want = HeaderSize;
-            continue;
-        }
-        if (indefiniteDepth && header.length == 0 && header.tag == 0 && header.tagClass == 0) {
-            --indefiniteDepth;
-            if (indefiniteDepth == 0) break;
-            want = HeaderSize;
-            continue;
-        }
-        want = header.length;
+    std::vector<Frame> frames;
+    const auto readBody = [&](std::size_t bodyLength) {
         const std::size_t bodyAvailable = length - offset;
+        std::size_t want = bodyLength;
         if (want > bodyAvailable) {
             want -= bodyAvailable;
-            if (want > static_cast<std::size_t>(std::numeric_limits<int>::max()) || length > static_cast<std::size_t>(std::numeric_limits<int>::max()) - want) {
+            if (want > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+                length > static_cast<std::size_t>(std::numeric_limits<int>::max()) - want) {
                 PutError(Asn1Library, TooLong);
                 return false;
             }
@@ -259,13 +245,81 @@ bool ReadObject(LibreSsl::Bio* bio, std::vector<unsigned char>& bytes) {
                 if (chunkMaximum < static_cast<std::size_t>(std::numeric_limits<int>::max() / 2)) chunkMaximum *= 2;
             }
         }
-        if (offset > static_cast<std::size_t>(std::numeric_limits<int>::max()) - header.length) {
+        if (offset > static_cast<std::size_t>(std::numeric_limits<int>::max()) - bodyLength) {
             PutError(Asn1Library, TooLong);
             return false;
         }
-        offset += header.length;
-        if (indefiniteDepth == 0) break;
-        want = HeaderSize;
+        offset += bodyLength;
+        return true;
+    };
+    for (;;) {
+        const std::size_t boundary = DefiniteBoundary(frames);
+        if (offset > boundary || (offset == boundary && !frames.empty() && frames.back().indefinite)) {
+            PutError(Asn1Library, HeaderTooLong);
+            return false;
+        }
+        const std::size_t available = length - offset;
+        if (HeaderSize >= available) {
+            const std::size_t boundaryRemaining = length < boundary ? boundary - length : 0;
+            const std::size_t request = std::min(HeaderSize - available, boundaryRemaining);
+            if (request > static_cast<std::size_t>(std::numeric_limits<int>::max()) || length > static_cast<std::size_t>(std::numeric_limits<int>::max()) - request) {
+                PutError(Asn1Library, TooLong);
+                return false;
+            }
+            if (request > 0) {
+                bytes.resize(length + request);
+                const int read = BioRead(bio, reinterpret_cast<char*>(bytes.data() + length), static_cast<int>(request));
+                if (read < 0 && available == 0) {
+                    PutError(Asn1Library, NotEnoughData);
+                    return false;
+                }
+                if (read > 0) length += static_cast<std::size_t>(read);
+            }
+        }
+        Header header{};
+        const std::size_t headerAvailable = std::min(length - offset, boundary - offset);
+        if (!ParseHeader(bytes.data() + offset, headerAvailable, header)) {
+            PutError(Asn1Library, HeaderTooLong);
+            return false;
+        }
+        offset += header.size;
+        if (frames.empty()) {
+            if (header.indefinite) {
+                frames.push_back({true, 0});
+                continue;
+            }
+            if (!readBody(header.length)) return false;
+            break;
+        }
+        if (header.indefinite) {
+            frames.push_back({true, 0});
+            continue;
+        }
+        const bool eoc = !header.constructed && header.length == 0 && header.tag == 0 && header.tagClass == 0;
+        if (eoc && frames.back().indefinite) {
+            frames.pop_back();
+            if (!PopCompletedFrames(frames, offset)) {
+                PutError(Asn1Library, HeaderTooLong);
+                return false;
+            }
+            if (frames.empty()) break;
+            continue;
+        }
+        if (offset > std::numeric_limits<std::size_t>::max() - header.length ||
+            offset + header.length > DefiniteBoundary(frames)) {
+            PutError(Asn1Library, HeaderTooLong);
+            return false;
+        }
+        if (header.constructed) {
+            frames.push_back({false, offset + header.length});
+        } else if (!readBody(header.length)) {
+            return false;
+        }
+        if (!PopCompletedFrames(frames, offset)) {
+            PutError(Asn1Library, HeaderTooLong);
+            return false;
+        }
+        if (frames.empty()) break;
     }
     bytes.resize(offset);
     return true;
