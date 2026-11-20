@@ -8,6 +8,7 @@ import re
 import shlex
 import subprocess
 import sys
+import threading
 import tomllib
 from collections import Counter
 from datetime import date
@@ -265,6 +266,8 @@ def main(argv=None):
             raise ValueError("--skip-sce-module conflicts with --sce-module-path")
         if args.timeout_seconds <= 0:
             raise ValueError("timeout-seconds must be positive")
+        if args.timeout_seconds > threading.TIMEOUT_MAX:
+            raise ValueError(f"timeout-seconds must be at most {threading.TIMEOUT_MAX:.0f}")
         root = resolve_path(args.sce_module_path or args.input.parent)
         if not root.is_dir():
             raise ValueError("module parent must be a directory")
