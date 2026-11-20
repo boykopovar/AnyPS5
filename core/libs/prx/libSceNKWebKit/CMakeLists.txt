@@ -57,7 +57,7 @@ if(BUILD_TESTING)
         target_include_directories(nkwebkit_${testName}_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(nkwebkit_${testName}_tests PRIVATE libSceNKWebKit libSceJsc libc)
         configure_windows_unwind(nkwebkit_${testName}_tests)
-        if(testName STREQUAL "wtf" OR testName STREQUAL "presentingapplicationpid" OR testName STREQUAL "blobdatafilereference")
+        if(testName STREQUAL "wtf" OR testName STREQUAL "presentingapplicationpid" OR testName STREQUAL "blobdatafilereference" OR testName STREQUAL "wtfplatformdefaults")
             target_link_libraries(nkwebkit_${testName}_tests PRIVATE libkernel)
         endif()
         if(testName STREQUAL "dragimage")
@@ -75,7 +75,8 @@ if(BUILD_TESTING)
     endforeach()
 
     add_test_executable(nkwebkit_wtftext_allocation_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/allocation/WtfTextAllocation.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/StringBuilder.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfString.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfNumberFormat.cpp)
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/StringBuilder.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfString.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfNumberFormat.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/CharactersToNumber.cpp)
     target_include_directories(nkwebkit_wtftext_allocation_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(nkwebkit_wtftext_allocation_tests PRIVATE libc)
     configure_windows_unwind(nkwebkit_wtftext_allocation_tests)
