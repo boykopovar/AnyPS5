@@ -1122,10 +1122,6 @@ int APS5_VABI _ZN3JSC23createBuiltinExecutableERNS_2VMERKNS_10SourceCodeERKNS_10
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC23errorMesasgeForTransferEPNS_11ArrayBufferE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC23objectProtoFuncToStringEPNS_14JSGlobalObjectEPNS_9CallFrameE() {
     NotImplemented_nid_no_patch(__func__);
 }
