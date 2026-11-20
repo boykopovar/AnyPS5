@@ -747,9 +747,10 @@ extern "C" {
 
 long double APS5_VABI copysignl_nid_postfix(long double x, long double y) { return std::copysign(x, y); }
 long double APS5_VABI fdiml_nid_postfix(long double x, long double y) {
-    if (std::isnan(x)) return x;
-    if (std::isnan(y)) return y;
-    return x > y ? x - y : 0.0L;
+    if (ExtendedNan(Bits(x))) return x;
+    if (ExtendedNan(Bits(y))) return y;
+    const volatile long double difference = x - y;
+    return x > y ? difference : 0.0L;
 }
 
 long double APS5_VABI fmodl_nid_postfix(long double x, long double y) {
@@ -795,12 +796,17 @@ int APS5_VABI ilogbl_nid_postfix(long double x) {
 }
 
 long double APS5_VABI rintl_nid_postfix(long double x) { return std::rint(x); }
-long double APS5_VABI roundl_nid_postfix(long double x) { return std::isfinite(x) ? std::round(x) : x; }
-
-std::int64_t APS5_VABI lroundl_nid_postfix(long double x) {
-    ErrnoGuard guard;
-    return std::llround(x);
+long double APS5_VABI roundl_nid_postfix(long double x) {
+    if ((Bits(x).signExponent & 0x7fff) == 0x7fff) return x;
+    const bool negative = !(x >= 0.0L);
+    const long double whole = floorl_nid_postfix(negative ? -x : x);
+    const long double difference = negative ? x + whole : whole - x;
+    const volatile long double above = 1.0L + whole;
+    const long double rounded = -0.5L < difference ? whole : above;
+    return negative ? -rounded : rounded;
 }
+
+std::int64_t APS5_VABI lroundl_nid_postfix(long double x) { return llroundl_nid_postfix(x); }
 
 std::int64_t APS5_VABI lrintl_nid_postfix(long double x) {
     ErrnoGuard guard;

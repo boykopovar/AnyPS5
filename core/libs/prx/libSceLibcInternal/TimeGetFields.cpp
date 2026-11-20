@@ -351,9 +351,7 @@ int GetLocaleText(GuestLocale::InputIterator& first, const GuestLocale::InputIte
         return -2;
     }
     const TChar sep = ptr[0];
-    if (sep == TChar{}) {
-        return -2;
-    }
+    const bool nulMarked = sep == TChar{};
     std::vector<std::size_t> fieldStarts;
     for (std::size_t off = 0; ptr[off] != TChar{}; ++off) {
         if (ptr[off] == sep) {
@@ -373,6 +371,11 @@ int GetLocaleText(GuestLocale::InputIterator& first, const GuestLocale::InputIte
     }
     while (fieldStarts.size() < numFields) {
         fieldStarts.push_back(nulOff);
+        if (nulMarked) {
+            do {
+                ++nulOff;
+            } while (ptr[nulOff] != TChar{});
+        }
     }
 
     std::string skip(numFields, '\0');
@@ -980,11 +983,11 @@ GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwS
     return DoGetFmtImpl<std::uint16_t>(self, first, last, stream, state, time, fmtfirst, __func__);
 }
 
-int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT0_S5_mPKT__nid_postfix(GuestLocale::InputIterator* first, GuestLocale::InputIterator last, std::size_t numFields, const char* ptr) {
-    if (first == nullptr || ptr == nullptr) {
+int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT0_S5_mPKT__nid_postfix(GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, std::size_t numFields, const char* ptr) {
+    if (first == nullptr || last == nullptr || ptr == nullptr) {
         return -2;
     }
-    return GetLocaleText<char>(*first, &last, numFields, ptr);
+    return GetLocaleText<char>(*first, last, numFields, ptr);
 }
 
 }

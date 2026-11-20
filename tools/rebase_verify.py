@@ -44,9 +44,9 @@ def changed_lines(root, base, tip):
         if line.startswith("diff --git "):
             old_path, new_path, in_hunk = None, None, False
         elif not in_hunk and line.startswith("--- "):
-            old_path = line[6:] if line.startswith("--- a/") else None
+            old_path = line[6:].removesuffix("\t") if line.startswith("--- a/") else None
         elif not in_hunk and line.startswith("+++ "):
-            new_path = line[6:] if line.startswith("+++ b/") else None
+            new_path = line[6:].removesuffix("\t") if line.startswith("+++ b/") else None
         elif line.startswith("@@"):
             in_hunk = True
         elif in_hunk and line.startswith("+") and new_path is not None:
