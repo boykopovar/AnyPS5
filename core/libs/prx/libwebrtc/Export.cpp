@@ -15,6 +15,33 @@ namespace {
 constexpr int GuestClockMonotonic = 4;
 constexpr std::int64_t NanosecondsPerSecond = 1000000000;
 
+struct RtcThreadState {
+    std::uint8_t reserved[0x64];
+    std::uint32_t isQuitting;
+};
+
+static_assert(offsetof(RtcThreadState, isQuitting) == 0x64);
+
+std::uint32_t ReadRtcThreadState(const void* thread) {
+    if (thread == nullptr) throw std::invalid_argument("rtc::Thread::IsQuitting: null thread");
+    std::uint32_t state = 0;
+    const auto* field = static_cast<const std::uint8_t*>(thread) + offsetof(RtcThreadState, isQuitting);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&state, field, sizeof(state));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("rtc::Thread::IsQuitting: unreadable thread state");
+    return state;
+}
+
+void WriteRtcThreadState(void* thread, std::uint32_t state) {
+    if (thread == nullptr) throw std::invalid_argument("rtc::Thread::Restart: null thread");
+    auto* field = static_cast<std::uint8_t*>(thread) + offsetof(RtcThreadState, isQuitting);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(field, &state, sizeof(state));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("rtc::Thread::Restart: unwritable thread state");
+}
+
 std::int64_t TimeNanos() {
     KernelTimespec now{};
     if (clock_gettime_nid_postfix(GuestClockMonotonic, &now) != 0) throw std::runtime_error("rtc::TimeNanos: clock_gettime(CLOCK_MONOTONIC) failed");
@@ -452,14 +479,12 @@ int APS5_VABI _ZN3rtc6Thread4QuitEv_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3rtc6Thread10IsQuittingEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI _ZN3rtc6Thread10IsQuittingEv_nid_postfix(const void* thread) {
+    return ReadRtcThreadState(thread) != 0;
 }
 
-int APS5_VABI _ZN3rtc6Thread7RestartEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZN3rtc6Thread7RestartEv_nid_postfix(void* thread) {
+    WriteRtcThreadState(thread, 0);
 }
 
 int APS5_VABI _ZN3rtc6Thread12PostTaskImplEN4absl12AnyInvocableIFvvOEEERKN6webrtc13TaskQueueBase14PostTaskTraitsERKNS5_8LocationE_nid_postfix(void) {
