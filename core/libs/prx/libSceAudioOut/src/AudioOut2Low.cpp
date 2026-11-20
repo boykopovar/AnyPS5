@@ -52,6 +52,7 @@ int APS5_VABI sceAudioOut2LoInit(void) {
 }
 
 int APS5_VABI sceAudioOut2LoTerminate(void) {
+    AudioOut2DestroyAllContexts();
     return 0;
 }
 
