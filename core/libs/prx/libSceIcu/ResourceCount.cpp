@@ -306,27 +306,23 @@ Selection Select(
 
     auto* entryAddress = bundle.data;
     std::unordered_set<const GuestResourceEntry*> visited;
-    std::int32_t realEntries = 0;
     GuestResourceEntry entry{};
     Item item{};
     while (entryAddress) {
         if (!visited.insert(entryAddress).second) NotImplemented_nid_no_patch(function);
         entry = Read<GuestResourceEntry>(entryAddress, function);
         if (entry.bogus == 0) {
-            ++realEntries;
             item = FindItem(entry.resourceData, entry.resourceData.rootResource, key, function);
             if (item.found) break;
         }
         entryAddress = entry.parent;
     }
     if (!item.found) return {{}, BogusResource, MissingResourceError, false};
-    if (realEntries > 1) {
-        const std::string name = CopyText(entry.name, function);
-        const char* defaultLocale = uloc_getDefault();
-        status = name == "root" || (defaultLocale && name == defaultLocale)
-            ? UsingDefaultWarning
-            : UsingFallbackWarning;
-    }
+    const std::string name = CopyText(entry.name, function);
+    const char* defaultLocale = uloc_getDefault();
+    status = name == "root" || (defaultLocale && name == defaultLocale)
+        ? UsingDefaultWarning
+        : UsingFallbackWarning;
     return {entry.resourceData, item.resource, status, true};
 }
 

@@ -275,8 +275,8 @@ void Fallback() {
     parent.resourceData.rootResource = parentBundle.resource;
 
     ResourceEntry current{};
-    std::array<char, 3> enName{'e', 'n', 0};
-    current.name = enName.data();
+    std::array<char, 5> currentRootName{'r', 'o', 'o', 't', 0};
+    current.name = currentRootName.data();
     current.resourceData = currentBundle.resourceData;
     current.resourceData.rootResource = currentBundle.resource;
     current.parent = &parent;
@@ -291,7 +291,7 @@ void Fallback() {
     Require(ures_countArrayItems_nid_postfix(
         reinterpret_cast<const UResourceBundle*>(&bundle), "local", &status) == 5,
         "same-entry fallback count");
-    Require(status == 0, "same-entry fallback status");
+    Require(status == -127, "same-entry fallback status");
     Require(ures_countArrayItems_nid_postfix(
         reinterpret_cast<const UResourceBundle*>(&bundle), "missing", &status) == 0,
         "fallback missing count");
