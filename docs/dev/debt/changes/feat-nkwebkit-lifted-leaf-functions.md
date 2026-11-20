@@ -2,7 +2,7 @@
 
 ## add Functional
 
-- [Lifted leaf functions](../../../core/libs/prx/libSceNKWebKit/src/LiftedLeafFunctions.cpp) (libSceNKWebKit) - 193 exports whose body in the `libSceNKWebKit.sprx` with SHA-256 `3af992253665387feeb5df90ff27dff683e3aa270cc4d92a0535b46ab18fa20d` (the module the Constant-return exports entry reads as 11.00) is a leaf function (no calls or global data), translated instruction by instruction into C++ that keeps every load and store with its width and order. Parameter and return types are the register widths the bodies use, not the source prototypes. A null-page address throws where the module would fault. Checked offline against the module's own code on randomized memory; the `LiftedLeafFunctions` test replays recorded digests and contains no module code.
+- [Lifted leaf functions](../../../core/libs/prx/libSceNKWebKit/src/LiftedLeafFunctions.cpp) (libSceNKWebKit) - 192 exports whose body in the `libSceNKWebKit.sprx` with SHA-256 `3af992253665387feeb5df90ff27dff683e3aa270cc4d92a0535b46ab18fa20d` (the module the Constant-return exports entry reads as 11.00) is a leaf function (no calls or global data), translated instruction by instruction into C++ that keeps every load and store with its width and order. Parameter and return types are the register widths the bodies use, not the source prototypes. A null-page address throws where the module would fault. Checked offline against the module's own code on randomized memory; the `LiftedLeafFunctions` test replays recorded digests and contains no module code.
 
 ## remove | `_ZN3JSC11FuzzerAgent13getPredictionEPNS_9CodeBlockERKNS_10CodeOriginEm` | `bPu4g9cnHTE` |
 
@@ -14,7 +14,6 @@
 
 ## remove | `_ZN3JSC13RuntimeMethod15subspaceForImplERNS_2VME` | `E51l7UtV1-A` |
 
-## remove | `_ZN3JSC17MarkingConstraint17quickWorkEstimateERNS_11SlotVisitorE` | `DD08+9TAImA` |
 
 ## remove | `_ZN3JSC20failNextNewCodeBlockEPNS_14JSGlobalObjectE` | `w00D0ddSQLA` |
 

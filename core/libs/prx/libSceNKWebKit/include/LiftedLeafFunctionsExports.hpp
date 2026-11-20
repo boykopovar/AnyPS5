@@ -11,7 +11,6 @@ std::uint8_t APS5_VABI _ZN3JSC11MarkedBlock13areMarksStaleEv(std::uint64_t a0);
 std::uint8_t APS5_VABI _ZN3JSC11MarkedBlock6Handle13areMarksStaleEv(std::uint64_t a0);
 std::uint64_t APS5_VABI _ZN3JSC13RuntimeMethod15createPrototypeERNS_2VMERNS_14JSGlobalObjectE(std::uint64_t a0, std::uint64_t a1);
 std::uint64_t APS5_VABI _ZN3JSC13RuntimeMethod15subspaceForImplERNS_2VME(std::uint64_t a0);
-void APS5_VABI _ZN3JSC17MarkingConstraint17quickWorkEstimateERNS_11SlotVisitorE();
 std::uint32_t APS5_VABI _ZN3JSC20failNextNewCodeBlockEPNS_14JSGlobalObjectE(std::uint64_t a0);
 double APS5_VABI _ZN3JSC22EdenGCActivityCallback12lastGCLengthERNS_4HeapE(std::uint64_t a0, std::uint64_t a1);
 double APS5_VABI _ZN3JSC22FullGCActivityCallback12lastGCLengthERNS_4HeapE(std::uint64_t a0, std::uint64_t a1);
