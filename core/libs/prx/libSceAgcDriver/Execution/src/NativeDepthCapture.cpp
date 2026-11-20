@@ -11,6 +11,9 @@
 namespace AgcDriver {
 namespace {
 
+constexpr std::uint32_t DepthPartiallyResidentFlag = 1u << 5u;
+constexpr std::uint32_t StencilPartiallyResidentFlag = 1u << 6u;
+
 void Require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(std::string("native depth capture: ") + reason);
 }
@@ -118,7 +121,8 @@ void WriteNativeDepthCapture(const std::filesystem::path& path, std::span<const 
         const auto& t = snapshot.target;
         out.Value(t.address); out.Value(t.stencilAddress); out.Value(t.htileAddress);
         for (const auto value : {t.extent.width, t.extent.height, static_cast<std::uint32_t>(t.format), static_cast<std::uint32_t>(snapshot.hostFormat), std::bit_cast<std::uint32_t>(t.clearDepth), static_cast<std::uint32_t>(t.clearStencil), t.samples, t.depthSwizzle, t.pipeBankXor, t.firstSlice, t.lastSlice, t.htileVrsEncoding}) out.Value(value);
-        const std::uint32_t flags = static_cast<std::uint32_t>(t.htileStencil) | (static_cast<std::uint32_t>(t.iterate256) << 1u) | (static_cast<std::uint32_t>(t.htilePipeAligned) << 2u) | (static_cast<std::uint32_t>(t.htileDepthOnly) << 3u) | (static_cast<std::uint32_t>(t.gcn) << 4u);
+        const std::uint32_t flags = static_cast<std::uint32_t>(t.htileStencil) | (static_cast<std::uint32_t>(t.iterate256) << 1u) | (static_cast<std::uint32_t>(t.htilePipeAligned) << 2u) | (static_cast<std::uint32_t>(t.htileDepthOnly) << 3u) | (static_cast<std::uint32_t>(t.gcn) << 4u)
+            | (t.depthPartiallyResident ? DepthPartiallyResidentFlag : 0u) | (t.stencilPartiallyResident ? StencilPartiallyResidentFlag : 0u);
         out.Value(flags);
         out.Value(static_cast<std::uint32_t>(!snapshot.depth.empty()) | (static_cast<std::uint32_t>(!snapshot.stencil.empty()) << 1u));
         out.Value(snapshot.depthOrder); out.Value(snapshot.stencilOrder);
@@ -157,8 +161,10 @@ std::vector<NativeDepthSnapshot> ReadNativeDepthCapture(const std::filesystem::p
         t.samples = in.Value<std::uint32_t>(); t.depthSwizzle = in.Value<std::uint32_t>(); t.pipeBankXor = in.Value<std::uint32_t>();
         t.firstSlice = in.Value<std::uint32_t>(); t.lastSlice = in.Value<std::uint32_t>(); t.htileVrsEncoding = in.Value<std::uint32_t>();
         const auto flags = in.Value<std::uint32_t>();
-        Require((flags & ~31u) == 0u, "unknown target flags");
+        Require((flags & ~(31u | DepthPartiallyResidentFlag | StencilPartiallyResidentFlag)) == 0u, "unknown target flags");
         t.htileStencil = (flags & 1u) != 0u; t.iterate256 = (flags & 2u) != 0u; t.htilePipeAligned = (flags & 4u) != 0u; t.htileDepthOnly = (flags & 8u) != 0u; t.gcn = (flags & 16u) != 0u;
+        t.depthPartiallyResident = (flags & DepthPartiallyResidentFlag) != 0u;
+        t.stencilPartiallyResident = (flags & StencilPartiallyResidentFlag) != 0u;
         const auto aspects = in.Value<std::uint32_t>();
         Require(aspects != 0u && (aspects & ~3u) == 0u, "unknown owner aspects");
         snapshot.depthOrder = in.Value<std::uint64_t>(); snapshot.stencilOrder = in.Value<std::uint64_t>();
