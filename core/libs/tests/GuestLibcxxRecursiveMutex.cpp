@@ -39,6 +39,24 @@ int main() {
     contender.join();
     Require(!otherAcquired.load(), "libc++ recursive mutex try_lock accepted a different thread");
 
+    std::atomic<bool> nonOwnerUnlockThrew{false};
+    std::thread nonOwner([&] {
+        try {
+            _ZNSt3__115recursive_mutex6unlockEv_nid_postfix(&mutex);
+        } catch (...) {
+            nonOwnerUnlockThrew.store(true);
+        }
+    });
+    nonOwner.join();
+    Require(!nonOwnerUnlockThrew.load(), "libc++ recursive mutex non-owner unlock threw");
+    bool heldDestroyThrew = false;
+    try {
+        _ZNSt3__115recursive_mutexD1Ev_nid_postfix(&mutex);
+    } catch (...) {
+        heldDestroyThrew = true;
+    }
+    Require(!heldDestroyThrew && mutex != nullptr, "libc++ recursive mutex destruction while held did not ignore the pthread error");
+
     std::atomic<bool> attempted{false};
     std::atomic<bool> acquired{false};
     std::thread waiter([&] {

@@ -58,7 +58,7 @@ void APS5_VABI _ZNSt3__115recursive_mutexC1Ev_nid_postfix(PthreadMutex* self) {
 
 void APS5_VABI _ZNSt3__115recursive_mutexD1Ev_nid_postfix(PthreadMutex* self) {
     auto& kernel = Kernel(__func__);
-    CheckError(kernel.mutexDestroy(CheckedMutex(self, __func__)), __func__);
+    static_cast<void>(kernel.mutexDestroy(CheckedMutex(self, __func__)));
 }
 
 void APS5_VABI _ZNSt3__115recursive_mutex4lockEv_nid_postfix(PthreadMutex* self) {
@@ -73,7 +73,7 @@ bool APS5_VABI _ZNSt3__115recursive_mutex8try_lockEv_nid_postfix(PthreadMutex* s
 
 void APS5_VABI _ZNSt3__115recursive_mutex6unlockEv_nid_postfix(PthreadMutex* self) {
     auto& kernel = Kernel(__func__);
-    CheckError(kernel.mutexUnlock(CheckedMutex(self, __func__)), __func__);
+    static_cast<void>(kernel.mutexUnlock(CheckedMutex(self, __func__)));
 }
 
 }
