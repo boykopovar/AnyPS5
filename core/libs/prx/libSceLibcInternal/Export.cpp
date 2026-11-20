@@ -200,11 +200,6 @@ int APS5_VABI _ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE8_P
     return 0;
 }
 
-int APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLibcInternalPending4_103_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -635,11 +630,6 @@ unsigned int APS5_VABI alarm_nid_postfix(unsigned int seconds) {
 }
 
 
-int APS5_VABI _Atan_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Atqexit_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -691,11 +681,6 @@ double APS5_VABI _Erfc_nid_postfix(double x) {
     return ErfcTail(x, erfc_nid_postfix, __func__);
 }
 
-int APS5_VABI _FAtan_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 float APS5_VABI _FErfc_nid_postfix(float x) {
     return ErfcTail(x, erfcf_nid_postfix, __func__);
 }
@@ -726,11 +711,6 @@ int APS5_VABI _FRint_nid_postfix() {
 }
 
 int APS5_VABI _FSincos_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FTan_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1122,11 +1102,6 @@ int APS5_VABI _Isdst_nid_postfix() {
     return -1;
 }
 
-int APS5_VABI _LAtan_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 long double APS5_VABI _LErfc_nid_postfix(long double x) {
     return ErfcTail(x, erfcl_nid_postfix, __func__);
 }
@@ -1157,11 +1132,6 @@ int APS5_VABI _LRint_nid_postfix() {
 }
 
 int APS5_VABI _LSincos_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LTan_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -161,6 +161,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     const std::string prefix = std::string(what) + ": ";
     require(left.spirv == right.spirv, prefix + "SPIR-V differs");
     require(left.meshWindowBuffer == right.meshWindowBuffer, prefix + "mesh window buffer flags differ");
+    require(left.dispatchThreadLimit == right.dispatchThreadLimit && left.splitStateLanes == right.splitStateLanes, prefix + "split dispatch state differs");
     require(left.bdaAbiVersion == right.bdaAbiVersion, prefix + "BDA ABI version differs");
     require(left.descriptorFaults == right.descriptorFaults, prefix + "descriptor fault count differs");
     require(left.windowLaneGuards == right.windowLaneGuards, prefix + "window lane guards differ");
@@ -259,6 +260,8 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
 RecompileResult sampleResult() {
     RecompileResult result;
     result.meshWindowBuffer = true;
+    result.dispatchThreadLimit = true;
+    result.splitStateLanes = 64u;
     std::vector<std::uint32_t> words(1000);
     for (std::size_t i = 0; i < words.size(); ++i) words[i] = static_cast<std::uint32_t>(i * 2654435761u);
     words[0] = 0x07230203u;
@@ -554,7 +557,7 @@ void verifyEntryRoundTrip() {
     auto upstreamVersion = file;
     upstreamVersion[4] = std::byte{33};
     require(ShaderDiskCache::DecodeEntry(upstreamVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a stencil artifact with the upstream resource plan format loads");
-    for (const auto version : {69u, 85u, 88u, 90u, 91u, 103u}) {
+    for (const auto version : {69u, 85u, 88u, 90u, 91u, 95u, 103u, 104u}) {
         auto previousStencilVersion = file;
         previousStencilVersion[4] = static_cast<std::byte>(version);
         require(ShaderDiskCache::DecodeEntry(previousStencilVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a stencil attachment artifact with previous format " + std::to_string(version) + " loads");
