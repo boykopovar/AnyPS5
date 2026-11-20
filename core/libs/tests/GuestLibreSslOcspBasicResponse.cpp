@@ -10,6 +10,7 @@
 #include <cstring>
 #include <exception>
 #include <limits>
+#include <stdexcept>
 
 struct alignas(8) Guest {
     std::array<std::byte, 32> basic;
@@ -37,6 +38,11 @@ static void Require(bool value, const char* message) {
 
 template<typename TAction> static void RequireThrows(TAction action, const char* message) {
     try { action(); } catch (const std::exception&) { return; }
+    Require(false, message);
+}
+
+template<typename TAction> static void RequireInvalidArgument(TAction action, const char* message) {
+    try { action(); } catch (const std::invalid_argument&) { return; }
     Require(false, message);
 }
 
@@ -188,6 +194,17 @@ static void AddCertificates() {
     }
     free_nid_postfix(response.certs->data);
     free_nid_postfix(response.certs);
+
+    RequireInvalidArgument([&] { OCSP_basic_add1_cert_nid_postfix(nullptr, &certificates[0]); }, "a null response throws");
+    std::array<char*, 4> elements{};
+    LibreSslStack negative{-1, elements.data(), 0, 4, nullptr};
+    LibreSslOcspBasicResponse negativeResponse{};
+    negativeResponse.certs = &negative;
+    RequireInvalidArgument([&] { OCSP_basic_add1_cert_nid_postfix(&negativeResponse, &certificates[0]); }, "a negative stack count throws");
+    LibreSslStack empty{0, elements.data(), 0, 0, nullptr};
+    negativeResponse.certs = &empty;
+    RequireInvalidArgument([&] { OCSP_basic_add1_cert_nid_postfix(&negativeResponse, &certificates[0]); }, "a zero stack capacity throws");
+    Require(negative.num == -1 && empty.num == 0 && certificates[0].references == 8, "corrupt stacks are left unchanged");
 }
 
 static void AllocationFailures() {
@@ -238,7 +255,7 @@ static void AllocationFailures() {
     bool threw = false;
     try {
         OCSP_basic_add1_cert_nid_postfix(&pushedNull, nullptr);
-    } catch (const std::exception&) {
+    } catch (const std::invalid_argument&) {
         threw = true;
     }
     Require(threw && pushedNull.certs && pushedNull.certs->num == 1 && pushedNull.certs->data[0] == nullptr,
@@ -253,7 +270,7 @@ static void AllocationFailures() {
     bool malformedThrew = false;
     try {
         OCSP_basic_add1_cert_nid_postfix(&malformedResponse, &certificate);
-    } catch (const std::exception&) {
+    } catch (const std::invalid_argument&) {
         malformedThrew = true;
     }
     Require(malformedThrew && malformedStack.num == std::numeric_limits<std::int32_t>::max() && certificate.references == beforeReferences,
@@ -326,14 +343,14 @@ int main() {
     Require(Count(guest) == 3, "the count does not read the entry array");
     Require(Get(guest, 3) == nullptr, "an index equal to the count returns null before the entry array is read");
     Require(Get(guest, -1) == nullptr, "a negative index returns null before the entry array is read");
-    RequireThrows([&] { Get(guest, 0); }, "a null entry array with index 0 throws");
-    RequireThrows([&] { Get(guest, 2); }, "a null entry array with the last index throws");
+    RequireInvalidArgument([&] { Get(guest, 0); }, "a null entry array with index 0 throws");
+    RequireInvalidArgument([&] { Get(guest, 2); }, "a null entry array with the last index throws");
 
     Build(guest, 3);
     Store(guest.basic, 0, static_cast<const void*>(nullptr));
-    RequireThrows([&] { Count(guest); }, "a null response data pointer throws in the count");
+    RequireInvalidArgument([&] { Count(guest); }, "a null response data pointer throws in the count");
     for (const auto index : Indices)
-        RequireThrows([&] { Get(guest, index); }, "a null response data pointer throws for every index");
+        RequireInvalidArgument([&] { Get(guest, index); }, "a null response data pointer throws for every index");
     VerifyMissingSigner();
     return 0;
 }
