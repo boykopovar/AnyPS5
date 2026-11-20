@@ -54,7 +54,7 @@ async function setup(t, name, overrides = {}) {
     Worker,
     fetch: overrides.fetch ?? (async () => ({
       ok: true,
-      json: async () => ({ tag: "test-release", platforms: { linux: { expandedBytes: 1024 }, windows: { expandedBytes: 1024 } } })
+      json: async () => ({ tag: "v1-test", platforms: { linux: { expandedBytes: 1024 }, windows: { expandedBytes: 1024 } } })
     }))
   };
   for (const [key, value] of Object.entries(globals)) {
@@ -311,6 +311,42 @@ for (const stage of ["picker", "writable", "root"]) {
   });
 }
 
+for (const stage of ["picker", "writable"]) {
+  test(`a late ${stage} result preserves a replacement conversion's ZIP sink`, async t => {
+    const pending = deferred();
+    let aborted = 0;
+    let opened = 0;
+    const writes = [];
+    const obsolete = { async abort() { aborted++; } };
+    const handle = { async createWritable() { opened++; return stage === "writable" ? pending.promise : obsolete; } };
+    const replacementSink = { async write(bytes) { writes.push([...bytes]); }, async close() {}, async abort() { assert.fail("replacement ZIP was aborted"); } };
+    let pickers = 0;
+    const { get, workers } = await setup(t, `replacement-sink-${stage}`, {
+      showSaveFilePicker: async () => ++pickers === 1
+        ? stage === "picker" ? pending.promise : handle
+        : { async createWritable() { return replacementSink; } }
+    });
+    const old = await selected(get, workers, "old.zip");
+    const converting = get("convert").onclick();
+    await setImmediate();
+    await old.onerror({ message: "old worker stopped" });
+    const replacement = await selected(get, workers, "replacement.zip");
+    await get("convert").onclick();
+    pending.resolve(stage === "picker" ? handle : obsolete);
+    await converting;
+
+    await replacement.onmessage({ data: { type: "write", bytes: new Uint8Array([1, 2, 3]) } });
+    assert.deepEqual(writes, [[1, 2, 3]]);
+    assert.equal(replacement.terminated, false);
+    assert.deepEqual(replacement.messages.map(message => message.type), ["inspect", "convert", "written"]);
+    assert.equal(opened, stage === "writable" ? 1 : 0);
+    assert.equal(aborted, stage === "writable" ? 1 : 0);
+    await replacement.onmessage({ data: { type: "complete", mode: "zip", outputName: "replacement.elf", size: 3, apps: 1, release: "v1-test" } });
+    assert.equal(get("done").hidden, false);
+    assert.equal(get("error").hidden, true);
+  });
+}
+
 test("a visible error follows a language switch", async t => {
   const { get } = await setup(t, "locale-error", { fetch: async () => ({ ok: false, status: 404 }) });
   assert.equal(get("error").hidden, false);
@@ -322,6 +358,10 @@ test("a visible error follows a language switch", async t => {
   assert.equal(document.documentElement.lang, "ar");
   assert.equal(document.documentElement.dir, "rtl");
   assert.match(get("error").children[0].textContent, /\p{Script=Arabic}.*404/u);
+  get("locale").onclick();
+  assert.equal(document.documentElement.lang, "fr");
+  assert.equal(document.documentElement.dir, "ltr");
+  assert.equal(get("error").children[0].textContent, "Impossible de charger les informations de version (404). release.json est généré lors de la génération du site ; il est donc absent quand demo/web est servi directement.");
   get("locale").onclick();
   assert.equal(document.documentElement.lang, "en");
   assert.equal(document.documentElement.dir, "ltr");

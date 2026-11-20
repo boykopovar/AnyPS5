@@ -115,6 +115,7 @@ private:
     static void appendMesh(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
         if (request.shader.stage == ShaderStage::Fragment) {
             append(key, request.graphics && request.graphics->mesh);
+            if (request.graphics && request.graphics->emulateBarycentrics) append(key, 0x62617279ull);
             return;
         }
         const auto* mesh = request.graphics && request.graphics->mesh ? &*request.graphics->mesh : nullptr;
