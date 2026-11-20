@@ -4361,6 +4361,15 @@ bool resident(std::uint64_t address, std::uint64_t bytes) {
     return GuestMemory::DescribeCommitted(address, static_cast<std::size_t>(bytes)).whole;
 }
 
+std::uint64_t targetPlaneBytes(const DepthTarget& target, std::uint32_t bytesPerTexel) {
+    return target.samples == 1u ? DepthSliceBytes(target.extent, bytesPerTexel) : MultisampledDepthBytes_nid_no_patch(target.extent, bytesPerTexel, target.samples);
+}
+
+void requireResidentPlanes(const DepthTarget& target) {
+    if (target.depthPartiallyResident) Require(resident(target.address, targetPlaneBytes(target, target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT ? 2u : 4u)) && (target.htileAddress == 0u || resident(target.htileAddress, HtileMetadataBytes(target.extent))), "partially resident depth (DB_Z_INFO) with pages that are not mapped is unsupported");
+    if (target.stencilPartiallyResident) Require(resident(target.stencilAddress, targetPlaneBytes(target, 1u)), "partially resident stencil (DB_STENCIL_INFO) with pages that are not mapped is unsupported");
+}
+
 }
 
 VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, bool depthWritten, bool stencilTested) {
@@ -4368,11 +4377,9 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, 
 }
 
 VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const DepthTarget& target, bool depthWritten, bool stencilTested, bool stencilWritten, std::optional<std::uint8_t> overwrittenStencil) {
-    const auto planeBytes = [&](std::uint32_t bytesPerTexel) { return target.samples == 1u ? DepthSliceBytes(target.extent, bytesPerTexel) : MultisampledDepthBytes_nid_no_patch(target.extent, bytesPerTexel, target.samples); };
-    if (target.depthPartiallyResident) Require(resident(target.address, planeBytes(target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT ? 2u : 4u)) && (target.htileAddress == 0u || resident(target.htileAddress, HtileMetadataBytes(target.extent))), "partially resident depth (DB_Z_INFO) with pages that are not mapped is unsupported");
-    if (target.stencilPartiallyResident) Require(resident(target.stencilAddress, planeBytes(1u)), "partially resident stencil (DB_STENCIL_INFO) with pages that are not mapped is unsupported");
-    ClaimMultisampleTargetMemory(target.address, planeBytes(target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT ? 2u : 4u));
-    if (target.stencilAddress != 0u) ClaimMultisampleTargetMemory(target.stencilAddress, planeBytes(1u));
+    requireResidentPlanes(target);
+    ClaimMultisampleTargetMemory(target.address, targetPlaneBytes(target, target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT ? 2u : 4u));
+    if (target.stencilAddress != 0u) ClaimMultisampleTargetMemory(target.stencilAddress, targetPlaneBytes(target, 1u));
     if (target.htileAddress != 0u) ClaimMultisampleTargetMemory(target.htileAddress, HtileMetadataBytes(target.extent));
     const auto htileCleared = RoutesToNativeDepthOwner(target) ? VkImageAspectFlags{0} : storeBackClearedHtile(context, target);
     std::lock_guard gpu(GuestMemory::GpuMutex());
@@ -5063,6 +5070,7 @@ void PreflightNativeDepthSurfaces(const Context& context, std::span<const Native
         Require(target.htileAddress == 0u, "native depth restoration with HTILE is not implemented");
         Require(HostDepthFormat(context, target.format) == snapshot.hostFormat, "native depth snapshot requires another host depth format");
         Require(target.extent.width <= context.limits.maxFramebufferWidth && target.extent.height <= context.limits.maxFramebufferHeight, "native depth snapshot exceeds framebuffer limits");
+        requireResidentPlanes(target);
         if (!context.depthRangeUnrestricted) {
             Require(target.clearDepth >= 0.0f && target.clearDepth <= 1.0f, "native depth clear requires unrestricted depth range");
             if (snapshot.hostFormat == VK_FORMAT_D32_SFLOAT || snapshot.hostFormat == VK_FORMAT_D32_SFLOAT_S8_UINT) {

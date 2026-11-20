@@ -71,7 +71,8 @@ void Render(AgcDriver::VulkanDevice& device, std::uintptr_t base) {
         Require(DepthFastClearHarness::Draw(device, shaders, Surface(base, index), options) == Width * Height, "native depth source draw did not cover its plane");
     }
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
-    const AgcDriver::Graphics::DepthTarget clear{base + 8u * Step, 0u, {Width, Height}, VK_FORMAT_D16_UNORM, 0.875f, 0u};
+    AgcDriver::Graphics::DepthTarget clear{base + 8u * Step, 0u, {Width, Height}, VK_FORMAT_D16_UNORM, 0.875f, 0u};
+    clear.depthPartiallyResident = true;
     static_cast<void>(AgcDriver::Graphics::DepthSurfaceView(context, clear, false, false));
     auto retired = clear;
     retired.address = base + 9u * Step;
@@ -89,6 +90,7 @@ void Check(std::span<const NativeDepthSnapshot> snapshots, std::uintptr_t base) 
         const auto index = static_cast<unsigned>((snapshot.target.address - base) / Step);
         Require(index < seen.size() && !seen[index], "native snapshot duplicated a plane");
         seen[index] = true;
+        Require(snapshot.target.depthPartiallyResident == (index == 8u), "native depth capture changed the mapped surface residency flag");
         const bool d16 = index < 6u || index == 8u;
         Require(snapshot.depth.size() == Width * Height * (d16 ? 2u : 4u), "native depth snapshot has the wrong size");
         for (std::size_t pixel = 0; pixel < Width * Height; ++pixel) {
@@ -298,6 +300,29 @@ bool Preflight() {
         try { target->RestoreNativeDepth(snapshots); } catch (const std::runtime_error&) { refused = true; }
         Require(refused && target->CaptureNativeDepth().empty(), "invalid native ownership graph or range changed state before preflight refused it");
     };
+    const auto reserved = reinterpret_cast<std::uintptr_t>(GuestArena::GuestArenaAllocate_nid_postfix(Step, 65536u));
+    Require(reserved != 0u, "cannot reserve unmapped pages for native depth preflight");
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*target);
+    auto partial = valid;
+    partial.target.depthPartiallyResident = true;
+    for (const bool stencil : {false, true}) {
+        if (stencil) {
+            partial.target.format = partial.hostFormat = VK_FORMAT_D32_SFLOAT_S8_UINT;
+            partial.target.stencilPartiallyResident = true;
+            partial.target.stencilAddress = base + Step;
+            partial.depth.resize(Width * Height * 4u);
+            partial.stencilOrder = 2u;
+            partial.stencil.resize(Width * Height);
+        }
+        auto& address = stencil ? partial.target.stencilAddress : partial.target.address;
+        const auto mapped = address;
+        AgcDriver::Graphics::PreflightNativeDepthSurfaces(context, std::span(&partial, 1));
+        address = reserved;
+        bool refused = false;
+        try { AgcDriver::Graphics::PreflightNativeDepthSurfaces(context, std::span(&partial, 1)); } catch (const std::runtime_error&) { refused = true; }
+        Require(refused, "native replay preflight accepted reserved pages for a partially resident plane");
+        address = mapped;
+    }
     auto missing = valid;
     missing.target.format = missing.hostFormat = VK_FORMAT_D32_SFLOAT_S8_UINT;
     missing.target.stencilAddress = base + 2u * Step;

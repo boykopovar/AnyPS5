@@ -53,11 +53,13 @@ void Run() {
     Require(AgcDriver::ReadNativeDepthCapture(path).empty(), "an empty depth capture changed");
     Snapshot first;
     first.target = {0x123456780000ull, 0u, {2u, 2u}, VK_FORMAT_D16_UNORM, 0.375f, 0u, 0x123456790000ull, true, 1u, 24u, 3u, 5u, 5u, true, true, 2u, true, true};
+    first.target.depthPartiallyResident = true;
     first.hostFormat = VK_FORMAT_D16_UNORM;
     first.depthOrder = 1u;
     first.depth = {std::byte{0}, std::byte{0}, std::byte{255}, std::byte{255}, std::byte{0}, std::byte{128}, std::byte{0}, std::byte{64}};
     Snapshot second;
     second.target = {0x223456780000ull, 0x223456790000ull, {2u, 1u}, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 37u};
+    second.target.stencilPartiallyResident = true;
     second.hostFormat = VK_FORMAT_D32_SFLOAT_S8_UINT;
     second.depthOrder = 2u;
     second.stencilOrder = 3u;
@@ -77,6 +79,7 @@ void Run() {
     const auto& target = decoded[0].target;
     Require(target.address == 0x123456780000ull && target.stencilAddress == 0u && target.htileAddress == 0x123456790000ull && target.extent.width == 2u && target.extent.height == 2u && target.format == VK_FORMAT_D16_UNORM && target.clearDepth == 0.375f && target.samples == 1u, "depth target geometry or clear state was lost");
     Require(target.htileStencil && target.iterate256 && target.htilePipeAligned && target.htileDepthOnly && target.gcn && target.depthSwizzle == 24u && target.pipeBankXor == 3u && target.firstSlice == 5u && target.lastSlice == 5u && target.htileVrsEncoding == 2u, "depth target layout metadata was lost");
+    Require(decoded[0].target == first.target && decoded[1].target == second.target && decoded[2].target == third.target, "native capture lost depth or stencil residency flags");
     Require(decoded[0].hostFormat == VK_FORMAT_D16_UNORM && decoded[0].depth == first.depth && decoded[0].stencil.empty(), "D16 texels changed");
     Require(decoded[1].depth == second.depth && decoded[1].stencil == second.stencil && decoded[1].target.clearStencil == 37u, "depth or stencil texels changed");
     Require(decoded[2].target.address == 0u && decoded[2].depth.empty() && decoded[2].stencil == third.stencil && decoded[2].hostFormat == VK_FORMAT_D24_UNORM_S8_UINT, "a stencil-only owner was lost");
@@ -90,13 +93,19 @@ void Run() {
     Refuses([&] { AgcDriver::WriteNativeDepthCapture(path, duplicates); }, "two current owners of one depth plane were accepted");
     const auto valid = Bytes(path);
     Require(valid.size() > 144u, "the valid codec fixture is empty");
+    AgcDriver::WriteNativeDepthCapture(path, std::span(&first, 1));
+    auto legacy = Bytes(path);
+    Word(legacy, 96u, 31u);
+    Save(path, legacy);
+    const auto oldTarget = AgcDriver::ReadNativeDepthCapture(path).front().target;
+    Require(!oldTarget.depthPartiallyResident && !oldTarget.stencilPartiallyResident && oldTarget.gcn, "old native captures must keep their original flags");
     for (const auto length : {0u, 19u, 23u, 24u, 143u, static_cast<unsigned>(valid.size() - 1u)}) {
         auto broken = valid;
         broken.resize(length);
         Save(path, broken);
         Refuses([&] { static_cast<void>(AgcDriver::ReadNativeDepthCapture(path)); }, "a truncated depth file was accepted");
     }
-    for (const auto [at, value] : std::array<std::array<std::uint32_t, 2>, 8>{{{20u, 0xffffffffu}, {48u, 0u}, {48u, 0xffffffffu}, {60u, 0xffffffffu}, {72u, 4u}, {96u, 0x80000000u}, {104u, 0u}, {136u, 0xffffffffu}}}) {
+    for (const auto [at, value] : std::array<std::array<std::uint32_t, 2>, 8>{{{20u, 0xffffffffu}, {48u, 0u}, {48u, 0xffffffffu}, {60u, 0xffffffffu}, {72u, 4u}, {96u, 128u}, {104u, 0u}, {136u, 0xffffffffu}}}) {
         auto broken = valid;
         Word(broken, at, value);
         Save(path, broken);
