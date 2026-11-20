@@ -752,7 +752,7 @@ NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL19protocolHostAndPortEv(const URL
     if (!self) throw std::invalid_argument("URL::protocolHostAndPort: null this");
     URL url;
     if (!LoadURL(url, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    if (!(url.bits & 1) || !url.impl) return String();
+    if (!url.impl) return String();
     unsigned pathStart = PathStart(url);
     bool hasCredentials = url.passwordEnd > url.userStart;
     if (!hasCredentials) {
@@ -768,7 +768,7 @@ NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL4userEv(const URL* self) {
     if (!self) throw std::invalid_argument("URL::user: null this");
     URL url;
     if (!LoadURL(url, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    if (!(url.bits & 1) || !url.impl) return String();
+    if (!url.impl) return String();
     auto view = _ZNK3WTF3URL11encodedUserEv(&url);
     return DecodeEscapeSequences(view);
 }
@@ -777,7 +777,7 @@ NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL8passwordEv(const URL* self) {
     if (!self) throw std::invalid_argument("URL::password: null this");
     URL url;
     if (!LoadURL(url, self)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    if (!(url.bits & 1) || !url.impl) return String();
+    if (!url.impl) return String();
     auto view = _ZNK3WTF3URL15encodedPasswordEv(&url);
     return DecodeEscapeSequences(view);
 }
