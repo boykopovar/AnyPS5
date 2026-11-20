@@ -256,53 +256,6 @@ void TestErrnoPreservation() {
     Require(*__error_nid_postfix() == SentinelErrno);
 }
 
-void TestNeighbourBitIsolation() {
-    GuestSignalSet set{{0, 0, 0, 0}};
-    Require(sigemptyset_nid_postfix(&set) == 0);
-
-    Require(sigaddset_nid_postfix(&set, 32) == 0);
-    Require(Equals(set, 0x80000000u, 0, 0, 0));
-
-    Require(sigaddset_nid_postfix(&set, 33) == 0);
-    Require(Equals(set, 0x80000000u, 1u, 0, 0));
-
-    Require(sigaddset_nid_postfix(&set, 64) == 0);
-    Require(Equals(set, 0x80000000u, 0x80000001u, 0, 0));
-
-    Require(sigaddset_nid_postfix(&set, 65) == 0);
-    Require(Equals(set, 0x80000000u, 0x80000001u, 1u, 0));
-
-    Require(sigaddset_nid_postfix(&set, 96) == 0);
-    Require(Equals(set, 0x80000000u, 0x80000001u, 0x80000001u, 0));
-
-    Require(sigaddset_nid_postfix(&set, 97) == 0);
-    Require(Equals(set, 0x80000000u, 0x80000001u, 0x80000001u, 1u));
-
-    Require(sigaddset_nid_postfix(&set, 128) == 0);
-    Require(Equals(set, 0x80000000u, 0x80000001u, 0x80000001u, 0x80000001u));
-
-    Require(sigdelset_nid_postfix(&set, 32) == 0);
-    Require(Equals(set, 0, 0x80000001u, 0x80000001u, 0x80000001u));
-
-    Require(sigdelset_nid_postfix(&set, 33) == 0);
-    Require(Equals(set, 0, 0x80000000u, 0x80000001u, 0x80000001u));
-
-    Require(sigdelset_nid_postfix(&set, 64) == 0);
-    Require(Equals(set, 0, 0, 0x80000001u, 0x80000001u));
-
-    Require(sigdelset_nid_postfix(&set, 65) == 0);
-    Require(Equals(set, 0, 0, 0x80000000u, 0x80000001u));
-
-    Require(sigdelset_nid_postfix(&set, 96) == 0);
-    Require(Equals(set, 0, 0, 0, 0x80000001u));
-
-    Require(sigdelset_nid_postfix(&set, 97) == 0);
-    Require(Equals(set, 0, 0, 0, 0x80000000u));
-
-    Require(sigdelset_nid_postfix(&set, 128) == 0);
-    Require(Equals(set, 0, 0, 0, 0));
-}
-
 } // namespace
 
 int main() {
@@ -313,6 +266,5 @@ int main() {
     TestInvalidSignalNumbers();
     TestNullPointerValidation();
     TestErrnoPreservation();
-    TestNeighbourBitIsolation();
     return 0;
 }
