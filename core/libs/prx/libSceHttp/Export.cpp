@@ -592,7 +592,10 @@ int APS5_VABI sceHttpGetLastErrno(int request_id, int* errno_out) {
     if (errno_out == nullptr) {
         return ERROR_INVALID_VALUE;
     }
-    *errno_out = 0;
+    const int zeroErrno = 0;
+    if (!HttpGuest::Store(errno_out, zeroErrno)) {
+        return ERROR_INVALID_VALUE;
+    }
     return 0;
 }
 

@@ -97,7 +97,20 @@ void InvalidIds() {
     Require(ktimer_settime_nid_postfix(id, 0, nullptr, nullptr) == -1 && Error() == Efault);
     const int valid = Create();
     Require(ktimer_gettime_nid_postfix(valid, nullptr) == -1 && Error() == Efault);
+    for (const int flags : {-1, 0, TimerAbstime, 2, 3, 100}) {
+        Require(ktimer_settime_nid_postfix(valid, flags, nullptr, nullptr) == -1 && Error() == Efault);
+    }
     Require(ktimer_delete_nid_postfix(valid) == 0);
+}
+
+void SettimeNegative() {
+    const int id = Create();
+    GuestItimerspec old{};
+    *__error_nid_postfix() = 0;
+    Require(ktimer_settime_nid_postfix(-1, 0, nullptr, &old) == -1 && Error() == Efault);
+    *__error_nid_postfix() = 0;
+    Require(ktimer_settime_nid_postfix(id, TimerAbstime, nullptr, &old) == -1 && Error() == Efault);
+    Require(ktimer_delete_nid_postfix(id) == 0);
 }
 
 void Values() {
@@ -204,6 +217,7 @@ static void SettimeGuestBuffers() {
 int main() {
     Creation();
     InvalidIds();
+    SettimeNegative();
     Values();
     Expiry();
     Absolute();
