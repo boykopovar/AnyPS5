@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -168,12 +169,36 @@ void TestAllocationFailures() {
     Require(Terminate(&builder) == 0, "terminate after the failure");
 }
 
+void TestOptionChangeMidDocument() {
+    Fixture f;
+    XmlHandle builder{nullptr};
+    Require(Initialize(&builder, &f.initializer) == 0, "initialize");
+    Require(Parse(&builder, "<a>", false) == 0x00850001, "a chunk that is not the last is in progress");
+    _ZN3sce3Xml3Dom15DocumentBuilder16setResolveEntityEb(&builder, true);
+    bool threw = false;
+    try {
+        Parse(&builder, "</a>", true);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    Require(threw, "changing an option mid-document throws");
+    threw = false;
+    try {
+        Parse(&builder, "<b/>", true);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    Require(threw, "a parse after a failed option change throws");
+    Require(Terminate(&builder) == 0, "terminate after an option-change failure");
+}
+
 }
 
 int main() {
     TestLifecycle();
     TestStreaming();
     TestAllocationFailures();
+    TestOptionChangeMidDocument();
     std::puts("guest_xml_document_builder: all checks passed");
     return 0;
 }
