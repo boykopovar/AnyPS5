@@ -1,5 +1,6 @@
 #include "prx/libScePad/include/InputMapping.hpp"
 #include "prx/libScePad/include/KeyboardMouse.hpp"
+#include "prx/libScePad/include/ToggleLatch.hpp"
 #include "PadSimulation.hpp"
 
 #include <algorithm>
@@ -458,6 +459,24 @@ void testFocusLossReleasesMouse() {
     check(!keyboardMouse.HandleEvent(PadSimulation::FocusLostEvent(), Pad::KeyboardMouse::Clock::now()).releaseMouse, "nothing to release without capture");
 }
 
+void testToggleLatch() {
+    const auto cross = static_cast<std::uint32_t>(Pad::PadButton::Cross);
+    const auto square = static_cast<std::uint32_t>(Pad::PadButton::Square);
+    Pad::ToggleLatch latch;
+    check(!latch.Held(cross), "a new latch holds nothing");
+    latch.Toggle(cross);
+    check(latch.Held(cross), "the first toggle holds the button");
+    latch.Toggle(cross);
+    check(!latch.Held(cross), "the second toggle releases the button");
+    latch.Toggle(cross);
+    latch.Toggle(square);
+    check(latch.Held(cross) && latch.Held(square), "each button keeps its own state");
+    latch.Toggle(square);
+    check(latch.Held(cross) && !latch.Held(square), "toggling one button leaves the other held");
+    latch.Clear();
+    check(!latch.Held(cross) && !latch.Held(square), "clearing releases every toggled button");
+}
+
 void testShake() {
     const auto samples = Simulate(defaults(), {At(0.0, KeyEvent(SDL_SCANCODE_X, true)), At(200.0, KeyEvent(SDL_SCANCODE_X, false))}, 10.0, 300.0);
     const auto& first = samples[1].state;
@@ -806,6 +825,7 @@ int main() {
             {"wheel tilt", testWheelTilt},
             {"wheel and keys on focus loss", testWheelFocusLoss},
             {"focus loss releases the mouse", testFocusLossReleasesMouse},
+            {"toggle latch", testToggleLatch},
             {"shake", testShake},
             {"toggle requests", testToggleRequests},
             {"show pad status", testShowPadStatus},
