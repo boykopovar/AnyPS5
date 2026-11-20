@@ -60,11 +60,6 @@ int APS5_VABI libSceSaveDataUnknown_cbD93i6sy9E_nid_no_patch() {
 }
 APS5_EXPORT("cbD93i6sy9E", libSceSaveDataUnknown_cbD93i6sy9E_nid_no_patch);
 
-int APS5_VABI libSceSaveDataUnknown_fIu_minus_ckf3n_minus_o_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("fIu-ckf3n-o", libSceSaveDataUnknown_fIu_minus_ckf3n_minus_o_nid_no_patch);
-
 int APS5_VABI libSceSaveDataUnknown_g1roz3Ux_plus_3I_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

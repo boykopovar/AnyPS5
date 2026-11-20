@@ -64,6 +64,7 @@ int APS5_VABI sceSaveDataManualUpload(void);
 int APS5_VABI sceSaveDataMount5();
 int APS5_VABI sceSaveDataMountInternal(void);
 int APS5_VABI sceSaveDataMountSys(void);
+int APS5_VABI sceSaveDataMountSysProspero2(void);
 int APS5_VABI sceSaveDataRebuildDatabase(void);
 int APS5_VABI sceSaveDataRegisterEventCallback(SaveDataEventCallback callback, void* userdata);
 int APS5_VABI sceSaveDataRestoreBackupData(const SaveDataRestoreBackupData* restore);
