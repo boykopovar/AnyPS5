@@ -81,7 +81,7 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t word3) {
+void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t word3, bool oversized = false) {
     Input.fill(word3);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(12, 0u);
@@ -91,7 +91,13 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t word3
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     std::copy(data.begin(), data.begin() + 3, userData.begin() + 8);
-    const std::span<const std::uint32_t> code(Code);
+    std::vector<std::uint32_t> words(Code.begin(), Code.end());
+    if (oversized) {
+        words[5] = 0x880dff09u;
+        words[6] = 0xbe8e03c1u;
+        words.insert(words.begin() + 6, 0x00100000u);
+    }
+    const std::span<const std::uint32_t> code(words);
     const std::span<const std::uint8_t> guestBytes(guest.Data(), 256);
     const std::array<ShaderRecompiler::MemoryRegion, 2> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}, {reinterpret_cast<std::uintptr_t>(guest.Data()), std::as_bytes(guestBytes)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
@@ -107,8 +113,8 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t word3
     device.WaitIdle();
 }
 
-void Check(std::uint32_t word3) {
-    constexpr std::array<std::uint32_t, 3> expected{0xa0000001u, 0xa0000004u, 0u};
+void Check(std::uint32_t word3, bool oversized = false) {
+    const std::array<std::uint32_t, 3> expected{0xa0000001u, 0xa0000004u, oversized ? 0xa0000005u : 0u};
     constexpr std::array<const char*, 3> names{"offset 0x4", "offset 0x10", "offset 0x14 past the records"};
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         for (std::uint32_t i = 0; i < expected.size(); ++i) {
@@ -133,6 +139,10 @@ int main() {
         for (const auto word3 : Word3s) {
             Run(*device, guest, word3);
             Check(word3);
+        }
+        for (const auto word3 : {0u, 0xffffffffu}) {
+            Run(*device, guest, word3, true);
+            Check(word3, true);
         }
         std::puts("scalar buffer runtime word 3 tests passed");
         return 0;
