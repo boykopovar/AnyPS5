@@ -921,6 +921,19 @@ class ModuleListTests(unittest.TestCase):
             (root / 'notes.txt').write_text('x', encoding='utf-8')
             (root / 'folder.prx').mkdir()
             self.assertEqual(sorted(path.name for path in audit_dump.modules_of(root)), ['libA.prx'])
+
+    def test_report_overlaps_dump_flags_paths_inside_or_aliasing_the_dump(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dump = root / 'dump'
+            (dump / 'sce_module').mkdir(parents=True)
+            (dump / 'eboot.bin').write_bytes(b'x')
+            outside = root / 'report.json'
+            self.assertFalse(audit_dump.report_overlaps_dump(outside, dump))
+            self.assertTrue(audit_dump.report_overlaps_dump(dump / 'report.json', dump))
+            self.assertTrue(audit_dump.report_overlaps_dump(dump / 'sce_module' / 'r.json', dump))
+            self.assertTrue(audit_dump.report_overlaps_dump(dump / 'eboot.bin', dump))
+            self.assertTrue(audit_dump.report_overlaps_dump(dump / 'sce_module', dump))
 class StageRefusalTests(unittest.TestCase):
     def test_stage_refuses_a_non_elf_input_and_writes_nothing(self):
         import unwrap_self
@@ -932,6 +945,97 @@ class StageRefusalTests(unittest.TestCase):
             with self.assertRaises(unwrap_self.Refused):
                 audit_dump.stage(source, destination)
             self.assertFalse(destination.exists())
+
+class StageModulesTests(unittest.TestCase):
+    def stage(self, modules, source, elf_types):
+        def fake_stage(module, destination):
+            destination.write_bytes(module.read_bytes())
+
+        log = []
+        with mock.patch.object(audit_dump, "stage", side_effect=fake_stage), \
+                mock.patch.object(audit_dump, "elf_type", side_effect=lambda path: elf_types[path.name]):
+            return audit_dump.stage_modules(modules, source, log.append), log
+
+    def test_module_suffixes_are_staged_without_checking_the_elf_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            suffix = sorted(audit_dump.MODULE_SUFFIXES)[0]
+            module = Path(directory) / f"a{suffix}"
+            module.write_bytes(b"x")
+            source = Path(directory) / "source"
+            source.mkdir()
+            staged, log = self.stage([module], source, {})
+            self.assertEqual(staged, [module])
+            self.assertEqual(log, [])
+            self.assertTrue((source / module.name).is_file())
+
+    def test_other_files_need_a_shared_module_elf_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            source.mkdir()
+            names = ("shared.bin", "executable.bin", "plain.bin")
+            modules = []
+            for name in names:
+                module = Path(directory) / name
+                module.write_bytes(b"x")
+                modules.append(module)
+            types = {"shared.bin": audit_dump.SHARED_MODULE_TYPES[0], "executable.bin": 2, "plain.bin": None}
+            staged, log = self.stage(modules, source, types)
+            self.assertEqual([module.name for module in staged], ["shared.bin"])
+            self.assertEqual(log, ["skipped executable.bin: not a shared module (ELF type 0x2)",
+                                   "skipped plain.bin: not a shared module (ELF type unknown)"])
+            self.assertEqual(sorted(path.name for path in source.iterdir()), ["shared.bin"])
+
+class ElfTypeTests(unittest.TestCase):
+    def test_reads_the_little_endian_type_field(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "m.elf"
+            path.write_bytes(b"\x7fELF" + bytes(12) + (3).to_bytes(2, "little") + bytes(4))
+            self.assertEqual(audit_dump.elf_type(path), 3)
+
+    def test_file_shorter_than_the_type_field_has_no_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for size in (0, 17):
+                path = Path(directory) / f"short{size}"
+                path.write_bytes(bytes(size))
+                self.assertIsNone(audit_dump.elf_type(path))
+
+
+class AuditDirectoriesTests(unittest.TestCase):
+    def test_other_directories_pass_through_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            other = Path(directory) / "other"
+            source.mkdir()
+            other.mkdir()
+            self.assertEqual(audit_dump.audit_directories([other], source), [other])
+            self.assertEqual(list(source.iterdir()), [])
+
+    def test_source_directory_is_replaced_by_a_copy_without_the_eboot_or_subdirectories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            other = Path(directory) / "other"
+            source.mkdir()
+            other.mkdir()
+            (source / "a.prx").write_bytes(b"a")
+            (source / "b.sprx").write_bytes(b"b")
+            (source / "eboot.elf").write_bytes(b"e")
+            (source / "nested").mkdir()
+            audited = audit_dump.audit_directories([other, source], source)
+            self.assertEqual(audited[0], other)
+            self.assertNotEqual(audited[1], source)
+            self.assertEqual(audited[1].parent, source)
+            self.assertTrue(audited[1].name.startswith("modules-"))
+            self.assertEqual(sorted(path.name for path in audited[1].iterdir()), ["a.prx", "b.sprx"])
+            self.assertEqual((audited[1] / "a.prx").read_bytes(), b"a")
+
+    def test_copies_when_hard_links_are_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            source.mkdir()
+            (source / "a.prx").write_bytes(b"a")
+            with mock.patch.object(audit_dump.os, "link", side_effect=OSError("no links")):
+                audited = audit_dump.audit_directories([source], source)
+            self.assertEqual((audited[0] / "a.prx").read_bytes(), b"a")
 
 
 if __name__ == "__main__":

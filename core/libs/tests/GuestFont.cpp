@@ -506,6 +506,9 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
     characters[1].clusterIndex = 0;
 
     Require(sceFontCharactersRefersTextCodes(characters, nullptr, nullptr) == nullptr);
+    errno = 71;
+    Require(sceFontCharactersRefersTextCodes(characters, nullptr, reinterpret_cast<FontTextCodes*>(0x10)) == nullptr);
+    Require(errno == 71);
     Require(sceFontTextCodesStepNext(nullptr) == nullptr && sceFontTextCodesStepBack(nullptr) == nullptr);
     bool threw = false;
     try {
@@ -727,7 +730,7 @@ static void CheckOutlineBuffer() {
     Require(sceFontRendererResetOutlineBuffer(renderer) == SCE_FONT_OK);
     Require(sceFontRendererGetOutlineBufferSize(renderer, &size) == SCE_FONT_OK && size == 0x4000);
     Require(sceFontRendererSetOutlineBufferPolicy(nullptr, 0, 0x8000, 0) == SCE_FONT_ERROR_INVALID_RENDERER);
-    Require(sceFontRendererSetOutlineBufferPolicy(&foreign, 0, 0x8000, 0) == SCE_FONT_ERROR_INVALID_RENDERER);
+    Require(sceFontRendererSetOutlineBufferPolicy(&foreign, 0, 0x8000, 0) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontRendererSetOutlineBufferPolicy(renderer, 0, 0x8000, 0x4000) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontRendererGetOutlineBufferSize(renderer, &size) == SCE_FONT_OK && size == 0x4000);
     Require(sceFontRendererSetOutlineBufferPolicy(renderer, 0, 0x8000, 0) == SCE_FONT_OK);

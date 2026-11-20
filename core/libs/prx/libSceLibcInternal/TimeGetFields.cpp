@@ -58,7 +58,7 @@ TChar IteratorValue(const GuestLocale::InputIterator& it) {
 
 void SetIteratorEof(GuestLocale::InputIterator& it) {
     it.words[0] = 0;
-    it.words[1] = 1;
+    it.words[1] = 0;
 }
 
 template<typename TChar>
@@ -316,34 +316,101 @@ inline constexpr char kCharMonths[] = ":Jan:January:Feb:February:Mar:March:Apr:A
 inline constexpr char kCharAmPm[] = ":AM:am:PM:pm";
 
 template<typename TChar>
-int GetLocaleText(GuestLocale::InputIterator& first, GuestLocale::InputIterator& last, std::size_t numFields, const TChar* ptr) {
-    for (std::size_t off = 0; ptr[off] != TChar{}; ++off) {
-        if (ptr[off] == ptr[0]) ++numFields;
+inline TChar FoldAscii(TChar ch) {
+    if constexpr (sizeof(TChar) == 1) {
+        const auto u = static_cast<unsigned char>(ch);
+        if (u >= 'A' && u <= 'Z') {
+            return static_cast<TChar>(u + ('a' - 'A'));
+        }
+        return ch;
+    } else {
+        if (ch >= u'A' && ch <= u'Z') {
+            return static_cast<TChar>(ch + (u'a' - u'A'));
+        }
+        return ch;
     }
-    std::vector<std::size_t> skip(numFields, 0);
-    const GuestLocale::Facet* ctype = CtypeTraits<TChar>::FromGlobal();
+}
 
+template<typename TChar>
+bool IsAtEnd(GuestLocale::InputIterator& first, const GuestLocale::InputIterator* last) {
+    if (IteratorBuffer(first) == nullptr) {
+        return true;
+    }
+    if (last == nullptr || IteratorBuffer(*last) == nullptr) {
+        if (!IteratorGot(first)) {
+            Peek<TChar>(first);
+        }
+        return IteratorBuffer(first) == nullptr;
+    }
+    return Equal<TChar>(first, const_cast<GuestLocale::InputIterator&>(*last));
+}
+
+template<typename TChar>
+int GetLocaleText(GuestLocale::InputIterator& first, const GuestLocale::InputIterator* last, std::size_t numFields, const TChar* ptr) {
+    if (IteratorBuffer(first) == nullptr || ptr == nullptr) {
+        return -2;
+    }
+    const TChar sep = ptr[0];
+    const bool nulMarked = sep == TChar{};
+    std::vector<std::size_t> fieldStarts;
+    for (std::size_t off = 0; ptr[off] != TChar{}; ++off) {
+        if (ptr[off] == sep) {
+            if (numFields == SIZE_MAX) {
+                throw std::length_error("string too long");
+            }
+            ++numFields;
+            fieldStarts.push_back(off);
+        }
+    }
+    if (numFields == 0) {
+        return -2;
+    }
+    std::size_t nulOff = 0;
+    while (ptr[nulOff] != TChar{}) {
+        ++nulOff;
+    }
+    while (fieldStarts.size() < numFields) {
+        fieldStarts.push_back(nulOff);
+        if (nulMarked) {
+            do {
+                ++nulOff;
+            } while (ptr[nulOff] != TChar{});
+        }
+    }
+
+    std::string skip(numFields, '\0');
     int ans = -2;
-    for (std::size_t col = 1;; ++col, Inc<TChar>(first), ans = -1) {
+
+    for (std::size_t col = 1; col < 128; ++col) {
         bool prefix = false;
-        std::size_t off = 0;
         for (std::size_t field = 0; field < numFields; ++field) {
-            while (ptr[off] != TChar{} && ptr[off] != ptr[0]) ++off;
-            if (skip[field] != 0) {
-                off += skip[field];
-            } else if (ptr[off += col] == ptr[0] || ptr[off] == TChar{}) {
-                skip[field] = col;
+            if (skip[field] != '\0') {
+                continue;
+            }
+            const std::size_t charOff = fieldStarts[field] + col;
+            const TChar tableChar = (charOff >= nulOff) ? TChar{} : ptr[charOff];
+            if (tableChar == sep || tableChar == TChar{}) {
+                skip[field] = static_cast<char>(col);
                 ans = static_cast<int>(field);
-            } else if (Equal<TChar>(first, last) ||
-                       CtypeTraits<TChar>::ToLower(ctype, ptr[off]) != CtypeTraits<TChar>::ToLower(ctype, Peek<TChar>(first))) {
-                skip[field] = col;
+            } else if (IsAtEnd<TChar>(first, last) ||
+                       FoldAscii(tableChar) != FoldAscii(Peek<TChar>(first))) {
+                skip[field] = static_cast<char>(col);
             } else {
                 prefix = true;
             }
         }
-        if (!prefix || Equal<TChar>(first, last)) break;
+        if (!prefix || IsAtEnd<TChar>(first, last)) {
+            break;
+        }
+        Inc<TChar>(first);
+        ans = -1;
     }
     return ans;
+}
+
+template<typename TChar>
+int GetLocaleText(GuestLocale::InputIterator& first, GuestLocale::InputIterator& last, std::size_t numFields, const TChar* ptr) {
+    return GetLocaleText<TChar>(first, &last, numFields, ptr);
 }
 
 template<typename TChar>
@@ -914,6 +981,13 @@ GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwS
 
 GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetfmtES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKc_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time, const char* fmtfirst) {
     return DoGetFmtImpl<std::uint16_t>(self, first, last, stream, state, time, fmtfirst, __func__);
+}
+
+int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT0_S5_mPKT__nid_postfix(GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, std::size_t numFields, const char* ptr) {
+    if (first == nullptr || last == nullptr || ptr == nullptr) {
+        return -2;
+    }
+    return GetLocaleText<char>(*first, last, numFields, ptr);
 }
 
 }
