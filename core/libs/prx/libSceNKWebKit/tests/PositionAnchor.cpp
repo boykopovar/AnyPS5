@@ -8,6 +8,11 @@
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 namespace {
 
@@ -145,6 +150,63 @@ void TestGuestPointerValidation() {
     Require(_ZNK7WebCore8Position13containerNodeEv(&broken) == unmappedNode);
 }
 
+constexpr std::size_t PageSize = 4096;
+
+// Two adjacent pages; the second one is read-only.
+unsigned char* MapPagePair() {
+#ifdef _WIN32
+    void* pages = VirtualAlloc(nullptr, 2 * PageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    Require(pages != nullptr);
+    DWORD previous = 0;
+    Require(VirtualProtect(static_cast<unsigned char*>(pages) + PageSize, PageSize, PAGE_READONLY, &previous) != 0);
+#else
+    void* pages = mmap(nullptr, 2 * PageSize, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Require(pages != MAP_FAILED);
+    Require(mprotect(static_cast<unsigned char*>(pages) + PageSize, PageSize, PROT_READ) == 0);
+#endif
+    return static_cast<unsigned char*>(pages);
+}
+
+void UnmapPagePair(unsigned char* pages) {
+#ifdef _WIN32
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(pages, 2 * PageSize) == 0);
+#endif
+}
+
+template<typename Call>
+void CheckUnwritableSelf(Call call) {
+    unsigned char* pages = MapPagePair();
+    Node node{};
+
+    // The whole Position is on the read-only page: nothing is stored and the node's reference word is untouched.
+    auto* readOnly = reinterpret_cast<Position*>(pages + PageSize);
+    node.refCountAndParentBit = 0x11;
+    ThrowsInvalidArgument([&] { call(readOnly, &node); }, EAGAIN);
+    Require(node.refCountAndParentBit == 0x11);
+
+    // The module stores the anchor node first, then the reference word, then the offset: with the anchor node field
+    // on the writable page and the offset on the read-only one, the first two stores happen and the third faults.
+    auto* straddling = reinterpret_cast<Position*>(pages + PageSize - sizeof(Node*));
+    std::memset(pages + PageSize - sizeof(Node*), 0, sizeof(Node*));
+    node.refCountAndParentBit = 0x11;
+    ThrowsInvalidArgument([&] { call(straddling, &node); }, EINVAL);
+    Node* stored = nullptr;
+    std::memcpy(&stored, pages + PageSize - sizeof(Node*), sizeof(stored));
+    Require(stored == &node);
+    Require(node.refCountAndParentBit == 0x13);
+
+    UnmapPagePair(pages);
+}
+
+void TestUnwritableSelf() {
+    CheckUnwritableSelf([](Position* self, Node* node) { _ZN7WebCore8PositionC1EPNS_4NodeENS0_10AnchorTypeE(self, node, 1); });
+    CheckUnwritableSelf([](Position* self, Node* node) { _ZN7WebCore8PositionC2EPNS_4NodeENS0_10AnchorTypeE(self, node, 2); });
+    CheckUnwritableSelf([](Position* self, Node* node) { _ZN7WebCore8PositionC1EPNS_4NodeEjNS0_10AnchorTypeE(self, node, 7, 3); });
+    CheckUnwritableSelf([](Position* self, Node* node) { _ZN7WebCore8PositionC2EPNS_4NodeEjNS0_10AnchorTypeE(self, node, 7, 4); });
+}
+
 }
 
 int main() {
@@ -152,5 +214,6 @@ int main() {
     TestOffsetConstructors();
     TestContainerNode();
     TestGuestPointerValidation();
+    TestUnwritableSelf();
     return 0;
 }

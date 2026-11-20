@@ -38,16 +38,20 @@ void WriteGuest(T* pointer, const T& value, const char* function) {
     if (!ok) throw std::invalid_argument(std::string(function) + ": unwritable object");
 }
 
+// The module stores the fields one by one in this order: the anchor node, the node's reference word (when
+// the node is not null), the offset, then the flags byte (read, low nibble replaced, written). Each store is
+// its own guest write, so a fault at `self` leaves the node's reference count untouched, and a fault part-way
+// leaves the earlier stores in place as in the module.
 void Construct(Position* self, Node* anchorNode, std::uint32_t offset, std::uint32_t anchorType, const char* function) {
-    Position position = ReadGuest(self, function);
-    position.anchorNode = anchorNode;
-    position.offset = offset;
-    position.anchorTypeAndFlags = static_cast<std::uint8_t>((position.anchorTypeAndFlags & PositionUnrelatedBitsMask) | (anchorType & PositionAnchorTypeMask));
+    if (!self) throw std::invalid_argument(std::string(function) + ": null object");
+    WriteGuest(&self->anchorNode, anchorNode, function);
     if (anchorNode) {
         std::uint32_t* refCount = &anchorNode->refCountAndParentBit;
         WriteGuest(refCount, ReadGuest(refCount, function) + NodeRefCountIncrement, function);
     }
-    WriteGuest(self, position, function);
+    WriteGuest(&self->offset, offset, function);
+    const std::uint8_t flags = ReadGuest(&self->anchorTypeAndFlags, function);
+    WriteGuest(&self->anchorTypeAndFlags, static_cast<std::uint8_t>((flags & PositionUnrelatedBitsMask) | (anchorType & PositionAnchorTypeMask)), function);
 }
 
 }
