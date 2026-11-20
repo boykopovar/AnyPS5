@@ -15,6 +15,7 @@
 #include "Numeric.hpp"
 #include "Set.hpp"
 #include "Version.hpp"
+#include "Timezone.hpp"
 #include "RecoveredInventory.hpp"
 #include "ConverterCallbacks.hpp"
 #include "CString.hpp"

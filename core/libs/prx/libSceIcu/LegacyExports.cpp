@@ -4313,10 +4313,6 @@ int APS5_VABI _ZN6icu_6813UnicodeString9doReplaceEiiPKDsii_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uprv_tzname_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6817UCharsTrieBuilderC1ER10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -6091,10 +6087,6 @@ int APS5_VABI sceIcuLegacyUnknown_cs7AdQAdbbo_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("cs7AdQAdbbo", sceIcuLegacyUnknown_cs7AdQAdbbo_nid_no_patch);
-
-int APS5_VABI uprv_tzset_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN6icu_6820CheckedArrayByteSink15GetAppendBufferEiiPciPi_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -8232,10 +8224,6 @@ int APS5_VABI sceIcuLegacyUnknown_qPVPvgCLdLw_nid_no_patch() {
 APS5_EXPORT("qPVPvgCLdLw", sceIcuLegacyUnknown_qPVPvgCLdLw_nid_no_patch);
 
 int APS5_VABI _ZN6icu_689BytesTrie18getNextBranchBytesEPKhiRNS_8ByteSinkE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uprv_timezone_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
