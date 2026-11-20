@@ -249,6 +249,12 @@ elseif(ANYPS5_ENABLE_TSAN)
     add_compile_definitions(ANYPS5_ENABLE_TSAN=1)
 elseif(NOT APPLE)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
+    check_cxx_source_compiles("int main() { return 0; }" ANYPS5_CXX_LINKS_STATICALLY)
+    if(NOT ANYPS5_CXX_LINKS_STATICALLY)
+        message(FATAL_ERROR "The C++ compiler ${CMAKE_CXX_COMPILER} cannot link a program statically, which every build outside the sanitizer and fuzzer ones requires. "
+            "Install the toolchain's static C and C++ libraries (on Fedora: sudo dnf install glibc-static libstdc++-static; on Debian and Ubuntu: libc6-dev and libstdc++-dev provide them) and configure in a new build directory. "
+            "Supported toolchains are listed in docs/dev/BUILD.md.")
+    endif()
 endif()
 
 if(APPLE AND NOT ANYPS5_RELINKER_ONLY)
