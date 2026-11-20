@@ -369,6 +369,7 @@ static void CheckStrictMemoryProtectionBits() {
         try { operation(); } catch (const std::invalid_argument&) { threw = true; }
         Require(threw);
     };
+    constexpr int invalidProtection = static_cast<int>(0x80020016u);
     std::size_t available = 0;
     Require(sceKernelAvailableFlexibleMemorySize(&available) == 0);
     for (const int protection : {-256, -129, -128, -14, -1, 8, 0x400, 0x800, 0x3ff, std::numeric_limits<int>::min()}) {
@@ -394,6 +395,20 @@ static void CheckStrictMemoryProtectionBits() {
         void* invalid = nullptr;
         Require(sceKernelMapDirectMemory2(&invalid, length, 0, 3, flags, physical, 0) == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
     }
+    KernelBatchMapEntry batch{};
+    batch.start = mapping;
+    batch.length = length;
+    batch.operation = 4;
+    batch.type = 2;
+    batch.protection = static_cast<char>(0x0b);
+    int processed = -1;
+    Require(sceKernelBatchMap2(&batch, 1, &processed, 0) == invalidProtection && processed == 0);
+    VirtualQueryInfo afterTypeProtect{};
+    Require(sceKernelVirtualQuery(mapping, 0, &afterTypeProtect, sizeof(afterTypeProtect)) == 0);
+    Require(afterTypeProtect.protection == 3 && afterTypeProtect.memory_type == 0);
+    batch.start = nullptr;
+    processed = -1;
+    Require(sceKernelBatchMap2(&batch, 1, &processed, 0) == invalidProtection && processed == 0);
     for (const std::size_t alignment : {std::size_t{1}, std::size_t{0x2000}, std::size_t{0x3000}, std::size_t{0x6000}, std::size_t{0x80000000}}) {
         void* invalid = nullptr;
         Require(sceKernelMapDirectMemory2(&invalid, length, 0, 3, 0, physical, alignment) == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
