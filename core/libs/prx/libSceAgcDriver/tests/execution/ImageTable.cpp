@@ -17,8 +17,10 @@
 #include <functional>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -670,6 +672,16 @@ void SetClassRecords() {
     SetRecord(6, {0u, 0u, 0u, 0u}, {0u, 0u, 0u, 0u});
     SetRecord(7, PointClamp, {0x1234u, 0x5678u, 0x9abcu, 0x1000ffacu});
     for (std::uint32_t record = 8; record < Records; ++record) SetRecord(record, PointClamp, floatImage);
+}
+
+void RunRecordRangeTests() {
+    using Keys = std::pair<std::uint64_t, std::uint64_t>;
+    constexpr auto top = std::numeric_limits<std::uint64_t>::max();
+    const ShaderRecompiler::ImageTableRecordLayout middle{0x1000u, Stride, 16u};
+    Require(middle.KeysOverlapping(0x1000u + Stride * 5u + 8u, Stride * 2u, 64u) == Keys{5u, 8u}, "image table records: a store over records 5 to 7 did not select keys 5 to 7");
+    const ShaderRecompiler::ImageTableRecordLayout high{top - Stride * 4u + 1u, Stride, 16u};
+    Require(high.KeysOverlapping(high.start + Stride * 3u + 4u, 1000u, 4u) == Keys{3u, 4u}, "image table records: a store running past the top of the address space did not select the last record");
+    Require(high.KeysOverlapping(high.start, Stride * 4u, 4u) == Keys{0u, 4u}, "image table records: a store ending at the top of the address space did not select all four records");
 }
 
 void RunBorderSwizzleTests(AgcDriver::VulkanDevice& device) {
@@ -2319,6 +2331,7 @@ int main(int argc, char** argv) {
 #else
         setenv("APS5_SRGB_SHADER_DECODE", "1", 1);
 #endif
+        RunRecordRangeTests();
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (argc == 2 && std::strcmp(argv[1], "--nested") == 0) {

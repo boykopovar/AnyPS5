@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -958,6 +959,19 @@ struct ImageTableRecordLayout {
     std::uint32_t bytes = 0;
 
     bool operator==(const ImageTableRecordLayout& other) const = default;
+
+    [[nodiscard]] std::pair<std::uint64_t, std::uint64_t> KeysOverlapping(std::uint64_t address, std::uint64_t length, std::uint64_t keys) const {
+        constexpr auto top = std::numeric_limits<std::uint64_t>::max();
+        if (length == 0u || stride == 0u || keys == 0u) return {0u, 0u};
+        const auto last = address + std::min<std::uint64_t>(length - 1u, top - address);
+        if (last < start) return {0u, 0u};
+        const auto firstEnd = start + std::min<std::uint64_t>(bytes, top - start);
+        const auto lastKey = (last - start) / stride;
+        const auto past = lastKey >= keys ? keys : lastKey + 1u;
+        const auto skipped = address < firstEnd ? 0u : (address - firstEnd) / stride;
+        const auto first = address < firstEnd ? 0u : (skipped >= keys ? keys : skipped + 1u);
+        return {std::min(first, past), past};
+    }
 };
 
 struct ShaderInvocation {
