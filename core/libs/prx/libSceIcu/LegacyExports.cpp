@@ -171,7 +171,7 @@ std::int8_t APS5_VABI ures_hasNext_nid_postfix(const UResourceBundle* resourceBu
         GuestCopyIn_nid_no_patch(iterator, reinterpret_cast<const void*>(base + offset), sizeof(iterator));
     errno = savedErrno;
     if (!readable) NotImplemented_nid_no_patch(__func__);
-    return ures_hasNext(resourceBundle);
+    return static_cast<std::int64_t>(iterator[0]) < static_cast<std::int64_t>(iterator[1]) - 1;
 }
 
 int APS5_VABI sceIcuLegacyUnknown__plus_ydVYIaYo6w_nid_no_patch() {
