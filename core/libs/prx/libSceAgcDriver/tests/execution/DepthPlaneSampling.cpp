@@ -344,19 +344,61 @@ void GuestDepthBitsCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std:
     }
 }
 
-void GuestWriteAfterDrawCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+void GuestWriteAfterDrawCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output, bool layered) {
     auto* base = block.At(ReloadOffset);
     if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(reinterpret_cast<std::uintptr_t>(base), SliceBytes)) {
+        Require(!layered, "the depth array rewrite requires write-watched guest memory");
         std::puts("guest memory has no write watch: the guest write after a draw is not checked");
         return;
     }
-    const Shape shape{Format32Float, 128, 128, Type2D, 0, Swizzle64KbZX};
-    DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX));
+    const Shape shape{Format32Float, 128, 128, layered ? Type2DArray : Type2D, layered ? 1u : 0u, Swizzle64KbZX};
+    const auto swizzle = AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX);
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, swizzle);
+    if (layered) DrawDepth(device, reinterpret_cast<std::uintptr_t>(base + SliceBytes), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, swizzle);
     Load(device, base, shape, 0, output);
     Expect(output, Bits(DrawnDepth), "D32 plane sampled after a draw");
+    if (layered) {
+        Load(device, base, shape, 1, output);
+        Expect(output, Bits(DrawnDepth), "second D32 plane sampled after a draw");
+        AgcDriver::Graphics::Recorder::CountPresent();
+    }
     FillSlice(base, SliceBytes, Bits(0.75f), 4u);
     Load(device, base, shape, 0, output);
     Expect(output, Bits(0.75f), "D32 plane the guest wrote after a draw, sampled before its surface is bound again");
+    if (layered) {
+        FillSlice(base + SliceBytes, SliceBytes, Bits(0.625f), 4u);
+        Load(device, base, shape, 1, output);
+        Expect(output, Bits(0.625f), "second D32 plane the guest wrote after the depth array was copied");
+    }
+}
+
+void DepthPlaneLayoutReuseCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    using namespace AgcDriver::Graphics;
+    auto* base = block.At(ReloadOffset);
+    constexpr VkExtent2D extent{128, 64};
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), extent, VK_FORMAT_D32_SFLOAT, DrawnDepth);
+    const Shape tiled{Format32Float, extent.width, extent.height, Type2DArray, 1, Swizzle64KbZX};
+    const Shape linear{Format32Float, extent.width, extent.height, Type2DArray, 1, 0};
+    const auto tiledWords = TextureDescriptor(base, tiled);
+    const auto linearWords = TextureDescriptor(base, linear);
+    const auto tiledResource = DecodeTextureResource(tiledWords);
+    const auto linearResource = DecodeTextureResource(linearWords);
+    const auto tiledBytes = DescribeSurface(tiledResource).layerBytes;
+    const auto linearBytes = DescribeSurface(linearResource).layerBytes;
+    Require(tiledBytes >= 2u * linearBytes, "the depth array layouts must place slice 1 at disjoint guest ranges");
+    FillSlice(base + tiledBytes, tiledBytes, Bits(0.75f), 4u);
+    FillSlice(base + linearBytes, linearBytes, Bits(0.5f), 4u);
+    Load(device, base, tiled, 1, output);
+    Expect(output, Bits(0.75f), "tiled D32 array slice 1");
+    Load(device, base, linear, 1, output);
+    Expect(output, Bits(0.5f), "linear D32 array slice 1");
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const auto tiledTexture = DepthSurfaceTexture(context, tiledWords, tiledResource, {});
+    const auto linearTexture = DepthSurfaceTexture(context, linearWords, linearResource, {});
+    Require(tiledTexture != nullptr && linearTexture != nullptr && tiledTexture != linearTexture, "depth arrays with different guest layouts share one sampled image");
+    if (linearTexture->HasReuseLookup()) Require(linearTexture->ReuseLookupHolds(), "the linear depth array lost its reuse lookup after the tiled lookup");
+    Load(device, base, linear, 1, output);
+    Expect(output, Bits(0.5f), "reused linear D32 array slice 1");
 }
 
 void FirstSliceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
@@ -518,11 +560,20 @@ void RefusalCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
 
 int main(int argc, char** argv) {
     try {
-        const bool evicting = argc > 1 && std::string(argv[1]) == "--evicting";
+        const std::string mode = argc > 1 ? argv[1] : "";
+        const bool evicting = mode == "--evicting";
         GuestBlock block;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const std::span<std::uint32_t> output(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads);
+        if (mode == "--guest-rewrite") {
+            GuestWriteAfterDrawCase(*device, block, output, true);
+            return 0;
+        }
+        if (mode == "--layout-reuse") {
+            DepthPlaneLayoutReuseCase(*device, block, output);
+            return 0;
+        }
         const auto present = [&] {
             if (!evicting) return;
             AgcDriver::Graphics::Recorder::CountPresent();
@@ -540,7 +591,7 @@ int main(int argc, char** argv) {
         present();
         GuestDepthBitsCase(*device, block, output);
         present();
-        GuestWriteAfterDrawCase(*device, block, output);
+        GuestWriteAfterDrawCase(*device, block, output, false);
         present();
         FirstSliceCase(*device, block, output);
         present();
