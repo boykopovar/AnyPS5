@@ -22,6 +22,11 @@ bool APS5_VABI WKFrameIsMainFrame(const void* frame) {
     return f->isMainFrame;
 }
 
+bool APS5_VABI WKFrameIsFrameSet(const void* frame) {
+    const auto* f = NKWebKit::Cast<NKWebKit::Frame>(frame, __func__);
+    return f->isFrameSet;
+}
+
 const void* APS5_VABI WKFrameCopyURL(const void* frame) {
     const auto* f = NKWebKit::Cast<NKWebKit::Frame>(frame, __func__);
     return f->url ? NKWebKit::ToRef(f->url) : nullptr;

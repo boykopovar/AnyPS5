@@ -271,7 +271,6 @@ int APS5_VABI WKFrameGetPage();
 int APS5_VABI WKFrameGetResourceData();
 int APS5_VABI WKFrameGetWebArchive();
 int APS5_VABI WKFrameInfoCreateFrameHandleRef();
-int APS5_VABI WKFrameIsFrameSet();
 int APS5_VABI WKFramePolicyListenerDownload();
 int APS5_VABI WKFramePolicyListenerIgnore();
 int APS5_VABI WKFramePolicyListenerUseInNewProcess();
