@@ -1835,8 +1835,10 @@ static int64_t ReceiveFrom(int s, void* buf, size_t len, int flags, void* from, 
 #ifdef _WIN32
     if (result < 0 && socket.type == NET_SOCK_DGRAM && WSAGetLastError() == WSAEMSGSIZE) result = static_cast<int>(len);
 #endif
-    if (result < 0 && ThreadCancel::IoInterrupted()) return fail(NET_EINTR);
-    if (result < 0) return fail(native_error());
+    if (result < 0) {
+        const int error = native_error();
+        return fail(ThreadCancel::IoInterrupted() ? NET_EINTR : error);
+    }
     if (from) {
         std::array<std::uint8_t, 28> bytes{};
         if (!returnAddress) capacity = 0;

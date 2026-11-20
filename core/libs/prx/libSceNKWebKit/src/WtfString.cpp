@@ -67,6 +67,7 @@
  */
 
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 
@@ -225,10 +226,7 @@ double APS5_VABI _ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm(
     }
     buffer[length] = '\0';
 
-    char* endPtr = nullptr;
-    double val = std::strtod(buffer.data(), &endPtr);
-    parsedLength = static_cast<std::size_t>(endPtr - buffer.data());
-    return val;
+    return _ZN3WTF17double_conversion23StringToDoubleConverter14StringToDoubleEPKcmPm(buffer.data(), length, &parsedLength);
 }
 
 }

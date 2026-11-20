@@ -309,7 +309,7 @@ int APS5_VABI _ZNK6icu_6813SimpleFactory6createERKNS_13ICUServiceKeyEPKNS_10ICUS
 int APS5_VABI _ZN6icu_6811Normalizer214getNFCInstanceER10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6815MaybeStackArrayIcLi40EEC2Ev_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_6jtnn2CzF7M_nid_no_patch();
-int APS5_VABI uloc_openAvailableByType_nid_postfix();
+UEnumeration* APS5_VABI uloc_openAvailableByType_nid_postfix(std::int32_t, std::int32_t*);
 int APS5_VABI sceIcuLegacyUnknown_6n74pmh0NR0_nid_no_patch();
 int APS5_VABI utrace_data_nid_postfix();
 int APS5_VABI _ZNK6icu_6822RuleBasedBreakIterator8hashCodeEv_nid_postfix();
