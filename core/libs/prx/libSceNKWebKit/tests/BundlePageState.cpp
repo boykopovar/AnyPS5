@@ -39,6 +39,7 @@ int main() {
     Require(!WKBundlePageIsUsingEphemeralSession(pageRef));
     Require(WKBundlePageGetRenderTreeSize(pageRef) == 0);
     Require(!WKBundlePageHasComposition(pageRef));
+    Require(!WKBundlePageIsUsingDarkAppearance(pageRef));
 
     page->backingScaleFactor = 2.0;
     page->isControlledByAutomation = true;
@@ -46,6 +47,7 @@ int main() {
     page->usesEphemeralSession = true;
     page->renderTreeSize = 0x1'0000'0001ULL;
     page->hasComposition = true;
+    WKBundlePageSetUseDarkAppearance(pageRef, true);
 
     Require(WKBundlePageGetBackingScaleFactor(pageRef) == 2.0);
     Require(WKBundlePageIsControlledByAutomation(pageRef));
@@ -53,6 +55,9 @@ int main() {
     Require(WKBundlePageIsUsingEphemeralSession(pageRef));
     Require(WKBundlePageGetRenderTreeSize(pageRef) == 0x1'0000'0001ULL);
     Require(WKBundlePageHasComposition(pageRef));
+    Require(WKBundlePageIsUsingDarkAppearance(pageRef));
+    WKBundlePageSetUseDarkAppearance(pageRef, false);
+    Require(!WKBundlePageIsUsingDarkAppearance(pageRef));
 
     RequireInvalidArgument([] { WKBundlePageGetBackingScaleFactor(nullptr); });
     RequireInvalidArgument([] { WKBundlePageIsControlledByAutomation(nullptr); });
@@ -60,6 +65,8 @@ int main() {
     RequireInvalidArgument([] { WKBundlePageIsUsingEphemeralSession(nullptr); });
     RequireInvalidArgument([] { WKBundlePageGetRenderTreeSize(nullptr); });
     RequireInvalidArgument([] { WKBundlePageHasComposition(nullptr); });
+    RequireInvalidArgument([] { WKBundlePageIsUsingDarkAppearance(nullptr); });
+    RequireInvalidArgument([] { WKBundlePageSetUseDarkAppearance(nullptr, true); });
 
     auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
     RequireInvalidArgument([&] { WKBundlePageGetBackingScaleFactor(frame.Get()); });
@@ -68,6 +75,8 @@ int main() {
     RequireInvalidArgument([&] { WKBundlePageIsUsingEphemeralSession(frame.Get()); });
     RequireInvalidArgument([&] { WKBundlePageGetRenderTreeSize(frame.Get()); });
     RequireInvalidArgument([&] { WKBundlePageHasComposition(frame.Get()); });
+    RequireInvalidArgument([&] { WKBundlePageIsUsingDarkAppearance(frame.Get()); });
+    RequireInvalidArgument([&] { WKBundlePageSetUseDarkAppearance(frame.Get(), true); });
 
     return 0;
 }

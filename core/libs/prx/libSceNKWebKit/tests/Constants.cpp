@@ -50,7 +50,6 @@ int main() {
     Require(WKBundlePageCopyContextMenuAtPointInWindow() == 0);
     Require(WKBundlePageCopyContextMenuItems() == 0);
     Require(WKBundlePageGetBackForwardList() == 0);
-    Require(WKBundlePageIsUsingDarkAppearance() == 0);
     Require(WKContextCopyPlugInAutoStartOriginHashes() == 0);
     Require(WKContextDownloadURLRequest() == 0);
     Require(WKContextGetIconDatabase() == 0);

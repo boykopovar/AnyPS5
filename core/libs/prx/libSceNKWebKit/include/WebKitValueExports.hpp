@@ -111,6 +111,8 @@ bool APS5_VABI WKBundlePageIsSuspended(const void* pageRef);
 bool APS5_VABI WKBundlePageIsUsingEphemeralSession(const void* pageRef);
 std::uint64_t APS5_VABI WKBundlePageGetRenderTreeSize(const void* pageRef);
 bool APS5_VABI WKBundlePageHasComposition(const void* pageRef);
+bool APS5_VABI WKBundlePageIsUsingDarkAppearance(const void* pageRef);
+void APS5_VABI WKBundlePageSetUseDarkAppearance(const void* pageRef, bool useDarkAppearance);
 std::uint32_t APS5_VABI WKBundlePageOverlayGetTypeID();
 std::uint32_t APS5_VABI WKBundleRangeHandleGetTypeID();
 std::uint32_t APS5_VABI WKBundleScriptWorldGetTypeID();

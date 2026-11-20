@@ -9529,10 +9529,6 @@ int APS5_VABI WKBundlePageSetUIClient() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageSetUseDarkAppearance() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageSimulateMouseDown() {
     NotImplemented_nid_no_patch(__func__);
 }

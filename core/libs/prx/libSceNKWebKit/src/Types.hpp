@@ -240,6 +240,7 @@ public:
     bool usesEphemeralSession = false;
     std::uint64_t renderTreeSize = 0;
     bool hasComposition = false;
+    bool isUsingDarkAppearance = false;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
