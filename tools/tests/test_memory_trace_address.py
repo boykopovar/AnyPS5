@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import tempfile
@@ -50,6 +51,18 @@ class ParseTests(FeatureRequired):
     def test_ignores_unknown_operations_and_lines_without_the_prefix(self):
         self.assertEqual(trace.parse_events(["[memory] unmapped 0x1+0x1\n", "map anon 0x1+0x1\n",
                                              "[memory]map anon 0x1+0x1\n"]), [])
+
+    def test_parses_a_null_pointer_printed_by_glibc(self):
+        events = trace.parse_events([
+            "[memory] unmap (nil)+0x1000\n",
+            "[memory] protect (nil)+0x2000 prot=0x1\n",
+            "[memory] map anon 0x4000+0x1000 prot=0x3 flags=0x0\n",
+        ])
+        self.assertEqual([(event.line, event.operation, event.address, event.size) for event in events], [
+            (1, "unmap", 0, 0x1000),
+            (2, "protect", 0, 0x2000),
+            (3, "map anon", 0x4000, 0x1000),
+        ])
 
     def test_rejects_a_truncated_mapping_event(self):
         with self.assertRaisesRegex(ValueError, "line 1: protect event has no address range"):
@@ -117,6 +130,28 @@ class CliTests(FeatureRequired):
             self.assertIn("line 1: map anon", result.stdout)
             self.assertNotIn("protect", result.stdout)
             self.assertNotIn("allocate physical", result.stdout)
+
+    def test_cli_reads_a_first_line_event_after_a_utf8_bom(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.log"
+            path.write_text("[memory] map anon 0x1000+0x1000 prot=0x3 flags=0x0\n", encoding="utf-8-sig")
+            result = subprocess.run([sys.executable, str(TOOL), str(path), "--address", "0x1800"],
+                                    capture_output=True, text=True, encoding="utf-8", timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("line 1: map anon 0x1000+0x1000", result.stdout)
+            self.assertNotIn("No traced mapping operations", result.stdout)
+
+    def test_cli_reports_a_non_ascii_trace_path_as_utf8(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "界" / "run.log"
+            path.parent.mkdir()
+            path.write_text("[memory] map anon 0x1000+0x1000 prot=0x3 flags=0x0\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), str(path), "--address", "0x1800"],
+                                    capture_output=True, timeout=10, env={**os.environ, "PYTHONIOENCODING": "cp1252"})
+            self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
+            stdout = result.stdout.decode("utf-8")
+            self.assertIn(f"in {path}", stdout)
+            self.assertIn("line 1: map anon", stdout)
 
     def test_cli_rejects_a_non_positive_limit(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "prx/libSceLibcInternal/include/AtomicWaitDeadline.hpp"
+#include "prx/libSceLibcInternal/include/FacetReferences.hpp"
 #include "prx/libSceLibcInternal/include/PendingExports.hpp"
 #include "prx/libSceLibcInternal/include/RecoveredInventory.hpp"
 #include "prx/libSceLibcInternal/include/IntegerExtrema.hpp"
@@ -10,6 +11,7 @@
 #include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
 #include "prx/libSceLibcInternal/include/VectorAlgorithms.hpp"
 #include "prx/libSceLibcInternal/include/ErrExports.hpp"
+#include "prx/libSceLibcInternal/include/Fiopen.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/ExceptionVirtuals.hpp"
 #include "prx/libSceLibcInternal/include/IosBase.hpp"
@@ -22,3 +24,4 @@
 #include "prx/libSceLibcInternal/include/CodecvtUtfMetadata.hpp"
 #include "prx/libSceLibcInternal/include/TimeGetOrder.hpp"
 #include "prx/libSceLibcInternal/include/TimeGetFields.hpp"
+#include "prx/libSceLibcInternal/include/DinkumThreadErrors.hpp"

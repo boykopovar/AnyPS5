@@ -103,6 +103,32 @@ static bool Queue(int descriptor, int receiver, const char* text) {
     return send_nid_postfix(descriptor, text, static_cast<std::uint64_t>(length), 0) == length && Readable(receiver);
 }
 
+static void CheckSendControlFaults() {
+    constexpr std::size_t page = 0x4000;
+    void* memory = nullptr;
+    Require(sceKernelMapFlexibleMemory(&memory, page * 2, 3, 0) == 0 && memory != nullptr);
+    auto* readable = static_cast<char*>(memory);
+    auto* inaccessible = readable + page;
+    Require(sceKernelMprotect(inaccessible, page, 0) == 0);
+    int pair[2] = {-1, -1};
+    Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
+    char data[4] = {'a', 'b', 'c', 'd'};
+    KernelIovec good{data, sizeof(data)};
+    const auto fails = [&](void* control, std::uint32_t length, int error) {
+        GuestMsghdr message{nullptr, 0, &good, 1, control, length, 0};
+        *__error_nid_postfix() = 0;
+        return sendmsg_nid_postfix(pair[0], &message, 0) == -1 && *__error_nid_postfix() == error;
+    };
+    Require(fails(reinterpret_cast<void*>(0x1000), 24, 14));
+    Require(fails(inaccessible, 24, 14));
+    Require(fails(inaccessible + page - 8, 24, 14));
+    Require(fails(reinterpret_cast<void*>(0x1000), 8, 22));
+    Require(fails(readable, 2049, 22));
+    Require(fails(readable, 11, 22));
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(sceKernelMprotect(memory, page * 2, 3) == 0 && sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory), page * 2) == 0);
+}
+
 static void CheckReceiveMessageFaults() {
     constexpr std::size_t page = 0x4000;
     void* memory = nullptr;
@@ -337,9 +363,39 @@ static void CheckRecordOverSendBuffer(int type, int sendBuffer) {
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
 }
 
+static bool BlockSize(int descriptor, std::uint32_t expected) {
+    FileStat status{};
+    return fstat_nid_disambig1_nid_postfix(descriptor, &status) == 0 && status.st_blksize == expected;
+}
+
+static void CheckStatBlockSize() {
+    constexpr int SolSocket = 0xffff;
+    constexpr int SendBuffer = 0x1001;
+    int pair[2] = {-1, -1};
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    Require(BlockSize(pair[0], 8192) && BlockSize(pair[1], 8192));
+    const int resized = 5000;
+    Require(setsockopt_nid_postfix(pair[0], SolSocket, SendBuffer, &resized, sizeof(resized)) == 0);
+    Require(BlockSize(pair[0], 5000) && BlockSize(pair[1], 8192));
+    FileStat status{};
+    Require(sceKernelFstat(pair[0], &status) == 0 && status.st_blksize == 5000);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
+    Require(BlockSize(pair[0], 2048) && BlockSize(pair[1], 2048));
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    const int tcp = socket_nid_postfix(2, Stream, 0);
+    Require(tcp >= 0 && BlockSize(tcp, 32768) && close_nid_postfix(tcp) == 0);
+    const int udp = socket_nid_postfix(2, Datagram, 0);
+    Require(udp >= 0 && BlockSize(udp, 9216) && close_nid_postfix(udp) == 0);
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "sendmsg-memory") == 0) {
         CheckSendMessageFaults();
+        return 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "sendmsg-control") == 0) {
+        CheckSendControlFaults();
         return 0;
     }
     if (argc == 2 && std::strcmp(argv[1], "recvmsg-memory") == 0) {
@@ -501,6 +557,7 @@ int main(int argc, char** argv) {
 #endif
     CheckReceiveMessageFaults();
     CheckAddressOnPairEnd();
+    CheckStatBlockSize();
     CheckRecordOverSendBuffer(Datagram, 2048);
 #if !defined(_WIN32) && !defined(__APPLE__)
     CheckRecordOverSendBuffer(SequencedPacket, 8192);
