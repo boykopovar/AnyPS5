@@ -39,10 +39,8 @@ bool Failure(std::int32_t* status, std::int32_t& value, const char* caller) {
 extern "C" {
 
 void APS5_VABI ureldatefmt_close_nid_postfix(URelativeDateTimeFormatter* reldatefmt) {
-    if (!reldatefmt) {
-        return;
-    }
-    NotImplemented_nid_no_patch(__func__);
+    if (!reldatefmt) return;
+    ::ureldatefmt_close(reldatefmt);
 }
 
 std::int32_t APS5_VABI ureldatefmt_format_nid_postfix(const URelativeDateTimeFormatter*, double, std::int32_t, char16_t* result, std::int32_t resultCapacity, std::int32_t* status) {
