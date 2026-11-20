@@ -180,13 +180,13 @@ void APS5_VABI _ZN7WebCore21BlobDataFileReferenceD2Ev(BlobDataFileReference* sel
 
 void APS5_VABI _ZN7WebCore21BlobDataFileReferenceD0Ev(BlobDataFileReference* self) {
     _ZN7WebCore21BlobDataFileReferenceD1Ev(self);
-    _ZdlPv_nid_postfix(self);
+    _ZN3WTF8fastFreeEPv(self);
 }
 
 BlobDataFileReferenceRef APS5_VABI _ZN7WebCore21BlobDataFileReference6createERKN3WTF6StringES4_(const String* path, const String* replacementPath) {
     CheckedPath(path, "create");
     CheckedPath(replacementPath, "create");
-    auto* object = static_cast<BlobDataFileReference*>(_Znwm_nid_postfix(sizeof(BlobDataFileReference)));
+    auto* object = static_cast<BlobDataFileReference*>(_ZN3WTF10fastMallocEm(sizeof(BlobDataFileReference)));
     Construct(object, path, replacementPath);
     return BlobDataFileReferenceRef(object);
 }
