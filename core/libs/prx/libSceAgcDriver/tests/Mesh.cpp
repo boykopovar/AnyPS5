@@ -374,6 +374,28 @@ int main() {
             CheckTriangles((std::string("non-indexed triangle list, ") + name).c_str());
         }
 
+        static std::array<std::uint16_t, 6 * Triangles> doubled{};
+        for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
+            for (std::uint32_t k = 0; k < 3; ++k) {
+                doubled[6 * triangle + k] = Indices[3 * triangle + k];
+                doubled[6 * triangle + 3 + k] = Indices[3 * triangle + k];
+            }
+        }
+        for (const auto& [name, subgroup] : {std::pair{"one-wave subgroups", SmallSubgroup}, std::pair{"two-wave subgroups", WideSubgroup}}) {
+            auto reuse = subgroup;
+            reuse.reuseVertexLimit = subgroup.verticesPerGroup;
+            reuse.reusePrimitiveLimit = subgroup.primitivesPerGroup;
+            ClearPixels();
+            DrawMesh(device, {reuse, {reinterpret_cast<std::uintptr_t>(Indices.data()), static_cast<std::uint32_t>(Indices.size()), 2, 1, 0, true}, VertexBufferDescriptor(Scrambled.data(), static_cast<std::uint32_t>(Scrambled.size()))});
+            CheckTriangles((std::string("indexed triangle list with reuse grouping, ") + name).c_str());
+            ClearPixels();
+            DrawMesh(device, {reuse, {reinterpret_cast<std::uintptr_t>(doubled.data()), static_cast<std::uint32_t>(doubled.size()), 2, 1, 0, true}, VertexBufferDescriptor(Scrambled.data(), static_cast<std::uint32_t>(Scrambled.size()))});
+            CheckTriangles((std::string("indexed triangle list drawn twice with reuse grouping, ") + name).c_str());
+            ClearPixels();
+            DrawMesh(device, {reuse, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size()))});
+            CheckTriangles((std::string("non-indexed triangle list with reuse grouping, ") + name).c_str());
+        }
+
         auto wave32Subgroup = SmallSubgroup;
         wave32Subgroup.threadsPerGroup = 32u;
         for (const auto& subgroup : {wave32Subgroup, SmallSubgroup, WideSubgroup}) {
