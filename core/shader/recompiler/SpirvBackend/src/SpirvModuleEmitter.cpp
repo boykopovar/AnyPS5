@@ -1067,6 +1067,7 @@ namespace {
 
 std::uint32_t MeshArray(SpirvEmitterState& state, std::uint32_t storage, std::uint32_t type, std::uint32_t count) {
     const auto array = state.module.Type(spv::OpTypeArray, type, ConstantU32(state, count));
+    if (storage == spv::StorageClassPrivate) return state.module.DefineInitializedGlobalVariable(TypePointer(state, storage, array), storage, state.module.Constant(spv::OpConstantNull, array));
     return state.module.DefineGlobalVariable(TypePointer(state, storage, array), storage);
 }
 
