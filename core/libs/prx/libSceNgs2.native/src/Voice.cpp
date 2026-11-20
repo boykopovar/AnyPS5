@@ -145,6 +145,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
             }
             if (state == Ngs2PlayState::Empty || state == Ngs2PlayState::Stopped) {
                 Ngs2ClearCustomReverb(*this);
+                Ngs2ResetCustomFilterHistory(*this);
                 if (IsSampler()) {
                     Ngs2ReplaySampler(*this);
                     Ngs2ResetFilterHistory(*this);

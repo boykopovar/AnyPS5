@@ -1168,6 +1168,51 @@ static void TestCustomUserFxBuffers() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static void TestCustomSubmixerFilter() {
+    const auto system = CreateSystem();
+    const auto master = Mastering(system, 2);
+    const auto userFx2 = Module(Gain);
+    auto option = BuiltInRackOption(userFx2, SCE_NGS2_CUSTOM_MODULE_ID_FILTER, nullptr, 0);
+    option.custom_rack_option.num_buffers = 2;
+    option.max_inputs = 2;
+    option.custom_rack_option.module[0].source_buffer_id = 1;
+    option.custom_rack_option.module[0].dest_buffer_id = 0;
+    const auto rack = CustomRack(system, option);
+    const auto custom = Voice(rack);
+    Control(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 2, 2, 0, 0});
+    Patch(custom, master);
+    Event(custom, SCE_NGS2_VOICE_EVENT_PLAY);
+    const std::vector<std::int16_t> loud(Grain * 2 * 8, 16384);
+    const auto sampler = Sampler(system, loud);
+    Control(sampler, SCE_NGS2_VOICE_PARAM_PATCH, Ngs2VoicePatchParam{{}, 0, 1, custom});
+    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+
+    auto out = Render(system);
+    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == (i < 3 ? 0.0f : 0.5f) && out[i * 2 + 1] == out[i * 2]);
+
+    Ngs2CustomVoiceFilterParam filter{};
+    filter.channel_mask = 2;
+    filter.type = 11;
+    filter.param.direct.i0 = 0.25f;
+    filter.param.direct.i1 = 0.5f;
+    Control(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_FILTER | 0, filter);
+    out = Render(system);
+    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == (i == 0 ? 0.125f : 0.375f) && out[i * 2 + 1] == 0.5f);
+    out = Render(system);
+    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == 0.375f && out[i * 2 + 1] == 0.5f);
+
+    auto rejected = filter;
+    rejected.type = 12;
+    Require(ControlResult(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_FILTER | 0, rejected) == SCE_NGS2_ERROR_INVALID_FILTER_TYPE);
+    Require(ControlResult(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_FILTER | 1, filter) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
+    Control(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_FILTER | 0, Ngs2CustomVoiceFilterParam{});
+    out = Render(system);
+    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == 0.5f && out[i * 2 + 1] == 0.5f);
+
+    Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 template <typename TException>
 static bool ModuleInfoThrows(uintptr_t rack, std::uint32_t moduleIndex, std::size_t infoSize) {
     Ngs2CustomModuleInfo info;
@@ -1364,6 +1409,9 @@ int main() {
     TestCustomSamplerGain();
     TestCustomGain();
     TestCustomUserFxBuffers();
+#ifndef APS5_NGS2_PS4_LIBRARY
+    TestCustomSubmixerFilter();
+#endif
     TestCustomModuleInfo();
 #ifndef APS5_NGS2_PS4_LIBRARY
     TestCustomFilterCodes();
