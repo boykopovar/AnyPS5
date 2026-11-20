@@ -2,7 +2,7 @@
 
 ## add Unknown function info
 
-- [SecurityOriginData](../../../core/libs/prx/libSceNKWebKit/src/SecurityOrigin.cpp) (libSceNKWebKit) - console symbols predate pinned [SecurityOriginData.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/page/SecurityOriginData.cpp#L40-L156): the exported `isolatedCopy` has no ref qualifier, 11.x `const &`. The 32-byte by-value return of `isolatedCopy` follows the pinned variant layout through the hidden result pointer and is unmeasured. Closes when compared with a console.
+- [SecurityOriginData](../../../core/libs/prx/libSceNKWebKit/src/SecurityOrigin.cpp) (libSceNKWebKit) - console symbols predate pinned [SecurityOriginData.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/page/SecurityOriginData.cpp#L40-L156): the exported `isolatedCopy` has no ref qualifier, 11.x `const &`. The 32-byte `isolatedCopy` result follows the pinned variant layout and is not compared with a console module; it is returned through the hidden result pointer, which the SysV x86-64 psABI prescribes for a class larger than 16 bytes. Closes when compared with a console.
 
 ## add Functional
 
