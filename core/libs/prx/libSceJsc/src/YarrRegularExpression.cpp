@@ -70,8 +70,57 @@ Units UnitsOf(const StringImpl* impl, const char* message) {
     return {impl->data, impl->length, (impl->hashAndFlags & StringImplFlag8Bit) != 0};
 }
 
+int HexValue(char16_t unit) {
+    if (unit >= u'0' && unit <= u'9') return unit - u'0';
+    if (unit >= u'a' && unit <= u'f') return unit - u'a' + 10;
+    if (unit >= u'A' && unit <= u'F') return unit - u'A' + 10;
+    return -1;
+}
+
+bool ReadEscape(const Units& pattern, unsigned& index, unsigned end, char32_t& codePoint) {
+    if (index + 1 >= end || pattern.At(index) != u'\\' || pattern.At(index + 1) != u'u') return false;
+    unsigned cursor = index + 2;
+    char32_t value = 0;
+    if (cursor < end && pattern.At(cursor) == u'{') {
+        unsigned digits = 0;
+        for (++cursor; cursor < end && pattern.At(cursor) != u'}'; ++cursor, ++digits) {
+            const int digit = HexValue(pattern.At(cursor));
+            if (digit < 0) return false;
+            value = value * 16 + static_cast<char32_t>(digit);
+            if (value > 0x10FFFF) return false;
+        }
+        if (!digits || cursor >= end) return false;
+        ++cursor;
+    } else {
+        if (cursor + 4 > end) return false;
+        for (unsigned digits = 0; digits < 4; ++digits, ++cursor) {
+            const int digit = HexValue(pattern.At(cursor));
+            if (digit < 0) return false;
+            value = value * 16 + static_cast<char32_t>(digit);
+        }
+    }
+    index = cursor;
+    codePoint = value;
+    return true;
+}
+
+std::u32string GroupName(const Units& pattern, unsigned begin, unsigned end) {
+    std::u32string name;
+    unsigned index = begin;
+    while (index < end) {
+        char32_t codePoint = 0;
+        if (!ReadEscape(pattern, index, end, codePoint)) codePoint = pattern.At(index++);
+        if (codePoint >= 0xDC00 && codePoint <= 0xDFFF && !name.empty() && name.back() >= 0xD800 && name.back() <= 0xDBFF) {
+            name.back() = 0x10000 + ((name.back() - 0xD800) << 10) + (codePoint - 0xDC00);
+            continue;
+        }
+        name.push_back(codePoint);
+    }
+    return name;
+}
+
 bool RejectedByYarr(const Units& pattern) {
-    std::vector<std::u16string> names;
+    std::vector<std::u32string> names;
     bool inClass = false;
     for (unsigned index = 0; index < pattern.length; ++index) {
         const char16_t unit = pattern.At(index);
@@ -92,11 +141,11 @@ bool RejectedByYarr(const Units& pattern) {
         if (kind == u':' || kind == u'=' || kind == u'!') continue;
         if (kind != u'<') return true;
         if (index + 3 < pattern.length && (pattern.At(index + 3) == u'=' || pattern.At(index + 3) == u'!')) return true;
-        std::u16string name;
         unsigned end = index + 3;
-        while (end < pattern.length && pattern.At(end) != u'>') name.push_back(pattern.At(end++));
+        while (end < pattern.length && pattern.At(end) != u'>') ++end;
         if (end == pattern.length) continue;
-        for (const std::u16string& seen : names) {
+        std::u32string name = GroupName(pattern, index + 3, end);
+        for (const std::u32string& seen : names) {
             if (seen == name) return true;
         }
         names.push_back(std::move(name));

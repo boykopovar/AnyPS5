@@ -232,6 +232,21 @@ void TestGroups() {
         Require(named.MatchIn(Text(std::string("baa")).reference, 0, &length) == 1 && length == 2);
     }
     {
+        for (const char* pattern : {"(?<a>x)|(?<\\u0061>y)", "(?<\\u0061>x)|(?<a>y)", "(?<a>x)|(?<\\u{61}>y)", "(?<a>x)|(?<\\u{000061}>y)",
+                 "(?<\\u0061\\u0062>x)|(?<ab>y)", "(?<\\u{1D4D0}>x)|(?<\\uD835\\uDCD0>y)"}) {
+            Expression duplicate(pattern);
+            Require(!IsValid(&duplicate.value));
+        }
+        Expression escaped("(?<a>x)|(?<\\u0062>y)");
+        Require(IsValid(&escaped.value) && escaped.value.d->numSubpatterns == 2);
+        Require(escaped.MatchIn(Text(std::string("zy")).reference) == 1);
+        Expression afterName("(?<n>a)>(?:b)");
+        int length = 0;
+        Require(IsValid(&afterName.value) && afterName.MatchIn(Text(std::string("xa>b")).reference, 0, &length) == 1 && length == 3);
+        Expression unterminated("(?<n(?:a)");
+        Require(!IsValid(&unterminated.value));
+    }
+    {
         Expression lookahead("a(?=b)|c(?!d)");
         int length = 0;
         Require(lookahead.MatchIn(Text(std::string("acdab")).reference, 0, &length) == 3 && length == 1);
