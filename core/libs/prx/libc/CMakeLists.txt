@@ -8,6 +8,15 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_owned_memory PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_emutls_tests ${LIBS_INCLUDE_DIR}/tests/GuestEmutls.cpp)
+    target_include_directories(guest_emutls_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_emutls_tests PRIVATE libc)
+    configure_windows_unwind(guest_emutls_tests)
+    add_test(NAME guest_emutls COMMAND guest_emutls_tests)
+    if(WIN32)
+        set_tests_properties(guest_emutls PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 
     if(WIN32)
         add_test_executable(guest_owned_memory_limits_tests ${LIBS_INCLUDE_DIR}/tests/GuestOwnedMemoryLimits.cpp)
@@ -274,6 +283,7 @@ if(ANYPS5_ENABLE_TSAN)
 endif()
 
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/BinaryWordIo.cpp)
+target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Emutls.cpp)
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/LegacySignals.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SigvecExport.cpp)
 
 if(BUILD_TESTING)

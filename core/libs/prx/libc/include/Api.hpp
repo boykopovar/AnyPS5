@@ -8,6 +8,7 @@
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/GuestDirectory.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
+#include "prx/libc/include/GuestEmutls.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/exceptions/Unwind.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
@@ -159,6 +160,7 @@ char* APS5_VABI gets_s_nid_postfix(char* buffer, std::size_t size);
 void* APS5_VABI __cxa_demangle_nid_postfix(const char* mangled, char* buf, std::size_t* len, int* status);
 int APS5_VABI __cxa_thread_atexit_impl_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dso);
 int APS5_VABI __cxa_thread_atexit_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dso);
+void* APS5_VABI __emutls_get_address_nid_postfix(GuestEmutlsControl* control);
 int APS5_VABI LibcInternalExtCxaThreadAtexit_nid_postfix(void (APS5_VABI *destructor)(void*), void* object, void* moduleId);
 const std::error_category* APS5_VABI _ZSt17iostream_categoryv_nid_postfix();
 const std::error_category* APS5_VABI IostreamCategory_nid_no_patch();
