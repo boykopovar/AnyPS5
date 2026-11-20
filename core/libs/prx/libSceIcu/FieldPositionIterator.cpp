@@ -8,6 +8,7 @@
 */
 // https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/i18n/ufieldpositer.cpp
 
+#include "prx/libSceIcu/FieldPositionIterator.hpp"
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -30,6 +31,12 @@ void WriteStatus(std::int32_t* destination, std::int32_t previous, std::int32_t 
     }
 }
 
+}
+
+std::unique_lock<std::mutex> Icu::LockFieldPositionIterator_nid_no_patch(UFieldPositionIterator* iterator, const char* caller) {
+    std::unique_lock lock(iteratorMutex);
+    if (!iterators.contains(iterator)) NotImplemented_nid_no_patch(caller);
+    return lock;
 }
 
 extern "C" {
@@ -62,8 +69,7 @@ UFieldPositionIterator* APS5_VABI ufieldpositer_open_nid_postfix(std::int32_t* s
 
 std::int32_t APS5_VABI ufieldpositer_next_nid_postfix(UFieldPositionIterator* fpositer, std::int32_t* beginIndex,
                                                     std::int32_t* endIndex) {
-    const std::lock_guard lock(iteratorMutex);
-    if (!iterators.contains(fpositer)) NotImplemented_nid_no_patch(__func__);
+    const auto lock = Icu::LockFieldPositionIterator_nid_no_patch(fpositer, __func__);
     icu::FieldPosition field;
     if (!reinterpret_cast<icu::FieldPositionIterator*>(fpositer)->next(field)) return -1;
     const GuestArena::HostWrite beginAccess(beginIndex, beginIndex ? sizeof(*beginIndex) : 0);

@@ -4,6 +4,7 @@ void CheckIcuCalendar();
 void CheckIcuCollator();
 void CheckIcuDataMemory();
 void CheckIcuDateFormat();
+void CheckIcuDateFormatBehavior();
 void CheckIcuDateTimePatternGenerator();
 void CheckIcuDateIntervalFormat();
 void CheckIcuFieldPositionIterator();
@@ -25,6 +26,7 @@ int main() {
     CheckIcuCollator();
     CheckIcuDataMemory();
     CheckIcuDateFormat();
+    CheckIcuDateFormatBehavior();
     CheckIcuDateTimePatternGenerator();
     CheckIcuDateIntervalFormat();
     CheckIcuFieldPositionIterator();

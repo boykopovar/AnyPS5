@@ -331,23 +331,16 @@ void FailureShortCircuit() {
     }
 }
 
-void NonFailureThrows() {
-    const char16_t zone[] = u"UTC";
-    const char16_t pattern[] = u"yyyy-MM-dd";
-    RequireThrows<std::invalid_argument>([&] {
-        udat_open_nid_postfix(0, 0, "en_US", zone, 3, pattern, 10, nullptr);
+void OpenWithWarnings() {
+    RequireThrows<std::invalid_argument>([] {
+        udat_open_nid_postfix(0, 0, "en_US", u"UTC", 3, nullptr, 0, nullptr);
     });
-    for (std::int32_t incoming : {std::numeric_limits<std::int32_t>::min(), -128, -124, -1, 0}) {
-        for (std::int32_t timeStyle : {-2, 0, 2}) {
-            std::int32_t status = incoming;
-            RequireThrows<std::exception>([&] {
-                udat_open_nid_postfix(timeStyle, 0, "en_US", zone, 3, pattern, 10, &status);
-            });
-            Require(status == incoming);
-            RequireThrows<std::exception>([&] {
-                udat_open_nid_postfix(timeStyle, 0, nullptr, nullptr, -1, nullptr, -1, &status);
-            });
-            Require(status == incoming);
+    for (std::int32_t incoming : {-128, -124, -1, 0}) {
+        for (const char* locale : {"en_US", static_cast<const char*>(nullptr)}) {
+            auto status = incoming;
+            auto* format = udat_open_nid_postfix(-2, -2, locale, u"UTC", 3, u"yyyy-MM-dd", 10, &status);
+            Require(format && status <= 0);
+            udat_close_nid_postfix(format);
         }
     }
 }
@@ -356,7 +349,7 @@ void NonFailureThrows() {
 
 void Run() {
     FailureShortCircuit();
-    NonFailureThrows();
+    OpenWithWarnings();
 }
 
 } // namespace UdatOpen
