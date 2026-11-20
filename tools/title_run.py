@@ -195,9 +195,9 @@ def read_report(path):
     unsupported = [entry for entry in unsupported if isinstance(entry, dict)] if isinstance(unsupported, list) else unsupported
     return {"averageFps": run.get("averageFps"),
             "frameMs": section(run, "frameMs") or None,
-            "shaders": {name: shaders.get(name) for name in SHADER_COUNTS} if coverage.get("shaders") else None,
-            "missing": functions if coverage.get("missing") and isinstance(functions, list) else None,
-            "unsupported": unsupported if coverage.get("unsupported") and isinstance(unsupported, list) else None,
+            "shaders": {name: shaders.get(name) for name in SHADER_COUNTS} if coverage.get("shaders") is True else None,
+            "missing": functions if coverage.get("missing") is True and isinstance(functions, list) else None,
+            "unsupported": unsupported if coverage.get("unsupported") is True and isinstance(unsupported, list) else None,
             "truncated": {"functions": truncated.get("functions", 0), "unsupported": truncated.get("unsupported", 0)}}
 
 
