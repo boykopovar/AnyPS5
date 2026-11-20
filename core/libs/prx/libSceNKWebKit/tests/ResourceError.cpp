@@ -58,7 +58,6 @@ URL MakeURL(const String& text) {
     return url;
 }
 
-// The ResourceError members are raw pointers; the isolated copy owns one reference to each.
 struct OwnedError {
     ResourceError value;
     explicit OwnedError(const ResourceError& error) : value(error) {}
