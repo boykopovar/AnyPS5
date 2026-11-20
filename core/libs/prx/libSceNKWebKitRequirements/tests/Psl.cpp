@@ -82,6 +82,11 @@ void TestSuffixAndRegistrableDomain() {
     AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, "www.example.com", "example.com") == 1, "cookie domain example.com should be acceptable");
     AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, "www.example.com", "com") == 0, "cookie domain com should not be acceptable");
     AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, "www.example.com", "other.com") == 0, "cookie domain other.com should not be acceptable");
+
+    AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, "192.168.0.1", "192.168.0.1") == 1, "an IPv4 host should accept its own address");
+    AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, "192.168.0.1", "0.1") == 0, "an IPv4 host should reject a cookie domain that only ends it");
+    AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, "1.2.3", "2.3") == 1, "1.2.3 is a host name for inet_pton");
+    AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, "0x7f.0.0.1", "0.0.1") == 1, "0x7f.0.0.1 is a host name for inet_pton");
 }
 
 void TestStringConversionAndFileLoading() {
