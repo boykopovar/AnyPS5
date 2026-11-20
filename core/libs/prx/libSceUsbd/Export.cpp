@@ -3,6 +3,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 
@@ -280,10 +281,15 @@ bool RequestStringDescriptor(libusb_device_handle* handle, std::uint8_t descript
     return result >= 0 && descriptor[1] == LIBUSB_DT_STRING;
 }
 
+bool GuestOutputWritable(void* destination, std::size_t bytes) {
+    const GuestArena::HostWrite write(destination, bytes);
+    return write.Open() && GuestWritable_nid_no_patch(destination, bytes);
+}
+
 bool GuestTransferDataUsable(std::uint8_t endpoint, std::uint8_t* data, std::int32_t length) {
     if (length <= 0) return true;
     const auto bytes = static_cast<std::size_t>(length);
-    if ((endpoint & LIBUSB_ENDPOINT_IN) != 0) return GuestWritable_nid_no_patch(data, bytes);
+    if ((endpoint & LIBUSB_ENDPOINT_IN) != 0) return GuestOutputWritable(data, bytes);
     std::array<std::uint8_t, 4096> chunk{};
     for (std::size_t offset = 0; offset < bytes; offset += chunk.size()) {
         if (!GuestCopyIn_nid_no_patch(chunk.data(), data + offset, std::min(chunk.size(), bytes - offset))) return false;
@@ -344,7 +350,7 @@ void APS5_VABI sceUsbdExit() {
 
 std::int64_t APS5_VABI sceUsbdGetDeviceList(void*** list) {
     if (list == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
-    if (!GuestWritable_nid_no_patch(list, sizeof(*list))) return SCE_USBD_ERROR_INVALID_ARG;
+    if (!GuestOutputWritable(list, sizeof(*list))) return SCE_USBD_ERROR_INVALID_ARG;
     auto& state = State();
     std::lock_guard lock(state.mutex);
     if (state.context == nullptr) {
@@ -811,7 +817,7 @@ std::int32_t APS5_VABI sceUsbdGetConfigDescriptorByValue(void* device, std::uint
 
 std::int32_t APS5_VABI sceUsbdGetConfiguration(void* deviceHandle, std::int32_t* configuration) {
     if (deviceHandle == nullptr || configuration == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
-    if (!GuestWritable_nid_no_patch(configuration, sizeof(*configuration))) return SCE_USBD_ERROR_INVALID_ARG;
+    if (!GuestOutputWritable(configuration, sizeof(*configuration))) return SCE_USBD_ERROR_INVALID_ARG;
     int host = 0;
     const int result = libusb_get_configuration(KnownHandle(deviceHandle, __func__), &host);
     if (result == 0) {
