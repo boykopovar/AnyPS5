@@ -5232,6 +5232,10 @@ bool StorageTexture::pendingUnitInside(std::uint64_t address, std::size_t bytes)
     return false;
 }
 
+bool LabelTrapBypassed() {
+    return GuestMemory::GpuMutex().HeldByThisThread() || AgcDriver::DriverDetail::DrawPipeline::OnCommitterThread();
+}
+
 namespace {
 
 #if defined(__APPLE__) || defined(__linux__)
@@ -5254,7 +5258,7 @@ void ResolveLabelTrap(std::uintptr_t begin, std::uintptr_t end) {
 bool LabelTrapsEnabled() {
     static const bool enabled = [] {
         if (std::getenv("APS5_NO_LABEL_READ_TRAP") != nullptr || !GuestWriteWatch::GuestWriteWatchSetReadTrapResolver_nid_postfix(&ResolveLabelTrap)) return false;
-        GuestWriteWatch::GuestWriteWatchSetReadTrapBypass_nid_postfix(+[] { return GuestMemory::GpuMutex().HeldByThisThread(); });
+        GuestWriteWatch::GuestWriteWatchSetReadTrapBypass_nid_postfix(&LabelTrapBypassed);
         return true;
     }();
     return enabled;

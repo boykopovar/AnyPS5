@@ -54,6 +54,11 @@ struct ClearOnExit {
 namespace {
 thread_local bool finisherThread = false;
 thread_local bool finisherProducer = false;
+thread_local bool committerThread = false;
+}
+
+bool DrawPipeline::OnCommitterThread() {
+    return committerThread;
 }
 
 DrawFinisher& DrawFinisher::Get() {
@@ -466,6 +471,7 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
 
 
 void DrawPipeline::run() {
+    committerThread = true;
     NameDriverThread("draw-commit");
     PerformanceTrace::BindThread("draw committer");
     ReserveCommitterCore();
