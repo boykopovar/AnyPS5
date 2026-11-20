@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 
@@ -60,6 +61,8 @@ int main() {
     const auto past = std::chrono::duration_cast<std::chrono::nanoseconds>(
         (std::chrono::system_clock::now() - std::chrono::seconds(1)).time_since_epoch()).count();
     _ZNSt3__118condition_variable15__do_timed_waitERNS_11unique_lockINS_5mutexEEENS_6chrono10time_pointINS5_12system_clockENS5_8durationIxNS_5ratioILl1ELl1000000000EEEEEEE_nid_postfix(&condition, &lock, past);
+    for (const auto beforeEpoch : {std::int64_t{-1}, std::numeric_limits<std::int64_t>::min()})
+        _ZNSt3__118condition_variable15__do_timed_waitERNS_11unique_lockINS_5mutexEEENS_6chrono10time_pointINS5_12system_clockENS5_8durationIxNS_5ratioILl1ELl1000000000EEEEEEE_nid_postfix(&condition, &lock, beforeEpoch);
     Require(pthread_mutex_unlock_nid_postfix(&mutex) == 0, "timed wait did not retain mutex ownership");
 
     lock.owns = false;

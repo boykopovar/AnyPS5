@@ -78,7 +78,7 @@ void APS5_VABI _ZNSt3__118condition_variable15__do_timed_waitERNS_11unique_lockI
         --seconds;
         remainder += billion;
     }
-    const KernelTimespec deadline{seconds, remainder};
+    const KernelTimespec deadline = seconds < 0 ? KernelTimespec{0, 0} : KernelTimespec{seconds, remainder};
     const int error = kernel.timedwait(CheckedCondition(self, __func__), CheckedLock(lock, __func__), &deadline);
     if (error != 60) CheckError(error, __func__);
 }
