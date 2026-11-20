@@ -300,6 +300,7 @@ void RequireProgramDecode() {
     constexpr std::array<std::uint32_t, 8> geometryUsers{0x22220001u, 0x22220002u, 0x22220003u, 0x22220004u, 0x22220005u, 0x22220006u, 0x22220007u, 0x22220008u};
     constexpr std::array<std::uint32_t, 4> copyUsers{0x33330001u, 0x33330002u, 0x33330003u, 0x33330004u};
     AgcDriver::QueueState queue{};
+    queue.context[0x31c] = 10u << 2u;
     queue.context[0x8e] = 0xfu;
     queue.context[0x8f] = 0xfu;
     Bind(queue, GcnExport.data(), 0x0c8u, 0x0cbu, exportUsers);
