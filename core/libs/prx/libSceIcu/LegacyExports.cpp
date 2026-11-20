@@ -1,11 +1,13 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceIcu/include/LegacyExports.hpp"
+#include "prx/libSceIcu/DefaultLocaleName.hpp"
 #include "prx/libSceIcu/Enumeration.hpp"
 #include "prx/libc/include/General.hpp"
 #include "cmemory.h"
 #include "unicode/ucnv.h"
 #include <putilimp.h>
 #include "unicode/uenum.h"
+#include "uresimp.h"
 #include <atomic>
 #include <cerrno>
 #include <cstddef>
@@ -8578,8 +8580,35 @@ int APS5_VABI utrace_exit_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ures_getFunctionalEquivalent_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int32_t APS5_VABI ures_getFunctionalEquivalent_nid_postfix(char* result, std::int32_t resultCapacity, const char* path, const char* resName, const char* keyword, const char* locid, std::int8_t* isAvailable, std::int8_t omitDefault, std::int32_t* status) {
+    if (!status) APS5_INVALID_ARG_EX;
+    std::int32_t currentStatus = 0;
+    const int savedErrno = errno;
+    const bool statusReadable = GuestCopyIn_nid_no_patch(&currentStatus, status, sizeof(currentStatus));
+    errno = savedErrno;
+    if (!statusReadable) APS5_INVALID_ARG_EX;
+    if (currentStatus > 0) return 0;
+    const bool statusWritable = GuestWritable_nid_no_patch(status, sizeof(*status));
+    errno = savedErrno;
+    if (!statusWritable) APS5_INVALID_ARG_EX;
+    if (result == nullptr ? resultCapacity != 0 : resultCapacity < 0) {
+        *status = U_ILLEGAL_ARGUMENT_ERROR;
+        return 0;
+    }
+    if (result != nullptr && resultCapacity > 0) {
+        const bool resultWritable = GuestWritable_nid_no_patch(result, static_cast<std::size_t>(resultCapacity));
+        errno = savedErrno;
+        if (!resultWritable) APS5_INVALID_ARG_EX;
+    }
+    if (isAvailable != nullptr) {
+        const bool availableWritable = GuestWritable_nid_no_patch(isAvailable, sizeof(*isAvailable));
+        errno = savedErrno;
+        if (!availableWritable) APS5_INVALID_ARG_EX;
+    }
+    if (!locid) locid = Icu::DefaultLocaleName();
+    char scratch = 0;
+    char* target = (result == nullptr || resultCapacity == 0) ? &scratch : result;
+    return ures_getFunctionalEquivalent(target, resultCapacity, path, resName, keyword, locid, isAvailable, omitDefault, reinterpret_cast<UErrorCode*>(status));
 }
 
 int APS5_VABI uloc_getTableStringWithFallback_nid_postfix() {
