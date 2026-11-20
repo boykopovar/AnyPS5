@@ -4791,7 +4791,7 @@ static void CheckTinyInverseTrigFlags() {
             errno = 1234;
             std::feclearexcept(FE_ALL_EXCEPT);
             const auto result = std::bit_cast<std::uint64_t>(function(input));
-            Require(result == bits && errno == 1234 && std::fetestexcept(FE_ALL_EXCEPT) == expected);
+            Require(result == bits && errno == 1234 && std::fetestexcept(StandardExceptions) == expected);
         }
     }
 }
