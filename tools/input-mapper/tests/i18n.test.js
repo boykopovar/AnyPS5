@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {diagnostic, initialLocale, locales, messages, translate} from '../i18n.js';
 import {captureKey} from '../capture.js';
 import {parseIni, serialize} from '../validation.js';
@@ -104,5 +105,25 @@ test('French diagnostics keep action, setting and type tokens', () => {
 test('inherited property names fall back to the original message', () => {
     for (const locale of ['xx', 'constructor', 'toString', '__proto__', 'hasOwnProperty']) {
         assert.equal(diagnostic(locale, 'Unexpected diagnostic'), 'Unexpected diagnostic');
+    }
+});
+
+test('Spanish and Portuguese translate the per-game profile field', () => {
+    for (const code of ['es', 'pt-BR']) {
+        for (const key of ['profileTitleId', 'profileTitleIdHelp', 'profileTitleIdError']) {
+            assert.equal(typeof messages[code][key], 'string', `${code}: ${key}`);
+            assert.notEqual(messages[code][key], messages.en[key], `${code}: ${key}`);
+        }
+    }
+});
+
+test('every translated title ID error states the native title ID length limit', () => {
+    const source = readFileSync(new URL('../../../core/libs/prx/libScePad/include/InputMapping.hpp', import.meta.url), 'utf8');
+    const [, limit] = source.match(/MaxTitleIdLength = (\d+);/u);
+    for (const locale of [{code: 'en'}, ...locales]) {
+        const message = messages[locale.code]?.profileTitleIdError;
+        if (message === undefined) continue;
+        const spellings = [limit, new Intl.NumberFormat(locale.code).format(Number(limit))];
+        assert.ok(spellings.some(spelling => message.includes(spelling)), `${locale.code}: ${message}`);
     }
 });
