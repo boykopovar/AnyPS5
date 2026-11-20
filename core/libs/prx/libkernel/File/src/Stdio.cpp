@@ -578,7 +578,7 @@ static int PositionedArgumentError(int descriptor, bool write, bool nullBuffer, 
 }
 
 static int TransferArgumentError(int descriptor, bool nullBuffer) {
-    if (!nullBuffer) return 0;
+    if (!nullBuffer || IsKqueueDescriptor_nid_no_patch(descriptor)) return 0;
     return (GuestSockets::IsOpen(descriptor) || DescriptorIsOpen_nid_no_patch(descriptor)) ? GUEST_EFAULT : GUEST_EBADF;
 }
 
