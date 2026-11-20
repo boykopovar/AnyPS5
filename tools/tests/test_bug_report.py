@@ -27,6 +27,38 @@ class RedactTests(unittest.TestCase):
         out = bug_report.redact("banana ana ana.txt ana-dir", home="", user="ana", host="")
         self.assertEqual(out, "banana <user> <user>.txt ana-dir")
 
+    def test_windows_home_matches_mixed_case_and_separators(self):
+        out = bug_report.redact(
+            r"opened c:/PROFILES\Example/games/title.elf and C:\Profiles\Example-backup\title.elf",
+            home=r"C:\Profiles\Example", user="", host="")
+        self.assertEqual(out, r"opened ~/games/title.elf and C:\Profiles\Example-backup\title.elf")
+
+    def test_windows_home_before_a_period_is_redacted(self):
+        out = bug_report.redact(
+            r"Home is C:\Profiles\Example. Sibling is C:\Profiles\Example.old.",
+            home=r"C:\Profiles\Example", user="", host="")
+        self.assertEqual(out, r"Home is ~. Sibling is C:\Profiles\Example.old.")
+
+    def test_windows_unc_home_matches_with_a_trailing_separator(self):
+        out = bug_report.redact(
+            r"opened //FILEHOST/Share\Example/games/title.elf",
+            home="\\\\FileHost\\Share\\Example\\", user="", host="")
+        self.assertEqual(out, "opened ~/games/title.elf")
+
+    def test_posix_home_is_not_replaced_inside_a_sibling_directory(self):
+        out = bug_report.redact(
+            "opened /home/anabel/title.elf, /home/ana-backup/title.elf, /home/ana.old/title.elf and /home/ana/title.elf",
+            home="/home/ana", user="", host="")
+        self.assertEqual(out, "opened /home/anabel/title.elf, /home/ana-backup/title.elf, /home/ana.old/title.elf and ~/title.elf")
+
+    def test_posix_home_before_a_period_is_redacted(self):
+        out = bug_report.redact("Home is /home/ana. Sibling is /home/ana.old.", home="/home/ana", user="", host="")
+        self.assertEqual(out, "Home is ~. Sibling is /home/ana.old.")
+
+    def test_posix_home_matches_with_a_trailing_separator(self):
+        out = bug_report.redact("opened /home/ana/title.elf", home="/home/ana/", user="", host="")
+        self.assertEqual(out, "opened ~/title.elf")
+
     def test_short_or_empty_identities_are_not_replaced(self):
         text = "a b /x"
         self.assertEqual(bug_report.redact(text, home="/x", user="a", host="b"), "a b /x")
@@ -87,6 +119,36 @@ class BundleTests(unittest.TestCase):
                 details["path"] = f"opened ~{suffix}"
                 self.assertEqual(archived, report)
 
+    def test_json_object_keys_are_redacted(self):
+        report = {
+            "/home/ana/games/title.elf": {
+                "ana": "opened by ana",
+                "serverfestivo": {"10.0.0.7": "/home/ana/save.bin"},
+            }
+        }
+        self.report.write_text(json.dumps(report), encoding="utf-8")
+        out, _ = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            raw = bundle.read("anyps5-report.json").decode("utf-8")
+            archived = json.loads(raw)
+        self.assertEqual(
+            archived,
+            {
+                "~/games/title.elf": {
+                    "<user>": "opened by <user>",
+                    "<host>": {"<ip>": "~/save.bin"},
+                }
+            },
+        )
+        for secret in ("/home/ana", "ana", "serverfestivo", "10.0.0.7"):
+            self.assertNotIn(secret, raw)
+
+    def test_utf8_bom_report_is_redacted(self):
+        self.report.write_text('{"path": "/home/ana/title.elf"}', encoding="utf-8-sig")
+        out, _ = self.bundle()
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(json.loads(bundle.read("anyps5-report.json")), {"path": "~/title.elf"})
+
     def test_missing_log_and_input_are_left_out(self):
         _, names = self.bundle(log=self.root / "absent.log", input_config=None)
         self.assertEqual(names, ["README.txt", "anyps5-report.json", "host.txt"])
@@ -144,6 +206,18 @@ class MainTests(unittest.TestCase):
             self.assertEqual(sorted(bundle.namelist()), ["README.txt", "anyps5-report.json", "anyps5.log", "host.txt"])
             self.assertEqual(bundle.read("anyps5.log").decode("utf-8"), "opened ~/title.elf on <host>\n")
 
+    def test_colliding_redacted_keys_refuse_the_bundle(self):
+        first, second = "192.0.2.1", "192.0.2.2"
+        self.report.write_text(json.dumps({"addresses": [{first: 1, second: 2}]}), encoding="utf-8")
+        target = self.root / "bundle.zip"
+        code, out, err = self.run_main(["--report", str(self.report), "--out", str(target)])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("duplicate JSON object keys after redaction", err)
+        self.assertNotIn(first, err)
+        self.assertNotIn(second, err)
+        self.assertFalse(target.exists())
+
     def test_missing_report_is_an_error(self):
         code, _, err = self.run_main(["--report", str(self.root / "absent.json"), "--out", str(self.root / "b.zip")])
         self.assertEqual(code, 1)
@@ -165,6 +239,64 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 0)
         with zipfile.ZipFile(target) as bundle:
             self.assertIn("anyps5.log", bundle.namelist())
+
+    def test_input_config_defaults_to_the_environment_variable(self):
+        ini = self.root / "map.ini"
+        ini.write_text("Cross = KEY:/home/ana/F\n", encoding="utf-8")
+        target = self.root / "bundle.zip"
+        with patch.dict(os.environ, {"ANYPS5_INPUT_CONFIG": str(ini)}):
+            code, _, _ = self.run_main(["--report", str(self.report), "--log", "", "--out", str(target)])
+        self.assertEqual(code, 0)
+        with zipfile.ZipFile(target) as bundle:
+            self.assertEqual(bundle.read("anyps5-input.ini").decode("utf-8"), "Cross = KEY:~/F\n")
+
+    def test_invalid_report_json_is_an_error(self):
+        self.report.write_text("not json", encoding="utf-8")
+        code, _, err = self.run_main(["--report", str(self.report), "--log", "", "--input-config", "", "--out", str(self.root / "b.zip")])
+        self.assertEqual(code, 1)
+        self.assertIn("bug_report:", err)
+        self.assertFalse((self.root / "b.zip").exists())
+
+
+class IdentityTests(unittest.TestCase):
+    def test_host_is_cut_at_the_first_dot(self):
+        with patch.object(bug_report.getpass, "getuser", return_value="ana"), patch.object(bug_report.socket, "gethostname", return_value="box.example.org"):
+            identity = bug_report.identities()
+        self.assertEqual(identity["user"], "ana")
+        self.assertEqual(identity["host"], "box")
+        self.assertEqual(identity["home"], str(Path.home()))
+
+    def test_user_is_empty_when_it_cannot_be_determined(self):
+        with patch.object(bug_report.getpass, "getuser", side_effect=OSError("no user")), patch.object(bug_report.socket, "gethostname", return_value="box"):
+            self.assertEqual(bug_report.identities()["user"], "")
+
+
+class RedactReportContainerTests(unittest.TestCase):
+    def test_non_string_scalars_pass_through_and_containers_are_walked(self):
+        identity = {"home": "/home/ana", "user": "ana", "host": "box1"}
+        value = {"n": 3, "ok": True, "none": None, "list": ["/home/ana/x", 1.5, {"h": "box1"}]}
+        self.assertEqual(bug_report.redact_report(value, identity), {"n": 3, "ok": True, "none": None, "list": ["~/x", 1.5, {"h": "<host>"}]})
+
+class RedactReportTests(unittest.TestCase):
+    IDENTITY = {"home": "/home/alice", "user": "alice", "host": "box"}
+
+    def test_redacts_strings_in_lists_dict_keys_and_values(self):
+        report = {"/home/alice/a": ["/home/alice/b", {"k": "alice"}], "n": 3, "flag": True, "none": None}
+        expected = {
+            bug_report.redact("/home/alice/a", **self.IDENTITY): [
+                bug_report.redact("/home/alice/b", **self.IDENTITY),
+                {"k": bug_report.redact("alice", **self.IDENTITY)},
+            ],
+            "n": 3,
+            "flag": True,
+            "none": None,
+        }
+        self.assertEqual(bug_report.redact_report(report, self.IDENTITY), expected)
+
+    def test_leaves_non_string_scalars_and_does_not_mutate_input(self):
+        report = [1, 2.5, None, ["/home/alice"]]
+        self.assertEqual(bug_report.redact_report(report, self.IDENTITY)[:3], [1, 2.5, None])
+        self.assertEqual(report[3], ["/home/alice"])
 
 
 if __name__ == "__main__":

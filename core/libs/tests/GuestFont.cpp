@@ -382,6 +382,13 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
     Require(sceFontCharacterGetTextOrder(characters, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontCharacterGetTextOrder(nullptr, &textOrder) == SCE_FONT_ERROR_INVALID_PARAMETER && textOrder == nullptr);
     Require(sceFontCharacterGetTextOrder(characters, &textOrder) == SCE_FONT_OK && textOrder == characters->textOrder);
+    int bidiLevel = -1;
+    Require(sceFontCharacterGetBidiLevel(characters, &bidiLevel) == SCE_FONT_OK && bidiLevel >= 0);
+    errno = 71;
+    Require(sceFontCharacterGetBidiLevel(characters, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
+    Require(sceFontCharacterGetTextFontCode(characters, reinterpret_cast<FontHandle*>(0x10), &characterCode) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
+    Require(sceFontCharacterGetTextFontCode(characters, &characterFont, reinterpret_cast<std::uint32_t*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
+    Require(sceFontCharacterGetTextOrder(characters, reinterpret_cast<void**>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
     Require(sceFontStringGetWritingForm(string) == 0x12);
     Require(sceFontStringGetTerminateCode(string) == 0 && sceFontStringGetTerminateOrder(string) == parsed.text + 3);
     ParsedText line{"AV\nA", 0, font};
@@ -499,6 +506,9 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
     characters[1].clusterIndex = 0;
 
     Require(sceFontCharactersRefersTextCodes(characters, nullptr, nullptr) == nullptr);
+    errno = 71;
+    Require(sceFontCharactersRefersTextCodes(characters, nullptr, reinterpret_cast<FontTextCodes*>(0x10)) == nullptr);
+    Require(errno == 71);
     Require(sceFontTextCodesStepNext(nullptr) == nullptr && sceFontTextCodesStepBack(nullptr) == nullptr);
     bool threw = false;
     try {
@@ -547,6 +557,14 @@ static void CheckRenderEffects(FontHandle font, FontRenderer renderer) {
     Require(sceFontGetRenderScalePixel(font, &pixelW, &pixelH) == SCE_FONT_OK);
     Require(sceFontSetupRenderScalePixel(font, 24.0f, 32.0f) == SCE_FONT_OK);
     Require(sceFontGetRenderScalePixel(font, &scaleW, &scaleH) == SCE_FONT_OK && scaleW == 24.0f && scaleH == 32.0f);
+    Require(sceFontGetRenderScalePixel(nullptr, reinterpret_cast<float*>(0x10), nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontGetRenderScalePixel(font, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetRenderScalePixel(font, reinterpret_cast<float*>(0x10), &scaleH) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontGetRenderScalePixel(font, &scaleW, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontSetupRenderScalePoint(font, 12.0f, 18.0f) == SCE_FONT_OK);
     Require(sceFontGetRenderScalePoint(font, &scaleW, &scaleH) == SCE_FONT_OK && scaleW == 12.0f && scaleH == 18.0f);
     Require(sceFontGetRenderScalePoint(nullptr, reinterpret_cast<float*>(0x10), nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
@@ -562,6 +580,11 @@ static void CheckRenderEffects(FontHandle font, FontRenderer renderer) {
     Require(sceFontGetRenderEffectSlant(font, &slant) == SCE_FONT_OK && slant == 0.25f);
     Require(sceFontSetupRenderEffectSlant(font, 2.0f) == SCE_FONT_OK);
     Require(sceFontGetRenderEffectSlant(font, &slant) == SCE_FONT_OK && slant == 1.0f);
+    Require(sceFontGetRenderEffectSlant(nullptr, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontGetRenderEffectSlant(font, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetRenderEffectSlant(font, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontSetupRenderEffectWeight(font, 1.02f, 0.98f, 1) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontSetupRenderEffectWeight(font, 1.02f, 0.98f, 0) == SCE_FONT_OK);
     Require(sceFontGetRenderEffectWeight(font, &weightX, &weightY, &mode) == SCE_FONT_OK && approximately(weightX, 1.02f) && approximately(weightY, 0.98f) && mode == 0);
@@ -707,7 +730,7 @@ static void CheckOutlineBuffer() {
     Require(sceFontRendererResetOutlineBuffer(renderer) == SCE_FONT_OK);
     Require(sceFontRendererGetOutlineBufferSize(renderer, &size) == SCE_FONT_OK && size == 0x4000);
     Require(sceFontRendererSetOutlineBufferPolicy(nullptr, 0, 0x8000, 0) == SCE_FONT_ERROR_INVALID_RENDERER);
-    Require(sceFontRendererSetOutlineBufferPolicy(&foreign, 0, 0x8000, 0) == SCE_FONT_ERROR_INVALID_RENDERER);
+    Require(sceFontRendererSetOutlineBufferPolicy(&foreign, 0, 0x8000, 0) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontRendererSetOutlineBufferPolicy(renderer, 0, 0x8000, 0x4000) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontRendererGetOutlineBufferSize(renderer, &size) == SCE_FONT_OK && size == 0x4000);
     Require(sceFontRendererSetOutlineBufferPolicy(renderer, 0, 0x8000, 0) == SCE_FONT_OK);

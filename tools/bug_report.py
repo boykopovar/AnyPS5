@@ -15,7 +15,12 @@ IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
 def redact(text, *, home, user, host):
     if home and len(home) >= 3:
-        text = text.replace(home, "~")
+        if re.match(r"^(?:[a-zA-Z]:[\\/]|\\\\)", home):
+            parts = re.split(r"[\\/]", home.rstrip("\\/"))
+            pattern = r"[\\/]".join(re.escape(part) for part in parts)
+            text = re.sub(pattern + r"(?![\w-]|\.+[\w-])", "~", text, flags=re.IGNORECASE)
+        elif home.rstrip("/"):
+            text = re.sub(re.escape(home.rstrip("/")) + r"(?![\w-]|\.+[\w-])", "~", text)
     if user and len(user) >= 2:
         text = re.sub(r"(?<![\w-])" + re.escape(user) + r"(?![\w-])", "<user>", text)
     if host and len(host) >= 2:
@@ -29,7 +34,13 @@ def redact_report(value, identity):
     if isinstance(value, list):
         return [redact_report(item, identity) for item in value]
     if isinstance(value, dict):
-        return {key: redact_report(item, identity) for key, item in value.items()}
+        result = {}
+        for key, item in value.items():
+            redacted_key = redact_report(key, identity)
+            if redacted_key in result:
+                raise ValueError("duplicate JSON object keys after redaction")
+            result[redacted_key] = redact_report(item, identity)
+        return result
     return value
 
 
@@ -52,7 +63,7 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None):
     out = Path(out)
     if out.exists():
         raise FileExistsError(f"{out} already exists")
-    data = json.loads(report.read_text(encoding="utf-8"))
+    data = json.loads(report.read_text(encoding="utf-8-sig"))
     identity = {"home": home, "user": user, "host": host}
     members = {"anyps5-report.json": json.dumps(redact_report(data, identity), indent=2) + "\n"}
     if log is not None and Path(log).is_file():

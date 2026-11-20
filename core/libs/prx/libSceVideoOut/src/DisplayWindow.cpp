@@ -1,5 +1,6 @@
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
 #include "prx/libSceVideoOut/include/Telemetry.hpp"
+#include "prx/libSceVideoOut/include/WindowTitleUpdate.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceMouse/include/MouseState.hpp"
@@ -168,14 +169,18 @@ void DisplayWindow::UpdateTitle() {
     frameNum++;
     fpsFrames++;
     const double elapsed = std::chrono::duration<double>(now - fpsStart).count();
+    bool fpsWindowClosed = false;
     if (elapsed >= 2.0) {
         currentFps = static_cast<double>(fpsFrames) / elapsed;
         fpsStart = now;
         fpsFrames = 0;
+        fpsWindowClosed = true;
     }
-    char text[160];
-    std::snprintf(text, sizeof(text), "%s | FPS: %.2f (%llu)", title.value, currentFps, static_cast<unsigned long long>(frameNum));
-    SDL_SetWindowTitle(window, text);
+    if (WindowTitleUpdate::ShouldPush(frameNum, fpsWindowClosed)) {
+        char text[160];
+        std::snprintf(text, sizeof(text), "%s | FPS: %.2f (%llu)", title.value, currentFps, static_cast<unsigned long long>(frameNum));
+        SDL_SetWindowTitle(window, text);
+    }
     if (fullscreen) fullscreen->Refresh(MouseIsOpen_nid_no_patch());
     if (auto* telemetry = VideoOutTelemetry::Instance(); telemetry != nullptr && (frameNum == 1 || frameNum % 30 == 0)) telemetry->EmitPresent(frameNum, currentFps);
 }

@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <string>
 #include <string_view>
 #include "SceTypes.hpp"
@@ -433,16 +434,25 @@ const XmlEntity* XmlEntityAt(const char* text) {
     return nullptr;
 }
 
-bool ReadXmlSource(const char* src, std::size_t length, std::string& host) {
+bool ReadGuestBytes(const char* src, std::size_t length, std::string& host) {
     constexpr std::size_t Chunk = 64 * 1024;
-    constexpr std::size_t Tail = 8;
     host.clear();
     for (std::size_t done = 0; done < length;) {
         const std::size_t step = std::min(Chunk, length - done);
-        host.resize(done + step);
+        try {
+            host.resize(done + step);
+        } catch (const std::exception&) {
+            return false;
+        }
         if (!GuestCopyIn_nid_no_patch(host.data() + done, src + done, step)) return false;
         done += step;
     }
+    return true;
+}
+
+bool ReadXmlSource(const char* src, std::size_t length, std::string& host) {
+    constexpr std::size_t Tail = 8;
+    if (!ReadGuestBytes(src, length, host)) return false;
     char tail[Tail]{};
     if (!GuestCopyIn_nid_no_patch(tail, src + length, Tail)) {
         for (std::size_t index = 0; index < Tail && GuestCopyIn_nid_no_patch(tail + index, src + length + index, 1); ++index) {}
@@ -649,6 +659,17 @@ int APS5_VABI sceNpUtilJsonEscape(char* dst, std::size_t dstSize, const char* sr
     if (copyError == 63) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
     if (copyError != 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     const std::size_t start = existing.size();
+    const std::size_t room = start <= dstSize - JSON_ESCAPE_MARGIN ? dstSize - JSON_ESCAPE_MARGIN - start + 1 : 0;
+    const std::size_t window = std::min(srcLength, room);
+    std::string source;
+    if (window != 0) {
+        const int sourceError = CopyGuestString_nid_no_patch(src, window, source);
+        if (sourceError == 63) {
+            if (!ReadGuestBytes(src, window, source)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        } else if (sourceError != 0) {
+            return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        }
+    }
     std::size_t written = start;
     std::string appended;
     const auto finish = [&](int result) {
@@ -657,7 +678,7 @@ int APS5_VABI sceNpUtilJsonEscape(char* dst, std::size_t dstSize, const char* sr
     };
     for (std::size_t i = 0; i < srcLength; ++i) {
         if (written > dstSize - JSON_ESCAPE_MARGIN) return finish(NP_UTIL_ERROR_BUFFER_TOO_SMALL);
-        const auto c = static_cast<unsigned char>(src[i]);
+        const auto c = i < source.size() ? static_cast<unsigned char>(source[i]) : 0;
         if (c == 0) return finish(0);
         char piece[JSON_ESCAPE_MARGIN] = {};
         if (const char* escape = JsonShortEscape(c)) {
@@ -677,6 +698,9 @@ int APS5_VABI sceNpUtilJsonUnescape(char* dst, std::size_t dstSize, const char* 
     std::size_t* dstLength) {
     if (src == nullptr || srcLength == 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     if (dst == nullptr && dstLength == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    std::string source;
+    if (!ReadGuestBytes(src, srcLength, source)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    src = source.data();
     const char* end = src + srcLength;
     std::size_t count = 0;
     int status = 0;
@@ -753,6 +777,9 @@ int APS5_VABI sceNpUtilJsonGetOneChar(char* dst, std::size_t dstSize, const char
     std::size_t* dstLength, std::size_t* consumed) {
     if (src == nullptr || srcLength == 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     if (dst == nullptr && dstLength == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    std::string source;
+    if (!ReadGuestBytes(src, std::min<std::size_t>(srcLength, JSON_SURROGATE_PAIR_LENGTH), source)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    src = source.data();
     std::size_t decoded = 1;
     std::size_t used = 1;
     int status = 0;

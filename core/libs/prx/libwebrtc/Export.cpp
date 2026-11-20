@@ -48,11 +48,6 @@ int APS5_VABI libwebrtcUnknown02(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc10CallConfigD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("DdAZMMuUzBg", libwebrtcUnknown03);
 int APS5_VABI libwebrtcUnknown03(void) {
     NotImplemented_nid_no_patch("DdAZMMuUzBg");
@@ -93,37 +88,12 @@ int APS5_VABI _ZN6webrtc34CreateModularPeerConnectionFactoryENS_33PeerConnection
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc33PeerConnectionFactoryDependenciesC1EOS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc33PeerConnectionFactoryDependenciesD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNK6webrtc18EnvironmentFactory6CreateEv_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc26PeerConnectionDependenciesC1EOS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc26PeerConnectionDependenciesD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN7cricket18BasicPortAllocatorC1EPN3rtc14NetworkManagerEPNS1_19PacketSocketFactoryEPN6webrtc14TurnCustomizerEPNS_25RelayPortFactoryInterfaceEPKNS6_15FieldTrialsViewE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc10CallConfigC1ERKNS_11EnvironmentEPNS_13TaskQueueBaseE_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -138,27 +108,7 @@ int APS5_VABI _ZN6webrtc23PeerConnectionInterface16RTCConfigurationD1Ev_nid_post
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc23PeerConnectionInterface9IceServerC1ERKS1__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc23PeerConnectionInterface9IceServerD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN7cricket5CodecD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc18RtpTransceiverInitC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc18RtpTransceiverInitD1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -181,11 +131,6 @@ int APS5_VABI _ZN6webrtc17RtpPacketReceivedC1ERKS0__nid_postfix(void) {
 }
 
 int APS5_VABI _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc21RtpHeaderExtensionMapC1EN3rtc9ArrayViewIKNS_12RtpExtensionELln4711EEE_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -274,21 +219,6 @@ int APS5_VABI libwebrtcUnknown11(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc23PeerConnectionInterface9IceServerC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc26PeerConnectionDependenciesC1EPNS_22PeerConnectionObserverE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc33PeerConnectionFactoryDependenciesC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("IEo8FXYcE8c", libwebrtcUnknown12);
 int APS5_VABI libwebrtcUnknown12(void) {
     NotImplemented_nid_no_patch("IEo8FXYcE8c");
@@ -357,11 +287,6 @@ int APS5_VABI libwebrtcUnknown18(void) {
 APS5_EXPORT("z-b1v5cik7s", libwebrtcUnknown19);
 int APS5_VABI libwebrtcUnknown19(void) {
     NotImplemented_nid_no_patch("z-b1v5cik7s");
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc10TruncateIPERKNS_9IPAddressEi_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -612,11 +537,6 @@ int APS5_VABI _ZN6webrtc4rtcp3PliC1Ev_nid_postfix(void) {
 
 void APS5_VABI _ZN6webrtc4rtcp3PliD1Ev_nid_postfix(void*) {}
 
-int APS5_VABI _ZN6webrtc4rtcp14ReceiverReportC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc4rtcp4RembC1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -676,17 +596,7 @@ int APS5_VABI _ZN7cricket16CreateVideoCodecERKN6webrtc14SdpVideoFormatE_nid_post
 
 void APS5_VABI _ZN6webrtc13PacketOptionsD1Ev_nid_postfix(void*) {}
 
-int APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface6ConfigC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc10AudioState6ConfigD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc15AudioSendStream6ConfigC1EPNS_9TransportE_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

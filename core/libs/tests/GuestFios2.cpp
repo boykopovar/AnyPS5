@@ -93,16 +93,30 @@ static SceFiosOpAttr CountingAttr() {
 
 static void CheckInitialization() {
     REQUIRE(!sceFiosIsInitialized(nullptr));
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 0);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(0) == 1);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 1);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(1) == 0);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 0);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(5) == 0);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 0);
     std::uint32_t params[16] = {};
     params[0] = (sizeof(params) << 1) | 0u;
     params[3] = 0xfeedbeef;
     REQUIRE(sceFiosInitialize(reinterpret_cast<const SceFiosParams*>(params)) == SCE_FIOS_OK);
     REQUIRE(sceFiosIsInitialized(nullptr));
     REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 2);
-    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(5) == 2);
-    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(1) == 1);
     REQUIRE(sceFiosArchiveSetDecompressorThreadCount(0) == 1);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 1);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(1) == 1);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 1);
     REQUIRE(sceFiosArchiveSetDecompressorThreadCount(2) == 2);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 2);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(3) == 2);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 2);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(5) == 2);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(10) == 2);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(255) == 2);
     REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 2);
     std::uint32_t copy[16] = {};
     REQUIRE(sceFiosIsInitialized(reinterpret_cast<SceFiosParams*>(copy)));
@@ -628,6 +642,8 @@ static void CheckFileHandles(const std::string& directory) {
     REQUIRE(sceFiosFHReadSync(nullptr, fh, buffer, 1) == SCE_FIOS_ERROR_BAD_FH);
     REQUIRE(sceFiosFHSeek(fh, 0, 0) == SCE_FIOS_ERROR_BAD_FH && sceFiosFHTell(fh) == SCE_FIOS_ERROR_BAD_FH);
     REQUIRE(sceFiosFHGetSize(fh) == SCE_FIOS_ERROR_BAD_FH);
+    REQUIRE(sceFiosFHSeek(999, 0, 0) == SCE_FIOS_ERROR_BAD_FH);
+    REQUIRE(sceFiosFHGetSize(999) == SCE_FIOS_ERROR_BAD_FH);
     REQUIRE(sceFiosFHStatSync(nullptr, fh, &stat) == SCE_FIOS_ERROR_BAD_FH);
     REQUIRE(sceFiosFHSyncSync(nullptr, fh) == SCE_FIOS_ERROR_BAD_FH);
 
@@ -921,13 +937,18 @@ static void CheckOverlayResolve(const std::string& directory) {
     const std::string source = directory + "/ovlsrc";
     std::filesystem::create_directories(base);
     std::filesystem::create_directories(source);
-    for (const char* name : {"/a.txt", "/older.txt", "/newer.txt"}) std::ofstream(source + name) << "source";
-    for (const char* name : {"/b.txt", "/older.txt", "/newer.txt"}) std::ofstream(base + name) << "base";
+    for (const char* name : {"/a.txt", "/older.txt", "/newer.txt", "/same.txt", "/epoch.txt"}) std::ofstream(source + name) << "source";
+    for (const char* name : {"/b.txt", "/older.txt", "/newer.txt", "/same.txt", "/epoch.txt"}) std::ofstream(base + name) << "base";
     const auto now = std::filesystem::last_write_time(source + "/a.txt");
     std::filesystem::last_write_time(base + "/older.txt", now - std::chrono::hours(1));
     std::filesystem::last_write_time(source + "/older.txt", now);
     std::filesystem::last_write_time(base + "/newer.txt", now);
     std::filesystem::last_write_time(source + "/newer.txt", now - std::chrono::hours(1));
+    std::filesystem::last_write_time(base + "/same.txt", now);
+    std::filesystem::last_write_time(source + "/same.txt", now);
+    const KernelTimeval epoch[2]{};
+    REQUIRE(sceKernelUtimes_nid_postfix((base + "/epoch.txt").c_str(), epoch) == 0);
+    REQUIRE(sceKernelUtimes_nid_postfix((source + "/epoch.txt").c_str(), epoch) == 0);
 
     std::int32_t opaque = AddOverlay(0, 5, "/app0/ovltest", source);
     REQUIRE(Resolve(0, "/app0/ovltest/a.txt") == source + "/a.txt");
@@ -947,6 +968,22 @@ static void CheckOverlayResolve(const std::string& directory) {
     REQUIRE(sceFiosOverlayRemove(first) == SCE_FIOS_OK && sceFiosOverlayRemove(nested) == SCE_FIOS_OK);
     REQUIRE(sceFiosOverlayRemove(opaque) == SCE_FIOS_OK);
 
+    const std::int32_t rootDestination = AddOverlay(0, 0, "/", source);
+    REQUIRE(Resolve(0, "/") == source);
+    REQUIRE(Resolve(0, "/app0//./asset.bin") == source + "/app0/asset.bin");
+    REQUIRE(Resolve(0, "app0/asset.bin") == "app0/asset.bin");
+    REQUIRE(sceFiosOverlayRemove(rootDestination) == SCE_FIOS_OK);
+
+    const std::int32_t rootSource = AddOverlay(0, 0, "/virtual/", "/");
+    REQUIRE(Resolve(0, "/virtual") == "/");
+    REQUIRE(Resolve(0, "/virtual/asset.bin") == "/asset.bin");
+    REQUIRE(Resolve(0, "/virtualized/asset.bin") == "/virtualized/asset.bin");
+    REQUIRE(sceFiosOverlayRemove(rootSource) == SCE_FIOS_OK);
+
+    const std::int32_t rootToRoot = AddOverlay(0, 0, "/", "/");
+    REQUIRE(Resolve(0, "//app0/./asset.bin") == "/app0/asset.bin");
+    REQUIRE(sceFiosOverlayRemove(rootToRoot) == SCE_FIOS_OK);
+
     for (std::uint8_t type : {std::uint8_t{1}, std::uint8_t{2}, std::uint8_t{3}}) {
         const std::int32_t id = AddOverlay(type, 0, base, source);
         REQUIRE(Resolve(0, base + "/a.txt") == source + "/a.txt");
@@ -954,6 +991,8 @@ static void CheckOverlayResolve(const std::string& directory) {
         REQUIRE(Resolve(1, base + "/b.txt") == (type == 3 ? source : base) + "/b.txt");
         REQUIRE(Resolve(0, base + "/older.txt") == source + "/older.txt");
         REQUIRE(Resolve(0, base + "/newer.txt") == (type == 2 ? base : source) + "/newer.txt");
+        REQUIRE(Resolve(0, base + "/same.txt") == (type == 2 ? base : source) + "/same.txt");
+        REQUIRE(Resolve(0, base + "/epoch.txt") == source + "/epoch.txt");
         REQUIRE(sceFiosOverlayRemove(id) == SCE_FIOS_OK);
     }
 }
@@ -1141,7 +1180,23 @@ int main() {
     params[0] = sizeof(params) << 1;
     params[6] = 7;
     REQUIRE(sceFiosInitialize(reinterpret_cast<const SceFiosParams*>(params)) == SCE_FIOS_OK);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(0) == 1);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 1);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(1) == 1);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 1);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(2) == 2);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 2);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(3) == 3);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(4) == 3);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
     REQUIRE(sceFiosArchiveSetDecompressorThreadCount(9) == 3);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(100) == 3);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(255) == 3);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 3);
     sceFiosTerminate();
     std::filesystem::remove_all(directory);
     std::puts("guest_fios2 ok");

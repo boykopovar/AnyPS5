@@ -13,6 +13,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include <algorithm>
+#include <bit>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -261,7 +262,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
         if (const auto localDevice = device.Load()) {
             recordDeferredLabels(localDevice.get(), submission.queue);
-            wroteOnGpu = localDevice->DumpSamplesOnGpu(Pm4::SampleDumpAddress(packet));
+            wroteOnGpu = localDevice->DumpSamplesOnGpu(Pm4::SampleDumpAddress(packet), queue.sampleDumpBlocks);
         }
     }
 
@@ -323,7 +324,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
     return drains;
 }
 
-void Driver::dumpSampleCounters(std::uint64_t address) {
+void Driver::dumpSampleCounters(std::uint64_t address, std::uint32_t blocks) {
     std::uint64_t samples = 0;
     {
         GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
@@ -334,18 +335,20 @@ void Driver::dumpSampleCounters(std::uint64_t address) {
         samples = recorder->SamplesTotal();
     }
     constexpr std::uint64_t ready = 1ull << 63u;
+    const auto first = static_cast<std::uint64_t>(std::countr_zero(blocks));
     for (std::uint64_t db = 0; db < Pm4::SampleDumpBlocks; ++db) {
-        const std::uint64_t value = ready | (db == 0 ? samples : 0u);
+        if (((blocks >> db) & 1u) == 0) continue;
+        const std::uint64_t value = ready | (db == first ? samples : 0u);
         GuestMemory::Write(address + db * Pm4::SampleDumpStride, std::as_bytes(std::span(&value, 1)).first(Pm4::SampleDumpBlockBytes), 8);
     }
 }
 
-bool Driver::enqueueSampleDumpPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue) {
+bool Driver::enqueueSampleDumpPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue, std::uint32_t blocks) {
     static const bool ordered = std::getenv("APS5_PIPELINE_DRAIN_SAMPLE_DUMPS") == nullptr;
     if (!ordered || opcode != 0x46 || queue != 0 || packet.size() < 4 || !Pm4::SampleDump(packet) || !DrawPipeline::Active() || !deferredLabels().labels.empty()) return false;
     const auto address = Pm4::SampleDumpAddress(packet);
     if (address == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), Pm4::SampleDumpBytes, true)) return false;
-    DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::SampleDump, [this, queue, address] {
+    DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::SampleDump, [this, queue, address, blocks] {
         GuestMemory::SetCurrentPacket(0x46, queue);
         bool wrote = false;
         {
@@ -353,11 +356,11 @@ bool Driver::enqueueSampleDumpPacket(std::span<const std::uint32_t> packet, std:
             std::lock_guard gpuLock(GuestMemory::GpuMutex());
             if (const auto localDevice = device.Load()) {
                 recordDeferredLabels(localDevice.get(), queue);
-                wrote = localDevice->DumpSamplesOnGpu(address);
+                wrote = localDevice->DumpSamplesOnGpu(address, blocks);
                 if (!wrote) localDevice->WaitIdle();
             }
         }
-        if (!wrote) dumpSampleCounters(address);
+        if (!wrote) dumpSampleCounters(address, blocks);
     }, {{address, address + Pm4::SampleDumpBytes}});
     ++sampleDumpsQueued;
     Graphics::Recorder::CountRecordedWork();
