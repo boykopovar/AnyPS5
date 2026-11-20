@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <initializer_list>
 #include <source_location>
+#include <cstdint>
+#include <stdexcept>
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
@@ -48,6 +50,16 @@ static guest_curl_httppost* GuestFormNode(const char* name, const char* contents
     form->more = more;
     form->flags = flags;
     return form;
+}
+
+template <typename Call>
+static bool Throws(Call call) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
 }
 
 int main() {
@@ -96,6 +108,14 @@ int main() {
         Require(curl_formadd_nid_postfix(&form, &last, CURLFORM_COPYNAME, "named", CURLFORM_COPYNAME, "again",
             CURLFORM_ARRAY, static_cast<const guest_curl_forms*>(nullptr), CURLFORM_END) == CURL_FORMADD_OPTION_TWICE);
         Require(last == tail && tail->next == nullptr);
+        auto* const unmappedSlot = reinterpret_cast<guest_curl_httppost**>(std::uintptr_t{1});
+        Require(Throws([&] { curl_formadd_nid_postfix(&form, unmappedSlot, CURLFORM_COPYNAME, "x", CURLFORM_COPYCONTENTS, "y", CURLFORM_END); }));
+        const auto* const unmappedForms = reinterpret_cast<const guest_curl_forms*>(~std::uintptr_t{0xFFF});
+        Require(Throws([&] { curl_formadd_nid_postfix(&form, &last, CURLFORM_ARRAY, unmappedForms, CURLFORM_END); }));
+        Require(last == tail && tail->next == nullptr);
+        guest_curl_httppost* emptyLast = nullptr;
+        Require(Throws([&] { curl_formadd_nid_postfix(unmappedSlot, &emptyLast, CURLFORM_COPYNAME, "x", CURLFORM_COPYCONTENTS, "y", CURLFORM_END); }));
+        Require(emptyLast == nullptr);
         FreeGuestForms(form);
     }
     {
