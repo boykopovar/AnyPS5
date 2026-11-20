@@ -709,7 +709,7 @@ bool IsVnode(int fd) {
 }
 
 extern "C" bool DescriptorHasNoVnode_nid_no_patch(int fd) {
-    return IsKqueueDescriptor_nid_no_patch(fd) || (!File::IsVnode(fd) && !File::IsCharacterDevice(fd) && !File::IsRandomDevice(fd));
+    return IsKqueueDescriptor_nid_no_patch(fd) || IsKsemDescriptor(fd) || (!File::IsVnode(fd) && !File::IsCharacterDevice(fd) && !File::IsRandomDevice(fd));
 }
 
 extern "C" std::uint64_t FileSynchronousWritesForTest_nid_no_patch() {
