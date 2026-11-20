@@ -40,8 +40,9 @@ def changed_lines(root, base, tip):
     added = collections.defaultdict(collections.Counter)
     deleted = collections.defaultdict(collections.Counter)
     old_path, new_path, in_hunk = None, None, False
-    lines = git(root, "diff", "-U0", "--no-renames", "--no-relative", "--no-color", "--no-ext-diff", "--no-textconv",
-                "--src-prefix=a/", "--dst-prefix=b/", base, tip).split("\n")
+    diff = git(root, "diff", "-U0", "--no-renames", "--no-relative", "--no-color", "--no-ext-diff", "--no-textconv",
+               "--src-prefix=a/", "--dst-prefix=b/", base, tip, raw=True)
+    lines = diff.decode("utf-8", "replace").split("\n")
     for index, line in enumerate(lines):
         if line.startswith("diff --git "):
             old_path, new_path, in_hunk = None, None, False
@@ -80,7 +81,7 @@ def text_only(lines):
 
 def shown(text):
     text, unterminated, _ = text.partition("\n")
-    return text[:100] + (" (no newline at end of file)" if unterminated else "")
+    return text[:100].replace("\r", "\\r") + (" (no newline at end of file)" if unterminated else "")
 
 
 def changed_modes(root, base, tip):
