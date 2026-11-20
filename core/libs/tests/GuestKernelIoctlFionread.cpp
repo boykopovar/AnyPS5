@@ -138,20 +138,20 @@ void AuditNullAndFaultPointers() {
         "ioctl FIONBIO null pointer on closed descriptor must fail with EFAULT (14)");
     Require(_ioctl_nid_postfix(sock, NonblockingRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorFault,
         "_ioctl FIONBIO null pointer on closed descriptor must fail with EFAULT (14)");
-    Require(ioctl_nid_postfix(sock, ReadableRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorFault,
-        "ioctl FIONREAD null pointer on closed descriptor must fail with EFAULT (14)");
-    Require(_ioctl_nid_postfix(sock, ReadableRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorFault,
-        "_ioctl FIONREAD null pointer on closed descriptor must fail with EFAULT (14)");
+    Require(ioctl_nid_postfix(sock, ReadableRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorBadDescriptor,
+        "ioctl FIONREAD null pointer on closed descriptor must fail with EBADF (9)");
+    Require(_ioctl_nid_postfix(sock, ReadableRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorBadDescriptor,
+        "_ioctl FIONREAD null pointer on closed descriptor must fail with EBADF (9)");
 
     *__error_nid_postfix() = 0;
     Require(ioctl_nid_postfix(-1, NonblockingRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorFault,
         "ioctl FIONBIO null pointer on -1 descriptor must fail with EFAULT (14)");
     Require(_ioctl_nid_postfix(-1, NonblockingRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorFault,
         "_ioctl FIONBIO null pointer on -1 descriptor must fail with EFAULT (14)");
-    Require(ioctl_nid_postfix(-1, ReadableRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorFault,
-        "ioctl FIONREAD null pointer on -1 descriptor must fail with EFAULT (14)");
-    Require(_ioctl_nid_postfix(-1, ReadableRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorFault,
-        "_ioctl FIONREAD null pointer on -1 descriptor must fail with EFAULT (14)");
+    Require(ioctl_nid_postfix(-1, ReadableRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorBadDescriptor,
+        "ioctl FIONREAD null pointer on -1 descriptor must fail with EBADF (9)");
+    Require(_ioctl_nid_postfix(-1, ReadableRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorBadDescriptor,
+        "_ioctl FIONREAD null pointer on -1 descriptor must fail with EBADF (9)");
 
     const int dgram = socket_nid_postfix(2, Datagram, 0);
     Require(dgram >= 0, "datagram socket creation failed");
