@@ -313,6 +313,11 @@ int APS5_VABI FreeTypeAttachStream_nid_no_patch(GuestFaceRec* face, const GuestO
     GuestOpenArgs args{};
     if (!CopyGuestIn(&args, parameters, sizeof(args))) NotImplemented_nid_no_patch("FT_Attach_Stream");
     const std::uint32_t mode = args.flags & (FT_OPEN_MEMORY | FT_OPEN_STREAM | FT_OPEN_PATHNAME);
+    auto* guestStream = static_cast<GuestStreamRec*>(args.stream);
+    if (mode != FT_OPEN_MEMORY && mode != FT_OPEN_PATHNAME && (mode != FT_OPEN_STREAM || !guestStream)) {
+        if ((args.flags & FT_OPEN_STREAM) && guestStream && guestStream->close) guestStream->close(guestStream);
+        return FT_Err_Invalid_Argument;
+    }
     FT_Open_Args native{};
     std::vector<unsigned char> bytes;
     GuestStreamBridge bridge;
@@ -331,8 +336,8 @@ int APS5_VABI FreeTypeAttachStream_nid_no_patch(GuestFaceRec* face, const GuestO
         native.flags = FT_OPEN_MEMORY;
         native.memory_base = bytes.data();
         native.memory_size = static_cast<FT_Long>(bytes.size());
-    } else if (mode == FT_OPEN_STREAM && args.stream) {
-        if (!BindGuestStream(bridge, static_cast<GuestStreamRec*>(args.stream))) NotImplemented_nid_no_patch("FT_Attach_Stream");
+    } else {
+        if (!BindGuestStream(bridge, guestStream)) NotImplemented_nid_no_patch("FT_Attach_Stream");
         native.flags = FT_OPEN_STREAM;
         native.stream = &bridge.host;
     }

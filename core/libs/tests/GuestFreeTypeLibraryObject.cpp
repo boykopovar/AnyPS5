@@ -277,8 +277,15 @@ void AttachStream(const std::filesystem::path& root) {
         Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == FT_Err_Invalid_Argument);
         guest.flags = native.flags = 0;
         Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == FT_Attach_Stream(pair.oracle, &native));
+        Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == FT_Err_Invalid_Argument);
+        GuestOpenArgs blank{};
+        Require(FT_Attach_Stream_nid_postfix(pair.face, &blank) == FT_Err_Invalid_Argument);
         guest.flags = native.flags = FT_OPEN_STREAM;
         Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == FT_Attach_Stream(pair.oracle, &native));
+        Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == FT_Err_Invalid_Argument);
+        guest.flags = native.flags = FT_OPEN_STREAM | FT_OPEN_PATHNAME;
+        Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == FT_Attach_Stream(pair.oracle, &native));
+        Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == FT_Err_Invalid_Argument);
         GuestStreamRec stream{};
         FT_StreamRec nativeStream{};
         guest.stream = &stream;
@@ -286,6 +293,18 @@ void AttachStream(const std::filesystem::path& root) {
         guest.flags = native.flags = FT_OPEN_MEMORY | FT_OPEN_STREAM;
         Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == FT_Attach_Stream(pair.oracle, &native));
         Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == FT_Err_Invalid_Argument && closes == 0);
+        stream.close = GuestStreamClose;
+        nativeStream.close = NativeStreamClose;
+        for (const std::uint32_t flags : {FT_OPEN_MEMORY | FT_OPEN_STREAM, FT_OPEN_PATHNAME | FT_OPEN_STREAM, FT_OPEN_MEMORY | FT_OPEN_PATHNAME | FT_OPEN_STREAM}) {
+            guest.flags = native.flags = flags;
+            closes = nativeCloses = 0;
+            Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == FT_Attach_Stream(pair.oracle, &native));
+            Require(closes == 1 && nativeCloses == 1);
+        }
+        guest.flags = native.flags = FT_OPEN_MEMORY;
+        closes = nativeCloses = 0;
+        Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == 0 && FT_Attach_Stream(pair.oracle, &native) == 0);
+        Require(closes == 0 && nativeCloses == 0);
         guest = {};
         guest.flags = FT_OPEN_PATHNAME;
         Require(Throws([&] { FT_Attach_Stream_nid_postfix(pair.face, &guest); }));
