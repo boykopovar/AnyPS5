@@ -494,11 +494,6 @@ void APS5_VABI sceLibcInternalUnknown6_141_zkCx9c2QKBc_nid_no_patch(void* self) 
 }
 APS5_EXPORT("zkCx9c2QKBc", sceLibcInternalUnknown6_141_zkCx9c2QKBc_nid_no_patch);
 
-int APS5_VABI _ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
