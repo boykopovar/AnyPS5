@@ -153,6 +153,9 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         pixelStorage.psDepthExportEnable = pixel.depthExportEnable;
         pixelStorage.psDepthExportMin = pixel.depthExportMin;
         pixelStorage.psDepthExportMax = pixel.depthExportMax;
+        pixelStorage.psDepthExportViewportRanges = pixel.depthExportViewportRanges;
+        pixelStorage.psDepthExportMinByViewport = pixel.depthExportMinByViewport;
+        pixelStorage.psDepthExportMaxByViewport = pixel.depthExportMaxByViewport;
         pixelStorage.psSampleMaskExportEnable = pixel.sampleMaskExportEnable;
         pixelStorage.psStencilRefExportEnable = pixel.stencilRefExportEnable;
         pixelStorage.psStencilOperationValueExport = pixel.stencilOperationValueExport;

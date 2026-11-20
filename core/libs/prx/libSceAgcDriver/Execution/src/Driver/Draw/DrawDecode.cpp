@@ -205,7 +205,7 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
             break;
         }
     }
-    product->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(product->state), Graphics::PixelProgramSkipped(queue), fragmentHeader);
+    product->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(product->state), Graphics::PixelProgramSkipped(queue), fragmentHeader, context.multiViewport);
     Graphics::NormalizeUnusedViewportDepth(product->state, product->pixel);
     Graphics::ApplyViewportIndex(context, product->state);
     Graphics::ApplyDepthRemap(context, product->state);
