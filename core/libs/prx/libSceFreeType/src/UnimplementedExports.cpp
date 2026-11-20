@@ -302,4 +302,8 @@ void APS5_VABI FTA_Support_Format_Type42_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+void APS5_VABI FTA_Support_Format_WinFonts_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
