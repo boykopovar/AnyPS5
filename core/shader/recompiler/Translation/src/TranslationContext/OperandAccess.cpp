@@ -70,6 +70,8 @@ RdnaOperand TranslationContext::destinationOperand(const RdnaInstruction& inst) 
 RdnaOperand TranslationContext::accumulatorOperand(const RdnaInstruction& inst) {
     RdnaOperand accumulator = inst.destination;
     accumulator.dpp = false;
+    accumulator.absolute = inst.source2.absolute;
+    accumulator.negate = inst.source2.negate;
     return accumulator;
 }
 
@@ -168,8 +170,10 @@ IrF32 TranslationContext::flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* 
     if (afterRounding && roundMode == 0u) {
         IrValue& scaled = ir.BitwiseAnd(ir.BitCastU32(ir.Emit(IrOpcode::FPMul32, IrType::F32, {&ir.Emit(IrOpcode::FPMul32, IrType::F32, {lhs, &ir.ConstantF32(0x1p64f)}), rhs})), ir.Constant(0x7fffffffu));
         IrValue* tiny = zeroAddend(&ir.ULessThan(ir.ISub(scaled, ir.Constant(1u)), ir.Constant(0x207fffffu)));
+        IrValue* smallestNormal = zeroAddend(&ir.IEqual(scaled, ir.Constant(0x20800000u)));
         IrValue& sign = ir.BitwiseAnd(ir.BitwiseXor(lhsBits, rhsBits), ir.Constant(0x80000000u));
-        return IrF32(ir.Emit(IrOpcode::SelectF32, IrType::F32, {tiny, &ir.BitCastF32(sign), product}));
+        IrValue& flushed = ir.Emit(IrOpcode::SelectF32, IrType::F32, {tiny, &ir.BitCastF32(sign), product});
+        return IrF32(ir.Emit(IrOpcode::SelectF32, IrType::F32, {smallestNormal, &ir.BitCastF32(ir.BitwiseOr(sign, ir.Constant(0x00800000u))), &flushed}));
     }
     const auto exponent = [&](IrValue& bits) -> IrValue& { return ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&bits, &ir.Constant(23u), &ir.Constant(8u)}); };
     const auto significand = [&](IrValue& bits) -> IrValue& { return ir.BitwiseOr(ir.BitwiseAnd(bits, ir.Constant(0x007fffffu)), ir.Constant(0x00800000u)); };
@@ -354,6 +358,9 @@ IrU32 TranslationContext::applyBitSourceModifiers(const RdnaOperand& operand, Ir
 }
 
 bool TranslationContext::outputModifierApplies(std::uint32_t denormalShift) const {
+    if (((rounding.unknown >> denormalShift) & 2u) != 0u) {
+        throw std::runtime_error("output modifier on a result whose MODE denormal bits differ between the paths reaching it or were written from an SGPR: not implemented");
+    }
     const std::uint32_t mode = floatMode.has_value() ? floatMode->floatMode : 0xc0u;
     return !ieeeMode && ((mode >> denormalShift) & 2u) == 0u;
 }
@@ -364,23 +371,34 @@ IrU32 TranslationContext::quietNan32(IrU32 bits) {
 
 IrValue* TranslationContext::nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct, bool multiplication) {
     if (!ExactF32Arithmetic()) return result;
-    const auto isNan = [&](IrValue& bits) -> IrValue& { return ir.UGreaterThan(ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u)); };
-    IrValue* bits = &ir.BitCastU32(*result);
+    const auto isNan = [&](IrValue& value) -> IrValue& { return ir.Emit(IrOpcode::FPIsNan32, IrType::U1, {&value}); };
+    IrValue* candidate = nullptr;
     const bool normalFactor = multiplication && std::any_of(sources.begin(), sources.end(), [](const IrValue* source) {
         const IrValue* constant = constantF32Bits(*source);
         if (constant == nullptr) return false;
         const std::uint32_t exponent = (constant->ImmediateU32() >> 23u) & 0xffu;
         return exponent != 0u && exponent != 0xffu;
     });
-    if (!normalFactor) bits = &ir.Select(isNan(*bits), ir.Constant(0xffc00000u), *bits);
+    if (!normalFactor) {
+        std::array<IrValue*, 3> operands{};
+        std::uint32_t count = 0u;
+        for (IrValue* source : sources) operands.at(count++) = source;
+        for (auto index = count; index < operands.size(); ++index) operands[index] = operands[0];
+        const std::uint32_t flags = (ieeeMode ? 1u : 0u) | (count << 1u);
+        IrValue& invalid = invalidProduct != nullptr && count == 3u ? *invalidProduct : ir.ConstantBool(false);
+        return &ir.Emit(IrOpcode::NanPropagateF32, IrType::F32, {result, &ir.Constant(flags), &invalid, operands[0], operands[1], operands[2]});
+    }
     for (auto source = sources.end(); source != sources.begin();) {
         --source;
         IrValue& sourceBits = ir.BitCastU32(**source);
-        IrValue* selected = &isNan(sourceBits);
-        if (invalidProduct != nullptr && source + 1 == sources.end() && sources.size() == 3u) selected = &ir.LogicalAnd(*selected, ir.LogicalNot(*invalidProduct));
-        bits = &ir.Select(*selected, quietNan32(IrU32(sourceBits)).Value(), *bits);
+        if (candidate == nullptr) {
+            candidate = invalidProduct != nullptr && sources.size() == 3u ? &ir.Select(*invalidProduct, ir.Constant(0u), sourceBits) : &sourceBits;
+            continue;
+        }
+        candidate = &ir.Select(isNan(**source), sourceBits, *candidate);
     }
-    return &ir.BitCastF32(*bits);
+    IrValue& fallback = normalFactor ? ir.BitCastU32(*result) : ir.Select(isNan(*result), ir.Constant(0xffc00000u), ir.BitCastU32(*result));
+    return &ir.BitCastF32(ir.Select(isNan(ir.BitCastF32(*candidate)), quietNan32(IrU32(*candidate)).Value(), fallback));
 }
 
 IrValue* TranslationContext::propagatedNanResultF32(std::initializer_list<IrValue*> sources, IrValue* result) {
@@ -399,7 +417,8 @@ IrValue* TranslationContext::propagatedNanResultF32(std::initializer_list<IrValu
 IrValue& TranslationContext::invalidProductF32(IrValue* lhs, IrValue* rhs) {
     IrValue& lhsMagnitude = ir.BitwiseAnd(ir.BitCastU32(*lhs), ir.Constant(0x7fffffffu));
     IrValue& rhsMagnitude = ir.BitwiseAnd(ir.BitCastU32(*rhs), ir.Constant(0x7fffffffu));
-    const auto infZero = [&](IrValue& inf, IrValue& zero) -> IrValue& { return ir.LogicalAnd(ir.IEqual(inf, ir.Constant(0x7f800000u)), ir.IEqual(zero, ir.Constant(0u))); };
+    const auto zero = [&](IrValue& magnitude) -> IrValue& { return (f32DenormalFlush & 4u) != 0u ? ir.ULessThan(magnitude, ir.Constant(0x00800000u)) : ir.IEqual(magnitude, ir.Constant(0u)); };
+    const auto infZero = [&](IrValue& inf, IrValue& factor) -> IrValue& { return ir.LogicalAnd(ir.IEqual(inf, ir.Constant(0x7f800000u)), zero(factor)); };
     return ir.LogicalOr(infZero(lhsMagnitude, rhsMagnitude), infZero(rhsMagnitude, lhsMagnitude));
 }
 

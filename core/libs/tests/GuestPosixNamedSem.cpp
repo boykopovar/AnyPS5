@@ -10,6 +10,7 @@
 #include <thread>
 
 static constexpr int GUEST_ENOENT = 2;
+static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EEXIST = 17;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_EAGAIN = 35;
@@ -52,6 +53,9 @@ static int Value(void* sem) {
 }
 
 static void CheckNames() {
+    const auto* unreadable = reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10));
+    REQUIRE(OpenFails(unreadable, O_CREAT_FLAG, GUEST_EFAULT));
+    REQUIRE(UnlinkFails(unreadable, GUEST_EFAULT));
     REQUIRE(OpenFails("relative", O_CREAT_FLAG, GUEST_EINVAL));
     REQUIRE(OpenFails("/anyps5-named-flags", 0x1, GUEST_EINVAL));
     REQUIRE(OpenFails("/anyps5-named-flags", O_CREAT_FLAG | 0x2, GUEST_EINVAL));
@@ -108,6 +112,20 @@ static void CheckLifetime() {
     REQUIRE(sem_close_nid_postfix(recreated) == 0 && sem_unlink_nid_postfix(name) == 0);
 }
 
+static void CheckValueAboveMaximum() {
+    const char* name = "/anyps5-named-above-max";
+    void* sem = sem_open_nid_postfix(name, O_CREAT_FLAG | O_EXCL_FLAG, 0600, static_cast<int>(0x80000002u));
+    REQUIRE(sem != nullptr && Value(sem) == 2);
+    REQUIRE(sem_trywait_nid_postfix(sem) == 0 && Value(sem) == 1);
+    REQUIRE(sem_post_nid_postfix(sem) == 0 && Value(sem) == 2);
+    REQUIRE(sem_close_nid_postfix(sem) == 0 && sem_unlink_nid_postfix(name) == 0);
+    void* empty = sem_open_nid_postfix(name, O_CREAT_FLAG | O_EXCL_FLAG, 0600, static_cast<int>(0x80000000u));
+    REQUIRE(empty != nullptr && Value(empty) == 0);
+    *__error_nid_postfix() = 0;
+    REQUIRE(sem_trywait_nid_postfix(empty) == -1 && *__error_nid_postfix() == GUEST_EAGAIN);
+    REQUIRE(sem_close_nid_postfix(empty) == 0 && sem_unlink_nid_postfix(name) == 0);
+}
+
 static void CheckUnnamed() {
     std::uintptr_t storage[2] = {};
     REQUIRE(sem_init_nid_postfix(storage, 0, 1) == 0);
@@ -120,6 +138,7 @@ static void CheckUnnamed() {
 int main() {
     CheckNames();
     CheckLifetime();
+    CheckValueAboveMaximum();
     CheckUnnamed();
     return 0;
 }
