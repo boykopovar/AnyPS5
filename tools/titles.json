@@ -18,6 +18,7 @@
   "PPSA97510": {"seconds": 30},
   "PPSA98001": {"seconds": 30},
   "PPSA98510": {"seconds": 30},
+  "PPSA98513": {"relink": ["--trap-sdk-syscall-stubs"], "seconds": 30},
   "PPSA98766": {"seconds": 30, "pad": {"after_s": 6, "events": [{"at_ms": 0, "hold_ms": 300, "buttons": ["cross"]}, {"at_ms": 400, "hold_ms": 300, "buttons": ["circle"]}, {"at_ms": 800, "hold_ms": 300, "buttons": ["square"]}, {"at_ms": 1200, "hold_ms": 300, "buttons": ["triangle"]}, {"at_ms": 1600, "hold_ms": 300, "buttons": ["l1"]}, {"at_ms": 2000, "hold_ms": 300, "buttons": ["r1"]}, {"at_ms": 2400, "hold_ms": 300, "buttons": ["l2"]}, {"at_ms": 2800, "hold_ms": 300, "buttons": ["r2"]}, {"at_ms": 3200, "hold_ms": 300, "buttons": ["up"]}, {"at_ms": 3600, "hold_ms": 300, "buttons": ["down"]}, {"at_ms": 4000, "hold_ms": 300, "buttons": ["left"]}, {"at_ms": 4400, "hold_ms": 300, "buttons": ["right"]}, {"at_ms": 4800, "hold_ms": 300, "buttons": ["options"]}]}, "smoke": true},
   "PPSA99000": {"seconds": 30},
   "PPSA99001": {"seconds": 30},
