@@ -30,8 +30,10 @@ while True:
         first = now if first is None else first
         count += 1
         pixels = bytes([0, 0, 0, 255, 255, 255, 255, 255])
-        Path(f"frame_{count}.bmp").write_bytes(struct.pack("<2sIHHI", b"BM", 62, 0, 0, 54) +
+        pending = Path("frame.tmp")
+        pending.write_bytes(struct.pack("<2sIHHI", b"BM", 62, 0, 0, 54) +
             struct.pack("<IiiHHIIiiII", 40, 2, -1, 1, 32, 0, 8, 0, 0, 0, 0) + pixels)
+        pending.replace(f"frame_{count}.bmp")
         interval = float(os.environ["APS5_TRACE_SUMMARY_EVERY"])
         if now - first >= interval and not wrote:
             row = {"format": "aps5-bench/1", "commit": os.environ["OBSERVATION_COMMIT"][:12], "dirty": False,
