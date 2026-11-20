@@ -137,7 +137,7 @@ RdnaProgram DecodeStageProgram(ShaderStageKind stage, std::span<const std::uint3
         program.instructions.erase(std::next(end), program.instructions.end());
         return program;
     }
-    if (stage != ShaderStageKind::Local) return RdnaInstructionDecoder{}.Decode(code);
+    if (stage != ShaderStageKind::Local || GcnGuestShaders()) return RdnaInstructionDecoder{}.Decode(code);
     auto program = DecodeRdnaFrontProgram(code);
     program.instructions.back() = DecodeRdnaInstruction(program.instructions.back().programCounter, EndProgram, 0u);
     return program;
