@@ -64,7 +64,7 @@ def parse_range(address, size):
 
 
 def overlaps(event, start, size):
-    return event.address < start + size and start < event.address + event.size
+    return event.size > 0 and event.address < start + size and start < event.address + event.size
 
 
 def select_events(events, start, size):
