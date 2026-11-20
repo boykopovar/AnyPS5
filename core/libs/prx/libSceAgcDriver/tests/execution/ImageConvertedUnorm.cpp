@@ -862,7 +862,8 @@ bool SameDepth24(std::uint32_t bits, std::uint32_t depth) {
 
 void CheckDepth24(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     const auto depthTexel = [](std::uint32_t index) {
-        return index < 24u ? 1u << index : LoadTexel(index);
+        constexpr auto firstPower = LoadWidth / 2u;
+        return index >= firstPower && index < firstPower + 24u ? 1u << (index - firstPower) : LoadTexel(index);
     };
     for (std::uint32_t index = 0; index < LoadWidth; ++index) {
         const auto texel = depthTexel(index);
