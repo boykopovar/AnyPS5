@@ -699,15 +699,31 @@ static void CheckCheckedReleaseDirectMemory() {
 
 static void CheckDirectMemoryFollowsPhysicalPages() {
     constexpr std::size_t page = 0x4000;
+    std::int64_t invalidPhys = -1;
+    Require(sceKernelAllocateDirectMemory(-1, 0x10000, page, 0, 0, &invalidPhys) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelAllocateDirectMemory(0x20000, 0x10000, page, 0, 0, &invalidPhys) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelAllocateDirectMemory(0, 0x10000, 0, 0, 0, &invalidPhys) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelAllocateDirectMemory(0, 0x10000, page + 1, 0, 0, &invalidPhys) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelAllocateDirectMemory(0, 0x10000, page, 0, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelAllocateDirectMemory(0, 0x10000, page, page - 1, 0, &invalidPhys) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseDirectMemory(-1, page) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseDirectMemory(0, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseDirectMemory(1, page) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseDirectMemory(0, page + 1) == SCE_KERNEL_ERROR_EINVAL);
     std::int64_t phys = 0;
     Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &phys) == 0);
     void* first = nullptr;
     Require(sceKernelMapDirectMemory(&first, page * 2, 3, 0, phys, 0) == 0);
+    Require(!DirectMemoryAliased_nid_postfix(reinterpret_cast<std::uintptr_t>(first), page));
+    Require(!DirectMemoryAliased_nid_postfix(reinterpret_cast<std::uintptr_t>(first) + page, page));
     static_cast<unsigned char*>(first)[0] = 11;
     static_cast<unsigned char*>(first)[page + 5] = 22;
     Require(sceKernelEnableDmemAliasing() == 0);
     void* alias = nullptr;
     Require(sceKernelMapDirectMemory(&alias, page, 3, 0, phys + page, 0) == 0);
+    Require(DirectMemoryAliased_nid_postfix(reinterpret_cast<std::uintptr_t>(alias), page));
+    Require(DirectMemoryAliased_nid_postfix(reinterpret_cast<std::uintptr_t>(first) + page, page));
+    Require(!DirectMemoryAliased_nid_postfix(reinterpret_cast<std::uintptr_t>(first), page));
     Require(alias != first && static_cast<unsigned char*>(alias)[5] == 22);
     static_cast<unsigned char*>(alias)[5] = 37;
     Require(static_cast<unsigned char*>(first)[page + 5] == 37);
@@ -720,6 +736,7 @@ static void CheckDirectMemoryFollowsPhysicalPages() {
     static_cast<unsigned char*>(alias)[5] = 22;
     Require(static_cast<unsigned char*>(first)[page + 5] == 22);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(alias), page) == 0);
+    Require(!DirectMemoryAliased_nid_postfix(reinterpret_cast<std::uintptr_t>(first) + page, page));
     static_cast<unsigned char*>(first)[page + 5] = 22;
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(first), page * 2) == 0);
     void* filler = nullptr;
@@ -1405,6 +1422,38 @@ static void CheckGpuAccessFollowsProtection() {
     Require(sceKernelMapNamedFlexibleMemory(&flexible, page, 0x33, 0, "gpu") == 0);
     Require(GpuMapped(flexible));
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(flexible), page) == 0);
+    std::int64_t gpuOnlyPhys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &gpuOnlyPhys) == 0);
+    void* gpuOnly = nullptr;
+    Require(sceKernelMapDirectMemory(&gpuOnly, page, 0x30, 0, gpuOnlyPhys, 0) == 0);
+    {
+        GuestAllocations::Mutation mutation;
+        const auto range = mutation.Find(gpuOnly);
+        Require(!range.readable && !range.writable && range.gpu && range.gpuWritable && range.HostReadable() && range.HostWritable());
+    }
+    {
+        const auto addr = reinterpret_cast<std::uintptr_t>(gpuOnly);
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        Require(std::any_of(lease.begin(), lease.end(), [&](const auto& range) { return range->address == addr && range->gpu && range->gpuWritable && !range->readable; }));
+        const auto registered = GuestAllocations::GuestAllocationsAcquireRegistered_nid_postfix();
+        Require(std::any_of(registered.begin(), registered.end(), [&](const auto& range) { return range->address == addr && range->gpu && range->gpuWritable && !range->readable; }));
+    }
+    Require(sceKernelMprotect(gpuOnly, page, 0x10) == 0);
+    {
+        GuestAllocations::Mutation mutation;
+        const auto range = mutation.Find(gpuOnly);
+        Require(!range.readable && !range.writable && range.gpu && !range.gpuWritable && range.HostReadable() && !range.HostWritable());
+    }
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(gpuOnly), page) == 0);
+    void* gpuFlex = nullptr;
+    Require(sceKernelMapNamedFlexibleMemory(&gpuFlex, page, 0x30, 0, "gpu-only") == 0);
+    {
+        GuestAllocations::Mutation mutation;
+        const auto range = mutation.Find(gpuFlex);
+        Require(!range.readable && !range.writable && range.gpu && range.gpuWritable);
+    }
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(gpuFlex), page) == 0);
+    Require(sceKernelReleaseDirectMemory(gpuOnlyPhys, page * 2) == 0);
 }
 
 static std::vector<std::pair<std::uintptr_t, std::size_t>> gpuMapped;
@@ -4127,7 +4176,9 @@ static void CheckMappedLeasesPreserveReadableRuns() {
     const auto pointer = [&](std::size_t index) { return reinterpret_cast<void*>(base + index * page); };
     {
         GuestAllocations::Mutation mutation;
-        for (std::size_t index = 0; index < 8; ++index) mutation.Add(pointer(index), page, index != 3, index != 3 && index != 4, index != 5);
+        for (std::size_t index = 0; index < 8; ++index) mutation.Add(pointer(index), page, index != 3, index != 3 && index != 4, index != 3 && index != 5);
+        mutation.Add(pointer(8), page, false, false, true, true);
+        mutation.Add(pointer(9), page, false, false, true, true);
     }
     const auto weak = [&](std::size_t index) { return std::weak_ptr<const GuestAllocations::Range>(GuestAllocations::GuestAllocationsLookup_nid_postfix(base + index * page, false)); };
     const auto verify = [&](const GuestAllocations::Mapped& mapped, std::initializer_list<std::size_t> expected) {
@@ -4143,6 +4194,22 @@ static void CheckMappedLeasesPreserveReadableRuns() {
     verify({weak(4)}, {4});
     verify({weak(5)}, {5});
     verify({weak(7), weak(1)}, {0, 1, 2, 6, 7});
+    verify({weak(8)}, {8, 9});
+    verify({weak(7), weak(8)}, {6, 7, 8, 9});
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(pointer(12), page, true, true, true, false);
+        mutation.Add(pointer(13), page, true, true, true, true);
+        mutation.Add(pointer(14), page, true, false, true, false);
+        mutation.Add(pointer(15), page, true, false, true, true);
+    }
+    verify({weak(12)}, {12, 13});
+    verify({weak(14)}, {14});
+    verify({weak(15)}, {15});
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 12; index < 16; ++index) mutation.Remove(pointer(index));
+    }
     auto stale = std::make_shared<const GuestAllocations::Range>(*GuestAllocations::GuestAllocationsLookup_nid_postfix(base + page, false));
     {
         GuestAllocations::Mutation mutation;
@@ -4170,7 +4237,7 @@ static void CheckMappedLeasesPreserveReadableRuns() {
     verify({weak(2)}, {2});
     {
         GuestAllocations::Mutation mutation;
-        for (std::size_t index = 0; index < 8; ++index) if (index != 1) mutation.Remove(pointer(index));
+        for (std::size_t index = 0; index < 10; ++index) if (index != 1) mutation.Remove(pointer(index));
         mutation.Remove(pointer(10));
     }
     verify({weak(0)}, {});
@@ -4337,10 +4404,14 @@ static void CheckPosixFixedAnonymousReleasesFlexibleAccounting() {
     Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
 }
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(_WIN32)
 static void CheckPosixFixedFileReleasesFlexibleAccounting() {
     constexpr std::size_t page = 0x4000;
-    constexpr int fixedShared = 0x11;
+#ifdef _WIN32
+    constexpr int fixedFile = 0x12;
+#else
+    constexpr int fixedFile = 0x11;
+#endif
     const auto path = std::filesystem::path("anyps5-fixed-file-accounting-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin");
     {
@@ -4359,7 +4430,7 @@ static void CheckPosixFixedFileReleasesFlexibleAccounting() {
     auto* bytes = static_cast<unsigned char*>(base);
     bytes[0] = 0x31;
     bytes[page * 2] = 0x51;
-    Require(mmap_nid_postfix(bytes + page, page, 1, fixedShared, fd, 0) == bytes + page);
+    Require(mmap_nid_postfix(bytes + page, page, 1, fixedFile, fd, 0) == bytes + page);
     Require(bytes[0] == 0x31 && bytes[page] == 0x6d && bytes[page * 2] == 0x51);
     Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before - page * 2);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(base), page * 3) == 0);
@@ -4656,7 +4727,7 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "fixed-anonymous") == 0) {
         CheckPosixFixedAnonymousMapping();
         CheckPosixFixedAnonymousReleasesFlexibleAccounting();
-#if defined(__linux__)
+#if defined(__linux__) || defined(_WIN32)
         CheckPosixFixedFileReleasesFlexibleAccounting();
 #endif
         return 0;
@@ -4867,6 +4938,17 @@ int main(int argc, char** argv) {
     *__error_nid_postfix() = 0;
     Require(madvise_nid_postfix(reinterpret_cast<void*>(0x800000000000), 1, 0) == -1 && *__error_nid_postfix() == 22);
     Require(madvise_nid_postfix(reinterpret_cast<void*>(0x7fffffffc000), 0x4000, 4) == 0);
+    *__error_nid_postfix() = 0;
+    Require(madvise_nid_postfix(nullptr, 0, 0) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x1000), page, 0) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x1000), 0, 0) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x3fff), page, 0) == -1 && *__error_nid_postfix() == 22);
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x4000), page, 0) == 0);
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x4000), 0, 0) == 0);
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x4001), page, 0) == 0);
     *__error_nid_postfix() = 77;
     for (int advice = 0; advice <= 10; ++advice) Require(posix_madvise_nid_postfix(memory, page * 3, advice) == 0);
     Require(posix_madvise_nid_postfix(reinterpret_cast<void*>(0x800000000000), 1, 10) == 0);

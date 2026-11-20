@@ -801,16 +801,8 @@ bool GuestThreadCpuNanos(int cpuClockThread, std::uint64_t* nanos) {
     }
     if (WaitForSingleObject(thread->nativeHandle, 0) == WAIT_OBJECT_0)
         return false;
-    FILETIME creation{};
-    FILETIME exitTime{};
-    FILETIME kernel{};
-    FILETIME user{};
-    if (!GetThreadTimes(thread->nativeHandle, &creation, &exitTime, &kernel, &user))
+    if (!HostThreadCpuNanos_nid_no_patch(thread->nativeHandle, nanos))
         throw std::system_error(GetLastError(), std::system_category(), "Querying guest thread CPU time");
-    const auto toTicks = [](const FILETIME& time) {
-        return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
-    };
-    *nanos = (toTicks(user) + toTicks(kernel)) * 100ULL;
 #else
     if (!thread->hostCpuClockBound) {
         *nanos = 0;
@@ -1575,7 +1567,8 @@ int APS5_VABI scePthreadGetaffinity(Pthread thread, KernelCpumask* mask) {
     if (!thread || !mask) return SCE_KERNEL_ERROR_EINVAL;
     auto registered = LockRegisteredGuestThread(thread);
     if (!registered) return SCE_KERNEL_ERROR_ESRCH;
-    *mask = thread->affinity.load(std::memory_order_relaxed);
+    const KernelCpumask affinity = thread->affinity.load(std::memory_order_relaxed);
+    if (!GuestCopyOut_nid_no_patch(mask, &affinity, sizeof(affinity))) return SCE_KERNEL_ERROR_EFAULT;
     return SCE_OK;
 }
 
@@ -1596,10 +1589,11 @@ int APS5_VABI scePthreadGetname(Pthread thread, char* name) {
 }
 
 int APS5_VABI scePthreadGetprio(Pthread thread, int* prio) {
-    if (!thread || !prio) return SCE_KERNEL_ERROR_EINVAL;
-    auto registered = LockRegisteredGuestThread(thread);
-    if (!registered) return SCE_KERNEL_ERROR_ESRCH;
-    *prio = thread->priority.load(std::memory_order_relaxed);
+    if (!prio) return SCE_KERNEL_ERROR_EINVAL;
+    const auto live = LockLiveGuestThread(thread);
+    if (!live) return SCE_KERNEL_ERROR_ESRCH;
+    const int priority = thread->priority.load(std::memory_order_relaxed);
+    if (!GuestCopyOut_nid_no_patch(prio, &priority, sizeof(priority))) return SCE_KERNEL_ERROR_EFAULT;
     return SCE_OK;
 }
 

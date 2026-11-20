@@ -21,6 +21,7 @@ target_sources(libSceJxr PRIVATE src/ListStream.cpp src/ImageEncode.cpp src/File
 configure_windows_unwind(libSceJxr)
 
 include(Metadata.cmake)
+include(Wmp.cmake)
 
 if(BUILD_TESTING)
     add_library(jxr_lookup_reference STATIC ${LIBS_INCLUDE_DIR}/tests/GuestJxrLookupReference.c)
