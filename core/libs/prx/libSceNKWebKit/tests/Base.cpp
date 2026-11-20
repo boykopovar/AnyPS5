@@ -1837,6 +1837,7 @@ static void TestProtectionSpace() {
     Require(WKProtectionSpaceGetAuthenticationScheme(space) == 2);
     Require(!WKProtectionSpaceGetIsProxy(space));
     Require(WKProtectionSpaceGetReceivesCredentialSecurely(space));
+    Require(WKProtectionSpaceCopyCertificateInfo(space) == nullptr);
     WKRelease(space);
 
     const Server servers[] = {Server::HTTP, Server::HTTPS, Server::FTP, Server::FTPS, Server::ProxyHTTP, Server::ProxyHTTPS, Server::ProxyFTP, Server::ProxySOCKS};
@@ -1878,7 +1879,16 @@ static void TestProtectionSpace() {
     Require(WKProtectionSpaceGetAuthenticationScheme(empty) == 1);
     Require(!WKProtectionSpaceGetIsProxy(empty));
     Require(!WKProtectionSpaceGetReceivesCredentialSecurely(empty));
+    Require(WKProtectionSpaceCopyCertificateInfo(empty) == nullptr);
     WKRelease(empty);
+
+    auto certInfo = NKWebKit::Make<NKWebKit::CertificateInfo>();
+    auto* spaceWithCert = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::ProtectionSpace>(
+        NKWebKit::String::FromUtf8("secure.example.com"), 443, Server::HTTPS, NKWebKit::String::FromUtf8("Secure Realm"), Scheme::ServerTrustEvaluationRequested, certInfo));
+    auto* copiedCert = WKProtectionSpaceCopyCertificateInfo(spaceWithCert);
+    Require(copiedCert == NKWebKit::ToRef(certInfo));
+    WKRelease(copiedCert);
+    WKRelease(spaceWithCert);
 
     auto* notSpace = NKWebKit::ToRef(NKWebKit::String::FromUtf8("not a protection space"));
     bool threw = false;
@@ -1888,11 +1898,27 @@ static void TestProtectionSpace() {
         threw = true;
     }
     Require(threw);
+
+    threw = false;
+    try {
+        WKProtectionSpaceCopyCertificateInfo(notSpace);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
     WKRelease(notSpace);
 
     threw = false;
     try {
         WKProtectionSpaceCopyHost(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKProtectionSpaceCopyCertificateInfo(nullptr);
     } catch (const std::invalid_argument&) {
         threw = true;
     }

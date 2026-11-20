@@ -39,6 +39,11 @@ const void* CopyString(const NKWebKit::Retained<NKWebKit::String>& string) {
 
 extern "C" {
 
+const void* APS5_VABI WKProtectionSpaceCopyCertificateInfo(const void* protectionSpaceRef) {
+    const auto* space = NKWebKit::Cast<NKWebKit::ProtectionSpace>(protectionSpaceRef, __func__);
+    return space->certificateInfo ? NKWebKit::ToRef(NKWebKit::Retained<NKWebKit::CertificateInfo>::Share(space->certificateInfo.Get())) : nullptr;
+}
+
 const void* APS5_VABI WKProtectionSpaceCopyHost(const void* protectionSpaceRef) {
     const auto* space = NKWebKit::Cast<NKWebKit::ProtectionSpace>(protectionSpaceRef, __func__);
     return CopyString(space->host);

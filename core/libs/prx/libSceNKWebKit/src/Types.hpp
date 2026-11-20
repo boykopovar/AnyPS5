@@ -87,6 +87,9 @@ public:
     std::vector<std::uint8_t> data;
 };
 
+class CertificateInfo final : public ObjectOf<ObjectType::CertificateInfo> {
+};
+
 template<ObjectType kind, typename Value>
 class Number final : public ObjectOf<kind> {
 public:
