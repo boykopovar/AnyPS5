@@ -3000,17 +3000,21 @@ bool StorageTexture::otherPendingOverlaps() const {
     return std::any_of(pending.textures.begin(), pending.textures.end(), other) || std::any_of(pending.flushing.begin(), pending.flushing.end(), other);
 }
 
+bool StorageTexture::otherPendingInside(std::uint64_t address, std::size_t bytes) const {
+    auto& pending = Pending();
+    std::lock_guard lock(pending.mutex);
+    const auto other = [&](const StorageTexture* texture) { return texture != this && texture->overlaps(address, bytes); };
+    const auto owed = [&](const StorageTexture* texture) { return other(texture) && texture->pendingUnitInside(address, bytes); };
+    return std::any_of(pending.textures.begin(), pending.textures.end(), owed) || std::any_of(pending.flushing.begin(), pending.flushing.end(), other);
+}
+
 const char* StorageTexture::RefreshObligation(std::uint32_t first, std::uint32_t count) const {
     const auto [firstLayer, lastLayer] = refreshUnits(first, count);
     const auto scoped = firstLayer != 0 || lastLayer != trackedLayers;
     {
         const auto base = scoped ? layerBegin(firstLayer) : descriptor.baseAddress;
         const auto bytes = scoped ? static_cast<std::size_t>(layerBegin(lastLayer - 1) + layerBytes(lastLayer - 1) - base) : static_cast<std::size_t>(guestBytes);
-        auto& pending = Pending();
-        std::lock_guard lock(pending.mutex);
-        const auto other = [&](const StorageTexture* texture) { return texture != this && texture->overlaps(base, bytes); };
-        const auto owed = [&](const StorageTexture* texture) { return other(texture) && texture->pendingUnitInside(base, bytes); };
-        if (std::any_of(pending.textures.begin(), pending.textures.end(), owed) || std::any_of(pending.flushing.begin(), pending.flushing.end(), other)) return "another image's pending results";
+        if (otherPendingInside(base, bytes)) return "another image's pending results";
     }
     auto* recorder = Recorder::Active();
     const auto keyCount = static_cast<std::size_t>(guestBytes / 256);
@@ -4113,7 +4117,7 @@ std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segme
             gathered.insert(gathered.end(), found.begin(), found.end());
         }
     }
-    const auto& read = gather ? gathered : sources;
+    auto& read = gather ? gathered : sources;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> pieces;
     bool allShadow = true;
     for (const auto& source : read) {
@@ -4123,6 +4127,38 @@ std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segme
     if (allShadow && !read.empty() && (std::strcmp(uploadReason, "flushed") == 0 || std::strcmp(uploadReason, "store") == 0)) uploadReason = "shadow";
     auto windows = gather ? sliceWindows(runs) : sliceWindows(pieces);
     Require(!windows.empty(), "storage image upload selects no unit");
+    struct Fill {
+        VkDeviceSize offset;
+        VkDeviceSize bytes;
+        std::uint32_t value;
+    };
+    std::vector<Fill> fills;
+    std::shared_ptr<DeviceBuffer> fillBuffer;
+    static const bool fillUnits = std::getenv("APS5_NO_FILL_UPLOAD_UNITS") == nullptr;
+    if (fillUnits && uploadedKeys == DccKeys::Uncompressed) {
+        VkDeviceSize total = 0;
+        for (auto& source : read) {
+            const auto bytes = source.end - source.begin;
+            const auto address = descriptor.baseAddress + source.begin;
+            if (source.shadow || bytes < 4 || bytes % 4 != 0 || address % 4 != 0) continue;
+            if (Recorder::SnapshotWriteOverlaps(address, static_cast<std::size_t>(bytes)) || otherPendingInside(address, static_cast<std::size_t>(bytes))) continue;
+            const auto* words = reinterpret_cast<const std::uint32_t*>(static_cast<std::uintptr_t>(address));
+            if (!GuestMemory::Accessible(words, static_cast<std::size_t>(bytes))) continue;
+            const auto value = words[0];
+            if (!std::all_of(words, words + bytes / 4, [value](std::uint32_t word) { return word == value; })) continue;
+            fills.push_back({total, bytes, value});
+            source.buffer = VK_NULL_HANDLE;
+            source.offset = total;
+            source.shadow = true;
+            total += (bytes + 255) & ~VkDeviceSize{255};
+        }
+        if (!fills.empty()) {
+            fillBuffer = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(total), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            for (auto& source : read) {
+                if (source.shadow && source.buffer == VK_NULL_HANDLE) source.buffer = fillBuffer->Handle();
+            }
+        }
+    }
     std::shared_ptr<DeviceBuffer> gatherBuffer;
     std::vector<std::pair<VkBuffer, std::vector<VkBufferCopy>>> gatherCopies;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> gatherReads;
@@ -4197,12 +4233,13 @@ std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segme
         timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageUpload);
         if (linear) recorder->Keep(linear, linear->Size());
         if (gatherBuffer) recorder->Keep(gatherBuffer, gatherBuffer->Size());
+        if (fillBuffer) recorder->Keep(fillBuffer, fillBuffer->Size());
         for (const auto& source : read) {
             if (source.slab != nullptr) recorder->Keep(source.slab);
         }
         if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
         if (!reads.empty()) recorder->NotePendingReads(reads, Recorder::ReadKind::StorageUpload);
-        Recorder::CountBarriers(Recorder::CommandClass::StorageUpload, (direct ? 2 : 3) + (gather ? 2 : 0));
+        Recorder::CountBarriers(Recorder::CommandClass::StorageUpload, (direct ? 2 : 3) + (gather ? 2 : 0) + (fillBuffer && !gather ? 1 : 0));
         if (Recorder::BarrierValidate()) {
             const std::pair<VkImage, bool> written{image, true};
             recorder->NoteAccess(Recorder::CommandClass::StorageUpload, Recorder::Access{reads, {}, std::span(&written, 1), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT});
@@ -4213,6 +4250,8 @@ std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segme
     }
     const auto& import = *segments.front().import;
     const auto importOffset = HostImportOffset(import, descriptor.baseAddress);
+    for (const auto& fill : fills) context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, fillBuffer->Handle(), fill.offset, fill.bytes, fill.value);
+    if (fillBuffer && !gather) RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
     if (gather) {
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
         for (const auto& [buffer, copies] : gatherCopies) context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, buffer, gatherBuffer->Handle(), static_cast<std::uint32_t>(copies.size()), copies.data());
