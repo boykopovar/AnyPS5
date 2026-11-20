@@ -120,8 +120,8 @@ int APS5_VABI sceFreeTypeOtGlyphSlotOblique_nid_no_patch() {
 }
 APS5_EXPORT("wBKAYO7yEXw", sceFreeTypeOtGlyphSlotOblique_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtGlyphGetCBox_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI sceFreeTypeOtGlyphGetCBox_nid_no_patch(FreeType::GuestGlyphRec* glyph, std::uint32_t mode, FreeType::GuestBBox* box) {
+    FT_Glyph_Get_CBox_nid_postfix(glyph, mode, box);
 }
 APS5_EXPORT("avLzN0tTxLI", sceFreeTypeOtGlyphGetCBox_nid_no_patch);
 
