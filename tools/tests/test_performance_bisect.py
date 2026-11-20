@@ -891,6 +891,14 @@ class UniqueRecipeFieldsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             json.loads('{"a": 1, "a": 2}', object_pairs_hook=performance_bisect.unique_recipe_fields)
 
+class RecipeFieldTests(unittest.TestCase):
+    def test_unique_recipe_fields_keeps_distinct_names(self):
+        self.assertEqual(performance_bisect.unique_recipe_fields([('a', 1), ('b', 2)]), {'a': 1, 'b': 2})
+
+    def test_unique_recipe_fields_refuses_a_duplicate_name(self):
+        with self.assertRaisesRegex(ValueError, 'has a duplicate field'):
+            performance_bisect.unique_recipe_fields([('a', 1), ('a', 2)])
+
 
 if __name__ == "__main__":
     unittest.main()
