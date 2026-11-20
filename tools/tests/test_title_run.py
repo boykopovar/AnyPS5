@@ -620,6 +620,15 @@ class PreparationTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
 
+    def test_reset_work_removes_a_read_only_file(self):
+        work = self.root / "work"
+        (work / "cert_cache").mkdir(parents=True)
+        cached = work / "cert_cache" / "CA_LIST.cer"
+        cached.write_bytes(b"list")
+        cached.chmod(stat.S_IREAD)
+        title_run.reset_work(work)
+        self.assertEqual(list(work.iterdir()), [])
+
     def test_a_running_title_is_left_alone(self):
         package(self.root / "games/PPSA00001", "PPSA00001")
         out = self.root / "out"
