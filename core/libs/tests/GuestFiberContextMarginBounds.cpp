@@ -142,6 +142,7 @@ void TestInternalOptionFlagMarginsAndInfoValidation() {
 
     alignas(8) std::uint8_t uninitStorage[256] = {};
     Require(sceFiberGetInfo(reinterpret_cast<FiberObject*>(uninitStorage), &info) == FiberErrorInvalid);
+    Require(sceFiberGetInfo(g_fiberA, reinterpret_cast<FiberInfo*>(std::uintptr_t{0x10})) == FiberErrorInvalid);
 
     info.size = 0;
     Require(sceFiberGetInfo(g_fiberA, &info) == FiberErrorInvalid);
