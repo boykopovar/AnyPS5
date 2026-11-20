@@ -1,9 +1,22 @@
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 #include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libcurl/libcurl.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <climits>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -11,6 +24,20 @@
 #include <stdexcept>
 #include <source_location>
 #include <string>
+#include <thread>
+#include <vector>
+
+#ifdef _WIN32
+using Socket = SOCKET;
+static void CloseSocket(Socket socket) {
+    closesocket(socket);
+}
+#else
+using Socket = int;
+static void CloseSocket(Socket socket) {
+    close(socket);
+}
+#endif
 
 #ifdef _WIN32
 extern "C" int CurlHostNonblock_nid_no_patch(curl_socket_t socket, int nonblocking);
@@ -127,7 +154,297 @@ static void TestHstsThroughDuplicates(const std::string& url) {
     Require(hsts.writes == writes + 1 && hsts.written == "hsts.example");
 }
 
+class Server {
+public:
+    unsigned short port = 0;
+
+    Server() {
+        Require(listener != static_cast<Socket>(-1));
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        Require(bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0);
+        Require(listen(listener, 1) == 0);
+        socklen_t length = sizeof(address);
+        Require(getsockname(listener, reinterpret_cast<sockaddr*>(&address), &length) == 0);
+        port = ntohs(address.sin_port);
+        thread = std::thread([this] { Serve(); });
+    }
+
+    ~Server() {
+        Request();
+        CloseSocket(listener);
+    }
+
+    const std::string& Request() {
+        if (thread.joinable()) thread.join();
+        return request;
+    }
+
+private:
+    Socket listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    std::string request;
+    std::thread thread;
+
+    void Serve() {
+        fd_set readable;
+        FD_ZERO(&readable);
+#ifdef _WIN32
+        constexpr int descriptorCount = 0;
+#else
+        Require(listener < FD_SETSIZE);
+        const int descriptorCount = listener + 1;
+#endif
+        FD_SET(listener, &readable);
+        timeval acceptTimeout{5, 0};
+        if (select(descriptorCount, &readable, nullptr, nullptr, &acceptTimeout) <= 0) return;
+        const Socket client = accept(listener, nullptr, nullptr);
+        if (client == static_cast<Socket>(-1)) return;
+#ifdef _WIN32
+        const DWORD timeout = 5000;
+        Require(setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == 0);
+#else
+        const timeval timeout{5, 0};
+        Require(setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0);
+#ifdef SO_NOSIGPIPE
+        const int noSigPipe = 1;
+        Require(setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof(noSigPipe)) == 0);
+#endif
+#endif
+        char buffer[4096];
+        std::size_t headerEnd = std::string::npos;
+        std::size_t total = 0;
+        while (true) {
+            if (headerEnd == std::string::npos) {
+                headerEnd = request.find("\r\n\r\n");
+                if (headerEnd != std::string::npos) {
+                    std::string headers = request.substr(0, headerEnd);
+                    std::transform(headers.begin(), headers.end(), headers.begin(), [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+                    const auto field = headers.find("content-length:");
+                    total = headerEnd + 4 + (field == std::string::npos ? 0 : std::strtoul(headers.c_str() + field + 15, nullptr, 10));
+                }
+            }
+            if (headerEnd != std::string::npos && request.size() >= total) {
+                const char response[] = "HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n";
+#ifdef MSG_NOSIGNAL
+                send(client, response, sizeof(response) - 1, MSG_NOSIGNAL);
+#else
+                send(client, response, sizeof(response) - 1, 0);
+#endif
+                break;
+            }
+            const auto received = recv(client, buffer, sizeof(buffer), 0);
+            if (received <= 0) break;
+            request.append(buffer, static_cast<std::size_t>(received));
+        }
+        CloseSocket(client);
+    }
+};
+
+struct Base64MimeCase {
+    const char* name;
+    const char* filename;
+    std::string rawBytes;
+};
+
+static std::string LowercaseAscii(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+    return text;
+}
+
+static std::vector<std::string> SplitLinesCrlf(const std::string& text) {
+    std::vector<std::string> lines;
+    std::size_t position = 0;
+    while (true) {
+        const std::size_t next = text.find("\r\n", position);
+        const std::string line = next == std::string::npos ? text.substr(position) : text.substr(position, next - position);
+        Require(line.find('\r') == std::string::npos);
+        Require(line.find('\n') == std::string::npos);
+        lines.push_back(line);
+        if (next == std::string::npos) break;
+        position = next + 2;
+    }
+    return lines;
+}
+
+static bool HasExactHeader(const std::vector<std::string>& lines, const std::string& expected) {
+    const std::string needle = LowercaseAscii(expected);
+    for (const auto& line : lines) {
+        if (LowercaseAscii(line) == needle) return true;
+    }
+    return false;
+}
+
+static std::string ExtractMultipartBoundary(const std::string& httpHeaders) {
+    for (const auto& line : SplitLinesCrlf(httpHeaders)) {
+        const std::string lower = LowercaseAscii(line);
+        if (!lower.starts_with("content-type:")) continue;
+        Require(lower.find("multipart/form-data") != std::string::npos);
+        const std::size_t marker = lower.find("boundary=");
+        Require(marker != std::string::npos);
+        std::size_t start = marker + 9;
+        std::size_t end = line.find(';', start);
+        if (end == std::string::npos) end = line.size();
+        while (start < end && (line[start] == ' ' || line[start] == '\t')) ++start;
+        while (end > start && (line[end - 1] == ' ' || line[end - 1] == '\t')) --end;
+        if (end - start >= 2 && line[start] == '"' && line[end - 1] == '"') {
+            ++start;
+            --end;
+        }
+        const std::string boundary = line.substr(start, end - start);
+        Require(!boundary.empty());
+        return boundary;
+    }
+    Require(false);
+    return {};
+}
+
+static std::vector<std::string> SplitMultipartParts(const std::string& httpBody, const std::string& boundary) {
+    const std::string open = "--" + boundary + "\r\n";
+    const std::string close = "\r\n--" + boundary + "--\r\n";
+    const std::string separator = "\r\n--" + boundary + "\r\n";
+    Require(httpBody.starts_with(open));
+    Require(httpBody.ends_with(close));
+    Require(httpBody.size() >= open.size() + close.size());
+    const std::string inner = httpBody.substr(open.size(), httpBody.size() - open.size() - close.size());
+    std::vector<std::string> parts;
+    std::size_t position = 0;
+    while (true) {
+        const std::size_t next = inner.find(separator, position);
+        if (next == std::string::npos) {
+            parts.push_back(inner.substr(position));
+            break;
+        }
+        parts.push_back(inner.substr(position, next - position));
+        position = next + separator.size();
+    }
+    return parts;
+}
+
+static std::string MakeBinaryPayload(std::size_t length, unsigned char seed) {
+    std::string bytes;
+    bytes.reserve(length);
+    constexpr unsigned char required[] = {0x00, 0xFF, 0x80, 0x01, 0x7F, 0xFE};
+    for (std::size_t index = 0; index < length; ++index) {
+        const unsigned char value = index < sizeof(required)
+            ? required[index]
+            : static_cast<unsigned char>((index * 37 + seed) & 0xFF);
+        bytes.push_back(static_cast<char>(value));
+    }
+    return bytes;
+}
+
+static std::string ExpectedMimeBase64(const std::string& input) {
+    static constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string encoded;
+    std::size_t lineLength = 0;
+    for (std::size_t index = 0; index < input.size(); index += 3) {
+        if (lineLength == 76) {
+            encoded += "\r\n";
+            lineLength = 0;
+        }
+        const unsigned char b0 = static_cast<unsigned char>(input[index]);
+        const bool hasB1 = index + 1 < input.size();
+        const bool hasB2 = index + 2 < input.size();
+        const unsigned char b1 = hasB1 ? static_cast<unsigned char>(input[index + 1]) : 0;
+        const unsigned char b2 = hasB2 ? static_cast<unsigned char>(input[index + 2]) : 0;
+        const unsigned int triple = (static_cast<unsigned int>(b0) << 16) |
+            (static_cast<unsigned int>(b1) << 8) | static_cast<unsigned int>(b2);
+        encoded.push_back(alphabet[(triple >> 18) & 0x3F]);
+        encoded.push_back(alphabet[(triple >> 12) & 0x3F]);
+        encoded.push_back(hasB1 ? alphabet[(triple >> 6) & 0x3F] : '=');
+        encoded.push_back(hasB2 ? alphabet[triple & 0x3F] : '=');
+        lineLength += 4;
+    }
+    return encoded;
+}
+
+static void VerifyBase64Part(const std::string& rawPart, const Base64MimeCase& expected) {
+    const std::size_t headerEnd = rawPart.find("\r\n\r\n");
+    Require(headerEnd != std::string::npos);
+    const auto headerLines = SplitLinesCrlf(rawPart.substr(0, headerEnd));
+    Require(HasExactHeader(headerLines,
+        std::string("Content-Disposition: form-data; name=\"") + expected.name + "\"; filename=\"" + expected.filename + "\""));
+    Require(HasExactHeader(headerLines, "Content-Type: application/octet-stream"));
+    Require(HasExactHeader(headerLines, "Content-Transfer-Encoding: base64"));
+
+    const std::string body = rawPart.substr(headerEnd + 4);
+    const auto bodyLines = SplitLinesCrlf(body);
+    Require(!bodyLines.empty());
+    Require(bodyLines.size() == (expected.rawBytes.size() + 56) / 57);
+    for (std::size_t index = 0; index + 1 < bodyLines.size(); ++index) {
+        Require(bodyLines[index].size() == 76);
+    }
+    Require(!bodyLines.back().empty() && bodyLines.back().size() <= 76);
+    for (const auto& line : bodyLines) {
+        Require(line.size() % 4 == 0);
+    }
+    const std::size_t remainder = expected.rawBytes.size() % 3;
+    if (remainder == 0) {
+        Require(!body.ends_with('='));
+    } else if (remainder == 1) {
+        Require(body.ends_with("=="));
+    } else {
+        Require(body.ends_with('=') && !body.ends_with("=="));
+    }
+    Require(body == ExpectedMimeBase64(expected.rawBytes));
+}
+
+static void TestMimeBase64Transfer() {
+    const std::vector<Base64MimeCase> cases{
+        {"wrapped", "wrapped.bin", MakeBinaryPayload(120, 17)},
+        {"pad2", "pad2.bin", MakeBinaryPayload(4, 0)},
+        {"pad1", "pad1.bin", MakeBinaryPayload(65, 91)},
+    };
+
+    auto* easy = curl_easy_init_nid_postfix();
+    Require(easy != nullptr);
+    auto* mime = curl_mime_init_nid_postfix(easy);
+    Require(mime != nullptr);
+
+    for (const auto& item : cases) {
+        auto* part = curl_mime_addpart_nid_postfix(mime);
+        Require(part != nullptr);
+        Require(curl_mime_name_nid_postfix(part, item.name) == CURLE_OK);
+        Require(curl_mime_filename_nid_postfix(part, item.filename) == CURLE_OK);
+        Require(curl_mime_type_nid_postfix(part, "application/octet-stream") == CURLE_OK);
+        Require(curl_mime_data_nid_postfix(part, item.rawBytes.data(), item.rawBytes.size()) == CURLE_OK);
+        Require(curl_mime_encoder_nid_postfix(part, "base64") == CURLE_OK);
+    }
+
+    Server server;
+    const std::string url = "http://127.0.0.1:" + std::to_string(server.port) + "/";
+    std::string responseBody;
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_URL, url.c_str()) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_MIMEPOST, mime) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_NOPROXY, "*") == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_HTTP_VERSION, static_cast<std::int64_t>(CURL_HTTP_VERSION_1_0)) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_TIMEOUT, static_cast<std::int64_t>(10)) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_WRITEFUNCTION, Write) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_WRITEDATA, &responseBody) == CURLE_OK);
+    Require(curl_easy_perform_nid_postfix(easy) == CURLE_OK);
+
+    const std::string& request = server.Request();
+    const std::size_t requestHeaderEnd = request.find("\r\n\r\n");
+    Require(requestHeaderEnd != std::string::npos);
+    const std::string httpHeaders = request.substr(0, requestHeaderEnd);
+    const std::string httpBody = request.substr(requestHeaderEnd + 4);
+    const std::string boundary = ExtractMultipartBoundary(httpHeaders);
+    const auto parts = SplitMultipartParts(httpBody, boundary);
+    Require(parts.size() == cases.size());
+    for (std::size_t index = 0; index < cases.size(); ++index) {
+        VerifyBase64Part(parts[index], cases[index]);
+    }
+
+    curl_mime_free_nid_postfix(mime);
+    curl_easy_cleanup_nid_postfix(easy);
+}
+
 int main() {
+#ifdef _WIN32
+    WSADATA data;
+    Require(WSAStartup(MAKEWORD(2, 2), &data) == 0);
+#endif
     ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     Require(curl_global_init_nid_postfix(CURL_GLOBAL_DEFAULT) == CURLE_OK);
     auto path = std::filesystem::temp_directory_path() /
@@ -294,5 +611,9 @@ int main() {
         std::filesystem::remove(path.string() + "-" + suffix);
     std::filesystem::remove(path);
     std::filesystem::remove(uploadPath);
+    TestMimeBase64Transfer();
     curl_global_cleanup_nid_postfix();
+#ifdef _WIN32
+    WSACleanup();
+#endif
 }

@@ -349,6 +349,11 @@ static void TestTime() {
     Require(parsed > 1700000000000.0);
     Require(isLocal == false);
 
+    Require(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.5Z", isLocal) == 1577836800500.0);
+    Require(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.500000000Z", isLocal) == 1577836800500.0);
+    Require(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.5000000000Z", isLocal) == 1577836800500.0);
+    Require(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.250000000000Z", isLocal) == 1577836800250.0);
+
     bool isLocal2 = false;
     double parsedInvalid = _ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("not-a-date", isLocal2);
     Require(std::isnan(parsedInvalid));
@@ -593,6 +598,21 @@ static void TestWebCorePure() {
     Require(ir.m_location.m_y == 21);
     Require(ir.m_size.m_width == 100);
     Require(ir.m_size.m_height == 51);
+
+    constexpr int lowest = std::numeric_limits<int>::min();
+    constexpr int highest = std::numeric_limits<int>::max();
+    const FloatRect huge{FloatPoint{3.0e9f, -3.0e9f}, FloatSize{4.0e9f, std::numeric_limits<float>::infinity()}};
+    const IntRect clamped = _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(huge);
+    Require(clamped.m_location.m_x == highest && clamped.m_location.m_y == lowest);
+    Require(clamped.m_size.m_width == highest && clamped.m_size.m_height == highest);
+    const FloatRect edge{FloatPoint{2147483648.0f, -2147483648.0f}, FloatSize{2147483520.0f, -0.5f}};
+    const IntRect atEdge = _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(edge);
+    Require(atEdge.m_location.m_x == highest && atEdge.m_location.m_y == lowest);
+    Require(atEdge.m_size.m_width == 2147483520 && atEdge.m_size.m_height == -1);
+    const FloatRect unordered{FloatPoint{std::numeric_limits<float>::quiet_NaN(), 0.5f}, FloatSize{-2.5f, 2.5f}};
+    const IntRect fromNaN = _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(unordered);
+    Require(fromNaN.m_location.m_x == lowest && fromNaN.m_location.m_y == 1);
+    Require(fromNaN.m_size.m_width == -3 && fromNaN.m_size.m_height == 3);
 }
 
 static void TestJscAndPal() {
@@ -623,6 +643,48 @@ static void TestJscAndPal() {
     WTFGetBacktrace(stack, &frames);
     Require(frames >= 0);
     Require(WTFIsDebuggerAttached() == false);
+}
+
+struct TestLogChannel {
+    std::uint8_t state;
+    const char* name;
+    std::uint8_t level;
+    const char* subsystem;
+};
+
+static_assert(sizeof(TestLogChannel) == 32);
+static_assert(offsetof(TestLogChannel, level) == 16);
+
+static bool AccumulatedLogsEqual(const char* expected) {
+    NKWebKit::WtfAbi::String logs = _ZN3WTF26getAndResetAccumulatedLogsEv();
+    const std::size_t length = std::strlen(expected);
+    return logs.impl && logs.impl->length == length && (logs.impl->hashAndFlags & 4) && (!length || std::memcmp(logs.impl->data, expected, length) == 0);
+}
+
+static void TestAccumulatedLogs() {
+    _ZN3WTF20resetAccumulatedLogsEv();
+    Require(AccumulatedLogsEqual(""));
+
+    TestLogChannel off{0, "Off", 1, "test"};
+    TestLogChannel on{1, "On", 1, "test"};
+    TestLogChannel accumulating{2, "Accumulating", 1, "test"};
+    WTFLog(&off, "off%d", 0);
+    WTFLog(&on, "on%d", 1);
+    Require(AccumulatedLogsEqual(""));
+
+    WTFLog(&accumulating, "a%d", 1);
+    WTFLog(&accumulating, "b\n");
+    WTFLog(&accumulating, "%s", "");
+    WTFLog(&accumulating, "%c", 0xE9);
+    Require(AccumulatedLogsEqual("a1\nb\n\n\xE9\n"));
+    Require(AccumulatedLogsEqual(""));
+
+    WTFLog(&accumulating, "c");
+    _ZN3WTF20resetAccumulatedLogsEv();
+    Require(AccumulatedLogsEqual(""));
+
+    _ZN3WTF14dataLogFStringEPKc("dataLogFString\n");
+    _ZN3WTF14dataLogFStringEPKc("");
 }
 
 void TestAdditionalWtf();
@@ -795,6 +857,81 @@ static void TestFileHandles() {
     std::filesystem::remove_all(root);
 }
 
+static NKWebKit::WtfAbi::String GuestPath(const char* path) {
+    return _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(path));
+}
+
+static bool HasUtf8(const NKWebKit::WtfAbi::String& value, const char* expected) {
+    const auto bytes = _ZNK3WTF6String4utf8ENS_14ConversionModeE(&value, 0);
+    return bytes.buffer && std::strcmp(reinterpret_cast<const char*>(bytes.buffer + 1), expected) == 0;
+}
+
+static void TestFileSystemHelpers() {
+    const auto exists = &_ZN3WTF14FileSystemImpl10fileExistsERKNS_6StringE;
+    const auto deleteFile = &_ZN3WTF14FileSystemImpl10deleteFileERKNS_6StringE;
+    const auto deleteEmptyDirectory = &_ZN3WTF14FileSystemImpl20deleteEmptyDirectoryERKNS_6StringE;
+    const auto moveFile = &_ZN3WTF14FileSystemImpl8moveFileERKNS_6StringES3_;
+    const auto realPath = &_ZN3WTF14FileSystemImpl8realPathERKNS_6StringE;
+    const auto sameVolume = &_ZN3WTF14FileSystemImpl19filesHaveSameVolumeERKNS_6StringES3_;
+    const auto root = std::filesystem::current_path() / ("nkwebkit-fs-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    Require(std::filesystem::create_directory(root / "sub"));
+    Require(std::filesystem::create_directory(root / "full"));
+    Require(std::filesystem::create_directory(root / "full" / "child"));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-fs", reinterpret_cast<const char*>(hostPath.c_str()));
+    const NKWebKit::WtfAbi::String nullString;
+    const auto emptyString = GuestPath("");
+    const auto file = GuestPath("/nkwebkit-fs/file.txt");
+    const auto other = GuestPath("/nkwebkit-fs/other.txt");
+    const auto moved = GuestPath("/nkwebkit-fs/moved.txt");
+    const auto missing = GuestPath("/nkwebkit-fs/missing.txt");
+    const auto directory = GuestPath("/nkwebkit-fs/sub");
+    const auto full = GuestPath("/nkwebkit-fs/full");
+    int handle = _ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(file, 1, true, false);
+    Require(handle >= 0);
+    _ZN3WTF14FileSystemImpl9closeFileERi(handle);
+    handle = _ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(other, 1, true, false);
+    Require(handle >= 0);
+    _ZN3WTF14FileSystemImpl9closeFileERi(handle);
+    Require(exists(file));
+    Require(exists(directory));
+    Require(!exists(missing));
+    Require(!exists(emptyString));
+    Require(!exists(nullString));
+    Require(sameVolume(file, other));
+    Require(sameVolume(file, directory));
+    Require(!sameVolume(file, nullString));
+    Require(!sameVolume(nullString, file));
+    Require(!sameVolume(file, missing));
+    Require(!sameVolume(file, emptyString));
+    Require(moveFile(file, moved));
+    Require(!exists(file) && exists(moved));
+    Require(!moveFile(missing, file));
+    Require(!moveFile(nullString, file));
+    Require(HasUtf8(realPath(GuestPath("/nkwebkit-fs/sub/../moved.txt")), "/nkwebkit-fs/moved.txt"));
+    const auto unresolved = GuestPath("/nkwebkit-fs/sub/../missing.txt");
+    const auto unresolvedResult = realPath(unresolved);
+    Require(unresolvedResult.impl == unresolved.impl);
+    Require(!realPath(nullString).impl);
+    Require(deleteFile(moved));
+    Require(!exists(moved));
+    Require(!deleteFile(moved));
+    Require(!deleteFile(directory));
+    Require(exists(directory));
+    Require(!deleteFile(nullString));
+    Require(!deleteEmptyDirectory(full));
+    Require(!deleteEmptyDirectory(other));
+    Require(exists(other));
+    Require(!deleteEmptyDirectory(missing));
+    Require(!deleteEmptyDirectory(nullString));
+    Require(deleteEmptyDirectory(directory));
+    Require(!exists(directory));
+    Require(deleteFile(other));
+    RemovePathAlias_nid_no_patch("/nkwebkit-fs");
+    std::filesystem::remove_all(root);
+}
+
 static void RequireCurrentStackBounds() {
     static_assert(sizeof(WTF::StackBounds) == 16);
     static_assert(offsetof(WTF::StackBounds, m_origin) == 0);
@@ -944,6 +1081,20 @@ static void TestSleepSeconds() {
     _ZN3WTF5sleepENS_7SecondsE(Seconds{-std::numeric_limits<double>::infinity()});
     _ZN3WTF5sleepENS_7SecondsE(Seconds{std::numeric_limits<double>::quiet_NaN()});
     Require(_ZN3WTF13MonotonicTime3nowEv().m_value - start < 1.0);
+
+    auto shortStart = std::chrono::steady_clock::now();
+    for (int round = 0; round < 20; ++round) _ZN3WTF5sleepENS_7SecondsE(Seconds{0.002});
+    auto shortSleeps = std::chrono::steady_clock::now() - shortStart;
+    Require(shortSleeps >= std::chrono::milliseconds(38) && shortSleeps < std::chrono::milliseconds(200));
+
+    shortStart = std::chrono::steady_clock::now();
+    for (int round = 0; round < 20; ++round) {
+        TimeWithDynamicClockType wake = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(ClockType::Monotonic);
+        wake.m_value += 0.002;
+        _ZN3WTF5sleepERKNS_24TimeWithDynamicClockTypeE(wake);
+    }
+    shortSleeps = std::chrono::steady_clock::now() - shortStart;
+    Require(shortSleeps >= std::chrono::milliseconds(38) && shortSleeps < std::chrono::milliseconds(200));
 }
 
 static void TestMakeAllDirectories() {
@@ -994,6 +1145,7 @@ int main() {
         return 1;
     }
     TestAdditionalWtf();
+    TestAccumulatedLogs();
     TestStackBounds();
     TestTimingScope();
     TestMemoryAllocations();
@@ -1005,6 +1157,7 @@ int main() {
     TestJscAndPal();
     TestMappedFiles();
     TestFileHandles();
+    TestFileSystemHelpers();
     TestUniStdExtras();
     TestSleepSeconds();
     TestMakeAllDirectories();
@@ -1249,12 +1402,22 @@ void TestUTFConversions() {
     char16_t bad[] = {0xD800, 'X', 0xDC00, 0xDFFF};
     auto malformed = Create16(bad, 4);
     Check(ImplCharacter(malformed.impl, 0) == 0 && ImplCharacter(malformed.impl, 2) == 0);
-    Check(Bytes(UTF8(&malformed, 0)) == "\xed\xa0\x80X\xed\xb0\x80\xed\xbf\xbf");
+    Check(Bytes(UTF8(&malformed, 0)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
     Check(Bytes(UTF8(&malformed, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
     Throws([&] { UTF8(&malformed, 1); });
-    Check(Bytes(Utf8For16(bad, 4, 0)) == "\xed\xa0\x80X\xed\xb0\x80\xed\xbf\xbf");
+    Check(Bytes(Utf8For16(bad, 4, 0)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
     Check(Bytes(Utf8For16(bad, 4, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
     Throws([&] { Utf8For16(bad, 4, 1); });
+    char16_t endsWithLead[] = {'a', 0xD800, 0xDBFF};
+    Check(Bytes(Utf8For16(endsWithLead, 3, 0)) == "a\xef\xbf\xbd\xed\xaf\xbf");
+    Check(Bytes(Utf8For16(endsWithLead, 3, 2)) == "a\xef\xbf\xbd\xef\xbf\xbd");
+    Check(Bytes(Utf8For16(endsWithLead, 2, 0)) == "a\xed\xa0\x80");
+    Throws([&] { Utf8For16(endsWithLead, 2, 1); });
+    auto leadAtEnd = Create16(endsWithLead, 2);
+    Check(Bytes(UTF8(&leadAtEnd, 0)) == "a\xed\xa0\x80");
+    Check(Bytes(UTF8(&leadAtEnd, 2)) == "a\xef\xbf\xbd");
+    char16_t endsWithTrail[] = {'a', 0xDC00};
+    Check(Bytes(Utf8For16(endsWithTrail, 2, 0)) == "a\xef\xbf\xbd");
     char16_t paired[] = {'c', 'a', 'f', 0xE9, 0xD83D, 0xDE00};
     Check(Bytes(Utf8For16(paired, 6, 1)) == "caf\xc3\xa9\xf0\x9f\x98\x80");
     Check(Bytes(Utf8For16(paired, 0, 1)).empty() && Bytes(Utf8For16(nullptr, 0, 1)).empty());
@@ -1882,7 +2045,8 @@ void TestFileSystemRepresentations() {
     auto latin1 = Create8(latin1Path, 5);
     Check(Bytes(Representation(&latin1)) == "/caf\xC3\xA9");
     Check(Bytes(Representation(&(const String&)Wide(u"/a/caf\u00E9/\u4E2D"))) == "/a/caf\xC3\xA9/\xE4\xB8\xAD");
-    Check(Bytes(Representation(&(const String&)Wide(u"x\xD800y"))) == "x\xED\xA0\x80y");
+    Check(Bytes(Representation(&(const String&)Wide(u"x\xD800y"))) == "x\xEF\xBF\xBDy");
+    Check(Bytes(Representation(&(const String&)Wide(u"x\xD800"))) == "x\xED\xA0\x80");
     String nullString;
     CString nullRepresentation = Representation(&nullString);
     Check(nullRepresentation.buffer && Bytes(nullRepresentation).empty());

@@ -484,15 +484,15 @@ std::uint32_t APS5_VABI _ZNK9Inspector15ScriptArguments13argumentCountEv(const v
 }
 
 std::uint32_t APS5_VABI _ZNK9Inspector15ScriptCallFrame10lineNumberEv(const void* self) {
-    return *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(self) + 0x14);
+    return *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(self) + 0x1c);
 }
 
 std::uint32_t APS5_VABI _ZNK9Inspector15ScriptCallFrame12columnNumberEv(const void* self) {
-    return *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(self) + 0x18);
+    return *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(self) + 0x20);
 }
 
 std::uint32_t APS5_VABI _ZNK9Inspector15ScriptCallFrame8sourceIDEv(const void* self) {
-    return *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(self) + 0x10);
+    return *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(self) + 0x18);
 }
 
 std::uint32_t APS5_VABI _ZNK9Inspector15ScriptCallStack4sizeEv(const void* self) {
