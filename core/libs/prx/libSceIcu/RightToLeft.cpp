@@ -15,12 +15,11 @@
 
 namespace {
 
-constexpr std::string_view LanguageDirections = "root-en-es-pt-zh-ja-ko-de-fr-it-ar+he+fa+ru-nl-pl-th-tr-ur+";
-constexpr std::array<std::pair<std::string_view, std::string_view>, 19> DirectionAliases{{
+constexpr std::string_view LanguageDirections = "root-en-es-pt-zh-ja-ko-de-fr-it-ar+he+fa+ru-nl-pl-th-tr-";
+constexpr std::array<std::pair<std::string_view, std::string_view>, 17> DirectionAliases{{
     {"ara", "ar"}, {"deu", "de"}, {"eng", "en"}, {"fas", "fa"}, {"fra", "fr"}, {"heb", "he"},
-    {"ita", "it"}, {"iw", "he"}, {"jpn", "ja"}, {"kor", "ko"}, {"nld", "nl"}, {"pol", "pl"},
-    {"por", "pt"}, {"rus", "ru"}, {"spa", "es"}, {"tha", "th"}, {"tur", "tr"}, {"urd", "ur"},
-    {"zho", "zh"}
+    {"ita", "it"}, {"jpn", "ja"}, {"kor", "ko"}, {"nld", "nl"}, {"pol", "pl"}, {"por", "pt"},
+    {"rus", "ru"}, {"spa", "es"}, {"tha", "th"}, {"tur", "tr"}, {"zho", "zh"}
 }};
 constexpr std::array<std::string_view, 28> RtlLanguages{{
     "ar", "ara",
@@ -88,10 +87,7 @@ struct Subtags {
 
 Subtags LanguageAndScript(std::string_view locale) {
     Subtags subtags;
-    if (locale.empty() || (locale.size() == 4 && SameIgnoringCase(locale, "root"))) {
-        subtags.language = "root";
-        return subtags;
-    }
+    if (locale.size() == 4 && SameIgnoringCase(locale, "root")) locale.remove_prefix(4);
     std::size_t length = locale.size() >= 2 && (Lower(locale[0]) == 'x' || Lower(locale[0]) == 'i') &&
                          Separator(locale[1]) ? 2 : 0;
     while (length < locale.size() && !Terminator(locale[length]) && !Separator(locale[length])) {

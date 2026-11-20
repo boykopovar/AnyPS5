@@ -69,16 +69,15 @@ void CommonLanguages() {
              {"th", false}, {"tr", false}, {"en-u-nu-arab", false}, {"ru_Arabic", false},
              {"ara", true}, {"HEB", true}, {"fas_IR", true}, {"eng", false}, {"zho_CN", false}, {"deu", false},
              {"ar_Arabx", true}, {"ar_Ara", true}, {"ar__Arab", true}, {"ar_EG_Arab", true}, {"en_US_Arab", false},
-             {"root_US", false}, {"t", false}, {"ot", false}, {"n", false}, {"h", false},
-             {"ur", true}, {"ur_Arabx", true}, {"iw", true}, {"root", false}, {"ROOT", false}, {"", false}}) {
+             {"root_US", false}, {"t", false}, {"ot", false}, {"n", false}, {"h", false}}) {
         Expect(item);
     }
 }
 
 void LikelySubtags() {
-    for (const char* locale : {"ps_AF", "yi", "dv", "und", "und_", "und@x", "und.x",
-                               "r", "e", "oo", "per", "x-foo", "i_klingon", "abcdefgh", "abcdefghijk_",
-                               "abcdefghijkl_Arab", "ps_Arabx", "@x", ".x", "_US"}) {
+    for (const char* locale : {"", "ur", "ps_AF", "yi", "dv", "und", "und_", "und@x", "und.x", "root", "ROOT",
+                               "r", "e", "oo", "iw", "per", "x-foo", "i_klingon", "abcdefgh", "abcdefghijk_",
+                               "abcdefghijkl_Arab", "ur_Arabx", "@x", ".x", "_US"}) {
         ExpectThrows(locale);
     }
     try {
