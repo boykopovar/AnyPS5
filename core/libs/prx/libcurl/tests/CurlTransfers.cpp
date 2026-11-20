@@ -11,6 +11,7 @@
 #include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libcurl/libcurl.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include <algorithm>
 #include <cctype>
@@ -440,6 +441,58 @@ static void TestMimeBase64Transfer() {
     curl_easy_cleanup_nid_postfix(easy);
 }
 
+static void TestMimeFileGuestPath() {
+    const std::string name = "anyps5-curl-mime-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin";
+    const std::string guestPath = "/" + name;
+    const std::string contents("guest file\0bytes\xff", 17);
+    auto* file = fopen_nid_postfix(guestPath.c_str(), "wb");
+    Require(file != nullptr);
+    Require(fwrite_nid_postfix(contents.data(), 1, contents.size(), file) == contents.size());
+    Require(fclose_nid_postfix(file) == 0);
+
+    auto* easy = curl_easy_init_nid_postfix();
+    Require(easy != nullptr);
+    auto* mime = curl_mime_init_nid_postfix(easy);
+    Require(mime != nullptr);
+    auto* part = curl_mime_addpart_nid_postfix(mime);
+    Require(part != nullptr);
+    Require(curl_mime_name_nid_postfix(part, "upload") == CURLE_OK);
+    Require(curl_mime_filedata_nid_postfix(part, guestPath.c_str()) == CURLE_OK);
+    auto* missing = curl_mime_addpart_nid_postfix(mime);
+    Require(missing != nullptr);
+    Require(curl_mime_filedata_nid_postfix(missing, ("/" + name + "-missing").c_str()) == CURLE_READ_ERROR);
+    Require(curl_mime_filedata_nid_postfix(missing, ("/" + std::string(300, 'n')).c_str()) == CURLE_READ_ERROR);
+    Require(curl_mime_data_nid_postfix(missing, "replaced", CURL_ZERO_TERMINATED) == CURLE_OK);
+    Require(curl_mime_name_nid_postfix(missing, "replaced") == CURLE_OK);
+    Require(curl_mime_filename_nid_postfix(missing, nullptr) == CURLE_OK);
+
+    Server server;
+    const std::string url = "http://127.0.0.1:" + std::to_string(server.port) + "/";
+    std::string responseBody;
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_URL, url.c_str()) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_MIMEPOST, mime) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_NOPROXY, "*") == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_HTTP_VERSION, static_cast<std::int64_t>(CURL_HTTP_VERSION_1_0)) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_TIMEOUT, static_cast<std::int64_t>(10)) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_WRITEFUNCTION, Write) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_WRITEDATA, &responseBody) == CURLE_OK);
+    Require(curl_easy_perform_nid_postfix(easy) == CURLE_OK);
+
+    const std::string& request = server.Request();
+    const std::size_t requestHeaderEnd = request.find("\r\n\r\n");
+    Require(requestHeaderEnd != std::string::npos);
+    const auto parts = SplitMultipartParts(request.substr(requestHeaderEnd + 4), ExtractMultipartBoundary(request.substr(0, requestHeaderEnd)));
+    Require(parts.size() == 2);
+    const std::size_t headerEnd = parts[0].find("\r\n\r\n");
+    Require(headerEnd != std::string::npos);
+    Require(HasExactHeader(SplitLinesCrlf(parts[0].substr(0, headerEnd)), "Content-Disposition: form-data; name=\"upload\"; filename=\"" + name + "\""));
+    Require(parts[0].substr(headerEnd + 4) == contents);
+
+    curl_mime_free_nid_postfix(mime);
+    curl_easy_cleanup_nid_postfix(easy);
+    Require(remove_nid_postfix(guestPath.c_str()) == 0);
+}
+
 int main() {
 #ifdef _WIN32
     WSADATA data;
@@ -612,6 +665,7 @@ int main() {
     std::filesystem::remove(path);
     std::filesystem::remove(uploadPath);
     TestMimeBase64Transfer();
+    TestMimeFileGuestPath();
     curl_global_cleanup_nid_postfix();
 #ifdef _WIN32
     WSACleanup();

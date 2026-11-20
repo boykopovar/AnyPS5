@@ -4,6 +4,7 @@
 #include "prx/libcurl/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/FilesystemError.hpp"
 
 #include "prx/libc/include/Api.hpp"
 
@@ -13,6 +14,7 @@
 #include <climits>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -1569,9 +1571,20 @@ std::time_t APS5_VABI curl_getdate_nid_postfix(const char* p, const std::time_t*
 }
 
 std::int32_t APS5_VABI curl_mime_filedata_nid_postfix(curl_mimepart* part, const char* filename) {
-    const auto result = ::curl_mime_filedata(part, filename);
-    if (part) ReplacePartContent(part, nullptr, nullptr);
-    return result;
+    if (!part || !filename) {
+        const auto result = ::curl_mime_filedata(part, filename);
+        if (part) ReplacePartContent(part, nullptr, nullptr);
+        return result;
+    }
+    char base[1024];
+    if (!basename_r_nid_postfix(filename, base))
+        throw std::length_error("curl_mime_filedata: the base name does not fit basename's buffer, and curl passes the null result to strdup");
+    std::filesystem::path host;
+    const std::string hostName = ResolvePathError_nid_no_patch(filename, host) == 0 ? host.string() : std::string{};
+    const auto result = ::curl_mime_filedata(part, hostName.c_str());
+    ReplacePartContent(part, nullptr, nullptr);
+    const auto named = ::curl_mime_filename(part, base);
+    return named == CURLE_OK ? result : named;
 }
 
 std::int32_t APS5_VABI curl_multi_timeout_nid_postfix(CURLM* multi_handle, int64_t* milliseconds) {
