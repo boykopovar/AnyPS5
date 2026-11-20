@@ -218,6 +218,10 @@ void ReleaseEncodedData(void* buffer) {
 
 }
 
+void ReleaseRtpPacketInfos(WebRtcRtpPacketInfosData* data) {
+    ReleasePacketInfos(data);
+}
+
 extern "C" {
 
 WebRtcEncodedImageBuffer** APS5_VABI _ZN6webrtc18EncodedImageBuffer6CreateEPKhm_nid_postfix(WebRtcEncodedImageBuffer** result, const std::uint8_t* data, std::size_t size) {

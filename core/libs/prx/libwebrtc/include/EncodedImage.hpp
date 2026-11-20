@@ -156,3 +156,5 @@ static_assert(offsetof(WebRtcEncodedImage, retransmissionAllowed) == 312);
 static_assert(offsetof(WebRtcEncodedImage, isSteadyStateRefreshFrame) == 314);
 static_assert(offsetof(WebRtcEncodedImage, corruptionDetectionStdDev) == 320);
 static_assert(offsetof(WebRtcEncodedImage, hasCorruptionDetectionFilterSettings) == 336);
+
+void ReleaseRtpPacketInfos(WebRtcRtpPacketInfosData* data);
