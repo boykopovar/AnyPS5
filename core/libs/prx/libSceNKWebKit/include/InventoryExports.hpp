@@ -543,8 +543,6 @@ int APS5_VABI WKWebsiteDataStoreStatisticsProcessStatisticsAndDataRecords();
 int APS5_VABI WKWebsiteDataStoreStatisticsResetToConsistentState();
 int APS5_VABI WKWebsiteDataStoreStatisticsUpdateCookieBlocking();
 int APS5_VABI WKWebsiteDataStoreUpdateBundleIdentifierInNetworkProcess();
-int APS5_VABI _ZN14OpaqueJSString9tryCreateEON3WTF6StringE();
-int APS5_VABI _ZN14OpaqueJSString9tryCreateERKN3WTF6StringE();
 int APS5_VABI _ZN3JSC10ConfigFile14setProcessNameEPKc();
 int APS5_VABI _ZN3JSC10ConfigFile20setParentProcessNameEPKc();
 int APS5_VABI _ZN3JSC10ConfigFile5parseEv();
