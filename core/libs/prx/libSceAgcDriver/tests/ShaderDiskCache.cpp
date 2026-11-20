@@ -914,6 +914,7 @@ void verifyKeySensitivity() {
     changes("spanned waves", [](SampleRequest& sample) { sample.request.target.spannedWaves = true; });
     changes("robust buffer access 2", [](SampleRequest& sample) { sample.request.target.robustBufferAccess2 = true; });
     changes("exact robust loads", [](SampleRequest& sample) { sample.request.target.exactRobustLoads = true; });
+    changes("wide buffer stores", [](SampleRequest& sample) { sample.request.target.wideBufferStores = true; });
     changes("wave LDS memory barriers", [](SampleRequest& sample) { sample.request.target.waveLdsMemoryBarriers = true; });
     changes("device-scope LDS memory barriers", [](SampleRequest& sample) { sample.request.target.deviceScopeLdsMemoryBarriers = true; });
     changes("LDS lock fences", [](SampleRequest& sample) { sample.request.target.ldsLockFences = true; });

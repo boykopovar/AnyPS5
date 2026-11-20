@@ -31,6 +31,7 @@ struct SpirvTargetOptions {
     bool spannedAnySubgroup = false;
     bool robustBufferAccess2 = false;
     bool exactRobustLoads = false;
+    bool wideBufferStores = false;
     bool float32FlushToZero = false;
     bool float32DenormPreserve = false;
     bool fusedExactArithmetic = false;

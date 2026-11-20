@@ -838,6 +838,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.spannedAnySubgroup = request.target.spannedAnySubgroup;
     targetOptions.robustBufferAccess2 = request.target.robustBufferAccess2;
     targetOptions.exactRobustLoads = request.target.exactRobustLoads;
+    targetOptions.wideBufferStores = request.target.wideBufferStores;
     targetOptions.float32FlushToZero = HardwareFloat32Flush(request);
     targetOptions.float32DenormPreserve = request.target.float32DenormPreserve;
     targetOptions.fusedExactArithmetic = request.target.fusedExactArithmetic;
