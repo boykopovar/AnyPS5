@@ -767,7 +767,10 @@ int VerifyDigestInfo(int type, const unsigned char* digest, unsigned int digestL
     Algorithm algorithm;
     Element hash;
     if (!ReadAlgorithm(fields, algorithm, function) || !ReadPrimitive(fields, 4, hash, function) || fields.length) return 0;
-    if (sequence.end != data + length) return 0;
+    if (sequence.end != data + length) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 104, __FILE__, __LINE__);
+        return 0;
+    }
     if (algorithm.parameter && !algorithm.nullParameter) {
         LibreSslPutError_nid_no_patch(4, 0xfff, 104, __FILE__, __LINE__);
         return 0;
