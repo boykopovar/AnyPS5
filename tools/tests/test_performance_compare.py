@@ -681,6 +681,38 @@ class GraphicsMetricsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "outside the finite numeric range"):
             performance_compare.graphics_metrics({"presents": 1, "graphics_track": {"Graphics.Copy": 10 ** 400}})
 
+class CompareHelperTests(unittest.TestCase):
+    def test_delta_gives_absolute_and_percentage_change(self):
+        self.assertEqual(performance_compare.delta(100, 150), {'baseline': 100, 'candidate': 150, 'change': 50, 'change_pct': 50.0})
+        self.assertIsNone(performance_compare.delta(None, 5)['change'])
+        self.assertIsNone(performance_compare.delta(0, 5)['change_pct'])
+
+    def test_delta_refuses_an_overflowing_difference(self):
+        with self.assertRaisesRegex(ValueError, 'finite numeric range'):
+            performance_compare.delta(1e308, -1e308)
+
+    def test_number_accepts_finite_non_negative_numbers_only(self):
+        self.assertEqual(performance_compare.number(3, 'x'), 3)
+        for value in (-1, True, float('nan')):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'x must be'):
+                performance_compare.number(value, 'x')
+
+    def test_unique_json_object_refuses_a_duplicate_field(self):
+        self.assertEqual(performance_compare.unique_json_object([('a', 1), ('b', 2)]), {'a': 1, 'b': 2})
+        with self.assertRaisesRegex(ValueError, 'duplicate JSON field'):
+            performance_compare.unique_json_object([('a', 1), ('a', 2)])
+
+    def test_cell_escapes_table_characters_and_line_breaks(self):
+        self.assertEqual(performance_compare.cell('a|b'), 'a&#124;b')
+        self.assertEqual(performance_compare.cell('<x> & y'), '&lt;x&gt; &amp; y')
+        self.assertEqual(performance_compare.cell('x\ny'), 'x y')
+        self.assertEqual(performance_compare.cell(1.5), '1.5')
+class GraphicsEmptyTests(unittest.TestCase):
+    def test_graphics_metrics_without_a_track_has_every_label_empty(self):
+        metrics = performance_compare.graphics_metrics({'graphics_track': None})
+        self.assertEqual(set(metrics), set(performance_compare.GRAPHICS_LABELS))
+        self.assertTrue(all(value is None for value in metrics.values()))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,6 +4,18 @@ target_link_libraries(libScePosixForWebKit PRIVATE libSceNet libkernel_sys libSc
 if(WIN32)
     target_link_libraries(libScePosixForWebKit PRIVATE ws2_32)
 endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_posix_getpwuid_tests ${LIBS_INCLUDE_DIR}/tests/GuestPosixGetpwuid.cpp)
+    target_include_directories(guest_posix_getpwuid_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_posix_getpwuid_tests PRIVATE libScePosixForWebKit libc)
+    configure_windows_unwind(guest_posix_getpwuid_tests)
+    add_test(NAME guest_posix_getpwuid COMMAND guest_posix_getpwuid_tests)
+    if(WIN32)
+        set_tests_properties(guest_posix_getpwuid PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePosixForWebKit>")
+    endif()
+endif()
 configure_windows_unwind(libScePosixForWebKit)
 
 if(BUILD_TESTING)
@@ -141,3 +153,5 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePosixForWebKit>")
     endif()
 endif()
+
+target_sources(libScePosixForWebKit PRIVATE UserDatabase.cpp)

@@ -127,8 +127,16 @@ static std::uint64_t GetStartNanos() {
 }
 
 static const std::uint64_t g_processStart = GetStartNanos();
+#ifdef _WIN32
+static std::uint64_t APS5_VABI LibcMonotonicNanos() {
+    return GetMonotonicNanos();
+}
+#endif
 static const bool g_clockSourceInstalled = [] {
     LibcSetProcessTimeSource_nid_no_patch(&sceKernelGetProcessTime);
+#ifdef _WIN32
+    LibcSetMonotonicTimeSource_nid_no_patch(&LibcMonotonicNanos);
+#endif
     return true;
 }();
 
