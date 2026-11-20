@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include "prx/libSceVideoOut/include/Firmware1340Exports.hpp"
 
 namespace {
 constexpr int VideoOutErrorCurveSamplePoints = static_cast<int>(0x8029001Cu);
@@ -1015,5 +1016,34 @@ int APS5_VABI sceVideoOutGetFlipStatusNative() {
 int APS5_VABI sceVideoOutSysLatencyMeasureGetLatestLatency() {
     NotImplemented_nid_no_patch(__func__);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceVideoOutUnknown_P5UKZX0gZu0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("P5UKZX0gZu0", libSceVideoOutUnknown_P5UKZX0gZu0_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_UsSayY09JLM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("UsSayY09JLM", libSceVideoOutUnknown_UsSayY09JLM_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_c_minus_F4XSW6nTI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("c-F4XSW6nTI", libSceVideoOutUnknown_c_minus_F4XSW6nTI_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_iPcTl5Mq7a8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("iPcTl5Mq7a8", libSceVideoOutUnknown_iPcTl5Mq7a8_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_znMcW7Whi2Q_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("znMcW7Whi2Q", libSceVideoOutUnknown_znMcW7Whi2Q_nid_no_patch);
 
 }

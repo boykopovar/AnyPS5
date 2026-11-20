@@ -1,0 +1,42 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI libReactNative_Modules_VshUnknown__plus__minus_ngKTt9QXw_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown__plus_eVj2XDLUiQ_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_0DM4sdeS_minus_IU_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_3OWD7zg2cfo_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_73hD2FCu9AQ_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_B84OcrqLGr4_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_FUo8uW8eE6E_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_HsWLwzEh7Ko_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_IJIP9GNy9_plus_0_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_JRf21UIcck4_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_KjTZfo9l2Bg_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_L3t_minus_cj1wWec_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_NfICCCysk34_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_OCvdQAt7GAs_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_OLqr_minus_7XJji4_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_QpvvRI2SD1g_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_Uj_plus_9nh6mMZE_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_XltrW3BX8WI_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_XmMixX68g9E_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_Yhu2CVX5xSE_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_ZpqqoTjY2iQ_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_a7HgJGZsZd0_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_d7IJuaDmd1g_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_fZ_plus_SaO_plus_7O4E_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_hSW6mn_plus_3SSA_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_iE_plus_PB_minus_qxTn0_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_nezNJ9wnn60_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_nqBO73Whr80_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_nrBmGY6Yjd4_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_nsryIO0fCTc_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_oQorhafzyoM_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_uLwd43GwmAg_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_vJNhO6yA6nk_nid_no_patch();
+int APS5_VABI libReactNative_Modules_VshUnknown_wPBmeRhzusw_nid_no_patch();
+
+}

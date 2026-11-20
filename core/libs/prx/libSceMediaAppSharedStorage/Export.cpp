@@ -4,6 +4,7 @@
 #include "prx/libSceMediaAppSharedStorage/include/InventoryExports.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceMediaAppSharedStorage/include/Firmware1340Exports.hpp"
 
 extern "C" {
 
@@ -92,5 +93,24 @@ int APS5_VABI libSceMediaAppSharedStorageUnknown_zgDNUrp0A_plus_U_nid_no_patch()
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("zgDNUrp0A+U", libSceMediaAppSharedStorageUnknown_zgDNUrp0A_plus_U_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceMediaAppSharedStorageUnknown_1PUwS0Zfk8c_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("1PUwS0Zfk8c", libSceMediaAppSharedStorageUnknown_1PUwS0Zfk8c_nid_no_patch);
+
+int APS5_VABI libSceMediaAppSharedStorageUnknown_9dFfiM_plus_9Aj8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("9dFfiM+9Aj8", libSceMediaAppSharedStorageUnknown_9dFfiM_plus_9Aj8_nid_no_patch);
+
+int APS5_VABI libSceMediaAppSharedStorageUnknown_LVVWLGFNMjk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("LVVWLGFNMjk", libSceMediaAppSharedStorageUnknown_LVVWLGFNMjk_nid_no_patch);
 
 }

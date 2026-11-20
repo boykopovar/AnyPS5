@@ -6,6 +6,8 @@
 #include "prx/libc/include/General.hpp"
 
 #include "prx/libSceCamera/include/Camera.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceCamera/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -200,4 +202,18 @@ int APS5_VABI sceCameraSetVideoSync(void) {
 int APS5_VABI sceCameraAudioReset(void) {
     return 0;
 }
+}
+
+extern "C" {
+
+int APS5_VABI libSceCameraUnknown_CJMTaGC2gAo_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("CJMTaGC2gAo", libSceCameraUnknown_CJMTaGC2gAo_nid_no_patch);
+
+int APS5_VABI libSceCameraUnknown_jsje8wdb1jY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("jsje8wdb1jY", libSceCameraUnknown_jsje8wdb1jY_nid_no_patch);
+
 }

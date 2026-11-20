@@ -3,6 +3,8 @@
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceVnaInternal/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -349,5 +351,29 @@ int APS5_VABI sceVnaStopKeyPhraseDetection() {
 int APS5_VABI sceVnaOpenTtsStream() {
     return SCE_VNA_ERROR_UNKNOWN_HANDLE;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceVnaInternalUnknown_4pvvjbiJZlM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("4pvvjbiJZlM", libSceVnaInternalUnknown_4pvvjbiJZlM_nid_no_patch);
+
+int APS5_VABI libSceVnaInternalUnknown_V4B6VaIBhPc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("V4B6VaIBhPc", libSceVnaInternalUnknown_V4B6VaIBhPc_nid_no_patch);
+
+int APS5_VABI libSceVnaInternalUnknown_h_plus_wCIFVgaSU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("h+wCIFVgaSU", libSceVnaInternalUnknown_h_plus_wCIFVgaSU_nid_no_patch);
+
+int APS5_VABI libSceVnaInternalUnknown_iWRdR8YAr0k_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("iWRdR8YAr0k", libSceVnaInternalUnknown_iWRdR8YAr0k_nid_no_patch);
 
 }

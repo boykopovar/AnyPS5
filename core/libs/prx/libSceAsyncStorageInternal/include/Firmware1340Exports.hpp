@@ -1,0 +1,20 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI libSceAsyncStorageInternalUnknown_0P9_plus_DkF_minus_wL0_nid_no_patch();
+int APS5_VABI libSceAsyncStorageInternalUnknown_4DGHztVTFeY_nid_no_patch();
+int APS5_VABI libSceAsyncStorageInternalUnknown_8l8JmrhExtQ_nid_no_patch();
+int APS5_VABI libSceAsyncStorageInternalUnknown_A7SgCDpsYCo_nid_no_patch();
+int APS5_VABI libSceAsyncStorageInternalUnknown_CVIPq9Gawyc_nid_no_patch();
+int APS5_VABI libSceAsyncStorageInternalUnknown_ETfsxIJd3p8_nid_no_patch();
+int APS5_VABI libSceAsyncStorageInternalUnknown_Puv6i5Z5XlU_nid_no_patch();
+int APS5_VABI libSceAsyncStorageInternalUnknown_R2QIl9114iQ_nid_no_patch();
+int APS5_VABI libSceAsyncStorageInternalUnknown_Vg2kS4xytms_nid_no_patch();
+int APS5_VABI libSceAsyncStorageInternalUnknown_s66Kkj_plus_82rA_nid_no_patch();
+int APS5_VABI libSceAsyncStorageInternalUnknown_uPSZLV59rCk_nid_no_patch();
+int APS5_VABI libSceAsyncStorageInternalUnknown_yci9XCgXR_minus_I_nid_no_patch();
+
+}

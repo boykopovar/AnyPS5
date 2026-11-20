@@ -74,3 +74,4 @@ const void* APS5_VABI sceFreeTypeOlFtaExportModuleWinfonts_nid_postfix();
 int APS5_VABI sceFreeTypeOlFtaAddModule_nid_postfix(void* library, const void* module);
 int APS5_VABI sceFreeTypeOlAddModule_nid_postfix(void* library, const void* module);
 }
+#include "prx/libSceFreeTypeOl/include/Firmware1340Exports.hpp"

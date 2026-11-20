@@ -12,6 +12,7 @@
 #include <limits>
 #include <mutex>
 #include <string>
+#include "prx/libSceSystemLogger2/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -245,5 +246,19 @@ int APS5_VABI libSceSystemLogger2Unknown_eI4wpp_plus_8Bco_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("eI4wpp+8Bco", libSceSystemLogger2Unknown_eI4wpp_plus_8Bco_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceSystemLogger2Unknown_ZrNsRT4x6tU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ZrNsRT4x6tU", libSceSystemLogger2Unknown_ZrNsRT4x6tU_nid_no_patch);
+
+int APS5_VABI libSceSystemLogger2Unknown_kMdSj4DSHzo_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("kMdSj4DSHzo", libSceSystemLogger2Unknown_kMdSj4DSHzo_nid_no_patch);
 
 }

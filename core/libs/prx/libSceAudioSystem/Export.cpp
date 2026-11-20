@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceAudioSystem/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -217,5 +218,14 @@ int APS5_VABI libSceAudioSystemUnknown_xG7GUeOKtBM_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("xG7GUeOKtBM", libSceAudioSystemUnknown_xG7GUeOKtBM_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceAudioSystemUnknown_ytNksDcitGM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ytNksDcitGM", libSceAudioSystemUnknown_ytNksDcitGM_nid_no_patch);
 
 }

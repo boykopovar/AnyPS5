@@ -19,6 +19,8 @@
 #include <string_view>
 #include <stdexcept>
 #include "prx/libScePad/include/HostAudioInControl.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceAudioIn/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -510,5 +512,14 @@ int APS5_VABI sceAudioInInputs(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceAudioInUnknown_dXyimSEcX8Q_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("dXyimSEcX8Q", libSceAudioInUnknown_dXyimSEcX8Q_nid_no_patch);
 
 }

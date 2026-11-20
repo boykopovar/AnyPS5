@@ -5,6 +5,7 @@
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceAsyncStorageInternal/include/Firmware1340Exports.hpp"
 
 extern "C" {
 
@@ -127,5 +128,69 @@ int APS5_VABI asyncStorageLegacyUnknown_yLYSOLZmYso_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("yLYSOLZmYso", asyncStorageLegacyUnknown_yLYSOLZmYso_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceAsyncStorageInternalUnknown_0P9_plus_DkF_minus_wL0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("0P9+DkF-wL0", libSceAsyncStorageInternalUnknown_0P9_plus_DkF_minus_wL0_nid_no_patch);
+
+int APS5_VABI libSceAsyncStorageInternalUnknown_4DGHztVTFeY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("4DGHztVTFeY", libSceAsyncStorageInternalUnknown_4DGHztVTFeY_nid_no_patch);
+
+int APS5_VABI libSceAsyncStorageInternalUnknown_8l8JmrhExtQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("8l8JmrhExtQ", libSceAsyncStorageInternalUnknown_8l8JmrhExtQ_nid_no_patch);
+
+int APS5_VABI libSceAsyncStorageInternalUnknown_A7SgCDpsYCo_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("A7SgCDpsYCo", libSceAsyncStorageInternalUnknown_A7SgCDpsYCo_nid_no_patch);
+
+int APS5_VABI libSceAsyncStorageInternalUnknown_CVIPq9Gawyc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("CVIPq9Gawyc", libSceAsyncStorageInternalUnknown_CVIPq9Gawyc_nid_no_patch);
+
+int APS5_VABI libSceAsyncStorageInternalUnknown_ETfsxIJd3p8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ETfsxIJd3p8", libSceAsyncStorageInternalUnknown_ETfsxIJd3p8_nid_no_patch);
+
+int APS5_VABI libSceAsyncStorageInternalUnknown_Puv6i5Z5XlU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Puv6i5Z5XlU", libSceAsyncStorageInternalUnknown_Puv6i5Z5XlU_nid_no_patch);
+
+int APS5_VABI libSceAsyncStorageInternalUnknown_R2QIl9114iQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("R2QIl9114iQ", libSceAsyncStorageInternalUnknown_R2QIl9114iQ_nid_no_patch);
+
+int APS5_VABI libSceAsyncStorageInternalUnknown_Vg2kS4xytms_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Vg2kS4xytms", libSceAsyncStorageInternalUnknown_Vg2kS4xytms_nid_no_patch);
+
+int APS5_VABI libSceAsyncStorageInternalUnknown_s66Kkj_plus_82rA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("s66Kkj+82rA", libSceAsyncStorageInternalUnknown_s66Kkj_plus_82rA_nid_no_patch);
+
+int APS5_VABI libSceAsyncStorageInternalUnknown_uPSZLV59rCk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("uPSZLV59rCk", libSceAsyncStorageInternalUnknown_uPSZLV59rCk_nid_no_patch);
+
+int APS5_VABI libSceAsyncStorageInternalUnknown_yci9XCgXR_minus_I_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("yci9XCgXR-I", libSceAsyncStorageInternalUnknown_yci9XCgXR_minus_I_nid_no_patch);
 
 }

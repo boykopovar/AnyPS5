@@ -13,3 +13,4 @@
 #include "prx/libcairo/include/GlyphDrawing.hpp"
 #include "prx/libcairo/include/ContextFontOptions.hpp"
 #include "prx/libcairo/include/FontFace.hpp"
+#include "prx/libcairo/include/Firmware1340Exports.hpp"

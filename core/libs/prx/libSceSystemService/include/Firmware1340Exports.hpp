@@ -1,0 +1,33 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI libSceSystemServiceUnknown__minus_qpl6OTwtRE_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_0gm3JiKZ33w_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_2fKRg0hhXm8_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_4CjdIjMaZDc_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_5STuMKHell4_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_7P8xYWW8YaY_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_8Os3oHsslRc_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_BUDKo3539Os_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_CExzMkA1WtA_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_E08aSzF5pig_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_E5Qw_minus_xwshB0_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_Fn9dTNR6wMM_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_G5qxGoGiQ_minus_Q_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_H0IWnWhEziU_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_H831dHz7_plus_eQ_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_HCk4IYFJ8aU_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_IUh4KZmgbhM_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_LtKBOKCDUWI_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_a1TOY4fwA5Y_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_cHlIo6CoRTA_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_dEXSXkZD6p0_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_lTvit2qjY0o_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_rXi7NnNC6cI_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_sHjGtg0ZQQQ_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_t6t6cHDjiE8_nid_no_patch();
+
+}

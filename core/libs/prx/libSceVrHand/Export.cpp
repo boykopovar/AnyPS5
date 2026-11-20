@@ -6,6 +6,7 @@
 #include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceVrHand/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -167,6 +168,26 @@ int APS5_VABI sceVrHandStop(void) {
         g_vrHandState = 1;
     }
     return 0;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI sceVrHandDebugSetConfig() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVrHandSetDebugInterface() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVrHandDebugGetConfig() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVrHandDebugGetInternalResult() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

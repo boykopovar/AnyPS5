@@ -26,6 +26,7 @@
 
 #include "prx/libSceUsbStorage/UsbStorage.hpp"
 #include "prx/libSceUsbStorage/include/HostVolumes.hpp"
+#include "prx/libSceUsbStorage/include/Firmware1340Exports.hpp"
 
 static_assert(sizeof(UsbStorageEvent) == 16);
 static_assert(offsetof(UsbStorageEvent, device) == 4);
@@ -841,5 +842,134 @@ int APS5_VABI libSceUsbStorageUnknown_yct_minus_absP9LM_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("yct-absP9LM", libSceUsbStorageUnknown_yct_minus_absP9LM_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceUsbStorageUnknown_45k9Pb86OxY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("45k9Pb86OxY", libSceUsbStorageUnknown_45k9Pb86OxY_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_5WMt8RqTDoM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("5WMt8RqTDoM", libSceUsbStorageUnknown_5WMt8RqTDoM_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_6Y8xRp7bcyI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("6Y8xRp7bcyI", libSceUsbStorageUnknown_6Y8xRp7bcyI_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_B85TkOwBjgg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("B85TkOwBjgg", libSceUsbStorageUnknown_B85TkOwBjgg_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_LM1Ql_plus_ml4_minus_o_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("LM1Ql+ml4-o", libSceUsbStorageUnknown_LM1Ql_plus_ml4_minus_o_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_NGjAzLpDuvM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("NGjAzLpDuvM", libSceUsbStorageUnknown_NGjAzLpDuvM_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_OioBMzpQcBo_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("OioBMzpQcBo", libSceUsbStorageUnknown_OioBMzpQcBo_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_TYspzJkB8R8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("TYspzJkB8R8", libSceUsbStorageUnknown_TYspzJkB8R8_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_UKzaid1rygQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("UKzaid1rygQ", libSceUsbStorageUnknown_UKzaid1rygQ_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_W_minus_MPDIFdWlY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("W-MPDIFdWlY", libSceUsbStorageUnknown_W_minus_MPDIFdWlY_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_W5SFqOnOVt0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("W5SFqOnOVt0", libSceUsbStorageUnknown_W5SFqOnOVt0_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_eQI_plus_BTcubNA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("eQI+BTcubNA", libSceUsbStorageUnknown_eQI_plus_BTcubNA_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_faF_plus_VbsKa7Y_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("faF+VbsKa7Y", libSceUsbStorageUnknown_faF_plus_VbsKa7Y_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_gH6oC6pR6C8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("gH6oC6pR6C8", libSceUsbStorageUnknown_gH6oC6pR6C8_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_h05NWkofJag_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("h05NWkofJag", libSceUsbStorageUnknown_h05NWkofJag_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_iCxihIzQvuQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("iCxihIzQvuQ", libSceUsbStorageUnknown_iCxihIzQvuQ_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_j1V9GuUKJoU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("j1V9GuUKJoU", libSceUsbStorageUnknown_j1V9GuUKJoU_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_jD_plus_vAX5JUXQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("jD+vAX5JUXQ", libSceUsbStorageUnknown_jD_plus_vAX5JUXQ_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_jbFCz9Ddxzg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("jbFCz9Ddxzg", libSceUsbStorageUnknown_jbFCz9Ddxzg_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_kz7mh92sZ_plus_I_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("kz7mh92sZ+I", libSceUsbStorageUnknown_kz7mh92sZ_plus_I_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_phbAfzFg_minus_Pk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("phbAfzFg-Pk", libSceUsbStorageUnknown_phbAfzFg_minus_Pk_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_r93wv5ywHzE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("r93wv5ywHzE", libSceUsbStorageUnknown_r93wv5ywHzE_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_sJYKRlRtCkA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("sJYKRlRtCkA", libSceUsbStorageUnknown_sJYKRlRtCkA_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_ujtRGxgtvgk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ujtRGxgtvgk", libSceUsbStorageUnknown_ujtRGxgtvgk_nid_no_patch);
+
+int APS5_VABI libSceUsbStorageUnknown_xI0cy_plus_P1RpU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("xI0cy+P1RpU", libSceUsbStorageUnknown_xI0cy_plus_P1RpU_nid_no_patch);
 
 }

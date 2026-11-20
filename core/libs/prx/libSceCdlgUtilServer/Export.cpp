@@ -8,6 +8,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <string>
+#include "prx/libSceCdlgUtilServer/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -268,5 +269,14 @@ int APS5_VABI libSceCdlgUtilServerUnknown_zjj3moy7KpM_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("zjj3moy7KpM", libSceCdlgUtilServerUnknown_zjj3moy7KpM_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceCdlgUtilServerUnknown_3yG73_plus_AFwS8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("3yG73+AFwS8", libSceCdlgUtilServerUnknown_3yG73_plus_AFwS8_nid_no_patch);
 
 }

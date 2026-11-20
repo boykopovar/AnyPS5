@@ -4,3 +4,4 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include "prx/libSceAudioOut/include/InventoryExports.hpp"
 #include "prx/libSceAudioOut/include/LaterExports.hpp"
+#include "prx/libSceAudioOut/include/Firmware1340Exports.hpp"

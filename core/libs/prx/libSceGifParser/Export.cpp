@@ -10,6 +10,7 @@
 #include <array>
 #include <mutex>
 #include <stdexcept>
+#include "prx/libSceGifParser/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -97,5 +98,19 @@ APS5_EXPORT("OTz-uftEt84", libSceGifParserUnknown_OTz_minus_uftEt84_nid_no_patch
 int APS5_VABI _ZN23sceMetadataReaderWriter9gifParser25gifParserExtractThumbnailERKSsRNS_9ThumbnailE() {
     NotImplemented_nid_no_patch(__func__);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceGifParserUnknown_DTWP8QPsnTM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("DTWP8QPsnTM", libSceGifParserUnknown_DTWP8QPsnTM_nid_no_patch);
+
+int APS5_VABI libSceGifParserUnknown_SZeQGmAx_plus_N0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("SZeQGmAx+N0", libSceGifParserUnknown_SZeQGmAx_plus_N0_nid_no_patch);
 
 }

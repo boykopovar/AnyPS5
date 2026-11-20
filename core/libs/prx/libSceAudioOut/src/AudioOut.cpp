@@ -26,6 +26,9 @@
 #include "AudioOut2PadMix.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/PadRumbleIntensity.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceAudioOut/include/Firmware1340Exports.hpp"
 
 static constexpr int PORT_TYPE_MAIN = 0;
 static constexpr int PORT_TYPE_BGM = 1;
@@ -827,5 +830,14 @@ int APS5_VABI sceAudioOutGetSystemState(AudioOutSystemState* state) {
     }
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceAudioOutUnknown_Y9dp33ukU_minus_8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Y9dp33ukU-8", libSceAudioOutUnknown_Y9dp33ukU_minus_8_nid_no_patch);
 
 }

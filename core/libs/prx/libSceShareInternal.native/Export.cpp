@@ -5,6 +5,7 @@
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceShareInternal.native/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -130,5 +131,23 @@ int APS5_VABI libSceShareInternal_nativeUnknown_zyzD8P5ZKPA_nid_no_patch(const c
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("zyzD8P5ZKPA", libSceShareInternal_nativeUnknown_zyzD8P5ZKPA_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceShareInternal_nativeUnknown_Ti0Jjq8cdFU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Ti0Jjq8cdFU", libSceShareInternal_nativeUnknown_Ti0Jjq8cdFU_nid_no_patch);
+
+int APS5_VABI sceShareSetCommonCurrentStatus() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI libSceShareInternal_nativeUnknown_ZEfRkX_minus_nhEw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ZEfRkX-nhEw", libSceShareInternal_nativeUnknown_ZEfRkX_minus_nhEw_nid_no_patch);
 
 }

@@ -5,6 +5,8 @@
 #include <array>
 #include <cerrno>
 #include <cstdint>
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceMouse/include/Firmware1340Exports.hpp"
 
 extern "C" {
 
@@ -158,5 +160,19 @@ int APS5_VABI sceMouseExtensionScalePosition(std::uint16_t* position, std::uint1
     if (!written) return MOUSE_ERROR_INVALID_ARG;
     return MOUSE_OK;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceMouseUnknown_THccz_plus_qCfdk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("THccz+qCfdk", libSceMouseUnknown_THccz_plus_qCfdk_nid_no_patch);
+
+int APS5_VABI libSceMouseUnknown_eaPbyqIvac8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("eaPbyqIvac8", libSceMouseUnknown_eaPbyqIvac8_nid_no_patch);
 
 }

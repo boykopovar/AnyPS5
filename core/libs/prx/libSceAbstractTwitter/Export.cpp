@@ -3,6 +3,8 @@
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceAbstractTwitter/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -284,5 +286,129 @@ int APS5_VABI _ZNK15AbstractStorage14TwitterStorage13GetCapabilityEv() {
 int APS5_VABI _ZNK15AbstractStorage14TwitterStorage7GetStatEPNS_4StatE() {
     return SCE_ABSTRACT_STORAGE_ERROR_NOT_SUPPORTED;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceAbstractTwitterUnknown__minus_F2Zy1e7FOY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("-F2Zy1e7FOY", libSceAbstractTwitterUnknown__minus_F2Zy1e7FOY_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown__minus_eYRuWdVXik_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("-eYRuWdVXik", libSceAbstractTwitterUnknown__minus_eYRuWdVXik_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_Ahg8qnhYlGk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Ahg8qnhYlGk", libSceAbstractTwitterUnknown_Ahg8qnhYlGk_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_CkKHcUqNv3k_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("CkKHcUqNv3k", libSceAbstractTwitterUnknown_CkKHcUqNv3k_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_EVhTLAOKj1w_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("EVhTLAOKj1w", libSceAbstractTwitterUnknown_EVhTLAOKj1w_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_FGVLIQ_minus_SMcM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("FGVLIQ-SMcM", libSceAbstractTwitterUnknown_FGVLIQ_minus_SMcM_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_IdnWRFLM0vU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("IdnWRFLM0vU", libSceAbstractTwitterUnknown_IdnWRFLM0vU_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_MNUWDqzVtto_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("MNUWDqzVtto", libSceAbstractTwitterUnknown_MNUWDqzVtto_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_NJhy7o_plus_CmlQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("NJhy7o+CmlQ", libSceAbstractTwitterUnknown_NJhy7o_plus_CmlQ_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_PlZbHxbI3vU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("PlZbHxbI3vU", libSceAbstractTwitterUnknown_PlZbHxbI3vU_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_RVG4i_plus_u_plus_7ZM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("RVG4i+u+7ZM", libSceAbstractTwitterUnknown_RVG4i_plus_u_plus_7ZM_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_TQR0NQgtmO0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("TQR0NQgtmO0", libSceAbstractTwitterUnknown_TQR0NQgtmO0_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_X9INiGFZd9U_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("X9INiGFZd9U", libSceAbstractTwitterUnknown_X9INiGFZd9U_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_Yd0hJhW5Q84_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Yd0hJhW5Q84", libSceAbstractTwitterUnknown_Yd0hJhW5Q84_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_a_plus_PZyGBdVBc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("a+PZyGBdVBc", libSceAbstractTwitterUnknown_a_plus_PZyGBdVBc_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_aPWdr85yNks_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("aPWdr85yNks", libSceAbstractTwitterUnknown_aPWdr85yNks_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_cI_minus_KT_minus_zsH7Q_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("cI-KT-zsH7Q", libSceAbstractTwitterUnknown_cI_minus_KT_minus_zsH7Q_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_ciUyXfF69w4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ciUyXfF69w4", libSceAbstractTwitterUnknown_ciUyXfF69w4_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_f6Bas3Wsj0Y_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("f6Bas3Wsj0Y", libSceAbstractTwitterUnknown_f6Bas3Wsj0Y_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_lbL1i2qNNGs_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("lbL1i2qNNGs", libSceAbstractTwitterUnknown_lbL1i2qNNGs_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_rOc_plus_J0eLLqo_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("rOc+J0eLLqo", libSceAbstractTwitterUnknown_rOc_plus_J0eLLqo_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_tYmE1_plus_szuLc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tYmE1+szuLc", libSceAbstractTwitterUnknown_tYmE1_plus_szuLc_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_vU9dwLMvxIw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("vU9dwLMvxIw", libSceAbstractTwitterUnknown_vU9dwLMvxIw_nid_no_patch);
+
+int APS5_VABI libSceAbstractTwitterUnknown_wzNc5Qv0uJc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("wzNc5Qv0uJc", libSceAbstractTwitterUnknown_wzNc5Qv0uJc_nid_no_patch);
 
 }

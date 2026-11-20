@@ -6,6 +6,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceAgcVsh/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -66,5 +69,29 @@ std::uint32_t* APS5_VABI sceAgcVshUnknown_Aozdh0bCcO0(CommandBuffer* buffer) {
     emit(9, {0xc0071e00u, 0x100e4100u, 0x0d430286u, 0x07834d06u, 0x058d068cu, 0x038f048eu, 0x0c02a803u, 0x0c410807u, 0x00001006u});
     return first;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceAgcVshUnknown_Eq7asRCcfMs_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Eq7asRCcfMs", libSceAgcVshUnknown_Eq7asRCcfMs_nid_no_patch);
+
+int APS5_VABI libSceAgcVshUnknown_h4h5EQ_minus_Y20M_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("h4h5EQ-Y20M", libSceAgcVshUnknown_h4h5EQ_minus_Y20M_nid_no_patch);
+
+int APS5_VABI libSceAgcVshUnknown_mzvvOZlxNag_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mzvvOZlxNag", libSceAgcVshUnknown_mzvvOZlxNag_nid_no_patch);
+
+int APS5_VABI libSceAgcVshUnknown_pRO4U9d0vaA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("pRO4U9d0vaA", libSceAgcVshUnknown_pRO4U9d0vaA_nid_no_patch);
 
 }

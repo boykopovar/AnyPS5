@@ -6,6 +6,7 @@
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceGvMp4Parser/include/Firmware1340Exports.hpp"
 
 extern "C" {
 
@@ -135,5 +136,34 @@ int APS5_VABI gvMp4LegacyUnknown_qli8xXuToKQ_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("qli8xXuToKQ", gvMp4LegacyUnknown_qli8xXuToKQ_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("PJigiYrhUwQ", libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch);
+
+int APS5_VABI libSceGvMp4ParserUnknown_ZtmoQvawiE8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ZtmoQvawiE8", libSceGvMp4ParserUnknown_ZtmoQvawiE8_nid_no_patch);
+
+int APS5_VABI libSceGvMp4ParserUnknown_dpqCzB7PIw8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("dpqCzB7PIw8", libSceGvMp4ParserUnknown_dpqCzB7PIw8_nid_no_patch);
+
+int APS5_VABI libSceGvMp4ParserUnknown_iPAZM6la8Gk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("iPAZM6la8Gk", libSceGvMp4ParserUnknown_iPAZM6la8Gk_nid_no_patch);
+
+int APS5_VABI libSceGvMp4ParserUnknown_tcsvdFwGn9U_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tcsvdFwGn9U", libSceGvMp4ParserUnknown_tcsvdFwGn9U_nid_no_patch);
 
 }

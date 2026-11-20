@@ -4,6 +4,8 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceGLSlimVSH/include/Api.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceGLSlimVSH/include/Firmware1340Exports.hpp"
 
 extern "C" {
 
@@ -412,4 +414,38 @@ extern "C" void APS5_VABI glUniformMatrix4fv_nid_postfix(GLint location, GLsizei
 
 extern "C" EGLSurface APS5_VABI eglCreateWindowSurface_nid_postfix(EGLDisplay display, EGLConfig config, void* window, const EGLint* attributes) {
     NotImplemented_nid_no_patch(__func__);
+}
+
+extern "C" {
+
+int APS5_VABI libSceGLSlimVSHUnknown_2Iv6xax1K_plus_c_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("2Iv6xax1K+c", libSceGLSlimVSHUnknown_2Iv6xax1K_plus_c_nid_no_patch);
+
+int APS5_VABI libSceGLSlimVSHUnknown_3ITExC8FiJ4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("3ITExC8FiJ4", libSceGLSlimVSHUnknown_3ITExC8FiJ4_nid_no_patch);
+
+int APS5_VABI sceSlimglClientMonitorServerStart() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSlimglClientMonitorServerEnd() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSlimglClientPulse() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSlimglClientLiveTimeout() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSlimglSupportServerProcess() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

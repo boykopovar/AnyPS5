@@ -5,6 +5,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceEsvmEngine/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -277,5 +278,29 @@ int APS5_VABI libSceEsvmEngineUnknown_Y6Rtwfuj0Bw_nid_no_patch(void* argument1) 
     return 0;
 }
 APS5_EXPORT("Y6Rtwfuj0Bw", libSceEsvmEngineUnknown_Y6Rtwfuj0Bw_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceEsvmEngineUnknown_SSUYPtShdAM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("SSUYPtShdAM", libSceEsvmEngineUnknown_SSUYPtShdAM_nid_no_patch);
+
+int APS5_VABI libSceEsvmEngineUnknown_VHmbWCiGHOo_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("VHmbWCiGHOo", libSceEsvmEngineUnknown_VHmbWCiGHOo_nid_no_patch);
+
+int APS5_VABI libSceEsvmEngineUnknown_a9yNzYfo1PI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("a9yNzYfo1PI", libSceEsvmEngineUnknown_a9yNzYfo1PI_nid_no_patch);
+
+int APS5_VABI libSceEsvmEngineUnknown_nZyWKXB5TqA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("nZyWKXB5TqA", libSceEsvmEngineUnknown_nZyWKXB5TqA_nid_no_patch);
 
 }

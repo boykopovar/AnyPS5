@@ -61,6 +61,8 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "src/ResolverTestHooks.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceNet/include/Firmware1340Exports.hpp"
 
 // Guest socket descriptors retain PS5 semantics while their transport is backed by host sockets.
 
@@ -4573,5 +4575,34 @@ int APS5_VABI sceNetEmulationSet(const NetEmulationParameter*, std::uint32_t) {
 int APS5_VABI sceNetEmulationGet(NetEmulationParameter*, std::uint32_t) {
     return fail(NET_EOPNOTSUPP);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceNetUnknown_PfR8F7amgV0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("PfR8F7amgV0", libSceNetUnknown_PfR8F7amgV0_nid_no_patch);
+
+int APS5_VABI libSceNetUnknown_dplpPTDtVhQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("dplpPTDtVhQ", libSceNetUnknown_dplpPTDtVhQ_nid_no_patch);
+
+int APS5_VABI libSceNetUnknown_hhQ_plus_sbGTxKM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("hhQ+sbGTxKM", libSceNetUnknown_hhQ_plus_sbGTxKM_nid_no_patch);
+
+int APS5_VABI libSceNetUnknown_q_minus_8ufzUnVUs_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("q-8ufzUnVUs", libSceNetUnknown_q_minus_8ufzUnVUs_nid_no_patch);
+
+int APS5_VABI libSceNetUnknown_xKbc30bdRjs_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("xKbc30bdRjs", libSceNetUnknown_xKbc30bdRjs_nid_no_patch);
 
 }

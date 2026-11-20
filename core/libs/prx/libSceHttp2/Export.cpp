@@ -19,6 +19,8 @@
 #include <deque>
 #include <type_traits>
 #include <unordered_map>
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceHttp2/include/Firmware1340Exports.hpp"
 
 static constexpr int ERROR_INVALID_ID = static_cast<int>(0x817B1100);
 static constexpr int ERROR_NULL_POINTER = static_cast<int>(0x817B1225);
@@ -672,4 +674,13 @@ extern "C" void Http2SetCheckHook_nid_no_patch(Http2::CheckHook hook) {
 
 extern "C" void Http2SetWriteHook_nid_no_patch(Http2::WriteHook hook) {
     Http2::WriteHookSlot().store(hook, std::memory_order_release);
+}
+
+extern "C" {
+
+int APS5_VABI libSceHttp2Unknown_yYVB1yGq35k_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("yYVB1yGq35k", libSceHttp2Unknown_yYVB1yGq35k_nid_no_patch);
+
 }

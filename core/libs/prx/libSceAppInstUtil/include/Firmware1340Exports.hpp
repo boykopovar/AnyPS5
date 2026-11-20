@@ -1,0 +1,34 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI libSceAppInstUtilUnknown_22CrAAWlt6g_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_4cdBQ3_plus_7Csg_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_4zXy9KhBtqA_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_6RQBGTIovPE_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_8s5YDa_minus_NV8w_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_CkHlIBeTvXs_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_E_plus_4spTBJqSY_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_K7aKX2IeWQY_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_Kdygl_minus_4bkxY_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_Lobnsjzhc_minus_w_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_Oax0sHG3RlU_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_PlDdgX701gQ_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_PoD_minus_JbsCZ68_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_R4209ykcbeY_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_RyIAzxSAKhs_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_UZdlIg8IGMs_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_aEPt6mjFeBQ_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_dSmN8mmyqJI_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_gm7JH9EuO6Q_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_ity1_minus_4gwMbw_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_l_plus_2oQF2NIBc_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_nX9_plus_eI67rGI_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_odZ7TsLsTJE_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_u_minus_ARRRdU5AA_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_w8rUUEQr8vA_nid_no_patch();
+int APS5_VABI libSceAppInstUtilUnknown_zdVLG52Fgu8_nid_no_patch();
+
+}

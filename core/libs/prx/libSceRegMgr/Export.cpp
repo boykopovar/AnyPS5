@@ -13,6 +13,8 @@
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceRegMgr/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -536,5 +538,74 @@ int APS5_VABI sceRegMgrLogStart(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceRegMgrUnknown_1kLjU7xX7JQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("1kLjU7xX7JQ", libSceRegMgrUnknown_1kLjU7xX7JQ_nid_no_patch);
+
+int APS5_VABI libSceRegMgrUnknown_3PmHPx_plus_Ycas_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("3PmHPx+Ycas", libSceRegMgrUnknown_3PmHPx_plus_Ycas_nid_no_patch);
+
+int APS5_VABI libSceRegMgrUnknown_6UYIfeo_minus_agQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("6UYIfeo-agQ", libSceRegMgrUnknown_6UYIfeo_minus_agQ_nid_no_patch);
+
+int APS5_VABI libSceRegMgrUnknown_8Isw8lszCPs_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("8Isw8lszCPs", libSceRegMgrUnknown_8Isw8lszCPs_nid_no_patch);
+
+int APS5_VABI libSceRegMgrUnknown_DldrxP_minus_Bpv8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("DldrxP-Bpv8", libSceRegMgrUnknown_DldrxP_minus_Bpv8_nid_no_patch);
+
+int APS5_VABI libSceRegMgrUnknown_HnXRfSDXh7Q_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("HnXRfSDXh7Q", libSceRegMgrUnknown_HnXRfSDXh7Q_nid_no_patch);
+
+int APS5_VABI libSceRegMgrUnknown_WnxgnoD8fP0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("WnxgnoD8fP0", libSceRegMgrUnknown_WnxgnoD8fP0_nid_no_patch);
+
+int APS5_VABI libSceRegMgrUnknown_g_minus_t75K1f53U_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("g-t75K1f53U", libSceRegMgrUnknown_g_minus_t75K1f53U_nid_no_patch);
+
+int APS5_VABI libSceRegMgrUnknown_hXNEjSwZO9E_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("hXNEjSwZO9E", libSceRegMgrUnknown_hXNEjSwZO9E_nid_no_patch);
+
+int APS5_VABI libSceRegMgrUnknown_lbryB3aaSd0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("lbryB3aaSd0", libSceRegMgrUnknown_lbryB3aaSd0_nid_no_patch);
+
+int APS5_VABI libSceRegMgrUnknown_qy_plus__plus_51QQzko_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("qy++51QQzko", libSceRegMgrUnknown_qy_plus__plus_51QQzko_nid_no_patch);
+
+int APS5_VABI libSceRegMgrUnknown_w9ZQQS6s5PA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("w9ZQQS6s5PA", libSceRegMgrUnknown_w9ZQQS6s5PA_nid_no_patch);
+
+int APS5_VABI libSceRegMgrUnknown_wdfNlp433_plus_U_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("wdfNlp433+U", libSceRegMgrUnknown_wdfNlp433_plus_U_nid_no_patch);
 
 }

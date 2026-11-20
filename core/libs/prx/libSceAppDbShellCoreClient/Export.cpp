@@ -5,6 +5,7 @@
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceAppDbShellCoreClient/include/Firmware1340Exports.hpp"
 
 extern "C" {
 
@@ -157,5 +158,164 @@ int APS5_VABI appDbShellLegacyUnknown_wPUeYDMn7_minus_A_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("wPUeYDMn7-A", appDbShellLegacyUnknown_wPUeYDMn7_minus_A_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown__plus_SCLk5wNTB8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+SCLk5wNTB8", libSceAppDbShellCoreClientUnknown__plus_SCLk5wNTB8_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_0QcwR2M1LzA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("0QcwR2M1LzA", libSceAppDbShellCoreClientUnknown_0QcwR2M1LzA_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_3wgjcIUwL44_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("3wgjcIUwL44", libSceAppDbShellCoreClientUnknown_3wgjcIUwL44_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_5g80tF6RtUM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("5g80tF6RtUM", libSceAppDbShellCoreClientUnknown_5g80tF6RtUM_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_5rwApEXmVrc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("5rwApEXmVrc", libSceAppDbShellCoreClientUnknown_5rwApEXmVrc_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_6nUD_minus_iulT44_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("6nUD-iulT44", libSceAppDbShellCoreClientUnknown_6nUD_minus_iulT44_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_9oDkf0C64M0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("9oDkf0C64M0", libSceAppDbShellCoreClientUnknown_9oDkf0C64M0_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_Aw2fJZ_plus_TNcM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Aw2fJZ+TNcM", libSceAppDbShellCoreClientUnknown_Aw2fJZ_plus_TNcM_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_Bj0hSEaglms_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Bj0hSEaglms", libSceAppDbShellCoreClientUnknown_Bj0hSEaglms_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_DXYdzNq_minus_Kcg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("DXYdzNq-Kcg", libSceAppDbShellCoreClientUnknown_DXYdzNq_minus_Kcg_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_EWUbUtP3zWo_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("EWUbUtP3zWo", libSceAppDbShellCoreClientUnknown_EWUbUtP3zWo_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_G6QGW4amFBc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("G6QGW4amFBc", libSceAppDbShellCoreClientUnknown_G6QGW4amFBc_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_Hk3ZVT3vbzI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Hk3ZVT3vbzI", libSceAppDbShellCoreClientUnknown_Hk3ZVT3vbzI_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_J6LN2x1jm0k_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("J6LN2x1jm0k", libSceAppDbShellCoreClientUnknown_J6LN2x1jm0k_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_JPI9m4ViLQ4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("JPI9m4ViLQ4", libSceAppDbShellCoreClientUnknown_JPI9m4ViLQ4_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_LT3OvVCajHE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("LT3OvVCajHE", libSceAppDbShellCoreClientUnknown_LT3OvVCajHE_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_NBZvJ5W_plus_fMs_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("NBZvJ5W+fMs", libSceAppDbShellCoreClientUnknown_NBZvJ5W_plus_fMs_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_PIy5_plus_tE5xHE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("PIy5+tE5xHE", libSceAppDbShellCoreClientUnknown_PIy5_plus_tE5xHE_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_PRLur_minus_1VXy0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("PRLur-1VXy0", libSceAppDbShellCoreClientUnknown_PRLur_minus_1VXy0_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_WUIPL_minus_WE6g0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("WUIPL-WE6g0", libSceAppDbShellCoreClientUnknown_WUIPL_minus_WE6g0_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_Wb1YX8GhGcM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Wb1YX8GhGcM", libSceAppDbShellCoreClientUnknown_Wb1YX8GhGcM_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_ZWqfj9VyL0I_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ZWqfj9VyL0I", libSceAppDbShellCoreClientUnknown_ZWqfj9VyL0I_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_d2QxftYkxSs_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("d2QxftYkxSs", libSceAppDbShellCoreClientUnknown_d2QxftYkxSs_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_dqvEVECoS_plus_E_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("dqvEVECoS+E", libSceAppDbShellCoreClientUnknown_dqvEVECoS_plus_E_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_dr9_minus_2YPkvUw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("dr9-2YPkvUw", libSceAppDbShellCoreClientUnknown_dr9_minus_2YPkvUw_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_f4HF_plus_zGwtCg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("f4HF+zGwtCg", libSceAppDbShellCoreClientUnknown_f4HF_plus_zGwtCg_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_faNkQhATfVw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("faNkQhATfVw", libSceAppDbShellCoreClientUnknown_faNkQhATfVw_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_j5q3FIFFuDk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("j5q3FIFFuDk", libSceAppDbShellCoreClientUnknown_j5q3FIFFuDk_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_mvByKa1KO80_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mvByKa1KO80", libSceAppDbShellCoreClientUnknown_mvByKa1KO80_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_tD0D5nAPXmk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tD0D5nAPXmk", libSceAppDbShellCoreClientUnknown_tD0D5nAPXmk_nid_no_patch);
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown_xsKxektSL_plus_U_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("xsKxektSL+U", libSceAppDbShellCoreClientUnknown_xsKxektSL_plus_U_nid_no_patch);
 
 }

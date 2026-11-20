@@ -11,6 +11,8 @@
 #include "SceTypes.hpp"
 #include "prx/libSceVoice/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceVoiceQoS/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -426,5 +428,14 @@ int APS5_VABI sceVoiceQoSSetMode() {
 int APS5_VABI sceVoiceQoSTerminate() {
     return sceVoiceQoSEnd();
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceVoiceQoSUnknown_Qv3uTij4KoM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Qv3uTij4KoM", libSceVoiceQoSUnknown_Qv3uTij4KoM_nid_no_patch);
 
 }

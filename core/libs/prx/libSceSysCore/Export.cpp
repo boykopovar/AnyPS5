@@ -6,6 +6,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceSysCore/include/Firmware1340Exports.hpp"
 
 static_assert(sizeof(ApplicationInfo) == 152);
 
@@ -420,5 +421,24 @@ int APS5_VABI libSceSysCoreUnknown_piCjhbSYauo_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("piCjhbSYauo", libSceSysCoreUnknown_piCjhbSYauo_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceSysCoreUnknown_KJ3Cw7ZH6pU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("KJ3Cw7ZH6pU", libSceSysCoreUnknown_KJ3Cw7ZH6pU_nid_no_patch);
+
+int APS5_VABI libSceSysCoreUnknown_WoJ7K_minus_2EIKk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("WoJ7K-2EIKk", libSceSysCoreUnknown_WoJ7K_minus_2EIKk_nid_no_patch);
+
+int APS5_VABI libSceSysCoreUnknown_x6tZHyeLijI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("x6tZHyeLijI", libSceSysCoreUnknown_x6tZHyeLijI_nid_no_patch);
 
 }

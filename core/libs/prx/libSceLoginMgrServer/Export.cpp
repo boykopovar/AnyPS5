@@ -5,6 +5,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceLoginMgrServer/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -172,5 +173,49 @@ int APS5_VABI libSceLoginMgrServerUnknown_uD_minus_Sde_plus_R4D8_nid_no_patch() 
     return SCE_LOGIN_MGR_SERVER_ERROR_NOT_INITIALIZED;
 }
 APS5_EXPORT("uD-Sde+R4D8", libSceLoginMgrServerUnknown_uD_minus_Sde_plus_R4D8_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceLoginMgrServerUnknown_2K3BpXVTALI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("2K3BpXVTALI", libSceLoginMgrServerUnknown_2K3BpXVTALI_nid_no_patch);
+
+int APS5_VABI libSceLoginMgrServerUnknown_7kKTnzmE4VY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("7kKTnzmE4VY", libSceLoginMgrServerUnknown_7kKTnzmE4VY_nid_no_patch);
+
+int APS5_VABI libSceLoginMgrServerUnknown_CxuW7EXF_plus_EM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("CxuW7EXF+EM", libSceLoginMgrServerUnknown_CxuW7EXF_plus_EM_nid_no_patch);
+
+int APS5_VABI libSceLoginMgrServerUnknown_DZVsPy_minus_AboA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("DZVsPy-AboA", libSceLoginMgrServerUnknown_DZVsPy_minus_AboA_nid_no_patch);
+
+int APS5_VABI libSceLoginMgrServerUnknown_IBXnmmCtNE0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("IBXnmmCtNE0", libSceLoginMgrServerUnknown_IBXnmmCtNE0_nid_no_patch);
+
+int APS5_VABI libSceLoginMgrServerUnknown_ZuDvKL7QDCI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ZuDvKL7QDCI", libSceLoginMgrServerUnknown_ZuDvKL7QDCI_nid_no_patch);
+
+int APS5_VABI libSceLoginMgrServerUnknown_mfgXSGcKC_plus_4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mfgXSGcKC+4", libSceLoginMgrServerUnknown_mfgXSGcKC_plus_4_nid_no_patch);
+
+int APS5_VABI libSceLoginMgrServerUnknown_sIwLOrrBbeI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("sIwLOrrBbeI", libSceLoginMgrServerUnknown_sIwLOrrBbeI_nid_no_patch);
 
 }

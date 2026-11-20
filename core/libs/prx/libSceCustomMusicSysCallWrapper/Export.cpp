@@ -5,6 +5,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceCustomMusicSysCallWrapper/include/Firmware1340Exports.hpp"
 
 extern "C" {
 
@@ -493,5 +494,139 @@ int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_zUgaEYLIysQ_nid_no_patch() 
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("zUgaEYLIysQ", libSceCustomMusicSysCallWrapperUnknown_zUgaEYLIysQ_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown__plus_qtuR54R32g_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+qtuR54R32g", libSceCustomMusicSysCallWrapperUnknown__plus_qtuR54R32g_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_0yPe0YNJSOg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("0yPe0YNJSOg", libSceCustomMusicSysCallWrapperUnknown_0yPe0YNJSOg_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_1AAwWqMLMGo_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("1AAwWqMLMGo", libSceCustomMusicSysCallWrapperUnknown_1AAwWqMLMGo_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_AI5cA8dwVTc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("AI5cA8dwVTc", libSceCustomMusicSysCallWrapperUnknown_AI5cA8dwVTc_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_Ieq9HieaH2s_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Ieq9HieaH2s", libSceCustomMusicSysCallWrapperUnknown_Ieq9HieaH2s_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_JnLe_plus_X2eN_minus_0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("JnLe+X2eN-0", libSceCustomMusicSysCallWrapperUnknown_JnLe_plus_X2eN_minus_0_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_KN_plus_HSpTM3hc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("KN+HSpTM3hc", libSceCustomMusicSysCallWrapperUnknown_KN_plus_HSpTM3hc_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_MnqEIORiuVc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("MnqEIORiuVc", libSceCustomMusicSysCallWrapperUnknown_MnqEIORiuVc_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_O45Dk62Pef8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("O45Dk62Pef8", libSceCustomMusicSysCallWrapperUnknown_O45Dk62Pef8_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_PoM2zXuA6yg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("PoM2zXuA6yg", libSceCustomMusicSysCallWrapperUnknown_PoM2zXuA6yg_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_U81y4EYKdRM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("U81y4EYKdRM", libSceCustomMusicSysCallWrapperUnknown_U81y4EYKdRM_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_WaEZFQCFEFA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("WaEZFQCFEFA", libSceCustomMusicSysCallWrapperUnknown_WaEZFQCFEFA_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_WpE5Xh_plus_sqck_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("WpE5Xh+sqck", libSceCustomMusicSysCallWrapperUnknown_WpE5Xh_plus_sqck_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_ZYUc107hjv0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ZYUc107hjv0", libSceCustomMusicSysCallWrapperUnknown_ZYUc107hjv0_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_cBeSeGdnDWU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("cBeSeGdnDWU", libSceCustomMusicSysCallWrapperUnknown_cBeSeGdnDWU_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_cMJqmpAAfI0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("cMJqmpAAfI0", libSceCustomMusicSysCallWrapperUnknown_cMJqmpAAfI0_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_gSsAUGZYPnM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("gSsAUGZYPnM", libSceCustomMusicSysCallWrapperUnknown_gSsAUGZYPnM_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_jX_plus_HMFWQZQ0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("jX+HMFWQZQ0", libSceCustomMusicSysCallWrapperUnknown_jX_plus_HMFWQZQ0_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_kQxetluMQiM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("kQxetluMQiM", libSceCustomMusicSysCallWrapperUnknown_kQxetluMQiM_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_lNI1Iws9mN8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("lNI1Iws9mN8", libSceCustomMusicSysCallWrapperUnknown_lNI1Iws9mN8_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_meakiZHwnp4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("meakiZHwnp4", libSceCustomMusicSysCallWrapperUnknown_meakiZHwnp4_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_pLXoJtWX4YY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("pLXoJtWX4YY", libSceCustomMusicSysCallWrapperUnknown_pLXoJtWX4YY_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_puIgDZY1ZaY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("puIgDZY1ZaY", libSceCustomMusicSysCallWrapperUnknown_puIgDZY1ZaY_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_rGYes35_plus_Yms_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("rGYes35+Yms", libSceCustomMusicSysCallWrapperUnknown_rGYes35_plus_Yms_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_spqfkmUBjqw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("spqfkmUBjqw", libSceCustomMusicSysCallWrapperUnknown_spqfkmUBjqw_nid_no_patch);
+
+int APS5_VABI libSceCustomMusicSysCallWrapperUnknown_vdSaqB3x3lQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("vdSaqB3x3lQ", libSceCustomMusicSysCallWrapperUnknown_vdSaqB3x3lQ_nid_no_patch);
 
 }

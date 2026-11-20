@@ -5,6 +5,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libmdbg_syscore/include/Firmware1340Exports.hpp"
 
 extern "C" {
 
@@ -859,5 +860,109 @@ int APS5_VABI libmdbg_syscoreUnknown_wrKerXOBJ8U_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("wrKerXOBJ8U", libmdbg_syscoreUnknown_wrKerXOBJ8U_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libmdbg_syscoreUnknown_2jWSRT28MdM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("2jWSRT28MdM", libmdbg_syscoreUnknown_2jWSRT28MdM_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_3X_minus_Lym730ds_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("3X-Lym730ds", libmdbg_syscoreUnknown_3X_minus_Lym730ds_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_8WAPnKROaVk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("8WAPnKROaVk", libmdbg_syscoreUnknown_8WAPnKROaVk_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_AuNucRHCJSM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("AuNucRHCJSM", libmdbg_syscoreUnknown_AuNucRHCJSM_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_EDTnsy1L8sI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("EDTnsy1L8sI", libmdbg_syscoreUnknown_EDTnsy1L8sI_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_FlSDoPQQ6Y0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("FlSDoPQQ6Y0", libmdbg_syscoreUnknown_FlSDoPQQ6Y0_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_JNXjZGBON1Y_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("JNXjZGBON1Y", libmdbg_syscoreUnknown_JNXjZGBON1Y_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_JNwnvgfRDc4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("JNwnvgfRDc4", libmdbg_syscoreUnknown_JNwnvgfRDc4_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_Kh_minus_mBfyitFY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Kh-mBfyitFY", libmdbg_syscoreUnknown_Kh_minus_mBfyitFY_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_Tp3MXQqS9qI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Tp3MXQqS9qI", libmdbg_syscoreUnknown_Tp3MXQqS9qI_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_Xx4qXbFuzwQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Xx4qXbFuzwQ", libmdbg_syscoreUnknown_Xx4qXbFuzwQ_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_ZV77i_plus_W8SyQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ZV77i+W8SyQ", libmdbg_syscoreUnknown_ZV77i_plus_W8SyQ_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_bu4Jo9Oerl0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("bu4Jo9Oerl0", libmdbg_syscoreUnknown_bu4Jo9Oerl0_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_cXLYrZpZXDM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("cXLYrZpZXDM", libmdbg_syscoreUnknown_cXLYrZpZXDM_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_dIrMoB6_minus__minus_gQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("dIrMoB6--gQ", libmdbg_syscoreUnknown_dIrMoB6_minus__minus_gQ_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_dtKdhNK0hMY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("dtKdhNK0hMY", libmdbg_syscoreUnknown_dtKdhNK0hMY_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_pZ0ESq5zDkE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("pZ0ESq5zDkE", libmdbg_syscoreUnknown_pZ0ESq5zDkE_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_sGMETZVv7Qg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("sGMETZVv7Qg", libmdbg_syscoreUnknown_sGMETZVv7Qg_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_wrH3i37l_plus_hA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("wrH3i37l+hA", libmdbg_syscoreUnknown_wrH3i37l_plus_hA_nid_no_patch);
+
+int APS5_VABI libmdbg_syscoreUnknown_yF4HCd7EfF0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("yF4HCd7EfF0", libmdbg_syscoreUnknown_yF4HCd7EfF0_nid_no_patch);
 
 }

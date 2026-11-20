@@ -3,6 +3,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include <cstdint>
+#include "prx/libSceWebRtc/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -45,5 +46,39 @@ int APS5_VABI libSceWebRtcUnknown_z1bMECaLQhM_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("z1bMECaLQhM", libSceWebRtcUnknown_z1bMECaLQhM_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceWebRtcUnknown_4ZADb2AOVjA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("4ZADb2AOVjA", libSceWebRtcUnknown_4ZADb2AOVjA_nid_no_patch);
+
+int APS5_VABI libSceWebRtcUnknown_KagFilTdh_minus_A_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("KagFilTdh-A", libSceWebRtcUnknown_KagFilTdh_minus_A_nid_no_patch);
+
+int APS5_VABI libSceWebRtcUnknown_TpKtnsQa_plus_kM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("TpKtnsQa+kM", libSceWebRtcUnknown_TpKtnsQa_plus_kM_nid_no_patch);
+
+int APS5_VABI libSceWebRtcUnknown_UGkRT49_minus_n9E_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("UGkRT49-n9E", libSceWebRtcUnknown_UGkRT49_minus_n9E_nid_no_patch);
+
+int APS5_VABI libSceWebRtcUnknown_gTNthJLY4gY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("gTNthJLY4gY", libSceWebRtcUnknown_gTNthJLY4gY_nid_no_patch);
+
+int APS5_VABI libSceWebRtcUnknown_lCy4Fu02MPQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("lCy4Fu02MPQ", libSceWebRtcUnknown_lCy4Fu02MPQ_nid_no_patch);
 
 }

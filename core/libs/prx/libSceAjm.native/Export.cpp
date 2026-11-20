@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include "prx/libSceAjm.native/include/Firmware1340Exports.hpp"
 
 // Entry points this library does not implement: reported before the unimplemented-call exception so an
 // APS5_TRACE_AJM run shows which one a title reached.
@@ -211,5 +212,14 @@ int APS5_VABI libSceAjm_nativeUnknown_qkuXdR4_minus_Ihc_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("qkuXdR4-Ihc", libSceAjm_nativeUnknown_qkuXdR4_minus_Ihc_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceAjm_nativeUnknown_KWoxiB9bVmA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("KWoxiB9bVmA", libSceAjm_nativeUnknown_KWoxiB9bVmA_nid_no_patch);
 
 }

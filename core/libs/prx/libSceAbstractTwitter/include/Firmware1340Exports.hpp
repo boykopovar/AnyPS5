@@ -1,0 +1,32 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI libSceAbstractTwitterUnknown__minus_F2Zy1e7FOY_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown__minus_eYRuWdVXik_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_Ahg8qnhYlGk_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_CkKHcUqNv3k_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_EVhTLAOKj1w_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_FGVLIQ_minus_SMcM_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_IdnWRFLM0vU_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_MNUWDqzVtto_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_NJhy7o_plus_CmlQ_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_PlZbHxbI3vU_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_RVG4i_plus_u_plus_7ZM_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_TQR0NQgtmO0_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_X9INiGFZd9U_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_Yd0hJhW5Q84_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_a_plus_PZyGBdVBc_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_aPWdr85yNks_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_cI_minus_KT_minus_zsH7Q_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_ciUyXfF69w4_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_f6Bas3Wsj0Y_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_lbL1i2qNNGs_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_rOc_plus_J0eLLqo_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_tYmE1_plus_szuLc_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_vU9dwLMvxIw_nid_no_patch();
+int APS5_VABI libSceAbstractTwitterUnknown_wzNc5Qv0uJc_nid_no_patch();
+
+}

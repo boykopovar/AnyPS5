@@ -1,0 +1,28 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI libSceMetadataReaderWriterUnknown__plus_k0trJi9U40_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown__minus_pyEotv2tkA_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_3M46lOmQrqQ_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_5XPqMu5BF9I_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_8zEv3rVpAg0_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_9wWYRpqWnkE_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_EqiT4bJrD3U_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_HPhbUpG3eyU_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_K4SAedM77mg_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_M_minus_j0MR0fl1Q_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_NhQK_minus_n3UmXE_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_P_minus_g2IenG6fs_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_WWSL9IG8vkw_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_e_plus_JOJUM2NV0_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_mqNpIDBdg6Q_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_qAF3mmR_plus_Bq4_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_tBIZw5S9Lss_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_vdaZ6LwHRtk_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_wEZXaLsC7EM_nid_no_patch();
+int APS5_VABI libSceMetadataReaderWriterUnknown_xM1sJyAZllM_nid_no_patch();
+
+}

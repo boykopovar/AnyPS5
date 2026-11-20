@@ -24,6 +24,8 @@
 #include <iterator>
 #include <unordered_map>
 #include <vector>
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libcurl/include/Firmware1340Exports.hpp"
 
 #ifdef _WIN32
 #define CURL_ARGS_START(last) __builtin_sysv_va_list args; __builtin_sysv_va_start(args, last)
@@ -1749,5 +1751,49 @@ char* APS5_VABI curl_easy_unescape(void* handle, const char* string, int length,
     if (!string) throw std::runtime_error(__func__);
     return ::host_curl_easy_unescape(static_cast<CURL*>(handle), string, length, outputLength);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libcurlUnknown_2tIG2sl7UJg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("2tIG2sl7UJg", libcurlUnknown_2tIG2sl7UJg_nid_no_patch);
+
+int APS5_VABI libcurlUnknown_3rp9Xlr8T3Q_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("3rp9Xlr8T3Q", libcurlUnknown_3rp9Xlr8T3Q_nid_no_patch);
+
+int APS5_VABI libcurlUnknown_CP29sVntPtU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("CP29sVntPtU", libcurlUnknown_CP29sVntPtU_nid_no_patch);
+
+int APS5_VABI libcurlUnknown_PYvUXFJZ06I_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("PYvUXFJZ06I", libcurlUnknown_PYvUXFJZ06I_nid_no_patch);
+
+int APS5_VABI libcurlUnknown_V57uyD_plus_6A3Q_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("V57uyD+6A3Q", libcurlUnknown_V57uyD_plus_6A3Q_nid_no_patch);
+
+int APS5_VABI libcurlUnknown_jhCk6W9HgLQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("jhCk6W9HgLQ", libcurlUnknown_jhCk6W9HgLQ_nid_no_patch);
+
+int APS5_VABI libcurlUnknown_tGDSWWmh0GQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tGDSWWmh0GQ", libcurlUnknown_tGDSWWmh0GQ_nid_no_patch);
+
+int APS5_VABI libcurlUnknown_xRgigoOXd2s_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("xRgigoOXd2s", libcurlUnknown_xRgigoOXd2s_nid_no_patch);
 
 }

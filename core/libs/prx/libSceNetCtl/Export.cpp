@@ -44,6 +44,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "prx/libSceNetCtl/include/Firmware1340Exports.hpp"
 
 // Network-control state reflects host interface addressing, not PSN sign-in status.
 
@@ -1675,5 +1676,24 @@ int APS5_VABI libSceNetCtlUnknown_wVXoAlD7Fsg_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("wVXoAlD7Fsg", libSceNetCtlUnknown_wVXoAlD7Fsg_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceNetCtlUnknown_7BXL2Wg5jNU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("7BXL2Wg5jNU", libSceNetCtlUnknown_7BXL2Wg5jNU_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_Ac92i2fW0Gw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Ac92i2fW0Gw", libSceNetCtlUnknown_Ac92i2fW0Gw_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_rjScLOEk_minus_eU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("rjScLOEk-eU", libSceNetCtlUnknown_rjScLOEk_minus_eU_nid_no_patch);
 
 }

@@ -23,6 +23,7 @@
 #include "prx/libSceRtc/libSceRtc.hpp"
 #include "prx/libSceUserService/libSceUserService.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceHttpCache/include/Firmware1340Exports.hpp"
 
 static_assert(sizeof(HttpCacheHeader) == 16);
 static_assert(sizeof(HttpCacheRequest) == 32);
@@ -1175,5 +1176,29 @@ int APS5_VABI libSceHttpCacheUnknown_Y3bCbdeHzNg_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("Y3bCbdeHzNg", libSceHttpCacheUnknown_Y3bCbdeHzNg_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceHttpCacheUnknown_912OawFQtAw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("912OawFQtAw", libSceHttpCacheUnknown_912OawFQtAw_nid_no_patch);
+
+int APS5_VABI libSceHttpCacheUnknown_ZxMbPyMPSWc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ZxMbPyMPSWc", libSceHttpCacheUnknown_ZxMbPyMPSWc_nid_no_patch);
+
+int APS5_VABI libSceHttpCacheUnknown_b74k6s_minus_1WzU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("b74k6s-1WzU", libSceHttpCacheUnknown_b74k6s_minus_1WzU_nid_no_patch);
+
+int APS5_VABI libSceHttpCacheUnknown_vyG7AkKGIAg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("vyG7AkKGIAg", libSceHttpCacheUnknown_vyG7AkKGIAg_nid_no_patch);
 
 }

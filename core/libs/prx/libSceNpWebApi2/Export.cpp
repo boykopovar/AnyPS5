@@ -15,6 +15,7 @@
 #include <vector>
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceNpWebApi2/include/Firmware320Exports.hpp"
+#include "prx/libSceNpWebApi2/include/Firmware1340Exports.hpp"
 
 // The PSN web API has no service behind it: handles can be created, but requests fail.
 static constexpr int SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80553402);
@@ -422,5 +423,14 @@ int APS5_VABI libSceNpWebApi2Unknown_qaMcX2_plus_6ZiA_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("qaMcX2+6ZiA", libSceNpWebApi2Unknown_qaMcX2_plus_6ZiA_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceNpWebApi2Unknown_gANJba5v5BI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("gANJba5v5BI", libSceNpWebApi2Unknown_gANJba5v5BI_nid_no_patch);
 
 }

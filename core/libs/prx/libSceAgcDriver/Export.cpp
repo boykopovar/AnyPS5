@@ -5,6 +5,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceAgcDriver/include/Firmware1340Exports.hpp"
 
 extern "C" {
 
@@ -269,5 +270,94 @@ int APS5_VABI sceAgcDriverUnknown_yuO_plus_lNrj_plus_Do(std::int32_t kind, std::
     return static_cast<int>(0x8A6D0003u);
 }
 APS5_EXPORT("yuO+lNrj+Do", sceAgcDriverUnknown_yuO_plus_lNrj_plus_Do);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceAgcDriverUnknown_1l15IdtXNWw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("1l15IdtXNWw", libSceAgcDriverUnknown_1l15IdtXNWw_nid_no_patch);
+
+int APS5_VABI libSceAgcDriverUnknown_38aK8XQj6Cg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("38aK8XQj6Cg", libSceAgcDriverUnknown_38aK8XQj6Cg_nid_no_patch);
+
+int APS5_VABI libSceAgcDriverUnknown_6fugJiMPLGQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("6fugJiMPLGQ", libSceAgcDriverUnknown_6fugJiMPLGQ_nid_no_patch);
+
+int APS5_VABI libSceAgcDriverUnknown_8j6_minus_e3dPf4c_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("8j6-e3dPf4c", libSceAgcDriverUnknown_8j6_minus_e3dPf4c_nid_no_patch);
+
+int APS5_VABI libSceAgcDriverUnknown_9rDcI6cJb_plus_8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("9rDcI6cJb+8", libSceAgcDriverUnknown_9rDcI6cJb_plus_8_nid_no_patch);
+
+int APS5_VABI libSceAgcDriverUnknown_CkL1hUyKZyo_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("CkL1hUyKZyo", libSceAgcDriverUnknown_CkL1hUyKZyo_nid_no_patch);
+
+int APS5_VABI libSceAgcDriverUnknown_Hb3p8BJm2PI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Hb3p8BJm2PI", libSceAgcDriverUnknown_Hb3p8BJm2PI_nid_no_patch);
+
+int APS5_VABI libSceAgcDriverUnknown_IfCY5tDfgK8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("IfCY5tDfgK8", libSceAgcDriverUnknown_IfCY5tDfgK8_nid_no_patch);
+
+int APS5_VABI libSceAgcDriverUnknown_JvVqPfac9vE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("JvVqPfac9vE", libSceAgcDriverUnknown_JvVqPfac9vE_nid_no_patch);
+
+int APS5_VABI libSceAgcDriverUnknown_RXqABdLqFFA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("RXqABdLqFFA", libSceAgcDriverUnknown_RXqABdLqFFA_nid_no_patch);
+
+int APS5_VABI libSceAgcDriverUnknown_V_plus_rBNI2HzGA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("V+rBNI2HzGA", libSceAgcDriverUnknown_V_plus_rBNI2HzGA_nid_no_patch);
+
+int APS5_VABI libSceAgcDriverUnknown_cRjqDvsrGkg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("cRjqDvsrGkg", libSceAgcDriverUnknown_cRjqDvsrGkg_nid_no_patch);
+
+int APS5_VABI libSceAgcDriverUnknown_dN1zf573IKU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("dN1zf573IKU", libSceAgcDriverUnknown_dN1zf573IKU_nid_no_patch);
+
+int APS5_VABI libSceAgcDriverUnknown_kFiKcGagv5k_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("kFiKcGagv5k", libSceAgcDriverUnknown_kFiKcGagv5k_nid_no_patch);
+
+int APS5_VABI libSceAgcDriverUnknown_myaO_minus_KfzonI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("myaO-KfzonI", libSceAgcDriverUnknown_myaO_minus_KfzonI_nid_no_patch);
+
+int APS5_VABI libSceAgcDriverUnknown_nTwzz_minus_6W9Jg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("nTwzz-6W9Jg", libSceAgcDriverUnknown_nTwzz_minus_6W9Jg_nid_no_patch);
+
+int APS5_VABI libSceAgcDriverUnknown_nhzPF9s5WF0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("nhzPF9s5WF0", libSceAgcDriverUnknown_nhzPF9s5WF0_nid_no_patch);
 
 }

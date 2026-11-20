@@ -52,3 +52,4 @@
 #include "Copy.hpp"
 #include "UtfConversions.hpp"
 #include "ConverterFileSeparator.hpp"
+#include "prx/libSceIcu/include/Firmware1340Exports.hpp"

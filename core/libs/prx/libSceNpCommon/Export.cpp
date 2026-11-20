@@ -11,6 +11,8 @@
 #include <iterator>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceNpCommon/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -295,5 +297,24 @@ void APS5_VABI sceNpGetNavSdkVersion(char* version) {
     GuestCopyOut_nid_no_patch(version, NAV_SDK_VERSION, sizeof(NAV_SDK_VERSION));
     errno = savedErrno;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceNpCommonUnknown_3rQPy5yUvso_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("3rQPy5yUvso", libSceNpCommonUnknown_3rQPy5yUvso_nid_no_patch);
+
+int APS5_VABI libSceNpCommonUnknown_EQpGK69EaU8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("EQpGK69EaU8", libSceNpCommonUnknown_EQpGK69EaU8_nid_no_patch);
+
+int APS5_VABI libSceNpCommonUnknown_N2il2apmuR0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("N2il2apmuR0", libSceNpCommonUnknown_N2il2apmuR0_nid_no_patch);
 
 }

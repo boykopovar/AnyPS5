@@ -2,6 +2,7 @@
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceFreeTypeOl/include/Firmware1340Exports.hpp"
 
 extern "C" {
 
@@ -129,5 +130,29 @@ int APS5_VABI sceFreeTypeOlGetModuleInterface_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("5NYsP564wwY", sceFreeTypeOlGetModuleInterface_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI ft_stub_set_pixel_sizes_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ft_validator_init_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ft_validator_run_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ft_validator_error_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ft_stub_set_char_sizes_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
 
 }

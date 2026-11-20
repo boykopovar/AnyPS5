@@ -7,3 +7,4 @@
 #include "prx/libSceVideoOut/include/InventoryExports.hpp"
 #include "prx/libSceVideoOut/include/LegacyExports.hpp"
 #include "prx/libSceVideoOut/include/LaterExports.hpp"
+#include "prx/libSceVideoOut/include/Firmware1340Exports.hpp"

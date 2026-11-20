@@ -4,6 +4,7 @@
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceMediaFrameworkInterface/include/Firmware1340Exports.hpp"
 
 extern "C" {
 
@@ -826,4 +827,178 @@ int APS5_VABI sceMediaFwSyncVideo(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+}
+
+extern "C" {
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown__plus_SpZIsqY9Zc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+SpZIsqY9Zc", libSceMediaFrameworkInterfaceUnknown__plus_SpZIsqY9Zc_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_6Zuu750N0dQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("6Zuu750N0dQ", libSceMediaFrameworkInterfaceUnknown_6Zuu750N0dQ_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_7hyHPepZcB0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("7hyHPepZcB0", libSceMediaFrameworkInterfaceUnknown_7hyHPepZcB0_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_9jHo_minus__plus_LhooU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("9jHo-+LhooU", libSceMediaFrameworkInterfaceUnknown_9jHo_minus__plus_LhooU_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_AooiBF0kst8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("AooiBF0kst8", libSceMediaFrameworkInterfaceUnknown_AooiBF0kst8_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_DaRf1MzSaTg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("DaRf1MzSaTg", libSceMediaFrameworkInterfaceUnknown_DaRf1MzSaTg_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_EezlN9RSX7A_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("EezlN9RSX7A", libSceMediaFrameworkInterfaceUnknown_EezlN9RSX7A_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_F96_plus_SR_minus_lt70_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("F96+SR-lt70", libSceMediaFrameworkInterfaceUnknown_F96_plus_SR_minus_lt70_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_Grm60DSbEYA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Grm60DSbEYA", libSceMediaFrameworkInterfaceUnknown_Grm60DSbEYA_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_HRGGfV4gOwk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("HRGGfV4gOwk", libSceMediaFrameworkInterfaceUnknown_HRGGfV4gOwk_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_HunD_minus_fOxkWI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("HunD-fOxkWI", libSceMediaFrameworkInterfaceUnknown_HunD_minus_fOxkWI_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_JwFiRdmzhh8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("JwFiRdmzhh8", libSceMediaFrameworkInterfaceUnknown_JwFiRdmzhh8_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_LghHdvXc4XI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("LghHdvXc4XI", libSceMediaFrameworkInterfaceUnknown_LghHdvXc4XI_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_LuHyXxulYpQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("LuHyXxulYpQ", libSceMediaFrameworkInterfaceUnknown_LuHyXxulYpQ_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_O20dcRTe2KE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("O20dcRTe2KE", libSceMediaFrameworkInterfaceUnknown_O20dcRTe2KE_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_Odxx6UPXBqU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Odxx6UPXBqU", libSceMediaFrameworkInterfaceUnknown_Odxx6UPXBqU_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_Q_plus_DlayG_plus_qMQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Q+DlayG+qMQ", libSceMediaFrameworkInterfaceUnknown_Q_plus_DlayG_plus_qMQ_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_WHMS1vGvyX8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("WHMS1vGvyX8", libSceMediaFrameworkInterfaceUnknown_WHMS1vGvyX8_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_aOqAkEUTuAw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("aOqAkEUTuAw", libSceMediaFrameworkInterfaceUnknown_aOqAkEUTuAw_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_d7nlmtAi6R0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("d7nlmtAi6R0", libSceMediaFrameworkInterfaceUnknown_d7nlmtAi6R0_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_dlFQzvKJ2rk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("dlFQzvKJ2rk", libSceMediaFrameworkInterfaceUnknown_dlFQzvKJ2rk_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_dyCpsjUzXTs_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("dyCpsjUzXTs", libSceMediaFrameworkInterfaceUnknown_dyCpsjUzXTs_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_eNV_minus_JME1PeM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("eNV-JME1PeM", libSceMediaFrameworkInterfaceUnknown_eNV_minus_JME1PeM_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_fuhQBPWLMMk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("fuhQBPWLMMk", libSceMediaFrameworkInterfaceUnknown_fuhQBPWLMMk_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_idxumNc7A14_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("idxumNc7A14", libSceMediaFrameworkInterfaceUnknown_idxumNc7A14_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_jDow6uu9KS0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("jDow6uu9KS0", libSceMediaFrameworkInterfaceUnknown_jDow6uu9KS0_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_kiyeBKU4Puk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("kiyeBKU4Puk", libSceMediaFrameworkInterfaceUnknown_kiyeBKU4Puk_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_oKxrKPP4gTM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("oKxrKPP4gTM", libSceMediaFrameworkInterfaceUnknown_oKxrKPP4gTM_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_phNjZFWpSAQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("phNjZFWpSAQ", libSceMediaFrameworkInterfaceUnknown_phNjZFWpSAQ_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_qBUbOO4_minus_9G4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("qBUbOO4-9G4", libSceMediaFrameworkInterfaceUnknown_qBUbOO4_minus_9G4_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_twII_plus_8guYQc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("twII+8guYQc", libSceMediaFrameworkInterfaceUnknown_twII_plus_8guYQc_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_w2JFMpxrYmU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("w2JFMpxrYmU", libSceMediaFrameworkInterfaceUnknown_w2JFMpxrYmU_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_wpSO7YNHZVc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("wpSO7YNHZVc", libSceMediaFrameworkInterfaceUnknown_wpSO7YNHZVc_nid_no_patch);
+
+int APS5_VABI libSceMediaFrameworkInterfaceUnknown_zkE4i3PXkvQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("zkE4i3PXkvQ", libSceMediaFrameworkInterfaceUnknown_zkE4i3PXkvQ_nid_no_patch);
+
 }

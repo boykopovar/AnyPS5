@@ -4,6 +4,7 @@
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceEsvm/include/Firmware1340Exports.hpp"
 
 extern "C" {
 
@@ -225,6 +226,54 @@ int APS5_VABI sceEsvmRequestMediaKeySystemAccessPlayReady() {
 }
 
 int APS5_VABI sceEsvmRequestMediaKeySystemAccessWidevine() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI sceEsvmHandleProvisioningResponse() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceEsvmMediaKeysDecryptAudioData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceEsvmGetMetrics() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceEsvmUseCustomMusicCoreForDecoderMode() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceEsvmGetServiceCertificateRequest() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceEsvmGetProvisioningRequest() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceEsvmIsProvisioned() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceEsvmSetServiceCertificate() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceEsvmParseAndLoadServiceCertificateResponse() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceEsvmSetMediaKeys() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceEsvmCreateMediaKeys2() {
     NotImplemented_nid_no_patch(__func__);
 }
 

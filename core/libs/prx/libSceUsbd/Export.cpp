@@ -27,6 +27,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceUsbd/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -992,5 +994,19 @@ std::int32_t APS5_VABI sceUsbdWaitForEvent(UsbdTimeval* timeout) {
     RequireEventLock(events, __func__);
     return WaitForChange(events, local);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceUsbdUnknown_J3Kun60WMwE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("J3Kun60WMwE", libSceUsbdUnknown_J3Kun60WMwE_nid_no_patch);
+
+int APS5_VABI libSceUsbdUnknown_Yap9lhKBRdQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Yap9lhKBRdQ", libSceUsbdUnknown_Yap9lhKBRdQ_nid_no_patch);
 
 }

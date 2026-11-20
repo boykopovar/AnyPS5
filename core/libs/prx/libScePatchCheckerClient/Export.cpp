@@ -3,6 +3,8 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libScePatchCheckerClient/include/Firmware1340Exports.hpp"
 
 namespace {
 
@@ -62,5 +64,14 @@ int APS5_VABI scePatchCheckerRequestCheckPatchByType() {
 int APS5_VABI scePatchCheckerTerminate() {
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libScePatchCheckerClientUnknown_6f4BOeN6_plus_Bs_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("6f4BOeN6+Bs", libScePatchCheckerClientUnknown_6f4BOeN6_plus_Bs_nid_no_patch);
 
 }

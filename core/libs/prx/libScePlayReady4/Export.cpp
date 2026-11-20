@@ -5,6 +5,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libScePlayReady4/include/Firmware1340Exports.hpp"
 
 extern "C" {
 
@@ -442,5 +443,34 @@ int APS5_VABI libScePlayReady4LegacyUnknown_zGW9LWmm1vI_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("zGW9LWmm1vI", libScePlayReady4LegacyUnknown_zGW9LWmm1vI_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libScePlayReady4Unknown_A7YXgKOV0sM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("A7YXgKOV0sM", libScePlayReady4Unknown_A7YXgKOV0sM_nid_no_patch);
+
+int APS5_VABI libScePlayReady4Unknown_Mpme26YuAiM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Mpme26YuAiM", libScePlayReady4Unknown_Mpme26YuAiM_nid_no_patch);
+
+int APS5_VABI libScePlayReady4Unknown_aomhg5duFjk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("aomhg5duFjk", libScePlayReady4Unknown_aomhg5duFjk_nid_no_patch);
+
+int APS5_VABI libScePlayReady4Unknown_sTt69r204jw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("sTt69r204jw", libScePlayReady4Unknown_sTt69r204jw_nid_no_patch);
+
+int APS5_VABI libScePlayReady4Unknown_w4o5auJa4kA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("w4o5auJa4kA", libScePlayReady4Unknown_w4o5auJa4kA_nid_no_patch);
 
 }

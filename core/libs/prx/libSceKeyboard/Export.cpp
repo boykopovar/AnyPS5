@@ -3,6 +3,7 @@
 #include "prx/libSceKeyboard/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceKeyboard/include/KeyboardState.hpp"
+#include "prx/libSceKeyboard/include/Firmware1340Exports.hpp"
 
 extern "C" {
 
@@ -139,5 +140,24 @@ int APS5_VABI libSceKeyboardUnknown_l76jptHfizM_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("l76jptHfizM", libSceKeyboardUnknown_l76jptHfizM_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceKeyboardUnknown_KoGcympb138_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("KoGcympb138", libSceKeyboardUnknown_KoGcympb138_nid_no_patch);
+
+int APS5_VABI libSceKeyboardUnknown_RV_minus_uFDJUkFQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("RV-uFDJUkFQ", libSceKeyboardUnknown_RV_minus_uFDJUkFQ_nid_no_patch);
+
+int APS5_VABI libSceKeyboardUnknown_vNgwsjbEeug_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("vNgwsjbEeug", libSceKeyboardUnknown_vNgwsjbEeug_nid_no_patch);
 
 }

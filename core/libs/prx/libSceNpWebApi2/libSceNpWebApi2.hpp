@@ -4,3 +4,4 @@
 
 #include "prx/libSceNpWebApi2/include/Api.hpp"
 #include "prx/libSceNpWebApi2/include/InventoryExports.hpp"
+#include "prx/libSceNpWebApi2/include/Firmware1340Exports.hpp"

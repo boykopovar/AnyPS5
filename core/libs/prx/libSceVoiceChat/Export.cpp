@@ -10,6 +10,8 @@
 #include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceVoiceChat/include/Firmware1340Exports.hpp"
 
 namespace {
 constexpr int VOICECHAT_ERROR_SIGNED_OUT = static_cast<int>(0x80550006u);
@@ -168,5 +170,24 @@ int APS5_VABI sceVoiceChatUnregisterMicEventHandler(void* a) { (void)a; return 0
 int APS5_VABI sceVoiceChatUnregisterPartyUserStateChangedHandler(void* a) { (void)a; return 0; }
 int APS5_VABI sceVoiceChatUnregisterRangedMemberEventHandler(void* a) { (void)a; return 0; }
 int APS5_VABI sceVoiceChatUnregisterVoiceEventHandler(void* a) { (void)a; return 0; }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceVoiceChatUnknown_32VWZje_plus_f2Q_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("32VWZje+f2Q", libSceVoiceChatUnknown_32VWZje_plus_f2Q_nid_no_patch);
+
+int APS5_VABI libSceVoiceChatUnknown_7P3I5VinW_minus_A_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("7P3I5VinW-A", libSceVoiceChatUnknown_7P3I5VinW_minus_A_nid_no_patch);
+
+int APS5_VABI libSceVoiceChatUnknown_fRgJPGrOhAU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("fRgJPGrOhAU", libSceVoiceChatUnknown_fRgJPGrOhAU_nid_no_patch);
 
 }

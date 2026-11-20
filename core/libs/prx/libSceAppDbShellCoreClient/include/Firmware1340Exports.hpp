@@ -1,0 +1,39 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown__plus_SCLk5wNTB8_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_0QcwR2M1LzA_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_3wgjcIUwL44_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_5g80tF6RtUM_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_5rwApEXmVrc_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_6nUD_minus_iulT44_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_9oDkf0C64M0_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_Aw2fJZ_plus_TNcM_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_Bj0hSEaglms_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_DXYdzNq_minus_Kcg_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_EWUbUtP3zWo_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_G6QGW4amFBc_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_Hk3ZVT3vbzI_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_J6LN2x1jm0k_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_JPI9m4ViLQ4_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_LT3OvVCajHE_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_NBZvJ5W_plus_fMs_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_PIy5_plus_tE5xHE_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_PRLur_minus_1VXy0_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_WUIPL_minus_WE6g0_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_Wb1YX8GhGcM_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_ZWqfj9VyL0I_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_d2QxftYkxSs_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_dqvEVECoS_plus_E_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_dr9_minus_2YPkvUw_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_f4HF_plus_zGwtCg_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_faNkQhATfVw_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_j5q3FIFFuDk_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_mvByKa1KO80_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_tD0D5nAPXmk_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_xsKxektSL_plus_U_nid_no_patch();
+
+}

@@ -49,3 +49,4 @@
 #include "prx/libSceAgc/Shader/include/InterpolantMapping.hpp"
 #include "prx/libSceAgc/Shader/include/LinkShaders.hpp"
 #include "prx/libSceAgc/Shader/include/PrimState.hpp"
+#include "prx/libSceAgc/include/Firmware1340Exports.hpp"
