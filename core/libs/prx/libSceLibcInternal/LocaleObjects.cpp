@@ -1,8 +1,10 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "SceTypes.hpp"
+#include <stdexcept>
 
 extern "C" {
 
@@ -20,5 +22,12 @@ void APS5_VABI sceLibcInternalLocimpBaseCopyConstructor_nid_no_patch(void* self,
     _ZNSt6locale7_LocimpC1ERKS0__nid_postfix(static_cast<GuestLocale::Implementation*>(self), static_cast<const GuestLocale::Implementation*>(source));
 }
 APS5_EXPORT("dsJKehuajH4", sceLibcInternalLocimpBaseCopyConstructor_nid_no_patch);
+
+void APS5_VABI _Deletegloballocale_nid_postfix(void* pointer) {
+    if (pointer == nullptr) throw std::invalid_argument("_Deletegloballocale: null locale reference");
+    auto* locale = *static_cast<GuestLocale::Implementation**>(pointer);
+    if (locale == nullptr) return;
+    if (auto* released = locale->base.vtable->release(&locale->base)) released->vtable->deleteObject(released);
+}
 
 }
