@@ -1067,7 +1067,7 @@ int TruncateSharedMemory_nid_no_patch(int descriptor, std::int64_t length) {
 
 }
 
-extern "C" int APS5_VABI shm_open_nid_postfix(const char* path, int flags, int mode) {
+extern "C" int APS5_VABI shm_open_nid_no_patch(const char* path, int flags, int mode) {
     const int accessMode = flags & SCE_KERNEL_O_ACCMODE;
     if (accessMode != SCE_KERNEL_O_RDONLY && accessMode != SCE_KERNEL_O_RDWR) return Fail(GuestInvalid);
     if ((flags & ~AcceptedFlags) != 0) return Fail(GuestInvalid);
@@ -1093,8 +1093,12 @@ extern "C" int APS5_VABI shm_open_nid_postfix(const char* path, int flags, int m
     if (const int guest = GuestError(error)) return Fail(guest);
     throw std::runtime_error("shm_open: creating the host anonymous file failed, errno=" + std::to_string(error));
 }
+extern "C" int APS5_VABI shm_open_nid_postfix(const char* path, int flags, int mode) {
+    return shm_open_nid_no_patch(path, flags, mode);
+}
 
-extern "C" int APS5_VABI shm_unlink_nid_postfix(const char* path) {
+
+extern "C" int APS5_VABI shm_unlink_nid_no_patch(const char* path) {
     std::string copy;
     if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return Fail(error);
     path = copy.c_str();
@@ -1122,3 +1126,7 @@ extern "C" int APS5_VABI shm_unlink_nid_postfix(const char* path) {
     throw std::runtime_error("shm_unlink: removing the host named object failed, errno=" + std::to_string(error));
 #endif
 }
+extern "C" int APS5_VABI shm_unlink_nid_postfix(const char* path) {
+    return shm_unlink_nid_no_patch(path);
+}
+

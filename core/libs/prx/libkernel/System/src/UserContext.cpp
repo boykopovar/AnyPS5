@@ -22,10 +22,14 @@ int APS5_VABI getcontext_nid_postfix(UserUcontext* context) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI setcontext_nid_postfix(const UserUcontext* context) {
+int APS5_VABI setcontext_nid_no_patch(const UserUcontext* context) {
     static_cast<void>(context);
     NotImplemented_nid_no_patch(__func__);
 }
+int APS5_VABI setcontext_nid_postfix(const UserUcontext* context) {
+    return setcontext_nid_no_patch(context);
+}
+
 
 int APS5_VABI swapcontext_nid_postfix(UserUcontext* saved, const UserUcontext* next) {
     static_cast<void>(saved);
@@ -278,7 +282,7 @@ enum class FpuSource { Context, Current, Initial };
 
 extern "C" {
 
-int APS5_VABI setcontext_nid_postfix(const UserUcontext* context) {
+int APS5_VABI setcontext_nid_no_patch(const UserUcontext* context) {
     if (context == nullptr) return Fail(GuestEinval);
     UserUcontext local{};
     if (!GuestCopyIn_nid_no_patch(&local, context, offsetof(UserUcontext, link))) return Fail(GuestEfault);
@@ -286,6 +290,10 @@ int APS5_VABI setcontext_nid_postfix(const UserUcontext* context) {
     if (machine.len != sizeof(UserMcontext) || (machine.flags & ~McontextFlagMask) != 0) return Fail(GuestEinval);
     RestoreContext(&local, FpuSource::Context);
 }
+int APS5_VABI setcontext_nid_postfix(const UserUcontext* context) {
+    return setcontext_nid_no_patch(context);
+}
+
 
 int SigreturnContext_nid_no_patch(const UserUcontext* context) {
     if (context == nullptr) return Fail(GuestEfault);

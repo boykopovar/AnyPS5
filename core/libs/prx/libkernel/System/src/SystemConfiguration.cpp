@@ -325,7 +325,7 @@ bool IsUnansweredName(const char* name) {
 
 extern "C" {
 // Guest long is 64 bits, including when the Windows host long is 32 bits.
-std::int64_t APS5_VABI sysconf_nid_postfix(int name) {
+std::int64_t APS5_VABI sysconf_nid_no_patch(int name) {
     const int saved = *__error_nid_postfix();
     std::int64_t result = -1;
     switch (name) {
@@ -409,7 +409,11 @@ std::int64_t APS5_VABI sysconf_nid_postfix(int name) {
     *__error_nid_postfix() = saved;
     return result;
 }
-int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void* oldValue, std::size_t* oldLength, const void* newValue, std::size_t newLength) {
+std::int64_t APS5_VABI sysconf_nid_postfix(int name) {
+    return sysconf_nid_no_patch(name);
+}
+
+int APS5_VABI sysctl_nid_no_patch(const int* name, std::uint32_t nameLength, void* oldValue, std::size_t* oldLength, const void* newValue, std::size_t newLength) {
     (void)newLength;
     if (nameLength < 2 || nameLength > 24) {
         *__error_nid_postfix() = 22;
@@ -627,8 +631,12 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
     for (std::uint32_t i = 0; i < nameLength; ++i) mib += (i == 0 ? "" : ".") + std::to_string(name[i]);
     throw std::runtime_error(std::string(__func__) + ": unsupported MIB " + mib);
 }
+int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void* oldValue, std::size_t* oldLength, const void* newValue, std::size_t newLength) {
+    return sysctl_nid_no_patch(name, nameLength, oldValue, oldLength, newValue, newLength);
+}
 
-int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::size_t* oldLength, const void* newValue, std::size_t newLength) {
+
+int APS5_VABI sysctlbyname_nid_no_patch(const char* name, void* oldValue, std::size_t* oldLength, const void* newValue, std::size_t newLength) {
     std::string guestName;
     if (const int error = CopyGuestPath_nid_no_patch(name, guestName)) {
         *__error_nid_postfix() = error;
@@ -747,8 +755,12 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
     *__error_nid_postfix() = 2;
     return -1;
 }
+int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::size_t* oldLength, const void* newValue, std::size_t newLength) {
+    return sysctlbyname_nid_no_patch(name, oldValue, oldLength, newValue, newLength);
+}
 
-int APS5_VABI sceKernelGetSystemSwVersion_nid_postfix(SceKernelSystemSwVersion* version) {
+
+int APS5_VABI sceKernelGetSystemSwVersion_nid_no_patch(SceKernelSystemSwVersion* version) {
     if (version == nullptr) {
         return 0;
     }
@@ -761,6 +773,10 @@ int APS5_VABI sceKernelGetSystemSwVersion_nid_postfix(SceKernelSystemSwVersion* 
     }
     return 0;
 }
+int APS5_VABI sceKernelGetSystemSwVersion_nid_postfix(SceKernelSystemSwVersion* version) {
+    return sceKernelGetSystemSwVersion_nid_no_patch(version);
+}
+
 
 int APS5_VABI sceKernelGetSystemExVersion(char* first, char* second) {
     if (first == nullptr || second == nullptr) {
@@ -774,7 +790,7 @@ int APS5_VABI sceKernelGetSystemExVersion(char* first, char* second) {
     return 0;
 }
 
-int APS5_VABI sysKernelGetLowerLimitSysexVersion_nid_postfix(char* version) {
+int APS5_VABI sysKernelGetLowerLimitSysexVersion_nid_no_patch(char* version) {
     if (version == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
@@ -784,8 +800,12 @@ int APS5_VABI sysKernelGetLowerLimitSysexVersion_nid_postfix(char* version) {
     }
     return 0;
 }
+int APS5_VABI sysKernelGetLowerLimitSysexVersion_nid_postfix(char* version) {
+    return sysKernelGetLowerLimitSysexVersion_nid_no_patch(version);
+}
 
-int APS5_VABI sysKernelGetLowerLimitUpdVersion_nid_postfix(std::uint32_t* version) {
+
+int APS5_VABI sysKernelGetLowerLimitUpdVersion_nid_no_patch(std::uint32_t* version) {
     if (version == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
@@ -795,16 +815,24 @@ int APS5_VABI sysKernelGetLowerLimitUpdVersion_nid_postfix(std::uint32_t* versio
     }
     return 0;
 }
+int APS5_VABI sysKernelGetLowerLimitUpdVersion_nid_postfix(std::uint32_t* version) {
+    return sysKernelGetLowerLimitUpdVersion_nid_no_patch(version);
+}
 
-int APS5_VABI sysKernelGetUpdVersion_nid_postfix(std::uint32_t* version) {
+
+int APS5_VABI sysKernelGetUpdVersion_nid_no_patch(std::uint32_t* version) {
     if (version == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
     std::size_t length = sizeof(*version);
     return sysctlbyname_nid_postfix("machdep.upd_version", version, &length, nullptr, 0);
 }
+int APS5_VABI sysKernelGetUpdVersion_nid_postfix(std::uint32_t* version) {
+    return sysKernelGetUpdVersion_nid_no_patch(version);
+}
 
-int APS5_VABI sysKernelGetManufacturingMode_nid_postfix(void) {
+
+int APS5_VABI sysKernelGetManufacturingMode_nid_no_patch(void) {
     int mode = 0;
     std::size_t length = sizeof(mode);
     if (sysctlbyname_nid_postfix("machdep.curr_manumode", &mode, &length, nullptr, 0) != 0) {
@@ -812,8 +840,12 @@ int APS5_VABI sysKernelGetManufacturingMode_nid_postfix(void) {
     }
     return mode;
 }
+int APS5_VABI sysKernelGetManufacturingMode_nid_postfix(void) {
+    return sysKernelGetManufacturingMode_nid_no_patch();
+}
 
-int APS5_VABI sysKernelGetIntdevModeForInternalLibc_nid_postfix(void) {
+
+int APS5_VABI sysKernelGetIntdevModeForInternalLibc_nid_no_patch(void) {
     int mode = 0;
     std::size_t length = sizeof(mode);
     const int result = sysctlbyname_nid_postfix("machdep.rcmgr_intdev_for_internal_libc", &mode, &length, nullptr, 0);
@@ -822,8 +854,12 @@ int APS5_VABI sysKernelGetIntdevModeForInternalLibc_nid_postfix(void) {
     }
     return mode;
 }
+int APS5_VABI sysKernelGetIntdevModeForInternalLibc_nid_postfix(void) {
+    return sysKernelGetIntdevModeForInternalLibc_nid_no_patch();
+}
 
-int APS5_VABI sysKernelGetIntdevModeForRcmgr_nid_postfix(void) {
+
+int APS5_VABI sysKernelGetIntdevModeForRcmgr_nid_no_patch(void) {
     int mode = 0;
     std::size_t length = sizeof(mode);
     const int result = sysctlbyname_nid_postfix("machdep.rcmgr_intdev", &mode, &length, nullptr, 0);
@@ -832,8 +868,12 @@ int APS5_VABI sysKernelGetIntdevModeForRcmgr_nid_postfix(void) {
     }
     return mode;
 }
+int APS5_VABI sysKernelGetIntdevModeForRcmgr_nid_postfix(void) {
+    return sysKernelGetIntdevModeForRcmgr_nid_no_patch();
+}
 
-int APS5_VABI sysctlnametomib_nid_postfix(const char* name, int* mib, std::size_t* size) {
+
+int APS5_VABI sysctlnametomib_nid_no_patch(const char* name, int* mib, std::size_t* size) {
     struct KnownName {
         const char* name;
         int mib[3];
@@ -898,4 +938,8 @@ int APS5_VABI sysctlnametomib_nid_postfix(const char* name, int* mib, std::size_
     *__error_nid_postfix() = 2;
     return -1;
 }
+int APS5_VABI sysctlnametomib_nid_postfix(const char* name, int* mib, std::size_t* size) {
+    return sysctlnametomib_nid_no_patch(name, mib, size);
+}
+
 }

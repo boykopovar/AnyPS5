@@ -30,7 +30,7 @@ static_assert(offsetof(VersionPayload, version) == offsetof(SceKernelProsperoSys
 
 extern "C" {
 
-int APS5_VABI sceKernelGetProsperoSystemSwVersion_nid_postfix(SceKernelProsperoSystemSwVersion* version) {
+int APS5_VABI sceKernelGetProsperoSystemSwVersion_nid_no_patch(SceKernelProsperoSystemSwVersion* version) {
     if (version == nullptr) return 0;
     VersionPayload payload{};
     std::memcpy(payload.versionString, SystemSoftwareVersionString, sizeof(SystemSoftwareVersionString));
@@ -41,8 +41,12 @@ int APS5_VABI sceKernelGetProsperoSystemSwVersion_nid_postfix(SceKernelProsperoS
     if (!copied) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
+int APS5_VABI sceKernelGetProsperoSystemSwVersion_nid_postfix(SceKernelProsperoSystemSwVersion* version) {
+    return sceKernelGetProsperoSystemSwVersion_nid_no_patch(version);
+}
 
-int APS5_VABI sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(std::uint32_t* version) {
+
+int APS5_VABI sceKernelGetAllowedSdkVersionOnSystem_nid_no_patch(std::uint32_t* version) {
     if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
     const std::uint32_t value = SystemSoftwareVersion | SdkPatchMask;
     const int saved = errno;
@@ -51,5 +55,9 @@ int APS5_VABI sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(std::uint32_t* v
     if (!copied) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
+int APS5_VABI sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(std::uint32_t* version) {
+    return sceKernelGetAllowedSdkVersionOnSystem_nid_no_patch(version);
+}
+
 
 }

@@ -213,7 +213,7 @@ int APS5_VABI scePthreadRwlockattrSettype(PthreadRwlockattr* attr, int type) {
     return SCE_OK;
 }
 
-int APS5_VABI pthread_rwlock_setname_np_nid_postfix(PthreadRwlock* rwlock, const char* name) {
+int APS5_VABI pthread_rwlock_setname_np_nid_no_patch(PthreadRwlock* rwlock, const char* name) {
     if (!rwlock) throw std::runtime_error("pthread_rwlock_setname_np: null rwlock");
     PthreadRwlock probe = nullptr;
     if (!GuestCopyIn_nid_no_patch(&probe, rwlock, sizeof(probe))) return POSIX_EFAULT;
@@ -229,5 +229,9 @@ int APS5_VABI pthread_rwlock_setname_np_nid_postfix(PthreadRwlock* rwlock, const
     current->_named = true;
     return SCE_OK;
 }
+int APS5_VABI pthread_rwlock_setname_np_nid_postfix(PthreadRwlock* rwlock, const char* name) {
+    return pthread_rwlock_setname_np_nid_no_patch(rwlock, name);
+}
+
 
 }

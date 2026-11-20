@@ -40,7 +40,7 @@ void APS5_VABI ResetOnce(void* control) {
 }
 }
 
-extern "C" int APS5_VABI pthread_once_nid_postfix(
+extern "C" int APS5_VABI pthread_once_nid_no_patch(
     GuestOnce* control, void (APS5_VABI *initialize)()) {
     if (!control || !initialize) return 22;
     std::unique_lock lock(onceMutex);
@@ -74,4 +74,8 @@ extern "C" int APS5_VABI pthread_once_nid_postfix(
     lock.unlock();
     onceChanged.notify_all();
     return updated ? 0 : 14;
+}
+extern "C" int APS5_VABI pthread_once_nid_postfix(
+    GuestOnce* control, void (APS5_VABI *initialize)()) {
+    return pthread_once_nid_no_patch(control, initialize);
 }

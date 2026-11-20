@@ -535,19 +535,31 @@ struct EnvironmentBinding {
 EnvironmentBinding environmentBinding;
 }
 
-int APS5_VABI getargc_nid_postfix(void) {
+int APS5_VABI getargc_nid_no_patch(void) {
     return getProcessArguments().GetCount();
 }
+int APS5_VABI getargc_nid_postfix(void) {
+    return getargc_nid_no_patch();
+}
 
-const char** APS5_VABI getargv_nid_postfix(void) {
+
+const char** APS5_VABI getargv_nid_no_patch(void) {
     return getProcessArguments().GetValues();
 }
-
-int APS5_VABI getpagesize_nid_postfix(void) {
-    return PS5_PAGE_SIZE;
+const char** APS5_VABI getargv_nid_postfix(void) {
+    return getargv_nid_no_patch();
 }
 
-int APS5_VABI getpid_nid_postfix(void) {
+
+int APS5_VABI getpagesize_nid_no_patch(void) {
+    return PS5_PAGE_SIZE;
+}
+int APS5_VABI getpagesize_nid_postfix(void) {
+    return getpagesize_nid_no_patch();
+}
+
+
+int APS5_VABI getpid_nid_no_patch(void) {
 #ifdef _WIN32
     const auto pid = GetCurrentProcessId();
 #else
@@ -557,6 +569,10 @@ int APS5_VABI getpid_nid_postfix(void) {
         throw std::runtime_error("Process identifier is outside the guest range");
     return static_cast<int>(pid);
 }
+int APS5_VABI getpid_nid_postfix(void) {
+    return getpid_nid_no_patch();
+}
+
 
 int APS5_VABI sceKernelGetProcessAbiType(int pid) {
     if (pid == -1 || pid == getpid_nid_postfix()) return 1;
@@ -564,14 +580,18 @@ int APS5_VABI sceKernelGetProcessAbiType(int pid) {
     throw std::runtime_error("sceKernelGetProcessAbiType: unsupported process id " + std::to_string(pid));
 }
 
-int APS5_VABI getsid_nid_postfix(int pid) {
+int APS5_VABI getsid_nid_no_patch(int pid) {
     const int self = getpid_nid_postfix();
     if (pid == 0 || pid == self) return self;
     *__error_nid_postfix() = errnoNoSuchProcess;
     return -1;
 }
+int APS5_VABI getsid_nid_postfix(int pid) {
+    return getsid_nid_no_patch(pid);
+}
 
-int APS5_VABI setpgid_nid_postfix(int pid, int pgid) {
+
+int APS5_VABI setpgid_nid_no_patch(int pid, int pgid) {
     if (pgid < 0) {
         *__error_nid_postfix() = errnoInvalidArgument;
         return -1;
@@ -584,12 +604,16 @@ int APS5_VABI setpgid_nid_postfix(int pid, int pgid) {
     *__error_nid_postfix() = errnoOperationNotPermitted;
     return -1;
 }
+int APS5_VABI setpgid_nid_postfix(int pid, int pgid) {
+    return setpgid_nid_no_patch(pid, pgid);
+}
+
 
 int APS5_VABI setpgrp_nid_postfix(int pid, int pgrp) {
     return setpgid_nid_postfix(pid, pgrp);
 }
 
-int APS5_VABI getppid_nid_postfix(void) {
+int APS5_VABI getppid_nid_no_patch(void) {
 #ifdef _WIN32
     const DWORD self = GetCurrentProcessId();
     const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -614,6 +638,10 @@ int APS5_VABI getppid_nid_postfix(void) {
         throw std::runtime_error("Parent process identifier is outside the guest range");
     return static_cast<int>(pid);
 }
+int APS5_VABI getppid_nid_postfix(void) {
+    return getppid_nid_no_patch();
+}
+
 
 int APS5_VABI sceKernelGetAppInfo(int pid, void* info) {
     const bool own = pid == getpid_nid_postfix();
@@ -641,25 +669,45 @@ int APS5_VABI sceKernelGetAppInfo(int pid, void* info) {
     return 0;
 }
 
+int APS5_VABI getuid_nid_no_patch(void) {
+    return 0;
+}
 int APS5_VABI getuid_nid_postfix(void) {
-    return 0;
+    return getuid_nid_no_patch();
 }
 
+
+int APS5_VABI geteuid_nid_no_patch(void) {
+    return 0;
+}
 int APS5_VABI geteuid_nid_postfix(void) {
-    return 0;
+    return geteuid_nid_no_patch();
 }
 
+
+int APS5_VABI getgid_nid_no_patch(void) {
+    return 0;
+}
 int APS5_VABI getgid_nid_postfix(void) {
-    return 0;
+    return getgid_nid_no_patch();
 }
 
+
+int APS5_VABI getegid_nid_no_patch(void) {
+    return 0;
+}
 int APS5_VABI getegid_nid_postfix(void) {
-    return 0;
+    return getegid_nid_no_patch();
 }
 
-int APS5_VABI issetugid_nid_postfix(void) {
+
+int APS5_VABI issetugid_nid_no_patch(void) {
     return 0;
 }
+int APS5_VABI issetugid_nid_postfix(void) {
+    return issetugid_nid_no_patch();
+}
+
 
 int APS5_VABI getresuid_nid_postfix(std::uint32_t* ruid, std::uint32_t* euid, std::uint32_t* suid) {
     if (!StoreGuestId(ruid) || !StoreGuestId(euid) || !StoreGuestId(suid)) {
@@ -683,14 +731,22 @@ void APS5_VABI exit_nid_postfix(int code) {
 }
 #endif
 
-[[noreturn]] void APS5_VABI _exit_nid_postfix(int status) {
+[[noreturn]] void APS5_VABI _exit_nid_no_patch(int status) {
     LibcTerminate_nid_no_patch(status);
 }
+[[noreturn]] void APS5_VABI _exit_nid_postfix(int status) {
+    _exit_nid_no_patch(status);
+}
 
-int APS5_VABI system_nid_postfix(const char* command) {
+
+int APS5_VABI system_nid_no_patch(const char* command) {
     constexpr int shellNotExecuted = 127 << 8;
     return command == nullptr ? 1 : shellNotExecuted;
 }
+int APS5_VABI system_nid_postfix(const char* command) {
+    return system_nid_no_patch(command);
+}
+
 
 #ifndef _WIN32
 static GuestResourceUsage ResourceUsage(const struct rusage& native) {
@@ -717,9 +773,13 @@ static GuestResourceUsage ResourceUsage(const struct rusage& native) {
 }
 #endif
 
-int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
+int APS5_VABI waitpid_nid_no_patch(int pid, int* status, int options) {
     return WaitProcess_nid_no_patch(pid, status, options, nullptr);
 }
+int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
+    return waitpid_nid_no_patch(pid, status, options);
+}
+
 
 int WaitProcess_nid_no_patch(int pid, int* status, int options, GuestResourceUsage* usage) {
     if ((static_cast<unsigned>(options) & ~freebsdWaitOptions) != 0) {
@@ -792,7 +852,7 @@ int WaitProcess_nid_no_patch(int pid, int* status, int options, GuestResourceUsa
 #endif
 }
 
-int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limit) {
+int APS5_VABI setrlimit_nid_no_patch(int resource, const GuestResourceLimit* limit) {
     GuestResourceLimit requested{};
     if (limit == nullptr || !GuestCopyIn_nid_no_patch(&requested, limit, sizeof(requested))) {
         *__error_nid_postfix() = guestFault;
@@ -838,10 +898,18 @@ int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limi
         throw std::runtime_error("setrlimit: changing the limit of resource " + std::to_string(resource) + " is not supported");
     return 0;
 }
+int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limit) {
+    return setrlimit_nid_no_patch(resource, limit);
+}
 
-int APS5_VABI wait_nid_postfix(int* status) {
+
+int APS5_VABI wait_nid_no_patch(int* status) {
     return waitpid_nid_postfix(-1, status, 0);
 }
+int APS5_VABI wait_nid_postfix(int* status) {
+    return wait_nid_no_patch(status);
+}
+
 
 int ExecProgram(const char* file, char* const* arguments, char* const* environment, bool search, bool implicitEnvironment) {
     const auto fail = [](int error) { *__error_nid_postfix() = error; return -1; };
@@ -904,17 +972,29 @@ int ExecProgram(const char* file, char* const* arguments, char* const* environme
 #endif
 }
 
-int APS5_VABI execvp_nid_postfix(const char* file, char* const* arguments) {
+int APS5_VABI execvp_nid_no_patch(const char* file, char* const* arguments) {
     return ExecProgram(file, arguments, nullptr, true, true);
 }
+int APS5_VABI execvp_nid_postfix(const char* file, char* const* arguments) {
+    return execvp_nid_no_patch(file, arguments);
+}
 
-int APS5_VABI execv_nid_postfix(const char* path, char* const* arguments) {
+
+int APS5_VABI execv_nid_no_patch(const char* path, char* const* arguments) {
     return ExecProgram(path, arguments, nullptr, false, true);
 }
+int APS5_VABI execv_nid_postfix(const char* path, char* const* arguments) {
+    return execv_nid_no_patch(path, arguments);
+}
 
-int APS5_VABI execve_nid_postfix(const char* path, char* const* arguments, char* const* environment) {
+
+int APS5_VABI execve_nid_no_patch(const char* path, char* const* arguments, char* const* environment) {
     return ExecProgram(path, arguments, environment, false, false);
 }
+int APS5_VABI execve_nid_postfix(const char* path, char* const* arguments, char* const* environment) {
+    return execve_nid_no_patch(path, arguments, environment);
+}
+
 
 int APS5_VABI sceKernelGetCurrentCpu(void) {
 #ifdef _WIN32
@@ -993,26 +1073,38 @@ void APS5_VABI sceKernelSync(void) {
     SyncWrittenPaths_nid_no_patch();
 }
 
-void APS5_VABI sync_nid_postfix(void) {
+void APS5_VABI sync_nid_no_patch(void) {
     sceKernelSync();
 
 }
+void APS5_VABI sync_nid_postfix(void) {
+    sync_nid_no_patch();
+}
 
-int APS5_VABI sched_get_priority_max_nid_postfix(int policy) {
+
+int APS5_VABI sched_get_priority_max_nid_no_patch(int policy) {
     if (!hasPriorityRange(policy)) {
         *__error_nid_postfix() = guestInvalid;
         return -1;
     }
     return 767;
 }
+int APS5_VABI sched_get_priority_max_nid_postfix(int policy) {
+    return sched_get_priority_max_nid_no_patch(policy);
+}
 
-int APS5_VABI sched_get_priority_min_nid_postfix(int policy) {
+
+int APS5_VABI sched_get_priority_min_nid_no_patch(int policy) {
     if (!hasPriorityRange(policy)) {
         *__error_nid_postfix() = guestInvalid;
         return -1;
     }
     return 256;
 }
+int APS5_VABI sched_get_priority_min_nid_postfix(int policy) {
+    return sched_get_priority_min_nid_no_patch(policy);
+}
+
 
 static int SysarchFailure(int error) {
     *__error_nid_postfix() = error;
@@ -1112,7 +1204,7 @@ int APS5_VABI sysarch(int operation, void* parameters) {
 #endif
 }
 
-int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
+int APS5_VABI getrusage_nid_no_patch(int who, GuestResourceUsage* usage) {
     if (who != -1 && who != 0 && who != 1) {
         *__error_nid_postfix() = guestInvalid;
         return -1;
@@ -1181,8 +1273,12 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
     }
     return 0;
 }
+int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
+    return getrusage_nid_no_patch(who, usage);
+}
 
-int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit) {
+
+int APS5_VABI getrlimit_nid_no_patch(int resource, GuestResourceLimit* limit) {
     if (resource < 0 || resource >= guestRlimitCount) {
         *__error_nid_postfix() = guestInvalid;
         return -1;
@@ -1259,8 +1355,12 @@ int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit) {
     }
     return 0;
 }
+int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit) {
+    return getrlimit_nid_no_patch(resource, limit);
+}
 
-int APS5_VABI getpriority_nid_postfix(int which, int who) {
+
+int APS5_VABI getpriority_nid_no_patch(int which, int who) {
     if (which != guestPriorityProcess && which != guestPriorityGroup && which != guestPriorityUser) {
         *__error_nid_postfix() = guestInvalid;
         return -1;
@@ -1273,8 +1373,12 @@ int APS5_VABI getpriority_nid_postfix(int which, int who) {
     }
     return 0;
 }
+int APS5_VABI getpriority_nid_postfix(int which, int who) {
+    return getpriority_nid_no_patch(which, who);
+}
 
-int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
+
+int APS5_VABI setpriority_nid_no_patch(int which, int who, int niceval) {
     if (which != guestPriorityProcess && which != guestPriorityGroup && which != guestPriorityUser) {
         *__error_nid_postfix() = guestInvalid;
         return -1;
@@ -1296,8 +1400,12 @@ int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
     }
     return 0;
 }
+int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
+    return setpriority_nid_no_patch(which, who, niceval);
+}
 
-int APS5_VABI getdtablesize_nid_postfix(void) {
+
+int APS5_VABI getdtablesize_nid_no_patch(void) {
     GuestResourceLimit limit{};
     getrlimit_nid_postfix(guestRlimitNofile, &limit);
 
@@ -1309,6 +1417,10 @@ int APS5_VABI getdtablesize_nid_postfix(void) {
         return std::numeric_limits<int>::max();
     return static_cast<int>(tableSize);
 }
+int APS5_VABI getdtablesize_nid_postfix(void) {
+    return getdtablesize_nid_no_patch();
+}
+
 
 int APS5_VABI sceKernelIsTrinityMode(void) {
     return 0;
@@ -1328,23 +1440,35 @@ void APS5_VABI sceKernelGetOperationMode(int* mode, int* submode) {
         throw std::invalid_argument("sceKernelGetOperationMode: output is not writable");
 }
 
-int APS5_VABI seteuid_nid_postfix(std::uint32_t euid) {
+int APS5_VABI seteuid_nid_no_patch(std::uint32_t euid) {
     if (euid != 0)
         throw std::runtime_error("seteuid: unsupported user id " + std::to_string(euid));
     return 0;
 }
+int APS5_VABI seteuid_nid_postfix(std::uint32_t euid) {
+    return seteuid_nid_no_patch(euid);
+}
 
-int APS5_VABI setegid_nid_postfix(std::uint32_t egid) {
+
+int APS5_VABI setegid_nid_no_patch(std::uint32_t egid) {
     if (egid != 0)
         throw std::runtime_error("setegid: unsupported group id " + std::to_string(egid));
     return 0;
 }
+int APS5_VABI setegid_nid_postfix(std::uint32_t egid) {
+    return setegid_nid_no_patch(egid);
+}
 
-int APS5_VABI setuid_nid_postfix(std::uint32_t uid) {
+
+int APS5_VABI setuid_nid_no_patch(std::uint32_t uid) {
     if (uid != 0)
         throw std::runtime_error("setuid: unsupported user id " + std::to_string(uid));
     return 0;
 }
+int APS5_VABI setuid_nid_postfix(std::uint32_t uid) {
+    return setuid_nid_no_patch(uid);
+}
+
 
 int APS5_VABI setgid_nid_postfix(std::uint32_t gid) {
     if (gid != 0)
@@ -1352,7 +1476,7 @@ int APS5_VABI setgid_nid_postfix(std::uint32_t gid) {
     return 0;
 }
 
-int APS5_VABI setreuid_nid_postfix(std::uint32_t ruid, std::uint32_t euid) {
+int APS5_VABI setreuid_nid_no_patch(std::uint32_t ruid, std::uint32_t euid) {
     constexpr std::uint32_t unchanged = 0xffffffffu;
     if (ruid != 0 && ruid != unchanged)
         throw std::runtime_error("setreuid: unsupported real user id " + std::to_string(ruid));
@@ -1360,8 +1484,12 @@ int APS5_VABI setreuid_nid_postfix(std::uint32_t ruid, std::uint32_t euid) {
         throw std::runtime_error("setreuid: unsupported effective user id " + std::to_string(euid));
     return 0;
 }
+int APS5_VABI setreuid_nid_postfix(std::uint32_t ruid, std::uint32_t euid) {
+    return setreuid_nid_no_patch(ruid, euid);
+}
 
-int APS5_VABI setregid_nid_postfix(std::uint32_t rgid, std::uint32_t egid) {
+
+int APS5_VABI setregid_nid_no_patch(std::uint32_t rgid, std::uint32_t egid) {
     constexpr std::uint32_t unchanged = 0xffffffffu;
     if (rgid != 0 && rgid != unchanged)
         throw std::runtime_error("setregid: unsupported real group id " + std::to_string(rgid));
@@ -1369,6 +1497,10 @@ int APS5_VABI setregid_nid_postfix(std::uint32_t rgid, std::uint32_t egid) {
         throw std::runtime_error("setregid: unsupported effective group id " + std::to_string(egid));
     return 0;
 }
+int APS5_VABI setregid_nid_postfix(std::uint32_t rgid, std::uint32_t egid) {
+    return setregid_nid_no_patch(rgid, egid);
+}
+
 
 int APS5_VABI setresuid_nid_postfix(std::uint32_t ruid, std::uint32_t euid, std::uint32_t suid) {
     constexpr std::uint32_t unchanged = 0xffffffffu;
@@ -1392,7 +1524,7 @@ int APS5_VABI setresgid_nid_postfix(std::uint32_t rgid, std::uint32_t egid, std:
     return 0;
 }
 
-int APS5_VABI setgroups_nid_postfix(int count, const std::uint32_t* groups) {
+int APS5_VABI setgroups_nid_no_patch(int count, const std::uint32_t* groups) {
     if (static_cast<std::uint32_t>(count) > static_cast<std::uint32_t>(freebsdGroupsMax) + 1) {
         *__error_nid_postfix() = errnoInvalidArgument;
         return -1;
@@ -1419,8 +1551,12 @@ int APS5_VABI setgroups_nid_postfix(int count, const std::uint32_t* groups) {
     supplementaryGroups.swap(requested);
     return 0;
 }
+int APS5_VABI setgroups_nid_postfix(int count, const std::uint32_t* groups) {
+    return setgroups_nid_no_patch(count, groups);
+}
 
-int APS5_VABI getgroups_nid_postfix(int capacity, std::uint32_t* groups) {
+
+int APS5_VABI getgroups_nid_no_patch(int capacity, std::uint32_t* groups) {
     std::lock_guard lock(supplementaryGroupsMutex);
     const int count = static_cast<int>(supplementaryGroups.size());
     const auto size = static_cast<std::uint32_t>(capacity);
@@ -1439,6 +1575,10 @@ int APS5_VABI getgroups_nid_postfix(int capacity, std::uint32_t* groups) {
     }
     return count;
 }
+int APS5_VABI getgroups_nid_postfix(int capacity, std::uint32_t* groups) {
+    return getgroups_nid_no_patch(capacity, groups);
+}
+
 
 }
 

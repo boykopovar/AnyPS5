@@ -89,7 +89,7 @@ GuestItimerspec Remaining(Ktimer& timer) {
 
 extern "C" {
 
-int APS5_VABI ktimer_create_nid_postfix(int clock, const GuestSigevent* event, int* timerid) {
+int APS5_VABI ktimer_create_nid_no_patch(int clock, const GuestSigevent* event, int* timerid) {
     if (clock != ClockRealtime && clock != ClockMonotonic) return static_cast<int>(Fail(GuestEinval));
     if (event != nullptr) {
         if (event->notify != SigevNone && event->notify != SigevSignal && event->notify != SigevThreadId)
@@ -113,16 +113,24 @@ int APS5_VABI ktimer_create_nid_postfix(int clock, const GuestSigevent* event, i
     }
     return 0;
 }
+int APS5_VABI ktimer_create_nid_postfix(int clock, const GuestSigevent* event, int* timerid) {
+    return ktimer_create_nid_no_patch(clock, event, timerid);
+}
 
-int APS5_VABI ktimer_delete_nid_postfix(int id) {
+
+int APS5_VABI ktimer_delete_nid_no_patch(int id) {
     std::lock_guard lock(g_ktimerLock);
     Ktimer* timer = FindTimer(id);
     if (timer == nullptr) return static_cast<int>(Fail(GuestEinval));
     *timer = {};
     return 0;
 }
+int APS5_VABI ktimer_delete_nid_postfix(int id) {
+    return ktimer_delete_nid_no_patch(id);
+}
 
-int APS5_VABI ktimer_settime_nid_postfix(int id, int flags, const GuestItimerspec* value, GuestItimerspec* oldValue) {
+
+int APS5_VABI ktimer_settime_nid_no_patch(int id, int flags, const GuestItimerspec* value, GuestItimerspec* oldValue) {
     GuestItimerspec next{};
     if (!GuestCopyIn_nid_no_patch(&next, value, sizeof(next))) return static_cast<int>(Fail(GuestEfault));
     GuestItimerspec previous{};
@@ -143,8 +151,12 @@ int APS5_VABI ktimer_settime_nid_postfix(int id, int flags, const GuestItimerspe
         return static_cast<int>(Fail(GuestEfault));
     return 0;
 }
+int APS5_VABI ktimer_settime_nid_postfix(int id, int flags, const GuestItimerspec* value, GuestItimerspec* oldValue) {
+    return ktimer_settime_nid_no_patch(id, flags, value, oldValue);
+}
 
-int APS5_VABI ktimer_gettime_nid_postfix(int id, GuestItimerspec* value) {
+
+int APS5_VABI ktimer_gettime_nid_no_patch(int id, GuestItimerspec* value) {
     GuestItimerspec remaining{};
     {
         std::lock_guard lock(g_ktimerLock);
@@ -156,11 +168,19 @@ int APS5_VABI ktimer_gettime_nid_postfix(int id, GuestItimerspec* value) {
     if (!GuestCopyOut_nid_no_patch(value, &remaining, sizeof(remaining))) return static_cast<int>(Fail(GuestEfault));
     return 0;
 }
+int APS5_VABI ktimer_gettime_nid_postfix(int id, GuestItimerspec* value) {
+    return ktimer_gettime_nid_no_patch(id, value);
+}
 
-int APS5_VABI ktimer_getoverrun_nid_postfix(int id) {
+
+int APS5_VABI ktimer_getoverrun_nid_no_patch(int id) {
     std::lock_guard lock(g_ktimerLock);
     if (FindTimer(id) == nullptr) return static_cast<int>(Fail(GuestEinval));
     return 0;
 }
+int APS5_VABI ktimer_getoverrun_nid_postfix(int id) {
+    return ktimer_getoverrun_nid_no_patch(id);
+}
+
 
 }

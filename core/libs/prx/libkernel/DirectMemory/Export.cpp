@@ -1001,23 +1001,31 @@ bool APS5_VABI DirectMemoryAliased_nid_postfix(std::uintptr_t address, std::size
     return DirectMemoryAliased(address, bytes);
 }
 
-int APS5_VABI sceKernelMlock_nid_postfix(void* address, std::uint64_t length) {
+int APS5_VABI sceKernelMlock_nid_no_patch(void* address, std::uint64_t length) {
     std::uintptr_t start = 0;
     std::uintptr_t end = 0;
     if (!PageRange(address, length, start, end)) return SCE_KERNEL_ERROR_EINVAL;
     if (start == end) return 0;
     return LockHostPages(start, end);
 }
+int APS5_VABI sceKernelMlock_nid_postfix(void* address, std::uint64_t length) {
+    return sceKernelMlock_nid_no_patch(address, length);
+}
 
-int APS5_VABI sceKernelMunlock_nid_postfix(void* address, std::uint64_t length) {
+
+int APS5_VABI sceKernelMunlock_nid_no_patch(void* address, std::uint64_t length) {
     std::uintptr_t start = 0;
     std::uintptr_t end = 0;
     if (!PageRange(address, length, start, end)) return SCE_KERNEL_ERROR_EINVAL;
     if (start == end) return 0;
     return UnlockHostPages(start, end);
 }
+int APS5_VABI sceKernelMunlock_nid_postfix(void* address, std::uint64_t length) {
+    return sceKernelMunlock_nid_no_patch(address, length);
+}
 
-int APS5_VABI sceKernelMunlockall_nid_postfix() {
+
+int APS5_VABI sceKernelMunlockall_nid_no_patch() {
 #if !defined(_WIN32) && !defined(__APPLE__)
     ::munlockall();
 #endif
@@ -1052,5 +1060,9 @@ int APS5_VABI sceKernelMunlockall_nid_postfix() {
 #endif
     return 0;
 }
+int APS5_VABI sceKernelMunlockall_nid_postfix(void) {
+    return sceKernelMunlockall_nid_no_patch();
+}
+
 
 }

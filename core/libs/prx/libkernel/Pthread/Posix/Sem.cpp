@@ -116,7 +116,7 @@ static int WaitFor(PosixSemaphore* semaphore, const KernelUseconds* usec) {
 
 extern "C" {
 
-int APS5_VABI sem_init_nid_postfix(void* sem, int pshared, unsigned int value) {
+int APS5_VABI sem_init_nid_no_patch(void* sem, int pshared, unsigned int value) {
     (void)pshared;
     if (!sem || value > GUEST_SEM_VALUE_MAX) return Fail(PosixThread::GUEST_EINVAL);
     auto* semaphore = new PosixSemaphore();
@@ -124,22 +124,34 @@ int APS5_VABI sem_init_nid_postfix(void* sem, int pshared, unsigned int value) {
     std::memcpy(sem, &semaphore, sizeof(semaphore));
     return 0;
 }
+int APS5_VABI sem_init_nid_postfix(void* sem, int pshared, unsigned int value) {
+    return sem_init_nid_no_patch(sem, pshared, value);
+}
 
-int APS5_VABI sem_destroy_nid_postfix(void* sem) {
+
+int APS5_VABI sem_destroy_nid_no_patch(void* sem) {
     auto* semaphore = Get(sem);
     if (!semaphore || IsNamed(sem)) return Fail(PosixThread::GUEST_EINVAL);
     delete semaphore;
     std::memset(sem, 0, sizeof(semaphore));
     return 0;
 }
+int APS5_VABI sem_destroy_nid_postfix(void* sem) {
+    return sem_destroy_nid_no_patch(sem);
+}
 
-int APS5_VABI sem_wait_nid_postfix(void* sem) {
+
+int APS5_VABI sem_wait_nid_no_patch(void* sem) {
     auto* semaphore = Get(sem);
     if (!semaphore) return Fail(PosixThread::GUEST_EINVAL);
     return WaitFor(semaphore, nullptr);
 }
+int APS5_VABI sem_wait_nid_postfix(void* sem) {
+    return sem_wait_nid_no_patch(sem);
+}
 
-int APS5_VABI sem_trywait_nid_postfix(void* sem) {
+
+int APS5_VABI sem_trywait_nid_no_patch(void* sem) {
     auto* semaphore = Get(sem);
     if (!semaphore) return Fail(PosixThread::GUEST_EINVAL);
     std::lock_guard lock(semaphore->lock);
@@ -147,8 +159,12 @@ int APS5_VABI sem_trywait_nid_postfix(void* sem) {
     --semaphore->count;
     return 0;
 }
+int APS5_VABI sem_trywait_nid_postfix(void* sem) {
+    return sem_trywait_nid_no_patch(sem);
+}
 
-int APS5_VABI sem_timedwait_nid_postfix(void* sem, const KernelTimespec* abstime) {
+
+int APS5_VABI sem_timedwait_nid_no_patch(void* sem, const KernelTimespec* abstime) {
     auto* semaphore = Get(sem);
     if (!semaphore) return Fail(PosixThread::GUEST_EINVAL);
     ThreadCancel::Check();
@@ -164,15 +180,23 @@ int APS5_VABI sem_timedwait_nid_postfix(void* sem, const KernelTimespec* abstime
     if (!PosixThread::RelativeMicroseconds(GUEST_REALTIME_CLOCK, abstime, &usec)) return Fail(PosixThread::GUEST_EINVAL);
     return WaitFor(semaphore, &usec);
 }
+int APS5_VABI sem_timedwait_nid_postfix(void* sem, const KernelTimespec* abstime) {
+    return sem_timedwait_nid_no_patch(sem, abstime);
+}
 
-int APS5_VABI sem_reltimedwait_np_nid_postfix(void* sem, uint32_t usec) {
+
+int APS5_VABI sem_reltimedwait_np_nid_no_patch(void* sem, uint32_t usec) {
     auto* semaphore = Get(sem);
     if (!semaphore) return Fail(PosixThread::GUEST_EINVAL);
     const KernelUseconds timeout = usec;
     return WaitFor(semaphore, &timeout);
 }
+int APS5_VABI sem_reltimedwait_np_nid_postfix(void* sem, uint32_t usec) {
+    return sem_reltimedwait_np_nid_no_patch(sem, usec);
+}
 
-int APS5_VABI sem_post_nid_postfix(void* sem) {
+
+int APS5_VABI sem_post_nid_no_patch(void* sem) {
     auto* semaphore = Get(sem);
     if (!semaphore) return Fail(PosixThread::GUEST_EINVAL);
     std::lock_guard lock(semaphore->lock);
@@ -181,16 +205,24 @@ int APS5_VABI sem_post_nid_postfix(void* sem) {
     semaphore->available.NotifyOne();
     return 0;
 }
+int APS5_VABI sem_post_nid_postfix(void* sem) {
+    return sem_post_nid_no_patch(sem);
+}
 
-int APS5_VABI sem_getvalue_nid_postfix(void* sem, int* value) {
+
+int APS5_VABI sem_getvalue_nid_no_patch(void* sem, int* value) {
     auto* semaphore = Get(sem);
     if (!semaphore || !value) return Fail(PosixThread::GUEST_EINVAL);
     std::lock_guard lock(semaphore->lock);
     *value = static_cast<int>(semaphore->count);
     return 0;
 }
+int APS5_VABI sem_getvalue_nid_postfix(void* sem, int* value) {
+    return sem_getvalue_nid_no_patch(sem, value);
+}
 
-int APS5_VABI sem_setname_nid_postfix(void* sem, const char* name) {
+
+int APS5_VABI sem_setname_nid_no_patch(void* sem, const char* name) {
     if (!sem) throw std::invalid_argument("sem_setname: null semaphore");
     auto* semaphore = Get(sem);
     if (!semaphore) return Fail(GUEST_EAGAIN);
@@ -204,8 +236,12 @@ int APS5_VABI sem_setname_nid_postfix(void* sem, const char* name) {
     semaphore->named = true;
     return 0;
 }
+int APS5_VABI sem_setname_nid_postfix(void* sem, const char* name) {
+    return sem_setname_nid_no_patch(sem, name);
+}
 
-void* APS5_VABI sem_open_nid_postfix(const char* name, int flags, ...) {
+
+void* APS5_VABI sem_open_nid_no_patch(const char* name, int flags, std::uint64_t v0, std::uint64_t v1) {
     std::string nameCopy;
     if (const int error = CopyNamedPath("sem_open", name, PosixThread::GUEST_EINVAL, nameCopy)) {
         Fail(error);
@@ -217,19 +253,8 @@ void* APS5_VABI sem_open_nid_postfix(const char* name, int flags, ...) {
     }
     unsigned int value = 0;
     if ((flags & GUEST_O_CREAT) != 0) {
-#ifdef _WIN32
-        __builtin_sysv_va_list arguments;
-        __builtin_sysv_va_start(arguments, flags);
-        static_cast<void>(__builtin_va_arg(arguments, int));
-        value = static_cast<unsigned int>(__builtin_va_arg(arguments, int));
-        __builtin_sysv_va_end(arguments);
-#else
-        std::va_list arguments;
-        va_start(arguments, flags);
-        static_cast<void>(va_arg(arguments, int));
-        value = static_cast<unsigned int>(va_arg(arguments, int));
-        va_end(arguments);
-#endif
+        static_cast<void>(v0);
+        value = static_cast<unsigned int>(v1);
     }
     if (const int error = NamedFileError("sem_open", nameCopy)) {
         Fail(error);
@@ -262,8 +287,25 @@ void* APS5_VABI sem_open_nid_postfix(const char* name, int flags, ...) {
     ++object->openCount;
     return object->mapping.get();
 }
+void* APS5_VABI sem_open_nid_postfix(const char* name, int flags, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list arguments;
+    __builtin_sysv_va_start(arguments, flags);
+    const std::uint64_t v0 = __builtin_va_arg(arguments, std::uint64_t);
+    const std::uint64_t v1 = __builtin_va_arg(arguments, std::uint64_t);
+    __builtin_sysv_va_end(arguments);
+#else
+    std::va_list arguments;
+    va_start(arguments, flags);
+    const std::uint64_t v0 = va_arg(arguments, std::uint64_t);
+    const std::uint64_t v1 = va_arg(arguments, std::uint64_t);
+    va_end(arguments);
+#endif
+    return sem_open_nid_no_patch(name, flags, v0, v1);
+}
 
-int APS5_VABI sem_close_nid_postfix(void* sem) {
+
+int APS5_VABI sem_close_nid_no_patch(void* sem) {
     if (!sem) throw std::invalid_argument("sem_close: null semaphore");
     auto& named = Named();
     std::lock_guard lock(named.lock);
@@ -276,8 +318,12 @@ int APS5_VABI sem_close_nid_postfix(void* sem) {
     }
     return 0;
 }
+int APS5_VABI sem_close_nid_postfix(void* sem) {
+    return sem_close_nid_no_patch(sem);
+}
 
-int APS5_VABI sem_unlink_nid_postfix(const char* name) {
+
+int APS5_VABI sem_unlink_nid_no_patch(const char* name) {
     std::string nameCopy;
     if (const int error = CopyNamedPath("sem_unlink", name, GUEST_ENOENT, nameCopy)) return Fail(error);
     if (const int error = NamedFileError("sem_unlink", nameCopy)) return Fail(error);
@@ -286,5 +332,9 @@ int APS5_VABI sem_unlink_nid_postfix(const char* name) {
     if (named.linked.erase(nameCopy.substr(1)) == 0) return Fail(GUEST_ENOENT);
     return 0;
 }
+int APS5_VABI sem_unlink_nid_postfix(const char* name) {
+    return sem_unlink_nid_no_patch(name);
+}
+
 
 }
