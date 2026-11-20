@@ -18,9 +18,22 @@ constexpr std::int64_t NanosecondsPerSecond = 1000000000;
 struct RtcThreadState {
     std::uint8_t reserved[0x64];
     std::uint32_t isQuitting;
+    void* socketServer;
 };
 
 static_assert(offsetof(RtcThreadState, isQuitting) == 0x64);
+static_assert(offsetof(RtcThreadState, socketServer) == 0x68);
+
+void* ReadRtcThreadSocketServer(const void* thread) {
+    if (thread == nullptr) throw std::invalid_argument("rtc::Thread::socketserver: null thread");
+    void* socketServer = nullptr;
+    const auto* field = static_cast<const std::uint8_t*>(thread) + offsetof(RtcThreadState, socketServer);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&socketServer, field, sizeof(socketServer));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("rtc::Thread::socketserver: unreadable socket server");
+    return socketServer;
+}
 
 std::uint32_t ReadRtcThreadState(const void* thread) {
     if (thread == nullptr) throw std::invalid_argument("rtc::Thread::IsQuitting: null thread");
@@ -469,9 +482,8 @@ int APS5_VABI _ZN3rtc6Thread9DoDestroyEv_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3rtc6Thread12socketserverEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI _ZN3rtc6Thread12socketserverEv_nid_postfix(void* thread) {
+    return ReadRtcThreadSocketServer(thread);
 }
 
 int APS5_VABI _ZN3rtc6Thread4QuitEv_nid_postfix(void) {
