@@ -52,7 +52,13 @@ void CheckInaccessibleObjects() {
     _ZN3sce2np8JsonNull5ClearEv(const_cast<void*>(invalid));
 
     const auto overflow = reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - 0x20);
+    Require(!_ZNK3sce2np9EventFlag6IsInitEv(overflow), "overflowed event flag address fallback");
+    Require(!_ZNK3sce2np7RingBuf6IsFullEv(overflow), "overflowed ring buffer address fallback");
     Require(!_ZNK3sce2np10EventQueue6IsInitEv(overflow), "overflowed event queue address fallback");
+    Require(!_ZNK3sce2np5Mutex6IsInitEv(overflow), "overflowed mutex address fallback");
+    Require(!_ZN3sce2np3ipc10IpmiClient11IsConnectedEv(overflow), "overflowed IPMI client address fallback");
+    Require(!_ZN3sce2np7Callout10IsTimedoutEv(overflow), "overflowed callout address fallback");
+    Require(!_ZN3sce2np13RingBufMemory6IsInitEv(overflow), "overflowed ring buffer memory address fallback");
     _ZN3sce2np13NpTitleSecret5ClearEv(overflow);
 }
 
@@ -136,6 +142,12 @@ int main() {
     Require(_ZN3sce2np7Callout10IsTimedoutEv(callout.data()), "callout in positive state");
     WriteField(callout, 0x10, std::int32_t{-1});
     Require(!_ZN3sce2np7Callout10IsTimedoutEv(callout.data()), "callout in state -1");
+    WriteField(callout, 0x10, std::int32_t{-3});
+    Require(!_ZN3sce2np7Callout10IsTimedoutEv(callout.data()), "callout in state -3");
+    WriteField(callout, 0x10, std::numeric_limits<std::int32_t>::min());
+    Require(!_ZN3sce2np7Callout10IsTimedoutEv(callout.data()), "callout in state min");
+    WriteField(callout, 0x10, std::numeric_limits<std::int32_t>::max());
+    Require(_ZN3sce2np7Callout10IsTimedoutEv(callout.data()), "callout in state max");
 
     std::array<std::byte, 0x10> ringBufferMemory{};
     Require(!_ZN3sce2np13RingBufMemory6IsInitEv(ringBufferMemory.data()), "uninitialized ring buffer memory");
