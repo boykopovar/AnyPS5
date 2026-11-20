@@ -1051,6 +1051,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVrTracker>")
     endif()
 
+    add_test_executable(guest_vr_tracker_tests tests/GuestVrTracker.cpp)
+    target_include_directories(guest_vr_tracker_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_vr_tracker_tests PRIVATE libSceVrTracker libc)
+    configure_windows_unwind(guest_vr_tracker_tests)
+    add_test(NAME guest_vr_tracker COMMAND guest_vr_tracker_tests)
+    if(WIN32)
+        set_tests_properties(guest_vr_tracker PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVrTracker>")
+    endif()
+
     add_test_executable(guest_tts_core_g3_bc_unknown_returns_tests tests/GuestTtsCoreG3BcUnknownReturns.cpp)
     target_include_directories(guest_tts_core_g3_bc_unknown_returns_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_tts_core_g3_bc_unknown_returns_tests PRIVATE libSceTtsCoreG3Bc libc)
