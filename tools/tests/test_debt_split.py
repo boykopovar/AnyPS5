@@ -510,12 +510,21 @@ class DebtSplitTests(unittest.TestCase):
 
     def test_main_reports_non_git_repository(self):
         with tempfile.TemporaryDirectory() as empty_dir:
-            with patch("pathlib.Path.cwd", return_value=Path(empty_dir)):
-                with patch("sys.stderr", new_callable=io.StringIO) as stderr:
-                    with self.assertRaises(SystemExit) as cm:
-                        debt_split.main(["split"])
-                    self.assertEqual(cm.exception.code, 2)
-                    self.assertIn("not a git repository", stderr.getvalue())
+            with patch.dict(os.environ, {"GIT_CEILING_DIRECTORIES": str(Path(empty_dir).parent)}):
+                with patch("pathlib.Path.cwd", return_value=Path(empty_dir)):
+                    with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                        with self.assertRaises(SystemExit) as cm:
+                            debt_split.main(["split"])
+                        self.assertEqual(cm.exception.code, 2)
+                        self.assertIn("not a git repository", stderr.getvalue())
+
+    def test_main_reports_missing_git_executable(self):
+        with patch.object(debt_split.subprocess, "run", side_effect=FileNotFoundError(2, "No such file or directory", "git")):
+            with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                with self.assertRaises(SystemExit) as cm:
+                    debt_split.main(["split"])
+                self.assertEqual(cm.exception.code, 2)
+                self.assertIn("cannot run git", stderr.getvalue())
 
 
     def test_split_keeps_the_note_and_sub_headings_of_an_existing_debt_file(self):

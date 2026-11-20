@@ -125,6 +125,7 @@ std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes);
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes);
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes, std::uint64_t& order);
 void ForgetKnownZero(std::uint64_t address, std::size_t bytes);
+std::uint64_t KnownZeroMarks();
 void MaterializeKnownZero(std::uint64_t address, std::size_t bytes);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void()>& store);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void(std::span<std::byte>)>& store);
@@ -172,6 +173,15 @@ std::uint64_t CollectEpochBumps();
 std::uint64_t ThreadCollectEpoch();
 std::uint64_t UnwatchSerial();
 std::uint64_t CollectWritesUncached(std::uint64_t address, std::size_t bytes);
+struct GpuUseObservation {
+    std::uint64_t address = 0;
+    std::size_t bytes = 0;
+    std::uint64_t generation = 0;
+    std::uint64_t epoch = 0;
+    std::uint64_t unwatched = 0;
+    std::uint64_t mapping = 0;
+};
+void CollectWritesForGpuUse(const UnchangedQuery& range, GpuUseObservation& observation);
 struct Observation {
     enum class Status { Complete, Refused, Uncovered, Failed };
     Status status = Status::Failed;
