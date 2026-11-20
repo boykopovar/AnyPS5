@@ -67,5 +67,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_fios2_path_archive PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFios2>")
     endif()
+    add_test_executable(guest_fios2_path_mutations_tests ${LIBS_INCLUDE_DIR}/tests/GuestFios2PathMutations.cpp)
+    target_include_directories(guest_fios2_path_mutations_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_fios2_path_mutations_tests PRIVATE libSceFios2 libkernel libc)
+    configure_windows_unwind(guest_fios2_path_mutations_tests)
+    add_test(NAME guest_fios2_path_mutations COMMAND guest_fios2_path_mutations_tests)
+    set_tests_properties(guest_fios2_path_mutations PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_fios2_path_mutations PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFios2>")
+    endif()
 endif()
 
