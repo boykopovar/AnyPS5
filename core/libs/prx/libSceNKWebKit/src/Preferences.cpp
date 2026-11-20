@@ -305,6 +305,7 @@ const std::map<std::u16string_view, Definition, std::less<>>& Definitions() {
         {u"ProcessSwapOnCrossSiteNavigationEnabled", {false, FeatureKind::Testable}},
         {u"ProcessSwapOnCrossSiteWindowOpenEnabled", {false, FeatureKind::Internal}},
         {u"PunchOutWhiteBackgroundsInDarkMode", {false, FeatureKind::Boolean}},
+        {u"QTKitEnabled", {false, FeatureKind::Boolean}},
         {u"ReadableByteStreamAPIEnabled", {false, FeatureKind::Testable}},
         {u"ReferrerPolicyAttributeEnabled", {true, FeatureKind::Testable}},
         {u"ReportingEnabled", {false, FeatureKind::Testable}},
@@ -2065,6 +2066,14 @@ void APS5_VABI WKPreferencesSetPunchOutWhiteBackgroundsInDarkMode(const void* pr
 
 bool APS5_VABI WKPreferencesGetPunchOutWhiteBackgroundsInDarkMode(const void* preferencesRef) {
     return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"PunchOutWhiteBackgroundsInDarkMode");
+}
+
+void APS5_VABI WKPreferencesSetQTKitEnabled(const void* preferencesRef, bool flag) {
+    PreferencesFromRef(preferencesRef, __func__)->Set(u"QTKitEnabled", flag);
+}
+
+bool APS5_VABI WKPreferencesGetQTKitEnabled(const void* preferencesRef) {
+    return PreferencesFromRef(preferencesRef, __func__)->GetBool(u"QTKitEnabled");
 }
 
 void APS5_VABI WKPreferencesSetCaptureAudioInUIProcessEnabled(const void* preferencesRef, bool flag) {

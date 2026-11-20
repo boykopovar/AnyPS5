@@ -342,10 +342,6 @@ int APS5_VABI WKPreferencesGetAccelerated2DCanvasEnabled() {
     return 0;
 }
 
-int APS5_VABI WKPreferencesGetQTKitEnabled() {
-    return 0;
-}
-
 int APS5_VABI WKProtectionSpaceCopyCertificateInfo() {
     return 0;
 }

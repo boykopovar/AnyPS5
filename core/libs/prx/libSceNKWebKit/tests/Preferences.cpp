@@ -164,6 +164,7 @@ const BooleanCase booleanCases[]{
     {"PluginsEnabled", WKPreferencesSetPluginsEnabled, WKPreferencesGetPluginsEnabled, true},
     {"ProcessSwapOnNavigationEnabled", WKPreferencesSetProcessSwapOnNavigationEnabled, WKPreferencesGetProcessSwapOnNavigationEnabled, false},
     {"PunchOutWhiteBackgroundsInDarkMode", WKPreferencesSetPunchOutWhiteBackgroundsInDarkMode, WKPreferencesGetPunchOutWhiteBackgroundsInDarkMode, false},
+    {"QTKitEnabled", WKPreferencesSetQTKitEnabled, WKPreferencesGetQTKitEnabled, false},
     {"ReferrerPolicyAttributeEnabled", WKPreferencesSetReferrerPolicyAttributeEnabled, WKPreferencesGetReferrerPolicyAttributeEnabled, true},
     {"RemotePlaybackEnabled", WKPreferencesSetRemotePlaybackEnabled, WKPreferencesGetRemotePlaybackEnabled, false},
     {"ResourceUsageOverlayVisible", WKPreferencesSetResourceUsageOverlayVisible, WKPreferencesGetResourceUsageOverlayVisible, false},
