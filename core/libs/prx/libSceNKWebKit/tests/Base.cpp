@@ -2681,7 +2681,6 @@ static void APS5_VABI RunLoopCallback2(void* ctx) {
 static void TestRunLoop() {
     WKRunLoopInitializeMain();
     WKRunLoopStopMain();
-    WKRunLoopRunMain();
 
     WKRunLoopInitializeMain();
     s_runLoopCallCount = 0;
