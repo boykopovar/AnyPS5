@@ -1,13 +1,22 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "StencilReplay.hpp"
 #include "VulkanTestDevice.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <iostream>
 #include <span>
@@ -586,6 +595,96 @@ int main() {
             Check(even, "a four-sample bounded stencil export replaces even columns");
         } else {
             std::printf("stencil replay four-sample checks skipped: %s\n", multisampleSkip.c_str());
+        }
+        {
+            constexpr std::size_t HeapBytes = 65536;
+            constexpr std::size_t StencilOffset = 0x2000;
+            constexpr std::size_t ValueOffset = 0x8000;
+#ifdef _WIN32
+            auto* heap = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, HeapBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+            auto* heap = static_cast<std::uint8_t*>(std::aligned_alloc(HeapBytes, HeapBytes));
+#endif
+            Require(heap != nullptr, "cannot allocate the guest heap holding the depth target");
+            std::memset(heap, 0, HeapBytes);
+            const std::uint32_t value = 0x2000u;
+            std::memcpy(heap + ValueOffset, &value, sizeof(value));
+            GuestAllocations::Mutation().Add(heap, HeapBytes, true, true, true);
+            const auto heapAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(heap));
+            const auto heapDepth = [&](AgcDriver::Graphics::State& state) {
+                state.depth = AgcDriver::Graphics::DepthTarget{heapAddress, heapAddress + StencilOffset, {Width, Height}, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0};
+            };
+            const auto pointer = [](std::uint64_t address) { return std::array<std::uint32_t, 2>{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)}; };
+            constexpr std::array<std::uint32_t, 14> addressed{
+                0x7e080280u, 0xdc308000u, 0x05000004u, 0xbf8c3f70u,
+                0x7e040f00u, 0x36060481u,
+                0x7c000000u | (0xd2u << 17u) | (3u << 9u) | 0x80u,
+                0x34100488u, 0x4a101105u, 0x7e0c02ffu, 0x3f400000u,
+                0xf8001883u, (8u << 8u) | 6u,
+                0xbf810000u
+            };
+            alignas(256) const std::array<std::uint32_t, 4> record{3u, 1u, 0u, 0u};
+            const auto valuePointer = pointer(heapAddress + ValueOffset);
+            Draw(*device, PlainPixelCode, plain, replace(0xeeu), 3u, 1u, false, [&](AgcDriver::Graphics::State& state) {
+                heapDepth(state);
+                state.depthTest = true;
+                state.depthWrite = true;
+                state.depthCompare = VK_COMPARE_OP_ALWAYS;
+            });
+            Draw(*device, addressed, 0x45u, replace(), 0u, 0u, false, [&](AgcDriver::Graphics::State& state) {
+                heapDepth(state);
+                state.colors.clear();
+                state.blends.clear();
+                state.hasColorTarget = false;
+                state.depthTest = true;
+                state.depthWrite = true;
+                state.depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL;
+            }, [&](AgcDriver::Pm4::DrawParameters& draw) {
+                draw.indirect = indirectDraw(record.data(), 0x24u, 16u, 1u);
+                draw.indirect->vertexRule = IndirectDraw::Rule::Constant;
+                draw.indirect->instanceRule = IndirectDraw::Rule::Constant;
+            }, Vertices, VertexCode, valuePointer);
+            Draw(*device, PlainPixelCode, plain, equal(0x24u), 3u, 1u, false, heapDepth);
+            Check([](std::uint32_t x, std::uint32_t) { return x == 4u; }, "an address-reading fullscreen export over a depth target in a registered heap replaces each kept column's value");
+            Draw(*device, PlainPixelCode, plain, equal(0xeeu), 3u, 1u, false, heapDepth);
+            Check(odd, "an address-reading fullscreen export keeps the stencil of killed columns");
+            auto exportedDepth = Vertices;
+            for (auto& vertex : exportedDepth) vertex[2] = 0.75f;
+            Draw(*device, PlainPixelCode, plain, replace(0u), 3u, 1u, false, [&](AgcDriver::Graphics::State& state) {
+                heapDepth(state);
+                state.stencilTest = false;
+                state.depthTest = true;
+                state.depthCompare = VK_COMPARE_OP_EQUAL;
+            }, {}, exportedDepth);
+            Check(even, "an address-reading fullscreen export writes its exported depth on kept columns");
+            for (const std::size_t plane : {std::size_t{0}, StencilOffset}) {
+                const auto planeBuffer = BufferDescriptor(heap + plane, 4u, Width);
+                for (const bool addressReads : {false, true}) {
+                    constexpr std::array<std::uint32_t, 10> declared{
+                        0x7e060f00u, 0xe0302000u, 0x80000603u, 0xbf8c3f70u,
+                        0x7e0e02f2u, 0xf8000082u, 6u << 8u,
+                        0xf800180fu, 0x07070707u, 0xbf810000u
+                    };
+                    constexpr std::array<std::uint32_t, 14> declaredAndAddressed{
+                        0x7e080280u, 0xdc308000u, 0x05040004u,
+                        0x7e060f00u, 0xe0302000u, 0x80000603u, 0xbf8c3f70u,
+                        0x4a0c0d05u,
+                        0x7e0e02f2u, 0xf8000082u, 6u << 8u,
+                        0xf800180fu, 0x07070707u, 0xbf810000u
+                    };
+                    std::vector<std::uint32_t> data(planeBuffer.begin(), planeBuffer.end());
+                    if (addressReads) data.insert(data.end(), valuePointer.begin(), valuePointer.end());
+                    bool planeRefused = false;
+                    try {
+                        if (addressReads) Draw(*device, declaredAndAddressed, exported, replace(), 3u, 1u, false, heapDepth, {}, Vertices, VertexCode, data);
+                        else Draw(*device, declared, exported, replace(), 3u, 1u, false, heapDepth, {}, Vertices, VertexCode, data);
+                    } catch (const std::exception& error) {
+                        planeRefused = std::string_view(error.what()).find("depth or stencil feedback reads") != std::string_view::npos;
+                        if (!planeRefused) throw;
+                    }
+                    Require(planeRefused, plane == 0u ? (addressReads ? "an address-reading export with a buffer over its own depth plane was not refused" : "an export with a buffer over its own depth plane was not refused") : (addressReads ? "an address-reading export with a buffer over its own stencil plane was not refused" : "an export with a buffer over its own stencil plane was not refused"));
+                }
+            }
         }
         std::puts("stencil replay tests passed");
         return 0;
