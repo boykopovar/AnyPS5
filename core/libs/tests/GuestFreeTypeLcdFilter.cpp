@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -56,5 +57,9 @@ int main() {
     Require(Rejects([&] { FT_Library_SetLcdFilterWeights_nid_postfix(badLibrary, nullptr); }));
     Require(Rejects([&] { FT_Library_SetLcdFilterWeights_nid_postfix(&library, badWeights); }));
     Require(Rejects([&] { FT_Library_SetLcdFilterWeights_nid_postfix(nullptr, badWeights); }));
+    alignas(std::max_align_t) std::array<std::byte, 64> misalignedStorage{};
+    auto* const misaligned = reinterpret_cast<GuestLibrary*>(misalignedStorage.data() + 1);
+    Require(Rejects([&] { FT_Library_SetLcdFilter_nid_postfix(misaligned, FT_LCD_FILTER_DEFAULT); }));
+    Require(Rejects([&] { FT_Library_SetLcdFilterWeights_nid_postfix(misaligned, weights.data()); }));
     Require(FT_Done_FreeType(library.host) == 0 && FT_Done_FreeType(native) == 0);
 }
