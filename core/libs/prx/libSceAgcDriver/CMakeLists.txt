@@ -467,21 +467,21 @@ set(agcDriverSources
         
         
         
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderAddressResources.cpp
         
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MapImportGate.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ResidentMirror.cpp
+        
+        
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ReferenceStorage.cpp
         
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BufferAddress.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DescriptorValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/State.cpp
         
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestTextureResource.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestSamplerResource.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/TextureFormat.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DccMetadata.cpp
+        
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/TextureTiling.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MultisampleTextureLayout.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/TextureDetiler.cpp
@@ -1562,4 +1562,56 @@ get_target_property(libSceAgcDriver_PipelineJournal_Chunk01_incdirs libSceAgcDri
 if(libSceAgcDriver_PipelineJournal_Chunk01_incdirs)
     target_include_directories(libSceAgcDriver_PipelineJournal_Chunk01_PipelineJournal_Chunk01 PRIVATE ${libSceAgcDriver_PipelineJournal_Chunk01_incdirs})
     target_include_directories(libSceAgcDriver_PipelineJournal_Chunk01_PipelineJournal_Chunk02 PRIVATE ${libSceAgcDriver_PipelineJournal_Chunk01_incdirs})
+endif()
+
+# --- small-size libraries split from MapImportGate.cpp ---
+add_library(libSceAgcDriver_MapImportGate_Chunk01 STATIC Graphics/src/chunks/MapImportGate_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_MapImportGate_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_MapImportGate_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from TextureFormat.cpp ---
+add_library(libSceAgcDriver_TextureFormat_Chunk01 STATIC Graphics/src/chunks/TextureFormat_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_TextureFormat_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_TextureFormat_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from DccMetadata.cpp ---
+add_library(libSceAgcDriver_DccMetadata_Chunk01 STATIC Graphics/src/chunks/DccMetadata_Chunk01.cpp)
+add_library(libSceAgcDriver_DccMetadata_Chunk02 STATIC Graphics/src/chunks/DccMetadata_Chunk02.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_DccMetadata_Chunk01 libSceAgcDriver_DccMetadata_Chunk02)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_DccMetadata_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_DccMetadata_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from BufferAddress.cpp ---
+add_library(libSceAgcDriver_BufferAddress_Chunk01 STATIC Graphics/src/chunks/BufferAddress_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_BufferAddress_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_BufferAddress_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from ShaderAddressResources.cpp ---
+add_library(libSceAgcDriver_ShaderAddressResources_Chunk01 STATIC Graphics/src/chunks/ShaderAddressResources_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_ShaderAddressResources_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_ShaderAddressResources_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from ResidentMirror.cpp ---
+add_library(libSceAgcDriver_ResidentMirror_Chunk01 STATIC Graphics/src/chunks/ResidentMirror_Chunk01.cpp)
+add_library(libSceAgcDriver_ResidentMirror_Chunk02 STATIC Graphics/src/chunks/ResidentMirror_Chunk02.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_ResidentMirror_Chunk01 libSceAgcDriver_ResidentMirror_Chunk02)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_ResidentMirror_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ResidentMirror_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
 endif()
