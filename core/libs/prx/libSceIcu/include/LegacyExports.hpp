@@ -430,7 +430,6 @@ int APS5_VABI sceIcuLegacyUnknown_9sXRmxOZtsY_nid_no_patch();
 int APS5_VABI _ZN6icu_6813UnicodeString9setCharAtEiDs_nid_postfix();
 int APS5_VABI uenum_openFromStringEnumeration_nid_postfix();
 int APS5_VABI _ZN6icu_6817StringEnumeration8setCharsEPKciR10UErrorCode_nid_postfix();
-int APS5_VABI ucnv_getDefaultName_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_AATyPI2mYE0_nid_no_patch();
 int APS5_VABI _ZNK6icu_6815Normalizer2Impl21isCanonSegmentStarterEi_nid_postfix();
 int APS5_VABI _ZN6icu_686Locale21getTraditionalChineseEv_nid_postfix();
@@ -1474,7 +1473,6 @@ int APS5_VABI _ZN6icu_689LocaleKeyC2ERKNS_13UnicodeStringES3_PS2_i_nid_postfix()
 int APS5_VABI ucnv_swapAliases_nid_postfix();
 int APS5_VABI _ZN6icu_6813UnicodeFilter7setDataEPKNS_23TransliterationRuleDataE_nid_postfix();
 int APS5_VABI _ZNK6icu_689ErrorCode9errorNameEv_nid_postfix();
-int APS5_VABI ucnv_setDefaultName_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_e7ZvEjJf4To_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown_e7dHslq11OU_nid_no_patch();
 int APS5_VABI _ZN6icu_6818UnicodeSetIteratorC2ERKNS_10UnicodeSetE_nid_postfix();
