@@ -682,6 +682,9 @@ void RunRecordRangeTests() {
     const ShaderRecompiler::ImageTableRecordLayout high{top - Stride * 4u + 1u, Stride, 16u};
     Require(high.KeysOverlapping(high.start + Stride * 3u + 4u, 1000u, 4u) == Keys{3u, 4u}, "image table records: a store running past the top of the address space did not select the last record");
     Require(high.KeysOverlapping(high.start, Stride * 4u, 4u) == Keys{0u, 4u}, "image table records: a store ending at the top of the address space did not select all four records");
+    const ShaderRecompiler::ImageTableRecordLayout last{top, Stride, 16u};
+    Require(last.KeysOverlapping(top, 1u, 4u) == Keys{0u, 1u}, "image table records: a one-byte store at the last address did not select the record that starts there");
+    Require(last.KeysOverlapping(top - 10u, 11u, 4u) == Keys{0u, 1u}, "image table records: a store ending at the last address did not select the record that starts there");
     const ShaderRecompiler::ImageTableRecordLayout empty{0x1000u, Stride, 0u};
     const auto [emptyFirst, emptyPast] = empty.KeysOverlapping(0x1000u + Stride * 2u, 10u, 64u);
     Require(emptyFirst == emptyPast, "image table records: a store over records of zero bytes selected keys");
