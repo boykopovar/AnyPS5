@@ -1238,6 +1238,14 @@ int APS5_VABI dup_nid_postfix(int d) {
     return duplicate;
 }
 
+int APS5_VABI sceKernelRdup(int pid, int fd) {
+    if (pid != 0 && pid != getpid_nid_postfix())
+        NotImplemented_nid_no_patch("sceKernelRdup: a pid other than the caller's and 0");
+    if (fd < 0) return SCE_KERNEL_ERROR_EBADF;
+    const int duplicate = dup_nid_postfix(fd);
+    return duplicate < 0 ? SceErrorFromErrno(*__error_nid_postfix()) : duplicate;
+}
+
 int APS5_VABI dup2_nid_postfix(int from, int to) {
     if (from < 0 || to < 0) return PosixFailure(GUEST_EBADF);
     {
