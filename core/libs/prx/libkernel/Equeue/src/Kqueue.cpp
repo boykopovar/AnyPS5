@@ -8,6 +8,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/HostStreams.hpp"
 #include "prx/libkernel/File/include/RandomDevice.hpp"
+#include "prx/libkernel/Semaphore/include/Ksem.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
@@ -327,6 +328,11 @@ int AddKqueueKnote(const KernelEqueueRef& queue, const KernelEqueueRef& watched,
 
 int AddDescriptorKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
     const int descriptor = static_cast<int>(change.ident);
+    if (IsKsemDescriptor(descriptor)) {
+        change.fflags = 0;
+        change.data = 0;
+        return GUEST_EINVAL;
+    }
     if (const auto watched = FindKqueue(descriptor)) {
         if (change.filter != EVFILT_READ) {
             return GUEST_EINVAL;

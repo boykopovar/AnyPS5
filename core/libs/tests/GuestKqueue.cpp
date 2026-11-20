@@ -210,6 +210,45 @@ static void BadPointersFaultAndBatchesFill() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void KsemReadWrite() {
+    const int kq = kqueue_nid_postfix();
+    Require(kq >= 0);
+    std::intptr_t id = -1;
+    Require(ksem_init_nid_postfix(&id, 0) == 0 && id >= 0);
+    const auto ident = static_cast<std::uintptr_t>(id);
+    for (const std::int16_t filter : {EvfiltRead, EvfiltWrite}) {
+        RequireFailure(Apply(kq, Change(ident, filter, EvAdd)), GuestEinval);
+        const KernelEvent attach = Change(ident, filter, EvAdd, 7, 9);
+        KernelEvent failed[1]{};
+        Require(kevent_nid_postfix(kq, &attach, 1, failed, 1, nullptr) == 1);
+        Require(failed[0].ident == ident && failed[0].filter == filter && failed[0].flags == EvError);
+        Require(failed[0].data == GuestEinval && failed[0].fflags == 0);
+        RequireFailure(Apply(kq, Change(ident, filter, EvDelete)), GuestEnoent);
+    }
+    Require(ksem_destroy_nid_postfix(id) == 0);
+#ifdef _WIN32
+    Require(_close(0) == 0);
+#else
+    Require(::close(0) == 0);
+#endif
+    std::intptr_t first = -1;
+    Require(ksem_init_nid_postfix(&first, 0) == 0 && first == 0);
+    RequireFailure(Apply(kq, Change(0, EvfiltRead, EvAdd)), GuestEinval);
+    const KernelEvent attach = Change(0, EvfiltRead, EvAdd, 7, 9);
+    KernelEvent failed[1]{};
+    Require(kevent_nid_postfix(kq, &attach, 1, failed, 1, nullptr) == 1);
+    Require(failed[0].ident == 0 && failed[0].flags == EvError && failed[0].data == GuestEinval && failed[0].fflags == 0);
+#ifdef _WIN32
+    const int null = _open("NUL", _O_RDONLY);
+#else
+    const int null = ::open("/dev/null", O_RDONLY);
+#endif
+    Require(null > 0 && dup2_nid_postfix(null, 0) == 0 && close_nid_postfix(null) == 0);
+    int value = -1;
+    Require(ksem_getvalue_nid_postfix(0, &value) == -1 && *__error_nid_postfix() == GuestEinval);
+    Require(close_nid_postfix(kq) == 0);
+}
+
 static void KqueueDescriptorMetadata() {
     constexpr int GuestEnotty = 25;
     constexpr std::uint64_t Fionread = 0x4004667f;
@@ -1964,6 +2003,7 @@ int main(int argc, char** argv) {
     KqueueDescriptorOperations();
     KqueueDescriptorMetadata();
     Timers();
+    KsemReadWrite();
     TimerReadd();
     UnsupportedFilters();
     ProcdescOnFiles();
