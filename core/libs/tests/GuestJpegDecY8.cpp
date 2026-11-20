@@ -27,6 +27,24 @@ std::int32_t APS5_VABI ReadChunk(JpegDecInputChunk* chunk, void* argument) {
     return 0;
 }
 
+struct FragmentSource {
+    const std::vector<std::uint8_t>& bytes;
+    std::size_t chunkSize;
+    std::size_t offset = 0;
+    std::size_t calls = 0;
+};
+
+std::int32_t APS5_VABI ReadFragment(JpegDecInputChunk* chunk, void* argument) {
+    auto& source = *static_cast<FragmentSource*>(argument);
+    ++source.calls;
+    if (source.offset == source.bytes.size()) return 0;
+    const auto count = std::min(source.chunkSize, source.bytes.size() - source.offset);
+    chunk->data = source.bytes.data() + source.offset;
+    chunk->size = static_cast<std::uint32_t>(count);
+    source.offset += count;
+    return 0;
+}
+
 void Check(std::uint32_t channels, std::uint16_t scale) {
     constexpr std::uint32_t width = 19, height = 11;
     constexpr std::uint8_t sentinel = 0xCD;
@@ -111,6 +129,54 @@ void Check(std::uint32_t channels, std::uint16_t scale) {
             Require(sceJpegDecDecodeWithInputControl(handle, &stream, nullptr) == invalidParam);
             Require(std::all_of(output.begin(), output.end(), [](auto byte) { return byte == sentinel; }));
         }
+    }
+    std::vector<std::uint8_t> streamed = jpeg;
+    const std::uint8_t sos[] = {0xFF, 0xDA};
+    const auto scan = std::search(streamed.begin(), streamed.end(), sos, sos + 2);
+    Require(scan != streamed.end());
+    constexpr std::size_t commentBytes = 3000;
+    std::vector<std::uint8_t> comment(commentBytes + 4, 0x5A);
+    comment[0] = 0xFF;
+    comment[1] = 0xFE;
+    comment[2] = static_cast<std::uint8_t>((commentBytes + 2) >> 8);
+    comment[3] = static_cast<std::uint8_t>(commentBytes + 2);
+    streamed.insert(scan, comment.begin(), comment.end());
+    Require(streamed.size() > 0x800);
+    FragmentSource source{streamed, std::size_t{64}};
+    JpegDecInputControlParam stream{};
+    stream.input = ReadFragment;
+    stream.input_argument = &source;
+    stream.operation = 0x10;
+    stream.down_scale = scale;
+    JpegDecImageInfo parsed{};
+    Require(sceJpegDecDecodeWithInputControl(handle, &stream, &parsed) == 0);
+    Require(std::memcmp(&parsed, &expectedInfo, sizeof(parsed)) == 0);
+    Require(source.calls > 1 && source.offset < streamed.size());
+    const auto callsAfterParse = source.calls;
+    std::vector<std::uint8_t> shortOutput(outWidth * outHeight - 1, sentinel);
+    stream.operation = 0x20;
+    stream.pixel_format = 11;
+    stream.image_pitch = 0;
+    stream.image_mem_addr = shortOutput.data();
+    stream.image_mem_size = static_cast<std::uint32_t>(shortOutput.size());
+    Require(sceJpegDecDecodeWithInputControl(handle, &stream, nullptr) == invalidSize);
+    Require(source.calls == callsAfterParse);
+    Require(std::all_of(shortOutput.begin(), shortOutput.end(), [](auto byte) { return byte == sentinel; }));
+    const std::uint32_t retryPitch = outWidth + 2;
+    std::vector<std::uint8_t> output(retryPitch * outHeight + 2, sentinel);
+    stream.image_pitch = retryPitch;
+    stream.image_mem_addr = output.data() + 1;
+    Require(reinterpret_cast<std::uintptr_t>(stream.image_mem_addr) % 4 != 0);
+    stream.image_mem_size = retryPitch * outHeight;
+    Require(sceJpegDecDecodeWithInputControl(handle, &stream, nullptr) == result);
+    Require(source.calls > callsAfterParse);
+    Require(output.front() == sentinel && output.back() == sentinel);
+    for (std::uint32_t y = 0; y < outHeight; ++y) {
+        for (std::uint32_t x = 0; x < outWidth; ++x) {
+            const auto* rgb = rgba.data() + (y * outWidth + x) * 4;
+            Require(output[1 + y * retryPitch + x] == (77 * rgb[0] + 150 * rgb[1] + 29 * rgb[2]) >> 8);
+        }
+        for (auto x = outWidth; x < retryPitch; ++x) Require(output[1 + y * retryPitch + x] == sentinel);
     }
     Require(sceJpegDecDelete(handle) == 0);
 }
