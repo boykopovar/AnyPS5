@@ -347,6 +347,7 @@ std::optional<File::PositionedTransferLock> File::IoPositionedTransfer(int descr
         entry.changed.notify_all();
     }, entry.get());
     std::unique_lock lock(entry->mutex);
+    if (entry->held) FileStreamCloseEventForTest_nid_no_patch(descriptor, 1);
     entry->changed.wait(lock, [&] { return !entry->held || ThreadCancel::IoInterrupted(); });
     if (ThreadCancel::IoInterrupted()) {
         errno = EINTR;

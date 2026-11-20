@@ -616,19 +616,26 @@ static void PipeVectors() {
 }
 
 static void PositionedRelease() {
+    static std::atomic<int> watched{-1};
+    static std::atomic<bool> waiting{false};
     std::FILE* file = OpenTemporary();
     Require(std::fputc('x', file) == 'x' && std::fseek(file, 0, SEEK_SET) == 0, "seed positioned probe file");
     const int input = NativeDescriptor(file);
     const int alias = dup_nid_postfix(input);
     Require(alias >= 0, "duplicate positioned probe descriptor");
     auto positioned = File::LockPositionedTransfer(input);
+    watched.store(alias);
+    FileStreamSetCloseHookForTest_nid_no_patch([](int descriptor, int event) {
+        if (descriptor == watched.load() && event == 1) waiting.store(true);
+    });
     BlockedRead read{alias};
     Pthread reader = nullptr;
     Require(scePthreadCreate(&reader, nullptr, Reader, &read, nullptr) == 0, "start positioned probe reader");
-    Require(Registered(reader) && !reader->_finished.load(), "aliased read did not wait for positioned ownership");
+    Require(Observe([] { return waiting.load(); }), "aliased read did not wait for positioned ownership");
     positioned.unlock();
     Require(Observe([&] { return reader->_finished.load(); }), "release did not wake positioned probe reader");
     Require(scePthreadJoin(reader, nullptr) == 0, "join positioned probe reader");
+    FileStreamSetCloseHookForTest_nid_no_patch(nullptr);
     Require(read.result == 1 && read.byte == 'x', "positioned probe read lost its byte");
     Require(close_nid_postfix(alias) == 0 && std::fclose(file) == 0, "close positioned probe file");
 }
