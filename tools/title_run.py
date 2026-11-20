@@ -782,11 +782,18 @@ def validate_layout(args, found, ids, titles, source, platform, packages=None):
         check_work_directories(work, args.out, protected_directories, checks)
 
 
+def remove_read_only(function, path, error):
+    if os.name != "nt" or linked_path(Path(path)):
+        raise error[1] if isinstance(error, tuple) else error
+    os.chmod(path, stat.S_IWRITE)
+    function(path)
+
+
 def reset_work(work):
     if linked_path(work):
         raise OSError(f"unsafe linked work directory: {work}")
     if work.exists():
-        shutil.rmtree(work)
+        shutil.rmtree(work, **{"onexc" if sys.version_info >= (3, 12) else "onerror": remove_read_only})
     work.mkdir(parents=True)
 
 
