@@ -2200,6 +2200,7 @@ int APS5_VABI sceKernelFutimes(int d, const KernelTimeval* times) {
             if (times[i].tv_usec < 0 || times[i].tv_usec >= 1000000) return SceErrorFromErrno(GUEST_EINVAL);
         }
     }
+    if (IsKqueueDescriptor_nid_no_patch(d)) return SceErrorFromErrno(GUEST_EINVAL);
     if (NativeFutimes(d, times) != 0) return SceErrorFromErrno(errno);
     return 0;
 }

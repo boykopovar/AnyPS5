@@ -1948,6 +1948,9 @@ static void KqueueDescriptorOperations() {
     RequireFailure(fsync_nid_postfix(kq), GuestEinval);
     RequireFailure(fdatasync_nid_postfix(kq), GuestEinval);
     RequireFailure(flock_nid_postfix(kq, 1), GuestEopnotsupp);
+    RequireFailure(futimes_nid_postfix(kq, nullptr), GuestEinval);
+    const KernelTimeval times[2] = {{1, 0}, {2, 0}};
+    Require(sceKernelFutimes(kq, times) == SceEinval);
     Require(close_nid_postfix(kq) == 0);
 }
 
