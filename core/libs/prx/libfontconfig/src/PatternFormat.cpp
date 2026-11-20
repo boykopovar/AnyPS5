@@ -195,13 +195,7 @@ FcChar8* FormatDowncase(const FcChar8* text) {
     return CopyText(FontconfigDowncase_nid_no_patch(reinterpret_cast<const char*>(text)));
 }
 const char* LastSlash(const FcChar8* text) {
-    const auto* value = reinterpret_cast<const char*>(text);
-    const auto* slash = std::strrchr(value, '/');
-#ifdef _WIN32
-    const auto* backslash = std::strrchr(value, '\\');
-    if (backslash && (!slash || backslash > slash)) slash = backslash;
-#endif
-    return slash;
+    return std::strrchr(reinterpret_cast<const char*>(text), '/');
 }
 FcChar8* FormatBasename(const FcChar8* text) {
     const auto* slash = LastSlash(text);

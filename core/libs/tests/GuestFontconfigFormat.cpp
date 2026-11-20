@@ -76,6 +76,12 @@ int main() {
     Expect(nullptr, "%{missing:-file|dirname}", ".");
     Expect(nullptr, "%{missing:-/file|dirname}", "");
     Expect(nullptr, "%{missing:-/dir/|basename}", "");
+    Expect(nullptr, "%{missing:-a\\\\b.ttf|basename}|%{missing:-a\\\\b.ttf|dirname}", "a\\b.ttf|.");
+    auto* backslashes = FcPatternCreate();
+    CHECK(backslashes);
+    CHECK(FcPatternAddString(backslashes, "file", Text("/fonts\\a/b\\c.ttf")));
+    Expect(backslashes, "%{file|basename}|%{file|dirname}", "b\\c.ttf|/fonts\\a");
+    FcPatternDestroy_nid_postfix(backslashes);
     Expect(pattern, "%{family|downcase|delete( )}", "dejavusans,other");
     Expect(pattern, "%{family|translate(aeiou,X)}", "DXjXVX SXns,OthXr");
     Expect(pattern, "%{family|escape(_ )}", "DejaVu_ Sans,Other");
