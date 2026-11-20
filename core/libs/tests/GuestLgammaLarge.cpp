@@ -1,7 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestCpu.hpp"
 #include <array>
-#include <cfenv>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -450,6 +449,9 @@ static constexpr GammaCase Cases[] = {
     }}},
 };
 
+constexpr int GuestInexact = 0x20;
+constexpr int GuestAllExceptions = 0x3f;
+
 #ifdef __linux__
 static int* TrapError;
 static unsigned TrapPrecision;
@@ -457,7 +459,7 @@ static unsigned TrapPrecision;
 static void FirstTrap(int, siginfo_t* info, void* context) {
     const auto* state = static_cast<ucontext_t*>(context)->uc_mcontext.fpregs;
     const unsigned flags = (state->swd | state->mxcsr) & 0x3fu;
-    const bool correct = info->si_code == FPE_FLTRES && flags == FE_INEXACT && *TrapError == 91 && (state->cwd & 0xf00u) == TrapPrecision;
+    const bool correct = info->si_code == FPE_FLTRES && flags == GuestInexact && *TrapError == 91 && (state->cwd & 0xf00u) == TrapPrecision;
     _exit(correct ? 0 : 1);
 }
 
@@ -475,7 +477,7 @@ static int CheckFirstTrap() {
             TrapPrecision = precision;
             GuestCpu::X87ClearExceptions();
             GuestCpu::SetMxcsr((GuestCpu::Mxcsr() & ~0x3fu) | 0x1f80u);
-            const auto control = static_cast<std::uint16_t>(((GuestCpu::X87Control() & ~0xf00u) | precision | 0x3fu) & ~FE_INEXACT);
+            const auto control = static_cast<std::uint16_t>(((GuestCpu::X87Control() & ~0xf00u) | precision | 0x3fu) & ~static_cast<unsigned>(GuestInexact));
             *TrapError = 91;
             GuestCpu::SetX87Control(control);
             const volatile long double result = lgammal_nid_postfix(0x1p16380L);
@@ -515,7 +517,7 @@ int main(int argc, char** argv) {
             GuestCpu::SetMxcsr(GuestCpu::Mxcsr() | 0x1f80u);
             feclearexcept_nid_postfix(0x3f);
             const long double result = lgammal_nid_postfix(input);
-            const int flags = fetestexcept_nid_postfix(FE_ALL_EXCEPT);
+            const int flags = fetestexcept_nid_postfix(GuestAllExceptions);
             std::uint64_t mantissa{};
             std::uint16_t exponent{};
             std::memcpy(&mantissa, &result, sizeof(mantissa));
