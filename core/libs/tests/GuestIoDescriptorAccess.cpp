@@ -615,6 +615,24 @@ static void PipeVectors() {
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(alias) == 0 && close_nid_postfix(pipe[1]) == 0, "close vector race pipe");
 }
 
+static void PositionedRelease() {
+    std::FILE* file = OpenTemporary();
+    Require(std::fputc('x', file) == 'x' && std::fseek(file, 0, SEEK_SET) == 0, "seed positioned probe file");
+    const int input = NativeDescriptor(file);
+    const int alias = dup_nid_postfix(input);
+    Require(alias >= 0, "duplicate positioned probe descriptor");
+    auto positioned = File::LockPositionedTransfer(input);
+    BlockedRead read{alias};
+    Pthread reader = nullptr;
+    Require(scePthreadCreate(&reader, nullptr, Reader, &read, nullptr) == 0, "start positioned probe reader");
+    Require(Registered(reader) && !reader->_finished.load(), "aliased read did not wait for positioned ownership");
+    positioned.unlock();
+    Require(Observe([&] { return reader->_finished.load(); }), "release did not wake positioned probe reader");
+    Require(scePthreadJoin(reader, nullptr) == 0, "join positioned probe reader");
+    Require(read.result == 1 && read.byte == 'x', "positioned probe read lost its byte");
+    Require(close_nid_postfix(alias) == 0 && std::fclose(file) == 0, "close positioned probe file");
+}
+
 static void CloseProgress() {
     int pipe[2]{};
     Require(pipe_nid_postfix(pipe) == 0, "create close-progress pipe");
@@ -830,6 +848,7 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "append_stream") == 0) AppendOwnership(true);
     else if (std::strcmp(argv[1], "close_progress") == 0) CloseProgress();
     else if (std::strcmp(argv[1], "position_cancel") == 0) AccessCancellation(true);
+    else if (std::strcmp(argv[1], "position_release") == 0) PositionedRelease();
     else if (std::strcmp(argv[1], "pipe_vectors") == 0) PipeVectors();
 #endif
 #ifndef _WIN32

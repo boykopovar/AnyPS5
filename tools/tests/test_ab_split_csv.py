@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ab_split
 import ab_split_csv
 from test_ab_split import log
@@ -77,6 +78,19 @@ class AbCsvTests(unittest.TestCase):
                     self.assertEqual(completed.returncode, 0, completed.stderr)
                     expected = ab_split_csv.render(json.loads(original.stdout)).encode("utf-8")
                     self.assertEqual(completed.stdout, expected)
+
+    def test_render_without_metrics_is_header_only(self):
+        text = ab_split_csv.render({"config": "c", "phases": [], "metrics": []})
+        self.assertEqual(text, ",".join(ab_split_csv.COLUMNS) + "\r\n")
+
+    def test_render_keeps_full_noise_and_blank_missing_values(self):
+        metric = {"metric": "m", "a": 1.5, "b": None, "change": None, "change_pct": None,
+                  "noise": {"mean": 0.5, "se": 0.25, "sd": 0.75, "n": 4}}
+        result = {"config": "cfg", "phases": [1, 2, 3], "metrics": [metric]}
+        rows = list(csv.DictReader(io.StringIO(ab_split_csv.render(result), newline="")))
+        self.assertEqual(rows, [{"config": "cfg", "phases": "3", "metric": "m", "a": "1.5", "b": "",
+                                 "change": "", "change_pct": "", "noise_mean": "0.5",
+                                 "noise_se": "0.25", "noise_sd": "0.75", "noise_n": "4"}])
 
     def test_invalid_inputs_emit_no_csv(self):
         with tempfile.TemporaryDirectory() as directory:

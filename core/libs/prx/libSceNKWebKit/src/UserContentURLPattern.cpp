@@ -1,5 +1,8 @@
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
+#include "prx/libSceNKWebKit/include/UrlParserExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 
 namespace {
 
@@ -64,58 +67,36 @@ bool WildcardMatchesPath(std::u16string_view pattern, std::u16string_view path) 
     return pIndex == pattern.size();
 }
 
+std::u16string Units(const NKWebKit::WtfAbi::StringView& view) {
+    std::u16string text;
+    text.reserve(view.length);
+    for (unsigned index = 0; index < view.length; ++index) text.push_back(NKWebKit::WtfAbi::CodeUnitAt(view, index));
+    return text;
+}
+
 bool MatchesURL(const NKWebKit::UserContentURLPattern* pattern, const NKWebKit::URL* url) {
     if (!pattern || !pattern->valid || !url) return false;
-    const auto decoded = NKWebKit::DecodeUtf8(url->text.data(), url->text.size());
-    if (!decoded.has_value()) return false;
-    const std::u16string_view urlString = *decoded;
-    const auto schemeEnd = urlString.find(u"://");
-    if (schemeEnd == std::u16string_view::npos) return false;
-    const auto urlScheme = urlString.substr(0, schemeEnd);
+    const NKWebKit::WtfAbi::String input = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(url->text.c_str()));
+    const NKWebKit::WtfAbi::URL base{};
+    NKWebKit::WtfAbi::URL parsed{};
+    _ZN3WTF3URLC2ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE(&parsed, &base, &input, nullptr);
+    const NKWebKit::WtfAbi::String owner(parsed.impl);
+    if (!(parsed.bits & 1)) return false;
+    const std::u16string urlScheme = Units(_ZNK3WTF3URL8protocolEv(&parsed));
+    const std::u16string urlHost = Units(_ZNK3WTF3URL4hostEv(&parsed));
+    const std::u16string urlPath = Units(_ZNK3WTF3URL4pathEv(&parsed));
     if (pattern->scheme == u"*") {
-        if (!EqualLettersIgnoringASCIICase(urlScheme, u"http") && !EqualLettersIgnoringASCIICase(urlScheme, u"https"))
-            return false;
+        if (urlScheme != u"http" && urlScheme != u"https") return false;
     } else if (!EqualLettersIgnoringASCIICase(urlScheme, pattern->scheme)) {
         return false;
     }
-    const bool fileScheme = EqualLettersIgnoringASCIICase(pattern->scheme, u"file");
-    const auto hostStart = schemeEnd + 3;
-    const auto authEnd = urlString.find_first_of(u"/?#", hostStart);
-    std::u16string_view authority;
-    std::u16string_view urlPath;
-    if (authEnd == std::u16string_view::npos) {
-        authority = urlString.substr(hostStart);
-        urlPath = u"/";
-    } else if (urlString[authEnd] == u'/') {
-        authority = urlString.substr(hostStart, authEnd - hostStart);
-        const auto queryOrFragment = urlString.find_first_of(u"?#", authEnd);
-        urlPath = (queryOrFragment == std::u16string_view::npos) ? urlString.substr(authEnd) : urlString.substr(authEnd, queryOrFragment - authEnd);
-    } else {
-        authority = urlString.substr(hostStart, authEnd - hostStart);
-        urlPath = u"/";
-    }
-    const auto atPos = authority.rfind(u'@');
-    const auto hostAndPort = (atPos == std::u16string_view::npos) ? authority : authority.substr(atPos + 1);
-    std::u16string_view urlHost;
-    if (hostAndPort.starts_with(u'[')) {
-        const auto closeBracket = hostAndPort.find(u']');
-        urlHost = (closeBracket != std::u16string_view::npos) ? hostAndPort.substr(0, closeBracket + 1) : hostAndPort;
-    } else {
-        const auto portStart = hostAndPort.find(u':');
-        urlHost = (portStart == std::u16string_view::npos) ? hostAndPort : hostAndPort.substr(0, portStart);
-    }
-    if (!fileScheme) {
-        if (pattern->host.empty()) {
-            if (!pattern->matchSubdomains) return false;
-        } else if (pattern->matchSubdomains) {
-            if (!EqualLettersIgnoringASCIICase(urlHost, pattern->host)) {
-                if (urlHost.size() <= pattern->host.size() + 1) return false;
-                if (urlHost[urlHost.size() - pattern->host.size() - 1] != u'.') return false;
-                if (!EqualLettersIgnoringASCIICase(urlHost.substr(urlHost.size() - pattern->host.size()), pattern->host))
-                    return false;
-            }
-        } else if (!EqualLettersIgnoringASCIICase(urlHost, pattern->host)) {
-            return false;
+    if (!EqualLettersIgnoringASCIICase(urlHost, pattern->host)) {
+        if (!pattern->matchSubdomains) return false;
+        if (!pattern->host.empty()) {
+            if (urlHost.size() <= pattern->host.size()) return false;
+            if (urlHost[urlHost.size() - pattern->host.size() - 1] != u'.') return false;
+            if (!EqualLettersIgnoringASCIICase(std::u16string_view(urlHost).substr(urlHost.size() - pattern->host.size()), pattern->host))
+                return false;
         }
     }
     return WildcardMatchesPath(pattern->path, urlPath);

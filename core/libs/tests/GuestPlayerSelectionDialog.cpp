@@ -39,6 +39,9 @@ int main() {
     Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
     Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
     Require(scePlayerSelectionDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(scePlayerSelectionDialogOpen(reinterpret_cast<const PlayerSelectionDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(scePlayerSelectionDialogParamInitialize(nullptr) == kErrArgNull);
     Require(scePlayerSelectionDialogParamInitialize(&param) == 0);
     errno = 71;
@@ -74,6 +77,9 @@ int main() {
     Require(scePlayerSelectionDialogGetStatus() == kStatusInitialized);
 
     Require(scePlayerSelectionDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(scePlayerSelectionDialogOpen(reinterpret_cast<const PlayerSelectionDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(scePlayerSelectionDialogGetResult(&result) == kErrNotFinished);
 
     param.base.size = sizeof(param.base) - 1;
@@ -228,6 +234,9 @@ int main() {
     Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
     Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
     Require(scePlayerSelectionDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(scePlayerSelectionDialogOpen(reinterpret_cast<const PlayerSelectionDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(scePlayerSelectionDialogOpen(&param) == kErrNotInitialized);
     Require(scePlayerSelectionDialogClose() == kErrNotInitialized);
     Require(scePlayerSelectionDialogGetResult(nullptr) == kErrArgNull);
