@@ -73,6 +73,7 @@ struct WebRtcVadInstance;
 #include "prx/libwebrtc/include/SequenceChecker.hpp"
 #include "prx/libwebrtc/include/VideoEncoderInfo.hpp"
 #include "prx/libwebrtc/include/PeerConnectionDependencies.hpp"
+#include "prx/libwebrtc/include/CallConfig.hpp"
 
 extern "C" {
 
@@ -80,7 +81,7 @@ int APS5_VABI libwebrtcUnknown00(void);
 int APS5_VABI libwebrtcUnknown01(void);
 int APS5_VABI _ZN6webrtc11EnableMediaERNS_33PeerConnectionFactoryDependenciesE_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown02(void);
-int APS5_VABI _ZN6webrtc10CallConfigD1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc10CallConfigD1Ev_nid_postfix(WebRtcCallConfig* config);
 int APS5_VABI libwebrtcUnknown03(void);
 char* APS5_VABI _ZN4absl16numbers_internal15FastIntToBufferEiPc_nid_postfix(int value, char* buffer);
 [[noreturn]] void APS5_VABI _ZN3rtc18webrtc_checks_impl8FatalLogEPKciS2_PKNS0_12CheckArgTypeEz_nid_postfix(const char* file, int line, const char* message, const WebRtcCheckArgType* format, ...);
@@ -109,7 +110,7 @@ void APS5_VABI _ZN6webrtc12RtpExtensionD1Ev_nid_postfix(WebRtcRtpExtension* exte
 void APS5_VABI _ZN6webrtc26PeerConnectionDependenciesC1EOS0__nid_postfix(WebRtcPeerConnectionDependencies* dependencies, WebRtcPeerConnectionDependencies* other);
 void APS5_VABI _ZN6webrtc26PeerConnectionDependenciesD1Ev_nid_postfix(WebRtcPeerConnectionDependencies* dependencies);
 int APS5_VABI _ZN7cricket18BasicPortAllocatorC1EPN3rtc14NetworkManagerEPNS1_19PacketSocketFactoryEPN6webrtc14TurnCustomizerEPNS_25RelayPortFactoryInterfaceEPKNS6_15FieldTrialsViewE_nid_postfix(void);
-int APS5_VABI _ZN6webrtc10CallConfigC1ERKNS_11EnvironmentEPNS_13TaskQueueBaseE_nid_postfix(void);
+void APS5_VABI _ZN6webrtc10CallConfigC1ERKNS_11EnvironmentEPNS_13TaskQueueBaseE_nid_postfix(WebRtcCallConfig* config, const WebRtcEnvironment* env, WebRtcTaskQueueBase* networkTaskQueue);
 int APS5_VABI _ZN6webrtc23PeerConnectionInterface16RTCConfigurationC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc23PeerConnectionInterface16RTCConfigurationD1Ev_nid_postfix(void);
 void APS5_VABI _ZN6webrtc13CryptoOptionsC1ERKS0__nid_postfix(WebRtcCryptoOptions* options, const WebRtcCryptoOptions* other);

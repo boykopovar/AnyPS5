@@ -105,6 +105,7 @@ The same file also accepts these settings, each at most once, in the form `Setti
 | `StickModifierScale` | Number from 0.05 to 1, the tilt of keyboard stick bindings while a `StickModifier` binding is held. | `0.5` |
 | `KeyboardRampMs` | Number from 0 to 2000, the milliseconds a keyboard stick binding takes to move the stick from the center to full tilt. 0 tilts at once. | `0` |
 | `TriggerRampMs` | Number from 0 to 2000, the milliseconds a key or mouse button bound to `L2` or `R2` takes to press the trigger from 0 to full. 0 presses it fully at once. | `0` |
+| `ToggleActions` | Comma-separated pad buttons (`Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`), each toggled by the keys and mouse buttons bound to it. Stick directions and emulator actions are refused. See [Toggled buttons](#toggled-buttons). | none |
 
 ```ini
 LeftStickDeadzone = 12
@@ -158,6 +159,19 @@ With `KeyboardRampMs` above 0, keyboard stick bindings move the stick toward the
 
 With `TriggerRampMs` above 0, a key or mouse button bound to `L2` or `R2` presses the analog trigger gradually and lets it go the same way, for throttle and brake in racing titles. A pressed controller trigger is not slowed, and the larger of the two values is passed on.
 
+## Toggled buttons
+
+A pad button listed in `ToggleActions` latches instead of being held: the first press of a key or mouse button bound to it presses the button, and the button stays pressed after the key or mouse button is released. The next press releases it. Every key and mouse button bound to the same action shares that one state, so pressing either one toggles it. Buttons not listed keep the normal behavior, pressed while the key is held. Losing focus releases every toggled button.
+
+Mouse wheel bindings are not toggled; they still press the button for a short moment as before.
+
+```ini
+ToggleActions = R2, L1
+R2 = KEY:Z
+```
+
+Here Z presses R2 on the first press and off on the second, and Q (bound to L1 by default) does the same for L1. A listed action with no binding is ignored. A per-game profile that sets `ToggleActions` replaces the list from the shared file, and an empty value or an unknown action is an error.
+
 ## Shake
 
 While the `Shake` input is held (X by default), the controller reports its acceleration and angular velocity swinging back and forth every 50 ms, for titles that ask the player to shake the controller. A controller's own motion sensors are used otherwise.
@@ -199,7 +213,9 @@ An invalid line stops the game when video output starts, with an error that name
 
 ## Web configurator
 
-The [input mapper](../../tools/input-mapper/index.html) edits keyboard, mouse and wheel overrides in the browser. `PAD:` chords in an imported file are kept and exported, but new chords are written by hand. It supports alternate bindings, physical-key capture, search, INI import, preview, copy and download. Search by action or group name, by key name such as `F7`, or by full input such as `MOUSE:Left`. Input searches include the configured bindings and the built-in bindings for actions without overrides. Invalid imports preserve the current configuration. Invalid bindings block export; duplicate and shared inputs, including retained built-in bindings, produce warnings. Removing every binding for an action restores its built-in inputs.
+The [input mapper](../../tools/input-mapper/index.html) edits keyboard, mouse, wheel and controller chord bindings in the browser. It supports alternate bindings, physical-key capture, search, INI import, preview, copy and download. Search by action or group name, by key name such as `F7`, or by full input such as `MOUSE:Left`. Input searches include the configured bindings and the built-in bindings for actions without overrides. Invalid imports preserve the current configuration. Invalid bindings block export; duplicate and shared inputs, including retained built-in bindings, produce warnings. Removing every binding for an action restores its built-in inputs.
+
+For an emulator action such as `ToggleFullscreen`, add a binding, choose `PAD` as the input type and select one or more controller buttons in the binding value. Open an imported `PAD:` binding the same way to edit its buttons.
 
 On the Configuration page, enter the game's exact title ID to download a [per-game profile](#per-game-profiles), such as `anyps5-input.PPSA00001.ini`. Leave the field blank to download the shared `anyps5-input.ini`.
 

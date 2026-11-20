@@ -989,6 +989,23 @@ if(BUILD_TESTING)
             cmake_language(DEFER CALL raise_windows_deferred_tooling_test_timeouts)
         endif()
     endif()
+    if(ANYPS5_ENABLE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test_executable(tsan_lavapipe_unload_tests tools/tests/TsanLavapipeUnload.cpp)
+        target_link_libraries(tsan_lavapipe_unload_tests PRIVATE ${CMAKE_DL_LIBS})
+        set(tsanUnloadLibraries)
+        foreach(libraryName vulkan_lvp LLVM pulsecommon)
+            add_library(tsan_unload_${libraryName} MODULE tools/tests/TsanLavapipeUnloadLibrary.cpp)
+            set_target_properties(tsan_unload_${libraryName} PROPERTIES
+                OUTPUT_NAME ${libraryName}
+                LIBRARY_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}/tsan_unload>")
+            add_dependencies(tsan_lavapipe_unload_tests tsan_unload_${libraryName})
+            list(APPEND tsanUnloadLibraries "$<TARGET_FILE:tsan_unload_${libraryName}>")
+        endforeach()
+        add_test(NAME tsan_lavapipe_unload COMMAND tsan_lavapipe_unload_tests ${tsanUnloadLibraries})
+        set_tests_properties(tsan_lavapipe_unload PROPERTIES
+            ENVIRONMENT "TSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tools/tsan-suppressions.txt"
+            TIMEOUT 60)
+    endif()
 endif()
 
 if(ANYPS5_RELINKER_ONLY)

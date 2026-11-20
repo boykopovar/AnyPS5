@@ -257,6 +257,12 @@ int APS5_VABI sceHttp2GetAllTrailingHeaders(int req_id, char** header, size_t* h
 }
 
 int APS5_VABI sceHttp2GetResponseContentLength(int req_id, int* result, uint64_t* content_length) {
+    {
+        std::lock_guard lock(g_handlesMutex);
+        const auto* handle = FindHandle(req_id, Http2Kind::Request);
+        if (!handle) return ERROR_INVALID_ID;
+        if (!handle->transport) return ERROR_NOT_CONNECTED;
+    }
     const auto request = Transport(req_id, false);
     return request ? request->ContentLength(result, content_length) : ERROR_INVALID_ID;
 }

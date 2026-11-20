@@ -1352,6 +1352,7 @@ int APS5_VABI _Cnd_timedwait_nid_postfix(void** conditionHandle, void** mutexHan
 int APS5_VABI _Cnd_broadcast_nid_postfix(void** handle);
 unsigned APS5_VABI _ZNSt6thread20hardware_concurrencyEv_nid_postfix();
 int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*);
+void APS5_VABI _ZNSt3__111this_thread9sleep_forERKNS_6chrono8durationIxNS_5ratioILl1ELl1000000000EEEEE_nid_postfix(const std::int64_t* nanoseconds);
 int APS5_VABI _Thrd_yield_nid_postfix();
 int APS5_VABI _Cnd_signal_nid_postfix(void** handle);
 void APS5_VABI _Cnd_register_at_thread_exit_nid_postfix(void* condition, void* mutex, int* ready);
@@ -1740,6 +1741,7 @@ void APS5_VABI _ZSt14_Throw_C_errori_nid_postfix(int code);
 std::uint64_t APS5_VABI _ZNSt3__112__next_primeEm_nid_postfix(std::uint64_t minimum);
 std::int64_t APS5_VABI _ZNSt3__16chrono12steady_clock3nowEv_nid_postfix() noexcept;
 std::int64_t APS5_VABI _ZNSt3__16chrono12system_clock3nowEv_nid_postfix() noexcept;
+std::int64_t APS5_VABI _ZNSt3__16chrono12system_clock9to_time_tERKNS0_10time_pointIS1_NS0_8durationIxNS_5ratioILl1ELl1000000EEEEEEE_nid_postfix(const std::int64_t* microseconds);
 [[noreturn]] void APS5_VABI _ZSt19_Xbad_function_callv_nid_postfix();
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix();
 [[noreturn]] void APS5_VABI _ZSt19_Throw_bad_weak_ptrv_nid_postfix();

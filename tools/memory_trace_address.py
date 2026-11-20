@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 TRACE_PREFIX = re.compile(r"^\[memory\]\s+")
-RANGE = re.compile(r"(?P<address>(?:0x)?[0-9a-fA-F]+)\+(?P<size>0x[0-9a-fA-F]+)")
+RANGE = re.compile(r"(?P<address>(?:0x)?[0-9a-fA-F]+|\(nil\))\+(?P<size>0x[0-9a-fA-F]+)")
 OPERATIONS = (
     "remap fixed",
     "map direct",
@@ -42,7 +42,8 @@ def parse_events(lines):
         address = RANGE.search(detail)
         if address is None:
             raise ValueError(f"line {number}: {operation} event has no address range")
-        events.append(MappingEvent(number, operation, int(address["address"], 16),
+        start = 0 if address["address"] == "(nil)" else int(address["address"], 16)
+        events.append(MappingEvent(number, operation, start,
                                    int(address["size"], 16), detail))
     return events
 

@@ -2970,6 +2970,17 @@ void DepthStencilTests() {
     queue.context[0x31b] = 1u | (1u << 13u);
     const auto slice = AgcDriver::Graphics::DecodeState(queue);
     Require(slice.color.address == sliced + 1024u && slice.color.bytes == 1024u, "a color view of one slice did not move the target by one slice");
+    {
+        alignas(256) std::array<std::uint8_t, 8> sliceKeyMemory{};
+        const auto sliceKeys = reinterpret_cast<std::uintptr_t>(sliceKeyMemory.data());
+        auto keyed = queue;
+        keyed.context[0x31c] |= 0x10000000;
+        keyed.context[0x325] = static_cast<std::uint32_t>(sliceKeys >> 8u);
+        keyed.context[0x3a8] = static_cast<std::uint32_t>(sliceKeys >> 40u);
+        Require(AgcDriver::Graphics::DecodeState(keyed).color.dccAddress == sliceKeys + 1024u / 256u, "a color view of one slice did not move the target's DCC keys by one slice's keys");
+        keyed.context[0x31b] = 1u << 13u;
+        Require(AgcDriver::Graphics::DecodeState(keyed).color.dccAddress == sliceKeys, "a color view from the first slice moved the target's DCC keys");
+    }
     queue.context[0x3b8] = 0x09000001;
     const auto arraySlice = AgcDriver::Graphics::DecodeState(queue);
     Require(arraySlice.color.address == sliced + 1024u && arraySlice.color.bytes == 1024u && arraySlice.color.depth == 1u, "a color view of one slice of a 2D array target did not move the target by one slice");
@@ -10491,7 +10502,7 @@ void registeredReadableCoverTests() {
     const auto base = reinterpret_cast<std::uint64_t>(memory);
     const auto add = [&](std::size_t index, bool readable) {
         auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
-        GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, memory + index * block, block, readable, readable, true);
+        GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, memory + index * block, block, readable, readable, readable);
         GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
     };
     const auto remove = [&](std::size_t index) {
@@ -10514,6 +10525,18 @@ void registeredReadableCoverTests() {
     Require(!RegisteredReadableCovers(base, 0), "an empty range must not be covered");
     for (std::size_t index = 0; index < 4; ++index) remove(index);
     Require(!RegisteredReadableCovers(base, block), "a removed allocation must not be covered");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(memory, block, false, false, true, true);
+        mutation.Add(memory + block, block, false, false, true, false);
+    }
+    std::vector<RegisteredPiece> pieces;
+    Require(RegisteredReadableCovers(base, block, &pieces) && pieces.size() == 1 && pieces[0].writable && pieces[0].gpu, "a gpu-rw allocation without cpu access must be covered as writable");
+    Require(RegisteredReadableCovers(base + block, block, &pieces) && pieces.size() == 1 && !pieces[0].writable && pieces[0].gpu, "a gpu-read allocation without cpu access must be covered as read-only");
+    Require(RegisteredReadableCovers(base, 2 * block, &pieces) && pieces.size() == 2, "adjacent gpu-only allocations must be covered together");
+    Require(RegisteredReadableEnd(base) == base + block, "RegisteredReadableEnd missed a gpu-only allocation");
+    remove(0);
+    remove(1);
     ::operator delete(memory, std::align_val_t{block});
 }
 

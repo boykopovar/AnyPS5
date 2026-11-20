@@ -1304,6 +1304,7 @@ double APS5_VABI asin_nid_postfix(double x) {
     }
     if (ix < 0x3fe00000) {
         if (ix < 0x3e500000) {
+            if ((bits << 1) != 0) std::feraiseexcept(FE_INEXACT);
             return x;
         }
         return x + x * AsinRational(x * x);
@@ -1780,6 +1781,7 @@ double APS5_VABI atan_nid_postfix(double x) {
     }
     if (ix < 0x3fdc0000) {
         if (ix < 0x3e400000) {
+            if ((bits << 1) != 0) std::feraiseexcept(FE_INEXACT);
             return x;
         }
         id = -1;
@@ -5994,8 +5996,22 @@ int APS5_VABI __fpclassifyd_nid_postfix(double value) {
     return SonyFpclassifyd(value);
 }
 
+static double SinhProduct(double x, double y) {
+    if (std::isnan(x)) return x;
+    if (std::isnan(y)) return y;
+    if ((std::isinf(x) && y == 0.0) || (x == 0.0 && std::isinf(y))) return std::numeric_limits<double>::quiet_NaN();
+    if (std::isinf(x) || x == 0.0 || y == 0.0 || std::isinf(y)) return x * y;
+    double value = std::fabs(x);
+    if (value < 18.738) return y * sinh_nid_postfix(x);
+    _Exp_nid_postfix(&value, y, -1);
+    return x < 0.0 ? -value : value;
+}
+
 double APS5_VABI _Sinh_nid_postfix(double x, double y) {
-    return SonySinh(x, y);
+    const double result = SinhProduct(x, y);
+    if (std::isnan(result) && !std::isnan(x) && !std::isnan(y)) errno = EDOM;
+    else if (std::isinf(result) && std::isfinite(x) && std::isfinite(y)) errno = ERANGE;
+    return result;
 }
 
 static double CoshProduct(double x, double y) {

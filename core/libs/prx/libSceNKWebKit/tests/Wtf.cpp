@@ -349,6 +349,11 @@ static void TestTime() {
     Require(parsed > 1700000000000.0);
     Require(isLocal == false);
 
+    Require(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.5Z", isLocal) == 1577836800500.0);
+    Require(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.500000000Z", isLocal) == 1577836800500.0);
+    Require(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.5000000000Z", isLocal) == 1577836800500.0);
+    Require(_ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("2020-01-01T00:00:00.250000000000Z", isLocal) == 1577836800250.0);
+
     bool isLocal2 = false;
     double parsedInvalid = _ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb("not-a-date", isLocal2);
     Require(std::isnan(parsedInvalid));
