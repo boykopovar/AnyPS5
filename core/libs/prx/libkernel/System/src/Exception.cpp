@@ -759,7 +759,7 @@ Attempt TryDeliver(Pthread thread, HANDLE native, GuestExceptionHandler handler,
         const bool restoring = RestoringContext(delivery.context.Rip);
         DWORD64 image = 0;
         const auto running = restoring ? CodeKind::Host : RunningCode(delivery.context.Rip, image);
-        if (running == CodeKind::Guest && arm != nullptr && arm->entry != nullptr && delivery.context.Rip == arm->at) {
+        if (running == CodeKind::Guest && ((arm != nullptr && arm->entry != nullptr && delivery.context.Rip == arm->at) || ArmedOnThread(GetThreadId(native), delivery.context.Rip))) {
             ResumeThread(native);
             return Attempt::Host;
         }
