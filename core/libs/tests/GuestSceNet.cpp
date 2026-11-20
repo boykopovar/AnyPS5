@@ -2984,6 +2984,34 @@ static void CheckPeerSocketTypes() {
     RequireSocketOption(datagram, 0x40000, 1);
     Require(Failed(sceNetSetsockopt(datagram, 0xffff, 0x20000, &one, 1), 22));
     Require(sceNetSocketClose(datagram) == 0);
+
+    Require(Failed(sceNetSocket("peer", 2, 10, 17), 43));
+    const int unbound = sceNetSocket("peer", 2, 10, 0);
+    Require(unbound >= 0);
+    std::array<std::uint8_t, 16> loopback{16, 2, 0, 0, 127, 0, 0, 1};
+    const char payload = 0;
+    Require(Throws([&] { sceNetBind_nid_postfix(unbound, loopback.data(), loopback.size()); }));
+    Require(Throws([&] { sceNetListen(unbound, 1); }));
+    Require(Throws([&] { sceNetAccept(unbound, nullptr, nullptr); }));
+    Require(Throws([&] { sceNetConnect(unbound, loopback.data(), loopback.size()); }));
+    Require(Throws([&] { sceNetSend(unbound, &payload, 1, 0); }));
+    Require(sceNetSocketClose(unbound) == 0);
+
+    const int receiver = sceNetSocket("peer", 2, 6, 0);
+    const int sender = sceNetSocket("plain", 2, 2, 0);
+    Require(receiver >= 0 && sender >= 0);
+    Require(sceNetBind_nid_postfix(receiver, loopback.data(), loopback.size()) == 0);
+    std::uint32_t loopbackSize = loopback.size();
+    Require(sceNetGetsockname(receiver, loopback.data(), &loopbackSize) == 0 && loopbackSize == loopback.size());
+    Require(Throws([&] { sceNetConnect(receiver, loopback.data(), loopback.size()); }));
+    Require(Throws([&] { sceNetSend(receiver, &payload, 1, 0); }));
+    Require(Throws([&] { sceNetSendto(receiver, &payload, 1, 0, loopback.data(), loopback.size()); }));
+    char incoming = 1;
+    Require(sceNetSendto(sender, &payload, 1, 0, loopback.data(), loopback.size()) == 1);
+    Require(Throws([&] { sceNetRecvfrom(receiver, &incoming, 1, 0, nullptr, nullptr); }));
+    Require(sceNetSendto(sender, &payload, 1, 0, loopback.data(), loopback.size()) == 1);
+    Require(Throws([&] { sceNetRecv(receiver, &incoming, 1, 0); }));
+    Require(sceNetSocketClose(sender) == 0 && sceNetSocketClose(receiver) == 0);
 }
 
 int main(int argc, char** argv) {
