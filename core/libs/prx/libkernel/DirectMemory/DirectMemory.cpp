@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <iterator>
 #include <map>
 #include <mutex>
@@ -879,19 +880,21 @@ void AddMapping(std::uintptr_t address, std::size_t len, std::uint64_t phys, int
 #endif
 }
 
-void RequireResidentUnpinned(GuestAllocations::Mutation& mutation, std::uintptr_t address, std::size_t len) {
+bool RequireResidentUnpinned(GuestAllocations::Mutation& mutation, std::uintptr_t address, std::size_t len, std::chrono::steady_clock::time_point deadline) {
 #ifdef _WIN32
     std::uintptr_t start = 0;
     std::uintptr_t end = 0;
-    if (GuestArena::GuestArenaResidentSpan_nid_postfix(address, len, &start, &end)) mutation.RequireUnpinned(reinterpret_cast<const void*>(start), end - start);
+    return GuestArena::GuestArenaResidentSpan_nid_postfix(address, len, &start, &end) && mutation.RequireUnpinned(reinterpret_cast<const void*>(start), end - start, deadline);
 #else
     static_cast<void>(mutation);
     static_cast<void>(address);
     static_cast<void>(len);
+    static_cast<void>(deadline);
+    return false;
 #endif
 }
 
-void RequireAliasesUnpinned(GuestAllocations::Mutation& mutation, std::uint64_t phys, std::size_t len) {
+bool RequireAliasesUnpinned(GuestAllocations::Mutation& mutation, std::uint64_t phys, std::size_t len, std::chrono::steady_clock::time_point deadline) {
 #ifdef _WIN32
     std::vector<std::pair<std::uintptr_t, std::size_t>> aliases;
     {
@@ -903,11 +906,15 @@ void RequireAliasesUnpinned(GuestAllocations::Mutation& mutation, std::uint64_t 
             if (first < last) aliases.emplace_back(base + (first - mapping.phys), last - first);
         }
     }
-    for (const auto& [address, bytes] : aliases) RequireResidentUnpinned(mutation, address, bytes);
+    bool waited = false;
+    for (const auto& [address, bytes] : aliases) waited |= RequireResidentUnpinned(mutation, address, bytes, deadline);
+    return waited;
 #else
     static_cast<void>(mutation);
     static_cast<void>(phys);
     static_cast<void>(len);
+    static_cast<void>(deadline);
+    return false;
 #endif
 }
 
@@ -916,8 +923,11 @@ bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, 
     constexpr int GuestMapNoOverwrite = 0x80;
     if (addr == nullptr || (flags & GuestMapFixed) == 0 || (flags & GuestMapNoOverwrite) != 0 || !mutation.Covers(addr, len)) return false;
     ValidateRange(addr, len, PS5_PAGE_SIZE);
-    RequireResidentUnpinned(mutation, reinterpret_cast<std::uintptr_t>(addr), len);
-    if (physStart >= 0) RequireAliasesUnpinned(mutation, static_cast<std::uint64_t>(physStart), len);
+    const auto deadline = GuestAllocations::GuestAllocationsPinDeadline_nid_postfix();
+    for (bool waited = true; waited;) {
+        waited = RequireResidentUnpinned(mutation, reinterpret_cast<std::uintptr_t>(addr), len, deadline);
+        if (physStart >= 0) waited |= RequireAliasesUnpinned(mutation, static_cast<std::uint64_t>(physStart), len, deadline);
+    }
     Trace("remap fixed %p+0x%zx prot=0x%x phys=0x%llx", addr, len, prot, static_cast<long long>(physStart));
     const auto nativeProtection = LinuxProtFromSce(prot);
     mutation.Protect(addr, len, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0, [&] {
@@ -1182,7 +1192,7 @@ bool Reserved(const void* addr, size_t len) {
 }
 
 void UnmapRegistered(GuestAllocations::Mutation& mutation, void* addr, size_t len) {
-    RequireResidentUnpinned(mutation, reinterpret_cast<std::uintptr_t>(addr), len);
+    RequireResidentUnpinned(mutation, reinterpret_cast<std::uintptr_t>(addr), len, GuestAllocations::GuestAllocationsPinDeadline_nid_postfix());
     mutation.Unmap(addr, len, [&](const void* piece, std::size_t pieceBytes, const void* allocation, bool last) {
         auto* pieceAddress = const_cast<void*>(piece);
         std::lock_guard lock(g_directLock);
@@ -1236,7 +1246,7 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
         return 0;
     }
     ReplaceFixedOverlap(mutation, *addr, len, flags);
-    RequireAliasesUnpinned(mutation, static_cast<std::uint64_t>(physStart), len);
+    RequireAliasesUnpinned(mutation, static_cast<std::uint64_t>(physStart), len, GuestAllocations::GuestAllocationsPinDeadline_nid_postfix());
     std::lock_guard lock(g_directLock);
     void* mapped = MapAligned(*addr, len, PROT_NONE, flags, alignment);
     try {

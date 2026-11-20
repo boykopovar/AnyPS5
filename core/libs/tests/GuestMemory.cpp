@@ -2883,6 +2883,70 @@ static void RequireResidentMapping(const void* address) {
 }
 #endif
 
+#ifdef _WIN32
+struct NeighbourPin {
+    std::uint64_t source = 0;
+    std::uint64_t neighbour = 0;
+    std::vector<std::shared_ptr<const GuestAllocations::Range>> held;
+    int rounds = 0;
+};
+
+static NeighbourPin* neighbourPin = nullptr;
+
+static std::vector<std::shared_ptr<const GuestAllocations::Range>> LeaseRangeAt(std::uint64_t address) {
+    std::vector<std::shared_ptr<const GuestAllocations::Range>> held;
+    for (const auto& range : GuestAllocations::GuestAllocationsAcquire_nid_postfix()) {
+        if (address >= range->address && address < range->address + range->bytes) held.push_back(range);
+    }
+    return held;
+}
+
+static bool MovePinToTheRunNeighbour(std::uintptr_t, std::size_t) {
+    auto& state = *neighbourPin;
+    state.held = state.rounds++ == 0 ? LeaseRangeAt(state.neighbour) : std::vector<std::shared_ptr<const GuestAllocations::Range>>{};
+    return true;
+}
+#endif
+
+static void CheckFixedRemapWaitsForTheTargetPinnedDuringTheAliasWait() {
+#ifdef _WIN32
+    constexpr std::size_t page = 0x4000;
+    std::int64_t targetPhys = 0;
+    std::int64_t sourcePhys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &targetPhys) == 0);
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 0, &sourcePhys) == 0);
+    void* target = nullptr;
+    void* source = nullptr;
+    Require(sceKernelMapDirectMemory(&target, page * 2, 3, 0, targetPhys, 0) == 0);
+    Require(sceKernelMapDirectMemory(&source, page, 3, 0, sourcePhys, 0) == 0);
+    auto* neighbour = static_cast<unsigned char*>(target) + page;
+    Require(sceKernelMprotect(neighbour, page, 1) == 0);
+    std::uintptr_t begin = 0;
+    std::uintptr_t end = 0;
+    Require(GuestArena::GuestArenaResidentSpan_nid_postfix(reinterpret_cast<std::uintptr_t>(target), page, &begin, &end) && begin == reinterpret_cast<std::uintptr_t>(target) && end == begin + page * 2);
+    NeighbourPin state;
+    state.source = reinterpret_cast<std::uintptr_t>(source);
+    state.neighbour = reinterpret_cast<std::uintptr_t>(neighbour);
+    state.held = LeaseRangeAt(state.source);
+    Require(!state.held.empty());
+    neighbourPin = &state;
+    GuestAllocations::GuestAllocationsSetPinWaiter_nid_postfix(&MovePinToTheRunNeighbour);
+    void* fixed = target;
+    const auto result = sceKernelMapDirectMemory(&fixed, page, 3, 0x10, sourcePhys, 0);
+    const bool pinnedAfterRemap = !state.held.empty();
+    GuestAllocations::GuestAllocationsSetPinWaiter_nid_postfix(nullptr);
+    neighbourPin = nullptr;
+    state.held.clear();
+    Require(result == 0 && fixed == target);
+    Require(!pinnedAfterRemap);
+    Require(state.rounds == 2);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(target), page * 2) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(source), page) == 0);
+    Require(sceKernelReleaseDirectMemory(targetPhys, page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(sourcePhys, page) == 0);
+#endif
+}
+
 static void CheckBreakingAResidentRunKeepsConcurrentAccesses() {
 #ifdef _WIN32
     constexpr std::size_t page = 0x4000;
@@ -4780,6 +4844,7 @@ int main(int argc, char** argv) {
     CheckMtypeprotectLeavesAReplacementAllocation();
     CheckReleaseOfManyViewsScalesLinearly();
     CheckPinnedRangeIsLeftOutOfNewLeases();
+    CheckFixedRemapWaitsForTheTargetPinnedDuringTheAliasWait();
     CheckBreakingAResidentRunKeepsConcurrentAccesses();
     CheckRemappedDirectMemoryIsChargedOnce();
     CheckFixedRemapReprotectsHost();

@@ -442,7 +442,15 @@ void GuestAllocationsAdd_nid_postfix(void* mutation, void* pointer, std::size_t 
     throw std::runtime_error(message);
 }
 
+std::chrono::steady_clock::time_point GuestAllocationsPinDeadline_nid_postfix() {
+    return std::chrono::steady_clock::now() + pinWait();
+}
+
 void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* pointer, std::size_t bytes) {
+    GuestAllocationsRequireUnpinnedBy_nid_postfix(mutation, pointer, bytes, GuestAllocationsPinDeadline_nid_postfix());
+}
+
+bool GuestAllocationsRequireUnpinnedBy_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, std::chrono::steady_clock::time_point deadline) {
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
     require(bytes <= std::numeric_limits<std::uint64_t>::max() - address, "guest allocation range overflow");
     const auto end = address + bytes;
@@ -454,7 +462,7 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
     // lock is retaken, since another mutation may have run meanwhile. Without a waiter the lease is
     // dropped by another thread (a synchronous draw or dispatch), so yielding suffices. A waiter
     auto* state = static_cast<MutationState*>(mutation);
-    const auto deadline = std::chrono::steady_clock::now() + pinWait();
+    bool waited = false;
     int syncedRounds = 0;
     bool marked = false;
     const auto unmark = [&] {
@@ -487,8 +495,9 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
         if (!pinned) {
             unmark();
             if (state != nullptr && bytes != 0) state->unpinned.emplace_back(address, bytes);
-            return;
+            return waited;
         }
+        waited = true;
         if (!marked && state != nullptr && state->lock.owns_lock()) {
             registry().retiring.emplace_back(address, end);
             marked = true;

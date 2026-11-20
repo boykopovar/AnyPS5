@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_GUESTALLOCATIONS_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_GUESTALLOCATIONS_HPP
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -60,6 +61,8 @@ void GuestAllocationsUnregisterImage_nid_postfix(void* mutation, const void* ima
 void GuestAllocationsEnd_nid_postfix(void* mutation) noexcept;
 void GuestAllocationsAdd_nid_postfix(void* mutation, void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu);
 void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* pointer, std::size_t bytes);
+std::chrono::steady_clock::time_point GuestAllocationsPinDeadline_nid_postfix();
+bool GuestAllocationsRequireUnpinnedBy_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, std::chrono::steady_clock::time_point deadline);
 void GuestAllocationsRequireAvailable_nid_postfix(void* mutation, const void* pointer, std::size_t bytes);
 bool GuestAllocationsCovers_nid_postfix(void* mutation, const void* pointer, std::size_t bytes);
 void GuestAllocationsTrimToRegistered_nid_postfix(void* mutation, std::size_t page, const void** pointer, std::size_t* bytes);
@@ -104,6 +107,7 @@ public:
     void UnregisterImage(const void* image) { GuestAllocationsUnregisterImage_nid_postfix(handle, image); }
     void Add(void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu) { GuestAllocationsAdd_nid_postfix(handle, pointer, bytes, readable, writable, gpu); }
     void RequireUnpinned(const void* pointer, std::size_t bytes) const { GuestAllocationsRequireUnpinned_nid_postfix(handle, pointer, bytes); }
+    bool RequireUnpinned(const void* pointer, std::size_t bytes, std::chrono::steady_clock::time_point deadline) const { return GuestAllocationsRequireUnpinnedBy_nid_postfix(handle, pointer, bytes, deadline); }
     void RequireAvailable(const void* pointer, std::size_t bytes) const { GuestAllocationsRequireAvailable_nid_postfix(handle, pointer, bytes); }
     bool Covers(const void* pointer, std::size_t bytes) const { return GuestAllocationsCovers_nid_postfix(handle, pointer, bytes); }
     void TrimToRegistered(std::size_t page, const void*& pointer, std::size_t& bytes) const { GuestAllocationsTrimToRegistered_nid_postfix(handle, page, &pointer, &bytes); }
