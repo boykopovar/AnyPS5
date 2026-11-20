@@ -399,6 +399,23 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         setVector(static_cast<VectorReg>(6), u32(0u));
         setVector(static_cast<VectorReg>(7), u32(0u));
         setVector(static_cast<VectorReg>(8), entryIr.IAdd(draw(2u), builtin(StageInputKind::WorkgroupId, 1u)));
+    } else if (options.stage == ShaderStageKind::Local && options.gcnLegacyVertexInputs) {
+        setVector(static_cast<VectorReg>(0), drawIndex(StageInputKind::VertexIndex));
+        setVector(static_cast<VectorReg>(1), tessellationBase(TessellationBaseKind::RelativeIndex));
+        setVector(static_cast<VectorReg>(2), drawIndex(StageInputKind::InstanceIndex));
+        setVector(static_cast<VectorReg>(3), drawIndex(StageInputKind::InstanceIndex));
+    } else if (options.stage == ShaderStageKind::TessellationControl && options.gcnLegacyVertexInputs) {
+        auto reg = options.userDataBaseRegister + options.userDataCount;
+        if (!options.inputInfo.vertex->tess.onChip) entryIr.SetScalarReg(static_cast<ScalarReg>(reg++), tessellationBase(TessellationBaseKind::OffChip));
+        entryIr.SetScalarReg(static_cast<ScalarReg>(reg), tessellationBase(TessellationBaseKind::Factor));
+        setVector(static_cast<VectorReg>(0), builtin(StageInputKind::PrimitiveId));
+        setVector(static_cast<VectorReg>(1), entryIr.BitwiseOr(entryIr.ShiftLeftLogical(builtin(StageInputKind::InvocationId), entryIr.Constant(8u)), tessellationBase(TessellationBaseKind::RelativeIndex)));
+    } else if (options.stage == ShaderStageKind::TessellationEvaluation && options.gcnLegacyVertexInputs) {
+        if (!options.inputInfo.vertex->tess.onChip) entryIr.SetScalarReg(static_cast<ScalarReg>(options.userDataBaseRegister + options.userDataCount), tessellationBase(TessellationBaseKind::OffChip));
+        setVector(static_cast<VectorReg>(0), builtin(StageInputKind::TessCoord, 0u));
+        setVector(static_cast<VectorReg>(1), builtin(StageInputKind::TessCoord, 1u));
+        setVector(static_cast<VectorReg>(2), tessellationBase(TessellationBaseKind::RelativeIndex));
+        setVector(static_cast<VectorReg>(3), builtin(StageInputKind::PrimitiveId));
     } else if (options.stage == ShaderStageKind::Local) {
         entryIr.SetScalarReg(static_cast<ScalarReg>(3), entryIr.Constant(64u));
         setVector(static_cast<VectorReg>(2), drawIndex(StageInputKind::VertexIndex));
