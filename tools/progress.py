@@ -33,6 +33,7 @@ ISA_FORMS = Path(__file__).resolve().parent / "rdna2_isa_forms.txt"
 ISA_GFX1013 = Path(__file__).resolve().parent / "gfx1013_isa_forms.txt"
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
+STATIC_DECLARATION = re.compile(r"\bstatic\b[^;{}]*\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?;")
 EXPORT = re.compile(r"\bAPS5_EXPORT\s*\(\s*LITERAL\s*,\s*(\w+)\s*\)")
 ASM_DEFINITION = re.compile(rf'\b(?:{"|".join(sorted(tokenizer.ASM_FUNCTION_MACROS))})\s*\(\s*"(\w+)"\s*\)')
 STUB = "NotImplemented_nid_no_patch"
@@ -128,6 +129,30 @@ def body_end(text, start):
             if depth == 0:
                 return i
     return len(text)
+
+
+def brace_spans(text, pattern):
+    return [(match.end() - 1, body_end(text, match.end() - 1)) for match in re.finditer(pattern, text)]
+
+
+class Linkage:
+    def __init__(self, text):
+        self.text = text
+        self.anonymous = brace_spans(text, r"\bnamespace\s*\{")
+        self.classes = brace_spans(text, r"\b(?:class|struct|union)\b[^;{}()]*\{")
+        self.declared = {match.group(1) for match in STATIC_DECLARATION.finditer(text)
+                         if self.namespace_scope(match.start())}
+
+    def namespace_scope(self, start):
+        return not any(open_brace < start < close for open_brace, close in self.classes)
+
+    def internal(self, name, start):
+        if any(open_brace < start < close for open_brace, close in self.anonymous):
+            return True
+        if not self.namespace_scope(start):
+            return False
+        boundary = max(self.text.rfind(character, 0, start) for character in ";{}")
+        return name in self.declared or bool(re.search(r"\bstatic\b", self.text[boundary + 1:start]))
 
 
 def stub_calls(text):
@@ -281,7 +306,7 @@ def parameter_type(declaration):
 
 class Definition:
     def __init__(self, name, text, match, follow_qualified):
-        self.name, self.follow_qualified = name, follow_qualified
+        self.name, self.follow_qualified, self.start = name, follow_qualified, match.start()
         start = match.end(1)
         opening = text.index("(", start)
         parameters = text[opening + 1:closing(text, opening)]
@@ -524,9 +549,12 @@ def scan_library(path):
         if not definitions:
             continue
         wrappers = inert_wrappers(text)
+        linkage = Linkage(text)
         for definition in definitions:
             name = definition.name
             if name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) and name not in exported:
+                continue
+            if name not in exported and linkage.internal(name, definition.start):
                 continue
             if definition.reaches:
                 todo.add(name)

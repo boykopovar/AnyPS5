@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_FIRSTSAMPLECOPY_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include <memory>
 
 namespace AgcDriver::Graphics {
 
@@ -9,16 +10,18 @@ class Recorder;
 
 class FirstSampleCopy {
 public:
-    FirstSampleCopy(const Context& context, VkFormat format, VkExtent2D extent);
+    FirstSampleCopy(const Context& context, VkFormat format, VkExtent2D extent, bool averagePacked = false);
     ~FirstSampleCopy();
     FirstSampleCopy(const FirstSampleCopy&) = delete;
     FirstSampleCopy& operator=(const FirstSampleCopy&) = delete;
 
     void Record(Recorder& recorder, VkImageView source, VkImageLayout layout);
+    std::shared_ptr<void> RecordInto(VkCommandBuffer commands, Recorder* recorder, VkImageView source, VkImageLayout layout, VkImageView destination);
     VkImage Image() const { return image; }
 
 private:
     void release() noexcept;
+    std::shared_ptr<void> record(Recorder* recorder, VkCommandBuffer commands, VkImageView source, VkImageLayout layout, VkFramebuffer target);
 
     Context context;
     VkExtent2D extent;

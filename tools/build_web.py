@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import urllib.request
 import zipfile
 
@@ -197,6 +198,17 @@ def publish_libraries(output, release=None):
     print(f"Published library assets from {tag}")
 
 
+def rename(source, target):
+    deadline = time.monotonic() + 1
+    while True:
+        try:
+            return source.rename(target)
+        except PermissionError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.05)
+
+
 def publish_release(output):
     with request("https://api.github.com/repos/boykopovar/AnyPS5/releases/latest") as response:
         release = load_release(response)
@@ -257,13 +269,13 @@ def publish_release(output):
         (staging / "release.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         (staging / ".nojekyll").touch()
         if output.exists():
-            output.rename(previous)
+            rename(output, previous)
         try:
-            staging.rename(output)
+            rename(staging, output)
         except OSError:
             if previous.exists():
                 try:
-                    previous.rename(output)
+                    rename(previous, output)
                 except OSError as error:
                     raise RuntimeError(f"Could not restore release output. Previous site is preserved at {previous}") from error
             raise

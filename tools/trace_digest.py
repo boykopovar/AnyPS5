@@ -267,6 +267,9 @@ def recorded_span(trace, tid, frames, full_at):
     if not kept or tid not in trace.slices:
         return {}
     start, until = frames[0][1], kept[-1][2]
+    span_us = until - start
+    if span_us <= 0:
+        return {}
     gpu = trace.name(tid) == "gpu"
     traced = waited = 0.0
     covered_until = -math.inf
@@ -285,9 +288,9 @@ def recorded_span(trace, tid, frames, full_at):
         if waiting and not nested:
             waited += end - begin
     count = len(kept)
-    return {"frames_before_full": count, "recorded_ms": (until - start) / 1000.0,
+    return {"frames_before_full": count, "recorded_ms": span_us / 1000.0,
             "busy_ms_per_frame": (traced - waited) / 1000.0 / count, "wait_ms_per_frame": waited / 1000.0 / count,
-            "busy_pct": 100.0 * (traced - waited) / (until - start),
+            "busy_pct": 100.0 * (traced - waited) / span_us,
             "top": [{"name": name, "ms_per_frame": us / 1000.0 / count} for name, us in leaders.most_common(2)]}
 
 
