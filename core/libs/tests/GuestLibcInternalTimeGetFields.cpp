@@ -1282,6 +1282,30 @@ void CheckGroup6Getloctxt(bool hasLibrary) {
     }
 
     {
+        static constexpr char boolTable[] = "\0false\0true";
+        static constexpr char emptyFirst[] = "\0\0on";
+        struct MarkedCase {
+            const char* table;
+            std::size_t count;
+            const char* input;
+            int result;
+            char next;
+        };
+        for (const MarkedCase& item : {MarkedCase{boolTable, 2, "false", 0, '\0'}, MarkedCase{boolTable, 2, "true", 1, '\0'}, MarkedCase{boolTable, 2, "TRUE", 1, '\0'},
+                 MarkedCase{boolTable, 2, "False", 0, '\0'}, MarkedCase{boolTable, 2, "truex", 1, 'x'}, MarkedCase{boolTable, 2, "false 1", 0, ' '},
+                 MarkedCase{boolTable, 2, "tru", -1, '\0'}, MarkedCase{boolTable, 2, "f", -1, '\0'}, MarkedCase{boolTable, 2, "trux", -1, 'x'},
+                 MarkedCase{boolTable, 2, "yes", -2, 'y'}, MarkedCase{boolTable, 0, "true", -2, 't'}, MarkedCase{boolTable, 1, "true", -2, 't'},
+                 MarkedCase{boolTable, 1, "false", 0, '\0'}, MarkedCase{emptyFirst, 2, "x", 0, 'x'}, MarkedCase{emptyFirst, 2, "on", 1, '\0'},
+                 MarkedCase{emptyFirst, 2, "o", -1, '\0'}}) {
+            InputStreambuf<char> sb{};
+            sb.Setup(item.input, true);
+            GuestLocale::InputIterator first = sb.Begin();
+            Require(fn(&first, &endIter, item.count, item.table) == item.result, "_Getloctxt NUL-marked table result");
+            Require(sb.RemainingFirst() == item.next, "_Getloctxt NUL-marked table consumption");
+        }
+    }
+
+    {
         InputStreambuf<char> sb{};
         sb.Setup("Jan", true);
         GuestLocale::InputIterator first = sb.Begin();

@@ -351,9 +351,7 @@ int GetLocaleText(GuestLocale::InputIterator& first, const GuestLocale::InputIte
         return -2;
     }
     const TChar sep = ptr[0];
-    if (sep == TChar{}) {
-        return -2;
-    }
+    const bool nulMarked = sep == TChar{};
     std::vector<std::size_t> fieldStarts;
     for (std::size_t off = 0; ptr[off] != TChar{}; ++off) {
         if (ptr[off] == sep) {
@@ -373,6 +371,11 @@ int GetLocaleText(GuestLocale::InputIterator& first, const GuestLocale::InputIte
     }
     while (fieldStarts.size() < numFields) {
         fieldStarts.push_back(nulOff);
+        if (nulMarked) {
+            do {
+                ++nulOff;
+            } while (ptr[nulOff] != TChar{});
+        }
     }
 
     std::string skip(numFields, '\0');
