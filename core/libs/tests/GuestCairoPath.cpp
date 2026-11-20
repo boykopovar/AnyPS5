@@ -24,7 +24,7 @@ void CheckBasicPathAndCurrentPoint() {
     for (int iteration = 0; iteration < 2048; ++iteration) {
         CairoSurface* surface = cairo_image_surface_create(0, 8, 8);
         CairoContext* context = cairo_create(surface);
-        cairo_surface_destroy(surface);
+        cairo_surface_destroy_nid_postfix(surface);
         assert(cairo_has_current_point(context) == 0);
         double x = 123, y = 456;
         cairo_get_current_point(context, &x, &y);
@@ -81,14 +81,14 @@ void CheckBasicPathAndCurrentPoint() {
         path = cairo_copy_path(context);
         assert(path && path->status == 0 && path->num_data == 0);
         cairo_path_destroy(path);
-        cairo_destroy(context);
+        cairo_destroy_nid_postfix(context);
     }
 }
 
 void CheckQuantizationTransformsAndAppend() {
     CairoSurface* surface = cairo_image_surface_create(0, 8, 8);
     CairoContext* context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     cairo_move_to(context, 1.2345, 2.3456);
     cairo_line_to(context, 3.14159, 4.98765);
 
@@ -115,7 +115,7 @@ void CheckQuantizationTransformsAndAppend() {
 
     CairoSurface* anotherSurface = cairo_image_surface_create(0, 8, 8);
     CairoContext* another = cairo_create(anotherSurface);
-    cairo_surface_destroy(anotherSurface);
+    cairo_surface_destroy_nid_postfix(anotherSurface);
     cairo_append_path(another, original);
     CairoPath* appended = cairo_copy_path(another);
     assert(appended && appended->status == 0 && appended->num_data == 4);
@@ -126,12 +126,12 @@ void CheckQuantizationTransformsAndAppend() {
     cairo_path_destroy(appended);
     cairo_path_destroy(shifted);
     cairo_path_destroy(original);
-    cairo_destroy(another);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(another);
+    cairo_destroy_nid_postfix(context);
 
     surface = cairo_image_surface_create(0, 8, 8);
     context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     cairo_move_to(context, std::numeric_limits<double>::quiet_NaN(), 1);
     CairoPath* path = cairo_copy_path(context);
     assert(path && path->num_data == 2);
@@ -141,11 +141,11 @@ void CheckQuantizationTransformsAndAppend() {
     path = cairo_copy_path(context);
     Near(path->data[1].point.x, 8388606.0 - 1.0 / 256.0);
     cairo_path_destroy(path);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 
     surface = cairo_image_surface_create(0, 8, 8);
     context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     cairo_move_to(context, 1, 2);
     cairo_curve_to(context, 1, 2, 1, 2, 1, 2);
     path = cairo_copy_path(context);
@@ -158,13 +158,13 @@ void CheckQuantizationTransformsAndAppend() {
     path = cairo_copy_path(context);
     assert(path && path->num_data == 6 && path->data[2].header.type == 2);
     cairo_path_destroy(path);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 }
 
 void CheckErrorAndSaveSemantics() {
     CairoSurface* surface = cairo_image_surface_create(0, 8, 8);
     CairoContext* context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     cairo_move_to(context, 1, 2);
     cairo_save(context);
     cairo_line_to(context, 5, 7);
@@ -181,18 +181,18 @@ void CheckErrorAndSaveSemantics() {
     Near(x, 0);
     Near(y, 0);
     cairo_path_destroy(cairo_copy_path(context));
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 
     CairoContext* nil = cairo_create(nullptr);
     path = cairo_copy_path(nil);
     assert(path && path->status == 7);
     cairo_path_destroy(path);
-    cairo_destroy(nil);
+    cairo_destroy_nid_postfix(nil);
     cairo_path_destroy(nullptr);
 
     surface = cairo_image_surface_create(0, 1, 1);
     context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     CairoPathData extended[3]{};
     extended[0].header = {0, 3};
     extended[1].point = {1, 2};
@@ -203,24 +203,24 @@ void CheckErrorAndSaveSemantics() {
     assert(path && path->status == 0 && path->num_data == 2);
     Near(path->data[1].point.x, 1);
     cairo_path_destroy(path);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 
     surface = cairo_image_surface_create(0, 1, 1);
     context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     CairoPath alreadyFailed{5, nullptr, 3};
     cairo_append_path(context, &alreadyFailed);
     path = cairo_copy_path(context);
     assert(path && path->status == 5);
     cairo_path_destroy(path);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 }
 
 void CheckScaledCoordinatesAndLines() {
     CairoSurface* surface = cairo_image_surface_create(0, 8, 8);
     cairo_surface_set_device_scale(surface, 2, 2);
     CairoContext* context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
 
     cairo_move_to(context, 0.1, 0.1);
     double x = 0, y = 0;
@@ -264,7 +264,7 @@ void CheckScaledCoordinatesAndLines() {
     cairo_get_current_point(context, &x, &y);
     Near(x, 0);
     Near(y, -1);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 }
 
 } // namespace

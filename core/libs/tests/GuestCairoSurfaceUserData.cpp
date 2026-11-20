@@ -58,7 +58,7 @@ void CheckReplacement() {
     assert(cairo_surface_set_user_data(surface, &absent, nullptr, Record) == 0);
     assert(cairo_surface_set_user_data(surface, &equal, &d, Record) == 0);
     assert(cairo_surface_set_user_data(surface, &absent, &ignored, nullptr) == 0);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     Expect({&a, &c, &b, &d, &c});
 }
 
@@ -75,7 +75,7 @@ void CheckSlotOrder() {
     assert(cairo_surface_set_user_data(surface, &keys[4], &values[4], Record) == 0);
     assert(cairo_surface_set_user_data(surface, &keys[3], &values[5], Record) == 0);
     Expect({&values[0], &values[2], &values[3]});
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     Expect({&values[0], &values[2], &values[3], &values[5], &values[4], &values[1]});
 }
 
@@ -94,7 +94,7 @@ void CheckNullKey() {
     assert(cairo_surface_set_user_data(surface, nullptr, nullptr, Record) == 0);
     assert(cairo_surface_set_user_data(surface, nullptr, nullptr, Record) == 0);
     Expect({&a, &c, &d});
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     Expect({&a, &c, &d, &b});
 }
 
@@ -131,17 +131,17 @@ void CheckLifetime() {
     assert(cairo_surface_status(parent) == 0);
     assert(cairo_image_surface_get_data(parent) == pixels);
     assert(cairo_surface_set_user_data(parent, &parentKey, pixels, ReleasePixels) == 0);
-    assert(cairo_surface_reference(parent) == parent);
+    assert(cairo_surface_reference_nid_postfix(parent) == parent);
     auto* child = cairo_surface_create_for_rectangle(parent, 0, 0, 2, 2);
     assert(cairo_surface_status(child) == 0);
     assert(cairo_surface_set_user_data(child, &childKey, &childData, Record) == 0);
-    cairo_surface_destroy(parent);
+    cairo_surface_destroy_nid_postfix(parent);
     Expect({});
     assert(cairo_image_surface_get_data(parent)[13] == 93);
-    cairo_surface_destroy(parent);
+    cairo_surface_destroy_nid_postfix(parent);
     Expect({});
     assert(pixelReleases == 0);
-    cairo_surface_destroy(child);
+    cairo_surface_destroy_nid_postfix(child);
     Expect({pixels, &childData});
     assert(pixelReleases == 1 && releasedPixels == pixels);
 
@@ -149,7 +149,7 @@ void CheckLifetime() {
     int data{};
     finishingSurface = Image();
     assert(cairo_surface_set_user_data(finishingSurface, &parentKey, &data, Reenter) == 0);
-    cairo_surface_destroy(finishingSurface);
+    cairo_surface_destroy_nid_postfix(finishingSurface);
     Expect({&data});
     assert(registrationStatus == 12 && removalStatus == 12);
     finishingSurface = nullptr;
@@ -158,7 +158,7 @@ void CheckLifetime() {
         ResetEvents();
         auto* empty = Image(dimensions[0], dimensions[1]);
         assert(cairo_surface_set_user_data(empty, &parentKey, &data, Record) == 0);
-        cairo_surface_destroy(empty);
+        cairo_surface_destroy_nid_postfix(empty);
         Expect({&data});
     }
 }
@@ -178,9 +178,9 @@ void CheckErrors() {
         assert(cairo_surface_status(errors[i]) == expected[i]);
         assert(cairo_surface_set_user_data(errors[i], &key, &data, Record) == expected[i]);
         assert(cairo_surface_set_user_data(errors[i], nullptr, nullptr, Record) == expected[i]);
-        cairo_surface_destroy(errors[i]);
+        cairo_surface_destroy_nid_postfix(errors[i]);
     }
-    cairo_surface_destroy(valid);
+    cairo_surface_destroy_nid_postfix(valid);
     Expect({});
 }
 

@@ -59,7 +59,7 @@ void Patterns() {
     assert(aps5_cairo_surface_get_reference_count(Backend(surface)) == 2);
     aps5_cairo_pattern_destroy(Backend(pattern));
     assert(aps5_cairo_surface_get_reference_count(Backend(surface)) == 1);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
 
     CairoPattern* null = cairo_pattern_create_for_surface(nullptr);
     assert(null && aps5_cairo_pattern_status(Backend(null)) == CAIRO_STATUS_NULL_POINTER);
@@ -69,7 +69,7 @@ void Patterns() {
     CairoPattern* failed = cairo_pattern_create_for_surface(invalid);
     assert(failed && aps5_cairo_pattern_status(Backend(failed)) == CAIRO_STATUS_INVALID_FORMAT);
     aps5_cairo_pattern_destroy(Backend(failed));
-    cairo_surface_destroy(invalid);
+    cairo_surface_destroy_nid_postfix(invalid);
 }
 
 void Source() {
@@ -86,27 +86,27 @@ void Source() {
     cairo_set_source(context, mesh);
     assert(aps5_cairo_get_source(Backend(context)) == Backend(mesh));
     assert(aps5_cairo_pattern_get_reference_count(Backend(pattern)) == 1);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
     assert(aps5_cairo_pattern_get_reference_count(Backend(mesh)) == 1);
     aps5_cairo_pattern_destroy(Backend(mesh));
 
     context = cairo_create(target);
     cairo_set_source(context, nullptr);
     assert(aps5_cairo_status(Backend(context)) == CAIRO_STATUS_NULL_POINTER);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 
     CairoSurface* invalid = cairo_image_surface_create(-5, Size, Size);
     CairoPattern* failed = cairo_pattern_create_for_surface(invalid);
     context = cairo_create(target);
     cairo_set_source(context, failed);
     assert(aps5_cairo_status(Backend(context)) == CAIRO_STATUS_INVALID_FORMAT);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
     aps5_cairo_pattern_destroy(Backend(failed));
-    cairo_surface_destroy(invalid);
+    cairo_surface_destroy_nid_postfix(invalid);
 
     aps5_cairo_pattern_destroy(Backend(pattern));
-    cairo_surface_destroy(image);
-    cairo_surface_destroy(target);
+    cairo_surface_destroy_nid_postfix(image);
+    cairo_surface_destroy_nid_postfix(target);
 }
 
 struct Images {
@@ -129,8 +129,8 @@ struct Images {
     }
 
     ~Images() {
-        cairo_surface_destroy(color);
-        cairo_surface_destroy(alpha);
+        cairo_surface_destroy_nid_postfix(color);
+        cairo_surface_destroy_nid_postfix(alpha);
     }
 };
 
@@ -167,7 +167,7 @@ void Mask() {
     cairo_set_source(context, source);
     cairo_mask(context, mask);
     assert(aps5_cairo_status(Backend(context)) == CAIRO_STATUS_SUCCESS);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
     assert(Pixel(target, 0, 0) == 0);
     assert(Pixel(target, 1, 0) == 0x80107080u);
     assert(Pixel(target, 2, 0) == 0x400c3400u);
@@ -176,13 +176,13 @@ void Mask() {
     cairo_surface_t* expected = Reference(images, true);
     Same(target, expected);
     aps5_cairo_surface_destroy(expected);
-    cairo_surface_destroy(target);
+    cairo_surface_destroy_nid_postfix(target);
 
     target = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, Size, Size);
     context = cairo_create(target);
     cairo_mask(context, mask);
     assert(aps5_cairo_status(Backend(context)) == CAIRO_STATUS_SUCCESS);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
     for (int i = 0; i < Size * Size; ++i) {
         assert(Pixel(target, i % Size, i / Size) == static_cast<std::uint32_t>(images.alphas[i]) << 24);
     }
@@ -194,7 +194,7 @@ void Mask() {
     cairo_set_source(context, source);
     cairo_mask(context, nullptr);
     assert(aps5_cairo_status(Backend(context)) == CAIRO_STATUS_NULL_POINTER);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
     assert(Pixel(target, 1, 0) == 0x80000000u);
 
     CairoSurface* invalid = cairo_image_surface_create(-5, Size, Size);
@@ -202,11 +202,11 @@ void Mask() {
     context = cairo_create(target);
     cairo_mask(context, failed);
     assert(aps5_cairo_status(Backend(context)) == CAIRO_STATUS_INVALID_FORMAT);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
     assert(Pixel(target, 3, 0) == 0xff000000u);
     aps5_cairo_pattern_destroy(Backend(failed));
-    cairo_surface_destroy(invalid);
-    cairo_surface_destroy(target);
+    cairo_surface_destroy_nid_postfix(invalid);
+    cairo_surface_destroy_nid_postfix(target);
 
     aps5_cairo_pattern_destroy(Backend(source));
     aps5_cairo_pattern_destroy(Backend(mask));

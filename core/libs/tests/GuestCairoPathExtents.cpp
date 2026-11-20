@@ -34,7 +34,7 @@ void Check(CairoContext* context, std::array<double, 4> expected) {
 int main() {
     CairoSurface* surface = cairo_image_surface_create(0, 100, 100);
     CairoContext* c = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     assert(c);
     Check(c, {0, 0, 0, 0});
     cairo_move_to(c, 1, 2);
@@ -84,6 +84,6 @@ int main() {
     cairo_new_path(c);
     cairo_move_to(c, 4, 7);
     Check(c, {0, 0, 0, 0});
-    cairo_destroy(c);
+    cairo_destroy_nid_postfix(c);
     std::puts("guest Cairo path extents tests passed");
 }

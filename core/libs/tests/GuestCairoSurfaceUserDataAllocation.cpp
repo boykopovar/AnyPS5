@@ -49,7 +49,7 @@ int main() {
     assert(cairo_surface_set_user_data(invalid, &key, &data, Reenter) == CAIRO_STATUS_INVALID_FORMAT);
     assert(rejectedAllocations == 0);
     rejectAllocation = false;
-    cairo_surface_destroy(invalid);
+    cairo_surface_destroy_nid_postfix(invalid);
 
     finishingSurface = cairo_image_surface_create(0, 1, 1);
     rejectAllocation = true;
@@ -61,6 +61,6 @@ int main() {
     cairo_surface_mark_dirty_rectangle(finishingSurface, 0, 0, 1, 1);
     assert(cairo_surface_status(finishingSurface) == CAIRO_STATUS_SURFACE_FINISHED);
     assert(cairo_surface_set_user_data(finishingSurface, &key, &data, Reenter) == CAIRO_STATUS_SUCCESS);
-    cairo_surface_destroy(finishingSurface);
+    cairo_surface_destroy_nid_postfix(finishingSurface);
     assert(callbacks == 1);
 }

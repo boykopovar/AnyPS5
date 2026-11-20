@@ -35,7 +35,7 @@ void CheckStrideAndErrors() {
             auto* bytes = cairo_image_surface_get_data(image);
             assert((bytes != nullptr) == (expected > 0));
             for (int n = 0; n < expected * 3; ++n) assert(bytes[n] == 0);
-            cairo_surface_destroy(image);
+            cairo_surface_destroy_nid_postfix(image);
         }
     }
     for (int format : {-1, 8, 99}) {
@@ -45,7 +45,7 @@ void CheckStrideAndErrors() {
         assert(cairo_image_surface_get_data(invalid) == nullptr);
         assert(cairo_image_surface_get_format(invalid) == -1);
         assert(cairo_image_surface_get_width(invalid) == 0);
-        cairo_surface_destroy(invalid);
+        cairo_surface_destroy_nid_postfix(invalid);
     }
     assert(cairo_format_stride_for_width(0, -1) == -1);
     assert(cairo_format_stride_for_width(0, INT_MAX) == -1);
@@ -54,20 +54,20 @@ void CheckStrideAndErrors() {
     CairoSurface* empty = cairo_image_surface_create(0, 0, 4);
     assert(empty && cairo_surface_status(empty) == 0);
     assert(cairo_image_surface_get_data(empty) == nullptr);
-    cairo_surface_destroy(empty);
+    cairo_surface_destroy_nid_postfix(empty);
     empty = cairo_image_surface_create(0, 7, 0);
     assert(empty && cairo_surface_status(empty) == 0);
     assert(cairo_image_surface_get_width(empty) == 7);
     assert(cairo_image_surface_get_stride(empty) == 0);
     assert(cairo_image_surface_get_data(empty) == nullptr);
-    cairo_surface_destroy(empty);
+    cairo_surface_destroy_nid_postfix(empty);
     CairoSurface* oversized = cairo_image_surface_create(0, 32768, 0);
     assert(oversized && cairo_surface_status(oversized) == 32);
-    cairo_surface_destroy(oversized);
+    cairo_surface_destroy_nid_postfix(oversized);
     for (auto dims : {std::array{-1, 2}, std::array{2, -1}}) {
         CairoSurface* invalid = cairo_image_surface_create(0, dims[0], dims[1]);
         assert(invalid && cairo_surface_status(invalid) == 32);
-        cairo_surface_destroy(invalid);
+        cairo_surface_destroy_nid_postfix(invalid);
     }
     assert(cairo_surface_status(nullptr) == 7);
 }
@@ -79,45 +79,45 @@ void CheckBorrowedDataAndLifetime() {
     assert(surface && cairo_surface_status(surface) == 0);
     assert(cairo_image_surface_get_data(surface) == pixels.data());
     assert(cairo_image_surface_get_stride(surface) == 16);
-    assert(cairo_surface_reference(surface) == surface);
-    cairo_surface_destroy(surface);
+    assert(cairo_surface_reference_nid_postfix(surface) == surface);
+    cairo_surface_destroy_nid_postfix(surface);
     assert(cairo_image_surface_get_data(surface)[4] == 123);
     cairo_image_surface_get_data(surface)[8] = 42;
     cairo_surface_mark_dirty_rectangle(surface, 0, 0, 1, 1);
     cairo_surface_flush(surface);
     assert(pixels[8] == 42);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     assert(pixels[4] == 123);
 
     surface = cairo_image_surface_create_for_data(pixels.data() + 8, 0, 1, 2, -4);
     assert(surface && cairo_surface_status(surface) == 0);
     assert(cairo_image_surface_get_data(surface) == pixels.data() + 8);
     assert(cairo_image_surface_get_stride(surface) == -4);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
 
     for (int stride : {0, 4, 8, 11, 13, -1}) {
         surface = cairo_image_surface_create_for_data(pixels.data(), 0, 3, 4, stride);
         assert(surface && cairo_surface_status(surface) == 24);
         assert(cairo_image_surface_get_data(surface) == nullptr);
-        cairo_surface_destroy(surface);
+        cairo_surface_destroy_nid_postfix(surface);
     }
     surface = cairo_image_surface_create_for_data(pixels.data(), 0, -1, 2, -1);
     assert(surface && cairo_surface_status(surface) == 24);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     surface = cairo_image_surface_create_for_data(nullptr, 0, 3, 4, 16);
     assert(surface && cairo_surface_status(surface) == 0);
     assert(cairo_image_surface_get_data(surface) != nullptr);
     assert(cairo_image_surface_get_stride(surface) == 12);
     for (int n = 0; n < 48; ++n) assert(cairo_image_surface_get_data(surface)[n] == 0);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     surface = cairo_image_surface_create_for_data(nullptr, 0, 2, 0, 16);
     assert(surface && cairo_surface_status(surface) == 0);
     assert(cairo_image_surface_get_data(surface) == nullptr);
     assert(cairo_image_surface_get_stride(surface) == 16);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     surface = cairo_image_surface_create_for_data(nullptr, 7, 0, 2, 4);
     assert(surface && cairo_surface_status(surface) == 1);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
 }
 
 void CheckSimilarAndSubsurfaces() {
@@ -137,17 +137,17 @@ void CheckSimilarAndSubsurfaces() {
         double sx = 0, sy = 0;
         cairo_surface_get_device_scale(similar, &sx, &sy);
         assert(sx == 2 && sy == 3);
-        cairo_surface_destroy(similar);
+        cairo_surface_destroy_nid_postfix(similar);
     }
     CairoSurface* bad = cairo_surface_create_similar(parent, 0, 2, 2);
     assert(bad && cairo_surface_status(bad) == 15);
-    assert(cairo_surface_reference(bad) == bad);
-    cairo_surface_destroy(bad);
+    assert(cairo_surface_reference_nid_postfix(bad) == bad);
+    cairo_surface_destroy_nid_postfix(bad);
     assert(cairo_surface_status(bad) == 15);
-    cairo_surface_destroy(bad);
+    cairo_surface_destroy_nid_postfix(bad);
     bad = cairo_surface_create_similar(parent, 0, -1, 2);
     assert(bad && cairo_surface_status(bad) == 32);
-    cairo_surface_destroy(bad);
+    cairo_surface_destroy_nid_postfix(bad);
 
     cairo_surface_set_device_scale(parent, 1.5, 2.5);
     CairoSurface* fractional = cairo_surface_create_similar(parent, 0x3000, 3, 2);
@@ -155,7 +155,7 @@ void CheckSimilarAndSubsurfaces() {
     assert(cairo_image_surface_get_width(fractional) == 4);
     assert(cairo_image_surface_get_height(fractional) == 5);
     assert(cairo_image_surface_get_stride(fractional) == 16);
-    cairo_surface_destroy(fractional);
+    cairo_surface_destroy_nid_postfix(fractional);
     cairo_surface_set_device_scale(parent, 2, 3);
 
     for (const auto [format, content, stride] :
@@ -167,8 +167,8 @@ void CheckSimilarAndSubsurfaces() {
         assert(similar && cairo_surface_status(similar) == 0);
         assert(cairo_image_surface_get_format(similar) == format);
         assert(cairo_image_surface_get_stride(similar) == stride);
-        cairo_surface_destroy(similar);
-        cairo_surface_destroy(image);
+        cairo_surface_destroy_nid_postfix(similar);
+        cairo_surface_destroy_nid_postfix(image);
     }
     CairoSurface* subsection = cairo_surface_create_for_rectangle(parent, 1.5, 2.5, 3.5, 4.5);
     assert(subsection && cairo_surface_status(subsection) == 0);
@@ -180,19 +180,19 @@ void CheckSimilarAndSubsurfaces() {
     double sx = 0, sy = 0;
     cairo_surface_get_device_scale(subsection, &sx, &sy);
     assert(sx == 2 && sy == 3);
-    cairo_surface_destroy(parent);
+    cairo_surface_destroy_nid_postfix(parent);
 
     assert(cairo_surface_status(subsection) == 0);
-    cairo_surface_destroy(subsection);
+    cairo_surface_destroy_nid_postfix(subsection);
     CairoSurface* live = cairo_image_surface_create(0, 4, 4);
     bad = cairo_surface_create_for_rectangle(live, 0, 0, -2, 2);
     assert(bad && cairo_surface_status(bad) == 32);
-    cairo_surface_destroy(bad);
+    cairo_surface_destroy_nid_postfix(bad);
     bad = cairo_surface_create_for_rectangle(
         live, 0, 0, std::numeric_limits<double>::quiet_NaN(), 2);
     assert(bad && cairo_surface_status(bad) == 0);
-    cairo_surface_destroy(bad);
-    cairo_surface_destroy(live);
+    cairo_surface_destroy_nid_postfix(bad);
+    cairo_surface_destroy_nid_postfix(live);
 }
 
 void CheckDeviceScale() {
@@ -204,8 +204,8 @@ void CheckDeviceScale() {
     cairo_surface_get_device_scale(surface, &sx, &sy);
     assert(sx == 2 && sy == 3.5);
     assert(cairo_surface_status(surface) == 0);
-    cairo_surface_destroy(surface);
-    cairo_surface_destroy(nullptr);
+    cairo_surface_destroy_nid_postfix(surface);
+    cairo_surface_destroy_nid_postfix(nullptr);
 }
 
 }

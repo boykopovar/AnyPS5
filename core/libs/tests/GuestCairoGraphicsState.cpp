@@ -18,7 +18,7 @@ void Near(double actual, double expected) {
 void CheckDefaultsAndSaveRestore() {
     CairoSurface* surface = cairo_image_surface_create(0, 16, 16);
     CairoContext* context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     assert(cairo_get_antialias(context) == 0);
     assert(cairo_get_fill_rule(context) == 0);
     assert(cairo_get_line_cap(context) == 0);
@@ -76,7 +76,7 @@ void CheckDefaultsAndSaveRestore() {
     assert(cairo_get_line_cap(context) == 0);
     Near(cairo_get_line_width(context), 2);
     assert(cairo_get_dash_count(context) == 0);
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
 }
 
 void CheckDashValidationAndStress() {
@@ -86,7 +86,7 @@ void CheckDashValidationAndStress() {
     for (int n = 0; n < 4096; ++n) {
         CairoSurface* surface = cairo_image_surface_create(0, 1, 1);
         CairoContext* context = cairo_create(surface);
-        cairo_surface_destroy(surface);
+        cairo_surface_destroy_nid_postfix(surface);
         cairo_set_dash(context, valid.data(), 2, -7);
         std::array<double, 2> copied{};
         double offset = 0;
@@ -107,23 +107,23 @@ void CheckDashValidationAndStress() {
         Near(mergedOffset, 8);
         cairo_restore(context);
         assert(cairo_get_dash_count(context) == 2);
-        cairo_destroy(context);
+        cairo_destroy_nid_postfix(context);
     }
 
     for (const auto& bad : {allZero, invalid}) {
         CairoSurface* surface = cairo_image_surface_create(0, 1, 1);
         CairoContext* context = cairo_create(surface);
-        cairo_surface_destroy(surface);
+        cairo_surface_destroy_nid_postfix(surface);
         cairo_set_dash(context, valid.data(), 2, 0);
         cairo_save(context);
         cairo_set_dash(context, bad.data(), 2, 0);
         assert(cairo_surface_status(cairo_get_target(context)) == 1);
         assert(cairo_get_dash_count(context) == 0);
-        cairo_destroy(context);
+        cairo_destroy_nid_postfix(context);
     }
     CairoSurface* surface = cairo_image_surface_create(0, 1, 1);
     CairoContext* nanDash = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     const double notANumber = std::numeric_limits<double>::quiet_NaN();
     cairo_set_dash(nanDash, &notANumber, 1, 0);
     assert(cairo_get_dash_count(nanDash) == 1);
@@ -131,11 +131,11 @@ void CheckDashValidationAndStress() {
     double actualOffset = 0;
     cairo_get_dash(nanDash, &actualDash, &actualOffset);
     assert(std::isnan(actualDash) && std::isnan(actualOffset));
-    cairo_destroy(nanDash);
+    cairo_destroy_nid_postfix(nanDash);
 
     surface = cairo_image_surface_create(0, 1, 1);
     CairoContext* normalized = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     const double twoSolid[] = {10, 0};
     cairo_set_dash(normalized, twoSolid, 2, 5);
     assert(cairo_get_dash_count(normalized) == 0);
@@ -180,7 +180,7 @@ void CheckDashValidationAndStress() {
     cairo_get_dash(normalized, preservedSegments.data(), &preservedOffset);
     assert(preservedSegments == shortMultisegmentPeriod);
     Near(preservedOffset, std::fmod(8, 0.00202));
-    cairo_destroy(normalized);
+    cairo_destroy_nid_postfix(normalized);
 }
 
 } // namespace

@@ -11,8 +11,8 @@ void APS5_VABI cairo_select_font_face(CairoContext* context, const char* family,
 void APS5_VABI cairo_set_font_size(CairoContext* context, double size);
 void APS5_VABI cairo_show_text(CairoContext* context, const char* utf8);
 CairoContext* APS5_VABI cairo_create(CairoSurface* target);
-CairoContext* APS5_VABI cairo_reference(CairoContext* context);
-void APS5_VABI cairo_destroy(CairoContext* context);
+CairoContext* APS5_VABI cairo_reference_nid_postfix(CairoContext* context);
+void APS5_VABI cairo_destroy_nid_postfix(CairoContext* context);
 void APS5_VABI cairo_save(CairoContext* context);
 void APS5_VABI cairo_restore(CairoContext* context);
 CairoSurface* APS5_VABI cairo_get_target(CairoContext* context);

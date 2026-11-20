@@ -96,7 +96,7 @@ int main() {
     CairoSurface* surface = cairo_image_surface_create(0, 128, 128);
     assert(surface);
     CairoContext* context = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    cairo_surface_destroy_nid_postfix(surface);
     assert(context);
     CheckOperator(context);
     CheckRectangle(context, 0, 0, 20, 12,
@@ -176,6 +176,6 @@ int main() {
         if (iteration % 31 == 0) values[3] = 0;
         TraceRectangle(context, values[0], values[1], values[2], values[3]);
     }
-    cairo_destroy(context);
+    cairo_destroy_nid_postfix(context);
     return 0;
 }

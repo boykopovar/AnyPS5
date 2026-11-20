@@ -78,11 +78,11 @@ CairoSurface* APS5_VABI cairo_surface_create_for_rectangle(CairoSurface* target,
     return Guest(aps5_cairo_surface_create_for_rectangle(Backend(target), x, y, width, height));
 }
 
-CairoSurface* APS5_VABI cairo_surface_reference(CairoSurface* surface) {
+CairoSurface* APS5_VABI cairo_surface_reference_nid_postfix(CairoSurface* surface) {
     return Guest(aps5_cairo_surface_reference(Backend(surface)));
 }
 
-void APS5_VABI cairo_surface_destroy(CairoSurface* surface) {
+void APS5_VABI cairo_surface_destroy_nid_postfix(CairoSurface* surface) {
     aps5_cairo_surface_destroy(Backend(surface));
 }
 
