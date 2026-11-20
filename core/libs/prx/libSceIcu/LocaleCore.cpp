@@ -449,6 +449,7 @@ struct Parts {
     std::string variant;
     std::string encoding;
     std::string keywords;
+    std::string name;
     int fields = 0;
     bool posixVariant = false;
 };
@@ -485,19 +486,33 @@ Parts Parse(const char* locale) {
     const bool undetermined = parts.language == "und" && (tokens.size() > 1 || encoding == std::string_view::npos);
     if (undetermined || ChangeCase(input, false) == "root") parts.language.clear();
     if (parts.language.size() == 3) parts.language = ShortCode(Languages, parts.language);
-    if (index < tokens.size()) ++parts.fields;
+    parts.name = parts.language;
+    if (index < tokens.size()) {
+        ++parts.fields;
+        parts.name += '_';
+    }
     if (index < tokens.size() && IsScript(tokens[index])) {
         parts.script = ChangeCase(tokens[index], false);
         parts.script.front() = Upper(parts.script.front());
         ++index;
         ++parts.fields;
+        parts.name += parts.script;
+        if (index < tokens.size()) parts.name += '_';
     }
     const bool region = index < tokens.size() && IsRegion(tokens[index]);
     if (region) {
         parts.country = Region(tokens[index]);
         ++index;
+        parts.name += parts.country;
     }
     if (index < tokens.size() && !tokens[index].empty()) ++parts.fields;
+    if (index < tokens.size()) {
+        if (!tokens[index].empty() || index + 1 == tokens.size()) parts.name += '_';
+        for (std::size_t item = index; item < tokens.size(); ++item) {
+            if (item != index) parts.name += '_';
+            parts.name += ChangeCase(tokens[item], true);
+        }
+    }
     if (!region && index < tokens.size() && tokens[index].empty()) {
         ++index;
         if (index < tokens.size()) parts.variant += "_";
@@ -511,14 +526,7 @@ Parts Parse(const char* locale) {
 }
 
 std::string BaseName(const Parts& parts) {
-    std::string result = parts.language;
-    if (!parts.script.empty()) result += "_" + parts.script;
-    if (!parts.country.empty()) result += "_" + parts.country;
-    if (!parts.variant.empty()) {
-        if (parts.country.empty()) result += "_";
-        result += parts.variant.front() == '_' ? parts.variant : "_" + parts.variant;
-    }
-    return result + parts.encoding;
+    return parts.name + parts.encoding;
 }
 
 std::int32_t Write(std::string_view value, char* destination, std::int32_t capacity,
