@@ -41,7 +41,10 @@ IrU32 TranslationContext::readPackedU16Source(const RdnaOperand& operand) {
     if (operand.opSel && !operand.opSelHi) {
         packed = IrU32(ir.Emit(IrOpcode::BitFieldInsert, IrType::U32, {&ir.ShiftRightLogical(raw.Value(), ir.Constant(16u)), &raw.Value(), &ir.Constant(16u), &ir.Constant(16u)}));
     } else if (!operand.opSel && !operand.opSelHi) {
-        packed = IrU32(ir.Emit(IrOpcode::BitFieldInsert, IrType::U32, {&raw.Value(), &raw.Value(), &ir.Constant(16u), &ir.Constant(16u)}));
+        // opSel==opSelHi==false: both lanes read the low half -> keep bits 0..15 and
+        // replicate them into the high half (0x87658765 for raw 0x12348765).
+        const IrU32 lowHalf(ir.BitwiseAnd(raw.Value(), ir.Constant(0xffffu)));
+        packed = IrU32(ir.Emit(IrOpcode::BitFieldInsert, IrType::U32, {&lowHalf.Value(), &lowHalf.Value(), &ir.Constant(16u), &ir.Constant(16u)}));
     } else if (operand.opSel && operand.opSelHi) {
         packed = IrU32(ir.Emit(IrOpcode::BitFieldInsert, IrType::U32, {&raw.Value(), &ir.ShiftRightLogical(raw.Value(), ir.Constant(16u)), &ir.Constant(0u), &ir.Constant(16u)}));
     }
