@@ -1396,7 +1396,6 @@ int APS5_VABI _ZN7WebCore10JSDocument15createStructureERN3JSC2VMEPNS1_14JSGlobal
 int APS5_VABI _ZN7WebCore10JSDocument15subspaceForImplERN3JSC2VME();
 int APS5_VABI _ZN7WebCore10JSDocument4infoEv();
 int APS5_VABI _ZN7WebCore10JSDocument9prototypeERN3JSC2VMERNS_17JSDOMGlobalObjectE();
-int APS5_VABI _ZN7WebCore10JSDocument9toWrappedERN3JSC2VMENS1_7JSValueE();
 int APS5_VABI _ZN7WebCore10JSDocumentC1ERKS0_();
 int APS5_VABI _ZN7WebCore10JSDocumentC2ERKS0_();
 int APS5_VABI _ZN7WebCore10JSDocumentD1Ev();
@@ -3657,7 +3656,6 @@ int APS5_VABI _ZN7WebCore6JSNode15createStructureERN3JSC2VMEPNS1_14JSGlobalObjec
 int APS5_VABI _ZN7WebCore6JSNode15subspaceForImplERN3JSC2VME();
 int APS5_VABI _ZN7WebCore6JSNode4infoEv();
 int APS5_VABI _ZN7WebCore6JSNode9prototypeERN3JSC2VMERNS_17JSDOMGlobalObjectE();
-int APS5_VABI _ZN7WebCore6JSNode9toWrappedERN3JSC2VMENS1_7JSValueE();
 int APS5_VABI _ZN7WebCore6JSNodeC1ERKS0_();
 int APS5_VABI _ZN7WebCore6JSNodeC2ERKS0_();
 int APS5_VABI _ZN7WebCore6JSNodeD1Ev();
@@ -3735,7 +3733,6 @@ int APS5_VABI _ZN7WebCore7Element9innerTextEv();
 int APS5_VABI _ZN7WebCore7Element9offsetTopEv();
 int APS5_VABI _ZN7WebCore7Element9outerTextEv();
 int APS5_VABI _ZN7WebCore7Element9setPseudoERKN3WTF10AtomStringE();
-int APS5_VABI _ZN7WebCore7JSEvent9toWrappedERN3JSC2VMENS1_7JSValueE();
 int APS5_VABI _ZN7WebCore7JSRange14getConstructorERN3JSC2VMEPKNS1_14JSGlobalObjectE();
 int APS5_VABI _ZN7WebCore7JSRange15createPrototypeERN3JSC2VMERNS_17JSDOMGlobalObjectE();
 int APS5_VABI _ZN7WebCore7JSRange15createStructureERN3JSC2VMEPNS1_14JSGlobalObjectENS1_7JSValueE();
@@ -3932,7 +3929,6 @@ int APS5_VABI _ZN7WebCore9JSElement15createStructureERN3JSC2VMEPNS1_14JSGlobalOb
 int APS5_VABI _ZN7WebCore9JSElement15subspaceForImplERN3JSC2VME();
 int APS5_VABI _ZN7WebCore9JSElement4infoEv();
 int APS5_VABI _ZN7WebCore9JSElement9prototypeERN3JSC2VMERNS_17JSDOMGlobalObjectE();
-int APS5_VABI _ZN7WebCore9JSElement9toWrappedERN3JSC2VMENS1_7JSValueE();
 int APS5_VABI _ZN7WebCore9JSElementC1ERKS0_();
 int APS5_VABI _ZN7WebCore9JSElementC2ERKS0_();
 int APS5_VABI _ZN7WebCore9JSElementD1Ev();

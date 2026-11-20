@@ -13979,10 +13979,6 @@ int APS5_VABI _ZN7WebCore10JSDocument9prototypeERN3JSC2VMERNS_17JSDOMGlobalObjec
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore10JSDocument9toWrappedERN3JSC2VMENS1_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore10JSDocumentC1ERKS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -22321,10 +22317,6 @@ int APS5_VABI _ZN7WebCore6JSNode9prototypeERN3JSC2VMERNS_17JSDOMGlobalObjectE() 
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore6JSNode9toWrappedERN3JSC2VMENS1_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore6JSNodeC1ERKS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -22617,10 +22609,6 @@ int APS5_VABI _ZN7WebCore7Element9outerTextEv() {
 }
 
 int APS5_VABI _ZN7WebCore7Element9setPseudoERKN3WTF10AtomStringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore7JSEvent9toWrappedERN3JSC2VMENS1_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -23405,10 +23393,6 @@ int APS5_VABI _ZN7WebCore9JSElement4infoEv() {
 }
 
 int APS5_VABI _ZN7WebCore9JSElement9prototypeERN3JSC2VMERNS_17JSDOMGlobalObjectE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore9JSElement9toWrappedERN3JSC2VMENS1_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
