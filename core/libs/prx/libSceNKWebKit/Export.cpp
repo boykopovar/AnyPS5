@@ -12949,34 +12949,6 @@ int APS5_VABI _ZN3PAL8KillRing7prependERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF10AtomString16fromUTF8InternalEPKcS2_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF10AtomString6numberEd() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF10AtomString6numberEf() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF10AtomString6numberEi() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF10AtomString6numberEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF10AtomString6numberEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF10AtomString6numberEy() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF10ParkingLot11forEachImplERKNS_12ScopedLambdaIFvRNS_6ThreadEPKvEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -13009,10 +12981,6 @@ int APS5_VABI _ZN3WTF10StringImpl5adoptEONS_12StringBufferIhEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF10StringImpl7destroyEPS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF10StringView16GraphemeClusters8IteratorC1EOS2_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -13030,14 +12998,6 @@ int APS5_VABI _ZN3WTF10StringView16GraphemeClusters8IteratorD2Ev() {
 }
 
 int APS5_VABI _ZN3WTF10StringView16GraphemeClusters8IteratorppEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF10SymbolImpl16createNullSymbolEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF10SymbolImpl6createERNS_10StringImplE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -13258,46 +13218,6 @@ int APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEy() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF14AtomStringImpl10addLiteralEPKcj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14AtomStringImpl11addSlowCaseERNS_15AtomStringTableERNS_10StringImplE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14AtomStringImpl14lookUpSlowCaseERNS_10StringImplE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14AtomStringImpl3addEPKDsj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14AtomStringImpl3addEPKNS_10StringImpl16StaticStringImplE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14AtomStringImpl3addEPKhj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14AtomStringImpl3addEPNS_10StringImplEjj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14AtomStringImpl6lookUpEPKDsj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14AtomStringImpl6lookUpEPKhj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF14FileSystemImpl18createSymbolicLinkERKNS_6StringES3_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -13311,18 +13231,6 @@ int APS5_VABI _ZN3WTF14FileSystemImpl30appendFileContentsToFileHandleERKNS_6Stri
 }
 
 int APS5_VABI _ZN3WTF14FileSystemImpl8hardLinkERKNS_6StringES3_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14SymbolRegistry12symbolForKeyERKNS_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14SymbolRegistryD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14SymbolRegistryD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -13408,10 +13316,6 @@ int APS5_VABI _ZN3WTF17GregorianDateTimeC1EdNS_15LocalTimeOffsetE() {
 }
 
 int APS5_VABI _ZN3WTF17GregorianDateTimeC2EdNS_15LocalTimeOffsetE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF17PrivateSymbolImpl6createERNS_10StringImplE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -25893,14 +25797,6 @@ int APS5_VABI _ZNK3JSC9JSPromise6statusERNS_2VME() {
 }
 
 int APS5_VABI _ZNK3JSC9JSPromise9isHandledERNS_2VME() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF10AtomString23convertToASCIILowercaseEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF10AtomString23convertToASCIIUppercaseEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
