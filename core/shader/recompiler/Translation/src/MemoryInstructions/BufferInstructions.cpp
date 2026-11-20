@@ -76,7 +76,7 @@ bool TranslationContext::bufferLoad(const RdnaInstruction& inst) {
         IrValue& ldsAddress = ir.IAdd(base, ir.ShiftLeftLogical(lane, ir.Constant(2u)));
         IrValue& end = ir.IAdd(ldsAddress, ir.Constant(inst.memoryOffset + 3u));
         IrValue& active = ir.LogicalAnd(exec, ir.ULessThan(end, ir.Constant(bufferLdsBytes)));
-        IrValue* previous = bufferPreviousValue(inst, memory);
+        IrValue* previous = &ir.Constant(0u);
         IrValue& loaded = ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), previous, &active}, addMemoryInfo(memory, inst.programCounter));
         MemoryInfo shared;
         shared.kind = ResourceKind::Lds;
