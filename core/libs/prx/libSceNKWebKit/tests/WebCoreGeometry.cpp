@@ -370,8 +370,11 @@ static void TestColor() {
     _ZN7WebCore5ColoraSEOS0_(&cMoveAssign, std::move(cAssign));
     Require(cMoveAssign.m_colorAndFlags == c1.m_colorAndFlags);
 
-    WebCore::Color cAlpha = _ZNK7WebCore5Color14colorWithAlphaEf(&c1, 0.5f);
+    WebCore::Color cAlpha;
+    cAlpha.m_colorAndFlags = 0xFFFFFFFFull;
+    Require(_ZNK7WebCore5Color14colorWithAlphaEf(&cAlpha, &c1, 0.5f) == &cAlpha);
     Require((cAlpha.m_colorAndFlags & 0xFF) == 128);
+    Require(((cAlpha.m_colorAndFlags ^ c1.m_colorAndFlags) & 0xFFFFFF00ull) == 0);
 
     WebCore::Color cWhite;
     cWhite.m_colorAndFlags = 0xFFFFFFFFull;
@@ -383,11 +386,14 @@ static void TestColor() {
     Require(AlmostEqual(_ZNK7WebCore5Color9lightnessEv(&cBlack), 0.0));
     Require(AlmostEqual(_ZNK7WebCore5Color9luminanceEv(&cBlack), 0.0));
 
-    WebCore::Color cDarkened = _ZNK7WebCore5Color8darkenedEv(&cWhite);
-    Require(((cDarkened.m_colorAndFlags >> 24) & 0xFF) < 255);
+    WebCore::Color cDarkened;
+    Require(_ZNK7WebCore5Color8darkenedEv(&cDarkened, &cWhite) == &cDarkened);
+    Require((cDarkened.m_colorAndFlags & 0xFFFFFFFFull) == 0xABABABFFull);
 
-    WebCore::Color cLightened = _ZNK7WebCore5Color9lightenedEv(&cBlack);
-    Require(((cLightened.m_colorAndFlags >> 24) & 0xFF) > 0);
+    WebCore::Color cLightened;
+    cLightened.m_colorAndFlags = 0xFFFFFFFFull;
+    Require(_ZNK7WebCore5Color9lightenedEv(&cLightened, &cBlack) == &cLightened);
+    Require((cLightened.m_colorAndFlags & 0xFFFFFFFFull) == 0x545454FFull);
 }
 
 static void TestAffineTransform() {
