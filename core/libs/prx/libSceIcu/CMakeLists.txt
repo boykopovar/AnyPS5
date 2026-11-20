@@ -792,6 +792,7 @@ if(BUILD_TESTING)
         tests/FieldPositionIterator.cpp
         tests/FormattedValue.cpp
         tests/Idna.cpp
+        tests/IdnaIdentity.cpp
         tests/ListFormatter.cpp
         tests/LocaleDisplayNames.cpp
         tests/NumberFormat.cpp
@@ -816,7 +817,7 @@ if(BUILD_TESTING)
     add_test(NAME guest_icu_recovered_signatures COMMAND guest_icu_recovered_signatures_tests)
     add_test(NAME guest_icu_idna_uts46 COMMAND guest_icu_recovered_signatures_tests --idna-uts46)
     set(icu_idna_tests guest_icu_idna_uts46)
-    foreach(mode native memory conformance-unicode conformance-ascii-n conformance-ascii-t)
+    foreach(mode native identity memory conformance-unicode conformance-ascii-n conformance-ascii-t)
         string(REPLACE "-" "_" name ${mode})
         add_test(NAME guest_icu_idna_${name} COMMAND guest_icu_recovered_signatures_tests --idna-${mode})
         list(APPEND icu_idna_tests guest_icu_idna_${name})

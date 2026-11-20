@@ -7,12 +7,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <new>
 #include <string>
-#include <unordered_set>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -23,8 +25,12 @@ static_assert(offsetof(UIDNAInfo, size) == 0 && offsetof(UIDNAInfo, isTransition
 static_assert(offsetof(UIDNAInfo, reservedB3) == 3 && offsetof(UIDNAInfo, errors) == 4);
 static_assert(offsetof(UIDNAInfo, reservedI2) == 8 && offsetof(UIDNAInfo, reservedI3) == 12);
 
+struct alignas(void*) HandleToken {};
+using NativeHandle = std::unique_ptr<UIDNA, decltype(&uidna_close)>;
+
 std::mutex HandlesMutex;
-std::unordered_set<const UIDNA*> Handles;
+std::deque<HandleToken> HandleTokens;
+std::unordered_map<const UIDNA*, NativeHandle> Handles;
 
 std::int32_t ReadStatus(const std::int32_t* error) {
     std::int32_t status;
@@ -79,12 +85,14 @@ std::int32_t Convert(ConvertFunction convert, const UIDNA* idna, const char16_t*
         return 0;
     }
     const std::lock_guard lock(HandlesMutex);
-    if (!Handles.contains(idna)) NotImplemented_nid_no_patch(__func__);
+    const auto found = Handles.find(idna);
+    if (found == Handles.end()) NotImplemented_nid_no_patch(__func__);
+    const auto* native = found->second.get();
     try {
         const auto input = ReadName(name, length);
         UIDNAInfo preflightInfo = UIDNA_INFO_INITIALIZER;
         auto status = static_cast<UErrorCode>(previous);
-        const auto required = convert(idna, input.data(), static_cast<std::int32_t>(input.size()), nullptr, 0,
+        const auto required = convert(native, input.data(), static_cast<std::int32_t>(input.size()), nullptr, 0,
                                       &preflightInfo, &status);
         const auto bounded = static_cast<std::int32_t>(std::min<std::int64_t>(capacity,
             std::max<std::int64_t>(input.size(), static_cast<std::int64_t>(required) + 1)));
@@ -93,7 +101,7 @@ std::int32_t Convert(ConvertFunction convert, const UIDNA* idna, const char16_t*
         std::memcpy(nativeInfo.data(), &infoSize, sizeof(infoSize));
         status = static_cast<UErrorCode>(previous);
         const auto perform = [&](char16_t* buffer, std::int32_t bufferCapacity) {
-            return convert(idna, input.data(), static_cast<std::int32_t>(input.size()), buffer, bufferCapacity,
+            return convert(native, input.data(), static_cast<std::int32_t>(input.size()), buffer, bufferCapacity,
                            reinterpret_cast<UIDNAInfo*>(nativeInfo.data()), &status);
         };
         std::int32_t count;
@@ -130,7 +138,6 @@ void APS5_VABI uidna_close_nid_postfix(UIDNA* idna) {
     if (!idna) return;
     const std::lock_guard lock(HandlesMutex);
     if (Handles.erase(idna) == 0) NotImplemented_nid_no_patch(__func__);
-    uidna_close(idna);
 }
 
 std::int32_t APS5_VABI uidna_nameToASCII_nid_postfix(const UIDNA* idna, const char16_t* name, std::int32_t length,
@@ -149,21 +156,23 @@ UIDNA* APS5_VABI uidna_openUTS46_nid_postfix(std::uint32_t options, std::int32_t
     const auto previous = ReadStatus(error);
     if (previous > 0) return nullptr;
     auto status = static_cast<UErrorCode>(previous);
-    std::unique_ptr<UIDNA, decltype(&uidna_close)> idna(uidna_openUTS46(options, &status), uidna_close);
+    NativeHandle native(uidna_openUTS46(options, &status), uidna_close);
+    WriteStatus(error, previous, status);
+    if (!native) return nullptr;
     try {
         const std::lock_guard lock(HandlesMutex);
-        if (idna) Handles.insert(idna.get());
+        auto* handle = reinterpret_cast<UIDNA*>(&HandleTokens.emplace_back());
         try {
-            WriteStatus(error, previous, status);
+            Handles.emplace(handle, std::move(native));
         } catch (...) {
-            if (idna) Handles.erase(idna.get());
+            HandleTokens.pop_back();
             throw;
         }
+        return handle;
     } catch (const std::bad_alloc&) {
         WriteStatus(error, previous, U_MEMORY_ALLOCATION_ERROR);
         return nullptr;
     }
-    return idna.release();
 }
 
 }

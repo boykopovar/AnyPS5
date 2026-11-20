@@ -12,6 +12,7 @@ void CheckIcuFormattedValue();
 void CheckIcuIdna();
 void CheckIcuIdnaUts46();
 void CheckIcuIdnaNative();
+void CheckIcuIdnaIdentity();
 void CheckIcuIdnaConformance(int operation);
 void CheckIcuIdnaMemory();
 #ifdef __linux__
@@ -37,6 +38,7 @@ int main(int argc, char* argv[]) {
     if (argc == 2) {
         const std::string_view mode(argv[1]);
         if (mode == "--idna-native") { CheckIcuIdnaNative(); return 0; }
+        if (mode == "--idna-identity") { CheckIcuIdnaIdentity(); return 0; }
         if (mode == "--idna-memory") { CheckIcuIdnaMemory(); return 0; }
 #ifdef __linux__
         if (mode == "--idna-input-allocation") { CheckIcuIdnaInputAllocation(); return 0; }
