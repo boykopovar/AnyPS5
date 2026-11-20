@@ -161,6 +161,16 @@ std::uint32_t EmitSampleOffset(SpirvEmitterState& state) {
     return offset;
 }
 
+std::uint32_t KeepRasterizedBarycentric(SpirvEmitterState& state, std::uint32_t value) {
+    const auto fragCoordW = state.module.AllocateId();
+    state.module.AddFunction(spv::OpBitcast, TypeF32(state), fragCoordW, EmitBuiltinU32(state, StageInputKind::FragCoord, 3u));
+    const auto rasterized = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFOrdGreaterThan, TypeBool(state), rasterized, fragCoordW, ConstantF32Value(state, 0.0f));
+    const auto kept = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelect, TypeF32(state), kept, rasterized, value, ConstantF32Value(state, 0.0f));
+    return kept;
+}
+
 std::uint32_t EmitOffsetBarycentricU32(SpirvEmitterState& state, StageInputKind kind, std::uint32_t component) {
     const bool smoothOffset = kind == StageInputKind::BaryCoordSmoothCenter || kind == StageInputKind::BaryCoordSmoothSample;
     const auto variable = smoothOffset && state.barycentricReciprocalWVariable != 0u
@@ -177,8 +187,9 @@ std::uint32_t EmitOffsetBarycentricU32(SpirvEmitterState& state, StageInputKind 
     const auto offset = center ? InterpolationOffset(state, 0u) : EmitSampleOffset(state);
     const auto weights = state.module.AllocateId();
     state.module.AddFunction(spv::OpExtInst, TypeF32Vector(state, 3u), weights, GlslStd450(state), GLSLstd450InterpolateAtOffset, variable, offset);
-    const auto weight = state.module.AllocateId();
+    auto weight = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), weight, weights, component + 1u);
+    if (state.program.Metadata().barycentricBuiltinsReadFragCoord) weight = KeepRasterizedBarycentric(state, weight);
     if (smoothOffset && state.barycentricReciprocalWVariable != 0u) {
         std::array<std::uint32_t, 3> components{};
         for (std::uint32_t index = 0; index < components.size(); ++index) {
@@ -312,17 +323,9 @@ std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std:
         const auto bits = state.module.AllocateId();
         state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassInput, TypeF32(state)), pointer, variable, ConstantU32(state, component + 1u));
         state.module.AddFunction(spv::OpLoad, TypeF32(state), value, pointer);
-        if (kind == StageInputKind::BaryCoordSmooth && state.program.Metadata().barycentricBuiltinsUnnormalized) {
-            const auto fragCoordW = state.module.AllocateId();
-            state.module.AddFunction(spv::OpBitcast, TypeF32(state), fragCoordW, EmitBuiltinU32(state, StageInputKind::FragCoord, 3u));
-            const auto rasterized = state.module.AllocateId();
-            state.module.AddFunction(spv::OpFOrdGreaterThan, TypeBool(state), rasterized, fragCoordW, ConstantF32Value(state, 0.0f));
-            const auto kept = state.module.AllocateId();
-            state.module.AddFunction(spv::OpSelect, TypeF32(state), kept, rasterized, value, ConstantF32Value(state, 0.0f));
-            state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, kept);
-            return bits;
-        }
-        state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, value);
+        const bool unnormalized = kind == StageInputKind::BaryCoordSmooth && state.program.Metadata().barycentricBuiltinsUnnormalized;
+        const auto kept = unnormalized || state.program.Metadata().barycentricBuiltinsReadFragCoord ? KeepRasterizedBarycentric(state, value) : value;
+        state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, kept);
         return bits;
     }
     return EmitInputComponentU32(state, kind, component);

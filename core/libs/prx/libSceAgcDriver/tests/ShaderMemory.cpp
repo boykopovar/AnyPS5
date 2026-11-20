@@ -10062,6 +10062,44 @@ std::vector<std::pair<std::uint32_t, bool>> slotInputs(std::initializer_list<std
     return located;
 }
 
+void verifyBarycentricBuiltinsReadFragCoord() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 3> code{0xf800180fu, 0x01000100u, 0xbf810000u};
+    for (const auto input : {PixelInput::PerspectiveCenter, PixelInput::LinearCenter}) {
+        const bool linear = input == PixelInput::LinearCenter;
+        for (const bool fragCoord : {false, true}) {
+            auto request = slotRequest({0u}, code, false);
+            request.context.pixel->inputAddr = PixelInputBit(input);
+            request.context.pixel->hasPerspectiveCenterVgpr = !linear;
+            request.context.pixel->noPerspective = linear;
+            request.target.barycentricBuiltinsReadFragCoord = fragCoord;
+            const auto result = Recompile(request);
+            require(!result.barycentricEmulation.active, "barycentric built-ins beside gl_FragCoord: the probe program needed generated stages");
+            const auto& words = result.spirv.Words();
+            std::set<std::uint32_t> builtins;
+            std::uint32_t rasterChecks = 0;
+            for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+                const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
+                if (op == spv::OpDecorate && words[at + 2] == spv::DecorationBuiltIn) builtins.insert(words[at + 3]);
+                if (op == spv::OpFOrdGreaterThan) ++rasterChecks;
+            }
+            const auto barycentric = linear ? spv::BuiltInBaryCoordNoPerspKHR : spv::BuiltInBaryCoordKHR;
+            require(builtins.contains(barycentric), "barycentric built-ins beside gl_FragCoord: I/J were not read from the barycentric built-in");
+            require(builtins.contains(spv::BuiltInFragCoord) == fragCoord, "barycentric built-ins beside gl_FragCoord: an I/J read did not follow the target's gl_FragCoord flag");
+            require((rasterChecks == 2u) == fragCoord, "barycentric built-ins beside gl_FragCoord: each I/J component was not kept by one gl_FragCoord.w test");
+        }
+    }
+    auto plain = slotRequest({0u}, code, false);
+    auto guarded = plain;
+    guarded.target.barycentricBuiltinsReadFragCoord = true;
+    std::vector<std::uint64_t> plainKey;
+    std::vector<std::uint64_t> guardedKey;
+    RecompileCacheKey::Build(plain, plainKey);
+    RecompileCacheKey::Build(guarded, guardedKey);
+    require(plainKey != guardedKey, "barycentric built-ins beside gl_FragCoord: the cache key ignores the gl_FragCoord read");
+    std::cout << "barycentric built-ins beside gl_FragCoord passed\n";
+}
+
 void verifyPixelParameterSlots() {
     static constexpr std::array<std::uint32_t, 7> shared{0xc8100000u, 0xc8110001u, 0xc8140500u, 0xc8150501u, 0xf800180fu, 0x05040504u, 0xbf810000u};
     auto inputs = slotInputs({0x3u, 0x3u}, shared);
@@ -13629,6 +13667,7 @@ int main(int argc, char** argv) {
         verifyLegacyPixelRequests();
         verifyPixelExportReplay();
         verifyPixelParameterSlots();
+        verifyBarycentricBuiltinsReadFragCoord();
         verifyHostInterpolationFirst();
         verifyF16PixelParameterSlots();
         verifyComputedTexelOffsets();

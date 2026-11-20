@@ -377,6 +377,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         program.Metadata().barycentricEmulation = !hostInterpolationFirst;
         simplify();
     }
+    if (stageKind == ShaderStageKind::Pixel) program.Metadata().barycentricBuiltinsReadFragCoord = request.target.barycentricBuiltinsReadFragCoord && !program.Metadata().barycentricEmulation;
 
     constexpr DenormalFlushEliminator denormalFlushEliminator;
     if (denormalFlushEliminator.Eliminate(program).removedFlushes != 0u) {
