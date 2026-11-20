@@ -160,6 +160,7 @@ struct DeviceFunctions {
     TrackedFunction<PFN_vkCmdSetColorWriteMaskEXT> cmdSetColorWriteMask;
     TrackedFunction<PFN_vkCmdSetDepthBounds> cmdSetDepthBounds;
     TrackedFunction<PFN_vkCmdSetDepthBias> cmdSetDepthBias;
+    TrackedFunction<PFN_vkCmdSetDepthBias2EXT> cmdSetDepthBias2;
     TrackedFunction<PFN_vkCmdSetCullModeEXT> cmdSetCullMode;
     TrackedFunction<PFN_vkCmdSetFrontFaceEXT> cmdSetFrontFace;
     TrackedFunction<PFN_vkCmdSetDepthTestEnableEXT> cmdSetDepthTestEnable;
@@ -334,6 +335,10 @@ struct Context {
     bool pipelineLinkTimeOptimization = true;
     bool dynamicColorWriteMask = false;
     bool dynamicDepthBiasEnable = false;
+    bool depthBiasControl = false;
+    bool depthBiasForceUnorm = false;
+    bool depthBiasFloat = false;
+    bool depthBiasExact = false;
     std::uint32_t srgbDecodeFormats = 0;
     std::uint32_t srgbCopyFormats = 0;
     std::uint32_t scaledSampledFormats = 0;

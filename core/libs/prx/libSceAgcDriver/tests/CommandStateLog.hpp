@@ -48,6 +48,14 @@ inline VKAPI_ATTR void VKAPI_CALL stateViewport(VkCommandBuffer, std::uint32_t, 
 inline VKAPI_ATTR void VKAPI_CALL stateScissor(VkCommandBuffer, std::uint32_t, std::uint32_t, const VkRect2D* scissor) { stateNote("scissor", scissor->offset.x, scissor->offset.y, scissor->extent.width, scissor->extent.height); }
 inline VKAPI_ATTR void VKAPI_CALL stateDepthBounds(VkCommandBuffer, float minimum, float maximum) { stateNote("bounds", minimum, maximum); }
 inline VKAPI_ATTR void VKAPI_CALL stateDepthBias(VkCommandBuffer, float constant, float clamp, float slope) { stateNote("bias", constant, clamp, slope); }
+inline VKAPI_ATTR void VKAPI_CALL stateDepthBias2(VkCommandBuffer, const VkDepthBiasInfoEXT* info) {
+    const auto* representation = static_cast<const VkDepthBiasRepresentationInfoEXT*>(info->pNext);
+    if (representation == nullptr) {
+        stateNote("bias2", info->depthBiasConstantFactor, info->depthBiasClamp, info->depthBiasSlopeFactor);
+        return;
+    }
+    stateNote("bias2", info->depthBiasConstantFactor, info->depthBiasClamp, info->depthBiasSlopeFactor, static_cast<std::uint32_t>(representation->depthBiasRepresentation), static_cast<std::uint32_t>(representation->depthBiasExact));
+}
 inline VKAPI_ATTR void VKAPI_CALL stateCullMode(VkCommandBuffer, VkCullModeFlags mode) { stateNote("cull", static_cast<std::uint32_t>(mode)); }
 inline VKAPI_ATTR void VKAPI_CALL stateFrontFace(VkCommandBuffer, VkFrontFace face) { stateNote("front", static_cast<std::uint32_t>(face)); }
 inline VKAPI_ATTR void VKAPI_CALL stateDepthTest(VkCommandBuffer, VkBool32 enable) { stateNote("depthtest", static_cast<std::uint32_t>(enable)); }
@@ -91,6 +99,7 @@ inline DeviceFunctions stateFunctions() {
     functions.cmdSetScissor = stateScissor;
     functions.cmdSetDepthBounds = stateDepthBounds;
     functions.cmdSetDepthBias = stateDepthBias;
+    functions.cmdSetDepthBias2 = stateDepthBias2;
     functions.cmdSetCullMode = stateCullMode;
     functions.cmdSetFrontFace = stateFrontFace;
     functions.cmdSetDepthTestEnable = stateDepthTest;

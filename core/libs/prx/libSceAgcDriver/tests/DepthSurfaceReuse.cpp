@@ -365,8 +365,32 @@ void TestFilledHtileAfterCopyClears(const Context& context) {
     ClearDepthSurfaces(context.device);
 }
 
+bool HostBiasIs(const Context& context, VkFormat format, DepthBiasUnits units, float constant, float value, VkDepthBiasRepresentationEXT representation) {
+    const auto host = HostDepthBiasConstant(context, format, units, constant);
+    return host.value == value && host.representation == representation;
+}
+
 void TestD16StencilFallback(const Context& context) {
-    Require(HostDepthFormat(context, VK_FORMAT_D16_UNORM_S8_UINT) == VK_FORMAT_D16_UNORM_S8_UINT && HostDepthBiasConstant(context, VK_FORMAT_D16_UNORM_S8_UINT, 2.0f) == 2.0f, "a device with D16_UNORM_S8_UINT must keep it and its depth bias");
+    constexpr auto formatUnits = VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORMAT_EXT;
+    constexpr auto forceUnorm = VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORCE_UNORM_EXT;
+    constexpr auto floatUnits = VK_DEPTH_BIAS_REPRESENTATION_FLOAT_EXT;
+    Require(HostDepthFormat(context, VK_FORMAT_D16_UNORM_S8_UINT) == VK_FORMAT_D16_UNORM_S8_UINT && HostBiasIs(context, VK_FORMAT_D16_UNORM_S8_UINT, DepthBiasUnits::Target, 2.0f, 2.0f, formatUnits), "a device with D16_UNORM_S8_UINT must keep it and its depth bias");
+    Require(HostBiasIs(context, VK_FORMAT_D16_UNORM, DepthBiasUnits::Float, 2.0f, 2.0f / 256.0f, formatUnits) && HostBiasIs(context, VK_FORMAT_D16_UNORM, DepthBiasUnits::Unorm16, 2.0f, 2.0f, formatUnits), "a D16 target must take float bias units at 2^-24 and 16-bit units unchanged");
+    Require(HostBiasIs(context, VK_FORMAT_D32_SFLOAT, DepthBiasUnits::Target, 2.0f, 2.0f, formatUnits) && HostBiasIs(context, VK_FORMAT_D32_SFLOAT, DepthBiasUnits::Float, 2.0f, 2.0f, formatUnits), "float bias units on a D32 target must not be scaled");
+    Require(HostBiasIs(context, VK_FORMAT_D32_SFLOAT, DepthBiasUnits::Unorm16, 2.0f, 512.0f, formatUnits), "without VK_EXT_depth_bias_control 16-bit bias units on a D32 target must keep the factor of 256 exact for a largest depth in [0.5, 1)");
+    Context forced = context;
+    forced.depthBiasControl = true;
+    forced.depthBiasExact = true;
+    forced.depthBiasForceUnorm = true;
+    forced.depthBiasFloat = true;
+    Require(HostBiasIs(forced, VK_FORMAT_D32_SFLOAT, DepthBiasUnits::Unorm16, 2.0f, 512.0f, forceUnorm) && HostBiasIs(forced, VK_FORMAT_D32_SFLOAT_S8_UINT, DepthBiasUnits::Unorm16, -3.0f, -768.0f, forceUnorm), "16-bit bias units on a D32 target must use the force-unorm representation, whose unit is 2^-24");
+    Require(HostBiasIs(forced, VK_FORMAT_D32_SFLOAT, DepthBiasUnits::Float, 2.0f, 2.0f, formatUnits) && HostBiasIs(forced, VK_FORMAT_D16_UNORM, DepthBiasUnits::Unorm16, 2.0f, 2.0f, formatUnits), "bias units that match the target must keep the format representation");
+    Require(HostBiasIs(forced, VK_FORMAT_D32_SFLOAT, DepthBiasUnits::Unorm16, 0.0f, 0.0f, formatUnits), "a zero constant needs no representation");
+    Context floating = context;
+    floating.depthBiasControl = true;
+    floating.depthBiasExact = true;
+    floating.depthBiasFloat = true;
+    Require(HostBiasIs(floating, VK_FORMAT_D32_SFLOAT, DepthBiasUnits::Unorm16, 2.0f, 2.0f / 65536.0f, floatUnits), "16-bit bias units on a D32 target without force-unorm must use the float representation, whose unit is 1");
     static int withoutTag = 0;
     Context without = context;
     without.physical = reinterpret_cast<VkPhysicalDevice>(&withoutTag);
@@ -394,8 +418,9 @@ void TestD16StencilFallback(const Context& context) {
         displacedFallback = true;
     }
     Require(displacedFallback && imageReads.empty(), "a stencil slice displaced by a newer owner of another extent must not reuse the older surface");
-    Require(HostDepthBiasConstant(without, VK_FORMAT_D16_UNORM_S8_UINT, 2.0f) == 512.0f, "a 16-bit depth bias must be scaled by 256 for D24 storage");
-    Require(HostDepthBiasConstant(without, VK_FORMAT_D32_SFLOAT_S8_UINT, 2.0f) == 2.0f, "a D32 depth bias must not be scaled");
+    Require(HostBiasIs(without, VK_FORMAT_D16_UNORM_S8_UINT, DepthBiasUnits::Target, 2.0f, 512.0f, formatUnits), "a 16-bit depth bias must be scaled by 256 for D24 storage");
+    Require(HostBiasIs(without, VK_FORMAT_D16_UNORM_S8_UINT, DepthBiasUnits::Float, 2.0f, 2.0f, formatUnits), "float bias units on D24 storage must be taken at 2^-24");
+    Require(HostBiasIs(without, VK_FORMAT_D32_SFLOAT_S8_UINT, DepthBiasUnits::Target, 2.0f, 2.0f, formatUnits), "a D32 depth bias must not be scaled");
     const auto refused = [&](const View& view) {
         try {
             lookup(without, view);
@@ -421,14 +446,22 @@ void TestD16StencilFallback(const Context& context) {
     only.physical = reinterpret_cast<VkPhysicalDevice>(&onlyTag);
     only.formatProperties = formatPropertiesOnlyD32S8;
     Require(HostDepthFormat(only, VK_FORMAT_D16_UNORM_S8_UINT) == VK_FORMAT_D32_SFLOAT_S8_UINT, "a device with neither D16 nor D24 stencil formats must store D16_UNORM_S8_UINT as D32_SFLOAT_S8_UINT");
-    Require(HostDepthBiasConstant(only, VK_FORMAT_D16_UNORM_S8_UINT, 0.0f) == 0.0f, "a zero depth bias needs no scaling");
+    Require(HostBiasIs(only, VK_FORMAT_D16_UNORM_S8_UINT, DepthBiasUnits::Target, 0.0f, 0.0f, formatUnits), "a zero depth bias needs no scaling");
+    Require(HostBiasIs(only, VK_FORMAT_D16_UNORM_S8_UINT, DepthBiasUnits::Float, 2.0f, 2.0f, formatUnits), "float bias units on D32_SFLOAT_S8_UINT storage must not be scaled");
     bool threw = false;
     try {
-        HostDepthBiasConstant(only, VK_FORMAT_D16_UNORM_S8_UINT, 2.0f);
-    } catch (const std::runtime_error&) {
-        threw = true;
+        HostDepthBiasConstant(only, VK_FORMAT_D16_UNORM_S8_UINT, DepthBiasUnits::Target, 2.0f);
+    } catch (const std::runtime_error& error) {
+        threw = std::string_view(error.what()).find("needs VK_EXT_depth_bias_control") != std::string_view::npos;
     }
-    Require(threw, "a constant 16-bit depth bias on D32_SFLOAT_S8_UINT storage must throw");
+    Require(threw, "a constant 16-bit depth bias on D32_SFLOAT_S8_UINT storage without VK_EXT_depth_bias_control must throw");
+    only.depthBiasControl = true;
+    only.depthBiasExact = true;
+    only.depthBiasForceUnorm = true;
+    Require(HostBiasIs(only, VK_FORMAT_D16_UNORM_S8_UINT, DepthBiasUnits::Target, 2.0f, 512.0f, forceUnorm), "a 16-bit depth bias on D32_SFLOAT_S8_UINT storage must use the force-unorm representation");
+    only.depthBiasForceUnorm = false;
+    only.depthBiasFloat = true;
+    Require(HostBiasIs(only, VK_FORMAT_D16_UNORM_S8_UINT, DepthBiasUnits::Target, 2.0f, 2.0f / 65536.0f, floatUnits), "a 16-bit depth bias on D32_SFLOAT_S8_UINT storage without force-unorm must use the float representation");
 }
 
 void TestMultisampleDepthOwnership(Context context) {

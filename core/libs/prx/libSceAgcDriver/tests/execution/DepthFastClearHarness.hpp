@@ -54,6 +54,7 @@ struct DrawOptions {
     float maxDepth = 1.0f;
     bool depthBias = false;
     float depthBiasConstant = 0.0f;
+    AgcDriver::Graphics::DepthBiasUnits depthBiasUnits = AgcDriver::Graphics::DepthBiasUnits::Target;
 };
 
 inline std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
@@ -133,6 +134,7 @@ inline std::uint32_t Draw(AgcDriver::VulkanDevice& device, const Shaders& compil
     state.stencilBack = options.stencil;
     state.depthBias = options.depthBias;
     state.depthBiasConstant = options.depthBiasConstant;
+    state.depthBiasUnits = options.depthBiasUnits;
     state.renderExtent = extent;
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     state.viewport = {0, static_cast<float>(extent.height), static_cast<float>(extent.width), -static_cast<float>(extent.height), options.minDepth, options.maxDepth};

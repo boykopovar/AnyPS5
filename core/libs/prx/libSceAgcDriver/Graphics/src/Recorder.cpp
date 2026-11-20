@@ -1664,9 +1664,18 @@ void CommandState::SetViewports(const Context& context, std::span<const VkViewpo
     wrote(Mask(Viewport) | Mask(Scissor));
 }
 
-void CommandState::SetDepthBias(const Context& context, float constant, float clamp, float slope) {
-    const std::array<float, 3> bias{constant, clamp, slope};
-    apply(DepthBias, &CommandState::depthBias, bias, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.tracked(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, constant, clamp, slope); });
+void CommandState::SetDepthBias(const Context& context, float constant, float clamp, float slope, VkDepthBiasRepresentationEXT representation) {
+    const DepthBiasFactors bias{{constant, clamp, slope}, representation};
+    apply(DepthBias, &CommandState::depthBias, bias, [](const auto& left, const auto& right) { return sameBits(left.factors, right.factors) && left.representation == right.representation; }, [&] {
+        if (!context.depthBiasControl) {
+            Require(representation == VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORMAT_EXT, "a depth bias representation other than the depth format's needs VK_EXT_depth_bias_control");
+            context.tracked(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, constant, clamp, slope);
+            return;
+        }
+        const VkDepthBiasRepresentationInfoEXT exact{VK_STRUCTURE_TYPE_DEPTH_BIAS_REPRESENTATION_INFO_EXT, nullptr, representation, context.depthBiasExact ? VK_TRUE : VK_FALSE};
+        const VkDepthBiasInfoEXT info{VK_STRUCTURE_TYPE_DEPTH_BIAS_INFO_EXT, &exact, constant, clamp, slope};
+        context.tracked(&DeviceFunctions::cmdSetDepthBias2, "vkCmdSetDepthBias2EXT")(commands, &info);
+    });
 }
 
 void CommandState::SetDepthBounds(const Context& context, float minimum, float maximum) {
