@@ -86,7 +86,13 @@ private:
     bool open = false;
 };
 
+Gate retireGate;
 Gate failGate;
+
+VKAPI_ATTR VkResult VKAPI_CALL GatedSubmit(VkQueue, std::uint32_t, const VkSubmitInfo*, VkFence) {
+    retireGate.Pass();
+    return VK_SUCCESS;
+}
 
 VKAPI_ATTR VkResult VKAPI_CALL GatedFailingSubmit(VkQueue, std::uint32_t, const VkSubmitInfo*, VkFence) {
     failGate.Pass();
@@ -96,6 +102,15 @@ VKAPI_ATTR VkResult VKAPI_CALL GatedFailingSubmit(VkQueue, std::uint32_t, const 
 
 QueueSubmitter::Job JobFor(std::uintptr_t commands, VkResult* result = nullptr, std::uint64_t serial = 0) {
     return {Fake<VkCommandBuffer>(commands), VK_NULL_HANDLE, VK_NULL_HANDLE, 0, serial != 0 ? Fake<VkSemaphore>(0x7700) : VK_NULL_HANDLE, serial, result};
+}
+
+bool Refused(QueueSubmitter& submitter, std::uintptr_t commands) {
+    try {
+        submitter.Enqueue(JobFor(commands));
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
 }
 
 void ordered() {
@@ -242,6 +257,62 @@ void nothingQueuedAfterAFailedSubmit() {
     Require(QueueSubmitter::Existing(queue) == nullptr, "a failed submitter outlived its device");
 }
 
+void noWorkerAdmittedWhileItsDeviceRetires() {
+    const auto device = Fake<VkDevice>(0xf200);
+    const auto blocked = Fake<VkQueue>(0xf300);
+    const auto another = Fake<VkQueue>(0xf400);
+    auto& old = QueueSubmitter::For(device, blocked, GatedSubmit);
+    old.Enqueue(JobFor(1));
+    Require(retireGate.WaitEntered(), "the blocked submit did not start");
+    struct Retirement {
+        std::thread thread;
+        ~Retirement() {
+            retireGate.Open();
+            if (thread.joinable()) thread.join();
+        }
+    } retirement{std::thread([device] { QueueSubmitter::RetireDevice(device); })};
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    bool refused = false;
+    for (const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2); !refused && std::chrono::steady_clock::now() < deadline; std::this_thread::yield()) {
+        try {
+            QueueSubmitter::For(device, another, SecondSubmit);
+        } catch (const std::runtime_error&) {
+            refused = true;
+        }
+    }
+    retireGate.Open();
+    retirement.thread.join();
+    auto* left = QueueSubmitter::Existing(another);
+    const int before = secondSubmits.load(std::memory_order_relaxed);
+    if (left != nullptr && !Refused(*left, 2)) left->Drain();
+    Require(left == nullptr, secondSubmits.load(std::memory_order_relaxed) != before ? "a worker admitted while its device was retired stayed registered and still submits" : "a worker admitted while its device was retired stayed registered");
+    Require(refused, "a device under retirement admitted a new worker");
+    Require(QueueSubmitter::Existing(blocked) == nullptr, "the blocked worker outlived its device");
+    Require(Refused(old, 3), "the blocked worker accepted a job after its device was retired");
+}
+
+void cleanupBetweenRetirements() {
+    const auto device = Fake<VkDevice>(0xf500);
+    const auto queue = Fake<VkQueue>(0xf600);
+    auto& early = QueueSubmitter::For(device, queue, FirstSubmit);
+    early.WaitSubmitReturned(early.Enqueue(JobFor(11)));
+    QueueSubmitter::RetireDevice(device);
+    Require(QueueSubmitter::Existing(queue) == nullptr, "the early retirement left the device's worker registered");
+    const int before = secondSubmits.load(std::memory_order_relaxed);
+    auto& cleanup = QueueSubmitter::For(device, queue, SecondSubmit);
+    Require(&cleanup != &early, "a cleanup submission after the early retirement found the stopped worker");
+    Require(QueueSubmitter::Existing(queue) == &cleanup, "the cleanup worker is not registered");
+    cleanup.WaitSubmitReturned(cleanup.Enqueue(JobFor(12)));
+    Require(secondSubmits.load(std::memory_order_relaxed) == before + 1, "a cleanup submission after the early retirement was not submitted");
+    {
+        const QueueAccess access(queue);
+    }
+    QueueSubmitter::RetireDevice(device);
+    Require(QueueSubmitter::Existing(queue) == nullptr, "the final retirement left the cleanup worker registered");
+    Require(Refused(cleanup, 13), "the cleanup worker accepted a job after the final retirement");
+    Require(Refused(early, 14), "the early worker accepted a job after its retirement");
+}
+
 }
 
 int main() {
@@ -252,6 +323,8 @@ int main() {
         {"drained before access and retirement", drainedBeforeAccessAndRetirement},
         {"failure reaches its job", failureReachesItsJob},
         {"nothing queued after a failed submit", nothingQueuedAfterAFailedSubmit},
+        {"no worker admitted while its device retires", noWorkerAdmittedWhileItsDeviceRetires},
+        {"cleanup between retirements", cleanupBetweenRetirements},
     };
     int failed = 0;
     for (const auto& [name, run] : cases) {

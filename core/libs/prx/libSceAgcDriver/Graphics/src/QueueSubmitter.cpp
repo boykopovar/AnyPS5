@@ -16,6 +16,7 @@ namespace {
 struct Submitters {
     std::mutex mutex;
     std::map<VkQueue, QueueSubmitter*> byQueue;
+    std::map<VkDevice, std::size_t> retiring;
 };
 
 Submitters& AllSubmitters() {
@@ -39,6 +40,7 @@ QueueSubmitter& QueueSubmitter::For(VkDevice device, VkQueue queue, PFN_vkQueueS
     QueueSubmitter* result = nullptr;
     {
         std::lock_guard lock(all.mutex);
+        if (all.retiring.contains(device)) throw std::runtime_error("AGC graphics: a batch was submitted to a device while its queue submitters were being retired");
         const auto found = all.byQueue.find(queue);
         if (found != all.byQueue.end() && found->second->device == device) return *found->second;
         std::unique_ptr<QueueSubmitter> created(new QueueSubmitter(device, queue, submit));
@@ -68,6 +70,7 @@ void QueueSubmitter::RetireDevice(VkDevice device) {
     std::vector<QueueSubmitter*> retired;
     {
         std::lock_guard lock(all.mutex);
+        ++all.retiring[device];
         for (const auto& entry : all.byQueue) {
             if (entry.second->device == device) retired.push_back(entry.second);
         }
@@ -80,6 +83,8 @@ void QueueSubmitter::RetireDevice(VkDevice device) {
         all.byQueue.erase(found);
         liveSubmitters.fetch_sub(1, std::memory_order_release);
     }
+    const auto mark = all.retiring.find(device);
+    if (--mark->second == 0) all.retiring.erase(mark);
 }
 
 std::uint64_t QueueSubmitter::FailedSubmits(VkDevice device) {
