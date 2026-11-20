@@ -64,6 +64,50 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSInitHQ(memory.data(), 0x40000, appType) == initialized);
     Require(sceVoiceQoSInitHQ(nullptr, 0, 0) == initialized);
 
+    const bool wideAppType = appType == 0x10000000;
+    const std::int32_t connectionLimit = wideAppType ? 15 : 7;
+    const std::int32_t bitrateCap = wideAppType ? 22533 : 7300;
+    auto setBitrate = [](std::int32_t connection, std::int32_t attribute, std::int32_t bitrate) {
+        return sceVoiceQoSSetConnectionAttribute(connection, attribute, &bitrate, sizeof(bitrate));
+    };
+    auto getBitrate = [](std::int32_t connection, std::int32_t attribute) {
+        std::int32_t bitrate = -1;
+        Require(sceVoiceQoSGetConnectionAttribute(connection, attribute, &bitrate, sizeof(bitrate)) == 0);
+        return bitrate;
+    };
+    for (std::int32_t connection = 0; connection < connectionLimit; ++connection) {
+        Require(getBitrate(connection, 4) == bitrateCap && getBitrate(connection, 9) == 3850);
+    }
+    std::int32_t bitrateOut = 77;
+    for (std::int32_t connection : {-1, connectionLimit, 100}) {
+        Require(sceVoiceQoSGetConnectionAttribute(connection, 9, &bitrateOut, 4) == argumentInvalid);
+        Require(setBitrate(connection, 9, 5000) == argumentInvalid);
+    }
+    for (std::int32_t attribute : {0, 1, 3, 5, 8, 10}) {
+        Require(sceVoiceQoSGetConnectionAttribute(0, attribute, &bitrateOut, 4) == argumentInvalid);
+        Require(setBitrate(0, attribute, 5000) == argumentInvalid);
+    }
+    Require(sceVoiceQoSGetConnectionAttribute(0, 9, &bitrateOut, 8) == argumentInvalid && bitrateOut == 77);
+    Require(sceVoiceQoSGetConnectionAttribute(0, 9, nullptr, 4) == argumentInvalid);
+    Require(sceVoiceQoSSetConnectionAttribute(0, 9, &bitrateOut, 2) == argumentInvalid);
+    Require(sceVoiceQoSSetConnectionAttribute(0, 9, nullptr, 4) == argumentInvalid);
+    Require(getBitrate(0, 9) == 3850);
+    Require(setBitrate(0, 9, 5000) == 0 && getBitrate(0, 9) == 4650);
+    Require(setBitrate(0, 9, 7299) == 0 && getBitrate(0, 9) == 5700);
+    Require(setBitrate(0, 9, 7300) == 0 && getBitrate(0, 9) == 7300);
+    Require(setBitrate(0, 9, 16500) == 0 && getBitrate(0, 9) == (wideAppType ? 16000 : 7300));
+    Require(setBitrate(0, 9, 100000) == 0 && getBitrate(0, 9) == bitrateCap);
+    Require(setBitrate(0, 9, -5) == 0 && getBitrate(0, 9) == 3850);
+    Require(getBitrate(1, 9) == 3850 && getBitrate(1, 4) == bitrateCap);
+    Require(setBitrate(0, 9, 7300) == 0);
+    Require(setBitrate(0, 4, 1000) == 0 && getBitrate(0, 4) == 7300);
+    Require(setBitrate(0, 9, 0) == 0 && getBitrate(0, 9) == 3850);
+    Require(setBitrate(0, 4, 5000) == 0 && getBitrate(0, 4) == 5000);
+    Require(setBitrate(0, 9, 6000) == 0 && getBitrate(0, 9) == 4650);
+    Require(setBitrate(0, 4, 100000) == 0 && getBitrate(0, 4) == bitrateCap);
+    Require(setBitrate(0, 4, -1) == 0 && getBitrate(0, 4) == 4650);
+    Require(setBitrate(connectionLimit - 1, 9, 5700) == 0 && getBitrate(connectionLimit - 1, 9) == 5700);
+
     VoicePortParam titlePortParam{};
     titlePortParam.port_type = 0;
     titlePortParam.volume = 0.25f;
@@ -232,6 +276,7 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSDisableChat() == notInitialized);
     Require(sceVoiceQoSInitHQ(nullptr, 0x40000, appType) == argumentInvalid);
     Require(sceVoiceQoSInitHQ(memory.data(), 0x40000, appType) == 0);
+    Require(getBitrate(0, 4) == bitrateCap && getBitrate(0, 9) == 3850 && getBitrate(connectionLimit - 1, 9) == 3850);
     Require(sceVoiceQoSEnd() == 0);
     Require(sceVoiceQoSEnd() == notInitialized);
     Require(sceVoiceQoSInitHQ(memory.data(), 0x40000, appType) == 0);
@@ -243,7 +288,8 @@ int main(int argc, char** argv) {
 
     Require(sceVoiceQoSGetLocalEndpointAttribute(0, 0, nullptr, 0) == notInitialized);
     Require(NotImplemented([] { sceVoiceQoSGetRemoteEndpointAttribute(1, 1, nullptr, 0); }));
-    Require(NotImplemented([] { sceVoiceQoSGetConnectionAttribute(1, 1, nullptr, 0); }));
+    Require(sceVoiceQoSGetConnectionAttribute(1, 9, &bitrateOut, 4) == notInitialized);
+    Require(setBitrate(1, 9, 5000) == notInitialized);
     Require(NotImplemented([] { sceVoiceQoSGetStatus(1, 1, nullptr, 0); }));
     Require(NotImplemented([] { sceVoiceQoSDebugGetStatus(0, 200, nullptr, 4); }));
     Require(NotImplemented([] { sceVoiceQoSSetMode(); }));
