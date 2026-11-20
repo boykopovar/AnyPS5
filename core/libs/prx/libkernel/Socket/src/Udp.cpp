@@ -2371,6 +2371,8 @@ static std::int64_t ReceiveFrom(int descriptor, void* buffer, std::uint64_t leng
     int flags, void* address, std::uint32_t* addressLength) {
     std::uint32_t capacity = 0;
     if (addressLength && !GuestCopyIn_nid_no_patch(&capacity, addressLength, sizeof(capacity))) return Fail(14);
+    const File::IoDescriptor retained(descriptor);
+    if (retained.Value() < 0) return -1;
     if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
         if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
         if (length > INT_MAX) return Fail(40);
@@ -3304,9 +3306,7 @@ std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint6
 }
 std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::uint64_t length,
     int flags, void* address, std::uint32_t* addressLength) {
-    return ThreadCancel::Io([&] { return File::WithIoDescriptor(descriptor, [&](int descriptor) {
-        return ReceiveFrom(descriptor, buffer, length, flags, address, addressLength);
-    }); });
+    return ThreadCancel::Io([&] { return ReceiveFrom(descriptor, buffer, length, flags, address, addressLength); });
 }
 std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message, int flags) {
     return ThreadCancel::Io([&] { return ReceiveMessage(descriptor, message, flags); });

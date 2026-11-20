@@ -78,6 +78,8 @@ void ArgumentsAreCheckedBeforeTheDescriptor() {
     for (const void* unusable : {reinterpret_cast<const void*>(0x10), UnreadablePage()}) {
         Require(Fails(bind_nid_postfix(-1, unusable, address.size()), ErrorFault), "bind(-1) with an unreadable address must fail with EFAULT (14)");
         Require(Fails(connect_nid_postfix(-1, unusable, address.size()), ErrorFault), "connect(-1) with an unreadable address must fail with EFAULT (14)");
+        auto* length = static_cast<std::uint32_t*>(const_cast<void*>(unusable));
+        Require(Fails(recvfrom_nid_postfix(-1, nullptr, 0, 0, nullptr, length), ErrorFault), "recvfrom(-1) checks the address length before the descriptor");
         const int stream = socket_nid_postfix(2, Stream, 0);
         const int datagram = socket_nid_postfix(2, Datagram, 0);
         Require(stream >= 0 && datagram >= 0, "socket failed");
@@ -91,6 +93,8 @@ void ArgumentsAreCheckedBeforeTheDescriptor() {
     Require(Fails(bind_nid_postfix(-1, address.data(), address.size()), ErrorBadDescriptor), "bind(-1) with a valid address must fail with EBADF (9)");
     Require(Fails(connect_nid_postfix(-1, address.data(), address.size()), ErrorBadDescriptor), "connect(-1) with a valid address must fail with EBADF (9)");
     Require(Fails(sendto_nid_postfix(-1, "x", 1, 0, address.data(), address.size()), ErrorBadDescriptor), "sendto(-1) with a valid address must fail with EBADF (9)");
+    std::uint32_t length = 0;
+    Require(Fails(recvfrom_nid_postfix(-1, nullptr, 0, 0, nullptr, &length), ErrorBadDescriptor), "recvfrom(-1) with a readable address length must fail with EBADF (9)");
 }
 
 void LongAddressesAndOtherFamiliesFail() {
