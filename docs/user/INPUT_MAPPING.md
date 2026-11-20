@@ -105,6 +105,7 @@ The same file also accepts these settings, each at most once, in the form `Setti
 | `StickModifierScale` | Number from 0.05 to 1, the tilt of keyboard stick bindings while a `StickModifier` binding is held. | `0.5` |
 | `KeyboardRampMs` | Number from 0 to 2000, the milliseconds a keyboard stick binding takes to move the stick from the center to full tilt. 0 tilts at once. | `0` |
 | `TriggerRampMs` | Number from 0 to 2000, the milliseconds a key or mouse button bound to `L2` or `R2` takes to press the trigger from 0 to full. 0 presses it fully at once. | `0` |
+| `ToggleActions` | Comma-separated pad buttons (`Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`), each toggled by the keys and mouse buttons bound to it. Stick directions and emulator actions are refused. See [Toggled buttons](#toggled-buttons). | none |
 
 ```ini
 LeftStickDeadzone = 12
@@ -157,6 +158,19 @@ StickModifierScale = 0.4
 With `KeyboardRampMs` above 0, keyboard stick bindings move the stick toward their tilt at a steady speed instead of jumping, and back to the center the same way when the keys are let go. Opposite keys held together move the stick to the center at the same speed.
 
 With `TriggerRampMs` above 0, a key or mouse button bound to `L2` or `R2` presses the analog trigger gradually and lets it go the same way, for throttle and brake in racing titles. A pressed controller trigger is not slowed, and the larger of the two values is passed on.
+
+## Toggled buttons
+
+A pad button listed in `ToggleActions` latches instead of being held: the first press of a key or mouse button bound to it presses the button, and the button stays pressed after the key or mouse button is released. The next press releases it. Every key and mouse button bound to the same action shares that one state, so pressing either one toggles it. Buttons not listed keep the normal behavior, pressed while the key is held. Losing focus releases every toggled button.
+
+Mouse wheel bindings are not toggled; they still press the button for a short moment as before.
+
+```ini
+ToggleActions = R2, L1
+R2 = KEY:Z
+```
+
+Here Z presses R2 on the first press and off on the second, and Q (bound to L1 by default) does the same for L1. A listed action with no binding is ignored. A per-game profile that sets `ToggleActions` replaces the list from the shared file, and an empty value or an unknown action is an error.
 
 ## Shake
 
