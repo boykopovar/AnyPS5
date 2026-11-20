@@ -241,6 +241,40 @@ int main() {
     cairo_device_to_user_distance(context, &dx, &dy);
     CHECK(Close(dx, 5.0) && Close(dy, -2.0));
 
+    using CoordinateTransform = void (APS5_VABI*)(CairoContext*, double*, double*);
+    const std::array<CoordinateTransform, 4> coordinateTransforms{
+        cairo_user_to_device,
+        cairo_user_to_device_distance,
+        cairo_device_to_user,
+        cairo_device_to_user_distance,
+    };
+    for (CoordinateTransform transform : coordinateTransforms) {
+        double first = 7.0;
+        double second = 11.0;
+        EXPECT_REJECTED(transform(context, nullptr, &second));
+        CHECK(Close(second, 11.0));
+        EXPECT_REJECTED(transform(context, &first, nullptr));
+        CHECK(Close(first, 7.0));
+        EXPECT_REJECTED(transform(context, badDouble, &second));
+        CHECK(Close(second, 11.0));
+        EXPECT_REJECTED(transform(context, &first, badDouble));
+        CHECK(Close(first, 7.0));
+        EXPECT_REJECTED(transform(context, roDoubles, &second));
+        CHECK(Close(second, 11.0));
+        EXPECT_REJECTED(transform(context, &first, roDoubles));
+        CHECK(Close(first, 7.0));
+    }
+
+    double backendAliased = 2.0;
+    aps5_cairo_user_to_device(
+        reinterpret_cast<cairo_t*>(context),
+        &backendAliased,
+        &backendAliased);
+
+    double aliased = 2.0;
+    cairo_user_to_device(context, &aliased, &aliased);
+    CHECK(Close(aliased, backendAliased));
+
     EXPECT_REJECTED(cairo_set_dash(context, nullptr, 2, 0.5));
     EXPECT_REJECTED(cairo_set_dash(context, badDouble, 2, 0.5));
     const std::array<double, 2> dashPattern{4.0, 2.0};
