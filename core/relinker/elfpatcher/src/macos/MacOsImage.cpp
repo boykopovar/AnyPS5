@@ -27,17 +27,13 @@ using Windows::LoadRva;
 constexpr std::uint64_t PageSize = 0x1000;
 constexpr std::uint64_t UserAddressEnd = 0x7fffffe00000;
 
-constexpr std::uint32_t MhMagic64 = 0xfeedfacf;
-constexpr std::uint32_t CpuTypeX8664 = 0x01000007;
 constexpr std::uint32_t CpuSubtypeX8664All = 3;
-constexpr std::uint32_t MhExecute = 2;
 constexpr std::uint32_t MhDylib = 6;
 constexpr std::uint32_t MhNoUndefs = 0x1;
 constexpr std::uint32_t MhDyldLink = 0x4;
 constexpr std::uint32_t MhTwoLevel = 0x80;
 constexpr std::uint32_t MhWeakDefines = 0x8000;
 
-constexpr std::uint32_t LcSegment64 = 0x19;
 constexpr std::uint32_t LcSymtab = 0x2;
 constexpr std::uint32_t LcDysymtab = 0xb;
 constexpr std::uint32_t LcLoadDylib = 0xc;
@@ -73,8 +69,6 @@ constexpr std::uint8_t BindOpcodeSetAddendSleb = 0x60;
 constexpr std::uint8_t BindOpcodeSetSegmentAndOffsetUleb = 0x70;
 constexpr std::uint8_t BindOpcodeDoBind = 0x90;
 
-constexpr std::uint64_t MetaVersion = 2;
-constexpr std::size_t MetaLoadBias = 0x08;
 constexpr std::size_t MetaAllocateSlot = 0x10;
 constexpr std::size_t MetaRegisterSlot = 0x18;
 constexpr std::size_t MetaTlsDescriptor = 0x20;

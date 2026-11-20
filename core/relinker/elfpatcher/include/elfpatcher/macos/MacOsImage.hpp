@@ -4,6 +4,7 @@
 #include <elfpatcher/windows/WindowsLoadImage.hpp>
 #include <codegen/CodegenTypes.hpp>
 #include <domain/Types.hpp>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -12,8 +13,14 @@
 
 namespace Elfpatcher::MacOs {
 
+inline constexpr std::uint32_t MhMagic64 = 0xfeedfacf;
+inline constexpr std::uint32_t CpuTypeX8664 = 0x01000007;
+inline constexpr std::uint32_t MhExecute = 2;
+inline constexpr std::uint32_t LcSegment64 = 0x19;
 inline constexpr std::uint64_t ExportKindAbsolute = 2;
 inline constexpr std::uint64_t ExportWeakDefinition = 4;
+inline constexpr std::uint64_t MetaVersion = 2;
+inline constexpr std::size_t MetaLoadBias = 0x08;
 
 struct MacOsBind {
     std::string Symbol;
