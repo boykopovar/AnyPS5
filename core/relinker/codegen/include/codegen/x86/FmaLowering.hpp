@@ -28,6 +28,7 @@ struct FmaOperands {
     FmaOrder Order;
     bool Scalar;
     bool Wide;
+    bool Double;
     std::uint8_t Destination;
     std::uint8_t Second;
     std::uint8_t Third;
@@ -36,6 +37,7 @@ struct FmaOperands {
 
 [[nodiscard]] std::optional<FmaOperands> DecodeFma(const std::uint8_t* data, std::size_t length);
 void EmitFma(StubBodyBuilder& body, const FmaOperands& operands);
+void EmitFmaDouble(StubBodyBuilder& body, const FmaOperands& operands);
 
 }
 
