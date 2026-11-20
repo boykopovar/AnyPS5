@@ -27,6 +27,7 @@
 #include "prx/libSceNKWebKit/include/InspectorCallStackExports.hpp"
 #include "prx/libSceNKWebKit/include/InspectorFrontendRouterExports.hpp"
 #include "prx/libSceNKWebKit/include/FourCCExports.hpp"
+#include "prx/libSceNKWebKit/include/ExceptionDataExports.hpp"
 #include "prx/libSceNKWebKit/include/InspectorExports.hpp"
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/JscExports.hpp"
