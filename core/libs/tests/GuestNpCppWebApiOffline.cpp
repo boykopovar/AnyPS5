@@ -1,4 +1,5 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
+#include "NpCppWebApiFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
@@ -33,6 +34,9 @@ struct ParameterLifecycle {
 template <typename TInitialize>
 static void TestParameterLifecycle(const ParameterLifecycle& lifecycle, TInitialize initialize) {
     std::uint64_t context = 0;
+    alignas(8) unsigned char params[0x28];
+    std::memset(params, 0xa5, sizeof(params));
+    _ZN3sce2Np9CppWebApi6Common10InitParamsC1Ev(params);
     alignas(16) unsigned char parameter[0x20];
     std::memset(parameter, 0x5a, sizeof(parameter));
     Require(lifecycle.construct(parameter) == 0, "a parameter constructor failed");
@@ -42,7 +46,8 @@ static void TestParameterLifecycle(const ParameterLifecycle& lifecycle, TInitial
     Require(lifecycle.terminate(parameter) == ParameterTerminatedUninitialized, "terminate accepted an uninitialized parameter");
     Require(initialize(parameter, nullptr, true) == ParameterInvalidArgument, "initialize accepted a null context");
     Require(initialize(parameter, &context, true) == ParameterNotInitialized, "initialize accepted an uninitialized context");
-    Require(_ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(nullptr, &context) == 0, "the context did not initialize");
+    Require(_ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(nullptr, &context) == ParameterInvalidArgument, "initialize accepted null parameters");
+    Require(_ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(params, &context) == 0, "the context did not initialize");
     Require(initialize(parameter, &context, false) == ParameterInvalidArgument, "initialize accepted a null argument");
     Require(lifecycle.terminate(parameter) == ParameterTerminatedUninitialized, "a failed initialize left the parameter initialized");
     Require(initialize(parameter, &context, true) == 0, "initialize failed");
@@ -138,6 +143,9 @@ static void TestSessionManagerParameterLifecycles() {
         });
 
     std::uint64_t context = 0;
+    alignas(8) unsigned char params[0x28];
+    std::memset(params, 0xa5, sizeof(params));
+    _ZN3sce2Np9CppWebApi6Common10InitParamsC1Ev(params);
     alignas(16) unsigned char parameter[0x10];
     std::memset(parameter, 0x5a, sizeof(parameter));
     const auto initialize = _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi38ParameterToGetPlayerSessionInvitations10initializeEPNS1_6Common10LibContextEPKc;
@@ -147,7 +155,8 @@ static void TestSessionManagerParameterLifecycles() {
     Require(setFilter(parameter, "filter") == ParameterNotInitialized, "the filter setter accepted an uninitialized parameter");
     Require(initialize(parameter, nullptr, "me") == ParameterInvalidArgument, "the invitations initialize accepted a null context");
     Require(initialize(parameter, &context, "me") == ParameterNotInitialized, "the invitations initialize accepted an uninitialized context");
-    Require(_ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(nullptr, &context) == 0, "the context did not initialize");
+    Require(_ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(nullptr, &context) == ParameterInvalidArgument, "initialize accepted null parameters");
+    Require(_ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(params, &context) == 0, "the context did not initialize");
     Require(initialize(parameter, &context, nullptr) == ParameterInvalidArgument, "the invitations initialize accepted a null account");
     Require(setFilter(parameter, "filter") == ParameterNotInitialized, "a failed invitations initialize left the parameter initialized");
     Require(initialize(parameter, &context, "me") == 0, "the invitations initialize failed");
@@ -366,9 +375,11 @@ static bool Throws(TCall call) {
     return false;
 }
 
+static void APS5_VABI KeepObject(void*) {}
+
 static void TestVectorSizeAndElements() {
-    std::uint64_t context = 1;
-    IntrusivePtr vector{nullptr, nullptr, &context};
+    NpCppWebApiTest::LibContext context;
+    IntrusivePtr vector{nullptr, nullptr, context.value()};
     for (const auto size : sizes) Require(size(&vector) == 0, "a vector without a body has elements");
     for (const auto empty : empties) Require(empty(&vector) == true, "a vector without a body is not empty");
     for (const auto element : elements) Require(Throws([&] { element(&vector, 0); }), "indexing a vector without a body did not throw");
@@ -376,8 +387,8 @@ static void TestVectorSizeAndElements() {
     alignas(8) std::int32_t first[4] = {1};
     alignas(8) std::int32_t second[4] = {1};
     alignas(8) std::int32_t third[4] = {1};
-    const IntrusivePtr pushed[] = {{first, nullptr, &context}, {second, nullptr, &context}, {third, nullptr, &context}};
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEEC1EPNS2_10LibContextE(&vector, &context);
+    const IntrusivePtr pushed[] = {{first, KeepObject, context.value()}, {second, KeepObject, context.value()}, {third, KeepObject, context.value()}};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEEC1EPNS2_10LibContextE(&vector, context.value());
     for (const auto empty : empties) Require(empty(&vector) == true, "a newly initialized vector is not empty");
     for (const auto& element : pushed)
         Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEE8pushBackERKS8_(&vector, &element) == 0, "pushBack failed");
@@ -394,7 +405,7 @@ static void TestVectorSizeAndElements() {
     Require(first[0] == 1 && second[0] == 1 && third[0] == 1, "destroying the vector did not release its references");
 
     alignas(8) unsigned char foreignBody[0x50] = {};
-    IntrusivePtr foreign{foreignBody, nullptr, &context};
+    IntrusivePtr foreign{foreignBody, nullptr, context.value()};
     for (const auto size : sizes) Require(Throws([&] { size(&foreign); }), "sizing a foreign body did not throw");
     for (const auto empty : empties) Require(Throws([&] { empty(&foreign); }), "emptying a foreign body did not throw");
     for (const auto element : elements) Require(Throws([&] { element(&foreign, 0); }), "indexing a foreign body did not throw");
