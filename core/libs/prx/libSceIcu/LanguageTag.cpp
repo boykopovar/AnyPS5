@@ -477,7 +477,8 @@ bool AppendUnicodeExtension(std::string_view value, std::vector<Extension>& into
     }
 
     std::string_view bcpKey;
-    std::string_view bcpType;
+    std::size_t typeStart = 0;
+    std::size_t typeEnd = 0;
     bool haveKey = false;
     bool haveType = false;
     for (bool done = !hasKeys; !done;) {
@@ -489,7 +490,8 @@ bool AppendUnicodeExtension(std::string_view value, std::vector<Extension>& into
             if (end == std::string_view::npos) end = value.size();
             const std::string_view subtag = value.substr(position, end - position);
             if (!IsUnicodeLocaleKey(subtag)) {
-                bcpType = haveType ? value.substr(static_cast<std::size_t>(bcpType.data() - value.data()), end - static_cast<std::size_t>(bcpType.data() - value.data())) : subtag;
+                if (!haveType) typeStart = position;
+                typeEnd = end;
                 haveType = true;
             } else if (haveKey) {
                 emit = true;
@@ -515,11 +517,11 @@ bool AppendUnicodeExtension(std::string_view value, std::vector<Extension>& into
         const std::string key = legacyKey == keyText.c_str() ? Lowered(keyText) : std::string(legacyKey);
         std::string type(kTypeYes);
         if (haveType) {
-            if (bcpType.size() >= kTypeCapacity) {
+            if (typeEnd - typeStart >= kTypeCapacity) {
                 status = Icu::IllegalArgument;
                 return false;
             }
-            const std::string typeText(bcpType);
+            const std::string typeText(value.substr(typeStart, typeEnd - typeStart));
             const char* legacyType = uloc_toLegacyType_nid_postfix(key.c_str(), typeText.c_str());
             if (!legacyType) {
                 status = Icu::IllegalArgument;
