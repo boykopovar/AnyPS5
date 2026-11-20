@@ -160,6 +160,24 @@ void ReconnectAfterARefusalFails() {
     Require(close_nid_postfix(failing) == 0, "close failed");
 }
 
+#ifdef _WIN32
+void BlockingConnectCanRetryAfterRefusal() {
+    int listener = -1;
+    const auto listening = Listen(&listener);
+    int closed = -1;
+    const auto refused = Listen(&closed);
+    Require(close_nid_postfix(closed) == 0, "close failed");
+    const int client = socket_nid_postfix(2, Stream, 0);
+    Require(client >= 0, "socket failed");
+    Require(connect_nid_postfix(client, refused.data(), refused.size()) == -1 && *__error_nid_postfix() == ErrorConnectionRefused,
+        "a blocking connect to a closed port must report ECONNREFUSED (61)");
+    Require(connect_nid_postfix(client, listening.data(), listening.size()) == 0, "a blocking connect must be able to retry after refusal");
+    const int accepted = accept_nid_postfix(listener, nullptr, nullptr);
+    Require(accepted >= 0, "accept after a retried connect failed");
+    for (const int descriptor : {client, accepted, listener}) Require(close_nid_postfix(descriptor) == 0, "close failed");
+}
+#endif
+
 void BooleanOptionsReportTheirBit() {
     const int stream = socket_nid_postfix(2, Stream, 0);
     const int datagram = socket_nid_postfix(2, Datagram, 0);
@@ -744,6 +762,9 @@ int main(int argc, char** argv) {
     ReportsTypeAndListening();
     ReportsAndClearsTheConnectError();
     ReconnectAfterARefusalFails();
+#ifdef _WIN32
+    BlockingConnectCanRetryAfterRefusal();
+#endif
     BooleanOptionsReportTheirBit();
     AcceptFilterFollowsFreeBsd();
     ReusePortSharesAPort();

@@ -2048,11 +2048,13 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
     if (modeLock.owns_lock()) modeLock.unlock();
 #ifdef _WIN32
     const int host = WSAGetLastError();
-    const int error = socket->type == 1 ? NoteConnectError(*socket) : ConnectError();
-    if (host != WSAEWOULDBLOCK) return Fail(error);
+    if (host != WSAEWOULDBLOCK) return Fail(socket->type == 1 ? NoteConnectError(*socket) : ConnectError());
     {
         std::lock_guard lock(socket->modeMutex);
-        if (socket->options.nonblocking) return Fail(36);
+        if (socket->options.nonblocking) {
+            if (socket->type == 1) socket->connecting = true;
+            return Fail(36);
+        }
     }
     for (;;) {
         fd_set write;
@@ -2069,7 +2071,6 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
             if (socket->type == 1) {
                 std::lock_guard lock(socket->modeMutex);
                 socket->connecting = false;
-                socket->connectFailure = GuestSockets::GuestErrorFromHost(WSAECONNREFUSED);
             }
             WSASetLastError(pending);
             return Fail(ConnectError());
