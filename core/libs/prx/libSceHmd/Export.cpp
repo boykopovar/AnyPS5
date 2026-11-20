@@ -22,6 +22,7 @@ static_assert(sizeof(HmdAssemblyError) == 16);
 namespace {
 
 std::atomic<bool> initialized{false};
+HmdEventCallback registeredEventCallback = nullptr;
 
 std::int32_t Initialize(const Hmd::InitializeParam* param) {
     if (initialized.load()) return Hmd::AlreadyInitialized;
@@ -212,7 +213,7 @@ int APS5_VABI sceHmdDistortionGetWorkMemoryAlign(void) {
 }
 
 int APS5_VABI sceHmdInternalRegisterEventCallback(HmdEventCallback callback) {
-    NotImplemented_nid_no_patch(__func__);
+    registeredEventCallback = callback;
     return 0;
 }
 
