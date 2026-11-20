@@ -1644,5 +1644,62 @@ class IntervalSchemaTests(unittest.TestCase):
         self.assertIn("0-0", trace_digest.markdown_intervals(digest))
 
 
+class MarkdownTextTests(unittest.TestCase):
+    def test_markdown_text_escapes_a_leading_heading_or_list_marker(self):
+        self.assertEqual(trace_digest.markdown_text("# heading"), "&#35; heading")
+        self.assertEqual(trace_digest.markdown_text("- item"), "&#45; item")
+        self.assertEqual(trace_digest.markdown_text("1. item"), "&#49;. item")
+
+    def test_markdown_text_escapes_html_and_keeps_inner_underscores(self):
+        self.assertEqual(trace_digest.markdown_text("<b>"), "&lt;b&gt;")
+        self.assertEqual(trace_digest.markdown_text("a_b"), "a_b")
+        self.assertEqual(trace_digest.markdown_text("_x"), "&#95;x")
+
+    def test_interval_number_accepts_finite_non_negative_numbers(self):
+        self.assertEqual(trace_digest.interval_number(0, "start"), 0)
+        self.assertEqual(trace_digest.interval_number(1.5, "start"), 1.5)
+
+    def test_interval_number_refuses_strings_booleans_and_non_finite_values(self):
+        for value in ("3", True, -1, float("nan"), float("inf")):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "finite non-negative"):
+                trace_digest.interval_number(value, "start")
+
+    def test_nonnegative_integer_accepts_zero_and_positive_values(self):
+        self.assertEqual(trace_digest.nonnegative_integer("0"), 0)
+        self.assertEqual(trace_digest.nonnegative_integer("7"), 7)
+
+    def test_nonnegative_integer_refuses_negative_values(self):
+        import argparse
+        with self.assertRaises(argparse.ArgumentTypeError):
+            trace_digest.nonnegative_integer("-1")
+class SummaryFileTests(unittest.TestCase):
+    def write(self, text):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "summary.jsonl"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_load_summary_lines_skips_blank_lines_and_numbers_records_on_request(self):
+        path = self.write('{"a": 1}\n\n{"b": 2}\n')
+        self.assertEqual(trace_digest.load_summary_lines(path), [{"a": 1}, {"b": 2}])
+        self.assertEqual(trace_digest.load_summary_lines(path, numbered=True), [(1, {"a": 1}), (3, {"b": 2})])
+
+    def test_load_summary_lines_names_the_bad_line_by_label(self):
+        with self.assertRaisesRegex(ValueError, "run.jsonl:2: invalid JSON"):
+            trace_digest.load_summary_lines(self.write('{"a": 1}\n{bad\n'), label="run.jsonl")
+        with self.assertRaisesRegex(ValueError, "summary record must be an object"):
+            trace_digest.load_summary_lines(self.write("[1]\n"))
+
+    @unittest.skipIf(os.name == "nt", "symbolic link loops need POSIX symlinks here")
+    def test_resolve_summary_path_returns_a_regular_file_and_refuses_a_loop(self):
+        path = self.write("{}\n")
+        self.assertEqual(trace_digest.resolve_summary_path(path), path.resolve())
+        loop = path.with_name("loop.jsonl")
+        os.symlink(loop, loop)
+        with self.assertRaisesRegex(ValueError, "symbolic link loop"):
+            trace_digest.resolve_summary_path(loop)
+
+
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("TRACE_DIGEST_TEST"))

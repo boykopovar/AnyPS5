@@ -1,9 +1,12 @@
+import io
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 TOOL = Path(__file__).resolve().parents[1] / "memory_trace_address.py"
 if TOOL.is_file():
@@ -51,6 +54,12 @@ class ParseTests(FeatureRequired):
     def test_ignores_unknown_operations_and_lines_without_the_prefix(self):
         self.assertEqual(trace.parse_events(["[memory] unmapped 0x1+0x1\n", "map anon 0x1+0x1\n",
                                              "[memory]map anon 0x1+0x1\n"]), [])
+
+    def test_reads_events_on_demand_and_reports_late_errors(self):
+        events = trace.iter_events(["[memory] unmap 0x10+0x20", "[memory] protect truncated"])
+        self.assertEqual(next(events).operation, "unmap")
+        with self.assertRaisesRegex(ValueError, "line 2: protect event has no address range"):
+            next(events)
 
     def test_parses_a_null_pointer_printed_by_glibc(self):
         events = trace.parse_events([
@@ -118,6 +127,16 @@ class SelectionTests(FeatureRequired):
 
 
 class CliTests(FeatureRequired):
+    def test_cli_streams_the_trace_when_limiting_matches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.log"
+            path.write_text("[memory] protect 0x1000+0x10\n[memory] unmap 0x1000+0x10\n", encoding="utf-8")
+            output = io.StringIO()
+            with patch.object(trace, "parse_events", side_effect=AssertionError("eager parse")), redirect_stdout(output):
+                self.assertEqual(trace.main([str(path), "--address", "0x1000", "--limit", "1"]), 0)
+            self.assertEqual(output.getvalue().splitlines()[1:],
+                             ["Showing the last 1 of 2 matching events.", "line 2: unmap 0x1000+0x10"])
+
     def test_cli_prints_only_operations_overlapping_the_requested_range(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "run.log"

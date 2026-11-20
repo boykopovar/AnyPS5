@@ -10,7 +10,6 @@
 #include <cstring>
 #include <initializer_list>
 #include <string_view>
-#include <stdexcept>
 #include <string>
 
 namespace {
@@ -130,6 +129,7 @@ int main() {
         {"i-default", "en"}, {"i-hakka_MT_XEMXIJA", "i-hakka_MT_XEMXIJA"}, {"x-piglatin_ML.MBE", "x-piglatin_ML.MBE"},
         {"x-elmer", ""}, {"en-a-bbb-x-foo", "en"}, {"i-klingon@currency=EUR", "i-klingon"},
         {"x-private@currency=EUR", "x-private"}, {"x_foo", "x-foo"}, {"i-klingon.utf8", "i-klingon.utf8"},
+        {"zh_YUE", "zh_YUE"}, {"art_LOJBAN", "art__LOJBAN"},
     });
     Check(uloc_canonicalize, false, {
         {"EN-us", "en_US"}, {"eN_LatN_us", "en_Latn_US"},
@@ -146,6 +146,11 @@ int main() {
         {"sr-Latn-RS-a-bbb", "sr_Latn_RS@a=bbb"}, {"x-elmer", "@x=elmer"},
         {"en-a-bbb-x-foo", "en@a=bbb;x=foo"}, {"i-klingon@currency=EUR", "i-klingon@currency=EUR"},
         {"x_foo", "x-foo"},
+        {"zh_YUE", "yue"}, {"zh-yue", "yue"}, {"ZH_gan", "gan"}, {"zh_MIN_NAN", "nan"}, {"zh_WUU", "wuu"},
+        {"zh_GUOYU", "zh"}, {"zh__HAKKA", "hak"}, {"zh_XIANG", "hsn"}, {"art_LOJBAN", "jbo"},
+        {"art-lojban", "jbo"}, {"hy_AREVELA", "hy"}, {"hy__AREVMDA", "hyw"}, {"zh_YUE.utf8", "yue"},
+        {"zh_min_nan@collation=pinyin", "nan@collation=pinyin"}, {"zh_Hant_YUE", "zh_Hant_YUE"},
+        {"zh_YUE_FOO", "zh_YUE_FOO"}, {"zh_MIN", "zh_MIN"}, {"yue", "yue"},
     });
     CheckLongLanguageTag();
     CheckKeyword("en_US@currency=USD", "currency", "USD");
@@ -213,13 +218,12 @@ int main() {
         output.fill('Q');
     }
     status = 0;
-    bool keywordThrown = false;
-    try {
-        uloc_getKeywordValue("en-u-ca-buddhist", "calendar", output.data(), 16, &status);
-    } catch (const std::runtime_error&) {
-        keywordThrown = true;
-    }
-    assert(keywordThrown && status == 0 && output[0] == 'Q');
+    assert(uloc_getKeywordValue("en-u-ca-buddhist", "calendar", output.data(), 16, &status) == 8);
+    assert(status == 0 && std::string_view(output.data()) == "buddhist");
+    output.fill('Q');
+    assert(uloc_getKeywordValue("en-u-ca-gregory-nu-thai", "numbers", output.data(), 16, &status) == 4);
+    assert(status == 0 && std::string_view(output.data()) == "thai");
+    output.fill('Q');
     status = 15;
     assert(uloc_getKeywordValue("en-u-ca-buddhist", "calendar", output.data(), 16, &status) == 0);
     assert(status == 15 && output[0] == 'Q');

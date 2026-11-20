@@ -725,18 +725,24 @@ bool APS5_VABI _ZN7WebCore16MIMETypeRegistry14isTextMIMETypeERKN3WTF6StringE(con
 NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String> APS5_VABI _ZN7WebCore16MIMETypeRegistry16allowedMIMETypesERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEES8_(
     const NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String>& mimeTypes,
     const NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String>& extensions) {
-    std::vector<std::optional<std::string>> collected;
-    for (unsigned i = 0; i < mimeTypes.size; ++i) {
-        if (!mimeTypes.buffer[i].impl) {
-            if (std::find(collected.begin(), collected.end(), std::nullopt) == collected.end()) {
-                collected.push_back(std::nullopt);
+    NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String> result(mimeTypes.size + extensions.size);
+    const auto appendIfNotContains = [&result](const NKWebKit::WtfAbi::String& candidate) {
+        for (unsigned i = 0; i < result.size; ++i) {
+            const auto* present = result.buffer[i].impl;
+            if (!present || !candidate.impl) {
+                if (present == candidate.impl) return;
+                continue;
             }
-        } else {
-            std::string s = ToStdStringLower(mimeTypes.buffer[i].impl);
-            if (std::find_if(collected.begin(), collected.end(), [&](const auto& opt) { return opt && *opt == s; }) == collected.end()) {
-                collected.push_back(std::move(s));
-            }
+            if (present->length != candidate.impl->length) continue;
+            unsigned index = 0;
+            while (index < present->length && GetChar(present, index) == GetChar(candidate.impl, index)) ++index;
+            if (index == present->length) return;
         }
+        result.append(candidate);
+    };
+    for (unsigned i = 0; i < mimeTypes.size; ++i) {
+        const auto& mimeType = mimeTypes.buffer[i];
+        appendIfNotContains(mimeType.impl ? _ZNK3WTF6String23convertToASCIILowercaseEv(&mimeType) : MakeStringNull());
     }
     for (unsigned i = 0; i < extensions.size; ++i) {
         if (extensions.buffer[i].impl) {
@@ -751,18 +757,8 @@ NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String> APS5_VABI _ZN7WebCore16MIMETy
                 for (std::size_t j = 0; mime[j] != '\0'; ++j) {
                     s.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(mime[j]))));
                 }
-                if (std::find_if(collected.begin(), collected.end(), [&](const auto& opt) { return opt && *opt == s; }) == collected.end()) {
-                    collected.push_back(std::move(s));
-                }
+                appendIfNotContains(MakeString(s));
             }
-        }
-    }
-    NKWebKit::WtfAbi::Vector<NKWebKit::WtfAbi::String> result(static_cast<unsigned>(collected.size()));
-    for (const auto& item : collected) {
-        if (!item) {
-            result.append(MakeStringNull());
-        } else {
-            result.append(MakeString(*item));
         }
     }
     return result;

@@ -49,6 +49,7 @@ README = """AnyPS5 bug report
 anyps5-report.json  the run report of the last run, redacted
 anyps5.log          the log of the run (ANYPS5_LOG_FILE), redacted
 anyps5-input.ini    the input mapping in use, redacted
+anyps5-settings.txt the ANYPS5_ and APS5_ environment variables of the run, redacted
 host.txt            operating system, machine and Python version
 README.txt          this file
 
@@ -58,7 +59,22 @@ attach the bundle to a public report.
 """
 
 
-def make_bundle(report, out, *, home, user, host, log=None, input_config=None):
+def settings_text(environ, identity):
+    lines = [f"{name}={redact(value, **identity)}" for name, value in sorted(environ.items()) if name.startswith(("ANYPS5_", "APS5_"))]
+    return "\n".join(lines) + ("\n" if lines else "No ANYPS5_ or APS5_ variables were set.\n")
+
+
+def host_text():
+    return (
+        f"os: {platform.system()} {platform.release()}\n"
+        f"machine: {platform.machine()}\n"
+        f"processor: {platform.processor() or 'unknown'}\n"
+        f"logical cpus: {os.cpu_count() or 'unknown'}\n"
+        f"python: {platform.python_version()}\n"
+    )
+
+
+def make_bundle(report, out, *, home, user, host, log=None, input_config=None, settings=None):
     report = Path(report)
     out = Path(out)
     if out.exists():
@@ -70,7 +86,9 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None):
         members["anyps5.log"] = redact(Path(log).read_text(encoding="utf-8", errors="replace"), **identity)
     if input_config is not None and Path(input_config).is_file():
         members["anyps5-input.ini"] = redact(Path(input_config).read_text(encoding="utf-8", errors="replace"), **identity)
-    members["host.txt"] = f"os: {platform.system()}\nmachine: {platform.machine()}\npython: {platform.python_version()}\n"
+    if settings is not None:
+        members["anyps5-settings.txt"] = redact(settings, **identity)
+    members["host.txt"] = host_text()
     members["README.txt"] = README
     with zipfile.ZipFile(out, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
         for name, content in members.items():
@@ -98,7 +116,8 @@ def main(argv=None):
         print(f"bug_report: no run report at {args.report}", file=sys.stderr)
         return 1
     try:
-        names = make_bundle(args.report, args.out, log=args.log, input_config=args.input_config, **identities())
+        ident = identities()
+        names = make_bundle(args.report, args.out, log=args.log, input_config=args.input_config, settings=settings_text(os.environ, ident), **ident)
     except (OSError, ValueError, RecursionError) as error:
         print(f"bug_report: {error}", file=sys.stderr)
         return 1
