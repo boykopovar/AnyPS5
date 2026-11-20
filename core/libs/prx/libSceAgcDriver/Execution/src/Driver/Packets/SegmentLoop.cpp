@@ -707,7 +707,7 @@ void Driver::runLeanPackets(Submission& submission, QueueState& queue, PacketTab
         Timer timing("Driver.Packet");
         if (!predicated && entry.Has(LeanPacket::LabelIssue)) noteLabelIssue(packet, submission.queue);
         if (!predicated && !entry.Has(LeanPacket::FlipHeader) && !entry.Has(LeanPacket::RenderingWait) && !flip && (entry.Has(LeanPacket::Enqueues) || verifyPacket)) {
-            if (enqueueLabelPacket(packet, opcode, submission.queue, releaseInterrupt(packet, opcode, false)) || enqueueDmaPacket(packet, opcode, submission.queue, queue) || enqueueConstantRamDump(packet, opcode, submission.queue, queue) || enqueueSampleDumpPacket(packet, opcode, submission.queue)) {
+            if (enqueueLabelPacket(packet, opcode, submission.queue, releaseInterrupt(packet, opcode, false)) || enqueueDmaPacket(packet, opcode, submission.queue, queue) || enqueueConstantRamDump(packet, opcode, submission.queue, queue) || enqueueSampleDumpPacket(packet, opcode, submission.queue, queue.sampleDumpBlocks)) {
                 if (!entry.Has(LeanPacket::Enqueues)) LeanFront::NoteDifference(LeanFront::Field::PacketTable, where(submission, cursor) + ": today's code queued the packet beside the pipeline, the packet table skips that check");
                 if (verifyPacket) LeanFront::NoteChecked(LeanFront::Item::Packet);
                 traceLabel(packet, submission.queue);
@@ -986,7 +986,7 @@ void Driver::runLeanPackets(Submission& submission, QueueState& queue, PacketTab
             recordQueuedLabelsBeforeRead(submission.queue);
             Pm4::Execute(packet, queue);
         } else if (sampleDump && !wroteOnGpu) {
-            dumpSampleCounters(Pm4::SampleDumpAddress(packet));
+            dumpSampleCounters(Pm4::SampleDumpAddress(packet), queue.sampleDumpBlocks);
         } else if (entry.Has(LeanPacket::Seal)) {
             if (std::exchange(seal.drawn, false)) {
                 const auto sealPass = [this] {
@@ -997,7 +997,7 @@ void Driver::runLeanPackets(Submission& submission, QueueState& queue, PacketTab
                 if (DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Seal, sealPass, {});
                 else sealPass();
             }
-        } else if (opcode != 0x42 && opcode != 0x46 && opcode != 0x58) {
+        } else if (opcode != 0x42 && (opcode != 0x46 || Pm4::SampleControl(packet)) && opcode != 0x58) {
             if (!wroteOnGpu) {
                 if (entry.Has(LeanPacket::IndirectRegisters)) {
                     const auto list = RegisterListAt(submission, cursor, listHint);

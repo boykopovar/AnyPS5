@@ -11,6 +11,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <list>
 #include <map>
@@ -323,6 +324,18 @@ int APS5_VABI _Cnd_init_with_default_name_override_nid_postfix(void** handle, co
     return _Cnd_init_nid_postfix(handle);
 }
 
+int APS5_VABI _Cnd_init_with_name_nid_postfix(void** handle, const char* name) {
+    constexpr std::size_t objectNameLimit = 32;
+    if (name != nullptr) {
+        std::string copied;
+        if (const int error = CopyGuestString_nid_no_patch(name, objectNameLimit, copied)) {
+            errno = error;
+            return threadError;
+        }
+    }
+    return _Cnd_init_nid_postfix(handle);
+}
+
 void APS5_VABI _Cnd_destroy_nid_postfix(void** handle) {
     if (!handle)
         throw std::invalid_argument("_Cnd_destroy: null condition handle pointer");
@@ -440,6 +453,22 @@ int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*) {
 int APS5_VABI _Thrd_yield_nid_postfix() {
     std::this_thread::yield();
     return threadSuccess;
+}
+
+void APS5_VABI _ZNSt3__111this_thread9sleep_forERKNS_6chrono8durationIxNS_5ratioILl1ELl1000000000EEEEE_nid_postfix(const std::int64_t* nanoseconds) {
+    std::int64_t remaining{};
+    if (!GuestCopyIn_nid_no_patch(&remaining, nanoseconds, sizeof(remaining))) throw std::invalid_argument("this_thread::sleep_for: unreadable duration");
+    constexpr std::int64_t maxChunk = longestSleepSeconds * nanosPerSecond;
+    while (remaining > 0) {
+        const auto chunk = std::min(remaining, maxChunk);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::nanoseconds(chunk);
+        for (;;) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline) break;
+            std::this_thread::sleep_for(deadline - now);
+        }
+        remaining -= chunk;
+    }
 }
 
 int APS5_VABI _Cnd_signal_nid_postfix(void** handle) {

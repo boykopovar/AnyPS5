@@ -5,6 +5,7 @@
 #include <streambuf>
 
 namespace LibcException {
+struct ExceptionObject;
 struct SystemErrorObject;
 struct ErrorCode;
 }
@@ -69,8 +70,6 @@ void APS5_VABI libSceLibcInternalInventory_071_nid_no_patch(void* self);
 int APS5_VABI libSceLibcInternalInventory_072_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_073_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_074_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_075_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_076_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_077_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_078_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_079_nid_no_patch();
@@ -88,9 +87,6 @@ void APS5_VABI libSceLibcInternalInventory_091_nid_no_patch(void* self);
 void APS5_VABI libSceLibcInternalInventory_092_nid_no_patch(void* self);
 void APS5_VABI libSceLibcInternalInventory_097_nid_no_patch(void* self);
 void APS5_VABI libSceLibcInternalInventory_098_nid_no_patch(void* self);
-int APS5_VABI libSceLibcInternalInventory_099_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_100_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_101_nid_no_patch();
 void APS5_VABI libSceLibcInternalInventory_102_nid_no_patch(void* self);
 void APS5_VABI libSceLibcInternalInventory_103_nid_no_patch(void* self);
 int APS5_VABI libSceLibcInternalInventory_104_nid_no_patch();
@@ -223,11 +219,10 @@ void APS5_VABI libSceLibcInternalInventory_233_nid_no_patch(void* self);
 void APS5_VABI libSceLibcInternalInventory_234_nid_no_patch(void* self);
 int APS5_VABI libSceLibcInternalInventory_235_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_236_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_237_nid_no_patch();
+[[noreturn]] void APS5_VABI libSceLibcInternalInventory_237_nid_no_patch(const char* message);
 int APS5_VABI libSceLibcInternalInventory_239_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_244_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_245_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_246_nid_no_patch();
+[[noreturn]] void APS5_VABI libSceLibcInternalInventory_245_nid_no_patch(const LibcException::ExceptionObject* error);
 int APS5_VABI libSceLibcInternalInventory_252_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_253_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_254_nid_no_patch();

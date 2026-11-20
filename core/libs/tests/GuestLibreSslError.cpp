@@ -2,12 +2,25 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
+#include <stdexcept>
 #include <thread>
 #include <type_traits>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value, const char* what) {
     if (value) return;
@@ -23,6 +36,48 @@ template<typename TAction> static void RequireThrows(TAction action, const char*
     try { action(); } catch (const std::exception&) { return; }
     Require(false, what);
 }
+
+template<typename TAction> static void RequireThrowsInvalidArgument(TAction action, const char* what) {
+    try { action(); } catch (const std::invalid_argument&) { return; }
+    Require(false, what);
+}
+
+struct GuardedPagePair {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedPagePair() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr, "allocate guarded pages");
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_NOACCESS, &oldProtect) != 0, "protect guard page");
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0, "query page size");
+        pageSize = static_cast<std::size_t>(size);
+        void* mapping = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapping != MAP_FAILED, "allocate guarded pages");
+        Require(mprotect(static_cast<unsigned char*>(mapping) + pageSize, pageSize, PROT_NONE) == 0, "protect guard page");
+        base = static_cast<unsigned char*>(mapping);
+#endif
+    }
+
+    ~GuardedPagePair() {
+        if (base == nullptr) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 2);
+#endif
+    }
+
+    GuardedPagePair(const GuardedPagePair&) = delete;
+    GuardedPagePair& operator=(const GuardedPagePair&) = delete;
+};
 
 int main() {
     Require(ERR_get_error_nid_postfix() == 0, "empty queue get");
@@ -148,6 +203,66 @@ int main() {
     RequireThrows([&] { ENGINE_ctrl_cmd_nid_postfix(&notAnEngine, "SO_PATH", 0, nullptr, nullptr, 1); }, "ENGINE_ctrl_cmd of a pointer that is no engine");
     RequireThrows([&] { ENGINE_load_private_key_nid_postfix(&notAnEngine, "key", nullptr, nullptr); }, "ENGINE_load_private_key of a pointer that is no engine");
     Require(ERR_peek_error_nid_postfix() == 0, "a refused engine pushes no error");
+
+    static_assert(std::is_same_v<decltype(ENGINE_get_id_nid_postfix(nullptr)), const char*>);
+    static_assert(std::is_same_v<decltype(ENGINE_set_default_nid_postfix(nullptr, 0u)), int>);
+
+    struct SyntheticEngine {
+        const char* id;
+        const char* name;
+    };
+    const char* const expectedId = "synthetic-engine";
+    const SyntheticEngine namedEngine{expectedId, "Synthetic Engine"};
+    const SyntheticEngine unnamedEngine{nullptr, "Unnamed Engine"};
+    errno = 42;
+    Require(ENGINE_get_id_nid_postfix(&namedEngine) == expectedId, "ENGINE_get_id returns offset-0 id pointer");
+    Require(errno == 42, "ENGINE_get_id preserves errno on valid id");
+    errno = 43;
+    Require(ENGINE_get_id_nid_postfix(&unnamedEngine) == nullptr, "ENGINE_get_id returns null when id is null");
+    Require(errno == 43, "ENGINE_get_id preserves errno on null id");
+
+    GuardedPagePair guarded;
+    unsigned char* const lastReadableSlot = guarded.base + guarded.pageSize - sizeof(const char*);
+    std::memcpy(lastReadableSlot, &expectedId, sizeof(expectedId));
+    errno = 44;
+    Require(ENGINE_get_id_nid_postfix(lastReadableSlot) == expectedId, "ENGINE_get_id reads exact page-end slot");
+    Require(errno == 44, "ENGINE_get_id preserves errno at page boundary");
+
+    const void* const invalidEngines[] = {
+        nullptr,
+        reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10)),
+        guarded.base + guarded.pageSize,
+        guarded.base + guarded.pageSize - 4,
+    };
+    for (const void* invalidEngine : invalidEngines) {
+        errno = 45;
+        RequireThrowsInvalidArgument([&] { ENGINE_get_id_nid_postfix(invalidEngine); }, "ENGINE_get_id rejects null or unreadable engine");
+        Require(errno == 45, "ENGINE_get_id preserves errno on rejected engine");
+    }
+    Require(ERR_peek_error_nid_postfix() == 0, "ENGINE_get_id pushes no error");
+
+    constexpr unsigned int engineMethodDefaultMask = 0x06FFu;
+    void* const guardPage = guarded.base + guarded.pageSize;
+    for (unsigned int flags : {0u, 0x0100u, 0x0800u, 0xFFFFF900u}) {
+        Require(ENGINE_set_default_nid_postfix(nullptr, flags) == 1, "ENGINE_set_default ignores unset mask bits on null engine");
+        Require(ENGINE_set_default_nid_postfix(&notAnEngine, flags) == 1, "ENGINE_set_default ignores unset mask bits on non-null engine");
+        Require(ENGINE_set_default_nid_postfix(guardPage, flags) == 1, "ENGINE_set_default ignores unset mask bits without reading engine");
+    }
+    for (unsigned int bit = 0; bit < 32; ++bit) {
+        const unsigned int flag = 1u << bit;
+        if ((flag & engineMethodDefaultMask) == 0u) {
+            Require(ENGINE_set_default_nid_postfix(nullptr, flag) == 1, "ENGINE_set_default ignores non-2.5.4 flag bit on null engine");
+            Require(ENGINE_set_default_nid_postfix(&notAnEngine, flag) == 1, "ENGINE_set_default ignores non-2.5.4 flag bit on non-null engine");
+        } else {
+            RequireThrowsInvalidArgument([&] { ENGINE_set_default_nid_postfix(nullptr, flag); }, "ENGINE_set_default throws invalid_argument for active bit on null engine");
+            RequireThrows([&] { ENGINE_set_default_nid_postfix(&notAnEngine, flag); }, "ENGINE_set_default throws for active bit on non-null engine");
+        }
+    }
+    for (unsigned int flags : {0x06FFu, 0xFFFFu, 0xFFFFFFFFu}) {
+        RequireThrowsInvalidArgument([&] { ENGINE_set_default_nid_postfix(nullptr, flags); }, "ENGINE_set_default throws invalid_argument for combined flags on null engine");
+        RequireThrows([&] { ENGINE_set_default_nid_postfix(&notAnEngine, flags); }, "ENGINE_set_default throws for combined flags on non-null engine");
+    }
+    Require(ERR_peek_error_nid_postfix() == 0, "ENGINE_set_default pushes no error");
 
     std::puts("guest_libressl_error: ok");
     return 0;

@@ -15,11 +15,11 @@ Supported input sources are:
 
 While a title has a mouse open (`sceMouseOpen`) and the window is focused, AnyPS5 hides and captures the host cursor, so the title's own cursor is the only one; the capture ends when the window loses focus or when the mouse-to-stick toggle (`ToggleMouse`) is on. While the title has the mouse, mouse clicks and the wheel go to the title instead of their pad bindings. Turning on `ToggleMouse` with its key (F7 by default) hands the whole mouse to the pad until it is turned off again: motion moves the stick, and clicks and the wheel press their pad bindings, while the title's mouse reports no movement, clicks or wheel turns. A title that opens the mouse but ignores it in play can be played this way. Mouse movement reaches the title scaled from the window's presented image to the title's display resolution, so the title's cursor moves as far as the host cursor would.
 
-The window hotkeys (`ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot`, `ShowPadStatus`, `VolumeDown`, `VolumeUp` and `ToggleMute`) never reach the game's pad when bound to a key or mouse button. A `PAD:` chord is the one exception: its buttons still reach the title. A key bound to a hotkey and to another action triggers both, as for every other action; the built-in keys of the actions above share none.
+The window hotkeys (`ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot`, `ShowPadStatus`, `VolumeDown`, `VolumeUp` and `ToggleMute`) accept keyboard keys and `PAD:` chords. The buttons in a chord still reach the title when the hotkey fires. A key bound to a hotkey and to another action triggers both, as for every other action; the built-in keys of the actions above share none.
 
 Game-controller bindings are enabled automatically. Keyboard and mouse overrides apply independently of [controller button remapping](#controller-button-remapping).
 
-Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`, `LeftStickLeft`, `LeftStickRight`, `LeftStickUp`, `LeftStickDown`, `RightStickLeft`, `RightStickRight`, `RightStickUp`, `RightStickDown`, `TouchLeft`, `TouchRight`, `StickModifier`, `Shake`, `ToggleMouse`, `ToggleFullscreen` (F11), `TogglePerformanceOverlay` (F10, the [performance overlay](USAGE.md#performance-overlay)), `Screenshot` (F12, saves the next displayed frame as described in [screenshots](USAGE.md#screenshots)), and `ShowPadStatus` (F9, shows the [controller status panel](USAGE.md#controller-status-panel) for a few seconds). `ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot` and `ShowPadStatus` accept only keyboard keys.
+Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`, `LeftStickLeft`, `LeftStickRight`, `LeftStickUp`, `LeftStickDown`, `RightStickLeft`, `RightStickRight`, `RightStickUp`, `RightStickDown`, `TouchLeft`, `TouchRight`, `StickModifier`, `Shake`, `ToggleMouse`, `ToggleFullscreen` (F11), `TogglePerformanceOverlay` (F10, the [performance overlay](USAGE.md#performance-overlay)), `Screenshot` (F12, saves the next displayed frame as described in [screenshots](USAGE.md#screenshots)), and `ShowPadStatus` (F9, shows the [controller status panel](USAGE.md#controller-status-panel) for a few seconds). `ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot` and `ShowPadStatus` also accept `PAD:` chords.
 
 ### Controller button remapping
 
@@ -41,7 +41,7 @@ Set `ANYPS5_INPUT_WATCH=1` to reload automatically when the file or the title's 
 
 A key bound to `ShowPadStatus` and to another action triggers both, as for every other action. F9 is the built-in key of `ShowPadStatus`: if you moved `Screenshot`, `TogglePerformanceOverlay` or another action to F9, also rebind `ShowPadStatus` to a key you do not use, or each press shows the controller status panel too. The [web configurator](#web-configurator) warns about a key that two actions share.
 
-Three more actions control the host's output volume: `VolumeDown` (F5), `VolumeUp` (F6) and `ToggleMute` (F8), described in [host volume and mute](USAGE.md#host-volume-and-mute). They accept only keyboard keys too.
+Three more actions control the host's output volume: `VolumeDown` (F5), `VolumeUp` (F6) and `ToggleMute` (F8), described in [host volume and mute](USAGE.md#host-volume-and-mute). They also accept `PAD:` chords.
 
 ### Default bindings
 
@@ -105,6 +105,7 @@ The same file also accepts these settings, each at most once, in the form `Setti
 | `StickModifierScale` | Number from 0.05 to 1, the tilt of keyboard stick bindings while a `StickModifier` binding is held. | `0.5` |
 | `KeyboardRampMs` | Number from 0 to 2000, the milliseconds a keyboard stick binding takes to move the stick from the center to full tilt. 0 tilts at once. | `0` |
 | `TriggerRampMs` | Number from 0 to 2000, the milliseconds a key or mouse button bound to `L2` or `R2` takes to press the trigger from 0 to full. 0 presses it fully at once. | `0` |
+| `ToggleActions` | Comma-separated pad buttons (`Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`), each toggled by the keys and mouse buttons bound to it. Stick directions and emulator actions are refused. See [Toggled buttons](#toggled-buttons). | none |
 
 ```ini
 LeftStickDeadzone = 12
@@ -158,6 +159,19 @@ With `KeyboardRampMs` above 0, keyboard stick bindings move the stick toward the
 
 With `TriggerRampMs` above 0, a key or mouse button bound to `L2` or `R2` presses the analog trigger gradually and lets it go the same way, for throttle and brake in racing titles. A pressed controller trigger is not slowed, and the larger of the two values is passed on.
 
+## Toggled buttons
+
+A pad button listed in `ToggleActions` latches instead of being held: the first press of a key or mouse button bound to it presses the button, and the button stays pressed after the key or mouse button is released. The next press releases it. Every key and mouse button bound to the same action shares that one state, so pressing either one toggles it. Buttons not listed keep the normal behavior, pressed while the key is held. Losing focus releases every toggled button.
+
+Mouse wheel bindings are not toggled; they still press the button for a short moment as before.
+
+```ini
+ToggleActions = R2, L1
+R2 = KEY:Z
+```
+
+Here Z presses R2 on the first press and off on the second, and Q (bound to L1 by default) does the same for L1. A listed action with no binding is ignored. A per-game profile that sets `ToggleActions` replaces the list from the shared file, and an empty value or an unknown action is an error.
+
 ## Shake
 
 While the `Shake` input is held (X by default), the controller reports its acceleration and angular velocity swinging back and forth every 50 ms, for titles that ask the player to shake the controller. A controller's own motion sensors are used otherwise.
@@ -199,9 +213,13 @@ An invalid line stops the game when video output starts, with an error that name
 
 ## Web configurator
 
-The [input mapper](../../tools/input-mapper/index.html) edits keyboard, mouse and wheel overrides in the browser. `PAD:` chords in an imported file are kept and exported, but new chords are written by hand. It supports alternate bindings, physical-key capture, search, INI import, preview, copy and download. Search by action or group name, by key name such as `F7`, or by full input such as `MOUSE:Left`. Input searches include the configured bindings and the built-in bindings for actions without overrides. Invalid imports preserve the current configuration. Invalid bindings block export; duplicate and shared inputs, including retained built-in bindings, produce warnings. Removing every binding for an action restores its built-in inputs.
+The [input mapper](../../tools/input-mapper/index.html) edits keyboard, mouse, wheel and controller chord bindings in the browser. It supports alternate bindings, physical-key capture, search, INI import, preview, copy and download. Search by action or group name, by key name such as `F7`, or by full input such as `MOUSE:Left`. Input searches include the configured bindings and the built-in bindings for actions without overrides. Invalid imports preserve the current configuration. Invalid bindings block export; duplicate and shared inputs, including retained built-in bindings, produce warnings. Removing every binding for an action restores its built-in inputs.
 
-Add `SDLButton:` lines by hand after exporting from the browser. Importing a file with these lines reports an error and leaves the editor's current configuration in place.
+For an emulator action such as `ToggleFullscreen`, add a binding, choose `PAD` as the input type and select one or more controller buttons in the binding value. Open an imported `PAD:` binding the same way to edit its buttons.
+
+On the Configuration page, enter the game's exact title ID to download a [per-game profile](#per-game-profiles), such as `anyps5-input.PPSA00001.ini`. Leave the field blank to download the shared `anyps5-input.ini`.
+
+Add `SDLButton:` lines by hand. The configurator validates them on import and preserves them in the INI preview, in copied text and in the downloaded file. Invalid or duplicate controller entries are reported with their line number.
 
 From the repository root, with Node.js 22 or later:
 
