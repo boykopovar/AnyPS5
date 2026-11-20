@@ -514,4 +514,12 @@ public:
     std::map<std::u16string, Retained<Object>> filters;
 };
 
+class FramePolicyListener final : public ObjectOf<ObjectType::FramePolicyListener> {
+public:
+    enum class Decision { None, Use, UseInNewProcess, Download, Ignore };
+
+    Decision decision = Decision::None;
+    Retained<Object> policies;
+};
+
 }  // namespace NKWebKit
