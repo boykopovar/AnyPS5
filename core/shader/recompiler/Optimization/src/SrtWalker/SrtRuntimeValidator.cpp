@@ -31,7 +31,7 @@ bool RuntimeValidator::Validate(IrValue* raw, bool requireUniform) {
     }
     IrValue& inst = *value;
     if (!requireUniform && _validatedDependencies.contains(&inst)) return true;
-    if (!_visiting.insert(&inst).second) {
+    if (!_visiting.insert(&inst)) {
         return !requireUniform;
     }
     const auto finish = [&](bool valid) {
@@ -40,7 +40,7 @@ bool RuntimeValidator::Validate(IrValue* raw, bool requireUniform) {
         return valid;
     };
     const auto op = inst.Opcode();
-    if (_activeMask != nullptr && inst.Type() == IrType::Bool && ActiveMaskImplies(_activeMask, &inst)) {
+    if (_activeMask != nullptr && inst.Type() == IrType::Bool && ActiveMaskImplies(_program, _activeMask, &inst)) {
         return finish(true);
     }
     if (op == IrOpcode::ReadConst) {
@@ -57,7 +57,7 @@ bool RuntimeValidator::Validate(IrValue* raw, bool requireUniform) {
         }
     }
     if (!requireUniform) return finish(ValidateArguments(inst, false));
-    if (_activeMask != nullptr && IsRuntimeSelect(op) && inst.ArgumentCount() == 3 && ActiveMaskImplies(_activeMask, inst.Argument(0))) {
+    if (_activeMask != nullptr && IsRuntimeSelect(op) && inst.ArgumentCount() == 3 && ActiveMaskImplies(_program, _activeMask, inst.Argument(0))) {
         if (_type == RuntimeValueType::Integer && !Validate(inst.Argument(2), false)) {
             return finish(false);
         }

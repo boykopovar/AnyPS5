@@ -125,6 +125,17 @@ private:
     void* mapping = nullptr;
 };
 
+static void CheckInit() {
+    Require(FT_Init_FreeType_nid_postfix(nullptr) == FT_Err_Invalid_Argument);
+    GuestOutput output;
+    auto* library = output.At<GuestLibrary*>(0);
+    output.Protect(0, 1);
+    output.Reject([&] { return FT_Init_FreeType_nid_postfix(library); });
+    output.Protect(0, 3);
+    Require(FT_Init_FreeType_nid_postfix(library) == 0 && *library != nullptr);
+    Require(FT_Done_FreeType_nid_postfix(*library) == 0);
+}
+
 static void CheckNames(GuestFaceRec* face) {
     GuestOutput output;
     auto* name = output.At<GuestSfntName>(0);
@@ -200,6 +211,7 @@ static void CheckPostScript(GuestFaceRec* face) {
 }
 
 int main() {
+    CheckInit();
     GuestLibrary library{};
     Require(FT_Init_FreeType(&library.host) == 0);
     {

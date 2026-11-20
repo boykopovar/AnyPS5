@@ -2,10 +2,15 @@
 #define CORE_LIBS_PRX_LIBSCEFREETYPE_INCLUDE_GUESTOBJECTS_HPP
 
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
+#include "prx/libSceFreeType/include/GuestSfntTables.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_SYSTEM_H
 
+#include <algorithm>
+#include <bit>
+#include <cstdint>
 #include <list>
 #include <memory>
 #include <vector>
@@ -13,6 +18,13 @@
 namespace FreeType {
 
 struct GuestFace;
+
+constexpr bool InGlyphFormatRange(std::uint32_t format) {
+    constexpr std::uint32_t largest = std::max({static_cast<std::uint32_t>(FT_GLYPH_FORMAT_NONE), static_cast<std::uint32_t>(FT_GLYPH_FORMAT_COMPOSITE),
+                                                static_cast<std::uint32_t>(FT_GLYPH_FORMAT_BITMAP), static_cast<std::uint32_t>(FT_GLYPH_FORMAT_OUTLINE),
+                                                static_cast<std::uint32_t>(FT_GLYPH_FORMAT_PLOTTER), static_cast<std::uint32_t>(FT_GLYPH_FORMAT_SVG)});
+    return std::bit_width(format) <= std::bit_width(largest);
+}
 
 struct GuestLibrary {
     FT_Library host = nullptr;
@@ -33,6 +45,12 @@ struct RasterTargetSpan {
 
 extern "C" RasterTargetSpan RasterTargetSpan_nid_no_patch(const GuestBitmap& target);
 
+struct GuestStreamBridge {
+    GuestStreamRec* guest = nullptr;
+    FT_StreamRec_ host{};
+    bool closed = false;
+};
+
 struct GuestFace {
     GuestFaceRec rec{};
     GuestGlyphSlotRec slot{};
@@ -48,11 +66,14 @@ struct GuestFace {
     std::vector<GuestCharMapRec> charmaps;
     std::vector<GuestCharMapRec*> charmapPointers;
     std::vector<GuestVector> outlinePoints;
+    GuestSfntTables sfntTables{};
+    std::unique_ptr<GuestStreamBridge> stream;
 
     ~GuestFace() { UnregisterBitmap_nid_no_patch(&slot.bitmap); }
 };
 
 extern "C" void RegisterBitmap_nid_no_patch(GuestFace& face);
+extern "C" int FreeTypeNewGlyph_nid_no_patch(GuestLibrary* library, std::uint32_t format, GuestGlyphRec** target);
 
 extern "C" GuestFace* FaceOf_nid_no_patch(const GuestFaceRec* face);
 extern "C" GuestFace* FaceOfSlot_nid_no_patch(const GuestGlyphSlotRec* slot);
@@ -65,5 +86,6 @@ void SyncSlot(GuestFace& face);
 }
 
 extern "C" void FreeTypeSyncFace_nid_no_patch(FreeType::GuestFaceRec* face);
+extern "C" bool FreeTypeSyncBitmap_nid_no_patch(FreeType::GuestBitmap* guest, const FT_Bitmap& bitmap);
 
 #endif

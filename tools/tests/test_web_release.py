@@ -16,7 +16,7 @@ import build_web
 import package_release
 import test_web
 
-FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "failure-report.mjs", "output-directory.mjs", "worker.mjs",
+FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "failure-report.mjs", "i18n.mjs", "output-directory.mjs", "worker.mjs",
          "native/relinker_wasm.mjs", "native/relinker_wasm.wasm")
 REVISION = "a" * 40
 LATEST = "https://api.github.com/repos/boykopovar/AnyPS5/releases/latest"
@@ -206,6 +206,23 @@ class WebReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(PermissionError, "publication blocked"):
                 self.publish()
         self.assertEqual(self.snapshot(), previous)
+        self.assertEqual(list(self.build.glob(".web-release-*")), [])
+
+    def test_publication_retries_a_briefly_locked_rename(self):
+        self.seed_previous()
+        rename = Path.rename
+        blocked = []
+
+        def locked_once(path, destination):
+            if path.name == "site" and not blocked:
+                blocked.append(path)
+                raise PermissionError("site is briefly in use")
+            return rename(path, destination)
+
+        with patch.object(Path, "rename", locked_once):
+            self.publish()
+        self.assertEqual(len(blocked), 1)
+        self.assertTrue((self.output / "web-release.json").is_file())
         self.assertEqual(list(self.build.glob(".web-release-*")), [])
 
     def test_failed_first_publication_leaves_no_output(self):

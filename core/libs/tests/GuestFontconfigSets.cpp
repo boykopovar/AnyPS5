@@ -43,14 +43,14 @@ void CheckFonts() {
         assert(set->sfont == ((j / 16) + 1) * 128);
         assert(set->fonts[j] != pattern);
         assert(Inspect(set->fonts[j])->isDuplicate);
-        FcPatternDestroy(pattern);
+        FcPatternDestroy_nid_postfix(pattern);
         for (int k = 0; k <= j; ++k)
             assert(Inspect(set->fonts[k])->value == k + 1);
     }
     assert(set->sfont == 8192);
     auto* beyondLimit = reinterpret_cast<FcPattern*>(new PatternState{9999, false});
     assert(FcFontSetAdd(set, beyondLimit) == 0);
-    FcPatternDestroy(beyondLimit);
+    FcPatternDestroy_nid_postfix(beyondLimit);
     assert(set->nfont == 1024);
     assert(FcFontSetAdd(set, nullptr) == 0);
     assert(destroyed == 0);
@@ -90,7 +90,7 @@ void CheckObjects() {
 
 }
 
-extern "C" void APS5_VABI FcPatternDestroy(FcPattern* pattern) {
+extern "C" void APS5_VABI FcPatternDestroy_nid_postfix(FcPattern* pattern) {
     if (!pattern) return;
     auto* value = Inspect(pattern);
     if (value->isDuplicate) {
@@ -102,7 +102,7 @@ extern "C" void APS5_VABI FcPatternDestroy(FcPattern* pattern) {
     delete value;
 }
 
-extern "C" FcPattern* APS5_VABI FcPatternDuplicate(const FcPattern* pattern) {
+extern "C" FcPattern* APS5_VABI FcPatternDuplicate_nid_postfix(const FcPattern* pattern) {
     if (!pattern) return nullptr;
     const auto* source = reinterpret_cast<const PatternState*>(pattern);
     return reinterpret_cast<FcPattern*>(new PatternState{source->value, true});

@@ -30,6 +30,9 @@ extern FileStream* __stdinp_nid_postfix;
 extern FileStream* __stdoutp_nid_postfix;
 extern FileStream* __stderrp_nid_postfix;
 extern int __isthreaded_nid_postfix;
+extern std::uint32_t Need_sceLibc_nid_postfix;
+extern int _thread_autoinit_dummy_decl_nid_postfix;
+extern int _thread_autoinit_dummy_decl_stub_nid_postfix;
 
 }
 static void Require(bool value) { if (!value) std::abort(); }
@@ -353,6 +356,11 @@ static void CheckSupplementaryWideCharacters() {
     Require(getwc_nid_postfix(&stream) == u'A' && getwc_nid_postfix(&stream) == 0xd83d);
     Require(ungetwc_nid_postfix(u'X', &stream) == u'X');
     Require(getwc_nid_postfix(&stream) == u'X' && getwc_nid_postfix(&stream) == 0xde00 && getwc_nid_postfix(&stream) == u'\n');
+    rewind_nid_postfix(&stream);
+    *__error_nid_postfix() = 0;
+    Require(fgetws_nid_postfix(reinterpret_cast<char16_t*>(0x10), 8, &stream) == nullptr && *__error_nid_postfix() == 22 && ferror_nid_postfix(&stream) != 0);
+    clearerr_nid_postfix(&stream);
+    Require(getwc_nid_postfix(&stream) == u'A');
     stream.Close();
 
     FileStream units(TemporaryFile::Open());
@@ -369,6 +377,21 @@ static void CheckSupplementaryWideCharacters() {
         Require(getwc_nid_postfix(&input) == -1 && *__error_nid_postfix() == 86 && ferror_nid_postfix(&input) != 0);
         input.Close();
     }
+}
+
+static void CheckWidePushback() {
+    FileStream stream(TemporaryFile::Open());
+    Require(std::fwrite("\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80\xEF\xBF\xBFz", 1, 13, stream.GetHandle()) == 13);
+    rewind_nid_postfix(&stream);
+    Require(getwc_nid_postfix(&stream) == 0xe9 && ungetwc_nid_postfix(0xe9, &stream) == 0xe9 && getwc_nid_postfix(&stream) == 0xe9);
+    Require(getwc_nid_postfix(&stream) == 0x20ac && ungetwc_nid_postfix(0x20ac, &stream) == 0x20ac && getwc_nid_postfix(&stream) == 0x20ac);
+    Require(getwc_nid_postfix(&stream) == 0xd83d && ungetwc_nid_postfix(0xd83d, &stream) == 0xd83d && ftello_nid_postfix(&stream) == 5);
+    Require(getwc_nid_postfix(&stream) == 0xd83d && getwc_nid_postfix(&stream) == 0xde00 && ungetwc_nid_postfix(0xde00, &stream) == 0xde00);
+    Require(getwc_nid_postfix(&stream) == 0xde00 && getwc_nid_postfix(&stream) == 0xffff && ungetwc_nid_postfix(0xffff, &stream) == 0xffff);
+    Require(getwc_nid_postfix(&stream) == 0xffff && getwc_nid_postfix(&stream) == u'z' && ferror_nid_postfix(&stream) == 0);
+    *__error_nid_postfix() = 0;
+    Require(ungetwc_nid_postfix(0x10000, &stream) == -1 && *__error_nid_postfix() == 86 && ferror_nid_postfix(&stream) != 0);
+    stream.Close();
 }
 
 static void CheckUngetcEndOfFile() {
@@ -687,8 +710,11 @@ static void CheckClosedStreamReopen() {
     Require(freopen_nid_postfix(overlong.c_str(), "w", &stream) == nullptr && *__error_nid_postfix() == 63);
     Require(fputs_nid_postfix("text", &stream) == -1 && *__error_nid_postfix() == 9);
     Require(freopen_nid_postfix(nullptr, "w", &stream) == nullptr && *__error_nid_postfix() == 9);
+    fwide_nid_postfix(&stream, 1);
     Require(freopen_nid_postfix(filename.c_str(), "w", &stream) == &stream);
+    Require(fwide_nid_postfix(&stream, 0) == 0);
     Require(fputs_nid_postfix("reopened\n", &stream) >= 0 && fflush_nid_postfix(&stream) == 0);
+    Require(fwide_nid_postfix(&stream, 0) == -1);
     Require(fileno_nid_postfix(&stream) >= 0);
     Require(freopen_nid_postfix(filename.c_str(), "r", &stream) == &stream);
     Require(fgetc_nid_postfix(&stream) == 'r');
@@ -875,6 +901,9 @@ int main(int argc, char** argv) {
     Require(std::strcmp(stringOutput, "1 2 3 4 5 6 7 8 9 10 1.25") == 0);
     Require(FormatString(stringOutput, "") == 0 && stringOutput[0] == '\0');
     Require(__isthreaded_nid_postfix == 1);
+    Require(Need_sceLibc_nid_postfix == 1);
+    Require(_thread_autoinit_dummy_decl_nid_postfix == 0);
+    Require(_thread_autoinit_dummy_decl_stub_nid_postfix == 0);
     Require(__stdoutp_nid_postfix == &_Stdout_nid_postfix);
     Require(__stderrp_nid_postfix == &_Stderr_nid_postfix);
     Require(fileno_nid_postfix(__stdinp_nid_postfix) == 0);
@@ -990,6 +1019,32 @@ int main(int argc, char** argv) {
     Require(fgetws_nid_postfix(utfBuf, 16, &roundTrip) == utfBuf);
     Require(utfBuf[0] == u'é' && utfBuf[1] == u'\u20ac' && utfBuf[2] == u'\n' && utfBuf[3] == 0);
     roundTrip.Close();
+
+    FileStream wideIncomplete(TemporaryFile::Open());
+    Require(std::fwrite("\xE2\x82", 1, 2, wideIncomplete.GetHandle()) == 2);
+    Require(fseeko_nid_postfix(&wideIncomplete, 0, SEEK_SET) == 0);
+    *__error_nid_postfix() = 0;
+    Require(fgetwc_nid_postfix(&wideIncomplete) == -1);
+    Require(*__error_nid_postfix() == 86 && feof_nid_postfix(&wideIncomplete) != 0 && ferror_nid_postfix(&wideIncomplete) != 0);
+    wideIncomplete.Close();
+
+    FileStream wideInvalid(TemporaryFile::Open());
+    Require(std::fwrite("\xE2" "A", 1, 2, wideInvalid.GetHandle()) == 2);
+    Require(fseeko_nid_postfix(&wideInvalid, 0, SEEK_SET) == 0);
+    *__error_nid_postfix() = 0;
+    Require(fgetwc_nid_postfix(&wideInvalid) == -1 && *__error_nid_postfix() == 86 && ferror_nid_postfix(&wideInvalid) != 0);
+    clearerr_nid_postfix(&wideInvalid);
+    Require(fseeko_nid_postfix(&wideInvalid, 1, SEEK_SET) == 0);
+    Require(fgetwc_nid_postfix(&wideInvalid) == 'A' && ferror_nid_postfix(&wideInvalid) == 0);
+    wideInvalid.Close();
+
+    FileStream wideFourByte(TemporaryFile::Open());
+    Require(std::fwrite("\xF0\x9F\x98\x80", 1, 4, wideFourByte.GetHandle()) == 4);
+    Require(fseeko_nid_postfix(&wideFourByte, 0, SEEK_SET) == 0);
+    *__error_nid_postfix() = 0;
+    Require(fgetwc_nid_postfix(&wideFourByte) == 0xd83d && fgetwc_nid_postfix(&wideFourByte) == 0xde00);
+    Require(fgetwc_nid_postfix(&wideFourByte) == -1 && ferror_nid_postfix(&wideFourByte) == 0);
+    wideFourByte.Close();
 
     FileStream midErr(TemporaryFile::Open());
     Require(fputc_nid_postfix('A', &midErr) == 'A');
@@ -1132,6 +1187,7 @@ int main(int argc, char** argv) {
     CheckFgetsSize();
     CheckFgetsSizeOne();
     CheckSupplementaryWideCharacters();
+    CheckWidePushback();
     CheckUnlockedStreams();
     CheckGetcPutc();
     CheckGetcharPutchar();

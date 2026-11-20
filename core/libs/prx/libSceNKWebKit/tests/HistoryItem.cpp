@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -7,6 +8,9 @@
 #include <stdexcept>
 
 using NKWebKit::WebCoreAbi::HistoryItem;
+using NKWebKit::WebCoreAbi::CachedPage;
+using NKWebKit::WebCoreAbi::HistoryItemChangedHook;
+using NKWebKit::WebCoreAbi::historyItemChangedHook;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
 using WebCore::IntPoint;
@@ -139,6 +143,16 @@ static void TestContainers() {
     Require(!_ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv(&item));
 }
 
+static void TestCachedPageExpiry() {
+    HistoryItem item;
+    const double now = _ZN3WTF13MonotonicTime3nowEv().m_value;
+    CachedPage page{nullptr, now + 60};
+    item.cachedPage = &page;
+    Require(!_ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv(&item));
+    page.expirationTime = now - 1;
+    Require(_ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv(&item));
+}
+
 static void TestNull() {
     bool threw = false;
     try {
@@ -158,10 +172,141 @@ static void TestNull() {
     Require(threw);
 }
 
+struct ScopedChangedHook {
+    HistoryItemChangedHook saved = nullptr;
+    explicit ScopedChangedHook(HistoryItemChangedHook hook) : saved(historyItemChangedHook) {
+        historyItemChangedHook = hook;
+    }
+    ~ScopedChangedHook() {
+        historyItemChangedHook = saved;
+    }
+};
+
+static void TestChangedHook() {
+    HistoryItem item;
+    auto impl = Make("http://hook/");
+    String value(&impl);
+    impl.refCount = 4;
+
+    _ZN7WebCore11HistoryItem12setURLStringERKN3WTF6StringE(&item, &value);
+    Require(_ZNK7WebCore11HistoryItem9urlStringEv(&item).impl == &impl);
+    Require(impl.refCount == 6);
+
+    static HistoryItem* hooked = nullptr;
+    static int calls = 0;
+    hooked = nullptr;
+    calls = 0;
+    {
+        ScopedChangedHook guard(+[](HistoryItem* seen) { hooked = seen; ++calls; });
+
+        _ZN7WebCore11HistoryItem12setURLStringERKN3WTF6StringE(&item, &value);
+        Require(calls == 1 && hooked == &item);
+        _ZN7WebCore11HistoryItem20setOriginalURLStringERKN3WTF6StringE(&item, &value);
+        Require(calls == 2 && hooked == &item);
+        _ZN7WebCore11HistoryItem11setReferrerERKN3WTF6StringE(&item, &value);
+        Require(calls == 3 && hooked == &item);
+        _ZN7WebCore11HistoryItem8setTitleERKN3WTF6StringE(&item, &value);
+        Require(calls == 4 && hooked == &item);
+        _ZN7WebCore11HistoryItem17setAlternateTitleERKN3WTF6StringE(&item, &value);
+        Require(calls == 5 && hooked == &item);
+        _ZN7WebCore11HistoryItem30setShouldRestoreScrollPositionEb(&item, true);
+        Require(calls == 6 && hooked == &item);
+        Require(_ZNK7WebCore11HistoryItem27shouldRestoreScrollPositionEv(&item));
+
+        String empty;
+        _ZN7WebCore11HistoryItem18setFormContentTypeERKN3WTF6StringE(&item, &empty);
+        IntPoint point{1, 2};
+        _ZN7WebCore11HistoryItem17setScrollPositionERKNS_8IntPointE(&item, &point);
+        _ZN7WebCore11HistoryItem18setPageScaleFactorEf(&item, 2.0f);
+        _ZN7WebCore11HistoryItem15setIsTargetItemEb(&item, true);
+        _ZN7WebCore11HistoryItem31setShouldOpenExternalURLsPolicyENS_28ShouldOpenExternalURLsPolicyE(&item, 1);
+        Require(calls == 6);
+        Require(_ZNK7WebCore11HistoryItem15pageScaleFactorEv(&item) == 2.0f);
+        Require(_ZNK7WebCore11HistoryItem12isTargetItemEv(&item));
+    }
+    Clear(item);
+    Require(impl.refCount == 4);
+    impl.refCount = 2;
+    value.impl = nullptr;
+}
+
+static void TestTarget() {
+    HistoryItem item;
+    Require(!_ZNK7WebCore11HistoryItem6targetEv(&item).impl);
+
+    auto target = Make("_blank");
+    String targetString(&target);
+    target.refCount = 4;
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&item, &targetString);
+    Require(_ZNK7WebCore11HistoryItem6targetEv(&item).impl == &target);
+    Require(target.refCount == 6);
+
+    static int calls = 0;
+    calls = 0;
+    {
+        ScopedChangedHook guard(+[](HistoryItem*) { ++calls; });
+        _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&item, &targetString);
+        Require(calls == 1);
+    }
+
+    HistoryItem first;
+    HistoryItem second;
+    auto firstName = Make("main");
+    auto secondName = Make("side");
+    String firstString(&firstName);
+    String secondString(&secondName);
+    firstName.refCount = secondName.refCount = 4;
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&first, &firstString);
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&second, &secondString);
+
+    HistoryItem* storage[2] = {&first, &second};
+    HistoryItem parent;
+    parent.children = {storage, 2, 2};
+
+    auto lookupMain = Make("main");
+    auto lookupSide = Make("side");
+    auto lookupMissing = Make("gone");
+    String mainString(&lookupMain);
+    String sideString(&lookupSide);
+    String missingString(&lookupMissing);
+    lookupMain.refCount = lookupSide.refCount = lookupMissing.refCount = 4;
+
+    Require(_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&parent, &mainString) == &first);
+    Require(_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&parent, &sideString) == &second);
+    Require(!_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&parent, &missingString));
+
+    HistoryItem empty;
+    empty.children = {nullptr, 0, 0};
+    Require(!_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&empty, &mainString));
+
+    bool threw = false;
+    try { _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&item, nullptr); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { _ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&parent, nullptr); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { _ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(nullptr, &mainString); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+
+    String emptyString;
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&item, &emptyString);
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&first, &emptyString);
+    _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(&second, &emptyString);
+    for (auto* impl : {&target, &firstName, &secondName, &lookupMain, &lookupSide, &lookupMissing}) impl->refCount = 2;
+    targetString.impl = firstString.impl = secondString.impl = mainString.impl = sideString.impl = missingString.impl = nullptr;
+}
+
 int main() {
     TestStrings();
     TestScalars();
     TestContainers();
+    TestCachedPageExpiry();
     TestNull();
+    TestChangedHook();
+    TestTarget();
     return 0;
 }

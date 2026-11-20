@@ -6,11 +6,6 @@
 
 extern "C" {
 
-int APS5_VABI _ZN23sceMetadataReaderWriter10jpegParser18jpegParserFinalizeEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN23sceMetadataReaderWriter10jpegParser20jpegParserInitializeEv() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
