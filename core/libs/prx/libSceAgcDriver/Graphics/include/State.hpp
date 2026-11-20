@@ -44,6 +44,8 @@ struct ShaderStages {
     std::uint32_t hullWaveSize = 64;
     std::optional<ShaderRecompiler::MeshConfiguration> tessellationGeometry;
     bool legacyVertex = false;
+    bool legacyTessellation = false;
+    std::optional<ShaderRecompiler::GeometryConfiguration> legacyGeometry;
 };
 
 inline constexpr std::uint16_t UnclampedBlendMask = 0xffffu;
@@ -253,6 +255,7 @@ void ApplyReadOnlyDepthBoundsComparison(State& state, const ShaderRecompiler::Sh
 void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
 std::uint32_t StageWaveSize(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage);
 std::optional<ShaderRecompiler::MeshConfiguration> StageMeshConfiguration(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage);
+std::optional<ShaderRecompiler::GeometryConfiguration> StageGeometryConfiguration(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage);
 std::uint32_t StagePushLimit(const ShaderStages& stages, std::uint32_t pushOffset, bool depthRemap);
 std::array<VkSampleLocationEXT, 32> SampleLocations(const State& state);
 std::array<std::uint8_t, 32> PixelSampleLocations(const State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
@@ -393,7 +396,7 @@ inline constexpr std::array<DrawKeyRange, 53> DrawKeyRegisters{{
     // The pixel program address, RSRC2 and user words; the geometry-back user pointer and program
     // address; the vertex/geometry-front RSRC1/RSRC2 and user words; the vertex program address;
     // the hull user pointer, program address, RSRC2 and user words; the local program address.
-    {RegisterBank::Shader, 0x008, 0x24}, {RegisterBank::Shader, 0x048, 0x14}, {RegisterBank::Shader, 0x082, 2}, {RegisterBank::Shader, 0x088, 2}, {RegisterBank::Shader, 0x08a, 0x22}, {RegisterBank::Shader, 0x0c8, 2}, {RegisterBank::Shader, 0x102, 2}, {RegisterBank::Shader, 0x108, 2}, {RegisterBank::Shader, 0x10b, 0x21}, {RegisterBank::Shader, 0x148, 2},
+    {RegisterBank::Shader, 0x008, 0x24}, {RegisterBank::Shader, 0x048, 0x14}, {RegisterBank::Shader, 0x082, 2}, {RegisterBank::Shader, 0x088, 2}, {RegisterBank::Shader, 0x08a, 0x22}, {RegisterBank::Shader, 0x0c8, 2}, {RegisterBank::Shader, 0x102, 2}, {RegisterBank::Shader, 0x108, 2}, {RegisterBank::Shader, 0x10b, 0x21}, {RegisterBank::Shader, 0x148, 0x14},
     // GE_PRIM_TYPE, GE_MULTI_PRIM_IB_RESET_EN, the geometry subgroup sizes.
     {RegisterBank::UserConfig, 0x242, 1}, {RegisterBank::UserConfig, 0x24b, 1}, {RegisterBank::UserConfig, 0x25b, 1},
 }};

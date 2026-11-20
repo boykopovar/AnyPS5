@@ -116,7 +116,21 @@ struct ShaderTessellationInputInfo {
     std::uint32_t instancePatches = 0;
     bool drawParameters = false;
     bool mergedHull = false;
+    bool onChip = false;
+    std::optional<std::array<std::uint32_t, TessellationConstantWords>> constants;
+    std::uint32_t userDataBase = 0;
     std::uint32_t geometryItemDwords = 0;
+};
+
+struct ShaderGeometryInputInfo {
+    bool active = false;
+    std::uint32_t inputVertices = 0;
+    std::uint32_t outputTopology = 0;
+    std::uint32_t maxVertices = 0;
+    std::uint32_t instances = 1;
+    std::uint32_t esgsItemDwords = 0;
+    std::uint32_t vertexDwords = 0;
+    std::vector<GeometryCopyExport> exports;
 };
 
 struct ShaderVertexInputInfo {
@@ -141,6 +155,7 @@ struct ShaderVertexInputInfo {
     ShaderDepthRemap depthRemap;
     ShaderMeshInputInfo mesh;
     ShaderTessellationInputInfo tess;
+    ShaderGeometryInputInfo geometry;
     bool fetchExternal = false;
     bool fetchEmbedded = false;
 };

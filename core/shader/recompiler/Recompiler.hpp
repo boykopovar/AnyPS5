@@ -403,8 +403,14 @@ enum class ProgramRole {
     Local,
     Hull,
     Domain,
-    Fragment
+    Fragment,
+    Geometry,
+    Copy
 };
+
+constexpr bool LinkedOnlyRole(ProgramRole role) {
+    return role == ProgramRole::GeometryBack || role == ProgramRole::Copy;
+}
 
 struct LinkedProgram {
     ProgramRole role;
@@ -427,6 +433,28 @@ struct MeshConfiguration {
     std::uint32_t outputPrimitiveSize = 3;
 };
 
+struct GeometryCopyExport {
+    std::uint32_t target = 0;
+    std::uint32_t enable = 0;
+    std::uint32_t constants = 0;
+    std::array<std::uint32_t, 4> values{};
+    bool done = false;
+    bool operator==(const GeometryCopyExport&) const = default;
+};
+
+struct GeometryConfiguration {
+    std::uint32_t inputVertices = 3;
+    std::uint32_t outputTopology = 2;
+    std::uint32_t maxVertices = 1;
+    std::uint32_t instances = 1;
+    std::uint32_t esgsItemDwords = 0;
+    std::uint32_t vertexDwords = 0;
+    std::vector<GeometryCopyExport> exports;
+    bool operator==(const GeometryConfiguration&) const = default;
+};
+
+[[nodiscard]] std::vector<GeometryCopyExport> ParseGeometryCopyProgram(std::span<const std::uint32_t> code, std::uint32_t maxVertices, std::uint32_t vertexDwords, std::optional<std::uint32_t> streamConfigSgpr);
+
 struct TessellationConfiguration {
     std::uint32_t inputControlPoints;
     std::uint32_t outputControlPoints;
@@ -439,6 +467,7 @@ struct TessellationConfiguration {
     std::uint32_t instancePatches = 0;
     bool drawParameters = false;
     bool mergedHull = false;
+    bool onChip = false;
 };
 
 inline constexpr std::uint32_t MeshDrawPushOffsetBytes = 104;
@@ -498,6 +527,8 @@ struct MeshBarycentricLayout {
     bool operator==(const MeshBarycentricLayout&) const = default;
 };
 
+inline constexpr std::uint32_t TessellationConstantWords = 9;
+
 struct GraphicsCompileContext {
     std::uint32_t firstUserSgpr;
     std::span<const LinkedProgram> linkedPrograms;
@@ -506,6 +537,8 @@ struct GraphicsCompileContext {
     GraphicsDrawParameters draw;
     std::optional<MeshBarycentricLayout> meshBarycentrics;
     bool emulateBarycentrics = false;
+    std::optional<std::array<std::uint32_t, TessellationConstantWords>> tessellationConstants;
+    std::optional<GeometryConfiguration> geometry;
 };
 
 struct RecompileRequest {

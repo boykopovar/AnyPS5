@@ -96,8 +96,9 @@ struct SpirvEmitterState {
     const IrProgram& program;
     ShaderStageInputInfo inputInfo;
     std::unordered_map<const IrValue*, std::optional<std::vector<std::uint32_t>>> normalizedSampleImages;
-    std::array<std::uint32_t, 11> tessVariables {};
+    std::array<std::uint32_t, 14> tessVariables {};
     std::uint32_t tessInnerVariable = 0;
+    std::uint32_t geometryCountVariable = 0;
 
     SpirvRequirements requirements;
     std::uint32_t laneCount = 1;

@@ -106,7 +106,7 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("LoadShared", U32, U32),
     makeMeta("StoreShared", Void, U32, U32),
     makeMeta("Barrier", Void),
-    makeMeta("EmitVertex", Void),
+    makeMeta("EmitVertex", Void, U1, U32),
     makeMeta("Discard", Void),
     makeMeta("ReadFirstLane", U32, U32, U1),
     makeMeta("ReadLane", U32, U32, U32),

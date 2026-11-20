@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdlib>
@@ -92,7 +93,7 @@ std::vector<std::pair<std::size_t, std::size_t>> UserDataWords(const std::vector
     std::vector<std::pair<std::size_t, std::size_t>> words;
     if (location == 0x280u) return words;
     for (std::size_t i = 0; i < programs.size(); ++i) {
-        if (roles[i] == Role::Fragment || roles[i] == Role::GeometryBack || location < programs[i].userDataBase) continue;
+        if (roles[i] == Role::Fragment || ShaderRecompiler::LinkedOnlyRole(roles[i]) || location < programs[i].userDataBase) continue;
         const auto word = location - programs[i].userDataBase + (8u - programs[i].firstUserSgpr);
         if (word < programs[i].userData.size()) words.emplace_back(i, static_cast<std::size_t>(word));
     }
@@ -123,7 +124,7 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
         DrawProgram result{
             {stage, address, std::span(snapshot.code).subspan(codeOffset), snapshot.headerAddress, snapshot.header},
             userDataBase,
-            stage == Stage::Fragment || userDataBase == 0x04cu ? 0u : 8u,
+            stage == Stage::Fragment || userDataBase == 0x04cu || ShaderRecompiler::GcnGuestShaders() ? 0u : 8u,
             {},
             memory,
             program,
@@ -150,7 +151,12 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             roles.push_back(role);
         };
         auto& graphics = product->state;
-        if (graphics.stages.path == Graphics::ShaderPath::Tessellation || graphics.stages.path == Graphics::ShaderPath::TessellationGeometry) {
+        if (graphics.stages.legacyTessellation) {
+            require(graphics.stages.tessellation.has_value(), "tessellation draw has no tessellation configuration");
+            append(0x148, 5, Stage::Local, 0x14b, 0x14c, Role::Local);
+            append(0x108, 7, Stage::TessellationControl, 0x10b, 0x10c, Role::Hull);
+            append(0x048, 2, Stage::TessellationEvaluation, 0x04b, 0x04c, Role::Domain);
+        } else if (graphics.stages.path == Graphics::ShaderPath::Tessellation || graphics.stages.path == Graphics::ShaderPath::TessellationGeometry) {
             const auto localAddress = programAddress(0x148);
             const auto local = !staticAbi || localAddress != 0 ? ProgramSnapshot(registry, localAddress, {3, 5}) : nullptr;
             const bool mergedHull = local != nullptr && !local->header.empty() && local->type == 3;
@@ -178,6 +184,15 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             append(0xc8, type, Stage::Mesh, 0x8b, 0x8c, Role::Main);
             InitializeMerged(queue, programs.back(), 0x82, type == 4, staticAbi);
             if (type == 4) append(0x88, 6, Stage::Mesh, 0x8b, 0x8c, Role::GeometryBack);
+        } else if (graphics.stages.legacyGeometry) {
+            append(0x0c8, 4, Stage::Vertex, 0x0cb, 0x0cc, Role::Main);
+            append(0x088, 6, Stage::Geometry, 0x08b, 0x08c, Role::Geometry);
+            append(0x048, 2, Stage::Vertex, 0x04b, 0x04c, Role::Copy);
+            auto& geometry = *graphics.stages.legacyGeometry;
+            const auto copyResources = queue.shader.find(0x04bu);
+            const auto copyRsrc2 = copyResources == queue.shader.end() ? 0u : copyResources->second;
+            const auto streamConfig = (copyRsrc2 & 0x1000u) != 0u ? std::optional<std::uint32_t>((copyRsrc2 >> 1u) & 0x1fu) : std::nullopt;
+            geometry.exports = ShaderRecompiler::ParseGeometryCopyProgram(programs.back().binary.code, geometry.maxVertices, geometry.vertexDwords, streamConfig);
         } else if (graphics.stages.legacyVertex) {
             append(0x48, 2, Stage::Vertex, 0x4b, 0x4c, Role::Main);
         } else {

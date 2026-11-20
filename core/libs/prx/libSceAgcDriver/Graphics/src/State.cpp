@@ -1331,6 +1331,37 @@ void ApplyPointSize(const State& state, ShaderRecompiler::ShaderVertexStageInfo&
     vertex.pointSizeMax = state.pointSizeMax;
 }
 
+namespace {
+
+template <typename TValidate>
+ShaderRecompiler::GeometryConfiguration decodeLegacyGeometry(const QueueState& queue, std::uint32_t primitive, const TValidate& validate) {
+    const auto optional = [&](std::uint32_t offset) {
+        const auto found = find(queue.context, offset);
+        return found == queue.context.end() ? 0u : found->second;
+    };
+    const auto mode = read(queue.context, 0x290);
+    validate((mode & 7u) == 3u && (mode & ~0x001a0837u) == 0u, "VGT_GS_MODE other than GS_SCENARIO_G off chip, without ES pass-through, compute modes, element info or suppressed cuts, is not implemented");
+    validate(optional(0x2e5) == 0u, "GCN stream-out (VGT_STRMOUT_CONFIG) from a geometry shader is not implemented");
+    validate(optional(0x2d8) == 0u && optional(0x2d9) == 0u && optional(0x2da) == 0u, "GCN geometry output to vertex streams 1-3 (VGT_GS_VERT_ITEMSIZE_1-3) is not implemented");
+    ShaderRecompiler::GeometryConfiguration geometry;
+    geometry.inputVertices = primitive == 1u ? 1u : primitive == 2u || primitive == 3u ? 2u : primitive == 4u || primitive == 5u || primitive == 6u ? 3u : 0u;
+    validate(geometry.inputVertices != 0u, "a GCN geometry shader over an adjacency, rectangle, quad or patch primitive is not implemented");
+    geometry.outputTopology = read(queue.context, 0x29b) & 0x3fu;
+    validate(geometry.outputTopology == 1u || geometry.outputTopology == 2u, "VGT_GS_OUT_PRIM_TYPE other than a line strip or a triangle strip is not implemented for a GCN geometry shader");
+    geometry.maxVertices = read(queue.context, 0x2ce) & 0x7ffu;
+    validate(geometry.maxVertices != 0u && geometry.maxVertices <= 1024u, "VGT_GS_MAX_VERT_OUT must be 1 to 1024");
+    const auto instances = read(queue.context, 0x2e4);
+    geometry.instances = (instances & 1u) != 0u ? (instances >> 2u) & 0x7fu : 1u;
+    validate(geometry.instances != 0u && geometry.instances <= 32u, "VGT_GS_INSTANCE_CNT must be 1 to 32");
+    geometry.esgsItemDwords = read(queue.context, 0x2ab) & 0x7fffu;
+    geometry.vertexDwords = read(queue.context, 0x2d7) & 0x7fffu;
+    validate(geometry.esgsItemDwords != 0u && geometry.vertexDwords != 0u, "VGT_ESGS_RING_ITEMSIZE and VGT_GS_VERT_ITEMSIZE must be nonzero");
+    validate((read(queue.context, 0x2ac) & 0x7fffu) >= geometry.vertexDwords * geometry.maxVertices, "VGT_GSVS_RING_ITEMSIZE is smaller than VGT_GS_VERT_ITEMSIZE times VGT_GS_MAX_VERT_OUT");
+    return geometry;
+}
+
+}
+
 ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
     const auto value = read(queue.context, 0x2d5);
     const auto validate = [&](bool condition, const char* reason) {
@@ -1344,7 +1375,8 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
     const auto primitive = read(queue.userConfig, 0x242, RegisterBank::UserConfig);
     const bool tessellation = primitive == 9;
     validate(!vertexWorkgroup || ((value & 0x02002020u) == 0x2000u && !tessellation), "a vertex program that needs a workgroup requires PRIMGEN_EN without GS_EN, PRIMGEN_PASSTHRU_EN or tessellation");
-    const bool geometry = (value & 0x20u) != 0 || vertexWorkgroup;
+    const bool legacyGeometry = ShaderRecompiler::GcnGuestShaders() && (value & 0x2000u) == 0 && (value & 0x20u) != 0 && !tessellation && !vertexWorkgroup;
+    const bool geometry = ((value & 0x20u) != 0 || vertexWorkgroup) && !legacyGeometry;
     validate(tessellation == ((value & 4u) != 0), "Patch topology and HS_EN disagree");
     const auto path = tessellation ? geometry ? ShaderPath::TessellationGeometry : ShaderPath::Tessellation : geometry ? ShaderPath::Geometry : ShaderPath::Vertex;
     ShaderStages result{path, value, (value & 0x00400000u) != 0 ? 32u : 64u, (read(queue.context, 0x1b6) & 0x8000u) != 0 ? 32u : 64u, {}, {}};
@@ -1379,19 +1411,22 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         return ShaderRecompiler::MeshConfiguration{inputPrimitive, groupPrimitives, (groupPrimitives - 1u) * inputStep + inputSize, maxVertices, maxPrimitives, ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize, ((resources >> 19u) & 0xffu) * 128u, provokingVertex, esgsItemSize, outputSize};
     };
     if (path == ShaderPath::Vertex && ShaderRecompiler::GcnGuestShaders() && (value & 0x2000u) == 0) {
-        validate(value == 0, "GCN vertex routing other than a plain VS is unsupported");
+        validate(value == 0 || (legacyGeometry && value == 0xb0u), "GCN vertex routing other than a plain VS, or ES and GS with a copy shader on the VS stage, is unsupported");
         const auto unitStepRate = [&](std::uint32_t offset) {
             const auto rate = find(queue.context, offset);
             return rate == queue.context.end() || rate->second == 1u;
         };
-        const auto components = (read(queue.shader, 0x4a, RegisterBank::Shader) >> 24u) & 3u;
+        const auto components = (read(queue.shader, legacyGeometry ? 0xcau : 0x4au, RegisterBank::Shader) >> 24u) & 3u;
         validate(components == 0 || (unitStepRate(0x2a8) && (components == 1 || unitStepRate(0x2a9))), "GCN vertex instance step rates other than 1 are not implemented");
-        result.legacyVertex = true;
+        if (legacyGeometry) result.legacyGeometry = decodeLegacyGeometry(queue, primitive, validate);
+        else result.legacyVertex = true;
     } else if (path == ShaderPath::Vertex) {
         validate((value & 0x2000u) != 0, "legacy vertex routing without PRIMGEN_EN is unsupported");
         validate((value & ~0x0247a010u) == 0 || value == 0x02002008u, "unsupported vertex routing, scheduling or wave-ID state");
     } else if (path == ShaderPath::Tessellation || path == ShaderPath::TessellationGeometry) {
-        if (path == ShaderPath::Tessellation) validate((value & ~0x0267ed0du) == 0 && (value & 0x02002000u) == 0x02002000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation routing");
+        const bool legacy = ShaderRecompiler::GcnGuestShaders() && (value & 0x2000u) == 0;
+        if (legacy) validate(path == ShaderPath::Tessellation && (value & ~0x100u) == 0x45u, "GCN tessellation routing other than LS, HS and a domain shader on the VS stage is unsupported");
+        else if (path == ShaderPath::Tessellation) validate((value & ~0x0267ed0du) == 0 && (value & 0x02002000u) == 0x02002000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation routing");
         else validate((value & ~0x0067ed2du) == 0 && (value & 0x02002000u) == 0x2000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation and geometry routing");
         const auto config = read(queue.context, 0x2d6);
         const auto parameters = read(queue.context, 0x2db);
@@ -1399,11 +1434,26 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         ShaderRecompiler::TessellationConfiguration tess{(config >> 8u) & 0x3fu, (config >> 14u) & 0x3fu, parameters & 3u, (parameters >> 2u) & 7u, (parameters >> 5u) & 7u, config & 0xffu, primitiveGroup == queue.userConfig.end() ? 0u : primitiveGroup->second & 0x1ffu, primitiveGroup != queue.userConfig.end() && (primitiveGroup->second & 0x40000u) != 0u};
         validate(tess.inputControlPoints != 0 && tess.inputControlPoints <= 32 && tess.outputControlPoints != 0 && tess.outputControlPoints <= 32, "invalid tessellation control-point counts");
         validate(tess.patchesPerGroup != 0, "VGT_LS_HS_CONFIG.NUM_PATCHES is zero");
-        if ((parameters & ~0x000600ffu) != 0) Require(false, zeroMessage(0x2db, parameters, "VGT_TF_PARAM donut, factor detection, memory type or reserved state"));
+        if ((parameters & ~(legacy ? 0x0001bcffu : 0x000600ffu)) != 0) Require(false, zeroMessage(0x2db, parameters, "VGT_TF_PARAM donut, factor detection, memory type or reserved state"));
         if (!((tess.domain == 1 || tess.domain == 2) && (tess.partitioning == 0 || tess.partitioning == 2 || tess.partitioning == 3) && (tess.outputTopology == 2 || tess.outputTopology == 3))) validate(false, tessellationMessage(config, parameters, tess).c_str());
         result.minTessellationLevel = readFloat(queue.context, 0x287);
         result.maxTessellationLevel = readFloat(queue.context, 0x286);
         Require(result.minTessellationLevel >= 0.0f && result.minTessellationLevel <= 63.0f && result.minTessellationLevel <= result.maxTessellationLevel && result.maxTessellationLevel >= 1.0f, "tessellation level clamps need 0 <= VGT_HOS_MIN_TESS_LEVEL <= 63, VGT_HOS_MAX_TESS_LEVEL >= 1 and the minimum at most the maximum");
+        if (legacy) {
+            const auto hull = read(queue.shader, 0x10b, RegisterBank::Shader);
+            const auto domain = read(queue.shader, 0x4b, RegisterBank::Shader);
+            validate((hull & 0x100u) == 0, "SPI_SHADER_PGM_RSRC2_HS.TG_SIZE_EN on a GCN hull shader is not implemented");
+            validate((domain & 0x1f00u) == 0, "stream-out from a GCN domain shader (SPI_SHADER_PGM_RSRC2_VS.SO_EN or SO_BASE*_EN) is not implemented");
+            validate(((hull ^ domain) & 0x80u) == 0, "the GCN hull and domain shaders disagree on SPI_SHADER_PGM_RSRC2.OC_LDS_EN");
+            const auto unitStepRate = [&](std::uint32_t offset) {
+                const auto rate = find(queue.context, offset);
+                return rate == queue.context.end() || rate->second == 1u;
+            };
+            const auto components = (read(queue.shader, 0x14a, RegisterBank::Shader) >> 24u) & 3u;
+            validate(components < 2u || unitStepRate(0x2a8), "GCN local shader instance step rates other than 1 are not implemented");
+            tess.onChip = (hull & 0x80u) == 0;
+            result.legacyTessellation = true;
+        }
         result.tessellation = tess;
         if (path == ShaderPath::TessellationGeometry) result.tessellationGeometry = meshConfiguration(4u, false);
     } else {
@@ -1418,6 +1468,11 @@ std::uint32_t StageWaveSize(const ShaderStages& stages, ShaderRecompiler::Shader
     if (stage == ShaderRecompiler::ShaderStage::Fragment) return stages.fragmentWaveSize;
     if (stage == ShaderRecompiler::ShaderStage::Local || stage == ShaderRecompiler::ShaderStage::TessellationControl) return stages.hullWaveSize;
     return stages.vertexWaveSize;
+}
+
+std::optional<ShaderRecompiler::GeometryConfiguration> StageGeometryConfiguration(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage) {
+    if (stage != ShaderRecompiler::ShaderStage::Vertex && stage != ShaderRecompiler::ShaderStage::Geometry) return std::nullopt;
+    return stages.legacyGeometry;
 }
 
 std::optional<ShaderRecompiler::MeshConfiguration> StageMeshConfiguration(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage) {
@@ -1631,9 +1686,9 @@ void ApplyDepthRemap(const Context& context, State& state) {
     const bool inRange = withinUnitRange(state.viewport) && std::ranges::all_of(state.extraViewports, withinUnitRange);
     if (context.depthRangeUnrestricted || inRange) return;
     Require(state.extraViewports.empty(), "viewport depth outside [0, 1] is remapped for a single viewport only");
-    const bool vertex = state.stages.path == ShaderPath::Vertex && !state.stages.tessellation;
+    const bool vertex = state.stages.path == ShaderPath::Vertex && !state.stages.tessellation && !state.stages.legacyGeometry;
     const bool tessellation = state.stages.path == ShaderPath::Tessellation && state.stages.tessellation.has_value();
-    Require((vertex || tessellation) && !state.stages.mesh, "viewport depth outside [0, 1] is remapped on the vertex and tessellation paths only");
+    Require((vertex || tessellation) && !state.stages.mesh, "viewport depth outside [0, 1] is remapped on the vertex and tessellation paths only, not through a geometry shader");
     Require(context.depthClamp, "viewport depth outside [0, 1] needs depth clamping to stand in for the console's clamp");
     const float clampMin = std::clamp(state.depthClampMin, 0.0f, 1.0f);
     const float clampMax = std::clamp(state.depthClampMax, 0.0f, 1.0f);
@@ -1706,7 +1761,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         case 1:
             Require(result.stages.mesh.has_value() || result.stages.path == ShaderPath::Vertex, "point lists are only drawn through the vertex and geometry paths");
             result.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
-            result.vertexPoints = result.stages.path == ShaderPath::Vertex;
+            result.vertexPoints = result.stages.path == ShaderPath::Vertex && !result.stages.legacyGeometry;
             break;
         case 2: result.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST; break;
         case 3: result.topology = VK_PRIMITIVE_TOPOLOGY_LINE_STRIP; break;
@@ -2345,6 +2400,7 @@ std::array<std::uint16_t, 4> QuadSampleMasks(const State& state) {
 
 ShaderRecompiler::RasterPrimitive RasterPrimitiveOf(const State& state) {
     if (state.rectList) return ShaderRecompiler::RasterPrimitive::Rectangle;
+    if (state.stages.legacyGeometry) return state.stages.legacyGeometry->outputTopology == 1u ? ShaderRecompiler::RasterPrimitive::Line : ShaderRecompiler::RasterPrimitive::Triangle;
     if (state.stages.mesh.has_value() && state.stages.mesh->outputPrimitiveSize == 1u) return ShaderRecompiler::RasterPrimitive::Point;
     if (state.stages.mesh.has_value() && state.stages.mesh->outputPrimitiveSize == 2u) return ShaderRecompiler::RasterPrimitive::Line;
     if (state.stages.mesh.has_value() || state.stages.tessellation.has_value()) return ShaderRecompiler::RasterPrimitive::Triangle;

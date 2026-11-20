@@ -59,7 +59,7 @@ static ShaderStageKind ToShaderStageKind(ShaderStage stage) {
     case ShaderStage::Mesh:
         return ShaderStageKind::Mesh;
     case ShaderStage::Geometry:
-        throw std::runtime_error("unsupported geometry shader stage");
+        return ShaderStageKind::Geometry;
     }
 
     throw std::runtime_error("invalid shader stage");
@@ -153,7 +153,7 @@ int main(int argc, char** argv) {
         std::cout << "Disassembly written to disasm.txt (" << disasm.size() << " bytes)\n";
 
         const ShaderStageKind stageKind = ToShaderStageKind(request.shader.stage);
-        const auto inputInfo = BuildShaderStageInputInfo(stageKind, request.context, request.target.subgroupSize, request.graphics && request.graphics->mesh ? &*request.graphics->mesh : nullptr);
+        const auto inputInfo = BuildShaderStageInputInfo(stageKind, request.context, request.target.subgroupSize, request.graphics && request.graphics->mesh ? &*request.graphics->mesh : nullptr, nullptr, request.graphics && request.graphics->geometry ? &*request.graphics->geometry : nullptr);
 
         GraphBuilder graphBuilder;
         auto cfg = graphBuilder.Build(decoded);
