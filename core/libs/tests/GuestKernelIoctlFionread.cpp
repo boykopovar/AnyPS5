@@ -18,6 +18,7 @@ constexpr int ErrorFault = 14;
 constexpr int ErrorInvalid = 22;
 constexpr int ErrorNotTerminal = 25;
 constexpr int ErrorAgain = 35;
+constexpr int ErrorNotConnected = 57;
 constexpr short PollIn = 0x1;
 
 constexpr std::uint64_t NonblockingRequest = 0x8004667e;
@@ -443,8 +444,8 @@ void AuditNonblockingModeQueries() {
     if (v6Stream >= 0) {
         int v6Large = 42;
         Require(ioctl_nid_postfix(v6Stream, NonblockingRequest, &v6Large) == 0, "set FIONBIO on v6 stream failed");
-        Require(read_nid_postfix(v6Stream, buffer, sizeof(buffer)) == -1 && *__error_nid_postfix() == ErrorAgain,
-            "read on nonblocking v6 stream must return EWOULDBLOCK");
+        Require(read_nid_postfix(v6Stream, buffer, sizeof(buffer)) == -1 && *__error_nid_postfix() == ErrorNotConnected,
+            "read on unconnected nonblocking v6 stream must return ENOTCONN (57)");
         int v6Clear = 0;
         Require(ioctl_nid_postfix(v6Stream, NonblockingRequest, &v6Clear) == 0, "clear FIONBIO on v6 stream failed");
         Require(close_nid_postfix(v6Stream) == 0, "close v6 stream failed");
