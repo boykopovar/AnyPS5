@@ -673,6 +673,9 @@ int main(int argc, char** argv) {
     Require(sceUsbdControlTransfer(nullptr, 0x80, 6, 0x100, 0, descriptor, 18, 1000) == invalidArgument, "null handle control transfer accepted");
     Require(sceUsbdControlTransfer(&foreign, 0x80, 6, 0x100, 0, nullptr, 18, 1000) == invalidArgument, "control transfer without data accepted");
     Require(Throws([&] { sceUsbdControlTransfer(&foreign, 0x80, 6, 0x100, 0, descriptor, 18, 1000); }), "control transfer on a handle that was never opened did not throw");
+    std::fill_n(descriptor, sizeof(descriptor), 0xA5);
+    Require(sceUsbdControlTransfer(&foreign, 0x80, 6, 0x100, 0, descriptor, sizeof(descriptor), 0) == invalidArgument, "control transfer on a foreign handle accepted");
+    Require(std::all_of(descriptor, descriptor + sizeof(descriptor), [](std::uint8_t value) { return value == 0xA5; }), "control transfer on a foreign handle wrote the device-to-host output");
     std::int32_t transferred = 0x5A5A;
     Require(sceUsbdBulkTransfer(nullptr, 0x81, descriptor, 18, &transferred, 1000) == invalidArgument && transferred == 0x5A5A, "null handle bulk transfer accepted");
     Require(Throws([&] { sceUsbdBulkTransfer(&foreign, 0x81, descriptor, 18, &transferred, 1000); }) && transferred == 0, "bulk transfer on a handle that was never opened did not throw after clearing the count");
