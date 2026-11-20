@@ -76,6 +76,7 @@ void TestValidation() {
     constexpr int invalidParam = static_cast<int>(0x80260106);
     constexpr int invalidState = static_cast<int>(0x80260109);
     Require(sceAudioInOpen(user, 6, 0, 256, 48000, 2) == invalidType);
+    Require(sceAudioInOpen(user, 99, 0, 256, 48000, 2) == invalidType);
     Require(sceAudioInOpen(user, 0, 1, 256, 48000, 2) == invalidParam);
     Require(sceAudioInOpen(user, 0, 0, 512, 48000, 2) == invalidSize);
     Require(sceAudioInOpen(user, 0, 0, 256, 44100, 2) == invalidFreq);
@@ -94,7 +95,7 @@ void TestValidation() {
     Require(sceAudioInAsyncOpen(user, 0, 0, 256, 48000, 0) == invalidSize);
     Require(sceAudioInHqOpen(user, 0, 0, 256, 48000, 2) == invalidSize);
     Require(sceAudioInHqOpen(user, 0, 0, 128, 16000, 2) == invalidFreq);
-    for (const int badHandle : {-1, 0, 1, 9}) {
+    for (const int badHandle : {-1, 0, 1, 9, invalidHandle}) {
         float gain = -2.5f;
         Require(sceAudioInGetGain(badHandle, &gain) == invalidHandle && gain == 1.0f);
         Require(sceAudioInGetRerouteCount(badHandle) == invalidHandle);

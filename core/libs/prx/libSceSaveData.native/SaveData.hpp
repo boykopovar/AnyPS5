@@ -26,6 +26,8 @@ constexpr std::uint32_t SAVE_DATA_MOUNT_MODE_RDONLY = 1;
 constexpr std::uint32_t SAVE_DATA_MOUNT_MODE_RDWR = 2;
 constexpr std::uint32_t SAVE_DATA_MOUNT_MODE_CREATE = 4;
 constexpr std::uint32_t SAVE_DATA_MOUNT_MODE_CREATE2 = 32;
+constexpr std::uint32_t SAVE_DATA_UMOUNT_MODE_BACKUP = 0x10000;
+constexpr std::uint32_t SAVE_DATA_UMOUNT_MODE_BACKUP_FORCE = 0x1;
 
 constexpr std::uint64_t SAVE_DATA_BLOCKS_MIN2 = 96;
 constexpr std::uint64_t SAVE_DATA_BLOCKS_MAX = 16384;

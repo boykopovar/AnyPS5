@@ -525,6 +525,48 @@ static void CheckScopeIdText() {
     Require(sceNetInetPtonWithScopeId(28, "fe80::1%lo0", address.data(), nullptr) == 0 && address[0] == 0xa5 && address[15] == 0xa5);
     Require(Failed(sceNetInetPtonWithScopeId(2, "fe80::1", address.data(), &scope), 47));
     Require(Failed(sceNetInetPtonWithScopeId(28, nullptr, address.data(), &scope), 22));
+    address.fill(0xa5);
+    scope = 0xa5a5a5a5u;
+    errno = 71;
+    Require(Failed(sceNetInetPtonWithScopeId(
+        28,
+        reinterpret_cast<const char*>(std::uintptr_t{0x10}),
+        address.data(),
+        &scope),
+        14));
+    Require(errno == 14);
+    Require(scope == 0xa5a5a5a5u && address[0] == 0xa5 && address[15] == 0xa5);
+
+    constexpr std::size_t Page = 0x4000;
+    auto* const memory = static_cast<char*>(
+        mmap_nid_postfix(nullptr, 2 * Page, 3, 0x1002, -1, 0));
+    Require(memory != reinterpret_cast<char*>(
+        static_cast<std::uintptr_t>(-1)));
+    char* const guarded = memory + Page;
+    Require(mprotect_nid_postfix(guarded, Page, 0) == 0);
+
+    constexpr char unterminated[] = "fe80::1%lo0";
+    char* const boundarySource = guarded - (sizeof(unterminated) - 1);
+    std::memcpy(
+        boundarySource,
+        unterminated,
+        sizeof(unterminated) - 1);
+
+    address.fill(0xa5);
+    scope = 0xa5a5a5a5u;
+    errno = 71;
+    Require(Failed(sceNetInetPtonWithScopeId(
+        28,
+        boundarySource,
+        address.data(),
+        &scope),
+        14));
+    Require(errno == 14);
+    Require(scope == 0xa5a5a5a5u &&
+        address[0] == 0xa5 &&
+        address[15] == 0xa5);
+    Require(munmap_nid_postfix(memory, 2 * Page) == 0);
+
     Require(Failed(sceNetInetPtonWithScopeId(28, "fe80::1", reinterpret_cast<void*>(0x10), &scope), 14));
     Require(Failed(sceNetInetPtonWithScopeId(28, "fe80::1", address.data(), reinterpret_cast<std::uint32_t*>(0x10)), 14));
     Require(sceNetInetNtopWithScopeId(28, plain.data(), reinterpret_cast<char*>(0x10), text.size(), 0) == nullptr && *sceNetErrnoLoc() == 14);

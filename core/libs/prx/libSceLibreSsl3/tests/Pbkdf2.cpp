@@ -115,6 +115,23 @@ int main() {
     Require(errno == 71 && PeakKilobytes() - peakBefore < 64 * 1024);
     Require(Derive(sha256, "", "salt", 1, 32) == "f135c27993baf98773c5cdb40a5706ce6a345cde61b000a67858650cd6a324d7");
     Require(Derive(sha256, "password", "salt", 0, 20) == Derive(sha256, "password", "salt", 1, 20));
+    const auto* const sha1 = reinterpret_cast<const EvpMd*>(EVP_sha1_nid_postfix());
+    Require(Derive(sha1, "password", "salt", 1, 20) == "0c60c80f961f0e71f3a9b524af6012062fe037a6");
+    Require(Derive(sha1, "password", "salt", 2, 20) == "ea6c014dc72d6f8ccd1ed92ace1d41f0d8de8957");
+    Require(Derive(sha1, "password", "salt", 4096, 20) == "4b007901b765489abead49d926f721d065a429c1");
+    Require(Derive(sha1, "passwordPASSWORDpassword", "saltSALTsaltSALTsaltSALTsaltSALTsalt", 4096, 25) ==
+            "3d2eec4fe41c849b80c8d83662c0e44a8b291a964cf2f07038");
+    Require(Derive(sha1, std::string_view("pass\0word", 9), 9, std::string_view("sa\0lt", 5), 4096, 16) ==
+            "56fa6aa75548099dcc37d7f03425e0c3");
+    Require(Derive(sha1, "", "salt", 1, 20) == "a33dddc30478185515311f8752895d36ea4363a2");
+    const std::string chunkedSalt(5000, 's');
+    Require(Derive(sha1, "password", chunkedSalt, 2, 20) == "efe9e288c7df1a56a7513c9dedc5038489ffb969");
+    const std::string wide = Derive(sha1, "password", "salt", 1, 6000);
+    Require(wide.size() == 12000 && wide.substr(0, 40) == "0c60c80f961f0e71f3a9b524af6012062fe037a6");
+    Require(wide.substr(255 * 40, 40) == "89b0537aa21739e7b940a64b6420bfde6ece34ed");
+    Require(wide.substr(11960) == "387fd724f7ffd65a75373c03975ec6580c8b95df");
+    Require(Derive(sha256, "password", "salt", 3, 45) ==
+            "ad35240ac683febfaf3cd49d845473fbbbaa2437f5f82d5a415ae00ac76c6bfccf9a9b8d6d2fe4a1e700c4460b");
     Require(Derive(EVP_sha512_nid_postfix(), "password", "salt", 3, 100) ==
             "b6b07cb2cebf4ad84468391a543824fccffe0e0769dbe6bddf10a65673c4b648"
             "e612d44918f9ce9a19a1294cf5140628084ba994c3b21a4ef4741220b811c633"
