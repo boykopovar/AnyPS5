@@ -241,6 +241,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Radix64.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Queue.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxPlainMutex.cpp
 )
 
 find_package(Git QUIET)
@@ -771,6 +772,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_time_return PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_libcxx_plain_mutex_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxPlainMutex.cpp)
+    target_include_directories(guest_libcxx_plain_mutex_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libcxx_plain_mutex_tests PRIVATE libc libkernel)
+    configure_windows_unwind(guest_libcxx_plain_mutex_tests)
+    add_test(NAME guest_libcxx_plain_mutex COMMAND guest_libcxx_plain_mutex_tests)
+    set_tests_properties(guest_libcxx_plain_mutex PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libcxx_plain_mutex PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_libcxx_to_time_t_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxToTimeT.cpp)
     target_include_directories(guest_libcxx_to_time_t_tests PRIVATE ${LIBS_INCLUDE_DIR})
