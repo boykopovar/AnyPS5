@@ -17,6 +17,7 @@
 
 #include "prx/libSceNKWebKit/include/Api.hpp"
 #include "prx/libSceNKWebKit/include/AuthenticationChallengeExports.hpp"
+#include "prx/libSceNKWebKit/include/ScrollbarValueExports.hpp"
 #include "prx/libSceNKWebKit/include/ContentTypeExports.hpp"
 #include "prx/libSceNKWebKit/include/CursorExports.hpp"
 #include "prx/libSceNKWebKit/include/ProcessWarmingExports.hpp"
@@ -47,6 +48,7 @@
 #include "prx/libSceNKWebKit/include/WebKitConfigExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/include/PropertyDescriptorExports.hpp"
+#include "prx/libSceNKWebKit/include/ScriptExecutableExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfBitVector.hpp"
 #include "prx/libSceNKWebKit/include/UserGestureExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
@@ -88,3 +90,4 @@
 #include "prx/libSceNKWebKit/include/BmallocIsoHeapExports.hpp"
 #include "prx/libSceNKWebKit/include/GraphemeClusterExports.hpp"
 #include "prx/libSceNKWebKit/include/EmptyLoaderErrorExports.hpp"
+#include "prx/libSceNKWebKit/include/NodeTraversalExports.hpp"
