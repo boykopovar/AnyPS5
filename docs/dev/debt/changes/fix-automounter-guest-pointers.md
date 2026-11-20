@@ -1,0 +1,5 @@
+# libSceAutoMounterClient
+
+## change [sceAutoMounterClientGetUsbDeviceInfo and sceAutoMounterClientGetUsbDeviceList]
+
+- [sceAutoMounterClientGetUsbDeviceInfo and sceAutoMounterClientGetUsbDeviceList](../../../core/libs/prx/libSceAutoMounterClient/Export.cpp) (libSceAutoMounterClient) - in 13.42 module disassembly (sha256 6aaa6bd4b3e0c2f62fcfd4b8ed6fb738be7853c2b59a3ee89c032f36157970f0), `sceAutoMounterClientGetUsbDeviceList` rejects null `deviceNames` and null `count` pointers with `0x80F40002`, and `sceAutoMounterClientGetUsbDeviceInfo` returns `0x80F40002` when `sscanf` fails to match `/dev%s` (returns 0). The module hands the guest name to `sscanf` without copying it first; bounded guest string copying, checking output buffer writability, returning `0x80F40002` for null or unmapped pointers, and preserving caller `errno` are host-safety fallbacks, not measured firmware behaviour. Neither export is measured on a console, and service queries continue throwing through `NotImplemented_nid_no_patch`.

@@ -33,10 +33,15 @@ bool AllBytesEqual(const void* data, std::size_t size, unsigned char expected) {
 
 int main() {
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     AutoMounterUsbDeviceInfo info{};
     std::memset(&info, 0x5a, sizeof(info));
     char deviceNames[1][64]{};
     std::int32_t count = 0x12345678;
+
+    errno = EAGAIN;
+    Require(sceAutoMounterClientGetUsbDeviceInfo(nullptr, &info) == AUTOMOUNTER_ERROR_INVALID_ARGUMENT);
+    Require(errno == EAGAIN);
 
     for (const char* invalidName : {"usb0", "dev/usb0", "/usb0", " /dev/usb0", "/DEV/usb0", "a"}) {
         errno = EAGAIN;
@@ -55,13 +60,38 @@ int main() {
     errno = EAGAIN;
     Require(sceAutoMounterClientGetUsbDeviceInfo(reinterpret_cast<const char*>(~std::uintptr_t{0}), &info) == AUTOMOUNTER_ERROR_INVALID_ARGUMENT);
     Require(errno == EAGAIN);
+
+    errno = EAGAIN;
+    Require(sceAutoMounterClientGetUsbDeviceInfo("/dev/usb0", nullptr) == AUTOMOUNTER_ERROR_INVALID_ARGUMENT);
+    Require(errno == EAGAIN);
+    errno = EAGAIN;
+    Require(sceAutoMounterClientGetUsbDeviceInfo("/dev/usb0", reinterpret_cast<AutoMounterUsbDeviceInfo*>(0x10)) == AUTOMOUNTER_ERROR_INVALID_ARGUMENT);
+    Require(errno == EAGAIN);
     Require(AllBytesEqual(&info, sizeof(info), 0x5a));
 
+    errno = EAGAIN;
     Require(sceAutoMounterClientGetUsbDeviceList(nullptr, &count) == AUTOMOUNTER_ERROR_INVALID_ARGUMENT);
+    Require(errno == EAGAIN);
     Require(count == 0x12345678);
+
+    errno = EAGAIN;
     Require(sceAutoMounterClientGetUsbDeviceList(deviceNames, nullptr) == AUTOMOUNTER_ERROR_INVALID_ARGUMENT);
+    Require(errno == EAGAIN);
+
+    errno = EAGAIN;
     Require(sceAutoMounterClientGetUsbDeviceList(nullptr, nullptr) == AUTOMOUNTER_ERROR_INVALID_ARGUMENT);
+    Require(errno == EAGAIN);
+
+    errno = EAGAIN;
+    Require(sceAutoMounterClientGetUsbDeviceList(reinterpret_cast<char(*)[64]>(0x10), &count) == AUTOMOUNTER_ERROR_INVALID_ARGUMENT);
+    Require(errno == EAGAIN);
+    Require(count == 0x12345678);
+
+    errno = EAGAIN;
+    Require(sceAutoMounterClientGetUsbDeviceList(deviceNames, reinterpret_cast<std::int32_t*>(0x10)) == AUTOMOUNTER_ERROR_INVALID_ARGUMENT);
+    Require(errno == EAGAIN);
 
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

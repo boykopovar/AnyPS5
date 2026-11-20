@@ -25,25 +25,34 @@ constexpr int AUTOMOUNTER_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80F40002u)
 extern "C" {
 
 int APS5_VABI sceAutoMounterClientGetUsbDeviceInfo(const char* deviceName, AutoMounterUsbDeviceInfo* info) {
-    if (deviceName != nullptr) {
-        const int savedErrno = errno;
-        std::string name;
-        if (CopyGuestString_nid_no_patch(deviceName, 128, name) != 0) {
-            errno = savedErrno;
-            return AUTOMOUNTER_ERROR_INVALID_ARGUMENT;
-        }
-        char buf[128];
-        if (sscanf(name.c_str(), "/dev%127s", buf) == 0) {
-            errno = savedErrno;
-            return AUTOMOUNTER_ERROR_INVALID_ARGUMENT;
-        }
+    const int savedErrno = errno;
+    std::string name;
+    if (deviceName == nullptr || CopyGuestString_nid_no_patch(deviceName, 128, name) != 0) {
         errno = savedErrno;
+        return AUTOMOUNTER_ERROR_INVALID_ARGUMENT;
     }
+    char buf[128];
+    if (sscanf(name.c_str(), "/dev%127s", buf) == 0) {
+        errno = savedErrno;
+        return AUTOMOUNTER_ERROR_INVALID_ARGUMENT;
+    }
+    if (info == nullptr || !GuestWritable_nid_no_patch(info, sizeof(*info))) {
+        errno = savedErrno;
+        return AUTOMOUNTER_ERROR_INVALID_ARGUMENT;
+    }
+    errno = savedErrno;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceAutoMounterClientGetUsbDeviceList(char (*deviceNames)[64], std::int32_t* count) {
-    if (deviceNames == nullptr || count == nullptr) return AUTOMOUNTER_ERROR_INVALID_ARGUMENT;
+    const int savedErrno = errno;
+    if (deviceNames == nullptr || count == nullptr ||
+        !GuestWritable_nid_no_patch(count, sizeof(*count)) ||
+        !GuestWritable_nid_no_patch(deviceNames, sizeof(*deviceNames))) {
+        errno = savedErrno;
+        return AUTOMOUNTER_ERROR_INVALID_ARGUMENT;
+    }
+    errno = savedErrno;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
