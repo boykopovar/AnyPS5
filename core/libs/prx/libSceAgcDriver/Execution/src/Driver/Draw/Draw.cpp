@@ -970,6 +970,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     std::size_t completedSubdraws = 0;
     std::vector<std::uint32_t> pushOffsets(programs.size(), 0);
     std::optional<ShaderRecompiler::MeshBarycentricLayout> meshBarycentrics;
+    bool forcedBarycentrics = false;
     std::vector<std::size_t> resultIndex(programs.size(), 0);
     const bool fixedSlots = localDevice->GraphicsPipelineLibraries();
     const bool hasFragment = std::ranges::any_of(programs, [](const DrawProgram& program) { return program.binary.stage == ShaderRecompiler::ShaderStage::Fragment; });
@@ -1113,6 +1114,18 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         require(evaluation != stages.end(), "tessellation followed by a geometry stage has no domain program");
         stages.insert(std::next(evaluation), Graphics::CompiledShader{Stage::Geometry, &results.back(), 0});
     }
+    const bool lastVertexPatches = programs.size() == 2u && programResults[0] != nullptr && programResults[1] != nullptr && Graphics::LastVertexPatches(graphics, stages, localDevice->ProvokingVertexLast(), localDevice->Target().tessellation.has_value(), localDevice->PrimitiveListRestart(), drawParameters.indexed);
+    if (lastVertexPatches && !programResults[1]->barycentricEmulation.active) {
+        forcedBarycentrics = true;
+        const auto pushBytes = programResults[1]->pushConstants.size();
+        pixel = Graphics::DefaultUnexportedInputs(decode->pixel, programResults[0]->parameterExports);
+        compiledStages.push_back(materializeDrawStage(1, pushOffsets[1], queue, submission, packetOffset, traceToken, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics, true));
+        if (!rejected.empty()) return DrawVerdict::Rejected;
+        programResults[1] = compiledStages.back().get();
+        stages[1].program = programResults[1];
+        stages[1].registeredImageViews = stageCaptures[1].registeredViews.get();
+        require(programResults[1]->barycentricEmulation.active && programResults[1]->pushConstants.size() == pushBytes, "emulating barycentrics for a last provoking vertex changed the pixel shader's push constants or left it without emulated barycentrics");
+    }
     if (!programs.empty() && programResults.back() != nullptr && programResults.back()->barycentricEmulation.active && graphics.stages.path == Graphics::ShaderPath::Geometry) {
         require(localDevice->Target().mesh.has_value(), "a pixel shader on the mesh path reads barycentrics, and this device has neither VK_KHR_fragment_shader_barycentric nor mesh shaders (VK_EXT_mesh_shader), so they cannot be provided or emulated");
         require(!graphics.rectList && graphics.stages.mesh && programs.size() == 2 && programResults[0] != nullptr && programResults[1] != nullptr && stages.size() == 2, "a pixel shader that reads barycentrics needs exactly one mesh program before it to emulate them");
@@ -1132,7 +1145,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         require(graphics.stages.path == Graphics::ShaderPath::Vertex && programs.size() == 2 && programResults[0] != nullptr && stages.size() == 2, "a pixel shader that reads barycentrics without VK_KHR_fragment_shader_barycentric needs a vertex shader before it");
         const auto geometryLimits = localDevice->GeometryLimits();
         results.reserve(programs.size() + 2u);
-        if (geometryLimits || !localDevice->Target().tessellation) {
+        if (!lastVertexPatches && (geometryLimits || !localDevice->Target().tessellation)) {
             results.push_back(ShaderRecompiler::BuildBarycentricGeometryShader(*programResults[0], *programResults[1], localDevice->Target(), geometryLimits));
             stages.insert(stages.begin() + 1, Graphics::CompiledShader{Stage::Geometry, &results.back(), 0});
         } else {
@@ -1299,14 +1312,14 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 if (pushWord && forwardRecordWords(programIndex, result, previousInfo)) {
                     wordsForwarded += static_cast<std::uint64_t>(std::count_if(recordWords.begin(), recordWords.end(), [&](const RecordWord& word) { return word.program == programIndex; }));
                     if (!verifyPushWord) continue;
-                    const auto fresh = materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, packetOffset, trace.token, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics);
+                    const auto fresh = materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, packetOffset, trace.token, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics, forcedBarycentrics);
                     for (auto& stage : stages) if (stage.program == &result) stage.registeredImageViews = stageCaptures[programIndex].registeredViews.get();
                     if (!rejected.empty()) return DrawVerdict::Rejected;
                     verifyForwardedWords(programIndex, result, *fresh);
                     continue;
                 }
                 if (pushWord) wordsRefused += static_cast<std::uint64_t>(std::count_if(recordWords.begin(), recordWords.end(), [&](const RecordWord& word) { return word.program == programIndex; }));
-                result = *materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, packetOffset, trace.token, programs, graphics, pixel, vertexInfos, memory, linked, programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics);
+                result = *materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, packetOffset, trace.token, programs, graphics, pixel, vertexInfos, memory, linked, programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics, forcedBarycentrics);
                 for (auto& stage : stages) if (stage.program == &result) stage.registeredImageViews = stageCaptures[programIndex].registeredViews.get();
                 if (!rejected.empty()) return DrawVerdict::Rejected;
                 require(result.pushConstants.size() == pushBytes, "patched program changed its push constant layout");
