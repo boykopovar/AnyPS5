@@ -91,6 +91,7 @@ struct ImageResource {
     bool cube = false;
     bool r128 = false;
     bool srgbDecode = false;
+    std::uint8_t scaledUnormBits = 0u;
     bool srgbDecodeCompatible = true;
     std::uint32_t srgbDecodeFormats = 0u;
     bool depthBits = false;
