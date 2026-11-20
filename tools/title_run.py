@@ -22,7 +22,7 @@ import pad_input
 import pad_timeline
 import unwrap_self
 from audit_dump import comparison_path
-from package_release import windows_runtime
+from package_release import native_auxiliary_runtimes, windows_runtime
 OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "frame-unreadable", "blank", "rendering")
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
 TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "pad": dict, "files": dict, "smoke": bool}
@@ -68,19 +68,32 @@ def stage_files(files, work, content):
     missing = []
     for destination, source in files.items():
         target = work / destination
+        content_name = source.get("content")
+        content_file = content / content_name if content is not None and content_name is not None else None
+        if content_name is not None and (content_file is None or not content_file.is_file()):
+            if not target.is_file():
+                missing.append(content_name)
+            continue
         target.parent.mkdir(parents=True, exist_ok=True)
         target.unlink(missing_ok=True)
-        if "text" in source:
-            target.write_text(source["text"], encoding="utf-8", newline="\n")
-        elif content and (content / source["content"]).is_file():
-            shutil.copyfile(content / source["content"], target)
+        if content_file is None:
+            with target.open("w", encoding="utf-8", newline="\n") as output:
+                output.write(source["text"])
         else:
-            missing.append(source["content"])
+            shutil.copyfile(content_file, target)
     return missing
 
 
 def load_titles(path):
-    titles = json.loads(Path(path).read_text(encoding="utf-8"))
+    def unique_fields(pairs):
+        fields = {}
+        for name, value in pairs:
+            if name in fields:
+                raise ValueError(f"{path}: duplicate field {name!r}")
+            fields[name] = value
+        return fields
+
+    titles = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=unique_fields)
     for title_id, entry in titles.items():
         if not TITLE_ID.fullmatch(title_id):
             raise ValueError(f"{path}: {title_id} is not a title ID")
@@ -104,9 +117,22 @@ def load_titles(path):
     return titles
 
 
-def relink_args(entry, platform):
+def host_is_intel():
+    if os.name == "nt":
+        return os.environ.get("PROCESSOR_IDENTIFIER", "").strip().lower().startswith("intel")
+    if sys.platform == "darwin":
+        return os.uname().machine == "x86_64"
+    try:
+        return "GenuineIntel" in Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+
+
+def relink_args(entry, platform, intel_host=False):
     args = ["--windows"] if platform == "windows" else []
     args += entry.get("relink", [])
+    if intel_host and not any(flag in args for flag in ("--to-intel", "--to-rosetta", "--to-avx")):
+        args.append("--to-intel")
     if "fixed_base" in entry:
         if platform not in FIXED_BASE_FLAGS:
             raise ValueError(f"fixed_base is not supported on {platform}")
@@ -447,6 +473,8 @@ def discover(directories, wanted=(), packages=None):
             if wanted and title_id not in wanted:
                 continue
             if title_id in found:
+                if package.samefile(found[title_id]["package"]):
+                    continue
                 raise ValueError(f"{title_id} found more than once: {found[title_id]['package']} and {package}")
             localized = data.get("localizedParameters", {})
             name = localized.get(localized.get("defaultLanguage", "en-US"), {}).get("titleName", title_id)
@@ -471,6 +499,20 @@ def link_file(source, target):
         shutil.copy2(source, target)
 
 
+def copy_asset(source, target):
+    if sys.platform == "linux" and source.is_file():
+        try:
+            import fcntl
+            with source.open("rb") as original, target.open("xb") as cloned:
+                fcntl.ioctl(cloned.fileno(), getattr(fcntl, "FICLONE", 0x40049409), original.fileno())
+        except (ImportError, OSError):
+            pass
+        else:
+            shutil.copystat(source, target)
+            return
+    shutil.copy2(source, target)
+
+
 def link_tree(source, target, skip):
     for path in sorted(source.rglob("*")):
         relative = path.relative_to(source)
@@ -480,7 +522,7 @@ def link_tree(source, target, skip):
             (target / relative).mkdir(parents=True, exist_ok=True)
         else:
             (target / relative).parent.mkdir(parents=True, exist_ok=True)
-            link_file(path, target / relative)
+            copy_asset(path, target / relative)
 
 
 def lock_work(path):
@@ -696,6 +738,7 @@ def validate_layout(args, found, ids, titles, source, platform, packages=None):
                 if directory:
                     pending.append((path, package))
     trees.extend(build_trees)
+    files.extend(native_auxiliary_runtimes(platform, args.build))
     if platform == "windows":
         try:
             runtime = windows_runtime(args.build)
@@ -754,14 +797,14 @@ def prepare(title_id, found, entry, platform, build, work):
     executable = work / (title_id + (".exe" if platform == "windows" else ""))
     relinker = build / "core/relinker" / ("relinker.exe" if platform == "windows" else "relinker")
     with (work / "relink.log").open("w", encoding="utf-8") as log:
-        relinked = subprocess.run([str(relinker), *relink_args(entry, platform), str(source / "eboot.elf"), str(executable)],
+        relinked = subprocess.run([str(relinker), *relink_args(entry, platform, host_is_intel()), str(source / "eboot.elf"), str(executable)],
                                   stdout=log, stderr=subprocess.STDOUT)
     if relinked.returncode != 0:
         return None
     link_tree(package, work / "app0", {"sce_module"})
     libs = work / "libs"
     libs.mkdir()
-    for library in sorted((build / "core/libs/libs").glob("*.prx")):
+    for library in sorted((build / "core/libs/libs").glob("*.prx")) + native_auxiliary_runtimes(platform, build):
         link_file(library, libs / library.name)
     if platform == "windows":
         runtime = windows_runtime(build)
@@ -1219,6 +1262,8 @@ def run_cli(argv, capture_resources):
     packages = []
     found = discover(args.games, args.ids, packages=packages)
     ids = args.ids or sorted(found)
+    if not ids:
+        raise SystemExit(f"no title package under --games: {', '.join(str(directory) for directory in args.games)}")
     missing = [title_id for title_id in ids if title_id not in found]
     if missing:
         raise SystemExit(f"not found under --games: {', '.join(missing)}")

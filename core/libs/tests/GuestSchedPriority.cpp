@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
+#include <limits>
 #include <stdexcept>
 #include <ctime>
 
@@ -50,10 +51,16 @@ int main() {
     Require(sched_rr_get_interval_nid_postfix(self, &interval) == 0 && interval.tv_sec == 0 && interval.tv_nsec == 94000000);
     *__error_nid_postfix() = 0;
     Require(sched_rr_get_interval_nid_postfix(-1, &interval) == -1 && *__error_nid_postfix() == 3);
+    for (int pid : {-999, 999999, std::numeric_limits<int>::max()}) {
+        *__error_nid_postfix() = 0;
+        Require(sched_rr_get_interval_nid_postfix(pid, &interval) == -1 && *__error_nid_postfix() == 3);
+    }
     *__error_nid_postfix() = 0;
     Require(sched_rr_get_interval_nid_postfix(self + 1, &interval) == -1 && *__error_nid_postfix() == 3);
     *__error_nid_postfix() = 0;
     Require(sched_rr_get_interval_nid_postfix(0, nullptr) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sched_rr_get_interval_nid_postfix(-1, nullptr) == -1 && *__error_nid_postfix() == 3);
     *__error_nid_postfix() = 0;
     Require(sched_rr_get_interval_nid_postfix(0, reinterpret_cast<KernelTimespec*>(std::uintptr_t{0x10})) == -1 && *__error_nid_postfix() == 14);
     *__error_nid_postfix() = 0;
@@ -106,7 +113,8 @@ int main() {
     GuestRtPrio rtprio{7, 7};
     Require(rtprio_thread_nid_postfix(0, 0, &rtprio) == 0 && rtprio.type == 10 && rtprio.prio == 700);
     *__error_nid_postfix() = 0;
-    Require(rtprio_thread_nid_postfix(1, 0, &rtprio) == -1 && *__error_nid_postfix() == 1);
+    GuestRtPrio lowRealtime{2, 0};
+    Require(rtprio_thread_nid_postfix(1, 0, &lowRealtime) == -1 && *__error_nid_postfix() == 22);
     *__error_nid_postfix() = 0;
     Require(rtprio_thread_nid_postfix(2, 0, &rtprio) == -1 && *__error_nid_postfix() == 3);
     *__error_nid_postfix() = 0;

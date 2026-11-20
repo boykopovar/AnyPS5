@@ -32,6 +32,11 @@ void APS5_VABI udat_close_nid_postfix(UDateFormat* format) {
     NotImplemented_nid_no_patch(__func__);
 }
 
+std::int32_t APS5_VABI udat_countSymbols_nid_postfix(const UDateFormat* fmt, std::int32_t) {
+    if (!fmt) return 0;
+    NotImplemented_nid_no_patch(__func__);
+}
+
 std::int32_t APS5_VABI udat_format_nid_postfix(const UDateFormat*, double, char16_t* result, std::int32_t resultLength, UFieldPosition*, std::int32_t* status) {
     if (Failure(status, __func__)) return -1;
     if (result == nullptr ? resultLength != 0 : resultLength < 0) {
@@ -50,6 +55,10 @@ std::int32_t APS5_VABI udat_formatForFields_nid_postfix(const void* format, doub
         WriteStatus(status, Icu::IllegalArgument, __func__);
         return -1;
     }
+    NotImplemented_nid_no_patch(__func__);
+}
+
+const UCalendar* APS5_VABI udat_getCalendar_nid_postfix(const UDateFormat*) {
     NotImplemented_nid_no_patch(__func__);
 }
 

@@ -251,6 +251,56 @@ class TraceEventLossTests(unittest.TestCase):
         result = trace_digest.digest(trace)
         self.assertEqual(result["event_loss"], [{"thread": "tid 9", "at_ms": 1.5, "events_lost": 8}])
 
+    def test_filled_thread_reports_its_recorded_span_beside_the_retained_totals(self):
+        events = [{"name": "thread_name", "ph": "M", "tid": 1, "args": {"name": "draw committer"}},
+                  {"name": "thread_name", "ph": "M", "tid": 2, "args": {"name": "draw finisher"}}]
+        events += [{"name": "present", "ph": "i", "ts": ts, "args": {"present": index}} for index, ts in enumerate(range(0, 50000, 10000))]
+        events += [complete(1, "Graphics.Draw", 0, 6000), complete(1, "Graphics.Draw.wait", 1000, 1000),
+                   complete(1, "Graphics.Draw", 10000, 6000), complete(1, "Graphics.Draw", 20000, 400)]
+        events += [complete(2, "Driver.DrawFinish", start, 2000) for start in range(0, 40000, 10000)]
+        marker = {"name": "trace buffer full", "ph": "i", "ts": 20500, "tid": 1, "args": {"events_lost": 3}}
+        expected = trace_digest.digest(trace_digest.Trace(events))
+        result = trace_digest.digest(trace_digest.Trace(events + [marker]))
+        loss = result.pop("event_loss")
+        self.assertTrue(result.pop("trace_incomplete"))
+        self.assertEqual(result, expected)
+        self.assertAlmostEqual(expected["threads"][0]["busy_ms_per_frame"], 2.85)
+        self.assertEqual(loss, [{"thread": "draw committer", "at_ms": 20.5, "events_lost": 3, "frames_before_full": 2, "recorded_ms": 20.0,
+                                 "busy_ms_per_frame": 5.5, "wait_ms_per_frame": 0.5, "busy_pct": 55.0,
+                                 "top": [{"name": "Graphics.Draw", "ms_per_frame": 6.0}]}])
+        markdown = trace_digest.markdown(dict(result, event_loss=loss, trace_incomplete=True))
+        self.assertIn("- draw committer: 3 events lost; buffer full at 20.5 ms; over the 2 of 4 frames that ended before it: busy 5.5 ms per frame (55 %), "
+                      "wait 0.5, largest Graphics.Draw 6.0 (the thread table divides the retained slices by every frame)", markdown)
+
+    def test_loss_before_any_positive_frame_span_still_reports_lost_events(self):
+        events = [complete(1, "work", 0, 1000), self.marker()]
+        events += [{"name": "present", "ph": "i", "ts": ts, "args": {"present": index}}
+                   for index, ts in enumerate((0, 0, 10000))]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trace.json"
+            path.write_text(json.dumps(events), encoding="utf-8")
+            for output in ([], ["--json"]):
+                with self.subTest(output=output):
+                    result = subprocess.run([sys.executable, trace_digest.__file__, str(path), *output],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=10)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    if output:
+                        report = json.loads(result.stdout)
+                        self.assertTrue(report["trace_incomplete"])
+                        self.assertEqual(report["event_loss"], [{"thread": "tid 1", "at_ms": 1.5, "events_lost": 8}])
+                    else:
+                        self.assertIn("tid 1: 8 events lost; buffer full at 1.5 ms", result.stdout)
+                        self.assertNotIn("frames that ended before it", result.stdout)
+
+    def test_gpu_recorded_span_is_the_union_of_clipped_ranges(self):
+        events = [{"name": "thread_name", "ph": "M", "tid": 1, "args": {"name": "gpu"}}]
+        events += [{"name": "present", "ph": "i", "ts": ts, "args": {"present": index}} for index, ts in enumerate(range(0, 40000, 10000))]
+        events += [dict(complete(1, "batch", 0, 6000), args={"batch": 1}), dict(complete(1, "batch", 3000, 6000), args={"batch": 2}),
+                   dict(complete(1, "batch", 9500, 3000), args={"batch": 3})]
+        events.append({"name": "trace buffer full", "ph": "i", "ts": 10000, "tid": 1, "args": {"events_lost": 1}})
+        loss = trace_digest.digest(trace_digest.Trace(events))["event_loss"][0]
+        self.assertEqual((loss["frames_before_full"], loss["recorded_ms"], loss["busy_ms_per_frame"], loss["busy_pct"]), (1, 10.0, 9.5, 95.0))
+
     def test_loss_counters_are_validated(self):
         for lost in (None, True, -1, 1.5, "8"):
             with self.subTest(lost=lost):
@@ -401,6 +451,21 @@ class TraceDigestTests(unittest.TestCase):
         self.assertTrue(result.stderr.startswith("FAIL: the summary line has no 'ms' field"), result.stderr)
         self.assertNotIn("Traceback", result.stderr)
         self.assertEqual(result.stdout, "")
+
+    def test_cli_rejects_invalid_summary_windows(self):
+        summary = self.trace.with_name("aps5-summary.jsonl")
+        invalid = [(None, "window must be an object"), ([], "window must be an object")]
+        invalid += [({"ms": value}, "window.ms") for value in (None, True, "40", -1, float("inf"), 1e308)]
+        for window, message in invalid:
+            with self.subTest(window=window):
+                record = dict(SUMMARY, window=window)
+                summary.write_text(json.dumps(record) + "\n", encoding="utf-8")
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace), "--json"],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(result.stdout, "")
 
     def test_cli_rejects_invalid_summary_records_without_partial_output(self):
         summary = self.trace.with_name("aps5-summary.jsonl")
@@ -1529,6 +1594,19 @@ class IntervalSchemaTests(unittest.TestCase):
                     self.write(record)
                     with self.assertRaisesRegex(ValueError, r"summary\.jsonl:4:"):
                         trace_digest.load_intervals(self.path)
+
+    def test_missing_interval_bound_is_rejected_by_both_cli_reports(self):
+        for field in ("interval_start_s", "interval_end_s"):
+            record = interval_line(0, 1, 20, 1)
+            del record[field]
+            self.write(record)
+            for script in (trace_digest.__file__, Path(trace_digest.__file__).with_name("trace_intervals_csv.py")):
+                with self.subTest(field=field, script=script):
+                    result = subprocess.run([sys.executable, str(script), str(self.path)],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=10)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn(f"summary.jsonl:4: {field} must be", result.stderr)
+                    self.assertEqual(result.stdout, "")
 
     def test_out_of_order_percentiles_are_rejected_by_both_cli_reports(self):
         for frames in (dict(p50=2, p90=1, p99=3, max=4), dict(p50=1, p90=3, p99=2, max=4),
