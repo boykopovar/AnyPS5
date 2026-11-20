@@ -452,6 +452,75 @@ void TestRefusals() {
     Require(liveBlocks == blocksBefore);
 }
 
+void* ColorContextPointer(const Jxr::ImageEncode* encoder) {
+    void* pointer = nullptr;
+    std::memcpy(&pointer, encoder->header.data() + 24, sizeof(pointer));
+    return pointer;
+}
+
+std::uint32_t ColorContextSize(const Jxr::ImageEncode* encoder) {
+    std::uint32_t size = 0;
+    std::memcpy(&size, encoder->header.data() + 32, sizeof(size));
+    return size;
+}
+
+void TestColorContextReplacementOom() {
+    const auto blocksBefore = liveBlocks;
+    auto parameters = Parameters(0, 0);
+    const auto pixels = Pixels(3);
+    constexpr std::uint32_t stride = Width * 3;
+    const std::array<std::uint8_t, 8> replacement{10, 20, 30, 40, 50, 60, 70, 80};
+    std::vector<std::uint8_t> output(Capacity);
+    auto* stream = MemoryStream(output, output.size());
+    auto* encoder = CreateEncoder();
+    Require(encoder->initialize(encoder, stream, parameters.data(), parameters.size()) == 0);
+    Require(encoder->setPixelFormat(encoder, JxrGuest_GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
+    Require(encoder->setSize(encoder, Width, Height) == 0);
+
+    const auto blocksBeforeContext = liveBlocks;
+    Require(encoder->setColorContext(encoder, colorContext.data(), static_cast<std::uint32_t>(colorContext.size())) == 0);
+    Require(liveBlocks == blocksBeforeContext + 1);
+    Require(ColorContextPointer(encoder) != nullptr);
+    Require(ColorContextSize(encoder) == colorContext.size());
+
+    failCalloc = true;
+    const auto callocsBefore = callocCalls;
+    const auto result = encoder->setColorContext(encoder, replacement.data(),
+                                                 static_cast<std::uint32_t>(replacement.size()));
+    failCalloc = false;
+    Require(result == OutOfMemory);
+    Require(callocCalls == callocsBefore + 1);
+    Require(liveBlocks == blocksBeforeContext);
+    Require(ColorContextPointer(encoder) == nullptr);
+    Require(ColorContextSize(encoder) == 0);
+
+    Require(encoder->setColorContext(encoder, replacement.data(), static_cast<std::uint32_t>(replacement.size())) == 0);
+    Require(liveBlocks == blocksBeforeContext + 1);
+    Require(ColorContextPointer(encoder) != nullptr);
+    Require(ColorContextSize(encoder) == replacement.size());
+
+    auto* writable = const_cast<std::uint8_t*>(pixels.data());
+    Require(encoder->writePixels(encoder, Height, writable, stride) == 0);
+    std::size_t written = 0;
+    Require(stream->getPosition(stream, &written) == 0);
+    Require(written > 0);
+    Require(encoder->terminate(encoder) == 0);
+    Require(encoder->release(&encoder) == 0 && encoder == nullptr);
+
+    auto* decodeStream = MemoryStream(output, output.size());
+    auto* decoder = CreateDecoder();
+    Require(decoder->initialize(decoder, decodeStream) == 0);
+    std::uint32_t decodedSize = 0;
+    Require(decoder->getColorContext(decoder, nullptr, &decodedSize) == 0);
+    Require(decodedSize == replacement.size());
+    std::array<std::uint8_t, replacement.size()> decodedContext{};
+    Require(decoder->getColorContext(decoder, decodedContext.data(), &decodedSize) == 0);
+    Require(decodedSize == replacement.size() && decodedContext == replacement);
+    Require(decoder->release(&decoder) == 0 && decoder == nullptr);
+    Require(decodeStream->close(&decodeStream) == 0 && decodeStream == nullptr);
+    Require(liveBlocks == blocksBefore);
+}
+
 }
 
 int main() {
@@ -466,6 +535,7 @@ int main() {
     TestTranscode(plain, 0);
     TestTranscode(alpha, 2);
     TestRefusals();
+    TestColorContextReplacementOom();
     Require(liveBlocks == 0);
     return 0;
 }
