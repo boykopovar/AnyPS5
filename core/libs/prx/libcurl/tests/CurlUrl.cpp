@@ -164,6 +164,51 @@ static void TestReadBuffersLifetimeUntilFreed() {
     free_nid_postfix(fullUrl);
 }
 
+static void TestAppendQueryWithUrlencode() {
+    auto* u = curl_url_nid_postfix();
+    Require(u != nullptr);
+    Require(curl_url_set_nid_postfix(u, CURLUPART_URL, "https://example.com/api", 0) == CURLUE_OK);
+
+    char* initialQuery = nullptr;
+    Require(curl_url_get_nid_postfix(u, CURLUPART_QUERY, &initialQuery, 0) == CURLUE_NO_QUERY);
+
+    Require(curl_url_set_nid_postfix(u, CURLUPART_QUERY, "tag=hello world&category=a/b=c", CURLU_APPENDQUERY | CURLU_URLENCODE) == CURLUE_OK);
+
+    char* url1 = nullptr;
+    Require(curl_url_get_nid_postfix(u, CURLUPART_URL, &url1, 0) == CURLUE_OK);
+    Require(url1 != nullptr && std::strcmp(url1, "https://example.com/api?tag=hello+world%26category%3da%2fb%3dc") == 0);
+    free_nid_postfix(url1);
+
+    char* rawQuery1 = nullptr;
+    Require(curl_url_get_nid_postfix(u, CURLUPART_QUERY, &rawQuery1, 0) == CURLUE_OK);
+    Require(rawQuery1 != nullptr && std::strcmp(rawQuery1, "tag=hello+world%26category%3da%2fb%3dc") == 0);
+    free_nid_postfix(rawQuery1);
+
+    char* decodedQuery1 = nullptr;
+    Require(curl_url_get_nid_postfix(u, CURLUPART_QUERY, &decodedQuery1, CURLU_URLDECODE) == CURLUE_OK);
+    Require(decodedQuery1 != nullptr && std::strcmp(decodedQuery1, "tag=hello world&category=a/b=c") == 0);
+    free_nid_postfix(decodedQuery1);
+
+    Require(curl_url_set_nid_postfix(u, CURLUPART_QUERY, "filter=x & y=z", CURLU_APPENDQUERY | CURLU_URLENCODE) == CURLUE_OK);
+
+    char* url2 = nullptr;
+    Require(curl_url_get_nid_postfix(u, CURLUPART_URL, &url2, 0) == CURLUE_OK);
+    Require(url2 != nullptr && std::strcmp(url2, "https://example.com/api?tag=hello+world%26category%3da%2fb%3dc&filter=x+%26+y%3dz") == 0);
+    free_nid_postfix(url2);
+
+    char* rawQuery2 = nullptr;
+    Require(curl_url_get_nid_postfix(u, CURLUPART_QUERY, &rawQuery2, 0) == CURLUE_OK);
+    Require(rawQuery2 != nullptr && std::strcmp(rawQuery2, "tag=hello+world%26category%3da%2fb%3dc&filter=x+%26+y%3dz") == 0);
+    free_nid_postfix(rawQuery2);
+
+    char* decodedQuery2 = nullptr;
+    Require(curl_url_get_nid_postfix(u, CURLUPART_QUERY, &decodedQuery2, CURLU_URLDECODE) == CURLUE_OK);
+    Require(decodedQuery2 != nullptr && std::strcmp(decodedQuery2, "tag=hello world&category=a/b=c&filter=x & y=z") == 0);
+    free_nid_postfix(decodedQuery2);
+
+    curl_url_cleanup_nid_postfix(u);
+}
+
 int main() {
     ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     struct UrlCase {
@@ -273,5 +318,6 @@ int main() {
     TestFailedPortUpdatePreservesUrl();
     TestDuplicatePartIsolationAndFragmentRemoval();
     TestReadBuffersLifetimeUntilFreed();
+    TestAppendQueryWithUrlencode();
     return 0;
 }
