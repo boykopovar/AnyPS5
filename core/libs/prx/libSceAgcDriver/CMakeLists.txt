@@ -460,9 +460,9 @@ set(agcDriverSources
         
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/RuntimeSwitches.cpp
         
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DeferredDestruction.cpp
         
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PlaceholderImages.cpp
+        
+        
         
         
         
@@ -478,20 +478,20 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DescriptorValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/State.cpp
         
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestTextureResource.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestSamplerResource.cpp
         
         
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/TextureTiling.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MultisampleTextureLayout.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/TextureDetiler.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MultisampleReadback.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MultisampleUpload.cpp
         
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PassHazards.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/SampleOrder.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/StagedMerge.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BarrierBatch.cpp
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Sampler.cpp
         ${agcSampleOrderShaderHeaders}
@@ -1614,4 +1614,130 @@ get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
 if(libSceAgcDriver_incdirs)
     target_include_directories(libSceAgcDriver_ResidentMirror_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
     target_include_directories(libSceAgcDriver_ResidentMirror_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from  ---
+add_library(libSceAgcDriver_DeferredDestruction_Chunk01 STATIC Graphics/src/chunks/DeferredDestruction_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_DeferredDestruction_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_DeferredDestruction_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from  ---
+add_library(libSceAgcDriver_PlaceholderImages_Chunk01 STATIC Graphics/src/chunks/PlaceholderImages_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_PlaceholderImages_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_PlaceholderImages_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from DeferredDestruction.cpp ---
+add_library(libSceAgcDriver_DeferredDestruction_Chunk01_DeferredDestruction_Chunk01 STATIC Graphics/src/chunks/DeferredDestruction_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver_DeferredDestruction_Chunk01 PUBLIC libSceAgcDriver_DeferredDestruction_Chunk01_DeferredDestruction_Chunk01)
+get_target_property(libSceAgcDriver_DeferredDestruction_Chunk01_incdirs libSceAgcDriver_DeferredDestruction_Chunk01 INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_DeferredDestruction_Chunk01_incdirs)
+    target_include_directories(libSceAgcDriver_DeferredDestruction_Chunk01_DeferredDestruction_Chunk01 PRIVATE ${libSceAgcDriver_DeferredDestruction_Chunk01_incdirs})
+endif()
+
+# --- small-size libraries split from PlaceholderImages.cpp ---
+add_library(libSceAgcDriver_PlaceholderImages_Chunk01_PlaceholderImages_Chunk01 STATIC Graphics/src/chunks/PlaceholderImages_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver_PlaceholderImages_Chunk01 PUBLIC libSceAgcDriver_PlaceholderImages_Chunk01_PlaceholderImages_Chunk01)
+get_target_property(libSceAgcDriver_PlaceholderImages_Chunk01_incdirs libSceAgcDriver_PlaceholderImages_Chunk01 INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_PlaceholderImages_Chunk01_incdirs)
+    target_include_directories(libSceAgcDriver_PlaceholderImages_Chunk01_PlaceholderImages_Chunk01 PRIVATE ${libSceAgcDriver_PlaceholderImages_Chunk01_incdirs})
+endif()
+
+# --- small-size libraries split from PassHazards.cpp ---
+add_library(libSceAgcDriver_PassHazards_Chunk01 STATIC Graphics/src/chunks/PassHazards_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_PassHazards_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_PassHazards_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from SampleOrder.cpp ---
+add_library(libSceAgcDriver_SampleOrder_Chunk01 STATIC Graphics/src/chunks/SampleOrder_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_SampleOrder_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_SampleOrder_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from StagedMerge.cpp ---
+add_library(libSceAgcDriver_StagedMerge_Chunk01 STATIC Graphics/src/chunks/StagedMerge_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_StagedMerge_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_StagedMerge_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from BarrierBatch.cpp ---
+add_library(libSceAgcDriver_BarrierBatch_Chunk01 STATIC Graphics/src/chunks/BarrierBatch_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_BarrierBatch_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_BarrierBatch_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from GuestTextureResource.cpp ---
+add_library(libSceAgcDriver_GuestTextureResource_Chunk01 STATIC Graphics/src/chunks/GuestTextureResource_Chunk01.cpp)
+add_library(libSceAgcDriver_GuestTextureResource_Chunk02 STATIC Graphics/src/chunks/GuestTextureResource_Chunk02.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_GuestTextureResource_Chunk01 libSceAgcDriver_GuestTextureResource_Chunk02)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_GuestTextureResource_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestTextureResource_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from GuestSamplerResource.cpp ---
+add_library(libSceAgcDriver_GuestSamplerResource_Chunk01 STATIC Graphics/src/chunks/GuestSamplerResource_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_GuestSamplerResource_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_GuestSamplerResource_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from TextureTiling.cpp ---
+add_library(libSceAgcDriver_TextureTiling_Chunk01 STATIC Graphics/src/chunks/TextureTiling_Chunk01.cpp)
+add_library(libSceAgcDriver_TextureTiling_Chunk02 STATIC Graphics/src/chunks/TextureTiling_Chunk02.cpp)
+add_library(libSceAgcDriver_TextureTiling_Chunk03 STATIC Graphics/src/chunks/TextureTiling_Chunk03.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_TextureTiling_Chunk01 libSceAgcDriver_TextureTiling_Chunk02 libSceAgcDriver_TextureTiling_Chunk03)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_TextureTiling_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_TextureTiling_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_TextureTiling_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from MultisampleTextureLayout.cpp ---
+add_library(libSceAgcDriver_MultisampleTextureLayout_Chunk01 STATIC Graphics/src/chunks/MultisampleTextureLayout_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_MultisampleTextureLayout_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_MultisampleTextureLayout_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from TextureDetiler.cpp ---
+add_library(libSceAgcDriver_TextureDetiler_Chunk01 STATIC Graphics/src/chunks/TextureDetiler_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_TextureDetiler_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_TextureDetiler_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from MultisampleReadback.cpp ---
+add_library(libSceAgcDriver_MultisampleReadback_Chunk01 STATIC Graphics/src/chunks/MultisampleReadback_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_MultisampleReadback_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_MultisampleReadback_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from MultisampleUpload.cpp ---
+add_library(libSceAgcDriver_MultisampleUpload_Chunk01 STATIC Graphics/src/chunks/MultisampleUpload_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_MultisampleUpload_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_MultisampleUpload_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
 endif()
