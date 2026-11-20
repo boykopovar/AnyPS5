@@ -579,6 +579,7 @@ public:
     // was still current (nothing uploaded).
     // Keeps the image current with guest memory (see GuestMemory::CollectWrites).
     bool Refresh();
+    bool ChangedOutsideWatch() const;
     bool RefreshLayers(std::uint32_t first, std::uint32_t count);
     static void SetRefreshUnchangedHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes));
     inline static std::atomic<std::uint64_t> epochRefreshes{0};
@@ -634,6 +635,7 @@ private:
     };
     static const char* BaselineMissText(BaselineMiss miss);
     BaselineMiss baselineMiss(std::uint32_t unit) const;
+    bool unitChangedOutsideWatch(std::uint32_t unit) const;
     std::array<std::uint64_t, 2> unitContentHash(std::uint32_t unit) const;
     void hashBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven);
     void forgetUnwatchHash(std::uint32_t first, std::uint32_t count);
@@ -677,7 +679,7 @@ private:
     void releaseUnheldOriginal();
     // Lets the batches holding the saves of the units `layers` selects (every unit for none) complete.
     void awaitStoredSave(const std::vector<bool>* layers);
-    bool guestBytesSettled() const;
+    bool unitSettled(std::uint32_t unit) const;
     // Tracked units as 64 KiB write-stamp blocks (`blockUnits`: a thin tiled surface at a 64 KiB
     // aligned base; APS5_NO_BLOCK_TRACKING=1 tracks array layers as above instead): a fill of one
     // layer, a CPU write or another image's store then costs the blocks it touched, moved through
@@ -971,6 +973,9 @@ private:
     std::atomic<bool> writtenOccasionally{false};
     std::uint64_t version = 0;
     std::uint64_t writes = 0;
+    std::uint64_t zeroForgetMarks = 0;
+    std::uint64_t zeroForgetBegin = 0;
+    std::uint64_t zeroForgetEnd = 0;
     // `original` holds the guest bytes; false after a GPU-side clear, which never read them.
     std::vector<bool> layerOriginal;
     std::map<std::uint64_t, std::uint64_t> keptAtUnwatch;

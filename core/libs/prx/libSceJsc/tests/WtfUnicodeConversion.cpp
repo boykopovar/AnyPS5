@@ -125,6 +125,119 @@ void TestUtf16ToUtf8() {
     Check(Throws<std::invalid_argument>([&] { _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(nullptr, nullptr, &target, buffer + 4, true); }), __LINE__);
 }
 
+void TestUtf16ToUtf8SurrogateResumeForMode(bool strict) {
+    const std::u16string input{u'a', char16_t(0xD83D), char16_t(0xDE00), u'z'};
+    const char16_t* const inputEnd = input.data() + input.size();
+
+    char splitBuffer[16]{};
+    const char16_t* splitSource = input.data();
+    char* splitTarget = splitBuffer;
+    Check(_ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&splitSource, input.data() + 2, &splitTarget, splitBuffer + sizeof(splitBuffer), strict) == ConversionResult::SourceExhausted, __LINE__);
+    Check(splitSource == input.data() + 1 && splitTarget == splitBuffer + 1, __LINE__);
+    Check(*splitBuffer == 'a', __LINE__);
+    Check(_ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&splitSource, inputEnd, &splitTarget, splitBuffer + sizeof(splitBuffer), strict) == ConversionResult::ConversionOK, __LINE__);
+    Check(splitSource == inputEnd && splitTarget == splitBuffer + 6, __LINE__);
+    Check(std::string(splitBuffer, splitTarget) == "a\xF0\x9F\x98\x80" "z", __LINE__);
+
+    for (std::size_t remaining = 0; remaining < 4; ++remaining) {
+        char firstBuffer[16];
+        std::memset(firstBuffer, '#', sizeof(firstBuffer));
+        const char16_t* source = input.data();
+        char* firstTarget = firstBuffer;
+        const auto firstResult = _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&source, inputEnd, &firstTarget, firstBuffer + 1 + remaining, strict);
+        Check(firstResult == ConversionResult::TargetExhausted, __LINE__);
+        Check(source == input.data() + 1, __LINE__);
+        Check(firstTarget == firstBuffer + 1, __LINE__);
+        Check(std::string(firstBuffer, firstTarget) == "a", __LINE__);
+        for (std::size_t index = 1; index < sizeof(firstBuffer); ++index) {
+            Check(firstBuffer[index] == '#', __LINE__);
+        }
+
+        char secondBuffer[16];
+        std::memset(secondBuffer, '#', sizeof(secondBuffer));
+        char* secondTarget = secondBuffer;
+        const auto secondResult = _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&source, inputEnd, &secondTarget, secondBuffer + sizeof(secondBuffer), strict);
+        Check(secondResult == ConversionResult::ConversionOK, __LINE__);
+        Check(source == inputEnd, __LINE__);
+        Check(secondTarget == secondBuffer + 5, __LINE__);
+        Check(std::string(secondBuffer, secondTarget) == "\xF0\x9F\x98\x80" "z", __LINE__);
+        Check(std::string(firstBuffer, firstTarget) + std::string(secondBuffer, secondTarget) == "a\xF0\x9F\x98\x80" "z", __LINE__);
+    }
+
+    const std::u16string leadingInput{char16_t(0xD83D), char16_t(0xDE00), u'z'};
+    const char16_t* const leadingEnd = leadingInput.data() + leadingInput.size();
+    for (std::size_t remaining = 0; remaining < 4; ++remaining) {
+        char firstBuffer[8];
+        std::memset(firstBuffer, '#', sizeof(firstBuffer));
+        const char16_t* source = leadingInput.data();
+        char* firstTarget = firstBuffer;
+        const auto firstResult = _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&source, leadingEnd, &firstTarget, firstBuffer + remaining, strict);
+        Check(firstResult == ConversionResult::TargetExhausted, __LINE__);
+        Check(source == leadingInput.data(), __LINE__);
+        Check(firstTarget == firstBuffer, __LINE__);
+        for (char byte : firstBuffer) {
+            Check(byte == '#', __LINE__);
+        }
+
+        char secondBuffer[8];
+        std::memset(secondBuffer, '#', sizeof(secondBuffer));
+        char* secondTarget = secondBuffer;
+        const auto secondResult = _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&source, leadingEnd, &secondTarget, secondBuffer + sizeof(secondBuffer), strict);
+        Check(secondResult == ConversionResult::ConversionOK, __LINE__);
+        Check(source == leadingEnd, __LINE__);
+        Check(std::string(secondBuffer, secondTarget) == "\xF0\x9F\x98\x80" "z", __LINE__);
+    }
+
+    const std::u16string chainedInput{u'a', char16_t(0xD83D), char16_t(0xDE00), char16_t(0xD83D), char16_t(0xDE01), u'z'};
+    const char16_t* const chainedEnd = chainedInput.data() + chainedInput.size();
+    char firstChunk[8];
+    std::memset(firstChunk, '#', sizeof(firstChunk));
+    const char16_t* source = chainedInput.data();
+    char* firstTarget = firstChunk;
+    Check(_ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&source, chainedEnd, &firstTarget, firstChunk + 4, strict) == ConversionResult::TargetExhausted, __LINE__);
+    Check(source == chainedInput.data() + 1, __LINE__);
+    Check(std::string(firstChunk, firstTarget) == "a", __LINE__);
+
+    char secondChunk[8];
+    std::memset(secondChunk, '#', sizeof(secondChunk));
+    char* secondTarget = secondChunk;
+    Check(_ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&source, chainedEnd, &secondTarget, secondChunk + 7, strict) == ConversionResult::TargetExhausted, __LINE__);
+    Check(source == chainedInput.data() + 3, __LINE__);
+    Check(std::string(secondChunk, secondTarget) == "\xF0\x9F\x98\x80", __LINE__);
+
+    char thirdChunk[8];
+    std::memset(thirdChunk, '#', sizeof(thirdChunk));
+    char* thirdTarget = thirdChunk;
+    Check(_ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&source, chainedEnd, &thirdTarget, thirdChunk + sizeof(thirdChunk), strict) == ConversionResult::ConversionOK, __LINE__);
+    Check(source == chainedEnd, __LINE__);
+    Check(std::string(thirdChunk, thirdTarget) == "\xF0\x9F\x98\x81" "z", __LINE__);
+    Check(std::string(firstChunk, firstTarget) + std::string(secondChunk, secondTarget) + std::string(thirdChunk, thirdTarget) == "a\xF0\x9F\x98\x80\xF0\x9F\x98\x81" "z", __LINE__);
+}
+
+void TestUtf16ToUtf8SurrogateResume() {
+    TestUtf16ToUtf8SurrogateResumeForMode(true);
+    TestUtf16ToUtf8SurrogateResumeForMode(false);
+
+    const std::u16string unpairedInput{u'a', char16_t(0xD800), u'z'};
+    const char16_t* const unpairedEnd = unpairedInput.data() + unpairedInput.size();
+    for (std::size_t remaining = 0; remaining < 3; ++remaining) {
+        char firstBuffer[8];
+        std::memset(firstBuffer, '#', sizeof(firstBuffer));
+        const char16_t* source = unpairedInput.data();
+        char* firstTarget = firstBuffer;
+        Check(_ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&source, unpairedEnd, &firstTarget, firstBuffer + 1 + remaining, false) == ConversionResult::TargetExhausted, __LINE__);
+        Check(source == unpairedInput.data() + 1, __LINE__);
+        Check(std::string(firstBuffer, firstTarget) == "a", __LINE__);
+
+        char secondBuffer[8];
+        std::memset(secondBuffer, '#', sizeof(secondBuffer));
+        char* secondTarget = secondBuffer;
+        Check(_ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&source, unpairedEnd, &secondTarget, secondBuffer + sizeof(secondBuffer), false) == ConversionResult::ConversionOK, __LINE__);
+        Check(source == unpairedEnd, __LINE__);
+        Check(std::string(firstBuffer, firstTarget) + std::string(secondBuffer, secondTarget) == "a\xEF\xBF\xBD" "z", __LINE__);
+    }
+}
+
 void TestLatin1ToUtf8() {
     const unsigned char input[] = {'a', 0x7F, 0x80, 0xE9, 0xFF};
     char buffer[16];
@@ -148,6 +261,7 @@ void TestLatin1ToUtf8() {
 int main() {
     TestUtf8ToUtf16();
     TestUtf16ToUtf8();
+    TestUtf16ToUtf8SurrogateResume();
     TestLatin1ToUtf8();
     return 0;
 }
