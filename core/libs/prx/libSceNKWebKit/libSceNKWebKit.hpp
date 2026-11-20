@@ -97,4 +97,5 @@
 #include "prx/libSceNKWebKit/include/GraphemeClusterExports.hpp"
 #include "prx/libSceNKWebKit/include/EmptyLoaderErrorExports.hpp"
 #include "prx/libSceNKWebKit/include/NodeTraversalExports.hpp"
+#include "prx/libSceNKWebKit/include/MarkedTextExports.hpp"
 #include "prx/libSceNKWebKit/include/MarkingConstraintExports.hpp"
