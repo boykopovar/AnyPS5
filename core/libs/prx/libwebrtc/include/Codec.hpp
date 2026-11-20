@@ -1,5 +1,6 @@
 #pragma once
 
+#include "prx/libwebrtc/include/RtpTransceiverInit.hpp"
 #include "prx/libwebrtc/include/SdpVideoFormat.hpp"
 
 #include <cstddef>
@@ -8,11 +9,6 @@
 constexpr std::int32_t WebRtcCodecTypeVideo = 1;
 constexpr std::int32_t WebRtcCodecIdNotSet = -1;
 constexpr std::int32_t WebRtcVideoCodecClockrate = 90000;
-
-struct WebRtcOptionalString {
-    WebRtcGuestString value;
-    bool engaged;
-};
 
 struct WebRtcFeedbackParam {
     WebRtcGuestString id;
@@ -40,8 +36,6 @@ struct WebRtcCodec {
     WebRtcFeedbackParamVector feedbackParams;
 };
 
-static_assert(sizeof(WebRtcOptionalString) == 48);
-static_assert(offsetof(WebRtcOptionalString, engaged) == 40);
 static_assert(sizeof(WebRtcFeedbackParam) == 80);
 static_assert(sizeof(WebRtcFeedbackParamVector) == 24);
 static_assert(sizeof(WebRtcCodec) == 264);
