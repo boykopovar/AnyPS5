@@ -379,6 +379,21 @@ static void CheckSupplementaryWideCharacters() {
     }
 }
 
+static void CheckWidePushback() {
+    FileStream stream(TemporaryFile::Open());
+    Require(std::fwrite("\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80\xEF\xBF\xBFz", 1, 13, stream.GetHandle()) == 13);
+    rewind_nid_postfix(&stream);
+    Require(getwc_nid_postfix(&stream) == 0xe9 && ungetwc_nid_postfix(0xe9, &stream) == 0xe9 && getwc_nid_postfix(&stream) == 0xe9);
+    Require(getwc_nid_postfix(&stream) == 0x20ac && ungetwc_nid_postfix(0x20ac, &stream) == 0x20ac && getwc_nid_postfix(&stream) == 0x20ac);
+    Require(getwc_nid_postfix(&stream) == 0xd83d && ungetwc_nid_postfix(0xd83d, &stream) == 0xd83d && ftello_nid_postfix(&stream) == 5);
+    Require(getwc_nid_postfix(&stream) == 0xd83d && getwc_nid_postfix(&stream) == 0xde00 && ungetwc_nid_postfix(0xde00, &stream) == 0xde00);
+    Require(getwc_nid_postfix(&stream) == 0xde00 && getwc_nid_postfix(&stream) == 0xffff && ungetwc_nid_postfix(0xffff, &stream) == 0xffff);
+    Require(getwc_nid_postfix(&stream) == 0xffff && getwc_nid_postfix(&stream) == u'z' && ferror_nid_postfix(&stream) == 0);
+    *__error_nid_postfix() = 0;
+    Require(ungetwc_nid_postfix(0x10000, &stream) == -1 && *__error_nid_postfix() == 86 && ferror_nid_postfix(&stream) != 0);
+    stream.Close();
+}
+
 static void CheckUngetcEndOfFile() {
     FileStream stream(TemporaryFile::Open());
     Require(fwrite_nid_postfix("ab", 1, 2, &stream) == 2);
@@ -1172,6 +1187,7 @@ int main(int argc, char** argv) {
     CheckFgetsSize();
     CheckFgetsSizeOne();
     CheckSupplementaryWideCharacters();
+    CheckWidePushback();
     CheckUnlockedStreams();
     CheckGetcPutc();
     CheckGetcharPutchar();

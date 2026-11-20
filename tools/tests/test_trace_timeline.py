@@ -1,4 +1,5 @@
 import gzip
+import argparse
 import json
 import os
 import subprocess
@@ -320,6 +321,36 @@ class TimelineTests(unittest.TestCase):
 
 def trace_timeline_slices(items):
     return trace_timeline.window_slices(trace_of(items), 0, 10**12)
+
+
+class ArgumentValueTests(unittest.TestCase):
+    def test_nonnegative_number_accepts_values_from_zero_below_1e300(self):
+        self.assertEqual(trace_timeline.nonnegative_number('0.5'), 0.5)
+        self.assertEqual(trace_timeline.nonnegative_number('1'), 1.0)
+        for value in ('-1', 'abc', '1e300', 'nan', 'inf'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                trace_timeline.nonnegative_number(value)
+
+
+class ArgumentValueTests(unittest.TestCase):
+    def test_nonnegative_number_accepts_values_from_zero_below_1e300(self):
+        self.assertEqual(trace_timeline.nonnegative_number('0.5'), 0.5)
+        self.assertEqual(trace_timeline.nonnegative_number('1'), 1.0)
+        for value in ('-1', 'abc', '1e300', 'nan', 'inf'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                trace_timeline.nonnegative_number(value)
+
+    def test_positive_integer_accepts_one_and_up(self):
+        self.assertEqual(trace_timeline.positive_integer('3'), 3)
+        for value in ('0', '-2', 'x', '1.5'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                trace_timeline.positive_integer(value)
+class PageTests(unittest.TestCase):
+    def test_page_escapes_title_and_notes_and_keeps_the_svg(self):
+        text = trace_timeline.page('<svg id="s"></svg>', '<b>T</b>', ['a < b'])
+        self.assertIn('<title>&lt;b&gt;T&lt;/b&gt;</title>', text)
+        self.assertIn('<li>a &lt; b</li>', text)
+        self.assertIn('<svg id="s"></svg></body>', text)
 
 
 if __name__ == "__main__":

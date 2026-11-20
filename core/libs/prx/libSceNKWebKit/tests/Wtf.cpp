@@ -598,6 +598,21 @@ static void TestWebCorePure() {
     Require(ir.m_location.m_y == 21);
     Require(ir.m_size.m_width == 100);
     Require(ir.m_size.m_height == 51);
+
+    constexpr int lowest = std::numeric_limits<int>::min();
+    constexpr int highest = std::numeric_limits<int>::max();
+    const FloatRect huge{FloatPoint{3.0e9f, -3.0e9f}, FloatSize{4.0e9f, std::numeric_limits<float>::infinity()}};
+    const IntRect clamped = _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(huge);
+    Require(clamped.m_location.m_x == highest && clamped.m_location.m_y == lowest);
+    Require(clamped.m_size.m_width == highest && clamped.m_size.m_height == highest);
+    const FloatRect edge{FloatPoint{2147483648.0f, -2147483648.0f}, FloatSize{2147483520.0f, -0.5f}};
+    const IntRect atEdge = _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(edge);
+    Require(atEdge.m_location.m_x == highest && atEdge.m_location.m_y == lowest);
+    Require(atEdge.m_size.m_width == 2147483520 && atEdge.m_size.m_height == -1);
+    const FloatRect unordered{FloatPoint{std::numeric_limits<float>::quiet_NaN(), 0.5f}, FloatSize{-2.5f, 2.5f}};
+    const IntRect fromNaN = _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(unordered);
+    Require(fromNaN.m_location.m_x == lowest && fromNaN.m_location.m_y == 1);
+    Require(fromNaN.m_size.m_width == -3 && fromNaN.m_size.m_height == 3);
 }
 
 static void TestJscAndPal() {
@@ -1387,12 +1402,22 @@ void TestUTFConversions() {
     char16_t bad[] = {0xD800, 'X', 0xDC00, 0xDFFF};
     auto malformed = Create16(bad, 4);
     Check(ImplCharacter(malformed.impl, 0) == 0 && ImplCharacter(malformed.impl, 2) == 0);
-    Check(Bytes(UTF8(&malformed, 0)) == "\xed\xa0\x80X\xed\xb0\x80\xed\xbf\xbf");
+    Check(Bytes(UTF8(&malformed, 0)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
     Check(Bytes(UTF8(&malformed, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
     Throws([&] { UTF8(&malformed, 1); });
-    Check(Bytes(Utf8For16(bad, 4, 0)) == "\xed\xa0\x80X\xed\xb0\x80\xed\xbf\xbf");
+    Check(Bytes(Utf8For16(bad, 4, 0)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
     Check(Bytes(Utf8For16(bad, 4, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
     Throws([&] { Utf8For16(bad, 4, 1); });
+    char16_t endsWithLead[] = {'a', 0xD800, 0xDBFF};
+    Check(Bytes(Utf8For16(endsWithLead, 3, 0)) == "a\xef\xbf\xbd\xed\xaf\xbf");
+    Check(Bytes(Utf8For16(endsWithLead, 3, 2)) == "a\xef\xbf\xbd\xef\xbf\xbd");
+    Check(Bytes(Utf8For16(endsWithLead, 2, 0)) == "a\xed\xa0\x80");
+    Throws([&] { Utf8For16(endsWithLead, 2, 1); });
+    auto leadAtEnd = Create16(endsWithLead, 2);
+    Check(Bytes(UTF8(&leadAtEnd, 0)) == "a\xed\xa0\x80");
+    Check(Bytes(UTF8(&leadAtEnd, 2)) == "a\xef\xbf\xbd");
+    char16_t endsWithTrail[] = {'a', 0xDC00};
+    Check(Bytes(Utf8For16(endsWithTrail, 2, 0)) == "a\xef\xbf\xbd");
     char16_t paired[] = {'c', 'a', 'f', 0xE9, 0xD83D, 0xDE00};
     Check(Bytes(Utf8For16(paired, 6, 1)) == "caf\xc3\xa9\xf0\x9f\x98\x80");
     Check(Bytes(Utf8For16(paired, 0, 1)).empty() && Bytes(Utf8For16(nullptr, 0, 1)).empty());
@@ -2020,7 +2045,8 @@ void TestFileSystemRepresentations() {
     auto latin1 = Create8(latin1Path, 5);
     Check(Bytes(Representation(&latin1)) == "/caf\xC3\xA9");
     Check(Bytes(Representation(&(const String&)Wide(u"/a/caf\u00E9/\u4E2D"))) == "/a/caf\xC3\xA9/\xE4\xB8\xAD");
-    Check(Bytes(Representation(&(const String&)Wide(u"x\xD800y"))) == "x\xED\xA0\x80y");
+    Check(Bytes(Representation(&(const String&)Wide(u"x\xD800y"))) == "x\xEF\xBF\xBDy");
+    Check(Bytes(Representation(&(const String&)Wide(u"x\xD800"))) == "x\xED\xA0\x80");
     String nullString;
     CString nullRepresentation = Representation(&nullString);
     Check(nullRepresentation.buffer && Bytes(nullRepresentation).empty());
