@@ -43,12 +43,14 @@ LibreSslStack* Duplicate(const LibreSslStack* source) {
     stack->numAlloc = MinimumNodes;
     stack->num = 0;
     stack->sorted = 0;
-    auto* const data = static_cast<char**>(realloc_nid_postfix(stack->data, static_cast<std::size_t>(source->numAlloc) * sizeof(char*)));
-    if (!data) {
-        FreeStack(stack);
-        return nullptr;
+    if (source->numAlloc > 0) {
+        auto* const data = static_cast<char**>(realloc_nid_postfix(stack->data, static_cast<std::size_t>(source->numAlloc) * sizeof(char*)));
+        if (!data) {
+            FreeStack(stack);
+            return nullptr;
+        }
+        stack->data = data;
     }
-    stack->data = data;
     stack->num = source->num;
     if (source->num > 0) std::memcpy(stack->data, source->data, sizeof(char*) * static_cast<std::size_t>(source->num));
     stack->sorted = source->sorted;
