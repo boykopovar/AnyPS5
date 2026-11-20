@@ -2172,7 +2172,7 @@ int PublicationMappings(AgcDriver::VulkanDevice& device) {
         auto applied = std::make_shared<bool>(false);
         const auto protect = [block, applied, duringCompletion] {
             GuestAllocations::Mutation mutation;
-            mutation.Protect(block->data + 4096u, 4096u, duringCompletion, false, true, [] {});
+            mutation.Protect(block->data + 4096u, 4096u, duringCompletion, false, duringCompletion, [] {});
             *applied = true;
         };
         if (duringCompletion) {
@@ -2198,6 +2198,23 @@ int PublicationMappings(AgcDriver::VulkanDevice& device) {
         RequireNoMultisampleTarget(block->Address(), expected.size(), "after restored mapping publication");
         std::printf("native color publication mappings: completion=%u refusal preserved bytes/owner, restoration published samples\n", static_cast<unsigned>(duringCompletion));
     }
+    {
+        Block block(2u * BlockBytes);
+        const auto color = DecodeTarget(block);
+        StoreInitial(block, Samples, 0u, false);
+        Draw(device, TargetState(color));
+        const auto expected = ReadMultisampleTargetColorSnapshot_nid_no_patch(context, color).current;
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Protect(block.data + 4096u, 4096u, false, false, true, true, [] {});
+        }
+        PublishMultisampleTargetColor_nid_no_patch(context, color);
+        const auto* begin = reinterpret_cast<const std::byte*>(block.data);
+        Require(std::equal(expected.begin(), expected.end(), begin), "GPU-only writable mapping lost published samples or padding");
+        RequireNoMultisampleTarget(block.Address(), expected.size(), "after GPU-only mapping publication");
+        std::printf("native color publication mappings: GPU-only readable/writable mapping published samples and retired the owner\n");
+    }
+
     return 0;
 }
 
