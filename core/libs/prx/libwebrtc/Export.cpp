@@ -88,16 +88,6 @@ int APS5_VABI _ZN6webrtc34CreateModularPeerConnectionFactoryENS_33PeerConnection
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc33PeerConnectionFactoryDependenciesC1EOS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc33PeerConnectionFactoryDependenciesD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNK6webrtc18EnvironmentFactory6CreateEv_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -236,11 +226,6 @@ int APS5_VABI libwebrtcUnknown10(void) {
 APS5_EXPORT("s+XzpKPY7JA", libwebrtcUnknown11);
 int APS5_VABI libwebrtcUnknown11(void) {
     NotImplemented_nid_no_patch("s+XzpKPY7JA");
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc33PeerConnectionFactoryDependenciesC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
