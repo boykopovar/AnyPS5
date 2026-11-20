@@ -9184,14 +9184,16 @@ void verifyEmulatedBarycentricRequests() {
     auto flagged = decodeBase64(encoded);
     require(bytes[4] == 64u && flagged.size() == bytes.size() + 1u && flagged.back() == 1u && std::equal(bytes.begin(), bytes.end(), flagged.begin()), "emulated barycentrics are not one trailing byte after an otherwise identical request");
     auto legacyBytes = bytes;
+    legacyBytes.resize(legacyBytes.size() - 4u);
     legacyBytes[4] = 62u;
     const auto legacy = serializer.Deserialize(encodeBase64(legacyBytes));
     require(legacy.request.graphics.has_value() && !legacy.request.graphics->emulateBarycentrics, "a version 62 request emulated barycentrics");
     std::vector<std::uint64_t> legacyKey;
     RecompileCacheKey::Build(legacy.request, legacyKey);
     require(legacyKey == native && serializer.Serialize(legacy.request) == serializer.Serialize(request), "a version 62 request changed its cache key or its upgraded bytes");
-    flagged[4] = 62u;
-    expectFailure([&] { static_cast<void>(serializer.Deserialize(encodeBase64(flagged))); }, "unexpected trailing data", "a version 62 request accepted an emulated barycentrics flag");
+    auto legacyFlagged = legacyBytes;
+    legacyFlagged.push_back(1u);
+    expectFailure([&] { static_cast<void>(serializer.Deserialize(encodeBase64(legacyFlagged))); }, "unexpected trailing data", "a version 62 request accepted an emulated barycentrics flag");
     flagged[4] = 64u;
     flagged.back() = 0u;
     expectFailure([&] { static_cast<void>(serializer.Deserialize(encodeBase64(flagged))); }, "flag is clear", "a written but clear emulated barycentrics flag was accepted");
