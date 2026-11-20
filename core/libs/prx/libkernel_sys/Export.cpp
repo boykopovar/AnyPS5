@@ -1358,7 +1358,7 @@ void APS5_VABI scePthreadSetName(Pthread thread, const char* name) {
 
 static int QueryTitleWorkaround(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
     if (!workaround || !enabled) return static_cast<int>(0x8002000E);
-    if (static_cast<std::uint32_t>(bit) > 0x78) return static_cast<int>(0x80020016);
+    if (static_cast<std::uint32_t>(bit) > 0x7F) return static_cast<int>(0x80020016);
     KernelTitleWorkaround localWorkaround{};
     const int saved = errno;
     if (!GuestCopyIn_nid_no_patch(&localWorkaround, workaround, sizeof(localWorkaround))) {

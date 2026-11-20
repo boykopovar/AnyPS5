@@ -1259,10 +1259,9 @@ static void CheckProcessQueries() {
         Require(query(&workaround, 65, &enabled) == 0 && enabled == 0);
         Require(query(&workaround, 0x77, &enabled) == 0 && enabled == 0);
         Require(query(&workaround, 0x78, &enabled) == 0 && enabled == 1);
-        for (const std::int32_t refused : {0x79, 0x7E, 0x7F}) {
-            enabled = -1;
-            Require(query(&workaround, refused, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
-        }
+        Require(query(&workaround, 0x79, &enabled) == 0 && enabled == 0);
+        Require(query(&workaround, 0x7E, &enabled) == 0 && enabled == 0);
+        Require(query(&workaround, 0x7F, &enabled) == 0 && enabled == 1);
     }
     for (const std::uint64_t selector : {std::uint64_t{0}, std::uint64_t{0x28}}) {
         std::int32_t enabled = -1;
@@ -1275,10 +1274,9 @@ static void CheckProcessQueries() {
         Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 64, &enabled) == 0 && enabled == 1);
         Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 0x77, &enabled) == 0 && enabled == 0);
         Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 0x78, &enabled) == 0 && enabled == 1);
-        for (const std::uint32_t refused : {0x79u, 0x7Eu, 0x7Fu}) {
-            enabled = -1;
-            Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, refused, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
-        }
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 0x79u, &enabled) == 0 && enabled == 0);
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 0x7Eu, &enabled) == 0 && enabled == 0);
+        Require(sceKernelTitleWorkaroundIsEnabled2(&workaround, selector, 0x7Fu, &enabled) == 0 && enabled == 1);
     }
     for (const std::uint64_t selector : {std::uint64_t{0x29}, std::uint64_t{0x2A}, ~std::uint64_t{0}}) {
         std::int32_t enabled = -1;
