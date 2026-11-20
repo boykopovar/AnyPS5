@@ -1771,7 +1771,7 @@ int APS5_VABI _ZNK6icu_687UVector11containsAllERKS0__nid_postfix();
 int APS5_VABI _ZN6icu_6813UnicodeStringC2ERKS0_ii_nid_postfix();
 int APS5_VABI _ZNK6icu_6813UnicodeString6toUTF8EiiPci_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_mdtYM8TgyW8_nid_no_patch();
-int APS5_VABI utrie_swap();
+int APS5_VABI sceIcuLegacyUnknown_meZ2WMyv4mk_nid_no_patch();
 int APS5_VABI _ZN6icu_687UVector16getStaticClassIDEv_nid_postfix();
 int APS5_VABI _ZN6icu_6820StackUResourceBundleD1Ev_nid_postfix();
 int APS5_VABI _ZNK6icu_686UStack6searchEPv_nid_postfix();
