@@ -26,8 +26,13 @@ export const defaults = {
 };
 
 export function actionsForInput(search, bindings) {
-    const query = search.trim().toLowerCase();
+    let query = search.trim().toLowerCase();
     if (!query) return new Set();
+    if (query.startsWith('pad:')) {
+        const chord = canonicalChord(query.slice(4));
+        if (chord === undefined) return new Set();
+        query = `pad:${chord.toLowerCase()}`;
+    }
     const keyboardQuery = `key:${query}`;
     return new Set(actions.filter(action => {
         const custom = bindings.filter(binding => binding.action === action);
