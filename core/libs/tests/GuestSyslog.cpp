@@ -119,6 +119,8 @@ int main(int argc, char** argv) {
     Require(setlogmask_nid_postfix(0) == 0xff);
     syslog_nid_postfix(7, "mask shared across threads");
     syslog_nid_postfix(7, "wide %ls %d %S", u"guest", 5, u"text");
+    syslog_nid_postfix(7, "counted %d%n", 7, &count);
+    Require(count == 9);
     openlog_nid_postfix("worker", 1, 16 << 3);
     syslog_nid_postfix(6, "configured default facility");
     openlog_nid_postfix(nullptr, 1, 0);
@@ -224,7 +226,8 @@ int main(int argc, char** argv) {
         "[syslog:20] syslog-test: level 4\n"
         "[syslog:22] syslog-test: level 6\n"
         "[syslog:15] syslog-test: mask shared across threads\n"
-        "[syslog:15] syslog-test: wide guest 5 text\n";
+        "[syslog:15] syslog-test: wide guest 5 text\n"
+        "[syslog:15] syslog-test: counted 7\n";
     const std::string prefix = expected;
     const std::string pid = std::to_string(
 #ifdef _WIN32

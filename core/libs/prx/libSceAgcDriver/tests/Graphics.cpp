@@ -241,6 +241,27 @@ void PolygonPrimitiveTests() {
     Require(indexedState.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN && indexedState.primitiveRestart, "indexed polygon decoding did not keep primitive restart");
 }
 
+void VertexControlTests() {
+    const auto vertexControl = [](std::uint32_t word) {
+        auto queue = makeState();
+        queue.context[0x1b3] = 2;
+        queue.context[0x1b4] = 2;
+        queue.context[0x2f9] = word;
+        return queue;
+    };
+    for (const auto word : {0x29u, 0x2bu, 0x2du, 0x2fu}) {
+        const auto queue = vertexControl(word);
+        const auto rejection = AgcDriver::Graphics::DrawRejection(queue, false);
+        Require(rejection.empty(), "a PA_SU_VTX_CNTL rounding mode failed the draw precheck: " + rejection);
+        static_cast<void>(AgcDriver::Graphics::DecodeState(queue));
+    }
+    for (const auto word : {0x28u, 0x2cu, 0x21u, 0x25u, 0x31u, 0x39u, 0x69u}) {
+        const auto queue = vertexControl(word);
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).find("nonstandard pixel center or vertex quantization") != std::string::npos, "the draw precheck accepted an unsupported PA_SU_VTX_CNTL");
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "nonstandard pixel center or vertex quantization");
+    }
+}
+
 void vertexPointListTests() {
     const auto pointState = [](std::uint32_t control, std::uint32_t size, std::uint32_t limits) {
         auto queue = makeState();
@@ -328,6 +349,25 @@ void retainedPixelStageTests() {
         Require(!PixelProgramSkipped(queue), "an enabled high render target lost its pixel program");
         queue.context[0x8e] = queue.context[0x8f] = 0;
     }
+    queue.context[0x8e] = queue.context[0x8f] = 0xffffffffu;
+    Require(!PixelProgramSkipped(queue), "a pixel program writing a bound color target was skipped");
+    const std::uint32_t boundInfo = queue.context.at(0x31c);
+    for (std::uint32_t slot = 0; slot < 8; ++slot) queue.context[0x31c + 0xfu * slot] = 0;
+    Require(PixelProgramSkipped(queue), "reset-value color masks ran an unused pixel program with no color target bound");
+    Require(DrawRejection(queue, true).empty(), "an unused pixel program under reset-value color masks with no color target bound was rejected");
+    queue.context[0x203] = 0x400;
+    Require(!PixelProgramSkipped(queue), "EXEC_ON_NOOP was skipped with no color target bound");
+    queue.context[0x203] = 0;
+    queue.context[0x31c + 0xfu * 7u] = boundInfo;
+    Require(!PixelProgramSkipped(queue), "a pixel program writing a bound high color target was skipped");
+    queue.context[0x31c + 0xfu * 7u] = 0;
+    queue.context[0x31c] = boundInfo;
+    queue.context[0x8e] = queue.context[0x8f] = 0xf0u;
+    Require(PixelProgramSkipped(queue), "color masks enabling only a target without a format ran an unused pixel program beside a bound target");
+    queue.context[0x31c + 0xfu] = boundInfo;
+    Require(!PixelProgramSkipped(queue), "a pixel program writing the second bound color target was skipped");
+    queue.context[0x31c + 0xfu] = 0;
+    queue.context[0x8e] = queue.context[0x8f] = 0;
     queue.context[0x3] = 0;
     queue.context[0xb4] = std::bit_cast<std::uint32_t>(0.0f);
     queue.context[0xb5] = std::bit_cast<std::uint32_t>(1.0f);
@@ -2327,6 +2367,12 @@ void ReversedComponentOrderBlendTests() {
         const auto separate = DecodeState(constantQueue(0x60130001u));
         Require(separate.reversedBlend == 0u && separate.blends.at(0).srcColorBlendFactor == VK_BLEND_FACTOR_CONSTANT_COLOR && separate.blends.at(0).dstColorBlendFactor == VK_BLEND_FACTOR_ZERO && separate.blends.at(0).srcAlphaBlendFactor == VK_BLEND_FACTOR_ONE && separate.blends.at(0).dstAlphaBlendFactor == VK_BLEND_FACTOR_ZERO, "a constant alpha factor of the alpha equation did not reach the host color equation of the reversed target");
         Require(separate.blendConstants[0] == constants[3] && separate.blendConstants[1] == 1.0f && separate.blendConstants[2] == 1.0f, "the host blend constants of a constant alpha factor do not weigh the alpha channel alone");
+        auto nanRgb = constantQueue(0x60130001u);
+        for (std::uint32_t i = 0; i < 3; ++i) nanRgb.context[0x105 + i] = 0x7fc00000u;
+        Require(DecodeState(nanRgb).blendConstants[0] == constants[3], "a reversed target's constant alpha factor read unused RGB CB_BLEND registers");
+        nanRgb.context[0x1e0] = 0x40000504u;
+        nanRgb.context[0x108] = 0x7fc00000u;
+        Require(DecodeState(nanRgb).blendConstants == std::array<float, 4>{}, "a non-constant reversed target blend read CB_BLEND registers");
         const auto colored = DecodeState(constantQueue(0x40000e0du));
         Require(colored.blends.at(0).srcColorBlendFactor == VK_BLEND_FACTOR_CONSTANT_COLOR && colored.blends.at(0).dstColorBlendFactor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR && colored.blends.at(0).srcAlphaBlendFactor == VK_BLEND_FACTOR_CONSTANT_ALPHA && colored.blends.at(0).dstAlphaBlendFactor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA, "a constant color factor and its complement did not share the host blend constants");
         for (std::uint32_t component = 0; component < 4; ++component) Require(colored.blendConstants[component] == constantOf(component), "the blend constants of a reversed target did not follow its component mapping");
@@ -2500,12 +2546,49 @@ void Color565TargetTests() {
     Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.375f, 0.25f, 0.125f, 0.5f}, "a 5_6_5 target with the standard component order did not exchange the constants of a ONE_MINUS_CONSTANT_COLOR destination factor");
     queue.context[0x8e] = 0x3u;
     const auto partial = AgcDriver::Graphics::DecodeState(queue).blendConstants;
-    Require(partial[1] == 0.25f && partial[2] == 0.125f && partial[3] == 0.5f, "a 5_6_5 target with the standard component order writing only X and Y did not take the constants of its written channels from their exports");
+    Require(partial == std::array<float, 4>{0.0f, 0.25f, 0.125f, 0.0f}, "a 5_6_5 target with the standard component order writing only X and Y did not take the constants of its written channels from their exports");
+    for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = 0x7fc00000u;
+    queue.context[0x1e0] = 0x40000504u;
+    Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{}, "non-constant blending read unused CB_BLEND registers");
+    queue.context[0x1e0] = 0x40000d4du;
+    Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{}, "MIN blending read unused CB_BLEND registers");
+    queue.context[0x8e] = 0x2u;
+    queue.context[0x1e0] = (1u << 30u) | 13u;
+    queue.context[0x106] = std::bit_cast<std::uint32_t>(0.25f);
+    Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.0f, 0.25f, 0.0f, 0.0f}, "masked constant blending read masked-off CB_BLEND registers");
+    queue.context[0x8e] = 0x7u;
+    queue.context[0x107] = 0;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "non-finite register at DWORD 261");
+    queue.context[0x8e] = 0xfu;
+    queue.context[0x1e0] = 0x40001413u;
+    queue.context[0x108] = std::bit_cast<std::uint32_t>(0.5f);
+    Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.5f}, "constant alpha blending read unused RGB CB_BLEND registers");
+    queue.context[0x108] = 0x7f800000u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "non-finite register at DWORD 264");
     queue.context[0x8e] = 0xfu;
     queue.context[0x1e0] = 0;
     for (const auto& [number, swap] : {std::pair{1u, 2u}, std::pair{4u, 0u}, std::pair{0u, 1u}, std::pair{0u, 3u}}) {
         info(number, swap);
         expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported color format 16 number type " + std::to_string(number) + " component swap " + std::to_string(swap));
+    }
+}
+
+void SingleChannelSwapBlendTests() {
+    auto queue = makeState();
+    for (const auto swap : {1u, 2u}) {
+        queue.context[0x31c] = (queue.context[0x31c] & ~((0x1fu << 2u) | (7u << 8u) | (3u << 11u))) | (1u << 2u) | (swap << 11u);
+        queue.context[0x8e] = 0xfu;
+        for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = std::bit_cast<std::uint32_t>(float(i + 1) / 8.0f);
+        queue.context[0x1e0] = (1u << 30u) | 13u;
+        Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.125f, 0.25f, 0.375f, 0.5f}, "a one-channel target with component swap did not keep the constant-colour blend registers");
+        queue.context[0x1e0] = (1u << 30u) | (14u << 8u);
+        Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.125f, 0.25f, 0.375f, 0.5f}, "a one-channel target with component swap did not keep the destination constant-colour blend registers");
+        queue.context[0x1e0] = 0x6001000du;
+        queue.context[0x105] = 0x7fc00000u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "non-finite register at DWORD 261");
+        for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = 0x7fc00000u;
+        queue.context[0x1e0] = 0x40000504u;
+        Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{}, "non-constant blending on a swapped one-channel target read unused CB_BLEND registers");
     }
 }
 
@@ -2887,6 +2970,17 @@ void DepthStencilTests() {
     queue.context[0x31b] = 1u | (1u << 13u);
     const auto slice = AgcDriver::Graphics::DecodeState(queue);
     Require(slice.color.address == sliced + 1024u && slice.color.bytes == 1024u, "a color view of one slice did not move the target by one slice");
+    {
+        alignas(256) std::array<std::uint8_t, 8> sliceKeyMemory{};
+        const auto sliceKeys = reinterpret_cast<std::uintptr_t>(sliceKeyMemory.data());
+        auto keyed = queue;
+        keyed.context[0x31c] |= 0x10000000;
+        keyed.context[0x325] = static_cast<std::uint32_t>(sliceKeys >> 8u);
+        keyed.context[0x3a8] = static_cast<std::uint32_t>(sliceKeys >> 40u);
+        Require(AgcDriver::Graphics::DecodeState(keyed).color.dccAddress == sliceKeys + 1024u / 256u, "a color view of one slice did not move the target's DCC keys by one slice's keys");
+        keyed.context[0x31b] = 1u << 13u;
+        Require(AgcDriver::Graphics::DecodeState(keyed).color.dccAddress == sliceKeys, "a color view from the first slice moved the target's DCC keys");
+    }
     queue.context[0x3b8] = 0x09000001;
     const auto arraySlice = AgcDriver::Graphics::DecodeState(queue);
     Require(arraySlice.color.address == sliced + 1024u && arraySlice.color.bytes == 1024u && arraySlice.color.depth == 1u, "a color view of one slice of a 2D array target did not move the target by one slice");
@@ -4619,11 +4713,21 @@ void multisampleTests() {
     }
     queue.context[0x32b] = queue.context[0x31c] ^ (1u << 8u);
     expectFailure([&] { DecodeColorMetadataPass(queue); }, "different formats or extents");
-    for (const auto [packedInfo, name] : {std::pair{6u << 2u, "10_11_11 unorm"}, std::pair{(7u << 2u) | (7u << 8u) | (2u << 11u) | 0x40000u, "11_11_10 float"}}) {
-        auto packed = rasterizedResolve;
-        for (const auto offset : {0x31cu, 0x32bu}) packed.context[offset] = (packed.context[offset] & ~0x41f7cu) | packedInfo;
-        expectFailure([&] { DecodeColorMetadataPass(packed); }, std::string("CB resolves of ") + name + " color targets");
-    }
+    auto packed = rasterizedResolve;
+    for (const auto offset : {0x31cu, 0x32bu}) packed.context[offset] = (packed.context[offset] & ~0x41f7cu) | (6u << 2u);
+    expectFailure([&] { DecodeColorMetadataPass(packed); }, "CB resolves of 10_11_11 unorm color targets");
+    for (const auto offset : {0x31cu, 0x32bu}) packed.context[offset] = (packed.context[offset] & ~0x41f7cu) | (7u << 2u) | (7u << 8u) | (2u << 11u) | 0x40000u;
+    const auto floatPass = DecodeColorMetadataPass(packed);
+    Require(floatPass.has_value() && floatPass->mode == ColorMetadataPass::Mode::Resolve && floatPass->source.has_value() && floatPass->source->packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 && floatPass->source->samples == 2 && floatPass->targets.size() == 1, "a CB resolve of an 11_11_10 float target was refused");
+    auto swapped = packed;
+    swapped.context[0x32b] &= ~(3u << 11u);
+    expectFailure([&] { DecodeColorMetadataPass(swapped); }, "11_11_10 float color targets of different layouts");
+    auto unormDestination = packed;
+    unormDestination.context[0x32b] = (unormDestination.context[0x32b] & ~0x41f7cu) | (6u << 2u);
+    expectFailure([&] { DecodeColorMetadataPass(unormDestination); }, "11_11_10 float color targets of different layouts");
+    auto unormSource = packed;
+    unormSource.context[0x31c] = (unormSource.context[0x31c] & ~0x41f7cu) | (6u << 2u);
+    expectFailure([&] { DecodeColorMetadataPass(unormSource); }, "11_11_10 float color targets of different layouts");
     auto uintSource = rasterizedResolve;
     for (const auto offset : {0x31cu, 0x32bu}) uintSource.context[offset] = (uintSource.context[offset] & ~0x700u) | (4u << 8u);
     const auto uintPass = DecodeColorMetadataPass(uintSource);
@@ -10398,7 +10502,7 @@ void registeredReadableCoverTests() {
     const auto base = reinterpret_cast<std::uint64_t>(memory);
     const auto add = [&](std::size_t index, bool readable) {
         auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
-        GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, memory + index * block, block, readable, readable, true);
+        GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, memory + index * block, block, readable, readable, readable);
         GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
     };
     const auto remove = [&](std::size_t index) {
@@ -10421,6 +10525,18 @@ void registeredReadableCoverTests() {
     Require(!RegisteredReadableCovers(base, 0), "an empty range must not be covered");
     for (std::size_t index = 0; index < 4; ++index) remove(index);
     Require(!RegisteredReadableCovers(base, block), "a removed allocation must not be covered");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(memory, block, false, false, true, true);
+        mutation.Add(memory + block, block, false, false, true, false);
+    }
+    std::vector<RegisteredPiece> pieces;
+    Require(RegisteredReadableCovers(base, block, &pieces) && pieces.size() == 1 && pieces[0].writable && pieces[0].gpu, "a gpu-rw allocation without cpu access must be covered as writable");
+    Require(RegisteredReadableCovers(base + block, block, &pieces) && pieces.size() == 1 && !pieces[0].writable && pieces[0].gpu, "a gpu-read allocation without cpu access must be covered as read-only");
+    Require(RegisteredReadableCovers(base, 2 * block, &pieces) && pieces.size() == 2, "adjacent gpu-only allocations must be covered together");
+    Require(RegisteredReadableEnd(base) == base + block, "RegisteredReadableEnd missed a gpu-only allocation");
+    remove(0);
+    remove(1);
     ::operator delete(memory, std::align_val_t{block});
 }
 
@@ -10507,7 +10623,8 @@ void rectListTests() {
     auto explicitInterpolation = BuildRectListShaders(vertex, fragment, target);
     Require(!explicitInterpolation.control.spirv.empty() && !explicitInterpolation.evaluation.spirv.empty(), "rect-list shaders for an explicitly interpolated parameter are empty");
     fragment.fragmentParameters[0].custom = true;
-    expectFailure([&] { static_cast<void>(BuildRectListShaders(vertex, fragment, target)); }, "per-vertex interpolation");
+    const auto passThrough = BuildRectListShaders(vertex, fragment, target);
+    Require(std::ranges::equal(passThrough.control.spirv.Words(), explicitInterpolation.control.spirv.Words()) && std::ranges::equal(passThrough.evaluation.spirv.Words(), explicitInterpolation.evaluation.spirv.Words()), "a pass-through parameter read per vertex does not pass the rectangle's corners like an explicitly interpolated one");
     fragment.fragmentParameters[0].perVertex = false;
     fragment.fragmentParameters[0].custom = false;
     vertex.parameterExports.clear();
@@ -15432,6 +15549,11 @@ int main(int argc, char** argv) {
             DualSourceBlendTests();
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--vertex-control-state") {
+            VertexControlTests();
+            std::cout << "Vertex control state checks passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--depth-bounds-state") {
             DepthBoundsBiasTests();
             ReadOnlyDepthBoundsComparisonTests();
@@ -15517,6 +15639,7 @@ int main(int argc, char** argv) {
         DisabledColorTests();
         OpaqueDestinationAlphaTests();
         Color565TargetTests();
+        SingleChannelSwapBlendTests();
         Color1555TargetTests();
         BlendBypassTests();
         UnclampedNormalizedColorTests();
@@ -15553,6 +15676,7 @@ int main(int argc, char** argv) {
         NggVertexWorkgroupTests();
         inactiveVertexPointSizeTests();
         PolygonPrimitiveTests();
+        VertexControlTests();
         vertexPointListTests();
         TuningFieldTests();
         ShaderDeclaredPixelInputTests();
