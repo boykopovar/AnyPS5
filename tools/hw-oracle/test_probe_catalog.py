@@ -268,6 +268,58 @@ class ProbeGenerationTests(unittest.TestCase):
             self.assertEqual(generated, destinations)
             self.assertTrue(all((path / "probe.json").is_file() for path in destinations))
 
+    def locked_replace(self, failures):
+        original_replace = os.replace
+        calls = []
+
+        def replace(source, destination):
+            calls.append(destination)
+            if len(calls) <= failures:
+                raise PermissionError(13, "Access is denied", str(source))
+            return original_replace(source, destination)
+
+        return replace, calls
+
+    def test_promotion_retries_a_directory_held_open_on_windows(self):
+        probe = self.catalog["probes"][0]
+        replace, calls = self.locked_replace(2)
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "generated"
+            with patch.object(probe_catalog, "RETRY_LOCKED_REPLACE", True), \
+                    patch.object(probe_catalog.os, "replace", replace), \
+                    patch.object(probe_catalog.time, "sleep") as sleep:
+                generated = probe_catalog.generate([probe], self.digest, output)
+            self.assertEqual(generated, [output / probe["id"]])
+            self.assertTrue((output / probe["id"] / "probe.json").is_file())
+            self.assertEqual(len(calls), 3)
+            self.assertEqual([call.args[0] for call in sleep.call_args_list], list(probe_catalog.LOCKED_REPLACE_DELAYS[:2]))
+
+    def test_promotion_gives_up_on_a_directory_that_stays_locked(self):
+        probe = self.catalog["probes"][0]
+        replace, calls = self.locked_replace(len(probe_catalog.LOCKED_REPLACE_DELAYS) + 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "generated"
+            with patch.object(probe_catalog, "RETRY_LOCKED_REPLACE", True), \
+                    patch.object(probe_catalog.os, "replace", replace), \
+                    patch.object(probe_catalog.time, "sleep"), \
+                    self.assertRaises(PermissionError):
+                probe_catalog.generate([probe], self.digest, output)
+            self.assertEqual(len(calls), len(probe_catalog.LOCKED_REPLACE_DELAYS) + 1)
+            self.assertEqual(list(output.iterdir()), [])
+
+    def test_locked_replace_is_not_retried_off_windows(self):
+        replace, calls = self.locked_replace(1)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.json"
+            with patch.object(probe_catalog, "RETRY_LOCKED_REPLACE", False), \
+                    patch.object(probe_catalog.os, "replace", replace), \
+                    patch.object(probe_catalog.time, "sleep") as sleep, \
+                    self.assertRaises(PermissionError):
+                probe_catalog.write_atomic(path, "{}\n")
+            self.assertEqual(len(calls), 1)
+            sleep.assert_not_called()
+            self.assertEqual(list(Path(temporary).iterdir()), [])
+
 
 class ProbeRunTests(unittest.TestCase):
     def setUp(self):

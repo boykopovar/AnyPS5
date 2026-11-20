@@ -272,6 +272,10 @@ static void SocketNameFaults() {
     }
     size = address.size();
     Require(getpeername_nid_postfix(unconnected, address.data(), &size) == -1 && *__error_nid_postfix() == 57);
+    size = 0;
+    Require(getpeername_nid_postfix(unconnected, address.data(), &size) == -1 && *__error_nid_postfix() == 57);
+    size = address.size();
+    Require(getpeername_nid_postfix(listener, address.data(), &size) == -1 && *__error_nid_postfix() == 57);
     Require(fails(getpeername_nid_postfix(unconnected, address.data(), static_cast<std::uint32_t*>(unreadable))));
     for (const int descriptor : {unconnected, accepted, client, listener}) Require(close_nid_postfix(descriptor) == 0);
 }

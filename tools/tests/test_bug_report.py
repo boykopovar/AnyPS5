@@ -45,6 +45,20 @@ class RedactTests(unittest.TestCase):
             home="\\\\FileHost\\Share\\Example\\", user="", host="")
         self.assertEqual(out, "opened ~/games/title.elf")
 
+    def test_posix_home_is_not_replaced_inside_a_sibling_directory(self):
+        out = bug_report.redact(
+            "opened /home/anabel/title.elf, /home/ana-backup/title.elf, /home/ana.old/title.elf and /home/ana/title.elf",
+            home="/home/ana", user="", host="")
+        self.assertEqual(out, "opened /home/anabel/title.elf, /home/ana-backup/title.elf, /home/ana.old/title.elf and ~/title.elf")
+
+    def test_posix_home_before_a_period_is_redacted(self):
+        out = bug_report.redact("Home is /home/ana. Sibling is /home/ana.old.", home="/home/ana", user="", host="")
+        self.assertEqual(out, "Home is ~. Sibling is /home/ana.old.")
+
+    def test_posix_home_matches_with_a_trailing_separator(self):
+        out = bug_report.redact("opened /home/ana/title.elf", home="/home/ana/", user="", host="")
+        self.assertEqual(out, "opened ~/title.elf")
+
     def test_short_or_empty_identities_are_not_replaced(self):
         text = "a b /x"
         self.assertEqual(bug_report.redact(text, home="/x", user="a", host="b"), "a b /x")
@@ -52,6 +66,23 @@ class RedactTests(unittest.TestCase):
     def test_text_without_matches_is_unchanged(self):
         text = "frames=120 averageFps=59.9 version 1.2.3"
         self.assertEqual(bug_report.redact(text, home="/home/ana", user="ana", host="box"), "frames=120 averageFps=59.9 version 1.2.3")
+
+
+class SettingsTests(unittest.TestCase):
+    identity = {"home": "/home/ana", "user": "ana", "host": "serverfestivo"}
+
+    def test_only_anyps5_variables_are_listed_in_name_order(self):
+        environ = {"PATH": "/usr/bin", "ANYPS5_ZETA": "1", "APS5_NO_LABEL_READ_TRAP": "1", "ANYPS5_ALPHA": "on", "HOME": "/home/ana", "XAPS5_OTHER": "x"}
+        self.assertEqual(bug_report.settings_text(environ, self.identity), "ANYPS5_ALPHA=on\nANYPS5_ZETA=1\nAPS5_NO_LABEL_READ_TRAP=1\n")
+
+    def test_values_are_redacted(self):
+        environ = {"ANYPS5_INPUT_CONFIG": "/home/ana/cfg/serverfestivo.ini", "ANYPS5_DNS_OVERRIDE": "store.example=192.168.1.20"}
+        text = bug_report.settings_text(environ, self.identity)
+        self.assertIn("ANYPS5_INPUT_CONFIG=~/cfg/<host>.ini", text)
+        self.assertIn("ANYPS5_DNS_OVERRIDE=store.example=<ip>", text)
+
+    def test_no_variables_says_so(self):
+        self.assertEqual(bug_report.settings_text({"PATH": "/x"}, self.identity), "No ANYPS5_ or APS5_ variables were set.\n")
 
 
 class BundleTests(unittest.TestCase):
@@ -189,7 +220,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("wrote", out)
         with zipfile.ZipFile(target) as bundle:
-            self.assertEqual(sorted(bundle.namelist()), ["README.txt", "anyps5-report.json", "anyps5.log", "host.txt"])
+            self.assertEqual(sorted(bundle.namelist()), ["README.txt", "anyps5-report.json", "anyps5-settings.txt", "anyps5.log", "host.txt"])
             self.assertEqual(bundle.read("anyps5.log").decode("utf-8"), "opened ~/title.elf on <host>\n")
 
     def test_colliding_redacted_keys_refuse_the_bundle(self):
@@ -226,6 +257,43 @@ class MainTests(unittest.TestCase):
         with zipfile.ZipFile(target) as bundle:
             self.assertIn("anyps5.log", bundle.namelist())
 
+    def test_input_config_defaults_to_the_environment_variable(self):
+        ini = self.root / "map.ini"
+        ini.write_text("Cross = KEY:/home/ana/F\n", encoding="utf-8")
+        target = self.root / "bundle.zip"
+        with patch.dict(os.environ, {"ANYPS5_INPUT_CONFIG": str(ini)}):
+            code, _, _ = self.run_main(["--report", str(self.report), "--log", "", "--out", str(target)])
+        self.assertEqual(code, 0)
+        with zipfile.ZipFile(target) as bundle:
+            self.assertEqual(bundle.read("anyps5-input.ini").decode("utf-8"), "Cross = KEY:~/F\n")
+
+    def test_invalid_report_json_is_an_error(self):
+        self.report.write_text("not json", encoding="utf-8")
+        code, _, err = self.run_main(["--report", str(self.report), "--log", "", "--input-config", "", "--out", str(self.root / "b.zip")])
+        self.assertEqual(code, 1)
+        self.assertIn("bug_report:", err)
+        self.assertFalse((self.root / "b.zip").exists())
+
+
+class IdentityTests(unittest.TestCase):
+    def test_host_is_cut_at_the_first_dot(self):
+        with patch.object(bug_report.getpass, "getuser", return_value="ana"), patch.object(bug_report.socket, "gethostname", return_value="box.example.org"):
+            identity = bug_report.identities()
+        self.assertEqual(identity["user"], "ana")
+        self.assertEqual(identity["host"], "box")
+        self.assertEqual(identity["home"], str(Path.home()))
+
+    def test_user_is_empty_when_it_cannot_be_determined(self):
+        with patch.object(bug_report.getpass, "getuser", side_effect=OSError("no user")), patch.object(bug_report.socket, "gethostname", return_value="box"):
+            self.assertEqual(bug_report.identities()["user"], "")
+
+
+class RedactReportContainerTests(unittest.TestCase):
+    def test_non_string_scalars_pass_through_and_containers_are_walked(self):
+        identity = {"home": "/home/ana", "user": "ana", "host": "box1"}
+        value = {"n": 3, "ok": True, "none": None, "list": ["/home/ana/x", 1.5, {"h": "box1"}]}
+        self.assertEqual(bug_report.redact_report(value, identity), {"n": 3, "ok": True, "none": None, "list": ["~/x", 1.5, {"h": "<host>"}]})
+
 class RedactReportTests(unittest.TestCase):
     IDENTITY = {"home": "/home/alice", "user": "alice", "host": "box"}
 
@@ -250,3 +318,14 @@ class RedactReportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HostTextTests(unittest.TestCase):
+    def test_host_text_names_the_system_processor_cpus_and_python(self):
+        with patch.object(bug_report.platform, "system", return_value="Linux"), \
+                patch.object(bug_report.platform, "release", return_value="6.1.0"), \
+                patch.object(bug_report.platform, "machine", return_value="x86_64"), \
+                patch.object(bug_report.platform, "processor", return_value=""), \
+                patch.object(bug_report.os, "cpu_count", return_value=8):
+            text = bug_report.host_text()
+        self.assertEqual(text.splitlines(), ["os: Linux 6.1.0", "machine: x86_64", "processor: unknown", "logical cpus: 8", f"python: {bug_report.platform.python_version()}"])

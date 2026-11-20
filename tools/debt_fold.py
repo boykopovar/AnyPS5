@@ -76,8 +76,7 @@ def spans(text):
     return [(start - 1, start - 1 + len(entry.split("\n")), entry) for start, entry in units(text).items()], lines
 
 
-def find(text, operation):
-    found, _ = spans(text)
+def find(found, operation):
     matches = [(begin, end) for begin, end, entry in found if operation.target in entry]
     if len(matches) != 1:
         raise FoldError(f"{operation.fragment}:{operation.line}: '{operation.target}' matches {len(matches)} entries of {operation.library}, not one")
@@ -121,7 +120,7 @@ def apply(text, operation):
         if not inside or gap:
             new = [""] + new
         return "\n".join(lines[:at] + new + lines[at:])
-    begin, end = find(text, operation)
+    begin, end = find(found, operation)
     if operation.kind == "change":
         return "\n".join(lines[:begin] + operation.body.split("\n") + lines[end:])
     if end < len(lines) and not lines[end].strip() and (begin == 0 or not lines[begin - 1].strip()):
@@ -132,14 +131,14 @@ def apply(text, operation):
 def fold(root, write):
     fragments = sorted((root / DEBT_CHANGES).glob("*.md"))
     operations = [operation for path in fragments for operation in parse(path, root)]
-    texts, claimed, problems = {}, {}, []
+    texts, found, claimed, problems = {}, {}, {}, []
     for operation in operations:
-        path = root / debt_file(operation.library)
-        original = path.read_text(encoding="utf-8")
-        texts.setdefault(operation.library, original)
+        if operation.library not in texts:
+            texts[operation.library] = (root / debt_file(operation.library)).read_text(encoding="utf-8")
+            found[operation.library] = spans(texts[operation.library])[0]
         if operation.kind != "add":
             try:
-                key = (operation.library, find(original, operation))
+                key = (operation.library, find(found[operation.library], operation))
             except FoldError as error:
                 problems.append(str(error))
                 continue

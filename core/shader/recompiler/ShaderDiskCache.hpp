@@ -17,7 +17,7 @@ struct NanSpeculationConfig;
 
 namespace ShaderRecompiler::ShaderDiskCache {
 
-inline constexpr std::uint32_t FormatVersion = 90;
+inline constexpr std::uint32_t FormatVersion = 95;
 
 enum class LoadStatus {
     Loaded,
