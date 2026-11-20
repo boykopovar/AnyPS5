@@ -342,6 +342,7 @@ VideoOutDriver& VideoOutDriver::Get() {
 VideoOutDriver::VideoOutDriver() {
     OnMainThread([] {
         SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+        SDL_SetHint(SDL_HINT_IME_SUPPORT_EXTENDED_TEXT, "1");
 #ifdef _WIN32
         SDL_SetHintWithPriority(SDL_HINT_DIRECTINPUT_ENABLED, "0", SDL_HINT_DEFAULT);
         if (std::getenv("APS5_NO_WGI") != nullptr) SDL_SetHintWithPriority(SDL_HINT_JOYSTICK_WGI, "0", SDL_HINT_DEFAULT);
@@ -838,6 +839,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                         imeTextInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
                         dialogInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
                     }
+                    if (event.type == SDL_TEXTEDITING_EXT) SDL_free(event.editExt.text);
                 }
                 padInput->Update(window);
                 updateDisplayRefreshRate();

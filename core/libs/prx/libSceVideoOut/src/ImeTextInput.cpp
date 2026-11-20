@@ -1,7 +1,7 @@
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 
-#include <cstring>
+#include <string>
 
 #include "SDL_keyboard.h"
 
@@ -26,16 +26,21 @@ void ImeTextInput::HandleEvent(const SDL_Event& event, unsigned windowId) {
     switch (event.type) {
         case SDL_TEXTEDITING:
             if (event.edit.windowID != windowId) return;
-            static_assert(sizeof(input.text) >= sizeof(event.edit.text));
-            std::memcpy(input.text, event.edit.text, sizeof(event.edit.text));
+            input.text = event.edit.text;
             input.kind = ImeHostInputKind::Preedit;
             input.start = event.edit.start;
             input.length = event.edit.length;
             break;
+        case SDL_TEXTEDITING_EXT:
+            if (event.editExt.windowID != windowId) return;
+            if (event.editExt.text != nullptr) input.text = event.editExt.text;
+            input.kind = ImeHostInputKind::Preedit;
+            input.start = event.editExt.start;
+            input.length = event.editExt.length;
+            break;
         case SDL_TEXTINPUT:
             if (event.text.windowID != windowId) return;
-            static_assert(sizeof(input.text) >= sizeof(event.text.text));
-            std::memcpy(input.text, event.text.text, sizeof(event.text.text));
+            input.text = event.text.text;
             input.kind = ImeHostInputKind::Text;
             break;
         case SDL_KEYDOWN:

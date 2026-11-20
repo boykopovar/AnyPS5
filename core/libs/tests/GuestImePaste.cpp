@@ -83,7 +83,7 @@ void Paste(const std::string& utf8) {
 void Publish(ImeHostInputKind kind, const char* text = "", std::int32_t start = 0, std::int32_t length = 0) {
     ImeHostInput input{};
     input.kind = kind;
-    std::strncpy(input.text, text, sizeof(input.text) - 1);
+    input.text = text;
     input.start = start;
     input.length = length;
     ImePublishInput_nid_postfix(input);

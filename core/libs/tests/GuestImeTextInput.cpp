@@ -53,6 +53,16 @@ void Edit(const char* utf8, std::int32_t start, std::int32_t length, unsigned wi
     g_window.HandleEvent(event, WindowId);
 }
 
+void EditExt(char* utf8, std::int32_t start, std::int32_t length, unsigned windowId = WindowId) {
+    SDL_Event event{};
+    event.type = SDL_TEXTEDITING_EXT;
+    event.editExt.windowID = windowId;
+    event.editExt.text = utf8;
+    event.editExt.start = start;
+    event.editExt.length = length;
+    g_window.HandleEvent(event, WindowId);
+}
+
 void Type(const char* utf8) {
     SDL_Event event{};
     event.type = SDL_TEXTINPUT;
@@ -120,6 +130,21 @@ void CheckEditingEvents() {
     Edit("ni", 2, 0);
     Key(SDL_SCANCODE_ESCAPE, SDLK_ESCAPE, 0);
     Require(sceImeDialogGetStatus() == StatusRunning && View().preedit.empty(), "Escape from the keyboard with a composition cancels the dialog");
+    Close();
+
+    Open(param);
+    std::string longEdit;
+    std::u16string longPreedit;
+    for (int index = 0; index < 20; ++index) {
+        longEdit += "\xe3\x81\x8b";
+        longPreedit += u'\u304B';
+    }
+    EditExt(longEdit.data(), 20, 0);
+    Require(View().preedit == longPreedit && View().preeditCursor == 20, "an extended editing event longer than 32 bytes is not shown whole");
+    EditExt(longEdit.data(), 3, 0, WindowId + 1);
+    Require(View().preedit == longPreedit, "an extended edit for another window was shown");
+    EditExt(nullptr, 0, 0);
+    Require(View().preedit.empty(), "an extended edit without text does not clear the composition");
     Close();
 
     Edit("late", 0, 0);

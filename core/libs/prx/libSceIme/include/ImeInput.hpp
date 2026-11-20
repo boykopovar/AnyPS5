@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 enum class ImeHostInputKind : std::uint32_t {
     Text,
@@ -20,7 +21,7 @@ enum class ImeHostInputKind : std::uint32_t {
 
 struct ImeHostInput {
     ImeHostInputKind kind = ImeHostInputKind::Text;
-    char text[32] = {};
+    std::string text;
     std::int32_t start = 0;
     std::int32_t length = 0;
 };

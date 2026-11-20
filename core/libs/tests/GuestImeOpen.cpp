@@ -194,7 +194,7 @@ std::vector<Recorded> Drain() {
 void Publish(ImeHostInputKind kind, const char* text = "") {
     ImeHostInput input{};
     input.kind = kind;
-    std::strncpy(input.text, text, sizeof(input.text) - 1);
+    input.text = text;
     ImePublishInput_nid_postfix(input);
 }
 

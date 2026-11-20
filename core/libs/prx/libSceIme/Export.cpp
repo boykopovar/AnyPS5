@@ -262,17 +262,13 @@ std::size_t UnitsAfter(const Session& session) {
 std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pending) {
     const ImeHostInput& input = pending.input;
     if (input.kind == ImeHostInputKind::Preedit) {
-        std::size_t size = 0;
-        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
-        session.composition.Set(ImeHostText::PreeditUnits(input.text, size), input.start, input.length);
+        session.composition.Set(ImeHostText::PreeditUnits(input.text.data(), input.text.size()), input.start, input.length);
         return std::nullopt;
     }
     if (ImeRouteWhileComposing(session.composition, input.kind) == ImeCompositionRoute::Swallow) return std::nullopt;
     switch (input.kind) {
         case ImeHostInputKind::Text: {
-            std::size_t size = 0;
-            while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
-            return Insert(session, DecodeUtf8(input.text, size));
+            return Insert(session, DecodeUtf8(input.text.data(), input.text.size()));
         }
         case ImeHostInputKind::Backspace: {
             const std::size_t units = UnitsBefore(session);
@@ -398,9 +394,7 @@ void ImePublishInput_nid_postfix(const ImeHostInput& input) {
     if (input.kind == ImeHostInputKind::Preedit) {
         const ImeHostPreeditSink preeditSink = g_preeditSink.load();
         if (preeditSink == nullptr) return;
-        std::size_t size = 0;
-        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
-        const std::u16string units = ImeHostText::PreeditUnits(input.text, size);
+        const std::u16string units = ImeHostText::PreeditUnits(input.text.data(), input.text.size());
         preeditSink(units.data(), units.size(), input.start, input.length);
         return;
     }
@@ -408,9 +402,7 @@ void ImePublishInput_nid_postfix(const ImeHostInput& input) {
     if (sink == nullptr) return;
     std::u16string units;
     if (input.kind == ImeHostInputKind::Text) {
-        std::size_t size = 0;
-        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
-        units = DecodeUtf8(input.text, size);
+        units = DecodeUtf8(input.text.data(), input.text.size());
     }
     sink(input.kind, units.data(), units.size());
 }

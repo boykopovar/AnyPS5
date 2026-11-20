@@ -72,7 +72,7 @@ std::vector<Recorded> Drain() {
 void Publish(ImeHostInputKind kind, const char* text = "", std::int32_t start = 0, std::int32_t length = 0) {
     ImeHostInput input{};
     input.kind = kind;
-    std::strncpy(input.text, text, sizeof(input.text) - 1);
+    input.text = text;
     input.start = start;
     input.length = length;
     ImePublishInput_nid_postfix(input);
@@ -185,13 +185,9 @@ void CheckMalformedPreedit() {
     Param param = MakeParam(buffers, 16);
     Require(sceImeOpen_nid_postfix(&param, nullptr) == 0, "open for malformed");
     Drain();
-    char cut[sizeof(ImeHostInput::text)] = {};
-    std::memset(cut, 'a', sizeof(cut));
-    cut[30] = '\xe3';
-    cut[31] = '\x81';
     ImeHostInput input{};
     input.kind = ImeHostInputKind::Preedit;
-    std::memcpy(input.text, cut, sizeof(cut));
+    input.text = std::string(30, 'a') + "\xe3\x81";
     ImePublishInput_nid_postfix(input);
     Publish(ImeHostInputKind::Preedit, "\xff\xfe\x80", 0, 0);
     Require(Drain().empty() && buffers.text[0] == u'\0', "a malformed preedit changed the session");
