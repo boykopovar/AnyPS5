@@ -3972,7 +3972,6 @@ int APS5_VABI _ZN7WebCore9TreeScope17elementsFromPointEdd();
 int APS5_VABI _ZN7WebCore9endOfLineERKNS_15VisiblePositionE();
 int APS5_VABI _ZN7WebCore9endOfWordERKNS_15VisiblePositionENS_9EWordSideE();
 int APS5_VABI _ZN7WebCoreeqERKNS_18SecurityOriginDataES2_();
-int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_11TouchActionE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_24ScrollableAreaParametersE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_11EventRegionE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_12FilterEffectE();
@@ -3986,7 +3985,6 @@ int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_27AbsolutePositionConstraint
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_32FixedPositionViewportConstraintsE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_33StickyPositionViewportConstraintsE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_5ColorE();
-int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9ImageDataE();
 int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9RectEdgesIfEE();
 int APS5_VABI _ZN7bmalloc11Deallocator18deallocateSlowCaseEPv();
