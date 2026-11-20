@@ -9,4 +9,19 @@ void APS5_VABI _ZNSt4_PadD1Ev(void* self) {
     _ZNSt4_PadD2Ev_nid_postfix(static_cast<GuestPad*>(self));
 }
 
+void APS5_VABI sceLibcInternalPadConstructorWithName_nid_no_patch(void* self, const char* name) {
+    PadConstructWithName_nid_no_patch(static_cast<GuestPad*>(self), name);
+}
+APS5_EXPORT("uhnb6dnXOnc", sceLibcInternalPadConstructorWithName_nid_no_patch);
+
+void APS5_VABI sceLibcInternalPadLaunchWithName_nid_no_patch(void* self, const char* name, void** thread) {
+    PadLaunchWithName_nid_no_patch(static_cast<GuestPad*>(self), name, thread);
+}
+APS5_EXPORT("PBbZjsL6nfc", sceLibcInternalPadLaunchWithName_nid_no_patch);
+
+void APS5_VABI sceLibcInternalPadLaunchWithNameAttr_nid_no_patch(void* self, const char* name, void** attrSlot, void** thread) {
+    PadLaunchWithNameAttr_nid_no_patch(static_cast<GuestPad*>(self), name, attrSlot, thread);
+}
+APS5_EXPORT("H7-7Z3ixv-w", sceLibcInternalPadLaunchWithNameAttr_nid_no_patch);
+
 }

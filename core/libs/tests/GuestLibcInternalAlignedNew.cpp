@@ -73,24 +73,24 @@ int main() {
 
     const int nothrowTag = 0;
     Reset(0);
-    void* array = sceLibcInternalAlignedArrayNewNothrow_nid_no_patch(56, 256, &nothrowTag);
+    void* array = _ZnamSt11align_val_tRKSt9nothrow_t(56, 256, &nothrowTag);
     Require(array == storage.data(), "the array comes from the application heap");
     Require(lastSize == 56 && lastAlignment == 256 && allocations == 1, "size and alignment reach the aligned allocator");
 
-    sceLibcInternalAlignedArrayDelete_nid_no_patch(array, 256);
+    _ZdaPvSt11align_val_t(array, 256);
     Require(releases == 1 && lastReleased == storage.data(), "the aligned delete releases the array");
 
     Reset(0);
-    Require(sceLibcInternalAlignedArrayNewNothrow_nid_no_patch(0, 32, nullptr) == storage.data() && lastSize == 1 && lastAlignment == 32, "a zero-size array asks for one byte");
+    Require(_ZnamSt11align_val_tRKSt9nothrow_t(0, 32, nullptr) == storage.data() && lastSize == 1 && lastAlignment == 32, "a zero-size array asks for one byte");
 
     Reset(1);
-    Require(sceLibcInternalAlignedArrayNewNothrow_nid_no_patch(8, 64, &nothrowTag) == nullptr && allocations == 1, "a failed allocation returns null without throwing");
+    Require(_ZnamSt11align_val_tRKSt9nothrow_t(8, 64, &nothrowTag) == nullptr && allocations == 1, "a failed allocation returns null without throwing");
 
     Reset(2);
-    Require(sceLibcInternalAlignedArrayNewNothrow_nid_no_patch(8, 64, &nothrowTag) == nullptr && allocations == 1, "without a new handler the first failure returns null");
+    Require(_ZnamSt11align_val_tRKSt9nothrow_t(8, 64, &nothrowTag) == nullptr && allocations == 1, "without a new handler the first failure returns null");
 
     Reset(0);
-    sceLibcInternalAlignedArrayDelete_nid_no_patch(nullptr, 64);
+    _ZdaPvSt11align_val_t(nullptr, 64);
     Require(releases == 0, "deleting null releases nothing");
 
     std::puts("libc internal aligned array new checks passed");

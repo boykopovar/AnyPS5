@@ -101,5 +101,6 @@ int APS5_VABI sceAgcDriverSetWorkloadStreamInactive();
 int APS5_VABI sceAgcDriverSubmitReprojectionAcb();
 int APS5_VABI sceAgcDriverSuspendPointSubmitCdbg();
 int APS5_VABI sceAgcDriverSysGetGfxAppGpuResetStatus();
+int APS5_VABI sceAgcDriverUnknown_yuO_plus_lNrj_plus_Do(std::int32_t kind, std::int64_t arg);
 
 }

@@ -1,6 +1,11 @@
 #include "prx/libSceLibcInternal/include/InventoryExports2.hpp"
+#include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
+#include "prx/libc/include/Api.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -41,32 +46,24 @@ int APS5_VABI _Skip_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Stoflt_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Stoxflt_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Strcollx_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _Strerror_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+char* APS5_VABI _Strerror_nid_postfix(int error, char* buffer) {
+    if (const char* text = StrerrorText_nid_no_patch(error)) return const_cast<char*>(text);
+    char local[22];
+    std::snprintf(local, sizeof(local), "error_code=0x%08x", static_cast<unsigned>(error));
+    if (!buffer) {
+        thread_local char ownBuffer[sizeof(local)];
+        buffer = ownBuffer;
+    }
+    if (!GuestCopyOut_nid_no_patch(buffer, local, sizeof(local))) throw std::invalid_argument("_Strerror: an unwritable buffer");
+    return buffer;
 }
 
 int APS5_VABI _Strxfrmx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Tan_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -76,19 +73,46 @@ int APS5_VABI _Tgamma_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Ttotm_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI _Ttotm_nid_postfix(void* time, std::int64_t seconds, int isdst) {
+    constexpr std::uint64_t SecondsFrom1900To1970 = 2208988800u;
+    constexpr std::uint64_t SecondsPerDay = 86400;
+    if (time == nullptr) {
+        thread_local std::array<std::int32_t, 14> ownTime{};
+        time = ownTime.data();
+    }
+    const std::uint64_t secs = static_cast<std::uint64_t>(seconds) + SecondsFrom1900To1970;
+    auto days = static_cast<std::int64_t>(secs / SecondsPerDay);
+    const auto weekday = static_cast<std::int32_t>((days + 1) % 7);
+    auto year = static_cast<std::int32_t>(static_cast<std::uint32_t>(days / 365));
+    std::int64_t yearStart = 0;
+    while (days < (yearStart = _Daysto_nid_postfix(year, 0) + 365LL * year)) year = static_cast<std::int32_t>(static_cast<std::uint32_t>(year) - 1u);
+    days -= yearStart;
+    const int leapDays = _Daysto_nid_postfix(year, 0);
+    int month = 12;
+    while (days < _Daysto_nid_postfix(year, --month) - leapDays) {}
+    const std::uint64_t daySeconds = secs % SecondsPerDay;
+    const std::array<std::int32_t, 9> fields{
+        static_cast<std::int32_t>(daySeconds % 60),
+        static_cast<std::int32_t>(daySeconds % 3600 / 60),
+        static_cast<std::int32_t>(daySeconds / 3600),
+        static_cast<std::int32_t>(static_cast<std::uint32_t>(days - (_Daysto_nid_postfix(year, month) - leapDays) + 1)),
+        month,
+        year,
+        weekday,
+        static_cast<std::int32_t>(static_cast<std::uint32_t>(days)),
+        isdst,
+    };
+    if (!GuestCopyOut_nid_no_patch(time, fields.data(), sizeof(fields))) throw std::invalid_argument("_Ttotm: an unwritable time structure");
+    return time;
 }
 
 int APS5_VABI _Tzoff_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _Unlock_spin_lock_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _Unlock_spin_lock_nid_postfix(volatile char* lock, int mode) {
+    if (lock == nullptr) return;
+    __atomic_store_n(lock, 0, __ATOMIC_RELEASE);
 }
 
 int APS5_VABI _WFrprep_nid_postfix() {
@@ -161,31 +185,6 @@ int APS5_VABI _WScanf_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _WStodx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _WStoflt_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _WStofx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _WStoldx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _WStoxflt_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Wcscollx_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -206,97 +205,7 @@ int APS5_VABI _Wctomb_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Xp_addh_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Xp_addx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Xp_getw_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Xp_invx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Xp_ldexpx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Xp_movx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Xp_mulh_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Xp_mulx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Xp_setn_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Xp_setw_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Xp_sqrtx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Xp_subx() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6Dinkum7codecvt10_Cvt_checkEmm() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6Dinkum7threads10lock_errorD0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6Dinkum7threads10lock_errorD1Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6Dinkum7threads17_Throw_lock_errorEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6Dinkum7threads21_Throw_resource_errorEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6Dinkum7threads21thread_resource_errorD0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6Dinkum7threads21thread_resource_errorD1Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -306,11 +215,10 @@ int APS5_VABI _ZNKSbIwSt11char_traitsIwESaIwEE5_XlenEv_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI sceLibcInternalUnknown_GvYZax3i_Qk_nid_no_patch() {
+int APS5_VABI _ZNKSbIwSt11char_traitsIwESaIwEE5_XranEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("GvYZax3i-Qk", sceLibcInternalUnknown_GvYZax3i_Qk_nid_no_patch);
 
 int APS5_VABI _ZNKSt13bad_exception8_DoraiseEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -332,82 +240,7 @@ int APS5_VABI _ZNKSt24_Iostream_error_category7messageEi() {
     return 0;
 }
 
-int APS5_VABI _ZNKSt5ctypeIcE10do_tolowerEPcPKc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIcE10do_tolowerEc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIcE10do_toupperEPcPKc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIcE10do_toupperEc() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNKSt5ctypeIwE10do_scan_isEsPKwS2_() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIwE10do_tolowerEPwPKw_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIwE10do_tolowerEw_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIwE10do_toupperEPwPKw_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIwE10do_toupperEw_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIwE11do_scan_notEsPKwS2__nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIwE5do_isEPKwS2_Ps_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIwE5do_isEsw_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIwE8do_widenEPKcS2_Pw_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIwE8do_widenEc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIwE9do_narrowEPKwS2_cPc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt5ctypeIwE9do_narrowEwc_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

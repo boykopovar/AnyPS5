@@ -74,28 +74,28 @@ int main() {
     Require(_ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&created, nullptr) == 4 && created != nullptr, "_Getcat builds the C-locale facet");
     const auto* classic = reinterpret_cast<const GuestLocale::NumpunctFacet*>(created);
 
-    Require(sceLibcInternalNumpunctDecimalPoint_nid_no_patch(classic) == '.', "decimal_point of the C locale is '.'");
-    Require(sceLibcInternalNumpunctThousandsSep_nid_no_patch(classic) == ',', "thousands_sep of the C locale is ','");
-    Require(Call(sceLibcInternalNumpunctGrouping_nid_no_patch, classic).empty(), "grouping of the C locale is empty");
-    Require(Call(sceLibcInternalNumpunctFalsename_nid_no_patch, classic) == "false", "falsename of the C locale is \"false\"");
-    Require(Call(sceLibcInternalNumpunctTruename_nid_no_patch, classic) == "true", "truename of the C locale is \"true\"");
-    Require(sceLibcInternalNumpunctDoDecimalPoint_nid_no_patch(classic) == '.', "do_decimal_point of the C locale is '.'");
-    Require(sceLibcInternalNumpunctDoThousandsSep_nid_no_patch(classic) == ',', "do_thousands_sep of the C locale is ','");
-    Require(Call(sceLibcInternalNumpunctDoGrouping_nid_no_patch, classic).empty(), "do_grouping of the C locale is empty");
-    Require(Call(sceLibcInternalNumpunctDoFalsename_nid_no_patch, classic) == "false", "do_falsename of the C locale is \"false\"");
-    Require(Call(sceLibcInternalNumpunctDoTruename_nid_no_patch, classic) == "true", "do_truename of the C locale is \"true\"");
+    Require(_ZNKSt8numpunctIcE13decimal_pointEv(classic) == '.', "decimal_point of the C locale is '.'");
+    Require(_ZNKSt8numpunctIcE13thousands_sepEv(classic) == ',', "thousands_sep of the C locale is ','");
+    Require(Call(_ZNKSt8numpunctIcE8groupingEv, classic).empty(), "grouping of the C locale is empty");
+    Require(Call(_ZNKSt8numpunctIcE9falsenameEv, classic) == "false", "falsename of the C locale is \"false\"");
+    Require(Call(_ZNKSt8numpunctIcE8truenameEv, classic) == "true", "truename of the C locale is \"true\"");
+    Require(_ZNKSt8numpunctIcE16do_decimal_pointEv(classic) == '.', "do_decimal_point of the C locale is '.'");
+    Require(_ZNKSt8numpunctIcE16do_thousands_sepEv(classic) == ',', "do_thousands_sep of the C locale is ','");
+    Require(Call(_ZNKSt8numpunctIcE11do_groupingEv, classic).empty(), "do_grouping of the C locale is empty");
+    Require(Call(_ZNKSt8numpunctIcE12do_falsenameEv, classic) == "false", "do_falsename of the C locale is \"false\"");
+    Require(Call(_ZNKSt8numpunctIcE11do_truenameEv, classic) == "true", "do_truename of the C locale is \"true\"");
 
     const GuestLocale::NumpunctFacet derived{{&g_derivedVtable.facet, 1, 0}, "\2", ':', ';', "off", "on"};
-    Require(sceLibcInternalNumpunctDecimalPoint_nid_no_patch(&derived) == ',', "decimal_point calls the overriding do_decimal_point");
-    Require(sceLibcInternalNumpunctThousandsSep_nid_no_patch(&derived) == '.', "thousands_sep calls the overriding do_thousands_sep");
-    Require(Call(sceLibcInternalNumpunctGrouping_nid_no_patch, &derived) == "\3", "grouping calls the overriding do_grouping");
-    Require(Call(sceLibcInternalNumpunctFalsename_nid_no_patch, &derived) == "no", "falsename calls the overriding do_falsename");
-    Require(Call(sceLibcInternalNumpunctTruename_nid_no_patch, &derived) == "yes", "truename calls the overriding do_truename");
-    Require(sceLibcInternalNumpunctDoDecimalPoint_nid_no_patch(&derived) == ':', "do_decimal_point reads the facet's decimal point");
-    Require(sceLibcInternalNumpunctDoThousandsSep_nid_no_patch(&derived) == ';', "do_thousands_sep reads the facet's separator");
-    Require(Call(sceLibcInternalNumpunctDoGrouping_nid_no_patch, &derived) == "\2", "do_grouping copies the facet's grouping");
-    Require(Call(sceLibcInternalNumpunctDoFalsename_nid_no_patch, &derived) == "off", "do_falsename copies the facet's false name");
-    Require(Call(sceLibcInternalNumpunctDoTruename_nid_no_patch, &derived) == "on", "do_truename copies the facet's true name");
+    Require(_ZNKSt8numpunctIcE13decimal_pointEv(&derived) == ',', "decimal_point calls the overriding do_decimal_point");
+    Require(_ZNKSt8numpunctIcE13thousands_sepEv(&derived) == '.', "thousands_sep calls the overriding do_thousands_sep");
+    Require(Call(_ZNKSt8numpunctIcE8groupingEv, &derived) == "\3", "grouping calls the overriding do_grouping");
+    Require(Call(_ZNKSt8numpunctIcE9falsenameEv, &derived) == "no", "falsename calls the overriding do_falsename");
+    Require(Call(_ZNKSt8numpunctIcE8truenameEv, &derived) == "yes", "truename calls the overriding do_truename");
+    Require(_ZNKSt8numpunctIcE16do_decimal_pointEv(&derived) == ':', "do_decimal_point reads the facet's decimal point");
+    Require(_ZNKSt8numpunctIcE16do_thousands_sepEv(&derived) == ';', "do_thousands_sep reads the facet's separator");
+    Require(Call(_ZNKSt8numpunctIcE11do_groupingEv, &derived) == "\2", "do_grouping copies the facet's grouping");
+    Require(Call(_ZNKSt8numpunctIcE12do_falsenameEv, &derived) == "off", "do_falsename copies the facet's false name");
+    Require(Call(_ZNKSt8numpunctIcE11do_truenameEv, &derived) == "on", "do_truename copies the facet's true name");
 
     created->vtable->deleteObject(created);
     return 0;

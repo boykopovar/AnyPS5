@@ -1,5 +1,8 @@
 #include "prx/libSceNet/include/Net.hpp"
+#include "prx/libkernel/DirectMemory/DirectMemory.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -13,6 +16,7 @@ void Require(bool value) { if (!value) std::abort(); }
 constexpr int kErrorBase = static_cast<int>(0x80410100);
 constexpr int kEnoent = 2;
 constexpr int kEbadf = 9;
+constexpr int kEfault = 14;
 constexpr int kEinval = 22;
 constexpr int kEnametoolong = 63;
 constexpr int kEnotinit = 200;
@@ -94,7 +98,8 @@ void CheckDhcpOptionParser() {
     const std::array<std::uint8_t, 10> options = {53, 1, 5, 1, 4, 255, 255, 255, 0, 3};
     NetDhcpOption option{};
     option.code = 1;
-    Require(libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(options.data(), 10, &option) == 0);
+    errno = 71;
+    Require(libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(options.data(), 10, &option) == 0 && errno == 71);
     Require(option.value == options.data() + 5 && option.length == 4 && option.declaredLength == 4);
     option = {};
     option.code = 53;
@@ -108,6 +113,56 @@ void CheckDhcpOptionParser() {
     option.code = 3;
     Require(libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(options.data(), 9, &option) == kDaemonInvalid);
     Require(option.length == 0 && option.declaredLength == 0);
+    option = {};
+    option.code = 1;
+    option.length = 9;
+    option.declaredLength = 9;
+    errno = 71;
+    Require(libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(options.data(), 4, &option) == kDaemonInvalid && errno == 71);
+    Require(option.length == 0 && option.declaredLength == 0 && option.value == nullptr);
+    option = {};
+    option.code = 6;
+    option.length = 9;
+    option.declaredLength = 9;
+    errno = 71;
+    Require(libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(options.data(), 4, &option) == kDaemonInvalid && errno == 71);
+    Require(option.length == 0 && option.declaredLength == 0 && option.value == nullptr);
+    void* mapping = nullptr;
+    Require(sceKernelMapFlexibleMemory(&mapping, 2 * PS5_PAGE_SIZE, 3, 0) == 0 && mapping != nullptr);
+    auto* boundary = static_cast<std::uint8_t*>(mapping) + PS5_PAGE_SIZE;
+    auto* trailingFragment = boundary - 4;
+    trailingFragment[0] = 53;
+    trailingFragment[1] = 1;
+    trailingFragment[2] = 5;
+    trailingFragment[3] = 1;
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(boundary), PS5_PAGE_SIZE) == 0);
+    option = {};
+    option.code = 1;
+    option.length = 9;
+    option.declaredLength = 9;
+    errno = 71;
+    Require(libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(trailingFragment, 4, &option) == kDaemonInvalid && errno == 71);
+    Require(option.length == 0 && option.declaredLength == 0 && option.value == nullptr);
+    option = {};
+    option.code = 6;
+    option.length = 9;
+    option.declaredLength = 9;
+    errno = 71;
+    Require(libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(trailingFragment, 4, &option) == kDaemonInvalid && errno == 71);
+    Require(option.length == 0 && option.declaredLength == 0 && option.value == nullptr);
+    option = {};
+    option.code = 53;
+    errno = 71;
+    Require(libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(trailingFragment, 4, &option) == 0 && errno == 71);
+    Require(option.value == trailingFragment + 2 && option.length == 1 && option.declaredLength == 1);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), PS5_PAGE_SIZE) == 0);
+    errno = 71;
+    Require(libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(options.data(), 10, reinterpret_cast<NetDhcpOption*>(0x10)) == kDaemonInvalid && errno == 71);
+    option = {};
+    option.code = 1;
+    option.length = 7;
+    Require(libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(reinterpret_cast<const std::uint8_t*>(0x10), 10, &option) == kDaemonInvalid && errno == 71);
+    Require(option.length == 0 && option.declaredLength == 0 && option.value == nullptr);
     const std::array<std::uint8_t, 4> padded = {0, 0, 6, 1};
     option = {};
     option.code = 6;
@@ -131,6 +186,14 @@ void CheckDhcpOptionParser() {
 void CheckSync() {
     Require(sceNetSyncGet(5) == nullptr);
     Require(sceNetSyncGet(0xFFFFFFFFu) == nullptr);
+    Require(Failed(sceNetSyncCreate(nullptr, 0, "GuestNetPs4Exports"), kEinval));
+    Require(Failed(sceNetSyncCreate(reinterpret_cast<NetSyncObject*>(0x10), 0, "GuestNetPs4Exports"), kEfault));
+    Require(Failed(sceNetSyncDestroy(nullptr), kEinval));
+    Require(Failed(sceNetSyncDestroy(reinterpret_cast<NetSyncObject*>(0x10)), kEfault));
+    Require(Failed(sceNetSyncSignal(nullptr, 1), kEinval));
+    Require(Failed(sceNetSyncSignal(reinterpret_cast<NetSyncObject*>(0x10), 1), kEfault));
+    Require(Failed(sceNetSyncWait(nullptr, nullptr), kEinval));
+    Require(Failed(sceNetSyncWait(reinterpret_cast<NetSyncObject*>(0x10), nullptr), kEfault));
     for (std::uint32_t index = 0; index < 5; ++index) {
         NetSyncObject* sync = sceNetSyncGet(index);
         Require(sync != nullptr && sync != sceNetSyncGet((index + 1) % 5));
@@ -142,6 +205,7 @@ void CheckSync() {
     NetSyncObject sync{};
     Require(sceNetSyncCreate(&sync, 0, "GuestNetPs4Exports") == 0);
     Require(sync.mutex != nullptr && sync.condition != nullptr && sync.signals == 0);
+    Require(Failed(sceNetSyncWait(&sync, reinterpret_cast<std::uint32_t*>(0x10)), kEfault));
     std::uint32_t timeout = 2000;
     Require(sceNetSyncWait(&sync, &timeout) == 0 && timeout == 0xFFFFFFFFu);
     Require(sceNetSyncSignal(&sync, 2) == 0);
@@ -193,6 +257,17 @@ void CheckValidation() {
     Require(Failed(sceNetBandwidthControlGetDataTraffic(-1, nullptr, 0), kEinval));
     Require(Failed(sceNetBandwidthControlGetDataTraffic(-1, traffic, 1), kEinval));
     Require(Failed(sceNetDumpCreate(nullptr, 0x800, 0), kEinval));
+    void* mapping = nullptr;
+    Require(sceKernelMapFlexibleMemory(&mapping, 2 * PS5_PAGE_SIZE, 3, 0) == 0 && mapping != nullptr);
+    auto* boundary = static_cast<char*>(mapping) + PS5_PAGE_SIZE;
+    auto* dumpName = boundary - 16;
+    std::memset(dumpName, 'x', 16);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(boundary), PS5_PAGE_SIZE) == 0);
+    Require(Failed(sceNetDumpCreate(dumpName, 0x800, 0), kEfault));
+    dumpName[15] = '\0';
+    Require(Failed(sceNetDumpCreate(dumpName, 0x7ff, 0), kEinval));
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), PS5_PAGE_SIZE) == 0);
+    Require(Failed(sceNetDumpCreate(reinterpret_cast<const char*>(0x10), 0x800, 0), 14));
     Require(Failed(sceNetDumpCreate("dump", 0x7FF, 0), kEinval));
     Require(Failed(sceNetDumpCreate("dump", 0x800, 3), kEinval));
     Require(Failed(sceNetDumpCreate("dump", 0x800, 5), kEinval));
@@ -200,6 +275,7 @@ void CheckValidation() {
     Require(Failed(sceNetDumpCreate("0123456789abcdef0123456789abcdef", 0, 3), kEnametoolong));
     Require(Failed(sceNetDumpRead(0, nullptr, 0, nullptr), kEinval));
     Require(Failed(sceNetDumpRead(0, g_buffer.data(), -1, nullptr), kEinval));
+    Require(Failed(sceNetDumpRead(0, g_buffer.data(), 1, reinterpret_cast<std::uint32_t*>(0x10)), 14));
     flags = 0x21;
     Require(Failed(sceNetDumpRead(0, g_buffer.data(), 1, &flags), kEinval));
     const std::int32_t small = static_cast<std::int32_t>(g_buffer.size()) - 1;
