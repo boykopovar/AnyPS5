@@ -30,28 +30,28 @@ int main() {
     Require(contextRef != nullptr);
     const auto* pool = NKWebKit::Cast<NKWebKit::ProcessPool>(contextRef, __func__);
 
-    Require(pool->injectedBundleInitializationUserData == nullptr);
-    Require(pool->lastInjectedBundleMessageName == nullptr);
-    Require(pool->lastInjectedBundleMessageBody == nullptr);
+    Require(pool->injectedBundleInitializationUserData.Get() == nullptr);
+    Require(pool->lastInjectedBundleMessageName.Get() == nullptr);
+    Require(pool->lastInjectedBundleMessageBody.Get() == nullptr);
     Require(!pool->injectedBundleClientConfigured);
 
     const void* userData = WKStringCreateWithUTF8CString("custom_user_data");
     WKContextSetInitializationUserDataForInjectedBundle(contextRef, userData);
-    Require(pool->injectedBundleInitializationUserData != nullptr);
+    Require(pool->injectedBundleInitializationUserData.Get() != nullptr);
 
     WKContextSetInitializationUserDataForInjectedBundle(contextRef, nullptr);
-    Require(pool->injectedBundleInitializationUserData == nullptr);
+    Require(pool->injectedBundleInitializationUserData.Get() == nullptr);
 
     const void* msgName = WKStringCreateWithUTF8CString("PingBundle");
     const void* msgBody = WKStringCreateWithUTF8CString("Payload");
     WKContextPostMessageToInjectedBundle(contextRef, msgName, msgBody);
-    Require(pool->lastInjectedBundleMessageName != nullptr);
-    Require(pool->lastInjectedBundleMessageBody != nullptr);
+    Require(pool->lastInjectedBundleMessageName.Get() != nullptr);
+    Require(pool->lastInjectedBundleMessageBody.Get() != nullptr);
 
     const void* msgName2 = WKStringCreateWithUTF8CString("NoPayload");
     WKContextPostMessageToInjectedBundle(contextRef, msgName2, nullptr);
-    Require(pool->lastInjectedBundleMessageName != nullptr);
-    Require(pool->lastInjectedBundleMessageBody == nullptr);
+    Require(pool->lastInjectedBundleMessageName.Get() != nullptr);
+    Require(pool->lastInjectedBundleMessageBody.Get() == nullptr);
 
     int dummyClient = 42;
     WKContextSetInjectedBundleClient(contextRef, &dummyClient);
