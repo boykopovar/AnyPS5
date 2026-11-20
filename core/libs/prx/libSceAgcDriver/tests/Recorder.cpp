@@ -16411,6 +16411,27 @@ void rotatedRepackTests(const Device& device, Recorder& recorder) {
         const auto expected = texel >= 3u && texel < 8u ? static_cast<std::uint16_t>(RotateTextureWord(guarded(texel))) : guarded(texel);
         Require(actual == expected, "a rotating repack of texels 3 to 7 left texel " + std::to_string(texel) + " as " + std::to_string(actual) + ", expected " + std::to_string(expected));
     }
+    constexpr std::uint32_t pairs = 64u;
+    for (std::uint32_t texel = 0; texel < pairs * 16u; ++texel) {
+        const auto value = guarded(texel);
+        std::memcpy(bytes.data() + texel * 2u, &value, sizeof(value));
+    }
+    commands = recorder.Commands();
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    for (std::uint32_t pair = 0; pair < pairs; ++pair) {
+        const std::uint64_t first = pair * 32u;
+        detiler.DispatchRepack(commands, halves->Handle(), first, halves->Handle(), first, 10, TextureRepack::Rotate1_5_5_5);
+        detiler.DispatchRepack(commands, halves->Handle(), first + 10u, halves->Handle(), first + 10u, 10, TextureRepack::Rotate1_5_5_5);
+    }
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    recorder.Submit();
+    recorder.Sync();
+    for (std::uint32_t texel = 0; texel < pairs * 16u; ++texel) {
+        std::uint16_t actual = 0;
+        std::memcpy(&actual, bytes.data() + texel * 2u, sizeof(actual));
+        const auto expected = texel % 16u < 10u ? static_cast<std::uint16_t>(RotateTextureWord(guarded(texel))) : guarded(texel);
+        Require(actual == expected, "two rotating repacks in one command buffer that meet inside a word left texel " + std::to_string(texel) + " as " + std::to_string(actual) + ", expected " + std::to_string(expected));
+    }
 
     SampleProgram program(context, recorder);
     std::array<std::uint32_t, 8> words{0x1000u, 135u << 20u, 1u | (2u << 14u), 0x90010facu, 0u, 1u << 4u, 0u, 0u};
@@ -16441,7 +16462,7 @@ void rotatedRepackTests(const Device& device, Recorder& recorder) {
             expectRed(program.Red(copy.View(), copy.Layout(), static_cast<float>(level)), expected, "a rotated copy of an odd-width 1_5_5_5 storage image read the wrong component");
         }
     }
-    std::cout << "1_5_5_5 rotated repack, a partial-word range and an odd-width rotated copy: passed\n";
+    std::cout << "1_5_5_5 rotated repack, a partial-word range, adjacent ranges in one command buffer and an odd-width rotated copy: passed\n";
 }
 
 struct SampledViewProbe {
