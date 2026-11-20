@@ -416,6 +416,109 @@ static void CheckTouchpadBoundsAndGyroClampingAudit(int handle) {
     Require(scePadSetAngularVelocityDeadbandState(handle, false) == PAD_OK);
 }
 
+
+static void CheckTouchpadDualFingerTracking(int handle) {
+    for (const auto& [x, y] : {
+            std::pair<std::uint16_t, std::uint16_t>{0, 0},
+            std::pair<std::uint16_t, std::uint16_t>{1919, 0},
+            std::pair<std::uint16_t, std::uint16_t>{0, 1079},
+            std::pair<std::uint16_t, std::uint16_t>{1919, 1079},
+            std::pair<std::uint16_t, std::uint16_t>{960, 540},
+            std::pair<std::uint16_t, std::uint16_t>{16, 12},
+            std::pair<std::uint16_t, std::uint16_t>{1904, 1060}}) {
+        PadInputState singleContact;
+        singleContact.touch[0] = {true, x, y, 0};
+        PadPublishInput_nid_postfix(singleContact);
+        PadData sample{};
+        Require(scePadReadState(handle, &sample) == PAD_OK);
+        Require(sample.touch_data_touch_num == 1);
+        Require(sample.touch_data_touch0_x == x);
+        Require(sample.touch_data_touch0_y == y);
+        Require(sample.touch_data_touch0_id <= 0x7F);
+    }
+
+    PadInputState dualTouch;
+    dualTouch.touch[0] = {true, 0, 0, 0};
+    dualTouch.touch[1] = {true, 1919, 1079, 0};
+    PadPublishInput_nid_postfix(dualTouch);
+    PadData dualSample{};
+    Require(scePadReadState(handle, &dualSample) == PAD_OK);
+    Require(dualSample.touch_data_touch_num == 2);
+    Require(dualSample.touch_data_touch0_x == 0 && dualSample.touch_data_touch0_y == 0);
+    Require(dualSample.touch_data_touch1_x == 1919 && dualSample.touch_data_touch1_y == 1079);
+    const auto id0 = dualSample.touch_data_touch0_id;
+    const auto id1 = dualSample.touch_data_touch1_id;
+    Require(id0 <= 0x7F && id1 <= 0x7F);
+    Require(id0 != id1);
+
+    dualTouch.touch[0] = {true, 19, 15, 0};
+    dualTouch.touch[1] = {true, 1901, 1060, 0};
+    PadPublishInput_nid_postfix(dualTouch);
+    Require(scePadReadState(handle, &dualSample) == PAD_OK);
+    Require(dualSample.touch_data_touch_num == 2);
+    Require(dualSample.touch_data_touch0_x == 19 && dualSample.touch_data_touch0_y == 15);
+    Require(dualSample.touch_data_touch1_x == 1901 && dualSample.touch_data_touch1_y == 1060);
+    Require(dualSample.touch_data_touch0_id == id0);
+    Require(dualSample.touch_data_touch1_id == id1);
+
+    dualTouch.touch[0] = {false, 0, 0, 0};
+    PadPublishInput_nid_postfix(dualTouch);
+    PadData singleRemaining{};
+    Require(scePadReadState(handle, &singleRemaining) == PAD_OK);
+    Require(singleRemaining.touch_data_touch_num == 1);
+    Require(singleRemaining.touch_data_touch0_x == 1901 && singleRemaining.touch_data_touch0_y == 1060);
+    Require(singleRemaining.touch_data_touch0_id == id1);
+
+    dualTouch.touch[1] = {false, 0, 0, 0};
+    PadPublishInput_nid_postfix(dualTouch);
+    PadData allLifted{};
+    Require(scePadReadState(handle, &allLifted) == PAD_OK);
+    Require(allLifted.touch_data_touch_num == 0);
+
+    dualTouch.touch[0] = {true, 100, 200, 0};
+    dualTouch.touch[1] = {true, 300, 400, 0};
+    PadPublishInput_nid_postfix(dualTouch);
+    Require(scePadReadState(handle, &dualSample) == PAD_OK);
+    Require(dualSample.touch_data_touch_num == 2);
+    const auto newId0 = dualSample.touch_data_touch0_id;
+    const auto newId1 = dualSample.touch_data_touch1_id;
+    Require(newId0 != newId1);
+
+    dualTouch.touch[1] = {false, 0, 0, 0};
+    PadPublishInput_nid_postfix(dualTouch);
+    Require(scePadReadState(handle, &singleRemaining) == PAD_OK);
+    Require(singleRemaining.touch_data_touch_num == 1);
+    Require(singleRemaining.touch_data_touch0_x == 100 && singleRemaining.touch_data_touch0_y == 200);
+    Require(singleRemaining.touch_data_touch0_id == newId0);
+
+    dualTouch.touch[0] = {false, 0, 0, 0};
+    PadPublishInput_nid_postfix(dualTouch);
+    Require(scePadReadState(handle, &allLifted) == PAD_OK);
+    Require(allLifted.touch_data_touch_num == 0);
+
+    std::uint8_t firstId = 0;
+    for (std::uint16_t cycle = 0; cycle < 130; ++cycle) {
+        PadInputState tap;
+        tap.touch[0] = {true, 500, 540, 0};
+        PadPublishInput_nid_postfix(tap);
+        PadData tapSample{};
+        Require(scePadReadState(handle, &tapSample) == PAD_OK);
+        Require(tapSample.touch_data_touch_num == 1);
+        if (cycle == 0) {
+            firstId = tapSample.touch_data_touch0_id;
+        } else {
+            Require(tapSample.touch_data_touch0_id == static_cast<std::uint8_t>((firstId + cycle) & 0x7F));
+        }
+        tap.touch[0] = {false, 0, 0, 0};
+        PadPublishInput_nid_postfix(tap);
+        Require(scePadReadState(handle, &tapSample) == PAD_OK);
+        Require(tapSample.touch_data_touch_num == 0);
+    }
+
+    PadPublishInput_nid_postfix(PadInputState{});
+    Pad::ReadState();
+}
+
 static void CheckTouchPadInformation(int handle) {
     PadControllerInformation info;
     std::memset(&info, 0x5a, sizeof(info));
@@ -1834,6 +1937,7 @@ int main() {
     CheckAngularVelocityDeadband(handle);
     CheckTouchContact(handle);
     CheckTouchpadBoundsAndGyroClampingAudit(handle);
+    CheckTouchpadDualFingerTracking(handle);
     CheckHandleQueries(user, handle);
     CheckVirtualTouchContact(handle);
     CheckTouchPadInformation(handle);
