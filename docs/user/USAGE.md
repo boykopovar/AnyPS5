@@ -378,6 +378,8 @@ The game chooses its video-output resolution; AnyPS5 uses that mode for renderin
 
 `ANYPS5_DISPLAY_INDEX=<n>` opens the window centred on display `n`, counted from 0 in the order SDL lists the displays. Unset, the first display is used. A value that is not the index of a connected display, including an empty value, stops the game at start with an error that names the variable.
 
+On Linux, the bundled SDL2 requests server-side window decorations when the Wayland compositor advertises xdg-decoration. Compositors without xdg-decoration, including GNOME, use libdecor when it is available. If libdecor fails to configure the window within three seconds, AnyPS5 retries with xdg-shell. The retry can open without decorations, and startup reports an error if the compositor fails to configure that window too. Set `SDL_VIDEO_WAYLAND_ALLOW_LIBDECOR=0` to disable libdecor, `SDL_VIDEO_WAYLAND_PREFER_LIBDECOR=1` to try it first, or `SDL_VIDEODRIVER=x11` to select X11 or XWayland.
+
 ### VR compatibility
 
 AnyPS5 does not currently support PS VR2 headsets or PC VR headsets connected through an OpenXR runtime. It does not provide headset tracking, stereoscopic output or reprojection. A VR title may skip its headset setup when no device is detected, but that does not mean its VR gameplay is supported.
