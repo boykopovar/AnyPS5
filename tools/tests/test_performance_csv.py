@@ -131,6 +131,13 @@ class PerformanceCsvTests(unittest.TestCase):
         self.assertEqual(result.stdout, b"")
         self.assertIn(b"recorded configuration differs", result.stderr)
 
+    def test_trace_output_directory_does_not_block_csv_export(self):
+        self.before["env"]["APS5_TRACE_DIR"] = "baseline"
+        self.after["env"]["APS5_TRACE_DIR"] = "candidate"
+        rows = self.rows(self.run_csv("--require-matching-context"))
+        self.assertTrue(any(row["kind"] == "metric" for row in rows))
+        self.assertFalse(any(row["kind"] == "configuration" for row in rows))
+
     def test_missing_and_empty_context_values_stay_distinct(self):
         self.before.pop("cpu", None)
         self.after["cpu"] = ""

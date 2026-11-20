@@ -180,7 +180,8 @@ def compare(baseline, candidate):
         context["window.spec"] = summary["window"]["spec"]
         if re.fullmatch(r"seconds [0-9]+:[0-9]+", summary["window"]["spec"]) is None:
             context["window.first_present"] = summary["window"]["first_present"]
-        context.update({f"env.{key}": value for key, value in summary["env"].items()})
+        context.update({f"env.{key}": value for key, value in summary["env"].items()
+                        if key != "APS5_TRACE_DIR"})
         contexts.append(context)
     differences = {key: {"baseline": contexts[0].get(key), "candidate": contexts[1].get(key)}
                    for key in sorted(contexts[0].keys() | contexts[1].keys())
