@@ -10,7 +10,10 @@
 namespace {
 
 using NKWebKit::WtfAbi::AtomString;
+using NKWebKit::WtfAbi::CodeUnitAt;
 using NKWebKit::WtfAbi::String;
+using NKWebKit::WtfAbi::StringImpl;
+using NKWebKit::WtfAbi::ViewOf;
 using WebCore::QualifiedName;
 using WebCore::QualifiedNameImpl;
 
@@ -25,6 +28,14 @@ void Check(bool value, int line) {
 
 AtomString Atom(const char* text) {
     return AtomString { _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(text), static_cast<unsigned>(std::strlen(text))) };
+}
+
+void RequireContents(StringImpl* impl, const char* text) {
+    Require(impl);
+    const auto view = ViewOf(impl);
+    Require(view.length == std::strlen(text));
+    for (unsigned i = 0; i < view.length; ++i)
+        Require(CodeUnitAt(view, i) == static_cast<unsigned char>(text[i]));
 }
 
 QualifiedName Construct(const AtomString& prefix, const AtomString& localName, const AtomString& namespaceURI) {
@@ -85,6 +96,97 @@ void TestInterning() {
     Deref(second);
     Deref(first);
     Require(localName.string.impl->refCount == 2);
+}
+
+void TestPrefixAndNamespaceKeys() {
+    AtomString prefix = Atom("svg");
+    AtomString otherPrefix = Atom("xlink");
+    AtomString localName = Atom("title");
+    AtomString namespaceURI = Atom("http://www.w3.org/2000/svg");
+    AtomString otherNamespaceURI = Atom("http://www.w3.org/1999/xlink");
+    QualifiedName base = Construct(prefix, localName, namespaceURI);
+    QualifiedName baseAgain = Construct(prefix, localName, namespaceURI);
+    QualifiedName withPrefix = Construct(otherPrefix, localName, namespaceURI);
+    QualifiedName withNamespace = Construct(prefix, localName, otherNamespaceURI);
+
+    Require(base.m_impl == baseAgain.m_impl);
+    Require(base.m_impl->m_refCount == 2);
+    Require(base.m_impl != withPrefix.m_impl);
+    Require(base.m_impl != withNamespace.m_impl);
+    Require(withPrefix.m_impl->m_refCount == 1);
+    Require(withNamespace.m_impl->m_refCount == 1);
+    Require(base.m_impl->m_prefix == prefix.string.impl);
+    Require(base.m_impl->m_localName == localName.string.impl);
+    Require(base.m_impl->m_namespace == namespaceURI.string.impl);
+    Require(!base.m_impl->m_localNameUpper);
+    RequireContents(base.m_impl->m_prefix, "svg");
+    RequireContents(base.m_impl->m_localName, "title");
+    RequireContents(base.m_impl->m_namespace, "http://www.w3.org/2000/svg");
+    Require(withPrefix.m_impl->m_prefix == otherPrefix.string.impl);
+    Require(withPrefix.m_impl->m_localName == localName.string.impl);
+    Require(withPrefix.m_impl->m_namespace == namespaceURI.string.impl);
+    RequireContents(withPrefix.m_impl->m_prefix, "xlink");
+    RequireContents(withPrefix.m_impl->m_namespace, "http://www.w3.org/2000/svg");
+    Require(withNamespace.m_impl->m_prefix == prefix.string.impl);
+    Require(withNamespace.m_impl->m_localName == localName.string.impl);
+    Require(withNamespace.m_impl->m_namespace == otherNamespaceURI.string.impl);
+    RequireContents(withNamespace.m_impl->m_prefix, "svg");
+    RequireContents(withNamespace.m_impl->m_namespace, "http://www.w3.org/1999/xlink");
+    Require(prefix.string.impl->refCount == 6);
+    Require(otherPrefix.string.impl->refCount == 4);
+    Require(localName.string.impl->refCount == 8);
+    Require(namespaceURI.string.impl->refCount == 6);
+    Require(otherNamespaceURI.string.impl->refCount == 4);
+
+    Deref(baseAgain);
+    Require(base.m_impl->m_refCount == 1);
+    Require(prefix.string.impl->refCount == 6);
+    Require(localName.string.impl->refCount == 8);
+    Require(namespaceURI.string.impl->refCount == 6);
+
+    Deref(base);
+    Require(withPrefix.m_impl->m_refCount == 1);
+    Require(withNamespace.m_impl->m_refCount == 1);
+    Require(prefix.string.impl->refCount == 4);
+    Require(otherPrefix.string.impl->refCount == 4);
+    Require(localName.string.impl->refCount == 6);
+    Require(namespaceURI.string.impl->refCount == 4);
+    Require(otherNamespaceURI.string.impl->refCount == 4);
+    RequireContents(withPrefix.m_impl->m_prefix, "xlink");
+    RequireContents(withPrefix.m_impl->m_localName, "title");
+    RequireContents(withPrefix.m_impl->m_namespace, "http://www.w3.org/2000/svg");
+    RequireContents(withNamespace.m_impl->m_prefix, "svg");
+    RequireContents(withNamespace.m_impl->m_localName, "title");
+    RequireContents(withNamespace.m_impl->m_namespace, "http://www.w3.org/1999/xlink");
+
+    QualifiedName retainedAgain = Construct(otherPrefix, localName, namespaceURI);
+    Require(retainedAgain.m_impl == withPrefix.m_impl);
+    Require(retainedAgain.m_impl->m_refCount == 2);
+    Require(otherPrefix.string.impl->refCount == 4);
+    Require(localName.string.impl->refCount == 6);
+    Require(namespaceURI.string.impl->refCount == 4);
+
+    Deref(retainedAgain);
+    Require(withPrefix.m_impl->m_refCount == 1);
+    Require(otherPrefix.string.impl->refCount == 4);
+    Require(localName.string.impl->refCount == 6);
+    Require(namespaceURI.string.impl->refCount == 4);
+
+    Deref(withPrefix);
+    Require(otherPrefix.string.impl->refCount == 2);
+    Require(localName.string.impl->refCount == 4);
+    Require(namespaceURI.string.impl->refCount == 2);
+    Require(withNamespace.m_impl->m_refCount == 1);
+    RequireContents(withNamespace.m_impl->m_prefix, "svg");
+    RequireContents(withNamespace.m_impl->m_localName, "title");
+    RequireContents(withNamespace.m_impl->m_namespace, "http://www.w3.org/1999/xlink");
+
+    Deref(withNamespace);
+    Require(prefix.string.impl->refCount == 2);
+    Require(otherPrefix.string.impl->refCount == 2);
+    Require(localName.string.impl->refCount == 2);
+    Require(namespaceURI.string.impl->refCount == 2);
+    Require(otherNamespaceURI.string.impl->refCount == 2);
 }
 
 void TestEmptyNamespace() {
@@ -155,6 +257,7 @@ void TestNullArguments() {
 int main() {
     TestFields();
     TestInterning();
+    TestPrefixAndNamespaceKeys();
     TestEmptyNamespace();
     TestDestroyedEntryIsReplaced();
     TestBaseObjectEntryPoints();
