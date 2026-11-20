@@ -149,14 +149,19 @@ void ReadOnlyPrefailed() {
     Require(*status == U_ILLEGAL_ARGUMENT_ERROR);
 }
 
-void ReducedData() {
+void BundledData() {
     std::int32_t status = 0;
-    Require(ucnv_openStandardNames_nid_postfix(reinterpret_cast<const char*>(1),
-                                               reinterpret_cast<const char*>(1), &status) == nullptr);
-    Require(status == U_FILE_ACCESS_ERROR);
+    bool threw = false;
+    try {
+        ucnv_openStandardNames_nid_postfix(reinterpret_cast<const char*>(1), reinterpret_cast<const char*>(1), &status);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(status == 0);
     status = 0;
     Require(ucnv_openStandardNames_nid_postfix(nullptr, nullptr, &status) == nullptr);
-    Require(status == U_FILE_ACCESS_ERROR);
+    Require(status == U_ILLEGAL_ARGUMENT_ERROR);
 }
 
 std::string NextGuest(UEnumeration* enumeration) {
@@ -267,6 +272,6 @@ int main(int argc, char**) {
     Prefailed();
     NullStatus();
     ReadOnlyPrefailed();
-    if (argc == 1) ReducedData();
+    if (argc == 1) BundledData();
     else FullData();
 }
