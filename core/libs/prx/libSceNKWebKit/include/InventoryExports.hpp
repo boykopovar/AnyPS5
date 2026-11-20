@@ -233,9 +233,6 @@ int APS5_VABI WKGeolocationManagerSetProvider();
 int APS5_VABI WKHTTPCookieStoreDeleteAllCookies();
 int APS5_VABI WKHTTPCookieStoreSetCookieForHostname();
 int APS5_VABI WKHTTPCookieStoreSetHTTPCookieAcceptPolicy();
-int APS5_VABI WKImageCreateCairoSurface();
-int APS5_VABI WKImageCreateFromCairoSurface();
-
 int APS5_VABI WKInspectorShowMainResourceForFrame();
 int APS5_VABI WKKeyValueStorageManagerDeleteAllEntries();
 int APS5_VABI WKKeyValueStorageManagerDeleteEntriesForOrigin();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libcairo/include/Surface.hpp"
 #include "prx/libSceJsc/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -260,6 +261,8 @@ void APS5_VABI WKIconDatabaseSetIconDataForIconURL(const void* iconDatabaseRef, 
 void APS5_VABI WKIconDatabaseSetIconDatabaseClient(const void* iconDatabaseRef, const void* client);
 void APS5_VABI WKIconDatabaseSetIconURLForPageURL(const void* iconDatabaseRef, const void* iconURLRef, const void* pageURLRef);
 const void* APS5_VABI WKImageCreate(NKWebKit::SizeValue size, unsigned options);
+CairoSurface* APS5_VABI WKImageCreateCairoSurface(const void* imageRef);
+const void* APS5_VABI WKImageCreateFromCairoSurface(CairoSurface* surface, unsigned options);
 NKWebKit::SizeValue APS5_VABI WKImageGetSize(const void* imageRef);
 std::uint32_t APS5_VABI WKImageGetTypeID();
 void APS5_VABI WKInspectorAttach(const void* inspectorRef);

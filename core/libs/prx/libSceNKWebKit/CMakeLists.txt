@@ -99,6 +99,7 @@ if(BUILD_TESTING)
         set_tests_properties(nkwebkit_wtftext_allocation PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    target_link_libraries(nkwebkit_imagecairo_tests PRIVATE libcairo)
 endif()
 
 if(BUILD_TESTING)
