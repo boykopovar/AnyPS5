@@ -339,6 +339,12 @@ int main() {
     Require(huge.value == std::numeric_limits<double>::infinity() && huge.state == (FailBit | EofBit) && huge.consumed == 801, "an overflow keeps infinity and fails");
     const auto lostDigits = Run<double>(bench, 12, "1." + std::string(800, '0') + "1", Dec);
     Require(lostDigits.state == EofBit && lostDigits.value == 1.0 && lostDigits.consumed == 803, "digits past 768 are read and only mark the last kept digit");
+    const auto zeroInteger = Run<double>(bench, 12, std::string(800, '0') + ".25", Dec);
+    Require(zeroInteger.state == EofBit && zeroInteger.value == 0.25 && zeroInteger.consumed == 803, "integer zeros past 768 are not significant digits");
+    const auto tinyFraction = Run<double>(bench, 12, "0." + std::string(769, '0') + "1e770", Dec);
+    Require(tinyFraction.state == EofBit && tinyFraction.value == 1.0 && tinyFraction.consumed == 776, "fraction zeros past 768 scale the first significant digit");
+    const auto tinyAfterZeros = Run<double>(bench, 12, std::string(800, '0') + "." + std::string(769, '0') + "15e770", Dec);
+    Require(tinyAfterZeros.state == EofBit && tinyAfterZeros.value == 1.5 && tinyAfterZeros.consumed == 1576, "zeros on both sides of the point leave the digits after them intact");
     const auto longValue = Run<long double>(bench, 13, "1.5", Dec);
     Require(longValue.value == 1.5L && longValue.state == EofBit, "long double");
     const auto longHex = Run<long double>(bench, 13, "0x1p4", HexFloat);
