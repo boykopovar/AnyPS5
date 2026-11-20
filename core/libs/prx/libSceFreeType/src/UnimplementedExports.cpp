@@ -6,4 +6,8 @@ void APS5_VABI FTA_Add_Module_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+void APS5_VABI FTA_Add_Module_autofitter_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
