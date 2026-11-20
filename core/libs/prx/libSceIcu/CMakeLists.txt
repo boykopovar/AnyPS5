@@ -741,6 +741,7 @@ set(ICU_RECOVERED_SOURCES
     PluralRules.cpp
     RelativeDateTimeFormatter.cpp
     ResourceBundle.cpp
+    ResourceUtf8.cpp
     StringSearch.cpp
     UText.cpp)
 target_sources(libSceIcu PRIVATE ${ICU_RECOVERED_SOURCES})
@@ -936,6 +937,19 @@ if(BUILD_TESTING)
     set_tests_properties(guest_icu_invariant_chars PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_icu_invariant_chars PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_resource_utf8_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/ResourceUtf8.cpp)
+    target_include_directories(guest_icu_resource_utf8_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_resource_utf8_tests PRIVATE libSceIcu libc libkernel)
+    configure_windows_unwind(guest_icu_resource_utf8_tests)
+    add_test(NAME guest_icu_resource_utf8 COMMAND guest_icu_resource_utf8_tests)
+    set_tests_properties(guest_icu_resource_utf8 PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_icu_resource_utf8 PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()

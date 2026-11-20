@@ -221,6 +221,12 @@ URelativeDateTimeFormatter* APS5_VABI ureldatefmt_open_nid_postfix(const char* l
 void APS5_VABI ures_close(UResourceBundle* resB);
 void APS5_VABI ures_initStackObject_nid_postfix(UResourceBundle* resB);
 std::uint32_t APS5_VABI ures_getUInt_nid_postfix(const UResourceBundle* resB, std::int32_t* status);
+const char* APS5_VABI ures_getUTF8String_nid_postfix(const UResourceBundle* resB, char* dest, std::int32_t* length,
+    std::int8_t forceCopy, std::int32_t* status);
+const char* APS5_VABI ures_getUTF8StringByIndex_nid_postfix(const UResourceBundle* resB, std::int32_t index, char* dest,
+    std::int32_t* length, std::int8_t forceCopy, std::int32_t* status);
+const char* APS5_VABI ures_getUTF8StringByKey_nid_postfix(const UResourceBundle* resB, const char* key, char* dest,
+    std::int32_t* length, std::int8_t forceCopy, std::int32_t* status);
 
 UCollator* APS5_VABI usearch_getCollator_nid_postfix(const UStringSearch* search);
 std::int32_t APS5_VABI usearch_getMatchedLength_nid_postfix(const UStringSearch* search);
