@@ -1678,7 +1678,8 @@ bool singleTexelPlane(const DescriptorValue& descriptor) {
 }
 
 void materializeSingleTexelSamplers(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
-    constexpr std::array<std::uint32_t, 4> PointClampToLastTexel{0x92u, 0u, 0u, 0u};
+    constexpr std::uint32_t PointClampToLastTexel = 0x92u;
+    constexpr std::uint32_t KeptDegammaBits = 0x80100000u;
     for (std::uint32_t index = 0; index < plan.info.samplers.size() && index < snapshot.samplers.size(); ++index) {
         auto& sampler = snapshot.samplers[index];
         if (plan.info.samplers[index].table != NoTable || sampler.dwordCount != 4u) continue;
@@ -1689,10 +1690,11 @@ void materializeSingleTexelSamplers(const IrResourcePlan& plan, ResourceSnapshot
             if (pair.sampler != index) continue;
             paired = true;
             const auto& image = plan.info.images.at(pair.image);
-            singleTexel = singleTexel && image.table == NoTable && image.resourceClass == ImageResourceClass::Sampled && image.dimension == RdnaImageDimension::Dim2D && !image.depthCompare && !image.gathered && pair.image < snapshot.images.size() && singleTexelPlane(snapshot.images[pair.image]);
+            singleTexel = singleTexel && image.table == NoTable && image.resourceClass == ImageResourceClass::Sampled && image.dimension == RdnaImageDimension::Dim2D && !image.depthCompare && !image.gathered && !image.lodQueried && pair.image < snapshot.images.size() && singleTexelPlane(snapshot.images[pair.image]);
         }
         if (!paired || !singleTexel) continue;
-        std::copy(PointClampToLastTexel.begin(), PointClampToLastTexel.end(), sampler.dwords.begin());
+        sampler.dwords[0] = PointClampToLastTexel | (sampler.dwords[0] & KeptDegammaBits);
+        std::fill(sampler.dwords.begin() + 1, sampler.dwords.begin() + 4, 0u);
     }
 }
 

@@ -118,11 +118,12 @@ void Draw(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture,
     device.WaitIdle();
 }
 
-void Check(const std::string& name) {
+void Check(const std::string& name, const std::array<std::uint8_t, 4>& expected = Texel, std::uint32_t tolerance = 0u) {
     for (std::uint32_t index = 0; index < Width * Height; ++index) {
         for (std::uint32_t component = 0; component < 4u; ++component) {
             const auto value = std::to_integer<std::uint32_t>(Pixels[index * 4u + component]);
-            Require(value == Texel[component], "single-texel image, " + name + ": pixel " + std::to_string(index) + " component " + std::to_string(component) + " is " + std::to_string(value) + ", expected " + std::to_string(Texel[component]));
+            const auto want = static_cast<std::uint32_t>(expected[component]);
+            Require(value + tolerance >= want && value <= want + tolerance, "single-texel image, " + name + ": pixel " + std::to_string(index) + " component " + std::to_string(component) + " is " + std::to_string(value) + ", expected " + std::to_string(want));
         }
     }
 }
@@ -152,6 +153,13 @@ int main() {
                 Draw(*device, TextureDescriptor(1u, type), item.sampler);
                 Check(std::string(type == Type2D ? "2D, " : "one-slice volume, ") + item.name);
             }
+        }
+        constexpr std::array<std::uint8_t, 4> DecodedTexel{5u, 48u, 147u, 255u};
+        auto forced = cases[3].sampler;
+        forced[0] |= 1u << 20u;
+        for (const auto type : {Type2D, Type3D}) {
+            Draw(*device, TextureDescriptor(1u, type), forced);
+            Check(std::string(type == Type2D ? "2D, " : "one-slice volume, ") + "a FORCE_DEGAMMA anisotropic sampler keeps its sRGB decode", DecodedTexel, 1u);
         }
         std::string refusal;
         try {
