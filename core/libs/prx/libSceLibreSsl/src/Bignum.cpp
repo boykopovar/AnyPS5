@@ -291,6 +291,7 @@ std::string CopyGuestHexDigits(const char* guestAddress, std::size_t limit, cons
             if (HexValue(chunk[i]) < 0 || digits.size() > limit) return digits;
             digits.push_back(chunk[i]);
         }
+        if (count > UINTPTR_MAX - address) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
         address += count;
     }
 }
