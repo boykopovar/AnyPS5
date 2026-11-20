@@ -8,7 +8,7 @@ extern "C" _Unwind_Reason_Code APS5_VABI __gxx_personality_v0_nid_postfix(
     using namespace LibcUnwind;
     using namespace LibcException;
     if (version != 1) return _URC_FATAL_PHASE1_ERROR;
-    if (!context->lsda) return _URC_CONTINUE_UNWIND;
+    if (!context || !context->lsda) return _URC_CONTINUE_UNWIND;
     const Byte* p = reinterpret_cast<const Byte*>(context->lsda);
     Byte landingEncoding = *p++;
     Word landingBase = landingEncoding == 255 ? context->region : Encoded(p, landingEncoding, context->dataBase, context->region, context->textBase);
@@ -78,7 +78,7 @@ extern "C" _Unwind_Reason_Code APS5_VABI __gcc_personality_v0_nid_postfix(
 ) {
     using namespace LibcUnwind;
     if (version != 1) return _URC_FATAL_PHASE1_ERROR;
-    if (!(actions & _UA_CLEANUP_PHASE) || !context->lsda) return _URC_CONTINUE_UNWIND;
+    if (!context || !(actions & _UA_CLEANUP_PHASE) || !context->lsda) return _URC_CONTINUE_UNWIND;
     const Byte* p = reinterpret_cast<const Byte*>(context->lsda);
     Byte landingEncoding = *p++;
     Word landingBase = landingEncoding == 255 ? context->region : Encoded(p, landingEncoding, context->dataBase, context->region, context->textBase);
