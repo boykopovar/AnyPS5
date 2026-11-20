@@ -13,11 +13,14 @@ static bool Check(bool value, const char* what) {
 
 int main() {
     if (!Check(_ZNSt6thread20hardware_concurrencyEv_nid_postfix() == DefaultMaskCpus, "hardware_concurrency is not the CPU count of the default mask")) return 1;
+    if (!Check(_ZNSt3__16thread20hardware_concurrencyEv_nid_postfix() == DefaultMaskCpus, "libc++ hardware_concurrency is not the CPU count of the default mask")) return 1;
     Pthread self = scePthreadSelf();
     KernelCpumask original = 0;
     if (!Check(scePthreadGetaffinity(self, &original) == 0, "scePthreadGetaffinity failed")) return 1;
     if (!Check(scePthreadSetaffinity(self, 0x2) == 0, "scePthreadSetaffinity failed")) return 1;
     const unsigned narrowed = _ZNSt6thread20hardware_concurrencyEv_nid_postfix();
+    const unsigned narrowedLibcxx = _ZNSt3__16thread20hardware_concurrencyEv_nid_postfix();
     if (!Check(scePthreadSetaffinity(self, original) == 0, "scePthreadSetaffinity could not restore the mask")) return 1;
-    return Check(narrowed == DefaultMaskCpus, "hardware_concurrency followed the calling thread's mask") ? 0 : 1;
+    if (!Check(narrowed == DefaultMaskCpus, "hardware_concurrency followed the calling thread's mask")) return 1;
+    return Check(narrowedLibcxx == DefaultMaskCpus, "libc++ hardware_concurrency followed the calling thread's mask") ? 0 : 1;
 }
