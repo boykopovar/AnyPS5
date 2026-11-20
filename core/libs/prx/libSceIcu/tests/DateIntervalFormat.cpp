@@ -323,6 +323,47 @@ void Run() {
 
 } // namespace UdtitvfmtOpenResult
 
+namespace UdtitvfmtResultAsValue {
+
+using IcuRecoveredTest::Filler;
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+using IcuRecoveredTest::Unchanged;
+
+static_assert(std::is_same_v<decltype(&udtitvfmt_resultAsValue_nid_postfix), const UFormattedValue* (APS5_VABI*)(const UFormattedDateInterval*, std::int32_t*)>);
+
+namespace {
+
+constexpr std::int32_t IllegalArgument = 1;
+constexpr std::array<std::int32_t, 7> Failing{1, 2, 7, 15, 16, 27, 0x7fffffff};
+constexpr std::array<std::int32_t, 4> Passing{0, -128, -124, -1};
+
+} // namespace
+
+void Run() {
+    const auto storage = Filler();
+    const auto result = reinterpret_cast<const UFormattedDateInterval*>(storage.data());
+    for (const auto incoming : Failing) {
+        std::int32_t status = incoming;
+        Require(udtitvfmt_resultAsValue_nid_postfix(result, &status) == nullptr);
+        Require(udtitvfmt_resultAsValue_nid_postfix(nullptr, &status) == nullptr);
+        Require(status == incoming);
+    }
+    for (const auto incoming : Passing) {
+        std::int32_t status = incoming;
+        Require(udtitvfmt_resultAsValue_nid_postfix(nullptr, &status) == nullptr);
+        Require(status == IllegalArgument);
+        status = incoming;
+        RequireThrows([&] { udtitvfmt_resultAsValue_nid_postfix(result, &status); });
+        Require(status == incoming);
+    }
+    RequireThrows([&] { udtitvfmt_resultAsValue_nid_postfix(result, nullptr); });
+    RequireThrows([] { udtitvfmt_resultAsValue_nid_postfix(nullptr, nullptr); });
+    Require(Unchanged(storage));
+}
+
+} // namespace UdtitvfmtResultAsValue
+
 void CheckIcuDateIntervalFormat() {
     UdtitvfmtClose::Run();
     UdtitvfmtCloseResult::Run();
@@ -330,4 +371,5 @@ void CheckIcuDateIntervalFormat() {
     UdtitvfmtFormatToResult::Run();
     UdtitvfmtOpen::Run();
     UdtitvfmtOpenResult::Run();
+    UdtitvfmtResultAsValue::Run();
 }

@@ -189,6 +189,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Backtrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DinkumwareAtomics.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DinkumwareInternals.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxNextPrime.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/TimeExtras.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AtomicBuiltins.cpp
@@ -266,6 +267,11 @@ set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
         TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedExtendedPrecision.cpp
         TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
+
+if(ANYPS5_ENABLE_TSAN)
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
+            TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-fno-sanitize=thread")
+endif()
 
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/BinaryWordIo.cpp)
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/LegacySignals.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SigvecExport.cpp)
@@ -2332,6 +2338,7 @@ if(BUILD_TESTING)
     add_test(NAME application_heap_exit_order COMMAND application_heap_tests exit-order)
     add_test(NAME application_heap_scripting COMMAND application_heap_tests scripting)
     add_test(NAME application_heap_lazy COMMAND application_heap_tests lazy)
+    add_test(NAME application_heap_threads COMMAND application_heap_tests threads)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_library(guest_sdk_heap_fixture MODULE ${LIBS_INCLUDE_DIR}/tests/GuestSdkHeap.cpp)
         add_library(guest_sdk_heap_partial_fixture MODULE ${LIBS_INCLUDE_DIR}/tests/GuestSdkHeap.cpp)
@@ -2343,7 +2350,7 @@ if(BUILD_TESTING)
         add_test(NAME application_heap_guest_sdk_default COMMAND application_heap_tests sdk-default $<TARGET_FILE:guest_sdk_heap_fixture>)
     endif()
     if(WIN32)
-        set_tests_properties(application_heap_replacement application_heap_invalid_metadata application_heap_default application_heap_exit_order application_heap_scripting application_heap_lazy
+        set_tests_properties(application_heap_replacement application_heap_invalid_metadata application_heap_default application_heap_exit_order application_heap_scripting application_heap_lazy application_heap_threads
             PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         add_test(NAME application_heap_without_parameters COMMAND application_heap_tests none)
         set_tests_properties(application_heap_without_parameters

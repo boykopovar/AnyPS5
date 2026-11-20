@@ -151,6 +151,9 @@ void APS5_VABI _ZNSt7collateIcEC1Em_nid_postfix(GuestLocale::CollateFacet* self,
 void APS5_VABI _ZNSt7collateIcEC1EPKcm_nid_postfix(GuestLocale::CollateFacet* self, const char* localeName, std::size_t references);
 void APS5_VABI _ZNSt7collateIcEC1ERKSt8_Locinfom_nid_postfix(GuestLocale::CollateFacet* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references);
 void APS5_VABI _ZNSt7collateIcEC2EPKcm_nid_postfix(GuestLocale::CollateFacet* self, const char* localeName, std::size_t references);
+void APS5_VABI _ZNSt7collateIcEC2Em_nid_postfix(GuestLocale::CollateFacet* self, std::size_t references);
+void APS5_VABI _ZNSt7collateIcEC2ERKSt8_Locinfom_nid_postfix(GuestLocale::CollateFacet* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references);
+void APS5_VABI _ZNSt7collateIcED0Ev_nid_postfix(GuestLocale::CollateFacet* self);
 int APS5_VABI _ZNSt10filesystem7_UnlinkEPKc_nid_postfix(const char* path);
 int APS5_VABI _ZNSt10filesystem6_ChmodEPKcNS_5permsE_nid_postfix(const char* path, int perms);
 bool APS5_VABI _ZNSt10filesystem12_Current_getERA260_c_nid_postfix(char* target);
