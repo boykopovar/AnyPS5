@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
@@ -8,7 +9,6 @@
 #include <cstdlib>
 
 extern "C" {
-void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED0Ev(void* self);
 }
 
 namespace {

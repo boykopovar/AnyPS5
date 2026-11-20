@@ -360,4 +360,5 @@ void APS5_VABI _ZNSt16nested_exceptionD1Ev_nid_postfix(void* self);
 void APS5_VABI _ZNSt16nested_exceptionD2Ev_nid_postfix(void* self);
 
 
+void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED0Ev(void* self);
 }
