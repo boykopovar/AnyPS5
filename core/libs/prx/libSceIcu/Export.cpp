@@ -151,10 +151,6 @@ int APS5_VABI ucnv_convertEx() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucnv_fromUnicode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ucnv_getName() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -184,10 +180,6 @@ int APS5_VABI ucnv_setToUCallBack() {
 }
 
 int APS5_VABI ucnv_toUChars() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucnv_toUnicode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
