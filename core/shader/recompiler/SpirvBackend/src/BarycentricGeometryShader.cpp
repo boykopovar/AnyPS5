@@ -390,7 +390,7 @@ BarycentricEmulationLayout LayoutBarycentricEmulation(std::span<const FragmentPa
     };
     if (emulation.smooth) layout.smoothLocation = take(1u);
     if (emulation.linear) layout.linearLocation = take(1u);
-    if (meshPositions) layout.positionsLocation = take(3u);
+    if (meshPositions && (emulation.smooth || emulation.linear)) layout.positionsLocation = take(3u);
     if (emulation.smoothOffset) layout.reciprocalWLocation = take(1u);
     for (const auto& parameter : parameters) {
         if (parameter.perVertex) layout.perVertexLocations.emplace_back(parameter.location, take(3u));

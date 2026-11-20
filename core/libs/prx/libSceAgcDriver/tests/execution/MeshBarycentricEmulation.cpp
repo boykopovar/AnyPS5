@@ -297,6 +297,7 @@ int main() {
         const auto noPerspective = CheckBarycentrics("mesh LINEAR_CENTER I/J", false);
         result = Draw(*device, VertexValuePixelCode, perspective);
         Require(result.barycentricEmulation.active && result.fragmentParameters.size() == 1 && result.fragmentParameters[0].perVertex, "v_interp_mov of P10 and P20 did not emulate per-vertex parameters");
+        Require(ShaderRecompiler::LayoutBarycentricEmulation(result.fragmentParameters, result.barycentricEmulation, true).positionsLocation == ShaderRecompiler::BarycentricEmulationLayout::NoLocation, "a pixel shader that reads no barycentrics was given corner positions it never reads");
         const auto vertexValues = CheckVertexValues();
         std::printf("mesh barycentric emulation tests passed: %u perspective and %u linear I/J pixels, %u raw vertex value pixels\n", smooth, noPerspective, vertexValues);
         return 0;
