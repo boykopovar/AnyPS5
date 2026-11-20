@@ -95,8 +95,8 @@ def test_words(root):
     words = set()
     for path in (root / "core").rglob("*"):
         if path.suffix in SOURCES | {".py"} and "tests" in path.relative_to(root).parts and path.is_file():
-            words.update(HELPER_SUFFIX.sub("", word) for word in WORD.findall(path.read_text(encoding="utf-8", errors="ignore")))
-    return words
+            words.update(WORD.findall(path.read_text(encoding="utf-8", errors="ignore")))
+    return {HELPER_SUFFIX.sub("", word) for word in words}
 
 
 def exported_names(root):

@@ -63,6 +63,36 @@ class Tests(unittest.TestCase):
                 finally:
                     header.write_bytes(original)
 
+    def test_manifest_matches_archives_for_symlink_alias(self):
+        import hashlib
+        import tarfile
+        import zipfile
+        sys.path.insert(0, str(TOOLS))
+        self.addCleanup(sys.path.pop, 0)
+        import package_headers
+        directory = self.fixture()
+        target = directory / "Target.hpp"
+        target.write_bytes(b"struct Target {};\n")
+        alias = directory / "Alias.hpp"
+        try:
+            alias.symlink_to(target.name)
+        except OSError as error:
+            self.skipTest(str(error))
+        (directory / "Api.hpp").write_bytes(b'#include "Alias.hpp"\n')
+        result = self.run_tool("--root", self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        output = self.root / "output"
+        package_headers.package(self.root, output, "v1")
+        with zipfile.ZipFile(output / "prx-headers-v1.zip") as archive:
+            files = {name: archive.read(name) for name in archive.namelist()}
+        with tarfile.open(output / "prx-headers-v1.tar.gz") as archive:
+            self.assertEqual({name: archive.extractfile(name).read() for name in archive.getnames()}, files)
+        entries = [{"path": name, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+                   for name, data in sorted(files.items())]
+        self.assertEqual(report["entries"], entries)
+        self.assertIn("include/anyps5/prx/libExample/Alias.hpp", files)
+
     def test_missing_dependency_and_license_fail_without_json(self):
         directory = self.fixture()
         (directory / "Api.hpp").unlink()
