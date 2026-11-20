@@ -48,9 +48,19 @@
 #include <unistd.h>
 #endif
 
+#ifdef _WIN32
+std::vector<std::filesystem::path> longTree;
+#endif
+
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
         std::fprintf(stderr, "Kernel sys check failed at line %u (guest errno %d)\n", location.line(), *__error_nid_postfix());
+#ifdef _WIN32
+        for (auto entry = longTree.rbegin(); entry != longTree.rend(); ++entry) {
+            const auto path = LR"(\\?\)" + std::filesystem::absolute(*entry).wstring();
+            if (::RemoveDirectoryW(path.c_str()) == FALSE) ::DeleteFileW(path.c_str());
+        }
+#endif
         std::abort();
     }
 }
@@ -1493,6 +1503,8 @@ static void CheckGetfsstat() {
 static void LongDirectoryAtCalls(const std::filesystem::path& root) {
     std::vector<std::filesystem::path> levels{root / "long-at"};
     for (int level = 0; level < 5; ++level) levels.push_back(levels.back() / std::string(60, 'd'));
+    longTree = levels;
+    for (const char* name : {"file.txt", "moved.txt", "made"}) longTree.push_back(levels.back() / name);
     const auto verbatim = [](const std::filesystem::path& path) { return LR"(\\?\)" + std::filesystem::absolute(path).wstring(); };
     for (const auto& level : levels) Require(::CreateDirectoryW(verbatim(level).c_str(), nullptr) != FALSE);
     const auto& path = levels.back();
@@ -1514,6 +1526,7 @@ static void LongDirectoryAtCalls(const std::filesystem::path& root) {
     Require(unlinkat_nid_postfix(directory, "made", 0x800) == 0 && !exists("made"));
     Require(sceKernelClose(directory) == 0);
     for (auto level = levels.rbegin(); level != levels.rend(); ++level) Require(::RemoveDirectoryW(verbatim(*level).c_str()) != FALSE);
+    longTree.clear();
 }
 #endif
 
