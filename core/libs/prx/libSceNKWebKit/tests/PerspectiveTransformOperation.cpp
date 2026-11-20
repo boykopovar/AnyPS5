@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -220,11 +221,140 @@ static void TestLegacyByteLayout() {
     Require(Equal(FromBytes(5, 0, 3, 0), FromBytes(0x40A00000u, 0, 3, 1)));
 }
 
+struct OperationSlots {
+    void (APS5_VABI* completeDestructor)(WebCore::PerspectiveTransformOperation*);
+    void (APS5_VABI* deletingDestructor)(WebCore::PerspectiveTransformOperation*);
+    WebCore::TransformOperation** (APS5_VABI* clone)(WebCore::TransformOperation**, const WebCore::PerspectiveTransformOperation*);
+    bool (APS5_VABI* equals)(const WebCore::PerspectiveTransformOperation*, const WebCore::TransformOperation&);
+    bool (APS5_VABI* isIdentity)(const WebCore::PerspectiveTransformOperation*);
+    bool (APS5_VABI* apply)(const WebCore::PerspectiveTransformOperation*, WebCore::TransformationMatrix&, const WebCore::FloatSize&);
+    WebCore::TransformOperation** (APS5_VABI* blend)(WebCore::TransformOperation**, WebCore::PerspectiveTransformOperation*, const WebCore::TransformOperation*, double, bool);
+    bool (APS5_VABI* isAffectedByTransformOrigin)(const WebCore::PerspectiveTransformOperation*);
+    bool (APS5_VABI* isRepresentableIn2D)(const WebCore::PerspectiveTransformOperation*);
+    void (APS5_VABI* dump)(const WebCore::PerspectiveTransformOperation*, void*);
+};
+
+static const OperationSlots& SlotsOf(const WebCore::PerspectiveTransformOperation* op) {
+    return *static_cast<const OperationSlots*>(op->m_base.m_vptr);
+}
+
+template <typename F>
+static bool ThrowsInvalidArgument(F function) {
+    try {
+        function();
+    } catch (const std::invalid_argument&) {
+        return true;
+    } catch (...) {
+        return false;
+    }
+    return false;
+}
+
+template <typename F>
+static bool ThrowsNotImplemented(F function) {
+    try {
+        function();
+    } catch (const std::invalid_argument&) {
+        return false;
+    } catch (const std::runtime_error&) {
+        return true;
+    } catch (...) {
+        return false;
+    }
+    return false;
+}
+
+static void TestLifecycle() {
+    const WebCore::LegacyLength fixed = Legacy(500, WebCore::LegacyLengthType::Fixed, true);
+    WebCore::PerspectiveTransformOperation* created = reinterpret_cast<WebCore::PerspectiveTransformOperation*>(std::uintptr_t{0x1234});
+    Require(_ZN7WebCore29PerspectiveTransformOperation6createERKNS_6LengthE(&created, &fixed) == &created);
+    Require(created != nullptr && created != reinterpret_cast<WebCore::PerspectiveTransformOperation*>(std::uintptr_t{0x1234}));
+    Require(_ZN3WTF14fastMallocSizeEPKv(created) == sizeof(WebCore::PerspectiveTransformOperation));
+    Require(created->m_base.m_vptr != nullptr && created->m_base.m_refCount == 1 && created->m_base.m_type == PerspectiveType);
+    Require(std::memcmp(&created->m_p, &fixed, sizeof(fixed)) == 0);
+
+    const OperationSlots& slots = SlotsOf(created);
+    const void* const vtablePointer = created->m_base.m_vptr;
+    Require(!slots.isIdentity(created) && slots.isAffectedByTransformOrigin(created) && !slots.isRepresentableIn2D(created));
+    WebCore::TransformationMatrix applied;
+    Require(!slots.apply(created, applied, WebCore::FloatSize{}));
+    WebCore::TransformationMatrix expected;
+    _ZN7WebCore20TransformationMatrix16applyPerspectiveEd(&expected, 500.0);
+    Require(std::memcmp(&applied, &expected, sizeof(applied)) == 0);
+    Require(slots.equals(created, created->m_base));
+
+    WebCore::TransformOperation* cloned = nullptr;
+    Require(slots.clone(&cloned, created) == &cloned);
+    auto* copy = reinterpret_cast<WebCore::PerspectiveTransformOperation*>(cloned);
+    Require(copy != nullptr && copy != created);
+    Require(_ZN3WTF14fastMallocSizeEPKv(copy) == sizeof(WebCore::PerspectiveTransformOperation));
+    Require(copy->m_base.m_vptr == created->m_base.m_vptr && copy->m_base.m_refCount == 1 && copy->m_base.m_type == PerspectiveType);
+    Require(std::memcmp(&copy->m_p, &fixed, sizeof(fixed)) == 0);
+    Require(slots.equals(created, copy->m_base) && slots.equals(copy, created->m_base));
+    created->m_base.m_refCount = 7;
+    WebCore::TransformOperation* second = nullptr;
+    _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(&second, created);
+    Require(second->m_refCount == 1);
+    SlotsOf(reinterpret_cast<WebCore::PerspectiveTransformOperation*>(second)).deletingDestructor(reinterpret_cast<WebCore::PerspectiveTransformOperation*>(second));
+
+    WebCore::TransformOperation* blended = nullptr;
+    Require(ThrowsNotImplemented([&] { slots.blend(&blended, created, nullptr, 0.5, false); }));
+    Require(ThrowsNotImplemented([&] { slots.dump(created, nullptr); }));
+
+    slots.completeDestructor(copy);
+    Require(copy->m_base.m_type == PerspectiveType && std::memcmp(&copy->m_p, &fixed, sizeof(fixed)) == 0);
+    slots.deletingDestructor(copy);
+    _ZN7WebCore29PerspectiveTransformOperationD0Ev(created);
+
+    for (const auto construct : {&_ZN7WebCore29PerspectiveTransformOperationC1ERKNS_6LengthE, &_ZN7WebCore29PerspectiveTransformOperationC2ERKNS_6LengthE}) {
+        alignas(8) unsigned char storage[sizeof(WebCore::PerspectiveTransformOperation)];
+        std::memset(storage, 0xA5, sizeof(storage));
+        auto* op = reinterpret_cast<WebCore::PerspectiveTransformOperation*>(storage);
+        const WebCore::LegacyLength percent = Legacy(50, WebCore::LegacyLengthType::Percent);
+        construct(op, &percent);
+        Require(op->m_base.m_vptr == vtablePointer);
+        Require(op->m_base.m_refCount == 1 && op->m_base.m_type == PerspectiveType);
+        Require(std::memcmp(&op->m_p, &percent, sizeof(percent)) == 0);
+        Require(AppliesPerspective(*op, 0.5));
+        _ZN7WebCore29PerspectiveTransformOperationD1Ev(op);
+        _ZN7WebCore29PerspectiveTransformOperationD2Ev(op);
+        Require(op->m_base.m_refCount == 1 && std::memcmp(&op->m_p, &percent, sizeof(percent)) == 0);
+    }
+
+    const WebCore::LegacyLength calculated = Legacy(3, WebCore::LegacyLengthType::Calculated);
+    WebCore::PerspectiveTransformOperation* untouched = reinterpret_cast<WebCore::PerspectiveTransformOperation*>(std::uintptr_t{0x1234});
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperation6createERKNS_6LengthE(&untouched, &calculated); }));
+    Require(untouched == reinterpret_cast<WebCore::PerspectiveTransformOperation*>(std::uintptr_t{0x1234}));
+    alignas(8) unsigned char raw[sizeof(WebCore::PerspectiveTransformOperation)];
+    std::memset(raw, 0xA5, sizeof(raw));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationC1ERKNS_6LengthE(reinterpret_cast<WebCore::PerspectiveTransformOperation*>(raw), &calculated); }));
+    Require(raw[0] == 0xA5 && raw[23] == 0xA5);
+    WebCore::PerspectiveTransformOperation holdsCalculated = Make(calculated);
+    WebCore::TransformOperation* none = nullptr;
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(&none, &holdsCalculated); }));
+    Require(none == nullptr);
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationD1Ev(&holdsCalculated); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationD2Ev(&holdsCalculated); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationD0Ev(&holdsCalculated); }));
+
+    WebCore::PerspectiveTransformOperation stack = Make(fixed);
+    Require(ThrowsInvalidArgument([&] { _ZN7WebCore29PerspectiveTransformOperation6createERKNS_6LengthE(nullptr, &fixed); }));
+    Require(ThrowsInvalidArgument([&] { _ZN7WebCore29PerspectiveTransformOperation6createERKNS_6LengthE(&untouched, nullptr); }));
+    Require(ThrowsInvalidArgument([&] { _ZN7WebCore29PerspectiveTransformOperationC1ERKNS_6LengthE(nullptr, &fixed); }));
+    Require(ThrowsInvalidArgument([&] { _ZN7WebCore29PerspectiveTransformOperationC2ERKNS_6LengthE(&stack, nullptr); }));
+    Require(ThrowsInvalidArgument([] { _ZN7WebCore29PerspectiveTransformOperationD1Ev(nullptr); }));
+    Require(ThrowsInvalidArgument([] { _ZN7WebCore29PerspectiveTransformOperationD2Ev(nullptr); }));
+    Require(ThrowsInvalidArgument([] { _ZN7WebCore29PerspectiveTransformOperationD0Ev(nullptr); }));
+    Require(ThrowsInvalidArgument([&] { _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(nullptr, &stack); }));
+    Require(ThrowsInvalidArgument([&] { _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(&none, nullptr); }));
+}
+
 int main() {
     TestIdentityQueries();
     TestPerspective();
     TestApply();
     TestEquality();
     TestLegacyByteLayout();
+    TestLifecycle();
     return 0;
 }

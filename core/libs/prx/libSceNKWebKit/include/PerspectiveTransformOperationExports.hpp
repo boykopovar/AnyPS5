@@ -30,6 +30,13 @@ static_assert(offsetof(PerspectiveTransformOperation, m_p) == 16);
 
 extern "C" {
 
+WebCore::PerspectiveTransformOperation** APS5_VABI _ZN7WebCore29PerspectiveTransformOperation6createERKNS_6LengthE(WebCore::PerspectiveTransformOperation** result, const WebCore::LegacyLength* p);
+void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationC1ERKNS_6LengthE(WebCore::PerspectiveTransformOperation* self, const WebCore::LegacyLength* p);
+void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationC2ERKNS_6LengthE(WebCore::PerspectiveTransformOperation* self, const WebCore::LegacyLength* p);
+void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationD0Ev(WebCore::PerspectiveTransformOperation* self);
+void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationD1Ev(WebCore::PerspectiveTransformOperation* self);
+void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationD2Ev(WebCore::PerspectiveTransformOperation* self);
+WebCore::TransformOperation** APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(WebCore::TransformOperation** result, const WebCore::PerspectiveTransformOperation* self);
 bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation10isIdentityEv(const WebCore::PerspectiveTransformOperation* self);
 bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation27isAffectedByTransformOriginEv(const WebCore::PerspectiveTransformOperation* self);
 bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation19isRepresentableIn2DEv(const WebCore::PerspectiveTransformOperation* self);

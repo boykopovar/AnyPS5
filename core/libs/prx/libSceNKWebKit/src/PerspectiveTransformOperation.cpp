@@ -53,7 +53,12 @@
 #include "prx/libSceNKWebKit/include/PerspectiveTransformOperationExports.hpp"
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceNKWebKit/include/LegacyExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
+
+#include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -81,9 +86,106 @@ float PerspectiveValue(const WebCore::PerspectiveTransformOperation* self, const
     }
 }
 
+constexpr std::uint32_t PerspectiveOperationType = 19;
+
+struct OperationVtable {
+    void (APS5_VABI* completeDestructor)(WebCore::PerspectiveTransformOperation*);
+    void (APS5_VABI* deletingDestructor)(WebCore::PerspectiveTransformOperation*);
+    WebCore::TransformOperation** (APS5_VABI* clone)(WebCore::TransformOperation**, const WebCore::PerspectiveTransformOperation*);
+    bool (APS5_VABI* equals)(const WebCore::PerspectiveTransformOperation*, const WebCore::TransformOperation&);
+    bool (APS5_VABI* isIdentity)(const WebCore::PerspectiveTransformOperation*);
+    bool (APS5_VABI* apply)(const WebCore::PerspectiveTransformOperation*, WebCore::TransformationMatrix&, const WebCore::FloatSize&);
+    int (APS5_VABI* blend)();
+    bool (APS5_VABI* isAffectedByTransformOrigin)(const WebCore::PerspectiveTransformOperation*);
+    bool (APS5_VABI* isRepresentableIn2D)(const WebCore::PerspectiveTransformOperation*);
+    int (APS5_VABI* dump)();
+};
+
+struct OperationVtableStorage {
+    std::ptrdiff_t offsetToTop;
+    const void* typeInfo;
+    OperationVtable dispatch;
+};
+
+const OperationVtableStorage PerspectiveVtable = {
+    0,
+    nullptr,
+    {
+        &_ZN7WebCore29PerspectiveTransformOperationD1Ev,
+        &_ZN7WebCore29PerspectiveTransformOperationD0Ev,
+        &_ZNK7WebCore29PerspectiveTransformOperation5cloneEv,
+        &_ZNK7WebCore29PerspectiveTransformOperationeqERKNS_18TransformOperationE,
+        &_ZNK7WebCore29PerspectiveTransformOperation10isIdentityEv,
+        &_ZNK7WebCore29PerspectiveTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE,
+        &_ZN7WebCore29PerspectiveTransformOperation5blendEPKNS_18TransformOperationEdb,
+        &_ZNK7WebCore29PerspectiveTransformOperation27isAffectedByTransformOriginEv,
+        &_ZNK7WebCore29PerspectiveTransformOperation19isRepresentableIn2DEv,
+        &_ZNK7WebCore29PerspectiveTransformOperation4dumpERN3WTF10TextStreamE,
+    },
+};
+
+void Construct(WebCore::PerspectiveTransformOperation* self, const LegacyLength* p, const char* function) {
+    if (!self) throw std::invalid_argument("WebCore::PerspectiveTransformOperation: null this");
+    if (!p) throw std::invalid_argument("WebCore::PerspectiveTransformOperation: null length");
+    if (p->m_type == LegacyLengthType::Calculated) NotImplemented_nid_no_patch(function);
+    const LegacyLength length = *p;
+    std::memset(self, 0, sizeof(*self));
+    self->m_base.m_vptr = const_cast<OperationVtable*>(&PerspectiveVtable.dispatch);
+    self->m_base.m_refCount = 1;
+    self->m_base.m_type = PerspectiveOperationType;
+    self->m_p = length;
+}
+
+WebCore::PerspectiveTransformOperation* Allocate(const LegacyLength* p, const char* function) {
+    if (!p) throw std::invalid_argument("WebCore::PerspectiveTransformOperation: null length");
+    if (p->m_type == LegacyLengthType::Calculated) NotImplemented_nid_no_patch(function);
+    auto* operation = static_cast<WebCore::PerspectiveTransformOperation*>(_ZN3WTF10fastMallocEm(sizeof(WebCore::PerspectiveTransformOperation)));
+    Construct(operation, p, function);
+    return operation;
+}
+
+void Destroy(WebCore::PerspectiveTransformOperation* self, const char* function) {
+    if (!self) throw std::invalid_argument("WebCore::PerspectiveTransformOperation: null this");
+    if (self->m_p.m_type == LegacyLengthType::Calculated) NotImplemented_nid_no_patch(function);
+}
+
 }
 
 extern "C" {
+
+WebCore::PerspectiveTransformOperation** APS5_VABI _ZN7WebCore29PerspectiveTransformOperation6createERKNS_6LengthE(WebCore::PerspectiveTransformOperation** result, const LegacyLength* p) {
+    if (!result) throw std::invalid_argument("WebCore::PerspectiveTransformOperation::create: null result");
+    *result = Allocate(p, __func__);
+    return result;
+}
+
+void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationC1ERKNS_6LengthE(WebCore::PerspectiveTransformOperation* self, const LegacyLength* p) {
+    Construct(self, p, __func__);
+}
+
+void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationC2ERKNS_6LengthE(WebCore::PerspectiveTransformOperation* self, const LegacyLength* p) {
+    Construct(self, p, __func__);
+}
+
+void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationD1Ev(WebCore::PerspectiveTransformOperation* self) {
+    Destroy(self, __func__);
+}
+
+void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationD2Ev(WebCore::PerspectiveTransformOperation* self) {
+    Destroy(self, __func__);
+}
+
+void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationD0Ev(WebCore::PerspectiveTransformOperation* self) {
+    Destroy(self, __func__);
+    _ZN3WTF8fastFreeEPv(self);
+}
+
+WebCore::TransformOperation** APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(WebCore::TransformOperation** result, const WebCore::PerspectiveTransformOperation* self) {
+    if (!result) throw std::invalid_argument("WebCore::PerspectiveTransformOperation::clone: null result");
+    if (!self) throw std::invalid_argument("WebCore::PerspectiveTransformOperation::clone: null this");
+    *result = &Allocate(&self->m_p, __func__)->m_base;
+    return result;
+}
 
 bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation10isIdentityEv(const WebCore::PerspectiveTransformOperation* self) {
     return !PerspectiveValue(self, __func__);
