@@ -54,8 +54,8 @@ def main():
         return
     relinker = Path(sys.argv[1]).resolve()
     for sce in (False, True):
-        system, magic, result, _ = next(outputs(relinker, sce, JUMP_SLOT_ADDEND, 0))
-        assert result.returncode == 2 and REJECTED in result.stderr, (sce, system, result.returncode, result.stdout, result.stderr)
+        for system, magic, result, _ in outputs(relinker, sce, JUMP_SLOT_ADDEND, 0):
+            assert result.returncode == 2 and REJECTED in result.stderr, (sce, system, result.returncode, result.stdout, result.stderr)
     for sce in (False, True):
         for system, magic, result, artifact in outputs(relinker, sce, 0, SLOT_ADDEND):
             assert result.returncode == 0, (sce, system, result.stdout, result.stderr)
