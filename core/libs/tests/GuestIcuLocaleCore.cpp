@@ -130,6 +130,7 @@ int main() {
         {"i-default", "en"}, {"i-hakka_MT_XEMXIJA", "i-hakka_MT_XEMXIJA"}, {"x-piglatin_ML.MBE", "x-piglatin_ML.MBE"},
         {"x-elmer", ""}, {"en-a-bbb-x-foo", "en"}, {"i-klingon@currency=EUR", "i-klingon"},
         {"x-private@currency=EUR", "x-private"}, {"x_foo", "x-foo"}, {"i-klingon.utf8", "i-klingon.utf8"},
+        {"zh_YUE", "zh_YUE"}, {"art_LOJBAN", "art__LOJBAN"},
     });
     Check(uloc_canonicalize, false, {
         {"EN-us", "en_US"}, {"eN_LatN_us", "en_Latn_US"},
@@ -146,6 +147,11 @@ int main() {
         {"sr-Latn-RS-a-bbb", "sr_Latn_RS@a=bbb"}, {"x-elmer", "@x=elmer"},
         {"en-a-bbb-x-foo", "en@a=bbb;x=foo"}, {"i-klingon@currency=EUR", "i-klingon@currency=EUR"},
         {"x_foo", "x-foo"},
+        {"zh_YUE", "yue"}, {"zh-yue", "yue"}, {"ZH_gan", "gan"}, {"zh_MIN_NAN", "nan"}, {"zh_WUU", "wuu"},
+        {"zh_GUOYU", "zh"}, {"zh__HAKKA", "hak"}, {"zh_XIANG", "hsn"}, {"art_LOJBAN", "jbo"},
+        {"art-lojban", "jbo"}, {"hy_AREVELA", "hy"}, {"hy__AREVMDA", "hyw"}, {"zh_YUE.utf8", "yue"},
+        {"zh_min_nan@collation=pinyin", "nan@collation=pinyin"}, {"zh_Hant_YUE", "zh_Hant_YUE"},
+        {"zh_YUE_FOO", "zh_YUE_FOO"}, {"zh_MIN", "zh_MIN"}, {"yue", "yue"},
     });
     CheckLongLanguageTag();
     CheckKeyword("en_US@currency=USD", "currency", "USD");
