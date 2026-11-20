@@ -1271,21 +1271,23 @@ int APS5_VABI sceNgs2VoiceRunCommands(uintptr_t voice_handle, const Ngs2VoiceCom
     if (voice.rack->system == nullptr && !voice.pendingControls.empty()) voice.ApplyPendingControls();
     try {
         if (commands == nullptr && num_commands != 0) APS5_INVALID_ARG_EX;
+        std::vector<Ngs2VoiceCommand> localCommands(num_commands);
+        if (num_commands != 0 && !ReadGuestBytes(localCommands.data(), commands, num_commands * sizeof(Ngs2VoiceCommand))) APS5_INVALID_ARG_EX;
         const auto isVolume = [](const Ngs2VoiceCommand& command) { return (command.id & 0xffffff) == COMMAND_PORT_VOLUME; };
         const auto badPort = [&](const Ngs2VoiceCommand& command) { return isVolume(command) && (command.id >> 24) >= voice.ports.size(); };
-        if (voice.ports.size() == DEFAULT_MAX_PORTS && std::any_of(commands, commands + num_commands, badPort) && std::all_of(commands, commands + num_commands, isVolume)) return SCE_NGS2_ERROR_INVALID_VOICE_OUTPUT_INDEX;
+        if (voice.ports.size() == DEFAULT_MAX_PORTS && std::any_of(localCommands.begin(), localCommands.end(), badPort) && std::all_of(localCommands.begin(), localCommands.end(), isVolume)) return SCE_NGS2_ERROR_INVALID_VOICE_OUTPUT_INDEX;
         if (DeferringControls(voice)) {
             if (num_commands > voice.pendingControls.max_size() - voice.pendingControls.size()) throw std::length_error("NGS2: too many buffered voice commands");
             std::vector<Ngs2PendingControl> captured;
             captured.reserve(num_commands);
-            for (std::size_t i = 0; i < num_commands; ++i) captured.push_back(CaptureCommandControl(voice, commands[i]));
+            for (std::size_t i = 0; i < num_commands; ++i) captured.push_back(CaptureCommandControl(voice, localCommands[i]));
             voice.pendingControls.reserve(voice.pendingControls.size() + captured.size());
             static_assert(std::is_nothrow_move_constructible_v<Ngs2PendingControl>);
             for (auto& control : captured) EnqueueControl(voice, std::move(control));
             return SCE_NGS2_OK;
         }
         for (std::size_t i = 0; i < num_commands; i++) {
-            const auto& command = commands[i];
+            const auto& command = localCommands[i];
             const std::uint32_t index = command.id >> 24;
             const std::uint32_t id = command.id & 0xffffff;
             if (id == COMMAND_EVENT) {
@@ -1484,7 +1486,10 @@ int APS5_VABI sceNgs2VoiceGetMatrixInfo(uintptr_t voice_handle, uint32_t matrix_
         if (!WriteGuest(info, Ngs2VoiceMatrixInfo{})) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
         return SCE_NGS2_OK;
     }
-    if (!WriteGuest(&info->num_levels, static_cast<std::uint32_t>(levels->size())) || !WriteGuestBytes(info->levels, levels->data(), levels->size() * sizeof(info->levels[0]))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    Ngs2VoiceMatrixInfo local{};
+    local.num_levels = static_cast<std::uint32_t>(levels->size());
+    std::memcpy(local.levels, levels->data(), levels->size() * sizeof(local.levels[0]));
+    if (!WriteGuestBytes(info, &local, sizeof(std::uint32_t) + levels->size() * sizeof(local.levels[0]))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
