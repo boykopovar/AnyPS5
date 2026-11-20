@@ -692,7 +692,12 @@ int APS5_VABI system_nid_postfix(const char* command) {
     return command == nullptr ? 1 : shellNotExecuted;
 }
 
-#ifndef _WIN32
+#ifdef _WIN32
+static KernelTimeval TimevalFromHundredNanoseconds(std::uint64_t ticks) {
+    const std::uint64_t micros = ticks / 10ULL;
+    return KernelTimeval{static_cast<std::int64_t>(micros / 1000000ULL), static_cast<std::int64_t>(micros % 1000000ULL)};
+}
+#else
 static GuestResourceUsage ResourceUsage(const struct rusage& native) {
     GuestResourceUsage result{};
     result.ru_utime.tv_sec = static_cast<std::int64_t>(native.ru_utime.tv_sec);
@@ -728,7 +733,8 @@ int WaitProcess_nid_no_patch(int pid, int* status, int options, GuestResourceUsa
     }
 #ifdef _WIN32
     int encoded = 0;
-    const std::int64_t reaped = WaitChildProcess_nid_no_patch(pid, static_cast<unsigned>(options), &encoded, usage != nullptr);
+    ChildProcessTimes times{};
+    const std::int64_t reaped = WaitChildProcess_nid_no_patch(pid, static_cast<unsigned>(options), &encoded, usage != nullptr ? &times : nullptr);
     if (reaped == -2) {
         *__error_nid_postfix() = errnoNoChild;
         return -1;
@@ -738,6 +744,15 @@ int WaitProcess_nid_no_patch(int pid, int* status, int options, GuestResourceUsa
     if (status != nullptr && !WriteGuest(status, &encoded, sizeof(encoded))) {
         *__error_nid_postfix() = guestFault;
         return -1;
+    }
+    if (usage != nullptr) {
+        GuestResourceUsage resources{};
+        resources.ru_utime = TimevalFromHundredNanoseconds(times.user);
+        resources.ru_stime = TimevalFromHundredNanoseconds(times.kernel);
+        if (!WriteGuest(usage, &resources, sizeof(resources))) {
+            *__error_nid_postfix() = guestFault;
+            return -1;
+        }
     }
     return static_cast<int>(reaped);
 #else
