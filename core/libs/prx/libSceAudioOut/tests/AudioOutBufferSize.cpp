@@ -86,6 +86,14 @@ void RunInvalidFormat() {
     Require(opened == 0, "an invalid format opened an audio device");
 }
 
+void RunAnyIndex() {
+    for (const int index : {1, 2, 255, -1}) {
+        const int handle = sceAudioOutOpen(0, 0, index, 512, 48000, 0);
+        Require(handle > 0, "a port with a nonzero index did not open");
+        Require(sceAudioOutClose(handle) == 0, "a port with a nonzero index did not close");
+    }
+}
+
 void RunInvalidSampleRate() {
     constexpr int expectedError = -2144993272;
     Require(sceAudioOutOpen(0, 0, 0, 512, 0, 0) == expectedError, "sample rate 0 did not return SCE_AUDIO_OUT_ERROR_INVALID_PARAM");
@@ -132,6 +140,7 @@ int main(int argc, char** argv) {
         else if (mode == "virtual_overflow") RunVirtualOverflow();
         else if (mode == "invalid_format") RunInvalidFormat();
         else if (mode == "invalid_sample_rate") RunInvalidSampleRate();
+        else if (mode == "any_index") RunAnyIndex();
         else Require(false, "invalid buffer size mode");
         std::puts("audio out buffer size tests passed");
         return 0;

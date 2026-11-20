@@ -1,5 +1,6 @@
 #include "prx/libSceSysUtil/include/Api.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -25,10 +26,13 @@ int APS5_VABI sceSysUtilSendSystemNotificationWithText(int32_t type, const char*
     std::memcpy(request.data(), &TextNotificationKind, sizeof(TextNotificationKind));
     std::memcpy(request.data() + TypeOffset, &type, sizeof(type));
     if (message != nullptr) {
+        const int savedErrno = errno;
         std::size_t length = 0;
         char c = 0;
         while (length < TextLimit) {
-            if (!GuestCopyIn_nid_no_patch(&c, message + length, sizeof(c))) {
+            const bool copied = GuestCopyIn_nid_no_patch(&c, message + length, sizeof(c));
+            errno = savedErrno;
+            if (!copied) {
                 return SCE_KERNEL_ERROR_EFAULT;
             }
             if (c == '\0') break;

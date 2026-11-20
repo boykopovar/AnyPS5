@@ -1,0 +1,441 @@
+#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "../src/WtfTextAbi.hpp"
+#include <cstddef>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <new>
+#include <stdexcept>
+#include <string>
+
+static void Check(bool condition, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "Check failed at line %d\n", line);
+        std::abort();
+    }
+}
+#define Require(cond) Check((cond), __LINE__)
+
+using NKWebKit::JsonAbi::Array;
+using NKWebKit::JsonAbi::ArrayBase;
+using NKWebKit::JsonAbi::Value;
+using NKWebKit::JsonAbi::ValueType;
+using NKWebKit::WtfAbi::String;
+
+static std::string Serialize(const Value* value) {
+    NKWebKit::JsonAbi::StringBuilder output{String(), nullptr, nullptr, false, true, 0, true};
+    if (!value || !value->vptr || !value->vptr->writeJSON) throw std::invalid_argument("invalid JSON value");
+    value->vptr->writeJSON(value, output);
+    auto* text = output.buffer ? output.buffer : output.string.impl;
+    std::string result;
+    if (text && output.length) {
+        if (output.is8Bit) {
+            auto* chars = output.buffer ? output.characters8 : static_cast<const unsigned char*>(text->data);
+            result.assign(reinterpret_cast<const char*>(chars), static_cast<unsigned>(output.length));
+        } else {
+            auto* chars = output.buffer ? output.characters16 : static_cast<const char16_t*>(text->data);
+            for (unsigned i = 0; i < static_cast<unsigned>(output.length); ++i) {
+                Require(chars[i] <= 0x7f);
+                result.push_back(static_cast<char>(chars[i]));
+            }
+        }
+    }
+    NKWebKit::WtfAbi::Release(output.buffer);
+    NKWebKit::WtfAbi::Release(output.string.impl);
+    return result;
+}
+
+static void TestValueNull() {
+    auto v = _ZN3WTF8JSONImpl5Value4nullEv();
+    Require(v.Get() != nullptr);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(v.Get()) == ValueType::Null);
+    Require(_ZNK3WTF8JSONImpl5Value6isNullEv(v.Get()));
+
+    double outDouble = 0.0;
+    Require(!_ZNK3WTF8JSONImpl5Value8asDoubleERd(v.Get(), outDouble));
+
+    int outInt = 0;
+    Require(!_ZNK3WTF8JSONImpl5Value9asIntegerERi(v.Get(), outInt));
+
+    Require(_ZNK3WTF8JSONImpl5Value10memoryCostEv(v.Get()) == sizeof(Value*));
+}
+
+static void TestValueBoolean() {
+    auto bTrue = _ZN3WTF8JSONImpl5Value6createEb(true);
+    Require(bTrue.Get() != nullptr);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(bTrue.Get()) == ValueType::Boolean);
+    Require(!_ZNK3WTF8JSONImpl5Value6isNullEv(bTrue.Get()));
+
+    double outDouble = 0.0;
+    Require(!_ZNK3WTF8JSONImpl5Value8asDoubleERd(bTrue.Get(), outDouble));
+
+    int outInt = 0;
+    Require(!_ZNK3WTF8JSONImpl5Value9asIntegerERi(bTrue.Get(), outInt));
+
+    auto bFalse = _ZN3WTF8JSONImpl5Value6createEb(false);
+    Require(bFalse.Get() != nullptr);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(bFalse.Get()) == ValueType::Boolean);
+    Require(!_ZNK3WTF8JSONImpl5Value6isNullEv(bFalse.Get()));
+}
+
+static void TestValueInteger() {
+    auto v = _ZN3WTF8JSONImpl5Value6createEi(42);
+    Require(v.Get() != nullptr);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(v.Get()) == ValueType::Integer);
+    Require(!_ZNK3WTF8JSONImpl5Value6isNullEv(v.Get()));
+
+    int outInt = 0;
+    Require(_ZNK3WTF8JSONImpl5Value9asIntegerERi(v.Get(), outInt));
+    Require(outInt == 42);
+
+    double outDouble = 0.0;
+    Require(_ZNK3WTF8JSONImpl5Value8asDoubleERd(v.Get(), outDouble));
+    Require(outDouble == 42.0);
+
+    auto vNeg = _ZN3WTF8JSONImpl5Value6createEi(-100);
+    outInt = 0;
+    Require(_ZNK3WTF8JSONImpl5Value9asIntegerERi(vNeg.Get(), outInt));
+    Require(outInt == -100);
+
+    auto vZero = _ZN3WTF8JSONImpl5Value6createEi(0);
+    outInt = 1;
+    Require(_ZNK3WTF8JSONImpl5Value9asIntegerERi(vZero.Get(), outInt));
+    Require(outInt == 0);
+}
+
+static void TestValueDouble() {
+    auto v = _ZN3WTF8JSONImpl5Value6createEd(3.14);
+    Require(v.Get() != nullptr);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(v.Get()) == ValueType::Double);
+    Require(!_ZNK3WTF8JSONImpl5Value6isNullEv(v.Get()));
+
+    double outDouble = 0.0;
+    Require(_ZNK3WTF8JSONImpl5Value8asDoubleERd(v.Get(), outDouble));
+    Require(outDouble == 3.14);
+
+    int outInt = 0;
+    Require(_ZNK3WTF8JSONImpl5Value9asIntegerERi(v.Get(), outInt));
+    Require(outInt == 3);
+
+    auto vNeg = _ZN3WTF8JSONImpl5Value6createEd(-2.718);
+    outDouble = 0.0;
+    Require(_ZNK3WTF8JSONImpl5Value8asDoubleERd(vNeg.Get(), outDouble));
+    Require(outDouble == -2.718);
+}
+
+static void TestValueString() {
+    String str = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>("test"), 4U);
+    auto v = _ZN3WTF8JSONImpl5Value6createERKNS_6StringE(str);
+    Require(v.Get() != nullptr);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(v.Get()) == ValueType::String);
+    Require(!_ZNK3WTF8JSONImpl5Value6isNullEv(v.Get()));
+
+    double outDouble = 0.0;
+    Require(!_ZNK3WTF8JSONImpl5Value8asDoubleERd(v.Get(), outDouble));
+
+    int outInt = 0;
+    Require(!_ZNK3WTF8JSONImpl5Value9asIntegerERi(v.Get(), outInt));
+
+    Require(_ZNK3WTF8JSONImpl5Value10memoryCostEv(v.Get()) == sizeof(Value*) + sizeof(NKWebKit::WtfAbi::StringImpl) + 4U);
+
+    String emptyStr = _ZN3WTF10StringImpl6createEPKhj(nullptr, 0U);
+    auto vEmpty = _ZN3WTF8JSONImpl5Value6createERKNS_6StringE(emptyStr);
+    Require(_ZNK3WTF8JSONImpl5Value10memoryCostEv(vEmpty.Get()) == sizeof(Value*) + sizeof(NKWebKit::WtfAbi::StringImpl));
+
+    String nullStr;
+    nullStr.impl = nullptr;
+    auto vNullStr = _ZN3WTF8JSONImpl5Value6createERKNS_6StringE(nullStr);
+    Require(_ZNK3WTF8JSONImpl5Value10memoryCostEv(vNullStr.Get()) == sizeof(Value*));
+}
+
+static void TestValueConstructorsAndDestructors() {
+    alignas(alignof(Value)) unsigned char buf[sizeof(Value)];
+    auto* p = reinterpret_cast<Value*>(buf);
+
+    _ZN3WTF8JSONImpl5ValueC1Ev(p);
+    Require(_ZNK3WTF8JSONImpl5Value6isNullEv(p));
+    _ZN3WTF8JSONImpl5ValueD2Ev(p);
+
+    _ZN3WTF8JSONImpl5ValueC2Ev(p);
+    Require(_ZNK3WTF8JSONImpl5Value6isNullEv(p));
+    _ZN3WTF8JSONImpl5ValueD1Ev(p);
+
+    _ZN3WTF8JSONImpl5ValueC1ENS1_4TypeE(p, ValueType::Double);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(p) == ValueType::Double);
+    _ZN3WTF8JSONImpl5ValueD2Ev(p);
+
+    _ZN3WTF8JSONImpl5ValueC2ENS1_4TypeE(p, ValueType::Integer);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(p) == ValueType::Integer);
+    _ZN3WTF8JSONImpl5ValueD1Ev(p);
+
+    _ZN3WTF8JSONImpl5ValueC1Eb(p, true);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(p) == ValueType::Boolean);
+    _ZN3WTF8JSONImpl5ValueD2Ev(p);
+
+    _ZN3WTF8JSONImpl5ValueC2Eb(p, false);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(p) == ValueType::Boolean);
+    _ZN3WTF8JSONImpl5ValueD1Ev(p);
+
+    _ZN3WTF8JSONImpl5ValueC1Ei(p, 123);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(p) == ValueType::Integer);
+    int valI = 0;
+    Require(_ZNK3WTF8JSONImpl5Value9asIntegerERi(p, valI));
+    Require(valI == 123);
+    _ZN3WTF8JSONImpl5ValueD2Ev(p);
+
+    _ZN3WTF8JSONImpl5ValueC2Ei(p, -456);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(p) == ValueType::Integer);
+    Require(_ZNK3WTF8JSONImpl5Value9asIntegerERi(p, valI));
+    Require(valI == -456);
+    _ZN3WTF8JSONImpl5ValueD1Ev(p);
+
+    _ZN3WTF8JSONImpl5ValueC1Ed(p, 1.5);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(p) == ValueType::Double);
+    double valD = 0.0;
+    Require(_ZNK3WTF8JSONImpl5Value8asDoubleERd(p, valD));
+    Require(valD == 1.5);
+    _ZN3WTF8JSONImpl5ValueD2Ev(p);
+
+    _ZN3WTF8JSONImpl5ValueC2Ed(p, -2.5);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(p) == ValueType::Double);
+    Require(_ZNK3WTF8JSONImpl5Value8asDoubleERd(p, valD));
+    Require(valD == -2.5);
+    _ZN3WTF8JSONImpl5ValueD1Ev(p);
+
+    String str = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>("cstr"), 4U);
+    _ZN3WTF8JSONImpl5ValueC1ERKNS_6StringE(p, str);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(p) == ValueType::String);
+    _ZN3WTF8JSONImpl5ValueD2Ev(p);
+
+    _ZN3WTF8JSONImpl5ValueC2ERKNS_6StringE(p, str);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(p) == ValueType::String);
+    _ZN3WTF8JSONImpl5ValueD1Ev(p);
+
+    auto* heapVal = static_cast<Value*>(_ZN3WTF10fastMallocEm(sizeof(Value)));
+    _ZN3WTF8JSONImpl5ValueC1Ev(heapVal);
+    _ZN3WTF8JSONImpl5ValueD0Ev(heapVal);
+}
+
+static void TestArrayCreateAndPush() {
+    auto arr = _ZN3WTF8JSONImpl5Array6createEv();
+    Require(arr.Get() != nullptr);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(arr.Get()) == ValueType::Array);
+    Require(!_ZNK3WTF8JSONImpl5Value6isNullEv(arr.Get()));
+    Require(_ZN3WTF8JSONImpl9ArrayBase5beginEv(arr.Get()) == _ZN3WTF8JSONImpl9ArrayBase3endEv(arr.Get()));
+    Require(_ZNK3WTF8JSONImpl9ArrayBase5beginEv(arr.Get()) == nullptr);
+    Require(_ZNK3WTF8JSONImpl9ArrayBase10memoryCostEv(arr.Get()) == sizeof(Value*));
+
+    bool threw = false;
+    try {
+        _ZNK3WTF8JSONImpl9ArrayBase3getEm(arr.Get(), 0);
+    } catch (const std::out_of_range&) {
+        threw = true;
+    }
+    Require(threw);
+
+    String str = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>("item"), 4U);
+
+    _ZN3WTF8JSONImpl9ArrayBase11pushBooleanEb(arr.Get(), true);
+    _ZN3WTF8JSONImpl9ArrayBase11pushIntegerEi(arr.Get(), 99);
+    _ZN3WTF8JSONImpl9ArrayBase10pushDoubleEd(arr.Get(), 4.5);
+    _ZN3WTF8JSONImpl9ArrayBase10pushStringERKNS_6StringE(arr.Get(), str);
+
+    Require(_ZN3WTF8JSONImpl9ArrayBase3endEv(arr.Get()) - _ZN3WTF8JSONImpl9ArrayBase5beginEv(arr.Get()) == 4);
+    Require(_ZNK3WTF8JSONImpl9ArrayBase5beginEv(arr.Get()) == _ZN3WTF8JSONImpl9ArrayBase5beginEv(arr.Get()));
+
+    auto e0 = _ZNK3WTF8JSONImpl9ArrayBase3getEm(arr.Get(), 0);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(e0.Get()) == ValueType::Boolean);
+
+    auto e1 = _ZNK3WTF8JSONImpl9ArrayBase3getEm(arr.Get(), 1);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(e1.Get()) == ValueType::Integer);
+    int intVal = 0;
+    Require(_ZNK3WTF8JSONImpl5Value9asIntegerERi(e1.Get(), intVal));
+    Require(intVal == 99);
+
+    auto e2 = _ZNK3WTF8JSONImpl9ArrayBase3getEm(arr.Get(), 2);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(e2.Get()) == ValueType::Double);
+    double dblVal = 0.0;
+    Require(_ZNK3WTF8JSONImpl5Value8asDoubleERd(e2.Get(), dblVal));
+    Require(dblVal == 4.5);
+
+    auto e3 = _ZNK3WTF8JSONImpl9ArrayBase3getEm(arr.Get(), 3);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(e3.Get()) == ValueType::String);
+
+    threw = false;
+    try {
+        _ZNK3WTF8JSONImpl9ArrayBase3getEm(arr.Get(), 4);
+    } catch (const std::out_of_range&) {
+        threw = true;
+    }
+    Require(threw);
+
+    std::size_t expectedCost = sizeof(Value*) + sizeof(Value*) + sizeof(Value*) + sizeof(Value*) + (sizeof(Value*) + sizeof(NKWebKit::WtfAbi::StringImpl) + 4U);
+    Require(_ZNK3WTF8JSONImpl9ArrayBase10memoryCostEv(arr.Get()) == expectedCost);
+}
+
+static void TestWriteJSON() {
+    auto nullValue = _ZN3WTF8JSONImpl5Value4nullEv();
+    Require(Serialize(nullValue.Get()) == "null");
+
+    auto truth = _ZN3WTF8JSONImpl5Value6createEb(true);
+    auto falsity = _ZN3WTF8JSONImpl5Value6createEb(false);
+    Require(Serialize(truth.Get()) == "true");
+    Require(Serialize(falsity.Get()) == "false");
+
+    auto integer = _ZN3WTF8JSONImpl5Value6createEi(-42);
+    auto number = _ZN3WTF8JSONImpl5Value6createEd(1.25);
+    auto infinity = _ZN3WTF8JSONImpl5Value6createEd(std::numeric_limits<double>::infinity());
+    Require(Serialize(integer.Get()) == "-42");
+    Require(Serialize(number.Get()) == "1.25");
+    Require(Serialize(infinity.Get()) == "null");
+
+    String string = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>("a\"b\n"), 4U);
+    auto stringValue = _ZN3WTF8JSONImpl5Value6createERKNS_6StringE(string);
+    Require(Serialize(stringValue.Get()) == "\"a\\\"b\\n\"");
+
+    auto array = _ZN3WTF8JSONImpl5Array6createEv();
+    _ZN3WTF8JSONImpl9ArrayBase11pushBooleanEb(array.Get(), true);
+    _ZN3WTF8JSONImpl9ArrayBase11pushIntegerEi(array.Get(), 7);
+    _ZN3WTF8JSONImpl9ArrayBase10pushStringERKNS_6StringE(array.Get(), string);
+    Require(Serialize(array.Get()) == "[true,7,\"a\\\"b\\n\"]");
+    auto emptyArray = _ZN3WTF8JSONImpl5Array6createEv();
+    Require(Serialize(emptyArray.Get()) == "[]");
+}
+
+static void TestWriteJSONEscapesLikeUpstream() {
+    String markup = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>("<a>\x01\t\x7f\xe9"), 7U);
+    auto markupValue = _ZN3WTF8JSONImpl5Value6createERKNS_6StringE(markup);
+    Require(Serialize(markupValue.Get()) == "\"\\u003Ca\\u003E\\u0001\\t\\u007F\\u00E9\"");
+
+    const char16_t wide[] = {u'x', 0x20AC, 0xD83D, 0xDE00};
+    String wideString = _ZN3WTF10StringImpl6createEPKDsj(wide, 4U);
+    auto wideValue = _ZN3WTF8JSONImpl5Value6createERKNS_6StringE(wideString);
+    Require(Serialize(wideValue.Get()) == "\"x\\u20AC\\uD83D\\uDE00\"");
+
+    String nullString;
+    auto nullStringValue = _ZN3WTF8JSONImpl5Value6createERKNS_6StringE(nullString);
+    Require(Serialize(nullStringValue.Get()) == "\"\"");
+}
+
+static void TestWriteJSONNumbersAndNesting() {
+    auto negativeZero = _ZN3WTF8JSONImpl5Value6createEd(-0.0);
+    auto large = _ZN3WTF8JSONImpl5Value6createEd(1e21);
+    auto belowLarge = _ZN3WTF8JSONImpl5Value6createEd(123456789012345680000.0);
+    auto small = _ZN3WTF8JSONImpl5Value6createEd(1.5e-7);
+    auto aboveSmall = _ZN3WTF8JSONImpl5Value6createEd(0.000001);
+    auto huge = _ZN3WTF8JSONImpl5Value6createEd(-2.5e300);
+    Require(Serialize(negativeZero.Get()) == "0");
+    Require(Serialize(large.Get()) == "1e+21");
+    Require(Serialize(belowLarge.Get()) == "123456789012345680000");
+    Require(Serialize(small.Get()) == "1.5e-7");
+    Require(Serialize(aboveSmall.Get()) == "0.000001");
+    Require(Serialize(huge.Get()) == "-2.5e+300");
+
+    auto inner = _ZN3WTF8JSONImpl5Array6createEv();
+    _ZN3WTF8JSONImpl9ArrayBase10pushDoubleEd(inner.Get(), -0.0);
+    _ZN3WTF8JSONImpl9ArrayBase10pushDoubleEd(inner.Get(), 1e21);
+    auto empty = _ZN3WTF8JSONImpl5Array6createEv();
+    auto outer = _ZN3WTF8JSONImpl5Array6createEv();
+    _ZN3WTF8JSONImpl9ArrayBase11pushIntegerEi(outer.Get(), 1);
+    _ZN3WTF8JSONImpl9ArrayBase11pushBooleanEb(outer.Get(), false);
+    _ZN3WTF8JSONImpl9ArrayBase11pushBooleanEb(outer.Get(), false);
+    Require(outer->elements.size == 3U);
+    outer->elements.buffer[1] = NKWebKit::JsonAbi::Ref<Value>(inner);
+    outer->elements.buffer[2] = NKWebKit::JsonAbi::Ref<Value>(empty);
+    Require(Serialize(outer.Get()) == "[1,[0,1e+21],[]]");
+}
+
+static void TestArrayConstructorsAndDestructors() {
+    alignas(alignof(ArrayBase)) unsigned char buf[sizeof(ArrayBase)];
+    auto* p = reinterpret_cast<ArrayBase*>(buf);
+
+    _ZN3WTF8JSONImpl9ArrayBaseC1Ev(p);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(p) == ValueType::Array);
+    Require(_ZN3WTF8JSONImpl9ArrayBase5beginEv(p) == _ZN3WTF8JSONImpl9ArrayBase3endEv(p));
+    _ZN3WTF8JSONImpl9ArrayBaseD1Ev(p);
+
+    _ZN3WTF8JSONImpl9ArrayBaseC2Ev(p);
+    Require(_ZNK3WTF8JSONImpl5Value4typeEv(p) == ValueType::Array);
+    _ZN3WTF8JSONImpl9ArrayBaseD1Ev(p);
+
+    auto* heapArr = static_cast<ArrayBase*>(_ZN3WTF10fastMallocEm(sizeof(ArrayBase)));
+    _ZN3WTF8JSONImpl9ArrayBaseC1Ev(heapArr);
+    _ZN3WTF8JSONImpl9ArrayBaseD0Ev(heapArr);
+}
+
+static void TestNullPointerExceptions() {
+    bool threw = false;
+    try {
+        _ZNK3WTF8JSONImpl5Value4typeEv(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        _ZNK3WTF8JSONImpl5Value6isNullEv(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        double d = 0;
+        _ZNK3WTF8JSONImpl5Value8asDoubleERd(nullptr, d);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        int i = 0;
+        _ZNK3WTF8JSONImpl5Value9asIntegerERi(nullptr, i);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        _ZNK3WTF8JSONImpl5Value10memoryCostEv(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        _ZN3WTF8JSONImpl9ArrayBase11pushBooleanEb(nullptr, true);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        _ZNK3WTF8JSONImpl9ArrayBase3getEm(nullptr, 0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+int main() {
+    TestValueNull();
+    TestValueBoolean();
+    TestValueInteger();
+    TestValueDouble();
+    TestValueString();
+    TestValueConstructorsAndDestructors();
+    TestArrayCreateAndPush();
+    TestWriteJSON();
+    TestWriteJSONEscapesLikeUpstream();
+    TestWriteJSONNumbersAndNesting();
+    TestArrayConstructorsAndDestructors();
+    TestNullPointerExceptions();
+    return 0;
+}

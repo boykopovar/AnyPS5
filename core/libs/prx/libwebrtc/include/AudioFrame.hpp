@@ -7,6 +7,16 @@ constexpr std::size_t WebRtcAudioFrameMaxDataSizeSamples = 7680;
 constexpr std::int32_t WebRtcAudioFrameSpeechUndefined = 4;
 constexpr std::int32_t WebRtcAudioFrameVadUnknown = 2;
 constexpr std::int32_t WebRtcChannelLayoutNone = 0;
+constexpr std::int32_t WebRtcChannelLayoutUnsupported = 1;
+constexpr std::int32_t WebRtcChannelLayoutMono = 2;
+constexpr std::int32_t WebRtcChannelLayoutStereo = 3;
+constexpr std::int32_t WebRtcChannelLayoutSurround = 5;
+constexpr std::int32_t WebRtcChannelLayoutQuad = 8;
+constexpr std::int32_t WebRtcChannelLayout5_0 = 9;
+constexpr std::int32_t WebRtcChannelLayout5_1 = 10;
+constexpr std::int32_t WebRtcChannelLayout7_1 = 14;
+constexpr std::int32_t WebRtcChannelLayout6_1 = 23;
+constexpr std::size_t WebRtcAudioFrameMaxConcurrentChannels = 8;
 
 struct WebRtcAudioFrame {
     std::uint32_t timestamp;
@@ -44,3 +54,13 @@ static_assert(offsetof(WebRtcAudioFrame, muted) == 15432);
 static_assert(offsetof(WebRtcAudioFrame, channelLayout) == 15436);
 static_assert(offsetof(WebRtcAudioFrame, absoluteCaptureTimestampMs) == 15440);
 static_assert(offsetof(WebRtcAudioFrame, absoluteCaptureTimestampMsEngaged) == 15448);
+
+struct WebRtcInterleavedView {
+    std::size_t numChannels;
+    std::size_t samplesPerChannel;
+    const std::int16_t* data;
+    std::size_t size;
+};
+
+static_assert(sizeof(WebRtcInterleavedView) == 32);
+static_assert(offsetof(WebRtcInterleavedView, data) == 16);

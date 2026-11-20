@@ -33,8 +33,8 @@ void MutexCounts(int threads, int iterations, int holdSpins) {
             for (int i = 0; i < iterations; ++i) {
                 std::lock_guard lock(mutex);
                 const auto seen = counter;
-                for (volatile int spin = 0; spin < holdSpins; spin = spin + 1) {
-                }
+                volatile int spin = 0;
+                while (spin < holdSpins) spin = spin + 1;
                 counter = seen + 1;
             }
         });
@@ -93,6 +93,7 @@ void DeviceGate() {
             }
         });
     }
+    while (uses.load(std::memory_order_relaxed) == 0) std::this_thread::yield();
     for (int r = 0; r < 2; ++r) {
         threads.emplace_back([&] {
             for (int i = 0; i < 300; ++i) {

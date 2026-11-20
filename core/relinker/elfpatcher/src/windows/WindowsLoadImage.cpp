@@ -16,12 +16,12 @@ WindowsLoadImage::WindowsLoadImage(const std::vector<std::uint8_t>& source, cons
             continue;
         if (header.FileSize > header.MemorySize || header.Offset > source.size() || header.FileSize > source.size() - header.Offset)
             throw Domain::RelinkerException("Invalid PT_LOAD file range", header.Offset);
-        if (header.MemorySize == 0)
-            throw Domain::RelinkerException("Empty PT_LOAD segment", header.Offset);
         if (header.MappedAddress > std::numeric_limits<std::uint64_t>::max() - header.MemorySize)
             throw Domain::RelinkerException("PT_LOAD address overflow", header.MappedAddress);
         if ((header.Flags & ~7u) != 0)
             throw Domain::RelinkerException("Unsupported PT_LOAD permission flags", header.Offset);
+        if (header.MemorySize == 0)
+            continue;
         segments.push_back(header);
     }
     if (segments.empty())

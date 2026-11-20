@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace ShaderRecompiler {
@@ -79,7 +80,9 @@ std::uint32_t LoadWordInBounds(SpirvValueEmitContext& ctx, const MemoryResourceA
     const auto load = [&](std::uint32_t element) {
         const auto pointer = EmitMemoryElementPointer(state, resource, element);
         const auto value = state.module.AllocateId();
-        if (resource.memoryAccess != 0u) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, resource.memoryAccess);
+        static const bool atomicLoads = std::getenv("APS5_COHERENT_ATOMIC_LOADS") != nullptr;
+        if (resource.memoryAccess != 0u && atomicLoads) state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), value, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u));
+        else if (resource.memoryAccess != 0u) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, resource.memoryAccess);
         else state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
         return value;
     };
@@ -937,8 +940,58 @@ std::uint32_t Atomic32(SpirvValueEmitContext& ctx, const IrValue& inst, const Me
     });
 }
 
+template<typename TReplacement>
+std::uint32_t LockedBufferAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst, TReplacement&& replacement) {
+    auto& state = ctx.state;
+    static_cast<void>(BufferMemory(ctx, inst));
+    return EmitRuntimeBufferAtomicPair(ctx, inst, ActiveArgument(ctx, inst), [&](std::uint32_t low, std::uint32_t high) {
+        const auto load = [&](std::uint32_t pointer) {
+            const auto word = state.module.AllocateId();
+            state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), word, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone));
+            return word;
+        };
+        const auto lowWord = load(low);
+        const auto highWord = load(high);
+        const auto old = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, TypeU64(state), old, lowWord, highWord);
+        const auto next = Unary(state, spv::OpBitcast, TypeU64(state), replacement(Unary(state, spv::OpBitcast, TypeScalarU64(state), old)));
+        for (const auto [pointer, component] : {std::pair{low, 0u}, std::pair{high, 1u}}) {
+            const auto word = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), word, next, component);
+            state.module.AddFunction(spv::OpAtomicStore, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), word);
+        }
+        return old;
+    });
+}
+
+std::uint32_t AtomicNext64(SpirvEmitterState& state, std::uint32_t opcode, std::uint32_t old, std::uint32_t value) {
+    const auto u64 = TypeScalarU64(state);
+    const auto pick = [&](spv::Op compare) { return Select(state, u64, Binary(state, compare, TypeBool(state), value, old), value, old); };
+    switch (opcode) {
+    case spv::OpAtomicExchange: return value;
+    case spv::OpAtomicIAdd: return Binary(state, spv::OpIAdd, u64, old, value);
+    case spv::OpAtomicISub: return Binary(state, spv::OpISub, u64, old, value);
+    case spv::OpAtomicSMin: return pick(spv::OpSLessThan);
+    case spv::OpAtomicUMin: return pick(spv::OpULessThan);
+    case spv::OpAtomicSMax: return pick(spv::OpSGreaterThan);
+    case spv::OpAtomicUMax: return pick(spv::OpUGreaterThan);
+    case spv::OpAtomicAnd: return Binary(state, spv::OpBitwiseAnd, u64, old, value);
+    case spv::OpAtomicOr: return Binary(state, spv::OpBitwiseOr, u64, old, value);
+    case spv::OpAtomicXor: return Binary(state, spv::OpBitwiseXor, u64, old, value);
+    default: throw std::runtime_error("AtomicNext64: opcode has no 64-bit replacement");
+    }
+}
+
 std::uint32_t BufferAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
+    if (state.requirements.bufferAtomicLocks) {
+        const auto value = Unary(state, spv::OpBitcast, TypeScalarU64(state), ctx.Arg(inst, inst.ArgumentCount() - 2u));
+        if (inst.Opcode() == IrOpcode::BufferAtomicCmpSwap64) {
+            const auto desired = Unary(state, spv::OpBitcast, TypeScalarU64(state), ctx.Arg(inst, inst.ArgumentCount() - 3u));
+            return LockedBufferAtomic64(ctx, inst, [&](std::uint32_t old) { return Select(state, TypeScalarU64(state), Binary(state, spv::OpIEqual, TypeBool(state), old, value), desired, old); });
+        }
+        return LockedBufferAtomic64(ctx, inst, [&](std::uint32_t old) { return AtomicNext64(state, SpirvAtomicOpcode(inst.Opcode()), old, value); });
+    }
     static_cast<void>(BufferMemory(ctx, inst));
     if (state.requirements.bufferInt64AtomicsSplit) {
         if (!IsSplittableBufferAtomic64(&inst)) ctx.Fail(inst, "64-bit buffer atomic needs shaderBufferInt64Atomics");
@@ -1031,6 +1084,7 @@ std::uint32_t BufferFloatAtomic(SpirvValueEmitContext& ctx, const IrValue& inst,
 template<typename TReplacement>
 std::uint32_t BufferAtomic64Update(SpirvValueEmitContext& ctx, const IrValue& inst, TReplacement&& replacement) {
     auto& state = ctx.state;
+    if (state.requirements.bufferAtomicLocks) return LockedBufferAtomic64(ctx, inst, [&](std::uint32_t observed) { return replacement(observed); });
     static_cast<void>(BufferMemory(ctx, inst));
     return EmitRuntimeBufferAtomic(ctx, inst, 64u, ActiveArgument(ctx, inst), [&](std::uint32_t pointer) {
         const auto old = AtomicUpdateTyped(state, pointer, ResourceKind::Buffer, TypeScalarU64(state), [&](std::uint32_t observed) { return replacement(observed); });
@@ -1446,7 +1500,78 @@ std::uint32_t LockedLdsUpdate(SpirvEmitterState& state, std::uint32_t type, std:
 }
 
 template<typename TReplacement>
+std::uint32_t GdsAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst, TReplacement&& replacement) {
+    auto& state = ctx.state;
+    if (!state.requirements.gdsInt64Atomics || state.gdsU64Variable == 0u) {
+        ctx.Fail(inst, "64-bit GDS atomic requires its storage-buffer atomic view");
+    }
+    const auto& mem = SharedMemory(ctx, inst);
+    const auto type = TypeScalarU64(state);
+    return EmitValueOrDefaultIfCondition(state, ActiveArgument(ctx, inst), TypeU64(state), ConstantU64(state, 0u), [&]() {
+        const auto address = ByteAddress(ctx, inst, mem);
+        const auto index = Binary(state, spv::OpShiftRightLogical, TypeU32(state), address, ConstantU32(state, 2u));
+        const auto high = Binary(state, spv::OpIAdd, TypeU32(state), index, ConstantU32(state, 1u));
+        const auto resource = PrepareMemoryResourceAccess(state, mem);
+        const auto guestBounds = Binary(state, spv::OpULessThanEqual, TypeBool(state), address, ConstantU32(state, 0xfff8u));
+        const auto bounds = AndCondition(state, guestBounds, EmitMemoryElementInBounds(state, resource, high));
+        return EmitValueOrDefaultIfCondition(state, bounds, TypeU64(state), ConstantU64(state, 0u), [&]() {
+            const auto unaligned = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), address, ConstantU32(state, 7u)), ConstantU32(state, 0u));
+            EmitIfCondition(state, unaligned, [&] { RecordBdaFaultWords(state, address, ConstantU32(state, 0u), ConstantU32(state, 8u), ConstantU32(state, inst.Flags<MemoryFlags>().pc), BdaAbi::FaultReason::Unaligned); });
+            return EmitValueOrDefaultIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), unaligned), TypeU64(state), ConstantU64(state, 0u), [&]() {
+                const auto pointer = state.module.AllocateId();
+                state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassStorageBuffer, type), pointer, state.gdsU64Variable, ConstantU32(state, 0u), Binary(state, spv::OpShiftRightLogical, TypeU32(state), address, ConstantU32(state, 3u)));
+                spv::Op opcode;
+                switch (inst.Opcode()) {
+                case IrOpcode::SharedAtomicSwap64:
+                    opcode = spv::OpAtomicExchange;
+                    break;
+                case IrOpcode::SharedAtomicIAdd64:
+                    opcode = spv::OpAtomicIAdd;
+                    break;
+                case IrOpcode::SharedAtomicISub64:
+                    opcode = spv::OpAtomicISub;
+                    break;
+                case IrOpcode::SharedAtomicSMin64:
+                    opcode = spv::OpAtomicSMin;
+                    break;
+                case IrOpcode::SharedAtomicSMax64:
+                    opcode = spv::OpAtomicSMax;
+                    break;
+                case IrOpcode::SharedAtomicUMin64:
+                    opcode = spv::OpAtomicUMin;
+                    break;
+                case IrOpcode::SharedAtomicUMax64:
+                    opcode = spv::OpAtomicUMax;
+                    break;
+                case IrOpcode::SharedAtomicAnd64:
+                    opcode = spv::OpAtomicAnd;
+                    break;
+                case IrOpcode::SharedAtomicOr64:
+                    opcode = spv::OpAtomicOr;
+                    break;
+                case IrOpcode::SharedAtomicXor64:
+                    opcode = spv::OpAtomicXor;
+                    break;
+                case IrOpcode::SharedAtomicRsub64:
+                case IrOpcode::SharedAtomicInc64:
+                case IrOpcode::SharedAtomicDec64:
+                case IrOpcode::SharedAtomicCmpst64:
+                case IrOpcode::SharedAtomicMskor64:
+                    return Unary(state, spv::OpBitcast, TypeU64(state), AtomicUpdateTyped(state, pointer, ResourceKind::Gds, type, [&](std::uint32_t old) { return replacement(state, old); }));
+                default: ctx.Fail(inst, "unsupported 64-bit GDS atomic operation");
+                }
+                const auto old = state.module.AllocateId();
+                state.module.AddFunction(opcode, type, old, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), ScalarU64Argument(ctx, inst, 2u));
+                EmitDeviceAtomicMemoryBarrier(state);
+                return Unary(state, spv::OpBitcast, TypeU64(state), old);
+            });
+        });
+    });
+}
+
+template<typename TReplacement>
 std::uint32_t SharedAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst, TReplacement&& replacement) {
+    if (SharedMemory(ctx, inst).kind == ResourceKind::Gds) return GdsAtomic64(ctx, inst, std::forward<TReplacement>(replacement));
     auto& state = ctx.state;
     const auto& mem = SharedMemory(ctx, inst);
     return EmitValueOrDefaultIfCondition(state, ActiveArgument(ctx, inst), TypeU64(state), ConstantU64(state, 0u), [&]() {
@@ -1584,7 +1709,7 @@ std::uint32_t EmitReadConst(SpirvValueEmitContext& ctx, const IrValue& inst) {
                 const auto scope = ConstantU32(state, spv::ScopeDevice);
                 const auto relaxed = ConstantU32(state, spv::MemorySemanticsMaskNone);
                 const auto value = Binary(state, spv::OpBitwiseOr, u32, record, stage);
-                if (state.bdaStopsInvocations) {
+                if (state.bdaStopsInvocations && !state.bdaFaultMasksWrites) {
                     state.module.AddFunction(spv::OpAtomicStore, word, scope, relaxed, value);
                 } else {
                     state.module.AddFunction(spv::OpAtomicCompareExchange, u32, state.module.AllocateId(), word, scope, relaxed, relaxed, value, ConstantU32(state, 0u));

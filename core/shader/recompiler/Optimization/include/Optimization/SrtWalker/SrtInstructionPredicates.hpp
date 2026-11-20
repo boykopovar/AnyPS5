@@ -15,25 +15,26 @@ bool LoadedFromMemory(const IrValue& handle);
 bool IsDescriptorHandle(IrOpcode opcode);
 bool IsRuntimeSelect(IrOpcode opcode);
 bool IsRuntimeUniformOp(IrOpcode opcode);
+bool HoldsFoldableValue(IrValue* value, std::uint32_t depth);
 
-bool ActiveMaskImplies(const IrValue* mask, const IrValue* condition);
+bool ActiveMaskImplies(const IrResourcePlan& program, const IrValue* mask, const IrValue* condition);
 
-inline bool ActiveMaskImplies(IrValue* mask, IrValue* condition) {
-    return ActiveMaskImplies(static_cast<const IrValue*>(mask), static_cast<const IrValue*>(condition));
+inline bool ActiveMaskImplies(const IrResourcePlan& program, IrValue* mask, IrValue* condition) {
+    return ActiveMaskImplies(program, static_cast<const IrValue*>(mask), static_cast<const IrValue*>(condition));
 }
 
-inline bool ActiveMaskImplies(const IrValue* mask, IrValue* condition) {
-    return ActiveMaskImplies(mask, static_cast<const IrValue*>(condition));
+inline bool ActiveMaskImplies(const IrResourcePlan& program, const IrValue* mask, IrValue* condition) {
+    return ActiveMaskImplies(program, mask, static_cast<const IrValue*>(condition));
 }
 
-inline bool ActiveMaskImplies(IrValue* mask, const IrValue* condition) {
-    return ActiveMaskImplies(static_cast<const IrValue*>(mask), condition);
+inline bool ActiveMaskImplies(const IrResourcePlan& program, IrValue* mask, const IrValue* condition) {
+    return ActiveMaskImplies(program, static_cast<const IrValue*>(mask), condition);
 }
 
 template<typename TNode>
 requires (!std::is_pointer_v<std::decay_t<TNode>>)
-bool ActiveMaskImplies(const TNode& mask, const TNode& condition) {
-    return ActiveMaskImplies(mask.Value(), condition.Value());
+bool ActiveMaskImplies(const IrResourcePlan& program, const TNode& mask, const TNode& condition) {
+    return ActiveMaskImplies(program, mask.Value(), condition.Value());
 }
 
 }

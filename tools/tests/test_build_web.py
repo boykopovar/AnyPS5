@@ -16,6 +16,7 @@ import zlib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import build_web
+import package_release
 
 
 def library_zip(entries):
@@ -28,6 +29,89 @@ def library_zip(entries):
 
 
 class LibraryPublicationTests(unittest.TestCase):
+    def test_browser_unsafe_paths_do_not_publish_library_archives(self):
+        valid = library_zip([("libs/libc.prx", b"valid")])
+        for name in ("libs/NUL.prx", "libs/file:stream.prx", "libs/trailing./libc.prx",
+                     "libs/COM\u00b9.prx", "libs/control\x1f.prx", "libs/question?.prx", "libs/double//"):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "archive layout"):
+                self.publish(library_zip([("libs/libc.prx", b"valid"), (name, b"runtime")]), valid)
+            self.assertEqual(self.manifest.read_bytes(), self.previous)
+            self.assertEqual(list(self.libraries.iterdir()), [self.existing])
+
+    def test_missing_or_empty_runtimes_preserve_the_release_manifest(self):
+        valid = library_zip([("libs/", b""), ("libs/libc.prx", b"valid"), ("libs/licenses/note.txt", b"license")])
+        for entries in ((('libs/', b''),), (('libs/licenses/note.txt', b'license'),), (('libs/libc.prx', b''),)):
+            invalid = library_zip(entries)
+            for platform in ("windows", "linux"):
+                with self.subTest(entries=entries, platform=platform), self.assertRaisesRegex(ValueError, "runtime"):
+                    self.publish(invalid if platform == "windows" else valid, invalid if platform == "linux" else valid)
+                self.assertEqual(self.manifest.read_bytes(), self.previous)
+                self.assertEqual(self.existing.read_bytes(), b"previous archive")
+                self.assertFalse(any(path.suffix == ".download" for path in self.libraries.iterdir()))
+        self.publish(valid, valid)
+        self.assertEqual(json.loads(self.manifest.read_text(encoding="utf-8"))["tag"], "v1")
+
+    def test_release_packager_library_archives_can_be_published(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            build = root / "build"
+            output = root / "release"
+            libraries = build / "core/libs/libs"
+            modules = {"libc": b"libc runtime", "libSceAjm.native": b"decoder runtime"}
+            for name, contents in modules.items():
+                (source / "core/libs/prx" / name).mkdir(parents=True)
+                for relative in (name + ".prx", "unpatched/" + name + ".prx", "implib/" + name + ".dll.a"):
+                    path = libraries / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(contents)
+            license_file = source / "3rdparty/vgmstream/COPYING"
+            license_file.parent.mkdir(parents=True)
+            license_file.write_bytes(b"decoder license")
+            allocator_license = source / "3rdparty/mimalloc/LICENSE"
+            allocator_license.parent.mkdir(parents=True)
+            allocator_license.write_bytes(b"allocator license")
+            runtime = root / "compiler"
+            runtime.mkdir()
+            for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"):
+                (runtime / name).write_bytes(b"compiler runtime")
+            for name in ("mimalloc.dll", "mimalloc-redirect.dll", "libmimalloc.so"):
+                (libraries / name).write_bytes(b"allocator runtime")
+            (build / "CMakeCache.txt").write_text("CMAKE_CXX_COMPILER:FILEPATH=" + (runtime / "g++.exe").as_posix() + "\n", encoding="utf-8")
+            (build / "core/libs/release-implibs.txt").write_text(
+                "".join(name + "=" + (libraries / "implib" / (name + ".dll.a")).as_posix() + "\n" for name in modules),
+                encoding="utf-8",
+            )
+            for name in ("relinker", "relinker.exe"):
+                path = build / "core/relinker" / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"relinker")
+            archives = {}
+            with patch.object(package_release, "ROOT", source):
+                for platform in ("windows", "linux"):
+                    package_release.package(platform, build, output, "v1")
+                    archive = output / f"prx-{platform}-v1.zip"
+                    archives[platform] = archive.read_bytes()
+                    with zipfile.ZipFile(archive) as packaged:
+                        self.assertEqual(
+                            {entry.filename for entry in packaged.infolist() if entry.filename.endswith(".prx")},
+                            {"libs/" + name + ".prx" for name in modules},
+                        )
+                        self.assertEqual(
+                            {name: packaged.read("libs/" + name + ".prx") for name in modules},
+                            modules,
+                        )
+                        self.assertEqual(packaged.read("libs/licenses/vgmstream.txt"), b"decoder license")
+                        self.assertEqual(packaged.read("libs/licenses/mimalloc.txt"), b"allocator license")
+                        if platform == "windows":
+                            self.assertEqual(packaged.read("libs/libstdc++-6.dll"), b"compiler runtime")
+            self.publish(archives["windows"], archives["linux"])
+            manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["tag"], "v1")
+            self.assertEqual(set(manifest["platforms"]), {"windows", "linux"})
+            for platform, asset in manifest["platforms"].items():
+                self.assertEqual((self.output / asset["path"]).read_bytes(), archives[platform])
+
     def test_unicode_path_rewrite_is_rejected_before_decompression(self):
         original = "libs/../libc.prx"
         rewritten = "libs/libc.prx"
@@ -486,6 +570,29 @@ class LocalNativeArtifactTests(unittest.TestCase):
             self.assertTrue((build / "web/.nojekyll").exists())
 
 
+    def test_copy_sources_removes_stale_files_without_touching_native_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "source"
+            source = root / "demo/web"
+            output = Path(directory) / "build/web"
+            native = output / "native"
+            source.mkdir(parents=True)
+            native.mkdir(parents=True)
+            (source / "keep.mjs").write_bytes(b"keep")
+            removed = source / "removed.mjs"
+            removed.write_bytes(b"removed")
+            wasm = native / "relinker_wasm.wasm"
+            wasm.write_bytes(b"native")
+            with patch.object(build_web, "ROOT", root):
+                build_web.copy_sources(output)
+                removed.unlink()
+                build_web.copy_sources(output)
+            self.assertEqual((output / "keep.mjs").read_bytes(), b"keep")
+            self.assertFalse((output / "removed.mjs").exists())
+            self.assertEqual(wasm.read_bytes(), b"native")
+            self.assertTrue((output / ".nojekyll").is_file())
+
+
 class WebReleaseValidationTests(unittest.TestCase):
     HISTORICAL_FILES = (
         "index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs",
@@ -668,6 +775,21 @@ class WebReleaseValidationTests(unittest.TestCase):
         with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 128, "", "fatal: bad object")):
             with self.assertRaisesRegex(ValueError, "Cannot resolve release revision: 0000000000000000000000000000000000000000"):
                 build_web.release_web_files("0" * 40)
+
+    def test_request_sends_github_token_only_to_the_github_api(self):
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "secret"}), \
+                patch.object(build_web.urllib.request, "urlopen", return_value="response") as urlopen:
+            self.assertEqual(build_web.request("https://api.github.com/repos/x/releases"), "response")
+            api = urlopen.call_args[0][0]
+            self.assertEqual(api.get_header("Authorization"), "Bearer secret")
+            self.assertEqual(api.get_header("User-agent"), "AnyPS5-Pages")
+            self.assertEqual(urlopen.call_args[1], {"timeout": 60})
+            build_web.request("https://github.com/x/prx.zip")
+            self.assertIsNone(urlopen.call_args[0][0].get_header("Authorization"))
+        with patch.dict(os.environ, clear=True), \
+                patch.object(build_web.urllib.request, "urlopen", return_value="response") as urlopen:
+            build_web.request("https://api.github.com/repos/x/releases")
+            self.assertIsNone(urlopen.call_args[0][0].get_header("Authorization"))
 
 
 if __name__ == "__main__":

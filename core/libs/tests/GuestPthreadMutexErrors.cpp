@@ -6,6 +6,12 @@
 #include <cstdlib>
 #include <initializer_list>
 #include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static constexpr int SCE_OK = 0;
 
@@ -25,6 +31,61 @@ static bool Throws(Call call) {
         return true;
     }
     return false;
+}
+
+class GuardPage {
+public:
+    GuardPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        page = static_cast<std::size_t>(size);
+        memory = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+        Require(mprotect(memory + page, page, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardPage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, 2 * page);
+#endif
+    }
+
+    GuardPage(const GuardPage&) = delete;
+    GuardPage& operator=(const GuardPage&) = delete;
+
+    void* Unreadable() const { return memory + page; }
+
+private:
+    char* memory = nullptr;
+    std::size_t page = 0;
+};
+
+static void CheckBadPointers(PthreadMutex* valid) {
+    GuardPage guard;
+    void* const bad[] = {reinterpret_cast<void*>(0x10), guard.Unreadable()};
+    for (void* pointer : bad) {
+        int count = -1;
+        Require(scePthreadMutexGetspinloops(static_cast<PthreadMutex*>(pointer), &count) == SCE_KERNEL_ERROR_EFAULT && count == -1);
+        Require(scePthreadMutexGetyieldloops(static_cast<PthreadMutex*>(pointer), &count) == SCE_KERNEL_ERROR_EFAULT && count == -1);
+        Require(scePthreadMutexGetspinloops(valid, static_cast<int*>(pointer)) == SCE_KERNEL_ERROR_EFAULT);
+        Require(scePthreadMutexGetyieldloops(valid, static_cast<int*>(pointer)) == SCE_KERNEL_ERROR_EFAULT);
+        Require(scePthreadMutexSetspinloops(static_cast<PthreadMutex*>(pointer), 5) == SCE_KERNEL_ERROR_EFAULT);
+        Require(scePthreadMutexSetyieldloops(static_cast<PthreadMutex*>(pointer), 5) == SCE_KERNEL_ERROR_EFAULT);
+        Require(pthread_mutex_setspinloops_np_nid_postfix(static_cast<PthreadMutex*>(pointer), 5) == 14);
+        Require(pthread_mutex_setyieldloops_np_nid_postfix(static_cast<PthreadMutex*>(pointer), 5) == 14);
+    }
 }
 
 struct OtherThread {
@@ -90,8 +151,9 @@ static void CheckLoops(PthreadMutexattr* attr) {
     Require(pthread_mutex_lock_nid_postfix(&mutex) == 0);
     Require(pthread_mutex_lock_nid_postfix(&mutex) == POSIX_EDEADLK);
     Require(pthread_mutex_unlock_nid_postfix(&mutex) == 0);
-    Require(Throws([&] { scePthreadMutexGetspinloops(&mutex, nullptr); }));
-    Require(Throws([&] { scePthreadMutexGetyieldloops(&mutex, nullptr); }));
+    Require(scePthreadMutexGetspinloops(&mutex, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(scePthreadMutexGetyieldloops(&mutex, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    CheckBadPointers(&mutex);
     Require(scePthreadMutexDestroy(&mutex) == SCE_OK);
 
     count = -1;

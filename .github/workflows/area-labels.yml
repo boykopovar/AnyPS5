@@ -7,9 +7,14 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: area-labels
+  cancel-in-progress: false
+
 jobs:
   label:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
       contents: read
       pull-requests: write

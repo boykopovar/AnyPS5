@@ -1,10 +1,14 @@
 import argparse
+import io
 import os
 from pathlib import Path
 import re
 import stat
 import tempfile
 import time
+
+
+COMMAND_FILE_BYTES = 64 * 1024
 
 
 BUTTONS = {
@@ -38,11 +42,13 @@ def timeline_sequence(command, header):
                 line = line[:-2] + b"\n"
         if not line or len(line.rstrip(b"\n")) > 127:
             return 0
-        fields = re.fullmatch(rb"\s*(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)\s*", line.split(b"\0", 1)[0])
+        fields = re.fullmatch(rb"\s*(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)((?:(?:\s+|(?=\+))\+?[0-9]+){4})?\s*", line.split(b"\0", 1)[0])
         if fields is None:
             return 0
-        start, duration, buttons = [int(token) for token in fields.groups()]
+        start, duration, buttons = [int(token) for token in fields.groups()[:3]]
         if buttons & ~0x70fffe or not 1 <= duration <= 5000 or start < previous_end or start + duration > 3600000:
+            return 0
+        if fields.group(4) and any(int(axis) > 255 for axis in re.findall(rb"\+?[0-9]+", fields.group(4))):
             return 0
         previous_end = start + duration
     while tail := command.read(4096):
@@ -55,20 +61,28 @@ def timeline_sequence(command, header):
 
 def previous_sequence(path):
     try:
-        with path.open("rb") as command:
-            line = command.readline(129)
-            if os.name == "nt" and line.endswith(b"\r\n"):
-                line = line[:-2] + b"\n"
-            if line.split()[:1] == [b"APS5_PAD_TIMELINE"]:
-                return timeline_sequence(command, line)
+        with path.open("rb") as source:
+            contents = source.read(COMMAND_FILE_BYTES + 1)
     except FileNotFoundError:
         return 0
-    tokens = line.split()
+    if len(contents) > COMMAND_FILE_BYTES:
+        return 0
+    command = io.BytesIO(contents)
+    line = command.readline(129)
+    if os.name == "nt" and line.endswith(b"\r\n"):
+        line = line[:-2] + b"\n"
+    if line.split()[:1] == [b"APS5_PAD_TIMELINE"]:
+        return timeline_sequence(command, line)
+    if os.name == "nt":
+        line = line.split(b"\x1a", 1)[0]
+    if len(line.rstrip(b"\n")) > 127:
+        return 0
+    tokens = line.split(b"\0", 1)[0].split()
     if len(tokens) in (4, 8):
         touch = re.fullmatch(rb"touch\((\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+)\)", tokens.pop())
-        if touch is None or any(int(value) > limit for value, limit in zip(touch.groups(), (1919, 942, 127, 1))):
+        if touch is None or any(int(value) > limit for value, limit in zip(touch.groups(), (1919, 1079, 127, 1))):
             return 0
-    if len(line.rstrip(b"\n")) > 127 or len(tokens) not in (3, 7):
+    if len(tokens) not in (3, 7):
         return 0
     if any(re.fullmatch(rb"\+?[0-9]+", token) is None for token in tokens):
         return 0
@@ -107,7 +121,7 @@ def main():
     parser.add_argument("--left-stick", type=int, nargs=2, metavar=("X", "Y"))
     parser.add_argument("--right-stick", type=int, nargs=2, metavar=("X", "Y"))
     parser.add_argument("--touch", type=int, nargs=4, metavar=("X", "Y", "ID", "ACTIVE"),
-                        help="touch contact: X 0..1919, Y 0..942, ID 0..127, ACTIVE 0 or 1; keep ID while moving, use 0 to lift")
+                        help="touch contact: X 0..1919, Y 0..1079, ID 0..127, ACTIVE 0 or 1; keep ID while moving, use 0 to lift")
     args = parser.parse_args()
     try:
         mask = button_mask(args.button)
@@ -121,8 +135,8 @@ def main():
         parser.error("--hold-ms must be between 1 and 5000")
     touch = ""
     if args.touch is not None:
-        if any(not 0 <= value <= limit for value, limit in zip(args.touch, (1919, 942, 127, 1))):
-            parser.error("--touch requires X 0..1919, Y 0..942, ID 0..127, ACTIVE 0 or 1")
+        if any(not 0 <= value <= limit for value, limit in zip(args.touch, (1919, 1079, 127, 1))):
+            parser.error("--touch requires X 0..1919, Y 0..1079, ID 0..127, ACTIVE 0 or 1")
         touch = " touch(" + ",".join(str(value) for value in args.touch) + ")"
     sticks = ""
     if args.left_stick is not None or args.right_stick is not None:

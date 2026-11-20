@@ -1,0 +1,15 @@
+add_library(libSceCdlgUtilServer SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceCdlgUtilServer PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceCdlgUtilServer)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_cdlg_util_server_tests ${LIBS_INCLUDE_DIR}/tests/GuestCdlgUtilServer.cpp)
+    target_include_directories(guest_cdlg_util_server_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_cdlg_util_server_tests PRIVATE libSceCdlgUtilServer libc)
+    configure_windows_unwind(guest_cdlg_util_server_tests)
+    add_test(NAME guest_cdlg_util_server COMMAND guest_cdlg_util_server_tests)
+    if(WIN32)
+        set_tests_properties(guest_cdlg_util_server PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceCdlgUtilServer>")
+    endif()
+endif()

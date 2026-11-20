@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import shutil
 import hashlib
 import json
 import os
@@ -8,7 +9,7 @@ import sys
 import tempfile
 import urllib.request
 from base64 import b64encode
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 ROOT = Path(__file__).resolve().parent.parent
 PRX = ROOT / "core" / "libs" / "prx"
@@ -50,14 +51,21 @@ def read_db(path):
     return db
 
 
-def load_db(path):
-    if not path.exists():
+DOWNLOAD_TIMEOUT = 30
+
+
+def load_db(path, *, offline=False):
+    if not offline and not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         print("downloading NID database to %s ..." % path, file=sys.stderr)
         with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".nid-db-", suffix=".tmp", delete=False) as download:
             temporary = Path(download.name)
         try:
-            urllib.request.urlretrieve(DB_URL, str(temporary))
+            with urllib.request.urlopen(DB_URL, timeout=DOWNLOAD_TIMEOUT) as response, temporary.open("wb") as target:
+                shutil.copyfileobj(response, target)
+                expected = response.headers.get("Content-Length")
+                if expected is not None and target.tell() < int(expected):
+                    raise OSError("incomplete NID database download")
             db = read_db(temporary)
             if not any(re.fullmatch(r"[A-Za-z0-9+\-]{11}", nid) for nid in db):
                 raise ValueError(f"{path}: downloaded database contains no valid NID records")
@@ -65,18 +73,25 @@ def load_db(path):
             return db
         finally:
             temporary.unlink(missing_ok=True)
-    return read_db(path)
+    db = read_db(path)
+    if not any(re.fullmatch(r"[A-Za-z0-9+\-]{11}", nid) for nid in db):
+        raise ValueError(f"{path}: database contains no valid NID records")
+    return db
 
 
 def source_files(root):
+    flavor = PureWindowsPath if os.name == "nt" else Path
+    root_flavored = flavor(str(root))
     return (path for path in sorted(root.rglob("*.cpp"))
             if not any(part.lower() in {"test", "tests"}
-                       for part in path.relative_to(root).parts[:-1]))
+                       for part in flavor(str(path)).relative_to(root_flavored).parts[:-1]))
 
 
 def source_aliases(text):
-    tokens = [match.group() for match in CPP_TOKEN.finditer(text.replace("\\\n", "").replace("\\\r\n", ""))
-              if match.group("comment") is None]
+    text = text.replace("\\\n", "").replace("\\\r\n", "")
+    if "APS5_EXPORT" not in text:
+        return
+    tokens = [match.group() for match in CPP_TOKEN.finditer(text) if match.group("comment") is None]
     for index, token in enumerate(tokens):
         if token != "APS5_EXPORT" or index + 5 >= len(tokens):
             continue
@@ -93,12 +108,17 @@ def source_definitions(text):
     def mask(match):
         return match.group() if match.group("code") is not None else re.sub(r"[^\n]", " ", match.group())
 
-    return DEFINITION.finditer(CPP_TOKEN.sub(mask, text.replace("\\\n", "").replace("\\\r\n", "")))
+    text = text.replace("\\\n", "").replace("\\\r\n", "")
+    if "APS5_VABI" not in text:
+        return iter(())
+    return DEFINITION.finditer(CPP_TOKEN.sub(mask, text))
 
 
 def source_assembly_definitions(text):
-    tokens = [match for match in CPP_TOKEN.finditer(text.replace("\\\n", "").replace("\\\r\n", ""))
-              if match.group("comment") is None]
+    text = text.replace("\\\n", "").replace("\\\r\n", "")
+    if not any(macro in text for macro in ASM_FUNCTION_MACROS):
+        return
+    tokens = [match for match in CPP_TOKEN.finditer(text) if match.group("comment") is None]
     for index, token in enumerate(tokens):
         if token.group("code") is None or token.group() not in ASM_FUNCTION_MACROS:
             continue
@@ -314,7 +334,7 @@ def symbol_file(path):
         text = sys.stdin.buffer.read().decode("utf-8-sig") if hasattr(sys.stdin, "buffer") else sys.stdin.read().removeprefix("\ufeff")
     else:
         text = Path(path).read_text(encoding="utf-8-sig")
-    return [line for raw in text.split("\n") if (line := raw.removesuffix("\r"))]
+    return [line for raw in text.split("\n") if (line := raw.removesuffix("\r")).strip()]
 
 
 def main(argv=None):
@@ -335,6 +355,7 @@ def main(argv=None):
                         help="find source exports matching requested NIDs or symbol names")
     parser.add_argument("--json", action="store_true",
                         help="emit machine-readable JSON")
+    parser.add_argument("--offline", action="store_true", help="require an existing database; never download a missing cache")
     options = [option for action in parser._actions for option in action.option_strings]
     arguments = sys.argv[1:] if argv is None else argv
     args = parser.parse_args(nid_arguments(arguments, options))
@@ -385,8 +406,10 @@ def main(argv=None):
             parser.error(f"invalid NID {nid!r}: expected 11 characters from A-Z, a-z, 0-9, + or -")
 
     db_path = Path(args.db) if args.db else DEFAULT_CACHE
+    if args.offline and not (requested_nids and not args.nid) and not db_path.is_file():
+        parser.error(f"offline database is not a file: {db_path}")
     try:
-        db = {} if requested_nids and not args.nid else load_db(db_path)
+        db = {} if requested_nids and not args.nid else load_db(db_path, offline=args.offline)
         if requested_nids:
             unknowns = {nid: "<cli>" for nid in (args.nid or [])}
         else:

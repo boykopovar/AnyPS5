@@ -3,10 +3,22 @@
 #include "prx/libc/include/General.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <cstring>
+#include <filesystem>
+#include <new>
 #include <stdexcept>
+#include <string>
 
 namespace {
+
+std::filesystem::space_info HostSpace() {
+    std::error_code error;
+    const std::filesystem::path directory = std::filesystem::current_path(error);
+    if (error) return {};
+    const std::filesystem::space_info space = std::filesystem::space(directory, error);
+    return error ? std::filesystem::space_info{} : space;
+}
 
 constexpr int SystemServiceUnavailable = static_cast<int>(0x80A10002);
 constexpr int SystemServiceInvalidArgument = static_cast<int>(0x80A10003);
@@ -22,6 +34,15 @@ constexpr std::int32_t FirstPSButtonEventType = 0x20000001;
 constexpr std::int32_t LastPSButtonEventType = 0x20000002;
 
 std::atomic<std::intptr_t> nextActivationHandle{0x1000};
+
+bool EmptyPrivacyDefinitionKey(const char* key) {
+    if (key == nullptr) return false;
+    char first = 1;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&first, key, sizeof(first));
+    errno = savedErrno;
+    return copied && first == '\0';
+}
 
 }
 
@@ -230,11 +251,6 @@ int APS5_VABI sceLncUtilGetAppCategory(std::int32_t appId, char* category) {
     return 0;
 }
 
-int APS5_VABI sceLncUtilGetAppCategoryType(std::int32_t appId, std::uint32_t* categoryType) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLncUtilGetAppFocusedAppStatus(LncAppStatus* status) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -348,7 +364,11 @@ int APS5_VABI sceLncUtilIsHostBoot(std::int32_t appId, bool* hostBoot) {
 int APS5_VABI sceLncUtilIsSpeculativeLaunch(std::int32_t appId, bool* speculative) {
     if (speculative == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
     if (appId != sceSystemServiceGetAppIdOfRunningBigApp()) throw std::runtime_error("sceLncUtilIsSpeculativeLaunch: application other than the running title");
-    *speculative = false;
+    const bool localSpeculative = false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(speculative, &localSpeculative, sizeof(localSpeculative));
+    errno = savedErrno;
+    if (!copied) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -363,8 +383,15 @@ int APS5_VABI sceLncUtilKillLocalProcess(std::int32_t appId, std::int32_t proces
 }
 
 int APS5_VABI sceLncUtilLaunchApp(const char* titleId, const char* const* argv, const LncLaunchParam* param) {
+    if (titleId == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+    std::string id;
+    const int savedErrno = errno;
+    const int error = CopyGuestString_nid_no_patch(titleId, 10, id);
+    errno = savedErrno;
+    if (error == 14) throw std::logic_error("sceLncUtilLaunchApp: reading a title id where it is not readable faults in firmware 13.60");
+    if (error != 0 && error != 63) throw std::bad_alloc();
+    if (error == 63 || id.size() != 9 || param == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceLncUtilNotifyCoredumpRequestEnd(std::int32_t appId, std::int32_t processId, std::int32_t result) {
@@ -502,16 +529,6 @@ int APS5_VABI sceLncUtilUnregisterShellUI() {
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilAccessibilityZoomLock() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilAccessibilityZoomUnlock() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceShellCoreUtilAcquireBgmCpuBudget() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -533,20 +550,36 @@ int APS5_VABI sceShellCoreUtilActivateAbort(std::intptr_t handle) {
 
 int APS5_VABI sceShellCoreUtilActivateGetStatus(std::intptr_t handle, std::int32_t* status, std::int32_t* result) {
     if (status == nullptr || result == nullptr) return ShellCoreInvalidArgument;
-    *status = ActivationStatus;
-    *result = 0;
+    const std::int32_t localStatus = ActivationStatus;
+    const std::int32_t localResult = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &localStatus, sizeof(localStatus)) && GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
+    errno = savedErrno;
+    if (!copied) return ShellCoreInvalidArgument;
     return 0;
 }
 
 int APS5_VABI sceShellCoreUtilActivateInit(std::int32_t type, std::intptr_t* handle) {
     if (handle == nullptr) return ShellCoreInvalidArgument;
-    *handle = nextActivationHandle.fetch_add(ActivationHandleStep);
+    const std::intptr_t cleared = 0;
+    const int savedErrno = errno;
+    const bool writable = GuestCopyOut_nid_no_patch(handle, &cleared, sizeof(cleared));
+    errno = savedErrno;
+    if (!writable) return ShellCoreInvalidArgument;
+    const std::intptr_t localHandle = nextActivationHandle.fetch_add(ActivationHandleStep);
+    const bool copied = GuestCopyOut_nid_no_patch(handle, &localHandle, sizeof(localHandle));
+    errno = savedErrno;
+    if (!copied) return ShellCoreInvalidArgument;
     return 0;
 }
 
 int APS5_VABI sceShellCoreUtilActivateIsActivated(std::int32_t type, bool* activated) {
     if (activated == nullptr) return ShellCoreInvalidArgument;
-    *activated = true;
+    const bool localActivated = true;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(activated, &localActivated, sizeof(localActivated));
+    errno = savedErrno;
+    if (!copied) return ShellCoreInvalidArgument;
     return 0;
 }
 
@@ -822,12 +855,27 @@ int APS5_VABI sceShellCoreUtilGetEffectiveTotalSizeOfUserPartition(std::uint64_t
 }
 
 std::uint64_t APS5_VABI sceShellCoreUtilGetFreeSizeOfAvContentsTmp() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return HostSpace().available;
 }
 
 int APS5_VABI sceShellCoreUtilGetFreeSizeOfUserPartition(std::uint64_t* freeSize, std::uint64_t* totalSize) {
-    NotImplemented_nid_no_patch(__func__);
+    const std::filesystem::space_info space = HostSpace();
+    const int savedErrno = errno;
+    if (freeSize != nullptr) {
+        const std::uint64_t localFree = space.available;
+        if (!GuestCopyOut_nid_no_patch(freeSize, &localFree, sizeof(localFree))) {
+            errno = savedErrno;
+            return static_cast<int>(0x80e30005);
+        }
+    }
+    if (totalSize != nullptr) {
+        const std::uint64_t localTotal = space.capacity;
+        if (!GuestCopyOut_nid_no_patch(totalSize, &localTotal, sizeof(localTotal))) {
+            errno = savedErrno;
+            return static_cast<int>(0x80e30005);
+        }
+    }
+    errno = savedErrno;
     return 0;
 }
 
@@ -1022,11 +1070,6 @@ int APS5_VABI sceShellCoreUtilHideBlocksFromUser(std::int64_t bytes, std::int32_
 }
 
 int APS5_VABI sceShellCoreUtilIncrementVersionNumberOfCameraCalibrationData() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceShellCoreUtilIsAccessibilityZoomLocked(std::int32_t appId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1684,14 +1727,9 @@ int APS5_VABI sceSystemServiceEnablePersonalEyeToEyeDistanceSetting() {
     return 0;
 }
 
-int APS5_VABI sceSystemServiceGetAppCategoryType(std::int32_t appId, std::uint32_t* categoryType) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceSystemServiceGetAppFocusedAppStatus(SystemServiceAppStatus* status) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (status == nullptr) NotImplemented_nid_no_patch(__func__);
+    return LNC_UTIL_ERROR_GAME_PROCESS;
 }
 
 int APS5_VABI sceSystemServiceGetAppStatus(SystemServiceAppStatus* status) {
@@ -1700,13 +1738,13 @@ int APS5_VABI sceSystemServiceGetAppStatus(SystemServiceAppStatus* status) {
 }
 
 int APS5_VABI sceSystemServiceGetAppType(std::int32_t appId, std::int32_t* type) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (type == nullptr || appId == SYSTEM_SERVICE_RUNNING_APP_ID) NotImplemented_nid_no_patch(__func__);
+    return LNC_UTIL_ERROR_GAME_PROCESS;
 }
 
-int APS5_VABI sceSystemServiceGetDbgExecutablePath(char* path, std::uint64_t selector) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSystemServiceGetDbgExecutablePath(char* path, std::uint64_t) {
+    if (path == nullptr) NotImplemented_nid_no_patch(__func__);
+    return SystemServiceRejected;
 }
 
 int APS5_VABI sceSystemServiceGetEventForDaemon(SystemServiceDaemonEvent* event) {
@@ -1719,21 +1757,22 @@ int APS5_VABI sceSystemServiceGetLocalProcessStatusList(SystemServiceLocalProces
     return 0;
 }
 
-int APS5_VABI sceSystemServiceGetMainAppTitleId() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceSystemServiceGetPSButtonEvent(const SystemServiceEvent* event, SystemServicePSButtonEvent* buttonEvent) {
     if (event == nullptr || buttonEvent == nullptr) return SystemServiceInvalidArgument;
-    const auto* bytes = reinterpret_cast<const std::uint8_t*>(event);
+    std::uint8_t bytes[20]{};
+    const int savedErrno = errno;
+    const bool copiedInput = GuestCopyIn_nid_no_patch(bytes, event, sizeof(bytes));
+    errno = savedErrno;
+    if (!copiedInput) return SystemServiceInvalidArgument;
     SystemServicePSButtonEvent result{};
     std::memcpy(&result.eventType, bytes, sizeof(result.eventType));
     if (result.eventType < FirstPSButtonEventType || result.eventType > LastPSButtonEventType) return SystemServiceInvalidArgument;
     std::memcpy(&result.dataAt0, bytes + 4, sizeof(result.dataAt0));
     std::memcpy(&result.dataAt8, bytes + 12, sizeof(result.dataAt8));
-    *buttonEvent = result;
-    return 0;
+    const int copyErrno = errno;
+    const bool copiedOutput = GuestCopyOut_nid_no_patch(buttonEvent, &result, sizeof(result));
+    errno = copyErrno;
+    return copiedOutput ? 0 : SystemServiceInvalidArgument;
 }
 
 int APS5_VABI sceSystemServiceGetParentSocket() {
@@ -1757,13 +1796,13 @@ int APS5_VABI sceSystemServiceGetParentSocketForPsmKit() {
 }
 
 int APS5_VABI sceSystemServiceGetPlatformPrivacyDefinitionData(const char* key, SystemServicePrivacyDefinitionData* data) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (data == nullptr || !EmptyPrivacyDefinitionKey(key)) NotImplemented_nid_no_patch(__func__);
+    return SYSTEM_SERVICE_ERROR_INTERNAL;
 }
 
 int APS5_VABI sceSystemServiceGetPlatformPrivacyDefinitionVersion(const char* key, SystemServicePrivacyDefinitionVersion* version) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (version == nullptr || !EmptyPrivacyDefinitionKey(key)) NotImplemented_nid_no_patch(__func__);
+    return SYSTEM_SERVICE_ERROR_INTERNAL;
 }
 
 int APS5_VABI sceSystemServiceGetPlatformPrivacySetting(std::uint32_t* setting) {
@@ -1797,8 +1836,7 @@ int APS5_VABI sceSystemServiceGetTitleWorkaroundInfo(SystemServiceTitleWorkaroun
 }
 
 int APS5_VABI sceSystemServiceGetUIStatus(std::uint64_t* status) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceShellCoreUtilGetUIStatus(status);
 }
 
 int APS5_VABI sceSystemServiceGetVersionNumberOfCameraCalibrationData() {
@@ -1817,8 +1855,7 @@ int APS5_VABI sceSystemServiceInvokeAppLaunchLink(const char* uri) {
 }
 
 bool APS5_VABI sceSystemServiceIsBgmCpuBudgetAvailable() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceShellCoreUtilIsBgmCpuBudgetAvailable();
 }
 
 int APS5_VABI sceSystemServiceKillLocalProcess(std::int32_t appId, std::int32_t processId) {
@@ -1869,8 +1906,7 @@ int APS5_VABI sceSystemServiceLoadExecVideoServiceWebApp() {
 }
 
 int APS5_VABI sceSystemServiceNavigateToAnotherApp(std::uint32_t target) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceShellCoreUtilNavigateToAnotherApp(target);
 }
 
 int APS5_VABI sceSystemServiceNavigateToGoBack() {
@@ -1884,8 +1920,7 @@ int APS5_VABI sceSystemServiceNavigateToGoBackWithValue(const char* value) {
 }
 
 int APS5_VABI sceSystemServiceNavigateToGoHome(std::uint32_t target) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceShellCoreUtilNavigateToGoHome(target);
 }
 
 int APS5_VABI sceSystemServiceNotifyBgmCoreTermination() {
@@ -1948,8 +1983,7 @@ int APS5_VABI sceSystemServiceSaveVideoToken(std::int32_t userId, const char* to
 }
 
 int APS5_VABI sceSystemServiceSetControllerFocusPermission(std::uint8_t permission) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceLncUtilSetControllerFocusPermission(permission);
 }
 
 int APS5_VABI sceSystemServiceSetOutOfVrPlayAreaFlag(std::uint8_t flag) {

@@ -15,6 +15,7 @@
 #include "prx/libSceNet/include/Net.hpp"
 #include "prx/libSceSsl/include/Ssl.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include <nghttp2/nghttp2.h>
 #include <algorithm>
@@ -22,6 +23,7 @@
 #include <charconv>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <exception>
@@ -41,6 +43,15 @@ constexpr int WantRead = static_cast<int>(0x8095f013);
 constexpr int WantWrite = static_cast<int>(0x8095f014);
 constexpr int InvalidValue = static_cast<int>(0x817B11FE);
 constexpr int ResponseUnavailable = static_cast<int>(0x817b1065);
+constexpr int ConnectionEnded = static_cast<int>(0x817b1064);
+constexpr int AlreadySent = static_cast<int>(0x817b1066);
+constexpr int TimedOut = static_cast<int>(0x817b1068);
+constexpr int Aborted = static_cast<int>(0x817b1080);
+constexpr int ConnectTimedOut = static_cast<int>(0x817b1221);
+constexpr int ReceiveTimedOut = static_cast<int>(0x817b1222);
+constexpr int SendTimedOut = static_cast<int>(0x817b1223);
+constexpr int ConnectionReset = static_cast<int>(0x80410136);
+constexpr int NetworkError = static_cast<int>(0x80431063);
 constexpr std::array<int, 7> HandshakeFailures{
     static_cast<int>(0x8095f00b), static_cast<int>(0x8095f00c), static_cast<int>(0x8095f00d), static_cast<int>(0x8095f010),
     static_cast<int>(0x8095170d), static_cast<int>(0x80951d78), static_cast<int>(0x80410136)};
@@ -55,9 +66,53 @@ void Require(bool condition, const char* message) {
     if (!condition) Unknown(message);
 }
 
+struct RequestFailure {
+    int code;
+};
+
+struct Limit {
+    Clock::time_point at;
+    int code;
+};
+
+Limit Earlier(Limit first, Limit second) {
+    return second.at < first.at ? second : first;
+}
+
 std::string Lower(std::string text) {
     for (auto& c : text) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
     return text;
+}
+
+std::uint32_t CompiledSdkVersion() {
+    std::int32_t version = 0;
+    return sceKernelGetCompiledSdkVersion(&version) < 0 ? 0x99900000u : static_cast<std::uint32_t>(version);
+}
+
+bool NamesField(std::string_view line, std::string_view name) {
+    return line.size() > name.size() && line[name.size()] == ':' && Lower(std::string(line.substr(0, name.size()))) == name;
+}
+
+bool GzipEncoded(const std::string& block) {
+    const char* value = nullptr;
+    std::size_t size = 0;
+    if (sceHttpParseResponseHeader(block.data(), block.size(), "Content-Encoding", &value, &size) < 0 || !value || size < 4) return false;
+    return Lower(std::string(value, 4)) == "gzip";
+}
+
+std::string WithoutGzipFields(std::string_view block) {
+    std::string result;
+    bool removing = false;
+    for (std::size_t start = 0; start < block.size();) {
+        const auto newline = block.find('\n', start);
+        const std::size_t end = newline == std::string_view::npos ? block.size() : newline + 1;
+        const auto line = block.substr(start, end - start);
+        start = end;
+        if (removing && line.starts_with(' ')) continue;
+        removing = NamesField(line, "content-encoding") || NamesField(line, "content-length");
+        if (!removing) result.append(line);
+    }
+    return result;
 }
 
 std::uint64_t Number(std::string_view text, int base = 10) {
@@ -66,6 +121,23 @@ std::uint64_t Number(std::string_view text, int base = 10) {
     Require(!text.empty() && result.ec == std::errc{} && result.ptr == text.data() + text.size(),
         "sceHttp2: invalid number; console error mapping is unknown");
     return value;
+}
+
+std::uint64_t Http1ContentLength(std::string_view text) {
+    std::uint64_t length = 0;
+    bool first = true;
+    for (;;) {
+        const auto comma = text.find(',');
+        auto digits = text.substr(0, comma);
+        while (!digits.empty() && (digits.front() == ' ' || digits.front() == '\t')) digits.remove_prefix(1);
+        while (!digits.empty() && (digits.back() == ' ' || digits.back() == '\t')) digits.remove_suffix(1);
+        const auto value = Number(digits);
+        Require(first || value == length, "sceHttp2: inconsistent HTTP1 content lengths");
+        length = value;
+        first = false;
+        if (comma == std::string_view::npos) return length;
+        text.remove_prefix(comma + 1);
+    }
 }
 
 struct Url {
@@ -172,6 +244,7 @@ struct Lookup {
     std::mutex mutex;
     std::condition_variable changed;
     bool complete = false;
+    int error = 0;
     std::vector<Address> addresses;
     std::exception_ptr failure;
 };
@@ -221,10 +294,11 @@ private:
                 hints.ai_family = AF_UNSPEC;
                 addrinfo* raw = nullptr;
                 const auto service = std::to_string(job->port);
-                if (const auto hook = LookupHookSlot().load(std::memory_order_acquire)) Require(hook(job->host.c_str()) == 0, "sceHttp2: DNS failed; console error mapping is unknown");
-                const int result = getaddrinfo(job->host.c_str(), service.c_str(), &hints, &raw);
+                const auto hook = LookupHookSlot().load(std::memory_order_acquire);
+                const int result = hook && hook(job->host.c_str()) != 0 ? EAI_NONAME :
+                    getaddrinfo(job->host.c_str(), service.c_str(), &hints, &raw);
                 std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> addresses(raw, freeaddrinfo);
-                Require(result == 0, "sceHttp2: DNS failed; console error mapping is unknown");
+                if (result != 0) job->error = static_cast<int>(0x804101e6);
                 for (auto* entry = raw; entry; entry = entry->ai_next) {
                     Address address;
                     if (entry->ai_family == AF_INET) {
@@ -245,7 +319,7 @@ private:
                     address.bytes[0] = static_cast<std::uint8_t>(address.size);
                     job->addresses.push_back(address);
                 }
-                Require(!job->addresses.empty(), "sceHttp2: DNS returned no supported address");
+                if (!job->error) Require(!job->addresses.empty(), "sceHttp2: DNS returned no supported address");
             } catch (...) {
                 job->failure = std::current_exception();
             }
@@ -303,15 +377,16 @@ int AddHeader(Settings& settings, const char* name, const char* value, std::uint
 
 struct Request::State {
     const int id;
+    Url url;
     const int version;
     int sslContext;
     const std::shared_ptr<Capacity> capacity;
     bool acquired = false;
     Settings settings;
     std::string method;
-    Url url;
     std::mutex mutex;
     std::atomic<bool> cancelled{false};
+    std::atomic<bool> stopped{false};
     bool started = false;
     bool callbackActive = false;
     std::unique_lock<std::mutex>* callbackLock = nullptr;
@@ -319,13 +394,19 @@ struct Request::State {
     bool ended = false;
     int status = 0;
     std::string contentEncoding;
+    bool hasEncoding = false;
     bool inflatedGzip = false;
+    std::vector<std::pair<std::string, std::string>> blockHeaders;
+    std::string allHeaders;
+    std::string trailerHeaders;
+    bool trailerBlock = false;
     int blockStatus = 0;
     bool hasAuthChallenge = false;
     bool hasProxyAuthChallenge = false;
     std::string location;
     bool hasLocation = false;
     int networkResult = 0;
+    int readResult = 0;
     int socket = -1;
     int ssl = -1;
     std::uintptr_t native = 0;
@@ -340,6 +421,8 @@ struct Request::State {
     std::vector<std::uint8_t> pending;
     std::size_t pendingOffset = 0;
     std::string rawHeaders;
+    std::string strippedSource;
+    std::string strippedHeaders;
     unsigned http1HeaderBlocks = 0;
     std::size_t headerBytes = 0;
     std::vector<std::uint8_t> body;
@@ -352,10 +435,10 @@ struct Request::State {
     Clock::time_point totalDeadline;
 
     State(int id, int version, int context, std::shared_ptr<Capacity> capacity, Settings options, std::string verb, std::string target)
-        : id(id), version(version), sslContext(context), capacity(std::move(capacity)), settings(std::move(options)), method(std::move(verb)), url(Parse(target)) {
+        : id(id), url(Parse(target)), version(version == 3 && !url.secure ? 2 : version), sslContext(context), capacity(std::move(capacity)), settings(std::move(options)), method(std::move(verb)) {
         Require(!method.empty() && nghttp2_check_method(reinterpret_cast<const std::uint8_t*>(method.data()), method.size()),
             "sceHttp2CreateRequestWithURL: invalid method");
-        Require(version >= 1 && version <= 3 && (version != 3 || url.secure), "sceHttp2: unsupported version or cleartext HTTP/2");
+        Require(version >= 1 && version <= 3, "sceHttp2: unsupported version");
         Require(method != "CONNECT", "sceHttp2: CONNECT is not implemented");
         Require(nghttp2_check_header_value_rfc9113(reinterpret_cast<const std::uint8_t*>(settings.userAgent.data()), settings.userAgent.size()),
             "sceHttp2: invalid user agent");
@@ -374,9 +457,19 @@ struct Request::State {
         if (std::exchange(acquired, false)) capacity->active.fetch_sub(1);
     }
 
-    Clock::time_point Deadline(std::uint32_t duration) const {
+    Limit Deadline(std::uint32_t duration, int code) const {
         Require(duration != 0, "sceHttp2: zero timeout semantics are unknown");
-        return std::min(totalDeadline, Clock::now() + std::chrono::microseconds(duration));
+        const auto phase = Clock::now() + std::chrono::microseconds(duration);
+        return phase < totalDeadline ? Limit{phase, code} : Total();
+    }
+
+    Limit Total() const { return {totalDeadline, TimedOut}; }
+
+    int SendTimeoutCode() const { return url.secure ? 0 : SendTimedOut; }
+
+    [[noreturn]] void Raise(int code, const char* message) const {
+        Require(code != 0, message);
+        throw RequestFailure{code};
     }
 
     template<class TCallback>
@@ -387,7 +480,7 @@ struct Request::State {
             const int result = callback();
             lock.lock();
             callbackActive = false;
-            Check(totalDeadline);
+            Check(Total());
             return result;
         } catch (...) {
             if (!lock.owns_lock()) lock.lock();
@@ -405,27 +498,36 @@ struct Request::State {
         return decision == 0 ? 0 : -1;
     }
 
-    void Check(Clock::time_point deadline) const {
-        Require(!cancelled.load(), "sceHttp2: request cancelled; console error mapping is unknown");
-        Require(Clock::now() < deadline, "sceHttp2: request timed out; console error mapping is unknown");
+    void Check(Limit deadline) {
+        const bool wasCancelled = cancelled.load();
+        if (const auto hook = CheckHookSlot().load(std::memory_order_acquire)) hook(stopped, cancelled);
+        Require(!stopped.load(), "sceHttp2: request deleted during an operation; console error mapping is unknown");
+        if (wasCancelled) Raise(Aborted, "sceHttp2: request cancelled; console error mapping is unknown");
+        if (Clock::now() >= deadline.at) Raise(deadline.code, "sceHttp2: request timed out; console error mapping is unknown");
     }
 
-    void Wait(bool write, Clock::time_point deadline, bool both = false) {
+    void Wait(bool write, Limit deadline, bool both = false) {
         for (;;) {
             Check(deadline);
+            int result;
+            if (const auto poll = PollHookSlot().load(std::memory_order_acquire)) result = poll(native, write, both);
+            else {
 #ifdef _WIN32
-            WSAPOLLFD entry{static_cast<SOCKET>(native), static_cast<short>(both ? POLLWRNORM | POLLRDNORM : write ? POLLWRNORM : POLLRDNORM), 0};
-            const auto result = WSAPoll(&entry, 1, 5);
+                WSAPOLLFD entry{static_cast<SOCKET>(native), static_cast<short>(both ? POLLWRNORM | POLLRDNORM : write ? POLLWRNORM : POLLRDNORM), 0};
+                result = WSAPoll(&entry, 1, 5);
 #else
-            pollfd entry{static_cast<int>(native), static_cast<short>(both ? POLLOUT | POLLIN : write ? POLLOUT : POLLIN), 0};
-            const auto result = poll(&entry, 1, 5);
+                pollfd entry{static_cast<int>(native), static_cast<short>(both ? POLLOUT | POLLIN : write ? POLLOUT : POLLIN), 0};
+                result = ::poll(&entry, 1, 5);
 #endif
+            }
             Require(result >= 0, "sceHttp2: host poll failed");
             if (result > 0) { Check(deadline); return; }
         }
     }
 
-    bool Inflating() const { return settings.inflateGzip && contentEncoding == "gzip"; }
+    bool GzipResponse() const { return contentEncoding.starts_with("gzip"); }
+
+    bool Inflating() const { return settings.inflateGzip && GzipResponse(); }
 
     void InflateGzip() {
         if (inflatedGzip || !Inflating() || body.empty()) return;
@@ -496,9 +598,6 @@ struct Request::State {
         }
         body = std::move(output);
         bodyOffset = 0;
-        contentLength = body.size();
-        hasLength = true;
-        contentEncoding.clear();
     }
 
     int Connect() {
@@ -509,7 +608,7 @@ struct Request::State {
 #endif
         std::shared_ptr<Lookup> job;
         for (std::int32_t attempt = 0;; ++attempt) {
-            const auto deadline = Deadline(settings.resolveTimeout);
+            const auto deadline = Deadline(settings.resolveTimeout, 0);
             job = Dns().Submit(url);
             std::unique_lock lock(job->mutex);
             while (!job->complete) {
@@ -517,10 +616,13 @@ struct Request::State {
                 job->changed.wait_for(lock, std::chrono::milliseconds(5));
             }
             Check(deadline);
-            if (!job->failure) break;
-            if (attempt >= settings.resolveRetry) std::rethrow_exception(job->failure);
+            if (!job->failure && !job->error) break;
+            if (attempt >= settings.resolveRetry) {
+                if (job->failure) std::rethrow_exception(job->failure);
+                return job->error;
+            }
         }
-        const auto connectDeadline = Deadline(settings.connectTimeout);
+        const auto connectDeadline = Deadline(settings.connectTimeout, ConnectTimedOut);
         int result = 0;
         for (const auto& address : job->addresses) {
             Check(connectDeadline);
@@ -530,14 +632,16 @@ struct Request::State {
             Require(sceNetSetsockopt(socket, 0xffff, 0x1200, &enabled, sizeof(enabled)) == 0,
                 "sceHttp2: cannot set nonblocking socket");
             Require(KernelLookupSocketNative_nid_no_patch(socket, &socketOwner, &native), "sceHttp2: native socket lookup failed");
-            result = sceNetConnect(socket, address.bytes.data(), address.size);
+            const auto connect = ConnectHookSlot().load(std::memory_order_acquire);
+            result = connect ? connect(socket, address.bytes.data(), address.size) : sceNetConnect(socket, address.bytes.data(), address.size);
+            Check(connectDeadline);
             if (result < 0 && *sceNetErrnoLoc() == 36) {
                 Wait(true, connectDeadline);
                 int error = 0;
                 std::uint32_t size = sizeof(error);
                 result = sceNetGetsockopt(socket, 0xffff, 0x1007, &error, &size);
                 Require(result == 0, "sceHttp2: connect status unavailable; console error mapping is unknown");
-                if (result == 0 && error != 0) result = static_cast<int>(0x80410100u | static_cast<unsigned>(error));
+                if (error != 0) result = static_cast<int>(0x80410100u | static_cast<unsigned>(error));
             }
             if (result == 0) break;
             sceNetSocketClose(std::exchange(socket, -1));
@@ -552,10 +656,11 @@ struct Request::State {
             "sceHttp2: SSL verification options rejected");
         Require(sceSslSetAlpn(ssl, version == 3 ? "h2" : "http/1.1") == 0, "sceHttp2: ALPN setup failed");
         if (settings.sslCallback) Require(sceSslSetVerifyCallback(ssl, Verify_nid_no_patch, this) == 0, "sceHttp2: SSL callback setup failed");
+        const Limit handshakeDeadline{connectDeadline.at, connectDeadline.code == TimedOut ? TimedOut : 0};
         for (;;) {
-            Check(connectDeadline);
+            Check(handshakeDeadline);
             result = sceSslConnect(ssl);
-            if (result == WantRead || result == WantWrite) Wait(result == WantWrite, connectDeadline);
+            if (result == WantRead || result == WantWrite) Wait(result == WantWrite, handshakeDeadline);
             else break;
         }
         if (settings.sslCallback) Require(sceSslSetVerifyCallback(ssl, nullptr, nullptr) == 0, "sceHttp2: SSL callback cleanup failed");
@@ -570,6 +675,7 @@ struct Request::State {
     int TryRead(void* data, std::size_t size) {
         const auto count = url.secure ? SslRead_nid_no_patch(ssl, data, size, 0) : sceNetRecv(socket, data, size, 0);
         if (!url.secure && count < 0 && *sceNetErrnoLoc() == 35) return WantRead;
+        if (!url.secure && count == ConnectionReset) Raise(ConnectionReset, "sceHttp2: read failed; console error mapping is unknown");
         Require((count >= 0 && count <= std::numeric_limits<int>::max()) || count == WantRead || count == WantWrite,
             "sceHttp2: read failed; console error mapping is unknown");
         return static_cast<int>(count);
@@ -577,14 +683,17 @@ struct Request::State {
 
     int TryWrite(const void* data, std::size_t size) {
         size = std::min<std::size_t>(size, 16384);
-        const auto count = url.secure ? sceSslWrite(ssl, const_cast<void*>(data), size, 0) : sceNetSend(socket, data, size, 0);
+        const auto write = WriteHookSlot().load(std::memory_order_acquire);
+        const auto count = url.secure ? sceSslWrite(ssl, const_cast<void*>(data), size, 0) :
+            write ? write(socket, data, size, 0) : sceNetSend(socket, data, size, 0);
         if (!url.secure && count < 0 && *sceNetErrnoLoc() == 35) return WantWrite;
+        if (!url.secure && count == ConnectionReset) Raise(ConnectionReset, "sceHttp2: connection reset during write");
         Require((count > 0 && static_cast<std::uint64_t>(count) <= size) || count == WantRead || count == WantWrite,
             "sceHttp2: write failed; console error mapping is unknown");
         return static_cast<int>(count);
     }
 
-    int RawRead(void* data, std::size_t size, Clock::time_point deadline) {
+    int RawRead(void* data, std::size_t size, Limit deadline) {
         for (;;) {
             Check(deadline);
             const int count = TryRead(data, size);
@@ -593,7 +702,7 @@ struct Request::State {
         }
     }
 
-    void RawWrite(const void* data, std::size_t size, Clock::time_point deadline) {
+    void RawWrite(const void* data, std::size_t size, Limit deadline) {
         const auto* bytes = static_cast<const std::uint8_t*>(data);
         while (size) {
             Check(deadline);
@@ -604,7 +713,7 @@ struct Request::State {
         }
     }
 
-    std::string Line(Clock::time_point deadline) {
+    std::string Line(Limit deadline, int endCode = 0) {
         for (;;) {
             Check(deadline);
             for (std::size_t index = pendingOffset; index + 1 < pending.size(); ++index) {
@@ -619,12 +728,12 @@ struct Request::State {
             if (pendingOffset) { pending.erase(pending.begin(), pending.begin() + pendingOffset); pendingOffset = 0; }
             std::array<std::uint8_t, 16384> buffer;
             const int count = RawRead(buffer.data(), buffer.size(), deadline);
-            Require(count > 0, "sceHttp2: truncated HTTP1 headers or chunk framing");
+            if (count == 0) Raise(endCode, "sceHttp2: truncated HTTP1 headers or chunk framing");
             pending.insert(pending.end(), buffer.begin(), buffer.begin() + count);
         }
     }
 
-    int PendingRead(void* output, std::size_t size, Clock::time_point deadline) {
+    int PendingRead(void* output, std::size_t size, Limit deadline) {
         Check(deadline);
         if (pendingOffset == pending.size()) return RawRead(output, size, deadline);
         const auto count = std::min(size, pending.size() - pendingOffset);
@@ -645,10 +754,10 @@ struct Request::State {
         return {std::move(name), value};
     }
 
-    void Http1Headers(Clock::time_point deadline) {
+    void Http1Headers(Limit deadline) {
         {
             Require(++http1HeaderBlocks <= 8, "sceHttp2: too many informational responses");
-            rawHeaders = Line(deadline) + "\r\n";
+            rawHeaders = Line(deadline, ConnectionEnded) + "\r\n";
             std::int32_t major = 0, minor = 0, code = 0;
             const char* reason = nullptr;
             std::size_t reasonSize = 0;
@@ -657,16 +766,17 @@ struct Request::State {
             status = code;
             hasLength = chunked = hasLocation = hasAuthChallenge = hasProxyAuthChallenge = false;
             contentEncoding.clear();
+            hasEncoding = false;
             contentLength = 0;
             location.clear();
             for (;;) {
-                const auto line = Line(deadline);
+                const auto line = Line(deadline, ConnectionEnded);
                 Require(rawHeaders.size() + line.size() + 2 <= 65536, "sceHttp2: HTTP1 headers exceed host limit");
                 rawHeaders += line + "\r\n";
                 if (line.empty()) break;
                 const auto [name, value] = Field(line);
                 if (name == "content-length") {
-                    const auto length = Number(value);
+                    const auto length = Http1ContentLength(value);
                     Require(!hasLength || length == contentLength, "sceHttp2: inconsistent HTTP1 content lengths");
                     hasLength = true;
                     contentLength = length;
@@ -674,7 +784,8 @@ struct Request::State {
                     Require(!chunked && Lower(std::string(value)) == "chunked" && minor == 1, "sceHttp2: unsupported HTTP1 transfer coding");
                     chunked = true;
                 } else if (name == "content-encoding") {
-                    contentEncoding = Lower(std::string(value));
+                    if (!hasEncoding) contentEncoding = Lower(std::string(value));
+                    hasEncoding = true;
                 } else if (name == "location") {
                     Require(!hasLocation, "sceHttp2: duplicate HTTP1 Location");
                     hasLocation = true;
@@ -697,7 +808,6 @@ struct Request::State {
             remaining = contentLength;
             ready = true;
             ended = method == "HEAD" || status == 204 || status == 304 || (hasLength && remaining == 0);
-            Require(!Inflating() || ended, "sceHttp2: HTTP1 gzip inflation is not implemented");
             return;
         }
     }
@@ -739,7 +849,7 @@ struct Request::State {
         }
         const std::array<std::pair<const void*, std::size_t>, 4> blocks{{
             {header.data(), header.size()}, {prefix.data(), prefix.size()}, {data, size}, {"\r\n0\r\n\r\n", chunkUpload ? 7u : 0u}}};
-        const auto deadline = Deadline(settings.sendTimeout);
+        const auto deadline = Deadline(settings.sendTimeout, SendTimeoutCode());
         std::size_t block = 0, offset = 0;
         while (!ready) {
             while (block < blocks.size() && offset == blocks[block].second) { ++block; offset = 0; }
@@ -748,7 +858,7 @@ struct Request::State {
             std::array<std::uint8_t, 16384> input;
             const int read = TryRead(input.data(), input.size());
             if (read >= 0) {
-                Require(read > 0, "sceHttp2: connection ended before HTTP1 response");
+                if (read == 0) Raise(ConnectionEnded, "sceHttp2: connection ended before HTTP1 response");
                 pending.insert(pending.end(), input.begin(), input.begin() + read);
                 for (;;) {
                     const auto first = pending.begin() + pendingOffset;
@@ -765,27 +875,35 @@ struct Request::State {
             if (written > 0) offset += static_cast<std::size_t>(written);
             else if (read < 0) Wait(read == WantWrite && written == WantWrite, deadline, read != written);
         }
-        while (!ready) Http1Headers(Deadline(settings.recvTimeout));
+        while (!ready) Http1Headers(Deadline(settings.recvTimeout, ReceiveTimedOut));
 
     }
 
-    int ReadHttp1(void* output, std::size_t size) {
-        const auto deadline = Deadline(settings.recvTimeout);
+    int ReadHttp1(void* output, std::size_t size, Limit deadline) {
         size = std::min(size, static_cast<std::size_t>(std::numeric_limits<int>::max()));
         if (chunked) {
             if (chunkTerminator) { Require(Line(deadline).empty(), "sceHttp2: invalid chunk terminator"); chunkTerminator = false; }
             if (!chunkRemaining) {
                 const auto line = Line(deadline);
-                chunkRemaining = Number(std::string_view(line).substr(0, line.find(';')), 16);
+                const auto extension = line.find(';');
+                auto digits = std::string_view(line).substr(0, extension);
+                if (extension != std::string::npos) {
+                    while (!digits.empty() && (digits.back() == ' ' || digits.back() == '\t')) digits.remove_suffix(1);
+                }
+                chunkRemaining = Number(digits, 16);
                 if (!chunkRemaining) {
                     std::size_t bytes = 0;
+                    std::string trailers;
                     for (;;) {
                         const auto trailer = Line(deadline);
                         bytes += trailer.size() + 2;
                         Require(bytes <= 65536, "sceHttp2: trailers exceed host limit");
                         if (trailer.empty()) break;
                         Field(trailer);
+                        trailers += trailer + "\r\n";
                     }
+                    if (!trailers.empty()) trailers += "\r\n";
+                    trailerHeaders = std::move(trailers);
                     ended = true;
                     return 0;
                 }
@@ -793,11 +911,26 @@ struct Request::State {
             size = static_cast<std::size_t>(std::min<std::uint64_t>(size, chunkRemaining));
         } else if (hasLength) size = static_cast<std::size_t>(std::min<std::uint64_t>(size, remaining));
         const int count = PendingRead(output, size, deadline);
+        if (count == 0 && hasLength && !url.secure) {
+            ended = true;
+            return 0;
+        }
         Require(count > 0 || (!hasLength && !chunked), "sceHttp2: truncated HTTP1 body");
         if (chunked) { chunkRemaining -= count; chunkTerminator = chunkRemaining == 0; }
         else if (hasLength) { remaining -= count; ended = remaining == 0; }
         else if (!count) ended = true;
         return count;
+    }
+
+    void FinishHttp1Gzip(Limit deadline) {
+        std::array<std::uint8_t, 16384> buffer;
+        while (!ended) {
+            const int count = ReadHttp1(buffer.data(), buffer.size(), deadline);
+            Require(body.size() + static_cast<std::size_t>(count) <= MaxGzipBytes,
+                "sceHttp2: encoded gzip response exceeds the host limit");
+            body.insert(body.end(), buffer.begin(), buffer.begin() + count);
+        }
+        InflateGzip();
     }
 
     template<class TCallback>
@@ -810,11 +943,18 @@ struct Request::State {
         auto& state = *static_cast<State*>(data);
         return Callback(state, [&] {
             if (frame->hd.stream_id == state.stream) {
-                Require(!state.ready, "sceHttp2: response trailers are not implemented");
+                if (state.ready) {
+                    state.trailerBlock = true;
+                    state.blockHeaders.clear();
+                    return;
+                }
                 state.blockStatus = 0;
+                state.blockHeaders.clear();
                 state.hasAuthChallenge = state.hasProxyAuthChallenge = false;
                 state.hasLength = false;
                 state.contentLength = 0;
+                state.contentEncoding.clear();
+                state.hasEncoding = false;
                 state.location.clear();
                 state.hasLocation = false;
             }
@@ -831,6 +971,10 @@ struct Request::State {
             state.headerBytes += nameSize + valueSize;
             const std::string_view key(reinterpret_cast<const char*>(name), nameSize);
             const std::string_view text(reinterpret_cast<const char*>(value), valueSize);
+            if (state.trailerBlock) {
+                state.blockHeaders.emplace_back(std::string(key), std::string(text));
+                return;
+            }
             if (key == ":status") state.blockStatus = static_cast<int>(Number(text));
             if (key == "www-authenticate") state.hasAuthChallenge = true;
             if (key == "proxy-authenticate") state.hasProxyAuthChallenge = true;
@@ -844,7 +988,11 @@ struct Request::State {
                 state.hasLength = true;
             }
             if (key == "set-cookie" && state.settings.cookieBox != 0) Http2StoreResponseCookie(state.settings.cookieBox, state.Address(), text);
-            if (key == "content-encoding") state.contentEncoding = Lower(std::string(text));
+            if (key == "content-encoding" && !state.hasEncoding) {
+                state.contentEncoding = Lower(std::string(text));
+                state.hasEncoding = true;
+            }
+            if (key != ":status") state.blockHeaders.emplace_back(std::string(key), std::string(text));
         });
     }
 
@@ -855,11 +1003,19 @@ struct Request::State {
                 Require(frame->goaway.error_code == NGHTTP2_NO_ERROR && frame->goaway.last_stream_id >= state.stream,
                     "sceHttp2: GOAWAY rejected request");
             if (frame->hd.stream_id != state.stream) return;
-            if (frame->hd.type == NGHTTP2_HEADERS && state.blockStatus >= 200) {
+            if (frame->hd.type == NGHTTP2_HEADERS && state.trailerBlock) {
+                state.trailerHeaders.clear();
+                for (const auto& [key, value] : state.blockHeaders) state.trailerHeaders += key + ": " + value + "\r\n";
+                state.trailerHeaders += "\r\n";
+                state.trailerBlock = false;
+            } else if (frame->hd.type == NGHTTP2_HEADERS && state.blockStatus >= 200) {
                 state.status = state.blockStatus;
                 const bool authenticationChallenge = (state.status == 401 && state.hasAuthChallenge) || (state.status == 407 && state.hasProxyAuthChallenge);
                 Require(!state.settings.auth || !authenticationChallenge, "sceHttp2: authentication is not implemented");
                 state.ready = true;
+                state.allHeaders = "HTTP/2.0 " + std::to_string(state.status) + " HTTP2 NO PHRASE\r\n";
+                for (const auto& [key, value] : state.blockHeaders) state.allHeaders += key + ": " + value + "\r\n";
+                state.allHeaders += "\r\n";
             }
             if ((frame->hd.type == NGHTTP2_HEADERS || frame->hd.type == NGHTTP2_DATA) &&
                 (frame->hd.flags & NGHTTP2_FLAG_END_STREAM)) {
@@ -942,7 +1098,7 @@ struct Request::State {
         CheckNg(stream);
     }
 
-    void Flush(Clock::time_point deadline) {
+    void Flush(Limit deadline) {
         for (;;) {
             const std::uint8_t* bytes = nullptr;
             const auto size = nghttp2_session_mem_send2(session, &bytes);
@@ -952,12 +1108,12 @@ struct Request::State {
         }
     }
 
-    void Pump(Clock::time_point deadline) {
-        Flush(std::min(deadline, Deadline(settings.sendTimeout)));
+    void Pump(Limit deadline) {
+        Flush(Earlier(deadline, Deadline(settings.sendTimeout, SendTimeoutCode())));
         Receive(deadline);
     }
 
-    void Receive(Clock::time_point deadline) {
+    void Receive(Limit deadline) {
         std::array<std::uint8_t, 16384> buffer;
         {
             const int size = RawRead(buffer.data(), buffer.size(), deadline);
@@ -975,7 +1131,6 @@ struct Request::State {
         Require(lock.owns_lock(), "sceHttp2: concurrent operation on one request is not implemented");
         Require(!callbackActive, "sceHttp2: operation during request callback is not implemented");
         if (failure) std::rethrow_exception(failure);
-        Require(!cancelled.load(), "sceHttp2: request cancelled; console error mapping is unknown");
         return lock;
     }
 
@@ -993,13 +1148,19 @@ Request::~Request() = default;
 int Request::Send(const void* data, std::size_t size) {
     auto lock = state->Lock();
     if (state->started && state->networkResult) return state->networkResult;
+    if (state->started && state->ended) return AlreadySent;
     Require(!state->started, "sceHttp2SendRequest: request reuse is not implemented");
     Require(data || size == 0, "sceHttp2SendRequest: null body");
-    Require(state->settings.noContentLength || size == state->settings.contentLength, "sceHttp2SendRequest: body length mismatch");
-    Require(state->version != 1 || !state->settings.noContentLength || size == 0, "sceHttp2: HTTP1.0 upload without a length is unsupported");
+    const bool disconnected = std::getenv("APS5_NET_DISCONNECTED") != nullptr;
+    Require(disconnected || state->settings.noContentLength || size == state->settings.contentLength, "sceHttp2SendRequest: body length mismatch");
+    Require(disconnected || state->version != 1 || !state->settings.noContentLength || size == 0, "sceHttp2: HTTP1.0 upload without a length is unsupported");
     state->started = true;
     state->totalDeadline = Clock::now() + std::chrono::microseconds(state->settings.timeout);
     try {
+        if (disconnected) {
+            state->Check(state->Total());
+            state->Raise(NetworkError, "sceHttp2: network disconnected");
+        }
         const void* payload = data;
         std::size_t payloadSize = size;
         for (unsigned redirects = 0;; ++redirects) {
@@ -1013,14 +1174,14 @@ int Request::Send(const void* data, std::size_t size) {
             if (state->version < 3) state->SendHttp1(payload, payloadSize);
             else {
                 state->Setup(payload, payloadSize);
-                const auto sendDeadline = state->Deadline(state->settings.sendTimeout);
+                const auto sendDeadline = state->Deadline(state->settings.sendTimeout, state->SendTimeoutCode());
                 auto receiveDeadline = sendDeadline;
                 bool uploaded = false;
                 for (;;) {
-                    state->Flush(uploaded ? state->Deadline(state->settings.sendTimeout) : sendDeadline);
+                    state->Flush(uploaded ? state->Deadline(state->settings.sendTimeout, state->SendTimeoutCode()) : sendDeadline);
                     if (!uploaded && state->uploadOffset == payloadSize) {
                         uploaded = true;
-                        receiveDeadline = state->Deadline(state->settings.recvTimeout);
+                        receiveDeadline = state->Deadline(state->settings.recvTimeout, ReceiveTimedOut);
                     }
                     if (state->ready) break;
                     state->Receive(uploaded ? receiveDeadline : sendDeadline);
@@ -1067,6 +1228,7 @@ int Request::Send(const void* data, std::size_t size) {
             state->body.clear();
             state->bodyOffset = 0;
             state->contentEncoding.clear();
+            state->hasEncoding = false;
             state->inflatedGzip = false;
             state->upload = nullptr;
             state->uploadSize = state->uploadOffset = 0;
@@ -1082,25 +1244,32 @@ int Request::Send(const void* data, std::size_t size) {
         state->upload = nullptr;
         if (state->ended && state->body.empty()) state->Close();
         return 0;
+    } catch (const RequestFailure& failure) {
+        state->networkResult = failure.code;
+        state->upload = nullptr;
+        state->Close();
+        return failure.code;
     } catch (...) { state->Fail(); throw; }
 }
 
 int Request::Read(void* data, std::size_t size) {
     auto lock = state->Lock();
     if (state->networkResult) return ResponseUnavailable;
+    if (state->readResult) return state->readResult;
     Require(state->ready, "sceHttp2ReadData: response unavailable");
     Require(data || size == 0, "sceHttp2ReadData: null buffer");
     if (!size) return 0;
     if (state->ended && state->body.empty()) return 0;
     try {
-        if (state->version < 3) {
-            const int count = state->ReadHttp1(data, size);
+        if (state->version < 3 && !state->Inflating() && !state->inflatedGzip) {
+            const int count = state->ReadHttp1(data, size, state->Deadline(state->settings.recvTimeout, ReceiveTimedOut));
             if (state->ended) state->Close();
             return count;
         }
-        const auto deadline = state->Deadline(state->settings.recvTimeout);
+        const auto deadline = state->Deadline(state->settings.recvTimeout, ReceiveTimedOut);
         state->Check(deadline);
-        while (!state->ended && (state->bodyOffset == state->body.size() || state->Inflating())) state->Pump(deadline);
+        if (state->version < 3) state->FinishHttp1Gzip(deadline);
+        else while (!state->ended && (state->bodyOffset == state->body.size() || state->Inflating())) state->Pump(deadline);
         const auto count = std::min({size, state->body.size() - state->bodyOffset, static_cast<std::size_t>(std::numeric_limits<int>::max())});
         state->Check(deadline);
         if (count) std::memcpy(data, state->body.data() + state->bodyOffset, count);
@@ -1109,6 +1278,10 @@ int Request::Read(void* data, std::size_t size) {
         if (count && !state->ended) CheckNg(nghttp2_session_consume(state->session, state->stream, count));
         if (state->ended && state->body.empty()) state->Close();
         return static_cast<int>(count);
+    } catch (const RequestFailure& failure) {
+        state->readResult = failure.code;
+        state->Close();
+        return failure.code;
     } catch (...) { state->Fail(); throw; }
 }
 
@@ -1127,15 +1300,11 @@ int Request::Status(int* status) {
 int Request::ContentLength(int* kind, std::uint64_t* length) {
     auto lock = state->Lock();
     if (state->networkResult) return ResponseUnavailable;
-    Require(kind && length && state->ready, "sceHttp2GetResponseContentLength: null output or response unavailable");
-    if (state->Inflating()) {
-        try {
-            const auto deadline = state->Deadline(state->settings.recvTimeout);
-            while (!state->ended) state->Pump(deadline);
-        } catch (...) { state->Fail(); throw; }
-    }
-    *kind = state->chunked ? 2 : state->hasLength ? 0 : 1;
-    *length = state->hasLength ? state->contentLength : 0;
+    Require(kind && length, "sceHttp2GetResponseContentLength: null output");
+    if (!state->ready) return ResponseUnavailable;
+    const bool known = state->hasLength && (!state->GzipResponse() || (!state->settings.inflateGzip && CompiledSdkVersion() >= 0x12500000));
+    *kind = known ? 0 : state->chunked ? 2 : 1;
+    *length = known ? state->contentLength : 0;
     return 0;
 }
 
@@ -1143,15 +1312,35 @@ int Request::Headers(char** header, std::size_t* size) {
     auto lock = state->Lock();
     if (state->networkResult) return state->networkResult;
     Require(header && size && state->ready, "sceHttp2GetAllResponseHeaders: null output or response unavailable");
-    Require(state->version < 3, "sceHttp2GetAllResponseHeaders: HTTP2 header representation is unimplemented");
-    *header = state->rawHeaders.data();
-    *size = state->rawHeaders.size();
+    auto& block = state->version < 3 ? state->rawHeaders : state->allHeaders;
+    if (state->settings.inflateGzip && state->settings.stripGzipHeaders && GzipEncoded(block)) {
+        if (state->strippedSource != block) {
+            state->strippedHeaders = WithoutGzipFields(block);
+            state->strippedSource = block;
+        }
+        *header = state->strippedHeaders.data();
+        *size = state->strippedHeaders.size();
+        return 0;
+    }
+    *header = block.data();
+    *size = block.size();
+    return 0;
+}
+
+int Request::TrailingHeaders(char** header, std::size_t* size) {
+    auto lock = state->Lock();
+    if (state->networkResult) return state->networkResult;
+    Require(header && size && state->ready && state->ended, "sceHttp2GetAllTrailingHeaders: null output or response unavailable");
+    Require(!state->trailerHeaders.empty(), "sceHttp2GetAllTrailingHeaders: response has no trailers");
+    *header = state->trailerHeaders.data();
+    *size = state->trailerHeaders.size();
     return 0;
 }
 
 void Request::Cancel() { state->cancelled.store(true); }
 
 void Request::Stop() {
+    state->stopped.store(true);
     Cancel();
     std::lock_guard lock(state->mutex);
     state->Close();
