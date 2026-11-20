@@ -1,9 +1,9 @@
 #include "prx/libSceMusicCoreInterface/include/InventoryExports.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-#include <stdexcept>
 
 namespace {
 
@@ -23,11 +23,11 @@ APS5_DUMMY_FUN
 
 int APS5_VABI sceMusicCoreIfInitializeInterface(const void* argument1, const void* param) {
     if (argument1 == nullptr || param == nullptr) return ErrorInvalidArgument;
+    const int savedErrno = errno;
     std::uint64_t size = 0;
-    if (!GuestCopyIn_nid_no_patch(&size, param, sizeof(size))) {
-        throw std::invalid_argument("sceMusicCoreIfInitializeInterface: unreadable parameter");
-    }
-    if (size != InterfaceParamSize) return ErrorInvalidArgument;
+    const bool copied = GuestCopyIn_nid_no_patch(&size, param, sizeof(size));
+    errno = savedErrno;
+    if (!copied || size != InterfaceParamSize) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 

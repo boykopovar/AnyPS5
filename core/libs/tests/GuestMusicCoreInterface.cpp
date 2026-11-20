@@ -1,10 +1,16 @@
 #include "prx/libSceMusicCoreInterface/libSceMusicCoreInterface.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 void Require(bool value) {
     if (!value) std::abort();
@@ -13,7 +19,7 @@ void Require(bool value) {
 constexpr int invalidArgument = static_cast<int>(0x81795002u);
 constexpr int notInitialized = static_cast<int>(0x81795003u);
 
-}
+} // namespace
 
 int main() {
     const std::array<std::uint64_t, 4> table{};
@@ -34,6 +40,14 @@ int main() {
         param[0] = size;
         Require(sceMusicCoreIfInitializeInterface(table.data(), param.data()) == invalidArgument);
     }
+
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    const auto* const badParam = reinterpret_cast<const void*>(std::uintptr_t{0x10});
+    errno = 71;
+    Require(sceMusicCoreIfInitializeInterface(table.data(), badParam) == invalidArgument);
+    Require(errno == 71);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+
     Require(sceMusicCoreIfInternalInitializeInterface(nullptr, table.data()) == invalidArgument);
     Require(sceMusicCoreIfInternalInitializeInterface("music", nullptr) == invalidArgument);
     Require(sceMusicCoreIfMainLoop() == notInitialized);
