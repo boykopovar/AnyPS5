@@ -303,7 +303,7 @@ void Driver::run(std::uint32_t id) noexcept {
                         OrderHold hold{orderHolders};
                         const auto released = [&] { return failure || stopping || orderReleased(id, submission.received); };
                         StallWatch stall(id);
-                        const auto wake = [&](const auto& done) { return changed.wait_for(lock, std::chrono::microseconds(200), done); };
+                        const auto wake = [&](const auto& done) { return changed.wait_for(lock, OrderHoldWait(), done); };
                         while (!released() && !wake(released)) stall.Check("order behind queue 0 for event", submission.received, &lock);
                     }
                     rethrowFailure();

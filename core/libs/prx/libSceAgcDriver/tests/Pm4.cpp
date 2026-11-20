@@ -2096,6 +2096,10 @@ void testInvalidStallWatchdog() {
     expectSettingRejected("APS5_STALL_WATCHDOG_SECS must be a number");
 }
 
+void testInvalidOrderHoldWait() {
+    expectSettingRejected("APS5_ORDER_HOLD_WAIT_US must be a number");
+}
+
 void testSubmissionRingFailureReport() {
     submitWrites(0, 0x5a000001u, 3);
     std::vector<std::string> lines;
@@ -2666,6 +2670,7 @@ void checkDriverLockFree() {
 
 void testOrderHoldWake() {
     constexpr std::uint32_t rounds = 32;
+    check(AgcDriver::DriverDetail::OrderHoldWait() >= std::chrono::milliseconds(50), "the order-signal test needs APS5_ORDER_HOLD_WAIT_US of 50000 or more, as ctest sets it, so that a held submission released by the fallback wait instead of the wake starts late");
     alignas(8) static std::uint32_t label = 0;
     alignas(8) static std::uint32_t armed = 0;
     alignas(8) static std::uint32_t started = 0;
@@ -2705,10 +2710,10 @@ void testOrderHoldWake() {
     }
     std::sort(latencies.begin(), latencies.end());
     static char reason[200];
-    std::snprintf(reason, sizeof(reason), "a held submission started %.3f ms (median) after queue 0 began to wait on its label; it must start at once", latencies[rounds / 2]);
+    std::snprintf(reason, sizeof(reason), "a held submission started %.3f ms (median) after queue 0 began to wait on its label; the wait must wake it, not the fallback wait", latencies[rounds / 2]);
     std::printf("order-signal: median %.3f ms, largest %.3f ms\n", latencies[rounds / 2], latencies.back());
     if (const char* skip = std::getenv("APS5_SKIP_TIMING_TESTS"); skip != nullptr && skip[0] != '\0' && skip[0] != '0') return;
-    check(latencies[rounds / 2] < 0.1, reason);
+    check(latencies[rounds / 2] < 5.0, reason);
 }
 
 void submitStalledOrderWait(const std::shared_ptr<GatedOutput>& output, std::uint32_t& done) {
@@ -3046,7 +3051,7 @@ int main(int argc, char** argv) {
         const std::pair<const char*, void (*)()> ringModes[]{
             {"ring", testSubmissionRing}, {"ring-empty", testEmptySubmissionRing}, {"ring-disabled", testDisabledSubmissionRing},
             {"ring-invalid", testInvalidSubmissionRing}, {"ring-report", testSubmissionRingFailureReport}, {"stall-watchdog", testStallWatchdog},
-            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"order-signal", testOrderHoldWake}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-zero", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-reentry", testStallPromptOneAtATime}, {"stall-prompt-quit", testStallPromptQuit}, {"stall-prompt-lock", testStallPromptLock}, {"stall-prompt-lock-unavailable", testStallPromptLockUnavailable}, {"rewind-trace", testRewindTailTrace}, {"rewind-copy", testRewindControlCopy}, {"rewind-size", testRewindSize}};
+            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"order-signal", testOrderHoldWake}, {"order-hold-wait-invalid", testInvalidOrderHoldWait}, {"order-hold-wait-zero", testInvalidOrderHoldWait}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-zero", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-reentry", testStallPromptOneAtATime}, {"stall-prompt-quit", testStallPromptQuit}, {"stall-prompt-lock", testStallPromptLock}, {"stall-prompt-lock-unavailable", testStallPromptLockUnavailable}, {"rewind-trace", testRewindTailTrace}, {"rewind-copy", testRewindControlCopy}, {"rewind-size", testRewindSize}};
         if (argc == 2 && std::string(argv[1]) == "ring-report-heap") {
 #ifdef _WIN32
             testSubmissionRingFailureReportHeap();
