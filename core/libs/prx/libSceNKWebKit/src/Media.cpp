@@ -200,8 +200,8 @@ bool rangeIsContiguousWithRange(const WebCore::PlatformTimeRanges::Range& a, con
 
 WebCore::PlatformTimeRanges::Range rangeUnionWithOverlappingOrContiguousRange(const WebCore::PlatformTimeRanges::Range& a, const WebCore::PlatformTimeRanges::Range& b) {
     WebCore::PlatformTimeRanges::Range ret;
-    ret.start = _ZNK3WTF9MediaTimeltERKS0_(&a.start, b.start) ? a.start : b.start;
-    ret.end = _ZNK3WTF9MediaTimegtERKS0_(&a.end, b.end) ? a.end : b.end;
+    ret.start = _ZNK3WTF9MediaTimeltERKS0_(&b.start, a.start) ? b.start : a.start;
+    ret.end = _ZNK3WTF9MediaTimeltERKS0_(&a.end, b.end) ? b.end : a.end;
     return ret;
 }
 

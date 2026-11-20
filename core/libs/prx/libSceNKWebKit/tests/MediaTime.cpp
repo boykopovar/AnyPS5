@@ -442,6 +442,45 @@ void TestPlatformTimeRanges() {
     Require(_ZNK7WebCore18PlatformTimeRanges6lengthEv(&invalidAddRanges) == 0);
     _ZN7WebCore18PlatformTimeRangesD1Ev(&invalidAddRanges);
 
+    WebCore::PlatformTimeRanges tieRanges;
+    _ZN7WebCore18PlatformTimeRangesC1Ev(&tieRanges);
+    WTF::MediaTime tieStart;
+    WTF::MediaTime tieEnd;
+    _ZN3WTF9MediaTimeC1Eljh(&tieStart, 0, 1000, WTF::MediaTime::Valid);
+    _ZN3WTF9MediaTimeC1Eljh(&tieEnd, 5000, 1000, WTF::MediaTime::Valid);
+    _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(&tieRanges, tieStart, tieEnd);
+    WTF::MediaTime sameStart;
+    WTF::MediaTime sameEnd;
+    _ZN3WTF9MediaTimeC1Eljh(&sameStart, 0, 90000, WTF::MediaTime::Valid);
+    _ZN3WTF9MediaTimeC1Eljh(&sameEnd, 450000, 90000, WTF::MediaTime::Valid);
+    _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(&tieRanges, sameStart, sameEnd);
+    Require(_ZNK7WebCore18PlatformTimeRanges6lengthEv(&tieRanges) == 1);
+    bool tieValid = false;
+    WTF::MediaTime mergedStart = _ZNK7WebCore18PlatformTimeRanges5startEjRb(&tieRanges, 0, tieValid);
+    Require(tieValid && mergedStart.m_timeValue == 0 && mergedStart.m_timeScale == 90000);
+    WTF::MediaTime mergedEnd = _ZNK7WebCore18PlatformTimeRanges3endEjRb(&tieRanges, 0, tieValid);
+    Require(tieValid && mergedEnd.m_timeValue == 450000 && mergedEnd.m_timeScale == 90000);
+    WTF::MediaTime shortStart;
+    WTF::MediaTime shortEnd;
+    _ZN3WTF9MediaTimeC1Eljh(&shortStart, 0, 30000, WTF::MediaTime::Valid);
+    _ZN3WTF9MediaTimeC1Eljh(&shortEnd, 60000, 30000, WTF::MediaTime::Valid);
+    _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(&tieRanges, shortStart, shortEnd);
+    Require(_ZNK7WebCore18PlatformTimeRanges6lengthEv(&tieRanges) == 1);
+    mergedStart = _ZNK7WebCore18PlatformTimeRanges5startEjRb(&tieRanges, 0, tieValid);
+    Require(tieValid && mergedStart.m_timeValue == 0 && mergedStart.m_timeScale == 30000);
+    mergedEnd = _ZNK7WebCore18PlatformTimeRanges3endEjRb(&tieRanges, 0, tieValid);
+    Require(tieValid && mergedEnd.m_timeValue == 450000 && mergedEnd.m_timeScale == 90000);
+    WTF::MediaTime doubleStart = _ZN3WTF9MediaTime16createWithDoubleEd(0.0);
+    WTF::MediaTime doubleEnd = _ZN3WTF9MediaTime16createWithDoubleEd(5.0);
+    _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(&tieRanges, doubleStart, doubleEnd);
+    Require(_ZNK7WebCore18PlatformTimeRanges6lengthEv(&tieRanges) == 1);
+    mergedStart = _ZNK7WebCore18PlatformTimeRanges5startEjRb(&tieRanges, 0, tieValid);
+    Require(tieValid && (mergedStart.m_timeFlags & WTF::MediaTime::DoubleValue) != 0);
+    mergedEnd = _ZNK7WebCore18PlatformTimeRanges3endEjRb(&tieRanges, 0, tieValid);
+    Require(tieValid && (mergedEnd.m_timeFlags & WTF::MediaTime::DoubleValue) != 0);
+    Require(_ZNK3WTF9MediaTime8toDoubleEv(&mergedEnd) == 5.0);
+    _ZN7WebCore18PlatformTimeRangesD1Ev(&tieRanges);
+
     WebCore::PlatformTimeRanges ranges;
     _ZN7WebCore18PlatformTimeRangesC1Ev(&ranges);
 
