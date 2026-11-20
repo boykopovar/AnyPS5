@@ -153,7 +153,7 @@ struct Attribute {
 
 struct PathPoint {
     AudioPropagationStructDescriptor desc;
-    AudioPropagationHandle room;
+    AudioPropagationHandle material;
     float gain;
     float position[3];
     std::byte opaque[8];
@@ -168,7 +168,7 @@ struct AudioPath {
 };
 
 static_assert(sizeof(PathPoint) == 48);
-static_assert(offsetof(PathPoint, room) == 16);
+static_assert(offsetof(PathPoint, material) == 16);
 static_assert(offsetof(PathPoint, gain) == 24);
 static_assert(offsetof(PathPoint, position) == 28);
 static_assert(sizeof(AudioPath) == 224);
