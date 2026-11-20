@@ -130,6 +130,12 @@ int main() {
         FillAndCheck(*device, inside, 0x1A51DE00u, "range inside one chunk");
         GuestAllocations::Mutation().Remove(inside);
 
+        const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+        if (context.sparseQueue == VK_NULL_HANDLE || context.sparseQueueMutex == nullptr) {
+            std::printf("skipped, the device has no queue of its own that binds sparse memory, so a range imported at map time is not bound into the chunk imports\n");
+            return VulkanTestSkipped;
+        }
+
         auto* straddling = mapping + ChunkBytes - RangeBytes / 2;
         device->ImportGuestMemory(Register(straddling, RangeBytes), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false);
         const auto straddlingShape = ShapeOf(*device, reinterpret_cast<std::uint64_t>(straddling), static_cast<std::size_t>(RangeBytes));
