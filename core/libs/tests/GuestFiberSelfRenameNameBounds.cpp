@@ -1,6 +1,7 @@
 #include "prx/libSceFiber/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -122,6 +123,10 @@ void AuditFiberRenameAndNameBounds() {
     info.size = sizeof(info);
     Require(sceFiberGetInfo(g_fiberA, &info) == SCE_OK);
     Require(std::strcmp(info.name, "orig_a") == 0);
+
+    errno = 0;
+    Require(sceFiberGetInfo(g_fiberA, reinterpret_cast<FiberInfo*>(std::uintptr_t{0x10})) == FiberErrorInvalid);
+    Require(errno == 0);
 
     Require(sceFiberRename(g_fiberA, "") == SCE_OK);
     Require(sceFiberGetInfo(g_fiberA, &info) == SCE_OK);
