@@ -398,6 +398,21 @@ static void CheckStrictMemoryProtectionBits() {
         void* invalid = nullptr;
         Require(sceKernelMapDirectMemory2(&invalid, length, 0, 3, 0, physical, alignment) == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
     }
+    void* invalid = nullptr;
+    Require(sceKernelMapDirectMemory2(&invalid, 0, 0, 3, 0, physical, 0) == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
+    Require(sceKernelMapDirectMemory2(&invalid, length - 1, 0, 3, 0, physical, 0) == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
+    Require(sceKernelMapDirectMemory2(&invalid, length, 0, 3, 0, -1, 0) == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
+    Require(sceKernelMapNamedDirectMemory(&invalid, 0, 3, 0, physical, 0, "bad") == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
+    Require(sceKernelMapNamedDirectMemory(&invalid, length - 1, 3, 0, physical, 0, "bad") == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
+    Require(sceKernelMapNamedDirectMemory(&invalid, length, 3, 0, -1, 0, "bad") == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
+    void* mappedDirect2 = nullptr;
+    Require(sceKernelMapDirectMemory2(&mappedDirect2, length, 0, 3, 0, physical, 0) == 0 && mappedDirect2 != nullptr);
+    Require(static_cast<volatile unsigned char*>(mappedDirect2)[0] == 5);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mappedDirect2), length) == 0);
+    void* mappedNamed = nullptr;
+    Require(sceKernelMapNamedDirectMemory(&mappedNamed, length, 3, 0, physical, 0, "test_dmem_named") == 0 && mappedNamed != nullptr);
+    Require(static_cast<volatile unsigned char*>(mappedNamed)[0] == 5);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mappedNamed), length) == 0);
     Require(bytes[0] == 5 && bytes[length - 1] == 7);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), length) == 0);
     Require(sceKernelReleaseDirectMemory(physical, length) == 0);

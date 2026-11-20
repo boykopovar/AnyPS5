@@ -710,6 +710,23 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+target_sources(libSceIcu PRIVATE AvailableLocales.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_available_locales_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/AvailableLocales.cpp)
+    target_include_directories(guest_icu_available_locales_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_available_locales_tests PRIVATE libSceIcu libc icu_common)
+    configure_windows_unwind(guest_icu_available_locales_tests)
+    foreach(scenario errors data)
+        add_test(NAME guest_icu_available_locales_${scenario} COMMAND guest_icu_available_locales_tests ${scenario})
+        set_tests_properties(guest_icu_available_locales_${scenario} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_icu_available_locales_${scenario} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+        endif()
+    endforeach()
+endif()
+
 if(BUILD_TESTING)
     add_test_executable(guest_icu_locale_map_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/LocaleMap.cpp)
     target_include_directories(guest_icu_locale_map_tests PRIVATE ${LIBS_INCLUDE_DIR})

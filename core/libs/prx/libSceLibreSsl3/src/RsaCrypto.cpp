@@ -1133,6 +1133,26 @@ int RsaBitCount_nid_no_patch(const LibreSsl3Rsa* rsa) {
     return BitCount(RequireComponent(rsa->n, "RSA_bits", "modulus"));
 }
 
+int RsaSecurityBits_nid_no_patch(const LibreSsl3Rsa* rsa) {
+    if (!rsa) Reject("RSA_security_bits: null key");
+    const int bits = BitCount(RequireComponent(rsa->n, "RSA_security_bits", "modulus"));
+    if (bits >= 15360) return 256;
+    if (bits >= 7680) return 192;
+    if (bits >= 3072) return 128;
+    if (bits >= 2048) return 112;
+    if (bits >= 1024) return 80;
+    return 0;
+}
+
+int RsaPublicCompare_nid_no_patch(const LibreSsl3Rsa* first, const LibreSsl3Rsa* second) {
+    if (!first || !second) Reject("EVP_PKEY_cmp: null RSA key");
+    const auto same = [](const void* left, const void* right, const char* name) {
+        if (!left || !right) return left == right;
+        return CompareComponents(RequireComponent(left, "EVP_PKEY_cmp", name), RequireComponent(right, "EVP_PKEY_cmp", name)) == 0;
+    };
+    return same(second->n, first->n, "modulus") && same(second->e, first->e, "exponent") ? 1 : 0;
+}
+
 int RsaComponentBits_nid_no_patch(const void* component) {
     return BitCount(RequireComponent(component, "BN_num_bits", "number"));
 }
