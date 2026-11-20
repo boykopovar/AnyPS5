@@ -61,6 +61,14 @@ alignas(256) constexpr std::array<std::uint32_t, 87> Code{
     0xbf810000,
 };
 
+alignas(256) constexpr auto ExplicitCode = [] {
+    static_assert(Code[32] == 0xf0840f08u && Code[42] == 0x7e0802ffu);
+    std::array<std::uint32_t, Code.size() - 10u> code{};
+    std::copy_n(Code.begin(), 32u, code.begin());
+    std::copy(Code.begin() + 42u, Code.end(), code.begin() + 32u);
+    return code;
+}();
+
 alignas(256) constexpr std::array<std::uint32_t, 27> GradientCode{
     0x34020087, 0xe0301000, 0x80000501, 0xe0301004, 0x80000601, 0xe0301008, 0x80000701, 0xe030100c,
     0x80000801, 0xe0301010, 0x80000901, 0xe0301014, 0x80000a01, 0xe0301018, 0x80000b01, 0xbf8c3f70,
@@ -206,7 +214,9 @@ std::string Describe(const Case& item) {
     return "T# MIN_LOD " + std::to_string(item.minLod) + " over BASE_LEVEL " + std::to_string(item.baseLevel) + " with S# MAX_LOD " + std::to_string(item.maxLod) + ", mip filter " + std::to_string(item.mipFilter) + " and LOD bias " + std::to_string(item.bias);
 }
 
-void Check(const Case& item, std::size_t results, bool implicitOnly = false) {
+enum class SampleChecks { All, ExplicitOnly, ImplicitOnly };
+
+void Check(const Case& item, std::size_t results, SampleChecks checks) {
     constexpr std::array<const char*, 6> names{"image_sample_d_cl", "image_sample_cl", "image_sample_d_cl_o (1, 2)", "image_sample_d_cl_o (-1, -2)", "image_sample_l", "image_sample_lz"};
     constexpr std::array<std::array<std::int32_t, 2>, 6> offsets{{{0, 0}, {0, 0}, {1, 2}, {-1, -2}, {0, 0}, {0, 0}}};
     const std::uint32_t last = Levels - 1u - item.baseLevel;
@@ -231,7 +241,8 @@ void Check(const Case& item, std::size_t results, bool implicitOnly = false) {
             }
         };
         for (std::size_t index = 0; index < results; ++index) {
-            if (implicitOnly && index != 1u) continue;
+            if (checks == SampleChecks::ImplicitOnly && index != 1u) continue;
+            if (checks == SampleChecks::ExplicitOnly && index == 1u) continue;
             const std::uint32_t level = levelOf(index);
             const std::uint32_t size = Size >> level;
             const std::array<std::uint32_t, 4> expected{level, Wrap(sample.x >> level, offsets[index][0], size), Wrap(sample.y >> level, offsets[index][1], size), 255u};
@@ -243,10 +254,10 @@ void Check(const Case& item, std::size_t results, bool implicitOnly = false) {
     }
 }
 
-void RunAndCheck(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::size_t results, const Case& item, bool cached) {
+void RunAndCheck(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::size_t results, const Case& item, bool cached, SampleChecks checks = SampleChecks::All) {
     FillInput();
     Run(device, code, item, cached);
-    Check(item, results);
+    Check(item, results, checks);
 }
 
 struct Pairing {
@@ -358,10 +369,9 @@ std::set<std::uint32_t> MinLodSpecIds(std::span<const std::uint32_t> spirv) {
     return ids;
 }
 
-void CheckSpirvLanes(const ShaderRecompiler::SpirvTarget& deviceTarget) {
+void CheckSpirvLanes(const ShaderRecompiler::SpirvTarget& deviceTarget, std::span<const std::uint32_t> code) {
     const Case item{0x200u, 0u};
     const auto userData = UserData(item);
-    const std::span<const std::uint32_t> code(Code);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     auto target = deviceTarget;
     target.shaderImageMinLod = false;
@@ -387,12 +397,18 @@ int main(int argc, char** argv) {
             std::puts("skipped, the device has no shaderResourceMinLod");
             return VulkanTestSkipped;
         }
+        const bool implicit = TargetHasCapability(device->Target(), spv::CapabilityComputeDerivativeGroupLinearKHR);
         if (samplerBias) {
             FillTexture();
             const Case item{0u, 0u, 0xfffu, 1u, 256};
+            if (!implicit) {
+                RequireRejected(*device, item, "compute texture derivatives require enabled ComputeDerivativeGroupLinearKHR");
+                std::puts("skipped, the device lacks compute derivatives for the implicit sampler bias check");
+                return VulkanTestSkipped;
+            }
             FillInput();
             Run(*device, Code, item, false);
-            Check(item, 6u, true);
+            Check(item, 6u, SampleChecks::ImplicitOnly);
             std::puts("image sample clamp unit-quad sampler bias tests passed");
             return 0;
         }
@@ -405,29 +421,35 @@ int main(int argc, char** argv) {
             std::puts("skipped, the device has no VK_EXT_image_view_min_lod, and graphics pipeline libraries keep T# minimum LODs out of the shader");
             return VulkanTestSkipped;
         }
-        CheckSpirvLanes(device->Target());
+        const auto code = implicit ? std::span<const std::uint32_t>(Code) : std::span<const std::uint32_t>(ExplicitCode);
+        const auto checks = implicit ? SampleChecks::All : SampleChecks::ExplicitOnly;
+        CheckSpirvLanes(device->Target(), code);
         FillTexture();
-        for (const auto& item : {Case{0u, 0u}, Case{0x200u, 0u}, Case{0x200u, 1u}, Case{0x200u, 0u, 0x300u}}) RunAndCheck(*device, Code, 6u, item, false);
+        if (!implicit) {
+            RequireRejected(*device, Case{0u, 0u}, "compute texture derivatives require enabled ComputeDerivativeGroupLinearKHR");
+            std::puts("image sample LOD clamp: using explicit samples because the device lacks compute derivatives");
+        }
+        for (const auto& item : {Case{0u, 0u}, Case{0x200u, 0u}, Case{0x200u, 1u}, Case{0x200u, 0u, 0x300u}}) RunAndCheck(*device, code, 6u, item, false, checks);
         if (!shaderClamp) RunAndCheck(*device, GradientCode, 1u, Case{0x100u, 1u, 0xfffu, 1u, -128}, false);
         if (!shaderClamp) RunAndCheck(*device, GradientCode, 1u, Case{0x200u, 0u, 0xfffu, 1u, -256}, false);
-        if (!shaderClamp) RunAndCheck(*device, Code, 6u, Case{0u, 0u, 0xfffu, 1u, 256}, false);
-        RunAndCheck(*device, Code, 6u, Case{0x100u, 1u, 0xfffu, 1u, -96}, false);
-        for (const auto& item : {Case{0x200u, 0u}, Case{0u, 0u}, Case{0x300u, 0u}, Case{0x200u, 1u}, Case{0x100u, 0u}}) RunAndCheck(*device, Code, 6u, item, true);
+        if (!shaderClamp) RunAndCheck(*device, code, 6u, Case{0u, 0u, 0xfffu, 1u, 256}, false, checks);
+        RunAndCheck(*device, code, 6u, Case{0x100u, 1u, 0xfffu, 1u, -96}, false, checks);
+        for (const auto& item : {Case{0x200u, 0u}, Case{0u, 0u}, Case{0x300u, 0u}, Case{0x200u, 1u}, Case{0x100u, 0u}}) RunAndCheck(*device, code, 6u, item, true, checks);
         for (const auto& item : {Pairing{0x300u, 0u, {0u, 0u, 0u, 0u}}, Pairing{0x300u, 1u, {0u, 0u, 1u << 26u, 0u}}, Pairing{0x300u, 0u, {0u, 0u, (1u << 20u) | (1u << 22u), 0u}}, Pairing{0x300u, 0u, {0u, 0u, 0x3f00u, 0u}}, Pairing{0x300u, 0u, {0u, 0u, 0u, 0u}, 0x300u, 4u}}) {
             RunPairing(*device, item);
             CheckPairing(item);
         }
         if (shaderClamp) {
-            for (const auto& item : {Case{0x1c0u, 0u}, Case{0x2c0u, 1u}}) RunAndCheck(*device, Code, 6u, item, false);
+            for (const auto& item : {Case{0x1c0u, 0u}, Case{0x2c0u, 1u}}) RunAndCheck(*device, code, 6u, item, false, checks);
             RunAndCheck(*device, GradientCode, 1u, Case{0x1c0u, 0u}, false);
-            for (const auto& item : {Case{0x1c0u, 0u}, Case{0u, 0u}, Case{0x2c0u, 1u}}) RunAndCheck(*device, Code, 6u, item, true);
-            RequireRejected(*device, Case{0x200u, 0u, 0x100u}, "above the maximum LOD of 256/256 of S# 0, which is not implemented");
+            for (const auto& item : {Case{0x1c0u, 0u}, Case{0u, 0u}, Case{0x2c0u, 1u}}) RunAndCheck(*device, code, 6u, item, true, checks);
+            RequireRejected(*device, Case{0x200u, 0u, 0x100u}, "above the maximum LOD of 256/256 of S# 0, which is not implemented", code);
             RunPairing(*device, Pairing{0x140u, 0u, {0u, 0u, 2u << 26u, 0u}});
             CheckPairing(Pairing{0x140u, 0u, {0u, 0u, 2u << 26u, 0u}});
             RequireRejected(*device, Pairing{0x300u, 0u, {0u, 0u, 0u, 0u}, 0x100u, 4u}, "which holds the LOD at 0, also samples image 1 with another minimum LOD, which is not implemented");
-            RequireRejected(*device, Case{0x200u, 0u, 0xfffu, 1u, -256}, "to an explicit LOD that S# 0 biases by -256/256, which is not implemented");
-            RequireRejected(*device, Case{0x200u, 0u, 0xfffu, 1u, 64}, "to an explicit LOD that S# 0 biases by 64/256, which is not implemented");
-            RequireRejected(*device, Case{0x200u, 0u, 0xfffu, 1u, 0, 1u << 20u}, "and S# 0 has different magnification and minification filters");
+            RequireRejected(*device, Case{0x200u, 0u, 0xfffu, 1u, -256}, "to an explicit LOD that S# 0 biases by -256/256, which is not implemented", code);
+            RequireRejected(*device, Case{0x200u, 0u, 0xfffu, 1u, 64}, "to an explicit LOD that S# 0 biases by 64/256, which is not implemented", code);
+            RequireRejected(*device, Case{0x200u, 0u, 0xfffu, 1u, 0, 1u << 20u}, "and S# 0 has different magnification and minification filters", code);
         }
         std::puts(shaderClamp ? "image sample LOD clamp tests passed in the shader-clamp lane" : "image sample LOD clamp tests passed in the image-view lane");
         return 0;

@@ -61,6 +61,14 @@ alignas(256) constexpr std::array<std::uint32_t, 61> Code{
     0xe0701058, 0x80000e01, 0xe070105c, 0x80000f01, 0xbf810000,
 };
 
+alignas(256) constexpr auto ExplicitCode = [] {
+    static_assert(Code[26] == 0xf0840f08u && Code[36] == 0x7e0802ffu);
+    std::array<std::uint32_t, Code.size() - 10u> code{};
+    std::copy_n(Code.begin(), 26u, code.begin());
+    std::copy(Code.begin() + 36u, Code.end(), code.begin() + 26u);
+    return code;
+}();
+
 struct Sample {
     std::uint32_t level;
     std::uint32_t gradient;
@@ -70,7 +78,10 @@ struct Sample {
 };
 
 Sample SampleOf(std::uint32_t tid) {
-    return {tid % 5u, (tid / 5u) % Gradients, (tid / 3u) % Clamps, (tid * 7u + 3u) % Size, (tid * 5u + 1u) % Size};
+    const auto quad = tid / 4u;
+    const auto x = (quad * 7u + 3u + (tid & 1u)) % Size;
+    const auto y = (quad * 5u + 1u + ((tid >> 1u) & 1u)) % Size;
+    return {tid % 5u, (tid / 5u) % Gradients, (tid / 3u) % Clamps, x, y};
 }
 
 std::uint32_t Bits(float value) {
@@ -219,7 +230,7 @@ std::array<std::uint32_t, 4> SamplerDescriptor() {
     return {0u, 0xfffu << 12u, 1u << 26u, 0u};
 }
 
-void Dispatch(AgcDriver::VulkanDevice& device, const std::uint8_t* texels, std::uint32_t minLodLevel) {
+void Dispatch(AgcDriver::VulkanDevice& device, const std::uint8_t* texels, std::uint32_t minLodLevel, std::span<const std::uint32_t> code) {
     std::vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Buffer.data(), static_cast<std::uint32_t>(Buffer.size() * 4u));
     const auto texture = TextureDescriptor(texels, minLodLevel);
@@ -227,7 +238,6 @@ void Dispatch(AgcDriver::VulkanDevice& device, const std::uint8_t* texels, std::
     std::copy(buffer.begin(), buffer.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     std::copy(sampler.begin(), sampler.end(), userData.begin() + 12);
-    const std::span<const std::uint32_t> code(Code);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -242,13 +252,14 @@ void Dispatch(AgcDriver::VulkanDevice& device, const std::uint8_t* texels, std::
     device.WaitIdle();
 }
 
-void Check(const std::string& surface, std::uint32_t minLodLevel) {
+void Check(const std::string& surface, std::uint32_t minLodLevel, bool implicit) {
     constexpr std::array<const char*, 4> names{"image_sample_d_cl", "image_sample_cl", "image_sample_d_cl_o (1, 2)", "image_sample_d_cl_o (-1, -2)"};
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto sample = SampleOf(tid);
         const auto clamped = std::max({sample.level, sample.clamp, minLodLevel});
         const std::array<std::uint32_t, 4> levels{clamped, std::max(sample.clamp, minLodLevel), clamped, clamped};
         for (std::uint32_t index = 0; index < levels.size(); ++index) {
+            if (index == 1u && !implicit) continue;
             const float red = std::bit_cast<float>(Buffer[tid * Words + ResultWord + index * 4u]) * 31.0f;
             const float alpha = std::bit_cast<float>(Buffer[tid * Words + ResultWord + index * 4u + 3u]);
             const auto expected = LevelRed(levels[index]);
@@ -263,11 +274,13 @@ struct Sampled {
 };
 
 Sampled SampleTexture(AgcDriver::VulkanDevice& device, const std::uint8_t* texels, std::uint32_t minLodLevel, const std::string& surface) {
+    const bool implicit = TargetHasCapability(device.Target(), spv::CapabilityComputeDerivativeGroupLinearKHR);
+    const auto code = implicit ? std::span<const std::uint32_t>(Code) : std::span<const std::uint32_t>(ExplicitCode);
     FillInput();
     const auto before = AgcDriver::Graphics::SampledTextureMemory();
-    Dispatch(device, texels, minLodLevel);
+    Dispatch(device, texels, minLodLevel, code);
     const auto after = AgcDriver::Graphics::SampledTextureMemory();
-    Check(surface + " (MIN_LOD " + std::to_string(minLodLevel) + ")", minLodLevel);
+    Check(surface + " (MIN_LOD " + std::to_string(minLodLevel) + ")", minLodLevel, implicit);
     return {after - before, Buffer};
 }
 
@@ -379,6 +392,7 @@ int main() {
             std::puts("skipped, the device has no sparse residency for 2D BC1 images (sparseResidencyImage2D and vkGetPhysicalDeviceSparseImageFormatProperties), so textures keep every level");
             return VulkanTestSkipped;
         }
+        if (!TargetHasCapability(device->Target(), spv::CapabilityComputeDerivativeGroupLinearKHR)) std::puts("sparse texture levels: using explicit gradients because the device lacks compute derivatives");
         ReportDeviceRequirements(context);
         GuestBlock cleared(ClearedMips(), ResidentBytes(ClearedMips()));
         const auto clearedAboveMinLod = ClearedTextureBytes(context, cleared.Texels(), MinLodLevel);

@@ -927,8 +927,12 @@ int main(int argc, char** argv) {
         Run(*device, StoreXyz, TextureDescriptor(texels + Float36Offset, NativeFloatFormat, SwizzleXYZ1, Threads), BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)), 1);
         CheckFloatSample(*device, texels + Float36Offset, {0u, 0u, 0x7fc00000u, 0x3f800000u}, "image_sample_lz of R11_G11_B10_FLOAT results still on the GPU", NativeFloatFormat);
         CheckSample(*device, texels, SampleAt, SampleStep, SampleStart, SwizzleXYZ1, PointSampler, false, false, "point image_sample_lz X Y Z 1");
-        CheckSample(*device, texels, SampleImplicit, SampleStep, SampleStart, SwizzleXYZ1, PointSampler, false, false, "point single-level converted image_sample X Y Z 1");
-        CheckSample(*device, texels, SampleImplicit, SampleStep, SampleStart, SwizzleZYX1, BilinearSampler, true, false, "bilinear single-level converted image_sample Z Y X 1");
+        if (TargetHasCapability(device->Target(), spv::CapabilityComputeDerivativeGroupLinearKHR)) {
+            CheckSample(*device, texels, SampleImplicit, SampleStep, SampleStart, SwizzleXYZ1, PointSampler, false, false, "point single-level converted image_sample X Y Z 1");
+            CheckSample(*device, texels, SampleImplicit, SampleStep, SampleStart, SwizzleZYX1, BilinearSampler, true, false, "bilinear single-level converted image_sample Z Y X 1");
+        } else {
+            RequireRefused(*device, SampleImplicit, texels, SwizzleXYZ1, PointSampler, "compute texture derivatives require enabled ComputeDerivativeGroupLinearKHR", "implicit sample without compute derivatives");
+        }
         CheckSample(*device, texels, SampleAt, SampleStep, SampleStart, SwizzleZYX1, BilinearSampler, true, false, "bilinear image_sample_lz Z Y X 1");
         CheckSample(*device, texels, SampleWrapped, SampleStep, WrappedStart, SwizzleX011, WrapPointSampler, false, true, "wrapped point image_sample_lz X 0 1 1");
         CheckSample(*device, texels, SampleWrapped, SampleStep, WrappedStart, SwizzleXYZ1, WrapBilinearSampler, true, true, "wrapped bilinear image_sample_lz X Y Z 1");
