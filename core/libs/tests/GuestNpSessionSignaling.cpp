@@ -123,6 +123,7 @@ int main() {
         std::memcpy(contextParam, &userId, sizeof(userId));
         Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), &otherContexts[userId - 1]) == 0, "create remaining contexts");
     }
+    Require(otherContexts[0] == firstId + 1 + 3 * 10, "three refused manual UDP calls did not each release the next slot");
     const std::int32_t overflowUser = 10;
     std::memcpy(contextParam, &overflowUser, sizeof(overflowUser));
     Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), &contextId) == ContextLimit, "context limit");

@@ -74,10 +74,15 @@ static bool CopyOutGuest(T* dst, const T& src) {
     return copied;
 }
 
+static void ReleaseSlot(SessionSignalingContext& context, std::uint32_t slot) {
+    const auto nextId = context.id + static_cast<std::uint32_t>(g_contexts.size());
+    context.id = nextId < 100001 ? nextId : 1000 + slot;
+}
+
 static int OpenManualUdpContext(const void* param) {
-    bool freeSlot = false;
-    for (const auto& context : g_contexts) freeSlot = freeSlot || !context.active;
-    if (!freeSlot) return SCE_NP_SESSION_SIGNALING_ERROR_CONTEXT_LIMIT;
+    std::uint32_t slot = 0;
+    while (slot < g_contexts.size() && g_contexts[slot].active) ++slot;
+    if (slot == g_contexts.size()) return SCE_NP_SESSION_SIGNALING_ERROR_CONTEXT_LIMIT;
     std::array<std::byte, 0x28> localParam{};
     const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(localParam.data(), param, localParam.size());
@@ -86,9 +91,13 @@ static int OpenManualUdpContext(const void* param) {
     std::int32_t userId = 0;
     std::memcpy(&userId, localParam.data(), sizeof(userId));
     NpId npId{};
-    if (const int status = sceNpManagerIntGetNpId(userId, &npId); status < 0) return status;
     std::uint64_t accountId = 0;
-    if (const int status = sceNpManagerIntGetAccountId(userId, &accountId); status < 0) return status;
+    int status = sceNpManagerIntGetNpId(userId, &npId);
+    if (status >= 0) status = sceNpManagerIntGetAccountId(userId, &accountId);
+    if (status < 0) {
+        ReleaseSlot(g_contexts[slot], slot);
+        return status;
+    }
     NotImplemented_nid_no_patch("sceNpSessionSignalingManualUdp registration with the signaling core");
 }
 
@@ -194,8 +203,7 @@ int APS5_VABI sceNpSessionSignalingDestroyContext(std::uint32_t contextId) {
     context->internalCallback = nullptr;
     context->internalCallbackUserData = nullptr;
     context->active = false;
-    const auto nextId = context->id + static_cast<std::uint32_t>(g_contexts.size());
-    context->id = nextId < 100001 ? nextId : 1000 + contextId % static_cast<std::uint32_t>(g_contexts.size());
+    ReleaseSlot(*context, contextId % static_cast<std::uint32_t>(g_contexts.size()));
     return 0;
 }
 
