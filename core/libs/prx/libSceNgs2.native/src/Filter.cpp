@@ -2,8 +2,10 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <numbers>
 #include <stdexcept>
 
 #include "Ngs2Internal.hpp"
@@ -88,6 +90,46 @@ void Ngs2ConfigureFilter(Ngs2Filter& filter, const Ngs2SamplerVoiceFilterParam& 
         e1[j] = o2 * e1[j - 2] + o1 * e1[j - 1];
         e2[j] = o2 * e2[j - 2] + o1 * e2[j - 1];
     }
+}
+
+static void ConfigureMasteringLfe(Ngs2MasteringLfe& filter, std::uint32_t designRate) {
+    constexpr double rippleDb = 0.1;
+    const double epsilon = std::sqrt(std::pow(10.0, rippleDb / 10.0) - 1.0);
+    const double mu = std::asinh(1.0 / epsilon) / 4.0;
+    const double cutoff = std::tan(std::numbers::pi * filter.cutoff / designRate);
+    double gain = std::pow(10.0, -rippleDb / 20.0);
+    for (std::size_t i = 0; i < filter.sections.size(); i++) {
+        const double angle = (i == 0 ? 3.0 : 1.0) * std::numbers::pi / 8.0;
+        const std::complex<double> analogPole(-std::sinh(mu) * std::sin(angle), std::cosh(mu) * std::cos(angle));
+        const auto pole = (1.0 + cutoff * analogPole) / (1.0 - cutoff * analogPole);
+        const double a1 = 2.0 * pole.real();
+        const double a2 = -std::norm(pole);
+        filter.sections[i].a1 = static_cast<float>(a1);
+        filter.sections[i].a2 = static_cast<float>(a2);
+        gain *= (1.0 - a1 - a2) * 0.25;
+    }
+    filter.sections[0].gain = static_cast<float>(gain);
+    filter.sections[1].gain = 1.0f;
+    filter.designRate = designRate;
+}
+
+void Ngs2ApplyMasteringLfe(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate) {
+    auto& filter = voice.masteringLfe;
+    if (voice.channels < 4) throw std::runtime_error("NGS2: mastering LFE on a voice without channel 3 is not implemented");
+    const auto designRate = sampleRate == 96000 ? 88200u : sampleRate;
+    if (filter.designRate != designRate) ConfigureMasteringLfe(filter, designRate);
+    float* samples = voice.samples.data() + 3 * grain;
+    const auto count = grain - grain % 4;
+    for (auto& section : filter.sections) {
+        auto& h = section.history;
+        for (std::uint32_t i = 0; i < count; i++) {
+            const float x = samples[i];
+            const float y = section.gain * x + (2.0f * section.gain) * h.x1 + section.gain * h.x2 + section.a1 * h.y1 + section.a2 * h.y2;
+            h = {x, h.x1, y, h.y1};
+            samples[i] = y;
+        }
+    }
+    if (!voice.hasSamples) voice.hasSamples = std::any_of(samples, samples + count, [](float sample) { return sample != 0.0f; });
 }
 
 static bool Bypasses(const Ngs2Filter& filter, std::uint32_t channel) {
