@@ -253,6 +253,7 @@ void TestSystemCertificateListWithT61Subject() {
 
 void TestNoCandidateLocations() {
     BlockCandidates();
+    BlockPathAlias_nid_no_patch("/system/common/cert/CA_LIST.cer");
     ClearEnvironment();
     LibreSslX509Store* store = NewStore();
     LibreSsl3SslCtx context = ContextFor(store);
@@ -325,6 +326,7 @@ void TestUnreadableEnvironmentFile() {
 
 void TestEnvironmentDirectory() {
     BlockCandidates();
+    BlockPathAlias_nid_no_patch("/system/common/cert/CA_LIST.cer");
     Require(std::string(HashedFileName(SubjectEncodingA, sizeof(SubjectEncodingA))) == HashedNameA);
     WriteGuestFile((std::string("hashed/") + HashedNameA).c_str(), CertificateA);
     AddPathAlias_nid_no_patch("/anyps5-libressl3-default-dir", HostPath("hashed").c_str());
