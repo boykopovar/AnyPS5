@@ -1834,6 +1834,7 @@ void APS5_VABI _ZNSt8__sce_v27_MP_RemEPyy_nid_postfix(std::uint64_t* u, std::uin
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_11range_errorE_nid_postfix(const LibcException::ExceptionObject* error);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12system_errorE_nid_postfix(const LibcException::SystemErrorObject* error);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v28ios_base6_ThrowERKNS0_7failureE_nid_postfix(const LibcException::SystemErrorObject* failure);
+[[noreturn]] void APS5_VABI _ZNKSt8ios_base7failure8_DoraiseEv_nid_postfix(const LibcException::SystemErrorObject* self);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix(int code);
 std::int64_t APS5_VABI _ZNSt8__sce_v216_Xtime_get_ticksEv_nid_postfix();
 int APS5_VABI __std_atomic_wait_direct_8_nid_postfix(const void* storage, std::uint8_t expected, std::uint64_t milliseconds);
@@ -1870,6 +1871,12 @@ unsigned long long APS5_VABI _ZNSt8__sce_v28_StoullxEPKcPPciPi_nid_postfix(const
 std::int64_t APS5_VABI _ZNSt8__sce_v26_StolxEPKcPPciPi_nid_postfix(const char* text, char** end, int base, int* error);
 std::uint64_t APS5_VABI _ZNSt8__sce_v27_StoulxEPKcPPciPi_nid_postfix(const char* text, char** end, int base, int* error);
 std::size_t APS5_VABI _ZNSt7codecvtIcc9_MbstatetE7_GetcatEPPKNSt6locale5facetEPKS2__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
+int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE10do_unshiftERS1_PcS4_RS4__nid_postfix(const void* self, void* state, char* to, char* toEnd, char** toNext);
+int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE11do_encodingEv_nid_postfix(const void* self);
+int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE13do_max_lengthEv_nid_postfix(const void* self);
+int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE5do_inERS1_PKcS5_RS5_PcS7_RS7__nid_postfix(const void* self, void* state, const char* from, const char* fromEnd, const char** fromNext, char* to, char* toEnd, char** toNext);
+int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE6do_outERS1_PKcS5_RS5_PcS7_RS7__nid_postfix(const void* self, void* state, const char* from, const char* fromEnd, const char** fromNext, char* to, char* toEnd, char** toNext);
+int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE9do_lengthERS1_PKcS5_m_nid_postfix(const void* self, void* state, const char* from, const char* fromEnd, std::size_t max);
 std::size_t APS5_VABI _ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
 extern std::uint64_t _ZNSt8numpunctIwE2idE_nid_postfix;
 extern std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9];

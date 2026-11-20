@@ -15,6 +15,7 @@ tokenizer_spec = importlib.util.spec_from_file_location("anyps5_cpp_tokenizer", 
 tokenizer = importlib.util.module_from_spec(tokenizer_spec)
 tokenizer_spec.loader.exec_module(tokenizer)
 CPP_TOKEN = tokenizer.CPP_TOKEN
+BRACE = re.compile(r"[{}]")
 
 scan_spec = importlib.util.spec_from_file_location("anyps5_shader_scan", Path(__file__).with_name("shader_scan.py"))
 shader_scan = importlib.util.module_from_spec(scan_spec)
@@ -121,13 +122,13 @@ def code(text):
 
 def body_end(text, start):
     depth = 0
-    for i in range(start, len(text)):
-        if text[i] == "{":
+    for brace in BRACE.finditer(text, start):
+        if brace.group() == "{":
             depth += 1
-        elif text[i] == "}":
+        else:
             depth -= 1
             if depth == 0:
-                return i
+                return brace.start()
     return len(text)
 
 
