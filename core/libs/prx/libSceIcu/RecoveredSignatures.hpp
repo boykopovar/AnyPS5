@@ -221,6 +221,21 @@ URelativeDateTimeFormatter* APS5_VABI ureldatefmt_open_nid_postfix(const char* l
 void APS5_VABI ures_close(UResourceBundle* resB);
 void APS5_VABI ures_initStackObject_nid_postfix(UResourceBundle* resB);
 std::uint32_t APS5_VABI ures_getUInt_nid_postfix(const UResourceBundle* resB, std::int32_t* status);
+std::int32_t APS5_VABI ures_getType_nid_postfix(const UResourceBundle* resB);
+const char* APS5_VABI ures_getKey_nid_postfix(const UResourceBundle* resB);
+std::int32_t APS5_VABI ures_getSize_nid_postfix(const UResourceBundle* resB);
+std::int32_t APS5_VABI ures_hasNext_nid_postfix(const UResourceBundle* resB);
+const char16_t* APS5_VABI ures_getString_nid_postfix(const UResourceBundle* resB, std::int32_t* length, std::int32_t* status);
+std::int32_t APS5_VABI ures_getInt_nid_postfix(const UResourceBundle* resB, std::int32_t* status);
+const std::int32_t* APS5_VABI ures_getIntVector_nid_postfix(const UResourceBundle* resB, std::int32_t* length, std::int32_t* status);
+const char* APS5_VABI ures_getLocaleByType_nid_postfix(const UResourceBundle* resB, std::int32_t type, std::int32_t* status);
+const std::uint8_t* APS5_VABI ures_getBinary_nid_postfix(const UResourceBundle* resB, std::int32_t* length, std::int32_t* status);
+UResourceBundle* APS5_VABI ures_getByKey_nid_postfix(const UResourceBundle* resB, const char* key, UResourceBundle* fillIn,
+    std::int32_t* status);
+UResourceBundle* APS5_VABI ures_getByIndex_nid_postfix(const UResourceBundle* resB, std::int32_t index,
+    UResourceBundle* fillIn, std::int32_t* status);
+const char16_t* APS5_VABI ures_getStringByKey_nid_postfix(const UResourceBundle* resB, const char* key,
+    std::int32_t* length, std::int32_t* status);
 
 UCollator* APS5_VABI usearch_getCollator_nid_postfix(const UStringSearch* search);
 std::int32_t APS5_VABI usearch_getMatchedLength_nid_postfix(const UStringSearch* search);
