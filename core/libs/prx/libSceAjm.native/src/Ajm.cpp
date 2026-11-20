@@ -1758,13 +1758,17 @@ void Execute(const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* out
 }
 
 int RegisterBatch(std::uint32_t context, AjmBatchError* error, std::uint32_t* batch) {
-    if (error) std::memset(error, 0, sizeof(*error));
+    if (batch == nullptr) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (error) {
+        const AjmBatchError localError{};
+        if (!GuestCopyOut_nid_no_patch(error, &localError, sizeof(localError))) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
     const auto id = g_nextBatch.fetch_add(1, std::memory_order_relaxed);
+    if (!GuestCopyOut_nid_no_patch(batch, &id, sizeof(id))) return SCE_AJM_ERROR_INVALID_PARAMETER;
     {
         std::lock_guard lock(g_batchLock);
         g_batches.emplace(id, context);
     }
-    *batch = id;
     return 0;
 }
 
@@ -2112,7 +2116,9 @@ int APS5_VABI sceAjmBatchInitialize(void* buffer, size_t size, AjmBatchInfo* inf
 int APS5_VABI sceAjmBatchJobInitialize(AjmBatchInfo* info, uint32_t instance, const void* codec_parameters, size_t codec_parameters_size, void* result) {
     auto header = MakeHeader(JobKind::Initialize, instance, result, sizeof(SidebandResult));
     header.parameterSize = std::min<std::size_t>(codec_parameters_size, sizeof(header.parameters));
-    if (codec_parameters && header.parameterSize) std::memcpy(header.parameters, codec_parameters, header.parameterSize);
+    if (codec_parameters && header.parameterSize) {
+        if (!GuestCopyIn_nid_no_patch(header.parameters, codec_parameters, header.parameterSize)) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
     return Append(info, header, nullptr, nullptr);
 }
 
@@ -2122,7 +2128,9 @@ int APS5_VABI sceAjmBatchJobClearContext(AjmBatchInfo* info, uint32_t instance, 
 
 int APS5_VABI sceAjmBatchJobSetGaplessDecode(AjmBatchInfo* info, uint32_t instance, const void* gapless_decode, int reset, void* result) {
     auto header = MakeHeader(JobKind::SetGaplessDecode, instance, result, sizeof(SidebandResult));
-    if (gapless_decode) std::memcpy(header.parameters, gapless_decode, sizeof(SidebandGaplessDecode));
+    if (gapless_decode) {
+        if (!GuestCopyIn_nid_no_patch(header.parameters, gapless_decode, sizeof(SidebandGaplessDecode))) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
     header.parameterSize = gapless_decode ? sizeof(SidebandGaplessDecode) : 0;
     header.flags = reset ? 1 : 0;
     return Append(info, header, nullptr, nullptr);
@@ -2154,18 +2162,25 @@ int AppendRun(AjmBatchInfo* info, std::uint32_t instance, std::uint64_t flags, c
 
 int APS5_VABI sceAjmBatchJobRunSplit(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* sideband_output, size_t sideband_output_size) {
     if (!info || sideband_output_size < sizeof(SidebandResult)) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    AjmBatchInfo localInfo{};
+    if (!GuestCopyIn_nid_no_patch(&localInfo, info, sizeof(localInfo))) return SCE_AJM_ERROR_INVALID_PARAMETER;
     if (input_buffers_num != 0 && !input_buffers) return SCE_AJM_ERROR_INVALID_PARAMETER;
     if (output_buffers_num != 0 && !output_buffers) return SCE_AJM_ERROR_INVALID_PARAMETER;
     const std::uint64_t buffers = static_cast<std::uint64_t>(input_buffers_num) + output_buffers_num;
     const std::uint64_t limit = UINT64_MAX - sizeof(PackedJob);
-    if (buffers < input_buffers_num || info->offset > limit || buffers > (limit - info->offset) / sizeof(AjmBuffer)) NotImplemented_nid_no_patch("sceAjmBatchJobRunSplit (a job size past 64 bits)");
-    const std::uint64_t end = info->offset + sizeof(PackedJob) + buffers * sizeof(AjmBuffer);
-    if (end > info->size) {
-        info->offset = end;
+    if (buffers < input_buffers_num || localInfo.offset > limit || buffers > (limit - localInfo.offset) / sizeof(AjmBuffer)) NotImplemented_nid_no_patch("sceAjmBatchJobRunSplit (a job size past 64 bits)");
+    const std::uint64_t end = localInfo.offset + sizeof(PackedJob) + buffers * sizeof(AjmBuffer);
+    if (end > localInfo.size) {
+        localInfo.offset = end;
+        if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return SCE_AJM_ERROR_INVALID_PARAMETER;
         return SCE_AJM_ERROR_JOB_CREATION;
     }
     if (input_buffers_num > 0xffu || output_buffers_num > 0xffu) NotImplemented_nid_no_patch("sceAjmBatchJobRunSplit (more than 255 input or output buffers in one job)");
-    return AppendRun(info, instance, flags, input_buffers, input_buffers_num, output_buffers, output_buffers_num, sideband_output, sideband_output_size);
+    const int result = AppendRun(&localInfo, instance, flags, input_buffers, input_buffers_num, output_buffers, output_buffers_num, sideband_output, sideband_output_size);
+    if (result == 0) {
+        if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
+    return result;
 }
 
 int APS5_VABI sceAjmBatchJobRun(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const void* data_input, size_t data_input_size, void* data_output, size_t data_output_size, void* sideband_output, size_t sideband_output_size) {
@@ -2228,16 +2243,28 @@ int APS5_VABI sceAjmBatchJobGetStatistics(AjmBatchInfo* info, float interval, vo
 
 int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int priority, AjmBatchError* error, uint32_t* batch) {
     if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
-    if (!info || !batch || !info->p_buffer || info->offset > info->size || info->offset == 0) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (!info || !batch) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    AjmBatchInfo localInfo{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localInfo, info, sizeof(localInfo))) {
+        errno = savedErrno;
+        return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
+    errno = savedErrno;
+    if (!localInfo.p_buffer || localInfo.offset > localInfo.size || localInfo.offset == 0) return SCE_AJM_ERROR_INVALID_PARAMETER;
     if (priority < SCE_AJM_PRIORITY_MIN || priority > SCE_AJM_PRIORITY_MAX) return SCE_AJM_ERROR_INVALID_PRIORITY;
-    AJM_TRACE("[ajm] batch start: context %u, priority %d, %llu of %llu buffer bytes used\n", context, priority, static_cast<unsigned long long>(info->offset), static_cast<unsigned long long>(info->size));
-    const auto* cursor = static_cast<const std::uint8_t*>(info->p_buffer);
-    auto remaining = info->offset;
+    AJM_TRACE("[ajm] batch start: context %u, priority %d, %llu of %llu buffer bytes used\n", context, priority, static_cast<unsigned long long>(localInfo.offset), static_cast<unsigned long long>(localInfo.size));
+    const auto* cursor = static_cast<const std::uint8_t*>(localInfo.p_buffer);
+    auto remaining = localInfo.offset;
     std::vector<AjmBuffer> buffers;
     while (remaining != 0) {
         if (remaining < sizeof(PackedJob)) NotImplemented_nid_no_patch("AJM batch contains a truncated private job header");
-        PackedJob record;
-        std::memcpy(&record, cursor, sizeof(record));
+        PackedJob record{};
+        if (!GuestCopyIn_nid_no_patch(&record, cursor, sizeof(record))) {
+            errno = savedErrno;
+            return SCE_AJM_ERROR_INVALID_PARAMETER;
+        }
+        errno = savedErrno;
         const std::size_t bufferCount = static_cast<std::size_t>(record.inputCount) + record.outputCount;
         const std::size_t parameterBytes = (static_cast<std::size_t>(record.parameterSize) + 7u) & ~std::size_t{7};
         const std::size_t requiredBytes = sizeof(PackedJob) + bufferCount * sizeof(AjmBuffer) + parameterBytes;
@@ -2253,8 +2280,20 @@ int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int p
         job.outputCount = record.outputCount;
         job.parameterSize = record.parameterSize;
         buffers.resize(record.inputCount + record.outputCount);
-        if (!buffers.empty()) std::memcpy(buffers.data(), cursor + sizeof(record), buffers.size() * sizeof(AjmBuffer));
-        if (record.parameterSize) std::memcpy(job.parameters, cursor + sizeof(record) + buffers.size() * sizeof(AjmBuffer), record.parameterSize);
+        if (!buffers.empty()) {
+            if (!GuestCopyIn_nid_no_patch(buffers.data(), cursor + sizeof(record), buffers.size() * sizeof(AjmBuffer))) {
+                errno = savedErrno;
+                return SCE_AJM_ERROR_INVALID_PARAMETER;
+            }
+            errno = savedErrno;
+        }
+        if (record.parameterSize) {
+            if (!GuestCopyIn_nid_no_patch(job.parameters, cursor + sizeof(record) + buffers.size() * sizeof(AjmBuffer), record.parameterSize)) {
+                errno = savedErrno;
+                return SCE_AJM_ERROR_INVALID_PARAMETER;
+            }
+            errno = savedErrno;
+        }
         Execute(job, buffers.data(), buffers.data() + job.inputCount);
         remaining -= record.bytes;
         if (remaining != 0) cursor += record.bytes;
@@ -2271,7 +2310,10 @@ int APS5_VABI sceAjmBatchWait(uint32_t context, uint32_t batch, uint32_t timeout
         if (found == g_batches.end() || found->second != context) return SCE_AJM_ERROR_INVALID_BATCH;
         g_batches.erase(found);
     }
-    if (error) std::memset(error, 0, sizeof(*error));
+    if (error) {
+        const AjmBatchError cleared{};
+        if (!GuestCopyOut_nid_no_patch(error, &cleared, sizeof(cleared))) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
     return 0;
 }
 
@@ -2351,7 +2393,7 @@ int APS5_VABI sceAjmBatchStartBuffer(uint32_t context, const uint8_t* batch, uin
             break;
         }
         std::uint32_t words[2];
-        std::memcpy(words, at, sizeof(words));
+        if (!GuestCopyIn_nid_no_patch(words, at, sizeof(words))) return SCE_AJM_ERROR_INVALID_PARAMETER;
         const std::uint8_t* body = at + sizeof(words);
         if (words[1] > static_cast<std::size_t>(end - body)) {
             accepted = false;
@@ -2366,7 +2408,10 @@ int APS5_VABI sceAjmBatchStartBuffer(uint32_t context, const uint8_t* batch, uin
         at = body + words[1];
     }
     if (!accepted) {
-        if (error) *error = AjmBatchError{refusal.code, refusal.job, refusal.offset, refusal.returnAddress};
+        if (error) {
+            const AjmBatchError refusalError{refusal.code, refusal.job, refusal.offset, refusal.returnAddress};
+            if (!GuestCopyOut_nid_no_patch(error, &refusalError, sizeof(refusalError))) return SCE_AJM_ERROR_INVALID_PARAMETER;
+        }
         return SCE_AJM_ERROR_MALFORMED_BATCH;
     }
     for (const ConsoleJob& job : jobs) Execute(job.header, job.buffers.data(), job.buffers.data() + job.header.inputCount);
