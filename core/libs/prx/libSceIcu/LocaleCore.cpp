@@ -518,8 +518,10 @@ std::int32_t Write(std::string_view value, char* destination, std::int32_t capac
     if (size > 0 && destination && capacity > 0 && (!fullOnly || capacity >= size)) {
         std::memcpy(destination, value.data(), static_cast<std::size_t>(std::min(capacity, size)));
     }
-    if (capacity > size && destination) destination[size] = '\0';
-    else if (capacity == size) *status = kStringNotTerminated;
+    if (capacity > size && destination) {
+        destination[size] = '\0';
+        if (*status == kStringNotTerminated) *status = 0;
+    } else if (capacity == size) *status = kStringNotTerminated;
     else *status = kBufferOverflow;
     return size;
 }

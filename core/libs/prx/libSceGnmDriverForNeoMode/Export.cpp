@@ -324,17 +324,18 @@ int APS5_VABI sceGnmDrawIndexIndirectMulti(std::uint32_t* cmdbuf, std::uint32_t 
 
 int APS5_VABI sceGnmDrawIndexMultiInstanced(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t indexCount, std::uint32_t instanceCount, std::uint64_t indexAddress, std::uint64_t objectIdAddress, std::uint32_t flags) {
     if (!cmdbuf || size != 13 || indexAddress == 0 || (indexAddress & 1) != 0 || objectIdAddress == 0 || (objectIdAddress & 0xff) != 0) return CommandFailed;
-    cmdbuf[0] = Header(0x3a, 8, false, flags & 1);
-    cmdbuf[1] = instanceCount;
-    cmdbuf[2] = static_cast<std::uint32_t>(objectIdAddress);
-    cmdbuf[3] = static_cast<std::uint32_t>(objectIdAddress >> 32);
-    cmdbuf[4] = indexCount;
-    cmdbuf[5] = static_cast<std::uint32_t>(indexAddress);
-    cmdbuf[6] = static_cast<std::uint32_t>(indexAddress >> 32);
-    cmdbuf[7] = indexCount;
-    cmdbuf[8] = (flags & NeoDrawFlags) | DmaIndex;
-    Nop(cmdbuf + 9, 3);
-    return 0;
+    return WriteCommandBuffer<13>(cmdbuf, [&](std::uint32_t* buf) {
+        buf[0] = Header(0x3a, 8, false, flags & 1);
+        buf[1] = instanceCount;
+        buf[2] = static_cast<std::uint32_t>(objectIdAddress);
+        buf[3] = static_cast<std::uint32_t>(objectIdAddress >> 32);
+        buf[4] = indexCount;
+        buf[5] = static_cast<std::uint32_t>(indexAddress);
+        buf[6] = static_cast<std::uint32_t>(indexAddress >> 32);
+        buf[7] = indexCount;
+        buf[8] = (flags & NeoDrawFlags) | DmaIndex;
+        Nop(buf + 9, 3);
+    });
 }
 
 int APS5_VABI sceGnmDrawIndexOffset(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t indexOffset, std::uint32_t indexCount, std::uint32_t flags) {
@@ -425,11 +426,12 @@ int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalSize(void) {
 
 int APS5_VABI sceGnmDrawOpaqueAuto(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t flags) {
     if (!cmdbuf || size != 7 || (flags & 0x1ffffffeu) != 0) return CommandFailed;
-    cmdbuf[0] = Header(0x2d, 2, false, flags & 1);
-    cmdbuf[1] = 0x10;
-    cmdbuf[2] = (flags & NeoDrawFlags) | AutoIndex | UseOpaque;
-    Nop(cmdbuf + 3, 3);
-    return 0;
+    return WriteCommandBuffer<7>(cmdbuf, [&](std::uint32_t* buf) {
+        buf[0] = Header(0x2d, 2, false, flags & 1);
+        buf[1] = 0x10;
+        buf[2] = (flags & NeoDrawFlags) | AutoIndex | UseOpaque;
+        Nop(buf + 3, 3);
+    });
 }
 
 int APS5_VABI sceGnmDriverInternalRetrieveGnmInterface(void) {
@@ -479,8 +481,8 @@ int APS5_VABI sceGnmGetCoredumpAddress(void) {
 
 int APS5_VABI sceGnmGetCoredumpMode(std::uint32_t* mode) {
     if (!mode) return 1;
-    *mode = 0;
-    return 0;
+    const std::uint32_t value = 0;
+    return GuestCopyOut_nid_no_patch(mode, &value, sizeof(value)) ? 0 : 1;
 }
 
 int APS5_VABI sceGnmGetCoredumpProtectionFaultTimestamp(void) {
