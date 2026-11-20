@@ -49,7 +49,12 @@ static void BoxAndFullBox() {
     box.version = 1;
     box.flags = 0x00abcdefU;
     Require(_ZNK7WebCore6ISOBox4sizeEv(&box.box) == 0x1'0000'0020ULL);
-    Require(_ZNK7WebCore6ISOBox7boxTypeEv(&box.box) == 0x7363686dU);
+    const std::uint32_t* boxType = _ZNK7WebCore6ISOBox7boxTypeEv(&box.box);
+    Require(boxType == &box.box.boxType && *boxType == 0x7363686dU);
+    Require(reinterpret_cast<const unsigned char*>(boxType) - reinterpret_cast<const unsigned char*>(&box.box) == 16);
+    box.box.boxType = 0x74656e63U;
+    Require(*boxType == 0x74656e63U);
+    box.box.boxType = 0x7363686dU;
     Require(&_ZNK7WebCore6ISOBox12extendedTypeEv(&box.box) == &box.box.extendedType);
     Require(_ZNK7WebCore10ISOFullBox7versionEv(&box) == 1);
     Require(_ZNK7WebCore10ISOFullBox5flagsEv(&box) == 0x00abcdefU);
