@@ -10,7 +10,6 @@
 #include <cstring>
 #include <initializer_list>
 #include <string_view>
-#include <stdexcept>
 #include <string>
 
 namespace {
@@ -159,13 +158,12 @@ int main() {
         assert(status == 15 && output[0] == 'Q');
     }
     status = 0;
-    bool keywordThrown = false;
-    try {
-        uloc_getKeywordValue("en-u-ca-buddhist", "calendar", output.data(), 16, &status);
-    } catch (const std::runtime_error&) {
-        keywordThrown = true;
-    }
-    assert(keywordThrown && status == 0 && output[0] == 'Q');
+    assert(uloc_getKeywordValue("en-u-ca-buddhist", "calendar", output.data(), 16, &status) == 8);
+    assert(status == 0 && std::string_view(output.data()) == "buddhist");
+    output.fill('Q');
+    assert(uloc_getKeywordValue("en-u-ca-gregory-nu-thai", "numbers", output.data(), 16, &status) == 4);
+    assert(status == 0 && std::string_view(output.data()) == "thai");
+    output.fill('Q');
     status = 15;
     assert(uloc_getKeywordValue("en-u-ca-buddhist", "calendar", output.data(), 16, &status) == 0);
     assert(status == 15 && output[0] == 'Q');
