@@ -606,6 +606,13 @@ int APS5_VABI sceAudioOutSetVolume(int handle, std::uint32_t flag, int* vol) {
     if (port == nullptr) {
         return -2144993277;
     }
+    std::array<int, 8> localVol{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(localVol.data(), vol, static_cast<std::size_t>(port->channels) * sizeof(int));
+    errno = savedErrno;
+    if (!copied) {
+        return -2144993276;
+    }
     const bool isStd = formatIsStd(port->format);
     for (int i = 0; i < port->channels; i++, flag >>= 1u) {
         if ((flag & 1u) == 0) {
@@ -618,7 +625,7 @@ int APS5_VABI sceAudioOutSetVolume(int handle, std::uint32_t flag, int* vol) {
             else if (i == 6) srcIdx = 4;
             else if (i == 7) srcIdx = 5;
         }
-        port->volume[i] = vol[srcIdx];
+        port->volume[i] = localVol[srcIdx];
     }
     return 0;
 }
