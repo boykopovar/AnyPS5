@@ -682,7 +682,7 @@ struct LibreSslX509CertInfo {
     Asn1String* issuerUid;
     Asn1String* subjectUid;
     LibreSslStack* extensions;
-    LibreSslAsn1Encoding encoding;
+    LibreSslAsn1Encoding enc;
 };
 
 struct LibreSslCertKey {
