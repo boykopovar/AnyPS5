@@ -72,7 +72,7 @@ static void CheckConstructed(const FakeTable& table, const FakeStructure& struct
 }
 
 static void TestBothVariants() {
-    using Constructor = void (*)(void*, void*);
+    using Constructor = void (APS5_VABI *)(void*, void*);
     const Constructor constructors[] = {
         reinterpret_cast<Constructor>(&_ZN3JSC11SymbolTableC1ERNS_2VME),
         reinterpret_cast<Constructor>(&_ZN3JSC11SymbolTableC2ERNS_2VME),
@@ -111,7 +111,7 @@ static void TestFlagsKeepHighBits() {
     Require(table.bytes[kSymbolTableFlagsOffset] == 0x00);
 }
 
-static bool Throws(void (*function)(void*, void*), void* self, void* vm) {
+static bool Throws(void (APS5_VABI *function)(void*, void*), void* self, void* vm) {
     try {
         function(self, vm);
     } catch (const std::invalid_argument&) {
@@ -127,7 +127,7 @@ static void TestNullInputs() {
     Wire(vm, structure, slot);
     FakeTable table;
     Fill(table, 0);
-    void (*const functions[])(void*, void*) = {_ZN3JSC11SymbolTableC1ERNS_2VME, _ZN3JSC11SymbolTableC2ERNS_2VME};
+    void (APS5_VABI *const functions[])(void*, void*) = {_ZN3JSC11SymbolTableC1ERNS_2VME, _ZN3JSC11SymbolTableC2ERNS_2VME};
     for (auto function : functions) {
         Require(Throws(function, nullptr, vm.bytes));
         Require(Throws(function, table.bytes, nullptr));
