@@ -16,7 +16,19 @@
 #include <windows.h>
 #endif
 
-static void Require(bool value) { if (!value) std::abort(); }
+#ifdef _WIN32
+static std::vector<std::filesystem::path> longTree;
+#endif
+static void Require(bool value) {
+    if (value) return;
+#ifdef _WIN32
+    for (auto entry = longTree.rbegin(); entry != longTree.rend(); ++entry) {
+        const auto path = LR"(\\?\)" + entry->wstring();
+        if (::RemoveDirectoryW(path.c_str()) == FALSE) ::DeleteFileW(path.c_str());
+    }
+#endif
+    std::abort();
+}
 static int allocations = 0;
 static int releases = 0;
 static void* APS5_VABI Allocate(std::size_t bytes) { ++allocations; return GuestHeap::GuestHeapAllocate_nid_postfix(bytes); }
@@ -28,11 +40,11 @@ static void LongDirectory(const std::filesystem::path& host) {
     std::filesystem::path relative = "anyps5-cwd-long-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     for (int level = 0; level < 5; ++level) relative /= std::string(60, 'd');
     std::vector<std::filesystem::path> levels;
-    for (const auto& part : relative) {
-        levels.push_back(levels.empty() ? host / part : levels.back() / part);
-        Require(::CreateDirectoryW(Verbatim(levels.back()).c_str(), nullptr) != FALSE);
-    }
+    for (const auto& part : relative) levels.push_back(levels.empty() ? host / part : levels.back() / part);
     const auto directory = levels.back();
+    longTree = levels;
+    longTree.push_back(directory / "sample.txt");
+    for (const auto& level : levels) Require(::CreateDirectoryW(Verbatim(level).c_str(), nullptr) != FALSE);
     Require(directory.native().size() > MAX_PATH);
     const HANDLE file = ::CreateFileW(Verbatim(directory / "sample.txt").c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr);
     Require(file != INVALID_HANDLE_VALUE && ::CloseHandle(file) != FALSE);
@@ -46,6 +58,7 @@ static void LongDirectory(const std::filesystem::path& host) {
     Require(chdir_nid_postfix("/") == 0);
     Require(::DeleteFileW(Verbatim(directory / "sample.txt").c_str()) != FALSE);
     for (auto level = levels.rbegin(); level != levels.rend(); ++level) Require(::RemoveDirectoryW(Verbatim(*level).c_str()) != FALSE);
+    longTree.clear();
 }
 #endif
 int main() {

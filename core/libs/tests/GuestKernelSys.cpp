@@ -1568,6 +1568,7 @@ static void LongDirectoryAtCalls(const std::filesystem::path& root) {
 static void LongDirectoryFchdir(const std::filesystem::path& root) {
     std::vector<std::filesystem::path> levels{root / "long"};
     for (int level = 0; level < 5; ++level) levels.push_back(levels.back() / std::string(60, 'd'));
+    longTree = levels;
     const auto verbatim = [](const std::filesystem::path& path) { return LR"(\\?\)" + std::filesystem::absolute(path).wstring(); };
     for (const auto& level : levels) Require(::CreateDirectoryW(verbatim(level).c_str(), nullptr) != FALSE);
     const auto& path = levels.back();
@@ -1583,6 +1584,7 @@ static void LongDirectoryFchdir(const std::filesystem::path& root) {
     Require(chdir_nid_postfix(previous) == 0);
     Require(sceKernelClose(directory) == 0);
     for (auto level = levels.rbegin(); level != levels.rend(); ++level) Require(::RemoveDirectoryW(verbatim(*level).c_str()) != FALSE);
+    longTree.clear();
 }
 #endif
 
