@@ -140,6 +140,10 @@ void TestStandardHandleTiltCorrectionAndOrientation() {
     Require(scePadReadState(handle0, &data) == 0, "scePadReadState after tilted motion failed");
     Require(data.orientation_w < 1.0f || data.orientation_z != 0.0f, "orientation must be adjusted by tilt correction");
 
+    Require(scePadSetTiltCorrectionState(handle0, false) == PAD_OK, "disable tilt correction before reset failed");
+    PadInputState neutralInput{};
+    PadPublishInputForPort_nid_postfix(0, neutralInput);
+
     Require(scePadResetOrientation(handle0) == PAD_OK, "reset orientation failed");
     Require(scePadReadState(handle0, &data) == 0, "scePadReadState after reset failed");
     Require(data.orientation_w == 1.0f && data.orientation_x == 0.0f && data.orientation_y == 0.0f && data.orientation_z == 0.0f, "reset orientation must restore identity");
