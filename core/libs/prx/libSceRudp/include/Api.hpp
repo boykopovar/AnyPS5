@@ -17,7 +17,7 @@ int APS5_VABI sceRudpSetEventHandler(GuestRudpEventHandler handler, void* arg);
 int APS5_VABI sceRudpCreateContext(GuestRudpEventHandler handler, void* arg, int* ctxId);
 int APS5_VABI sceRudpBind(int ctxId, int socketId, uint16_t vport, uint8_t muxMode);
 int APS5_VABI sceRudpSetOption(int ctxId, int option, const void* value, uint32_t len);
-int APS5_VABI sceRudpGetOption(int ctxId, int option, void* value, uint32_t len);
+int APS5_VABI sceRudpGetOption(int ctxId, int option, void* value, std::uint64_t len);
 int APS5_VABI sceRudpInitiate(int ctxId, const void* to, uint32_t tolen, uint16_t vport);
 int APS5_VABI sceRudpGetContextStatus(int ctxId, void* status, std::size_t size);
 int APS5_VABI sceRudpGetRemoteInfo(int contextId, void* address, std::uint32_t* addressSize, std::uint16_t* virtualPort);

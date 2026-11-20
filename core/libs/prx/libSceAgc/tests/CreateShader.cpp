@@ -13,6 +13,7 @@ const Shader* registered = nullptr;
 unsigned registrations = 0;
 
 alignas(256) const std::array<std::uint32_t, 64> code{0xbf810000u};
+alignas(256) const std::array<std::uint32_t, 64> movedCode{0xbf810000u};
 
 void check(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
@@ -47,13 +48,13 @@ void fill(Binary& binary, ShaderRegs::ShaderBinaryType type, std::uint32_t low) 
     binary.shader.specials = relative(&binary.specials, &binary.shader.specials);
 }
 
-Shader* create(Binary& binary) {
+Shader* create(Binary& binary, const std::array<std::uint32_t, 64>& at = code) {
     registered = nullptr;
     registrations = 0;
     Shader* created = nullptr;
-    check(sceAgcCreateShader(&created, &binary.shader, code.data()) == 0, "sceAgcCreateShader failed");
+    check(sceAgcCreateShader(&created, &binary.shader, at.data()) == 0, "sceAgcCreateShader failed");
     check(created == &binary.shader && registered == &binary.shader && registrations == 1, "the created shader is not the header, registered once");
-    check(binary.shader.code == code.data(), "the code address was not stored in the header");
+    check(binary.shader.code == at.data(), "the code address was not stored in the header");
     return created;
 }
 
@@ -88,6 +89,22 @@ void testPixelWithUserData() {
     check(binary.registers[0].value == static_cast<std::uint32_t>(program >> 8u) && binary.registers[1].value == (0xabcdef00u | static_cast<std::uint32_t>((program >> 40u) & 0xffu)), "SPI_SHADER_PGM_LO_PS and _HI_PS do not hold the code address");
 }
 
+void testCreatedAgain() {
+    Binary binary;
+    fill(binary, ShaderRegs::ShaderBinaryType::Ps, ShaderRegs::SPI_SHADER_PGM_LO_PS);
+    binary.shader.user_data = relative(&binary.userData, &binary.shader.user_data);
+    binary.userData.direct_resource_offset = relative(binary.direct.data(), &binary.userData.direct_resource_offset);
+    create(binary);
+    create(binary);
+    check(binary.shader.sh_registers == binary.registers.data() && binary.shader.specials == &binary.specials && binary.shader.user_data == &binary.userData, "a second create resolved the header's pointers again");
+    check(binary.userData.direct_resource_offset == binary.direct.data(), "a second create resolved the user data's pointers again");
+    const auto program = reinterpret_cast<std::uint64_t>(code.data()) + 0x1000u;
+    check(binary.registers[0].value == static_cast<std::uint32_t>(program >> 8u) && binary.registers[1].value == (0xabcdef00u | static_cast<std::uint32_t>((program >> 40u) & 0xffu)), "a second create from the same code moved the program address");
+    create(binary, movedCode);
+    const auto moved = reinterpret_cast<std::uint64_t>(movedCode.data()) + 0x1000u;
+    check(binary.registers[0].value == static_cast<std::uint32_t>(moved >> 8u) && binary.registers[1].value == (0xabcdef00u | static_cast<std::uint32_t>((moved >> 40u) & 0xffu)), "a create from other code did not rebase the program address onto it");
+}
+
 void testWithoutProgramAddress() {
     Binary binary;
     fill(binary, ShaderRegs::ShaderBinaryType::Fs, 0x30u);
@@ -107,6 +124,7 @@ int main() {
     try {
         testCompute();
         testPixelWithUserData();
+        testCreatedAgain();
         testWithoutProgramAddress();
         std::puts("AGC create shader tests passed");
         return 0;

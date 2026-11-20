@@ -1,6 +1,7 @@
 #include "prx/libc/include/WindowsFormatting.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 #include <cerrno>
 #include <climits>
@@ -12,14 +13,15 @@
 #include <mutex>
 
 extern "C" void APS5_VABI ignore_handler_s_nid_postfix(const char* message, void* pointer, int error) {
-    SonyIgnoreHandlerS(message, pointer, error);
+    SonyIgnoreHandlerS_nid_no_patch(message, pointer, error);
 }
 
 extern "C" void* APS5_VABI set_constraint_handler_s_nid_postfix(void* handler) {
-    return SonySetConstraintHandlerS(handler);
+    return SonySetConstraintHandlerS_nid_no_patch(handler);
 }
 
 extern "C" std::size_t APS5_VABI wcstombs_nid_postfix(char* destination, const std::uint16_t* source, std::size_t capacity) {
+    if (destination && capacity == 0) return 0;
     std::size_t count = 0;
     for (;; ++source) {
         char bytes[MB_LEN_MAX];
@@ -72,12 +74,15 @@ extern "C" int APS5_VABI strerror_s_nid_postfix(char* buffer, std::size_t capaci
     }
     char message[128];
     const auto length = ReadErrorMessage(error, message);
-    if (length < capacity) {
-        std::memcpy(buffer, message, length + 1);
-        return 0;
+    std::size_t count = length + 1;
+    if (length >= capacity) {
+        count = capacity;
+        message[capacity - 1] = '\0';
+        if (capacity > 3) std::memcpy(message + capacity - 4, "...", 3);
     }
-    std::memcpy(buffer, message, capacity - 1);
-    buffer[capacity - 1] = '\0';
-    if (capacity > 3) std::memcpy(buffer + capacity - 4, "...", 3);
+    if (!GuestCopyOut_nid_no_patch(buffer, message, count)) {
+        ErrorMessageConstraint();
+        return 22;
+    }
     return 0;
 }

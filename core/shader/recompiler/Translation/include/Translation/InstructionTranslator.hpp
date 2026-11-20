@@ -7,6 +7,7 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "Translation/EmbeddedVertexFetch.hpp"
+#include "SplitStateAbi.hpp"
 #include <cstdint>
 #include <optional>
 
@@ -43,17 +44,17 @@ struct TranslateOptions {
     bool float64 = false;
     bool gcnLegacyVertexInputs = false;
     bool nativeFloat16Fma = false;
+    bool float16HostNans = false;
+    bool nativeInteger16 = false;
     std::optional<ShaderFloatMode> floatMode;
     ShaderStageInputInfo inputInfo;
     const EmbeddedFetchPlan* embeddedFetch = nullptr;
+    const SplitStateAbi::Plan* splitState = nullptr;
 };
 
 class InstructionTranslator {
 public:
     [[nodiscard]] IrProgram Translate(const RdnaProgram& decoded, const ControlFlowGraph& cfg, const TranslateOptions& options) const;
-
-private:
-    void translateInstruction(IrBuilder& builder, const RdnaInstruction& instruction, const ControlFlowGraph& cfg, const TranslateOptions& options) const;
 };
 
 }
