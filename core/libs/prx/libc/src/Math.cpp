@@ -5828,9 +5828,13 @@ long double APS5_VABI exp2l_nid_postfix(long double x) {
 long double APS5_VABI logl_nid_postfix(long double x) { return _LLog_nid_postfix(x, 0); }
 long double APS5_VABI log10l_nid_postfix(long double x) { return _LLog_nid_postfix(x, 1); }
 long double APS5_VABI ldexpl_nid_postfix(long double x, int exp) { return scalbnl_nid_postfix(x, exp); }
-long double APS5_VABI truncl_nid_postfix(long double x) { return std::trunc(x); }
-long double APS5_VABI ceill_nid_postfix(long double x) { return std::ceil(x); }
-long double APS5_VABI floorl_nid_postfix(long double x) { return std::floor(x); }
+static long double RoundedIntegral(long double x, long double result) {
+    if (result != x && result == result) std::feraiseexcept(FE_INEXACT);
+    return result;
+}
+long double APS5_VABI truncl_nid_postfix(long double x) { return RoundedIntegral(x, std::trunc(x)); }
+long double APS5_VABI ceill_nid_postfix(long double x) { return RoundedIntegral(x, std::ceil(x)); }
+long double APS5_VABI floorl_nid_postfix(long double x) { return RoundedIntegral(x, std::floor(x)); }
 double APS5_VABI logb_nid_postfix(double x) {
     const std::uint64_t bits = std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull;
     if (bits == 0) {
