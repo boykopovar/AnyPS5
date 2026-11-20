@@ -1088,7 +1088,7 @@ private:
             Require(range->bytes <= std::numeric_limits<std::uint64_t>::max() - range->address, "guest color mapping is invalid");
             const auto rangeEnd = range->address + range->bytes;
             if (rangeEnd <= cursor) continue;
-            Require(!writable || range->writable, "guest color publication requires writable registered guest memory for its whole footprint");
+            Require(!writable || range->HostWritable(), "guest color publication requires writable registered guest memory for its whole footprint");
             leases.push_back(range);
             cursor = std::min(end, rangeEnd);
             if (cursor == end) return leases;
