@@ -9927,6 +9927,185 @@ void ExclusionSelectedInsideHook() {
     exclusionSelected.store(true, std::memory_order_release);
 }
 
+std::atomic<int> subtractFlushStage{0};
+
+void SubtractFlushSelectedHook() {
+    subtractFlushStage.store(1, std::memory_order_release);
+    AwaitGate([] { return subtractFlushStage.load(std::memory_order_acquire) >= 2; }, 5);
+}
+
+bool subtractFlushingUnitsTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    {
+        constexpr std::uint32_t width = 128;
+        constexpr std::uint32_t height = 128;
+        constexpr std::size_t imageBytes = width * height * 4;
+        std::vector<std::uint8_t> storage(imageBytes + 65536 * 2, 0x55);
+        const auto begin = (reinterpret_cast<std::uint64_t>(storage.data()) + 65535ull) & ~65535ull;
+        const auto end = begin + imageBytes;
+        auto* aligned = reinterpret_cast<void*>(begin);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(aligned, imageBytes + 65536, true, true, true);
+        }
+        struct Unregister {
+            void* block;
+            ~Unregister() {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+        } unregister{aligned};
+        GuestTextureResource resource{};
+        resource.baseAddress = begin;
+        resource.width = width;
+        resource.height = height;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        Require(DescribeSurface(resource).guestBytes == imageBytes, "flushing-units test surface has an unexpected size");
+        auto image = StorageTexture::Create(context, detiler, resource, 0);
+        recorder.Keep(image);
+        image->MarkDirty();
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges{{begin, end + 65536}};
+        StorageTexture::SubtractPendingUnits(ranges);
+        Require(ranges.size() == 1 && ranges[0] == std::pair<std::uint64_t, std::uint64_t>{end, end + 65536}, "pending image unit was not subtracted before flush");
+        Require(GpuMutex().DepthOnThisThread() == 1, "the test thread holds the GPU mutex more than once");
+        {
+            GateWatchdog watchdog("subtract pending units during flushing", 20);
+            subtractFlushStage.store(0, std::memory_order_release);
+            StorageTexture::SetFlushSelectedHookForTest(&SubtractFlushSelectedHook);
+            std::thread flusher([&] {
+                StorageTexture::FlushPending(begin, imageBytes, nullptr, "memory access", PublishScope::None);
+            });
+            Require(AwaitGate([] { return subtractFlushStage.load(std::memory_order_acquire) >= 1; }), "flush did not reach the registered-flushing hook");
+            ranges = {{begin, end + 65536}};
+            StorageTexture::SubtractPendingUnits(ranges);
+            const bool subtractedWhileFlushing = ranges.size() == 1 && ranges[0] == std::pair<std::uint64_t, std::uint64_t>{end, end + 65536};
+            GpuMutex().unlock();
+            subtractFlushStage.store(2, std::memory_order_release);
+            flusher.join();
+            GpuMutex().lock();
+            StorageTexture::SetFlushSelectedHookForTest(nullptr);
+            Require(subtractedWhileFlushing, "a texture parked in pending.flushing before GpuMutex was not subtracted from address heap ranges");
+        }
+        ranges = {{begin, end + 65536}};
+        StorageTexture::SubtractPendingUnits(ranges);
+        Require(ranges.size() == 1 && ranges[0] == std::pair<std::uint64_t, std::uint64_t>{begin, end + 65536}, "a completed flush stayed subtracted in the cached pending-unit snapshot");
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    }
+    const auto decided = PrepareImportWatch(base);
+    struct RestoreWatch {
+        const Context& context;
+        ImportWatch decided;
+        ~RestoreWatch() { SetImportWatch(context, decided); }
+    } restoreWatch{base, decided};
+    constexpr std::uint32_t width = 1024;
+    constexpr std::uint32_t height = 512;
+    constexpr std::size_t bytes = width * height * 4;
+    constexpr std::size_t allocated = bytes + 65536;
+    void* block = AllocateWatched(allocated, 65536);
+    if (block != nullptr) {
+        struct Release {
+            void* block;
+            ~Release() { ReleaseWatched(block, allocated); }
+        } release{block};
+        std::memset(block, 0x55, bytes);
+        const auto address = reinterpret_cast<std::uint64_t>(block);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(block, bytes, true, true, true);
+        }
+        struct Unregister {
+            const Context& context;
+            void* block;
+            std::uint64_t address;
+            ~Unregister() {
+                {
+                    GuestAllocations::Mutation mutation;
+                    mutation.Remove(block);
+                }
+                HostImportFor(context, address, bytes);
+            }
+        } unregister{base, block, address};
+        if (HostImportFor(base, address, bytes) != nullptr && AgcDriver::GuestMemory::Watched(address, bytes)) {
+            GuestTextureResource resource{};
+            resource.baseAddress = address;
+            resource.width = width;
+            resource.height = height;
+            resource.mipCount = 1;
+            resource.tileMode = TextureTileMode::kR64KBX;
+            resource.dimension = TextureDimension::k2D;
+            resource.format = 56;
+            resource.dstSelX = 4;
+            resource.dstSelY = 5;
+            resource.dstSelZ = 6;
+            resource.dstSelW = 7;
+            auto image = StorageTexture::Create(context, detiler, resource, 0);
+            const VkImageSubresourceRange subrange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            const auto draw = [&](VkClearColorValue value) {
+                const auto commands = recorder.Commands();
+                recorder.Keep(image);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+                context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &subrange);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+                image->MarkDirty();
+            };
+            const auto settle = [&] {
+                recorder.Submit();
+                device.WaitQueue();
+                recorder.Sync();
+            };
+            const auto* words = static_cast<const std::uint8_t*>(block);
+            const auto holds = [&](std::array<std::uint8_t, 4> texel) {
+                for (std::size_t i = 0; i < bytes; ++i) {
+                    if (words[i] != texel[i % 4]) return false;
+                }
+                return true;
+            };
+            draw({{1.0f, 0.0f, 0.0f, 1.0f}});
+            StorageTexture::FlushPending(address, bytes, nullptr, "storage refresh", PublishScope::None);
+            settle();
+            if (AnyShadowedOverlaps(address, bytes)) {
+                Require(holds({0x55, 0x55, 0x55, 0x55}), "red shadow write-back unexpectedly wrote guest RAM");
+                draw({{0.0f, 1.0f, 0.0f, 1.0f}});
+                GateWatchdog watchdog("address upload during flushing", 20);
+                subtractFlushStage.store(0, std::memory_order_release);
+                StorageTexture::SetFlushSelectedHookForTest(&SubtractFlushSelectedHook);
+                std::thread flusher([&] {
+                    StorageTexture::FlushPending(address, bytes, nullptr, "memory access", PublishScope::Whole);
+                });
+                Require(AwaitGate([] { return subtractFlushStage.load(std::memory_order_acquire) >= 1; }), "shadow flush did not reach the registered-flushing hook");
+                GuestBufferMemory leased(context);
+                leased.AcquireRegistered();
+                leased.Upload(true);
+                const bool stillShadowed = AnyShadowedOverlaps(address, bytes);
+                const bool stillUntouched = holds({0x55, 0x55, 0x55, 0x55});
+                leased.WriteBack();
+                GpuMutex().unlock();
+                subtractFlushStage.store(2, std::memory_order_release);
+                flusher.join();
+                GpuMutex().lock();
+                StorageTexture::SetFlushSelectedHookForTest(nullptr);
+                settle();
+                Require(stillShadowed && stillUntouched, "address-based UploadFinish published an older unit shadow while FlushPending was parked in pending.flushing");
+                Require(!AnyShadowedOverlaps(address, bytes) && holds({0, 255, 0, 255}), "flushed green result did not publish cleanly after release");
+            }
+        }
+    }
+    std::cout << "subtract flushing units tests passed\n";
+    return true;
+}
+
 bool flushExclusionTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (GateUnavailable(base, "flush exclusion")) return false;
@@ -18562,6 +18741,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--map-gate-disjoint-only") return mapGateDisjointTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--map-gate-retry-only") return mapGateRetryTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--flush-exclusion-only") return flushExclusionTests(device, recorder) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--subtract-flushing-units-only") return subtractFlushingUnitsTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--command-buffer-release-only") {
             commandBufferReleaseTests(device, recorder);
             return 0;
