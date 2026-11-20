@@ -3,6 +3,7 @@
 #include <winsock2.h>
 #else
 #include <sys/socket.h>
+#include <sys/ioctl.h>
 #endif
 #include <algorithm>
 #include <array>
@@ -12,6 +13,7 @@
 #include <cstring>
 #include <source_location>
 #include "prx/libSceNet/libSceNet.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 
 
@@ -20,6 +22,17 @@ static void Require(bool condition, std::source_location location = std::source_
         std::fprintf(stderr, "check failed at line %u\n", location.line());
         std::abort();
     }
+}
+
+static int NativeAtMark(std::uintptr_t socket) {
+#ifdef _WIN32
+    unsigned long mark = 0;
+    Require(::ioctlsocket(static_cast<SOCKET>(socket), SIOCATMARK, &mark) == 0);
+#else
+    int mark = 0;
+    Require(::ioctl(static_cast<int>(socket), SIOCATMARK, &mark) == 0);
+#endif
+    return mark != 0;
 }
 
 static void CheckFlag(int socket, int expected) {
@@ -106,6 +119,9 @@ int main() {
         Require(sceNetConnect(client, address.data(), size) == 0);
         const int accepted = sceNetAccept(listener, nullptr, nullptr);
         Require(accepted >= 0);
+        std::shared_ptr<void> acceptedOwner;
+        std::uintptr_t acceptedNative = 0;
+        Require(KernelFindSocketNative_nid_no_patch(accepted, &acceptedOwner, &acceptedNative));
         CheckFlag(accepted, 256);
         const int timeout = 500000;
         Require(sceNetSetsockopt(accepted, 0xffff, 0x1106, &timeout, sizeof(timeout)) == 0);
@@ -116,12 +132,12 @@ int main() {
         Require(::send(native, "!", 1, MSG_OOB) == 1);
         Require(::send(native, "B", 1, 0) == 1);
         std::array<char, 3> received{};
-        std::size_t count = 0;
-        while (count < received.size()) {
-            const auto result = sceNetRecv(accepted, received.data() + count, received.size() - count, 0);
-            Require(result > 0);
-            count += result;
-        }
+        Require(sockatmark_nid_postfix(accepted) == NativeAtMark(acceptedNative));
+        Require(sceNetRecv(accepted, received.data(), 1, 0) == 1);
+        Require(sockatmark_nid_postfix(accepted) == NativeAtMark(acceptedNative));
+        Require(sceNetRecv(accepted, received.data() + 1, 1, 0) == 1);
+        Require(sockatmark_nid_postfix(accepted) == NativeAtMark(acceptedNative));
+        Require(sceNetRecv(accepted, received.data() + 2, 1, 0) == 1);
         Require(std::memcmp(received.data(), "A!B", 3) == 0);
         const int off = 0;
         Require(sceNetSetsockopt(listener, 0xffff, 0x100, &off, sizeof(off)) == 0);
