@@ -93,6 +93,11 @@ int main() {
     AppContentBootParam boot{};
     Require(sceAppContentInitialize(nullptr, &boot) == ErrorParameter);
     Require(sceAppContentInitialize(&init, nullptr) == ErrorParameter);
+    errno = EBUSY;
+    Require(sceAppContentInitialize(reinterpret_cast<const AppContentInitParam*>(std::uintptr_t{0x10}), &boot) == ErrorParameter);
+    Require(errno == EBUSY);
+    Require(sceAppContentInitialize(&init, reinterpret_cast<AppContentBootParam*>(std::uintptr_t{0x10})) == ErrorParameter);
+    Require(errno == EBUSY);
     init.reserved[31] = 1;
     Require(sceAppContentInitialize(&init, &boot) == ErrorParameter);
     init.reserved[31] = 0;
@@ -323,6 +328,11 @@ int main() {
     Require(access_nid_postfix("/temp0/keep.txt", 0) == 0);
     size_t available = 0;
     Require(sceAppContentTemporaryDataGetAvailableSpaceKb(&mountPoint, &available) == 0 && available > 0);
+    errno = EBUSY;
+    Require(sceAppContentTemporaryDataGetAvailableSpaceKb(reinterpret_cast<const AppContentMountPoint*>(std::uintptr_t{0x10}), &available) == ErrorParameter);
+    Require(errno == EBUSY);
+    Require(sceAppContentTemporaryDataGetAvailableSpaceKb(&mountPoint, reinterpret_cast<size_t*>(std::uintptr_t{0x10})) == ErrorParameter);
+    Require(errno == EBUSY);
     Require(sceAppContentTemporaryDataUnmount(&mountPoint) == 0);
     Require(std::filesystem::exists(backing / "keep.txt"));
     Require(access_nid_postfix("/temp0/keep.txt", 0) == -1 && *__error_nid_postfix() == 2);
@@ -396,6 +406,9 @@ int main() {
     Require(sceAppContentGetPftFlag(&pftFlag) == 0);
     Require(pftFlag == 0);
     Require(sceAppContentGetPftFlag(nullptr) == ErrorParameter);
+    errno = EBUSY;
+    Require(sceAppContentGetPftFlag(reinterpret_cast<uint32_t*>(std::uintptr_t{0x10})) == ErrorParameter);
+    Require(errno == EBUSY);
     AppContentEntitlementKey key;
     std::memset(&key, 0x5a, sizeof(key));
     const AppContentEntitlementKey untouchedKey = key;

@@ -319,14 +319,31 @@ int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMount
 int APS5_VABI sceAppContentInitialize(const AppContentInitParam* initParam, AppContentBootParam* bootParam) {
     std::lock_guard lock(initializationMutex);
     const auto sdkVersion = ApplicationCompiledSdkVersion();
+    const int savedErrno = errno;
     if (sdkVersion >= 0x01500000) {
         if (initialized.load()) return SCE_APP_CONTENT_ERROR_BUSY;
         if (initParam == nullptr || bootParam == nullptr) return SCE_APP_CONTENT_ERROR_PARAMETER;
-        if (!std::all_of(std::begin(initParam->reserved), std::end(initParam->reserved), [](char value) { return value == 0; }) || !std::all_of(std::begin(bootParam->reserved1), std::end(bootParam->reserved1), [](char value) { return value == 0; }) || !std::all_of(std::begin(bootParam->reserved2), std::end(bootParam->reserved2), [](char value) { return value == 0; })) return SCE_APP_CONTENT_ERROR_PARAMETER;
+        AppContentInitParam localInit{};
+        AppContentBootParam localBoot{};
+        if (!GuestCopyIn_nid_no_patch(&localInit, initParam, sizeof(localInit))) {
+            errno = savedErrno;
+            return SCE_APP_CONTENT_ERROR_PARAMETER;
+        }
+        if (!GuestCopyIn_nid_no_patch(&localBoot, bootParam, sizeof(localBoot))) {
+            errno = savedErrno;
+            return SCE_APP_CONTENT_ERROR_PARAMETER;
+        }
+        errno = savedErrno;
+        if (!std::all_of(std::begin(localInit.reserved), std::end(localInit.reserved), [](char value) { return value == 0; }) || !std::all_of(std::begin(localBoot.reserved1), std::end(localBoot.reserved1), [](char value) { return value == 0; }) || !std::all_of(std::begin(localBoot.reserved2), std::end(localBoot.reserved2), [](char value) { return value == 0; })) return SCE_APP_CONTENT_ERROR_PARAMETER;
     }
     if (bootParam == nullptr) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    AppContentBootParam zeroBoot{};
+    if (!GuestCopyOut_nid_no_patch(bootParam, &zeroBoot, sizeof(zeroBoot))) {
+        errno = savedErrno;
+        return SCE_APP_CONTENT_ERROR_PARAMETER;
+    }
+    errno = savedErrno;
     Temporary();
-    std::memset(bootParam, 0, sizeof(*bootParam));
     initialized = true;
     return 0;
 }
@@ -344,12 +361,16 @@ int APS5_VABI sceAppContentTemporaryDataFormat(const AppContentMountPoint* mount
 
 int APS5_VABI sceAppContentTemporaryDataGetAvailableSpaceKb(const AppContentMountPoint* mountPoint, size_t* availableSpaceKb) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
-    if (!mountPoint || !availableSpaceKb) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const int savedErrno = errno;
+    const auto mount = CopyMountPoint(mountPoint);
+    if (!mount || !availableSpaceKb) return SCE_APP_CONTENT_ERROR_PARAMETER;
     auto& state = Temporary();
     std::lock_guard lock(state.mutex);
-    if (!state.mounted || !IsTemporaryMountPoint(*mountPoint)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
-    *availableSpaceKb = static_cast<size_t>(std::filesystem::space(state.directory).available / 1024);
-    return 0;
+    if (!state.mounted || !IsTemporaryMountPoint(*mount)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
+    const size_t space = static_cast<size_t>(std::filesystem::space(state.directory).available / 1024);
+    const bool copied = GuestCopyOut_nid_no_patch(availableSpaceKb, &space, sizeof(space));
+    errno = savedErrno;
+    return copied ? 0 : SCE_APP_CONTENT_ERROR_PARAMETER;
 }
 
 int APS5_VABI sceAppContentTemporaryDataMount2(uint32_t option, AppContentMountPoint* mountPoint) {
@@ -533,8 +554,11 @@ int APS5_VABI sceAppContentGetEntitlementKey(uint32_t serviceLabel, const NpUnif
 int APS5_VABI sceAppContentGetPftFlag(uint32_t* pftFlag) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     if (!pftFlag) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    *pftFlag = 0;
-    return 0;
+    const int savedErrno = errno;
+    const uint32_t flag = 0;
+    const bool copied = GuestCopyOut_nid_no_patch(pftFlag, &flag, sizeof(flag));
+    errno = savedErrno;
+    return copied ? 0 : SCE_APP_CONTENT_ERROR_PARAMETER;
 }
 
 int APS5_VABI sceAppContentGetRegion(void* region) {
