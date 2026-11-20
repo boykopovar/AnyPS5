@@ -33,6 +33,11 @@ std::string HostFullscreenWarning(const char* value) {
     return "DisplayWindow: ANYPS5_FULLSCREEN='" + sanitized + "' is not 0, 1, windowed or borderless; treating it as borderless";
 }
 
+std::optional<HostWindowRect> BorderlessCoverRect(HostWindowRect display) {
+    if (display.width <= 0 || display.height <= 0) return std::nullopt;
+    return display;
+}
+
 HostFullscreenState::HostFullscreenState(IHostFullscreenWindow& window) : window(window) {}
 
 void HostFullscreenState::Adopt(HostFullscreenMode mode, HostWindowSize size) {

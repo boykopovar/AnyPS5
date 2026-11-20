@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEVIDEOOUT_INCLUDE_HOSTFULLSCREEN_HPP
 #define CORE_LIBS_PRX_LIBSCEVIDEOOUT_INCLUDE_HOSTFULLSCREEN_HPP
 
+#include <optional>
 #include <string>
 
 enum class HostFullscreenMode {
@@ -16,6 +17,16 @@ struct HostWindowSize {
     int height = 0;
     friend bool operator==(const HostWindowSize&, const HostWindowSize&) = default;
 };
+
+struct HostWindowRect {
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+    friend bool operator==(const HostWindowRect&, const HostWindowRect&) = default;
+};
+
+std::optional<HostWindowRect> BorderlessCoverRect(HostWindowRect display);
 
 class IHostFullscreenWindow {
 public:

@@ -134,6 +134,7 @@ void DisplayWindow::Destroy() noexcept {
     removeSubclass();
     SDL_DestroyWindow(window);
     window = nullptr;
+    borderless = false;
 }
 
 SDL_Window* DisplayWindow::Handle() const {
@@ -144,6 +145,46 @@ void DisplayWindow::ToggleFullscreen() {
     require(window != nullptr && fullscreen != nullptr, "window must exist before toggling fullscreen");
     fullscreen->Toggle();
     fullscreen->Refresh(MouseIsOpen_nid_no_patch());
+}
+
+void DisplayWindow::ToggleBorderless() {
+    require(window != nullptr && fullscreen != nullptr, "window must exist before toggling borderless");
+    if (borderless) {
+        leaveBorderless();
+    } else {
+        if (hostWindow->IsFullscreen()) fullscreen->Toggle();
+        enterBorderless();
+    }
+    fullscreen->Refresh(MouseIsOpen_nid_no_patch());
+}
+
+void DisplayWindow::enterBorderless() {
+    const auto displayIndex = SDL_GetWindowDisplayIndex(window);
+    require(displayIndex >= 0, SDL_GetError());
+    SDL_Rect bounds{};
+    require(SDL_GetDisplayBounds(displayIndex, &bounds) == 0, SDL_GetError());
+    const auto cover = BorderlessCoverRect(HostWindowRect{bounds.x, bounds.y, bounds.w, bounds.h});
+    require(cover.has_value(), "display extent must be positive");
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+    SDL_GetWindowPosition(window, &x, &y);
+    SDL_GetWindowSize(window, &width, &height);
+    windowedRect = HostWindowRect{x, y, width, height};
+    SDL_SetWindowBordered(window, SDL_FALSE);
+    SDL_SetWindowPosition(window, cover->x, cover->y);
+    SDL_SetWindowSize(window, cover->width, cover->height);
+    borderless = true;
+}
+
+void DisplayWindow::leaveBorderless() {
+    SDL_SetWindowBordered(window, SDL_TRUE);
+    if (windowedRect.width > 0 && windowedRect.height > 0) {
+        SDL_SetWindowSize(window, windowedRect.width, windowedRect.height);
+        SDL_SetWindowPosition(window, windowedRect.x, windowedRect.y);
+    }
+    borderless = false;
 }
 
 void DisplayWindow::DrawableSize(std::uint32_t& width, std::uint32_t& height) const {
