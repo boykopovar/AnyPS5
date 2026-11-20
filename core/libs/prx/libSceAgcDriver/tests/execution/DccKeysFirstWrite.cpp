@@ -597,6 +597,8 @@ void RunUniformFillClear(AgcDriver::VulkanDevice& device, std::uint8_t* block, b
     const auto& uploaded = AgcDriver::Graphics::ThreadLookupOutcomes().counts;
     const bool cleared = uploaded[LookupOutcomes::UploadClear] == uploads[LookupOutcomes::UploadClear] + 1;
     Require(cleared == uniform, uniform ? what + ": the first write read the surface and uploaded it instead of clearing it on the GPU" : what + ": the surface was cleared to the first texel instead of uploaded");
+    const auto fromMemory = [](const auto& counts) { return counts[LookupOutcomes::UploadDirect] + counts[LookupOutcomes::UploadCpu]; };
+    Require(uniform || fromMemory(uploaded) == fromMemory(uploads) + 1, what + ": the first write did not upload the surface from guest memory");
     StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test uniform fill");
     device.WaitIdle();
     const AgcDriver::Graphics::ColorTargetLayout layout(Side, Side, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
