@@ -13,10 +13,10 @@ began. Presents per 10 s and frame time come from the [ab] lines (settled line t
 and idle gaps per frame from [present], GPU time per present from [gputime] (APS5_PROFILE_GPU), the committer and
 drains from [draw] pipelined, unlocked hook waits from [syncwait] (APS5_PROFILE_DRAW). The noise column compares
 each B phase with the mean of its neighbouring A phases, which cancels a linear drift: mean difference, standard
-error, standard deviation and count. A counted report with missing batch completion records or dropped GPU timing
-ranges refuses the comparison.
+error, standard deviation and count. A counted GPU timing report that dropped ranges refuses the comparison.
 A requested program's phase metric is omitted if a report lists 12 programs
-without it: the list may be truncated, so the program's time is unknown."""
+without it: the list may be truncated, so the program's time is unknown.
+A counted present report with missing batch completion records also refuses the comparison."""
 
 PHASE = re.compile(r"^\[ab\] phase ([AB]) (\d+) (begins|settled) at present (\d+) \(t ([\d.]+) s\)")
 KINDS = (("present", re.compile(r"\[present\] \d+ presents")), ("gputime", re.compile(r"\[gputime\] [\d.]+ ms of GPU time")),
