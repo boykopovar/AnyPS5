@@ -273,7 +273,8 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     translateOptions.sharedVectorCount = sharedVectors.count;
     translateOptions.sharedMemoryBytes = DeviceMemoryLdsBytes(request);
     const bool hostInterpolationFirst = stageKind == ShaderStageKind::Pixel && request.target.fragmentShaderBarycentricEnabled && request.target.hostInterpolationFirst;
-    translateOptions.fragmentShaderBarycentricEnabled = request.target.fragmentShaderBarycentricEnabled && !hostInterpolationFirst;
+    const bool emulatedBarycentrics = stageKind == ShaderStageKind::Pixel && request.graphics.has_value() && request.graphics->emulateBarycentrics;
+    translateOptions.fragmentShaderBarycentricEnabled = emulatedBarycentrics || (request.target.fragmentShaderBarycentricEnabled && !hostInterpolationFirst);
     const auto supports = [&](spv::Capability capability) { return std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(capability)) != request.target.supportedCapabilities.end(); };
     translateOptions.nativeFloat16 = supports(spv::CapabilityFloat16) && supports(spv::CapabilityRoundingModeRTE) && supports(spv::CapabilityDenormPreserve);
     translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
@@ -296,6 +297,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         translateOptions.embeddedFetch = &embeddedFetch;
     }
     auto program = translator.Translate(decoded, cfg, translateOptions);
+    if (emulatedBarycentrics) program.Metadata().barycentricEmulation = true;
     // Debug aid: APS5_DUMP_IR=<hex code address> (or "all") prints the program after each front-end pass.
     const auto dumpIr = [&](const char* pass) {
         static const std::string list = [] { const char* text = std::getenv("APS5_DUMP_IR"); return text ? std::string(text) : std::string(); }();
