@@ -491,13 +491,8 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             *__error_nid_postfix() = 22;
             return -1;
         }
-        const int pid = name[3];
-        if (pid != -1 && !CallingProcessId(pid)) {
-            *__error_nid_postfix() = 3;
-            return -1;
-        }
-        static constexpr char path[] = "/app0/eboot.bin";
-        return CopyOut(path, sizeof(path), oldValue, oldLength);
+        *__error_nid_postfix() = 2;
+        return -1;
     }
     if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 8) {
         if (newValue != nullptr) {
