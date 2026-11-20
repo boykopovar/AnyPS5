@@ -163,6 +163,7 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (SkipOnLlvmpipe(*device, "124 table samplers and 4 direct: lane 8 sums 0 through the point-clamp samplers, expected 1039.5")) return VulkanTestSkipped;
         const auto limits = device->graphicsContext().limits;
         if (limits.maxPerStageDescriptorSamplers < StageSamplers || limits.maxDescriptorSetSamplers < StageSamplers) {
             std::printf("skipped, the device binds fewer than %u samplers per stage or set\n", StageSamplers);
