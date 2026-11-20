@@ -806,55 +806,11 @@ int APS5_VABI _ZN10Deprecated18ScriptFunctionCallD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEN3JSC7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEPKc() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEi() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEl() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEx() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandlerC1EPN3JSC14JSGlobalObjectE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandlerC2EPN3JSC14JSGlobalObjectE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandlerD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandlerD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1119,10 +1075,6 @@ int APS5_VABI _ZN3JSC23JSModuleNamespaceObject3putEPNS_6JSCellEPNS_14JSGlobalObj
 }
 
 int APS5_VABI _ZN3JSC23createBuiltinExecutableERNS_2VMERKNS_10SourceCodeERKNS_10IdentifierENS_15ConstructorKindENS_16ConstructAbilityE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC23errorMesasgeForTransferEPNS_11ArrayBufferE() {
     NotImplemented_nid_no_patch(__func__);
 }
 

@@ -495,6 +495,8 @@ public:
             function<PFN_vkGetPhysicalDeviceFeatures>("vkGetPhysicalDeviceFeatures")(context.physical, &supported);
             enabled.occlusionQueryPrecise = supported.occlusionQueryPrecise;
             context.occlusionQueryPrecise = supported.occlusionQueryPrecise == VK_TRUE;
+            enabled.sampleRateShading = supported.sampleRateShading;
+            context.sampleRateShading = supported.sampleRateShading == VK_TRUE;
             enabled.shaderStorageImageReadWithoutFormat = supported.shaderStorageImageReadWithoutFormat;
             enabled.shaderStorageImageWriteWithoutFormat = supported.shaderStorageImageWriteWithoutFormat;
             enabled.shaderStorageImageMultisample = supported.shaderStorageImageMultisample;
@@ -17351,18 +17353,20 @@ void pipelineLibraryTests(const Device& device) {
     state.colors.front().format = VK_FORMAT_R16G16B16A16_SFLOAT;
     static_cast<void>(lookup());
     Require(counters().built == std::array<std::uint64_t, 4>{2, 2, 3, 3}, "another target format rebuilt more than the fragment output library");
+    const bool narrow = first->NarrowLibraryKeys();
+    const std::uint64_t wide = narrow ? 0u : 1u;
     state.samples = 4;
     state.colors.front().samples = 4;
     const auto multisampled = lookup();
-    Require(counters().built == std::array<std::uint64_t, 4>{2, 2, 4, 4}, "a 4x pipeline shared the 1x fragment shader or fragment output library");
+    Require(counters().built == std::array<std::uint64_t, 4>{2, 2, 3 + wide, 4}, narrow ? "a 4x pipeline did not share the 1x fragment shader library, or shared its fragment output library" : "a 4x pipeline shared the 1x fragment shader or fragment output library");
     state.samples = 1;
     state.colors.front().samples = 1;
-    Require(lookup() != multisampled && counters().built == std::array<std::uint64_t, 4>{2, 2, 4, 4}, "the 1x pipeline after a 4x one built its libraries again");
+    Require(lookup() != multisampled && counters().built == std::array<std::uint64_t, 4>{2, 2, 3 + wide, 4}, "the 1x pipeline after a 4x one built its libraries again");
     state.depth = DepthTarget{0, 0, {64, 64}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
     state.depthTest = true;
     state.depthCompare = VK_COMPARE_OP_LESS;
     static_cast<void>(lookup());
-    Require(counters().built == std::array<std::uint64_t, 4>{2, 3, 5, 5}, "a depth target shared the shader libraries built with no depth format");
+    Require(counters().built == std::array<std::uint64_t, 4>{2, 2 + wide, 3 + 2 * wide, 5}, narrow ? "a depth target rebuilt a shader library, or shared the fragment output library built with no depth format" : "a depth target shared the shader libraries built with no depth format");
     state.depth.reset();
     state.depthTest = false;
     if ((context.sampleLocationSampleCounts & VK_SAMPLE_COUNT_4_BIT) != 0) {
@@ -17374,14 +17378,14 @@ void pipelineLibraryTests(const Device& device) {
         const auto beforePatternChange = counters().built;
         state.sampleLocations[0] = 0x20;
         const auto otherPattern = lookup();
-        Require(otherPattern != pattern && counters().built[2] == beforePatternChange[2] + 1u && counters().built[3] == beforePatternChange[3] + 1u && counters().built[0] == beforePatternChange[0] && counters().built[1] == beforePatternChange[1], "a custom sample pattern did not rebuild exactly the fragment shader and fragment output libraries");
+        Require(otherPattern != pattern && counters().built[2] == beforePatternChange[2] + wide && counters().built[3] == beforePatternChange[3] + 1u && counters().built[0] == beforePatternChange[0] && counters().built[1] == beforePatternChange[1], narrow ? "a custom sample pattern did not rebuild exactly the fragment output library" : "a custom sample pattern did not rebuild exactly the fragment shader and fragment output libraries");
         state.sampleLocations[0] = 0x10;
-        Require(lookup() == pattern && counters().built[2] == beforePatternChange[2] + 1u && counters().built[3] == beforePatternChange[3] + 1u, "a cached custom sample pattern was not reused");
+        Require(lookup() == pattern && counters().built[2] == beforePatternChange[2] + wide && counters().built[3] == beforePatternChange[3] + 1u, "a cached custom sample pattern was not reused");
         if ((context.sampleLocationGridSampleCounts & VK_SAMPLE_COUNT_4_BIT) != 0) {
             state.sampleLocationGrid = true;
             state.sampleLocations[3u * 8u] = 0x20;
             const auto gridPattern = lookup();
-            Require(gridPattern != pattern && counters().built[2] == beforePatternChange[2] + 2u && counters().built[3] == beforePatternChange[3] + 2u, "a pattern varying between pixels shared a uniform pattern's fragment libraries");
+            Require(gridPattern != pattern && counters().built[2] == beforePatternChange[2] + 2 * wide && counters().built[3] == beforePatternChange[3] + 2u, narrow ? "a pattern varying between pixels shared a uniform pattern's fragment output library, or rebuilt the fragment shader library" : "a pattern varying between pixels shared a uniform pattern's fragment libraries");
             state.sampleLocationGrid = false;
             state.sampleLocations[3u * 8u] = 0;
             Require(lookup() == pattern, "the uniform pattern was not reused after a grid pattern");
@@ -17401,9 +17405,22 @@ void pipelineLibraryTests(const Device& device) {
             const auto beforeDepthChange = counters().built;
             state.depth->format = *incompatibleDepth;
             const auto incompatible = lookup();
-            Require(incompatible != compatible && counters().built[2] == beforeDepthChange[2] + 1u && counters().built[3] == beforeDepthChange[3] + 1u, "depth-format sample-location enablement did not rebuild both fragment libraries");
+            Require(incompatible != compatible && counters().built[2] == beforeDepthChange[2] + wide && counters().built[3] == beforeDepthChange[3] + 1u, narrow ? "depth-format sample-location enablement did not rebuild exactly the fragment output library" : "depth-format sample-location enablement did not rebuild both fragment libraries");
         }
         state.customSampleLocations = true;
+    }
+    if (context.sampleRateShading) {
+        state.depth.reset();
+        state.customSampleLocations = false;
+        state.perSampleShading = true;
+        state.samples = 1;
+        state.colors.front().samples = 1;
+        static_cast<void>(lookup());
+        const auto beforePerSample = counters().built;
+        state.samples = 4;
+        state.colors.front().samples = 4;
+        static_cast<void>(lookup());
+        Require(counters().built[2] == beforePerSample[2] + 1u && counters().built[3] == beforePerSample[3] + 1u, "a 4x pipeline that shades per sample shared the 1x per-sample fragment shader or fragment output library");
     }
     WaitForOptimizedPipelines(context.device);
     const auto lto = std::getenv("APS5_NO_PIPELINE_LTO") == nullptr && context.pipelineLinkTimeOptimization;
