@@ -150,11 +150,6 @@ constexpr int KenvUnset = 2;
 constexpr int KenvDump = 3;
 constexpr std::size_t KenvNameLength = 128;
 
-int CopyKernelEnvString(const char* source, std::size_t limit, std::string& destination) {
-    if (const int error = CopyGuestPath_nid_no_patch(source, destination)) return error;
-    return destination.size() + 1 > limit ? GuestEnametoolong : 0;
-}
-
 std::int64_t PathConfigurationValue(int name) {
     switch (name) {
     case PcLinkMax: return 32767;
@@ -394,13 +389,13 @@ int RenamePath(const std::filesystem::path& source, const std::filesystem::path&
         const auto relative = canonicalDestination.lexically_relative(canonicalSource);
         if (!relative.empty() && *relative.begin() != "..") return GuestEinval;
     }
+#ifdef _WIN32
     if (destinationExists && !sameFile && destinationIsDirectory) {
         error.clear();
         if (!fs::is_empty(destination, error)) {
             return error ? FilesystemError(error) : GuestEnotempty;
         }
     }
-#ifdef _WIN32
     if (!sameFile && sourceIsDirectory && destinationIsDirectory) {
         error.clear();
         if (!fs::remove(destination, error)) return error ? FilesystemError(error) : GuestEio;
@@ -470,8 +465,7 @@ int APS5_VABI sceKernelGetCpumodeGame(int* mode) {
 }
 
 int APS5_VABI sceKernelSetCpumodeGame(int mode) {
-    if (mode < 0 || mode > 7) NotImplemented_nid_no_patch("sceKernelSetCpumodeGame with a mode outside 0 to 7");
-    if (mode > 1) return SCE_KERNEL_ERROR_EINVAL;
+    if (static_cast<unsigned int>(mode) > 1) return SCE_KERNEL_ERROR_EINVAL;
     g_gameCpumode.store(mode, std::memory_order_relaxed);
     return 0;
 }
@@ -557,7 +551,7 @@ int APS5_VABI kenv_nid_postfix(int what, const char* name, char* value, int len)
     if (what == KenvDump) return 0;
     if (what == KenvSet || what == KenvUnset) return static_cast<int>(Fail(GuestEperm));
     std::string key;
-    if (const int error = CopyKernelEnvString(name, KenvNameLength + 1, key)) return static_cast<int>(Fail(error));
+    if (const int error = CopyGuestString_nid_no_patch(name, KenvNameLength + 1, key)) return static_cast<int>(Fail(error));
     if (what == KenvGet) return static_cast<int>(Fail(GuestEnoent));
     return static_cast<int>(Fail(GuestEinval));
 }
@@ -705,6 +699,7 @@ static int FollowLinkPath(const std::filesystem::path& source, std::filesystem::
 static int LinkSourceError(const std::filesystem::path& source) {
     std::error_code error;
     const auto status = std::filesystem::status(source, error);
+    if (error && error != std::errc::no_such_file_or_directory && error != std::errc::not_a_directory) return GuestError(error);
     if (!std::filesystem::exists(status)) {
 #ifdef _WIN32
         std::filesystem::path target;
@@ -717,8 +712,13 @@ static int LinkSourceError(const std::filesystem::path& source) {
 
 static int LinkDestinationError(const std::filesystem::path& destination) {
     std::error_code error;
-    if (std::filesystem::exists(std::filesystem::symlink_status(destination, error))) return GuestEexist;
-    if (!std::filesystem::is_directory(destination.parent_path(), error)) return HasNonDirectoryPrefix(destination) ? GuestEnotdir : GuestEnoent;
+    const auto status = std::filesystem::symlink_status(destination, error);
+    if (error && error != std::errc::no_such_file_or_directory && error != std::errc::not_a_directory) return GuestError(error);
+    if (std::filesystem::exists(status)) return GuestEexist;
+    error.clear();
+    const bool parentIsDirectory = std::filesystem::is_directory(destination.parent_path(), error);
+    if (error && error != std::errc::no_such_file_or_directory && error != std::errc::not_a_directory) return GuestError(error);
+    if (!parentIsDirectory) return HasNonDirectoryPrefix(destination) ? GuestEnotdir : GuestEnoent;
     return 0;
 }
 
@@ -734,7 +734,7 @@ static int LinkNative(const std::filesystem::path& source, const std::filesystem
 #endif
     if (!error) std::filesystem::create_hard_link(target, destination, error);
     if (error == std::errc::cross_device_link) return static_cast<int>(Fail(GuestExdev));
-    if (error) throw std::system_error(error, "link");
+    if (error) return static_cast<int>(Fail(GuestError(error)));
     RecordWrittenPath_nid_no_patch(destination);
     return 0;
 }
@@ -747,12 +747,12 @@ static int LinkSymbolicLinkItself(const std::filesystem::path& source, const std
     if (!CreateHardLinkW(destination.c_str(), source.c_str(), nullptr)) {
         const DWORD error = GetLastError();
         if (error == ERROR_NOT_SAME_DEVICE) return static_cast<int>(Fail(GuestExdev));
-        throw std::system_error(static_cast<int>(error), std::system_category(), "linkat");
+        return static_cast<int>(Fail(GuestError({static_cast<int>(error), std::system_category()})));
     }
 #else
     if (::linkat(AT_FDCWD, source.c_str(), AT_FDCWD, destination.c_str(), 0) != 0) {
         if (errno == EXDEV) return static_cast<int>(Fail(GuestExdev));
-        throw std::system_error(errno, std::generic_category(), "linkat");
+        return static_cast<int>(Fail(GuestError({errno, std::generic_category()})));
     }
 #endif
     RecordWrittenPath_nid_no_patch(destination);
@@ -944,14 +944,14 @@ static int CreateSymlinkAt(const char* target, int dirfd, const char* created) {
         if (code == ERROR_PRIVILEGE_NOT_HELD) return static_cast<int>(Fail(GuestEperm));
         if (code == ERROR_ALREADY_EXISTS || code == ERROR_FILE_EXISTS) return static_cast<int>(Fail(GuestEexist));
         if (code == ERROR_PATH_NOT_FOUND) return static_cast<int>(Fail(GuestEnoent));
-        throw std::system_error(static_cast<int>(code), std::system_category(), "symlink");
+        return static_cast<int>(Fail(GuestError(std::error_code(static_cast<int>(code), std::system_category()))));
     }
 #else
     if (directory)
         std::filesystem::create_directory_symlink(contents, native, error);
     else
         std::filesystem::create_symlink(contents, native, error);
-    if (error) throw std::system_error(error, "symlink");
+    if (error) return static_cast<int>(Fail(GuestError(error)));
 #endif
     RecordWrittenPath_nid_no_patch(native);
     return 0;
