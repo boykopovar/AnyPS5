@@ -150,11 +150,6 @@ constexpr int KenvUnset = 2;
 constexpr int KenvDump = 3;
 constexpr std::size_t KenvNameLength = 128;
 
-int CopyKernelEnvString(const char* source, std::size_t limit, std::string& destination) {
-    if (const int error = CopyGuestPath_nid_no_patch(source, destination)) return error;
-    return destination.size() + 1 > limit ? GuestEnametoolong : 0;
-}
-
 std::int64_t PathConfigurationValue(int name) {
     switch (name) {
     case PcLinkMax: return 32767;
@@ -556,7 +551,7 @@ int APS5_VABI kenv_nid_postfix(int what, const char* name, char* value, int len)
     if (what == KenvDump) return 0;
     if (what == KenvSet || what == KenvUnset) return static_cast<int>(Fail(GuestEperm));
     std::string key;
-    if (const int error = CopyKernelEnvString(name, KenvNameLength + 1, key)) return static_cast<int>(Fail(error));
+    if (const int error = CopyGuestString_nid_no_patch(name, KenvNameLength + 1, key)) return static_cast<int>(Fail(error));
     if (what == KenvGet) return static_cast<int>(Fail(GuestEnoent));
     return static_cast<int>(Fail(GuestEinval));
 }
@@ -704,6 +699,7 @@ static int FollowLinkPath(const std::filesystem::path& source, std::filesystem::
 static int LinkSourceError(const std::filesystem::path& source) {
     std::error_code error;
     const auto status = std::filesystem::status(source, error);
+    if (error && error != std::errc::no_such_file_or_directory && error != std::errc::not_a_directory) return GuestError(error);
     if (!std::filesystem::exists(status)) {
 #ifdef _WIN32
         std::filesystem::path target;
@@ -716,8 +712,13 @@ static int LinkSourceError(const std::filesystem::path& source) {
 
 static int LinkDestinationError(const std::filesystem::path& destination) {
     std::error_code error;
-    if (std::filesystem::exists(std::filesystem::symlink_status(destination, error))) return GuestEexist;
-    if (!std::filesystem::is_directory(destination.parent_path(), error)) return HasNonDirectoryPrefix(destination) ? GuestEnotdir : GuestEnoent;
+    const auto status = std::filesystem::symlink_status(destination, error);
+    if (error && error != std::errc::no_such_file_or_directory && error != std::errc::not_a_directory) return GuestError(error);
+    if (std::filesystem::exists(status)) return GuestEexist;
+    error.clear();
+    const bool parentIsDirectory = std::filesystem::is_directory(destination.parent_path(), error);
+    if (error && error != std::errc::no_such_file_or_directory && error != std::errc::not_a_directory) return GuestError(error);
+    if (!parentIsDirectory) return HasNonDirectoryPrefix(destination) ? GuestEnotdir : GuestEnoent;
     return 0;
 }
 
