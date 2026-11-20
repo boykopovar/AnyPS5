@@ -180,12 +180,12 @@ int main() {
         directories.push_back(directory / "hop2");
         Require(createLink(directory / "hop1", "../" + p2 + "/hop2", true));
         Require(createLink(directory / "hop2", seg + "/" + seg + "/" + std::string(214, 'a') + "/sub", true));
-        Require(Resolves(guest + "/hop1" + std::string(2, '/'), deepGuest));
-        Require(Resolves(guest + "/hop1/.", deepGuest));
-        Require(Resolves(guest + "/hop1/./", deepGuest));
-        Require(Resolves(guest + "/hop1/..", deepParent));
-        Require(Resolves(guest + "/hop1/../sub", deepGuest));
-        Require(Fails((guest + "/hop1/x").c_str(), 63));
+        Require(deepParent.size() == 1019 && deepGuest.size() == 1023);
+        Require(Resolves(guest + "/hop1", deepGuest));
+        Require(Resolves(guest + "/hop1/", deepGuest));
+        for (const char* rest : {"//", "/.", "/./", "/..", "/../sub", "/x"}) {
+            Require(Fails((guest + "/hop1" + rest).c_str(), 63, deepGuest));
+        }
         for (const auto* a : {&p5, &p4, &p3, &p2, &p1}) RemovePathAlias_nid_no_patch(a->c_str());
         for (int index = 0; index < 34; ++index) {
             Require(fileLink(directory / ("long-" + std::to_string(index)), index == 33 ? "file.txt" : "long-" + std::to_string(index + 1)));
