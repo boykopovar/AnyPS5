@@ -56,4 +56,9 @@ template<typename R, typename Target> R Call(Target* target, std::uint64_t a0, s
     return reinterpret_cast<Function>(reinterpret_cast<void (*)()>(target))(a0, a1, a2, a3, a4, a5);
 }
 
+template<typename R, typename Target, typename... F> R CallFp(Target* target, std::uint64_t a0, std::uint64_t a1, std::uint64_t a2, std::uint64_t a3, std::uint64_t a4, std::uint64_t a5, F... xs) {
+    using Function = R (APS5_VABI*)(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, F...);
+    return reinterpret_cast<Function>(reinterpret_cast<void (*)()>(target))(a0, a1, a2, a3, a4, a5, xs...);
+}
+
 }  // namespace NKWebKit::Lifted

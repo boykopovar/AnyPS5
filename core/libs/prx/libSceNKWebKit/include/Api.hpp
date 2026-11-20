@@ -78,9 +78,7 @@ int APS5_VABI WKContextSetDownloadClient();
 int APS5_VABI _ZN9Inspector23CanvasBackendDispatcher6createERNS_17BackendDispatcherEPNS_30CanvasBackendDispatcherHandlerE();
 int APS5_VABI _ZN7WebCore15DeferredPromise12callFunctionERN3JSC14JSGlobalObjectENS0_11ResolveModeENS1_7JSValueE();
 int APS5_VABI _ZN7WebCore21PlatformKeyboardEvent24disambiguateKeyDownEventENS_13PlatformEvent4TypeEb();
-int APS5_VABI _ZN7WebCore9JSElementD2Ev();
 int APS5_VABI _ZN9Inspector14InspectorAgentC2ERNS_12AgentContextE();
-int APS5_VABI WKWebsiteDataStoreHasAppBoundSession();
 int APS5_VABI _ZN7WebCore20ResourceHandleClientD0Ev();
 int APS5_VABI _ZN7WebCore7Element27dispatchMouseForceWillBeginEv();
 int APS5_VABI _ZN9Inspector21CSSFrontendDispatchernaEm();
@@ -95,7 +93,6 @@ int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent20setPauseOnAssertionsERN3WTF
 int APS5_VABI _ZN7WebCore14ResourceLoader5startEv();
 int APS5_VABI _ZNK7WebCore27TranslateTransformOperation5cloneEv();
 int APS5_VABI WKPageCanDelete();
-int APS5_VABI WKUserContentExtensionStoreRemove();
 int APS5_VABI _ZN9Inspector21InspectorRuntimeAgent6enableERN3WTF6StringE();
 int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager30stopAllMediaPlaybackForProcessEv();
 int APS5_VABI _ZN7WebCore23ApplicationCacheStorage16originsWithCacheEv();
