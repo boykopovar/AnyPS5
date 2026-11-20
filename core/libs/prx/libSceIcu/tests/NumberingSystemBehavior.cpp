@@ -45,6 +45,24 @@ void Selection() {
     Compare("arab", true, "arab", 0);
     Compare("hanidec", true, "hanidec", 0);
     Compare("roman", true, "roman", 1);
+    const std::string previous = uloc_getDefault();
+    for (const auto* locale : {"ar_EG", "en_US"}) {
+        std::int32_t status = 0;
+        uloc_setDefault_nid_postfix(locale, &status);
+        Require(status <= 0 && std::string_view(uloc_getDefault()) == locale, "set guest numbering locale");
+        std::int32_t expected = 0;
+        auto* native = NumberingOracleOpen(locale, false, &expected);
+        auto* guest = unumsys_open_nid_postfix(nullptr, &status);
+        Require(guest && native && status == expected, "null locale opens the current guest default");
+        Require(std::string_view(unumsys_getName_nid_postfix(guest)) == NumberingOracleName(native),
+            "numbering system follows each guest locale change");
+        unumsys_close_nid_postfix(guest);
+        NumberingOracleClose(native);
+        Compare("", false, "latn", 0);
+    }
+    std::int32_t restoreStatus = 0;
+    uloc_setDefault_nid_postfix(previous.c_str(), &restoreStatus);
+    Require(restoreStatus <= 0, "restore guest default after numbering selection");
     Compare("en_US", false, "latn", 0);
     Compare("ar_EG", false, "arab", 0);
     Compare("en@numbers=hanidec", false, "hanidec", 0);
@@ -122,7 +140,6 @@ void Status() {
     Refuses([] { unumsys_open_nid_postfix("en", nullptr); });
     Refuses([] { unumsys_openAvailableNames_nid_postfix(nullptr); });
     std::int32_t status = 0;
-    Refuses([&] { unumsys_open_nid_postfix(nullptr, &status); });
     Refuses([&] { unumsys_openByName_nid_postfix(nullptr, &status); });
     auto* closed = unumsys_openByName_nid_postfix("arab", &status);
     unumsys_close_nid_postfix(closed);
