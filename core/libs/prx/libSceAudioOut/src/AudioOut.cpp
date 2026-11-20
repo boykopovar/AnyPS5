@@ -131,8 +131,21 @@ struct Port {
     AudioOut2PadLayout padLayout;
     SDL_AudioDeviceID device = 0;
     SDL_AudioSpec spec = {};
+    SDL_AudioSpec requestedSpec = {};
+    std::string deviceName;
+    bool poolable = false;
     HostGainRamp hostGain;
 };
+
+struct IdleDevice {
+    SDL_AudioDeviceID device;
+    SDL_AudioSpec requestedSpec;
+    SDL_AudioSpec spec;
+    std::string deviceName;
+};
+
+static constexpr std::size_t IDLE_DEVICES_MAX = 4;
+static std::vector<IdleDevice> g_idleDevices;
 
 static std::mutex g_mutex;
 static std::array<std::mutex, PORTS_MAX> g_outputMutexes;
@@ -165,6 +178,49 @@ static const char* selectedOutputDevice(const char* requested) {
     return nullptr;
 }
 
+static bool deviceWritesFiles() {
+    const char* driver = SDL_GetCurrentAudioDriver();
+    return driver == nullptr || std::strcmp(driver, "disk") == 0;
+}
+
+static bool sameRequest(const SDL_AudioSpec& a, const SDL_AudioSpec& b) {
+    return a.freq == b.freq && a.format == b.format && a.channels == b.channels && a.samples == b.samples;
+}
+
+static bool takeIdleDevice(const char* requested, const SDL_AudioSpec& desired, Port& port) {
+    const std::string name = requested != nullptr ? requested : "";
+    for (auto it = g_idleDevices.begin(); it != g_idleDevices.end(); ++it) {
+        if (it->deviceName != name || !sameRequest(it->requestedSpec, desired)) continue;
+        if (SDL_GetAudioDeviceStatus(it->device) == SDL_AUDIO_STOPPED) {
+            SDL_CloseAudioDevice(it->device);
+            g_idleDevices.erase(it);
+            return false;
+        }
+        port.device = it->device;
+        port.spec = it->spec;
+        port.requestedSpec = it->requestedSpec;
+        port.deviceName = it->deviceName;
+        port.poolable = true;
+        g_idleDevices.erase(it);
+        SDL_ClearQueuedAudio(port.device);
+        SDL_PauseAudioDevice(port.device, 0);
+        return true;
+    }
+    return false;
+}
+
+static bool keepDeviceIdle(const Port& port) {
+    if (!port.poolable || deviceWritesFiles() || SDL_GetAudioDeviceStatus(port.device) == SDL_AUDIO_STOPPED) return false;
+    SDL_PauseAudioDevice(port.device, 1);
+    SDL_ClearQueuedAudio(port.device);
+    if (g_idleDevices.size() >= IDLE_DEVICES_MAX) {
+        SDL_CloseAudioDevice(g_idleDevices.front().device);
+        g_idleDevices.erase(g_idleDevices.begin());
+    }
+    g_idleDevices.push_back({port.device, port.requestedSpec, port.spec, port.deviceName});
+    return true;
+}
+
 static bool openDevice(Port& port) {
     if (!ensureSdlAudio() || SdlAudioReportsNoOutputEndpoint(SDL_GetCurrentAudioDriver(), SDL_GetNumAudioDevices(0))) {
         return false;
@@ -175,12 +231,17 @@ static bool openDevice(Port& port) {
     desired.channels = static_cast<Uint8>(port.channels);
     desired.samples = static_cast<Uint16>(port.samplesNum);
     desired.callback = nullptr;
+    const char* requested = selectedOutputDevice(std::getenv("ANYPS5_AUDIO_DEVICE"));
+    if (takeIdleDevice(requested, desired, port)) return true;
     SDL_AudioSpec obtained{};
-    port.device = SDL_OpenAudioDevice(selectedOutputDevice(std::getenv("ANYPS5_AUDIO_DEVICE")), 0, &desired, &obtained, 0);
+    port.device = SDL_OpenAudioDevice(requested, 0, &desired, &obtained, 0);
     if (port.device == 0) {
         return false;
     }
     port.spec = obtained;
+    port.deviceName = requested != nullptr ? requested : "";
+    port.requestedSpec = desired;
+    port.poolable = true;
     SDL_PauseAudioDevice(port.device, 0);
     return true;
 }
@@ -211,11 +272,14 @@ static bool openVibrationDevice(Port& port) {
 
 static void closeDevice(Port& port) {
     if (port.device != 0 && SDL_WasInit(SDL_INIT_AUDIO) != 0) {
-        SDL_ClearQueuedAudio(port.device);
-        SDL_CloseAudioDevice(port.device);
+        if (!keepDeviceIdle(port)) {
+            SDL_ClearQueuedAudio(port.device);
+            SDL_CloseAudioDevice(port.device);
+        }
     }
     port.device = 0;
     port.spec = {};
+    port.poolable = false;
 }
 
 static void reopenStoppedDevice(Port& port) {
