@@ -34,7 +34,9 @@ add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/emojiprops.cpp
     ${ICU_SOURCE_DIR}/common/filterednormalizer2.cpp
     ${ICU_SOURCE_DIR}/common/loadednormalizer2impl.cpp
-    ${ICU_SOURCE_DIR}/common/locmap.cpp
+    ${ICU_SOURCE_DIR}/common/errorcode.cpp
+        ${ICU_SOURCE_DIR}/common/locavailable.cpp
+        ${ICU_SOURCE_DIR}/common/locmap.cpp
     ${ICU_SOURCE_DIR}/common/normalizer2.cpp
     ${ICU_SOURCE_DIR}/common/normalizer2impl.cpp
     ${ICU_SOURCE_DIR}/common/parsepos.cpp
@@ -157,3 +159,9 @@ set_target_properties(icu_i18n PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIB
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(icu_i18n INTERFACE LINKER:--exclude-libs,libicu_i18n.a)
 endif()
+
+target_sources(icu_i18n PRIVATE
+    ${ICU_SOURCE_DIR}/i18n/ufieldpositer.cpp
+    ${ICU_SOURCE_DIR}/i18n/fpositer.cpp
+    ${CMAKE_SOURCE_DIR}/core/libs/prx/libSceIcu/FieldPositionBackend.cpp
+    ${ICU_SOURCE_DIR}/i18n/fphdlimp.cpp)
