@@ -69,6 +69,7 @@ void CheckExports() {
                              "sceVdecCoreCreateDecoder", "sceVdecCoreDeleteDecoder", "sceVdecCoreMapMemoryBlock"}) {
         Require(Resolve(name) != nullptr, name);
     }
+    Require(sceVdecCoreAnalyzeStream() == 0, "analyze stream");
 }
 
 void CheckInstanceSize() {

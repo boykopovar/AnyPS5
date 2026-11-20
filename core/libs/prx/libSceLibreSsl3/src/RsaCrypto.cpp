@@ -524,6 +524,7 @@
 
 #include <atomic>
 #include <bit>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -1186,13 +1187,20 @@ LibreSsl3Bignum* DuplicateRsaBignum_nid_no_patch(const LibreSsl3Bignum* number) 
 
 void FreeRsa_nid_no_patch(LibreSsl3Rsa* rsa) {
     if (!rsa) return;
+    LibreSsl3Rsa copy{};
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&copy, rsa, sizeof(copy));
+    const bool writable = readable && GuestWritable_nid_no_patch(rsa, sizeof(*rsa));
+    errno = savedErrno;
+    if (!readable) throw std::invalid_argument(std::string(__func__) + ": unreadable rsa");
+    if (!writable) throw std::invalid_argument(std::string(__func__) + ": unwritable rsa");
     const int remaining = std::atomic_ref<std::int32_t>(rsa->references).fetch_add(-1) - 1;
     if (remaining > 0) return;
-    if (rsa->pss || rsa->blinding || rsa->mtBlinding || rsa->extraData)
+    if (copy.pss || copy.blinding || copy.mtBlinding || copy.extraData)
         NotImplemented_nid_no_patch("RSA_free of a key holding PSS parameters, blinding state or extra data");
-    if (rsa->methodModN || rsa->methodModP || rsa->methodModQ || rsa->method)
+    if (copy.methodModN || copy.methodModP || copy.methodModQ || copy.method)
         NotImplemented_nid_no_patch("RSA_free of a key with method data");
-    for (void* component : {rsa->n, rsa->e, rsa->d, rsa->p, rsa->q, rsa->dmp1, rsa->dmq1, rsa->iqmp})
+    for (void* component : {copy.n, copy.e, copy.d, copy.p, copy.q, copy.dmp1, copy.dmq1, copy.iqmp})
         BN_clear_free_nid_postfix(static_cast<LibreSsl3Bignum*>(component));
     Wipe(rsa, sizeof(*rsa));
     free_nid_postfix(rsa);
@@ -1825,7 +1833,15 @@ int RsaVerifyPkcs1PssMgf1_nid_no_patch(const LibreSsl3Rsa* rsa, const unsigned c
 extern "C" {
 
 void APS5_VABI RSA_free_nid_disambig1_nid_postfix(LibreSsl3Rsa* rsa) {
-    if (rsa && rsa->method) {
+    if (!rsa) return;
+    LibreSsl3Rsa copy{};
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&copy, rsa, sizeof(copy));
+    const bool writable = readable && GuestWritable_nid_no_patch(rsa, sizeof(*rsa));
+    errno = savedErrno;
+    if (!readable) throw std::invalid_argument(std::string(__func__) + ": unreadable rsa");
+    if (!writable) throw std::invalid_argument(std::string(__func__) + ": unwritable rsa");
+    if (copy.method) {
         LibreSslRsaFree_nid_no_patch(reinterpret_cast<LibreSslRsa*>(rsa));
         return;
     }

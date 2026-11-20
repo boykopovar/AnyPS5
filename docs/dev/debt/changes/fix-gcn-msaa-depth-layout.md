@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## add Unknown function info
+
+- [PS4 (GCN) multisampled depth textures](../../../core/libs/prx/libSceAgcDriver/Graphics/src/TextureTiling.cpp) (libSceAgcDriver, PS4) - not checked on a console. A 2D multisampled T# in a depth tile mode (2, 4 or 8 samples, one level, one slice) follows addrlib's depth sample order: an element's samples are stored together, so a micro tile holds 64 elements times the sample count; past the mode's tile split it is split into slices a whole surface apart, and the smaller size picks the macro tile mode (`ComputeSurfaceAddrFromCoordMacroTiled` in [egbaddrlib.cpp](https://gitlab.freedesktop.org/mesa/mesa/-/blob/mesa-25.2.8/src/amd/addrlib/src/r800/egbaddrlib.cpp), `HwlComputeMacroModeIndex` in [ciaddrlib.cpp](https://gitlab.freedesktop.org/mesa/mesa/-/blob/mesa-25.2.8/src/amd/addrlib/src/r800/ciaddrlib.cpp)). Only the size and address equation are modeled; sampling still uses the rendered depth target. Color tile modes (FMASK), mips, array layers and more than 16 split slices throw.
