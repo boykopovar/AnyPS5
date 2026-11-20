@@ -319,22 +319,20 @@ int APS5_VABI sceVideodecReset(Ctrl* ctrl) {
 int APS5_VABI sceVideodecMapMemory(Ctrl* ctrl, const void* memory) {
     if (ctrl == nullptr || memory == nullptr) return VideodecErrorArgumentPointer;
     std::uint64_t ctrlSize = 0;
-    if (GuestCopyIn_nid_no_patch(&ctrlSize, ctrl, sizeof(ctrlSize))) {
-        if (ctrlSize != sizeof(Ctrl)) return VideodecErrorStructSize;
-        std::uint64_t memorySize = 0;
-        if (GuestCopyIn_nid_no_patch(&memorySize, memory, sizeof(memorySize))) {
-            if (memorySize != 0x20 && memorySize != 0x28 && memorySize != 0x48) return VideodecErrorStructSize;
-            void* handle = nullptr;
-            if (GuestCopyIn_nid_no_patch(&handle, &ctrl->handle, sizeof(handle))) {
-                if (handle == nullptr) return VideodecErrorHandle;
-                unsigned char fields[0x1c]{};
-                if (memorySize != 0x20 && GuestCopyIn_nid_no_patch(fields, static_cast<const unsigned char*>(memory) + 0x8, sizeof(fields))) {
-                    std::uint32_t flags = 0;
-                    std::memcpy(&flags, fields + 0x18, sizeof(flags));
-                    if (flags != 0) return VideodecErrorApiFail;
-                }
-            }
-        }
+    if (!GuestCopyIn_nid_no_patch(&ctrlSize, ctrl, sizeof(ctrlSize))) return VideodecErrorArgumentPointer;
+    if (ctrlSize != sizeof(Ctrl)) return VideodecErrorStructSize;
+    std::uint64_t memorySize = 0;
+    if (!GuestCopyIn_nid_no_patch(&memorySize, memory, sizeof(memorySize))) return VideodecErrorArgumentPointer;
+    if (memorySize != 0x20 && memorySize != 0x28 && memorySize != 0x48) return VideodecErrorStructSize;
+    void* handle = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&handle, &ctrl->handle, sizeof(handle))) return VideodecErrorArgumentPointer;
+    if (handle == nullptr) return VideodecErrorHandle;
+    if (memorySize != 0x20) {
+        unsigned char fields[0x1c]{};
+        if (!GuestCopyIn_nid_no_patch(fields, static_cast<const unsigned char*>(memory) + 0x8, sizeof(fields))) return VideodecErrorArgumentPointer;
+        std::uint32_t flags = 0;
+        std::memcpy(&flags, fields + 0x18, sizeof(flags));
+        if (flags != 0) return VideodecErrorApiFail;
     }
     NotImplemented_nid_no_patch(__func__);
     return 0;
