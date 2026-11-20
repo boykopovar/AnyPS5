@@ -265,14 +265,15 @@ UncachedImages& Uncached() {
     return uncached;
 }
 
+std::atomic<std::uint64_t> textureReleases{0};
+
 void noteUncached(const std::shared_ptr<StorageTexture>& image) {
+    textureReleases.fetch_add(1, std::memory_order_release);
     auto& uncached = Uncached();
     std::lock_guard lock(uncached.mutex);
     uncached.images.push_back(image);
     uncached.any.store(true, std::memory_order_release);
 }
-
-std::atomic<std::uint64_t> textureReleases{0};
 
 std::atomic<bool>& TexturesReleased() {
     static std::atomic<bool> released{false};

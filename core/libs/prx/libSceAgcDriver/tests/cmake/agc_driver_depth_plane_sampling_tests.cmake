@@ -11,6 +11,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_depth_plane_epoch_exit PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_driver_depth_plane_epoch_exit_retired COMMAND agc_driver_depth_plane_sampling_tests --epoch-exit-retired)
+    set_tests_properties(agc_driver_depth_plane_epoch_exit_retired PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_depth_plane_epoch_exit_retired PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_driver_depth_plane_epoch_exit_verify COMMAND agc_driver_depth_plane_sampling_tests --epoch-exit)
     set_tests_properties(agc_driver_depth_plane_epoch_exit_verify PROPERTIES ENVIRONMENT "APS5_VERIFY_DRAW_PIPELINE=1" SKIP_RETURN_CODE 77 TIMEOUT 60
         PASS_REGULAR_EXPRESSION "3 reused resource proofs checked, 0 failed, 0 where the full proof stored to guest memory, 0 where only other threads broke proofs meanwhile, 0 where the full proof did work the exit skipped. 4 proved builds missed the exit, by input moved: [^\n]*surfaces 2, stale planes 2, per-use copies 0. moved alone: [^\n]*surfaces 1, stale planes 1, per-use copies 0\n.*depth plane epoch exit tests passed"

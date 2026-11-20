@@ -3720,6 +3720,7 @@ void storeStaleStencil(DepthSurface& surface) {
 }
 
 void retire(DepthSurface& surface) {
+    if (!surface.retired) surfacesSerial.fetch_add(1, std::memory_order_release);
     surface.retired = true;
     for (auto* owners : {&depthOwners(), &stencilOwners()}) {
         std::erase_if(*owners, [&](const auto& entry) { return entry.second.surface == &surface; });

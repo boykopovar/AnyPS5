@@ -422,7 +422,7 @@ std::shared_ptr<Texture> SampledFastCleared(const Context& context, std::uint64_
     return texture;
 }
 
-std::shared_ptr<ShaderResources> ImageResources(const Context& context, const Block& block, std::size_t first, std::uint32_t count, bool sampled) {
+ShaderRecompiler::RecompileResult ImageProgram(const Block& block, std::size_t first, std::uint32_t count, bool sampled) {
     ShaderRecompiler::DescriptorBinding binding{};
     binding.kind = sampled ? ShaderRecompiler::DescriptorKind::SampledImage : ShaderRecompiler::DescriptorKind::StorageImage;
     binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
@@ -438,8 +438,47 @@ std::shared_ptr<ShaderResources> ImageResources(const Context& context, const Bl
     }
     ShaderRecompiler::RecompileResult program;
     program.bindings.push_back(std::move(binding));
+    return program;
+}
+
+std::shared_ptr<ShaderResources> ImageResources(const Context& context, const Block& block, std::size_t first, std::uint32_t count, bool sampled) {
+    const auto program = ImageProgram(block, first, count, sampled);
     const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
     return std::make_shared<ShaderResources>(context, shader);
+}
+
+void evictedEpochTests(const Context& context, const Block& block) {
+    AgcDriver::GuestMemory::MarkProofThread();
+    Require(ShaderResources::EpochProofs(), "the evicted-image fixture needs epoch proofs on");
+    ClearCachedTextures(context.device);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto program = ImageProgram(block, 0, 1, false);
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    auto held = std::make_shared<ShaderResources>(context, shader);
+    const auto image = StorageTexture::FindLive(block.Surface(0), SurfaceBytes);
+    Require(held->Reusable() && held->StorageImages().size() == 1 && image != nullptr && image->Cached(), "the evicted-image fixture has no reusable set over a cached storage image");
+    const auto exitTaken = [&](bool& proved) {
+        const auto reuses = EpochProofCounts().resourceReuses.Sum();
+        proved = held->Revalidate(shader);
+        return EpochProofCounts().resourceReuses.Sum() != reuses;
+    };
+    bool proved = false;
+    bool settled = false;
+    for (int round = 0; round < 3 && !settled; ++round) settled = exitTaken(proved) && proved;
+    Require(settled, "a held set over a clean storage image did not take the epoch exit");
+    const auto epochBefore = AgcDriver::GuestMemory::CollectEpoch();
+    const auto proofBefore = AgcDriver::GuestMemory::ProofSerial();
+    const auto pendingBefore = StorageTexture::PendingSerial();
+    for (std::size_t surface = 1; surface < Surfaces && image->Cached(); ++surface) CachedStorageSurface(context, Resource(block.Surface(surface)));
+    Require(!image->Cached(), "storage images over the entry cap did not evict the held set's image");
+    const bool moved = AgcDriver::GuestMemory::CollectEpoch() != epochBefore || AgcDriver::GuestMemory::ProofSerial() != proofBefore || StorageTexture::PendingSerial() != pendingBefore;
+    const bool exited = exitTaken(proved);
+    std::printf("evicted epoch: a held set over a storage image its own thread evicted in the same collect epoch (epoch, proof and pending serials %s): the next proof %s the exit and %s\n", moved ? "moved" : "kept", exited ? "took" : "did not take", proved ? "proved current" : "refused");
+    Require(!moved, "evicting a clean storage image moved the epoch, proof or pending serial, so the case tests nothing");
+    Require(!exited && !proved, "a held set reused its proof over a storage image its own thread evicted in the same collect epoch");
+    held.reset();
+    ClearCachedTextures(context.device);
+    std::puts("held set over a storage image evicted in the same collect epoch passed");
 }
 
 void recorderEvictionTests(const Context& context, const Block& block) {
@@ -529,6 +568,8 @@ bool resourceCacheTests(Context context, const std::string& mode) {
                 std::puts(sampledImages ? "resource cache oversized sampled lifetime passed" : "resource cache oversized storage lifetime passed");
                 ClearCachedTextures(context.device);
             }
+        } else if (mode == "resource-evicted-epoch") {
+            evictedEpochTests(context, block);
         } else {
             auto storage = ImageResources(context, block, 0, 1, false);
             auto sampled = ImageResources(context, block, 0, 1, true);
@@ -1681,7 +1722,7 @@ int main(int argc, char** argv) {
             deviceSelectionTests();
             return 0;
         }
-        const bool resources = mode == "resource-admission" || mode == "resource-oversized" || mode == "resource-clear";
+        const bool resources = mode == "resource-admission" || mode == "resource-oversized" || mode == "resource-clear" || mode == "resource-evicted-epoch";
         const bool disableStorageImageMultisample = mode == "without-storage-image-multisample";
         const bool recover = mode == "recover-sampled" || mode == "recover-storage" || mode == "recover-srgb" || mode == "recover-repack";
 #ifdef _WIN32
