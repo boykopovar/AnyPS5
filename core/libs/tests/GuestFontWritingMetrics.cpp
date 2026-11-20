@@ -2,6 +2,7 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 #include "tests/FontFixture.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -147,6 +148,8 @@ int main() {
     Require(sceFontDestroyString(&formatString) == SCE_FONT_OK);
 
     Require(sceFontDestroyString(&string) == SCE_FONT_OK);
+    errno = 71;
+    Require(sceFontDestroyString(reinterpret_cast<FontString*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
     Require(sceFontCloseFont(font) == SCE_FONT_OK);
     Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
     Require(allocations == 0);

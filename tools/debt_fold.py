@@ -10,6 +10,7 @@ from check_conventions import DEBT, DEBT_CHANGES, DEBT_DIR, DEBT_TARGET, debt_en
 ROOT = Path(__file__).resolve().parent.parent
 OPERATION = re.compile(r"## (add|change|remove) (.+)")
 ROW = re.compile(r"\| (?!-)(?!Name \|).*\|")
+LIBRARY = re.compile(r"[A-Za-z0-9._-]+")
 
 
 class FoldError(Exception):
@@ -17,6 +18,8 @@ class FoldError(Exception):
 
 
 def debt_file(library):
+    if not isinstance(library, str) or not LIBRARY.fullmatch(library) or library.startswith(".") or library.endswith(".") or ".." in library:
+        raise FoldError(f"invalid library name: {library!r}")
     return DEBT if library == Path(DEBT).stem else f"{DEBT_DIR}{library}.md"
 
 
@@ -36,7 +39,11 @@ def parse(path, root):
     for number, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
         if line.startswith("# "):
             library, current = line[2:].strip(), None
-            if not (root / debt_file(library)).is_file():
+            try:
+                target_file = debt_file(library)
+            except FoldError as error:
+                raise FoldError(f"{name}:{number}: {error}") from error
+            if not (root / target_file).is_file():
                 raise FoldError(f"{name}:{number}: no debt file for {library}")
         elif match := OPERATION.fullmatch(line.strip()):
             if library is None:
@@ -69,8 +76,7 @@ def spans(text):
     return [(start - 1, start - 1 + len(entry.split("\n")), entry) for start, entry in units(text).items()], lines
 
 
-def find(text, operation):
-    found, _ = spans(text)
+def find(found, operation):
     matches = [(begin, end) for begin, end, entry in found if operation.target in entry]
     if len(matches) != 1:
         raise FoldError(f"{operation.fragment}:{operation.line}: '{operation.target}' matches {len(matches)} entries of {operation.library}, not one")
@@ -114,7 +120,7 @@ def apply(text, operation):
         if not inside or gap:
             new = [""] + new
         return "\n".join(lines[:at] + new + lines[at:])
-    begin, end = find(text, operation)
+    begin, end = find(found, operation)
     if operation.kind == "change":
         return "\n".join(lines[:begin] + operation.body.split("\n") + lines[end:])
     if end < len(lines) and not lines[end].strip() and (begin == 0 or not lines[begin - 1].strip()):
@@ -125,14 +131,14 @@ def apply(text, operation):
 def fold(root, write):
     fragments = sorted((root / DEBT_CHANGES).glob("*.md"))
     operations = [operation for path in fragments for operation in parse(path, root)]
-    texts, claimed, problems = {}, {}, []
+    texts, found, claimed, problems = {}, {}, {}, []
     for operation in operations:
-        path = root / debt_file(operation.library)
-        original = path.read_text(encoding="utf-8")
-        texts.setdefault(operation.library, original)
+        if operation.library not in texts:
+            texts[operation.library] = (root / debt_file(operation.library)).read_text(encoding="utf-8")
+            found[operation.library] = spans(texts[operation.library])[0]
         if operation.kind != "add":
             try:
-                key = (operation.library, find(original, operation))
+                key = (operation.library, find(found[operation.library], operation))
             except FoldError as error:
                 problems.append(str(error))
                 continue
@@ -145,25 +151,30 @@ def fold(root, write):
         texts[operation.library] = apply(texts[operation.library], operation)
     if write:
         for library, text in texts.items():
-            (root / debt_file(library)).write_text(text, encoding="utf-8", newline="\n")
+            with (root / debt_file(library)).open("w", encoding="utf-8", newline="\n") as output:
+                output.write(text)
         for path in fragments:
             path.unlink()
     return texts, fragments
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="apply the debt fragments in docs/dev/debt/changes/ to the debt files")
     parser.add_argument("--check", action="store_true", help="check that every fragment applies, change nothing")
     parser.add_argument("--show", metavar="LIBRARY", help="print LIBRARY's debt file with the pending fragments applied")
     parser.add_argument("--root", type=Path, default=ROOT)
     args = parser.parse_args(argv)
     try:
-        texts, fragments = fold(args.root, write=not (args.check or args.show))
+        target = debt_file(args.show) if args.show is not None else None
+        texts, fragments = fold(args.root, write=not (args.check or args.show is not None))
     except FoldError as error:
         print(error, file=sys.stderr)
         return 1
-    if args.show:
-        path = args.root / debt_file(args.show)
+    if target is not None:
+        path = args.root / target
         if not path.is_file():
             print(f"no debt file for {args.show}", file=sys.stderr)
             return 1

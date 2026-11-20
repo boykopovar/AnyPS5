@@ -95,6 +95,8 @@ public:
     std::optional<ShaderRecompiler::GeometryStageLimits> GeometryLimits() const;
     std::uint32_t MaxFragmentInputComponents() const;
     const std::uint32_t* WorkGroupCountLimit() const;
+    std::uint64_t StorageBufferRangeLimit() const;
+    std::uint64_t DeviceLocalBytes() const;
     std::uint32_t VendorId() const;
     ShaderRecompiler::SpirvTarget ComputeTarget(std::uint32_t waveSize) const;
     bool ComputeFullSubgroups() const;
@@ -154,7 +156,7 @@ public:
     // CPU (a copied buffer's write-back, a deferred label). Debug aid: APS5_FILL_SYNC=1 waits for
     // every recorded store over the range.
     bool FillBuffer(std::uint64_t address, std::size_t bytes, std::span<const std::uint32_t, 4> pattern);
-    bool DumpSamplesOnGpu(std::uint64_t address);
+    bool DumpSamplesOnGpu(std::uint64_t address, std::uint32_t blocks);
     void NoteHtileMask(const Graphics::HtileMaskClear& clear) const;
     // Copies `bytes` of guest memory from `source` to `destination` (disjoint ranges) in place of the
     // engine's memcpy kernel (Driver.cpp copyBuffer). `path` 0: copied on the CPU at once, when
@@ -231,7 +233,7 @@ public:
     };
     static ComputePipelineCreation ComputePipelineCounts();
     struct DispatchMoveCount {
-        std::uint64_t checked, exact, moved, refused, filtered, rebuilt, kept, served;
+        std::uint64_t checked, exact, moved, refused, filtered, rebuilt, kept, served, inPlace;
     };
     static DispatchMoveCount DispatchMoveCounts();
     void ResolveMemory(std::uint64_t address, std::size_t bytes, bool writable);
@@ -365,7 +367,8 @@ public:
     static std::uint64_t DrawRecipeHits();
     // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, direct draw
     // built for its draw-cache entry (design_cpu_final M8); null otherwise.
-    void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0);
+    void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0, const std::vector<std::uint32_t>* contentKey = nullptr);
+    std::vector<std::uint32_t> DrawContentKey(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders) const;
     bool DrawInputsInPlace() const;
     std::optional<std::string> KnownDrawRejection(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> shaders) const;
     void ColorMetadataPass(const Graphics::ColorMetadataPass& pass);
@@ -396,8 +399,20 @@ public:
     std::shared_ptr<ComputePipelineObjects> createComputePipeline(const Graphics::Context& context, const ShaderRecompiler::RecompileResult& shader, VkDescriptorSetLayout setLayout, std::span<const std::uint32_t> layoutKey, VkShaderStageFlags pushStages, std::uint64_t programAddress);
     bool completionStoresOver(std::uint64_t address, std::size_t bytes) const;
     bool copyWaitsOnCompletions(std::uint64_t address, std::size_t bytes) const;
+    struct SplitSlice {
+        std::uint32_t capacity = 0;
+        std::uint32_t groupBase = 0;
+        std::uint32_t groups = 0;
+        std::uint32_t slots = 0;
+        bool readTargets = false;
+        std::uint32_t targetSlot = 0;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> runs;
+    };
+    void SetSplitSlice(const std::optional<SplitSlice>& slice);
+    std::span<const std::uint32_t> SplitTargets();
 
 private:
+    std::optional<SplitSlice> splitSlice;
     VulkanDevice(const PresentationWindow* window, bool compileOnly);
     friend struct VulkanDeviceTestAccess;
     std::pair<VkBuffer, std::uint64_t> scratchPoolHeader(const ShaderRecompiler::RecompileResult& shader) const;

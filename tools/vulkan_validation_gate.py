@@ -87,7 +87,10 @@ def git(source, *arguments):
 def identity(source, expected):
     if not re.fullmatch(r"[0-9a-f]{40}", expected):
         raise GateError("expected a full lowercase Git commit ID")
-    if Path(git(source, "rev-parse", "--show-toplevel")).resolve() != source:
+    root = Path(git(source, "rev-parse", "--show-toplevel"))
+    if os.name == "nt" and not root.is_dir():
+        root = source / git(source, "rev-parse", "--show-cdup")
+    if root.resolve() != source:
         raise GateError(f"{source}: must be a source worktree root")
     if git(source, "rev-parse", "HEAD") != expected:
         raise GateError(f"{source}: HEAD differs from {expected}")
@@ -269,7 +272,14 @@ def artifact_hashes(build, tests, runtime):
             paths.update(p.resolve() for p in path.rglob("*") if p.is_file())
         else:
             paths.add(path)
-    return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(paths)}
+    hashes = {}
+    for path in sorted(paths):
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            while block := source.read(1024 * 1024):
+                digest.update(block)
+        hashes[str(path)] = digest.hexdigest()
+    return hashes
 
 
 def check_timeouts(tests, limit):
@@ -420,6 +430,8 @@ def main(argv=None):
                     if prop["name"] in ("ENVIRONMENT", "ENVIRONMENT_MODIFICATION"):
                         for setting in prop["value"]:
                             key, _, value = setting.partition("=")
+                            if os.name == "nt":
+                                key = key.upper()
                             if key in (*FORCED, *PUBLIC_ENV) and (prop["name"] == "ENVIRONMENT_MODIFICATION" or value != environment.get(key)):
                                 raise GateError(f"{test['name']}: test property overrides required environment {key}")
             listings[side] = tests

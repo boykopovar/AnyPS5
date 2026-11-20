@@ -17,6 +17,7 @@ public:
 
     void TranslateEmbeddedFetch(const RdnaInstruction& instruction, std::uint32_t attribute, std::uint32_t components);
     void TranslateInstruction(const RdnaInstruction& instruction);
+    void SetBufferLdsSize(std::uint32_t bytes) { bufferLdsBytes = bytes; }
     void SetPixelInput(const ShaderPixelInputInfo* info, bool barycentricEnabled) { pixelInput = info; fragmentShaderBarycentricEnabled = barycentricEnabled; }
     void SetFloatMode(const std::optional<ShaderFloatMode>& mode) {
         declaredFloatMode = mode;
@@ -37,6 +38,7 @@ public:
     void SyncVectorWindow(bool toWindow) { ir.SyncVectorWindow(toWindow); }
     void TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table);
     void TranslateUnlinkedCall(const RdnaInstruction& instruction);
+    void TranslateSplitState(const SplitStateAbi::Plan& plan, const SplitStateAbi::Point& point);
     IrValue* ReadOperand(const RdnaOperand& operand, IrType type) { return readOperand(operand, type); }
     void WriteOperand(const RdnaOperand& operand, IrValue* value) { writeOperand(operand, value); }
 
@@ -113,6 +115,7 @@ private:
     std::array<IrU32, 2> readF64Bits(const RdnaOperand& operand);
     std::array<IrU32, 2> flushF64Bits(const std::array<IrU32, 2>& bits, std::uint32_t keepBit);
     IrValue& flushTinyF64Result(IrOpcode opcode, IrValue& lhs, IrValue& rhs, IrValue* addend, IrValue& result);
+    IrValue& nanResultF64(IrValue& lhs, IrValue& rhs, IrValue* addend, IrValue& result);
     IrU64 readF64(const RdnaOperand& operand);
     IrF32 readF16LaneAsF32(const RdnaOperand& operand, bool highLane, bool packed = false, bool nanPayloadUnused = false);
     IrF32 readF16AsF32(const RdnaOperand& operand, bool nanPayloadUnused = false);
@@ -172,6 +175,7 @@ private:
     IrValue* loadSharedU32(std::uint32_t width, IrU32 address, const MemoryInfo& memory, std::uint32_t pc);
     IrValue* extractSharedU32(IrValue* value, std::uint32_t width, std::uint32_t index);
     void writeSharedU32(std::uint32_t width, IrU32 address, const std::array<IrValue*, 4>& values, const MemoryInfo& memory, std::uint32_t pc);
+    IrU32 dsAddress(const RdnaInstruction& inst);
     bool dsRead(const RdnaInstruction& inst);
     bool dsRead2(const RdnaInstruction& inst);
     bool dsWrite(const RdnaInstruction& inst);
@@ -398,6 +402,7 @@ private:
     bool emitInterpolation(const RdnaInstruction& inst);
     bool emitMemory(const RdnaInstruction& inst);
 
+    std::uint32_t bufferLdsBytes = 0u;
     IrProgram& program;
     const ShaderPixelInputInfo* pixelInput = nullptr;
     bool fragmentShaderBarycentricEnabled = false;

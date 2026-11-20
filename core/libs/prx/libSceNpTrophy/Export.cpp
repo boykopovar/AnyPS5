@@ -645,9 +645,11 @@ int APS5_VABI sceNpTrophySetInfoGetTrophyNum(const std::uint8_t* setInfo) {
     return count;
 }
 
-int APS5_VABI sceNpTrophyShowTrophyList(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophyShowTrophyList(int contextId, int handle) {
+    std::lock_guard lock(g_mutex);
+    Context* context = nullptr;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
+    return context->registered ? 0 : NP_TROPHY_ERROR_NOT_REGISTERED;
 }
 
 int APS5_VABI sceNpTrophySystemAbortHandle(void) {

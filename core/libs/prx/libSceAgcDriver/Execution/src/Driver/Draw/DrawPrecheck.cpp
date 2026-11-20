@@ -110,9 +110,11 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
     traceIndirect = traceIndirectEnabled;
     if (traceIndirect && drawParameters.indirect) std::fprintf(stderr, "[draw] indirect packet %s args 0x%llx count %u reached\n", Pm4::Name(packet[0]).c_str(), static_cast<unsigned long long>(drawParameters.indirect->arguments), drawParameters.indirect->count);
     {
+        const auto colorControl = queue.context.find(0x202);
+        const bool colorDisabled = colorControl != queue.context.end() && ((colorControl->second >> 4u) & 7u) == 0u;
         const auto targetMask = queue.context.find(0x8e);
         const auto shaderMask = queue.context.find(0x8f);
-        const bool colorWrites = targetMask != queue.context.end() && shaderMask != queue.context.end() && Graphics::ColorWriteMask(queue.context) != 0;
+        const bool colorWrites = !colorDisabled && targetMask != queue.context.end() && shaderMask != queue.context.end() && Graphics::ColorWriteMask(queue.context) != 0;
         if (!colorWrites && !queue.shader.contains(0x8)) {
             const auto word = [&](std::uint32_t offset) { const auto it = queue.context.find(offset); return it == queue.context.end() ? 0u : it->second; };
             if ((word(0x200) & 3u) == 0 || ((word(0x010) & 3u) == 0 && (word(0x011) & 1u) == 0)) return DrawVerdict::Nothing;

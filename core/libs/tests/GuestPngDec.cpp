@@ -327,6 +327,10 @@ static void CheckChunkRules(void* handle, const std::vector<std::uint8_t>& rgbPn
     const PngChunk text{"tEXt", {'k', 0, 'v'}};
     const PngChunk unknownCritical{"ABCD", {1}};
     const PngChunk invalidName{"aB1d", {1}};
+    const PngChunk validPalette{"PLTE", {255, 0, 0}};
+    const PngChunk invalidPalette{"PLTE", {255, 0, 0, 1}};
+    const std::vector<PngChunk> grayscale = SplitChunks(std::span<const std::uint8_t>(GRAY16, sizeof(GRAY16)));
+    const std::vector<PngChunk> grayscaleAlpha = SplitChunks(std::span<const std::uint8_t>(GRAY_ALPHA16, sizeof(GRAY_ALPHA16)));
 
     auto badHeaderCrc = rgb;
     badHeaderCrc[0].badCrc = true;
@@ -340,6 +344,12 @@ static void CheckChunkRules(void* handle, const std::vector<std::uint8_t>& rgbPn
         {JoinChunks(WithChunk(rgb, 1, rgb[0])), invalidData},
         {JoinChunks(duplicateHeaderBadCrc), invalidData},
         {JoinChunks(WithChunk(WithChunk(rgb, 1, {"PLTE", std::vector<std::uint8_t>(10)}), 2, {"PLTE", std::vector<std::uint8_t>(12)})), invalidData},
+        {JoinChunks(WithChunk(rgb, 1, {"PLTE", {}})), invalidData},
+        {JoinChunks(WithChunk(rgb, 1, invalidPalette)), invalidData},
+        {JoinChunks(WithChunk(rgb, 1, {"PLTE", std::vector<std::uint8_t>(769)})), invalidData},
+        {JoinChunks(WithChunk(WithChunk(rgb, 1, validPalette), 2, validPalette)), invalidData},
+        {JoinChunks(WithChunk(grayscale, 1, validPalette)), invalidData},
+        {JoinChunks(WithChunk(grayscaleAlpha, 1, validPalette)), invalidData},
         {JoinChunks({rgb[0], rgb[2]}), decodeError},
         {JoinChunks(WithChunk(rgb, 0, {"tRNS", {0, 1, 0, 2, 0, 3}})), invalidData},
         {JoinChunks(WithChunk(rgb, 0, rgb[1])), invalidData},
@@ -362,8 +372,8 @@ static void CheckChunkRules(void* handle, const std::vector<std::uint8_t>& rgbPn
     const std::vector<std::vector<std::uint8_t>> accepted = {
         JoinChunks(ignoredTextCrc),
         JoinChunks(WithChunk(rgb, 0, text)),
-        JoinChunks(WithChunk(rgb, 1, {"PLTE", std::vector<std::uint8_t>(10)})),
-        JoinChunks(WithChunk(rgb, 2, {"PLTE", std::vector<std::uint8_t>(12)})),
+        JoinChunks(WithChunk(rgb, 1, validPalette)),
+        JoinChunks(WithChunk(rgb, 1, {"PLTE", std::vector<std::uint8_t>(768, 0x80)})),
         JoinChunks({rgb[0], rgb[1], {"IEND", {1}}}),
         trailingData,
     };
@@ -380,6 +390,7 @@ static void CheckChunkRules(void* handle, const std::vector<std::uint8_t>& rgbPn
         {JoinChunks(badEndCrc), decodeError},
         {JoinChunks({rgb[0], rgb[1]}), decodeError},
         {JoinChunks(WithChunk(rgb, 2, rgb[0])), invalidData},
+        {JoinChunks(WithChunk(rgb, 2, validPalette)), invalidData},
         {JoinChunks(WithChunk(rgb, 2, unknownCritical)), decodeError},
         {JoinChunks(WithChunk(rgb, 2, invalidName)), decodeError},
         {JoinChunks({rgb[0], rgb[1], text}), decodeError},
@@ -390,6 +401,9 @@ static void CheckChunkRules(void* handle, const std::vector<std::uint8_t>& rgbPn
         Require(DecodeWith(handle, png, image, info) == result && image == reference);
     }
     Require(DecodeWith(handle, JoinChunks(WithChunk(WithChunk(rgb, 2, text), 3, rgb[1])), image, info) == decodeError && image == reference);
+
+    const std::vector<PngChunk> rgba = SplitChunks(std::span<const std::uint8_t>(RGBA16, sizeof(RGBA16)));
+    Require(ParseWith(JoinChunks(WithChunk(rgba, 1, validPalette)), info) == 0 && info.color_space == 19);
 
     const std::vector<PngChunk> palette = SplitChunks(std::span<const std::uint8_t>(PALETTE_TRNS, sizeof(PALETTE_TRNS)));
     Require(palette.size() == 5 && std::strcmp(palette[1].type, "PLTE") == 0 && std::strcmp(palette[2].type, "tRNS") == 0);
@@ -403,11 +417,14 @@ static void CheckChunkRules(void* handle, const std::vector<std::uint8_t>& rgbPn
     shortPlteBadCrc[1].badCrc = true;
     auto longPlte = palette;
     longPlte[1].data.resize(257 * 3);
+    auto noEntries = palette;
+    noEntries[1].data.clear();
     const std::vector<std::vector<std::uint8_t>> paletteErrors = {
         JoinChunks({palette[0], palette[2], palette[3], palette[4]}),
         JoinChunks(shortPlte),
         JoinChunks(shortPlteBadCrc),
         JoinChunks(longPlte),
+        JoinChunks(noEntries),
         JoinChunks(WithChunk(palette, 2, palette[1])),
         JoinChunks({palette[0], palette[3], palette[1], palette[4]}),
     };
@@ -419,14 +436,11 @@ static void CheckChunkRules(void* handle, const std::vector<std::uint8_t>& rgbPn
 
     auto twoEntries = palette;
     twoEntries[1].data.resize(6);
-    auto noEntries = palette;
-    noEntries[1].data.clear();
     auto badTransparencyCrc = palette;
     badTransparencyCrc[2].badCrc = true;
     const std::vector<std::tuple<std::vector<std::uint8_t>, std::uint32_t, std::vector<std::uint8_t>>> paletteImages = {
         {JoinChunks({twoEntries[0], twoEntries[1], twoEntries[3], twoEntries[4]}), 0, shortPalette},
         {JoinChunks(twoEntries), 0, shortPalette},
-        {JoinChunks({noEntries[0], noEntries[1], noEntries[3], noEntries[4]}), 0, {0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255}},
         {JoinChunks(badTransparencyCrc), 0, opaque},
         {JoinChunks(WithChunk({palette[0], palette[1], palette[3], palette[4]}, 2, {"tRNS", {}})), 0, opaque},
         {JoinChunks({palette[0], palette[2], palette[1], palette[3], palette[4]}), 0, opaque},
@@ -642,6 +656,40 @@ int main() {
     Require(scePngDecDecode(handle, &decode, &info) == (2 << 16 | 2));
     Require(opaquePaletteImage == std::vector<std::uint8_t>({192, 176, 160, 255, 16, 32, 48, 255, 16, 32, 48, 255, 192, 176, 160, 255}));
     Require(info.color_space == 4 && info.bit_depth == 1 && info.image_flag == 1);
+
+    constexpr std::size_t paletteSize = 256 * 4;
+    std::vector<std::uint8_t> indexedImage(paletteSize + 10, 0xCC);
+    decode = DecodeParam(palettePng, indexedImage);
+    decode.pixel_format = 132;
+    decode.image_mem_size = paletteSize + 4;
+    Require(scePngDecDecode(handle, &decode, &info) == (2 << 16 | 2));
+    Require(info.color_space == 4 && info.bit_depth == 2 && info.image_flag == 2);
+    Require(std::equal(paletteImage.begin(), paletteImage.end(), indexedImage.begin()));
+    Require(std::all_of(indexedImage.begin() + paletteImage.size(), indexedImage.begin() + paletteSize,
+                        [](std::uint8_t byte) { return byte == 0; }));
+    const std::uint8_t tightlyPacked[] = {0, 1, 2, 3, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC};
+    Require(std::equal(std::begin(tightlyPacked), std::end(tightlyPacked), indexedImage.begin() + paletteSize));
+    --decode.image_mem_size;
+    Require(scePngDecDecode(handle, &decode, &info) == invalidSize);
+
+    std::fill(indexedImage.begin(), indexedImage.end(), 0xCC);
+    decode = DecodeParam(lowDepthPalettePng, indexedImage);
+    decode.pixel_format = 132;
+    decode.image_pitch = 5;
+    Require(scePngDecDecode(handle, &decode, &info) == (2 << 16 | 2));
+    Require(info.color_space == 4 && info.bit_depth == 1 && info.image_flag == 1);
+    const std::uint8_t indexedPalette[] = {16, 32, 48, 255, 192, 176, 160, 255};
+    Require(std::equal(std::begin(indexedPalette), std::end(indexedPalette), indexedImage.begin()));
+    const std::uint8_t paddedIndices[] = {1, 0, 0xCC, 0xCC, 0xCC, 0, 1, 0xCC, 0xCC, 0xCC};
+    Require(std::equal(std::begin(paddedIndices), std::end(paddedIndices), indexedImage.begin() + paletteSize));
+    --decode.image_mem_size;
+    Require(scePngDecDecode(handle, &decode, &info) == invalidParam);
+    decode.image_pitch = 1;
+    Require(scePngDecDecode(handle, &decode, &info) == invalidParam);
+
+    decode = DecodeParam(rgbPng, indexedImage);
+    decode.pixel_format = 132;
+    Require(scePngDecDecode(handle, &decode, &info) == invalidParam);
 
     const std::vector<std::uint8_t> gray16Png(GRAY16, GRAY16 + sizeof(GRAY16));
     std::vector<std::uint8_t> gray16Image(2 * 4, 0xCC);

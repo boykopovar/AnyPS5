@@ -95,16 +95,17 @@ WebCore::Color& APS5_VABI _ZN7WebCore5ColoraSERKS0_(WebCore::Color* self, const 
     return *self;
 }
 
-WebCore::Color APS5_VABI _ZNK7WebCore5Color14colorWithAlphaEf(const WebCore::Color* self, float alpha) {
+WebCore::Color* APS5_VABI _ZNK7WebCore5Color14colorWithAlphaEf(WebCore::Color* result, const WebCore::Color* self, float alpha) {
     if (WebCore::IsOutOfLine(*self)) {
         throw std::invalid_argument("OutOfLine Color unsupported");
     }
     std::uint8_t a = static_cast<std::uint8_t>(std::clamp(static_cast<long>(std::lround(alpha * 255.0f)), 0l, 255l));
     std::uint64_t semanticFlag = self->m_colorAndFlags & (1ULL << WebCore::kFlagsShift);
-    return WebCore::MakeSRGBA(WebCore::Red(*self), WebCore::Green(*self), WebCore::Blue(*self), a, semanticFlag);
+    *result = WebCore::MakeSRGBA(WebCore::Red(*self), WebCore::Green(*self), WebCore::Blue(*self), a, semanticFlag);
+    return result;
 }
 
-WebCore::Color APS5_VABI _ZNK7WebCore5Color8darkenedEv(const WebCore::Color* self) {
+WebCore::Color* APS5_VABI _ZNK7WebCore5Color8darkenedEv(WebCore::Color* result, const WebCore::Color* self) {
     if (WebCore::IsOutOfLine(*self)) {
         throw std::invalid_argument("OutOfLine Color unsupported");
     }
@@ -113,7 +114,8 @@ WebCore::Color APS5_VABI _ZNK7WebCore5Color8darkenedEv(const WebCore::Color* sel
     std::uint8_t b = WebCore::Blue(*self);
     std::uint8_t a = WebCore::Alpha(*self);
     if (r == 255 && g == 255 && b == 255 && a == 255) {
-        return WebCore::MakeSRGBA(171, 171, 171, 255);
+        *result = WebCore::MakeSRGBA(171, 171, 171, 255);
+        return result;
     }
     float rf = static_cast<float>(r) / 255.0f;
     float gf = static_cast<float>(g) / 255.0f;
@@ -123,10 +125,11 @@ WebCore::Color APS5_VABI _ZNK7WebCore5Color8darkenedEv(const WebCore::Color* sel
     std::uint8_t nr = static_cast<std::uint8_t>(std::clamp(static_cast<long>(std::lround(multiplier * rf * 255.0f)), 0l, 255l));
     std::uint8_t ng = static_cast<std::uint8_t>(std::clamp(static_cast<long>(std::lround(multiplier * gf * 255.0f)), 0l, 255l));
     std::uint8_t nb = static_cast<std::uint8_t>(std::clamp(static_cast<long>(std::lround(multiplier * bf * 255.0f)), 0l, 255l));
-    return WebCore::MakeSRGBA(nr, ng, nb, a);
+    *result = WebCore::MakeSRGBA(nr, ng, nb, a);
+    return result;
 }
 
-WebCore::Color APS5_VABI _ZNK7WebCore5Color9lightenedEv(const WebCore::Color* self) {
+WebCore::Color* APS5_VABI _ZNK7WebCore5Color9lightenedEv(WebCore::Color* result, const WebCore::Color* self) {
     if (WebCore::IsOutOfLine(*self)) {
         throw std::invalid_argument("OutOfLine Color unsupported");
     }
@@ -135,20 +138,23 @@ WebCore::Color APS5_VABI _ZNK7WebCore5Color9lightenedEv(const WebCore::Color* se
     std::uint8_t b = WebCore::Blue(*self);
     std::uint8_t a = WebCore::Alpha(*self);
     if (r == 0 && g == 0 && b == 0 && a == 255) {
-        return WebCore::MakeSRGBA(84, 84, 84, 255);
+        *result = WebCore::MakeSRGBA(84, 84, 84, 255);
+        return result;
     }
     float rf = static_cast<float>(r) / 255.0f;
     float gf = static_cast<float>(g) / 255.0f;
     float bf = static_cast<float>(b) / 255.0f;
     float v = std::max({rf, gf, bf});
     if (v == 0.0f) {
-        return WebCore::MakeSRGBA(84, 84, 84, a);
+        *result = WebCore::MakeSRGBA(84, 84, 84, a);
+        return result;
     }
     float multiplier = std::min(1.0f, v + 0.33f) / v;
     std::uint8_t nr = static_cast<std::uint8_t>(std::clamp(static_cast<long>(std::lround(multiplier * rf * 255.0f)), 0l, 255l));
     std::uint8_t ng = static_cast<std::uint8_t>(std::clamp(static_cast<long>(std::lround(multiplier * gf * 255.0f)), 0l, 255l));
     std::uint8_t nb = static_cast<std::uint8_t>(std::clamp(static_cast<long>(std::lround(multiplier * bf * 255.0f)), 0l, 255l));
-    return WebCore::MakeSRGBA(nr, ng, nb, a);
+    *result = WebCore::MakeSRGBA(nr, ng, nb, a);
+    return result;
 }
 
 double APS5_VABI _ZNK7WebCore5Color9lightnessEv(const WebCore::Color* self) {

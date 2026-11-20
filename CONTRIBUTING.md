@@ -22,7 +22,9 @@
 
 Toolchains are listed in the [build instructions](docs/dev/BUILD.md).
 
-For relinker changes, use the [relinker-only build](docs/dev/BUILD.md#relinker-only) to build and test without third-party submodules, system libraries or a GPU. It also works on macOS. Changes to system libraries or shaders still need the full build and relevant runtime tests.
+For relinker changes, use the [relinker-only build](docs/dev/BUILD.md#relinker-only) to build and test without third-party submodules, system libraries or a GPU; it adds `-DANYPS5_RELINKER_ONLY=ON` to the first command below. It also works on macOS. Changes to system libraries or shaders still need the full build and relevant runtime tests.
+
+The full build needs the submodules (`git submodule update --init --recursive`):
 
 ```
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
@@ -81,3 +83,11 @@ The [pull request template](.github/pull_request_template.md) is the checklist f
 ## Documentation
 
 Text in the repository is dry, strict and concise. Record known gaps, unknown NIDs and signatures in [technical debt](docs/dev/TechnicalDebt.md) instead of new files. An entry states the gap first (what differs from the console, what is unverified, what throws) and describes the implemented behaviour only as far as the gap needs it. A pull request that closes a gap removes its entry, or cuts it to what is still open, instead of rewriting it to describe the corrected behaviour. An entry goes in `docs/dev/debt/<name>.md`, named after the first `core/` path it links (`<name>` for `core/libs/prx/<name>/...`, otherwise for `core/<name>/...`), under the same `###` sections as the index; entries that link neither stay in the index. A pull request whose `TechnicalDebt.md` change conflicts after the split rebases and runs `python3 tools/debt_split.py resolve` during the stopped rebase, which moves its added, edited and removed entries to their files; `python3 tools/debt_split.py split` moves entries left in the index.
+
+A link to a Markdown file with a `#fragment` must name a heading of that file, as GitHub writes its anchor: the text of the heading in lowercase, with punctuation removed and spaces turned into hyphens. The check reports a fragment that matches no heading (`doc-anchor`) in the lines a pull request adds; it does not check fragments that were already there.
+
+## Maintainer scripts
+
+- `tools/rebase_verify.py <old> <new> [--onto BRANCH] [--repo REPO]` checks that a rebased branch kept its added and deleted lines, file modes, authors and commits. `--onto` names the branch the new commits sit on; by default it is `upstream/main`, then `origin/main`.
+- `tools/pr_labels.py (--pr N | --all) [--dry-run] [--json]` labels pull requests from their title and template fields. `--dry-run` prints the planned changes and writes nothing.
+- `tools/pr_unchanged.py [--dry-run]` labels open pull requests whose merge would not change `main`. `--dry-run` prints the planned changes and writes nothing.

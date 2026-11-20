@@ -28,7 +28,7 @@ function renderOptions() {
         option.textContent = item.label;
         if (item.lang) option.lang = item.lang;
         option.dir = item.direction || active.direction;
-        option.addEventListener('click', () => choose(item));
+        option.addEventListener('click', () => choose(active, item.value));
         option.addEventListener('focus', () => { focused = index; });
         list.append(option);
     });
@@ -36,10 +36,10 @@ function renderOptions() {
     if (dialog.open) list.children[focused]?.scrollIntoView({block: 'nearest'});
 }
 
-function choose(item) {
-    const current = active;
-    current.setValue(item.value);
+export function choose(current, value) {
     dialog.close();
+    if (value === current.select.value) return;
+    current.setValue(value);
     current.select.dispatchEvent(new Event('change', {bubbles: true}));
 }
 
@@ -97,7 +97,7 @@ dialog.addEventListener('keydown', event => {
         focusOption(event.key === 'Home' ? 0 : visible.length - 1);
     } else if (event.target === search && event.key === 'Enter' && visible.length) {
         event.preventDefault();
-        choose(visible[focused]);
+        choose(active, visible[focused].value);
     }
 });
 close.addEventListener('click', () => dialog.close());
