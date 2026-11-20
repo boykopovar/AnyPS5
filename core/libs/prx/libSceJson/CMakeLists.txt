@@ -1,0 +1,16 @@
+add_library(libSceJson SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceJson PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceJson)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_sce_json_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceJson.cpp)
+    target_include_directories(guest_sce_json_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_json_tests PRIVATE libSceJson libc)
+    configure_windows_unwind(guest_sce_json_tests)
+    add_test(NAME guest_sce_json COMMAND guest_sce_json_tests)
+    set_tests_properties(guest_sce_json PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_sce_json PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJson>")
+    endif()
+endif()
