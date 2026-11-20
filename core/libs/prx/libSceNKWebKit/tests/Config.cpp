@@ -291,6 +291,17 @@ static void TestUserScript() {
     Require(WKUserScriptGetInjectionTime(script) == 1);
     Require(WKUserScriptGetMainFrameOnly(script) == true);
 
+    const void* atStart = WKUserScriptCreateWithSource(src, 0, false);
+    Require(WKUserScriptGetInjectionTime(atStart) == 0);
+    Require(WKUserScriptGetMainFrameOnly(atStart) == false);
+    WKRelease(atStart);
+    for (const std::uint32_t outOfRange : {2u, 3u, 0x100u, 0x80000001u, 0xFFFFFFFFu}) {
+        const void* other = WKUserScriptCreateWithSource(src, outOfRange, true);
+        Require(WKUserScriptGetInjectionTime(other) == 0);
+        Require(WKUserScriptGetMainFrameOnly(other) == true);
+        WKRelease(other);
+    }
+
     WKRelease(src);
     WKRelease(script);
 }
