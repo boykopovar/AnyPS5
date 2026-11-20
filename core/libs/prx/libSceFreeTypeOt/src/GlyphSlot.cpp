@@ -156,13 +156,13 @@ std::int32_t SlotInit(GuestGlyphSlotRec* slot, const char* function) {
     return error;
 }
 
-void SlotDone(GuestGlyphSlotRec* slot, const char* function) {
+void SlotDoneWithDriver(
+    GuestGlyphSlotRec* slot,
+    const GuestDriverRec& guestDriver,
+    const GuestDriverClassPrefix& guestClazz,
+    const char* function) {
     GuestGlyphSlotRec guestSlot{};
     if (!slot || !CopySlotIn(slot, guestSlot)) return;
-    GuestFaceRec guestFace{};
-    GuestDriverRec guestDriver{};
-    GuestDriverClassPrefix guestClazz{};
-    if (!DriverOf(guestSlot, guestFace, guestDriver, guestClazz)) return;
     GuestMemoryRec* memory = guestDriver.root_memory;
     if (guestClazz.done_slot) guestClazz.done_slot(slot);
     FreeBitmap(slot, guestSlot, function);
@@ -183,6 +183,19 @@ void SlotDone(GuestGlyphSlotRec* slot, const char* function) {
         }
     }
     Free(memory, internal, function);
+}
+
+void RollbackSlot(
+    GuestFaceRec* face,
+    GuestGlyphSlotRec* slot,
+    const GuestDriverRec& guestDriver,
+    const GuestDriverClassPrefix& guestClazz,
+    const char* function) {
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(&slot->face, &face, sizeof(face));
+    errno = savedErrno;
+    SlotDoneWithDriver(slot, guestDriver, guestClazz, function);
+    Free(guestDriver.root_memory, slot, function);
 }
 
 }
@@ -227,16 +240,14 @@ int APS5_VABI FT_New_GlyphSlot_nid_postfix(GuestFaceRec* face, GuestGlyphSlotRec
     slot->face = face;
     error = SlotInit(slot, function);
     if (error) {
-        SlotDone(slot, function);
-        Free(memory, slot, function);
+        RollbackSlot(face, slot, guestDriver, guestClazz, function);
         return error;
     }
     GuestGlyphSlotRec* currentHead = guestFace.glyph;
     const int headErrno = errno;
     if (!GuestCopyIn_nid_no_patch(&currentHead, &face->glyph, sizeof(currentHead))) {
         errno = headErrno;
-        SlotDone(slot, function);
-        Free(memory, slot, function);
+        RollbackSlot(face, slot, guestDriver, guestClazz, function);
         return InvalidArgument;
     }
     errno = headErrno;
@@ -245,8 +256,7 @@ int APS5_VABI FT_New_GlyphSlot_nid_postfix(GuestFaceRec* face, GuestGlyphSlotRec
     const bool glyphWritten = GuestCopyOut_nid_no_patch(&face->glyph, &slot, sizeof(slot));
     errno = glyphErrno;
     if (!glyphWritten) {
-        SlotDone(slot, function);
-        Free(memory, slot, function);
+        RollbackSlot(face, slot, guestDriver, guestClazz, function);
         return InvalidArgument;
     }
     if (aslot) {
@@ -278,8 +288,7 @@ int APS5_VABI FT_New_GlyphSlot_nid_postfix(GuestFaceRec* face, GuestGlyphSlotRec
                     errno = restoreErrno;
                 }
             }
-            SlotDone(slot, function);
-            Free(memory, slot, function);
+            RollbackSlot(face, slot, guestDriver, guestClazz, function);
             return InvalidArgument;
         }
     }

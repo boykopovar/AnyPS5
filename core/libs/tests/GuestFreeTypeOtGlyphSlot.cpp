@@ -421,11 +421,9 @@ void GuestPointers() {
     gSavedLoader = nullptr;
     errno = 71;
     Require(FT_New_GlyphSlot_nid_postfix(&corruptFace.face, &slot) == 0x24 && errno == 71,
-        "SlotDone ignores an unreadable slot->face during rollback without changing errno");
-    Require(calls.dones == 0 && corruptFace.recorder.frees == 1,
-        "SlotDone skips done_slot and avoids crashing on unreadable slot->face");
-    std::free(gSavedLoader);
-    std::free(gSavedInternal);
+        "Rollback cleans up slot allocations even when init_slot corrupts slot->face without changing errno");
+    Require(calls.dones == 1 && corruptFace.recorder.allocs == corruptFace.recorder.frees && !corruptFace.face.glyph,
+        "Rollback calls done_slot and frees all slot, internal and loader allocations without leaking");
 
     ft_glyphslot_free_bitmap_nid_postfix(reinterpret_cast<GuestGlyphSlotRec*>(0x10));
     Require(errno == 71, "free_bitmap ignores an unreadable slot without changing errno");
