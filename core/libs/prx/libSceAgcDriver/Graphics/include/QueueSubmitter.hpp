@@ -44,6 +44,7 @@ private:
     QueueSubmitter(VkDevice device, VkQueue queue, PFN_vkQueueSubmit submit);
     void run();
     void stop();
+    void fail(const Job& job, std::uint64_t position, VkResult result);
 
     VkDevice device;
     VkQueue queue;

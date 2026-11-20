@@ -1,13 +1,16 @@
 #include "prx/libSceAgcDriver/Graphics/include/QueueSubmitter.hpp"
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
+#include <iterator>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using AgcDriver::Graphics::QueueAccess;
@@ -56,6 +59,41 @@ VKAPI_ATTR VkResult VKAPI_CALL FailingSubmit(VkQueue, std::uint32_t, const VkSub
     return VK_ERROR_OUT_OF_DEVICE_MEMORY;
 }
 
+class Gate {
+public:
+    void Pass() {
+        std::unique_lock lock(mutex);
+        entered = true;
+        changed.notify_all();
+        changed.wait_for(lock, std::chrono::seconds(10), [&] { return open; });
+    }
+    bool WaitEntered() {
+        std::unique_lock lock(mutex);
+        return changed.wait_for(lock, std::chrono::seconds(5), [&] { return entered; });
+    }
+    void Open() {
+        {
+            std::lock_guard lock(mutex);
+            open = true;
+        }
+        changed.notify_all();
+    }
+
+private:
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool entered = false;
+    bool open = false;
+};
+
+Gate failGate;
+
+VKAPI_ATTR VkResult VKAPI_CALL GatedFailingSubmit(VkQueue, std::uint32_t, const VkSubmitInfo*, VkFence) {
+    failGate.Pass();
+    failingCalls.fetch_add(1, std::memory_order_relaxed);
+    return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+}
+
 QueueSubmitter::Job JobFor(std::uintptr_t commands, VkResult* result = nullptr, std::uint64_t serial = 0) {
     return {Fake<VkCommandBuffer>(commands), VK_NULL_HANDLE, VK_NULL_HANDLE, 0, serial != 0 ? Fake<VkSemaphore>(0x7700) : VK_NULL_HANDLE, serial, result};
 }
@@ -63,6 +101,7 @@ QueueSubmitter::Job JobFor(std::uintptr_t commands, VkResult* result = nullptr, 
 void ordered() {
     const auto device = Fake<VkDevice>(0x1000);
     const auto queue = Fake<VkQueue>(0x2000);
+    Require(QueueSubmitter::Existing(queue) == nullptr, "a queue without a submitter found one");
     auto& submitter = QueueSubmitter::For(device, queue, FirstSubmit);
     Require(QueueSubmitter::Existing(queue) == &submitter, "a queue does not find its submitter");
     Require(&QueueSubmitter::For(device, queue, FirstSubmit) == &submitter, "a second request for the same device and queue made another submitter");
@@ -167,20 +206,63 @@ void failureReachesItsJob() {
     Require(QueueSubmitter::FailedSubmits(device) == 0, "a retired device still counts failed submits");
 }
 
+void nothingQueuedAfterAFailedSubmit() {
+    const auto device = Fake<VkDevice>(0xf000);
+    const auto queue = Fake<VkQueue>(0xf100);
+    const int callsBefore = failingCalls.load(std::memory_order_relaxed);
+    auto& submitter = QueueSubmitter::For(device, queue, GatedFailingSubmit);
+    VkResult first = VK_SUCCESS;
+    std::uint64_t last = submitter.Enqueue(JobFor(1, &first, 30));
+    Require(failGate.WaitEntered(), "the failing submit did not start");
+    std::vector<VkResult> behind(8, VK_SUCCESS);
+    for (std::size_t index = 0; index < behind.size(); ++index) last = submitter.Enqueue(JobFor(2 + index, &behind[index], 31 + index));
+    failGate.Open();
+    submitter.WaitSubmitReturned(last);
+    Require(first == VK_ERROR_OUT_OF_DEVICE_MEMORY, "a failed submit did not reach its job");
+    for (const auto result : behind) Require(result == VK_ERROR_OUT_OF_DEVICE_MEMORY, "a job queued behind a failed submit did not take the failure");
+    constexpr std::uintptr_t Later = 256;
+    for (std::uintptr_t commands = 16; commands < 16 + Later; ++commands) {
+        VkResult result = VK_SUCCESS;
+        const auto position = submitter.Enqueue(JobFor(commands, &result, 23 + commands));
+        Require(position == last + 1, "a job after a failed submit did not take the next position");
+        Require(submitter.Returned(position), "a job after a failed submit was queued instead of completed at once");
+        Require(result == VK_ERROR_OUT_OF_DEVICE_MEMORY, "a job after a failed submit did not take the stored failure at once");
+        last = position;
+    }
+    const std::uint64_t jobs = 1 + behind.size() + Later;
+    Require(failingCalls.load(std::memory_order_relaxed) == callsBefore + 1, "the submitter submitted again after a failed submit");
+    Require(QueueSubmitter::FailedSubmits(device) == jobs, "a job that took the failure was not counted as failed");
+    Require(QueueSubmitter::FailedThrough(device, 30) && !QueueSubmitter::FailedThrough(device, 29), "the later jobs moved the first failed serial");
+    submitter.Drain();
+    Require(submitter.Submitted() == jobs, "the submitter does not count the jobs that took the failure");
+    {
+        const QueueAccess access(queue);
+    }
+    QueueSubmitter::RetireDevice(device);
+    Require(QueueSubmitter::Existing(queue) == nullptr, "a failed submitter outlived its device");
+}
+
 }
 
 int main() {
-    try {
-        Require(QueueSubmitter::Existing(Fake<VkQueue>(0x2000)) == nullptr, "a queue without a submitter found one");
-        ordered();
-        retiredWithItsDevice();
-        staleDeviceReplaced();
-        drainedBeforeAccessAndRetirement();
-        failureReachesItsJob();
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "FAIL: %s\n", error.what());
-        return 1;
+    constexpr std::pair<const char*, void (*)()> cases[]{
+        {"ordered", ordered},
+        {"retired with its device", retiredWithItsDevice},
+        {"stale device replaced", staleDeviceReplaced},
+        {"drained before access and retirement", drainedBeforeAccessAndRetirement},
+        {"failure reaches its job", failureReachesItsJob},
+        {"nothing queued after a failed submit", nothingQueuedAfterAFailedSubmit},
+    };
+    int failed = 0;
+    for (const auto& [name, run] : cases) {
+        try {
+            run();
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "FAIL %s: %s\n", name, error.what());
+            ++failed;
+        }
     }
-    std::printf("queue submitter: 5 cases passed\n");
+    if (failed != 0) return 1;
+    std::printf("queue submitter: %zu cases passed\n", std::size(cases));
     return 0;
 }

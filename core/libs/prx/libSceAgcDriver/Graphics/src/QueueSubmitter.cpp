@@ -135,8 +135,13 @@ std::uint64_t QueueSubmitter::Enqueue(const Job& job) {
         std::unique_lock lock(mutex);
         drained.wait(lock, [&] { return jobs.size() < MaxQueuedJobs || stopping; });
         if (stopping) throw std::runtime_error("AGC graphics: a batch was queued on the queue submitter of a retired device");
-        jobs.push_back(job);
         position = ++enqueued;
+        if (stoppedWith != VK_SUCCESS) {
+            taken = position;
+            fail(job, position, stoppedWith);
+            return position;
+        }
+        jobs.push_back(job);
         wake = sleeping;
     }
     if (wake) ready.notify_one();
@@ -193,31 +198,43 @@ void QueueSubmitter::run() {
             timeline.pSignalSemaphoreValues = &job.signalValue;
         }
         if (job.wait != VK_NULL_HANDLE || job.signal != VK_NULL_HANDLE) submission.pNext = &timeline;
-        VkResult result = stoppedWith;
-        if (result == VK_SUCCESS) {
+        VkResult result;
+        {
             std::lock_guard queueLock(queueMutex);
             result = submit(queue, 1, &submission, job.fence);
         }
-        if (result != VK_SUCCESS) {
-            stoppedWith = result;
-            if (job.signal != VK_NULL_HANDLE) {
-                auto first = firstFailedSerial.load(std::memory_order_relaxed);
-                while (job.signalValue < first && !firstFailedSerial.compare_exchange_weak(first, job.signalValue, std::memory_order_acq_rel)) {
-                }
-            }
-            anyFailure.fetch_add(1, std::memory_order_acq_rel);
+        if (result == VK_SUCCESS) {
+            if (job.result != nullptr) *job.result = result;
+            returned.store(position, std::memory_order_release);
+            returned.notify_all();
         }
-        if (job.result != nullptr) *job.result = result;
-        if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST) failed.fetch_add(1, std::memory_order_release);
-        returned.store(position, std::memory_order_release);
-        returned.notify_all();
         {
             std::lock_guard lock(mutex);
             busy = false;
-            ++submitted;
+            if (result == VK_SUCCESS) {
+                ++submitted;
+            } else {
+                stoppedWith = result;
+                fail(job, position, result);
+                for (; !jobs.empty(); jobs.pop_front()) fail(jobs.front(), ++taken, result);
+            }
         }
         drained.notify_all();
     }
+}
+
+void QueueSubmitter::fail(const Job& job, std::uint64_t position, VkResult result) {
+    if (job.signal != VK_NULL_HANDLE) {
+        auto first = firstFailedSerial.load(std::memory_order_relaxed);
+        while (job.signalValue < first && !firstFailedSerial.compare_exchange_weak(first, job.signalValue, std::memory_order_acq_rel)) {
+        }
+    }
+    anyFailure.fetch_add(1, std::memory_order_acq_rel);
+    if (job.result != nullptr) *job.result = result;
+    if (result != VK_ERROR_DEVICE_LOST) failed.fetch_add(1, std::memory_order_release);
+    ++submitted;
+    returned.store(position, std::memory_order_release);
+    returned.notify_all();
 }
 
 QueueAccess::QueueAccess(VkQueue queue) : submitter(QueueSubmitter::Existing(queue)) {
