@@ -148,10 +148,6 @@ void TestVideoFrameBuffer() {
     Require(result == nullptr && buffer.addRefs == 1);
 }
 
-struct PacketInfosData {
-    std::int32_t references;
-};
-
 template<typename TCall>
 bool ThrowsInvalid(TCall call) {
     try {
@@ -162,7 +158,7 @@ bool ThrowsInvalid(TCall call) {
     return false;
 }
 
-WebRtcVideoFrameBuilder BuilderWithEveryField(RefBuffer& buffer, PacketInfosData* packetInfos) {
+WebRtcVideoFrameBuilder BuilderWithEveryField(RefBuffer& buffer, WebRtcRtpPacketInfosData* packetInfos) {
     WebRtcVideoFrameBuilder builder = Filled();
     builder.id = 0x1234;
     builder.videoFrameBuffer = &buffer;
@@ -189,7 +185,7 @@ void TestBuild() {
     g_refVtable[0] = reinterpret_cast<const void*>(RefAddRef);
     g_refVtable[1] = reinterpret_cast<const void*>(RefRelease);
     RefBuffer buffer{g_refVtable};
-    PacketInfosData packetInfos{5};
+    WebRtcRtpPacketInfosData packetInfos{5, nullptr, nullptr, nullptr};
     WebRtcVideoFrameBuilder builder = BuilderWithEveryField(buffer, &packetInfos);
     const WebRtcVideoFrameBuilder before = builder;
     WebRtcVideoFrame frame;
@@ -198,7 +194,7 @@ void TestBuild() {
     Require(_ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(&frame, &builder) == &frame);
     Require(std::memcmp(&builder, &before, sizeof(builder)) == 0);
     Require(buffer.addRefs == 1 && buffer.releases == 0 && g_order == std::vector<int>{1});
-    Require(packetInfos.references == 6);
+    Require(packetInfos.refCount.load() == 6);
     Require(frame.id == 0x1234 && frame.videoFrameBuffer == &buffer);
     Require(frame.timestampRtp == 0x89abcdef && frame.ntpTimeMs == 4444444444444 && frame.timestampUs == 1111111111111);
     Require(frame.presentationTimestamp.value == 2222222222222 && frame.presentationTimestamp.engaged);
@@ -219,7 +215,7 @@ void TestBuild() {
     builder.packetInfos = nullptr;
     std::memset(&frame, 0xCD, sizeof(frame));
     Require(_ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(&frame, &builder) == &frame);
-    Require(buffer.addRefs == 2 && packetInfos.references == 6);
+    Require(buffer.addRefs == 2 && packetInfos.refCount.load() == 6);
     Require(!frame.presentationTimestamp.engaged && !frame.referenceTime.engaged);
     Require(!frame.hasMaxCompositionDelayInFrames && !frame.hasUpdateRect && !frame.useLowLatencyRendering);
     Require(frame.packetInfos == nullptr && !frame.hasProcessingTime);
@@ -229,7 +225,7 @@ void TestBuildRefusals() {
     g_refVtable[0] = reinterpret_cast<const void*>(RefAddRef);
     g_refVtable[1] = reinterpret_cast<const void*>(RefRelease);
     RefBuffer buffer{g_refVtable};
-    PacketInfosData packetInfos{5};
+    WebRtcRtpPacketInfosData packetInfos{5, nullptr, nullptr, nullptr};
     WebRtcVideoFrameBuilder builder = BuilderWithEveryField(buffer, &packetInfos);
     WebRtcVideoFrame frame;
     std::memset(&frame, 0xCD, sizeof(frame));
@@ -247,7 +243,7 @@ void TestBuildRefusals() {
     builder.videoFrameBuffer = &withoutAddRef;
     Require(ThrowsInvalid([&] { _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(&frame, &builder); }));
     Require(std::memcmp(&frame, &untouched, sizeof(frame)) == 0);
-    Require(buffer.addRefs == 0 && withoutAddRef.addRefs == 0 && packetInfos.references == 5);
+    Require(buffer.addRefs == 0 && withoutAddRef.addRefs == 0 && packetInfos.refCount.load() == 5);
 }
 
 int releaseCalls = 0;

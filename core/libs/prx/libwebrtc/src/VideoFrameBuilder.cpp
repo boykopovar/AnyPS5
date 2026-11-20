@@ -159,7 +159,7 @@ WebRtcVideoFrame* APS5_VABI _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(W
     if (!vtable || !vtable[AddRefSlot])
         throw std::invalid_argument("VideoFrame::Builder::build requires a frame buffer with a virtual AddRef");
     if (checked.packetInfos)
-        std::atomic_ref<std::int32_t>(*static_cast<std::int32_t*>(checked.packetInfos)).fetch_add(1, std::memory_order_relaxed);
+        static_cast<WebRtcRtpPacketInfosData*>(checked.packetInfos)->refCount.fetch_add(1, std::memory_order_relaxed);
     CallReference(buffer, AddRefSlot, "VideoFrame::Builder::build requires a frame buffer with a virtual AddRef");
     result->id = checked.id;
     result->videoFrameBuffer = buffer;
