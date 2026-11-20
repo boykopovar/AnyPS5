@@ -31,6 +31,8 @@ HOST_KEYS = {
             "device_local_mib", "candidates", "present_modes", "present_mode_requested"},
     "shader_cache": {"state", "size_mib"},
 }
+HOST_SOURCES = {"redactions", "os", "cpu", "cpu_threads", "memory", "cpu_gate",
+                "sdl_linked", "sdl_compiled", "shader_cache", "environment"}
 LIMITATIONS = (
     "Replay throughput is not title FPS or a measurement of unrecorded title work.",
     "Replay times are printed to 0.001 s; per-frame each values are truncated whole milliseconds.",
@@ -120,7 +122,7 @@ def parse_replay_host_report(stderr, expected_commit=None):
             if section is None:
                 raise ValueError("host report has text before its first section")
             if section == "unavailable":
-                if not re.fullmatch(r"[A-Za-z0-9_]+", line):
+                if not re.fullmatch(r"[A-Za-z0-9_]+", line) and line.partition(": ")[0] not in HOST_SOURCES:
                     break
                 report[section].append(line)
             elif section == "environment" and line == "none":
