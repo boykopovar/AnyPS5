@@ -177,8 +177,8 @@ int GetHandle(std::int32_t userId, std::int32_t type, std::int32_t index) {
 int Read(std::int32_t handle, KeyboardData* data, std::int32_t num) {
     std::lock_guard lock(keyboardMutex);
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
-    if (!openSecondPort(handle) && (handle != KEYBOARD_HANDLE || !opened)) return KEYBOARD_ERROR_INVALID_HANDLE;
     if (data == nullptr || num <= 0 || num > KEYBOARD_MAX_DATA_NUM) return KEYBOARD_ERROR_INVALID_ARG;
+    if (!openSecondPort(handle) && (handle != KEYBOARD_HANDLE || !opened)) return KEYBOARD_ERROR_INVALID_HANDLE;
     if (handle == KEYBOARD_SECOND_PORT_HANDLE) return 0;
     const int available = std::min(count, num);
     if (available == 0) return 0;
@@ -197,17 +197,21 @@ int Read(std::int32_t handle, KeyboardData* data, std::int32_t num) {
 
 int ReadState(std::int32_t handle, KeyboardData* data) {
     std::lock_guard lock(keyboardMutex);
-    if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
-    if (!openSecondPort(handle) && (handle != KEYBOARD_HANDLE || !opened)) return KEYBOARD_ERROR_INVALID_HANDLE;
     if (data == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
     KeyboardData current{};
+    current.length = 1;
+    const int savedErrno = errno;
+    const bool cleared = GuestCopyOut_nid_no_patch(data, &current, sizeof(current));
+    errno = savedErrno;
+    if (!cleared) return KEYBOARD_ERROR_INVALID_ARG;
+    if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
+    if (!openSecondPort(handle) && (handle != KEYBOARD_HANDLE || !opened)) return KEYBOARD_ERROR_INVALID_HANDLE;
     if (handle == KEYBOARD_SECOND_PORT_HANDLE) {
         current.timestamp = sceKernelGetProcessTime();
         current.length = 1;
     } else {
         current = snapshot();
     }
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(data, &current, sizeof(current));
     errno = savedErrno;
     if (!copied) return KEYBOARD_ERROR_INVALID_ARG;

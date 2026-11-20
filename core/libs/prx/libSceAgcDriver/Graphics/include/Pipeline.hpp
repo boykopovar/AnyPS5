@@ -62,6 +62,7 @@ public:
     const SampleOrder& HostSampleOrder() const { return sampleOrder; }
     bool ReordersSamples() const { return Graphics::ReordersSamples(sampleOrder); }
     bool SampleLocationsEnabled() const { return sampleLocationsEnabled; }
+    bool NarrowLibraryKeys() const { return narrowLibraryKeys; }
     VkExtent2D HostSampleLocationGrid() const { return sampleLocationGrid; }
     void PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages, std::span<const std::byte, PipelinePushConstantBytes> bytes) const;
     // Forgets the Vulkan objects without destroying them: for entries of a device that is already gone.
@@ -95,6 +96,9 @@ private:
     bool depthBounds = false;
     bool depthBias = false;
     bool libraries = false;
+    bool narrowLibraryKeys = false;
+    bool dynamicDepthBiasEnable = false;
+    bool dynamicColorWriteMask = false;
     std::uint32_t dynamicSlots = 0;
     std::shared_ptr<OptimizedPipeline> optimized;
     bool dynamicRendering = false;
@@ -120,6 +124,8 @@ private:
 std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 // `created` reports whether this call built the pipeline (false: served from the store or private).
 std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, bool* created = nullptr, std::uint64_t* storeHash = nullptr);
+bool DefersPipelineBuild(std::span<const CompiledShader> shaders);
+std::shared_ptr<Pipeline> ResidentPipelineOrDeferredBuild(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::uint64_t* storeHash);
 std::shared_ptr<Pipeline> TouchCachedPipeline(const Context& context, std::uint64_t hash, const std::weak_ptr<Pipeline>& expected);
 // Cumulative pipeline store outcomes since start-up (the [pipecache] line reports 10 s windows).
 struct PipelineStoreCounters {
@@ -156,6 +162,7 @@ void ValidateMeshLimits(const Context& context, const ShaderRecompiler::MeshConf
 void ValidateLineWidth(const Context& context, float width);
 void ValidateProvokingVertex(const Context& context, const State& state, std::span<const CompiledShader> shaders = {});
 bool BarycentricPatches(const State& state, std::span<const CompiledShader> shaders);
+bool LastVertexPatches(const State& state, std::span<const CompiledShader> shaders, bool provokingVertexLast, bool tessellation, bool primitiveListRestart, bool indexed);
 bool ValidateSampleLocations(const Context& context, const State& state);
 
 void ValidateShaderPair(const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment);
