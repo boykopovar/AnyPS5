@@ -61,6 +61,7 @@
 #include <set>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <cstdarg>
 #include <cstddef>
 #include <stdexcept>
@@ -143,6 +144,8 @@ struct Socket : KernelSocketPoll::NativeOwner {
     std::uint32_t inode = 0;
     std::weak_ptr<Socket> peer;
     bool externalPeer = false;
+    bool pairCreated = false;
+    std::optional<GuestSockets::LocalCredentials> peerCredentials;
     Socket(NativeSocket value, int family, int type) : value(value), family(family), type(type) {}
     ~Socket() {
         if (value == Invalid) return;
@@ -910,6 +913,9 @@ int GuestSockets::DuplicateTo(int descriptor, int target) {
 
 namespace {
 constexpr int GuestUnix = 1;
+constexpr int GuestLocalPeerCredentials = 1;
+constexpr int GuestLocalCredentials = 2;
+constexpr int GuestLocalConnectWait = 4;
 constexpr int GuestCloseOnExec = 0x10000000;
 constexpr int GuestNonBlocking = 0x20000000;
 constexpr std::uint32_t NoDevice = 0xFFFFFFFFu;
@@ -986,10 +992,21 @@ int ReceiveAnsweredHere(Socket& socket, std::uint64_t length) {
     return ::getpeername(socket.value, reinterpret_cast<sockaddr*>(&peer), &size) == 0 ? 0 : NativeError();
 }
 
+GuestSockets::LocalCredentials CurrentCredentials() {
+    GuestSockets::LocalCredentials credentials{};
+    credentials.user = static_cast<std::uint32_t>(geteuid_nid_postfix());
+    std::vector<std::uint32_t> groups(1024);
+    const int count = getgroups_nid_postfix(static_cast<int>(groups.size()), groups.data());
+    if (count < 0) throw std::runtime_error("socketpair: cannot read the guest groups, errno " + std::to_string(*__error_nid_postfix()));
+    credentials.groupCount = static_cast<std::int16_t>(std::min(count, 16));
+    std::copy_n(groups.begin(), credentials.groupCount, credentials.groups);
+    return credentials;
+}
+
 int UnsupportedLevelError(const Socket& socket, int level, int option, bool set) {
     if (socket.family == GuestUnix) {
         if (level != 0) return 22;
-        const bool handledByFreeBsd = set ? option == 2 || option == 4 : option == 1 || option == 2 || option == 4;
+        const bool handledByFreeBsd = (!set && option == GuestLocalPeerCredentials) || option == GuestLocalCredentials || option == GuestLocalConnectWait;
         if (handledByFreeBsd) NotImplemented_nid_no_patch("setsockopt, getsockopt: LOCAL_PEERCRED, LOCAL_CREDS and LOCAL_CONNWAIT on an AF_UNIX socket");
         return 45;
     }
@@ -1196,10 +1213,12 @@ int GuestSockets::Stat(int descriptor, FileStat* status) {
     }
     bool receiveShut = false;
     bool sendShut = false;
+    int sendBuffer = 0;
     {
         std::lock_guard lock(socket->modeMutex);
         receiveShut = socket->receiveShut;
         sendShut = socket->sendShut;
+        sendBuffer = GuestSockets::SendBufferSize(socket->options, socket->family, socket->type);
     }
     std::int64_t available = 0;
 #ifdef _WIN32
@@ -1209,9 +1228,6 @@ int GuestSockets::Stat(int descriptor, FileStat* status) {
     int count = 0;
     if (!receiveShut && QueuedBytes(*socket, count) == 0) available = count;
 #endif
-    int sendBuffer = 0;
-    socklen_t length = sizeof(sendBuffer);
-    if (getsockopt(socket->value, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<char*>(&sendBuffer), &length) != 0) sendBuffer = 0;
     *status = FileStat{};
     if (socket->family == GuestUnix) {
         status->st_dev = NoDevice;
@@ -1221,7 +1237,7 @@ int GuestSockets::Stat(int descriptor, FileStat* status) {
     if (!receiveShut || available > 0) status->st_mode |= 0444;
     if (!sendShut) status->st_mode |= 0222;
     status->st_size = available;
-    status->st_blksize = sendBuffer > 0 ? static_cast<std::uint32_t>(sendBuffer) : 0;
+    status->st_blksize = static_cast<std::uint32_t>(sendBuffer);
     return 0;
 }
 
@@ -1632,6 +1648,11 @@ int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
     }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
+    if (socket->family == GuestUnix && socket->pairCreated && level == 0 && (option == GuestLocalPeerCredentials || option == GuestLocalCredentials || option == GuestLocalConnectWait)) {
+        const int error = GuestSockets::GetLocalLevelOption(socket->peerCredentials ? &*socket->peerCredentials : nullptr, socket->type == 1, option, value, &declared);
+        if (error != 0) return Fail(error);
+        return GuestCopyOut_nid_no_patch(length, &declared, sizeof(declared)) ? 0 : Fail(14);
+    }
     if (level != 0xffff && (level != 0 || socket->family == GuestUnix) && level != 6 && level != 41) return Fail(UnsupportedLevelError(*socket, level, option, false));
     std::lock_guard lock(socket->modeMutex);
     const auto native = static_cast<std::uintptr_t>(socket->value);
@@ -1711,6 +1732,13 @@ int APS5_VABI socketpair_nid_postfix(int family, int type, int protocol, int* de
         second->peer = first;
         first->connectStarted = true;
         second->connectStarted = true;
+        first->pairCreated = true;
+        second->pairCreated = true;
+        if (plainType != 2) {
+            const auto credentials = CurrentCredentials();
+            first->peerCredentials = credentials;
+            second->peerCredentials = credentials;
+        }
         if (nonblocking && (SetNonBlocking(*first) || SetNonBlocking(*second))) return -1;
         const int firstDescriptor = Install(std::move(first));
         if (firstDescriptor < 0) return -1;

@@ -149,6 +149,34 @@ static void CheckBlobBoundaries(const Api& api) {
     Require(threw && owner.destroyed == 0);
 }
 
+static void CheckSubBlobLifetime(const Api& api) {
+    std::array<char, 8> data{'s', 'u', 'b', '\0', 'b', 'l', 'o', 'b'};
+    const auto original = data;
+    Owner owner{0, &api, true};
+    auto* parent = api.blob(data.data(), data.size(), HB_MEMORY_MODE_READONLY, &owner, Destroy);
+    Require(parent != nullptr && owner.destroyed == 0);
+    CheckData(parent, original.data(), original.size());
+
+    auto* first = hb_blob_create_sub_blob(parent, 1, 4);
+    auto* second = hb_blob_create_sub_blob(parent, 5, 10);
+    Require(first != nullptr && second != nullptr && first != parent && second != parent && first != second);
+    CheckData(first, original.data() + 1, 4);
+    CheckData(second, original.data() + 5, 3);
+    Require(owner.destroyed == 0);
+
+    hb_blob_destroy(parent);
+    Require(owner.destroyed == 0);
+    CheckData(first, original.data() + 1, 4);
+    CheckData(second, original.data() + 5, 3);
+
+    hb_blob_destroy(first);
+    Require(owner.destroyed == 0);
+    CheckData(second, original.data() + 5, 3);
+
+    hb_blob_destroy(second);
+    Require(owner.destroyed == 1);
+}
+
 struct FaceState {
     const Api* api;
     hb_face_t* face = nullptr;
@@ -341,6 +369,7 @@ int main(int argc, char** argv) try {
         Import<decltype(FreeTypeApi::setPixelSizes)>(freeType, patched ? "lJxMIwj81SQ" : "FT_Set_Pixel_Sizes_nid_postfix")};
     CheckBlobModes(api);
     CheckBlobBoundaries(api);
+    CheckSubBlobLifetime(api);
     CheckFaceLifetime(api);
     CheckEmptyFaces(api);
     CheckCachedFace(api, ft);

@@ -68,15 +68,19 @@ def stage_files(files, work, content):
     missing = []
     for destination, source in files.items():
         target = work / destination
+        content_name = source.get("content")
+        content_file = content / content_name if content is not None and content_name is not None else None
+        if content_name is not None and (content_file is None or not content_file.is_file()):
+            if not target.is_file():
+                missing.append(content_name)
+            continue
         target.parent.mkdir(parents=True, exist_ok=True)
         target.unlink(missing_ok=True)
-        if "text" in source:
+        if content_file is None:
             with target.open("w", encoding="utf-8", newline="\n") as output:
                 output.write(source["text"])
-        elif content and (content / source["content"]).is_file():
-            shutil.copyfile(content / source["content"], target)
         else:
-            missing.append(source["content"])
+            shutil.copyfile(content_file, target)
     return missing
 
 
@@ -778,11 +782,18 @@ def validate_layout(args, found, ids, titles, source, platform, packages=None):
         check_work_directories(work, args.out, protected_directories, checks)
 
 
+def remove_read_only(function, path, error):
+    if os.name != "nt" or linked_path(Path(path)):
+        raise error[1] if isinstance(error, tuple) else error
+    os.chmod(path, stat.S_IWRITE)
+    function(path)
+
+
 def reset_work(work):
     if linked_path(work):
         raise OSError(f"unsafe linked work directory: {work}")
     if work.exists():
-        shutil.rmtree(work)
+        shutil.rmtree(work, **{"onexc" if sys.version_info >= (3, 12) else "onerror": remove_read_only})
     work.mkdir(parents=True)
 
 

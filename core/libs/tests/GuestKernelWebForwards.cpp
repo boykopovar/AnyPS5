@@ -1,4 +1,5 @@
 #include "prx/libkernel_web/include/Api.hpp"
+#include "prx/libkernel_sys/include/AdditionalExports.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -11,8 +12,13 @@
 namespace {
 
 constexpr int GuestEnoent = 2;
+constexpr int GuestEsrch = 3;
 constexpr int GuestEbadf = 9;
+constexpr int GuestEchild = 10;
 constexpr int GuestEfault = 14;
+constexpr int GuestEinval = 22;
+constexpr int GuestWnohang = 1;
+constexpr std::uint32_t MutexType = 0x201;
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -61,10 +67,46 @@ void TestExec() {
                    "_execvpe of a missing program did not fail with ENOENT");
 }
 
+void TestDevelopmentMode() {
+    Require(__sys_is_development_mode_nid_disambig1_nid_postfix() == 0, "__sys_is_development_mode did not report development mode off");
+    Require(__sys_is_development_mode_nid_disambig1_nid_postfix() == __sys_is_development_mode_nid_postfix(),
+            "__sys_is_development_mode differs from libkernel_sys");
+}
+
+void TestNamedObject() {
+    int object = 0;
+    RequireFailure(__sys_namedobj_create_nid_disambig1_nid_postfix(nullptr, &object, MutexType), GuestEinval,
+                   "__sys_namedobj_create with a null name did not fail with EINVAL");
+    RequireFailure(__sys_namedobj_create_nid_disambig1_nid_postfix(reinterpret_cast<const char*>(0x10), &object, MutexType), GuestEfault,
+                   "__sys_namedobj_create with an unreadable name did not fail with EFAULT");
+    const int id = __sys_namedobj_create_nid_disambig1_nid_postfix("kernel_web_named", &object, MutexType);
+    Require(id > 0, "__sys_namedobj_create did not return an id");
+    Require(__sys_namedobj_delete_nid_postfix(static_cast<std::uint32_t>(id), MutexType) == 0,
+            "libkernel_sys did not delete the id created through libkernel_web");
+    RequireFailure(__sys_namedobj_delete_nid_postfix(static_cast<std::uint32_t>(id), MutexType), GuestEsrch,
+                   "a deleted id is still live");
+    const int reused = __sys_namedobj_create_nid_postfix("kernel_web_named", &object, MutexType);
+    Require(reused == id, "libkernel_sys did not reuse the id released through the shared table");
+    Require(__sys_namedobj_delete_nid_postfix(static_cast<std::uint32_t>(reused), MutexType) == 0, "deleting the reused id failed");
+}
+
+void TestWait4() {
+    int status = -1;
+    RequireFailure(_wait4_nid_disambig1_nid_postfix(-1, &status, GuestWnohang, nullptr), GuestEchild,
+                   "_wait4 without children did not fail with ECHILD");
+    RequireFailure(_wait4_nid_postfix(-1, &status, GuestWnohang, nullptr), GuestEchild, "libkernel_sys _wait4 did not fail with ECHILD");
+    RequireFailure(_wait4_nid_disambig1_nid_postfix(-1, &status, 0x100, nullptr), GuestEinval,
+                   "_wait4 with an unknown option did not fail with EINVAL");
+    Require(status == -1, "_wait4 wrote a status on failure");
+}
+
 } // namespace
 
 int main() {
     TestDup2();
     TestExec();
+    TestDevelopmentMode();
+    TestNamedObject();
+    TestWait4();
     return 0;
 }
