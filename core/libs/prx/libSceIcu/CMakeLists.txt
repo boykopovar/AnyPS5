@@ -18,6 +18,7 @@ target_sources(libSceIcu PRIVATE Bidi.cpp CharsetDetection.cpp Normalization.cpp
 target_link_libraries(libSceIcu PRIVATE icu_common icu_i18n)
 target_sources(libSceIcu PRIVATE Availability.cpp StringHash.cpp InvariantChars.cpp)
 target_sources(libSceIcu PRIVATE Locale.cpp LocaleMap.cpp DefaultLocale.cpp)
+target_sources(libSceIcu PRIVATE LocaleDisplay.cpp)
 target_sources(libSceIcu PRIVATE UtcTime.cpp)
 
 if(BUILD_TESTING)
@@ -719,6 +720,19 @@ if(BUILD_TESTING)
     set_tests_properties(guest_icu_locale_map PROPERTIES TIMEOUT 10)
     if(WIN32)
         set_tests_properties(guest_icu_locale_map PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_locale_display_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/LocaleDisplay.cpp)
+    target_include_directories(guest_icu_locale_display_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_locale_display_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_locale_display_tests)
+    add_test(NAME guest_icu_locale_display COMMAND guest_icu_locale_display_tests)
+    set_tests_properties(guest_icu_locale_display PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_locale_display PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()
