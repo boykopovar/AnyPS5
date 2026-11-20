@@ -61,6 +61,12 @@ void decoding() {
             }
         }
     }
+    for (const auto operation : kOperations) {
+        const Bytes site{0x4D, 0xF3, 0x66, 0x0F, opcode(operation), 0xC1};
+        const auto operands = Codegen::DecodeCount(site.data(), site.size());
+        require(operands && operands->Width == 16 && operands->Destination == 0 && operands->Source == 1,
+                "An ineffective REX prefix changed the count operands");
+    }
     const Bytes memory{0x64, 0x67, 0xF3, 0x4F, 0x0F, 0xBD, 0x8C, 0xAC, 0x10, 0, 0, 0};
     const auto operands = Codegen::DecodeCount(memory.data(), memory.size());
     require(operands && operands->Operation == CountOperation::LeadingZeros && operands->Width == 64 && operands->Destination == 9 && operands->Memory && operands->Memory->RexIndexBase == 3 && operands->Memory->Prefixes == Bytes{0x64, 0x67}, "count memory extensions or prefixes were lost");
