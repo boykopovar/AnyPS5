@@ -1740,14 +1740,18 @@ struct WriteTracker {
         for (auto block = first; block <= last; ++block) unstampedStores[block % UnstampedSlots] = generation;
     }
 
-    std::uint64_t newestStamp(std::uint64_t address, std::uint64_t end) const {
+    std::uint64_t newestUnstampedStamp(std::uint64_t address, std::uint64_t end) const {
+        if (unstampedStores.empty()) return 0;
+        const auto first = address / WriteBlockBytes;
+        const auto last = (end - 1) / WriteBlockBytes;
+        if (last - first >= UnstampedSlots) return *std::max_element(unstampedStores.begin(), unstampedStores.end());
         std::uint64_t newest = 0;
-        if (!unstampedStores.empty()) {
-            const auto first = address / WriteBlockBytes;
-            const auto last = (end - 1) / WriteBlockBytes;
-            if (last - first >= UnstampedSlots) newest = *std::max_element(unstampedStores.begin(), unstampedStores.end());
-            else for (auto block = first; block <= last; ++block) newest = std::max(newest, unstampedStores[block % UnstampedSlots]);
-        }
+        for (auto block = first; block <= last; ++block) newest = std::max(newest, unstampedStores[block % UnstampedSlots]);
+        return newest;
+    }
+
+    std::uint64_t newestStamp(std::uint64_t address, std::uint64_t end) const {
+        auto newest = newestUnstampedStamp(address, end);
         if (!watched) return newest;
 #ifdef _WIN32
         address = std::max<std::uint64_t>(address, base);
@@ -2621,8 +2625,10 @@ bool OnlyRewatchedSince(std::uint64_t address, std::size_t bytes, std::uint64_t 
     const auto lock = lockTracker(tracker);
     tracker.initialize();
     if (!tracker.watched || !tracker.covers(address, bytes)) return false;
+    const auto end = address + bytes;
+    if (tracker.newestUnstampedStamp(address, end) > generation) return false;
     bool rewatched = false;
-    for (auto block = tracker.blockOf(address); block <= tracker.blockOf(address + bytes - 1); ++block) {
+    for (auto block = tracker.blockOf(address); block <= tracker.blockOf(end - 1); ++block) {
         const auto stamp = tracker.stampOf(block);
         if (stamp <= generation) continue;
         const auto found = tracker.rewatchStamps.find(block);

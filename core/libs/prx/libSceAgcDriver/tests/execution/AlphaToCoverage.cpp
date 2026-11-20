@@ -1140,7 +1140,12 @@ void MutateDccDuringCopy() {
 void DccUnwatchTests(AgcDriver::VulkanDevice& device) {
     Require(AgcDriver::GuestMemory::WriteWatched(), "color unwatch test requires the guest write watch");
     const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
-    for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u}) {
+#ifdef _WIN32
+    constexpr auto modeCount = 11u;
+#else
+    constexpr auto modeCount = 10u;
+#endif
+    for (auto mode = 0u; mode < modeCount; ++mode) {
         const auto samples = mode >= 7u ? 8u : 4u;
         Block source(layout.Bytes() * samples);
         Block metadata(BlockBytes);
@@ -1181,7 +1186,17 @@ void DccUnwatchTests(AgcDriver::VulkanDevice& device) {
             dccCopyMutation = source.data;
             AgcDriver::Graphics::SetMultisampleDccCopyHookForTest(&MutateDccDuringCopy);
         }
-        if (mode >= 7u) {
+        if (mode == 10u) {
+            constexpr std::uint64_t pageBytes = 4096u;
+            const auto address = metadata.Address();
+            AgcDriver::GuestMemory::Unwatch(address, pageBytes);
+            Require(!AgcDriver::GuestMemory::Watched(address, pageBytes), "the DCC metadata page was not unwatched");
+            const std::array<std::byte, 1> same{static_cast<std::byte>(metadata.data[0])};
+            AgcDriver::GuestMemory::StoreOwnBytes(address, same);
+            const std::array ranges{std::pair{address, address + pageBytes}};
+            AgcDriver::GuestMemory::Rewatch(ranges);
+            Require(AgcDriver::GuestMemory::Watched(address, pageBytes), "the DCC metadata page was not rewatched");
+        } else if (mode >= 7u) {
             AgcDriver::GuestMemory::Unwatch(fmask->Address(), 4096u);
         } else if (mode == 6u) {
             AgcDriver::GuestMemory::Unwatch(cmask->Address(), 4096u);
@@ -1200,9 +1215,10 @@ void DccUnwatchTests(AgcDriver::VulkanDevice& device) {
             refused = reason.find("writes to a resident multisampled DCC") != std::string_view::npos || reason.find("requires watched guest memory") != std::string_view::npos;
             if (!refused) throw;
         }
-        Require(refused == (mode == 1u || mode == 2u || mode == 3u || mode == 5u), "DCC unwatch did not preserve unchanged data or refused a real write incorrectly");
+        if (mode == 10u) Require(refused, "a same-value DCC metadata store before rewatch was accepted");
+        else Require(refused == (mode == 1u || mode == 2u || mode == 3u || mode == 5u), "DCC unwatch did not preserve unchanged data or refused a real write incorrectly");
         if (!refused) Require(ReadBack(device, resolved) == before, "color unwatch changed a rendered sample");
-        if (mode == 4u || mode >= 6u) {
+        if (!refused && (mode == 4u || mode >= 6u)) {
             if (mode == 7u) fmask->data[0] = 0x55u;
             else if (mode == 6u) cmask->data[0] = 0xffu;
             else if (mode == 9u) {
