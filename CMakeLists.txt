@@ -352,6 +352,9 @@ if(BUILD_TESTING)
             set_tests_properties(${shader_cache_sources_test_name} PROPERTIES TIMEOUT 180)
         endforeach()
         add_test(NAME tools_nid_name_audit COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_audit_nid_names.py)
+        add_test(NAME run_report_summary COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_run_report_summary.py)
+        set_tests_properties(run_report_summary PROPERTIES TIMEOUT 30)
         set_tests_properties(tools_nid_name_audit PROPERTIES TIMEOUT 20)
         add_test(NAME pr_overlap_encoding COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_encoding.py)
