@@ -11364,14 +11364,6 @@ int APS5_VABI _ZN3JSC14iteratorMethodEPNS_14JSGlobalObjectEPNS_8JSObjectE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC14setNeverInlineEPK15OpaqueJSContextPK13OpaqueJSValue() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC14setNeverInlineEPNS_14JSGlobalObjectEPNS_9CallFrameE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC14throwTypeErrorEPNS_14JSGlobalObjectERNS_10ThrowScopeEN3WTF12ASCIILiteralE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -11525,14 +11517,6 @@ int APS5_VABI _ZN3JSC16createRangeErrorEPNS_14JSGlobalObjectERKN3WTF6StringE() {
 }
 
 int APS5_VABI _ZN3JSC16profiledEvaluateEPNS_14JSGlobalObjectENS_15ProfilingReasonERKNS_10SourceCodeENS_7JSValueERN3WTF8NakedPtrINS_9ExceptionEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC16setNeverOptimizeEPK15OpaqueJSContextPK13OpaqueJSValue() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC16setNeverOptimizeEPNS_14JSGlobalObjectEPNS_9CallFrameE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
