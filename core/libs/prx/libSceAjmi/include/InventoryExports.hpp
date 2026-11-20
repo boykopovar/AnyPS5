@@ -14,7 +14,7 @@ int APS5_VABI sceAjmiInstanceSwitch();
 int APS5_VABI sceAjmiDecAt9ParseConfigData(const void* configData, AjmDecAt9ConfigDataInfo* configInfo);
 int APS5_VABI sceAjmiInitialize(std::int64_t reserved, std::uint32_t* context);
 int APS5_VABI sceAjmiBatchErrorDump();
-int APS5_VABI sceAjmiInstanceCodecType();
+std::uint32_t APS5_VABI sceAjmiInstanceCodecType(std::uint32_t instanceId);
 int APS5_VABI sceAjmiMemoryUnregister();
 int APS5_VABI sceAjmiInstanceDestroy(std::uint32_t context, std::uint32_t instance);
 int APS5_VABI sceAjmiDecMp3ParseFrame(const std::uint8_t* stream, std::uint32_t streamSize, int parseOfl, AjmDecMp3ParseFrame* frame);

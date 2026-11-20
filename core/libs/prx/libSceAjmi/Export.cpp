@@ -232,8 +232,8 @@ int APS5_VABI sceAjmiBatchErrorDump() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAjmiInstanceCodecType() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint32_t APS5_VABI sceAjmiInstanceCodecType(std::uint32_t instanceId) {
+    return sceAjmInstanceCodecType(instanceId);
 }
 
 int APS5_VABI sceAjmiMemoryUnregister() {
