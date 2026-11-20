@@ -7,6 +7,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#ifdef __linux__
+#include <csignal>
+#include <sys/wait.h>
+#include <ucontext.h>
+#include <unistd.h>
+#endif
 
 struct ExpectedGamma {
     std::uint16_t control;
@@ -444,7 +450,56 @@ static constexpr GammaCase Cases[] = {
     }}},
 };
 
-int main() {
+#ifdef __linux__
+static int* TrapError;
+static unsigned TrapPrecision;
+
+static void FirstTrap(int, siginfo_t* info, void* context) {
+    const auto* state = static_cast<ucontext_t*>(context)->uc_mcontext.fpregs;
+    const unsigned flags = (state->swd | state->mxcsr) & 0x3fu;
+    const bool correct = info->si_code == FPE_FLTRES && flags == FE_INEXACT && *TrapError == 91 && (state->cwd & 0xf00u) == TrapPrecision;
+    _exit(correct ? 0 : 1);
+}
+
+static int CheckFirstTrap() {
+    for (const unsigned precision : {0u, 0x200u, 0x300u}) {
+        const pid_t child = fork();
+        if (child < 0) return 1;
+        if (child == 0) {
+            struct sigaction action{};
+            action.sa_sigaction = FirstTrap;
+            action.sa_flags = SA_SIGINFO;
+            sigemptyset(&action.sa_mask);
+            if (sigaction(SIGFPE, &action, nullptr) != 0) _exit(3);
+            TrapError = __error_nid_postfix();
+            TrapPrecision = precision;
+            GuestCpu::X87ClearExceptions();
+            GuestCpu::SetMxcsr((GuestCpu::Mxcsr() & ~0x3fu) | 0x1f80u);
+            const auto control = static_cast<std::uint16_t>(((GuestCpu::X87Control() & ~0xf00u) | precision | 0x3fu) & ~FE_INEXACT);
+            *TrapError = 91;
+            GuestCpu::SetX87Control(control);
+            const volatile long double result = lgammal_nid_postfix(0x1p16380L);
+            asm volatile("fwait");
+            (void)result;
+            _exit(2);
+        }
+        int status{};
+        if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+            std::fprintf(stderr, "lgammal first-trap regression failed: precision=%x status=%x\n", precision, status);
+            return 1;
+        }
+    }
+    std::puts("lgammal: all3 precision modes preserve the reference first inexact trap");
+    return 0;
+}
+#endif
+
+int main(int argc, char** argv) {
+#ifdef __linux__
+    if (argc == 2 && std::strcmp(argv[1], "trap-inexact") == 0) return CheckFirstTrap();
+#endif
+    if (argc != 1) return 1;
+
     static_assert(std::numeric_limits<long double>::digits == 64);
     const auto savedControl = GuestCpu::X87Control();
     const auto savedSse = GuestCpu::Mxcsr();
