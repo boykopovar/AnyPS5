@@ -682,6 +682,11 @@ void RunRecordRangeTests() {
     const ShaderRecompiler::ImageTableRecordLayout high{top - Stride * 4u + 1u, Stride, 16u};
     Require(high.KeysOverlapping(high.start + Stride * 3u + 4u, 1000u, 4u) == Keys{3u, 4u}, "image table records: a store running past the top of the address space did not select the last record");
     Require(high.KeysOverlapping(high.start, Stride * 4u, 4u) == Keys{0u, 4u}, "image table records: a store ending at the top of the address space did not select all four records");
+    const ShaderRecompiler::ImageTableRecordLayout empty{0x1000u, Stride, 0u};
+    const auto [emptyFirst, emptyPast] = empty.KeysOverlapping(0x1000u + Stride * 2u, 10u, 64u);
+    Require(emptyFirst == emptyPast, "image table records: a store over records of zero bytes selected keys");
+    const auto [beyondFirst, beyondPast] = middle.KeysOverlapping(0x1000u + Stride * 64u + 8u, Stride, 64u);
+    Require(beyondFirst == beyondPast && beyondPast == 64u, "image table records: a store past the last of 64 records selected keys");
 }
 
 void RunBorderSwizzleTests(AgcDriver::VulkanDevice& device) {
