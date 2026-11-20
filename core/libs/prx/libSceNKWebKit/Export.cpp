@@ -11640,10 +11640,6 @@ int APS5_VABI _ZN3JSC17JSInternalPromise6createERNS_2VMEPNS_9StructureE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC17MarkingConstraint17quickWorkEstimateERNS_11SlotVisitorE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC17MarkingConstraintC2EN3WTF7CStringES2_NS_20ConstraintVolatilityENS_21ConstraintConcurrencyENS_21ConstraintParallelismE() {
     NotImplemented_nid_no_patch(__func__);
 }
