@@ -65,6 +65,14 @@ void WriteNext(char** next, char* first) {
         throw std::invalid_argument("UTF codecvt: unwritable next pointer");
 }
 
+template<typename T>
+void WriteLibcxxNext(T** next, T* first) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(next, &first, sizeof(first));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("libc++ codecvt<char,char>: unwritable next pointer");
+}
+
 template<typename TElement, typename TIn>
 int CodecvtUtfLength(const void* self, void* state, const char* first, const char* last, std::size_t count, TIn in) {
     if (self == nullptr || state == nullptr || (first == nullptr) != (last == nullptr) || (first != nullptr && last < first))
@@ -442,6 +450,46 @@ int APS5_VABI _ZNKSt7codecvtIDic9_MbstatetE6do_outERS0_PKDiS4_RS4_PcS6_RS6__nid_
 
 int APS5_VABI _ZNKSt7codecvtIDic9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix(const void* self, void* state, const char* first, const char* last, std::size_t count) {
     return CodecvtUtf32Length_nid_no_patch(self, state, first, last, count);
+}
+
+int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE10do_unshiftERS1_PcS4_RS4__nid_postfix(
+    const void*, void*, char* to, char*, char** toNext
+) {
+    WriteLibcxxNext(toNext, to);
+    return NoConv;
+}
+
+int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE11do_encodingEv_nid_postfix(const void*) { return 1; }
+
+int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE13do_max_lengthEv_nid_postfix(const void*) { return 1; }
+
+int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE5do_inERS1_PKcS5_RS5_PcS7_RS7__nid_postfix(
+    const void*, void*, const char* from, const char*, const char** fromNext,
+    char* to, char*, char** toNext
+) {
+    WriteLibcxxNext(fromNext, from);
+    WriteLibcxxNext(toNext, to);
+    return NoConv;
+}
+
+int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE6do_outERS1_PKcS5_RS5_PcS7_RS7__nid_postfix(
+    const void*, void*, const char* from, const char*, const char** fromNext,
+    char* to, char*, char** toNext
+) {
+    WriteLibcxxNext(fromNext, from);
+    WriteLibcxxNext(toNext, to);
+    return NoConv;
+}
+
+int APS5_VABI _ZNKSt3__17codecvtIcc11__mbstate_tE9do_lengthERS1_PKcS5_m_nid_postfix(
+    const void*, void*, const char* from, const char* fromEnd, std::size_t max
+) {
+    if (from == fromEnd) return 0;
+    const auto start = reinterpret_cast<std::uintptr_t>(from);
+    const auto end = reinterpret_cast<std::uintptr_t>(fromEnd);
+    if (start == 0 || end < start) throw std::invalid_argument("libc++ codecvt<char,char>: invalid input range");
+    const std::size_t size = end - start;
+    return static_cast<int>(size < max ? size : max);
 }
 
 }

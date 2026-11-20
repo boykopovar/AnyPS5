@@ -10,6 +10,8 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <atomic>
+#include <cstring>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 
@@ -25,6 +27,11 @@ constexpr int ErrorServiceUnavailable = static_cast<int>(0x809D0002u);
 constexpr std::uint32_t MaxSearchLimit = 92;
 constexpr std::uint32_t DirectServiceErrorSdk = 0x06500000;
 constexpr std::int64_t LibraryUpdateId = 0;
+constexpr int ErrorAvEventState = static_cast<int>(0x809D1014u);
+constexpr std::uint32_t AvContentCreatedEventType = 0x1000001D;
+
+std::mutex g_avEventMutex;
+bool g_avEventConditionAdded = false;
 
 bool CopyGuestOutPreservingErrno_nid_no_patch(void* destination, const void* source, std::size_t size) {
     const int savedErrno = errno;
@@ -93,20 +100,40 @@ bool ValidateOrderBy(const char* funcName, const ContentSearchContentOrderByCond
 
 extern "C" {
 
-int APS5_VABI sceContentSearchAddAvContentCreatedEventCondition() {
+int APS5_VABI sceContentSearchAddAvContentCreatedEventCondition(std::int32_t first, std::int32_t second) {
+    if (!g_initialized.load()) return ErrorNotInitialized;
+    if (first != 1 || second != 1) return ErrorInvalidArgument;
+    std::lock_guard lock(g_avEventMutex);
+    g_avEventConditionAdded = true;
+    return 0;
+}
+
+int APS5_VABI sceContentSearchDisableAvContentCreatedEvent(void) {
+    if (!g_initialized.load()) return ErrorNotInitialized;
+    return ErrorAvEventState;
+}
+
+int APS5_VABI sceContentSearchEnableAvContentCreatedEvent(void) {
+    if (!g_initialized.load()) return ErrorNotInitialized;
+    std::lock_guard lock(g_avEventMutex);
+    if (!g_avEventConditionAdded) return ErrorAvEventState;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceContentSearchDisableAvContentCreatedEvent() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceContentSearchEnableAvContentCreatedEvent() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceContentSearchGetContentIdByAvContentCreatedEvent() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceContentSearchGetContentIdByAvContentCreatedEvent(const void* event, std::uint64_t* contentId) {
+    if (!g_initialized.load()) return ErrorNotInitialized;
+    if (!event || !contentId) return ErrorInvalidArgument;
+    unsigned char record[12];
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(record, event, sizeof(record));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidArgument;
+    std::uint32_t type;
+    std::memcpy(&type, record, sizeof(type));
+    if (type != AvContentCreatedEventType) return ErrorInvalidArgument;
+    std::uint64_t id;
+    std::memcpy(&id, record + 4, sizeof(id));
+    return CopyGuestOutPreservingErrno_nid_no_patch(contentId, &id, sizeof(id)) ? 0 : ErrorInvalidArgument;
 }
 
 

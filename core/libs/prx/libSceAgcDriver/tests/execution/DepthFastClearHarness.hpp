@@ -52,6 +52,8 @@ struct DrawOptions {
     VkStencilOpState stencil{};
     float minDepth = 0.0f;
     float maxDepth = 1.0f;
+    bool depthBias = false;
+    float depthBiasConstant = 0.0f;
     bool rasterizerDiscard = false;
 };
 
@@ -130,6 +132,8 @@ inline std::uint32_t Draw(AgcDriver::VulkanDevice& device, const Shaders& compil
     state.stencilTest = options.stencilTest;
     state.stencilFront = options.stencil;
     state.stencilBack = options.stencil;
+    state.depthBias = options.depthBias;
+    state.depthBiasConstant = options.depthBiasConstant;
     state.rasterizerDiscard = options.rasterizerDiscard;
     state.renderExtent = extent;
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;

@@ -143,7 +143,7 @@ std::filesystem::path AgcDriver::Screenshot::Write(std::string_view titleId, std
         rgb[pixel * 3 + 1] = std::to_integer<std::uint8_t>(bgra[pixel * 4 + 1]);
         rgb[pixel * 3 + 2] = std::to_integer<std::uint8_t>(bgra[pixel * 4]);
     }
-    const auto png = Decoder::Png::Encode(rgb, width, height, 3);
+    const auto png = Decoder::Png::Encode(rgb, width, height, 3, {.compressionLevel = 1});
     const auto folder = directory();
     std::filesystem::create_directories(folder);
     return writeUnusedPng(folder, std::string(titleId) + "-" + localTimestamp(), png);

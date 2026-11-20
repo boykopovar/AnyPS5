@@ -22,9 +22,9 @@ int APS5_VABI sceNpRemotePlaySessionSignalingJoinSession(const char* sessionId, 
 int APS5_VABI sceNpRemotePlaySessionSignalingLeaveSession(std::uint32_t contextId);
 int APS5_VABI sceNpRemotePlaySessionSignalingSetCustomProperty(std::uint32_t contextId, const std::uint32_t* property, std::uint32_t* previous);
 int APS5_VABI sceNpRemotePlaySessionSignalingTerminate(void);
-int APS5_VABI sceNpRemotePlaySessionSignalingAbortConnection();
-int APS5_VABI sceNpRemotePlaySessionSignalingEstablishConnection();
-int APS5_VABI sceNpRemotePlaySessionSignalingManualUdpCreateJoinSession();
-int APS5_VABI sceNpRemotePlaySessionSignalingManualUdpJoinSession();
+int APS5_VABI sceNpRemotePlaySessionSignalingAbortConnection(std::uint32_t contextId);
+int APS5_VABI sceNpRemotePlaySessionSignalingEstablishConnection(std::uint32_t contextId, std::uint32_t value);
+int APS5_VABI sceNpRemotePlaySessionSignalingManualUdpCreateJoinSession(const void* param, std::uint32_t* id, std::uint32_t* extra);
+int APS5_VABI sceNpRemotePlaySessionSignalingManualUdpJoinSession(const void* param, const char* name, std::uint32_t* id, std::uint32_t* extra);
 
 }
