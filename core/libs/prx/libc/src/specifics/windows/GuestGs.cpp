@@ -17,8 +17,13 @@ struct Replay {
     std::uint64_t end;
     std::uint64_t guest;
     std::uint64_t resume;
+    std::uint64_t stack;
     std::uint64_t saved;
     std::uint8_t scratch;
+
+    bool Matches(const CONTEXT& context) const {
+        return start != 0 && context.Rsp == stack && context.Rip >= start && context.Rip <= end;
+    }
 };
 
 thread_local Replay pending{};
@@ -99,20 +104,33 @@ extern "C" bool GuestGsIsReplay_nid_no_patch(std::uintptr_t address) {
     return Find(address, entry, image, replay, true);
 }
 
+bool GuestGsProjectFault_nid_no_patch(const EXCEPTION_POINTERS* info, EXCEPTION_POINTERS* guest) {
+    if (!pending.Matches(*info->ContextRecord)) return false;
+    auto& context = *guest->ContextRecord;
+    auto& fault = *guest->ExceptionRecord;
+    if (guest != info) {
+        context = *info->ContextRecord;
+        fault = *info->ExceptionRecord;
+    }
+    Register(context, pending.scratch) = pending.saved;
+    context.Rsp += 128;
+    context.Rip = context.Rip == pending.end ? pending.resume : pending.guest;
+    fault.ExceptionAddress = reinterpret_cast<void*>(context.Rip);
+    return true;
+}
+
+void GuestGsDiscardReplay_nid_no_patch() {
+    pending = {};
+}
+
 bool GuestGsHandleException_nid_no_patch(EXCEPTION_POINTERS* info) {
     auto& context = *info->ContextRecord;
     auto& fault = *info->ExceptionRecord;
-    if (auto* active = &pending; active->start != 0) {
-        if (context.Rip >= active->start && context.Rip <= active->end) {
-            const bool complete = context.Rip == active->end && fault.ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION;
-            Register(context, active->scratch) = active->saved;
-            context.Rsp += 128;
-            context.Rip = context.Rip == active->end ? active->resume : active->guest;
-            fault.ExceptionAddress = reinterpret_cast<void*>(context.Rip);
-            pending = {};
-            return complete;
-        }
-        return false;
+    if (pending.Matches(context)) {
+        if (context.Rip != pending.end || fault.ExceptionCode != EXCEPTION_ILLEGAL_INSTRUCTION) return false;
+        GuestGsProjectFault_nid_no_patch(info, info);
+        GuestGsDiscardReplay_nid_no_patch();
+        return true;
     }
     if (fault.ExceptionCode != EXCEPTION_ILLEGAL_INSTRUCTION || (context.EFlags & 0x100) != 0) return false;
     std::uint8_t entry[64];
@@ -133,7 +151,7 @@ bool GuestGsHandleException_nid_no_patch(EXCEPTION_POINTERS* info) {
     if (index != 0xff) address += Register(context, index) << entry[10];
     if (entry[11]) address = static_cast<std::uint32_t>(address);
     address += GuestGsGet_nid_no_patch();
-    pending = {replay, replay + length, image + Value<std::uint32_t>(entry), resume, Register(context, scratch), scratch};
+    pending = {replay, replay + length, image + Value<std::uint32_t>(entry), resume, context.Rsp, Register(context, scratch), scratch};
     Register(context, scratch) = address;
     context.Rip = replay;
     return true;

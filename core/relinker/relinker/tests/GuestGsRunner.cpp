@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -10,6 +11,9 @@
 #ifdef _WIN32
 #include <windows.h>
 #include "prx/libc/include/GuestGs.hpp"
+#ifdef GUEST_GS_RUNTIME
+#include "prx/libc/include/HostFault.hpp"
+#endif
 #else
 #include <sys/mman.h>
 #include <sys/syscall.h>
@@ -25,20 +29,61 @@ template<typename TValue> TValue Read(const std::uint8_t* bytes) {
 #ifdef _WIN32
 static std::uintptr_t faultSite;
 static std::uintptr_t faultPage;
+static std::uintptr_t replaySite;
+static std::uint64_t replayStack;
+static bool guestFault;
+static bool unhandledFault;
 static bool faultRepaired;
 
+#ifndef GUEST_GS_RUNTIME
 static LONG WINAPI Handle(EXCEPTION_POINTERS* info) {
-    if (GuestGsHandleException_nid_no_patch(info)) return EXCEPTION_CONTINUE_EXECUTION;
-    if (faultPage && !faultRepaired && info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
-        if (info->ContextRecord->Rip != faultSite || info->ContextRecord->Rbx != 0x1234567812345678ull ||
-            info->ExceptionRecord->ExceptionAddress != reinterpret_cast<void*>(faultSite)) return EXCEPTION_CONTINUE_SEARCH;
-        DWORD previous = 0;
-        if (!VirtualProtect(reinterpret_cast<void*>(faultPage), 4096, PAGE_READWRITE, &previous)) return EXCEPTION_CONTINUE_SEARCH;
-        faultRepaired = true;
-        return EXCEPTION_CONTINUE_EXECUTION;
+    return GuestGsHandleException_nid_no_patch(info) ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
+}
+#endif
+
+static LONG WINAPI ObserveReplayStart(EXCEPTION_POINTERS* info) {
+    const auto& context = *info->ContextRecord;
+    if (info->ExceptionRecord->ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION && context.Rip == replaySite - 2) {
+        if (replayStack != 0 && (!guestFault || !faultRepaired || context.Rsp != replayStack)) ExitProcess(10);
+        replayStack = context.Rsp;
+        if (unhandledFault) {
+            std::fprintf(stderr, "expected guest rip 0x%016llx rsp %016llx\n",
+                static_cast<unsigned long long>(faultSite), static_cast<unsigned long long>(replayStack + 128));
+        }
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
+
+static LONG WINAPI RepairFault(EXCEPTION_POINTERS* info) {
+    const auto& context = *info->ContextRecord;
+    const auto& fault = *info->ExceptionRecord;
+    if (fault.ExceptionCode != EXCEPTION_ACCESS_VIOLATION) return EXCEPTION_CONTINUE_SEARCH;
+    if (guestFault || faultRepaired || replayStack == 0 || context.Rip != replaySite || context.Rsp != replayStack || context.Rbx != faultPage ||
+        fault.ExceptionAddress != reinterpret_cast<void*>(replaySite) || fault.NumberParameters < 2 || fault.ExceptionInformation[1] != faultPage)
+        ExitProcess(11);
+    if (unhandledFault) return EXCEPTION_CONTINUE_SEARCH;
+    DWORD previous = 0;
+    if (!VirtualProtect(reinterpret_cast<void*>(faultPage), 4096, PAGE_READWRITE, &previous)) ExitProcess(12);
+    faultRepaired = true;
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+#ifdef GUEST_GS_RUNTIME
+static bool AcceptGuestFault(void* exceptionPointers) noexcept {
+    const auto& info = *static_cast<EXCEPTION_POINTERS*>(exceptionPointers);
+    const auto& context = *info.ContextRecord;
+    const auto& fault = *info.ExceptionRecord;
+    if (fault.ExceptionCode != EXCEPTION_ACCESS_VIOLATION) return false;
+    if (faultRepaired || replayStack == 0 || context.Rip != faultSite || context.Rsp != replayStack + 128 ||
+        context.Rbx != 0x1234567812345678ull || context.Rsi != 0x2234567822345678ull ||
+        fault.ExceptionAddress != reinterpret_cast<void*>(faultSite) || fault.NumberParameters < 2 || fault.ExceptionInformation[1] != faultPage)
+        ExitProcess(13);
+    DWORD previous = 0;
+    if (!VirtualProtect(reinterpret_cast<void*>(faultPage), 4096, PAGE_READWRITE, &previous)) ExitProcess(12);
+    faultRepaired = true;
+    return true;
+}
+#endif
 #endif
 
 int main(int argc, char** argv) {
@@ -104,11 +149,20 @@ int main(int argc, char** argv) {
         return 0;
     }
 #ifdef _WIN32
-    if (argc > 4 && std::strcmp(argv[3], "fault") == 0) {
-        faultSite = reinterpret_cast<std::uintptr_t>(image) + std::stoull(argv[4], nullptr, 0);
+    unhandledFault = argc > 4 && std::strcmp(argv[3], "unhandled") == 0;
+#ifdef GUEST_GS_RUNTIME
+    guestFault = argc > 4 && std::strcmp(argv[3], "guest-fault") == 0;
+    if (guestFault) LibcSetHostFaultHandler_nid_no_patch(AcceptGuestFault);
+#endif
+    if (argc > 4 && (guestFault || unhandledFault || std::strcmp(argv[3], "fault") == 0)) {
+        const auto* patch = image + std::stoull(argv[4], nullptr, 0);
+        if (*patch != 0xe9) return 8;
+        faultSite = reinterpret_cast<std::uintptr_t>(patch);
+        replaySite = reinterpret_cast<std::uintptr_t>(patch + 5 + Read<std::int32_t>(patch + 1) + 7);
         faultPage = base;
         DWORD previous = 0;
-        if (!VirtualProtect(reinterpret_cast<void*>(faultPage), 4096, PAGE_NOACCESS, &previous)) return 8;
+        if (!AddVectoredExceptionHandler(1, ObserveReplayStart) || !AddVectoredExceptionHandler(0, RepairFault) ||
+            !VirtualProtect(reinterpret_cast<void*>(faultPage), 4096, PAGE_NOACCESS, &previous)) return 8;
     }
 #endif
     const auto result = reinterpret_cast<Function>(image + entry)(cells.data() + 4096);

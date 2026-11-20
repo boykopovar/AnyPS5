@@ -1,5 +1,6 @@
 import argparse
 from pathlib import Path
+import re
 import struct
 import subprocess
 import sys
@@ -117,10 +118,17 @@ def main():
             assert values[8:10] == [RBX, RSI], (name, "scratch register", run.stdout)
             if flags is not None:
                 assert values[7] & 0xcd5 == flags, (name, "flags", run.stdout)
-            if sys.platform == "win32" and not args.runtime and name in ("load", "store", "lock-xadd"):
+            if sys.platform == "win32" and name in ("load", "store", "lock-xadd"):
                 site = 0x10210 + body.index(bytes.fromhex(encoding))
                 retry = subprocess.run([str(args.runner.resolve()), str(output), "0x10210", "fault", hex(site)], capture_output=True, text=True, timeout=10)
-                assert retry.returncode == 0 and retry.stdout == run.stdout, (name, "fault retry", retry)
+                assert retry.returncode == 0 and retry.stdout == run.stdout and "FATAL:" not in retry.stderr, (name, "fault retry", retry)
+                if args.runtime and name == "load":
+                    delivered = subprocess.run([str(args.runner.resolve()), str(output), "0x10210", "guest-fault", hex(site)], capture_output=True, text=True, timeout=10)
+                    assert delivered.returncode == 0 and delivered.stdout == run.stdout, (name, "guest fault delivery", delivered)
+                    fault = subprocess.run([str(args.runner.resolve()), str(output), "0x10210", "unhandled", hex(site)], capture_output=True, text=True, timeout=10)
+                    expected = re.search(r"expected guest rip (0x[0-9a-f]+) rsp ([0-9a-f]+)", fault.stderr)
+                    assert fault.returncode & 0xffffffff == 0xc0000005 and expected, (name, "unhandled fault", fault)
+                    assert f"guest GS replay exception 0xc0000005 at {expected[1]} (rsp {expected[2]}, rbx {RBX:016x}, rsi {RSI:016x})" in fault.stderr, (name, fault.stderr)
             values[7] &= 0xcd5
             digest.append((name, values))
         source = work / "atomic.elf"

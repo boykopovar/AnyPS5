@@ -11,4 +11,6 @@ struct _EXCEPTION_POINTERS;
 extern "C" bool GuestGsIsReplay_nid_no_patch(std::uintptr_t address);
 
 bool GuestGsHandleException_nid_no_patch(_EXCEPTION_POINTERS* info);
+bool GuestGsProjectFault_nid_no_patch(const _EXCEPTION_POINTERS* info, _EXCEPTION_POINTERS* guest);
+void GuestGsDiscardReplay_nid_no_patch();
 #endif

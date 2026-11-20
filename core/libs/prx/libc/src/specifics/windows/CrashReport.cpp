@@ -372,6 +372,25 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     if (HandleWatch(info)) return EXCEPTION_CONTINUE_EXECUTION;
     if (GuestArena::GuestArenaRecoverWrite_nid_no_patch(info)) return EXCEPTION_CONTINUE_EXECUTION;
     if (HandleSse4a(info)) return EXCEPTION_CONTINUE_EXECUTION;
+    CONTEXT guestContext;
+    EXCEPTION_RECORD guestRecord;
+    EXCEPTION_POINTERS guest{&guestRecord, &guestContext};
+    if (GuestGsProjectFault_nid_no_patch(info, &guest)) {
+        if (HandleHostFault(&guest)) {
+            *info->ContextRecord = guestContext;
+            GuestGsDiscardReplay_nid_no_patch();
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+        if (IsFatal(guestRecord.ExceptionCode)) {
+            char line[MAX_PATH + 64];
+            DescribeAddress(guestContext.Rip, line, sizeof(line));
+            Report("guest GS replay exception 0x%08lx at %s (rsp %016llx, rbx %016llx, rsi %016llx)\n",
+                guestRecord.ExceptionCode, line, guestContext.Rsp, guestContext.Rbx, guestContext.Rsi);
+            if (guestRecord.ExceptionCode == EXCEPTION_ACCESS_VIOLATION && guestRecord.NumberParameters >= 2)
+                Report("  memory address 0x%016llx\n", static_cast<unsigned long long>(guestRecord.ExceptionInformation[1]));
+        }
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
     if (HandleHostFault(info)) return EXCEPTION_CONTINUE_EXECUTION;
     const auto* record = info->ExceptionRecord;
     if ((record->ExceptionCode & GccExceptionMask) == GccException) {
