@@ -66,7 +66,7 @@ add_test_executable(guest_nkwebkit_dates_tests ${LIBS_INCLUDE_DIR}/tests/GuestNK
         target_include_directories(nkwebkit_${testName}_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(nkwebkit_${testName}_tests PRIVATE libSceNKWebKit libSceJsc libc)
         configure_windows_unwind(nkwebkit_${testName}_tests)
-        if(testName STREQUAL "wtf" OR testName STREQUAL "presentingapplicationpid" OR testName STREQUAL "blobdatafilereference")
+        if(testName STREQUAL "wtf" OR testName STREQUAL "presentingapplicationpid" OR testName STREQUAL "blobdatafilereference" OR testName STREQUAL "wtfplatformdefaults")
             target_link_libraries(nkwebkit_${testName}_tests PRIVATE libkernel)
         endif()
         if(testName STREQUAL "dragimage")

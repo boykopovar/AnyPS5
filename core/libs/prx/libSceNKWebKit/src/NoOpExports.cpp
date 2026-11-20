@@ -755,12 +755,6 @@ void APS5_VABI _ZN3PAL8KillRing6appendERKN3WTF6StringE() {
 void APS5_VABI _ZN3PAL8KillRing7prependERKN3WTF6StringE() {
 }
 
-void APS5_VABI _ZN3WTF11OSAllocator6commitEPvmbb() {
-}
-
-void APS5_VABI _ZN3WTF11OSAllocator8decommitEPvm() {
-}
-
 void APS5_VABI _ZN3WTF15AutomaticThread14threadDidStartEv() {
 }
 
