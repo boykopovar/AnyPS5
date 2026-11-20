@@ -745,7 +745,7 @@ GuestLocale::InputIterator APS5_VABI CharNumGetBool(const GuestLocale::Facet*, G
                 *state = IosFailBit;
             } else {
                 *value = parsedValue != 0;
-                if (static_cast<std::uint64_t>(parsedValue) >= 2) *state = IosFailBit;
+                if (parsedValue < 0 || parsedValue > 1) *state = IosFailBit;
             }
         }
     } else {
