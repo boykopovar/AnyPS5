@@ -167,9 +167,82 @@ void GuestPointers() {
 #endif
 }
 
+
+void NameQueries() {
+    static_assert(std::is_same_v<decltype(&ucnv_countAvailable_nid_postfix), std::int32_t (APS5_VABI*)()>);
+    static_assert(std::is_same_v<decltype(&ucnv_getAvailableName_nid_postfix),
+                  const char* (APS5_VABI*)(std::int32_t)>);
+    static_assert(std::is_same_v<decltype(&ucnv_countStandards_nid_postfix), std::uint16_t (APS5_VABI*)()>);
+    static_assert(std::is_same_v<decltype(&ucnv_countAliases_nid_postfix),
+                  std::uint16_t (APS5_VABI*)(const char*, std::int32_t*)>);
+    static_assert(std::is_same_v<decltype(&ucnv_getAlias_nid_postfix),
+                  const char* (APS5_VABI*)(const char*, std::uint16_t, std::int32_t*)>);
+    static_assert(std::is_same_v<decltype(&ucnv_getStandardName_nid_postfix),
+                  const char* (APS5_VABI*)(const char*, const char*, std::int32_t*)>);
+
+    const auto available = ucnv_countAvailable();
+    Require(ucnv_countAvailable_nid_postfix() == available, "available count matches pinned ICU");
+    for (std::int32_t index : {-1, 0, 1, available - 1, available, available + 1})
+        Require(ucnv_getAvailableName_nid_postfix(index) == ucnv_getAvailableName(index),
+                "available name matches pinned ICU");
+    Require(ucnv_countStandards_nid_postfix() == ucnv_countStandards(), "standard count matches pinned ICU");
+
+    const std::string pastLimit(UCNV_MAX_CONVERTER_NAME_LENGTH + 1, 'a');
+    const char* names[] = {nullptr, "", "UTF-8", "u*T@f08", "ISO-8859-1", "not-a-converter", pastLimit.c_str()};
+    const char* standards[] = {nullptr, "", "MIME", "IANA", "WINDOWS", "not-a-standard"};
+    for (std::int32_t initial : {0, -1, -128, 1, 15}) {
+        for (const char* name : names) {
+            UErrorCode nativeStatus = static_cast<UErrorCode>(initial);
+            const auto count = ucnv_countAliases(name, &nativeStatus);
+            std::int32_t guestStatus = initial;
+            Require(ucnv_countAliases_nid_postfix(name, &guestStatus) == count &&
+                    guestStatus == static_cast<std::int32_t>(nativeStatus), "alias count matches pinned ICU");
+            for (std::uint16_t index : {std::uint16_t{0}, std::uint16_t{1}, count, std::uint16_t{0xffff}}) {
+                nativeStatus = static_cast<UErrorCode>(initial);
+                const char* expected = ucnv_getAlias(name, index, &nativeStatus);
+                guestStatus = initial;
+                const char* actual = ucnv_getAlias_nid_postfix(name, index, &guestStatus);
+                Require(actual == expected && guestStatus == static_cast<std::int32_t>(nativeStatus),
+                        "alias matches pinned ICU");
+                if (actual) Require(CheckedString(actual) == actual, "alias storage is guest-readable");
+            }
+            for (const char* standard : standards) {
+                nativeStatus = static_cast<UErrorCode>(initial);
+                const char* expected = ucnv_getStandardName(name, standard, &nativeStatus);
+                guestStatus = initial;
+                const char* actual = ucnv_getStandardName_nid_postfix(name, standard, &guestStatus);
+                Require(actual == expected && guestStatus == static_cast<std::int32_t>(nativeStatus),
+                        "standard name matches pinned ICU");
+                if (actual) Require(CheckedString(actual) == actual, "standard name storage is guest-readable");
+            }
+        }
+    }
+
+    const auto* invalid = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    auto* invalidStatus = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    RequireInvalidArgument([&] { ucnv_countAliases_nid_postfix(invalid, nullptr); }, "count: null status throws");
+    RequireInvalidArgument([&] { ucnv_getAlias_nid_postfix(invalid, 0, nullptr); }, "alias: null status throws");
+    RequireInvalidArgument([&] { ucnv_getStandardName_nid_postfix(invalid, invalid, nullptr); },
+                           "standard: null status throws");
+    RequireRuntimeError([&] { ucnv_countAliases_nid_postfix("UTF-8", invalidStatus); }, "count: bad status throws");
+    std::int32_t failed = 1;
+    Require(ucnv_countAliases_nid_postfix(invalid, &failed) == 0 && failed == 1, "count: prefailed status returns");
+    Require(!ucnv_getAlias_nid_postfix(invalid, 0, &failed) && failed == 1, "alias: prefailed status returns");
+    Require(!ucnv_getStandardName_nid_postfix(invalid, invalid, &failed) && failed == 1,
+            "standard: prefailed status returns");
+    std::int32_t ok = 0;
+    RequireRuntimeError([&] { ucnv_countAliases_nid_postfix(invalid, &ok); }, "count: unreadable alias throws");
+    ok = 0;
+    RequireRuntimeError([&] { ucnv_getAlias_nid_postfix(invalid, 0, &ok); }, "alias: unreadable alias throws");
+    ok = 0;
+    RequireRuntimeError([&] { ucnv_getStandardName_nid_postfix("UTF-8", invalid, &ok); },
+                        "standard: unreadable standard throws");
+}
+
 }
 
 int main() {
     Parity();
     GuestPointers();
+    NameQueries();
 }
