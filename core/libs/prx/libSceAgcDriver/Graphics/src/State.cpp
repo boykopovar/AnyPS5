@@ -524,9 +524,11 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
         Require(zFormat == 0 || !depthMips.at(viewMip).tail, "rendering the " + where + " into the packed mip tail is unsupported");
         Require(!stencil || !stencilMips.at(viewMip).tail, "rendering the stencil of the " + where + " into the packed mip tail is unsupported");
         Require((read(cx, 0x010) & (1u << 29u)) == 0, "HTILE for the " + where + " is unsupported");
+        depth.depthSlicePitch = static_cast<std::uint32_t>(ComputeSurfaceSize(depthMips, 1u));
+        depth.stencilSlicePitch = static_cast<std::uint32_t>(ComputeSurfaceSize(stencilMips, 1u));
         if (const auto slice = view & 0x1fffu; slice != 0) {
-            if (depth.address != 0) depth.address += static_cast<std::uint64_t>(slice) * ComputeSurfaceSize(depthMips, 1u);
-            if (depth.stencilAddress != 0) depth.stencilAddress += static_cast<std::uint64_t>(slice) * ComputeSurfaceSize(stencilMips, 1u);
+            if (depth.address != 0) depth.address += static_cast<std::uint64_t>(slice) * depth.depthSlicePitch;
+            if (depth.stencilAddress != 0) depth.stencilAddress += static_cast<std::uint64_t>(slice) * depth.stencilSlicePitch;
         }
         if (depth.address != 0) depth.address += depthMips.at(viewMip).tiledOffset;
         if (depth.stencilAddress != 0) depth.stencilAddress += stencilMips.at(viewMip).tiledOffset;

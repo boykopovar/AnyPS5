@@ -3161,8 +3161,8 @@ std::vector<std::unique_ptr<LayeredDepth>>& layeredDepths() {
 DepthTarget layerTarget(const DepthTarget& target, std::uint32_t layer) {
     auto slice = target;
     const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
-    slice.address += static_cast<std::uint64_t>(layer) * DepthSliceBytes(target.extent, d16 ? 2u : 4u);
-    if (slice.stencilAddress != 0) slice.stencilAddress += static_cast<std::uint64_t>(layer) * DepthSliceBytes(target.extent, 1u);
+    slice.address += static_cast<std::uint64_t>(layer) * (target.depthSlicePitch != 0u ? target.depthSlicePitch : DepthSliceBytes(target.extent, d16 ? 2u : 4u));
+    if (slice.stencilAddress != 0) slice.stencilAddress += static_cast<std::uint64_t>(layer) * (target.stencilSlicePitch != 0u ? target.stencilSlicePitch : DepthSliceBytes(target.extent, 1u));
     if (slice.htileAddress != 0) slice.htileAddress += static_cast<std::uint64_t>(layer) * HtileMetadataBytes(target.extent);
     slice.firstSlice = target.firstSlice + layer;
     slice.lastSlice = slice.firstSlice;
@@ -4244,7 +4244,6 @@ VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const
     std::unique_lock lock(surfacesMutex());
     const bool cleared = takeClearedHtile(target);
     DepthSurface* surface = nullptr;
-    if (const auto owner = depthOwners().find({context.device, target.address}); owner != depthOwners().end() && owner->second.surface->active->load(std::memory_order_acquire) && sameSurface(owner->second.surface->target, target)) surface = owner->second.surface;
     for (const auto& candidate : surfaces()) {
         if (candidate->active->load(std::memory_order_acquire) && candidate->context.device == context.device && sameSurface(candidate->target, target)) {
             surface = candidate.get();
