@@ -97,6 +97,12 @@ static std::string DumpBits(const WTF::BitVector& vector) {
     return streams.log;
 }
 
+static std::string DumpMediaOnInner(const WTF::MediaTime& time) {
+    Streams streams;
+    _ZNK3WTF9MediaTime4dumpERNS_11PrintStreamE(&time, reinterpret_cast<NKWebKit::WtfDumpAbi::PrintStream*>(&streams.inner));
+    return streams.log;
+}
+
 static std::string Expected(const std::string& bits) {
     std::string result;
     for (char bit : bits) result += std::string("<A[B:") + bit + "]A>";
@@ -117,6 +123,45 @@ int main() {
         Streams streams;
         _ZNK3WTF19MetaAllocatorHandle4dumpERNS_11PrintStreamE(&handle, streams.Out());
         Require(streams.log == "<A[B:" + Pointer(memory + 16) + "][B:...][B:" + Pointer(memory + 144) + "]A>");
+    }
+
+    {
+        NKWebKit::WtfDumpAbi::HeapRange range{2, 0xFFFF};
+        Streams streams;
+        _ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE(&range, streams.Out());
+        Require(streams.log == "[A:0x2-0xffff]");
+        NKWebKit::WtfDumpAbi::HeapRange empty{0, 0};
+        Streams emptyStreams;
+        _ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE(&empty, emptyStreams.Out());
+        Require(emptyStreams.log == "[A:0x0-0x0]");
+    }
+
+    {
+        alignas(8) NKWebKit::WtfDumpAbi::ClassInfo info{{"Window"}};
+        Streams streams;
+        _ZNK3JSC9ClassInfo4dumpERN3WTF11PrintStreamE(&info, streams.Out());
+        Require(streams.log == "<A[B:" + Pointer(&info) + "][B::[]<B[B:Window]B>[B:]]A>");
+    }
+
+    {
+        Streams streams;
+        WebCore::PlatformTimeRanges ranges{};
+        _ZNK7WebCore18PlatformTimeRanges4dumpERN3WTF11PrintStreamE(&ranges, streams.Out());
+        Require(streams.log.empty());
+    }
+    {
+        WebCore::PlatformTimeRanges::Range storage[2]{
+            {WTF::MediaTime(3, 2, WTF::MediaTime::Valid), WTF::MediaTime(5, 2, WTF::MediaTime::Valid)},
+            {WTF::MediaTime(7, 1, WTF::MediaTime::Valid), WTF::MediaTime(0, 1, WTF::MediaTime::Valid | WTF::MediaTime::PositiveInfinite)},
+        };
+        WebCore::PlatformTimeRanges ranges{{storage, 2, 2}};
+        Streams streams;
+        _ZNK7WebCore18PlatformTimeRanges4dumpERN3WTF11PrintStreamE(&ranges, streams.Out());
+        std::string expected;
+        for (const auto& range : storage)
+            expected += "<A[B:[]" + DumpMediaOnInner(range.start) + "[B:..]" + DumpMediaOnInner(range.end) + "[B:] ]A>";
+        Require(streams.log == expected);
+        Require(streams.log.find("<B[B:{]B><B[B:3][B:/][B:2][B: = ]B><B[B:1.500000][B:}]B>") != std::string::npos);
     }
 
     {
@@ -169,11 +214,22 @@ int main() {
         unsigned char thread[8]{};
         NKWebKit::WtfDumpAbi::MetaAllocatorHandle handle{};
         NKWebKit::WtfDumpAbi::FreeList list{};
+        NKWebKit::WtfDumpAbi::HeapRange range{};
+        NKWebKit::WtfDumpAbi::ClassInfo info{};
+        WebCore::PlatformTimeRanges ranges{};
+        WebCore::PlatformTimeRanges brokenRanges{{nullptr, 1, 1}};
         WTF::BitVector inlineVector{std::uintptr_t{1} << 63};
         WTF::BitVector emptyValue{0};
         WTF::BitVector deletedValue{1};
         Require(Throws([&] { _ZNK3WTF19MetaAllocatorHandle4dumpERNS_11PrintStreamE(nullptr, streams.Out()); }));
         Require(Throws([&] { _ZNK3WTF19MetaAllocatorHandle4dumpERNS_11PrintStreamE(&handle, nullptr); }));
+        Require(Throws([&] { _ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE(nullptr, streams.Out()); }));
+        Require(Throws([&] { _ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE(&range, nullptr); }));
+        Require(Throws([&] { _ZNK3JSC9ClassInfo4dumpERN3WTF11PrintStreamE(nullptr, streams.Out()); }));
+        Require(Throws([&] { _ZNK3JSC9ClassInfo4dumpERN3WTF11PrintStreamE(&info, nullptr); }));
+        Require(Throws([&] { _ZNK7WebCore18PlatformTimeRanges4dumpERN3WTF11PrintStreamE(nullptr, streams.Out()); }));
+        Require(Throws([&] { _ZNK7WebCore18PlatformTimeRanges4dumpERN3WTF11PrintStreamE(&ranges, nullptr); }));
+        Require(Throws([&] { _ZNK7WebCore18PlatformTimeRanges4dumpERN3WTF11PrintStreamE(&brokenRanges, streams.Out()); }));
         Require(Throws([&] { _ZNK3JSC8FreeList4dumpERN3WTF11PrintStreamE(nullptr, streams.Out()); }));
         Require(Throws([&] { _ZNK3JSC8FreeList4dumpERN3WTF11PrintStreamE(&list, nullptr); }));
         Require(Throws([&] { _ZNK3WTF6Thread4dumpERNS_11PrintStreamE(nullptr, streams.Out()); }));

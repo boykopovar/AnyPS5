@@ -2,6 +2,8 @@
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfBitVector.hpp"
+#include "prx/libSceNKWebKit/src/HttpHeaderMapAbi.hpp"
+#include "prx/libSceNKWebKit/src/MediaTypes.hpp"
 #include "prx/libSceNKWebKit/src/WtfDumpStreamAbi.hpp"
 
 #include <cstddef>
@@ -40,13 +42,30 @@ static_assert(offsetof(FreeList, secret) == 24);
 static_assert(offsetof(FreeList, originalSize) == 32);
 static_assert(offsetof(FreeList, cellSize) == 36);
 
+struct ClassInfo {
+    NKWebKit::HttpAbi::ASCIILiteral className;
+};
+
+static_assert(offsetof(ClassInfo, className) == 0);
+
+struct HeapRange {
+    std::uint16_t begin;
+    std::uint16_t end;
+};
+
+static_assert(sizeof(HeapRange) == 4);
+static_assert(offsetof(HeapRange, end) == 2);
+
 }  // namespace NKWebKit::WtfDumpAbi
 
 extern "C" {
 
+void APS5_VABI _ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE(const NKWebKit::WtfDumpAbi::HeapRange* self, NKWebKit::WtfDumpAbi::PrintStream* out);
+void APS5_VABI _ZNK3JSC9ClassInfo4dumpERN3WTF11PrintStreamE(const NKWebKit::WtfDumpAbi::ClassInfo* self, NKWebKit::WtfDumpAbi::PrintStream* out);
 void APS5_VABI _ZNK3JSC8FreeList4dumpERN3WTF11PrintStreamE(const NKWebKit::WtfDumpAbi::FreeList* self, NKWebKit::WtfDumpAbi::PrintStream* out);
 void APS5_VABI _ZNK3WTF19MetaAllocatorHandle4dumpERNS_11PrintStreamE(const NKWebKit::WtfDumpAbi::MetaAllocatorHandle* self, NKWebKit::WtfDumpAbi::PrintStream* out);
 void APS5_VABI _ZNK3WTF6Thread4dumpERNS_11PrintStreamE(const void* self, NKWebKit::WtfDumpAbi::PrintStream* out);
 void APS5_VABI _ZNK3WTF9BitVector4dumpERNS_11PrintStreamE(const WTF::BitVector* self, NKWebKit::WtfDumpAbi::PrintStream* out);
+void APS5_VABI _ZNK7WebCore18PlatformTimeRanges4dumpERN3WTF11PrintStreamE(const WebCore::PlatformTimeRanges* self, NKWebKit::WtfDumpAbi::PrintStream* out);
 
 }

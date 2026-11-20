@@ -25751,10 +25751,6 @@ int APS5_VABI _ZNK3JSC4Yarr17RegularExpression13matchedLengthEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3JSC6JSCell11toPrimitiveEPNS_14JSGlobalObjectENS_22PreferredPrimitiveTypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -25845,10 +25841,6 @@ int APS5_VABI _ZNK3JSC9CallFrame10codeOriginEv() {
 }
 
 int APS5_VABI _ZNK3JSC9CallFrame11callerFrameERPNS_10EntryFrameE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3JSC9ClassInfo4dumpERN3WTF11PrintStreamE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -27516,10 +27508,6 @@ int APS5_VABI _ZNK7WebCore18PlatformPasteboard10readStringEmRKN3WTF6StringE() {
 }
 
 int APS5_VABI _ZNK7WebCore18PlatformPasteboard29typesSafeForDOMToReadAndWriteERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore18PlatformTimeRanges4dumpERN3WTF11PrintStreamE() {
     NotImplemented_nid_no_patch(__func__);
 }
 

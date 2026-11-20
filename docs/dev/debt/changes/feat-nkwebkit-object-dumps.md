@@ -2,7 +2,7 @@
 
 ## add Functional
 
-- [WTF object dumps](../../../core/libs/prx/libSceNKWebKit/src/WtfObjectDump.cpp) (libSceNKWebKit) - not compared with a console module. The `MetaAllocatorHandle` layout (`m_start` at 40, `m_end` at 48) is derived from [MetaAllocatorHandle.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/MetaAllocatorHandle.h) and not measured. A null object or stream, a null `begin` result, and `BitVector::dump` on the hash-table values 0 and 1 throw where WebKit reads through an invalid pointer. The guest stream's vtable slots follow the existing PrintStream use.
+- [WTF object dumps](../../../core/libs/prx/libSceNKWebKit/src/WtfObjectDump.cpp) (libSceNKWebKit) - not compared with a console module. The layouts of `MetaAllocatorHandle` (`m_start` at 40, `m_end` at 48, from [MetaAllocatorHandle.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/MetaAllocatorHandle.h)) and of the 11.x interval `JSC::FreeList` (from [FreeList.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/JavaScriptCore/heap/FreeList.h)) are not measured; `FreeList::dump` prints `m_secret` with `%lu`, as `uint64_t` is `unsigned long` on the console. A null object or stream, a null `begin` result, `BitVector::dump` on the hash-table values 0 and 1, and a `PlatformTimeRanges` with ranges but no storage throw where WebKit reads through an invalid pointer.
 
 ## change [WTF::BitVector]
 
@@ -13,3 +13,11 @@
 ## remove `_ZNK3WTF6Thread4dumpERNS_11PrintStreamE`
 
 ## remove `_ZNK3WTF9BitVector4dumpERNS_11PrintStreamE`
+
+## remove `_ZNK3JSC8FreeList4dumpERN3WTF11PrintStreamE`
+
+## remove `_ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE`
+
+## remove `_ZNK3JSC9ClassInfo4dumpERN3WTF11PrintStreamE`
+
+## remove `_ZNK7WebCore18PlatformTimeRanges4dumpERN3WTF11PrintStreamE`

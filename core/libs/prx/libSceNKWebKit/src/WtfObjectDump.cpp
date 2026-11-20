@@ -1,6 +1,7 @@
-// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WTF/wtf/PrintStream.h, PrintStream.cpp, BitVector.cpp, Threading.cpp, MetaAllocator.cpp and Source/JavaScriptCore/heap/FreeList.cpp
+// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WTF/wtf/PrintStream.h, PrintStream.cpp, BitVector.cpp, Threading.cpp, MetaAllocator.cpp, Source/JavaScriptCore/heap/FreeList.cpp, runtime/ClassInfo.cpp, domjit/DOMJITHeapRange.cpp and Source/WebCore/platform/graphics/PlatformTimeRanges.cpp
 /*
  * Copyright (C) 2008-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2017 Yusuke Suzuki <utatane.tea@gmail.com>.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,6 +31,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfObjectDumpExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfTimeDumpExports.hpp"
 
 #include <cstdarg>
 #include <cstddef>
@@ -86,6 +88,14 @@ void PrintInternal(PrintStream& out, std::uint64_t value) {
     Printf_nid_no_patch(out, "%lu", value);
 }
 
+void PrintInternal(PrintStream& out, const NKWebKit::HttpAbi::ASCIILiteral& value) {
+    _ZNK3WTF12ASCIILiteral4dumpERNS_11PrintStreamE(&value, &out);
+}
+
+void PrintInternal(PrintStream& out, const WTF::MediaTime& value) {
+    _ZNK3WTF9MediaTime4dumpERNS_11PrintStreamE(&value, &out);
+}
+
 template<typename... TValues>
 void Print(PrintStream& out, const TValues&... values) {
     PrintStream* stream = Slot<BeginFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamBegin)(&out);
@@ -110,6 +120,17 @@ std::size_t BitCount(const WTF::BitVector& vector) {
 }  // namespace
 
 extern "C" {
+
+void APS5_VABI _ZNK3JSC6DOMJIT9HeapRange4dumpERN3WTF11PrintStreamE(const NKWebKit::WtfDumpAbi::HeapRange* self, PrintStream* out) {
+    if (!self || !out) throw std::invalid_argument(__func__);
+    Printf_nid_no_patch(*out, "0x%x-0x%x", static_cast<unsigned>(self->begin), static_cast<unsigned>(self->end));
+}
+
+void APS5_VABI _ZNK3JSC9ClassInfo4dumpERN3WTF11PrintStreamE(const NKWebKit::WtfDumpAbi::ClassInfo* self, PrintStream* out) {
+    if (!self || !out) throw std::invalid_argument(__func__);
+    const void* pointer = self;
+    Print(*out, pointer, ":[", self->className, "]");
+}
 
 void APS5_VABI _ZNK3JSC8FreeList4dumpERN3WTF11PrintStreamE(const FreeList* self, PrintStream* out) {
     if (!self || !out) throw std::invalid_argument(__func__);
@@ -136,6 +157,13 @@ void APS5_VABI _ZNK3WTF9BitVector4dumpERNS_11PrintStreamE(const WTF::BitVector* 
     if (!self || !out) throw std::invalid_argument(__func__);
     const std::size_t size = BitCount(*self);
     for (std::size_t i = 0; i < size; ++i) Print(*out, BitAt(*self, i) ? "1" : "-");
+}
+
+void APS5_VABI _ZNK7WebCore18PlatformTimeRanges4dumpERN3WTF11PrintStreamE(const WebCore::PlatformTimeRanges* self, PrintStream* out) {
+    if (!self || !out) throw std::invalid_argument(__func__);
+    const auto& ranges = self->m_ranges;
+    if (ranges.m_size && !ranges.m_buffer) throw std::invalid_argument("WebCore::PlatformTimeRanges without range storage");
+    for (unsigned i = 0; i < ranges.m_size; ++i) Print(*out, "[", ranges.m_buffer[i].start, "..", ranges.m_buffer[i].end, "] ");
 }
 
 }
