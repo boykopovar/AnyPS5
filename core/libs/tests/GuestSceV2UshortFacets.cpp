@@ -192,6 +192,16 @@ int main() {
     Require(!out.failed && Written(sink) == u"2024", "time_put<unsigned short> %Y");
 
     Require(Slot<bool (APS5_VABI *)(const void*)>(facet(Codecvt), 4)(facet(Codecvt)) == false, "codecvt<unsigned short>::always_noconv");
+    using CodecvtIn = int (APS5_VABI *)(const void*, void*, const char*, const char*, const char**, char16_t*, char16_t*, char16_t**);
+    const auto codecvtIn = Slot<CodecvtIn>(facet(Codecvt), 7);
+    static const char euro[] = "\xe2\x82\xac" "A";
+    std::array<std::uint64_t, 2> conversionState{};
+    std::array<char16_t, 4> converted{};
+    const char* readNext = nullptr;
+    char16_t* writeNext = nullptr;
+    Require(codecvtIn(facet(Codecvt), conversionState.data(), euro, euro + 2, &readNext, converted.data(), converted.data() + converted.size(), &writeNext) == 1 && readNext == euro && writeNext == converted.data(), "codecvt<unsigned short>::in leaves a split sequence unread");
+    Require(conversionState == std::array<std::uint64_t, 2>{}, "codecvt<unsigned short>::in keeps nothing of a split sequence in the state");
+    Require(codecvtIn(facet(Codecvt), conversionState.data(), readNext, euro + 4, &readNext, converted.data(), converted.data() + converted.size(), &writeNext) == 0 && readNext == euro + 4 && writeNext == converted.data() + 2 && converted[0] == u'\x20ac' && converted[1] == u'A', "codecvt<unsigned short>::in converts a split sequence once the rest arrives");
 
     if (failures != 0) std::fprintf(stderr, "%u failures\n", failures);
     std::fflush(stderr);
