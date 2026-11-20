@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdlib>
 #include <stdexcept>
 
@@ -49,6 +50,14 @@ int main() {
     RequireThrows<std::invalid_argument>([] {
         _Cnd_init_with_name_nid_postfix(nullptr, "NullHandle");
     });
+
+    void* unnamed = nullptr;
+    errno = 0;
+    Require(_Cnd_init_with_name_nid_postfix(&unnamed, reinterpret_cast<const char*>(0x10)) != success && errno == 14 && unnamed == nullptr);
+    Require(_Cnd_init_with_name_nid_postfix(&unnamed, "ThirtyOneCharacterConditionName") == success && unnamed != nullptr);
+    _Cnd_destroy_nid_postfix(&unnamed);
+    errno = 0;
+    Require(_Cnd_init_with_name_nid_postfix(&unnamed, "ThirtyTwoCharacterConditionNames") != success && errno == 63 && unnamed == nullptr);
 
     Require(&_ZSt10adopt_lock_nid_postfix != &_ZSt10defer_lock_nid_postfix);
     Require(&_ZSt10adopt_lock_nid_postfix != &_ZSt11try_to_lock_nid_postfix);

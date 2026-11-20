@@ -1,5 +1,7 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libSceLibreSsl/include/Evp.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
@@ -319,6 +321,71 @@ void Allocator() {
     ThrowingFreeOnFailedPush();
 }
 
+void AesWrapSemiblockBounds() {
+    std::array<unsigned char, 32> key{};
+    for (std::size_t index = 0; index < key.size(); ++index) key[index] = static_cast<unsigned char>(index);
+    const std::array<unsigned char, 16> plain{0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+        0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff};
+    const std::array<const LibreSslEvpCipher*, 3> ciphers{
+        EVP_aes_128_wrap_nid_postfix(), EVP_aes_192_wrap_nid_postfix(), EVP_aes_256_wrap_nid_postfix()};
+
+    for (const auto* cipher : ciphers) {
+        Require(cipher != nullptr, "wrap cipher descriptor");
+        LibreSslEvpCipherCtx* enc = EVP_CIPHER_CTX_new_nid_postfix();
+        Require(enc != nullptr, "allocate wrap encrypt ctx");
+        enc->flags |= CipherCtxFlagWrapAllow;
+        Require(EVP_EncryptInit_ex_nid_postfix(enc, cipher, nullptr, key.data(), nullptr) == 1, "init wrap encrypt");
+
+        int outLen = -1;
+        Require(EVP_EncryptUpdate_nid_postfix(enc, nullptr, &outLen, plain.data(), 8) == 1 && outLen == 16,
+            "wrap encrypt length query for 8 bytes");
+        outLen = -1;
+        Require(EVP_EncryptUpdate_nid_postfix(enc, nullptr, &outLen, plain.data(), 0x7ffffff8) == 0 && outLen == -1,
+            "wrap encrypt rejects 0x7ffffff8 length query");
+
+        std::array<unsigned char, 32> wrapped{};
+        wrapped.fill(0xa5);
+        outLen = -1;
+        Require(EVP_EncryptUpdate_nid_postfix(enc, wrapped.data(), &outLen, plain.data(), 8) == 0 && outLen == -1,
+            "wrap encrypt rejects 8-byte single semiblock");
+        for (const unsigned char byte : wrapped) Require(byte == 0xa5, "rejected wrap encrypt leaves out untouched");
+
+        wrapped.fill(0xa5);
+        outLen = 0;
+        Require(EVP_EncryptUpdate_nid_postfix(enc, wrapped.data(), &outLen, plain.data(), 16) == 1 && outLen == 24,
+            "wrap encrypt 16 bytes");
+        for (std::size_t index = 24; index < wrapped.size(); ++index)
+            Require(wrapped[index] == 0xa5, "wrap encrypt preserves trailing guard bytes");
+
+        LibreSslEvpCipherCtx* dec = EVP_CIPHER_CTX_new_nid_postfix();
+        Require(dec != nullptr, "allocate wrap decrypt ctx");
+        dec->flags |= CipherCtxFlagWrapAllow;
+        Require(EVP_DecryptInit_ex_nid_postfix(dec, cipher, nullptr, key.data(), nullptr) == 1, "init wrap decrypt");
+
+        outLen = -1;
+        Require(EVP_DecryptUpdate_nid_postfix(dec, nullptr, &outLen, wrapped.data(), 16) == 1 && outLen == 8,
+            "wrap decrypt length query for 16 bytes");
+
+        std::array<unsigned char, 24> unwrapped{};
+        unwrapped.fill(0xa5);
+        outLen = -1;
+        Require(EVP_DecryptUpdate_nid_postfix(dec, unwrapped.data(), &outLen, wrapped.data(), 16) == 0 && outLen == 0,
+            "wrap decrypt rejects 16-byte input");
+        for (const unsigned char byte : unwrapped) Require(byte == 0xa5, "rejected wrap decrypt leaves out untouched");
+
+        unwrapped.fill(0xa5);
+        outLen = 0;
+        Require(EVP_DecryptUpdate_nid_postfix(dec, unwrapped.data(), &outLen, wrapped.data(), 24) == 1 && outLen == 16,
+            "wrap decrypt 24 bytes");
+        Require(std::memcmp(unwrapped.data(), plain.data(), plain.size()) == 0, "wrap decrypt round-trip matches plaintext");
+        for (std::size_t index = 16; index < unwrapped.size(); ++index)
+            Require(unwrapped[index] == 0xa5, "wrap decrypt preserves trailing guard bytes");
+
+        EVP_CIPHER_CTX_free_nid_postfix(enc);
+        EVP_CIPHER_CTX_free_nid_postfix(dec);
+    }
+}
+
 } // namespace
 
 int main(int argc, char**) {
@@ -332,4 +399,5 @@ int main(int argc, char**) {
     AddLookup();
     Unsupported();
     Callbacks();
+    AesWrapSemiblockBounds();
 }
