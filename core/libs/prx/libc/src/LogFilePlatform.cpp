@@ -1,4 +1,5 @@
 #include "prx/libc/include/LogFile.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
@@ -285,9 +286,11 @@ void PauseMicroseconds(long microseconds) {
 }
 
 void WriteStandardDirect(int standard, const char* text, std::size_t length) {
+    const int kept = standard == StandardError ? HostStandardError_nid_no_patch() : -1;
+    const int descriptor = kept >= 0 ? kept : standard;
     std::size_t done = 0;
     while (done < length) {
-        const ssize_t result = ::write(standard, text + done, length - done);
+        const ssize_t result = ::write(descriptor, text + done, length - done);
         if (result < 0 && errno == EINTR) continue;
         if (result <= 0) break;
         done += static_cast<std::size_t>(result);
