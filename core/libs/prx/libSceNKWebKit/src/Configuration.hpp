@@ -42,6 +42,7 @@ public:
     double textZoomFactor = 1.0;
     bool supportsTextZoom = true;
     bool isClosed = false;
+    bool activeDOMObjectsAndAnimationsSuspended = false;
     std::optional<std::u16string> title;
     Retained<URL> activeURL;
     Retained<URL> provisionalURL;
