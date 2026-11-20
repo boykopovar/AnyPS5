@@ -587,8 +587,6 @@ int APS5_VABI _ZN3JSC11ProxyObject18structureForTargetEPNS_14JSGlobalObjectENS_7
 int APS5_VABI _ZN3JSC11ProxyObjectC2ERNS_2VMEPNS_9StructureE();
 int APS5_VABI _ZN3JSC11SlotVisitor10appendSlowEPNS_6JSCellEN3WTF10DependencyE();
 int APS5_VABI _ZN3JSC11SlotVisitor16appendHiddenSlowEPNS_6JSCellEN3WTF10DependencyE();
-int APS5_VABI _ZN3JSC11SymbolTableC1ERNS_2VME();
-int APS5_VABI _ZN3JSC11SymbolTableC2ERNS_2VME();
 int APS5_VABI _ZN3JSC11VMInspector11isValidCellEPNS_4HeapEPNS_6JSCellE();
 int APS5_VABI _ZN3JSC11VMInspector13dumpCallFrameEPNS_2VMEPNS_9CallFrameEj();
 int APS5_VABI _ZN3JSC11VMInspector13dumpRegistersEPNS_9CallFrameE();

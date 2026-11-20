@@ -10931,14 +10931,6 @@ int APS5_VABI _ZN3JSC11SlotVisitor16appendHiddenSlowEPNS_6JSCellEN3WTF10Dependen
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC11SymbolTableC1ERNS_2VME() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC11SymbolTableC2ERNS_2VME() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC11VMInspector11isValidCellEPNS_4HeapEPNS_6JSCellE() {
     NotImplemented_nid_no_patch(__func__);
 }
