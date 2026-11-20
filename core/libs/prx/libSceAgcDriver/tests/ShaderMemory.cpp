@@ -9142,6 +9142,34 @@ std::string encodeBase64(const std::vector<std::uint8_t>& bytes) {
     return text;
 }
 
+std::vector<std::uint8_t> withoutMergeStorageByte(const ShaderRecompiler::RecompileRequest& request) {
+    using namespace ShaderRecompiler;
+    const RequestSerializer serializer;
+    auto plain = request;
+    if (!plain.context.pixel.has_value()) return decodeBase64(serializer.Serialize(plain));
+    if (plain.context.pixel->targetMerges.empty()) plain.context.pixel->targetMerges.emplace_back();
+    for (auto& merge : plain.context.pixel->targetMerges) merge.storageFormat = StorageImageFormat::Unknown;
+    auto bytes = decodeBase64(serializer.Serialize(plain));
+    std::vector<std::size_t> formatBytes;
+    for (std::size_t merge = 0u; merge < plain.context.pixel->targetMerges.size(); ++merge) {
+        auto probe = plain;
+        probe.context.pixel->targetMerges[merge].storageFormat = StorageImageFormat::Rgba16Snorm;
+        const auto probed = decodeBase64(serializer.Serialize(probe));
+        require(probed.size() == bytes.size(), "a merge storage format changed the request size");
+        std::size_t differences = 0u;
+        std::size_t at = 0u;
+        for (std::size_t index = 0u; index < bytes.size(); ++index) {
+            if (bytes[index] == probed[index]) continue;
+            at = index;
+            ++differences;
+        }
+        require(differences == 1u, "a merge storage format is not one byte");
+        formatBytes.push_back(at);
+    }
+    for (auto it = formatBytes.rbegin(); it != formatBytes.rend(); ++it) bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(*it));
+    return bytes;
+}
+
 void verifyEmulatedBarycentricRequests() {
     using namespace ShaderRecompiler;
     const std::array<std::uint32_t, 1> code{0xbf810000u};
@@ -9184,7 +9212,7 @@ void verifyEmulatedBarycentricRequests() {
     auto bytes = decodeBase64(serializer.Serialize(request));
     auto flagged = decodeBase64(encoded);
     require(bytes[4] == 64u && flagged.size() == bytes.size() + 1u && flagged.back() == 1u && std::equal(bytes.begin(), bytes.end(), flagged.begin()), "emulated barycentrics are not one trailing byte after an otherwise identical request");
-    auto legacyBytes = bytes;
+    auto legacyBytes = withoutMergeStorageByte(request);
     legacyBytes[4] = 62u;
     const auto legacy = serializer.Deserialize(encodeBase64(legacyBytes));
     require(legacy.request.graphics.has_value() && !legacy.request.graphics->emulateBarycentrics, "a version 62 request emulated barycentrics");
