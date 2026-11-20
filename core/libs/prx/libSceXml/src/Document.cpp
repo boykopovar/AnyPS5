@@ -2,6 +2,7 @@
 
 #include "prx/libSceXml/src/DomReader.hpp"
 #include "prx/libSceXml/src/NodeList.hpp"
+#include "prx/libSceXml/src/Serializer.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
@@ -25,6 +26,7 @@ struct DocumentRef {
     std::shared_ptr<Generation> generation;
     XmlMemAllocator* allocator = nullptr;
     void* userData = nullptr;
+    std::string serialized;
 };
 
 DocumentRef* RefOf(const XmlHandle* document) {
@@ -348,6 +350,14 @@ int DocumentElementsByTagName(const XmlHandle* document, XmlNodeId node, const X
         pushChildren(current);
     }
     return NodeListReplace(list, items);
+}
+
+const std::string& DocumentSerialize(const XmlHandle* document, bool declaration) {
+    if (document == nullptr || document->impl == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
+    const Reader reader(Live(document).buffers);
+    DocumentRef* ref = RefOf(document);
+    ref->serialized = Serializer<Reader>(reader).Run(declaration);
+    return ref->serialized;
 }
 
 XmlNodeId NodeListFindByName(const XmlHandle* list, const std::string& name) {

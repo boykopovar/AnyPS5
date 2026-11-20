@@ -327,6 +327,69 @@ void TestAllocationFailures() {
     }
 }
 
+int Serialize(XmlHandle* document, const XmlSerializeParameter* parameter, XmlString* result) {
+    return _ZN3sce3Xml3Dom8Document9serializeEPKNS0_18SerializeParameterEPNS0_6StringE(document, parameter, result);
+}
+
+std::string Serialized(XmlHandle* document, bool declaration) {
+    XmlSerializeParameter parameter{};
+    _ZN3sce3Xml18SerializeParameterC1Ev(&parameter);
+    parameter.first = declaration ? 1 : 0;
+    XmlString result{};
+    Require(Serialize(document, &parameter, &result) == 0, "serialize succeeds");
+    Require(result.buffer != nullptr && std::strlen(result.buffer) == result.size, "the serialized text is terminated at its size");
+    return std::string(result.buffer, result.size);
+}
+
+std::string SerializedText(const char* text, bool declaration) {
+    Fixture f;
+    f.Parse(text);
+    XmlHandle document{nullptr};
+    _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv(&document, &f.builder);
+    const std::string result = Serialized(&document, declaration);
+    _ZN3sce3Xml3Dom8DocumentD1Ev(&document);
+    return result;
+}
+
+void TestSerialize() {
+    const std::string declaration = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
+    const char* mixed = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><!-- c --><root a=\"1\" b=\"t&amp;w\">x&lt;y<child>hello</child><e/><![CDATA[cd]]><?pi data?>tail</root>";
+    const std::string mixedText = "<root a=\"1\" b=\"t&amp;w\">x&lt;y<child>hello</child><e/>cd</e>pi data?>tail</root>";
+    Require(SerializedText(mixed, false) == mixedText, "the console's serialization, an element's name repeated as a closing tag after its empty tag");
+    Require(SerializedText(mixed, true) == declaration + mixedText, "the declaration flag prepends a fixed declaration");
+    Require(SerializedText("<r/><!-- after --><?pi x?>", false) == "<r/>", "nodes after the root element are not written");
+    Require(SerializedText("<r>&amp;&lt;&gt;&quot;&apos;</r>", false) == "<r>&amp;&lt;&gt;&quot;&apos;</r>", "references stay as written");
+    Require(SerializedText("<r><a/>t<b/></r>", false) == "<r><a/>t</a><b/></r>", "text after an empty element is followed by its closing tag");
+    Require(SerializedText("<r><a/><!--c-->x</r>", false) == "<r><a/>x</a></r>", "comments inside the root are not written");
+    Require(SerializedText("<r><a>x </a>", false) == "<r><a>x </a></r>", "a document that stopped at a missing end tag");
+    Require(SerializedText("<!-- only -->", true) == declaration, "a document without a root writes only the declaration");
+    bool faulted = false;
+    try {
+        SerializedText("<!-- only -->", false);
+    } catch (const std::logic_error&) {
+        faulted = true;
+    }
+    Require(faulted, "a document without a root and without the declaration reads an unterminated buffer in 13.40");
+
+    Fixture f;
+    Require(f.Parse("<r/>") == 0, "parse");
+    XmlHandle document{nullptr};
+    _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv(&document, &f.builder);
+    XmlString result{};
+    Require(Serialize(&document, nullptr, &result) == 0 && std::string(result.buffer, result.size) == "<r/>", "a null parameter writes no declaration");
+    XmlSerializeParameter high{0xfe, 1, 1};
+    Require(Serialize(&document, &high, &result) == 0 && std::string(result.buffer, result.size) == "<r/>", "only the lowest bit of the parameter's first byte is read");
+    Require(Serialize(&document, nullptr, nullptr) == static_cast<int>(0x80850003), "a null result");
+    XmlHandle copy{nullptr};
+    _ZN3sce3Xml3Dom8DocumentC1ERKS2_(&copy, &document);
+    Require(Serialized(&copy, true) == declaration + "<r/>" && Serialized(&document, false) == "<r/>", "each document keeps its own result");
+    _ZN3sce3Xml3Dom8DocumentD1Ev(&copy);
+    _ZN3sce3Xml3Dom8DocumentD1Ev(&document);
+    XmlHandle empty{nullptr};
+    _ZN3sce3Xml3Dom8DocumentC1Ev(&empty);
+    Require(Serialize(&empty, nullptr, nullptr) == static_cast<int>(0x80850002), "an empty document is checked before the result");
+}
+
 }
 
 int main() {
@@ -335,6 +398,7 @@ int main() {
     TestStatusAndAttributes();
     TestAttributeNameAtPageEnd();
     TestAllocationFailures();
+    TestSerialize();
     std::puts("guest_xml_document: all checks passed");
     return 0;
 }
