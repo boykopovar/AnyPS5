@@ -314,4 +314,8 @@ void APS5_VABI FTA_Support_Modules_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+void APS5_VABI FTA_Support_Renderer_Raster1_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
