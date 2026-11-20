@@ -1948,6 +1948,9 @@ std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std:
     if (socket->type == 1 && PairPeerGone(*socket)) return Fail(32);
 #endif
     if (const int waited = WaitForTransfer(*socket, true, flags)) return Fail(waited);
+#ifdef _WIN32
+    if (SourceFaults(buffer, length)) return Fail(14);
+#endif
     const auto result = ::send(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), SocketSendFlags(*socket, flags));
     return result < 0 ? Fail(SendError(*socket)) : result;
 }
@@ -1973,10 +1976,21 @@ std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint6
 #endif
     if (const int waited = WaitForTransfer(*socket, false, flags, descriptor)) return Fail(waited);
     if (ReceiveShut(*socket)) return 0;
-    const auto result = ::recv(socket->value, static_cast<char*>(buffer), static_cast<int>(length),
+    std::uint64_t limit = length;
+#ifdef _WIN32
+    if (length != 0 && (limit = GuestPrefix(buffer, length, WritableProtection)) < length) {
+        int error = 0;
+        if (!PendingFits(*socket, buffer, limit, flags, error)) {
+            DropDatagram(*socket, flags);
+            return Fail(14);
+        }
+        if (error) return Fail(error);
+    }
+#endif
+    const auto result = ::recv(socket->value, static_cast<char*>(buffer), static_cast<int>(limit),
         NativeReceiveFlags(flags, socket->type));
 #ifdef _WIN32
-    if (result < 0 && socket->type == 2 && WSAGetLastError() == WSAEMSGSIZE) return static_cast<std::int64_t>(length);
+    if (result < 0 && socket->type == 2 && WSAGetLastError() == WSAEMSGSIZE) return static_cast<std::int64_t>(limit);
 #endif
     return result < 0 ? Fail(NativeError()) : result;
 }
