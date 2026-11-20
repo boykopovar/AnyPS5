@@ -47,7 +47,6 @@
 #include "DataInfo.hpp"
 
 #include "BreakIterator.hpp"
-#include "Data.hpp"
 #include "ResourceBundle.hpp"
 
 #include "ConverterHelpers.hpp"
