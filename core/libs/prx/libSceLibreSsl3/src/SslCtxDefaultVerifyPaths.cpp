@@ -67,12 +67,13 @@ extern "C" int APS5_VABI SSL_CTX_set_default_verify_paths_nid_postfix(LibreSsl3S
     std::string file;
     if (!ReadOverride(CertificateFileVariable, file, __func__) || file.empty()) {
         file.clear();
-        if (Exists(SystemCertificateList)) file = SystemCertificateList;
         for (const char* candidate : CertificateFileCandidates) {
-            if (!file.empty()) break;
-            if (!Exists(candidate)) continue;
-            file = candidate;
+            if (Exists(candidate)) {
+                file = candidate;
+                break;
+            }
         }
+        if (file.empty() && Exists(SystemCertificateList)) file = SystemCertificateList;
     }
     std::string directory;
     if (!ReadOverride(CertificateDirectoryVariable, directory, __func__) || directory.empty()) {

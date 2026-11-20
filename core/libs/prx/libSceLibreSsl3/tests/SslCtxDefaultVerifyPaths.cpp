@@ -235,6 +235,8 @@ void ClearEnvironment() {
 
 
 void TestSystemCertificateListWithT61Subject() {
+    BlockCandidates();
+    ClearEnvironment();
     WriteGuestFile("system-ca.pem", T61Certificate);
     AddPathAlias_nid_no_patch("/system/common/cert/CA_LIST.cer", HostPath("system-ca.pem").c_str());
     LibreSslX509Store* store = NewStore();
@@ -254,6 +256,12 @@ void TestNoCandidateLocations() {
     ClearEnvironment();
     LibreSslX509Store* store = NewStore();
     LibreSsl3SslCtx context = ContextFor(store);
+    if (access_nid_postfix("/system/common/cert/CA_LIST.cer", 0) == 0) {
+        Require(SSL_CTX_set_default_verify_paths_nid_postfix(&context) == 1);
+        Require(ObjectCount(store) > 0);
+        Require(LookupCount(store) == 1);
+        return;
+    }
     Require(SSL_CTX_set_default_verify_paths_nid_postfix(&context) == 0);
     Require(ObjectCount(store) == 0);
     Require(LookupCount(store) == 0);
