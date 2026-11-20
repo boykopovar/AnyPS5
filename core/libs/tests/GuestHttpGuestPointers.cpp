@@ -115,7 +115,9 @@ int main() {
     RequireErrno(sceHttpGetEpollId(tmpl, static_cast<int*>(unmapped), nullptr), invalidValue);
     RequireErrno(sceHttpGetEpollId(tmpl, &value, static_cast<void**>(unmapped)), 0);
     Require(value == -1);
+    RequireErrno(sceHttpSetEpollId(tmpl, 42, unmapped), 0);
     RequireErrno(sceHttpGetCookieStats(context, static_cast<HttpCookieStats*>(unmapped)), invalidValue);
+    RequireErrno(sceHttpGetLastErrno(1, static_cast<int*>(unmapped)), invalidValue);
 
     Require(sceHttpGetAutoRedirect(tmpl, &value) == 0);
     Require(sceHttpGetAuthEnabled(tmpl, &value) == 0);
