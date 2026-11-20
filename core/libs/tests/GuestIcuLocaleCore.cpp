@@ -73,6 +73,36 @@ void CheckLongLanguageTag() {
     }
 }
 
+void CheckKeywordFailure(const std::string& locale, std::int32_t expectedStatus) {
+    const std::string expected = locale.substr(0, locale.find('@') + 1);
+    for (const std::int32_t capacity : {0, 2, 64}) {
+        std::array<char, 80> buffer{};
+        buffer.fill('Q');
+        std::int32_t status = 0;
+        const auto length = uloc_canonicalize(locale.c_str(), buffer.data(), capacity, &status);
+        assert(length == static_cast<std::int32_t>(expected.size()));
+        assert(status == expectedStatus);
+        const auto copied = static_cast<std::size_t>(std::min(capacity, length));
+        assert(std::memcmp(buffer.data(), expected.data(), copied) == 0);
+        for (std::size_t index = copied; index < buffer.size(); ++index) assert(buffer[index] == 'Q');
+    }
+}
+
+void CheckKeywordFailures() {
+    for (const char* locale : {"en@a=", "en@a= ;b=c", "en@=b", "en@ =b", "en@a=b;;c=d", "en@a=b;c", "en@a=b;c;d=e"})
+        CheckKeywordFailure(locale, 3);
+    CheckKeywordFailure("en@abcdefghijklmnopqrstuvwxy=1", 5);
+    CheckKeywordFailure("en@a                        =1", 5);
+    std::string many = "en@";
+    for (char name = 'a'; name < 'a' + 25; ++name) many += std::string(1, name) + "=1;";
+    std::array<char, 160> buffer{};
+    std::int32_t status = 0;
+    assert(uloc_canonicalize(many.c_str(), buffer.data(), 160, &status) == static_cast<std::int32_t>(many.size()) - 1);
+    assert(status == 0 && many.compare(0, many.size() - 1, buffer.data()) == 0);
+    CheckKeywordFailure(many + "a=2", 5);
+    CheckKeywordFailure(many + "z=2", 5);
+}
+
 void CheckKeyword(const char* locale, const char* keyword, const char* expected,
                   std::int32_t expectedStatus = 0) {
     for (const std::int32_t capacity : {0, 1, 2, 3, 4, 5, 8, 64}) {
@@ -139,6 +169,13 @@ int main() {
         {"de_DE@currency=EUR;collation=phonebook", "de_DE@collation=phonebook;currency=EUR"},
         {"fr@collation=phonebook", "fr@collation=phonebook"},
         {"deu_DEU@currency=EUR", "de_DE@currency=EUR"},
+        {"en_Hant_IL_VALLEY_GIRL@ currency = EUR; calendar = Japanese ;", "en_Hant_IL_VALLEY_GIRL@calendar=Japanese;currency=EUR"},
+        {"es_ES_PREEURO@CALendar=Japanese", "es_ES_PREEURO@calendar=Japanese"},
+        {"es_ES_EURO@SHOUT=zipeedeedoodah", "es_ES_EURO@shout=zipeedeedoodah"},
+        {"en@currency=USD;currency=EUR", "en@currency=USD"}, {"en@b=1;a=2;B=3", "en@a=2;b=1"},
+        {"en@a1=x;a=y", "en@a=y;a1=x"}, {"en@c u r=U S", "en@cur=U S"}, {"en@a=1;", "en@a=1"},
+        {"en@a=1;  ", "en@a=1"}, {"en@a;b=c", "en"}, {"en@a=b=c;d==", "en@a=b=c;d=="},
+        {"en@abcdefghijklmnopqrstuvwx=1", "en@abcdefghijklmnopqrstuvwx=1"},
         {"en-12", "en_12"}, {"en__US", "en__US"},
         {"en-u-attr2-attr1", "en@attribute=attr1-attr2"}, {"de-DE-x-ab", "de_DE@x=ab"},
         {"i-default", "en@x=i-default"}, {"x-piglatin_ML.MBE", "x-piglatin_ML"},
@@ -154,6 +191,7 @@ int main() {
         {"zh_YUE_FOO", "zh_YUE_FOO"}, {"zh_MIN", "zh_MIN"}, {"yue", "yue"},
     });
     CheckLongLanguageTag();
+    CheckKeywordFailures();
     CheckKeyword("en_US@currency=USD", "currency", "USD");
     CheckKeyword("de_DE@currency=EUR;collation=phonebook", "collation", "phonebook");
     CheckKeyword("en@Currency=USD", "CURRENCY", "USD");

@@ -28,6 +28,10 @@ constexpr std::int32_t kIllegalArgument = 1;
 constexpr std::int32_t kBufferOverflow = 15;
 constexpr std::int32_t kStringNotTerminated = -124;
 constexpr std::int32_t kFullNameCapacity = 157;
+constexpr std::int32_t kInvalidFormat = 3;
+constexpr std::int32_t kInternalProgramError = 5;
+constexpr std::size_t kKeywordNameCapacity = 25;
+constexpr std::size_t kMaximumKeywords = 25;
 
 constexpr std::array<std::pair<std::string_view, std::string_view>, 10> CanonicalIds{{
     {"art__LOJBAN", "jbo"}, {"hy__AREVELA", "hy"}, {"hy__AREVMDA", "hyw"}, {"zh__GUOYU", "zh"}, {"zh__HAKKA", "hak"},
@@ -545,6 +549,12 @@ std::string FromLanguageTag(const char* locale, std::int32_t* status) {
     return length > 0 && *status <= 0 ? std::string(buffer.data(), static_cast<std::size_t>(length)) : std::string(locale);
 }
 
+std::int32_t WriteUnterminated(std::string_view value, char* destination, std::int32_t capacity) {
+    if (destination && capacity > 0)
+        std::memcpy(destination, value.data(), std::min(value.size(), static_cast<std::size_t>(capacity)));
+    return static_cast<std::int32_t>(value.size());
+}
+
 std::int32_t WriteUnconverted(std::string_view id, char* destination, std::int32_t capacity) {
     std::size_t position = 0;
     if (ChangeCase(id, false) == "root") position = 4;
@@ -557,9 +567,42 @@ std::int32_t WriteUnconverted(std::string_view id, char* destination, std::int32
         for (++position; position < id.size() && id[position] != '.'; ++position)
             remainder.push_back(id[position] == '-' ? '_' : Upper(id[position]));
     }
-    if (destination && capacity > 0)
-        std::memcpy(destination, remainder.data(), std::min(remainder.size(), static_cast<std::size_t>(capacity)));
-    return static_cast<std::int32_t>(remainder.size());
+    return WriteUnterminated(remainder, destination, capacity);
+}
+
+std::int32_t SortedKeywords(std::string_view text, std::string& output) {
+    std::vector<std::pair<std::string, std::string_view>> keywords;
+    std::size_t position = 0;
+    for (;;) {
+        while (position < text.size() && text[position] == ' ') ++position;
+        if (position == text.size()) break;
+        if (keywords.size() == kMaximumKeywords) return kInternalProgramError;
+        const auto equal = text.find('=', position);
+        const auto semicolon = text.find(';', position);
+        if (equal == std::string_view::npos || semicolon < equal) return kInvalidFormat;
+        if (equal - position >= kKeywordNameCapacity) return kInternalProgramError;
+        std::string name;
+        for (const char part : text.substr(position, equal - position))
+            if (part != ' ') name.push_back(Lower(part));
+        if (name.empty()) return kInvalidFormat;
+        std::size_t start = equal + 1;
+        while (start < text.size() && text[start] == ' ') ++start;
+        if (start == text.size() || start == semicolon) return kInvalidFormat;
+        std::size_t end = std::min(semicolon, text.size());
+        while (text[end - 1] == ' ') --end;
+        if (std::none_of(keywords.begin(), keywords.end(), [&](const auto& entry) { return entry.first == name; }))
+            keywords.emplace_back(std::move(name), text.substr(start, end - start));
+        if (semicolon == std::string_view::npos) break;
+        position = semicolon + 1;
+    }
+    std::sort(keywords.begin(), keywords.end(), [](const auto& left, const auto& right) { return left.first < right.first; });
+    for (const auto& [name, value] : keywords) {
+        if (!output.empty()) output += ';';
+        output += name;
+        output += '=';
+        output += value;
+    }
+    return 0;
 }
 
 }
@@ -652,7 +695,18 @@ std::int32_t APS5_VABI uloc_canonicalize(const char* locale, char* result,
     const auto mapped = std::find_if(CanonicalIds.begin(), CanonicalIds.end(),
                                      [&](const auto& entry) { return entry.first == canonical; });
     if (mapped != CanonicalIds.end()) canonical = std::string(mapped->second);
-    if (!parts.keywords.empty()) {
+    const auto assignment = parts.keywords.find('=');
+    if (assignment != std::string::npos) {
+        if (parts.keywords.find(';') > assignment) {
+            canonical += '@';
+            std::string keywords;
+            if (const std::int32_t failure = SortedKeywords(parts.keywords, keywords)) {
+                *status = failure;
+                return WriteUnterminated(canonical, result, capacity);
+            }
+            canonical += keywords;
+        }
+    } else if (!parts.keywords.empty()) {
         std::vector<std::string> keywords;
         std::size_t start = 0;
         while (start < parts.keywords.size()) {
