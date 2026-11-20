@@ -232,6 +232,29 @@ class MainTests(unittest.TestCase):
             self.run_main([], prs, calls)
         self.assertEqual([call[2] for call in calls], ["1", "2"])
 
+    def test_author_explains_each_open_pull_request_of_that_author_and_writes_nothing(self):
+        calls = []
+        prs = [node(number=9, author="Alice", draft=True), node(number=8, author="bob"), node(number=7, author="alice", changes=["carol"])]
+        code, out, _ = self.run_main(["--author", "alice"], prs, calls, closed=[3])
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [])
+        self.assertEqual(out.splitlines(), [f"#7: {'; '.join(pr_ready.blockers(make(number=7, changes=['carol'])))}",
+                                            f"#9: {'; '.join(pr_ready.blockers(make(number=9, draft=True)))}"])
+
+    def test_author_without_open_pull_requests_says_so(self):
+        calls = []
+        code, out, _ = self.run_main(["--author", "dave"], [node(number=7)], calls)
+        self.assertEqual((code, out, calls), (0, "dave has no open pull request to main\n", []))
+
+    def test_author_reports_an_unblocked_pull_request(self):
+        code, out, _ = self.run_main(["--author", "alice"], [node(number=7)], [])
+        self.assertEqual((code, out), (0, "#7: nothing blocks it\n"))
+
+    def test_author_and_explain_cannot_be_combined(self):
+        code, _, err = self.run_main(["--author", "alice", "--explain", "7"], [node(number=7)], [])
+        self.assertEqual(code, 2)
+        self.assertIn("cannot be combined", err)
+
     def test_a_dry_run_writes_nothing(self):
         calls = []
         _, out, _ = self.run_main(["--dry-run", "--issue", "3"], [node(number=7)], calls)
