@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
@@ -28,6 +29,18 @@ int Noconv(const char* function, const char** next1, const char* first1, char** 
     StoreNext(function, next1, first1);
     StoreNext(function, next2, first2);
     return kCodecvtNoconv;
+}
+
+void ConstructCodecvtChar(GuestLocale::Facet* self, std::size_t refs, const char* function) {
+    if (self == nullptr) throw std::invalid_argument(std::string(function) + ": null object");
+    self->vtable = reinterpret_cast<const GuestLocale::FacetVtable*>(&_ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[2]);
+    self->references = static_cast<std::uint32_t>(refs);
+    self->reserved = static_cast<std::uint32_t>(static_cast<std::uint64_t>(refs) >> 32);
+}
+
+void ConstructCodecvtCharFromLocinfo(GuestLocale::Facet* self, const GuestLocale::LocinfoStorage* info, std::size_t refs, const char* function) {
+    if (info == nullptr) throw std::invalid_argument(std::string(function) + ": null _Locinfo");
+    ConstructCodecvtChar(self, refs, function);
 }
 
 }
@@ -70,6 +83,27 @@ int APS5_VABI _ZNKSt7codecvtIcc9_MbstatetE7unshiftERS0_PcS3_RS3__nid_postfix(Gue
 
 std::size_t APS5_VABI _ZNKSt7codecvtIcc9_MbstatetE6lengthERS0_PKcS4_m_nid_postfix(GuestLocale::Facet* self, std::uint64_t* state, const char* first1, const char* last1, std::size_t count) {
     return VtableOf(self)->length(self, state, first1, last1, count);
+}
+
+void APS5_VABI _ZNSt7codecvtIcc9_MbstatetEC1Em_nid_postfix(GuestLocale::Facet* self, std::size_t refs) {
+    ConstructCodecvtChar(self, refs, "codecvt<char, char>::codecvt");
+}
+
+void APS5_VABI _ZNSt7codecvtIcc9_MbstatetEC2Em_nid_postfix(GuestLocale::Facet* self, std::size_t refs) {
+    ConstructCodecvtChar(self, refs, "codecvt<char, char>::codecvt");
+}
+
+void APS5_VABI _ZNSt7codecvtIcc9_MbstatetEC1ERKSt8_Locinfom_nid_postfix(GuestLocale::Facet* self, const GuestLocale::LocinfoStorage* info, std::size_t refs) {
+    ConstructCodecvtCharFromLocinfo(self, info, refs, "codecvt<char, char>::codecvt");
+}
+
+void APS5_VABI _ZNSt7codecvtIcc9_MbstatetEC2ERKSt8_Locinfom_nid_postfix(GuestLocale::Facet* self, const GuestLocale::LocinfoStorage* info, std::size_t refs) {
+    ConstructCodecvtCharFromLocinfo(self, info, refs, "codecvt<char, char>::codecvt");
+}
+
+void APS5_VABI _ZNSt7codecvtIcc9_MbstatetED0Ev_nid_postfix(GuestLocale::Facet* self) {
+    if (self == nullptr) throw std::invalid_argument("codecvt<char, char>::~codecvt: null object");
+    _ZdlPv_nid_postfix(self);
 }
 
 }

@@ -2755,8 +2755,10 @@ String* APS5_VABI _ZN3sce4Json6StringpLEh(String* self, unsigned char ch) {
     return self;
 }
 String* APS5_VABI _ZNK3sce4Json6String6substrEmm(String* result, const String* self, std::size_t position, std::size_t length) {
-    if (position > View(*self).size()) throw std::out_of_range("sce::Json::String::substr: position past the end");
-    Construct(*result, View(*self).substr(position, length));
+    const auto source = View(*self);
+    if (position > source.size()) throw std::out_of_range("sce::Json::String::substr: position past the end");
+    Construct(*result, std::string_view{});
+    AssignText(*result, source.substr(position, length), true);
     return result;
 }
 char APS5_VABI _ZNK3sce4Json6String2atEm(const String* self, std::size_t index) {

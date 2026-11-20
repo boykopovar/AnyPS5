@@ -166,9 +166,9 @@ void CheckBindings(const IrProgram& program, const CompiledBindingLayout& bindin
     }
 }
 
-void EmitBaseHeader(SpirvModule& module, const IrProgram& program, bool atomicLockTable) {
+void EmitBaseHeader(SpirvModule& module, const IrProgram& program, bool deviceAddressStore) {
     module.EmitCapability(spv::CapabilityShader);
-    const bool physical = program.Info().usesDma || program.Resources().stage == IrShaderStage::Mesh || atomicLockTable;
+    const bool physical = program.Info().usesDma || program.Resources().stage == IrShaderStage::Mesh || deviceAddressStore;
     if (physical) {
         module.EmitCapability(spv::CapabilityInt64);
         module.EmitCapability(spv::CapabilityPhysicalStorageBufferAddresses);
@@ -225,6 +225,10 @@ void DefineInputs(SpirvEmitterState& state) {
         })) {
             addBuiltin(StageInputKind::WorkgroupId, 3u, "gl_WorkGroupID");
         }
+    }
+    if (state.splitState) {
+        addBuiltin(StageInputKind::LocalInvocationIndex, 1u, "gl_LocalInvocationIndex");
+        addBuiltin(StageInputKind::WorkgroupId, 3u, "gl_WorkGroupID");
     }
     if ((state.requirements.ldsLock || ScratchPoolActive(state)) && std::none_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) {
         return input.kind == StageInputKind::LocalInvocationIndex;
@@ -459,8 +463,10 @@ void DefineOutputs(SpirvEmitterState& state) {
                 const auto values = StencilReferenceValues(state.program, PixelInfo(state).psStencilOperationValueExport ? 8u : 0u);
                 if (values.empty()) throw std::runtime_error("stencil reference export emulation found no stencil export");
                 if (!StencilReferenceDefinedForKeptInvocations(state.program)) throw std::runtime_error("stencil reference export emulation requires a stencil export on every kept path");
-                if (PixelInfo(state).psEarlyZ || PixelInfo(state).psOrderedPixelShader || !StencilReplaySafe(state.program)) throw std::runtime_error("stencil reference export emulation requires a replay-safe pixel shader with late tests");
+                const bool lanesFixed = StencilReplayNeedsStore(state.program, state.supportedCapabilities);
+                if (PixelInfo(state).psEarlyZ || PixelInfo(state).psOrderedPixelShader || !StencilReplaySafe(state.program, lanesFixed)) throw std::runtime_error("stencil reference export emulation requires a replay-safe pixel shader with late tests");
                 state.stencilReplay = true;
+                state.stencilReplayLateStore = lanesFixed;
                 state.stencilRefVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeI32(state)), spv::StorageClassPrivate);
                 if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(state.stencilRefVariable);
                 binding.variableId = state.stencilRefVariable;
@@ -634,6 +640,14 @@ void DefineDescriptors(SpirvEmitterState& state) {
         if (state.spirvVersion >= 0x00010400u) {
             for (const auto variable : {state.meshWindowBufferVariable, state.meshWindowSlotVariable, state.meshWindowBaseVariable}) state.interfaceVariables.push_back(variable);
         }
+    }
+    if (state.splitState) {
+        state.splitStateVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, StorageBufferBlockType(state)), spv::StorageClassStorageBuffer);
+        state.module.AddName(state.splitStateVariable, "split_state");
+        state.module.AddAnnotation(spv::OpDecorate, state.splitStateVariable, spv::DecorationDescriptorSet, SplitStateDescriptorSet);
+        state.module.AddAnnotation(spv::OpDecorate, state.splitStateVariable, spv::DecorationBinding, 0u);
+        state.module.AddAnnotation(spv::OpDecorate, state.splitStateVariable, spv::DecorationRestrict);
+        if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(state.splitStateVariable);
     }
     if (state.pixelFunctionLdsBuffer) {
         state.ldsBufferVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, StorageBufferBlockType(state)), spv::StorageClassStorageBuffer);
