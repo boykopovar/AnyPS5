@@ -1,8 +1,10 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -36,6 +38,11 @@ static std::uint32_t Word(const char* buffer, std::size_t index) {
 }
 
 int main() {
+    failEntropy = true;
+    const double estimate = libSceLibcInternalInventory_244_nid_no_patch();
+    Require(std::bit_cast<std::uint64_t>(estimate) == 0, "the random-device entropy estimate returns positive double zero");
+    Require(entropyBuffer == nullptr && entropySize == 0, "reporting the entropy estimate does not request random bytes");
+    failEntropy = false;
     constexpr std::array<std::size_t, 5> sizes {8, 32, 64, 128, 256};
     constexpr std::array<std::size_t, 5> degrees {1, 7, 15, 31, 63};
     constexpr std::array<std::size_t, 5> separations {0, 3, 1, 3, 1};
