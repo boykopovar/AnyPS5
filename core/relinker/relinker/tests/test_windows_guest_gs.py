@@ -123,7 +123,8 @@ def main():
                 retry = subprocess.run([str(args.runner.resolve()), str(output), "0x10210", "fault", hex(site)], capture_output=True, text=True, timeout=10)
                 assert retry.returncode == 0 and retry.stdout == run.stdout and "FATAL:" not in retry.stderr, (name, "fault retry", retry)
                 if args.runtime and name == "load":
-                    delivered = subprocess.run([str(args.runner.resolve()), str(output), "0x10210", "guest-fault", hex(site)], capture_output=True, text=True, timeout=10)
+                    resume = site + len(bytes.fromhex(encoding))
+                    delivered = subprocess.run([str(args.runner.resolve()), str(output), "0x10210", "guest-fault", hex(site), hex(resume)], capture_output=True, text=True, timeout=10)
                     assert delivered.returncode == 0 and delivered.stdout == run.stdout, (name, "guest fault delivery", delivered)
                     fault = subprocess.run([str(args.runner.resolve()), str(output), "0x10210", "unhandled", hex(site)], capture_output=True, text=True, timeout=10)
                     expected = re.search(r"expected guest rip (0x[0-9a-f]+) rsp ([0-9a-f]+)", fault.stderr)

@@ -44,7 +44,7 @@ static LONG WINAPI Handle(EXCEPTION_POINTERS* info) {
 static LONG WINAPI ObserveReplayStart(EXCEPTION_POINTERS* info) {
     const auto& context = *info->ContextRecord;
     if (info->ExceptionRecord->ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION && context.Rip == replaySite - 2) {
-        if (replayStack != 0 && (!guestFault || !faultRepaired || context.Rsp != replayStack)) ExitProcess(10);
+        if (replayStack != 0) ExitProcess(10);
         replayStack = context.Rsp;
         if (unhandledFault) {
             std::fprintf(stderr, "expected guest rip 0x%016llx rsp %016llx\n",
@@ -69,9 +69,11 @@ static LONG WINAPI RepairFault(EXCEPTION_POINTERS* info) {
 }
 
 #ifdef GUEST_GS_RUNTIME
+static std::uintptr_t guestResume;
+
 static bool AcceptGuestFault(void* exceptionPointers) noexcept {
     const auto& info = *static_cast<EXCEPTION_POINTERS*>(exceptionPointers);
-    const auto& context = *info.ContextRecord;
+    auto& context = *info.ContextRecord;
     const auto& fault = *info.ExceptionRecord;
     if (fault.ExceptionCode != EXCEPTION_ACCESS_VIOLATION) return false;
     if (faultRepaired || replayStack == 0 || context.Rip != faultSite || context.Rsp != replayStack + 128 ||
@@ -80,6 +82,8 @@ static bool AcceptGuestFault(void* exceptionPointers) noexcept {
         ExitProcess(13);
     DWORD previous = 0;
     if (!VirtualProtect(reinterpret_cast<void*>(faultPage), 4096, PAGE_READWRITE, &previous)) ExitProcess(12);
+    context.Rax = *reinterpret_cast<const std::uint64_t*>(faultPage);
+    context.Rip = guestResume;
     faultRepaired = true;
     return true;
 }
@@ -152,7 +156,11 @@ int main(int argc, char** argv) {
     unhandledFault = argc > 4 && std::strcmp(argv[3], "unhandled") == 0;
 #ifdef GUEST_GS_RUNTIME
     guestFault = argc > 4 && std::strcmp(argv[3], "guest-fault") == 0;
-    if (guestFault) LibcSetHostFaultHandler_nid_no_patch(AcceptGuestFault);
+    if (guestFault) {
+        if (argc < 6) return 8;
+        guestResume = reinterpret_cast<std::uintptr_t>(image) + std::stoull(argv[5], nullptr, 0);
+        LibcSetHostFaultHandler_nid_no_patch(AcceptGuestFault);
+    }
 #endif
     if (argc > 4 && (guestFault || unhandledFault || std::strcmp(argv[3], "fault") == 0)) {
         const auto* patch = image + std::stoull(argv[4], nullptr, 0);
