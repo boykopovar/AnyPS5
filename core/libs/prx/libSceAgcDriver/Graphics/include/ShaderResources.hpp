@@ -249,6 +249,7 @@ public:
         };
         std::vector<InPlace> inPlace;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> inPlaceReads;
+        std::vector<std::size_t> snapshotted;
         ~DrawBindings();
     };
     struct MovedBuffer {
@@ -499,6 +500,7 @@ private:
         std::uint32_t adjustment;
     };
     void writeDataWords(VkCommandBuffer commands, std::size_t allocation, std::span<const std::uint32_t> words) const;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> readsLeftInPlace(const DrawBindings& bindings) const;
 
     struct Binding {
         VkDescriptorSetLayoutBinding layout;
