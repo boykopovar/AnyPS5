@@ -421,6 +421,10 @@ unsigned APS5_VABI _ZNSt6thread20hardware_concurrencyEv_nid_postfix() {
     return count;
 }
 
+unsigned APS5_VABI _ZNSt3__16thread20hardware_concurrencyEv_nid_postfix() {
+    return _ZNSt6thread20hardware_concurrencyEv_nid_postfix();
+}
+
 int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*) {
     if (!target)
         APS5_INVALID_ARG_EX;
