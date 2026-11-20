@@ -139,10 +139,10 @@ int main() {
         Check(test, false);
     }
     const Case wideCases[] {
-        { u"hvc1. 1.1.L0", true },
-        { u"hvc1.1 . 1 .L　0 . fF ", true, u"hvc1", 0, 1, 1, false, 0, {0xff} },
-        { u"hvc1. 1.1.L0" }, { u"hvc1.\u00851.1.L0" }, { u"hvc1. 1.1.L0" }, { u"hvc1.​1.1.L0" },
-        { u"hvc1.１.1.L0" }, { u"hvţ1.1.1.L0" }, { u"hvc1.1.1.L0.1Ā" }, { u"hvc1.1.1.ļ0" },
+        { u"hvc1.\u20031.1.L0", true },
+        { u"hvc1.1\u1680.\u20281\u205f.L\u30000\u200a.\u2000fF\u2009", true, u"hvc1", 0, 1, 1, false, 0, {0xff} },
+        { u"hvc1.\u00a01.1.L0" }, { u"hvc1.\u00851.1.L0" }, { u"hvc1.\u20291.1.L0" }, { u"hvc1.\u200b1.1.L0" },
+        { u"hvc1.\uff11.1.L0" }, { u"hv\u01631.1.1.L0" }, { u"hvc1.1.1.L0.1\u0100" }, { u"hvc1.1.1.\u013c0" },
     };
     for (const auto& test : wideCases) Check(test, true);
     String null;
