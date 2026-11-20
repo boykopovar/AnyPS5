@@ -133,7 +133,7 @@ def parse_replay_host_report(stderr, expected_commit=None):
                 key, value = line.split(": ", 1)
                 if section in HOST_KEYS and key not in HOST_KEYS[section]:
                     raise ValueError(f"unknown host report {section} field: {key}")
-                if not re.fullmatch(r"[A-Za-z0-9_]+", key) or not value or len(value) > 16384:
+                if not re.fullmatch(r"[A-Za-z0-9_]+", key) or (not value and section != "environment") or len(value) > 16384:
                     break
                 if key in report[section] or "none" in report[section]:
                     raise ValueError(f"duplicate host report field: {section}.{key}")
