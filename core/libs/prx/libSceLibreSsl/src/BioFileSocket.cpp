@@ -237,7 +237,6 @@ LibreSsl::Bio* APS5_VABI BIO_new_fp_nid_postfix(void* value, int closeFlag) {
 }
 
 LibreSsl::Bio* APS5_VABI BIO_new_socket_nid_postfix(int socket, int closeFlag) {
-    if (socket < 0) return nullptr;
     auto* bio = BIO_new_nid_postfix(&SocketMethod);
     if (!bio) return nullptr;
     bio->number = socket;
