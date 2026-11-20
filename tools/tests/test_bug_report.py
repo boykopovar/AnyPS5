@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -266,6 +267,38 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 0)
         with zipfile.ZipFile(target) as bundle:
             self.assertEqual(bundle.read("anyps5-input.ini").decode("utf-8"), "Cross = KEY:~/F\n")
+
+    def test_bundle_includes_the_profile_next_to_the_configured_input_mapping(self):
+        self.report.write_text('{"game": {"titleId": "PPSA00001"}}', encoding="utf-8")
+        config = self.root / "config"
+        config.mkdir()
+        ini = config / "controls.ini"
+        ini.write_text("Cross = KEY:F\n", encoding="utf-8")
+        (config / "anyps5-input.PPSA00001.ini").write_text(
+            "# /home/ana/controls on serverfestivo\nCross = KEY:G\n", encoding="utf-8")
+        (config / "anyps5-input.PPSA00002.ini").write_text("Cross = KEY:H\n", encoding="utf-8")
+        target = self.root / "bundle.zip"
+        with patch.dict(os.environ, {"ANYPS5_INPUT_CONFIG": str(ini)}):
+            code, _, err = self.run_main(["--report", str(self.report), "--log", "", "--out", str(target)])
+        self.assertEqual(code, 0, err)
+        with zipfile.ZipFile(target) as bundle:
+            self.assertEqual(sorted(name for name in bundle.namelist() if name.endswith(".ini")),
+                             ["anyps5-input-profile.ini", "anyps5-input.ini"])
+            self.assertEqual(bundle.read("anyps5-input.ini").decode("utf-8"), "Cross = KEY:F\n")
+            self.assertEqual(bundle.read("anyps5-input-profile.ini").decode("utf-8"),
+                             "# ~/controls on <host>\nCross = KEY:G\n")
+
+    def test_bundle_includes_the_title_profile_without_a_default_shared_mapping(self):
+        self.report.write_text('{"game": {"titleId": "PPSA00001"}}', encoding="utf-8")
+        (self.root / "anyps5-input.PPSA00001.ini").write_text("Cross = KEY:G\n", encoding="utf-8")
+        env = {name: value for name, value in os.environ.items() if name != "ANYPS5_INPUT_CONFIG"}
+        result = subprocess.run([sys.executable, bug_report.__file__, "--log", ""], cwd=self.root, env=env,
+                                capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with zipfile.ZipFile(self.root / "bug-report.zip") as bundle:
+            self.assertNotIn("anyps5-input.ini", bundle.namelist())
+            self.assertIn("anyps5-input-profile.ini", bundle.namelist())
+            self.assertEqual(bundle.read("anyps5-input-profile.ini").decode("utf-8"), "Cross = KEY:G\n")
 
     def test_invalid_report_json_is_an_error(self):
         self.report.write_text("not json", encoding="utf-8")
