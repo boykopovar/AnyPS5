@@ -29,6 +29,7 @@ std::int32_t APS5_VABI unorm2_getDecomposition_nid_postfix(const Icu::Normalizer
 std::int32_t APS5_VABI unorm2_getRawDecomposition_nid_postfix(const Icu::Normalizer2*, std::int32_t, char16_t*, std::int32_t,
                                                               std::int32_t*);
 std::int32_t APS5_VABI unorm2_composePair_nid_postfix(const Icu::Normalizer2*, std::int32_t, std::int32_t);
+std::int32_t APS5_VABI _ZNK6icu_6811Normalizer211composePairEii_nid_postfix(const Icu::Normalizer2*, std::int32_t, std::int32_t);
 std::uint8_t APS5_VABI unorm2_getCombiningClass_nid_postfix(const Icu::Normalizer2*, std::int32_t);
 std::int8_t APS5_VABI unorm2_isNormalized_nid_postfix(const Icu::Normalizer2*, const char16_t*, std::int32_t, std::int32_t*);
 std::int32_t APS5_VABI unorm2_quickCheck_nid_postfix(const Icu::Normalizer2*, const char16_t*, std::int32_t, std::int32_t*);

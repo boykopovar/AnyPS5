@@ -9184,10 +9184,6 @@ int APS5_VABI _ZN6icu_6817StringTrieBuilder8makeNodeEiiiR10UErrorCode_nid_postfi
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK6icu_6811Normalizer211composePairEii_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_685Edits8Iterator17updateNextIndexesEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

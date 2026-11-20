@@ -2130,7 +2130,6 @@ int APS5_VABI sceIcuLegacyUnknown_wp2Ap_plus_Lg4gk_nid_no_patch();
 int APS5_VABI _ZNK6icu_6814ResourceBundle9getLocaleEv_nid_postfix();
 int APS5_VABI _ZThn8_N6icu_6810UnicodeSet7matchesERKNS_11ReplaceableERiia_nid_postfix();
 int APS5_VABI _ZN6icu_6817StringTrieBuilder8makeNodeEiiiR10UErrorCode_nid_postfix();
-int APS5_VABI _ZNK6icu_6811Normalizer211composePairEii_nid_postfix();
 int APS5_VABI _ZN6icu_685Edits8Iterator17updateNextIndexesEv_nid_postfix();
 int APS5_VABI ures_openFillIn_nid_postfix();
 int APS5_VABI _ZN6icu_6822RuleBasedBreakIteratorC2ERKS0__nid_postfix();

@@ -214,6 +214,10 @@ std::int32_t APS5_VABI unorm2_composePair_nid_postfix(const Icu::Normalizer2* no
     return unorm2_composePair(Required(normalizer), first, second);
 }
 
+std::int32_t APS5_VABI _ZNK6icu_6811Normalizer211composePairEii_nid_postfix(const Icu::Normalizer2*, std::int32_t, std::int32_t) {
+    return U_SENTINEL;
+}
+
 std::uint8_t APS5_VABI unorm2_getCombiningClass_nid_postfix(const Icu::Normalizer2* normalizer, std::int32_t character) {
     return unorm2_getCombiningClass(Required(normalizer), character);
 }
