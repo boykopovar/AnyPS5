@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <thread>
 
@@ -24,9 +25,13 @@ extern const TypeRecord _ZTISt9exception_nid_postfix;
 extern const TypeRecord _ZTISt11logic_error_nid_postfix;
 extern const TypeRecord _ZTISt13runtime_error_nid_postfix;
 extern const TypeRecord _ZTISt14overflow_error_nid_postfix;
+extern const TypeRecord _ZTISt12system_error_nid_postfix;
 extern const void* const _ZTVSt18bad_variant_access_nid_postfix[5];
 
 void APS5_VABI SceV2Catch(Thrower thrower, const void* argument);
+int APS5_VABI libSceLibcInternalInventory_275_nid_no_patch(const void* table);
+[[noreturn]] void APS5_VABI sceLibcInternalPending4_123_nid_no_patch(const char* message, const GuestLocale::String* path1,
+    const GuestLocale::String* path2, LibcException::ErrorCode code);
 
 const void* SceV2CatchType = nullptr;
 const void* SceV2OtherType = nullptr;
@@ -146,6 +151,57 @@ void CatchOverflow(const char* message, const void* catchType, const void* other
     Require(caughtWhat == expected, label);
 }
 
+struct CrtSetupTable {
+    std::uint64_t size;
+    std::uintptr_t unknown;
+    std::uintptr_t primary[8];
+    std::uintptr_t extended[4];
+    std::uintptr_t trailing[10];
+};
+
+void CheckNewSetup() {
+    CrtSetupTable table{};
+    Require(libSceLibcInternalInventory_275_nid_no_patch(nullptr) == 0, "_new_setup accepts a null table");
+    table.size = 0x4f;
+    Require(libSceLibcInternalInventory_275_nid_no_patch(&table) == 1, "_new_setup refuses a table shorter than 0x50 bytes");
+    table.size = 0x50;
+    Require(libSceLibcInternalInventory_275_nid_no_patch(&table) == 0, "_new_setup accepts a table without slots");
+    table.primary[0] = 0x1000;
+    Require(libSceLibcInternalInventory_275_nid_no_patch(&table) == 1, "_new_setup refuses a partly filled slot group");
+}
+
+GuestLocale::String ShortGuestString(const char* text) {
+    GuestLocale::String string{};
+    string.size = std::strlen(text);
+    string.capacity = 15;
+    std::memcpy(string.buffer, text, string.size + 1);
+    return string;
+}
+
+void APS5_VABI ThrowFilesystemErrorTwoPaths(const void* argument) {
+    const auto* paths = static_cast<const GuestLocale::String*>(argument);
+    sceLibcInternalPending4_123_nid_no_patch("copy_file", &paths[0], &paths[1], {0, 17, _ZSt16generic_categoryv_nid_postfix()});
+}
+
+void CheckFilesystemErrorTwoPaths() {
+    const GuestLocale::String paths[2]{ShortGuestString("from"), ShortGuestString("to")};
+    SceV2CatchType = &_ZTISt12system_error_nid_postfix;
+    SceV2OtherType = &_ZTISt14overflow_error_nid_postfix;
+    SceV2Selector = 0;
+    caughtType.clear();
+    SceV2Catch(ThrowFilesystemErrorTwoPaths, paths);
+    Require(SceV2Selector == 2, "filesystem::_Xfilesystem_error with two paths throws a std::system_error");
+    Require(caughtType == "NSt10filesystem16filesystem_errorE", "filesystem::_Xfilesystem_error with two paths throws a filesystem_error");
+
+    bool rejected = false;
+    try {
+        sceLibcInternalPending4_123_nid_no_patch("copy_file", &paths[0], nullptr, {0, 17, _ZSt16generic_categoryv_nid_postfix()});
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected, "filesystem::_Xfilesystem_error with a null second path throws std::invalid_argument");
+}
+
 void CheckOverflow() {
     const TypeRecord versioned = Named("NSt8__sce_v214overflow_errorE");
     CatchOverflow("value too large", &_ZTISt14overflow_error_nid_postfix, &versioned, "value too large",
@@ -233,6 +289,8 @@ int main() {
     CheckOverflow();
     CheckMutex();
     CheckErrno();
+    CheckNewSetup();
+    CheckFilesystemErrorTwoPaths();
 
     if (failures != 0) return 1;
     std::puts("libc internal libc forward checks passed");
