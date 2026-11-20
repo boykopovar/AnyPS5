@@ -756,13 +756,18 @@ int APS5_VABI sceSslGetMemoryPoolStats(int sslCtxId, SceSsl::MemoryPoolStats* st
     std::lock_guard lock(state.mutex);
     const auto found = state.contexts.find(sslCtxId);
     if (found == state.contexts.end()) {
-        const SceSsl::MemoryPoolStats zeroStats{};
+        SceSsl::MemoryPoolStats zeroStats{};
+        std::memset(&zeroStats, 0, sizeof(zeroStats));
         if (!CopyGuestOut(stats, zeroStats)) return ErrorInvalidValue;
         return ErrorInvalidId;
     }
     auto& pool = found->second->pool;
     std::lock_guard poolLock(pool.mutex);
-    const SceSsl::MemoryPoolStats localStats = {pool.size, pool.peak, pool.current, 0};
+    SceSsl::MemoryPoolStats localStats{};
+    std::memset(&localStats, 0, sizeof(localStats));
+    localStats.poolSize = pool.size;
+    localStats.maxInuseSize = pool.peak;
+    localStats.currentInuseSize = pool.current;
     if (!CopyGuestOut(stats, localStats)) return ErrorInvalidValue;
     return 0;
 }
@@ -841,7 +846,8 @@ int APS5_VABI sceSslGetCaList(int sslCtxId, SceSsl::CaList* output) {
     PoolScope scope(context.pool);
     const auto count = CertificateCount(context);
     if (!count) {
-        const SceSsl::CaList empty{};
+        SceSsl::CaList empty{};
+        std::memset(&empty, 0, sizeof(empty));
         if (!CopyGuestOut(output, empty)) return ErrorInvalidValue;
         return ErrorNotFound;
     }
@@ -851,7 +857,10 @@ int APS5_VABI sceSslGetCaList(int sslCtxId, SceSsl::CaList* output) {
     std::size_t index = 0;
     for (const auto& chain : snapshot.certificates) for (auto* handle : chain->handles) pointers[index++] = handle;
     context.caLists.emplace(pointers, std::move(snapshot));
-    const SceSsl::CaList result{pointers, static_cast<int>(count)};
+    SceSsl::CaList result{};
+    std::memset(&result, 0, sizeof(result));
+    result.certs = pointers;
+    result.num = static_cast<int>(count);
     if (!CopyGuestOut(output, result)) {
         context.caLists.erase(pointers);
         return ErrorInvalidValue;
@@ -871,7 +880,8 @@ int APS5_VABI sceSslFreeCaList(int sslCtxId, SceSsl::CaList* list) {
     if (found == context.caLists.end() || local.num < 0 || static_cast<std::size_t>(local.num) != found->second.count)
         throw std::invalid_argument("Invalid SSL CA list allocation");
     context.caLists.erase(found);
-    const SceSsl::CaList empty{};
+    SceSsl::CaList empty{};
+    std::memset(&empty, 0, sizeof(empty));
     if (!CopyGuestOut(list, empty)) return ErrorInvalidArg;
     return 0;
 }
