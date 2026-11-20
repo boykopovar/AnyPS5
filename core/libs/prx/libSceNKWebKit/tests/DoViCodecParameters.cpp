@@ -128,15 +128,15 @@ int main() {
         Check("dvhe.04.\xa0" "1", wide);
         Check("dvhe.04.\x85" "1", wide);
     }
-    CheckWide(u"dvhe.04. 1", "em space before the level", 4, 1, "hev1");
-    CheckWide(u"dvhe.04.1　", "ideographic space after the level", 4, 1, "hev1");
-    CheckWide(u"dvhe.04 .  +9 ", "white-space-neutral characters", 4, 9, "hev1");
-    CheckWide(u"dvhe.04. 1", "paragraph separator");
-    CheckWide(u"dvhe.04.᠎1", "mongolian vowel separator");
-    CheckWide(u"dvhe.04.​1", "zero width space");
-    CheckWide(u"dvhe.0Ĵ.1", "non-digit in the profile");
-    CheckWide(u"dvhe.04.１", "fullwidth digit");
-    CheckWide(u"dvhť.04.1", "non-Latin-1 letter in the codec");
+    CheckWide(u"dvhe.04.\u20031", "em space before the level", 4, 1, "hev1");
+    CheckWide(u"dvhe.04.1\u3000", "ideographic space after the level", 4, 1, "hev1");
+    CheckWide(u"dvhe.04\u1680.\u2028\u205f+9\u200a", "white-space-neutral characters", 4, 9, "hev1");
+    CheckWide(u"dvhe.04.\u20291", "paragraph separator");
+    CheckWide(u"dvhe.04.\u180e1", "mongolian vowel separator");
+    CheckWide(u"dvhe.04.\u200b1", "zero width space");
+    CheckWide(u"dvhe.0\u0134.1", "non-digit in the profile");
+    CheckWide(u"dvhe.04.\uff11", "fullwidth digit");
+    CheckWide(u"dvh\u0165.04.1", "non-Latin-1 letter in the codec");
     StringImpl broken {1, 3, nullptr, 4};
     String input(&broken);
     try {
