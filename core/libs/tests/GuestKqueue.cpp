@@ -1598,6 +1598,31 @@ static void DirectoryWatch() {
     Require(std::filesystem::remove_all(path) == 1);
 }
 
+#ifdef _WIN32
+static void LongDirectoryWatch() {
+    const auto root = TemporaryName("long");
+    std::vector<std::string> levels{root};
+    for (int level = 0; level < 5; ++level) levels.push_back(levels.back() + "/" + std::string(60, 'd'));
+    for (const auto& level : levels) Require(mkdir_nid_postfix(level.c_str(), 0755) == 0);
+    const auto& path = levels.back();
+    Require(std::filesystem::absolute(path).native().size() > MAX_PATH);
+    const int directory = open_nid_postfix(path.c_str(), Directory, 0);
+    Require(directory >= 0);
+    const int kq = kqueue_nid_postfix();
+    KernelEvent events[4]{};
+    const auto ident = static_cast<std::uintptr_t>(directory);
+    Require(Apply(kq, Change(ident, EvfiltVnode, EvAdd | EvClear, NoteWrite)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    const int child = open_nid_postfix((path + "/child.bin").c_str(), ReadWrite | Create, 0644);
+    Require(child >= 0 && close_nid_postfix(child) == 0);
+    Require(Wait(kq, events, 4) == 1 && events[0].ident == ident && (events[0].fflags & NoteWrite) != 0);
+    Require(close_nid_postfix(directory) == 0);
+    Require(close_nid_postfix(kq) == 0);
+    Require(unlink_nid_postfix((path + "/child.bin").c_str()) == 0);
+    for (auto level = levels.rbegin(); level != levels.rend(); ++level) Require(rmdir_nid_postfix(level->c_str()) == 0);
+}
+#endif
+
 static void DeleteWatchedFile() {
     const auto path = TemporaryName("deleted");
     const int file = open_nid_postfix(path.c_str(), ReadWrite | Create, 0644);
@@ -1687,6 +1712,24 @@ static void DropBackupPrivileges() {
     Require(::CloseHandle(token) != FALSE);
 }
 
+static std::wstring ResolvedDirectory(const std::wstring& directory) {
+    const HANDLE handle = ::CreateFileW(directory.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    Require(handle != INVALID_HANDLE_VALUE);
+    std::wstring resolved(MAX_PATH, L'\0');
+    DWORD length = ::GetFinalPathNameByHandleW(handle, resolved.data(), static_cast<DWORD>(resolved.size()), FILE_NAME_NORMALIZED);
+    if (length >= resolved.size()) {
+        resolved.resize(length);
+        length = ::GetFinalPathNameByHandleW(handle, resolved.data(), length, FILE_NAME_NORMALIZED);
+    }
+    Require(::CloseHandle(handle) != FALSE);
+    Require(length != 0 && length < resolved.size());
+    resolved.resize(length);
+    if (resolved.starts_with(LR"(\\?\UNC\)")) resolved.replace(0, 8, LR"(\\)");
+    else if (resolved.starts_with(LR"(\\?\)")) resolved.erase(0, 4);
+    return resolved;
+}
+
 static void DeniedParentWatch() {
     DropBackupPrivileges();
     const auto path = TemporaryName("denied");
@@ -1695,6 +1738,7 @@ static void DeniedParentWatch() {
     Require(file >= 0);
     PSECURITY_DESCRIPTOR owner = nullptr;
     const auto directory = std::filesystem::absolute(path).wstring();
+    const auto resolved = ResolvedDirectory(directory);
     const PACL original = DenyListing(directory, owner);
     const int kq = kqueue_nid_postfix();
     KernelEvent events[4]{};
@@ -1708,7 +1752,7 @@ static void DeniedParentWatch() {
     ::LocalFree(owner);
     RequireContext(message, "parent");
     RequireContext(message, "error=5");
-    RequireContextInsensitive(message, Utf8(directory));
+    RequireContextInsensitive(message, Utf8(resolved));
     Require(Apply(kq, Change(ident, EvfiltVnode, EvAdd | EvClear, NoteWrite)) == 0);
     Require(write_nid_postfix(file, "abc", 3) == 3);
     Require(Wait(kq, events, 4) == 1 && events[0].ident == ident);
@@ -1967,6 +2011,7 @@ int main(int argc, char** argv) {
     DirectoryWatch();
     DeleteWatchedFile();
 #ifdef _WIN32
+    LongDirectoryWatch();
     DeniedParentWatch();
 #endif
     Timeout();

@@ -22,11 +22,11 @@ def render(result, spreadsheet_safe=False):
     for index, interval in enumerate(result["intervals"]):
         worker = interval["busiest_worker"] or {}
         phase = interval["top_phase"] or {}
-        row = {key: interval[key] for key in ("start_s", "end_s", "presents", "gpu_busy_ms_per_present", "trace_dropped")}
+        row = {key: interval[key] for key in ("start_s", "end_s", "presents", "gpu_busy_ms_per_present")}
         row.update({key + "_ms": interval["frame_ms"][key] for key in ("p50", "p90", "p99", "max")})
         row.update(interval=index + 1, busiest_worker=cell(worker.get("thread")), busiest_worker_pct=worker.get("pct"),
                    top_phase=cell(phase.get("name")), top_phase_ms_per_frame=phase.get("ms_per_frame"),
-                   identity_changed=index in changed)
+                   trace_dropped=str(interval["trace_dropped"]), identity_changed=str(index in changed))
         writer.writerow(row)
     return output.getvalue()
 
@@ -37,14 +37,23 @@ def main(argv=None):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace", newline="")
     parser = argparse.ArgumentParser(description="Export trace interval summaries as CSV")
     parser.add_argument("summary", type=Path)
-    parser.add_argument("--require-complete", action="store_true", help="require nonempty intervals without dropped events or changing capture identity")
+    parser.add_argument("--require-complete", action="store_true",
+                        help="require contiguous, nonempty intervals without dropped events or changing capture identity")
     parser.add_argument("--spreadsheet-safe", action="store_true",
                         help="opt-in tab prefix changes text cells; spreadsheet behavior varies and save/reopen not guaranteed")
     args = parser.parse_args(argv)
     try:
         result = trace_digest.digest_intervals(trace_digest.load_intervals(args.summary))
-        if args.require_complete and (not result["intervals"] or result["identity_changed_at"] or any(row["trace_dropped"] for row in result["intervals"])):
-            raise ValueError("capture is empty, has dropped events or changing identity")
+        if args.require_complete:
+            intervals = result["intervals"]
+            if not intervals or result["identity_changed_at"] or any(row["trace_dropped"] for row in intervals):
+                raise ValueError("capture is empty, has dropped events or changing identity")
+            previous_end = intervals[0]["end_s"]
+            for index, row in enumerate(intervals[1:], start=2):
+                start = row["start_s"]
+                if start != previous_end:
+                    raise ValueError(f"interval {index} starts at {start} s; previous interval ends at {previous_end} s")
+                previous_end = row["end_s"]
         text = render(result, args.spreadsheet_safe)
     except (EOFError, OSError, ValueError, KeyError, TypeError, RecursionError) as error:
         parser.error(str(error))

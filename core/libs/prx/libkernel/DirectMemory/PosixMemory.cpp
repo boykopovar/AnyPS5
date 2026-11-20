@@ -114,6 +114,7 @@ void* MapPrivateFileCopy(void* address, std::size_t rounded, int protection, int
     void* mapped = address;
     try {
         if (DoMapAnon(&mapped, rounded, 3, placement, alignment, false) != 0) return failed(GuestNoMemory);
+        if ((placement & GuestMapFixed) != 0) ReleaseFlexibleMappingRange(reinterpret_cast<std::uintptr_t>(mapped), rounded);
     } catch (const std::invalid_argument&) {
         return failed(GuestInvalid);
     } catch (const std::exception&) {

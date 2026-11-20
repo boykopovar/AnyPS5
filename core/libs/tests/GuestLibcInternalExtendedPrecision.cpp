@@ -13,6 +13,7 @@
 namespace {
 
 constexpr int RangeError = 34;
+constexpr int DomainError = 33;
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -135,9 +136,11 @@ void CheckFloatAddh() {
     _FXp_addh_nid_postfix(p, 4, std::numeric_limits<float>::infinity());
     Require(std::isinf(p[0]) && p[0] > 0, "adding a like-signed infinity keeps it");
     std::feclearexcept(FE_ALL_EXCEPT);
+    *__error_nid_postfix() = 0;
     _FXp_addh_nid_postfix(p, 4, -std::numeric_limits<float>::infinity());
     Require(std::isnan(p[0]) && p[1] == 0.0f, "infinity minus infinity is not a number");
     Require(std::fetestexcept(FE_INVALID) != 0, "infinity minus infinity raises invalid");
+    Require(*__error_nid_postfix() == DomainError, "infinity minus infinity sets a domain error");
     _FXp_addh_nid_postfix(p, 4, 1.0f);
     Require(std::isnan(p[0]), "a value that is not a number absorbs finite additions");
     _FXp_setw_nid_postfix(p, 4, 1.0f);
@@ -175,8 +178,10 @@ void CheckFloatMulh() {
     _FXp_mulh_nid_postfix(p, 4, std::numeric_limits<float>::infinity());
     Require(std::isinf(p[0]) && p[1] == 0.0f, "multiplying by infinity stores infinity and a zero");
     std::feclearexcept(FE_ALL_EXCEPT);
+    *__error_nid_postfix() = 0;
     _FXp_mulh_nid_postfix(p, 4, 0.0f);
     Require(std::isnan(p[0]) && std::fetestexcept(FE_INVALID) != 0, "infinity times zero is invalid");
+    Require(*__error_nid_postfix() == DomainError, "infinity times zero sets a domain error");
     _FXp_setw_nid_postfix(p, 4, std::numeric_limits<float>::max());
     _FXp_mulh_nid_postfix(p, 4, 4.0f);
     Require(std::isinf(p[0]), "an overflowing product becomes infinity");
@@ -307,8 +312,10 @@ void CheckFloatSqrtx() {
     float scratch[12];
     _FXp_setw_nid_postfix(p, 3, -2.0f);
     std::feclearexcept(FE_ALL_EXCEPT);
+    *__error_nid_postfix() = 0;
     _FXp_sqrtx_nid_postfix(p, 3, scratch);
     Require(std::isnan(p[0]) && std::fetestexcept(FE_INVALID) != 0, "the square root of a negative value is invalid");
+    Require(*__error_nid_postfix() == DomainError, "the square root of a negative value sets a domain error");
     _FXp_setw_nid_postfix(p, 3, -0.0f);
     _FXp_sqrtx_nid_postfix(p, 3, scratch);
     Require(Same(p[0], -0.0f), "the square root of negative zero is negative zero");
@@ -458,13 +465,17 @@ void CheckLongDouble() {
     long double special[3] = {};
     _LXp_setw_nid_postfix(special, 3, std::numeric_limits<long double>::infinity());
     std::feclearexcept(FE_ALL_EXCEPT);
+    *__error_nid_postfix() = 0;
     _LXp_addh_nid_postfix(special, 3, -std::numeric_limits<long double>::infinity());
     Require(std::isnan(special[0]) && std::fetestexcept(FE_INVALID) != 0, "long double infinity minus infinity is invalid");
+    Require(*__error_nid_postfix() == DomainError, "long double infinity minus infinity sets a domain error");
     _LXp_setw_nid_postfix(special, 3, -1.0L);
     long double sqrtScratch[12];
     std::feclearexcept(FE_ALL_EXCEPT);
+    *__error_nid_postfix() = 0;
     _LXp_sqrtx_nid_postfix(special, 3, sqrtScratch);
     Require(std::isnan(special[0]) && std::fetestexcept(FE_INVALID) != 0, "the long double square root of a negative value is invalid");
+    Require(*__error_nid_postfix() == DomainError, "the long double square root of a negative value sets a domain error");
     Require(_LXp_getw_nid_postfix(special, 0) == 0.0L, "_LXp_getw of no words is zero");
     long double tie[4] = {1.0L, 0x1p-64L, 0x1p-100L, -0x1p-99L};
     Require(_LXp_getw_nid_postfix(tie, 4) == 1.0L, "_LXp_getw adds the fourth word before rounding");

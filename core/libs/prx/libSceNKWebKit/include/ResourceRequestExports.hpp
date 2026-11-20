@@ -59,5 +59,6 @@ NKWebKit::WebCoreAbi::ResourceRequestBase APS5_VABI _ZNK7WebCore19ResourceReques
 const NKWebKit::WebCoreAbi::HTTPHeaderMap& APS5_VABI _ZNK7WebCore19ResourceRequestBase16httpHeaderFieldsEv(const NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 NKWebKit::WebCoreAbi::FormDataRefPtr APS5_VABI _ZNK7WebCore19ResourceRequestBase8httpBodyEv(const NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 bool APS5_VABI _ZNK7WebCore19ResourceRequestBase9hasUploadEv(const NKWebKit::WebCoreAbi::ResourceRequestBase* self);
+void APS5_VABI _ZN7WebCore19ResourceRequestBase22clearHTTPAuthorizationEv(NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 
 }

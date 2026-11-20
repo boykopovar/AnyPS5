@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import shlex
@@ -1332,6 +1333,141 @@ class CheckCompileLauncherTests(unittest.TestCase):
             with self.subTest(arguments=arguments):
                 with self.assertRaisesRegex(ValueError, message):
                     check_compile.syntax_arguments(arguments, Path.cwd(), source)
+
+
+class CheckCompileValidateArgumentsTests(unittest.TestCase):
+    def test_accepts_nonempty_list_of_strings(self):
+        check_compile.validate_arguments(["cc", "-c", "a.c"])
+
+    def test_rejects_non_lists_empty_lists_and_empty_executable(self):
+        for arguments in ("cc -c", ("cc",), [], [""], None):
+            with self.subTest(arguments=arguments):
+                with self.assertRaises(ValueError):
+                    check_compile.validate_arguments(arguments)
+
+    def test_rejects_non_string_elements(self):
+        with self.assertRaises(ValueError):
+            check_compile.validate_arguments(["cc", 1])
+
+
+class CheckCompileWindowsResponseTextTests(unittest.TestCase):
+    def test_decodes_utf16_with_either_byte_order_mark(self):
+        self.assertEqual(check_compile.windows_response_text("-DA=é".encode("utf-16")), "-DA=é")
+        self.assertEqual(check_compile.windows_response_text(b"\xfe\xff" + "-DA=é".encode("utf-16-be")), "-DA=é")
+
+    def test_strips_utf8_byte_order_mark(self):
+        self.assertEqual(check_compile.windows_response_text(b"\xef\xbb\xbf-DA"), "-DA")
+
+    def test_plain_utf8_is_decoded_and_invalid_bytes_raise(self):
+        self.assertEqual(check_compile.windows_response_text("-DA=é".encode("utf-8")), "-DA=é")
+        with self.assertRaises(UnicodeDecodeError):
+            check_compile.windows_response_text(b"\xff\xff\xff")
+
+
+class CheckCompileResponseQuotingTests(unittest.TestCase):
+    def test_defaults_to_posix(self):
+        self.assertEqual(check_compile.response_quoting([]), "posix")
+        self.assertEqual(check_compile.response_quoting(["cc", "-c"]), "posix")
+
+    def test_last_option_wins(self):
+        arguments = ["cc", "--rsp-quoting=windows", "--rsp-quoting=posix"]
+        self.assertEqual(check_compile.response_quoting(arguments), "posix")
+        self.assertEqual(check_compile.response_quoting(["--rsp-quoting=windows"]), "windows")
+
+    def test_unknown_quoting_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "unsupported response-file quoting --rsp-quoting=shell"):
+            check_compile.response_quoting(["--rsp-quoting=shell"])
+
+
+class CheckCompilePositiveIntegerTests(unittest.TestCase):
+    def test_returns_positive_integers(self):
+        self.assertEqual(check_compile.positive_integer("3"), 3)
+        self.assertEqual(check_compile.positive_integer(" 12 "), 12)
+
+    def test_zero_and_negative_values_are_argument_errors(self):
+        for value in ("0", "-4"):
+            with self.subTest(value=value):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    check_compile.positive_integer(value)
+
+    def test_non_numbers_raise_value_error(self):
+        with self.assertRaises(ValueError):
+            check_compile.positive_integer("many")
+
+
+class CheckCompileLauncherPrefixTests(unittest.TestCase):
+    def test_non_cmake_commands_have_no_prefix(self):
+        self.assertEqual(check_compile.launcher_prefix(["cc", "-c", "a.c"]), [])
+        self.assertEqual(check_compile.launcher_prefix(["cmake", "-E"]), [])
+        self.assertEqual(check_compile.launcher_prefix(["cmake", "-P", "env", "A=1", "cc"]), [])
+
+    def test_environment_assignments_end_at_the_first_other_word(self):
+        arguments = ["cmake", "-E", "env", "A=1", "B=2", "cc", "-c", "a=b.c"]
+        self.assertEqual(check_compile.launcher_prefix(arguments), arguments[:5])
+
+    def test_double_dash_ends_the_options(self):
+        arguments = ["cmake", "-E", "env", "A=1", "--", "cc"]
+        self.assertEqual(check_compile.launcher_prefix(arguments), arguments[:5])
+
+    def test_modify_and_unset_options_are_skipped(self):
+        arguments = ["cmake", "-E", "env", "--modify", "PATH=path_list_prepend:x", "--unset=A", "cc"]
+        self.assertEqual(check_compile.launcher_prefix(arguments), arguments[:6])
+
+    def test_executable_name_ignores_case_and_windows_directory(self):
+        arguments = ["C:\\Tools\\CMake.exe", "-E", "env", "A=1", "cc"]
+        self.assertEqual(check_compile.launcher_prefix(arguments), arguments[:4])
+
+    def test_malformed_launchers_are_refused(self):
+        for arguments in (["cmake", "-E", "env", "--bogus", "cc"], ["cmake", "-E", "env", "--modify"],
+                          ["cmake", "-E", "env", "A=1"], ["cmake", "-E", "env"]):
+            with self.subTest(arguments=arguments):
+                with self.assertRaises(ValueError):
+                    check_compile.launcher_prefix(arguments)
+
+
+class CheckCompileEntryKeyTests(unittest.TestCase):
+    def test_relative_file_is_resolved_against_the_entry_directory(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            entry = {"directory": str(root / "build"), "file": "../src/a.cpp"}
+            self.assertEqual(check_compile.entry_key(entry, root), "src/a.cpp")
+
+    def test_absolute_file_inside_root_is_root_relative(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            entry = {"directory": str(root), "file": str(root / "core" / "b.cpp")}
+            self.assertEqual(check_compile.entry_key(entry, root), "core/b.cpp")
+
+    def test_file_outside_root_keeps_its_absolute_path(self):
+        with tempfile.TemporaryDirectory() as name, tempfile.TemporaryDirectory() as other:
+            outside = Path(other) / "c.cpp"
+            entry = {"directory": name, "file": str(outside)}
+            self.assertEqual(check_compile.entry_key(entry, Path(name)), check_compile.real(outside).as_posix())
+
+
+class CheckCompileResolveSourceTests(unittest.TestCase):
+    def test_existing_file_inside_root_gets_a_relative_name(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            (root / "core").mkdir()
+            file = root / "core" / "a.cpp"
+            file.write_text("")
+            source, key = check_compile.resolve_source(file, root)
+            self.assertEqual(source, check_compile.real(file))
+            self.assertEqual(key, "core/a.cpp")
+
+    def test_missing_file_is_still_resolved(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            source, key = check_compile.resolve_source(root / "gone.cpp", root)
+            self.assertEqual(key, "gone.cpp")
+            self.assertEqual(source, check_compile.real(root / "gone.cpp"))
+
+    def test_file_outside_root_keeps_an_absolute_name(self):
+        with tempfile.TemporaryDirectory() as name, tempfile.TemporaryDirectory() as other:
+            file = Path(other) / "x.cpp"
+            _, key = check_compile.resolve_source(file, Path(name))
+            self.assertEqual(key, check_compile.real(file).as_posix())
 
 
 if __name__ == "__main__":
