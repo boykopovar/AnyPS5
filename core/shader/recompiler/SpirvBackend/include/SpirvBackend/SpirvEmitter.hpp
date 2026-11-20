@@ -57,6 +57,7 @@ struct SpirvEmitInfo {
     bool fullSubgroups = false;
     bool functionLdsBuffer = false;
     bool meshWindowBuffer = false;
+    std::uint32_t splitStateLanes = 0;
     std::uint32_t scratchPoolSlotDwords = 0;
     bool anySubgroupSize = false;
 };

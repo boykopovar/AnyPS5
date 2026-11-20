@@ -494,7 +494,7 @@ CString ToUTF8(StringView view, unsigned mode) {
                 cp = 0x10000 + ((cp - 0xD800) << 10) + Unit(view, i + 1) - 0xDC00;
                 ++i;
             } else if (mode == 1) throw std::invalid_argument("unpaired WTF UTF-16 surrogate");
-            else if (mode == 2) cp = 0xFFFD;
+            else if (mode == 2 || cp > 0xDBFF || i + 1 < view.length) cp = 0xFFFD;
         }
         if (cp < 0x80) bytes.push_back(static_cast<char>(cp));
         else if (cp < 0x800) {

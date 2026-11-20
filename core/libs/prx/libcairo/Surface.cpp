@@ -86,6 +86,10 @@ void APS5_VABI cairo_surface_destroy(CairoSurface* surface) {
     aps5_cairo_surface_destroy(Backend(surface));
 }
 
+void CairoSurfaceDestroy_nid_no_patch(CairoSurface* surface) {
+    aps5_cairo_surface_destroy(Backend(surface));
+}
+
 void APS5_VABI cairo_surface_flush(CairoSurface* surface) {
     aps5_cairo_surface_flush(Backend(surface));
 }

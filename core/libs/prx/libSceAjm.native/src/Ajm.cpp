@@ -37,6 +37,7 @@ constexpr int SCE_AJM_ERROR_INVALID_INSTANCE = static_cast<int>(0x80930003);
 constexpr int SCE_AJM_ERROR_INVALID_BATCH = static_cast<int>(0x80930004);
 constexpr int SCE_AJM_ERROR_INVALID_PARAMETER = static_cast<int>(0x80930005);
 constexpr int SCE_AJM_ERROR_OUT_OF_RESOURCES = static_cast<int>(0x80930007);
+constexpr int SCE_AJM_ERROR_INVALID_FLAGS = static_cast<int>(0x8093000C);
 constexpr int SCE_AJM_ERROR_INVALID_PRIORITY = static_cast<int>(0x8093000E);
 constexpr int SCE_AJM_ERROR_MALFORMED_BATCH = static_cast<int>(0x80930011);
 constexpr int SCE_AJM_ERROR_JOB_CREATION = static_cast<int>(0x80930012);
@@ -62,6 +63,8 @@ constexpr std::uint64_t M4AAC_ENABLE_SBR_DECODE = 1ull << 32;
 constexpr std::uint64_t M4AAC_ENABLE_NONDELAY_OUTPUT = 1ull << 33;
 constexpr std::uint64_t M4AAC_SURROUND_INTERLEAVE_ORDERS = 3ull << 34;
 constexpr std::uint32_t M4AAC_DELAY_FRAMES = 2;
+
+constexpr std::uint64_t INSTANCE_RESERVED_FLAGS = 0xF0000000FFFFC000ull;
 
 // APS5_TRACE_AJM=1 logs every job the title submits and what the library writes back.
 bool TraceEnabled() {
@@ -2023,8 +2026,9 @@ int APS5_VABI sceAjmMemoryUnregister(uint32_t context, void* ptr) {
 }
 
 int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t flags, uint32_t* instance) {
-    if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
     if (!instance) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if ((flags & 0x380u) >= 0x180u || (flags & 0x2400u) == 0x2000u || (flags & INSTANCE_RESERVED_FLAGS) != 0) return SCE_AJM_ERROR_INVALID_FLAGS;
+    if (context == 0 || context >= g_nextContext.load(std::memory_order_relaxed)) return SCE_AJM_ERROR_INVALID_CONTEXT;
     auto created = std::make_unique<Instance>();
     created->context = context;
     created->codec = codec;
