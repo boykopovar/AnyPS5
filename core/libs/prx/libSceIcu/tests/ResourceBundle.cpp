@@ -85,16 +85,26 @@ void Run() {
 
     UResourceBundle bundle{};
     NativeInit(&bundle);
-    constexpr std::array<std::int32_t, 6> sizes{0, 1, 2, 7, 64, 4096};
-    constexpr std::array<std::int32_t, 8> indices{-2, -1, 0, 1, 6, 63, 4094, 4095};
+    constexpr std::array<std::int32_t, 8> sizes{
+        std::numeric_limits<std::int32_t>::min(), -1, 0, 1, 2, 7, 64, 4096};
+    constexpr std::array<std::int32_t, 10> indices{
+        std::numeric_limits<std::int32_t>::min(), -2, -1, 0, 1, 6, 63, 4094, 4095,
+        std::numeric_limits<std::int32_t>::max()};
     for (const auto size : sizes) {
         bundle.fSize = size;
         for (const auto index : indices) {
             bundle.fIndex = index;
-            Require(ures_hasNext_nid_postfix(&bundle) == NativeHasNext(&bundle),
+            const auto expected = static_cast<std::int64_t>(index) < static_cast<std::int64_t>(size) - 1;
+            Require(ures_hasNext_nid_postfix(&bundle) == expected,
                     "resource iteration differs from ICU");
         }
     }
+
+    std::array<std::int32_t, 2> iterator{3, 5};
+    const auto iteratorAddress = reinterpret_cast<std::uintptr_t>(iterator.data());
+    Require(iteratorAddress >= offsetof(UResourceBundle, fIndex), "iterator address cannot form a resource handle");
+    const auto* partial = reinterpret_cast<const UResourceBundle*>(iteratorAddress - offsetof(UResourceBundle, fIndex));
+    Require(ures_hasNext_nid_postfix(partial), "a readable iterator does not require the rest of the resource handle");
 
     RequireUnreadableThrows(reinterpret_cast<const UResourceBundle*>(std::uintptr_t{1}));
     RequireUnreadableThrows(reinterpret_cast<const UResourceBundle*>(
