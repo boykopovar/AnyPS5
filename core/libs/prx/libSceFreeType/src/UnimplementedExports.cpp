@@ -374,4 +374,8 @@ void APS5_VABI ft_validator_init_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+void APS5_VABI ft_validator_run_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
