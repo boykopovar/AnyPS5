@@ -105,6 +105,7 @@ bool UsesGpuCacheBarrier(std::span<const std::uint32_t> packet);
 bool IsTagMarker(std::span<const std::uint32_t> packet);
 inline bool Predicated(std::uint32_t header) { return !FillerPacket(header) && (header & 1u) != 0; }
 bool PredicationPasses(const QueueState& queue);
+std::size_t PredicationBytes(const Predication& predication);
 bool WaitSatisfied(std::span<const std::uint32_t> packet);
 // WaitSatisfied for a polling loop: the caller has validated the address once, so the value is read
 // directly instead of through the checked guest memory path.
@@ -193,6 +194,10 @@ inline constexpr std::uint64_t SampleDumpBlockBytes = 8;
 inline constexpr std::uint64_t SampleDumpBytes = (SampleDumpBlocks - 1) * SampleDumpStride + SampleDumpBlockBytes;
 inline bool SampleDump(std::span<const std::uint32_t> packet) { return ((packet[0] >> 8u) & 0xffu) == 0x46u && packet.size() >= 2 && (packet[1] & 0x3fu) == SampleDumpEvent; }
 inline std::uint64_t SampleDumpAddress(std::span<const std::uint32_t> packet) { return packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u); }
+inline constexpr std::uint32_t SampleControlEvent = 0x38;
+static_assert(AllSampleDumpBlocks == (1u << SampleDumpBlocks) - 1u);
+inline bool SampleControl(std::span<const std::uint32_t> packet) { return ((packet[0] >> 8u) & 0xffu) == 0x46u && packet.size() >= 3 && (packet[1] & 0x3fu) == SampleControlEvent; }
+inline std::uint32_t SampleControlBlocks(std::span<const std::uint32_t> packet) { return (packet[2] >> 11u) & AllSampleDumpBlocks; }
 struct PacketStore {
     enum class Value : std::uint8_t { Bytes, Pattern, RunTime };
     std::uint64_t address = 0;

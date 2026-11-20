@@ -164,7 +164,10 @@ public:
     void Release() {
         if (!fetched || stream == nullptr || next < 0) return;
         fetched = false;
-        const std::uint32_t code = static_cast<std::uint32_t>(next);
+        std::uint32_t code = static_cast<std::uint32_t>(next);
+        if (code >= 0xd800 && code < 0xdc00) {
+            if (const char16_t low = stream->TakeLowSurrogate(); low != 0) code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+        }
         unsigned char bytes[4];
         std::size_t count = 0;
         if (code < 0x80) {
@@ -266,13 +269,11 @@ private:
             directive.suppress = true;
             ++format;
         }
-        const char16_t* digits = format;
         for (; *format >= u'0' && *format <= u'9'; ++format) {
             const std::size_t digit = static_cast<std::size_t>(*format - u'0');
             const std::size_t limit = (std::numeric_limits<std::size_t>::max() - digit) / 10;
             directive.width = directive.width > limit ? std::numeric_limits<std::size_t>::max() : directive.width * 10 + digit;
         }
-        if (format != digits && directive.width == 0) Fail("zero field width");
         if (*format == u'h' || *format == u'l') {
             directive.length += static_cast<char>(*format++);
             if (*format == directive.length[0]) directive.length += static_cast<char>(*format++);
@@ -280,7 +281,7 @@ private:
             directive.length += static_cast<char>(*format++);
         }
         directive.conversion = *format;
-        if (directive.conversion == 0) Fail("incomplete conversion specification");
+        if (directive.conversion == 0) return directive;
         ++format;
         if (directive.conversion == u'[') {
             directive.setExcluded = *format == u'^';
@@ -479,7 +480,8 @@ private:
     }
 
     Outcome Count(const Directive& directive) {
-        if (directive.suppress || directive.width != 0) Fail("%n with suppression or width");
+        converted = true;
+        if (directive.suppress) return Outcome::Done;
         const std::size_t size = IntegerSize(directive.length);
         void* target = args.Next<void*>();
         if (target == nullptr) return Outcome::Violation;

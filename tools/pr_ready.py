@@ -47,9 +47,12 @@ query($owner: String!, $name: String!, $after: String, $size: Int!) {
 """
 
 CLOSED_QUERY = """
-query($owner: String!, $name: String!, $label: String!) {
+query($owner: String!, $name: String!, $label: String!, $after: String) {
   repository(owner: $owner, name: $name) {
-    pullRequests(states: [CLOSED, MERGED], labels: [$label], first: 100) { nodes { number } }
+    pullRequests(states: [CLOSED, MERGED], labels: [$label], first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { number }
+    }
   }
 }
 """
@@ -146,10 +149,10 @@ def ranked(prs):
 
 
 def clean(text):
-    text = "".join(ch for ch in text if ch.isprintable()).replace("@", "@​")
-    for char in "[]|`<>*_~":
+    text = "".join(ch for ch in text if ch.isprintable())[:100].replace("@", "@​")
+    for char in "\\[]|`<>*_~":
         text = text.replace(char, "\\" + char)
-    return text[:100]
+    return text
 
 
 def queue_body(queue, total, ready):
@@ -161,9 +164,20 @@ def queue_body(queue, total, ready):
     return "\n".join(lines) + "\n"
 
 
+def pagination_cursor(connection, seen, label):
+    cursor = connection["pageInfo"]["endCursor"]
+    if not isinstance(cursor, str) or not cursor:
+        raise ValueError(f"{label} page has no cursor")
+    if cursor in seen:
+        raise ValueError(f"{label} pagination did not advance")
+    seen.add(cursor)
+    return cursor
+
+
 def fetch(repo):
     owner, name = repo.split("/", 1)
     prs, after = [], None
+    seen = set()
     while True:
         args = ["api", "graphql", "-f", f"query={QUERY}", "-F", f"owner={owner}", "-F", f"name={name}", "-F", f"size={PAGE_SIZE}"]
         if after:
@@ -175,16 +189,26 @@ def fetch(repo):
         prs += [pull(node) for node in listed(connection)]
         if not connection["pageInfo"]["hasNextPage"]:
             return prs
-        after = connection["pageInfo"]["endCursor"]
+        after = pagination_cursor(connection, seen, "open pull request")
 
 
 def closed_with_label(repo):
     owner, name = repo.split("/", 1)
-    page = json.loads(pr_labels.gh("api", "graphql", "-f", f"query={CLOSED_QUERY}", "-F", f"owner={owner}",
-                                   "-F", f"name={name}", "-f", f"label={QUEUE_LABEL}"))
-    if page.get("errors"):
-        raise ValueError(str(page["errors"])[:300])
-    return [node["number"] for node in listed(page["data"]["repository"]["pullRequests"])]
+    closed, after = [], None
+    seen = set()
+    while True:
+        args = ["api", "graphql", "-f", f"query={CLOSED_QUERY}", "-F", f"owner={owner}",
+                "-F", f"name={name}", "-f", f"label={QUEUE_LABEL}"]
+        if after:
+            args += ["-f", f"after={after}"]
+        page = json.loads(pr_labels.gh(*args))
+        if page.get("errors"):
+            raise ValueError(str(page["errors"])[:300])
+        connection = page["data"]["repository"]["pullRequests"]
+        closed += [node["number"] for node in listed(connection)]
+        if not connection["pageInfo"]["hasNextPage"]:
+            return closed
+        after = pagination_cursor(connection, seen, "closed pull request")
 
 
 def apply(repo, prs, queue, dry_run, closed=()):

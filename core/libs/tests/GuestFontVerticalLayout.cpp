@@ -2,6 +2,7 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 #include "tests/FontFixture.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -91,6 +92,9 @@ int main() {
 
     FontVerticalLayout layout{};
     Require(sceFontGetVerticalLayout(font, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetVerticalLayout(font, reinterpret_cast<FontVerticalLayout*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontGetVerticalLayout(nullptr, &layout) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
     Require(layout.baselineOffsetX == 0.0f && layout.columnAdvance == 0.0f && layout.decorationSpan == 0.0f);
     layout = {1.0f, 1.0f, 1.0f};
