@@ -129,6 +129,14 @@ int main() {
     Check(sceSaveDataDelete(nullptr) == SaveDataErrorParameter, "null del returns PARAMETER");
     SaveDataDelete nullDirDel{};
     Check(sceSaveDataDelete(&nullDirDel) == SaveDataErrorParameter, "null dir_name returns PARAMETER");
+    errno = EBUSY;
+    Check(sceSaveDataDelete(reinterpret_cast<const SaveDataDelete*>(std::uintptr_t{0x10})) == SaveDataErrorParameter, "unmapped del returns PARAMETER");
+    Check(errno == EBUSY, "errno preserved across unmapped del");
+    SaveDataDelete unmappedDirDel{};
+    unmappedDirDel.dir_name = reinterpret_cast<const SceSaveDataDirName*>(std::uintptr_t{0x10});
+    errno = EBUSY;
+    Check(sceSaveDataDelete(&unmappedDirDel) == SaveDataErrorParameter, "unmapped dir_name returns PARAMETER");
+    Check(errno == EBUSY, "errno preserved across unmapped dir_name");
     Check(sceSaveDataDeleteTransactionResource(0) == SaveDataErrorNotInitialized, "delete transaction resource fails before initialization");
     Check(sceSaveDataDeleteTransactionResource(1) == SaveDataErrorNotInitialized, "delete transaction resource 1 fails before initialization");
 
@@ -144,6 +152,14 @@ int main() {
     mount.dir_name = &dirName;
     mount.mount_mode = 2;
     SaveDataMountResult mountResult{};
+    errno = EBUSY;
+    Check(sceSaveDataMount3(reinterpret_cast<const SaveDataMount3*>(std::uintptr_t{0x10}), &mountResult) == SaveDataErrorParameter, "unmapped mount returns PARAMETER");
+    Check(errno == EBUSY, "errno preserved across unmapped mount");
+    SaveDataMount3 unmappedDirMount = mount;
+    unmappedDirMount.dir_name = reinterpret_cast<const SceSaveDataDirName*>(std::uintptr_t{0x10});
+    errno = EBUSY;
+    Check(sceSaveDataMount3(&unmappedDirMount, &mountResult) == SaveDataErrorParameter, "unmapped dir_name in mount returns PARAMETER");
+    Check(errno == EBUSY, "errno preserved across unmapped mount dir_name");
     const int mountResultCode = sceSaveDataMount3(&mount, &mountResult);
     Check(mountResultCode == 0, "the existing save mounts read/write");
     if (mountResultCode == 0) {

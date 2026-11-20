@@ -853,12 +853,37 @@ static void restoreSave(const std::string& dirName) {
     RemoveTree(stagedEntry, ignored);
 }
 
-static int deleteSave(const SaveDataDelete* del) {
-    if (del == nullptr || del->dir_name == nullptr) {
+struct DeleteTrace {
+    bool readable = false;
+    SceSaveDataDirName name{};
+};
+
+static int deleteSave(const SaveDataDelete* del, DeleteTrace* trace = nullptr) {
+    if (del == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    SaveDataDelete localDel{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localDel, del, sizeof(localDel))) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    errno = savedErrno;
+    if (localDel.dir_name == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    SceSaveDataDirName localDir{};
+    if (!GuestCopyIn_nid_no_patch(&localDir, localDel.dir_name, sizeof(localDir))) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    errno = savedErrno;
+    if (trace != nullptr) {
+        trace->readable = true;
+        trace->name = localDir;
+    }
     std::string dirName;
-    if (!parse_dir_name(del->dir_name, &dirName)) {
+    if (!parse_dir_name(&localDir, &dirName)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     const std::string path = save_root() + "/" + dirName;
@@ -886,8 +911,9 @@ static int deleteSave(const SaveDataDelete* del) {
 }
 
 int APS5_VABI sceSaveDataDelete(const SaveDataDelete* del) {
-    const int rc = deleteSave(del);
-    SAVEDATA_TRACE("delete dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), del != nullptr && del->dir_name != nullptr ? del->dir_name->data : "(null)", static_cast<unsigned>(rc));
+    DeleteTrace trace;
+    const int rc = deleteSave(del, &trace);
+    SAVEDATA_TRACE("delete dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), trace.readable ? trace.name.data : "(null)", static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -1333,21 +1359,37 @@ int APS5_VABI sceSaveDataLoadIcon(const SaveDataMountPoint* mount_point, SaveDat
     return SAVE_DATA_OK;
 }
 
-static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result) {
-    if (mount == nullptr || mount_result == nullptr || mount->dir_name == nullptr) {
-        return SAVE_DATA_ERROR_PARAMETER;
+struct MountTrace {
+    bool readable = false;
+    std::int32_t user_id = -1;
+    bool named = false;
+    SceSaveDataDirName dir_name{};
+    std::uint32_t mount_mode = 0;
+    std::uint64_t blocks = 0;
+    SaveDataMountPoint mount_point{};
+    std::uint32_t mount_status = 0;
+};
+
+static int mount3_impl(const SaveDataMount3& localMount, const SceSaveDataDirName& localDir, SaveDataMountResult* mount_result, MountTrace* trace = nullptr) {
+    if (trace != nullptr) {
+        trace->readable = true;
+        trace->user_id = localMount.user_id;
+        trace->named = true;
+        trace->dir_name = localDir;
+        trace->mount_mode = localMount.mount_mode;
+        trace->blocks = localMount.blocks;
     }
     const FreeSpaceMode freeSpace = free_space_mode();
-    const bool create = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_CREATE) != 0;
-    const bool create2 = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_CREATE2) != 0;
-    const bool rdonly = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_RDONLY) != 0;
-    const bool rdwr = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_RDWR) != 0;
+    const bool create = (localMount.mount_mode & SAVE_DATA_MOUNT_MODE_CREATE) != 0;
+    const bool create2 = (localMount.mount_mode & SAVE_DATA_MOUNT_MODE_CREATE2) != 0;
+    const bool rdonly = (localMount.mount_mode & SAVE_DATA_MOUNT_MODE_RDONLY) != 0;
+    const bool rdwr = (localMount.mount_mode & SAVE_DATA_MOUNT_MODE_RDWR) != 0;
     const bool open = !create && !create2 && (rdonly || rdwr);
     if (!create && !create2 && !open) {
         throw std::runtime_error("sceSaveDataMount3: unknown mount_mode");
     }
     std::string dirName;
-    if (!parse_dir_name(mount->dir_name, &dirName)) {
+    if (!parse_dir_name(&localDir, &dirName)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     const std::string real_path = save_root() + "/" + dirName;
@@ -1369,7 +1411,7 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
         return SAVE_DATA_ERROR_MOUNT_FULL;
     }
     if (!exists && (create || create2) && freeSpace == FreeSpaceMode::Host) {
-        const std::uint64_t blocks = mount->blocks == 0 ? SAVE_DATA_BLOCKS_MAX : std::min(mount->blocks, SAVE_DATA_BLOCKS_MAX);
+        const std::uint64_t blocks = localMount.blocks == 0 ? SAVE_DATA_BLOCKS_MAX : std::min(localMount.blocks, SAVE_DATA_BLOCKS_MAX);
         const std::uint64_t required = blocks * SAVE_DATA_BLOCK_BYTES;
         std::uint64_t available = 0;
         if (host_free_bytes(real_path, available) && available < required) {
@@ -1378,8 +1420,8 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
             return SAVE_DATA_ERROR_NO_SPACE_FS;
         }
     }
-    bool keepSize = mount->blocks != 0 && (create || (create2 && !exists));
-    if (mount->blocks != 0 && !keepSize) {
+    bool keepSize = localMount.blocks != 0 && (create || (create2 && !exists));
+    if (localMount.blocks != 0 && !keepSize) {
         keepSize = !std::filesystem::exists(blocks_path(real_path), error);
         if (error) return SAVE_DATA_ERROR_INTERNAL;
     }
@@ -1387,65 +1429,106 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     if (error) return SAVE_DATA_ERROR_INTERNAL;
     const bool created = (create || create2) && std::filesystem::create_directories(real_path, error);
     if (error) return SAVE_DATA_ERROR_INTERNAL;
-    if (keepSize && !keep_save_blocks(real_path, mount->blocks)) {
+    if (keepSize && !keep_save_blocks(real_path, localMount.blocks)) {
         if (created) {
             std::error_code ignored;
             std::filesystem::remove(real_path, ignored);
         }
         return SAVE_DATA_ERROR_INTERNAL;
     }
-    // The title gets a short mount point (16 bytes on the PS5) and opens files under it; the
-    // path resolver maps it to the save directory, whose name may be far longer.
     const std::string mountPoint = "/savedata" + std::to_string(slot);
     AddPathAlias_nid_no_patch(mountPoint.c_str(), absolutePath.c_str());
     std::memset(mount_result, 0, sizeof(*mount_result));
     g_slots[slot].used = true;
-    g_slots[slot].user_id = mount->user_id;
+    g_slots[slot].user_id = localMount.user_id;
     g_slots[slot].mount_point = mountPoint;
     g_slots[slot].real_path = real_path;
     std::memcpy(mount_result->mount_point.data, mountPoint.c_str(), mountPoint.size() + 1);
     mount_result->required_blocks = 0;
     mount_result->mount_status = (create || (create2 && !exists)) ? 1u : 0u;
+    if (trace != nullptr) {
+        trace->mount_point = mount_result->mount_point;
+        trace->mount_status = mount_result->mount_status;
+    }
     return SAVE_DATA_OK;
 }
 
-int APS5_VABI sceSaveDataMount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result) {
-    const int rc = mount3(mount, mount_result);
-    SAVEDATA_TRACE("mount3 user=%d dir=%.*s mode=0x%x blocks=%llu -> 0x%08x point=%.*s status=%u", mount != nullptr ? mount->user_id : -1, static_cast<int>(sizeof(SceSaveDataDirName::data)), mount != nullptr && mount->dir_name != nullptr ? mount->dir_name->data : "(null)", mount != nullptr ? mount->mount_mode : 0u, mount != nullptr ? static_cast<unsigned long long>(mount->blocks) : 0ull, static_cast<unsigned>(rc), static_cast<int>(sizeof(SaveDataMountPoint::data)), rc == SAVE_DATA_OK && mount_result != nullptr ? mount_result->mount_point.data : "", rc == SAVE_DATA_OK && mount_result != nullptr ? mount_result->mount_status : 0u);
-    return rc;
-}
-
-static int mount2(const SaveDataMount2* mount, SaveDataMountResult* mount_result) {
+static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result, MountTrace* trace = nullptr) {
     if (mount == nullptr || mount_result == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    SaveDataMount3 localMount{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localMount, mount, sizeof(localMount))) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    errno = savedErrno;
+    if (localMount.dir_name == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    SceSaveDataDirName localDir{};
+    if (!GuestCopyIn_nid_no_patch(&localDir, localMount.dir_name, sizeof(localDir))) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    errno = savedErrno;
+    return mount3_impl(localMount, localDir, mount_result, trace);
+}
+
+int APS5_VABI sceSaveDataMount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result) {
+    MountTrace trace;
+    const int rc = mount3(mount, mount_result, &trace);
+    SAVEDATA_TRACE("mount3 user=%d dir=%.*s mode=0x%x blocks=%llu -> 0x%08x point=%.*s status=%u", trace.readable ? trace.user_id : -1, static_cast<int>(sizeof(SceSaveDataDirName::data)), trace.named ? trace.dir_name.data : "(null)", trace.readable ? trace.mount_mode : 0u, trace.readable ? static_cast<unsigned long long>(trace.blocks) : 0ull, static_cast<unsigned>(rc), static_cast<int>(sizeof(SaveDataMountPoint::data)), rc == SAVE_DATA_OK ? trace.mount_point.data : "", rc == SAVE_DATA_OK ? trace.mount_status : 0u);
+    return rc;
+}
+
+static int mount2(const SaveDataMount2* mount, SaveDataMountResult* mount_result, MountTrace* trace = nullptr) {
+    if (mount == nullptr || mount_result == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    SaveDataMount2 localMount{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localMount, mount, sizeof(localMount))) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    errno = savedErrno;
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
-    if (mount->user_id == -1 || mount->user_id == 0) {
+    if (localMount.user_id == -1 || localMount.user_id == 0) {
         return SAVE_DATA_ERROR_INVALID_LOGIN_USER;
     }
-    const bool creates = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_CREATE) != 0;
-    if (mount->mount_mode == 0 || (creates && mount->blocks < SAVE_DATA_BLOCKS_MIN2)) {
+    const bool creates = (localMount.mount_mode & SAVE_DATA_MOUNT_MODE_CREATE) != 0;
+    if (localMount.mount_mode == 0 || (creates && localMount.blocks < SAVE_DATA_BLOCKS_MIN2)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    if (mount->dir_name != nullptr) {
-        const std::string_view name(mount->dir_name->data, sizeof(mount->dir_name->data));
-        if (name.substr(0, name.find('\0')).find('_') != std::string_view::npos) {
-            return SAVE_DATA_ERROR_PARAMETER;
-        }
+    if (localMount.dir_name == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    SceSaveDataDirName localDir{};
+    if (!GuestCopyIn_nid_no_patch(&localDir, localMount.dir_name, sizeof(localDir))) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    errno = savedErrno;
+    const std::string_view name(localDir.data, sizeof(localDir.data));
+    if (name.substr(0, name.find('\0')).find('_') != std::string_view::npos) {
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     SaveDataMount3 converted{};
-    converted.user_id = mount->user_id;
-    converted.dir_name = mount->dir_name;
-    converted.blocks = mount->blocks;
-    converted.mount_mode = mount->mount_mode;
-    return mount3(&converted, mount_result);
+    converted.user_id = localMount.user_id;
+    converted.dir_name = localMount.dir_name;
+    converted.blocks = localMount.blocks;
+    converted.mount_mode = localMount.mount_mode;
+    return mount3_impl(converted, localDir, mount_result, trace);
 }
 
 int APS5_VABI sceSaveDataMount2(const SaveDataMount2* mount, SaveDataMountResult* mount_result) {
-    const int rc = mount2(mount, mount_result);
-    SAVEDATA_TRACE("mount2 user=%d dir=%.*s mode=0x%x blocks=%llu -> 0x%08x point=%.*s status=%u", mount != nullptr ? mount->user_id : -1, static_cast<int>(sizeof(SceSaveDataDirName::data)), mount != nullptr && mount->dir_name != nullptr ? mount->dir_name->data : "(null)", mount != nullptr ? mount->mount_mode : 0u, mount != nullptr ? static_cast<unsigned long long>(mount->blocks) : 0ull, static_cast<unsigned>(rc), static_cast<int>(sizeof(SaveDataMountPoint::data)), mount_result != nullptr ? mount_result->mount_point.data : "", mount_result != nullptr ? mount_result->mount_status : 0u);
+    MountTrace trace;
+    const int rc = mount2(mount, mount_result, &trace);
+    SAVEDATA_TRACE("mount2 user=%d dir=%.*s mode=0x%x blocks=%llu -> 0x%08x point=%.*s status=%u", trace.readable ? trace.user_id : -1, static_cast<int>(sizeof(SceSaveDataDirName::data)), trace.named ? trace.dir_name.data : "(null)", trace.readable ? trace.mount_mode : 0u, trace.readable ? static_cast<unsigned long long>(trace.blocks) : 0ull, static_cast<unsigned>(rc), static_cast<int>(sizeof(SaveDataMountPoint::data)), rc == SAVE_DATA_OK ? trace.mount_point.data : "", rc == SAVE_DATA_OK ? trace.mount_status : 0u);
     return rc;
 }
 
@@ -1991,7 +2074,8 @@ static int getConvertProgress(float* progress) {
 
 int APS5_VABI sceSaveDataGetConvertProgress(float* progress) {
     const int rc = getConvertProgress(progress);
-    SAVEDATA_TRACE("getConvertProgress -> 0x%08x progress=%.2f", static_cast<unsigned>(rc), progress != nullptr && rc == SAVE_DATA_OK ? *progress : 0.0f);
+    const float current = rc == SAVE_DATA_OK ? g_convertProgress.load() : 0.0f;
+    SAVEDATA_TRACE("getConvertProgress -> 0x%08x progress=%.2f", static_cast<unsigned>(rc), current);
     return rc;
 }
 
@@ -2078,18 +2162,43 @@ int APS5_VABI sceSaveDataChangeInternal(void) {
     return 0;
 }
 
-static int checkBackupData(const SaveDataCheckBackupData* check) {
+struct BackupTrace {
+    bool readable = false;
+    SceSaveDataDirName dir_name{};
+};
+
+static int checkBackupData(const SaveDataCheckBackupData* check, BackupTrace* trace = nullptr) {
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
-    if (check == nullptr || check->dir_name == nullptr) {
+    if (check == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
+    }
+    SaveDataCheckBackupData localCheck{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localCheck, check, sizeof(localCheck))) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    errno = savedErrno;
+    if (localCheck.dir_name == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    SceSaveDataDirName localDir{};
+    if (!GuestCopyIn_nid_no_patch(&localDir, localCheck.dir_name, sizeof(localDir))) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    errno = savedErrno;
+    if (trace != nullptr) {
+        trace->readable = true;
+        trace->dir_name = localDir;
     }
     std::string dirName;
-    if (!parse_dir_name(check->dir_name, &dirName)) {
+    if (!parse_dir_name(&localDir, &dirName)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    if (!running_title(check->title_id)) {
+    if (!running_title(localCheck.title_id)) {
         return SAVE_DATA_ERROR_NOT_FOUND;
     }
     std::lock_guard lock(g_slots_mutex);
@@ -2098,12 +2207,13 @@ static int checkBackupData(const SaveDataCheckBackupData* check) {
         return SAVE_DATA_ERROR_BUSY;
     }
     if (error) return SAVE_DATA_ERROR_INTERNAL;
-    return read_backup(dirName, check->param);
+    return read_backup(dirName, localCheck.param);
 }
 
 int APS5_VABI sceSaveDataCheckBackupData(const SaveDataCheckBackupData* check) {
-    const int rc = checkBackupData(check);
-    SAVEDATA_TRACE("checkBackupData dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), check != nullptr && check->dir_name != nullptr ? check->dir_name->data : "(null)", static_cast<unsigned>(rc));
+    BackupTrace trace;
+    const int rc = checkBackupData(check, &trace);
+    SAVEDATA_TRACE("checkBackupData dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), trace.readable ? trace.dir_name.data : "(null)", static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -2448,18 +2558,38 @@ int APS5_VABI sceSaveDataRegisterEventCallback(SaveDataEventCallback callback, v
     return SAVE_DATA_OK;
 }
 
-static int restoreBackupData(const SaveDataRestoreBackupData* restore) {
+static int restoreBackupData(const SaveDataRestoreBackupData* restore, BackupTrace* trace = nullptr) {
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
-    if (restore == nullptr || restore->dir_name == nullptr) {
+    if (restore == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
+    }
+    SaveDataRestoreBackupData localRestore{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localRestore, restore, sizeof(localRestore))) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    errno = savedErrno;
+    if (localRestore.dir_name == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    SceSaveDataDirName localDir{};
+    if (!GuestCopyIn_nid_no_patch(&localDir, localRestore.dir_name, sizeof(localDir))) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    errno = savedErrno;
+    if (trace != nullptr) {
+        trace->readable = true;
+        trace->dir_name = localDir;
     }
     std::string dirName;
-    if (!parse_dir_name(restore->dir_name, &dirName)) {
+    if (!parse_dir_name(&localDir, &dirName)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    if (!running_title(restore->title_id)) {
+    if (!running_title(localRestore.title_id)) {
         return SAVE_DATA_ERROR_NOT_FOUND;
     }
     const std::string target = save_root() + "/" + dirName;
@@ -2485,8 +2615,9 @@ static int restoreBackupData(const SaveDataRestoreBackupData* restore) {
 }
 
 int APS5_VABI sceSaveDataRestoreBackupData(const SaveDataRestoreBackupData* restore) {
-    const int rc = restoreBackupData(restore);
-    SAVEDATA_TRACE("restoreBackupData dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), restore != nullptr && restore->dir_name != nullptr ? restore->dir_name->data : "(null)", static_cast<unsigned>(rc));
+    BackupTrace trace;
+    const int rc = restoreBackupData(restore, &trace);
+    SAVEDATA_TRACE("restoreBackupData dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), trace.readable ? trace.dir_name.data : "(null)", static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -2605,14 +2736,31 @@ int APS5_VABI sceSaveDataInitialize(const void* init) {
 }
 
 int APS5_VABI sceSaveDataMount(const SaveDataMountPs4* mount, SaveDataMountResult* mount_result) {
-    if (mount == nullptr || mount_result == nullptr || mount->dir_name == nullptr) return SAVE_DATA_ERROR_PARAMETER;
-    if (mount->title_id != nullptr) NotImplemented_nid_no_patch("sceSaveDataMount of another title's save data");
+    if (mount == nullptr || mount_result == nullptr) return SAVE_DATA_ERROR_PARAMETER;
+    SaveDataMountPs4 localMount{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localMount, mount, sizeof(localMount))) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    errno = savedErrno;
+    if (localMount.dir_name == nullptr) return SAVE_DATA_ERROR_PARAMETER;
+    if (localMount.title_id != nullptr) NotImplemented_nid_no_patch("sceSaveDataMount of another title's save data");
+    SceSaveDataDirName localDir{};
+    if (!GuestCopyIn_nid_no_patch(&localDir, localMount.dir_name, sizeof(localDir))) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    errno = savedErrno;
     SaveDataMount3 converted{};
-    converted.user_id = mount->user_id;
-    converted.dir_name = mount->dir_name;
-    converted.blocks = mount->blocks;
-    converted.mount_mode = mount->mount_mode;
-    return sceSaveDataMount3(&converted, mount_result);
+    converted.user_id = localMount.user_id;
+    converted.dir_name = localMount.dir_name;
+    converted.blocks = localMount.blocks;
+    converted.mount_mode = localMount.mount_mode;
+    MountTrace trace;
+    const int rc = mount3_impl(converted, localDir, mount_result, &trace);
+    SAVEDATA_TRACE("mount user=%d dir=%.*s mode=0x%x blocks=%llu -> 0x%08x point=%.*s status=%u", trace.readable ? trace.user_id : -1, static_cast<int>(sizeof(SceSaveDataDirName::data)), trace.named ? trace.dir_name.data : "(null)", trace.readable ? trace.mount_mode : 0u, trace.readable ? static_cast<unsigned long long>(trace.blocks) : 0ull, static_cast<unsigned>(rc), static_cast<int>(sizeof(SaveDataMountPoint::data)), rc == SAVE_DATA_OK ? trace.mount_point.data : "", rc == SAVE_DATA_OK ? trace.mount_status : 0u);
+    return rc;
 }
 
 int APS5_VABI sceSaveDataUmount(const SaveDataMountPoint* mount_point) {
