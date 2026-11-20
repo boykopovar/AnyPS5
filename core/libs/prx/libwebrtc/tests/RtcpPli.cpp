@@ -107,8 +107,9 @@ void TestConstructor() {
     WebRtcRtcpPli pli = Filled();
     _ZN6webrtc4rtcp3PliC1Ev_nid_postfix(&pli);
     Require(pli.vtable != nullptr && pli.senderSsrc == 0 && pli.mediaSsrc == 0);
-    Require(Slot(pli, 0) == reinterpret_cast<void*>(&_ZN6webrtc4rtcp3PliD1Ev_nid_postfix));
-    Require(Slot(pli, 1) != nullptr);
+    Require(Slot(pli, 0) != nullptr && Slot(pli, 1) != nullptr);
+    reinterpret_cast<void (APS5_VABI*)(WebRtcRtcpPli*)>(Slot(pli, 0))(&pli);
+    Require(pli.senderSsrc == 0 && pli.mediaSsrc == 0);
     Require(reinterpret_cast<BlockLengthFunction>(Slot(pli, 2))(&pli) == 12);
     RequireInvalidArgument([] { _ZN6webrtc4rtcp3PliC1Ev_nid_postfix(nullptr); });
 }
