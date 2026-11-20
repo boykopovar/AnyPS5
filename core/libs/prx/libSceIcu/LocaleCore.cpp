@@ -27,6 +27,7 @@ namespace {
 constexpr std::int32_t kIllegalArgument = 1;
 constexpr std::int32_t kBufferOverflow = 15;
 constexpr std::int32_t kStringNotTerminated = -124;
+constexpr std::int32_t kFullNameCapacity = 157;
 
 constexpr std::array<std::pair<std::string_view, std::string_view>, 185> Languages{{
     {"aar", "aa"}, {"abk", "ab"}, {"afr", "af"}, {"aka", "ak"}, {"amh", "am"}, {"ara", "ar"}, {"arg", "an"},
@@ -451,11 +452,6 @@ Parts Parse(const char* locale) {
     const auto encoding = head.find('.');
     const std::string_view base = head.substr(0, encoding);
     if (encoding != std::string_view::npos) parts.encoding = std::string(head.substr(encoding));
-    const std::string special = ChangeCase(base, false);
-    if (special == "i-klingon" || special == "x-private") {
-        parts.language = special;
-        return parts;
-    }
 
     std::vector<std::string> tokens;
     std::size_t start = 0;
@@ -466,10 +462,14 @@ Parts Parse(const char* locale) {
         start = end + 1;
     }
 
-    if (!tokens.empty()) parts.language = ChangeCase(tokens.front(), false);
+    std::size_t index = 1;
+    parts.language = ChangeCase(tokens.front(), false);
+    if (tokens.size() > 1 && (parts.language == "i" || parts.language == "x")) {
+        parts.language += "-" + ChangeCase(tokens[1], false);
+        index = 2;
+    }
     if (parts.language == "und" || parts.language == "root") parts.language.clear();
     if (parts.language.size() == 3) parts.language = ShortCode(Languages, parts.language);
-    std::size_t index = 1;
     if (index < tokens.size() && IsScript(tokens[index])) {
         parts.script = ChangeCase(tokens[index], false);
         parts.script.front() = Upper(parts.script.front());
@@ -491,8 +491,6 @@ Parts Parse(const char* locale) {
 }
 
 std::string BaseName(const Parts& parts) {
-    if (parts.language == "i-klingon") return "tlh";
-    if (parts.language == "x-private") return "";
     std::string result = parts.language;
     if (!parts.script.empty()) result += "_" + parts.script;
     if (!parts.country.empty()) result += "_" + parts.country;
@@ -518,8 +516,10 @@ std::int32_t Write(std::string_view value, char* destination, std::int32_t capac
     if (size > 0 && destination && capacity > 0 && (!fullOnly || capacity >= size)) {
         std::memcpy(destination, value.data(), static_cast<std::size_t>(std::min(capacity, size)));
     }
-    if (capacity > size && destination) destination[size] = '\0';
-    else if (capacity == size) *status = kStringNotTerminated;
+    if (capacity > size && destination) {
+        destination[size] = '\0';
+        if (*status == kStringNotTerminated) *status = 0;
+    } else if (capacity == size) *status = kStringNotTerminated;
     else *status = kBufferOverflow;
     return size;
 }
@@ -531,6 +531,32 @@ std::int32_t Component(const char* locale, char* result, std::int32_t capacity,
     Parts parts = Parse(locale);
     const std::string& value = which == 0 ? parts.language : which == 1 ? parts.country : parts.script;
     return Write(value, result, capacity, status, true);
+}
+
+std::string FromLanguageTag(const char* locale, std::int32_t* status) {
+    const std::string_view input(locale);
+    if (input.find('@') != std::string_view::npos || !ShortestSubtagIsOne(input)) return locale;
+    std::array<char, kFullNameCapacity> buffer;
+    const std::int32_t length = uloc_forLanguageTag(locale, buffer.data(), kFullNameCapacity, nullptr, status);
+    if (*status == kStringNotTerminated) *status = kBufferOverflow;
+    return length > 0 && *status <= 0 ? std::string(buffer.data(), static_cast<std::size_t>(length)) : std::string(locale);
+}
+
+std::int32_t WriteUnconverted(std::string_view id, char* destination, std::int32_t capacity) {
+    std::size_t position = 0;
+    if (ChangeCase(id, false) == "root") position = 4;
+    else if (ChangeCase(id.substr(0, 3), false) == "und" && (id.size() == 3 || id[3] == '-' || id[3] == '_')) position = 3;
+    if (position + 1 < id.size() && (Lower(id[position]) == 'i' || Lower(id[position]) == 'x')
+        && (id[position + 1] == '-' || id[position + 1] == '_')) position += 2;
+    while (position < id.size() && id[position] != '.' && id[position] != '-' && id[position] != '_') ++position;
+    std::string remainder;
+    if (position < id.size() && id[position] != '.') {
+        for (++position; position < id.size() && id[position] != '.'; ++position)
+            remainder.push_back(id[position] == '-' ? '_' : Upper(id[position]));
+    }
+    if (destination && capacity > 0)
+        std::memcpy(destination, remainder.data(), std::min(remainder.size(), static_cast<std::size_t>(capacity)));
+    return static_cast<std::int32_t>(remainder.size());
 }
 
 }
@@ -559,8 +585,10 @@ std::int32_t APS5_VABI uloc_getScript(const char* locale, char* result,
 std::int32_t APS5_VABI uloc_getBaseName(const char* locale, char* result,
                                        std::int32_t capacity, std::int32_t* status) {
     if (!status || *status > 0) return 0;
-    if (!locale) locale = Icu::DefaultLocaleName();
-    return Write(BaseName(Parse(locale)), result, capacity, status, false);
+    if (!locale) return Write(BaseName(Parse(Icu::DefaultLocaleName())), result, capacity, status, false);
+    const std::string id = FromLanguageTag(locale, status);
+    if (*status > 0) return WriteUnconverted(id, result, capacity);
+    return Write(BaseName(Parse(id.c_str())), result, capacity, status, false);
 }
 
 std::int32_t APS5_VABI uloc_getKeywordValue(const char* locale, const char* keyword,
@@ -613,10 +641,11 @@ std::int32_t APS5_VABI uloc_getKeywordValue(const char* locale, const char* keyw
 std::int32_t APS5_VABI uloc_canonicalize(const char* locale, char* result,
                                         std::int32_t capacity, std::int32_t* status) {
     if (!status || *status > 0) return 0;
-    if (!locale) locale = Icu::DefaultLocaleName();
-    Parts parts = Parse(locale);
+    const std::string id = locale ? FromLanguageTag(locale, status) : std::string(Icu::DefaultLocaleName());
+    if (*status > 0) return WriteUnconverted(id, result, capacity);
+    Parts parts = Parse(id.c_str());
     parts.encoding.clear();
-    std::string canonical = parts.language == "x-private" ? "@x=private" : BaseName(parts);
+    std::string canonical = BaseName(parts);
     if (!parts.keywords.empty()) {
         std::vector<std::string> keywords;
         std::size_t start = 0;

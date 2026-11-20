@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
@@ -9,6 +10,64 @@
 #include <initializer_list>
 #include <source_location>
 #include <stdexcept>
+#include <new>
+#include <string>
+#ifndef _WIN32
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
+#ifndef _WIN32
+static std::size_t hostAllocationLimit = SIZE_MAX;
+void* operator new(std::size_t bytes) {
+    if (bytes > hostAllocationLimit) {
+        std::fprintf(stderr, "host allocation of %zu bytes exceeds the test cap\n", bytes);
+        std::abort();
+    }
+    if (void* pointer = std::malloc(bytes ? bytes : 1)) return pointer;
+    throw std::bad_alloc();
+}
+void* operator new(std::size_t bytes, const std::nothrow_t&) noexcept {
+    if (bytes > hostAllocationLimit) {
+        std::fprintf(stderr, "host allocation of %zu bytes exceeds the test cap\n", bytes);
+        std::abort();
+    }
+    return std::malloc(bytes ? bytes : 1);
+}
+void operator delete(void* pointer) noexcept { std::free(pointer); }
+void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
+void operator delete(void* pointer, const std::nothrow_t&) noexcept { std::free(pointer); }
+#endif
+
+template<typename TCall> static void Capped(TCall call) {
+#ifndef _WIN32
+    hostAllocationLimit = 1 << 20;
+#endif
+    call();
+#ifndef _WIN32
+    hostAllocationLimit = SIZE_MAX;
+#endif
+}
+
+#ifndef _WIN32
+class GuardedPage {
+public:
+    GuardedPage() {
+        const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        mapping = mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (mapping == MAP_FAILED || mprotect(static_cast<unsigned char*>(mapping) + page, page, PROT_NONE) != 0) std::abort();
+        end = static_cast<unsigned char*>(mapping) + page;
+        bytes = page * 2;
+    }
+    ~GuardedPage() { munmap(mapping, bytes); }
+    unsigned char* Tail(std::size_t count) const { return end - count; }
+
+private:
+    void* mapping = nullptr;
+    unsigned char* end = nullptr;
+    std::size_t bytes = 0;
+};
+#endif
 
 struct TestStack {
     int num;
@@ -373,6 +432,111 @@ static void TestDynamicNid() {
     Require(BufferHolds(buffer, "", 0));
 }
 
+template<typename TCall> static void RejectsPreservingErrno(TCall call, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    bool rejected = false;
+    try { call(); } catch (const std::runtime_error&) { rejected = errno == 71; }
+    Require(rejected, location);
+}
+
+static void TestGuestPointers() {
+    auto* unmapped = reinterpret_cast<void*>(std::uintptr_t {0x10});
+    char buffer[64];
+    RejectsPreservingErrno([&] { X509_NAME_get_entry_nid_postfix(static_cast<const LibreSslX509Name*>(unmapped), 0); });
+    RejectsPreservingErrno([&] { X509_NAME_ENTRY_get_data_nid_postfix(static_cast<const LibreSslX509NameEntry*>(unmapped)); });
+    RejectsPreservingErrno([&] { X509_NAME_get_index_by_NID_nid_postfix(static_cast<const LibreSslX509Name*>(unmapped), 13, -1); });
+    RejectsPreservingErrno([&] { X509_NAME_get_text_by_NID_nid_postfix(static_cast<const LibreSslX509Name*>(unmapped), 13, buffer, 64); });
+    {
+        DecodedName decoded;
+        decoded.name.entries = static_cast<LibreSslStack*>(unmapped);
+        RejectsPreservingErrno([&] { X509_NAME_get_entry_nid_postfix(&decoded.name, 0); });
+        RejectsPreservingErrno([&] { X509_NAME_get_text_by_NID_nid_postfix(&decoded.name, 13, buffer, 64); });
+    }
+    {
+        DecodedName decoded;
+        decoded.stack.data = static_cast<char**>(unmapped);
+        RejectsPreservingErrno([&] { X509_NAME_get_entry_nid_postfix(&decoded.name, 1); });
+        RejectsPreservingErrno([&] { X509_NAME_get_text_by_NID_nid_postfix(&decoded.name, 13, buffer, 64); });
+    }
+    {
+        DecodedName decoded;
+        decoded.slots[1] = static_cast<char*>(unmapped);
+        Require(X509_NAME_get_entry_nid_postfix(&decoded.name, 1) == unmapped);
+        RejectsPreservingErrno([&] { X509_NAME_get_index_by_NID_nid_postfix(&decoded.name, 13, -1); });
+        Require(X509_NAME_get_index_by_NID_nid_postfix(&decoded.name, 14, -1) == 0);
+    }
+    {
+        DecodedName decoded;
+        decoded.entries[1].object = unmapped;
+        RejectsPreservingErrno([&] { X509_NAME_get_text_by_NID_nid_postfix(&decoded.name, 13, buffer, 64); });
+    }
+    {
+        DecodedName decoded;
+        decoded.objects[2].data = static_cast<const unsigned char*>(unmapped);
+        RejectsPreservingErrno([&] { X509_NAME_get_index_by_NID_nid_postfix(&decoded.name, 13, -1); });
+        Require(X509_NAME_get_index_by_NID_nid_postfix(&decoded.name, 14, -1) == 0);
+    }
+    {
+        DecodedName decoded;
+        decoded.entries[2].value = unmapped;
+        Require(X509_NAME_ENTRY_get_data_nid_postfix(&decoded.entries[2]) == unmapped);
+        RejectsPreservingErrno([&] { X509_NAME_get_text_by_NID_nid_postfix(&decoded.name, 13, buffer, 64); });
+        RejectsPreservingErrno([&] { X509_NAME_get_text_by_NID_nid_postfix(&decoded.name, 13, nullptr, 0); });
+    }
+    {
+        DecodedName decoded;
+        decoded.values[2].data = static_cast<unsigned char*>(unmapped);
+        std::memset(buffer, 0x7f, sizeof(buffer));
+        RejectsPreservingErrno([&] { X509_NAME_get_text_by_NID_nid_postfix(&decoded.name, 13, buffer, 64); });
+        Require(BufferHolds(buffer, "", 0));
+        Require(X509_NAME_get_text_by_NID_nid_postfix(&decoded.name, 13, nullptr, 64) == 5);
+        Require(X509_NAME_get_text_by_NID_nid_postfix(&decoded.name, 13, buffer, 1) == 0);
+        Require(BufferHolds(buffer, "", 1));
+    }
+    {
+        DecodedName decoded;
+        RejectsPreservingErrno([&] { X509_NAME_get_text_by_NID_nid_postfix(&decoded.name, 13, static_cast<char*>(unmapped), 64); });
+        RejectsPreservingErrno([&] { X509_NAME_get_text_by_NID_nid_postfix(&decoded.name, 13, static_cast<char*>(unmapped), 1); });
+        Require(X509_NAME_get_text_by_NID_nid_postfix(&decoded.name, 13, static_cast<char*>(unmapped), 0) == -1);
+    }
+    Require(NoError());
+}
+
+static void TestOversizedText() {
+    char buffer[64];
+    std::memset(buffer, 0x7f, sizeof(buffer));
+    {
+        DecodedName decoded;
+        decoded.values[2].length = INT_MAX;
+        decoded.values[2].data = reinterpret_cast<unsigned char*>(std::uintptr_t {0x10});
+        Capped([&] { RejectsPreservingErrno([&] { X509_NAME_get_text_by_NID_nid_postfix(&decoded.name, 13, buffer, INT_MAX); }); });
+        Require(BufferHolds(buffer, "", 0));
+#ifndef _WIN32
+        GuardedPage page;
+        std::memcpy(page.Tail(5), "first", 5);
+        decoded.values[2].data = page.Tail(5);
+        Capped([&] { RejectsPreservingErrno([&] { X509_NAME_get_text_by_NID_nid_postfix(&decoded.name, 13, buffer, INT_MAX); }); });
+        Require(BufferHolds(buffer, "", 0));
+        decoded.values[2].length = 5;
+        Capped([&] { Require(X509_NAME_get_text_by_NID_nid_postfix(&decoded.name, 13, buffer, INT_MAX) == 5); });
+        Require(std::memcmp(buffer, "first", 6) == 0);
+#endif
+    }
+    {
+        DecodedName decoded;
+        std::string text(0x2345, 'x');
+        for (std::size_t index = 0; index < text.size(); ++index) text[index] = static_cast<char>('a' + index % 26);
+        decoded.values[2].length = static_cast<int>(text.size());
+        decoded.values[2].data = reinterpret_cast<unsigned char*>(text.data());
+        std::string out(text.size() + 2, '\x7f');
+        Capped([&] { Require(X509_NAME_get_text_by_NID_nid_postfix(&decoded.name, 13, out.data(), static_cast<int>(out.size())) == static_cast<int>(text.size())); });
+        Require(out.compare(0, text.size(), text) == 0 && out[text.size()] == '\0' && out[text.size() + 1] == '\x7f');
+        Capped([&] { Require(X509_NAME_get_text_by_NID_nid_postfix(&decoded.name, 13, out.data(), 0x1001) == 0x1000); });
+        Require(out.compare(0, 0x1000, text, 0, 0x1000) == 0 && out[0x1000] == '\0');
+    }
+    Require(NoError());
+}
+
 int main() {
     TestGetEntry();
     TestEntryGetData();
@@ -381,5 +545,7 @@ int main() {
     TestObjectTableNids();
     TestUnknownNids();
     TestDynamicNid();
+    TestGuestPointers();
+    TestOversizedText();
     return 0;
 }

@@ -2,6 +2,7 @@
 #include "prx/libfreetype/include/GuestStream.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -9,6 +10,7 @@
 namespace {
 
 constexpr int InvalidFileFormat = 0x03;
+constexpr int InvalidStreamHandle = 0x28;
 constexpr int InvalidStreamOperation = 0x55;
 
 struct Counter {
@@ -107,4 +109,17 @@ int main() {
     Require(std::memcmp(decoded.data(), "ABC", decoded.size()) == 0);
     output.close(&output);
     Require(noReallocCounter.allocations > 0 && noReallocCounter.allocations == noReallocCounter.frees);
+
+    Require(FT_Stream_OpenLZW_nid_postfix(nullptr, &source) == InvalidStreamHandle);
+    Require(FT_Stream_OpenLZW_nid_postfix(&output, nullptr) == InvalidStreamHandle);
+    Require(FT_Stream_OpenLZW_nid_postfix(nullptr, nullptr) == InvalidStreamHandle);
+    errno = 71;
+    Require(FT_Stream_OpenLZW_nid_postfix(reinterpret_cast<LegacyFreeType::GuestStreamRec*>(0x10), &source) == InvalidStreamHandle);
+    Require(errno == 71);
+    errno = 71;
+    Require(FT_Stream_OpenLZW_nid_postfix(&output, reinterpret_cast<LegacyFreeType::GuestStreamRec*>(0x10)) == InvalidStreamHandle);
+    Require(errno == 71);
+    errno = 71;
+    Require(FT_Stream_OpenLZW_nid_postfix(reinterpret_cast<LegacyFreeType::GuestStreamRec*>(0x10), reinterpret_cast<LegacyFreeType::GuestStreamRec*>(0x10)) == InvalidStreamHandle);
+    Require(errno == 71);
 }

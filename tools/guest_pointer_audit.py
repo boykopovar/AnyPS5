@@ -98,17 +98,19 @@ def checked_argument_dereferences(body, name):
 
 def names_parameter(argument, name):
     argument = argument.strip()
+    pattern = re.compile(rf"\(?\s*{re.escape(name)}\b")
     while True:
+        if pattern.match(argument):
+            return True
         stripped = CAST.sub("", argument, count=1)
         if stripped == argument:
-            break
+            return False
         argument = stripped
-    return re.match(rf"{re.escape(name)}\b", argument) is not None
 
 
 def accesses(body, name):
     word = re.escape(name)
-    operand = rf"(?:\b{word}\b|\b(?:reinterpret|static|const)_cast\s*{CAST_TYPE}\s*\(\s*{word}\s*\))"
+    operand = rf"(?<![.>:])(?:\b{word}\b|\b(?:reinterpret|static|const)_cast\s*{CAST_TYPE}\s*\(\s*{word}\s*\))"
     found = []
     for kind, pattern in (("member", rf"{operand}\s*->"), ("index", rf"{operand}\s*\["),
                           ("dereference", rf"(?:^|[=(,;{{}}!&|?:+\-]|\breturn)\s*\*\s*{operand}")):
