@@ -143,6 +143,11 @@ class FrameReplayReportTests(unittest.TestCase):
             self.assertEqual(parsed["environment"], {"ANYPS5_GPU": "", "APS5_TRACE": "", "ANYPS5_HOST_REPORT": "1"})
             self.assertEqual(parsed["raw"], raw)
 
+        with self.subTest("a diagnostic after the environment ends the host report"):
+            parsed = report.parse_replay_host_report(HOST + "agc_frame_replay: the GPU lacks shaderInt64\n", COMMIT)
+            self.assertEqual(parsed["environment"], {"ANYPS5_HOST_REPORT": "1"})
+            self.assertEqual(parsed["raw"], HOST)
+
         for key in report.INTEGER_FIELDS:
             with self.subTest("required integer", field=key):
                 for replacement in (None, True, -1, 1.5, 1 << 64):
