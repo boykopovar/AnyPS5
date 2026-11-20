@@ -1746,21 +1746,23 @@ void TestNumbers() {
 
 class GuardedPage {
 public:
-    GuardedPage() {
+    explicit GuardedPage(std::size_t pages = 1) {
 #ifdef _WIN32
         SYSTEM_INFO info {};
         GetSystemInfo(&info);
-        size = info.dwPageSize;
-        base = static_cast<char*>(VirtualAlloc(nullptr, size * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        guard = info.dwPageSize;
+        size = guard * pages;
+        base = static_cast<char*>(VirtualAlloc(nullptr, size + guard, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
         Require(base != nullptr, "the guarded page is allocated");
         DWORD previous {};
-        Require(VirtualProtect(base + size, size, PAGE_NOACCESS, &previous) != 0, "the guard page is protected");
+        Require(VirtualProtect(base + size, guard, PAGE_NOACCESS, &previous) != 0, "the guard page is protected");
 #else
-        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
-        void* mapped = mmap(nullptr, size * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        guard = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        size = guard * pages;
+        void* mapped = mmap(nullptr, size + guard, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         Require(mapped != MAP_FAILED, "the guarded page is allocated");
         base = static_cast<char*>(mapped);
-        Require(mprotect(base + size, size, PROT_NONE) == 0, "the guard page is protected");
+        Require(mprotect(base + size, guard, PROT_NONE) == 0, "the guard page is protected");
 #endif
     }
 
@@ -1768,7 +1770,7 @@ public:
 #ifdef _WIN32
         VirtualFree(base, 0, MEM_RELEASE);
 #else
-        munmap(base, size * 2);
+        munmap(base, size + guard);
 #endif
     }
 
@@ -1786,6 +1788,7 @@ public:
 private:
     char* base = nullptr;
     std::size_t size = 0;
+    std::size_t guard = 0;
 };
 
 void TestGuestHexPointers() {
@@ -2168,6 +2171,21 @@ void TestStreamGuestPointers() {
     Require(_ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm(&reader, nullptr, out.data(), 64, &count) == NpInvalidArgument && count == 99 &&
                 reader.position == 0,
         "a memory read that runs into unmapped data is refused");
+    GuardedPage readPages(2);
+    std::fill(readPages.End() - 4096 - 100, readPages.End(), static_cast<char>(0x5A));
+    std::fill(out.begin(), out.end(), std::uint8_t{0xC3});
+    count = 99;
+    _ZN3sce2np18MemoryStreamReaderC1EPKvm(&reader, readPages.End() - 4096 - 100, 4096 + 200);
+    Require(_ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm(&reader, nullptr, out.data(), 4096 + 200, &count) == NpInvalidArgument &&
+                count == 99 && reader.position == 0 && std::all_of(out.begin(), out.end(), [](std::uint8_t stored) { return stored == 0xC3; }),
+        "a multi-chunk memory read whose later source chunk is unmapped leaves the buffer and the position unchanged");
+    GuardedPage readerPage;
+    auto* readOnlyReader = reinterpret_cast<NpMemoryStreamReader*>(readerPage.End() - sizeof(NpMemoryStreamReader));
+    _ZN3sce2np18MemoryStreamReaderC1EPKvm(readOnlyReader, source.data(), source.size());
+    readerPage.ReadOnly();
+    Require(_ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm(readOnlyReader, nullptr, out.data(), 16, &count) == NpInvalidArgument &&
+                count == 99 && readOnlyReader->position == 0 && std::all_of(out.begin(), out.end(), [](std::uint8_t stored) { return stored == 0xC3; }),
+        "a memory read through a read-only reader leaves the buffer unchanged");
 
     std::vector<std::uint8_t> sink(source.size() + 1);
     NpMemoryStreamWriter writer {};
@@ -2188,6 +2206,21 @@ void TestStreamGuestPointers() {
     _ZN3sce2np18MemoryStreamWriterC1EPvm(&writer, unmapped, 4);
     Require(_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, "ab", 2, &count) == NpInvalidArgument && writer.position == 0,
         "a memory write into an unmapped buffer is refused");
+    GuardedPage writePages(2);
+    char* const writeTarget = writePages.End() - 4096 - 100;
+    std::fill(writeTarget, writePages.End(), static_cast<char>(0x3C));
+    count = 99;
+    _ZN3sce2np18MemoryStreamWriterC1EPvm(&writer, writeTarget, 4096 + 200);
+    Require(_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, source.data(), 4096 + 200, &count) == NpInvalidArgument &&
+                count == 99 && writer.position == 0 && std::all_of(writeTarget, writePages.End(), [](char stored) { return stored == 0x3C; }),
+        "a multi-chunk memory write whose later destination chunk is unmapped leaves the destination and the position unchanged");
+    GuardedPage writerPage;
+    auto* readOnlyWriter = reinterpret_cast<NpMemoryStreamWriter*>(writerPage.End() - sizeof(NpMemoryStreamWriter));
+    _ZN3sce2np18MemoryStreamWriterC1EPvm(readOnlyWriter, writeTarget, 16);
+    writerPage.ReadOnly();
+    Require(_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(readOnlyWriter, nullptr, source.data(), 16, &count) == NpInvalidArgument &&
+                count == 99 && readOnlyWriter->position == 0 && std::all_of(writeTarget, writePages.End(), [](char stored) { return stored == 0x3C; }),
+        "a memory write through a read-only writer leaves the destination unchanged");
 
     bool refused = false;
     try {

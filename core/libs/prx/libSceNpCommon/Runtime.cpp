@@ -401,7 +401,20 @@ bool Writable(void* destination, std::size_t size) {
     return writable;
 }
 
+bool Readable(const void* source, std::size_t size) {
+    if (size == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(source);
+    if (size - 1 > UINTPTR_MAX - start) return false;
+    const auto last = start + size - 1;
+    for (auto address = start;; address = (address | 0xFFF) + 1) {
+        std::uint8_t probe = 0;
+        if (!CopyIn(&probe, reinterpret_cast<const void*>(address), 1)) return false;
+        if ((address | 0xFFF) >= last) return true;
+    }
+}
+
 bool CopyGuestToGuest(void* destination, const void* source, std::size_t size) {
+    if (!Readable(source, size) || !Writable(destination, size)) return false;
     std::array<std::uint8_t, 4096> chunk;
     for (std::size_t offset = 0; offset < size; offset += chunk.size()) {
         const std::size_t count = std::min(chunk.size(), size - offset);
@@ -1683,7 +1696,7 @@ int APS5_VABI _ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm(NpMemoryStr
     std::size_t count = 0;
     if (reader.position < reader.size) {
         count = std::min(size, reader.size - reader.position);
-        if (!CopyGuestToGuest(out, static_cast<const std::uint8_t*>(reader.data) + reader.position, count)) return NP_ERROR_INVALID_ARGUMENT;
+        if (!Writable(self, sizeof(*self)) || !CopyGuestToGuest(out, static_cast<const std::uint8_t*>(reader.data) + reader.position, count)) return NP_ERROR_INVALID_ARGUMENT;
         reader.position += count;
         if (!CopyOut(self, &reader, sizeof(reader))) return NP_ERROR_INVALID_ARGUMENT;
     }
@@ -1710,7 +1723,9 @@ void APS5_VABI _ZN3sce2np18MemoryStreamWriterD0Ev(NpMemoryStreamWriter* self) {
 
 int APS5_VABI _ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(NpMemoryStreamWriter* self, void*, const void* data, std::size_t size, std::size_t* written) {
     NpMemoryStreamWriter writer {};
-    if (!CopyIn(&writer, self, sizeof(writer))) return NP_ERROR_INVALID_ARGUMENT;
+    if (!CopyIn(&writer, self, sizeof(writer)) || !Writable(self, sizeof(*self)) || (written != nullptr && !Writable(written, sizeof(*written)))) {
+        return NP_ERROR_INVALID_ARGUMENT;
+    }
     if (writer.data != nullptr) {
         const std::size_t room = writer.size == 0 ? 0 : writer.size - writer.position;
         if (room < size) return NP_ERROR_STREAM_BUFFER_TOO_SMALL;
