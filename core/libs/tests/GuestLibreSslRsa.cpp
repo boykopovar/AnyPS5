@@ -287,7 +287,7 @@ static Bytes StandardKey() {
     return RsaKey(Concat({{0x00}, Hex(CavpModulus)}), CavpExponent);
 }
 
-static LibreSslRsa* Decode(const Bytes& der, long length, long* consumed = nullptr) {
+static LibreSslRsa* Decode(const Bytes& der, std::int64_t length, long* consumed = nullptr) {
     const unsigned char* data = der.data();
     auto* rsa = d2i_RSA_PUBKEY_nid_postfix(nullptr, &data, length);
     if (consumed) *consumed = data - der.data();
@@ -342,6 +342,10 @@ static void TestPublicKeyInfo() {
     Require(Decode(published, 293, &consumed) == nullptr && consumed == 0);
     RequireRefused(Bytes(published.begin(), published.end() - 1));
     Require(Decode(published, 0) == nullptr && Decode(published, -1) == nullptr);
+    constexpr std::int64_t FourGiB = std::int64_t{1} << 32;
+    Require((rsa = Decode(published, FourGiB + 100, &consumed)) != nullptr && consumed == 294);
+    RSA_free_nid_postfix(rsa);
+    Require(Decode(published, FourGiB, &consumed) == nullptr && consumed == 0);
     RequireThrows([&] { d2i_RSA_PUBKEY_nid_postfix(nullptr, nullptr, 294); });
     RequireThrows([&] {
         const unsigned char* none = nullptr;
