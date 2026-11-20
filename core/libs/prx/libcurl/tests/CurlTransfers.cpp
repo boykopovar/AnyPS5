@@ -493,6 +493,49 @@ static void TestMimeFileGuestPath() {
     Require(remove_nid_postfix(guestPath.c_str()) == 0);
 }
 
+static void TestHttpPostTransfer() {
+    guest_curl_httppost* form = nullptr;
+    guest_curl_httppost* last = nullptr;
+    Require(curl_formadd_nid_postfix(&form, &last, CURLFORM_COPYNAME, "first", CURLFORM_COPYCONTENTS, "alpha", CURLFORM_END) == CURL_FORMADD_OK);
+    static const char binaryContents[] = {'b', '\0', 'c'};
+    Require(curl_formadd_nid_postfix(&form, &last, CURLFORM_COPYNAME, "second", CURLFORM_PTRCONTENTS, binaryContents,
+        CURLFORM_CONTENTSLENGTH, std::int64_t{3}, CURLFORM_CONTENTTYPE, "application/x-test", CURLFORM_END) == CURL_FORMADD_OK);
+
+    auto* easy = curl_easy_init_nid_postfix();
+    Require(easy != nullptr);
+    Server server;
+    const std::string url = "http://127.0.0.1:" + std::to_string(server.port) + "/";
+    std::string responseBody;
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_URL, url.c_str()) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_HTTPPOST, form) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_NOPROXY, "*") == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_HTTP_VERSION, static_cast<std::int64_t>(CURL_HTTP_VERSION_1_0)) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_TIMEOUT, static_cast<std::int64_t>(10)) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_WRITEFUNCTION, Write) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_WRITEDATA, &responseBody) == CURLE_OK);
+    auto* duplicate = curl_easy_duphandle_nid_postfix(easy);
+    Require(duplicate != nullptr);
+    curl_easy_cleanup_nid_postfix(easy);
+    Require(curl_easy_setopt_nid_postfix(duplicate, CURLOPT_WRITEDATA, &responseBody) == CURLE_OK);
+    Require(curl_easy_perform_nid_postfix(duplicate) == CURLE_OK);
+
+    const std::string& request = server.Request();
+    const std::size_t requestHeaderEnd = request.find("\r\n\r\n");
+    Require(requestHeaderEnd != std::string::npos);
+    Require(request.starts_with("POST / "));
+    const auto parts = SplitMultipartParts(request.substr(requestHeaderEnd + 4), ExtractMultipartBoundary(request.substr(0, requestHeaderEnd)));
+    Require(parts.size() == 2);
+    Require(parts[0].find("Content-Disposition: form-data; name=\"first\"") != std::string::npos);
+    Require(parts[0].ends_with("\r\n\r\nalpha"));
+    Require(parts[1].find("Content-Disposition: form-data; name=\"second\"") != std::string::npos);
+    Require(parts[1].find("Content-Type: application/x-test") != std::string::npos);
+    Require(parts[1].ends_with(std::string("\r\n\r\nb\0c", 7)));
+
+    curl_easy_reset_nid_postfix(duplicate);
+    curl_easy_cleanup_nid_postfix(duplicate);
+    curl_formfree_nid_postfix(form);
+}
+
 int main() {
 #ifdef _WIN32
     WSADATA data;
@@ -666,6 +709,7 @@ int main() {
     std::filesystem::remove(uploadPath);
     TestMimeBase64Transfer();
     TestMimeFileGuestPath();
+    TestHttpPostTransfer();
     curl_global_cleanup_nid_postfix();
 #ifdef _WIN32
     WSACleanup();

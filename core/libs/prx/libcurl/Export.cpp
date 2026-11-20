@@ -227,9 +227,42 @@ struct CallbackSlot {
     void* data = nullptr;
 };
 
+using HostForm = std::vector<curl_httppost>;
+
+size_t CountGuestForm(const guest_curl_httppost* guest) {
+    size_t count = 0;
+    for (; guest; guest = guest->next) count += 1 + CountGuestForm(guest->more);
+    return count;
+}
+
+curl_httppost* CopyGuestForm(HostForm& nodes, const guest_curl_httppost* guest) {
+    curl_httppost* head = nullptr;
+    auto** link = &head;
+    for (; guest; guest = guest->next) {
+        auto& host = nodes.emplace_back();
+        host.name = guest->name;
+        host.namelength = HostLong(guest->namelength);
+        host.contents = guest->contents;
+        host.contentslength = HostLong(guest->contentslength);
+        host.buffer = guest->buffer;
+        host.bufferlength = HostLong(guest->bufferlength);
+        host.contenttype = guest->contenttype;
+        host.contentheader = reinterpret_cast<curl_slist*>(guest->contentheader);
+        host.flags = HostLong(guest->flags);
+        host.showfilename = guest->showfilename;
+        host.userp = guest->userp;
+        host.contentlen = guest->contentlen;
+        host.more = CopyGuestForm(nodes, guest->more);
+        *link = &host;
+        link = &host.next;
+    }
+    return head;
+}
+
 struct EasyContext {
     CurlSockets::Easy sockets;
     std::array<CallbackSlot, 314> slots{};
+    std::shared_ptr<const HostForm> form;
     void* errorStream = &_Stderr_nid_postfix;
     EasyContext() {
         slots[1].data = &_Stdout_nid_postfix;
@@ -559,6 +592,20 @@ CURLcode SetEasyPointer(CURL* easy, CURLoption option, void* value, EasyContext*
     default: break;
     }
     switch (option) {
+    case CURLOPT_HTTPPOST: {
+        std::shared_ptr<HostForm> form;
+        try {
+            const auto* guest = static_cast<const guest_curl_httppost*>(value);
+            form = std::make_shared<HostForm>();
+            form->reserve(CountGuestForm(guest));
+            CopyGuestForm(*form, guest);
+        } catch (const std::bad_alloc&) {
+            return CURLE_OUT_OF_MEMORY;
+        }
+        auto result = ::curl_easy_setopt(easy, option, form->empty() ? nullptr : form->data());
+        if (result == CURLE_OK) context->form = std::move(form);
+        return result;
+    }
     case CURLOPT_WRITEFUNCTION: {
         auto result = ::curl_easy_setopt(easy, option, Write);
         if (result == CURLE_OK) context->slots[1].function = value;
@@ -1241,9 +1288,6 @@ std::int32_t APS5_VABI curl_easy_setopt_nid_postfix(CURL* handle, std::int32_t g
     const auto option = static_cast<CURLoption>(guestOption);
     if (!handle) return CURLE_BAD_FUNCTION_ARGUMENT;
     switch (option) {
-    case CURLOPT_HTTPPOST:
-        if constexpr (sizeof(long) != 8) throw std::invalid_argument("CURLOPT_HTTPPOST");
-        break;
     case CURLOPT_SSL_CTX_FUNCTION: throw std::invalid_argument("CURLOPT_SSL_CTX_FUNCTION");
     case CURLOPT_SSL_CTX_DATA: throw std::invalid_argument("CURLOPT_SSL_CTX_DATA");
     default: break;
