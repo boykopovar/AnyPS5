@@ -541,8 +541,56 @@ static int NativeFutimes(int descriptor, const KernelTimeval* times) {
 static int NativeFlock(int descriptor, int operation) {
     return ::flock(descriptor, operation);
 }
+std::int64_t File::TransferInParts(int descriptor, const iovec* iov, int iovcnt, const std::int64_t* offset, bool write) {
+    constexpr std::uint64_t singleCallBytes = 0x7ffff000;
+    constexpr std::size_t partBytes = std::size_t{1} << 30;
+    constexpr auto maxBytes = static_cast<std::uint64_t>(std::numeric_limits<ssize_t>::max());
+    std::uint64_t total = 0;
+    for (int i = 0; i < iovcnt; ++i) {
+        if (iov[i].iov_len > maxBytes - total) return -2;
+        total += iov[i].iov_len;
+    }
+    if (total <= singleCallBytes) return -2;
+    if (offset != nullptr && (*offset < 0 || total > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max() - *offset))) return -2;
+    struct stat status{};
+    const auto statResult = write ? ::fstat(descriptor, &status)
+                                  : ThreadCancel::Native([&] { return ::fstat(descriptor, &status); });
+    if (statResult != 0 || !S_ISREG(status.st_mode)) return -2;
+    std::vector<iovec> part;
+    std::int64_t done = 0;
+    int index = 0;
+    std::size_t skip = 0;
+    while (static_cast<std::uint64_t>(done) < total) {
+        part.clear();
+        std::size_t bytes = 0;
+        while (index < iovcnt && bytes < partBytes) {
+            const auto take = std::min(iov[index].iov_len - skip, partBytes - bytes);
+            part.push_back({static_cast<char*>(iov[index].iov_base) + skip, take});
+            bytes += take;
+            skip += take;
+            if (skip == iov[index].iov_len) {
+                ++index;
+                skip = 0;
+            }
+        }
+        const auto count = static_cast<int>(part.size());
+        const auto at = static_cast<off_t>(offset != nullptr ? *offset + done : 0);
+        const auto moved = write ? (offset == nullptr ? ::writev(descriptor, part.data(), count)
+                                                       : ::pwritev(descriptor, part.data(), count, at))
+                                 : ThreadCancel::Native([&] {
+                                       return offset == nullptr ? ::readv(descriptor, part.data(), count)
+                                                                : ::preadv(descriptor, part.data(), count, at);
+                                   });
+        if (moved < 0) return done != 0 ? done : -1;
+        done += moved;
+        if (static_cast<std::size_t>(moved) < bytes) break;
+    }
+    return done;
+}
 static std::int64_t NativePread(int descriptor, void* buf, std::size_t nbytes, std::int64_t offset) {
-    return ThreadCancel::Native([&] { return static_cast<std::int64_t>(::pread(descriptor, buf, nbytes, static_cast<off_t>(offset))); });
+    const iovec whole{buf, nbytes};
+    const auto parts = File::TransferInParts(descriptor, &whole, 1, &offset, false);
+    return parts == -2 ? ThreadCancel::Native([&] { return ::pread(descriptor, buf, nbytes, static_cast<off_t>(offset)); }) : parts;
 }
 #ifdef __APPLE__
 std::int64_t File::WritevAtEnd(int descriptor, const iovec* iov, int iovcnt) {
@@ -560,11 +608,12 @@ std::int64_t File::WritevAtEnd(int descriptor, const iovec* iov, int iovcnt) {
 static std::int64_t NativePwrite(int descriptor, const void* buf, std::size_t nbytes, std::int64_t offset) {
     const auto result = File::PwriteSharedMemory_nid_no_patch(descriptor, buf, nbytes, offset);
     if (result != -2) return result;
-#ifdef __APPLE__
     const iovec whole{const_cast<void*>(buf), nbytes};
+#ifdef __APPLE__
     if (const auto appended = File::WritevAtEnd(descriptor, &whole, 1); appended != -2) return appended;
 #endif
-    return static_cast<std::int64_t>(::pwrite(descriptor, buf, nbytes, static_cast<off_t>(offset)));
+    const auto parts = File::TransferInParts(descriptor, &whole, 1, &offset, true);
+    return parts == -2 ? static_cast<std::int64_t>(::pwrite(descriptor, buf, nbytes, static_cast<off_t>(offset))) : parts;
 }
 static_assert(sizeof(KernelIovec) == sizeof(struct iovec));
 static_assert(offsetof(KernelIovec, base) == offsetof(struct iovec, iov_base));
@@ -1147,6 +1196,14 @@ int APS5_VABI dup_nid_postfix(int d) {
     File::ShareDescriptor(d, duplicate);
     DuplicateJitSharedMemory(d, duplicate);
     return duplicate;
+}
+
+int APS5_VABI sceKernelRdup(int pid, int fd) {
+    if (pid != 0 && pid != getpid_nid_postfix())
+        NotImplemented_nid_no_patch("sceKernelRdup: a pid other than the caller's and 0");
+    if (fd < 0) return SCE_KERNEL_ERROR_EBADF;
+    const int duplicate = dup_nid_postfix(fd);
+    return duplicate < 0 ? SceErrorFromErrno(*__error_nid_postfix()) : duplicate;
 }
 
 int APS5_VABI dup2_nid_postfix(int from, int to) {
@@ -2063,8 +2120,8 @@ int64_t APS5_VABI sceKernelReadv(int d, const KernelIovec* guestIov, int iovcnt)
 #ifdef __APPLE__
     if (iovcnt == 0) return EmptyIovecsResult(d, false, false);
 #endif
-    const auto result = ThreadCancel::Native([&] { return static_cast<std::int64_t>(::readv(d, NativeIovecs(iov), iovcnt)); });
-
+    const auto parts = File::TransferInParts(d, NativeIovecs(iov), iovcnt, nullptr, false);
+    const auto result = parts == -2 ? ThreadCancel::Native([&] { return ::readv(d, NativeIovecs(iov), iovcnt); }) : parts;
     return result < 0 ? SceErrorFromErrno(errno) : result;
 }
 
@@ -2085,7 +2142,8 @@ int64_t APS5_VABI sceKernelWritev(int d, const KernelIovec* guestIov, int iovcnt
 #ifdef __APPLE__
     if (iovcnt == 0) return EmptyIovecsResult(d, true, false);
 #endif
-    const auto result = static_cast<std::int64_t>(::writev(d, NativeIovecs(iov), iovcnt));
+    const auto parts = File::TransferInParts(d, NativeIovecs(iov), iovcnt, nullptr, true);
+    const auto result = parts == -2 ? static_cast<std::int64_t>(::writev(d, NativeIovecs(iov), iovcnt)) : parts;
     return result < 0 ? SceErrorFromErrno(errno) : result;
 }
 
@@ -2103,8 +2161,8 @@ int64_t APS5_VABI sceKernelPreadv(int d, const KernelIovec* guestIov, int iovcnt
 #ifdef __APPLE__
     if (iovcnt == 0) return EmptyIovecsResult(d, false, true);
 #endif
-    const auto result = ThreadCancel::Native([&] { return static_cast<std::int64_t>(::preadv(d, NativeIovecs(iov), iovcnt, static_cast<off_t>(offset))); });
-
+    const auto parts = File::TransferInParts(d, NativeIovecs(iov), iovcnt, &offset, false);
+    const auto result = parts == -2 ? ThreadCancel::Native([&] { return ::preadv(d, NativeIovecs(iov), iovcnt, static_cast<off_t>(offset)); }) : parts;
     return result < 0 ? SceErrorFromErrno(errno) : result;
 }
 
@@ -2123,7 +2181,8 @@ int64_t APS5_VABI sceKernelPwritev(int d, const KernelIovec* guestIov, int iovcn
     if (iovcnt == 0) return EmptyIovecsResult(d, true, true);
     if (const auto appended = File::WritevAtEnd(d, NativeIovecs(iov), iovcnt); appended != -2) return appended < 0 ? SceErrorFromErrno(errno) : appended;
 #endif
-    const auto result = static_cast<std::int64_t>(::pwritev(d, NativeIovecs(iov), iovcnt, static_cast<off_t>(offset)));
+    const auto parts = File::TransferInParts(d, NativeIovecs(iov), iovcnt, &offset, true);
+    const auto result = parts == -2 ? static_cast<std::int64_t>(::pwritev(d, NativeIovecs(iov), iovcnt, static_cast<off_t>(offset))) : parts;
     return result < 0 ? SceErrorFromErrno(errno) : result;
 }
 
