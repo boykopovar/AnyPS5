@@ -153,6 +153,15 @@ std::string WriteGuestFile(const char* name, const std::string& contents) {
     return guestPath;
 }
 
+const char T61Certificate[] = R"PEM(
+-----BEGIN CERTIFICATE-----
+MIGXMIGBoAMCAQICAhI0MA0GCSqGSIb3DQEBCwUAMBYxFDASBgNVBAMUC1Rlc3Qg
+Q0EgVDYxMB4XDTI0MDEwMTAwMDAwMFoXDTM0MDEwMTAwMDAwMFowFjEUMBIGA1UE
+AxQLVGVzdCBDQSBUNjEwFzANBgkqhkiG9w0BAQEFAAMGADADAQABMA0GCSqGSIb3
+DQEBCwUAAwIAAQ==
+-----END CERTIFICATE-----
+)PEM";
+
 int ObjectCount(const LibreSslX509Store* store) {
     const auto* stack = static_cast<const LibreSslStack*>(store->objects);
     Require(stack != nullptr && stack->num >= 0);
@@ -214,6 +223,7 @@ std::string HashedFileName(const unsigned char* encoding, std::size_t length) {
 }
 
 void BlockCandidates() {
+    RemovePathAlias_nid_no_patch("/system/common/cert/CA_LIST.cer");
     for (const char* candidate : CertificateFileCandidates) BlockPathAlias_nid_no_patch(candidate);
     BlockPathAlias_nid_no_patch(CertificateDirectoryCandidate);
 }
@@ -221,6 +231,22 @@ void BlockCandidates() {
 void ClearEnvironment() {
     Require(unsetenv_nid_postfix(CertificateFileVariable) == 0);
     Require(unsetenv_nid_postfix(CertificateDirectoryVariable) == 0);
+}
+
+
+void TestSystemCertificateListWithT61Subject() {
+    WriteGuestFile("system-ca.pem", T61Certificate);
+    AddPathAlias_nid_no_patch("/system/common/cert/CA_LIST.cer", HostPath("system-ca.pem").c_str());
+    LibreSslX509Store* store = NewStore();
+    LibreSsl3SslCtx context = ContextFor(store);
+    Require(SSL_CTX_set_default_verify_paths_nid_postfix(&context) == 1);
+    Require(ObjectCount(store) == 1);
+    static const unsigned char expected[] = {0x31, 0x14, 0x30, 0x12, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0c, 0x0b,
+        't', 'e', 's', 't', ' ', 'c', 'a', ' ', 't', '6', '1'};
+    int length = 0;
+    const unsigned char* subject = StoredSubject(store, 0, length);
+    Require(length == static_cast<int>(sizeof(expected)));
+    Require(std::memcmp(subject, expected, sizeof(expected)) == 0);
 }
 
 void TestNoCandidateLocations() {
@@ -371,6 +397,7 @@ int main() {
     std::filesystem::remove_all(TemporaryRoot(), ignored);
     Require(std::filesystem::create_directories(TemporaryRoot()));
     AddPathAlias_nid_no_patch(TemporaryMount, TemporaryRoot().string().c_str());
+    TestSystemCertificateListWithT61Subject();
     TestNoCandidateLocations();
     TestDefaultFileCandidate();
     TestEnvironmentOverridesCandidates();

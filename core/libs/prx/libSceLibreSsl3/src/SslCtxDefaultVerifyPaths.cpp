@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cerrno>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -18,6 +19,7 @@ constexpr std::array<const char*, 7> CertificateFileCandidates{{
     "/usr/local/etc/ssl/cert.pem"
 }};
 
+constexpr const char* SystemCertificateList = "/system/common/cert/CA_LIST.cer";
 constexpr const char* CertificateDirectoryCandidate = "/etc/ssl/certs";
 constexpr const char* CertificateFileVariable = "SSL_CERT_FILE";
 constexpr const char* CertificateDirectoryVariable = "SSL_CERT_DIR";
@@ -41,7 +43,12 @@ bool ReadOverride(const char* name, std::string& value, const char* caller) {
 
 bool Load(LibreSslX509Store* store, const char* file, const char* directory) {
     const int savedErrno = errno;
-    const bool loaded = X509_STORE_load_locations_nid_postfix(store, file, directory) == 1;
+    bool loaded = false;
+    try {
+        loaded = X509_STORE_load_locations_nid_postfix(store, file, directory) == 1;
+    } catch (const std::exception&) {
+        loaded = false;
+    }
     errno = savedErrno;
     return loaded;
 }
@@ -60,10 +67,11 @@ extern "C" int APS5_VABI SSL_CTX_set_default_verify_paths_nid_postfix(LibreSsl3S
     std::string file;
     if (!ReadOverride(CertificateFileVariable, file, __func__) || file.empty()) {
         file.clear();
+        if (Exists(SystemCertificateList)) file = SystemCertificateList;
         for (const char* candidate : CertificateFileCandidates) {
+            if (!file.empty()) break;
             if (!Exists(candidate)) continue;
             file = candidate;
-            break;
         }
     }
     std::string directory;

@@ -738,11 +738,66 @@ bool IsCanonicalizedType(int type) {
            type == VisibleStringType;
 }
 
+
+void AppendUtf8(std::vector<unsigned char>& output, std::uint32_t code) {
+    if (code <= 0x7f) {
+        output.push_back(static_cast<unsigned char>(code));
+    } else if (code <= 0x7ff) {
+        output.push_back(static_cast<unsigned char>(0xc0 | (code >> 6)));
+        output.push_back(static_cast<unsigned char>(0x80 | (code & 0x3f)));
+    } else if (code <= 0xffff) {
+        output.push_back(static_cast<unsigned char>(0xe0 | (code >> 12)));
+        output.push_back(static_cast<unsigned char>(0x80 | ((code >> 6) & 0x3f)));
+        output.push_back(static_cast<unsigned char>(0x80 | (code & 0x3f)));
+    } else {
+        output.push_back(static_cast<unsigned char>(0xf0 | (code >> 18)));
+        output.push_back(static_cast<unsigned char>(0x80 | ((code >> 12) & 0x3f)));
+        output.push_back(static_cast<unsigned char>(0x80 | ((code >> 6) & 0x3f)));
+        output.push_back(static_cast<unsigned char>(0x80 | (code & 0x3f)));
+    }
+}
+
+std::vector<unsigned char> ToUtf8(const std::vector<unsigned char>& bytes, int type, const char* function) {
+    std::vector<unsigned char> converted;
+    converted.reserve(bytes.size());
+    if (type == T61StringType) {
+        for (const unsigned char character : bytes) AppendUtf8(converted, character);
+        return converted;
+    }
+    if (type == BmpStringType) {
+        if (bytes.size() % 2 != 0) throw std::invalid_argument(std::string(function) + ": odd BMPString length");
+        for (std::size_t index = 0; index + 1 < bytes.size(); index += 2) {
+            std::uint32_t code = (static_cast<std::uint32_t>(bytes[index]) << 8) | bytes[index + 1];
+            if (code >= 0xd800 && code <= 0xdbff && index + 3 < bytes.size()) {
+                const std::uint32_t low = (static_cast<std::uint32_t>(bytes[index + 2]) << 8) | bytes[index + 3];
+                if (low >= 0xdc00 && low <= 0xdfff) {
+                    code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+                    index += 2;
+                }
+            }
+            AppendUtf8(converted, code);
+        }
+        return converted;
+    }
+    if (type == UniversalStringType) {
+        if (bytes.size() % 4 != 0) throw std::invalid_argument(std::string(function) + ": odd UniversalString length");
+        for (std::size_t index = 0; index + 3 < bytes.size(); index += 4) {
+            const std::uint32_t code = (static_cast<std::uint32_t>(bytes[index]) << 24) |
+                                       (static_cast<std::uint32_t>(bytes[index + 1]) << 16) |
+                                       (static_cast<std::uint32_t>(bytes[index + 2]) << 8) | bytes[index + 3];
+            AppendUtf8(converted, code);
+        }
+        return converted;
+    }
+    return bytes;
+}
+
 std::vector<unsigned char> CanonicalStringContent(const Asn1String& value, const char* function) {
     if (value.length < 0) throw std::invalid_argument(std::string(function) + ": negative name value length");
     std::vector<unsigned char> bytes(static_cast<std::size_t>(value.length));
     ReadGuestBytes(bytes.data(), value.data, bytes.size(), function);
-    if (!IsCanonicalizedType(value.type)) return bytes;
+    if (NeedsUtf8Conversion(value.type)) bytes = ToUtf8(bytes, value.type, function);
+    else if (!IsCanonicalizedType(value.type)) return bytes;
     std::size_t begin = 0;
     std::size_t end = bytes.size();
     while (begin < end && !(bytes[begin] & 0x80) && IsAsciiSpace(bytes[begin])) ++begin;
@@ -790,9 +845,7 @@ std::vector<unsigned char> EncodeNameEntry(const LibreSslX509NameEntry& entry, c
     std::vector<unsigned char> objectContent(static_cast<std::size_t>(object.length));
     ReadGuestBytes(objectContent.data(), object.data, objectContent.size(), function);
     const auto value = ReadGuest(static_cast<const Asn1String*>(entry.value), function);
-    if (NeedsUtf8Conversion(value.type))
-        NotImplemented_nid_no_patch("X509_STORE_load_locations: a name value that needs UTF-8 conversion");
-    const int type = IsCanonicalizedType(value.type) ? Utf8StringType : value.type;
+    const int type = IsCanonicalizedType(value.type) || NeedsUtf8Conversion(value.type) ? Utf8StringType : value.type;
     if (type < 0 || type > 0xff) throw std::invalid_argument(std::string(function) + ": name value type out of range");
     std::vector<unsigned char> content;
     AppendElement(content, ObjectTag, objectContent);
