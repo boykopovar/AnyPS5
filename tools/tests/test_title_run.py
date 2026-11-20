@@ -912,6 +912,7 @@ class PreparationTests(unittest.TestCase):
         source = package(self.root / "pkg", "PPSA00001")
         (source / "id1").mkdir()
         (source / "id1/autoexec.cfg").write_text("old\n", encoding="utf-8")
+        (source / "id1/pak0.pak").write_bytes(b"bundled data")
         work = self.root / "work"
         title_run.link_tree(source, work / "app0", {"sce_module"})
         content = self.root / "content"
@@ -923,8 +924,26 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual((work / "app0/id1/autoexec.cfg").read_bytes(), b"r_rtshadows 0\n")
         self.assertEqual((source / "id1/autoexec.cfg").read_text(encoding="utf-8"), "old\n")
         self.assertEqual((work / "app0/id1/pak0.pak").read_bytes(), b"PACK")
+        self.assertEqual((source / "id1/pak0.pak").read_bytes(), b"bundled data")
         self.assertFalse((work / "data/media/clip.mp4").exists())
-        self.assertEqual(title_run.stage_files({"app0/id1/pak0.pak": {"content": "quake/pak0.pak"}}, work, None), ["quake/pak0.pak"])
+
+    def test_missing_external_content_preserves_the_staged_package_file(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        (source / "id1").mkdir()
+        (source / "id1/pak0.pak").write_bytes(b"bundled data")
+        content = self.root / "content"
+        content.mkdir()
+        files = {"app0/id1/pak0.pak": {"content": "quake/pak0.pak"},
+                 "data/clip.mp4": {"content": "media/clip.mp4"}}
+        for index, content_dir in enumerate((None, content)):
+            with self.subTest(content=content_dir):
+                work = self.root / f"work-{index}"
+                title_run.link_tree(source, work / "app0", {"sce_module"})
+                missing = title_run.stage_files(files, work, content_dir)
+                target = work / "app0/id1/pak0.pak"
+                self.assertTrue(target.is_file(), "the run must retain the package's data file")
+                self.assertEqual(target.read_bytes(), b"bundled data")
+                self.assertEqual(missing, ["media/clip.mp4"])
 
     def test_a_non_ascii_title_name_is_reported_as_utf8(self):
         package(self.root / "games/PPSA00001", "PPSA00001", name="テスト")
