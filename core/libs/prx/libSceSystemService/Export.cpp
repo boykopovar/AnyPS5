@@ -269,9 +269,12 @@ int AnswerRunningAppCategoryType(const char* caller, std::int32_t appId, std::ui
     return copied ? SYSTEM_SERVICE_OK : nullOutputResult;
 }
 
+constexpr std::uint32_t BigAppListCapacityLimit = 4;
+
 int ListRunningBigApp(const std::string& caller, std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
+    static_cast<void>(caller);
     if (appIds == nullptr || count == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
-    if (capacity == 0) throw std::runtime_error(caller + ": a list with no room for the running title");
+    if (capacity >= BigAppListCapacityLimit) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
     std::int32_t currentId = 0;
     std::uint32_t currentCount = 0;
     const int savedErrno = errno;
@@ -282,6 +285,12 @@ int ListRunningBigApp(const std::string& caller, std::int32_t* appIds, std::uint
     if (!valid) {
         errno = savedErrno;
         return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+    }
+    if (capacity == 0) {
+        const std::uint32_t none = 0;
+        GuestCopyOut_nid_no_patch(count, &none, sizeof(none));
+        errno = savedErrno;
+        return SYSTEM_SERVICE_OK;
     }
     const std::int32_t runningId = SYSTEM_SERVICE_RUNNING_APP_ID;
     const std::uint32_t one = 1;

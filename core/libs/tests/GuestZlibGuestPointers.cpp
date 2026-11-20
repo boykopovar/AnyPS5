@@ -34,9 +34,10 @@ int main() {
     Check(requestId == 0x1122334455667788 && errno == EDOM);
     Check(sceZlibInflate(compressed.data(), compressed.size(), invalidDestination, output.size(), &requestId) == invalidArgument);
     Check(requestId == 0x1122334455667788 && errno == EDOM);
+    output.fill(0x5a);
+    const auto originalOutput = output;
     Check(sceZlibInflate(compressed.data(), compressed.size(), output.data(), output.size(), invalidId) == invalidArgument);
-    Check(requestId == 0x1122334455667788 && errno == EDOM);
-    Check(requestId == 0x1122334455667788);
+    Check(output == originalOutput && errno == EDOM);
     std::uint64_t completed = 0;
     std::uint32_t timeout = 0;
     Check(sceZlibWaitForDone(&completed, &timeout) == timedOut);

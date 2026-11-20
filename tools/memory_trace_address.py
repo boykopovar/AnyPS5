@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 TRACE_PREFIX = re.compile(r"^\[memory\]\s+")
-RANGE = re.compile(r"(?P<address>(?:0x)?[0-9a-fA-F]+)\+(?P<size>0x[0-9a-fA-F]+)")
+RANGE = re.compile(r"(?P<address>(?:0x)?[0-9a-fA-F]+|\(nil\))\+(?P<size>0x[0-9a-fA-F]+)")
 OPERATIONS = (
     "remap fixed",
     "map direct",
@@ -42,7 +42,8 @@ def parse_events(lines):
         address = RANGE.search(detail)
         if address is None:
             raise ValueError(f"line {number}: {operation} event has no address range")
-        events.append(MappingEvent(number, operation, int(address["address"], 16),
+        start = 0 if address["address"] == "(nil)" else int(address["address"], 16)
+        events.append(MappingEvent(number, operation, start,
                                    int(address["size"], 16), detail))
     return events
 
@@ -82,6 +83,9 @@ def render_events(events, path, start, size, limit):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(
         description="show APS5_TRACE_MEMORY mapping operations overlapping a guest address range")
     parser.add_argument("trace", type=Path, help="file containing APS5_TRACE_MEMORY stderr output")
@@ -93,7 +97,7 @@ def main(argv=None):
         parser.error("--limit must be positive")
     try:
         start, size = parse_range(args.address, args.length)
-        with args.trace.open(encoding="utf-8", errors="replace") as source:
+        with args.trace.open(encoding="utf-8-sig", errors="replace") as source:
             events = parse_events(source)
         sys.stdout.write(render_events(events, args.trace, start, size, args.limit))
     except (OSError, ValueError) as error:
