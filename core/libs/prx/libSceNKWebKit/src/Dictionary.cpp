@@ -9,7 +9,7 @@ const void* APS5_VABI WKDictionaryCreate(const void** keys, const void** values,
     std::map<std::u16string, NKWebKit::Retained<NKWebKit::Object>> entries;
     for (std::size_t i = 0; i < numberOfValues; ++i) {
         const auto* key = NKWebKit::Cast<NKWebKit::String>(keyRefs[i], __func__);
-        entries.insert_or_assign(key->characters, NKWebKit::Retained<NKWebKit::Object>::Share(const_cast<NKWebKit::Object*>(NKWebKit::ToObject(valueRefs[i], __func__))));
+        entries.try_emplace(key->characters, NKWebKit::Retained<NKWebKit::Object>::Share(const_cast<NKWebKit::Object*>(NKWebKit::ToObject(valueRefs[i], __func__))));
     }
     return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::Dictionary>(std::move(entries)));
 }

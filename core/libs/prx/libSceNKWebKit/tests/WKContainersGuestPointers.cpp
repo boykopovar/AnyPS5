@@ -141,7 +141,7 @@ int main() {
         for (std::size_t index = 0; index < many.size(); ++index) Require(WKArrayGetItemAtIndex(wide, index) == many[index]);
         WKRelease(wide);
         const void* last = WKDictionaryCreate(keys.data(), many.data(), many.size());
-        Require(WKDictionaryGetSize(last) == 1 && WKDictionaryGetItemForKey(last, one) == many.back());
+        Require(WKDictionaryGetSize(last) == 1 && WKDictionaryGetItemForKey(last, one) == many.front());
         WKRelease(last);
     });
 
