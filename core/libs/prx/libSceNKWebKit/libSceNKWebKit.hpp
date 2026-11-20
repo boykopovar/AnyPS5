@@ -71,6 +71,7 @@
 #include "prx/libSceNKWebKit/include/DOMExceptionExports.hpp"
 #include "prx/libSceNKWebKit/include/RegionExports.hpp"
 #include "prx/libSceNKWebKit/include/PerspectiveTransformOperationExports.hpp"
+#include "prx/libSceNKWebKit/include/ContentSearchUtilitiesExports.hpp"
 #include "prx/libSceNKWebKit/include/SpeculatedTypeExports.hpp"
 #include "prx/libSceNKWebKit/include/UrlHelpers.hpp"
 #include "prx/libSceNKWebKit/include/UrlParserExports.hpp"
