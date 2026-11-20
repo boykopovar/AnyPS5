@@ -94,8 +94,14 @@ void WriteBigEndian(std::uint8_t* bytes, std::uint32_t value) {
     bytes[3] = static_cast<std::uint8_t>(value);
 }
 
+std::size_t SsrcCount(const WebRtcRtcpRemb* remb) {
+    if (remb->ssrcBegin == remb->ssrcEnd)
+        return 0;
+    return static_cast<std::size_t>(remb->ssrcEnd - remb->ssrcBegin);
+}
+
 std::size_t APS5_VABI RembBlockLength_nid_no_patch(const WebRtcRtcpRemb* remb) {
-    return HeaderLength + CommonFeedbackLength + (2 + static_cast<std::size_t>(remb->ssrcEnd - remb->ssrcBegin)) * 4;
+    return HeaderLength + CommonFeedbackLength + (2 + SsrcCount(remb)) * 4;
 }
 
 std::size_t BlockLength(const WebRtcRtcpRemb* remb) {
@@ -129,7 +135,7 @@ bool APS5_VABI RembCreate_nid_no_patch(const WebRtcRtcpRemb* remb, std::uint8_t*
         mantissa >>= 1;
         ++exponent;
     }
-    packet[(*index)++] = static_cast<std::uint8_t>(remb->ssrcEnd - remb->ssrcBegin);
+    packet[(*index)++] = static_cast<std::uint8_t>(SsrcCount(remb));
     packet[(*index)++] = static_cast<std::uint8_t>((exponent << 2) | (mantissa >> 16));
     packet[(*index)++] = static_cast<std::uint8_t>(mantissa >> 8);
     packet[(*index)++] = static_cast<std::uint8_t>(mantissa);
