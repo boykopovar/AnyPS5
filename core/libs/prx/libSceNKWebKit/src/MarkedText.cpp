@@ -26,7 +26,6 @@
 
 #include "prx/libSceNKWebKit/include/MarkedTextExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
-#include "prx/libc/include/General.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -79,6 +78,10 @@ MarkedText Piece(unsigned start, unsigned end, const MarkedText& source) {
     return item;
 }
 
+[[noreturn]] void ThrowOrderDependent() {
+    throw std::logic_error("WebCore::subdivide: the result depends on the order std::sort leaves equal offsets in");
+}
+
 }
 
 extern "C" {
@@ -92,7 +95,7 @@ MarkedTextVector* APS5_VABI _ZN7WebCore9subdivideERKN3WTF6VectorINS_10MarkedText
         return result;
     }
     const bool frontmostOnly = overlapStrategy == NKWebKit::MarkedTextAbi::OverlapStrategyFrontmost;
-    if (!frontmostOnly && overlapStrategy != NKWebKit::MarkedTextAbi::OverlapStrategyNone) NotImplemented_nid_no_patch(__func__);
+    if (!frontmostOnly && overlapStrategy != NKWebKit::MarkedTextAbi::OverlapStrategyNone) throw std::invalid_argument("WebCore::subdivide: unknown OverlapStrategy");
     const MarkedText* const base = markedTexts->buffer;
     const unsigned numberOfMarkedTexts = markedTexts->size;
     if (numberOfMarkedTexts > MaximumCapacity) throw std::bad_alloc();
@@ -115,8 +118,8 @@ MarkedTextVector* APS5_VABI _ZN7WebCore9subdivideERKN3WTF6VectorINS_10MarkedText
     unsigned firstEnd = 0;
     while (firstEnd < firstGroupEnd && offsets[firstEnd].kind == Offset::Begin) ++firstEnd;
     if (firstEnd < firstGroupEnd && firstGroupEnd < numberOfOffsets) {
-        if (firstEnd) NotImplemented_nid_no_patch(__func__);
-        if (firstGroupEnd > 1 && offsets[1].markedText->type == offsets[0].markedText->type) NotImplemented_nid_no_patch(__func__);
+        if (firstEnd) ThrowOrderDependent();
+        if (firstGroupEnd > 1 && offsets[1].markedText->type == offsets[0].markedText->type) ThrowOrderDependent();
     }
 
     Results results{{}, numberOfMarkedTexts};
@@ -134,7 +137,7 @@ MarkedTextVector* APS5_VABI _ZN7WebCore9subdivideERKN3WTF6VectorINS_10MarkedText
                 for (unsigned j = 0; frontmost && j < i; ++j) {
                     const Offset& rival = offsets[j];
                     if (isProcessed(rival) || rival.value != frontmost->value || rival.kind != frontmost->kind) continue;
-                    if (rival.markedText->type == frontmost->markedText->type && !SameSource(*rival.markedText, *frontmost->markedText)) NotImplemented_nid_no_patch(__func__);
+                    if (rival.markedText->type == frontmost->markedText->type && !SameSource(*rival.markedText, *frontmost->markedText)) ThrowOrderDependent();
                 }
                 if (frontmost) results.Append(Piece(offsetSoFar, offsets[i].value, *frontmost->markedText));
             } else {
@@ -153,7 +156,7 @@ MarkedTextVector* APS5_VABI _ZN7WebCore9subdivideERKN3WTF6VectorINS_10MarkedText
         for (std::size_t index = 1; index < results.items.size(); ++index) {
             const MarkedText& previous = results.items[index - 1];
             const MarkedText& current = results.items[index];
-            if (previous.startOffset == current.startOffset && previous.type == current.type && !SameSource(previous, current)) NotImplemented_nid_no_patch(__func__);
+            if (previous.startOffset == current.startOffset && previous.type == current.type && !SameSource(previous, current)) ThrowOrderDependent();
         }
     }
 

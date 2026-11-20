@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <source_location>
 #include <stdexcept>
+#include <typeinfo>
 #include <string>
 #include <vector>
 
@@ -160,14 +161,15 @@ void TestSortIndependentCases() {
     for (const OrderCase& test : cases) Require(Run(test.input, test.strategy).items == test.expected);
 }
 
-bool ThrowsNotImplemented(const std::vector<Item>& items, std::uint32_t strategy) {
+template<typename TError> bool ThrowsUntouched(const std::vector<Item>& items, std::uint32_t strategy) {
     std::vector<MarkedText> texts = ToAbi(items);
     const MarkedTextVector input{texts.data(), static_cast<unsigned>(texts.size()), static_cast<unsigned>(texts.size())};
     MarkedText* const untouched = reinterpret_cast<MarkedText*>(std::uintptr_t{0x1234});
     MarkedTextVector result{untouched, 77, 99};
     try {
         Subdivide(&result, &input, strategy);
-    } catch (const std::runtime_error&) {
+    } catch (const TError& error) {
+        if (typeid(error) != typeid(TError)) return false;
         return result.buffer == untouched && result.capacity == 77 && result.size == 99;
     } catch (...) {
         return false;
@@ -178,23 +180,23 @@ bool ThrowsNotImplemented(const std::vector<Item>& items, std::uint32_t strategy
 
 void TestSortDependentCases() {
     const std::vector<Item> twins{{0, 5, 1, 1}, {0, 5, 1, 2}};
-    Require(ThrowsNotImplemented(twins, None));
-    Require(ThrowsNotImplemented(twins, Frontmost));
-    Require(ThrowsNotImplemented({{0, 9, 1, 1}, {4, 6, 1, 2}}, None));
+    Require(ThrowsUntouched<std::logic_error>(twins, None));
+    Require(ThrowsUntouched<std::logic_error>(twins, Frontmost));
+    Require(ThrowsUntouched<std::logic_error>({{0, 9, 1, 1}, {4, 6, 1, 2}}, None));
     Require(Run({{0, 9, 1, 1}, {4, 6, 1, 2}}, Frontmost).items == (std::vector<Item>{{0, 4, 1, 1}, {4, 6, 1, 1}, {6, 9, 1, 1}}));
     Require(Run({{0, 9, 1, 1}, {4, 6, 2, 2}}, None).items == (std::vector<Item>{{0, 4, 1, 1}, {4, 6, 1, 1}, {4, 6, 2, 2}, {6, 9, 1, 1}}));
-    Require(ThrowsNotImplemented({{2, 9, 1, 1}, {2, 6, 1, 2}, {0, 9, 0, 3}}, Frontmost));
+    Require(ThrowsUntouched<std::logic_error>({{2, 9, 1, 1}, {2, 6, 1, 2}, {0, 9, 0, 3}}, Frontmost));
     Require(Run({{2, 9, 1, 1}, {2, 6, 1, 2}, {0, 9, 5, 3}}, Frontmost).items == (std::vector<Item>{{0, 2, 5, 3}, {2, 6, 5, 3}, {6, 9, 5, 3}}));
 
-    Require(ThrowsNotImplemented({{0, 0, 2, 1}, {0, 1, 8, 2}}, None));
-    Require(ThrowsNotImplemented({{0, 0, 2, 1}, {0, 1, 8, 2}}, Frontmost));
+    Require(ThrowsUntouched<std::logic_error>({{0, 0, 2, 1}, {0, 1, 8, 2}}, None));
+    Require(ThrowsUntouched<std::logic_error>({{0, 0, 2, 1}, {0, 1, 8, 2}}, Frontmost));
     Require(Run({{1, 1, 2, 1}, {0, 2, 8, 2}}, None).items == (std::vector<Item>{{0, 1, 8, 2}, {1, 2, 8, 2}}));
-    Require(ThrowsNotImplemented({{5, 0, 1, 1}, {6, 0, 1, 2}}, None));
+    Require(ThrowsUntouched<std::logic_error>({{5, 0, 1, 1}, {6, 0, 1, 2}}, None));
     Require(Run({{5, 0, 1, 1}, {6, 0, 2, 2}}, Frontmost).items == (std::vector<Item>{{0, 5, 2, 2}, {5, 6, 2, 2}}));
 
     const std::vector<Item> plain{{0, 9, 3}};
-    Require(ThrowsNotImplemented(plain, 2));
-    Require(ThrowsNotImplemented(plain, 0xFFFFFFFFu));
+    Require(ThrowsUntouched<std::invalid_argument>(plain, 2));
+    Require(ThrowsUntouched<std::invalid_argument>(plain, 0xFFFFFFFFu));
 }
 
 void TestCapacity() {
