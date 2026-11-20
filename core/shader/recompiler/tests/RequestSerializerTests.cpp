@@ -210,7 +210,7 @@ std::vector<std::uint8_t> SerializeVersion62Bytes(const ShaderRecompiler::Recomp
         for (auto& merge : plain.context.pixel->targetMerges) merge.storageFormat = ShaderRecompiler::StorageImageFormat::Unknown;
     }
     auto bytes = DecodeBase64(serializer.Serialize(plain));
-    Require(bytes.size() > 14u && bytes[4] == 63u);
+    Require(bytes.size() > 14u && bytes[4] == 64u);
     std::vector<std::size_t> formatBytes;
     for (std::size_t merge = 0u; merge < mergeCount; ++merge) {
         auto probe = plain;
@@ -256,7 +256,7 @@ void VerifyTargetOptions() {
                     Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
                     Require(serializer.Serialize(replay.request) == encoded);
                     auto bytes = DecodeBase64(encoded);
-                    Require(bytes[4] == 63u && bytes.back() == 0u);
+                    Require(bytes[4] == 64u && bytes.back() == 0u);
                     for (std::size_t missing = 1u; missing <= 6u; ++missing) {
                         auto truncated = bytes;
                         truncated.resize(truncated.size() - missing);
@@ -268,6 +268,10 @@ void VerifyTargetOptions() {
                         }
                         Require(rejected);
                     }
+                    auto legacy62Bytes = bytes;
+                    legacy62Bytes[4] = 62u;
+                    const auto legacy62 = serializer.Deserialize(EncodeBase64(legacy62Bytes));
+                    Require(legacy62.request.target.fixedPushSlots == fixed && legacy62.request.target.maxImageArrayLayers == layers && !legacy62.request.graphics.has_value());
                     bytes.pop_back();
                     bytes[4] = 57u;
                     const auto legacy57 = serializer.Deserialize(EncodeBase64(bytes));
@@ -295,7 +299,11 @@ void VerifyTargetOptions() {
             }
         }
     }
-    auto trailing = DecodeBase64(serializer.Serialize(ShaderRecompiler::RecompileRequest{}));
+    ShaderRecompiler::RecompileRequest emulated{};
+    emulated.graphics = ShaderRecompiler::GraphicsCompileContext{};
+    emulated.graphics->emulateBarycentrics = true;
+    auto trailing = DecodeBase64(serializer.Serialize(emulated));
+    Require(trailing.back() == 1u && serializer.Deserialize(EncodeBase64(trailing)).request.graphics->emulateBarycentrics);
     trailing.push_back(2u);
     bool rejected = false;
     try {
@@ -806,7 +814,7 @@ int VerifyVersion56Compatibility() {
         version40[4] = 40u;
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
-        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 64u}) {
+        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 65u}) {
             auto future = bytes;
             future[4] = unwritten;
             bool futureRejected = false;
@@ -921,9 +929,9 @@ int VerifyVersion56Compatibility() {
         const auto replay35 = serializer.Deserialize(EncodeBase64(version35));
         Require(replay35.request.target.spannedWaves == spanned && !replay35.request.target.float32FlushToZero);
         request.target.spannedAnySubgroup = spanned;
-        const auto version63 = DecodeBase64(serializer.Serialize(request));
-        Require(version63[4] == 63u && version63.back() == (spanned ? 1u : 0u));
-        Require(serializer.Deserialize(EncodeBase64(version63)).request.target.spannedAnySubgroup == spanned);
+        const auto version64 = DecodeBase64(serializer.Serialize(request));
+        Require(version64[4] == 64u && version64.back() == (spanned ? 1u : 0u));
+        Require(serializer.Deserialize(EncodeBase64(version64)).request.target.spannedAnySubgroup == spanned);
         const auto version62 = SerializeVersion62Bytes(request);
         Require(version62[4] == 62u && version62.back() == (spanned ? 1u : 0u));
         Require(serializer.Deserialize(EncodeBase64(version62)).request.target.spannedAnySubgroup == spanned);
