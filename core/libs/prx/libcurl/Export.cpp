@@ -7,8 +7,11 @@
 
 #include "prx/libc/include/Api.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cerrno>
 #include <climits>
+#include <cstdint>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -35,6 +38,40 @@
 static char RawUpper(char value) {
     return value >= 'a' && value <= 'z' ? static_cast<char>('A' + value - 'a') : value;
 }
+
+class GuestText {
+public:
+    explicit GuestText(const char* source) : source(source) {}
+
+    char Peek(const char* caller) {
+        if (position == size) Fill(caller);
+        return chunk[position];
+    }
+
+    void Advance() {
+        ++position;
+    }
+
+private:
+    void Fill(const char* caller) {
+        constexpr std::uintptr_t pageSize = 4096;
+        consumed += size;
+        const auto address = reinterpret_cast<std::uintptr_t>(source) + consumed;
+        const std::size_t count = (std::min)(chunk.size(), static_cast<std::size_t>(pageSize - address % pageSize));
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(chunk.data(), reinterpret_cast<const char*>(address), count);
+        errno = savedErrno;
+        if (!copied) throw std::runtime_error(caller);
+        size = count;
+        position = 0;
+    }
+
+    const char* source;
+    std::array<char, 256> chunk{};
+    std::size_t size = 0;
+    std::size_t position = 0;
+    std::size_t consumed = 0;
+};
 
 extern "C" {
 extern curl_malloc_callback Curl_cmalloc;
@@ -1672,11 +1709,13 @@ void APS5_VABI curl_free(void* pointer) {
 
 int APS5_VABI curl_strequal(const char* first, const char* second) {
     if (!first || !second) throw std::runtime_error(__func__);
-    while (*first && *second && RawUpper(*first) == RawUpper(*second)) {
-        ++first;
-        ++second;
+    GuestText left(first);
+    GuestText right(second);
+    while (left.Peek(__func__) && right.Peek(__func__) && RawUpper(left.Peek(__func__)) == RawUpper(right.Peek(__func__))) {
+        left.Advance();
+        right.Advance();
     }
-    return RawUpper(*first) == RawUpper(*second);
+    return RawUpper(left.Peek(__func__)) == RawUpper(right.Peek(__func__));
 }
 
 CurlSlist* APS5_VABI curl_slist_append(CurlSlist* list, const char* string) {
@@ -1686,13 +1725,15 @@ CurlSlist* APS5_VABI curl_slist_append(CurlSlist* list, const char* string) {
 
 int APS5_VABI curl_strnequal(const char* first, const char* second, size_t max) {
     if (!first || !second) throw std::runtime_error(__func__);
-    while (*first && *second && max && RawUpper(*first) == RawUpper(*second)) {
+    GuestText left(first);
+    GuestText right(second);
+    while (max && left.Peek(__func__) && right.Peek(__func__) && RawUpper(left.Peek(__func__)) == RawUpper(right.Peek(__func__))) {
         --max;
-        ++first;
-        ++second;
+        left.Advance();
+        right.Advance();
     }
     if (max == 0) return 1;
-    return RawUpper(*first) == RawUpper(*second);
+    return RawUpper(left.Peek(__func__)) == RawUpper(right.Peek(__func__));
 }
 
 char* APS5_VABI curl_unescape(const char* string, int length) {

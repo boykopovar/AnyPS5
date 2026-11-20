@@ -50,6 +50,15 @@ bool MountedCountThrows(std::int32_t reserved, std::uint32_t* count) {
     return false;
 }
 
+bool Umount2Throws(std::uint32_t mode, const SaveDataMountPoint* point) {
+    try {
+        static_cast<void>(sceSaveDataUmount2(mode, point));
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
 void CheckUnmountedCalls() {
     SaveDataMountPoint point{};
     std::memcpy(point.data, "test", sizeof("test"));
@@ -819,6 +828,70 @@ void CheckBackupGuestErrors() {
     }
 }
 
+void CheckUmount2BackupModes() {
+    SceSaveDataDirName name{};
+    std::memcpy(name.data, "umount2_backup", sizeof("umount2_backup"));
+    SaveDataMountPoint missing{};
+    std::memcpy(missing.data, "/absent0", sizeof("/absent0"));
+    for (const std::uint32_t mode : {0x10000u, 0x10001u}) {
+        const std::string tag = "umount2(" + std::to_string(mode) + ")";
+        Check(sceSaveDataUmount2(mode, nullptr) == SaveDataErrorParameter, tag + " null point is PARAMETER");
+        Check(sceSaveDataUmount2(mode, reinterpret_cast<const SaveDataMountPoint*>(0x10)) == SaveDataErrorParameter, tag + " unmapped point is PARAMETER");
+        Check(sceSaveDataUmount2(mode, &missing) == SaveDataErrorNotMounted, tag + " unmounted point is NOT_MOUNTED");
+
+        SaveDataMountResult mounted{};
+        Check(MountSave(&name, MountReadWrite | MountCreate2, &mounted), tag + " save mounts");
+        const auto data = std::filesystem::path("_sd") / "umount2_backup" / "data.bin";
+        const std::string body = "payload-" + std::to_string(mode);
+        WriteText(data, body);
+        const std::string title = "Title " + std::to_string(mode);
+        Check(sceSaveDataSetParam(&mounted.mount_point, 1, title.c_str(), title.size() + 1) == 0, tag + " sets param");
+        Check(sceSaveDataUmount2(mode, &mounted.mount_point) == 0, tag + " succeeds");
+        SaveDataMountInfo info{};
+        Check(sceSaveDataGetMountInfo(&mounted.mount_point, &info) == SaveDataErrorNotMounted, tag + " unmounts the save");
+
+        SaveDataEvent event{};
+        Check(sceSaveDataGetEventResult(nullptr, &event) == 0, tag + " posts an event");
+        Check(event.type == 1, tag + " event type is UMOUNT_BACKUP");
+        Check(event.error_code == 0, tag + " event error_code is 0");
+        Check(event.user_id == 7, tag + " event user_id matches");
+        Check(std::strncmp(event.title_id.data, "PPSA00000", sizeof(event.title_id.data)) == 0, tag + " event title_id matches");
+        Check(std::strncmp(event.dir_name.data, "umount2_backup", sizeof(event.dir_name.data)) == 0, tag + " event dir_name matches");
+        Check(sceSaveDataGetEventResult(nullptr, &event) == SaveDataErrorNotFound, tag + " leaves no duplicate events");
+
+        SaveDataParam param{};
+        SaveDataCheckBackupData check{};
+        check.dir_name = &name;
+        check.param = &param;
+        Check(sceSaveDataCheckBackupData(&check) == 0, tag + " creates checkable backup");
+        Check(std::strcmp(param.title, title.c_str()) == 0, tag + " backup stores title");
+        Check(ReadText(std::filesystem::path("_sd_backup") / "umount2_backup" / "save" / "data.bin") == body, tag + " backup stores payload");
+    }
+
+    SaveDataMountResult mounted{};
+    Check(MountSave(&name, MountReadWrite, &mounted), "remount for mode 0 check");
+    Check(sceSaveDataUmount2(0, &mounted.mount_point) == 0, "umount2(0) succeeds");
+    SaveDataEvent empty{};
+    Check(sceSaveDataGetEventResult(nullptr, &empty) == SaveDataErrorNotFound, "umount2(0) does not post a backup event");
+
+    Check(MountSave(&name, MountReadWrite, &mounted), "remount for umount2 backup copy failure");
+    FailStep("backup.copy", 1);
+    Check(sceSaveDataUmount2(0x10000u, &mounted.mount_point) == 0, "umount2(0x10000) returns 0 when backup copy fails");
+    ClearFailingStep();
+    SaveDataEvent failedEvent{};
+    Check(sceSaveDataGetEventResult(nullptr, &failedEvent) == 0 && failedEvent.type == 1 && failedEvent.error_code == SaveDataErrorInternal, "umount2(0x10000) reports INTERNAL when backup copy fails");
+    SaveDataMountInfo info{};
+    Check(sceSaveDataGetMountInfo(&mounted.mount_point, &info) == SaveDataErrorNotMounted, "umount2(0x10000) unmounts the save when backup copy fails");
+
+    for (const std::uint32_t unknownMode : {1u, 2u, 0x20000u}) {
+        Check(Umount2Throws(unknownMode, &missing), "umount2 throws on unknown mode " + std::to_string(unknownMode));
+    }
+
+    SaveDataDelete del{};
+    del.dir_name = &name;
+    Check(sceSaveDataDelete(&del) == 0, "umount2 backup save deletes cleanly");
+}
+
 void CheckMountCapacityAndLifecycle() {
     Check(sceSaveDataAbort() == 0, "abort after init succeeds");
     Check(sceSaveDataClearProgress() == 0, "clearProgress after init succeeds");
@@ -967,6 +1040,7 @@ int main() {
     CheckBackupSwap();
     CheckLinkedPaths();
     CheckBackupGuestErrors();
+    CheckUmount2BackupModes();
     Check(sceSaveDataTerminate() == 0, "SaveData terminates");
     Check(sceSaveDataAbort() == SaveDataErrorNotInitialized, "abort post-terminate returns NOT_INITIALIZED");
     Check(sceSaveDataClearProgress() == SaveDataErrorNotInitialized, "clearProgress post-terminate returns NOT_INITIALIZED");

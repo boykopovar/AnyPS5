@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import contextlib
 import io
+import re
 import shutil
 import subprocess
 import sys
@@ -35,6 +36,12 @@ LIMITATIONS = [
     "skipped, the host cannot allocate a buffer of more than 2 GiB",
     "skipped, the host has no interface that can join 224.0.0.251",
     "skipped, the host mounts /dev/shm noexec, so named shared memory is not mapped executable",
+    "skipped, unproven on CPU Vulkan (llvmpipe): host write over a shadowed unit: the import made without the GPU lock was refused",
+    "skipped, host imports unavailable: carried shadows not tested",
+    "skipped, host import of the test block refused: carried shadows not tested",
+    "skipped, host imports are compared, not watched: carried shadows not tested",
+    "skipped, the surface's host import is compared, not write-watched",
+    "skipped, the device has no settle or sparse queue; nothing to check",
 ]
 
 HOST_LIMITATIONS = [
@@ -225,6 +232,8 @@ class CtestSkipPolicyTests(unittest.TestCase):
                                                 capture_output=True, encoding="utf-8")
                         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                         self.assertIn("error: guest_probe skipped", result.stdout)
+                        if "skipped, flaky" in report:
+                            self.assertIn("error: guest_probe skipped: skipped, flaky", result.stdout)
 
     def test_ctest_status_preserves_high_refresh_policy(self):
         reason = "skipped, current display does not provide 120 Hz"
@@ -345,6 +354,61 @@ class DeviceSkipPolicyTests(unittest.TestCase):
             f'<skipped message="{extra}"/><system-out>{known}</system-out>',
             f'<skipped>{reason}\n{extra}</skipped>',
             f'<skipped/><system-out>{known}\n{known}\n{extra}</system-out>',
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report in reports:
+                junit.write_text(f'<testsuite><testcase name="guest_video_out_high_frame_rate">{report}</testcase></testsuite>', encoding="utf-8")
+                for job in ("linux", "windows"):
+                    with self.subTest(job=job, report=report):
+                        result = subprocess.run(
+                            [sys.executable, "-I", str(TOOL), str(junit), "--job", job],
+                            capture_output=True, encoding="utf-8")
+                        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                        self.assertIn("error: guest_video_out_high_frame_rate skipped", result.stdout)
+
+    def test_high_refresh_skip_is_expected_alongside_device_log_lines(self):
+        reason = "current display does not provide 120 Hz"
+        log = "\n".join((
+            "[time] scheduler tick raised to 0.5 ms (was 0.50 ms, now 0.50 ms, timed waits fine, timers fire 518 us late)",
+            "[src/HostCpu.cpp:220 operator()] host CPU has SSE2 AVX AVX2",
+            "[src/VulkanDevice.cpp:2666 VulkanDevice] Vulkan device ready device=0x2 queue=0x3 family=0",
+            "[write-watch] host imports resolve write protection: yes",
+            "[gpu] open /dev/udmabuf: No such file or directory; using a fallback",
+            "[src/VulkanDevice.cpp:2758 VulkanDevice] Swapchain created swapchain=0x4 extent=1152x648 images=4",
+            "[shader-disk-cache] cache (source version 5110620204023565, format 60)",
+            "[videoout] HDR output available: peak 1000.0 nits, full frame 600.0 nits, black 0.0050 nits",
+            "[videoout] HDR output unavailable (display in HDR: no, surface offers HDR10: yes)",
+            f"skipped, {reason}",
+        ))
+        reports = (
+            f'<skipped/><system-out>{log}</system-out>',
+            f'<skipped message="{reason}"/><system-out>{log}</system-out>',
+            f'<skipped/><system-out>{log}</system-out><system-err>[gpu] teardown</system-err>',
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report in reports:
+                junit.write_text(f'<testsuite><testcase name="guest_video_out_high_frame_rate">{report}</testcase></testsuite>', encoding="utf-8")
+                for job in ("linux", "windows"):
+                    with self.subTest(job=job, report=report):
+                        result = subprocess.run(
+                            [sys.executable, "-I", str(TOOL), str(junit), "--job", job],
+                            capture_output=True, encoding="utf-8")
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertIn("1 test(s) skipped, all expected", result.stdout)
+
+    def test_bracketed_line_cannot_hide_a_second_skip_reason(self):
+        reason = "current display does not provide 120 Hz"
+        reports = (
+            f'<skipped/><system-out>[probe] skipped, flaky\nskipped, {reason}</system-out>',
+            f'<skipped/><system-out>skipped, {reason}\n[probe] skipped, flaky</system-out>',
+            f'<skipped message="{reason}"/><system-err>[probe] skipped, flaky</system-err>',
+            f'<skipped/><system-out>skipped, {reason}\n[probe] unexpected failure detail</system-out>',
+            f'<skipped/><system-out>[probe] unexpected failure detail\nskipped, {reason}</system-out>',
+            f'<skipped message="{reason}"/><system-err>[probe] unexpected failure detail</system-err>',
+            f'<skipped message="{reason}"/><system-err>[videoout] unexpected failure detail</system-err>',
+            f'<skipped message="{reason}"/><system-err>[videoout] HDR output unavailable (display in HDR: no, surface offers HDR10: yes): unexpected error</system-err>',
         )
         with tempfile.TemporaryDirectory() as directory:
             junit = Path(directory) / "junit.xml"
@@ -647,6 +711,56 @@ class NotRunTests(unittest.TestCase):
 
 
 
+
+
+class DeviceLimitationsTests(unittest.TestCase):
+    PATTERNS = [re.compile("no display"), re.compile("no gpu")]
+
+    def test_all_skip_reasons_matching_a_pattern_is_a_limitation(self):
+        output = "a: skipped, no display\nb: Skipped, NO GPU found\nc: ok\n"
+        self.assertTrue(check_skips.device_limitations(output, [re.compile("no display", re.I), re.compile("no gpu", re.I)]))
+
+    def test_one_unmatched_reason_is_not_a_limitation(self):
+        output = "a: skipped, no display\nb: skipped, flaky\n"
+        self.assertFalse(check_skips.device_limitations(output, self.PATTERNS))
+
+    def test_no_skips_or_no_patterns_is_not_a_limitation(self):
+        self.assertFalse(check_skips.device_limitations("all passed\n", self.PATTERNS))
+        self.assertFalse(check_skips.device_limitations("a: skipped, no display\n", []))
+
+
+class SymlinkPrivilegeLimitationTests(unittest.TestCase):
+    REASON = "SKIP: Windows symbolic-link privileges unavailable"
+    NAMES = ("guest_kernel_sys_paths_symlinkat", "guest_kernel_sys_paths_symlinkat_patched")
+
+    def test_exact_reason_for_the_symlink_tests_is_a_limitation(self):
+        for name in self.NAMES:
+            with self.subTest(name=name):
+                self.assertTrue(check_skips.symlink_privilege_limitation(name, "noise\n  " + self.REASON + "  \n"))
+
+    def test_other_tests_are_never_a_limitation(self):
+        self.assertFalse(check_skips.symlink_privilege_limitation("guest_kernel_sys_paths_open", self.REASON))
+
+    def test_any_other_reason_or_no_reason_is_not_a_limitation(self):
+        name = self.NAMES[0]
+        self.assertFalse(check_skips.symlink_privilege_limitation(name, "ok\n"))
+        self.assertFalse(check_skips.symlink_privilege_limitation(name, self.REASON + "\nSKIP: disk full\n"))
+        self.assertFalse(check_skips.symlink_privilege_limitation(name, "test skipped, Windows symbolic-link privileges unavailable"))
+
+
+class EnvironmentLoaderRetentionTests(unittest.TestCase):
+    def test_single_exact_skip_line_is_a_limitation(self):
+        reason = check_skips.ENVIRONMENT_LOADER_RETENTION
+        self.assertTrue(check_skips.environment_loader_retention("ok\n  " + reason + "  \nok\n"))
+
+    def test_other_or_extra_skips_are_not_a_limitation(self):
+        reason = check_skips.ENVIRONMENT_LOADER_RETENTION
+        self.assertFalse(check_skips.environment_loader_retention(reason + "\n" + reason))
+        self.assertFalse(check_skips.environment_loader_retention(reason + "\nskipping another check"))
+        self.assertFalse(check_skips.environment_loader_retention("skipped for another reason"))
+
+    def test_no_skip_is_not_a_limitation(self):
+        self.assertFalse(check_skips.environment_loader_retention("all passed\n"))
 
 
 if __name__ == "__main__":
