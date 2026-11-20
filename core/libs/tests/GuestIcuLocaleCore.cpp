@@ -161,6 +161,9 @@ int main() {
         {"x-elmer", ""}, {"en-a-bbb-x-foo", "en"}, {"i-klingon@currency=EUR", "i-klingon"},
         {"x-private@currency=EUR", "x-private"}, {"x_foo", "x-foo"}, {"i-klingon.utf8", "i-klingon.utf8"},
         {"zh_YUE", "zh_YUE"}, {"art_LOJBAN", "art__LOJBAN"},
+        {"no@ny", "no@ny"}, {"no-no.utf32@B", "no_NO.utf32@B"}, {"qz-qz@Euro", "qz_QZ@Euro"},
+        {"en_GB@EURO", "en_GB@EURO"}, {"no-no-ny.utf8@B", "no_NO_NY.utf8@B"}, {"mr@", "mr@"},
+        {"en@a;b", "en@a;b"}, {"en@a;b=c", "en"}, {"en@currency=EUR", "en"},
     });
     Check(uloc_canonicalize, false, {
         {"EN-us", "en_US"}, {"eN_LatN_us", "en_Latn_US"},
@@ -176,6 +179,11 @@ int main() {
         {"en@a1=x;a=y", "en@a=y;a1=x"}, {"en@c u r=U S", "en@cur=U S"}, {"en@a=1;", "en@a=1"},
         {"en@a=1;  ", "en@a=1"}, {"en@a;b=c", "en"}, {"en@a=b=c;d==", "en@a=b=c;d=="},
         {"en@abcdefghijklmnopqrstuvwx=1", "en@abcdefghijklmnopqrstuvwx=1"},
+        {"no@ny", "no__NY"}, {"no-no.utf32@B", "no_NO_B"}, {"qz-qz@Euro", "qz_QZ_EURO"},
+        {"en_GB@EURO", "en_GB_EURO"}, {"no-no-ny.utf8@B", "no_NO_NY_B"}, {"en@", "en__"},
+        {"en_Latn@FOO", "en_Latn_FOO"}, {"en_Latn_US@FOO", "en_Latn_US_FOO"}, {"en_POSIX@FOO", "en__POSIX_FOO"},
+        {"en_US_POSIX@", "en_US_POSIX"}, {"art@lojban", "jbo"}, {"zh@yue", "zh__YUE"}, {"en@a;b", "en__A;B"},
+        {"en@a-b,c", "en__A_B_C"}, {"en@foo.bar", "en__FOO"}, {"en@foo@bar", "en__FOO"}, {"@FOO", "__FOO"},
         {"en-12", "en_12"}, {"en__US", "en__US"},
         {"en-u-attr2-attr1", "en@attribute=attr1-attr2"}, {"de-DE-x-ab", "de_DE@x=ab"},
         {"i-default", "en@x=i-default"}, {"x-piglatin_ML.MBE", "x-piglatin_ML"},

@@ -449,6 +449,8 @@ struct Parts {
     std::string variant;
     std::string encoding;
     std::string keywords;
+    int fields = 0;
+    bool posixVariant = false;
 };
 
 Parts Parse(const char* locale) {
@@ -456,7 +458,10 @@ Parts Parse(const char* locale) {
     const auto keyword = input.find('@');
     const std::string_view head = input.substr(0, keyword);
     Parts parts;
-    if (keyword != std::string_view::npos) parts.keywords = std::string(input.substr(keyword + 1));
+    if (keyword != std::string_view::npos) {
+        parts.keywords = std::string(input.substr(keyword + 1));
+        parts.posixVariant = parts.keywords.find('=') == std::string::npos;
+    }
 
     const auto encoding = head.find('.');
     const std::string_view base = head.substr(0, encoding);
@@ -479,15 +484,20 @@ Parts Parse(const char* locale) {
     }
     if (parts.language == "und" || parts.language == "root") parts.language.clear();
     if (parts.language.size() == 3) parts.language = ShortCode(Languages, parts.language);
+    if (index < tokens.size()) ++parts.fields;
     if (index < tokens.size() && IsScript(tokens[index])) {
         parts.script = ChangeCase(tokens[index], false);
         parts.script.front() = Upper(parts.script.front());
         ++index;
+        ++parts.fields;
     }
-    if (index < tokens.size() && IsRegion(tokens[index])) {
+    const bool region = index < tokens.size() && IsRegion(tokens[index]);
+    if (region) {
         parts.country = Region(tokens[index]);
         ++index;
-    } else if (index < tokens.size() && tokens[index].empty()) {
+    }
+    if (index < tokens.size() && !tokens[index].empty()) ++parts.fields;
+    if (!region && index < tokens.size() && tokens[index].empty()) {
         ++index;
         if (index < tokens.size()) parts.variant += "_";
     }
@@ -634,7 +644,10 @@ std::int32_t APS5_VABI uloc_getBaseName(const char* locale, char* result,
     if (!locale) return Write(BaseName(Parse(Icu::DefaultLocaleName())), result, capacity, status, false);
     const std::string id = FromLanguageTag(locale, status);
     if (*status > 0) return WriteUnconverted(id, result, capacity);
-    return Write(BaseName(Parse(id.c_str())), result, capacity, status, false);
+    const Parts parts = Parse(id.c_str());
+    std::string name = BaseName(parts);
+    if (parts.posixVariant) name += "@" + parts.keywords;
+    return Write(name, result, capacity, status, false);
 }
 
 std::int32_t APS5_VABI uloc_getKeywordValue(const char* locale, const char* keyword,
@@ -692,6 +705,13 @@ std::int32_t APS5_VABI uloc_canonicalize(const char* locale, char* result,
     Parts parts = Parse(id.c_str());
     parts.encoding.clear();
     std::string canonical = BaseName(parts);
+    if (parts.posixVariant) {
+        if (parts.fields < 2 || (parts.fields < 3 && !parts.script.empty()))
+            canonical.append(parts.fields < 2 ? static_cast<std::size_t>(2 - parts.fields) : 1, '_');
+        const std::string_view variant = std::string_view(parts.keywords).substr(0, parts.keywords.find_first_of(".@"));
+        if (!variant.empty() && !parts.variant.empty()) canonical += '_';
+        for (const char part : variant) canonical += part == '-' || part == ',' ? '_' : Upper(part);
+    }
     const auto mapped = std::find_if(CanonicalIds.begin(), CanonicalIds.end(),
                                      [&](const auto& entry) { return entry.first == canonical; });
     if (mapped != CanonicalIds.end()) canonical = std::string(mapped->second);
@@ -706,20 +726,6 @@ std::int32_t APS5_VABI uloc_canonicalize(const char* locale, char* result,
             }
             canonical += keywords;
         }
-    } else if (!parts.keywords.empty()) {
-        std::vector<std::string> keywords;
-        std::size_t start = 0;
-        while (start < parts.keywords.size()) {
-            const auto end = parts.keywords.find(';', start);
-            const std::string item = parts.keywords.substr(
-                start, end == std::string::npos ? end : end - start);
-            if (!item.empty()) keywords.push_back(item);
-            if (end == std::string::npos) break;
-            start = end + 1;
-        }
-        std::sort(keywords.begin(), keywords.end());
-        for (const auto& keyword : keywords)
-            canonical += std::string(canonical.find('@') == std::string::npos ? "@" : ";") + keyword;
     }
     return Write(canonical, result, capacity, status, false);
 }
