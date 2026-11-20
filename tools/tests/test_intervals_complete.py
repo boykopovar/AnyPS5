@@ -62,6 +62,25 @@ class FeatureTests(unittest.TestCase):
                     self.assertEqual((strict.returncode, strict.stdout), (2, ""), strict.stderr)
                     self.assertIn("interval 2 starts at", strict.stderr)
 
+    def test_strict_export_rejects_duplicate_zero_length_intervals(self):
+        from test_trace_digest import interval_line
+        path = self.root / "aps5-summary.jsonl"
+        first = interval_line(0.0, 30.0, 20, 5)
+        point = interval_line(30.0, 30.0, 20, 5, presents=0)
+        last = interval_line(30.0, 60.0, 20, 5)
+        for points in ([point], [point, point]):
+            with self.subTest(point_count=len(points)):
+                path.write_text("\n".join(map(json.dumps, [first, *points, last])) + "\n", encoding="utf-8")
+                ordinary = self.cli("trace_intervals_csv.py", path)
+                strict = self.cli("trace_intervals_csv.py", path, "--require-complete")
+                self.assertEqual(ordinary.returncode, 0, ordinary.stderr)
+                if len(points) == 1:
+                    self.assertEqual(strict.returncode, 0, strict.stderr)
+                    self.assertEqual(strict.stdout, ordinary.stdout)
+                else:
+                    self.assertEqual((strict.returncode, strict.stdout), (2, ""), strict.stderr)
+                    self.assertIn("interval 3 duplicates the previous interval", strict.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
