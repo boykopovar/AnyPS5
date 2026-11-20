@@ -1236,6 +1236,7 @@ def run_cli(argv, capture_resources):
     parser.add_argument("--warmup-seconds", type=positive, help="warm-up duration before each capture (default: 60)")
     args = parser.parse_args(argv)
     validate_performance_args(parser, args)
+    args.ids = list(dict.fromkeys(args.ids))
     args.runs = args.runs or (1 if args.profile == "performance" else 2)
     if args.smoke and args.ids:
         parser.error("--smoke takes no title IDs")
