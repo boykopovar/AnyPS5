@@ -510,12 +510,13 @@ class DebtSplitTests(unittest.TestCase):
 
     def test_main_reports_non_git_repository(self):
         with tempfile.TemporaryDirectory() as empty_dir:
-            with patch("pathlib.Path.cwd", return_value=Path(empty_dir)):
-                with patch("sys.stderr", new_callable=io.StringIO) as stderr:
-                    with self.assertRaises(SystemExit) as cm:
-                        debt_split.main(["split"])
-                    self.assertEqual(cm.exception.code, 2)
-                    self.assertIn("not a git repository", stderr.getvalue())
+            with patch.dict(os.environ, {"GIT_CEILING_DIRECTORIES": str(Path(empty_dir).parent)}):
+                with patch("pathlib.Path.cwd", return_value=Path(empty_dir)):
+                    with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                        with self.assertRaises(SystemExit) as cm:
+                            debt_split.main(["split"])
+                        self.assertEqual(cm.exception.code, 2)
+                        self.assertIn("not a git repository", stderr.getvalue())
 
 
     def test_split_keeps_the_note_and_sub_headings_of_an_existing_debt_file(self):
@@ -580,6 +581,45 @@ class DebtSplitTests(unittest.TestCase):
 
     def test_separated_puts_a_blank_between_entries_and_text(self):
         self.assertEqual(debt_split.separated(["- a", "- b", "text"]), ["- a", "- b", "", "text"])
+
+
+    def test_render_index_separates_headings_and_text_and_ends_with_one_newline(self):
+        index = [("heading", "# T"), ("text", "note"), ("heading", "### S"), ("entry", "- a"), ("entry", "- b")]
+        self.assertEqual(debt_split.render_index(index), "# T\n\nnote\n\n### S\n\n- a\n- b\n")
+        self.assertEqual(debt_split.render_index([("entry", "- a"), ("entry", "- b")]), "- a\n- b\n")
+
+
+class SectionsOfTests(unittest.TestCase):
+    def test_lists_third_level_headings_in_order(self):
+        text = "# Title\n\n### Alpha\n- a\n\n### Beta\n- b\n"
+        self.assertEqual(debt_split.sections_of(text), ["Alpha", "Beta"])
+
+    def test_text_without_sections_has_none(self):
+        self.assertEqual(debt_split.sections_of("# Title\n- a\nbody\n"), [])
+        self.assertEqual(debt_split.sections_of(""), [])
+
+
+class ReadPreambleTests(unittest.TestCase):
+    def write(self, root, text):
+        path = root / debt_split.debt_file("lib")
+        path.parent.mkdir(parents=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_returns_text_before_the_first_section_without_the_title(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            self.write(root, "# Lib\n\nIntro text.\n\n### Sec\n- a\n")
+            self.assertEqual(debt_split.read_preamble(root, "lib"), ["Intro text."])
+
+    def test_second_level_headings_are_kept(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            self.write(root, "# Lib\n## Notes\nbody\n### Sec\n- a\n")
+            self.assertEqual(debt_split.read_preamble(root, "lib"), ["## Notes", "body"])
+
+    def test_missing_file_has_no_preamble(self):
+        with tempfile.TemporaryDirectory() as name:
+            self.assertEqual(debt_split.read_preamble(Path(name), "lib"), [])
 
 
 if __name__ == "__main__":
