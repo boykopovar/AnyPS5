@@ -392,6 +392,10 @@ int main(int argc, char** argv) {
         Require(argc == 1 || (argc == 2 && std::string_view(argv[1]) == "--masked-invalid-table-only"), "unknown waterfall test argument");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (device->Target().subgroupSize < 32u) {
+            std::printf("skipped, the host subgroup has %u lanes and LLVM cannot compile the wave32 emulation\n", device->Target().subgroupSize);
+            return VulkanTestSkipped;
+        }
         RunMaskedTable(*device, false);
         RunMaskedTable(*device, true);
         RunMaskedTable(*device, false, true);
