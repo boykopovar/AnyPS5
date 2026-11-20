@@ -268,6 +268,11 @@ set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedExtendedPrecision.cpp
         TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
 
+if(ANYPS5_ENABLE_TSAN)
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
+            TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-fno-sanitize=thread")
+endif()
+
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/BinaryWordIo.cpp)
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/LegacySignals.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SigvecExport.cpp)
 
