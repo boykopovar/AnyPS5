@@ -202,7 +202,7 @@ void VerifyTessellationInstancePatches() {
 
 std::string SerializeVersion56(const ShaderRecompiler::RecompileRequest& request) {
     auto bytes = DecodeBase64(ShaderRecompiler::RequestSerializer{}.Serialize(request));
-    Require(bytes.size() > 14u && bytes[4] == 63u);
+    Require(bytes.size() > 14u && bytes[4] == 64u);
     bytes.resize(bytes.size() - 6u);
     bytes[4] = 56u;
     return EncodeBase64(bytes);
@@ -226,7 +226,7 @@ void VerifyTargetOptions() {
                     Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
                     Require(serializer.Serialize(replay.request) == encoded);
                     auto bytes = DecodeBase64(encoded);
-                    Require(bytes[4] == 63u && bytes.back() == 0u);
+                    Require(bytes[4] == 64u && bytes.back() == 0u);
                     for (std::size_t missing = 1u; missing <= 6u; ++missing) {
                         auto truncated = bytes;
                         truncated.resize(truncated.size() - missing);
@@ -784,7 +784,7 @@ int VerifyVersion56Compatibility() {
         version40[4] = 40u;
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
-        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 64u}) {
+        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 65u}) {
             auto future = bytes;
             future[4] = unwritten;
             bool futureRejected = false;
@@ -899,8 +899,12 @@ int VerifyVersion56Compatibility() {
         const auto replay35 = serializer.Deserialize(EncodeBase64(version35));
         Require(replay35.request.target.spannedWaves == spanned && !replay35.request.target.float32FlushToZero);
         request.target.spannedAnySubgroup = spanned;
-        auto version62 = DecodeBase64(serializer.Serialize(request));
-        Require(version62[4] == 63u && version62.back() == (spanned ? 1u : 0u));
+        auto version64 = DecodeBase64(serializer.Serialize(request));
+        Require(version64[4] == 64u && version64.back() == (spanned ? 1u : 0u));
+        auto version63 = version64;
+        version63[4] = 63u;
+        Require(serializer.Deserialize(EncodeBase64(version63)).request.target.spannedAnySubgroup == spanned);
+        auto version62 = version63;
         version62[4] = 62u;
         Require(serializer.Deserialize(EncodeBase64(version62)).request.target.spannedAnySubgroup == spanned);
         auto version57 = version62;

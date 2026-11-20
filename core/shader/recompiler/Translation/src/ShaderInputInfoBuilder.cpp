@@ -260,6 +260,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             target.provokingVertex = mesh->provokingVertex;
             target.esgsItemSize = mesh->esgsItemSize;
             target.outputPrimitiveSize = mesh->outputPrimitiveSize;
+            target.verticesPerPrimitive = mesh->verticesPerPrimitive != 0u ? mesh->verticesPerPrimitive : mesh->outputPrimitiveSize;
             if (target.outputPrimitiveSize == 1u) vertexStorage.pointList = true;
             target.capturedInput = tessellation != nullptr;
         }

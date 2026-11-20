@@ -8499,6 +8499,15 @@ void verifyMeshConfiguration() {
         RecompileCacheKey::Build(other, key);
         require(key != first && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(other), "the cache keys ignore the mesh output primitive size");
     }
+    for (const auto perPrimitive : {5u, 7u}) {
+        otherMesh = mesh;
+        otherMesh.verticesPerPrimitive = perPrimitive;
+        other.graphics = GraphicsCompileContext{0u, {}, otherMesh, std::nullopt, {}};
+        const auto amplifiedReplay = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(other));
+        require(amplifiedReplay.request.graphics.has_value() && amplifiedReplay.request.graphics->mesh.has_value() && amplifiedReplay.request.graphics->mesh->verticesPerPrimitive == perPrimitive, "the mesh vertices per primitive limit was lost in serialization");
+        RecompileCacheKey::Build(other, key);
+        require(key != first && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(other), "the cache keys ignore the mesh vertices per primitive limit");
+    }
     RecompileRequest hull{};
     hull.shader = {ShaderStage::TessellationControl, 0x10000u, code, 0, {}};
     hull.context.waveSize = 64;
