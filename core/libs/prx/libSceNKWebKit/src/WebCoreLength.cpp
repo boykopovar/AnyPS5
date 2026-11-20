@@ -115,12 +115,17 @@ void DestroyNode(void* node) {
 }
 
 void ConstructLength(WebCore::Length& self, WTF::Ref<CalculationValue>&& value) {
-    CalculationValue* calculationValue = value.leakRef();
+    CalculationValue* calculationValue = value.get();
     if (!calculationValue)
         throw std::invalid_argument("WebCore::Length: null CalculationValue");
+    auto& map = CalculationValues();
+    if (map.size() >= std::numeric_limits<unsigned>::max() - 1u)
+        throw std::length_error("WebCore::Length: every CalculationValue handle is in use");
     unsigned handle = nextAvailableHandle;
-    while (handle == 0 || handle == std::numeric_limits<unsigned>::max() || !CalculationValues().emplace(handle, CalculationValueMapEntry{0, calculationValue}).second)
+    while (handle == 0 || handle == std::numeric_limits<unsigned>::max() || map.count(handle))
         ++handle;
+    map.emplace(handle, CalculationValueMapEntry{0, calculationValue});
+    value.leakRef();
     self.m_calculationValueHandle = handle;
     nextAvailableHandle = handle + 1;
     self.m_type = WebCore::LengthType::Calculated;
