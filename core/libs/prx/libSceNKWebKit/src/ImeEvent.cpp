@@ -25,9 +25,13 @@
  */
 
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
+#include "prx/libc/include/General.hpp"
+#include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <string_view>
 
@@ -212,6 +216,27 @@ std::string ExpandLocaleSubtags(std::string_view code) {
     return lang + "_" + script + "_" + region;
 }
 
+bool CopyGuestCString(const char* source, std::string& destination) {
+    const auto base = reinterpret_cast<std::uintptr_t>(source);
+    for (std::size_t offset = 0;;) {
+        if (offset > std::numeric_limits<std::uintptr_t>::max() - base) {
+            return false;
+        }
+        const auto current = base + offset;
+        const std::size_t chunk = std::min<std::size_t>(256, 4096 - current % 4096);
+        char buffer[256];
+        if (!GuestCopyIn_nid_no_patch(buffer, reinterpret_cast<const void*>(current), chunk)) {
+            return false;
+        }
+        if (const auto* end = static_cast<const char*>(std::memchr(buffer, 0, chunk))) {
+            destination.append(buffer, static_cast<std::size_t>(end - buffer));
+            return true;
+        }
+        destination.append(buffer, chunk);
+        offset += chunk;
+    }
+}
+
 int CountCompositionCharacters(const char* compositionString) {
     if (!compositionString) {
         return 0;
@@ -230,11 +255,18 @@ int CountCompositionCharacters(const char* compositionString) {
 extern "C" {
 
 WKInputLanguage APS5_VABI WKImeEventGetInputLanguage(const char* languageCode) {
-    if (!languageCode || !languageCode[0]) {
+    if (!languageCode) {
         return InputLanguageUndefined;
     }
-    const std::string expanded = ExpandLocaleSubtags(languageCode);
-    const char* candidate = expanded.empty() ? languageCode : expanded.c_str();
+    std::string code;
+    if (!CopyGuestCString(languageCode, code)) {
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
+    if (code.empty()) {
+        return InputLanguageUndefined;
+    }
+    const std::string expanded = ExpandLocaleSubtags(code);
+    const char* candidate = expanded.empty() ? code.c_str() : expanded.c_str();
     for (const auto& entry : languageEntries) {
         if (std::strcmp(candidate, entry.attr) == 0) {
             return entry.value;
