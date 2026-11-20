@@ -254,17 +254,17 @@ void ReleaseReport(const WebRtcRtcStatsReport* constReport) {
     auto* report = const_cast<WebRtcRtcStatsReport*>(constReport);
     RequireWritable(report, sizeof(*report), DestructorMessage);
     std::atomic_ref<std::int32_t> count(report->refCount);
-    const std::int32_t current = count.load(std::memory_order_acquire);
-    if (current <= 0)
-        throw std::invalid_argument(DestructorMessage);
+    std::int32_t current = count.load(std::memory_order_acquire);
     std::vector<WebRtcStatsMapNode*> nodes;
+    do {
+        if (current <= 0)
+            throw std::invalid_argument(DestructorMessage);
+        nodes.clear();
+        if (current == 1)
+            nodes = CollectPostOrder(report);
+    } while (!count.compare_exchange_weak(current, current - 1, std::memory_order_acq_rel, std::memory_order_acquire));
     if (current == 1)
-        nodes = CollectPostOrder(report);
-    if (count.fetch_sub(1, std::memory_order_acq_rel) != 1)
-        return;
-    if (current != 1)
-        nodes = CollectPostOrder(report);
-    DeleteReport(report, nodes);
+        DeleteReport(report, nodes);
 }
 
 }
