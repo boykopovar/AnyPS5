@@ -1,0 +1,5 @@
+# libkernel
+
+## change [sceKernelMunmap]
+
+- [sceKernelMunmap](../../../core/libs/prx/libkernel/DirectMemory/Export.cpp) (libkernel) - a title process was not measured. In a PS5 payload process (firmware 13.40, 2026-11-20 and 2026-11-21) on anonymous, flexible and direct mappings the start is rounded down and the offset plus the length rounded up to 16 KiB pages modulo 2^64, as FreeBSD 11.4's `kern_munmap` ([vm_mmap.c#L535-L542](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/vm/vm_mmap.c#L535-L542)) does: a sum that rounds to 0 returned 0 and removed nothing. A length of 0, a start in the first page, a range that wraps and a range that ends above 0x800000000000 returned `EINVAL`; a range with nothing mapped returned 0. It also drops the range names of the unmapped range, because a PS5 payload process (firmware 11.60, 2026-11-08) gave a new mapping at the address of an unmapped `sceKernelMapNamedFlexibleMemory` mapping a fresh anonymous name; a name set by `sceKernelSetVirtualRangeName` was not measured.
