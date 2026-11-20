@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "Recompiler.hpp"
+#include "StencilReplay.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
@@ -54,6 +55,10 @@ constexpr std::byte Kept{0x40};
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
 alignas(256) std::array<std::byte, 128 * 128 * 4> DepthMemory{};
 alignas(256) std::array<std::byte, 256 * 256> StencilMemory{};
+alignas(256) std::array<std::byte, 128 * 128 * 4> MultisampleDepthMemory{};
+alignas(256) std::array<std::byte, 256 * 256> MultisampleStencilMemory{};
+alignas(256) std::array<std::byte, 128 * 128 * 4> MultisampleColorMemory{};
+alignas(256) std::array<std::byte, 128 * 128 * 4> SampledDepthMemory{};
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -87,6 +92,8 @@ ShaderRecompiler::ShaderPixelStageInfo PixelInfo(std::uint32_t shaderControl) {
     };
     return AgcDriver::Graphics::DecodePixelStageInfo(context, {0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u});
 }
+
+bool LastReplayStored = false;
 
 void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelCode, std::uint32_t shaderControl, const VkStencilOpState& stencil, std::uint32_t vertices = 3u, std::uint32_t instances = 1u, bool depthFail = false, const std::function<void(AgcDriver::Graphics::State&)>& alter = {}, const std::function<void(AgcDriver::Pm4::DrawParameters&)>& alterDraw = {}, std::span<const std::array<float, 4>> vertexData = Vertices, std::span<const std::uint32_t> vertexCode = VertexCode, std::span<const std::uint32_t> pixelData = {}, std::span<const ShaderRecompiler::MemoryRegion> pixelSrt = {}, const std::function<void(ShaderRecompiler::RecompileResult&)>& alterVertex = {}, std::uint32_t pixelPushBytes = 0u) {
     Pixels.fill(Kept);
@@ -125,8 +132,10 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelC
     const auto pixelResult = ShaderRecompiler::Recompile(fragment);
     if (!pixelResult.stencilReferences.empty()) {
         Require(pixelResult.stencilReferenceDword * sizeof(std::uint32_t) + sizeof(std::uint32_t) == pixelResult.pushConstants.size(), "dynamic reference is not reserved after the stage payload");
+        LastReplayStored = false;
         for (std::size_t cursor = 5; cursor < pixelResult.spirv.size();) {
             const auto count = pixelResult.spirv[cursor] >> 16u;
+            LastReplayStored = LastReplayStored || (pixelResult.spirv[cursor] & 0xffffu) == spv::OpConvertUToPtr;
             Require(count != 0u && count <= pixelResult.spirv.size() - cursor, "invalid materialized replay module");
             Require((pixelResult.spirv[cursor] & 0xffffu) != spv::OpSpecConstant, "expected reference remains a pipeline specialization");
             cursor += count;
@@ -231,6 +240,17 @@ int main() {
         Check(odd, "odd columns exported zero");
         Draw(*device, alternating, exported, equal(91u));
         Check(all, "exported references replace compare reference");
+        const auto storeDevice = ShaderRecompiler::StencilReplayLanesFixed(device->Target().supportedCapabilities);
+        Require(!LastReplayStored, "a shader that needs no lane guarantee kept the replay store");
+        constexpr std::array<std::uint32_t, 21> waveBranch{
+            0x7e040f00u, 0xbe84047eu, 0x36060481u, 0x7daa0680u, 0xbf880007u, 0xbefe0404u, 0x7e0802ffu,
+            0x000000ffu, 0x7d8a0680u, 0xd5010005u, 0x01a90104u, 0xbf820003u, 0xbefe0404u, 0x7e0a02ffu,
+            0x000000feu, 0x7e0e02f2u, 0xf8000082u, 0x00000500u, 0xf800180fu, 0x07070707u, 0xbf810000u
+        };
+        Draw(*device, alternating, exported, replace());
+        Draw(*device, waveBranch, exported, equal(91u));
+        Check(all, "a wave branch on a lane predicate sees every lane of the original draw");
+        Require(LastReplayStored == storeDevice, "a shader that needs the lane guarantee did not get the replay store");
         Draw(*device, PlainPixelCode, plain, replace(0u));
         Draw(*device, ordered, exported, replace(), 6u);
         Draw(*device, PlainPixelCode, plain, equal(0u));
@@ -404,6 +424,72 @@ int main() {
         Check(all, "a replayed export beside an image draws the image's texels");
         Draw(*device, PlainPixelCode, plain, equal(0x35u));
         Check([](std::uint32_t x, std::uint32_t) { return x == 5u; }, "a replayed export beside an image reads its guest buffer at a 4-byte offset");
+        const auto at = [](const auto& memory) { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(memory.data())); };
+        const auto depthTexture = [](std::uint64_t address, std::uint32_t height) {
+            return std::array<std::uint32_t, 8>{static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (22u << 20u) | (((Width - 1u) & 3u) << 30u), ((Width - 1u) >> 2u) | ((height - 1u) << 14u), 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u};
+        };
+        const auto sampling = [&](std::uint64_t address, std::uint32_t height) {
+            std::vector<std::uint32_t> data(columnBuffer.begin(), columnBuffer.end());
+            const auto texture = depthTexture(address, height);
+            data.insert(data.end(), texture.begin(), texture.end());
+            data.insert(data.end(), alignedBuffer.begin(), alignedBuffer.end());
+            return data;
+        };
+        auto farVertices = Vertices;
+        for (auto& vertex : farVertices) vertex[2] = 1.0f;
+        Draw(*device, PlainPixelCode, plain, replace(0u), 3u, 1u, false, [&](AgcDriver::Graphics::State& state) {
+            state.depth = AgcDriver::Graphics::DepthTarget{at(SampledDepthMemory), 0u, {Width, 1u}, VK_FORMAT_D32_SFLOAT, 0.0f, 0};
+            state.stencilTest = false;
+            state.depthTest = true;
+            state.depthWrite = true;
+            state.depthCompare = VK_COMPARE_OP_ALWAYS;
+            state.renderExtent = {Width, 1u};
+            state.viewport = {0, 1.0f, static_cast<float>(Width), -1.0f, 0, 1};
+            state.scissor = {{0, 0}, {Width, 1u}};
+        }, {}, farVertices);
+        Draw(*device, PlainPixelCode, plain, replace(0u));
+        Draw(*device, bufferImageCode, exported, replace(), 3u, 1u, false, {}, {}, Vertices, VertexCode, sampling(at(SampledDepthMemory), 1u));
+        Check(all, "a replayed export samples a depth surface it does not render to");
+        Draw(*device, PlainPixelCode, plain, equal(0x35u));
+        Check([](std::uint32_t x, std::uint32_t) { return x == 5u; }, "a replayed export beside a sampled depth surface replaces each column's own value");
+        bool ownDepthRefused = false;
+        try { Draw(*device, bufferImageCode, exported, replace(), 3u, 1u, false, {}, {}, Vertices, VertexCode, sampling(at(DepthMemory), Height)); }
+        catch (const std::exception& error) { ownDepthRefused = std::string_view(error.what()).find("feedback") != std::string_view::npos; if (!ownDepthRefused) throw; }
+        Require(ownDepthRefused, "a replayed export sampling its own depth target was not refused");
+        const auto limits = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device).limits;
+        std::string multisampleSkip = (limits.framebufferColorSampleCounts & limits.framebufferDepthSampleCounts & limits.framebufferStencilSampleCounts & VK_SAMPLE_COUNT_4_BIT) != 0u ? std::string{} : "the device has no four-sample colour, depth and stencil targets";
+        const auto multisampled = [&](bool colorSamples) {
+            return [&, colorSamples](AgcDriver::Graphics::State& state) {
+                state.samples = 4u;
+                state.depth = AgcDriver::Graphics::DepthTarget{at(MultisampleDepthMemory), at(MultisampleStencilMemory), {Width, Height}, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0};
+                state.depth->samples = 4u;
+                if (!colorSamples) {
+                    state.truncatedCoverage = true;
+                    return;
+                }
+                state.color = {at(MultisampleColorMemory), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, MultisampleColorMemory.size(), 0xe4u};
+                state.color.tileMode = AgcDriver::Graphics::ColorTileMode::RenderTarget;
+                state.color.samples = 4u;
+                state.colors = {state.color};
+            };
+        };
+        if (multisampleSkip.empty()) {
+            try { Draw(*device, PlainPixelCode, plain, replace(0u), 3u, 1u, false, multisampled(false)); }
+            catch (const std::exception& error) {
+                if (std::string_view(error.what()).find("truncated coverage reduction") == std::string_view::npos) throw;
+                multisampleSkip = "the device lacks truncated coverage reduction for a single-sample colour target over four-sample depth";
+            }
+        }
+        if (multisampleSkip.empty()) {
+            Draw(*device, ColumnPixelCode, exported, replace(), 3u, 1u, false, multisampled(true));
+            Draw(*device, PlainPixelCode, plain, equal(5u), 3u, 1u, false, multisampled(false));
+            Check([](std::uint32_t x, std::uint32_t) { return x == 5u; }, "a four-sample unbounded stencil export replaces each column's own value");
+            Draw(*device, alternating, exported, replace(), 3u, 1u, false, multisampled(true));
+            Draw(*device, PlainPixelCode, plain, equal(255u), 3u, 1u, false, multisampled(false));
+            Check(even, "a four-sample bounded stencil export replaces even columns");
+        } else {
+            std::printf("stencil replay four-sample checks skipped: %s\n", multisampleSkip.c_str());
+        }
         std::puts("stencil replay tests passed");
         return 0;
     } catch (const std::exception& error) {
