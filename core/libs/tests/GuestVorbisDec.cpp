@@ -597,6 +597,42 @@ void TestThrowingCallbacks(const std::vector<unsigned char>& stream) {
     Require(guest.Untouched());
 }
 
+void TestBitrateHalfTies() {
+    constexpr long rate = 8192;
+    constexpr long samples = 16 * rate;
+    std::array<bool, 2> tested{};
+    for (int candidate = 0; candidate < 16 && !(tested[0] && tested[1]); ++candidate) {
+        std::vector<unsigned char> stream;
+        EncodeLink(stream, 1 + candidate * 97000000, 1, rate, samples, "bitrate");
+        Source host{&stream};
+        OggVorbis_File reference{};
+        Require(ov_open_callbacks(&host, &reference, nullptr, 0, HostSeekableCallbacks) == 0);
+        Require(ov_time_total(&reference, 0) == 16.0);
+        const auto bytes = reference.offsets[1] - reference.dataoffsets[0];
+        Require(ov_clear(&reference) == 0);
+        if (bytes % 2 == 0) continue;
+        const auto lower = bytes / 2;
+        const auto parity = lower % 2;
+        if (tested[parity]) continue;
+
+        GuestFile guest;
+        Source source{&stream};
+        Require(sceVorbisDecOpenCallbacks(&source, guest.Get(), nullptr, 0, SeekableCallbacks) == 0);
+        const auto expected = lower + parity;
+        for (const int link : {-1, 0}) {
+            const auto bitrate = sceVorbisDecBitrate(guest.Get(), link);
+            if (bitrate != expected)
+                std::fprintf(stderr, "Bitrate for link %d: %lld, expected %lld from %lld bytes in 16 seconds\n",
+                             link, static_cast<long long>(bitrate), static_cast<long long>(expected),
+                             static_cast<long long>(bytes));
+            Require(bitrate == expected);
+        }
+        Require(sceVorbisDecClear(guest.Get()) == 0);
+        tested[parity] = true;
+    }
+    Require(tested[0] && tested[1]);
+}
+
 }
 
 int main() {
@@ -612,6 +648,7 @@ int main() {
     TestNeverOpened();
     TestFailedOpens(stream);
     TestThrowingCallbacks(stream);
+    TestBitrateHalfTies();
 
     Require(Throws<std::runtime_error>([] { sceVorbisDecGetDecodePriority(); }));
     Require(Throws<std::runtime_error>([] { sceVorbisDecSetDecodePriority(); }));
