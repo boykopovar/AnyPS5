@@ -100,7 +100,7 @@ struct State {
     bool handoffPending = false;
     bool handoffReuse = false;
     alignas(16) std::array<std::uint64_t, 12> jumpBuffer{};
-    std::array<unsigned char, 16> peer{};
+    std::array<unsigned char, 28> peer{};
     std::uint32_t peerSize = peer.size();
     int acceptedFlags = -1;
     int acceptedDescriptorFlags = -1;
@@ -258,7 +258,11 @@ int main(int argc, char** argv) {
         Require(state.acceptedDescriptorFlags == 0, "accepted close-on-exec inherited");
         Require((state.acceptedFlags & 4) == (state.flags ? 4 : 0), "accepted nonblocking flags");
     }
-    if (state.installFault) Require(state.accepted == -1 && state.error == (state.installFault == 1 ? 24 : 12), "accepted installation failure errno");
+    if (state.installFault) {
+        Require(state.accepted == -1 && state.error == (state.installFault == 1 ? 24 : 12), "accepted installation failure errno");
+        Require(state.peerSize == state.peer.size() && state.peer == decltype(state.peer){},
+            "failed installation wrote the peer address");
+    }
     if (state.handoff) {
         Require(state.observed.load() && (state.handoffPending ? state.accepted >= 0 : state.accepted == -1), "accepted ownership handoff not reached");
         if (state.handoffReuse) Require(fcntl_nid_postfix(state.listener, 3) >= 0, "disposal closed replacement");

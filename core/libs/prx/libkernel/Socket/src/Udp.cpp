@@ -1932,16 +1932,14 @@ int APS5_VABI listen_nid_postfix(int descriptor, int backlog) {
     const int error = NativeError();
     return Fail(error == 56 ? 22 : error);
 }
-static int Accept(int descriptor, void* address, std::uint32_t* length, std::shared_ptr<Socket>& accepted) {
+static int Accept(int descriptor, sockaddr_storage* peer, std::shared_ptr<Socket>& accepted) {
     const auto listener = Lookup(descriptor);
     if (!listener) return -1;
-    if (listener->type != 1 || (address && !length)) return Fail(22);
-    sockaddr_storage peer{};
-    socklen_t size = sizeof(peer);
+    if (listener->type != 1) return Fail(22);
     NativeSocket native = Invalid;
     const int result = Transfer(*listener, false, 0, 0, [&](int) {
-        size = sizeof(peer);
-        native = ::accept(listener->value, address ? reinterpret_cast<sockaddr*>(&peer) : nullptr, address ? &size : nullptr);
+        socklen_t size = sizeof(sockaddr_storage);
+        native = ::accept(listener->value, reinterpret_cast<sockaddr*>(peer), peer ? &size : nullptr);
         return native == Invalid ? -1 : 0;
     }, false, TransferKind::Accept);
     if (result < 0) return Fail(NativeError());
@@ -1971,7 +1969,6 @@ static int Accept(int descriptor, void* address, std::uint32_t* length, std::sha
             accepted->options.tcpFlags = listener->options.tcpFlags & 0x1000;
         }
         if (inheritNonblocking && SetNonBlocking(*accepted)) return -1;
-        if (address) GuestAddress(peer, address, length);
         return 0;
     } catch (const std::bad_alloc&) {
         return Fail(12);
@@ -1981,19 +1978,30 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
     ThreadCancel::Check();
     ThreadCancel::IoRestart restart(true);
     for (;;) {
+        std::uint32_t capacity = 0;
+        if (address && !GuestCopyIn_nid_no_patch(&capacity, length, sizeof(capacity))) return Fail(14);
+        sockaddr_storage peer{};
         std::int64_t result;
         {
             ThreadCancel::IoPoint point(restart);
             std::shared_ptr<Socket> accepted;
             result = File::WithIoDescriptor(descriptor, [&](int descriptor) {
-                return Accept(descriptor, address, length, accepted);
+                return Accept(descriptor, address ? &peer : nullptr, accepted);
             });
             if (result >= 0) {
                 restart.RetainResult(std::move(accepted));
                 if (acceptObserver) acceptObserver();
             }
         }
-        if (result >= 0) return Install(std::static_pointer_cast<Socket>(restart.ReleaseResult()));
+        if (result >= 0) {
+            const int acceptedDescriptor = Install(std::static_pointer_cast<Socket>(restart.ReleaseResult()));
+            if (acceptedDescriptor < 0 || !address) return acceptedDescriptor;
+            unsigned char name[28]{};
+            GuestAddress(peer, name, &capacity);
+            if (ReportAddress(address, length, name, capacity)) return acceptedDescriptor;
+            GuestSockets::Close(acceptedDescriptor);
+            return Fail(14);
+        }
         if (ThreadCancel::Requested()) { restart.Clear(); ThreadCancel::Check(); }
         if (!restart.Ready()) return static_cast<int>(result);
     }
