@@ -1726,6 +1726,16 @@ class CollectFramesTests(unittest.TestCase):
             self.assertEqual(title_run.collect_frames(Path(directory), destination), [])
             self.assertTrue(destination.is_dir())
 
+    def test_only_collects_numbered_bitmap_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            for name in ("frame_005.bmp", "frame_preview.bmp", "frame_5_preview.bmp"):
+                (work / name).write_bytes(b"x")
+            (work / "frame_006.bmp").mkdir()
+            self.assertEqual(title_run.collect_frames(work, work / "out"), ["frame_005.bmp"])
+            self.assertEqual(sorted(path.name for path in work.iterdir()),
+                             ["frame_006.bmp", "frame_5_preview.bmp", "frame_preview.bmp", "out"])
+
     def test_single_frame_is_kept(self):
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory) / "work"

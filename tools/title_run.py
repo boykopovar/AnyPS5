@@ -978,7 +978,9 @@ FRAME_ENV = {"APS5_DUMP_FRAMES": "100000", "APS5_DUMP_FRAMES_EVERY": "30", "APS5
 
 
 def collect_frames(work, destination):
-    frames = sorted(work.glob("frame_*.bmp"), key=lambda path: int(path.stem.split("_")[1]))
+    numbered = (path for path in work.glob("frame_*.bmp")
+                if re.fullmatch(r"frame_[0-9]+", path.stem) and path.is_file())
+    frames = sorted(numbered, key=lambda path: int(path.stem.split("_")[1]))
     keep = {frames[0], frames[len(frames) // 2], frames[-1]} if frames else set()
     destination.mkdir(parents=True, exist_ok=True)
     kept = []
