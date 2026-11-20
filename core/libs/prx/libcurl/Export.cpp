@@ -1231,9 +1231,6 @@ std::int32_t APS5_VABI curl_easy_setopt_nid_postfix(CURL* handle, std::int32_t g
         break;
     case CURLOPT_SSL_CTX_FUNCTION: throw std::invalid_argument("CURLOPT_SSL_CTX_FUNCTION");
     case CURLOPT_SSL_CTX_DATA: throw std::invalid_argument("CURLOPT_SSL_CTX_DATA");
-    case CURLOPT_CONV_FROM_NETWORK_FUNCTION: throw std::invalid_argument("CURLOPT_CONV_FROM_NETWORK_FUNCTION");
-    case CURLOPT_CONV_TO_NETWORK_FUNCTION: throw std::invalid_argument("CURLOPT_CONV_TO_NETWORK_FUNCTION");
-    case CURLOPT_CONV_FROM_UTF8_FUNCTION: throw std::invalid_argument("CURLOPT_CONV_FROM_UTF8_FUNCTION");
     default: break;
     }
     if (!::curl_easy_option_by_id(option)) return ::curl_easy_setopt(handle, option);
