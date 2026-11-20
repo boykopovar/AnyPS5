@@ -706,7 +706,7 @@ public:
     }
 
     MultisampleColorSnapshot ColorSnapshot() {
-        Require(target.tileMode == ColorTileMode::RenderTarget && target.dccAddress == 0 && target.cmaskAddress == 0, "guest color snapshots with unsupported tiling or multisample metadata are not implemented");
+        Require(target.tileMode == ColorTileMode::RenderTarget && target.dccAddress == 0 && target.cmaskAddress == 0 && !target.fmaskCompression, "guest color snapshots with unsupported tiling or multisample metadata are not implemented");
         Require(!guestColorBaseline.empty(), "guest color snapshot has no initial footprint");
         readbackRecorder().Sync();
         Require(active->load(std::memory_order_acquire), "multisampled color target was retired before guest color snapshot");
@@ -825,6 +825,12 @@ public:
             texture->MarkRefreshedPerUse();
         }
         return {shared_from_this(), texture.get()};
+    }
+
+    FirstSampleCopy& PackedResolve() {
+        Require(sampleable, "the device cannot sample the multisampled 11_11_10 float color target a CB resolve averages");
+        if (packedResolve == nullptr) packedResolve = std::make_unique<FirstSampleCopy>(context, target.format, target.extent, true);
+        return *packedResolve;
     }
 
     VkImageView View(VkFormat format) {
@@ -981,6 +987,7 @@ private:
     std::map<std::array<std::uint32_t, 5>, std::shared_ptr<Texture>> textures;
     std::vector<std::shared_ptr<Texture>> retiredTextures;
     std::unique_ptr<FirstSampleCopy> firstSampleCopy;
+    std::unique_ptr<FirstSampleCopy> packedResolve;
     std::map<std::array<std::uint32_t, 4>, std::shared_ptr<Texture>> firstSampleTextures;
     struct ReinterpretCopy {
         Allocation allocation;
@@ -997,6 +1004,8 @@ private:
     };
     mutable std::vector<DccCopy> dccCopies;
     mutable DccCopy fmaskCopy;
+    mutable std::vector<GuestMemory::GpuUseObservation> dccObservations;
+    mutable GuestMemory::GpuUseObservation fmaskObservation;
     std::optional<std::uint32_t> dccFill;
     std::optional<std::uint32_t> cmaskFill;
 
@@ -1102,7 +1111,7 @@ private:
     VkImageView uploadView = VK_NULL_HANDLE;
 
     std::shared_ptr<Buffer> guestSampleUpload(const ColorTarget& use) {
-        Require(use.cmaskAddress == 0 && use.dccAddress == 0, "uploading multisampled guest color under compression metadata is not implemented");
+        Require(use.cmaskAddress == 0 && use.dccAddress == 0 && !use.fmaskCompression, "uploading multisampled guest color under compression metadata is not implemented");
         Require(use.layers == 1u && use.arraySlice == 0u && use.arrayLastSlice == 0u && use.depth == 1u && use.depthSlice == 0u && use.mipCount == 1u && use.mip == 0u && !use.mipTail, "uploading multisampled guest color of arrays, volumes or mips is not implemented");
         Require(use.tileMode == ColorTileMode::RenderTarget || use.tileMode == ColorTileMode::Z64KBX, "non-uniform multisampled guest color tiling is not implemented");
         const MultisampleTextureLayout layout(use.tileMode == ColorTileMode::Z64KBX ? TextureTileMode::kZ64KBX : TextureTileMode::kR64KBX, use.elementBytes, use.samples, use.extent.width, use.extent.height, 1u, use.pipeBankXor);
@@ -1126,6 +1135,7 @@ private:
         dccRanges.push_back({use.dccAddress, dccBytes, 0});
         if (use.cmaskAddress != 0) dccRanges.push_back({use.cmaskAddress, use.cmaskBytes, 0});
         dccCopies.assign(dccRanges.size(), {});
+        dccObservations.resize(dccRanges.size());
         std::vector<GuestMemory::UnchangedQuery> watched;
         for (std::size_t index = 0; index < dccRanges.size(); ++index) {
             auto& range = dccRanges[index];
@@ -1200,7 +1210,7 @@ private:
             if (compared(index)) {
                 requireDccRange(copyCurrent(range, dccCopies[index]), range, "writes to a resident multisampled DCC target or its metadata are not implemented");
             } else {
-                GuestMemory::CollectWritesUncached(range.address, range.bytes);
+                GuestMemory::CollectWritesForGpuUse(range, dccObservations[index]);
                 requireDccRange(GuestMemory::UnchangedSince(range.address, range.bytes, range.generation) || !GuestMemory::StoredOver(range.address, range.bytes, range.generation), range, "writes to a resident multisampled DCC target or its metadata are not implemented");
             }
             if (auto* recorder = Recorder::Active(); recorder != nullptr) requireDccRange(!recorder->PendingWriteOverlaps(range.address, range.bytes), range, "pending writes to a resident multisampled DCC target or its metadata are not implemented");
@@ -1212,7 +1222,7 @@ private:
             if (fmaskCopy.compared) {
                 requireDccRange(copyCurrent(range, fmaskCopy), range, "writes to a resident native FMASK are not implemented");
             } else {
-                GuestMemory::CollectWritesUncached(range.address, range.bytes);
+                GuestMemory::CollectWritesForGpuUse(range, fmaskObservation);
                 requireDccRange(GuestMemory::UnchangedSince(range.address, range.bytes, range.generation) || !GuestMemory::StoredOver(range.address, range.bytes, range.generation), range, "writes to a resident native FMASK are not implemented");
             }
             if (auto* recorder = Recorder::Active(); recorder != nullptr) requireDccRange(!recorder->PendingWriteOverlaps(range.address, range.bytes), range, "pending writes to a resident native FMASK are not implemented");
@@ -1225,6 +1235,7 @@ private:
         retiredTextures.clear();
         firstSampleTextures.clear();
         firstSampleCopy.reset();
+        packedResolve.reset();
         for (auto& [format, copy] : reinterpretCopies) {
             copy.textures.clear();
             destroy(copy.allocation);
@@ -1481,6 +1492,7 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested,
             target->cmask = MultisampledCmask(use.cmaskAddress, use.cmaskBytes);
         }
         target->cmask.CheckAddress(use.cmaskAddress);
+        target->target.fmaskCompression = target->target.fmaskCompression || use.fmaskCompression;
         target->Keep();
         target->SettleStorageWrites();
         target->ApplyFastClear(use);
@@ -1855,6 +1867,7 @@ void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const 
     }
     std::shared_ptr<Buffer> upload;
     if (!clear) {
+        Require(!target.fmaskCompression, "nonuniform compressed multisample color import is not implemented");
         Require(target.tileMode == ColorTileMode::RenderTarget, "nonuniform initial multisample color tiling is not implemented");
         const MultisampleTextureLayout layout(TextureTileMode::kR64KBX, target.elementBytes, target.samples, target.extent.width, target.extent.height, 1u, target.pipeBankXor);
         Require(layout.Bytes() == bytes && layout.LinearBytes() / target.elementBytes <= std::numeric_limits<std::uint32_t>::max(), "initial multisample color layout and footprint differ");
@@ -2108,19 +2121,25 @@ void ResolveMultisampleTarget(const Context& context, const ColorTarget& source,
     auto& target = acquire(context, source);
     target.Keep();
     const std::array<VkImageView, 2> views{target.View(source.format), destinationView};
-    auto framebuffer = std::make_shared<Framebuffer>(context, target.ResolvePass(source.format), views, source.extent);
+    auto* averaging = source.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? &target.PackedResolve() : nullptr;
+    auto framebuffer = averaging != nullptr ? nullptr : std::make_shared<Framebuffer>(context, target.ResolvePass(source.format), views, source.extent);
+    std::shared_ptr<void> averaged;
     recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
-        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-        VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-        begin.renderPass = target.ResolvePass(source.format);
-        begin.framebuffer = framebuffer->Handle();
-        begin.renderArea = {{0, 0}, source.extent};
-        context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-        context.Resolved(&DeviceFunctions::cmdEndRenderPass, "vkCmdEndRenderPass")(commands);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT);
+        if (averaging != nullptr) {
+            averaged = averaging->RecordInto(commands, recorder, views[0], VK_IMAGE_LAYOUT_GENERAL, destinationView);
+        } else {
+            VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+            begin.renderPass = target.ResolvePass(source.format);
+            begin.framebuffer = framebuffer->Handle();
+            begin.renderArea = {{0, 0}, source.extent};
+            context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+            context.Resolved(&DeviceFunctions::cmdEndRenderPass, "vkCmdEndRenderPass")(commands);
+        }
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
         if (recorder != nullptr) {
             Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
-            recorder->Keep(framebuffer);
+            if (framebuffer != nullptr) recorder->Keep(framebuffer);
         }
     });
     destination.MarkDirty();

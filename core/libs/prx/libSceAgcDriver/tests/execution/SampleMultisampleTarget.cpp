@@ -272,11 +272,12 @@ struct Block {
     std::uint8_t* data = nullptr;
 };
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(std::uint64_t address, std::uint32_t sampleShift = SampleShift, VkExtent2D extent = {Side, Side}) {
+AgcDriver::Graphics::ColorTarget DecodeTarget(std::uint64_t address, std::uint32_t sampleShift = SampleShift, VkExtent2D extent = {Side, Side}, std::uint32_t infoBits = 0u) {
     AgcDriver::Registers cx;
     cx[0x318] = static_cast<std::uint32_t>(address >> 8u);
     cx[0x31b] = 0;
-    cx[0x31c] = Float16x4Info;
+    cx[0x31c] = Float16x4Info | infoBits;
+    cx[0x31f] = 0u;
     cx[0x31d] = (sampleShift << 12u) | (sampleShift << 15u);
     cx[0x3b0] = ((extent.width - 1u) << 14u) | (extent.height - 1u);
     cx[0x3b8] = TiledAttrib3;
@@ -1899,6 +1900,39 @@ void RequirePublicationRefused(const AgcDriver::Graphics::Context& context, cons
     Require(refusal.find(expected) != std::string::npos, "native color publication was not refused: " + refusal);
 }
 
+void CompressionPublication(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    for (const bool existing : {false, true}) {
+        Block block(2u * BlockBytes);
+        const auto plain = DecodeTarget(block);
+        const auto compressed = DecodeTarget(block.Address(), SampleShift, {Side, Side}, 0x4000u);
+        Require(compressed.cmaskAddress == 0u, "the compression-only control acquired CMASK");
+        if (existing) {
+            StoreInitial(block, Samples, 0u, false);
+            Draw(device, TargetState(plain));
+        }
+        const auto* begin = reinterpret_cast<const std::byte*>(block.data);
+        const std::vector<std::byte> before(begin, begin + block.bytes);
+        Draw(device, TargetState(compressed));
+        device.WaitIdle();
+        RequireColorSnapshotRefused(context, compressed, "unsupported tiling or multisample metadata");
+        RequirePublicationRefused(context, compressed, "unsupported tiling or multisample metadata");
+        if (existing) RequirePublicationRefused(context, plain, "unsupported tiling or multisample metadata");
+        Require(std::equal(before.begin(), before.end(), begin), "compressed publication or draw changed guest bytes");
+        Require(Refused(block.Address(), 1u, "a compressed publication control"), "refused compressed publication lost its owner guard");
+        ClearMultisampleTargets(context.device);
+    }
+    Block block(2u * BlockBytes);
+    const auto compressed = DecodeTarget(block.Address(), SampleShift, {Side, Side}, 0x4000u);
+    StoreInitial(block, Samples, 0u, false);
+    const auto* begin = reinterpret_cast<const std::byte*>(block.data);
+    const std::vector<std::byte> before(begin, begin + block.bytes);
+    RequireInitialRefused(context, compressed, "nonuniform compressed multisample color import");
+    Require(std::equal(before.begin(), before.end(), begin), "refused compressed import changed guest bytes");
+    std::printf("compressed color: uniform rendering, snapshot/publication refusal, resident transition and nonuniform import refusal passed\n");
+}
+
 int InitialReuse(AgcDriver::VulkanDevice& device) {
     using namespace AgcDriver::Graphics;
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
@@ -2378,6 +2412,7 @@ int main(int argc, char** argv) {
         if (argc == 4 && std::string_view(argv[1]) == "--reused-publication") {
             return ReusedPublication(*device, argv[2], argv[3]);
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--compression-publication") { CompressionPublication(*device); return 0; }
         if (argc == 2 && std::string_view(argv[1]) == "--publication") { Publication(*device); return 0; }
         if (argc == 2 && std::string_view(argv[1]) == "--cpu-publication") { Publication(*device, true); return 0; }
         if (argc == 2 && std::string_view(argv[1]) == "--initial-reuse") return InitialReuse(*device);
