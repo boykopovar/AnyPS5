@@ -251,6 +251,18 @@ static bool ThrowsInvalidArgument(F function) {
 }
 
 template <typename F>
+static bool ThrowsCalculatedLength(F function) {
+    try {
+        function();
+    } catch (const std::invalid_argument& error) {
+        return std::strcmp(error.what(), "calculated WebCore length") == 0;
+    } catch (...) {
+        return false;
+    }
+    return false;
+}
+
+template <typename F>
 static bool ThrowsNotImplemented(F function) {
     try {
         function();
@@ -323,19 +335,19 @@ static void TestLifecycle() {
 
     const WebCore::LegacyLength calculated = Legacy(3, WebCore::LegacyLengthType::Calculated);
     WebCore::PerspectiveTransformOperation* untouched = reinterpret_cast<WebCore::PerspectiveTransformOperation*>(std::uintptr_t{0x1234});
-    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperation6createERKNS_6LengthE(&untouched, &calculated); }));
+    Require(ThrowsCalculatedLength([&] { _ZN7WebCore29PerspectiveTransformOperation6createERKNS_6LengthE(&untouched, &calculated); }));
     Require(untouched == reinterpret_cast<WebCore::PerspectiveTransformOperation*>(std::uintptr_t{0x1234}));
     alignas(8) unsigned char raw[sizeof(WebCore::PerspectiveTransformOperation)];
     std::memset(raw, 0xA5, sizeof(raw));
-    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationC1ERKNS_6LengthE(reinterpret_cast<WebCore::PerspectiveTransformOperation*>(raw), &calculated); }));
+    Require(ThrowsCalculatedLength([&] { _ZN7WebCore29PerspectiveTransformOperationC1ERKNS_6LengthE(reinterpret_cast<WebCore::PerspectiveTransformOperation*>(raw), &calculated); }));
     Require(raw[0] == 0xA5 && raw[23] == 0xA5);
     WebCore::PerspectiveTransformOperation holdsCalculated = Make(calculated);
     WebCore::TransformOperation* none = nullptr;
-    Require(ThrowsNotImplemented([&] { _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(&none, &holdsCalculated); }));
+    Require(ThrowsCalculatedLength([&] { _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(&none, &holdsCalculated); }));
     Require(none == nullptr);
-    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationD1Ev(&holdsCalculated); }));
-    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationD2Ev(&holdsCalculated); }));
-    Require(ThrowsNotImplemented([&] { _ZN7WebCore29PerspectiveTransformOperationD0Ev(&holdsCalculated); }));
+    Require(ThrowsCalculatedLength([&] { _ZN7WebCore29PerspectiveTransformOperationD1Ev(&holdsCalculated); }));
+    Require(ThrowsCalculatedLength([&] { _ZN7WebCore29PerspectiveTransformOperationD2Ev(&holdsCalculated); }));
+    Require(ThrowsCalculatedLength([&] { _ZN7WebCore29PerspectiveTransformOperationD0Ev(&holdsCalculated); }));
 
     WebCore::PerspectiveTransformOperation stack = Make(fixed);
     Require(ThrowsInvalidArgument([&] { _ZN7WebCore29PerspectiveTransformOperation6createERKNS_6LengthE(nullptr, &fixed); }));

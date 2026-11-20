@@ -126,10 +126,10 @@ const OperationVtableStorage PerspectiveVtable = {
     },
 };
 
-void Construct(WebCore::PerspectiveTransformOperation* self, const LegacyLength* p, const char* function) {
+void Construct(WebCore::PerspectiveTransformOperation* self, const LegacyLength* p) {
     if (!self) throw std::invalid_argument("WebCore::PerspectiveTransformOperation: null this");
     if (!p) throw std::invalid_argument("WebCore::PerspectiveTransformOperation: null length");
-    if (p->m_type == LegacyLengthType::Calculated) NotImplemented_nid_no_patch(function);
+    if (p->m_type == LegacyLengthType::Calculated) throw std::invalid_argument("calculated WebCore length");
     const LegacyLength length = *p;
     std::memset(self, 0, sizeof(*self));
     self->m_base.m_vptr = const_cast<OperationVtable*>(&PerspectiveVtable.dispatch);
@@ -138,17 +138,17 @@ void Construct(WebCore::PerspectiveTransformOperation* self, const LegacyLength*
     self->m_p = length;
 }
 
-WebCore::PerspectiveTransformOperation* Allocate(const LegacyLength* p, const char* function) {
+WebCore::PerspectiveTransformOperation* Allocate(const LegacyLength* p) {
     if (!p) throw std::invalid_argument("WebCore::PerspectiveTransformOperation: null length");
-    if (p->m_type == LegacyLengthType::Calculated) NotImplemented_nid_no_patch(function);
+    if (p->m_type == LegacyLengthType::Calculated) throw std::invalid_argument("calculated WebCore length");
     auto* operation = static_cast<WebCore::PerspectiveTransformOperation*>(_ZN3WTF10fastMallocEm(sizeof(WebCore::PerspectiveTransformOperation)));
-    Construct(operation, p, function);
+    Construct(operation, p);
     return operation;
 }
 
-void Destroy(WebCore::PerspectiveTransformOperation* self, const char* function) {
+void Destroy(WebCore::PerspectiveTransformOperation* self) {
     if (!self) throw std::invalid_argument("WebCore::PerspectiveTransformOperation: null this");
-    if (self->m_p.m_type == LegacyLengthType::Calculated) NotImplemented_nid_no_patch(function);
+    if (self->m_p.m_type == LegacyLengthType::Calculated) throw std::invalid_argument("calculated WebCore length");
 }
 
 }
@@ -157,35 +157,35 @@ extern "C" {
 
 WebCore::PerspectiveTransformOperation** APS5_VABI _ZN7WebCore29PerspectiveTransformOperation6createERKNS_6LengthE(WebCore::PerspectiveTransformOperation** result, const LegacyLength* p) {
     if (!result) throw std::invalid_argument("WebCore::PerspectiveTransformOperation::create: null result");
-    *result = Allocate(p, __func__);
+    *result = Allocate(p);
     return result;
 }
 
 void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationC1ERKNS_6LengthE(WebCore::PerspectiveTransformOperation* self, const LegacyLength* p) {
-    Construct(self, p, __func__);
+    Construct(self, p);
 }
 
 void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationC2ERKNS_6LengthE(WebCore::PerspectiveTransformOperation* self, const LegacyLength* p) {
-    Construct(self, p, __func__);
+    Construct(self, p);
 }
 
 void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationD1Ev(WebCore::PerspectiveTransformOperation* self) {
-    Destroy(self, __func__);
+    Destroy(self);
 }
 
 void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationD2Ev(WebCore::PerspectiveTransformOperation* self) {
-    Destroy(self, __func__);
+    Destroy(self);
 }
 
 void APS5_VABI _ZN7WebCore29PerspectiveTransformOperationD0Ev(WebCore::PerspectiveTransformOperation* self) {
-    Destroy(self, __func__);
+    Destroy(self);
     _ZN3WTF8fastFreeEPv(self);
 }
 
 WebCore::TransformOperation** APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation5cloneEv(WebCore::TransformOperation** result, const WebCore::PerspectiveTransformOperation* self) {
     if (!result) throw std::invalid_argument("WebCore::PerspectiveTransformOperation::clone: null result");
     if (!self) throw std::invalid_argument("WebCore::PerspectiveTransformOperation::clone: null this");
-    *result = &Allocate(&self->m_p, __func__)->m_base;
+    *result = &Allocate(&self->m_p)->m_base;
     return result;
 }
 
