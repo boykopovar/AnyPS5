@@ -216,6 +216,21 @@ int main() {
     waiter.join();
     Require(completed == id);
     TestConcurrentWaiters(compressed.data(), compressed.size());
+    {
+        constexpr auto invalid = static_cast<std::int32_t>(0x81120016);
+        Require(sceZlibInflate(compressed.data(), compressed.size(), output, 8192, &id) == 0);
+        std::uint32_t poll = 0;
+        Require(sceZlibWaitForDone(reinterpret_cast<std::uint64_t*>(0x10), &poll) == invalid);
+        std::int32_t retryStatus{};
+        std::uint64_t retried{};
+        std::thread retry([&] {
+            std::uint32_t retryPoll = 0;
+            retryStatus = sceZlibWaitForDone(&retried, &retryPoll);
+        });
+        retry.join();
+        Require(retryStatus == 0 && retried == id);
+        Require(sceZlibWaitForDone(&retried, &poll) == static_cast<std::int32_t>(0x81120027));
+    }
     Require(sceZlibInflate(compressed.data(), compressed.size(), output, 8192, &id) == 0);
     Require(sceZlibFinalize() == 0);
     Require(sceZlibInitialize(nullptr, 0) == 0);
