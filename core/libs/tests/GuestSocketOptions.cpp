@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -17,6 +18,16 @@ namespace {
 
 constexpr int Stream = 1;
 constexpr int Datagram = 2;
+constexpr int SequencedPacket = 5;
+
+struct LocalCredentials {
+    std::uint32_t version;
+    std::uint32_t user;
+    std::int16_t groupCount;
+    std::uint32_t groups[16];
+    std::uint64_t unused;
+};
+static_assert(sizeof(LocalCredentials) == 88);
 constexpr int SolSocket = 0xffff;
 constexpr int SoAcceptConnection = 0x2;
 constexpr int SoDebug = 0x1;
@@ -547,7 +558,52 @@ void UnknownLevelsFollowFreeBsd() {
     size = sizeof(value);
     Require(getsockopt_nid_postfix(pair[0], 0, 77, &value, &size) == -1 && *__error_nid_postfix() == 45, "getsockopt of an unknown option at level 0 on an AF_UNIX socket must fail with EOPNOTSUPP (45)");
     Require(SetFails(pair[0], 0, 1, &one, sizeof(one), 45), "setting LOCAL_PEERCRED on an AF_UNIX socket must fail with EOPNOTSUPP (45)");
-    for (const int descriptor : {stream, datagram, stream6, datagram6, pair[0], pair[1]}) Require(close_nid_postfix(descriptor) == 0, "close failed");
+    std::uint32_t original[16]{};
+    const int originalCount = getgroups_nid_postfix(16, original);
+    Require(originalCount >= 1, "getgroups failed");
+    std::uint32_t many[17]{};
+    for (std::uint32_t index = 0; index < 17; ++index) many[index] = index;
+#if defined(_WIN32) || defined(__APPLE__)
+    const int connectedTypes[]{Stream};
+#else
+    const int connectedTypes[]{Stream, SequencedPacket};
+#endif
+    for (const int type : connectedTypes) {
+        Require(setgroups_nid_postfix(17, many) == 0, "setgroups failed");
+        int connected[2]{-1, -1};
+        Require(socketpair_nid_postfix(1, type, 0, connected) == 0, "socketpair failed");
+        const std::uint32_t changed[2]{0, 5};
+        Require(setgroups_nid_postfix(2, changed) == 0, "setgroups failed");
+        for (const int end : connected) {
+            unsigned char bytes[88];
+            std::memset(bytes, 0xff, sizeof(bytes));
+            size = sizeof(bytes);
+            Require(getsockopt_nid_postfix(end, 0, 1, bytes, &size) == 0 && size == sizeof(bytes), "LOCAL_PEERCRED on a stream or sequenced-packet socketpair must succeed, as kern_socketpair calls unp_copy_peercred");
+            LocalCredentials credentials{};
+            std::memcpy(&credentials, bytes, sizeof(credentials));
+            Require(credentials.version == 0 && credentials.user == 0 && credentials.groupCount == 16 && std::equal(many, many + 16, credentials.groups), "LOCAL_PEERCRED must report the first 16 groups the pair was made with, as cru2x copies");
+            Require(bytes[10] == 0 && bytes[11] == 0 && bytes[76] == 0 && bytes[77] == 0 && bytes[78] == 0 && bytes[79] == 0 && credentials.unused == 0, "LOCAL_PEERCRED must clear the xucred padding, as cru2x starts with bzero");
+            std::uint32_t version = 0xffffffffu;
+            size = sizeof(version);
+            Require(getsockopt_nid_postfix(end, 0, 1, &version, &size) == 0 && size == sizeof(version) && version == 0, "a short LOCAL_PEERCRED read must copy only the bytes asked for");
+        }
+        for (const int end : connected) Require(close_nid_postfix(end) == 0, "close failed");
+    }
+    Require(setgroups_nid_postfix(originalCount, original) == 0, "setgroups failed");
+    LocalCredentials credentials{};
+    for (const int option : {2, 4}) {
+        value = -1;
+        size = sizeof(value);
+        Require(getsockopt_nid_postfix(pair[1], 0, option, &value, &size) == 0 && value == 0 && size == sizeof(value), "LOCAL_CREDS and LOCAL_CONNWAIT must read 0 on a socketpair");
+        value = -1;
+        size = 2;
+        Require(getsockopt_nid_postfix(pair[1], 0, option, &value, &size) == 0 && size == 2 && (value & 0xffff) == 0 && (value >> 16) == -1, "a short LOCAL_CREDS or LOCAL_CONNWAIT read must copy only the bytes asked for, as sooptcopyout does");
+    }
+    int datagramPair[2]{-1, -1};
+    Require(socketpair_nid_postfix(1, Datagram, 0, datagramPair) == 0, "socketpair failed");
+    size = sizeof(credentials);
+    Require(getsockopt_nid_postfix(datagramPair[0], 0, 1, &credentials, &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "LOCAL_PEERCRED on a datagram socketpair must fail with EINVAL (22)");
+    for (const int descriptor : {stream, datagram, stream6, datagram6, pair[0], pair[1], datagramPair[0], datagramPair[1]}) Require(close_nid_postfix(descriptor) == 0, "close failed");
 }
 
 }

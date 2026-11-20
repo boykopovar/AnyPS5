@@ -182,11 +182,6 @@ static std::uint64_t Call4(const Inputs& in) {
     return _ZN3JSC13RuntimeMethod15subspaceForImplERNS_2VME(in.gpr[0]);
 }
 
-static std::uint64_t Call5(const Inputs& in) {
-    _ZN3JSC17MarkingConstraint17quickWorkEstimateERNS_11SlotVisitorE();
-    return 0;
-}
-
 static std::uint64_t Call6(const Inputs& in) {
     return _ZN3JSC20failNextNewCodeBlockEPNS_14JSGlobalObjectE(in.gpr[0]);
 }
@@ -987,7 +982,6 @@ static const Case Cases[] = {
     {&Call2, 1, {}, {{8, 0x14d1b78cf59c68b7ull}, {12, 0x3d7991216a7dd8f7ull}, {23, 0xad9361f23ee2479bull}, {32, 0x4a3fd8801cc0fe33ull}, {44, 0x68c5881a8d7a0162ull}, {48, 0x426bd23214f17d22ull}, {50, 0x6ad3d9525d89f568ull}, {56, 0xe8f84cdd5999ce59ull}, {60, 0xfa87bf6cfff94a4cull}, {62, 0xb5a4509e096e36a1ull}, {77, 0x2b11011b16b1f85dull}, {83, 0x30341042d7f82e99ull}}},
     {&Call3, 4, {}, {{1, 0xeef8122d02edc092ull}, {2, 0xe7204f8a8985592aull}, {3, 0x797041035bf6c408ull}, {4, 0x3626ddc0b02136e7ull}, {5, 0xb7ac285453649f06ull}, {6, 0x89726268dbb68c33ull}, {7, 0x3a130ff16065fbceull}, {8, 0x14d1b68cf59c6740ull}, {9, 0xa1615ed8318763caull}, {10, 0x1256a2ad8c6ebe9aull}, {13, 0x7f82f1d7fbe55b49ull}, {14, 0x13f181be47c039b6ull}}},
     {&Call4, 4, {0x8ull, 0x10ull, 0x20ull, 0x80ull, 0x100ull, 0x200ull, 0x1000ull, 0x4000ull, 0x53b7ull, 0x53b8ull, 0x53b9ull, 0xffffffffffffac47ull}, {{0, 0x83b4c83099dc8a7aull}, {1, 0x0af42d1d7073d298ull}, {2, 0x40d178523169ea4cull}, {3, 0x0d9791fc4cb2622aull}, {5, 0x634595ab95f7cbe0ull}, {6, 0x1b8c13f781bd56a1ull}, {7, 0x6538e170c490b52eull}, {8, 0x4c01ed8f52200823ull}, {10, 0x3a7b507b3fa9665cull}, {11, 0xa0d5db4edae2e1b0ull}, {12, 0x3050ef86caab4a82ull}, {13, 0xacb8ccddf3f59305ull}}},
-    {&Call5, 0, {}, {{0, 0xddbc6f69213ba157ull}, {1, 0x44423a285186a9eaull}, {2, 0x3347278c34486f22ull}, {3, 0xf134d976e0633bbdull}, {4, 0x3626dfc0b021225dull}, {5, 0xb7ac285453649f06ull}, {6, 0xd870a957fa658ca4ull}, {7, 0x486357f2f0c77e26ull}, {8, 0x14d1b68cf59c6740ull}, {9, 0xa1615dd831877d99ull}, {10, 0x1256a2ad8c6ebe9aull}, {11, 0xf04d79d063bb7e4aull}}},
     {&Call6, 3, {0x0ull, 0x1ull, 0x2ull, 0x8ull, 0x9ull, 0xaull, 0xbull, 0xfffffffffffffff5ull, 0xfffffffffffffffeull}, {{1, 0x551d496f7808265eull}, {2, 0x4e0946a161b9ca19ull}, {3, 0xd3708a2a6e420328ull}, {8, 0x1669abe0ba4df4a5ull}, {10, 0xf1a1b4860ca9596full}, {14, 0x84ccc21e80f3d172ull}, {15, 0x4230256063e7c5e3ull}, {19, 0x122010c47519e7f0ull}, {20, 0x6274ab9aea329385ull}, {21, 0x39fac3cc435e98d3ull}, {29, 0x8566b586e4accfb2ull}, {32, 0x9d47e648b3c719fcull}}},
     {&Call7, 6, {}, {{1, 0x44423a285186a9eaull}, {2, 0x3347278c34486f22ull}, {3, 0xf134d976e0633bbdull}, {4, 0x3626dfc0b021225dull}, {5, 0xb7ac285453649f06ull}, {6, 0xd73bdb5781a559e4ull}, {7, 0x486357f2f0c77e26ull}, {8, 0x13c4ec8ccf91ab98ull}, {9, 0xa3354fd8251a1909ull}, {10, 0x1256a2ad8c6ebe9aull}, {13, 0x0903d1d44f106329ull}, {14, 0x13f181be47c039b6ull}}},
     {&Call8, 6, {}, {{1, 0x51da3a28fd46a9eaull}, {2, 0x351e458c18184f92ull}, {3, 0xf134e376e0611abfull}, {4, 0x3646dfc0b378c25dull}, {5, 0xb8590e542d5112feull}, {6, 0xd870a957fa658ca4ull}, {7, 0x486357f2f0c77e26ull}, {8, 0x14d1b68cf59c6740ull}, {9, 0xa3d317d823243c51ull}, {10, 0x1256a0fa8c6eac22ull}, {13, 0x0903d1d44f106329ull}, {14, 0x13f181be47c039b6ull}}},
