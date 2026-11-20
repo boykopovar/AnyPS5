@@ -98,7 +98,7 @@ private:
             if (a != b) return false;
             if (a == 0) return true;
         }
-        return true;
+        return index + name.size() < data.size() && data[index + name.size()] == 0;
     }
 
     std::map<int, std::vector<std::uint32_t>> buckets;
