@@ -84,7 +84,12 @@ int APS5_VABI sceAudioOut2LoContextGetAttributes(AudioOut2ContextHandle ctx, Aud
     if (!AudioOut2FindContext(ctx)) return ErrorInvalidParam;
     if (!attributes && num != 0) return ErrorInvalidParam;
     for (uint32_t index = 0; index < num; index++) {
-        const auto id = attributes[index].attribute_id;
+        AudioOut2Attribute attribute{};
+        const int savedErrno = errno;
+        const bool read = GuestCopyIn_nid_no_patch(&attribute, attributes + index, sizeof(attribute));
+        errno = savedErrno;
+        if (!read) return ErrorInvalidParam;
+        const auto id = attribute.attribute_id;
         if (id != 0x1e && id != 0x1f) return ErrorInvalidParam;
         NotImplemented_nid_no_patch(__func__);
     }

@@ -392,6 +392,19 @@ int main() {
         Require(paletteInfo.image_width == 2 && paletteInfo.image_height == 2);
         Require(paletteInfo.color_space == 4 && paletteInfo.bit_depth == 2);
         Require(paletteInfo.image_flag == 2);
+
+        constexpr std::size_t paletteSize = 256 * 4;
+        std::vector<std::uint8_t> indexedImage(paletteSize + 10, 0xCC);
+        param.operation = 0x20;
+        param.image_mem_addr = indexedImage.data();
+        param.image_mem_size = static_cast<std::uint32_t>(indexedImage.size());
+        param.image_pitch = 5;
+        param.pixel_format = 132;
+        Require(scePngDecDecodeWithInputControl(paletteDecoder.handle, &param, &paletteInfo) == (2 << 16 | 2));
+        const std::uint8_t indexedPalette[] = {255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 255, 255, 255, 0, 128};
+        Require(std::equal(std::begin(indexedPalette), std::end(indexedPalette), indexedImage.begin()));
+        const std::uint8_t paddedIndices[] = {0, 1, 0xCC, 0xCC, 0xCC, 2, 3, 0xCC, 0xCC, 0xCC};
+        Require(std::equal(std::begin(paddedIndices), std::end(paddedIndices), indexedImage.begin() + paletteSize));
     }
 
     {

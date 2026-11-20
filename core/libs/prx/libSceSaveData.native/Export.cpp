@@ -1836,21 +1836,54 @@ int APS5_VABI sceSaveDataTransferringMount(const SaveDataTransferringMount* moun
     return rc;
 }
 
-static int umount2(uint32_t mode, const SaveDataMountPoint* mount_point, std::string* tracePoint) {
-    (void)mode;
+static int unmountMountPoint(const SaveDataMountPoint* mount_point, std::string* tracePoint, bool backup) {
     SaveDataMountPoint localPoint{};
     if (!copy_mount_point(mount_point, &localPoint)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     if (tracePoint != nullptr) *tracePoint = localPoint.data;
-    std::lock_guard lock(g_slots_mutex);
-    int slot = find_slot_by_mount_point(localPoint.data);
-    if (slot == -1) {
-        return SAVE_DATA_ERROR_NOT_MOUNTED;
+    SaveDataEvent event{};
+    if (backup) {
+        event.type = SAVE_DATA_EVENT_TYPE_UMOUNT_BACKUP;
+        event.error_code = SAVE_DATA_OK;
     }
-    RemovePathAlias_nid_no_patch(g_slots[slot].mount_point.c_str());
-    g_slots[slot] = MountSlot{};
+    {
+        std::lock_guard lock(g_slots_mutex);
+        const int slot = find_slot_by_mount_point(localPoint.data);
+        if (slot == -1) {
+            return SAVE_DATA_ERROR_NOT_MOUNTED;
+        }
+        const MountSlot mounted = g_slots[slot];
+        RemovePathAlias_nid_no_patch(mounted.mount_point.c_str());
+        g_slots[slot] = MountSlot{};
+        if (backup) {
+            const AppTitleId title = GetAppTitleId_nid_postfix();
+            const std::string dirName = std::filesystem::path(mounted.real_path).filename().string();
+            event.user_id = mounted.user_id;
+            std::memcpy(event.title_id.data, title.value, strnlen(title.value, sizeof(event.title_id.data) - 1));
+            std::memcpy(event.dir_name.data, dirName.data(), std::min(dirName.size(), sizeof(event.dir_name.data) - 1));
+            try {
+                backupSave(dirName);
+            } catch (const std::exception&) {
+                event.error_code = SAVE_DATA_ERROR_INTERNAL;
+            }
+        }
+    }
+    if (backup) {
+        {
+            std::lock_guard lock(g_state_mutex);
+            g_events.push_back(event);
+        }
+        DeliverEvent(event);
+    }
     return SAVE_DATA_OK;
+}
+
+static int umount2(uint32_t mode, const SaveDataMountPoint* mount_point, std::string* tracePoint) {
+    if ((mode & ~(SAVE_DATA_UMOUNT_MODE_BACKUP | SAVE_DATA_UMOUNT_MODE_BACKUP_FORCE)) != 0) {
+        throw std::runtime_error("sceSaveDataUmount2: unknown mode");
+    }
+    return unmountMountPoint(mount_point, tracePoint, (mode & SAVE_DATA_UMOUNT_MODE_BACKUP) != 0);
 }
 
 int APS5_VABI sceSaveDataUmount2(uint32_t mode, const SaveDataMountPoint* mount_point) {
@@ -2506,40 +2539,7 @@ static int umountWithBackup(const SaveDataMountPoint* mount_point, std::string* 
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
-    SaveDataMountPoint localPoint{};
-    if (!copy_mount_point(mount_point, &localPoint)) {
-        return SAVE_DATA_ERROR_PARAMETER;
-    }
-    if (tracePoint != nullptr) *tracePoint = localPoint.data;
-    SaveDataEvent event{};
-    event.type = SAVE_DATA_EVENT_TYPE_UMOUNT_BACKUP;
-    event.error_code = SAVE_DATA_OK;
-    {
-        std::lock_guard lock(g_slots_mutex);
-        const int slot = find_slot_by_mount_point(localPoint.data);
-        if (slot == -1) {
-            return SAVE_DATA_ERROR_NOT_MOUNTED;
-        }
-        const AppTitleId title = GetAppTitleId_nid_postfix();
-        const MountSlot mounted = g_slots[slot];
-        RemovePathAlias_nid_no_patch(mounted.mount_point.c_str());
-        g_slots[slot] = MountSlot{};
-        const std::string dirName = std::filesystem::path(mounted.real_path).filename().string();
-        event.user_id = mounted.user_id;
-        std::memcpy(event.title_id.data, title.value, strnlen(title.value, sizeof(event.title_id.data) - 1));
-        std::memcpy(event.dir_name.data, dirName.data(), std::min(dirName.size(), sizeof(event.dir_name.data) - 1));
-        try {
-            backupSave(dirName);
-        } catch (const std::exception&) {
-            event.error_code = SAVE_DATA_ERROR_INTERNAL;
-        }
-    }
-    {
-        std::lock_guard lock(g_state_mutex);
-        g_events.push_back(event);
-    }
-    DeliverEvent(event);
-    return SAVE_DATA_OK;
+    return unmountMountPoint(mount_point, tracePoint, true);
 }
 
 int APS5_VABI sceSaveDataUmountWithBackup(const SaveDataMountPoint* mount_point) {
