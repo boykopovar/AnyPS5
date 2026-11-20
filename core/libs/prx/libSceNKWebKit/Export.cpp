@@ -13667,10 +13667,6 @@ int APS5_VABI _ZN3WTF37canCurrentThreadAccessThreadLocalDataERNS_6ThreadE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF3URL23fakeURLWithRelativePartENS_10StringViewE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF4Lock10unlockSlowEv() {
     NotImplemented_nid_no_patch(__func__);
 }

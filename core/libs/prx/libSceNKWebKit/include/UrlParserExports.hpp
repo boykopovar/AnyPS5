@@ -16,5 +16,6 @@ void APS5_VABI _ZN3WTF3URL8setQueryENS_10StringViewE(NKWebKit::WtfAbi::URL* self
 void APS5_VABI _ZN3WTF3URL7setPathENS_10StringViewE(NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView path);
 NKWebKit::WtfAbi::URL APS5_VABI _ZNK3WTF3URL21truncatedForUseAsBaseEv(const NKWebKit::WtfAbi::URL* self);
 NKWebKit::WtfAbi::URL APS5_VABI _ZN3WTF3URL25fileURLWithFileSystemPathENS_10StringViewE(NKWebKit::WtfAbi::StringView path);
+NKWebKit::WtfAbi::URL APS5_VABI _ZN3WTF3URL23fakeURLWithRelativePartENS_10StringViewE(NKWebKit::WtfAbi::StringView relativePart);
 
 }

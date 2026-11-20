@@ -1313,7 +1313,6 @@ int APS5_VABI _ZN3WTF31NonSharedCharacterBreakIteratorD2Ev();
 int APS5_VABI _ZN3WTF37canCurrentThreadAccessThreadLocalDataERNS_6ThreadE();
 double APS5_VABI _ZN3WTF37parseDateFromNullTerminatedCharactersEPKc(const char* dateString);
 double APS5_VABI _ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb(const char* dateString, bool* isLocalTime);
-int APS5_VABI _ZN3WTF3URL23fakeURLWithRelativePartENS_10StringViewE();
 int APS5_VABI _ZN3WTF4Lock10unlockSlowEv();
 int APS5_VABI _ZN3WTF4Lock13safepointSlowEv();
 int APS5_VABI _ZN3WTF4Lock8lockSlowEv();
