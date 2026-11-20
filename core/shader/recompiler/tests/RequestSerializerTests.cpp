@@ -238,6 +238,10 @@ void VerifyTargetOptions() {
                         }
                         Require(rejected);
                     }
+                    auto legacy62Bytes = bytes;
+                    legacy62Bytes[4] = 62u;
+                    const auto legacy62 = serializer.Deserialize(EncodeBase64(legacy62Bytes));
+                    Require(legacy62.request.target.fixedPushSlots == fixed && legacy62.request.target.maxImageArrayLayers == layers && !legacy62.request.graphics.has_value());
                     bytes.pop_back();
                     bytes[4] = 57u;
                     const auto legacy57 = serializer.Deserialize(EncodeBase64(bytes));
@@ -265,7 +269,11 @@ void VerifyTargetOptions() {
             }
         }
     }
-    auto trailing = DecodeBase64(serializer.Serialize(ShaderRecompiler::RecompileRequest{}));
+    ShaderRecompiler::RecompileRequest emulated{};
+    emulated.graphics = ShaderRecompiler::GraphicsCompileContext{};
+    emulated.graphics->emulateBarycentrics = true;
+    auto trailing = DecodeBase64(serializer.Serialize(emulated));
+    Require(trailing.back() == 1u && serializer.Deserialize(EncodeBase64(trailing)).request.graphics->emulateBarycentrics);
     trailing.push_back(2u);
     bool rejected = false;
     try {
@@ -776,7 +784,7 @@ int VerifyVersion56Compatibility() {
         version40[4] = 40u;
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
-        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 63u, 65u}) {
+        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 65u}) {
             auto future = bytes;
             future[4] = unwritten;
             bool futureRejected = false;

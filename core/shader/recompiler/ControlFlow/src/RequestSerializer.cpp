@@ -913,6 +913,7 @@ GraphicsCompileContext readGraphicsCompileContext(Reader& reader, DeserializedGr
 }
 
 std::string RequestSerializer::Serialize(const RecompileRequest& request) const {
+    if (!request.context.splitState.empty()) throw std::invalid_argument("RequestSerializer: a request that splits its state is built by the driver from another request and is not serialized");
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
@@ -976,6 +977,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
             for (const std::uint32_t word : merge.blendConstants) writer.WriteU32(word);
         }
     }
+    if (request.graphics.has_value() && request.graphics->emulateBarycentrics) writer.WriteBool(true);
     return base64Encode(buffer);
 }
 
@@ -984,7 +986,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 64u || version == 50u || (version >= 58u && version <= 61u) || version == 63u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 64u || version == 50u || (version >= 58u && version <= 61u)) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -1064,6 +1066,11 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         for (auto& merge : result.request.context.pixel->targetMerges) {
             for (std::uint32_t& word : merge.blendConstants) word = reader.ReadU32();
         }
+    }
+    if (version >= 63u && reader.Remaining() != 0u) {
+        if (!reader.ReadBool()) throw std::runtime_error("RequestSerializer: a written emulated barycentrics flag is clear");
+        if (!result.request.graphics.has_value()) throw std::runtime_error("RequestSerializer: emulated barycentrics without a graphics context");
+        result.request.graphics->emulateBarycentrics = true;
     }
     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
     return result;
