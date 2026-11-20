@@ -74,9 +74,10 @@ class Build:
         return found
 
     def walk(self, roots):
+        built = {line.rpartition(": ")[0] for line in self.run("-t", "targets", "all").splitlines()}
         nodes, todo = {}, list(roots)
         while todo:
-            batch = sorted({t for t in todo if t not in nodes})
+            batch = sorted({t for t in todo if t not in nodes and t in built})
             if not batch:
                 break
             nodes.update(self.query(batch))
