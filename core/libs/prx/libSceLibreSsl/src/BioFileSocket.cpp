@@ -106,7 +106,7 @@ std::int64_t APS5_VABI FileControl(Bio* bio, int command, std::int64_t argument,
     auto* stream = static_cast<FileStream*>(bio->data);
     switch (command) {
     case 1:
-        return stream ? fseek_nid_postfix(stream, 0, SEEK_SET) : -1;
+        return stream ? fseek_nid_postfix(stream, argument, SEEK_SET) : -1;
     case 2:
         return stream ? feof_nid_postfix(stream) : 1;
     case 8:
@@ -117,7 +117,8 @@ std::int64_t APS5_VABI FileControl(Bio* bio, int command, std::int64_t argument,
     case 10:
         return 0;
     case 11:
-        return stream && fflush_nid_postfix(stream) == 0;
+        fflush_nid_postfix(stream);
+        return 1;
     case 12:
         return 1;
     case BioControlSetFilename: {
