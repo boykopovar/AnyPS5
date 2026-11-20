@@ -154,7 +154,7 @@ std::uint32_t parsePadChord(std::string_view value) {
     return mask;
 }
 
-Pad::InputBinding parseBinding(const InputAction& action, std::string_view source) {
+Pad::InputBinding parseSource(const InputAction& action, std::string_view source) {
     const auto separator = source.find(':');
     if (separator == std::string_view::npos) throw std::runtime_error("source must use TYPE:VALUE format");
     const auto type = upper(trim(source.substr(0, separator)));
@@ -210,6 +210,25 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
     throw std::runtime_error("source type must be KEY, MOUSE, WHEEL or PAD");
 }
 
+Pad::InputBinding parseBinding(const InputAction& action, std::string_view source) {
+    auto mode = Pad::InputMode::Hold;
+    auto rest = trim(source);
+    const auto space = rest.find_first_of(" \t");
+    if (space != std::string_view::npos) {
+        const auto word = upper(rest.substr(0, space));
+        if (word == "TOGGLE") mode = Pad::InputMode::Toggle;
+        if (word == "TURBO") mode = Pad::InputMode::Turbo;
+        if (mode != Pad::InputMode::Hold) rest = trim(rest.substr(space + 1));
+    }
+    auto binding = parseSource(action, rest);
+    if (mode == Pad::InputMode::Hold) return binding;
+    const auto name = mode == Pad::InputMode::Toggle ? "Toggle" : "Turbo";
+    if (action.control != Pad::InputControl::Button) throw std::runtime_error(std::string(name) + " can only be used on a pad button");
+    if (binding.wheelDirection != 0 || binding.wheelTilt != 0) throw std::runtime_error(std::string(name) + " cannot use the mouse wheel");
+    binding.mode = mode;
+    return binding;
+}
+
 enum class InputSetting {
     LeftStickDeadzone,
     RightStickDeadzone,
@@ -223,6 +242,7 @@ enum class InputSetting {
     StickModifierScale,
     KeyboardRampMs,
     TriggerRampMs,
+    TurboRateHz,
     MouseControlsRightStick
 };
 
@@ -244,6 +264,7 @@ constexpr auto settingNames = std::array{
     InputSettingName{"StickModifierScale", InputSetting::StickModifierScale},
     InputSettingName{"KeyboardRampMs", InputSetting::KeyboardRampMs},
     InputSettingName{"TriggerRampMs", InputSetting::TriggerRampMs},
+    InputSettingName{"TurboRateHz", InputSetting::TurboRateHz},
     InputSettingName{"MouseStickTarget", InputSetting::MouseControlsRightStick}
 };
 
@@ -312,6 +333,7 @@ void applySetting(Pad::InputSettings& settings, InputSetting setting, std::strin
         case InputSetting::StickModifierScale: settings.stickModifierScale = parseNumber(value, "stick modifier scale", 0.05, 1.0); break;
         case InputSetting::KeyboardRampMs: settings.keyboardRampMs = parseNumber(value, "keyboard ramp", 0.0, 2000.0); break;
         case InputSetting::TriggerRampMs: settings.triggerRampMs = parseNumber(value, "trigger ramp", 0.0, 2000.0); break;
+        case InputSetting::TurboRateHz: settings.turboRateHz = parseNumber(value, "turbo rate", 1.0, 30.0); break;
         case InputSetting::MouseControlsRightStick: settings.mouseControlsRightStick = (parseStickId(value) == 1); break;
     }
 }

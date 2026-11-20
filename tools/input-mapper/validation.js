@@ -14,6 +14,7 @@ export const settings = [
     {name: 'StickModifierScale', minimum: 0.05, maximum: 1},
     {name: 'KeyboardRampMs', minimum: 0, maximum: 2000},
     {name: 'TriggerRampMs', minimum: 0, maximum: 2000},
+    {name: 'TurboRateHz', minimum: 1, maximum: 30},
     {name: 'MouseStickTarget', kind: 'stickTarget'}
 ];
 
