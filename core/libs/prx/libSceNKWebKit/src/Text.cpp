@@ -83,7 +83,7 @@ std::size_t ConvertUtf16ToUtf8(std::u16string_view text, char* buffer, std::size
             if (index < text.size() && text[index] >= 0xDC00 && text[index] <= 0xDFFF) {
                 codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + (text[index++] - 0xDC00);
             } else {
-                if (strict) return 0;
+                if (strict || index == text.size()) return 0;
                 codepoint = 0xFFFD;
             }
         } else if (codepoint >= 0xDC00 && codepoint <= 0xDFFF) {
