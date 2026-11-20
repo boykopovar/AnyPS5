@@ -191,12 +191,18 @@ std::int32_t APS5_VABI unum_formatDecimal_nid_postfix(const UNumberFormat* fmt, 
                                                       char16_t* result, std::int32_t resultLength, UFieldPosition* pos,
                                                       std::int32_t* status);
 std::int32_t APS5_VABI unum_formatDouble_nid_postfix(const UNumberFormat* format, double number, char16_t* result, std::int32_t resultLength, UFieldPosition* position, std::int32_t* status);
+std::int32_t APS5_VABI unum_formatDoubleForFields_nid_postfix(const UNumberFormat* format, double number, char16_t* result, std::int32_t resultLength, UFieldPositionIterator* fpositer, std::int32_t* status);
 std::int32_t APS5_VABI unum_getSymbol_nid_postfix(const UNumberFormat* format, std::int32_t symbol, char16_t* buffer, std::int32_t size, std::int32_t* status);
 UNumberFormat* APS5_VABI unum_open_nid_postfix(std::int32_t style, const char16_t* pattern, std::int32_t patternLength, const char* locale, UParseError* parseError, std::int32_t* status);
 
 void APS5_VABI unumf_close_nid_postfix(UNumberFormatter* formatter);
 void APS5_VABI unumf_closeResult_nid_postfix(UFormattedNumber* result);
+void APS5_VABI unumf_formatDecimal_nid_postfix(const UNumberFormatter* formatter, const char* value, std::int32_t valueLength, UFormattedNumber* result, std::int32_t* status);
+void APS5_VABI unumf_formatDouble_nid_postfix(const UNumberFormatter* formatter, double value, UFormattedNumber* result, std::int32_t* status);
+UNumberFormatter* APS5_VABI unumf_openForSkeletonAndLocale_nid_postfix(const char16_t* skeleton, std::int32_t skeletonLength, const char* locale, std::int32_t* status);
 UFormattedNumber* APS5_VABI unumf_openResult_nid_postfix(std::int32_t* status);
+void APS5_VABI unumf_resultGetAllFieldPositions_nid_postfix(const UFormattedNumber* result, UFieldPositionIterator* fpositer, std::int32_t* status);
+std::int32_t APS5_VABI unumf_resultToString_nid_postfix(const UFormattedNumber* result, char16_t* buffer, std::int32_t bufferCapacity, std::int32_t* status);
 
 void APS5_VABI unumsys_close_nid_postfix(UNumberingSystem* unumsys);
 UNumberingSystem* APS5_VABI unumsys_open_nid_postfix(const char* locale, std::int32_t* status);
