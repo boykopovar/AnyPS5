@@ -132,6 +132,8 @@ public:
     std::vector<std::string> emptyDocumentSchemes;
     std::vector<std::string> secureSchemes;
     std::vector<std::string> fontAllowList;
+    bool memorySamplerRunning = false;
+    double memorySamplerInterval = 0.0;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
