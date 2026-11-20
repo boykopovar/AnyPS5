@@ -670,6 +670,15 @@ int APS5_VABI EC_KEY_set_public_key_nid_postfix(EcKey* key, const EcPoint* point
     return 1;
 }
 
+EcPoint* EcPointDuplicate_nid_no_patch(const EcPoint* point, const EcGroup* group) {
+    if (point == nullptr) return nullptr;
+    if (group == nullptr) APS5_INVALID_ARG_EX;
+    if (point->curve.nid != group->curve.nid) return nullptr;
+    auto copy = std::make_unique<EcPoint>(group->curve);
+    Check(mbedtls_ecp_copy(&copy->point, &point->point), __func__);
+    return copy.release();
+}
+
 int APS5_VABI EC_KEY_generate_key_nid_postfix(EcKey* key) {
     if (key == nullptr || !key->group) return 0;
     EcGroup& group = *key->group;
