@@ -1582,10 +1582,6 @@ int APS5_VABI _ZN7WebCore11DisplayList18DrawFocusRingRectsD2Ev() {
 }
 
 
-int APS5_VABI _ZN7WebCore31BasicColorMatrixFilterOperation6createEdNS_15FilterOperation13OperationTypeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore11JSDOMWindow5eventERN3JSC14JSGlobalObjectE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -3902,10 +3898,6 @@ int APS5_VABI _ZN7WebCore12SharedBuffer5clearEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperation5blendEPKNS_15FilterOperationEdb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_RHS7MAfFQpU_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4680,10 +4672,6 @@ int APS5_VABI _ZN7WebCore12RenderObject17absoluteTextRectsERKNS_11SimpleRangeEb(
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperation6createEdNS_15FilterOperation13OperationTypeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore12JSAudioTrack23visitAdditionalChildrenERN3JSC11SlotVisitorE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4708,15 +4696,7 @@ int APS5_VABI _ZNK7WebCore24RotateTransformOperationeqERKNS_18TransformOperation
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperationC1EdNS_15FilterOperation13OperationTypeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList8ClipPathC1ERKNS_4PathENS_8WindRuleE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore31BasicColorMatrixFilterOperationC2EdNS_15FilterOperation13OperationTypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -5173,10 +5153,6 @@ int APS5_VABI _ZN3WTF14derefIfNotNullI6_cairoEEvPT_() {
 }
 
 int APS5_VABI _ZN7WebCore19JSDOMMatrixReadOnly6createEPN3JSC9StructureEPNS_17JSDOMGlobalObjectEON3WTF3RefINS_17DOMMatrixReadOnlyENS6_13DumbPtrTraitsIS8_EEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore37BasicComponentTransferFilterOperation14transformColorERNS_5SRGBAIfEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -5869,10 +5845,6 @@ int APS5_VABI _ZN7WebCore8Document35enqueueSecurityPolicyViolationEventEONS_28Se
 }
 
 int APS5_VABI _ZNK7WebCore21ContentSecurityPolicy19allowFrameAncestorsERKN3WTF6VectorINS1_6RefPtrINS_14SecurityOriginENS1_13DumbPtrTraitsIS4_EEEELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEERKNS1_3URLEb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore31BasicColorMatrixFilterOperation5blendEPKNS_15FilterOperationEdb() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -6846,10 +6818,6 @@ int APS5_VABI _ZN7WebCore20DecodeOrderSampleMap35findSyncSampleAfterPresentation
 }
 
 int APS5_VABI _ZN7WebCore11HTMLElement12setOuterTextERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore31BasicColorMatrixFilterOperationC1EdNS_15FilterOperation13OperationTypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -7864,10 +7832,6 @@ int APS5_VABI _ZN7WebCore17JSHTMLLinkElementC1EPN3JSC9StructureERNS_17JSDOMGloba
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore31BasicColorMatrixFilterOperation14transformColorERNS_5SRGBAIfEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 int APS5_VABI _ZN7WebCore15DatabaseTracker23trackerWithDatabasePathERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
@@ -8163,10 +8127,6 @@ int APS5_VABI _ZNK7WebCore22CSSAnimationController11isSuspendedEv() {
 }
 
 int APS5_VABI _ZN7WebCore16JSXMLHttpRequestC2EPN3JSC9StructureERNS_17JSDOMGlobalObjectEON3WTF3RefINS_14XMLHttpRequestENS6_13DumbPtrTraitsIS8_EEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperationC2EdNS_15FilterOperation13OperationTypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
