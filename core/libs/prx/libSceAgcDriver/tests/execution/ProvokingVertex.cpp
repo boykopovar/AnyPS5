@@ -36,7 +36,7 @@ ShaderRecompiler::RecompileResult Shader(std::span<const std::uint32_t> words, s
     return result;
 }
 
-ShaderRecompiler::RecompileResult GuestPixel(const ShaderRecompiler::SpirvTarget& target) {
+ShaderRecompiler::RecompileResult GuestPixel(const ShaderRecompiler::SpirvTarget& target, bool emulateBarycentrics = false) {
     alignas(256) static constexpr std::array<std::uint32_t, 7> code{0xc8120002u, 0xc8160102u, 0xc81a0202u, 0xc81e0302u, 0xf800180fu, 0x07060504u, 0xbf810000u};
     ShaderRecompiler::ShaderPixelStageInfo pixel{};
     pixel.interpolatorCount = 1;
@@ -52,9 +52,15 @@ ShaderRecompiler::RecompileResult GuestPixel(const ShaderRecompiler::SpirvTarget
     request.target = target;
     request.layout = PixelPushLayout(0u, target);
     request.useCache = false;
+    if (emulateBarycentrics) {
+        ShaderRecompiler::GraphicsCompileContext graphics{};
+        graphics.emulateBarycentrics = true;
+        request.graphics = graphics;
+    }
     auto result = ShaderRecompiler::Recompile(request);
-    result.variantId = 3;
-    Require(result.fragmentParameters.size() == 1 && result.fragmentParameters[0].flat && !result.fragmentParameters[0].perVertex, "guest P0 shader did not produce a flat input");
+    result.variantId = emulateBarycentrics ? 4 : 3;
+    Require(result.barycentricEmulation.active == emulateBarycentrics, "guest P0 shader emulation does not match the request");
+    Require(emulateBarycentrics || (result.fragmentParameters.size() == 1 && result.fragmentParameters[0].flat && !result.fragmentParameters[0].perVertex), "guest P0 shader did not produce a flat input");
     return result;
 }
 
@@ -65,8 +71,7 @@ void CheckPixel(std::uint32_t x, std::uint32_t y, const Color& expected, const s
     }
 }
 
-void Run(AgcDriver::VulkanDevice& device, VkPrimitiveTopology topology, std::span<const AgcDriver::Graphics::CompiledShader> shaders, bool useLast = true, std::string_view shaderName = "GLSL") {
-    Pixels.fill(Sentinel);
+AgcDriver::Graphics::State PanelState(VkPrimitiveTopology topology) {
     AgcDriver::Graphics::State state{};
     state.stages.path = AgcDriver::Graphics::ShaderPath::Vertex;
     state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size(), 0xe4u};
@@ -78,14 +83,20 @@ void Run(AgcDriver::VulkanDevice& device, VkPrimitiveTopology topology, std::spa
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     state.blend.colorWriteMask = 15;
     state.blends = {state.blend};
+    return state;
+}
+
+AgcDriver::Pm4::DrawParameters PanelDraw(VkPrimitiveTopology topology) {
+    return {0, topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP ? 4u : 6u, 0, 1, 0, false};
+}
+
+void SetPanel(AgcDriver::Graphics::State& state, std::uint32_t panel, bool last) {
+    state.viewport = {static_cast<float>(panel * Panel), static_cast<float>(Height), static_cast<float>(Panel), -static_cast<float>(Height), 0, 1};
+    state.provokingVertexMode = last ? VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT : VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
+}
+
+void CheckPanels(VkPrimitiveTopology topology, bool useLast, std::string_view shaderName) {
     const bool strip = topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-    const AgcDriver::Pm4::DrawParameters draw{0, strip ? 4u : 6u, 0, 1, 0, false};
-    for (std::uint32_t panel = 0; panel < 3; ++panel) {
-        state.viewport = {static_cast<float>(panel * Panel), static_cast<float>(Height), static_cast<float>(Panel), -static_cast<float>(Height), 0, 1};
-        state.provokingVertexMode = panel == 1 && useLast ? VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT : VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
-        device.Draw(state, draw, shaders);
-    }
-    device.WaitIdle();
     const auto name = std::string(shaderName) + (strip ? " triangle strip" : " triangle list");
     for (std::uint32_t panel = 0; panel < 3; ++panel) {
         const bool last = panel == 1 && useLast;
@@ -97,6 +108,37 @@ void Run(AgcDriver::VulkanDevice& device, VkPrimitiveTopology topology, std::spa
         }
         CheckPixel(panel * Panel, 0, {64, 64, 64, 64}, name + " background");
     }
+}
+
+void Run(AgcDriver::VulkanDevice& device, VkPrimitiveTopology topology, std::span<const AgcDriver::Graphics::CompiledShader> shaders, bool useLast = true, std::string_view shaderName = "GLSL") {
+    Pixels.fill(Sentinel);
+    auto state = PanelState(topology);
+    for (std::uint32_t panel = 0; panel < 3; ++panel) {
+        SetPanel(state, panel, panel == 1 && useLast);
+        device.Draw(state, PanelDraw(topology), shaders);
+    }
+    device.WaitIdle();
+    CheckPanels(topology, useLast, shaderName);
+}
+
+void RunPatches(AgcDriver::VulkanDevice& device, VkPrimitiveTopology topology, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& pixel) {
+    const auto first = ShaderRecompiler::BuildBarycentricTessellationShaders(vertex, pixel, device.Target(), device.MaxFragmentInputComponents(), 0u);
+    const auto last = ShaderRecompiler::BuildBarycentricTessellationShaders(vertex, pixel, device.Target(), device.MaxFragmentInputComponents(), 2u);
+    Pixels.fill(Sentinel);
+    auto state = PanelState(topology);
+    for (std::uint32_t panel = 0; panel < 3; ++panel) {
+        const auto& patches = panel == 1 ? last : first;
+        const std::array<AgcDriver::Graphics::CompiledShader, 4> shaders{{
+            {ShaderRecompiler::ShaderStage::Vertex, &vertex, 0},
+            {ShaderRecompiler::ShaderStage::TessellationControl, &patches.control, 0},
+            {ShaderRecompiler::ShaderStage::TessellationEvaluation, &patches.evaluation, 0},
+            {ShaderRecompiler::ShaderStage::Fragment, &pixel, PixelPushOffset(0u, device.Target())}
+        }};
+        SetPanel(state, panel, panel == 1);
+        device.Draw(state, PanelDraw(topology), shaders);
+    }
+    device.WaitIdle();
+    CheckPanels(topology, true, "guest P0 through emulated barycentric patches");
 }
 
 void RunRectangle(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& pixel) {
@@ -162,6 +204,14 @@ int main() {
             }
             Require(rejected, "last provoking vertex was drawn without device support");
             device->WaitIdle();
+            if (device->Target().tessellation.has_value()) {
+                auto exporting = vertex;
+                exporting.parameterExports = {0};
+                const auto emulatedPixel = GuestPixel(device->Target(), true);
+                for (const auto topology : {VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP}) RunPatches(*device, topology, exporting, emulatedPixel);
+                std::puts("provoking vertex rendering tests passed without provokingVertexLast: GLSL first vertex and feature rejection, guest P0 through emulated barycentric patches, triangle list and strip, first/last/first");
+                return 0;
+            }
             Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "required provoking vertex rendering coverage is unavailable: provokingVertexLast is not supported");
             std::puts("skipped last-vertex rendering, provokingVertexLast is unavailable; first-vertex rendering and feature rejection passed");
             return VulkanTestSkipped;

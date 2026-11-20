@@ -17,7 +17,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <exception>
 #include <random>
 #include <vector>
 #ifdef _WIN32
@@ -427,36 +426,22 @@ void Strokers() {
                     FT_Stroker_GetBorderCounts(host, static_cast<FT_StrokerBorder>(border), &nativePointCount, &nativeContourCount), "border counts");
             Require(pointCount == nativePointCount && contourCount == nativeContourCount, "border count values");
             Require(border == FT_STROKER_BORDER_RIGHT || pointCount > 0, "left border has points");
-            if constexpr (sizeof(FT_Pos) == sizeof(std::int64_t)) {
-                std::vector<GuestVector> exportedPoints(pointCount);
-                std::vector<unsigned char> exportedTags(pointCount);
-                std::vector<std::uint16_t> exportedContours(contourCount);
-                GuestOutline exported{0, 0, exportedPoints.data(), exportedTags.data(), exportedContours.data(), 0};
-                std::vector<FT_Vector> expectedPoints(pointCount);
-                std::vector<unsigned char> expectedTags(pointCount);
-                std::vector<unsigned short> expectedContours(contourCount);
-                FT_Outline expected{0, 0, expectedPoints.data(), expectedTags.data(), expectedContours.data(), 0};
-                strokers.exportBorder(guest, border, &exported);
-                FT_Stroker_ExportBorder(host, static_cast<FT_StrokerBorder>(border), &expected);
-                Require(exported.n_points == expected.n_points && exported.n_contours == expected.n_contours && exported.n_points == pointCount, "exported counts");
-                for (std::uint32_t index = 0; index < pointCount; ++index) {
-                    Require(exportedPoints[index].x == expectedPoints[index].x && exportedPoints[index].y == expectedPoints[index].y, "exported points");
-                    Require(exportedTags[index] == expectedTags[index], "exported tags");
-                }
-                for (std::uint32_t index = 0; index < contourCount; ++index) Require(exportedContours[index] == expectedContours[index], "exported contours");
-            } else {
-                std::vector<GuestVector> exportedPoints(pointCount);
-                std::vector<unsigned char> exportedTags(pointCount);
-                std::vector<std::uint16_t> exportedContours(contourCount);
-                GuestOutline exported{0, 0, exportedPoints.data(), exportedTags.data(), exportedContours.data(), 0};
-                bool threw = false;
-                try {
-                    strokers.exportBorder(guest, border, &exported);
-                } catch (const std::exception&) {
-                    threw = true;
-                }
-                Require(threw, "32-bit FT_Pos export border throws");
+            std::vector<GuestVector> exportedPoints(pointCount);
+            std::vector<unsigned char> exportedTags(pointCount);
+            std::vector<std::uint16_t> exportedContours(contourCount);
+            GuestOutline exported{0, 0, exportedPoints.data(), exportedTags.data(), exportedContours.data(), 0};
+            std::vector<FT_Vector> expectedPoints(pointCount);
+            std::vector<unsigned char> expectedTags(pointCount);
+            std::vector<unsigned short> expectedContours(contourCount);
+            FT_Outline expected{0, 0, expectedPoints.data(), expectedTags.data(), expectedContours.data(), 0};
+            strokers.exportBorder(guest, border, &exported);
+            FT_Stroker_ExportBorder(host, static_cast<FT_StrokerBorder>(border), &expected);
+            Require(exported.n_points == expected.n_points && exported.n_contours == expected.n_contours && exported.n_points == pointCount, "exported counts");
+            for (std::uint32_t index = 0; index < pointCount; ++index) {
+                Require(exportedPoints[index].x == expectedPoints[index].x && exportedPoints[index].y == expectedPoints[index].y, "exported points");
+                Require(exportedTags[index] == expectedTags[index], "exported tags");
             }
+            for (std::uint32_t index = 0; index < contourCount; ++index) Require(exportedContours[index] == expectedContours[index], "exported contours");
             strokers.exportBorder(guest, border, nullptr);
         }
         strokers.done(guest);
