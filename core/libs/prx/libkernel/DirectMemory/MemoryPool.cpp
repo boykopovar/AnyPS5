@@ -335,6 +335,7 @@ private:
 }
 
 int DirectMemoryAlloc(int64_t searchStart, int64_t searchEnd, size_t len, size_t alignment, int memoryType, int64_t* physOut) {
+    DirectMemoryTouch();
     try {
         return PhysicalMemoryPool::Instance().Alloc(searchStart, searchEnd, len, alignment, memoryType, physOut);
     } catch (const std::bad_alloc&) {
@@ -343,18 +344,22 @@ int DirectMemoryAlloc(int64_t searchStart, int64_t searchEnd, size_t len, size_t
 }
 
 void DirectMemoryFree(int64_t start, size_t len) {
+    DirectMemoryTouch();
     (void)PhysicalMemoryPool::Instance().Free(static_cast<uint64_t>(start), len);
 }
 
 bool DirectMemoryCheckedFree(int64_t start, size_t len) {
+    DirectMemoryTouch();
     return PhysicalMemoryPool::Instance().CheckedFree(static_cast<uint64_t>(start), len);
 }
 
 bool DirectMemoryClaimRelease(int64_t start, size_t len, bool requireAllocated) {
+    DirectMemoryTouch();
     return PhysicalMemoryPool::Instance().ClaimRelease(static_cast<uint64_t>(start), len, requireAllocated);
 }
 
 void DirectMemoryFinishRelease(int64_t start, size_t len) {
+    DirectMemoryTouch();
     PhysicalMemoryPool::Instance().FinishRelease(static_cast<uint64_t>(start), len);
 }
 
@@ -367,25 +372,32 @@ void DirectMemoryWakeReleaseClaims() {
 }
 
 bool DirectMemoryFind(int64_t offset, bool findNext, int64_t* start, int64_t* end, int* memoryType) {
+    DirectMemoryTouch();
     return PhysicalMemoryPool::Instance().Find(static_cast<uint64_t>(offset), findNext, start, end, memoryType);
 }
 
 void DirectMemoryRetype(int64_t start, size_t len, int memoryType) {
+    DirectMemoryTouch();
     (void)PhysicalMemoryPool::Instance().Retype(static_cast<uint64_t>(start), len, memoryType);
 }
 
 std::unique_lock<std::mutex> DirectMemoryPoolLock() {
+    DirectMemoryTouch();
     return PhysicalMemoryPool::Instance().Lock();
 }
 
 void DirectMemoryRetypeLocked(const std::unique_lock<std::mutex>& pool, int64_t start, size_t len, int memoryType) {
+    DirectMemoryTouch();
     (void)PhysicalMemoryPool::Instance().RetypeLocked(pool, static_cast<uint64_t>(start), len, memoryType);
 }
 
 int DirectMemoryLargestFree(int64_t searchStart, int64_t searchEnd, size_t alignment, int64_t* startOut, size_t* sizeOut) {
+    if ((alignment & (alignment - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
+    if (!DirectMemoryIsInitialized()) return SCE_KERNEL_ERROR_EBADF;
     return PhysicalMemoryPool::Instance().LargestFree(searchStart, searchEnd, alignment, startOut, sizeOut);
 }
 
 size_t DirectMemoryFreeRun(uint64_t offset, uint64_t limit) {
+    DirectMemoryTouch();
     return PhysicalMemoryPool::Instance().FreeRun(offset, limit);
 }

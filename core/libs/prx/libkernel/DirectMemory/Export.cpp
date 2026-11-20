@@ -353,6 +353,7 @@ int APS5_VABI sceKernelGetDirectMemoryType(int64_t offset, int* memory_type, int
 }
 
 size_t APS5_VABI sceKernelGetDirectMemorySize(void) {
+ DirectMemoryTouch();
  return DirectMemorySize();
 }
 

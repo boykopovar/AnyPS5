@@ -538,6 +538,7 @@ struct DirectMemoryState {
 #if defined(__linux__)
     std::vector<bool> physicalUsed = std::vector<bool>(DIRECT_MEMORY_SIZE / PS5_PAGE_SIZE);
 #endif
+    std::atomic_bool initialized{false};
     std::map<std::uint64_t, PhysicalSpan> physicalSpans;
     std::mutex directLock;
     std::map<std::uint64_t, PhysicalBlock> physBlocks;
@@ -1218,6 +1219,7 @@ int PlaceHintInReservation(void* addr, size_t len, int flags) {
 }
 
 int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart, size_t alignment) {
+    DirectMemoryTouch();
     ValidateOutput(addr);
     ValidateAlignment(alignment);
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
@@ -1917,4 +1919,12 @@ bool DirectMemoryTryAddReleaseClaim(std::uint64_t first, std::uint64_t last) {
 void DirectMemoryRemoveReleaseClaim(std::uint64_t first) {
     std::lock_guard lock(g_directLock);
     g_releaseClaims.erase(first);
+}
+
+void DirectMemoryTouch() noexcept {
+    MemoryState().initialized.store(true, std::memory_order_release);
+}
+
+bool DirectMemoryIsInitialized() noexcept {
+    return MemoryState().initialized.load(std::memory_order_acquire);
 }
