@@ -35,7 +35,7 @@ class GuardedPage {
 public:
     unsigned char* data = nullptr;
     std::size_t size = 0;
-    GuardedPage() {
+    explicit GuardedPage(bool guardFirst = false) {
 #ifdef _WIN32
         SYSTEM_INFO info{};
         GetSystemInfo(&info);
@@ -43,7 +43,7 @@ public:
         data = static_cast<unsigned char*>(VirtualAlloc(nullptr, size * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
         Require(data != nullptr);
         DWORD previous = 0;
-        Require(VirtualProtect(data + size, size, PAGE_NOACCESS, &previous) != 0);
+        Require(VirtualProtect(data + (guardFirst ? 0 : size), size, PAGE_NOACCESS, &previous) != 0);
 #else
         const auto pageSize = sysconf(_SC_PAGESIZE);
         Require(pageSize > 0);
@@ -51,7 +51,7 @@ public:
         auto* mapping = mmap(nullptr, size * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         Require(mapping != MAP_FAILED);
         data = static_cast<unsigned char*>(mapping);
-        Require(mprotect(data + size, size, PROT_NONE) == 0);
+        Require(mprotect(data + (guardFirst ? 0 : size), size, PROT_NONE) == 0);
 #endif
     }
     ~GuardedPage() {
@@ -87,6 +87,24 @@ struct FontRecord {
     std::uint32_t attr[5];
     std::uint32_t tail;
 };
+
+void CheckAttributeCopyOrder() {
+    std::array<std::uint32_t, 10> words{0, 0, 0, 0x14, 0x14, 1, 2, 3, 4, 0x77};
+    Require(sceWkFontConfigGetAttr(words.data(), words.data() + 3) == 0);
+    Require(words == std::array<std::uint32_t, 10>{0, 0, 0, 0x14, 1, 2, 4, 4, 4, 0x77});
+
+    GuardedPage page(true);
+    const std::uint32_t tail = 0x12345678;
+    std::memcpy(page.data + page.size, &tail, sizeof(tail));
+    std::array<std::uint32_t, 5> attr{0x14, 1, 2, 3, 4};
+    bool threw = false;
+    try {
+        sceWkFontConfigGetAttr(page.data + page.size - 0x20, attr.data());
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && attr == std::array<std::uint32_t, 5>{0x14, 1, 2, 3, tail});
+}
 
 template <typename Call>
 bool Throws(Call call, const void* font, char* out, std::uint32_t size) {
@@ -126,6 +144,14 @@ void CheckRecordReads() {
     Require(sceWkFontConfigGetFontName(&empty, out, 0) == bufferTooSmall);
 
     GuardedPage page;
+    std::array<char, 10003> padded;
+    padded.fill('x');
+    Require(sceWkFontConfigGetFontName(&font, padded.data(), padded.size() - 1) == 0);
+    Require(std::strcmp(padded.data(), font.name) == 0);
+    for (std::size_t i = std::strlen(font.name); i < padded.size() - 1; ++i) Require(padded[i] == '\0');
+    Require(padded.back() == 'x');
+    Require(Throws(sceWkFontConfigGetFontName, &font, reinterpret_cast<char*>(page.data + page.size), UINT32_MAX));
+
     std::memcpy(page.data + page.size - 3, "SST", 3);
     const FontRecord runsIntoGuard{nullptr, reinterpret_cast<const char*>(page.data + page.size - 3), {0x14, 0, 0, 0, 0}, 0};
     Require(Throws(sceWkFontConfigGetFontName, &runsIntoGuard, out, sizeof(out)));
@@ -171,6 +197,7 @@ int main() {
         }
     }
     RequireEarlyReturnBeforeUnreadableTail(invalidArgument);
+    CheckAttributeCopyOrder();
     CheckRecordReads();
     return 0;
 }

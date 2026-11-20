@@ -272,7 +272,7 @@ void FormatWideInto(std::u16string& out, const char16_t* format, VaList* source,
             else if (length == "h") *static_cast<short*>(pointer) = static_cast<short>(count);
             else if (length.empty()) *static_cast<int*>(pointer) = count;
             else *static_cast<long long*>(pointer) = count;
-        } else if (conversion == u'S' || (conversion < 0x80 && !std::strchr(LibcDetail::KnownConversions, static_cast<char>(conversion))) || (conversion >= 0xd800 && conversion < 0xdc00)) {
+        } else if (conversion == u'S' || conversion >= 0x80 || !std::strchr(LibcDetail::KnownConversions, static_cast<char>(conversion))) {
             std::u16string text = u"%";
             if (conversion != u'%') text.push_back(conversion);
             if (conversion >= 0xd800 && conversion < 0xdc00 && *format >= 0xdc00 && *format < 0xe000) text.push_back(*format++);
@@ -341,8 +341,9 @@ extern "C" {
 extern FileStream* __stdoutp_nid_postfix;
 
 int APS5_VABI vswprintf_nid_postfix(char16_t* buffer, std::size_t size, const char16_t* format, VaList* args) {
-    if (buffer == nullptr || size == 0) { errno = 22; return -1; }
+    if (buffer == nullptr && size != 0) { errno = 22; return -1; }
     const auto store = [buffer, size](const std::u16string& text) {
+        if (size == 0) return true;
         const std::size_t copied = text.size() < size - 1 ? text.size() : size - 1;
         const std::u16string stored = text.substr(0, copied);
         return GuestCopyOut_nid_no_patch(buffer, stored.c_str(), (copied + 1) * sizeof(char16_t));
@@ -350,13 +351,13 @@ int APS5_VABI vswprintf_nid_postfix(char16_t* buffer, std::size_t size, const ch
     try {
         const std::u16string text = FormatWide(format, args);
         if (!store(text)) { errno = 22; return -1; }
-        return text.size() < size ? static_cast<int>(text.size()) : -1;
+        return text.size() < size || text.empty() ? static_cast<int>(text.size()) : -1;
     } catch (const WideEncodingError& error) {
         if (!store(error.partial)) { errno = 22; return -1; }
         if (error.invalidSequence) errno = 86;
         return -1;
     } catch (const std::exception&) {
-        GuestCopyOut_nid_no_patch(buffer, u"", sizeof(char16_t));
+        if (size != 0) GuestCopyOut_nid_no_patch(buffer, u"", sizeof(char16_t));
         errno = 22;
         return -1;
     }

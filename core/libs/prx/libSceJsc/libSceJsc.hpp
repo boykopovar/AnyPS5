@@ -11,6 +11,8 @@
 #include "prx/libSceJsc/include/InventoryExports.hpp"
 #include "prx/libSceJsc/include/PlacementNewExports.hpp"
 #include "prx/libSceJsc/include/ProtoCallFrameExports.hpp"
+#include "prx/libSceJsc/include/SpeculatedTypeExports.hpp"
+#include "prx/libSceJsc/include/ScriptCallArgumentHandlerExports.hpp"
 #include "prx/libSceJsc/include/WtfCpuTimeExports.hpp"
 #include "prx/libSceJsc/include/WtfDataLogExports.hpp"
 #include "prx/libSceJsc/include/WtfFileSystemExports.hpp"

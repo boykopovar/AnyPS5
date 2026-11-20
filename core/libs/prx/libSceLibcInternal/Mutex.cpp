@@ -3,14 +3,18 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
 #include <cstdio>
+#include <string>
 
 namespace {
 
 constexpr int MutexTypeRecursive = 2;
 constexpr std::size_t MutexNameSize = 32;
+constexpr int GuestNameTooLong = 63;
+constexpr int CppErrorInvalidArgument = 1;
 
 }
 
@@ -34,6 +38,11 @@ int APS5_VABI _Mtxinit_nid_postfix(PthreadMutex* mutex, const char* name) {
 }
 
 int APS5_VABI _ZNSt8__sce_v236_Mtx_init_with_default_name_overrideEPP13pthread_mutexiPKc_nid_postfix(void** mutex, int type, const char* name) {
+    if (name != nullptr) {
+        std::string copied;
+        if (CopyGuestString_nid_no_patch(name, MutexNameSize, copied) == GuestNameTooLong)
+            _ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix(CppErrorInvalidArgument);
+    }
     return _ZNSt8__sce_v219_Mtx_init_with_nameEPP13pthread_mutexiPKc_nid_postfix(mutex, type, name);
 }
 
