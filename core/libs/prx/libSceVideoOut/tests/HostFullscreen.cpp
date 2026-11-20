@@ -384,6 +384,11 @@ static int WindowTest() {
         HostWindowSize back;
         SDL_GetWindowSize(window.Handle(), &back.width, &back.height);
         Require(!Borderless(window) && back == before, "leaving borderless did not restore the windowed size");
+        window.ToggleBorderless();
+        window.ToggleFullscreen();
+        Require(Fullscreen(window) && !Borderless(window), "F11 while borderless did not leave borderless before entering fullscreen");
+        window.ToggleFullscreen();
+        Require(!Fullscreen(window) && !Borderless(window), "F11 did not leave fullscreen");
     }
     SetFullscreenSetting("borderless");
     {

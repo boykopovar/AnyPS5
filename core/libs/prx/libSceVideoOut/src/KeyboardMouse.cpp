@@ -317,6 +317,7 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
             : binding.mouseButton != MouseButton::None && binding.mouseButton == static_cast<MouseButton>(event.button.button);
         if (!matches) continue;
         if (binding.control == InputControl::ToggleFullscreen && keyboard && down && !pressed[index]) requests.toggleFullscreen = true;
+        if (binding.control == InputControl::ToggleBorderless && keyboard && down && !pressed[index]) requests.toggleBorderless = true;
         if (binding.control == InputControl::TogglePerformanceOverlay && keyboard && down && !pressed[index]) requests.togglePerformanceOverlay = true;
         if (binding.control == InputControl::Screenshot && keyboard && down && !pressed[index]) requests.screenshot = true;
         if (binding.control == InputControl::ShowPadStatus && keyboard && down && !pressed[index]) requests.showPadStatus = true;

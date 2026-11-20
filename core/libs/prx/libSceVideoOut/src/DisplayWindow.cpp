@@ -143,6 +143,7 @@ SDL_Window* DisplayWindow::Handle() const {
 
 void DisplayWindow::ToggleFullscreen() {
     require(window != nullptr && fullscreen != nullptr, "window must exist before toggling fullscreen");
+    if (borderless) leaveBorderless();
     fullscreen->Toggle();
     fullscreen->Refresh(MouseIsOpen_nid_no_patch());
 }
