@@ -241,6 +241,10 @@ int APS5_VABI sceSlimglClientMonitorServerStart() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+int APS5_VABI sceSlimglClientPulse() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceSlimglClientStartIPC() {
     return 0;
 }
