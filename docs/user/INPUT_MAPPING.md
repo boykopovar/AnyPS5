@@ -15,7 +15,7 @@ Supported input sources are:
 
 While a title has a mouse open (`sceMouseOpen`) and the window is focused, AnyPS5 hides and captures the host cursor, so the title's own cursor is the only one; the capture ends when the window loses focus or when the mouse-to-stick toggle (`ToggleMouse`) is on. While the title has the mouse, mouse clicks and the wheel go to the title instead of their pad bindings. Turning on `ToggleMouse` with its key (F7 by default) hands the whole mouse to the pad until it is turned off again: motion moves the stick, and clicks and the wheel press their pad bindings, while the title's mouse reports no movement, clicks or wheel turns. A title that opens the mouse but ignores it in play can be played this way. Mouse movement reaches the title scaled from the window's presented image to the title's display resolution, so the title's cursor moves as far as the host cursor would.
 
-The window hotkeys (`ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot`, `ShowPadStatus`, `VolumeDown`, `VolumeUp` and `ToggleMute`) never reach the game's pad when bound to a key or mouse button. A `PAD:` chord is the one exception: its buttons still reach the title. A key bound to a hotkey and to another action triggers both, as for every other action; the built-in keys of the actions above share none.
+The window hotkeys (`ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot`, `ShowPadStatus`, `VolumeDown`, `VolumeUp` and `ToggleMute`) accept keyboard keys and `PAD:` chords. The buttons in a chord still reach the title when the hotkey fires. A key bound to a hotkey and to another action triggers both, as for every other action; the built-in keys of the actions above share none.
 
 Game-controller bindings are enabled automatically. Keyboard and mouse overrides apply independently of [controller button remapping](#controller-button-remapping).
 
@@ -199,7 +199,9 @@ An invalid line stops the game when video output starts, with an error that name
 
 ## Web configurator
 
-The [input mapper](../../tools/input-mapper/index.html) edits keyboard, mouse and wheel overrides in the browser. `PAD:` chords in an imported file are kept and exported, but new chords are written by hand. It supports alternate bindings, physical-key capture, search, INI import, preview, copy and download. Search by action or group name, by key name such as `F7`, or by full input such as `MOUSE:Left`. Input searches include the configured bindings and the built-in bindings for actions without overrides. Invalid imports preserve the current configuration. Invalid bindings block export; duplicate and shared inputs, including retained built-in bindings, produce warnings. Removing every binding for an action restores its built-in inputs.
+The [input mapper](../../tools/input-mapper/index.html) edits keyboard, mouse, wheel and controller chord bindings in the browser. It supports alternate bindings, physical-key capture, search, INI import, preview, copy and download. Search by action or group name, by key name such as `F7`, or by full input such as `MOUSE:Left`. Input searches include the configured bindings and the built-in bindings for actions without overrides. Invalid imports preserve the current configuration. Invalid bindings block export; duplicate and shared inputs, including retained built-in bindings, produce warnings. Removing every binding for an action restores its built-in inputs.
+
+For an emulator action such as `ToggleFullscreen`, add a binding, choose `PAD` as the input type and select one or more controller buttons in the binding value. Open an imported `PAD:` binding the same way to edit its buttons.
 
 On the Configuration page, enter the game's exact title ID to download a [per-game profile](#per-game-profiles), such as `anyps5-input.PPSA00001.ini`. Leave the field blank to download the shared `anyps5-input.ini`.
 

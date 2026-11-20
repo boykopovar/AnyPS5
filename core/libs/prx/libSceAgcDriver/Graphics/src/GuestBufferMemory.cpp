@@ -1019,7 +1019,7 @@ bool createSparseDmaBufImport(const Context& context, HostImport& entry, int fil
     if (runs.empty()) return false;
     const auto lead = runs[0].offset % SparseBlockBytes;
     const bool ownQueue = context.sparseQueue != VK_NULL_HANDLE && context.sparseQueueMutex != nullptr;
-    if (!context.sparseBinding || entry.bytes <= ImportChunkBytes || (!ownQueue && !GuestMemory::GpuMutex().HeldByThisThread()) || udmabufDevice() < 0) return false;
+    if (!context.sparseBinding || (!ownQueue && !GuestMemory::GpuMutex().HeldByThisThread()) || udmabufDevice() < 0) return false;
     struct stat backing {};
     if (fstat(file, &backing) != 0) throwSparseImport(entry, "fstat of the shared backing", VK_ERROR_INVALID_EXTERNAL_HANDLE);
     const auto chunkTypes = dmaBufBufferRequirements(context, entry, 0, ChunkImportUsage, ImportChunkBytes, nullptr).memoryTypeBits;
@@ -1062,8 +1062,13 @@ bool createSparseDmaBufImport(const Context& context, HostImport& entry, int fil
             const char* step = nullptr;
             VkResult failure = VK_SUCCESS;
             auto chunk = importChunk(context, file, index, requirements.memoryTypeBits, step, failure);
+            const bool usable = chunk != nullptr && ((requirements.memoryTypeBits >> chunk->memoryType) & 1u) != 0;
+            if (!usable && entry.bytes <= ImportChunkBytes) {
+                context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+                return false;
+            }
             if (chunk == nullptr) fail(step, failure);
-            if (((requirements.memoryTypeBits >> chunk->memoryType) & 1u) == 0) fail("the memory type of a chunk import", VK_ERROR_FORMAT_NOT_SUPPORTED);
+            if (!usable) fail("the memory type of a chunk import", VK_ERROR_FORMAT_NOT_SUPPORTED);
             binds.push_back({piece.resource + done, size, chunk->memory, within, 0});
             chunks->push_back(std::move(chunk));
             done += size;
@@ -6493,6 +6498,16 @@ bool GuestBufferMemory::gpuCopyEligible(const Region& region) const {
     return region.end - region.begin <= gpuCopyLimit();
 }
 
+bool GuestBufferMemory::copyBehindGpuWork(const Region& region, bool locked) const {
+    if (!gpuCopiesEnabled() || region.sparse || !(region.hostBacked || region.writable)) return false;
+    const auto* recorder = Recorder::Active();
+    if (recorder == nullptr) return false;
+    const auto bytes = static_cast<std::size_t>(region.end - region.begin);
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{region.begin, region.end}}};
+    const bool written = locked ? recorder->PendingWriteOverlaps(region.begin, bytes) : Recorder::SnapshotWriteOverlaps(region.begin, bytes);
+    return written || StorageTexture::AnyPendingOverlaps(range) || AnyShadowedOverlaps(region.begin, bytes);
+}
+
 bool GuestBufferMemory::bindableInPlace(std::uint64_t offset, bool addressable) const {
     if (adjustedRegions && !addressable) return offset % 4 == 0;
     return offset % context.limits.minStorageBufferOffsetAlignment == 0;
@@ -6714,7 +6729,7 @@ void GuestBufferMemory::UploadPrepare(bool addressable) {
             }
             if (misaligned || staged) {
                 if (!staged) {
-                    if (!gpuCopyEligible(region)) continue;
+                    if (!gpuCopyEligible(region) && !copyBehindGpuWork(region, false)) continue;
                     const auto allocateStart = std::chrono::steady_clock::now();
                     region.buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(region.end - region.begin), gpuCopyUsage(context, addressable), copyBufferProperties(false));
                     if (profile) allocateUs.fetch_add(microsecondsSince(allocateStart), std::memory_order_relaxed);
@@ -6938,7 +6953,7 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
                 // region in place (Descriptor prefers `direct`), and a kept buffer would count as copied.
                 region.buffer.reset();
                 region.deviceLocal = false;
-            } else if (entry != nullptr && recorder != nullptr && (staged || gpuCopyEligible(region))) {
+            } else if (entry != nullptr && recorder != nullptr && (staged || gpuCopyEligible(region) || copyBehindGpuWork(region, true))) {
                 // Misaligned in the import (or staged): the GPU copies the sub-range out of it. The
                 // handle and base are taken now, under the import lock: a reconcile by the flush
                 // below could retire the entry (the batch opened below keeps a retired import's

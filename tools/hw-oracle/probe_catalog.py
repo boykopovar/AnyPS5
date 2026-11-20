@@ -9,6 +9,7 @@ import shutil
 import sys
 import tempfile
 import subprocess
+import time
 from pathlib import Path
 
 import compare_results
@@ -163,6 +164,20 @@ def select_probes(probes, identifiers):
     return selected
 
 
+RETRY_LOCKED_REPLACE = os.name == "nt"
+LOCKED_REPLACE_DELAYS = (0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0)
+
+
+def replace_retrying_lock(source, destination):
+    for delay in LOCKED_REPLACE_DELAYS if RETRY_LOCKED_REPLACE else ():
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            time.sleep(delay)
+    os.replace(source, destination)
+
+
 def write_atomic(path, content):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -172,7 +187,7 @@ def write_atomic(path, content):
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        replace_retrying_lock(temporary, path)
     except BaseException:
         try:
             os.unlink(temporary)
@@ -225,7 +240,7 @@ def generate(probes, catalog_digest, output_dir):
         promoted = []
         try:
             for probe, destination in zip(probes, destinations):
-                os.replace(stage / probe["id"], destination)
+                replace_retrying_lock(stage / probe["id"], destination)
                 promoted.append(destination)
         except OSError as promotion_error:
             rollback_errors = []
