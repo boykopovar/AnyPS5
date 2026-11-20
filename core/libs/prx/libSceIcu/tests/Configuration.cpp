@@ -167,8 +167,8 @@ void TimeZoneDirectory() {
     status = 0;
 
     UErrorCode bundled = U_ZERO_ERROR;
-    u_setTimeZoneFilesDirectory("/bundled", &bundled);
-    Require(bundled == U_ZERO_ERROR && std::string(u_getTimeZoneFilesDirectory(&bundled)) == "/bundled");
+    u_setTimeZoneFilesDirectory("bundled", &bundled);
+    Require(bundled == U_ZERO_ERROR && std::string(u_getTimeZoneFilesDirectory(&bundled)) == "bundled");
     u_setTimeZoneFilesDirectory(nullptr, &bundled);
     Require(bundled == U_ZERO_ERROR && std::string(u_getTimeZoneFilesDirectory(&bundled)) == "");
 
