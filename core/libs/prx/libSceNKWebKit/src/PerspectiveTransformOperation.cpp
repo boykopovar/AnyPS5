@@ -55,6 +55,8 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
 
+#include <stdexcept>
+
 namespace {
 
 using WebCore::LegacyLength;
@@ -64,7 +66,7 @@ float LengthValue(const LegacyLength& length) {
     return length.m_isFloat ? length.m_floatValue : static_cast<float>(length.m_intValue);
 }
 
-float PerspectiveValue(const WebCore::PerspectiveTransformOperation* self, const char* function) {
+float PerspectiveValue(const WebCore::PerspectiveTransformOperation* self) {
     const LegacyLength& length = self->m_p;
     switch (length.m_type) {
     case LegacyLengthType::Fixed:
@@ -75,7 +77,7 @@ float PerspectiveValue(const WebCore::PerspectiveTransformOperation* self, const
     case LegacyLengthType::Auto:
         return 1.0f;
     case LegacyLengthType::Calculated:
-        NotImplemented_nid_no_patch(function);
+        throw std::invalid_argument("calculated WebCore length");
     default:
         return 0.0f;
     }
@@ -86,7 +88,7 @@ float PerspectiveValue(const WebCore::PerspectiveTransformOperation* self, const
 extern "C" {
 
 bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation10isIdentityEv(const WebCore::PerspectiveTransformOperation* self) {
-    return !PerspectiveValue(self, __func__);
+    return !PerspectiveValue(self);
 }
 
 bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation27isAffectedByTransformOriginEv(const WebCore::PerspectiveTransformOperation* self) {
@@ -104,7 +106,7 @@ LegacyLength* APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation11perspective
 }
 
 bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation5applyERNS_20TransformationMatrixERKNS_9FloatSizeE(const WebCore::PerspectiveTransformOperation* self, WebCore::TransformationMatrix& transform, const WebCore::FloatSize&) {
-    _ZN7WebCore20TransformationMatrix16applyPerspectiveEd(&transform, PerspectiveValue(self, __func__));
+    _ZN7WebCore20TransformationMatrix16applyPerspectiveEd(&transform, PerspectiveValue(self));
     return false;
 }
 
