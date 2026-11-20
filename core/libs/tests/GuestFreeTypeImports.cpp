@@ -1,5 +1,5 @@
 #include "FreeTypeFontFixture.hpp"
-#include "prx/libSceFreeType/include/GuestFreeType.hpp"
+#include "prx/libSceFreeType/include/Api.hpp"
 #include <nid/NidCompute.hpp>
 
 #include <ft2build.h>
@@ -42,21 +42,21 @@ int main(int argc, char** argv) {
     for (const char* name : {"FT_Init_FreeType", "FT_New_Memory_Face", "FT_Load_Glyph", "FT_Render_Glyph", "FT_Outline_Translate"}) {
         Require(dlsym(module, name) == nullptr);
     }
-    const auto initialize = Import<int (APS5_VABI *)(void**)>(module, "FT_Init_FreeType", patched);
-    const auto doneLibrary = Import<int (APS5_VABI *)(void*)>(module, "FT_Done_FreeType", patched);
-    const auto newFace = Import<int (APS5_VABI *)(void*, const unsigned char*, std::int64_t, std::int64_t, GuestFaceRec**)>(module, "FT_New_Memory_Face", patched);
-    const auto doneFace = Import<int (APS5_VABI *)(GuestFaceRec*)>(module, "FT_Done_Face", patched);
-    const auto setSize = Import<int (APS5_VABI *)(GuestFaceRec*, std::uint32_t, std::uint32_t)>(module, "FT_Set_Pixel_Sizes", patched);
-    const auto charIndex = Import<std::uint32_t (APS5_VABI *)(GuestFaceRec*, std::uint64_t)>(module, "FT_Get_Char_Index", patched);
-    const auto loadGlyph = Import<int (APS5_VABI *)(GuestFaceRec*, std::uint32_t, std::int32_t)>(module, "FT_Load_Glyph", patched);
-    const auto renderGlyph = Import<int (APS5_VABI *)(GuestGlyphSlotRec*, std::int32_t)>(module, "FT_Render_Glyph", patched);
+    const auto initialize = Import<decltype(&FT_Init_FreeType_nid_postfix)>(module, "FT_Init_FreeType", patched);
+    const auto doneLibrary = Import<decltype(&FT_Done_FreeType_nid_postfix)>(module, "FT_Done_FreeType", patched);
+    const auto newFace = Import<decltype(&FT_New_Memory_Face_nid_postfix)>(module, "FT_New_Memory_Face", patched);
+    const auto doneFace = Import<decltype(&FT_Done_Face_nid_postfix)>(module, "FT_Done_Face", patched);
+    const auto setSize = Import<decltype(&FT_Set_Pixel_Sizes_nid_postfix)>(module, "FT_Set_Pixel_Sizes", patched);
+    const auto charIndex = Import<decltype(&FT_Get_Char_Index_nid_postfix)>(module, "FT_Get_Char_Index", patched);
+    const auto loadGlyph = Import<decltype(&FT_Load_Glyph_nid_postfix)>(module, "FT_Load_Glyph", patched);
+    const auto renderGlyph = Import<decltype(&FT_Render_Glyph_nid_postfix)>(module, "FT_Render_Glyph", patched);
 
     const auto font = SquareGlyphFont('A', 700);
     FT_Library nativeLibrary = nullptr;
     FT_Face nativeFace = nullptr;
     Require(FT_Init_FreeType(&nativeLibrary) == 0);
     Require(FT_New_Memory_Face(nativeLibrary, font.data(), static_cast<FT_Long>(font.size()), 0, &nativeFace) == 0);
-    void* library = nullptr;
+    GuestLibrary* library = nullptr;
     GuestFaceRec* face = nullptr;
     Require(initialize(&library) == 0);
     Require(newFace(library, font.data(), static_cast<std::int64_t>(font.size()), 0, &face) == 0);
