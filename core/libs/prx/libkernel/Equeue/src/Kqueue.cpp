@@ -41,6 +41,7 @@ constexpr int GUEST_EPERM = 1;
 constexpr int GUEST_ENOENT = 2;
 constexpr int GUEST_EBADF = 9;
 constexpr int GUEST_EFAULT = 14;
+constexpr int GUEST_ENODEV = 19;
 constexpr int GUEST_EINVAL = 22;
 constexpr int GUEST_ENFILE = 23;
 constexpr int GUEST_EMFILE = 24;
@@ -332,6 +333,11 @@ int AddDescriptorKnote(const KernelEqueueRef& queue, KernelEvent& change, std::u
             return GUEST_EINVAL;
         }
         return AddKqueueKnote(queue, watched, change, flags);
+    }
+    if (File::IsRandomDevice(descriptor)) {
+        change.fflags = 0;
+        change.data = 0;
+        return GUEST_ENODEV;
     }
     if (descriptor == 0 && change.filter == EVFILT_READ && File::IsHostStream(descriptor)) {
         return AddStandardInputKnote(queue, change, flags);

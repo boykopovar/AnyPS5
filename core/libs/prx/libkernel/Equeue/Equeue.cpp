@@ -6,6 +6,7 @@
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/HostStreams.hpp"
+#include "prx/libkernel/File/include/RandomDevice.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -987,6 +988,7 @@ static int AddDescriptorEvent(KernelEqueue eq, int fd, std::size_t size, void* u
 }
 
 int APS5_VABI sceKernelAddReadEvent(KernelEqueue eq, int fd, std::size_t size, void* udata) {
+    if (File::IsRandomDevice(fd)) return EqueuePin_nid_postfix(eq) ? SCE_KERNEL_ERROR_ENODEV : SCE_KERNEL_ERROR_EBADF;
     return AddDescriptorEvent(eq, fd, size, udata, EVFILT_READ);
 }
 
@@ -995,6 +997,7 @@ int APS5_VABI sceKernelDeleteReadEvent(KernelEqueue eq, int fd) {
 }
 
 int APS5_VABI sceKernelAddWriteEvent(KernelEqueue eq, int fd, std::size_t size, void* udata) {
+    if (File::IsRandomDevice(fd)) return EqueuePin_nid_postfix(eq) ? SCE_KERNEL_ERROR_ENODEV : SCE_KERNEL_ERROR_EBADF;
     return AddDescriptorEvent(eq, fd, size, udata, EVFILT_WRITE);
 }
 
