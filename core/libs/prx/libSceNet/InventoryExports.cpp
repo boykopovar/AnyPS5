@@ -41,9 +41,12 @@ APS5_EXPORT("-qjsa0xOWMc", libSceNetUnknown__minus_qjsa0xOWMc_nid_no_patch);
 int APS5_VABI libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(const std::uint8_t* options, std::int32_t length, NetDhcpOption* option) {
     constexpr int invalid = static_cast<int>(0x80411506u);
     if (options == nullptr || option == nullptr) return invalid;
+    auto* const codePtr = reinterpret_cast<const void*>(reinterpret_cast<std::uintptr_t>(option) + offsetof(NetDhcpOption, code));
+    auto* const lengthPtr = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(option) + offsetof(NetDhcpOption, length));
+    auto* const valuePtr = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(option) + offsetof(NetDhcpOption, value));
     std::uint8_t wanted = 0;
     const std::uint8_t cleared[2] = {0, 0};
-    if (!CopyInPreservingErrno(&wanted, &option->code, sizeof(wanted)) || !CopyOutPreservingErrno(&option->length, cleared, sizeof(cleared))) return invalid;
+    if (!CopyInPreservingErrno(&wanted, codePtr, sizeof(wanted)) || !CopyOutPreservingErrno(lengthPtr, cleared, sizeof(cleared))) return invalid;
     if (length < 2) return invalid;
     for (std::int32_t offset = 0; offset < length;) {
         if (length - offset < 2) return invalid;
@@ -56,7 +59,7 @@ int APS5_VABI libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(const std::uint8_t* opti
         options += 2;
         if (code == wanted) {
             const std::uint8_t lengths[2] = {static_cast<std::uint8_t>(std::min<std::int32_t>(size, remaining)), size};
-            if (!CopyOutPreservingErrno(&option->length, lengths, sizeof(lengths)) || !CopyOutPreservingErrno(&option->value, &options, sizeof(options))) return invalid;
+            if (!CopyOutPreservingErrno(lengthPtr, lengths, sizeof(lengths)) || !CopyOutPreservingErrno(valuePtr, &options, sizeof(options))) return invalid;
             return 0;
         }
         if (size == 0 || remaining <= size) return invalid;
