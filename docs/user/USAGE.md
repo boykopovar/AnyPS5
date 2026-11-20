@@ -17,6 +17,8 @@ Download the file from the [official AnyPS5 releases](https://github.com/boykopo
 - Windows PowerShell: `Get-FileHash -Algorithm SHA256 -LiteralPath "path\to\downloaded-file"`
 - Linux: `sha256sum -- "path/to/downloaded-file"`
 
+- macOS: `shasum -a 256 -- "path/to/downloaded-file"`
+
 Compare the hash with the part after `sha256:`, ignoring letter case. If it differs, discard the file. A matching hash confirms that the file matches the published asset.
 
 If a browser or antivirus blocks the download, leave it blocked. Report the release link, file name, exact warning and the browser or antivirus that showed it. Include the file size in bytes and the hash if the file is available.
