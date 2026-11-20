@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -44,6 +45,26 @@ class HostOnlyTargets(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_selects_current_reply_even_if_an_old_index_has_a_later_mtime(self):
+        build = self.fixture([self.target("host_tests")])
+        reply = build / ".cmake/api/v1/reply"
+        stale = reply / "index-0000.json"
+        stale.write_text("{}", encoding="utf-8")
+        os.utime(reply / "index-0001.json", (10, 10))
+        os.utime(stale, (20, 20))
+        _, targets = build_mingw_host_only_tests.read_reply(build)
+        self.assertIn("host_tests", targets)
+
+    def test_newer_error_index_prevents_using_previous_configuration(self):
+        build = self.fixture([self.target("host_tests")])
+        reply = build / ".cmake/api/v1/reply"
+        (reply / "error-0000.json").write_text("{}", encoding="utf-8")
+        _, targets = build_mingw_host_only_tests.read_reply(build)
+        self.assertIn("host_tests", targets)
+        (reply / "error-0002.json").write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "error-0002.json"):
+            build_mingw_host_only_tests.read_reply(build)
 
     def test_selects_core_libs_test_executables_without_guest_libc(self):
         host = self.target("host_tests")

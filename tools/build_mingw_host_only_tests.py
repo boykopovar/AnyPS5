@@ -34,10 +34,12 @@ def target_document(value, path):
 
 def read_reply(build_dir):
     reply_dir = build_dir / ".cmake" / "api" / "v1" / "reply"
-    indexes = list(reply_dir.glob("index-*.json"))
+    indexes = [*reply_dir.glob("index-*.json"), *reply_dir.glob("error-*.json")]
     if not indexes:
         raise ValueError(f"{reply_dir}: no CMake File API index; configure with the codemodel-v2 query first")
-    index = max(indexes, key=lambda path: path.stat().st_mtime_ns)
+    index = max(indexes, key=lambda path: path.name.split("-", 1)[1])
+    if index.name.startswith("error-"):
+        raise ValueError(f"{index}: latest CMake generation failed; configure successfully before selecting targets")
     document = object_document(json.loads(index.read_text(encoding="utf-8")), index, "CMake File API index")
     reply = object_document(document.get("reply", {}), index, "CMake File API reply")
     codemodel = reply.get("codemodel-v2")
