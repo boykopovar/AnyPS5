@@ -1178,7 +1178,44 @@ int VerifyVersion56Compatibility() {
     return 0;
 }
 
+void VerifyTargetMergeBlendConstants() {
+    const ShaderRecompiler::RequestSerializer serializer;
+    ShaderRecompiler::RecompileRequest request{};
+    request.context.pixel = ShaderRecompiler::ShaderPixelStageInfo{};
+    const auto withoutMerges = serializer.Serialize(request);
+    ShaderRecompiler::TargetMerge unwritten{};
+    unwritten.blendConstants = {1u, 2u, 3u, 4u};
+    request.context.pixel->targetMerges = {unwritten};
+    const auto unwrittenEncoded = serializer.Serialize(request);
+    Require(unwrittenEncoded == withoutMerges);
+    const auto unwrittenReplay = serializer.Deserialize(unwrittenEncoded);
+    Require(unwrittenReplay.request.context.pixel.has_value() && unwrittenReplay.request.context.pixel->targetMerges.empty());
+    ShaderRecompiler::TargetMerge first{};
+    first.mask = 0x0fu;
+    first.blendConstants = {0x3f800000u, 0x40000000u, 0x40400000u, 0x40800000u};
+    ShaderRecompiler::TargetMerge second{};
+    second.target = 1u;
+    second.mask = 0xf0u;
+    second.blendConstants = {5u, 6u, 7u, 8u};
+    request.context.pixel->targetMerges = {first, second};
+    const auto encoded = serializer.Serialize(request);
+    const auto replay = serializer.Deserialize(encoded);
+    Require(replay.request.context.pixel.has_value() && replay.request.context.pixel->targetMerges.size() == 2u);
+    Require(replay.request.context.pixel->targetMerges[0].blendConstants == first.blendConstants && replay.request.context.pixel->targetMerges[1].blendConstants == second.blendConstants);
+    Require(serializer.Serialize(replay.request) == encoded);
+    auto truncated = DecodeBase64(encoded);
+    truncated.resize(truncated.size() - 4u);
+    bool rejected = false;
+    try {
+        static_cast<void>(serializer.Deserialize(EncodeBase64(truncated)));
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected);
+}
+
 int main() {
     VerifyTargetOptions();
+    VerifyTargetMergeBlendConstants();
     return VerifyVersion56Compatibility();
 }
