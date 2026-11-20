@@ -4,7 +4,15 @@
 
 namespace GuestSockets {
 
+struct LingerValue {
+    std::int32_t enabled = 0;
+    std::int32_t seconds = 0;
+};
+
 struct SocketOptionState {
+#ifdef _WIN32
+    LingerValue udpLinger;
+#endif
     int reportedError = 0;
     bool nonblocking = false;
     bool noSignal = false;
@@ -46,5 +54,10 @@ extern "C" int GuestSocketSetIpv6LevelOption_nid_no_patch(std::uintptr_t native,
 extern "C" int GuestSocketGetIpv6LevelOption_nid_no_patch(std::uintptr_t native, bool ipv6, int option, void* value, std::uint32_t* length);
 extern "C" int GuestSocketSetLinger_nid_no_patch(std::uintptr_t native, const void* value, std::uint32_t length);
 extern "C" int GuestSocketGetLinger_nid_no_patch(std::uintptr_t native, void* value, std::uint32_t* length);
+
+#ifdef _WIN32
+extern "C" int GuestSocketSetUdpLinger_nid_no_patch(GuestSockets::LingerValue* stored, const void* value, std::uint32_t length);
+extern "C" int GuestSocketGetUdpLinger_nid_no_patch(const GuestSockets::LingerValue* stored, void* value, std::uint32_t* length);
+#endif
 
 extern "C" int GuestSocketSetReuseFlags_nid_no_patch(std::uintptr_t native, int option, int value, int* flags);
