@@ -7,6 +7,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -90,6 +91,44 @@ void UpdatedPrimitiveType() {
         Require(sceAgcUpdatePrimState(context.data(), primitive.data(), static_cast<std::uint32_t>(PrimitiveType::PointList)) == 0);
         Require(context[1].value == kept && primitive[2].value == (0x5a5a5a40u | 1u));
     }
+}
+
+template <typename TAction>
+void RequireRejected(TAction action) {
+    bool rejected = false;
+    try { action(); }
+    catch (const std::runtime_error&) { rejected = true; }
+    Require(rejected);
+}
+
+void UnmappedPrimStatePointers(const Shader& vertex) {
+    using namespace ShaderRegs;
+    auto* unmappedShader = reinterpret_cast<const Shader*>(std::uintptr_t{0x10});
+    auto* unmappedRegs = reinterpret_cast<ShaderRegister*>(std::uintptr_t{0x10});
+    std::array<ShaderRegister, 2> context{ShaderRegister{0xdeadbeef, 0xdeadbeef}, ShaderRegister{0xdeadbeef, 0xdeadbeef}};
+    std::array<ShaderRegister, 3> primitive{ShaderRegister{0xdeadbeef, 0xdeadbeef}, ShaderRegister{0xdeadbeef, 0xdeadbeef}, ShaderRegister{0xdeadbeef, 0xdeadbeef}};
+    preparations = 0;
+    RequireRejected([&] { sceAgcCreatePrimState(context.data(), primitive.data(), nullptr, unmappedShader, 7); });
+    RequireRejected([&] { sceAgcCreatePrimState(context.data(), primitive.data(), unmappedShader, &vertex, 7); });
+    Shader unreadableSpecials = vertex;
+    unreadableSpecials.specials = reinterpret_cast<ShaderSpecialRegs*>(std::uintptr_t{0x10});
+    RequireRejected([&] { sceAgcCreatePrimState(context.data(), primitive.data(), nullptr, &unreadableSpecials, 7); });
+    Require(preparations == 0);
+    for (const auto value : context) Require(value.value == 0xdeadbeef);
+    for (const auto value : primitive) Require(value.value == 0xdeadbeef);
+    static const std::array<ShaderRegister, 2> readOnlyContext{ShaderRegister{VGT_SHADER_STAGES_EN, 0}, ShaderRegister{VGT_GS_OUT_PRIM_TYPE, 0}};
+    static const std::array<ShaderRegister, 3> readOnlyPrimitive{ShaderRegister{GE_CNTL, 0}, ShaderRegister{GE_USER_VGPR_EN, 0}, ShaderRegister{VGT_PRIMITIVE_TYPE, 0}};
+    auto* readOnlyContextRegs = const_cast<ShaderRegister*>(readOnlyContext.data());
+    auto* readOnlyPrimitiveRegs = const_cast<ShaderRegister*>(readOnlyPrimitive.data());
+    RequireRejected([&] { sceAgcCreatePrimState(unmappedRegs, nullptr, nullptr, &vertex, 7); });
+    RequireRejected([&] { sceAgcCreatePrimState(nullptr, unmappedRegs, nullptr, &vertex, 7); });
+    RequireRejected([&] { sceAgcCreatePrimState(readOnlyContextRegs, nullptr, nullptr, &vertex, 7); });
+    RequireRejected([&] { sceAgcCreatePrimState(nullptr, readOnlyPrimitiveRegs, nullptr, &vertex, 7); });
+    RequireRejected([&] { sceAgcUpdatePrimState(unmappedRegs, nullptr, static_cast<std::uint32_t>(PrimitiveType::LineStrip)); });
+    RequireRejected([&] { sceAgcUpdatePrimState(nullptr, unmappedRegs, static_cast<std::uint32_t>(PrimitiveType::LineStrip)); });
+    RequireRejected([&] { sceAgcUpdatePrimState(readOnlyContextRegs, nullptr, static_cast<std::uint32_t>(PrimitiveType::LineStrip)); });
+    RequireRejected([&] { sceAgcUpdatePrimState(nullptr, readOnlyPrimitiveRegs, static_cast<std::uint32_t>(PrimitiveType::LineStrip)); });
+    Require(readOnlyContext[1].value == 0 && readOnlyPrimitive[2].value == 0);
 }
 }
 
@@ -213,6 +252,7 @@ int main() {
         OptionalGeometryOutputRegister(special, vertex, hull);
         HandBuiltUserVgprRegister();
         UpdatedPrimitiveType();
+        UnmappedPrimStatePointers(vertex);
         LibcRunShutdown_nid_postfix();
         std::cout << "shader helper preparation tests passed\n";
     } catch (const std::exception& error) {

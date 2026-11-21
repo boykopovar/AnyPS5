@@ -122,6 +122,27 @@ void testRejections() {
     check(std::memcmp(regs.data(), saved.data(), sizeof(regs)) == 0, "rejected call wrote registers");
 }
 
+void testUnmappedPointers() {
+    GsSetup setup;
+    makeGs(setup, 2u << 11u, 4, 3u << 2u, 0, 64, false);
+    auto regs = filled();
+    const auto saved = regs;
+    auto* unmappedRegs = reinterpret_cast<ShaderRegister*>(std::uintptr_t{0x10});
+    static const Registers readOnly{};
+    auto* readOnlyRegs = const_cast<ShaderRegister*>(readOnly.data());
+    expectFailure([&] { sceAgcGetGsOversubscription(unmappedRegs, nullptr, 0, 0.5f); });
+    expectFailure([&] { sceAgcGetGsOversubscription(readOnlyRegs, &setup.shader, 1u << 20u, 0.5f); });
+    check(readOnly[0].offset == 0 && readOnly[1].offset == 0, "a read-only register array was written");
+    expectFailure([&] { sceAgcGetGsOversubscription(regs.data(), reinterpret_cast<const Shader*>(std::uintptr_t{0x10}), 1u << 20u, 0.5f); });
+    setup.shader.specials = reinterpret_cast<ShaderSpecialRegs*>(std::uintptr_t{0x10});
+    expectFailure([&] { sceAgcGetGsOversubscription(regs.data(), &setup.shader, 1u << 20u, 0.5f); });
+    setup.shader.specials = &setup.specials;
+    setup.shader.cx_registers = reinterpret_cast<ShaderRegister*>(std::uintptr_t{0x10});
+    expectFailure([&] { sceAgcGetGsOversubscription(regs.data(), &setup.shader, 1u << 20u, 0.5f); });
+    check(std::memcmp(regs.data(), saved.data(), sizeof(regs)) == 0, "a call with an unreadable shader wrote registers");
+    expectRegs(&setup.shader, 0, 0.5f, 0, 0, "a zero budget read the shader");
+}
+
 }
 
 int main() {
@@ -131,6 +152,7 @@ int main() {
         testExportBound();
         testRegisterFields();
         testRejections();
+        testUnmappedPointers();
         LibcRunShutdown_nid_postfix();
         std::puts("AGC GS oversubscription tests passed");
         return 0;

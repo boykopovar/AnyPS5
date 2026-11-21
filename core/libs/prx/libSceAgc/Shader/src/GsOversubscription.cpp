@@ -1,8 +1,10 @@
 #include "prx/libSceAgc/Shader/include/GsOversubscription.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <prx/libc/include/General.hpp>
@@ -21,18 +23,16 @@ struct GsOccupancyLimits {
     std::uint32_t exportCount;
 };
 
-std::uint32_t findContextRegister(const Shader* gs, std::uint32_t offset) {
-    if (gs->cx_registers != nullptr) {
-        for (std::uint32_t i = 0; i < gs->num_cx_registers; ++i) {
-            if (gs->cx_registers[i].offset == offset) {
-                return gs->cx_registers[i].value;
-            }
+std::uint32_t findContextRegister(std::span<const ShaderRegister> registers, std::uint32_t offset) {
+    for (const ShaderRegister& reg : registers) {
+        if (reg.offset == offset) {
+            return reg.value;
         }
     }
     throw std::runtime_error("sceAgcGetGsOversubscription: gs has no context register " + std::to_string(offset));
 }
 
-GsOccupancyLimits getGsOccupancyLimits(const Shader* gs, std::uint32_t vertexCapacity, std::uint32_t exportCapacity) {
+GsOccupancyLimits getGsOccupancyLimits(std::span<const ShaderRegister> gs, std::uint32_t stagesEnable, std::uint32_t vertexCapacity, std::uint32_t exportCapacity) {
     const std::uint32_t onchip = findContextRegister(gs, ShaderRegs::VGT_GS_ONCHIP_CNTL);
     const std::uint32_t subgroup = findContextRegister(gs, ShaderRegs::GE_NGG_SUBGRP_CNTL);
     const std::uint32_t vsOut = findContextRegister(gs, ShaderRegs::SPI_VS_OUT_CONFIG);
@@ -45,7 +45,7 @@ GsOccupancyLimits getGsOccupancyLimits(const Shader* gs, std::uint32_t vertexCap
     }
     const std::uint32_t subgroupWork = ((((onchip >> 11u) & 0x7FFu) * (subgroup & 0x1FFu)) + 31u) >> 5u;
     std::uint32_t waves = std::max(subgroupWork, outputWords);
-    if ((gs->specials->vgt_shader_stages_en.value & VGT_SHADER_STAGES_GS_W32_BIT) == 0) {
+    if ((stagesEnable & VGT_SHADER_STAGES_GS_W32_BIT) == 0) {
         waves >>= 1u;
     }
     waves = std::max(waves, 1u);
@@ -73,13 +73,21 @@ int APS5_VABI sceAgcGetGsOversubscription(ShaderRegister* regs, const Shader* gs
         pcAlloc.value = GE_PC_ALLOC_FULL;
         rsrc4.value = LATE_ALLOC_GS_FULL;
     } else if (budget != 0) {
-        if (gs == nullptr || gs->specials == nullptr) {
-            throw std::runtime_error(std::string(__func__) + ": gs or its special registers are null");
+        Shader shader{};
+        if (gs == nullptr || !GuestCopyIn_nid_no_patch(&shader, gs, sizeof(shader)) || shader.specials == nullptr) {
+            throw std::runtime_error(std::string(__func__) + ": gs or its special registers are null or not readable");
         }
-        const GsOccupancyLimits base = getGsOccupancyLimits(gs, 1024u, 128u);
-        const GsOccupancyLimits expanded = getGsOccupancyLimits(gs, 2048u, 382u);
+        ShaderSpecialRegs specials{};
+        std::array<ShaderRegister, std::numeric_limits<std::uint8_t>::max()> registers{};
+        const std::size_t count = shader.cx_registers != nullptr ? shader.num_cx_registers : 0u;
+        if (!GuestCopyIn_nid_no_patch(&specials, shader.specials, sizeof(specials)) || !GuestCopyIn_nid_no_patch(registers.data(), shader.cx_registers, count * sizeof(ShaderRegister))) {
+            throw std::runtime_error(std::string(__func__) + ": gs registers are not readable");
+        }
+        const std::span<const ShaderRegister> cx(registers.data(), count);
+        const GsOccupancyLimits base = getGsOccupancyLimits(cx, specials.vgt_shader_stages_en.value, 1024u, 128u);
+        const GsOccupancyLimits expanded = getGsOccupancyLimits(cx, specials.vgt_shader_stages_en.value, 2048u, 382u);
         const std::uint32_t baseMin = std::min(base.vertex, base.exportCount);
-        const std::uint32_t limitShift = (gs->specials->vgt_shader_stages_en.value & VGT_SHADER_STAGES_GS_W32_BIT) != 0 ? 5u : 6u;
+        const std::uint32_t limitShift = (specials.vgt_shader_stages_en.value & VGT_SHADER_STAGES_GS_W32_BIT) != 0 ? 5u : 6u;
         const std::uint32_t expandedLimit = std::min({expanded.vertex, expanded.exportCount, budget >> limitShift, 1024u});
         const std::uint32_t headroom = expandedLimit > baseMin ? expandedLimit - baseMin : 0u;
         const float scaled = std::fma(factor, static_cast<float>(headroom), static_cast<float>(baseMin));
@@ -104,8 +112,10 @@ int APS5_VABI sceAgcGetGsOversubscription(ShaderRegister* regs, const Shader* gs
         }
     }
 
-    regs[0] = pcAlloc;
-    regs[1] = rsrc4;
+    const std::array<ShaderRegister, 2> result{pcAlloc, rsrc4};
+    if (!GuestCopyOut_nid_no_patch(regs, result.data(), sizeof(result))) {
+        throw std::runtime_error(std::string(__func__) + ": regs is not writable");
+    }
     return 0;
 }
 
