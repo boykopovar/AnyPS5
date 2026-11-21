@@ -169,7 +169,9 @@ RuntimeDescriptor descriptor(SpirvValueEmitContext& context, const IrValue& inst
     if (memory.gpuDescriptor || BufferAccessOf(instruction.Opcode()) == BufferAccess::Atomic) {
         const auto u64 = TypeScalarU64(state);
         const auto high = Binary(state, spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, field(state, GcnGuestShaders() ? Binary(state, spv::OpBitwiseAnd, u32, context.Arg(*handle, 1u), ConstantU32(state, GcnBufferWord1Mask)) : context.Arg(*handle, 1u), 0u, 16u)), BdaConstant(state, 32u));
-        base = Binary(state, spv::OpBitwiseOr, u64, Unary(state, spv::OpUConvert, u64, context.Arg(*handle, 0u)), high);
+        const auto low = context.Arg(*handle, 0u);
+        const auto baseLow = memory.kind == ResourceKind::ScalarBuffer ? EmitAndConstant(state, low, ~3u) : low;
+        base = Binary(state, spv::OpBitwiseOr, u64, Unary(state, spv::OpUConvert, u64, baseLow), high);
     }
     auto invalid = memory.kind == ResourceKind::ScalarBuffer ? ConstantBool(state, false) : nonzero(state, field(state, word3, 30u, 2u));
     auto index = ConstantU32(state, 0u);
