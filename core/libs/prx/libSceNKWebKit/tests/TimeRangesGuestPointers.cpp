@@ -223,6 +223,13 @@ int main() {
 
     _ZN7WebCore18PlatformTimeRangesC1EON3WTF6VectorINS0_5RangeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(writable, &host.m_ranges);
     Require(writable->m_ranges.m_buffer == hostVector.m_buffer && writable->m_ranges.m_size == 2 && !host.m_ranges.m_buffer && !host.m_ranges.m_size);
+    auto* ownedBuffer = writable->m_ranges.m_buffer;
+    unsigned ownedCapacity = writable->m_ranges.m_capacity;
+    _ZN7WebCore18PlatformTimeRangesC1EON3WTF6VectorINS0_5RangeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(writable, &writable->m_ranges);
+    Require(writable->m_ranges.m_buffer == ownedBuffer && writable->m_ranges.m_capacity == ownedCapacity && writable->m_ranges.m_size == 2);
+    _ZN7WebCore18PlatformTimeRangesC2EON3WTF6VectorINS0_5RangeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(writable, &writable->m_ranges);
+    Require(writable->m_ranges.m_buffer == ownedBuffer && writable->m_ranges.m_capacity == ownedCapacity && writable->m_ranges.m_size == 2);
+    Require(_ZNK7WebCore18PlatformTimeRanges6lengthEv(writable) == 2);
 
     auto* writableTimeRanges = reinterpret_cast<WebCore::TimeRanges*>(writablePage + 128);
     _ZN7WebCore10TimeRangesC1Edd(writableTimeRanges, 1.0, 2.0);

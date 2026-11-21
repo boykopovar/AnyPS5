@@ -1010,6 +1010,9 @@ void APS5_VABI _ZN7WebCore18PlatformTimeRangesC2ERKS0_(WebCore::PlatformTimeRang
 }
 
 void APS5_VABI _ZN7WebCore18PlatformTimeRangesC1EON3WTF6VectorINS0_5RangeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(WebCore::PlatformTimeRanges* self, WebCore::PlatformTimeRanges::VectorRange* ranges) {
+    if (static_cast<const void*>(ranges) == static_cast<const void*>(self)) {
+        return;
+    }
     TimeRangeVector moved;
     if (!loadTimeRangeVector(moved, ranges) || !GuestWritable_nid_no_patch(ranges, sizeof(moved))
         || !storeTimeRangeVector(self, moved) || !storeTimeRangeVector(ranges, TimeRangeVector{}))
