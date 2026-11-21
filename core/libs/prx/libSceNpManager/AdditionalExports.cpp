@@ -1,4 +1,5 @@
 #include "prx/libSceNpManager/include/AdditionalExports.hpp"
+#include "prx/libSceNpManager/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 namespace {
@@ -15,6 +16,12 @@ TValue ReadAt(const void* object, std::size_t offset, const char* function) {
 namespace {
 
 constexpr int AsmClientExtNotInitialized = static_cast<int>(0x8055CE07u);
+
+} // namespace
+
+namespace {
+
+constexpr int NpPushErrorNotInitialized = static_cast<int>(0x8055A002);
 
 } // namespace
 
@@ -271,6 +278,7 @@ int APS5_VABI libSceNpManagerUnknown_Q49ghYqIP88_nid_no_patch() {
 APS5_EXPORT("Q49ghYqIP88", libSceNpManagerUnknown_Q49ghYqIP88_nid_no_patch);
 
 int APS5_VABI libSceNpManagerUnknown_QZJ5fC0tP8M_nid_no_patch() {
+    if (!NpPushInitialized_nid_no_patch()) return NpPushErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -361,6 +369,7 @@ int APS5_VABI libSceNpManagerUnknown__minus_1Q057TFjDE_nid_no_patch() {
 APS5_EXPORT("-1Q057TFjDE", libSceNpManagerUnknown__minus_1Q057TFjDE_nid_no_patch);
 
 int APS5_VABI libSceNpManagerUnknown__minus_5ZuQ1HlZNY_nid_no_patch() {
+    if (!NpPushInitialized_nid_no_patch()) return NpPushErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -807,10 +816,12 @@ int APS5_VABI sceNpPush2SetDataType() {
 }
 
 int APS5_VABI sceNpPushSetNpCommunicationId() {
+    if (!NpPushInitialized_nid_no_patch()) return NpPushErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceNpPushUnsetNpCommunicationId() {
+    if (!NpPushInitialized_nid_no_patch()) return NpPushErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
 }
 

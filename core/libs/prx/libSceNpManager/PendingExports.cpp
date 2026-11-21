@@ -4,6 +4,12 @@
 #include "prx/libSceNpManager/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+constexpr int NpPushErrorNotInitialized = static_cast<int>(0x8055A002);
+
+} // namespace
+
 extern "C" {
 
 void APS5_VABI _ZN3sce2np10NpOnlineIdD1Ev(void* self) {
@@ -354,10 +360,12 @@ int APS5_VABI sceNpPush2WaitCallback(void) {
     return 0;
 }
 int APS5_VABI sceNpPushIntBeginInactive(void) {
+    if (!NpPushInitialized_nid_no_patch()) return NpPushErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpPushIntEndInactive(void) {
+    if (!NpPushInitialized_nid_no_patch()) return NpPushErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -366,42 +374,52 @@ int APS5_VABI sceNpPushIntGetBindUserState(void) {
     return 0;
 }
 int APS5_VABI sceNpPushIntRegisterNotificationPacketCallback(void) {
+    if (!NpPushInitialized_nid_no_patch()) return NpPushErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpPushIntUnregisterNotificationPacketCallback(void) {
+    if (!NpPushInitialized_nid_no_patch()) return NpPushErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpPushRegisterExtendedDataFilter(void) {
+    if (!NpPushInitialized_nid_no_patch()) return NpPushErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpPushRegisterNotificationExCallback(void) {
+    if (!NpPushInitialized_nid_no_patch()) return NpPushErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpPushStartNotification(void) {
+    if (!NpPushInitialized_nid_no_patch()) return NpPushErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpPushStartNotificationA(void) {
+    if (!NpPushInitialized_nid_no_patch()) return NpPushErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpPushStopNotification(void) {
+    if (!NpPushInitialized_nid_no_patch()) return NpPushErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpPushStopNotificationA(void) {
+    if (!NpPushInitialized_nid_no_patch()) return NpPushErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpPushUnregisterExtendedDataFilter(void) {
+    if (!NpPushInitialized_nid_no_patch()) return NpPushErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpPushUnregisterNotificationCallback(void) {
+    if (!NpPushInitialized_nid_no_patch()) return NpPushErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
