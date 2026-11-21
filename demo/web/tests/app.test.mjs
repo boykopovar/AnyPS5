@@ -41,6 +41,7 @@ async function setup(t, name, overrides = {}) {
   const globals = {
     document: {
       documentElement: { lang: "", dir: "" },
+      activeElement: null,
       getElementById: get,
       createElement: () => new Element(),
       createTextNode: text => ({ textContent: text }),
@@ -200,6 +201,19 @@ async function selected(get, workers, name) {
   get("acknowledge").listeners.get("change")();
   return current;
 }
+
+test("changing the input returns keyboard focus to the ZIP picker", async t => {
+  const { get, workers } = await setup(t, "change-focus");
+  await selected(get, workers, "first.zip");
+  document.activeElement = get("change");
+  get("choose").focus = () => {
+    assert.equal(get("drop").hidden, false);
+    assert.equal(get("choose").disabled, false);
+    document.activeElement = get("choose");
+  };
+  get("change").onclick();
+  assert.equal(document.activeElement, get("choose"));
+});
 
 for (const outcome of ["error", "handle", "writable", "directory"]) {
   test(`a cancelled ${outcome} callback cannot change the replacement worker`, async t => {
