@@ -103,8 +103,12 @@ void FillInput() {
     }
 }
 
+std::vector<std::uint32_t> StoreCode(std::uint32_t opcode) {
+    return {0x34060084u, 0xe0381000u, 0x80031e03u, 0xbf8c3f70u, 0xf0000108u | (opcode << 18u), 0x0001211eu, 0xbf810000u};
+}
+
 void Run(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_t format, std::uint32_t dmask, std::uint32_t swizzle = 0xfacu) {
-    const auto code = Code(opcode, dmask);
+    const auto code = opcode >= 0x76u ? StoreCode(opcode) : Code(opcode, dmask);
     std::vector<std::uint32_t> userData(16, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
     const auto descriptor = Descriptor(format, swizzle);
@@ -122,6 +126,55 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_t fo
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
+    if (opcode < 0x76u) return;
+    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(Texels.data()), Bytes, nullptr, "test");
+    device.WaitIdle();
+}
+
+void FillStoreInput() {
+    constexpr std::array<std::array<std::uint32_t, 3>, Threads> targets{{
+        {32u, 0u, 0u}, {37u, 0u, 0u}, {42u, 0u, 0u}, {47u, 0u, 0u}, {52u, 0u, 0u}, {58u, 0u, 0u}, {60u, 0u, 0u},
+        {0u, 1u, 0u}, {5u, 1u, 0u}, {10u, 1u, 0u}, {15u, 1u, 0u}, {21u, 1u, 0u}, {26u, 1u, 0u}, {31u, 1u, 0u}, {57u, 1u, 0u},
+        {2u, 2u, 0u}, {7u, 2u, 0u}, {13u, 2u, 0u}, {19u, 2u, 0u}, {43u, 2u, 0u}, {59u, 2u, 0u},
+        {Width, 1u, 0u}, {0xffffffffu, 1u, 0u}, {0x80000000u, 2u, 0u}, {4u, Height, 0u}, {4u, 0xffffffffu, 0u},
+        {0u, 0u, 1u}, {5u, 0u, 1u}, {13u, 0u, 1u}, {26u, 0u, 1u}, {28u, 0u, 1u}, {9u, 0u, Levels},
+    }};
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        Input[thread * 4u + 0u] = targets[thread][0];
+        Input[thread * 4u + 1u] = targets[thread][1];
+        Input[thread * 4u + 2u] = targets[thread][2];
+        Input[thread * 4u + 3u] = 0x9e3779b9u * (thread + 1u);
+    }
+}
+
+void CheckStore(AgcDriver::VulkanDevice& device, std::uint32_t opcode, const Format& format) {
+    const auto elements = opcode == 0x77u || opcode == 0x7au ? 4u : 2u;
+    const bool mip = opcode == 0x79u || opcode == 0x7au;
+    const auto texelBytes = format.bytes * format.components;
+    const auto group = 4u / texelBytes;
+    const auto name = "image PCK store opcode " + std::to_string(opcode) + " format " + std::to_string(format.id);
+    FillTexels(format);
+    FillStoreInput();
+    auto expected = Texels;
+    const auto surface = AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(Descriptor(format.id, 0xfacu)));
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        const auto x = Input[thread * 4u + 0u];
+        const auto y = Input[thread * 4u + 1u];
+        const auto level = mip ? Input[thread * 4u + 2u] : 0u;
+        const auto data = Input[thread * 4u + 3u];
+        const auto width = level < Levels ? std::max(Width >> level, 1u) : 0u;
+        const auto height = level < Levels ? std::max(Height >> level, 1u) : 0u;
+        if (level >= Levels || x >= width || width - x < elements || y >= height) continue;
+        for (std::uint32_t element = 0; (x & (group - 1u)) + element < group && element < elements; ++element) {
+            const auto bits = data >> (element * texelBytes * 8u);
+            const auto offset = surface.mips[level].tiledOffset + static_cast<std::uint64_t>(y) * surface.mips[level].pitchBytes + (x + element) * texelBytes;
+            std::memcpy(expected.data() + offset, &bits, texelBytes);
+        }
+    }
+    Run(device, opcode, format.id, 0x1u);
+    for (std::size_t index = 0; index < Bytes; ++index) {
+        Require(Texels[index] == expected[index], name + ": byte " + std::to_string(index) + " is " + std::to_string(Texels[index]) + ", expected " + std::to_string(expected[index]));
+    }
 }
 
 void Check(AgcDriver::VulkanDevice& device, std::uint32_t opcode, const Format& format, std::uint32_t dmask) {
@@ -185,9 +238,17 @@ int main() {
         Refused(*device, 0x71u, R16UInt, 0x1u, 0xfacu, layout);
         Refused(*device, 0x71u, Rg8UInt, 0x1u, 0xfacu, layout);
         Refused(*device, 0x70u, R16UInt, 0x1u, 0xf2eu, "identity swizzle");
-        for (const auto opcode : {0x76u, 0x77u, 0x79u, 0x7au}) Refused(*device, opcode, R8UInt, 0x1u, 0xfacu, "stores are not implemented");
+        for (const auto opcode : {0x76u, 0x79u}) {
+            CheckStore(*device, opcode, r8);
+            CheckStore(*device, opcode, r16);
+            CheckStore(*device, opcode, rg8);
+        }
+        for (const auto opcode : {0x77u, 0x7au}) CheckStore(*device, opcode, r8);
+        Refused(*device, 0x76u, R32UInt, 0x1u, 0xfacu, layout);
+        Refused(*device, 0x77u, R16UInt, 0x1u, 0xfacu, layout);
+        Refused(*device, 0x76u, R16UInt, 0x1u, 0xf2eu, layout);
         GuestAllocations::Mutation().Remove(Texels.data());
-        std::cout << "image PCK2/PCK4 execution tests passed\n";
+        std::cout << "image PCK2/PCK4 load and store execution tests passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
