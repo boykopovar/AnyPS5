@@ -25,6 +25,7 @@ int main() {
     try {
         expectedAddress = reinterpret_cast<std::uint64_t>(&Require);
         ModuleInfoForUnwind info{};
+        info.st_size = sizeof(ModuleInfoForUnwind);
         bool threw = false;
         try {
             sceKernelGetModuleInfoForUnwind(expectedAddress, 1, &info);
@@ -34,6 +35,7 @@ int main() {
         }
         Require(calls == 1, "guest module lookup was not intercepted exactly once");
         Require(threw, "failed guest module lookup must throw instead of reporting success");
+        info.st_size = sizeof(ModuleInfoForUnwind);
         Require(sceKernelGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceKernelGetModuleInfoForUnwind), 1, &info) == 0, "host query failed");
         Require(calls == 1, "host query attempted a guest module lookup");
         Require(info.eh_frame_hdr_addr == 0 && info.eh_frame_addr == 0 && info.eh_frame_size == 0, "host query reported guest unwind tables");

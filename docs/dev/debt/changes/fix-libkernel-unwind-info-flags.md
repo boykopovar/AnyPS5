@@ -1,0 +1,5 @@
+# libkernel
+
+## change reports the mapped image path as the name
+
+- [sceKernelGetModuleInfoForUnwind](../../../core/libs/prx/libkernel/Module/src/Module.cpp) (libkernel) - reports the mapped image path as the name and answers for any mapped region, where firmware 13.60's `libkernel.sprx` (@ 0x36300) looks the address up in its loaded-module list and copies the name `sys_dynlib_get_info_ex` returns with option 2: a payload process got an empty name for libkernel and libSceLibcInternal and `ESRCH` for an address in no module. `flags` 2 throws: that code matches it against a second per-module range (module +0x58/+0x60, flag 1 uses +0x48/+0x50) whose meaning is not settled. The rest follows that code: other `flags` clear all 0x130 bytes and return `0x80020016` before the null check (a null output throws here), a null output returns `0x8002000e`, a caller's `st_size` below 0x130 returns `0x80020016` and writes nothing, `ESRCH` clears all 0x130 bytes, and success keeps the caller's `st_size`. Segment 0 matched each module's first segment there

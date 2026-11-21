@@ -41,7 +41,8 @@ static void Describe(bool withHeader, std::uint64_t loadSize) {
 
 static ModuleInfoForUnwind Query() {
     ModuleInfoForUnwind info{};
-    Require(sceKernelGetModuleInfoForUnwind(Address(&fixture.frames), 0, &info) == 0, "unwind query failed");
+    info.st_size = sizeof(ModuleInfoForUnwind);
+    Require(sceKernelGetModuleInfoForUnwind(Address(&fixture.frames), 1, &info) == 0, "unwind query failed");
     Require(info.st_size == sizeof(ModuleInfoForUnwind), "unwind info has the wrong size");
     Require(info.seg0_addr == Address(&fixture) && info.seg0_size == sizeof(fixture), "unwind segment is not the fixture's load segment");
     return info;
@@ -56,8 +57,9 @@ static void RequireTables(std::uint64_t size) {
 
 static bool QueryThrows() {
     ModuleInfoForUnwind info{};
+    info.st_size = sizeof(ModuleInfoForUnwind);
     try {
-        sceKernelGetModuleInfoForUnwind(Address(&fixture.frames), 0, &info);
+        sceKernelGetModuleInfoForUnwind(Address(&fixture.frames), 1, &info);
     } catch (const std::runtime_error&) {
         return true;
     }
