@@ -518,6 +518,13 @@ void CheckCharIntegers() {
         RunCharGet(getPointer, "10000000000000000", HexFlag, classic, state, value, true, pointerFacet);
         Require(value == nullptr && state == (FailBit | EofBit),
             "num_get::get(pointer) rejects values above uintptr_t");
+
+        const auto doGetPointer = Export<NumGetExport<void*>>("VKdXFE7ualw");
+        state = 0;
+        value = nullptr;
+        result = RunCharGet(doGetPointer, "2a", DecFlag, classic, state, value);
+        Require(reinterpret_cast<std::uintptr_t>(value) == 0x2a && state == EofBit,
+            "num_get::do_get(pointer) is callable directly and parses hexadecimal");
     }
 }
 

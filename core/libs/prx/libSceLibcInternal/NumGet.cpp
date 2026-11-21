@@ -910,6 +910,11 @@ GuestLocale::InputIterator APS5_VABI _ZNKSt7num_getIcSt19istreambuf_iteratorIcSt
     return DoGetFullInt<char>(first, last, stream, state, value, _Stoulx_nid_postfix);
 }
 
+GuestLocale::InputIterator APS5_VABI _ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERPv_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, void** value) {
+    return CharNumGetPointer(self, first, last, stream, state, value);
+}
+APS5_EXPORT("VKdXFE7ualw", _ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERPv_nid_postfix);
+
 GuestLocale::InputIterator APS5_VABI _ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERx_nid_postfix(const GuestLocale::Facet*, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, std::int64_t* value) {
     return DoGetFullInt<char>(first, last, stream, state, value, _Stollx_nid_postfix);
 }
