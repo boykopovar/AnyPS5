@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
@@ -10,6 +11,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DescriptorValidation.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/EpochProofCounters.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -263,7 +266,10 @@ UncachedImages& Uncached() {
     return uncached;
 }
 
+std::atomic<std::uint64_t> textureReleases{0};
+
 void noteUncached(const std::shared_ptr<StorageTexture>& image) {
+    textureReleases.fetch_add(1, std::memory_order_release);
     auto& uncached = Uncached();
     std::lock_guard lock(uncached.mutex);
     uncached.images.push_back(image);
@@ -288,6 +294,7 @@ void countIndex(IndexCount which, std::uint64_t amount = 1) {
 
 void noteReleased(const std::shared_ptr<Texture>& texture, std::uint64_t address) {
     texture->MarkReleased();
+    textureReleases.fetch_add(1, std::memory_order_release);
     TexturesReleased().store(true, std::memory_order_release);
     GuestMemory::NoteTextureReleased(address);
 }
@@ -4141,6 +4148,7 @@ bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std
     if ((context.copiedWriters != nullptr && overlaps(*context.copiedWriters)) || overlaps(*drawWriters) || (labels && recorder->CompletionLabelIn(address, bytes))) {
         Recorder::CountSync(4);
         recorder->SyncThrough(address, bytes);
+        ProofWorkTrace::Note(ProofWork::CpuWriteSync);
         return true;
     }
     return false;
@@ -4157,19 +4165,198 @@ const ShaderRecompiler::DescriptorBinding* ShaderResources::tableImages(std::spa
 }
 
 bool ShaderResources::EpochProofs() {
-    return DrawPipelineEnabled();
+    return !RuntimeSwitches::Set(RuntimeSwitch::NoEpochProofs) && DriverDetail::DrawPipeline::Depth() != 0;
 }
 
 namespace {
-void noteEpochProof(bool reused, bool verified, bool failed) {
-    static std::atomic<std::uint64_t> reuses{0}, proofs{0}, checks{0}, failures{0};
-    if (verified) checks.fetch_add(1, std::memory_order_relaxed);
-    if (failed) failures.fetch_add(1, std::memory_order_relaxed);
-    const auto count = (reused ? reuses : proofs).fetch_add(1, std::memory_order_relaxed) + 1u;
-    static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
-    if (!report) return;
-    if (count % 262144u == 0u || (count & (count - 1u)) == 0u) std::fprintf(stderr, "[epoch-proofs] resource proofs: %llu reused the epoch's, %llu proved; verify: %llu checked, %llu failed; storage refreshes reused %llu\n", static_cast<unsigned long long>(reuses.load()), static_cast<unsigned long long>(proofs.load()), static_cast<unsigned long long>(checks.load()), static_cast<unsigned long long>(failures.load()), static_cast<unsigned long long>(StorageTexture::epochRefreshes.load()));
+thread_local ProofWorkTrace* proofWorkTrace = nullptr;
 }
+
+ProofWorkTrace::ProofWorkTrace() : previous(proofWorkTrace) {
+    proofWorkTrace = this;
+}
+
+ProofWorkTrace::~ProofWorkTrace() {
+    proofWorkTrace = previous;
+}
+
+bool ProofWorkTrace::Active() {
+    return proofWorkTrace != nullptr;
+}
+
+void ProofWorkTrace::Note(ProofWork work) {
+    if (proofWorkTrace != nullptr) ++proofWorkTrace->counts[static_cast<std::size_t>(work)];
+}
+
+std::uint64_t ProofWorkTrace::Total() const {
+    std::uint64_t total = 0;
+    for (const auto count : counts) total += count;
+    return total;
+}
+
+EpochProofCounters& EpochProofCounts() {
+    static EpochProofCounters counters;
+    return counters;
+}
+
+bool EpochProofCountsProfiled() {
+    static const bool profiled = std::getenv("APS5_PROFILE_EPOCH_PROOFS") != nullptr;
+    return profiled;
+}
+
+namespace {
+
+constexpr std::array<const char*, 11> ExitInputs{"epoch", "proof", "pending", "releases", "unwatch", "imports", "allocations", "retired imports", "surfaces", "stale planes", "per-use copies"};
+
+constexpr std::size_t StampAges = static_cast<std::size_t>(ShaderResources::StampAge::Count);
+
+constexpr std::array<const char*, StampAges> StampAgeNames{"current", "own flushes", "own walk", "other threads", "pending", "other input"};
+
+struct ExitMisses {
+    ProfileCounter misses;
+    std::array<ProfileCounter, ExitInputs.size()> moved;
+    std::array<ProfileCounter, ExitInputs.size()> alone;
+    std::array<ProfileCounter, StampAges> stored;
+    std::array<ProfileCounter, StampAges> missed;
+    std::array<ProfileCounter, StampAges> proofAlone;
+};
+
+bool exitMissesCounted() {
+    static const bool counted = EpochProofCountsProfiled() || std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_PIPELINE_STATS") != nullptr;
+    return counted;
+}
+
+ExitMisses& exitMisses() {
+    static ExitMisses misses;
+    return misses;
+}
+
+void reportExitMisses() {
+    auto& misses = exitMisses();
+    std::string inputs;
+    for (std::size_t input = 0; input < ExitInputs.size(); ++input) {
+        const auto alone = misses.alone[input].Take();
+        const auto moved = misses.moved[input].Take();
+        if (moved == 0) continue;
+        inputs += inputs.empty() ? "" : ", ";
+        inputs += std::string(ExitInputs[input]) + " " + std::to_string(alone) + "/" + std::to_string(moved);
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[epoch-proofs] (10 s) proved resource sets that missed the exit %llu; by input, moved alone/moved: %s\n", static_cast<unsigned long long>(misses.misses.Take()), inputs.empty() ? "none" : inputs.c_str());
+    std::string ages;
+    for (std::size_t age = 0; age < StampAges; ++age) {
+        ages += ages.empty() ? "" : ", ";
+        ages += std::string(StampAgeNames[age]) + " " + std::to_string(misses.stored[age].Take()) + "/" + std::to_string(misses.missed[age].Take()) + "/" + std::to_string(misses.proofAlone[age].Take());
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[epoch-proofs] (10 s) proof stamps by age when stored, stored/missed next/missed with the proof moved alone: %s\n", ages.c_str());
+    if (!GuestMemory::ProofBreaksCounted()) return;
+    const auto breaks = GuestMemory::TakeProofBreakCounts();
+    std::string sites;
+    for (std::size_t site = 0; site < GuestMemory::ProofBreakSiteCount; ++site) {
+        sites += sites.empty() ? "" : ", ";
+        sites += std::string(GuestMemory::ProofBreakSiteName(static_cast<GuestMemory::ProofBreakSite>(site))) + " " + std::to_string(breaks.sites[site]);
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[epoch-proofs] (10 s) proof breaks by site: %s; write-backs empty %llu, unchanged %llu\n", sites.c_str(), static_cast<unsigned long long>(breaks.emptyWriteBacks), static_cast<unsigned long long>(breaks.unchangedWriteBacks));
+}
+
+ShaderResources::StampAge stampAge(const ShaderResources::ExitStamp& stamp, const ShaderResources::ExitStamp& end, std::uint64_t flushBreaks, std::uint64_t ownBreaks) {
+    using Age = ShaderResources::StampAge;
+    if (end == stamp) return Age::Current;
+    auto others = end;
+    others.proof = stamp.proof;
+    others.pending = stamp.pending;
+    if (others != stamp) return Age::OtherInput;
+    if (end.pending != stamp.pending) return Age::Pending;
+    if (end.proof - stamp.proof != ownBreaks) return Age::OtherThreads;
+    return ownBreaks == flushBreaks ? Age::OwnFlushes : Age::OwnWalk;
+}
+
+}
+
+void ReportEpochProofCounts() {
+    auto& counts = EpochProofCounts();
+    reportExitMisses();
+    AgcDriver::ProfilePrint_nid_no_patch("[epoch-proofs] (10 s, proofs %s): resource proofs reused %llu, proved %llu; storage refreshes reused %llu; address spaces reused %llu, refreshed %llu\n", ShaderResources::EpochProofs() ? "on" : "off", static_cast<unsigned long long>(counts.resourceReuses.Take()), static_cast<unsigned long long>(counts.resourceProofs.Take()), static_cast<unsigned long long>(counts.storageReuses.Take()), static_cast<unsigned long long>(counts.mirrorReuses.Take()), static_cast<unsigned long long>(counts.mirrorRefreshes.Take()));
+}
+
+namespace {
+
+struct ExitVerification {
+    std::atomic<std::uint64_t> checks{0};
+    std::atomic<std::uint64_t> failures{0};
+    std::atomic<std::uint64_t> stores{0};
+    std::atomic<std::uint64_t> concurrent{0};
+    std::atomic<std::uint64_t> worked{0};
+    std::atomic<std::uint64_t> reported{0};
+    std::atomic<std::uint64_t> workReported{0};
+    std::atomic<std::uint64_t> misses{0};
+    std::array<std::atomic<std::uint64_t>, ExitInputs.size()> moved{};
+    std::array<std::atomic<std::uint64_t>, ExitInputs.size()> alone{};
+};
+
+ExitVerification& exitVerification() {
+    static ExitVerification verification;
+    return verification;
+}
+
+bool verifyingExits() {
+    static const bool verify = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
+    return verify;
+}
+
+bool reportDue(std::uint64_t count) {
+    return count % 4096u == 0u || (count & (count - 1u)) == 0u;
+}
+
+void printExitVerification() {
+    auto& verification = exitVerification();
+    std::string moved;
+    for (std::size_t input = 0; input < ExitInputs.size(); ++input) {
+        moved += moved.empty() ? "" : ", ";
+        moved += std::string(ExitInputs[input]) + " " + std::to_string(verification.moved[input].load(std::memory_order_relaxed));
+    }
+    std::string alone;
+    for (std::size_t input = 0; input < ExitInputs.size(); ++input) {
+        alone += alone.empty() ? "" : ", ";
+        alone += std::string(ExitInputs[input]) + " " + std::to_string(verification.alone[input].load(std::memory_order_relaxed));
+    }
+    std::fprintf(stderr, "[epoch-proofs] verify: %llu reused resource proofs checked, %llu failed, %llu where the full proof stored to guest memory, %llu where only other threads broke proofs meanwhile, %llu where the full proof did work the exit skipped; %llu proved builds missed the exit, by input moved: %s; moved alone: %s\n", static_cast<unsigned long long>(verification.checks.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.failures.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.stores.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.concurrent.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.worked.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.misses.load(std::memory_order_relaxed)), moved.c_str(), alone.c_str());
+}
+
+void noteEpochProof(bool reused, bool verified, bool failed, bool stored = false, bool concurrent = false, bool worked = false) {
+    (reused ? EpochProofCounts().resourceReuses : EpochProofCounts().resourceProofs).Add();
+    if (!verified) return;
+    auto& verification = exitVerification();
+    if (failed) verification.failures.fetch_add(1, std::memory_order_relaxed);
+    if (stored) verification.stores.fetch_add(1, std::memory_order_relaxed);
+    if (concurrent) verification.concurrent.fetch_add(1, std::memory_order_relaxed);
+    if (worked) verification.worked.fetch_add(1, std::memory_order_relaxed);
+    if (reportDue(verification.checks.fetch_add(1, std::memory_order_relaxed) + 1u)) printExitVerification();
+}
+
+void noteExitMiss(const ShaderResources::ExitStamp& proved, const ShaderResources::ExitStamp& current, bool stalePlanes, bool copies, ShaderResources::StampAge age) {
+    const std::array<bool, ExitInputs.size()> moved{proved.epoch != current.epoch, proved.proof != current.proof, proved.pending != current.pending, proved.releases != current.releases, proved.unwatch != current.unwatch, proved.importSet != current.importSet, proved.allocations != current.allocations, proved.retired != current.retired, proved.surfaces != current.surfaces, stalePlanes, copies};
+    const bool alone = std::ranges::count(moved, true) == 1;
+    if (exitMissesCounted()) {
+        auto& misses = exitMisses();
+        misses.misses.Add();
+        misses.missed[static_cast<std::size_t>(age)].Add();
+        if (alone && moved[1]) misses.proofAlone[static_cast<std::size_t>(age)].Add();
+        for (std::size_t input = 0; input < moved.size(); ++input) {
+            if (!moved[input]) continue;
+            misses.moved[input].Add();
+            if (alone) misses.alone[input].Add();
+        }
+    }
+    if (!verifyingExits()) return;
+    auto& verification = exitVerification();
+    for (std::size_t input = 0; input < moved.size(); ++input) {
+        if (!moved[input]) continue;
+        verification.moved[input].fetch_add(1, std::memory_order_relaxed);
+        if (alone) verification.alone[input].fetch_add(1, std::memory_order_relaxed);
+    }
+    if (reportDue(verification.misses.fetch_add(1, std::memory_order_relaxed) + 1u)) printExitVerification();
+}
+
 }
 
 namespace {
@@ -4490,45 +4677,158 @@ ShaderResources::IndexOutcome ShaderResources::indexRevalidate(std::span<const C
     return outcome(partial || !replaced.empty() ? IndexOutcome::Partial : IndexOutcome::Accepted);
 }
 
+ShaderResources::ExitStamp ShaderResources::currentExitStamp() const {
+    const bool imported = !directRegions.empty();
+    return {GuestMemory::CollectEpoch(), GuestMemory::ProofSerial(), StorageTexture::PendingSerial(), textureReleases.load(std::memory_order_acquire), GuestMemory::UnwatchSerial(), imported ? HostImportSetGeneration() : 0, imported ? GuestAllocations::GuestAllocationsGeneration_nid_postfix() : 0, RetiredImportSerial(), DepthSurfacesSerial()};
+}
+
+void ShaderResources::recordFlushRanges() {
+    flushRanges.clear();
+    planesClean = 0;
+    flushUnscoped = textures.size() > validatedTextures.size();
+    for (const auto& region : directRegions) flushRanges.emplace_back(region.begin, region.end);
+    for (std::size_t index = 0; index < textures.size() && index < validatedTextures.size(); ++index) {
+        if (textures[index] == nullptr) continue;
+        const auto& surface = validatedTextures[index];
+        if (!surface.valid || (!surface.depth && surface.bytes == 0)) flushUnscoped = true;
+        flushRanges.emplace_back(surface.resource.baseAddress, surface.resource.baseAddress + surface.bytes);
+    }
+    for (const auto& image : storageTextures) {
+        if (image != nullptr) flushRanges.emplace_back(image->Descriptor().baseAddress, image->Descriptor().baseAddress + image->GuestBytes());
+    }
+    if (writeSubscription == nullptr) return;
+    for (const auto& span : GuestMemory::SubscriptionSpans(*writeSubscription)) flushRanges.push_back(span);
+}
+
+bool ShaderResources::stalePlanesRead() {
+    if (!DepthPlanesStale()) return false;
+    if (flushUnscoped) return true;
+    const auto serial = StalePlanesSerial();
+    if (serial == planesClean) return false;
+    for (const auto& [begin, end] : flushRanges) {
+        if (DepthPlanesStaleOver(begin, static_cast<std::size_t>(end - begin))) return true;
+    }
+    planesClean = serial;
+    return false;
+}
+
+std::string ShaderResources::rangeOwner(std::uint64_t address, std::uint64_t bytes) const {
+    if (bytes == 0) return "no range";
+    const auto end = address + bytes;
+    const auto overlaps = [&](std::uint64_t begin, std::uint64_t stop) { return begin < end && address < stop; };
+    std::string owner;
+    const auto add = [&](const std::string& kind) { owner += (owner.empty() ? "" : ", ") + kind; };
+    for (const auto& region : directRegions) {
+        if (overlaps(region.begin, region.end)) {
+            add("direct region");
+            break;
+        }
+    }
+    for (std::size_t index = 0; index < textures.size() && index < validatedTextures.size(); ++index) {
+        const auto& surface = validatedTextures[index];
+        if (textures[index] != nullptr && overlaps(surface.resource.baseAddress, surface.resource.baseAddress + surface.bytes)) add("texture surface " + std::to_string(index) + (surface.depth ? " (depth)" : ""));
+    }
+    for (const auto& image : storageTextures) {
+        if (image != nullptr && overlaps(image->Descriptor().baseAddress, image->Descriptor().baseAddress + image->GuestBytes())) {
+            add("storage image");
+            break;
+        }
+    }
+    if (writeSubscription != nullptr) {
+        for (const auto& [begin, stop] : GuestMemory::SubscriptionSpans(*writeSubscription)) {
+            if (overlaps(begin, stop)) {
+                add("subscription span");
+                break;
+            }
+        }
+    }
+    for (const auto& range : describedRanges) {
+        if (overlaps(range.address, range.address + range.bytes)) {
+            add(range.imageTable ? "described image table" : "described range");
+            break;
+        }
+    }
+    if (owner.empty()) owner = "outside every range the set records";
+    const bool recorded = std::any_of(flushRanges.begin(), flushRanges.end(), [&](const auto& range) { return overlaps(range.first, range.second); });
+    if (!recorded && !flushUnscoped) owner += ", not checked for stale planes";
+    if (DepthSurfaceAt(address)) owner += ", a depth surface";
+    return owner;
+}
+
+void ShaderResources::reportVerifiedStore(std::uint64_t exitSerial, std::uint64_t startSerial, std::uint64_t endSerial, const GuestMemory::ProofBreakTrace& trace) const {
+    auto& verification = exitVerification();
+    if (verification.reported.fetch_add(1, std::memory_order_relaxed) >= 64u) return;
+    std::string breaks;
+    for (const auto& entry : trace.Breaks()) {
+        char where[64];
+        std::snprintf(where, sizeof(where), " at 0x%llx+0x%llx", static_cast<unsigned long long>(entry.address), static_cast<unsigned long long>(entry.bytes));
+        breaks += (breaks.empty() ? "" : "; ") + std::string(GuestMemory::ProofBreakSiteName(entry.site)) + (entry.bytes != 0 ? where : "") + " over " + rangeOwner(entry.address, entry.bytes);
+    }
+    std::fprintf(stderr, "[epoch-proofs] verify: the full proof behind a reused proof broke proofs %llu times (the serial moved %llu times since the exit, %llu before the full proof started): %s\n", static_cast<unsigned long long>(trace.Count()), static_cast<unsigned long long>(endSerial - exitSerial), static_cast<unsigned long long>(startSerial - exitSerial), breaks.c_str());
+}
+
+void ShaderResources::reportVerifiedWork(const ProofWorkTrace& work) const {
+    auto& verification = exitVerification();
+    if (verification.workReported.fetch_add(1, std::memory_order_relaxed) >= 64u) return;
+    std::string images;
+    for (const auto& image : storageTextures) {
+        if (image == nullptr) continue;
+        char text[64];
+        std::snprintf(text, sizeof(text), "%s0x%llx+0x%llx", images.empty() ? "" : ", ", static_cast<unsigned long long>(image->Descriptor().baseAddress), static_cast<unsigned long long>(image->GuestBytes()));
+        images += text;
+    }
+    std::fprintf(stderr, "[epoch-proofs] verify: the full proof behind a reused proof did work the exit skipped: %llu CPU write syncs, %llu storage image uploads (the set's storage images: %s; %zu sampled textures)\n", static_cast<unsigned long long>(work.Count(ProofWork::CpuWriteSync)), static_cast<unsigned long long>(work.Count(ProofWork::StorageUpload)), images.empty() ? "none" : images.c_str(), textures.size());
+}
+
 bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofReport* report) {
     if (!registeredImageViewsCurrent(registeredImageViews)) {
         if (report != nullptr) *report = {ProofPath::Full, ProofFailure::Other};
-        provedEpoch = 0;
+        proved.epoch = 0;
         return false;
     }
     if (EpochProofs()) {
-        const auto epoch = GuestMemory::CollectEpoch();
-        const auto proof = GuestMemory::ProofSerial();
-        const auto pending = StorageTexture::PendingSerial();
-        const auto retired = RetiredImportSerial();
-        if (epoch != 0 && provedEpoch == epoch && provedProof == proof && provedPending == pending && provedRetired == retired) {
-            static const bool verify = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
-            thread_local std::uint64_t reuses = 0;
-            if (verify && ++reuses % 64u == 0u) {
+        const auto stamp = currentExitStamp();
+        const bool stalePlanes = proved.epoch != 0 && stalePlanesRead();
+        const bool matched = stamp.epoch != 0 && proved == stamp && !stalePlanes;
+        const bool copies = matched && !refreshPerUseCopies();
+        if (matched && !copies) {
+            if (verifyingExits()) {
+                const auto startSerial = GuestMemory::ProofSerial();
+                GuestMemory::ProofBreakTrace trace;
+                ProofWorkTrace work;
                 const bool ok = revalidateFull(shaders, report);
-                noteEpochProof(true, true, !ok);
+                const auto endSerial = GuestMemory::ProofSerial();
+                const bool stored = trace.Count() != 0;
+                const bool worked = work.Total() != 0;
+                if (stored) reportVerifiedStore(stamp.proof, startSerial, endSerial, trace);
+                if (worked) reportVerifiedWork(work);
+                noteEpochProof(true, true, !ok, stored, !stored && endSerial != stamp.proof, worked);
                 return ok;
             }
             if (report != nullptr) *report = {ProofPath::Full, ProofFailure::None};
             noteEpochProof(true, false, false);
             return true;
         }
-        const bool ok = revalidateFull(shaders, report);
+        const bool counted = exitMissesCounted();
+        if (proved.epoch != 0 && (verifyingExits() || counted)) noteExitMiss(proved, stamp, stalePlanes, copies, provedAge);
+        std::optional<GuestMemory::ProofBreakTrace> trace;
+        if (counted) trace.emplace();
+        std::uint64_t flushBreaks = 0;
+        const bool ok = revalidateFull(shaders, report, counted ? &flushBreaks : nullptr, counted ? &*trace : nullptr);
         noteEpochProof(false, false, false);
-        if (ok) {
-            provedEpoch = std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->HasReuseLookup(); }) ? 0 : epoch;
-            provedProof = proof;
-            provedPending = pending;
-            provedRetired = retired;
-        } else {
-            provedEpoch = 0;
+        proved = stamp;
+        recordFlushRanges();
+        if (!ok || std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->HasReuseLookup(); })) proved.epoch = 0;
+        if (counted) {
+            provedAge = stampAge(stamp, currentExitStamp(), flushBreaks, trace->Count());
+            if (proved.epoch != 0) exitMisses().stored[static_cast<std::size_t>(provedAge)].Add();
         }
         return ok;
     }
     return revalidateFull(shaders, report);
 }
 
-bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report) {
+bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report, std::uint64_t* flushBreaks, const GuestMemory::ProofBreakTrace* trace) {
     if (report != nullptr) *report = {ProofPath::Full, ProofFailure::Other};
     if (!reusable || shaders.empty()) return false;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -4552,6 +4852,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         CompletePendingCpuWrites(context, image->Descriptor().baseAddress, static_cast<std::size_t>(image->GuestBytes()));
         if (image->Descriptor().dccAddress != 0) CompletePendingCpuWrites(context, image->Descriptor().dccAddress, DccKeyBytes(image->GuestBytes()));
     }
+    if (flushBreaks != nullptr && trace != nullptr) *flushBreaks = trace->Count();
     // APS5_NO_FAST_REVALIDATE=1 always repeats the lookups.
     static const bool noFast = std::getenv("APS5_NO_FAST_REVALIDATE") != nullptr;
     const auto finish = [&](bool fast, bool ok, ProofFailure failure = ProofFailure::Other) {
@@ -4813,25 +5114,30 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         }
         comparedTableSpans.erase(std::remove_if(comparedTableSpans.begin(), comparedTableSpans.end(), [](const auto& span) { return span.second.empty(); }), comparedTableSpans.end());
     }
+    if (!refreshPerUseCopies()) return finish(fast, false, ProofFailure::Changed);
+    return finish(fast, true);
+}
+
+bool ShaderResources::refreshPerUseCopies() {
     if (writeSubscription != nullptr) {
         for (const auto index : depthCopyTextures) {
             if (textures[index]->HasReuseLookup()) {
-                if (!textures[index]->ReuseLookupHolds()) return finish(fast, false, ProofFailure::Changed);
+                if (!textures[index]->ReuseLookupHolds()) return false;
             } else {
                 textures[index]->RefreshDepthCopy();
             }
         }
-    } else {
-        for (const auto& texture : textures) {
-            if (texture == nullptr) continue;
-            if (texture->HasReuseLookup()) {
-                if (!texture->ReuseLookupHolds()) return finish(fast, false, ProofFailure::Changed);
-            } else if (texture->IsDepthCopy()) {
-                texture->RefreshDepthCopy();
-            }
+        return true;
+    }
+    for (const auto& texture : textures) {
+        if (texture == nullptr) continue;
+        if (texture->HasReuseLookup()) {
+            if (!texture->ReuseLookupHolds()) return false;
+        } else if (texture->IsDepthCopy()) {
+            texture->RefreshDepthCopy();
         }
     }
-    return finish(fast, true);
+    return true;
 }
 
 namespace {
@@ -7449,7 +7755,7 @@ void ShaderResources::WriteBack() {
     } catch (const BdaUnalignedAccess&) {
         unaligned = std::current_exception();
     }
-    if (!guestMemory.Writes().empty() || std::find(storageWritten.begin(), storageWritten.end(), true) != storageWritten.end() || (usesBda && !bdaReadOnly)) GuestMemory::BreakProofs();
+    if (!guestMemory.Writes().empty() || std::find(storageWritten.begin(), storageWritten.end(), true) != storageWritten.end() || (usesBda && !bdaReadOnly)) GuestMemory::BreakProofs(GuestMemory::ProofBreakSite::ResourceWriteBack);
     if (!SkipWriteBack()) {
         for (std::size_t index = 0; index < storageTextures.size(); ++index) {
             if (!storageWritten[index] || storageTextures[index] == nullptr) continue;

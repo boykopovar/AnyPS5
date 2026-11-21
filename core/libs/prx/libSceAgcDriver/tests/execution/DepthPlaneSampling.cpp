@@ -2,8 +2,10 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/EpochProofCounters.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -75,6 +77,10 @@ constexpr std::size_t LargeCubeOffset = 0x200000;
 constexpr std::size_t GuestDepthBitsOffset = 0x480000;
 constexpr std::size_t FrameCopiesOffset = 0x520000;
 constexpr std::size_t ReloadOffset = 0x700000;
+constexpr std::size_t EpochExitOffset = 0x7a0000;
+constexpr std::size_t EpochSurfaceOffset = 0x7c0000;
+constexpr std::size_t EpochUnrelatedOffset = 0x7e0000;
+constexpr std::size_t EpochRetiredOffset = 0x7f0000;
 constexpr float DrawnDepth = 0.25f;
 constexpr float DrawnD16Depth = 0.2f;
 constexpr std::uint32_t DrawnD16Bits = 13107;
@@ -177,7 +183,9 @@ std::uint32_t Bits(float value) {
 
 // Draws a full-target triangle at depth `z` into the depth surface at `address`, which makes the driver create the
 // surface (the base slice a later plane copy reads from the surface instead of from guest memory).
-void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2D extent, VkFormat format, float z, std::uint32_t swizzle = 0) {
+alignas(256) constexpr std::array<std::uint32_t, 4> NullPixelCode{0x7e0002f2u, 0xf8001890u, 0x00000000u, 0xbf810000u};
+
+void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2D extent, VkFormat format, float z, std::uint32_t swizzle = 0, bool color = true, bool write = true) {
     static std::deque<std::vector<std::array<float, 4>>> vertexData;
     vertexData.push_back({{-1.0f, -1.0f, z, 1.0f}, {3.0f, -1.0f, z, 1.0f}, {-1.0f, 3.0f, z, 1.0f}});
     const auto& vertices = vertexData.back();
@@ -200,12 +208,13 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
     pixelInfo.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
     pixelInfo.posX = true;
     pixelInfo.posY = true;
-    pixelInfo.targetOutputMode[0] = 9;
+    pixelInfo.targetOutputMode[0] = color ? 9u : 0u;
     pixelInfo.targetExportMapping.fill(0xe4u);
     std::vector<std::uint32_t> pixelUserData(4, 0u);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::as_bytes(std::span(PixelCode))}}};
+    const auto pixelCode = color ? std::span<const std::uint32_t>(PixelCode) : std::span<const std::uint32_t>(NullPixelCode);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(pixelCode.data()), std::as_bytes(pixelCode)}}};
     ShaderRecompiler::RecompileRequest fragmentRequest{
-        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}},
+        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(pixelCode.data()), pixelCode, 0, {}},
         {32, 0, pixelUserData, std::nullopt, pixelInfo, std::nullopt, pixelMemory},
         target,
         PixelPushLayout(vertexPush, target)
@@ -224,7 +233,7 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
     state.depth = AgcDriver::Graphics::DepthTarget{address, 0, extent, format, 1.0f, 0};
     state.depth->depthSwizzle = swizzle;
     state.depthTest = true;
-    state.depthWrite = true;
+    state.depthWrite = write;
     state.depthCompare = VK_COMPARE_OP_ALWAYS;
     state.renderExtent = extent;
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -236,12 +245,17 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
     state.blend.colorWriteMask = 15;
     state.blends = {state.blend};
     state.blendConstants = {};
+    if (!color) {
+        state.colors.clear();
+        state.blends.clear();
+        state.hasColorTarget = false;
+    }
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(vertices.size()), 0, 1, 0, false};
     device.Draw(state, draw, shaders);
     device.WaitIdle();
 }
 
-void Load(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t slice, std::span<std::uint32_t> output, bool shaderImage2D = false, std::uint32_t row = 0) {
+ShaderRecompiler::RecompileResult LoadProgram(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t slice, std::span<std::uint32_t> output, bool shaderImage2D = false, std::uint32_t row = 0) {
     const auto& code = shaderImage2D ? Load2D : shape.type == TypeCube ? LoadCube : shape.type == Type2DArray ? LoadArray : Load2D;
     std::vector<std::uint32_t> userData(16, 0u);
     const auto out = std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(output.data())), static_cast<std::uint32_t>((reinterpret_cast<std::uintptr_t>(output.data()) >> 32u) & 0xffffu), static_cast<std::uint32_t>(output.size_bytes()), 0x31016facu};
@@ -259,8 +273,13 @@ void Load(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& sh
         {0, 0, 0, 128}
     };
     request.useCache = false;
+    return ShaderRecompiler::Recompile(request);
+}
+
+void Load(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t slice, std::span<std::uint32_t> output, bool shaderImage2D = false, std::uint32_t row = 0) {
+    const auto& code = shaderImage2D ? Load2D : shape.type == TypeCube ? LoadCube : shape.type == Type2DArray ? LoadArray : Load2D;
+    const auto result = LoadProgram(device, texels, shape, slice, output, shaderImage2D, row);
     std::fill(output.begin(), output.end(), 0xdeadbeefu);
-    const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
@@ -357,6 +376,149 @@ void GuestWriteAfterDrawCase(AgcDriver::VulkanDevice& device, GuestBlock& block,
     FillSlice(base, SliceBytes, Bits(0.75f), 4u);
     Load(device, base, shape, 0, output);
     Expect(output, Bits(0.75f), "D32 plane the guest wrote after a draw, sampled before its surface is bound again");
+}
+
+void EpochExitPlaneCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
+    using AgcDriver::Graphics::ShaderResources;
+    auto* base = block.At(EpochExitOffset);
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (context.hostImportAlignment == 0) {
+        std::puts("host imports unavailable: a depth plane drawn under a buffer read in place is not checked against the epoch exit");
+        return;
+    }
+    ShaderRecompiler::RecompileResult program;
+    ShaderRecompiler::DescriptorBinding binding;
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
+    binding.descriptorSet = 0;
+    binding.binding = 0;
+    binding.count = 1;
+    binding.guestDescriptor = {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u) & 0xffffu, static_cast<std::uint32_t>(SliceBytes), 0x31000000u};
+    binding.bufferWritten = {false};
+    binding.bufferRead = {true};
+    program.bindings.push_back(binding);
+    const AgcDriver::Graphics::CompiledShader shader{ShaderStage::Compute, &program, 0};
+    const auto unrelated = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block.At(EpochUnrelatedOffset)));
+    DrawDepth(device, unrelated, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), false);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    AgcDriver::GuestMemory::MarkProofThread();
+    Require(ShaderResources::EpochProofs(), "depth plane epoch exit: epoch proofs are off");
+    Require(AgcDriver::Graphics::DepthPlanesStale(), "depth plane epoch exit: the draw away from the buffer left no stale plane");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto resources = std::make_shared<ShaderResources>(context, shader);
+    const auto reads = resources->InPlaceReads();
+    const bool inPlace = std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return range.first <= address && range.second >= address + SliceBytes; });
+    if (!resources->Reusable() || !inPlace) {
+        std::puts("the plane's buffer was not read in place from its import in a reusable build: the depth plane epoch exit is not checked");
+        return;
+    }
+    Require(resources->Revalidate(shader), "depth plane epoch exit: the buffer build did not prove current");
+    const auto reusesBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
+    const bool unrelatedExit = resources->Revalidate(shader) && AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != reusesBefore;
+    const bool unrelatedStale = AgcDriver::Graphics::DepthPlanesStale();
+    std::printf("depth plane epoch exit: with a stale plane outside the buffer (%s), an unchanged buffer build %s the exit\n", unrelatedStale ? "still stale" : "stored", unrelatedExit ? "took" : "did not take");
+    Require(unrelatedStale, "depth plane epoch exit: proving the buffer build stored a plane outside the buffer");
+    Require(unrelatedExit, "depth plane epoch exit: an unchanged buffer build did not take the epoch exit while only a plane outside the buffer was stale");
+    DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), false);
+    const bool stale = AgcDriver::Graphics::DepthPlanesStale();
+    const auto exitBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
+    const bool proved = resources->Revalidate(shader);
+    const bool exited = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != exitBefore;
+    const bool left = !AgcDriver::Graphics::FlushDepthPlanes(address, SliceBytes).empty();
+    std::printf("depth plane epoch exit: a draw over the buffer %s its plane stale; the next proof %s the exit and %s, leaving the plane %s\n", stale ? "left" : "did not leave", exited ? "took" : "did not take", proved ? "proved current" : "refused", left ? "unstored" : "stored");
+    Require(!proved || !left, "depth plane epoch exit: a reused buffer build read guest memory a depth surface had not stored to");
+    Require(resources->Revalidate(shader), "depth plane epoch exit: the buffer build did not prove current after its plane was stored");
+    const auto storedBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
+    Require(AgcDriver::Graphics::DepthPlanesStale() && resources->Revalidate(shader) && AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != storedBefore, "depth plane epoch exit: the stored buffer build did not take the exit while only a plane outside the buffer was stale");
+    const auto surfacesBefore = AgcDriver::Graphics::DepthSurfacesSerial();
+    DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, 0.5f, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), false);
+    const bool kept = AgcDriver::Graphics::DepthSurfacesSerial() == surfacesBefore;
+    const auto redrawBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
+    const bool reproved = resources->Revalidate(shader);
+    const bool reexited = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != redrawBefore;
+    const bool releft = !AgcDriver::Graphics::FlushDepthPlanes(address, SliceBytes).empty();
+    std::printf("depth plane epoch exit: a second draw over the buffer %s its depth surface; the next proof %s the exit and %s, leaving the plane %s\n", kept ? "kept" : "replaced", reexited ? "took" : "did not take", reproved ? "proved current" : "refused", releft ? "unstored" : "stored");
+    Require(!reproved || !releft, "depth plane epoch exit: a reused buffer build read guest memory its kept depth surface had not stored to");
+    resources.reset();
+}
+
+void EpochExitSurfaceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    using AgcDriver::Graphics::ShaderResources;
+    auto* base = block.At(EpochSurfaceOffset);
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
+    const Shape shape{Format32Float, 128, 128, Type2D, 0, Swizzle64KbZX};
+    FillSlice(base, SliceBytes, Bits(0.75f), 4u);
+    const auto program = LoadProgram(device, base, shape, 0, output);
+    const AgcDriver::Graphics::CompiledShader shader{ShaderStage::Compute, &program, 0};
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    AgcDriver::GuestMemory::MarkProofThread();
+    Require(ShaderResources::EpochProofs(), "depth surface epoch exit: epoch proofs are off");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto resources = std::make_shared<ShaderResources>(context, shader);
+    Require(resources->Reusable(), "depth surface epoch exit: the plane sampling build is not reusable");
+    Require(resources->Revalidate(shader), "depth surface epoch exit: the sampling build did not prove current");
+    const auto reusesBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
+    Require(resources->Revalidate(shader) && AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != reusesBefore, "depth surface epoch exit: an unchanged sampling build did not take the epoch exit");
+    const auto surfacesBefore = AgcDriver::Graphics::DepthSurfacesSerial();
+    const auto proofBefore = AgcDriver::GuestMemory::ProofSerial();
+    DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), false, false);
+    const bool created = AgcDriver::Graphics::DepthSurfacesSerial() != surfacesBefore;
+    const bool broke = AgcDriver::GuestMemory::ProofSerial() != proofBefore;
+    const bool stale = AgcDriver::Graphics::DepthPlanesStale();
+    const auto exitBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
+    const bool proved = resources->Revalidate(shader);
+    const bool exited = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != exitBefore;
+    AgcDriver::GuestMemory::BreakProofs();
+    const bool fullProved = resources->Revalidate(shader);
+    std::printf("depth surface epoch exit: a depth-tested draw without depth writes %s a surface over the sampled plane (proof serial %s, planes %s); the next proof %s the exit and %s, the full proof %s\n", created ? "created" : "did not create", broke ? "moved" : "kept", stale ? "stale" : "stored", exited ? "took" : "did not take", proved ? "proved current" : "refused", fullProved ? "proved current" : "refused");
+    Require(created, "depth surface epoch exit: the draw did not create a depth surface over the sampled plane");
+    Require(!proved || fullProved, "depth surface epoch exit: the exit reused a sampling build the full proof refuses after a depth surface was created over its plane");
+    resources.reset();
+    Load(device, base, shape, 0, output);
+    Expect(output, Bits(0.75f), "depth surface epoch exit: the plane under a surface no draw wrote");
+}
+
+void EpochExitRetiredSurfaceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    using AgcDriver::Graphics::ShaderResources;
+    auto* base = block.At(EpochRetiredOffset);
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
+    const Shape shape{Format32Float, 128, 128, Type2D, 0, Swizzle64KbZX};
+    FillSlice(base, SliceBytes, Bits(0.75f), 4u);
+    DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), false, false);
+    const auto program = LoadProgram(device, base, shape, 0, output);
+    const AgcDriver::Graphics::CompiledShader shader{ShaderStage::Compute, &program, 0};
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const auto resource = AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(base, shape));
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    AgcDriver::GuestMemory::MarkProofThread();
+    Require(ShaderResources::EpochProofs(), "retired depth surface epoch exit: epoch proofs are off");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto resources = std::make_shared<ShaderResources>(context, shader);
+    Require(resources->Reusable() && resources->SampledTextures().size() == 1, "retired depth surface epoch exit: the plane sampling build is not reusable");
+    const auto bound = resources->SampledTextures().front();
+    Require(AgcDriver::Graphics::DepthSurfaceHolds(context, resource, bound.get()), "retired depth surface epoch exit: the sampling build does not sample the depth surface, so the case tests nothing");
+    Require(resources->Revalidate(shader), "retired depth surface epoch exit: the sampling build did not prove current");
+    const auto reusesBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
+    Require(resources->Revalidate(shader) && AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != reusesBefore, "retired depth surface epoch exit: an unchanged sampling build did not take the epoch exit");
+    const auto epochBefore = AgcDriver::GuestMemory::CollectEpoch();
+    const auto proofBefore = AgcDriver::GuestMemory::ProofSerial();
+    const auto pendingBefore = AgcDriver::Graphics::StorageTexture::PendingSerial();
+    AgcDriver::Graphics::RetireDepthSurfaces(context.device, address, SliceBytes);
+    const bool retired = !AgcDriver::Graphics::DepthSurfaceAt(address) && !AgcDriver::Graphics::DepthSurfaceHolds(context, resource, bound.get());
+    const bool broke = AgcDriver::GuestMemory::CollectEpoch() != epochBefore || AgcDriver::GuestMemory::ProofSerial() != proofBefore || AgcDriver::Graphics::StorageTexture::PendingSerial() != pendingBefore;
+    const auto exitBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
+    const bool proved = resources->Revalidate(shader);
+    const bool exited = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != exitBefore;
+    AgcDriver::GuestMemory::BreakProofs();
+    const bool fullProved = resources->Revalidate(shader);
+    std::printf("retired depth surface epoch exit: retiring the sampled surface %s it (epoch, proof and pending serials %s); the next proof %s the exit and %s, the full proof %s\n", retired ? "retired" : "did not retire", broke ? "moved" : "kept", exited ? "took" : "did not take", proved ? "proved current" : "refused", fullProved ? "proved current" : "refused");
+    Require(retired, "retired depth surface epoch exit: the retire left the surface serving the sampled plane");
+    Require(!broke, "retired depth surface epoch exit: the retire moved the epoch, proof or pending serial, so the case tests nothing");
+    Require(!fullProved, "retired depth surface epoch exit: the full proof kept a build sampling a retired surface, so the case tests nothing");
+    Require(!exited && !proved, "retired depth surface epoch exit: the exit reused a sampling build bound to a depth surface its own thread retired in the same collect epoch");
+    resources.reset();
 }
 
 void FirstSliceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
@@ -522,6 +684,18 @@ int main(int argc, char** argv) {
         GuestBlock block;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc > 1 && std::string(argv[1]) == "--epoch-exit") {
+            EpochExitPlaneCase(*device, block);
+            EpochExitSurfaceCase(*device, block, std::span<std::uint32_t>(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads));
+            if (AgcDriver::Graphics::EpochProofCountsProfiled()) AgcDriver::Graphics::ReportEpochProofCounts();
+            std::puts("depth plane epoch exit tests passed");
+            return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "--epoch-exit-retired") {
+            EpochExitRetiredSurfaceCase(*device, block, std::span<std::uint32_t>(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads));
+            std::puts("retired depth surface epoch exit tests passed");
+            return 0;
+        }
         const std::span<std::uint32_t> output(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads);
         const auto present = [&] {
             if (!evicting) return;

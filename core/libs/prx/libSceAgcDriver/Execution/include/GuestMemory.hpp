@@ -165,8 +165,39 @@ std::uint64_t CollectSince();
 std::uint64_t SteadyNanoseconds();
 void AdoptLatestCollectEpoch();
 std::uint64_t ProofSerial();
+enum class ProofBreakSite : std::uint8_t { Other, DriverStore, Written, GpuMutex, WriteBack, WriteBackIfHeld, Packet, CompletionStore, RecordedWork, WrittenBack, KeptDraw, ResourceWriteBack };
+const char* ProofBreakSiteName(ProofBreakSite site);
+inline constexpr std::size_t ProofBreakSiteCount = static_cast<std::size_t>(ProofBreakSite::ResourceWriteBack) + 1;
+struct ProofBreakCounts {
+    std::array<std::uint64_t, ProofBreakSiteCount> sites{};
+    std::uint64_t emptyWriteBacks = 0;
+    std::uint64_t unchangedWriteBacks = 0;
+};
+bool ProofBreaksCounted();
+void HoldProofBreaksForTest(bool held);
+ProofBreakCounts TakeProofBreakCounts();
 std::uint64_t OwnProofBreaks();
-void BreakProofs();
+void BreakProofs(ProofBreakSite site = ProofBreakSite::Other, std::uint64_t address = 0, std::uint64_t bytes = 0);
+struct ProofBreak {
+    ProofBreakSite site = ProofBreakSite::Other;
+    std::uint64_t address = 0;
+    std::uint64_t bytes = 0;
+};
+class ProofBreakTrace {
+public:
+    ProofBreakTrace();
+    ~ProofBreakTrace();
+    ProofBreakTrace(const ProofBreakTrace&) = delete;
+    ProofBreakTrace& operator=(const ProofBreakTrace&) = delete;
+    void Note(const ProofBreak& entry);
+    const std::vector<ProofBreak>& Breaks() const { return breaks; }
+    std::uint64_t Count() const { return count; }
+
+private:
+    std::vector<ProofBreak> breaks;
+    std::uint64_t count = 0;
+    ProofBreakTrace* previous = nullptr;
+};
 void MarkProofThread();
 std::uint64_t CollectEpoch();
 std::uint64_t CollectEpochBumps();

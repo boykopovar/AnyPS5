@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HandoffSpin.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ProfileCounter.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WriteWatchCoverage.hpp"
@@ -2352,6 +2353,7 @@ std::uint64_t CollectEpochBumps() {
 namespace {
 std::atomic<std::uint64_t> proofSerial{1};
 thread_local bool proofThread = false;
+thread_local ProofBreakTrace* proofBreakTrace = nullptr;
 struct OwnProofBreaksSlot {};
 }
 
@@ -2359,13 +2361,80 @@ std::uint64_t ProofSerial() {
     return proofSerial.load(std::memory_order_acquire);
 }
 
+const char* ProofBreakSiteName(ProofBreakSite site) {
+    switch (site) {
+        case ProofBreakSite::DriverStore: return "driver store";
+        case ProofBreakSite::Written: return "marked written";
+        case ProofBreakSite::GpuMutex: return "GPU mutex taken off the proof thread";
+        case ProofBreakSite::WriteBack: return "write-back";
+        case ProofBreakSite::WriteBackIfHeld: return "held write-back";
+        case ProofBreakSite::Packet: return "non-draw packet";
+        case ProofBreakSite::CompletionStore: return "completion store";
+        case ProofBreakSite::RecordedWork: return "recorded work";
+        case ProofBreakSite::WrittenBack: return "written back";
+        case ProofBreakSite::KeptDraw: return "kept writing draw";
+        case ProofBreakSite::ResourceWriteBack: return "resource write-back";
+        case ProofBreakSite::Other: break;
+    }
+    return "other";
+}
+
+namespace {
+struct ProofBreakCounters {
+    std::array<ProfileCounter, ProofBreakSiteCount> sites;
+    ProfileCounter emptyWriteBacks;
+    ProfileCounter unchangedWriteBacks;
+};
+
+ProofBreakCounters& proofBreakCounters() {
+    static ProofBreakCounters counters;
+    return counters;
+}
+
+std::atomic<bool> proofBreaksHeldForTest{false};
+}
+
+void HoldProofBreaksForTest(bool held) {
+    proofBreaksHeldForTest.store(held, std::memory_order_relaxed);
+}
+
+bool ProofBreaksCounted() {
+    static const bool counted = std::getenv("APS5_PROFILE_EPOCH_PROOFS") != nullptr;
+    return counted;
+}
+
+ProofBreakCounts TakeProofBreakCounts() {
+    auto& counters = proofBreakCounters();
+    ProofBreakCounts counts;
+    for (std::size_t site = 0; site < ProofBreakSiteCount; ++site) counts.sites[site] = counters.sites[site].Take();
+    counts.emptyWriteBacks = counters.emptyWriteBacks.Take();
+    counts.unchangedWriteBacks = counters.unchangedWriteBacks.Take();
+    return counts;
+}
+
 std::uint64_t OwnProofBreaks() {
     return HostThreadSlot<std::uint64_t, OwnProofBreaksSlot>::Get();
 }
 
-void BreakProofs() {
+void BreakProofs(ProofBreakSite site, std::uint64_t address, std::uint64_t bytes) {
+    if (proofBreaksHeldForTest.load(std::memory_order_relaxed)) return;
     proofSerial.fetch_add(1, std::memory_order_acq_rel);
     HostThreadSlot<std::uint64_t, OwnProofBreaksSlot>::Set(OwnProofBreaks() + 1);
+    if (ProofBreaksCounted()) proofBreakCounters().sites[static_cast<std::size_t>(site)].Add();
+    if (proofBreakTrace != nullptr) proofBreakTrace->Note({site, address, bytes});
+}
+
+ProofBreakTrace::ProofBreakTrace() : previous(proofBreakTrace) {
+    proofBreakTrace = this;
+}
+
+ProofBreakTrace::~ProofBreakTrace() {
+    proofBreakTrace = previous;
+}
+
+void ProofBreakTrace::Note(const ProofBreak& entry) {
+    ++count;
+    if (breaks.size() < 8u) breaks.push_back(entry);
 }
 
 void MarkProofThread() {
@@ -2797,7 +2866,10 @@ static GuestAllocations::Lease::Ranges pinStoreRanges(std::uint64_t address, std
 }
 
 struct BreakWhenStored {
-    ~BreakWhenStored() { BreakProofs(); }
+    ProofBreakSite site;
+    std::uint64_t address;
+    std::uint64_t bytes;
+    ~BreakWhenStored() { BreakProofs(site, address, bytes); }
 };
 
 static std::atomic<bool> ownStoreCompare{false};
@@ -2809,8 +2881,8 @@ void SetOwnStoreCompare(bool compare) {
 std::uint64_t storeOwn(std::uint64_t address, std::size_t bytes, bool imaged, const std::function<std::pair<std::uint64_t, std::uint64_t>(std::span<std::byte>)>& store, bool complete = true) {
     if (bytes == 0) return 0;
     const auto pinned = pinStoreRanges(address, bytes);
-    BreakProofs();
-    const BreakWhenStored breakStored;
+    BreakProofs(ProofBreakSite::DriverStore, address, bytes);
+    const BreakWhenStored breakStored{ProofBreakSite::DriverStore, address, bytes};
     const auto stampStored = [complete](WriteTracker& tracker, std::pair<std::uint64_t, std::uint64_t> stored) -> std::uint64_t {
         if (stored.second <= stored.first) return 0;
         ++tracker.generation;
@@ -2877,8 +2949,8 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> so
 }
 
 static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool complete, std::uint64_t* order = nullptr) {
-    BreakProofs();
-    const BreakWhenStored breakStored;
+    BreakProofs(ProofBreakSite::Written, address, bytes);
+    const BreakWhenStored breakStored{ProofBreakSite::Written, address, bytes};
     auto& tracker = Tracker();
     auto lock = lockTracker(tracker);
     if (order != nullptr) *order = 0;
@@ -3279,7 +3351,7 @@ void GpuMutexType::acquired() {
     owner.store(CurrentThreadToken(), std::memory_order_relaxed);
     if (++depth == 1) {
         gpuHoldSerial.fetch_add(1, std::memory_order_relaxed);
-        if (!proofThread) BreakProofs();
+        if (!proofThread) BreakProofs(ProofBreakSite::GpuMutex);
     }
 }
 
@@ -3897,8 +3969,11 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
 
 static void writeChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, [[maybe_unused]] std::uint32_t byteStoreLimit, bool keepGuest) {
     require(current.size() == original.size(), "write-back snapshot sizes differ");
-    BreakProofs();
-    if (current.empty()) return;
+    BreakProofs(ProofBreakSite::WriteBack, address, current.size());
+    if (current.empty()) {
+        if (ProofBreaksCounted()) proofBreakCounters().emptyWriteBacks.Add();
+        return;
+    }
     // A store: the hook sync it makes orders this write after a pending GPU write, whatever a read
     // site above it was doing (the [hooksync] line counts stores apart).
     const ReadSiteScope site(ReadSite::Store);
@@ -3907,6 +3982,7 @@ static void writeChanged(std::uint64_t address, std::span<const std::byte> curre
     auto* destination = reinterpret_cast<std::byte*>(address);
     const auto size = current.size();
     // Stamped like a GPU write: a collect memoized for this packet would not see the page fault.
+    bool changed = false;
     storeOwn(address, size, true, [&](std::span<std::byte> image) {
         CheckRange(destination, size, 1, true);
         std::size_t firstChanged = size;
@@ -3946,8 +4022,10 @@ static void writeChanged(std::uint64_t address, std::span<const std::byte> curre
         for (std::size_t index = 0; index < image.size(); ++index) {
             image[index] = current[index] != original[index] && !(keepGuest && image[index] != original[index]) ? current[index] : image[index];
         }
+        changed = firstChanged < lastChanged;
         return firstChanged < lastChanged ? std::pair<std::uint64_t, std::uint64_t>{address + firstChanged, address + lastChanged} : std::pair<std::uint64_t, std::uint64_t>{0, 0};
     });
+    if (!changed && ProofBreaksCounted()) proofBreakCounters().unchangedWriteBacks.Add();
 }
 
 void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint32_t byteStoreLimit) {
@@ -3962,13 +4040,17 @@ static_assert(std::atomic_ref<std::uint64_t>::is_always_lock_free && std::atomic
 
 std::size_t WriteChangedIfHeld(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint64_t unchangedSince) {
     require(current.size() == original.size(), "write-back snapshot sizes differ");
-    BreakProofs();
-    if (current.empty()) return 0;
+    BreakProofs(ProofBreakSite::WriteBackIfHeld, address, current.size());
+    if (current.empty()) {
+        if (ProofBreaksCounted()) proofBreakCounters().emptyWriteBacks.Add();
+        return 0;
+    }
     const ReadSiteScope site(ReadSite::Store);
     FlushGpuWrites(address, current.size());
     const TimedAccess timed(CounterChangedWrite, current.size());
     auto* destination = reinterpret_cast<std::uint8_t*>(address);
     const auto size = current.size();
+    bool changed = false;
     std::size_t lost = 0;
     storeOwn(address, size, false, [&](std::span<std::byte>) {
         CheckRange(destination, size, 1, true);
@@ -4001,8 +4083,10 @@ std::size_t WriteChangedIfHeld(std::uint64_t address, std::span<const std::byte>
             for (std::size_t index = at; index < at + 8; ++index) exchange(index);
         }
         for (; at < size && lost == 0; ++at) exchange(at);
+        changed = firstChanged < lastChanged;
         return firstChanged < lastChanged ? std::pair<std::uint64_t, std::uint64_t>{address + firstChanged, address + lastChanged} : std::pair<std::uint64_t, std::uint64_t>{0, 0};
     }, false);
+    if (!changed && lost == 0 && ProofBreaksCounted()) proofBreakCounters().unchangedWriteBacks.Add();
     return lost;
 }
 

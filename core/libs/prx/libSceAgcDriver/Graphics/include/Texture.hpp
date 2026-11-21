@@ -580,7 +580,6 @@ public:
     bool ChangedOutsideWatch() const;
     bool RefreshLayers(std::uint32_t first, std::uint32_t count);
     static void SetRefreshUnchangedHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes));
-    inline static std::atomic<std::uint64_t> epochRefreshes{0};
     static std::uint64_t SinglePassMoves();
     static std::uint64_t SlabRetiles();
     static std::uint64_t PaddingSeedCopies();

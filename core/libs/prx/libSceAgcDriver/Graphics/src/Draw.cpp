@@ -2706,7 +2706,7 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
             resources->WriteBackBuffers();
         });
         writers->push_back(resources);
-        GuestMemory::BreakProofs();
+        GuestMemory::BreakProofs(GuestMemory::ProofBreakSite::KeptDraw);
     } else if (completion) {
         if (use != nullptr) recorder.OnComplete([resources, use] { resources->CompleteDrawUse(*use); });
         else if (resources->Reusable()) recorder.OnComplete([resources] { resources->CheckFaults(); });
@@ -3519,9 +3519,13 @@ AttachmentMemo& attachmentMemo() {
     return HostThreadLocal<AttachmentMemo, AttachmentMemoStorage>();
 }
 
-bool PassAttachmentMemoEnabled() {
-    return !RuntimeSwitches::Set(RuntimeSwitch::NoPassAttachmentMemo) && ShaderResources::EpochProofs();
 }
+
+bool PassAttachmentMemoEnabled() {
+    return !RuntimeSwitches::Set(RuntimeSwitch::NoPassAttachmentMemo) && DrawPipelineEnabled() && ShaderResources::EpochProofs();
+}
+
+namespace {
 
 bool VerifyPassAttachments() {
     static const bool verify = std::getenv("APS5_VERIFY_PASS_ATTACHMENTS") != nullptr;

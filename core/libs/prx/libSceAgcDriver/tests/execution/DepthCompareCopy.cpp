@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/EpochProofCounters.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -22,6 +24,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <vector>
@@ -267,6 +271,45 @@ void SingleLevelCase(AgcDriver::VulkanDevice& device, const Shape& shape, const 
     if (shape.format == Format32Float) RequireGuestTexels(texels, 1.0f / 64.0f, name + ": flushed results");
 }
 
+void EpochExitRefreshCase(AgcDriver::VulkanDevice& device, const Shape& shape) {
+    using AgcDriver::Graphics::ShaderResources;
+    GuestBlock block;
+    auto* texels = block.Data();
+    const auto bytes = SurfaceBytes(texels, shape);
+    Store(device, texels, shape, StoreQuarterCode);
+    Settle(device, texels, bytes);
+    Store(device, texels, shape, StoreHalfCode);
+    const auto program = SampleProgram(device, texels, shape);
+    const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Require(ShaderResources::EpochProofs(), "depth copy epoch exit: epoch proofs are off");
+    const auto context = device.graphicsContext();
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    AgcDriver::Graphics::Texture::TakeDepthCopyCounts();
+    auto resources = std::make_shared<ShaderResources>(context, shader);
+    Require(resources->Reusable(), "depth copy epoch exit: the comparison sample template is not reusable");
+    RequireCounts(1, 1, "depth copy epoch exit: the template's build");
+    ShaderResources::ProofReport report{};
+    Require(resources->Revalidate(shader, &report), "depth copy epoch exit: the template did not prove current");
+    const auto reusesBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
+    Require(resources->Revalidate(shader, &report) && AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != reusesBefore, "depth copy epoch exit: an unchanged template did not take the epoch exit");
+    AgcDriver::Graphics::Texture::TakeDepthCopyCounts();
+    const auto source = AgcDriver::Graphics::StorageTexture::FindPending(reinterpret_cast<std::uintptr_t>(texels), bytes);
+    Require(source != nullptr, "depth copy epoch exit: no storage image holds the surface's results");
+    const auto versionBefore = source->Version();
+    const auto pendingBefore = AgcDriver::Graphics::StorageTexture::PendingSerial();
+    const auto proofBefore = AgcDriver::GuestMemory::ProofSerial();
+    source->MarkDirty();
+    RequireNewerVersion(versionBefore, source->Version(), "depth copy epoch exit: a second write to the pending source");
+    const bool pendingMoved = AgcDriver::Graphics::StorageTexture::PendingSerial() != pendingBefore;
+    const bool proofMoved = AgcDriver::GuestMemory::ProofSerial() != proofBefore;
+    const bool proved = resources->Revalidate(shader, &report);
+    const auto counts = AgcDriver::Graphics::Texture::TakeDepthCopyCounts();
+    std::printf("depth copy epoch exit: a write to the pending source moved the pending serial %s, the proof serial %s; the next proof %s with %llu depth copy refreshes\n", pendingMoved ? "yes" : "no", proofMoved ? "yes" : "no", proved ? "proved current" : "refused", static_cast<unsigned long long>(counts.refreshes));
+    Require(!proved || counts.refreshes == 1, "depth copy epoch exit: a reuse after its source changed did not refresh the depth copy");
+    resources.reset();
+}
+
 void LayersAndMipsCase(AgcDriver::VulkanDevice& device) {
     const Shape shape{Format32Float, 256, 256, 4, 3, true};
     const std::string name = "R32F 256x256, 4 layers, 3 mips";
@@ -304,6 +347,7 @@ int main() {
         Input = std::span<float>(reinterpret_cast<float*>(buffers.Data()), Threads * 3u);
         Output = std::span<float>(reinterpret_cast<float*>(buffers.Data() + 4096u), Threads);
         SingleLevelCase(*device, {Format32Float, 512, 512, 1, 1, false}, "R32F 512x512");
+        EpochExitRefreshCase(*device, {Format32Float, 512, 512, 1, 1, false});
         SingleLevelCase(*device, {Format16Unorm, 1024, 512, 1, 1, false}, "R16 unorm 1024x512");
         LayersAndMipsCase(*device);
         std::puts("depth compare copy tests passed");
