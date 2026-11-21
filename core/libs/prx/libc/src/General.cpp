@@ -571,12 +571,16 @@ extern "C" int CopyGuestString_nid_no_patch(const char* source, std::size_t maxi
             bytes.resize(offset + count);
         } catch (const std::bad_alloc&) {
             return 12;
+        } catch (const std::length_error&) {
+            return 12;
         }
         if (!CopyGuestBytes(bytes.data() + offset, reinterpret_cast<const void*>(current), count)) return 14;
         if (const auto* end = static_cast<const char*>(std::memchr(bytes.data() + offset, 0, count))) {
             try {
                 destination.assign(bytes.data(), static_cast<std::size_t>(end - bytes.data()));
             } catch (const std::bad_alloc&) {
+                return 12;
+            } catch (const std::length_error&) {
                 return 12;
             }
             return 0;
