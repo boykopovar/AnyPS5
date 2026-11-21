@@ -4,6 +4,7 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
 
@@ -18,8 +19,11 @@ constexpr int audioInErrorInvalidState = static_cast<int>(0x80260109);
 constexpr int audioInErrorInvalidDevice = static_cast<int>(0x8026010F);
 constexpr int userId = 0x10000000;
 
-void Require(bool condition) {
+void Require(bool condition, const char* message = nullptr) {
     if (!condition) {
+        if (message) {
+            std::fprintf(stderr, "%s\n", message);
+        }
         std::abort();
     }
 }
@@ -70,24 +74,24 @@ void TestMicLevelBounds() {
         Require(Throws([&] { sceAudioInSetMicLevel(rawDeviceId, 0, 100, 0, 0); }));
     }
 
-    for (const int overLevel : {101, 102, 150, 200, 500}) {
-        Require(sceAudioInSetMicrophoneLevel(1, 0, overLevel, 0) == audioInErrorInvalidParam);
-        Require(sceAudioInSetMicrophoneLevel(0, 0, overLevel, 0) == audioInErrorInvalidParam);
-        Require(sceAudioInSetMicrophoneLevel(5, 0, overLevel, 0) == audioInErrorInvalidParam);
-        Require(sceAudioInSetMicrophoneLevel(-1, 0, overLevel, 0) == audioInErrorInvalidParam);
+    for (const int overLevel : {101, 102, 150, 200, 500, 1000}) {
+        Require(sceAudioInSetMicrophoneLevel(1, 0, overLevel, 0) == audioInErrorInvalidParam, "overLevel on type 1 must fail with invalidParam");
+        Require(sceAudioInSetMicrophoneLevel(0, 0, overLevel, 0) == audioInErrorInvalidParam, "overLevel on type 0 must fail with invalidParam");
+        Require(sceAudioInSetMicrophoneLevel(5, 0, overLevel, 0) == audioInErrorInvalidParam, "overLevel on type 5 must fail with invalidParam");
+        Require(sceAudioInSetMicrophoneLevel(-1, 0, overLevel, 0) == audioInErrorInvalidParam, "overLevel on type -1 must fail with invalidParam");
     }
 
-    for (const int negativeLevel : {-1, -5, -10, -50}) {
-        Require(sceAudioInSetMicrophoneLevel(1, 0, negativeLevel, 0) == audioInErrorInvalidParam);
-        Require(sceAudioInSetMicrophoneLevel(0, 0, negativeLevel, 0) == audioInErrorInvalidParam);
-        Require(sceAudioInSetMicrophoneLevel(5, 0, negativeLevel, 0) == audioInErrorInvalidParam);
-        Require(sceAudioInSetMicrophoneLevel(-1, 0, negativeLevel, 0) == audioInErrorInvalidParam);
+    for (const int negativeLevel : {-1, -5, -10, -50, -100}) {
+        Require(sceAudioInSetMicrophoneLevel(1, 0, negativeLevel, 0) == audioInErrorInvalidParam, "negativeLevel on type 1 must fail with invalidParam");
+        Require(sceAudioInSetMicrophoneLevel(0, 0, negativeLevel, 0) == audioInErrorInvalidParam, "negativeLevel on type 0 must fail with invalidParam");
+        Require(sceAudioInSetMicrophoneLevel(5, 0, negativeLevel, 0) == audioInErrorInvalidParam, "negativeLevel on type 5 must fail with invalidParam");
+        Require(sceAudioInSetMicrophoneLevel(-1, 0, negativeLevel, 0) == audioInErrorInvalidParam, "negativeLevel on type -1 must fail with invalidParam");
     }
 
-    for (const int badType : {0, 5, 6, 7, 10}) {
-        Require(sceAudioInSetMicrophoneLevel(badType, 0, 0, 0) == audioInErrorInvalidDevice);
-        Require(sceAudioInSetMicrophoneLevel(badType, 0, 50, 0) == audioInErrorInvalidDevice);
-        Require(sceAudioInSetMicrophoneLevel(badType, 0, 100, 0) == audioInErrorInvalidDevice);
+    for (const int badType : {0, 5, 6, 7, 8, 10, 100}) {
+        Require(sceAudioInSetMicrophoneLevel(badType, 0, 0, 0) == audioInErrorInvalidDevice, "badType at level 0 must fail with invalidDevice");
+        Require(sceAudioInSetMicrophoneLevel(badType, 0, 50, 0) == audioInErrorInvalidDevice, "badType at level 50 must fail with invalidDevice");
+        Require(sceAudioInSetMicrophoneLevel(badType, 0, 100, 0) == audioInErrorInvalidDevice, "badType at level 100 must fail with invalidDevice");
     }
 
     for (const int validType : {1, 2, 3, 4}) {
