@@ -24,6 +24,8 @@ if(BUILD_TESTING)
     add_test(NAME agc_buffer_pool_small_device_no_staging COMMAND agc_buffer_pool_tests --small-device-retention)
     set_tests_properties(agc_buffer_pool_small_device_no_staging PROPERTIES ENVIRONMENT
         "APS5_STAGING_POOL_MIB=0")
+    add_test(NAME agc_buffer_pool_host_image_budget COMMAND agc_buffer_pool_tests --host-image-budget)
+    set_tests_properties(agc_buffer_pool_host_image_budget PROPERTIES ENVIRONMENT "APS5_HOST_IMAGE_POOL_MIB=16")
     add_test(NAME agc_memory_accounting_budget_snapshot COMMAND agc_buffer_pool_tests --memory-accounting-budget-snapshot)
     set_tests_properties(agc_memory_accounting_budget_snapshot PROPERTIES ENVIRONMENT "APS5_TRACE_MEMORY_BUDGET=1"
         PASS_REGULAR_EXPRESSION "storage heap=2 sampled_live=1073741824 storage_cached=2147483648 reserved=8321499136 available=2415919104 cap=5368709120 selected=2415919104"

@@ -58,10 +58,11 @@ BufferPool::BufferPool(const Context& context) : maxSlots(std::max<std::size_t>(
     physical = context.physical;
     memoryProperties2 = context.memoryProperties2;
     imageBudget = ImageBudget(deviceTier.budget);
+    hostImageTier.budget = HostImageBudget();
 }
 
 BufferPool::~BufferPool() {
-    for (auto* tier : {&smallTier, &largeTier, &deviceTier, &smallDeviceTier}) {
+    for (auto* tier : {&smallTier, &largeTier, &deviceTier, &smallDeviceTier, &hostImageTier}) {
         for (const auto& [key, slots] : tier->free) {
             for (const auto& slot : slots) destroy(slot.allocation, true);
         }
@@ -149,6 +150,18 @@ VkDeviceSize BufferPool::ImageBudget(VkDeviceSize deviceBudget) {
     return deviceBudget / 4u;
 }
 
+VkDeviceSize BufferPool::HostImageBudget() {
+    static const VkDeviceSize value = [] {
+        const char* text = std::getenv("APS5_HOST_IMAGE_POOL_MIB");
+        return (text != nullptr ? static_cast<VkDeviceSize>(std::strtoull(text, nullptr, 10)) : VkDeviceSize{1024}) << 20u;
+    }();
+    return value;
+}
+
+bool BufferPool::hostImagePooled(VkDeviceSize bytes, std::uint32_t memoryType) const {
+    return hostImageTier.budget != 0 && bytes != 0 && bytes <= hostImageTier.budget && memoryType < memoryProperties.memoryTypeCount && !DeviceTiered(memoryProperties.memoryTypes[memoryType].propertyFlags);
+}
+
 bool BufferPool::imagePooled(VkDeviceSize bytes, std::uint32_t memoryType) const {
     return imageBudget != 0 && bytes != 0 && bytes <= imageBudget && bytes <= deviceTier.budget && memoryType < memoryProperties.memoryTypeCount && DeviceTiered(memoryProperties.memoryTypes[memoryType].propertyFlags);
 }
@@ -191,6 +204,23 @@ VkDeviceMemory BufferPool::TakeImageMemory(const VkMemoryAllocateInfo& allocatio
             return memory;
         }
         ++imageMisses;
+    } else if (hostImagePooled(allocation.allocationSize, type)) {
+        std::lock_guard lock(mutex);
+        const auto found = hostImageTier.free.find({static_cast<std::size_t>(allocation.allocationSize), 0, memoryProperties.memoryTypes[type].propertyFlags, type});
+        if (found != hostImageTier.free.end() && !found->second.empty()) {
+            auto& slots = found->second;
+            const auto memory = slots.back().allocation.memory;
+            hostImageOrder.erase(slots.back().order);
+            slots.pop_back();
+            if (slots.empty()) hostImageTier.free.erase(found);
+            --hostImageTier.slots;
+            hostImageTier.retainedBytes -= allocation.allocationSize;
+            ++hostImageTier.hits;
+            MemoryAccounting::Use(device, memory, operation);
+            if (allocatedType != nullptr) *allocatedType = type;
+            return memory;
+        }
+        ++hostImageTier.misses;
     }
     return AllocateMemory(allocation, operation, hostType, allocatedType, newImage);
 }
@@ -199,7 +229,44 @@ void BufferPool::PutImageMemory(VkDeviceMemory memory, VkDeviceSize bytes, std::
     if (memory == VK_NULL_HANDLE) return;
     imageMemoryReleasedBytes += bytes;
     if (!imagePooled(bytes, memoryType)) {
-        MemoryAccounting::Free(freeMemory, device, memory);
+        if (!hostImagePooled(bytes, memoryType)) {
+            MemoryAccounting::Free(freeMemory, device, memory);
+            return;
+        }
+        BufferAllocation retained{VK_NULL_HANDLE, memory, nullptr, 0, bytes, static_cast<std::size_t>(bytes), 0, memoryProperties.memoryTypes[memoryType].propertyFlags};
+        retained.memoryType = memoryType;
+        std::vector<BufferAllocation> evicted;
+        try {
+            std::lock_guard lock(mutex);
+            while (!hostImageOrder.empty() && hostImageTier.retainedBytes + bytes > hostImageTier.budget) {
+                const Slot* oldest = hostImageOrder.front();
+                const SlotKey key{oldest->allocation.bytes, 0, oldest->allocation.properties, oldest->allocation.memoryType};
+                const auto found = hostImageTier.free.find(key);
+                evicted.push_back(oldest->allocation);
+                hostImageOrder.pop_front();
+                hostImageTier.retainedBytes -= oldest->allocation.allocationBytes;
+                found->second.pop_front();
+                if (found->second.empty()) hostImageTier.free.erase(found);
+                --hostImageTier.slots;
+                ++hostImageTier.evictions;
+            }
+            const SlotKey key{retained.bytes, 0, retained.properties, memoryType};
+            auto& slots = hostImageTier.free[key];
+            slots.push_back({retained, ++clock, {}});
+            try {
+                slots.back().order = hostImageOrder.insert(hostImageOrder.end(), &slots.back());
+            } catch (...) {
+                slots.pop_back();
+                if (slots.empty()) hostImageTier.free.erase(key);
+                throw;
+            }
+            ++hostImageTier.slots;
+            hostImageTier.retainedBytes += bytes;
+            MemoryAccounting::Retain(device, memory, bytes);
+        } catch (...) {
+            destroy(retained);
+        }
+        for (const auto& gone : evicted) destroy(gone, true);
         return;
     }
     BufferAllocation allocation{VK_NULL_HANDLE, memory, nullptr, 0, bytes, static_cast<std::size_t>(bytes), 0, memoryProperties.memoryTypes[memoryType].propertyFlags};
@@ -558,9 +625,10 @@ VkDeviceSize BufferPool::trim() {
     Tier retiredLarge;
     Tier retiredDevice;
     Tier retiredSmallDevice;
+    Tier retiredHostImage;
     {
         std::lock_guard lock(mutex);
-        for (const auto& [tier, retired] : {std::pair{&smallTier, &retiredSmall}, std::pair{&largeTier, &retiredLarge}, std::pair{&deviceTier, &retiredDevice}, std::pair{&smallDeviceTier, &retiredSmallDevice}}) {
+        for (const auto& [tier, retired] : {std::pair{&smallTier, &retiredSmall}, std::pair{&largeTier, &retiredLarge}, std::pair{&deviceTier, &retiredDevice}, std::pair{&smallDeviceTier, &retiredSmallDevice}, std::pair{&hostImageTier, &retiredHostImage}}) {
             tier->free.swap(retired->free);
             tier->evictions += tier->slots;
             tier->retainedBytes = 0;
@@ -570,9 +638,10 @@ VkDeviceSize BufferPool::trim() {
         imageBytes = 0;
         imageSlots = 0;
         imageOrder.clear();
+        hostImageOrder.clear();
     }
     VkDeviceSize bytes = 0;
-    for (const auto* tier : {&retiredSmall, &retiredLarge, &retiredDevice, &retiredSmallDevice}) {
+    for (const auto* tier : {&retiredSmall, &retiredLarge, &retiredDevice, &retiredSmallDevice, &retiredHostImage}) {
         for (const auto& [key, slots] : tier->free) {
             for (const auto& slot : slots) bytes += destroy(slot.allocation, true);
         }

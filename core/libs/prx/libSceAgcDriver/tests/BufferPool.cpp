@@ -427,6 +427,58 @@ void AttachmentReclaim() {
     Expect(mock.liveBytes == 0, "an attachment allocation leaked memory");
 }
 
+void HostImageReuse() {
+    mock = MockDevice{};
+    {
+        auto context = budgetContext();
+        reportedBudget = 100 * MiB;
+        reportedUsage = 200 * MiB;
+        VkMemoryAllocateInfo host{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        host.allocationSize = 8 * MiB;
+        host.memoryTypeIndex = 1;
+        const auto first = AllocateImageMemory(context, host, 3, "vkAllocateMemory storage texture");
+        ReleaseImageMemory(context, first, host.allocationSize, 1);
+        Expect(mock.memoryBytes.contains(first), "released host-type image memory was freed instead of kept for reuse");
+        VkMemoryAllocateInfo device = host;
+        device.memoryTypeIndex = 0;
+        const auto deviceMemory = AllocateImageMemory(context, device, 3, "vkAllocateMemory storage texture");
+        ReleaseImageMemory(context, deviceMemory, device.allocationSize, 0);
+        Expect(mock.memoryBytes.contains(first), "a release while the device-local heap was over its budget flushed the host-type image memory");
+        const auto attempts = mock.attempts;
+        const auto again = AllocateImageMemory(context, host, 3, "vkAllocateMemory storage texture");
+        Expect(again == first && mock.attempts == attempts, "host-type image memory of the same size and type was allocated again instead of reused");
+        host.allocationSize = 4 * MiB;
+        const auto other = AllocateImageMemory(context, host, 3, "vkAllocateMemory storage texture");
+        Expect(other != first && mock.memoryBytes.at(other) == 4 * MiB, "host-type image memory of another size was handed out for a 4 MiB request");
+        ReleaseImageMemory(context, other, 4 * MiB, 1);
+        ReleaseImageMemory(context, again, 8 * MiB, 1);
+        reportedBudget = 0;
+        reportedUsage = 0;
+    }
+    Expect(mock.liveBytes == 0, "host-type image memory the pool kept leaked when the pool was destroyed");
+}
+
+void HostImageBudget() {
+    mock = MockDevice{};
+    {
+        auto context = mockContext();
+        VkMemoryAllocateInfo host{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        host.memoryTypeIndex = 1;
+        host.allocationSize = 12 * MiB;
+        const auto older = AllocateImageMemory(context, host, 3, "vkAllocateMemory storage texture");
+        host.allocationSize = 8 * MiB;
+        const auto newer = AllocateImageMemory(context, host, 3, "vkAllocateMemory storage texture");
+        ReleaseImageMemory(context, older, 12 * MiB, 1);
+        ReleaseImageMemory(context, newer, 8 * MiB, 1);
+        Expect(!mock.memoryBytes.contains(older) && mock.memoryBytes.contains(newer), "the host image pool kept more than its 16 MiB budget or evicted the newer allocation");
+        host.allocationSize = 20 * MiB;
+        const auto large = AllocateImageMemory(context, host, 3, "vkAllocateMemory storage texture");
+        ReleaseImageMemory(context, large, 20 * MiB, 1);
+        Expect(!mock.memoryBytes.contains(large), "host-type image memory larger than the pool's budget was kept");
+    }
+    Expect(mock.liveBytes == 0, "the host image pool leaked memory");
+}
+
 void SizeClassesAndDirections() {
     mock = MockDevice{};
     auto context = mockContext();
@@ -1338,16 +1390,16 @@ void ImageMemoryReuse() {
     const auto placed = AllocateImageMemory(context, host, 2u, "test image", &type);
     Expect(type == 1 && mock.allocations == 3, "a host-visible image allocation is made");
     ReleaseImageMemory(context, placed, 4 * MiB, 1);
-    Expect(mock.frees == 1 && context.bufferPool->RetainedImages() == 2, "a host-visible image allocation is freed when released");
+    Expect(mock.frees == 0 && context.bufferPool->RetainedImages() == 2 && mock.memoryBytes.contains(placed), "a host-visible image allocation is kept in its own tier when released");
     const auto unsized = AllocateImageMemory(context, smaller, 1u, "test image", &type);
     Expect(unsized == other && mock.allocations == 3 && context.bufferPool->RetainedImages() == 1, "an image of a retained size takes that allocation");
     ReleaseImageMemory(context, unsized, 0, 0);
-    Expect(mock.frees == 2 && context.bufferPool->RetainedImages() == 1, "an allocation of unknown size is freed");
+    Expect(mock.frees == 1 && context.bufferPool->RetainedImages() == 1, "an allocation of unknown size is freed");
     std::vector<VkDeviceMemory> many;
     for (int i = 0; i < 33; ++i) many.push_back(AllocateImageMemory(context, allocation, 1u, "test image", &type));
     Expect(many.front() == again && mock.allocations == 35, "a burst takes the retained allocation first and allocates the rest");
     for (const auto memory : many) ReleaseImageMemory(context, memory, 4 * MiB, 0);
-    Expect(context.bufferPool->RetainedImages() == 32 && mock.frees == 3 && !mock.memoryBytes.contains(many.front()) && mock.memoryBytes.contains(many.back()), "retained image memory is evicted least recently used under its budget");
+    Expect(context.bufferPool->RetainedImages() == 32 && mock.frees == 2 && !mock.memoryBytes.contains(many.front()) && mock.memoryBytes.contains(many.back()), "retained image memory is evicted least recently used under its budget");
     mock.results.push_back(VK_ERROR_OUT_OF_DEVICE_MEMORY);
     auto third = allocation;
     third.allocationSize = 3 * MiB;
@@ -1429,7 +1481,7 @@ void MemoryAccountingChecks() {
     }
     Expect(failed && MemoryAccounting::Read(context.device).allocations.size() == count, "a failed Vulkan allocation changed the live allocation count");
     ReleaseImageMemory(context, host, 4 * MiB, 1);
-    Expect(MemoryAccounting::Read(context.device).allocations.size() == 1, "host fallback memory stayed counted after release");
+    Expect(MemoryAccounting::Read(context.device).allocations.size() == 2 && find(host).retained == 4 * MiB, "released host fallback memory kept for reuse was not counted as retained");
     ReleaseImageMemory(context, reused, 4 * MiB, 0);
     context.bufferPool.reset();
     Expect(MemoryAccounting::Read(context.device).allocations.empty() && mock.liveBytes == 0, "image pool destruction left accounted memory");
@@ -1668,6 +1720,10 @@ int main(int argc, char** argv) {
             MemoryAccountingBudgetSnapshot();
             return failures == 0 ? 0 : 1;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--host-image-budget") {
+            HostImageBudget();
+            return failures == 0 ? 0 : 1;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--small-device-retention") {
             SmallDeviceRetention();
             if (std::getenv("APS5_STAGING_POOL_MIB") == nullptr) {
@@ -1689,6 +1745,7 @@ int main(int argc, char** argv) {
         SizeClassesAndDirections();
         LargerClass();
         ExactSizeReuse();
+        HostImageReuse();
         TableFill();
         TableLookups();
         KeptUntilFence();

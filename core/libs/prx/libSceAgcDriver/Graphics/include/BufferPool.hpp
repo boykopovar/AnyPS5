@@ -164,6 +164,8 @@ private:
     void evictOldest(Tier& tier, std::vector<BufferAllocation>& evicted);
     bool evictOldestImage(std::vector<BufferAllocation>& evicted);
     bool imagePooled(VkDeviceSize bytes, std::uint32_t memoryType) const;
+    bool hostImagePooled(VkDeviceSize bytes, std::uint32_t memoryType) const;
+    static VkDeviceSize HostImageBudget();
     bool heapOverBudget();
     // The retained-slot bound of each tier (APS5_BUFFER_POOL_SLOTS, default `defaultSlots`), read once.
     static std::size_t MaxSlots();
@@ -184,6 +186,8 @@ private:
     Tier largeTier;
     Tier deviceTier;
     Tier smallDeviceTier;
+    Tier hostImageTier;
+    std::list<Slot*> hostImageOrder;
     std::chrono::steady_clock::time_point heapRead{};
     bool heapOver = false;
     VkDeviceSize imageBudget = 0;
