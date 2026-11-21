@@ -139,6 +139,25 @@ int main() {
     Require(result != nullptr && *result == 0 && status == 0 && length == 0,
         "ures_getUTF8String did not return the empty string");
 
+    status = -124;
+    length = 8;
+    char terminated[8] = {};
+    result = ures_getUTF8String_nid_postfix(stringResource, terminated, &length, 1, &status);
+    Require(result == terminated && status == 0 && length == 2 && terminated[2] == 0,
+        "ures_getUTF8String did not clear the not-terminated warning");
+
+    status = -124;
+    length = 4;
+    result = ures_getUTF8String_nid_postfix(emptyResource, empty, &length, 1, &status);
+    Require(result == empty && status == 0 && length == 0 && empty[0] == 0,
+        "ures_getUTF8String did not clear the not-terminated warning for the empty string");
+
+    status = -127;
+    length = 8;
+    result = ures_getUTF8String_nid_postfix(stringResource, terminated, &length, 1, &status);
+    Require(result == terminated && status == -127 && length == 2,
+        "ures_getUTF8String changed another warning");
+
     status = 0;
     length = 8;
     result = ures_getUTF8String_nid_postfix(arrayResource, destination, &length, 1, &status);

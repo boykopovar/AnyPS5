@@ -139,6 +139,14 @@ bool ItemByIndex(const std::uint8_t* root, std::uint32_t resource, std::int32_t 
     return false;
 }
 
+void ClearNotTerminated(std::int32_t* status, int savedErrno, const char* caller) {
+    std::int32_t code = 0;
+    CopyIn(&code, status, sizeof(code), savedErrno, caller);
+    if (code != StringNotTerminated) return;
+    const std::int32_t zero = 0;
+    CopyOut(status, &zero, sizeof(zero), savedErrno, caller);
+}
+
 const char* ToUtf8(const std::vector<char16_t>& units, char* dest, std::int32_t* length, std::int8_t forceCopy,
     std::int32_t* status, int savedErrno, const char* caller) {
     std::int32_t capacity = 0;
@@ -151,6 +159,7 @@ const char* ToUtf8(const std::vector<char16_t>& units, char* dest, std::int32_t*
         if (capacity > 0) {
             const char terminator = 0;
             CopyOut(dest, &terminator, sizeof(terminator), savedErrno, caller);
+            ClearNotTerminated(status, savedErrno, caller);
         } else {
             CopyOut(status, &StringNotTerminated, sizeof(StringNotTerminated), savedErrno, caller);
         }
@@ -187,6 +196,8 @@ const char* ToUtf8(const std::vector<char16_t>& units, char* dest, std::int32_t*
     if (hostStatus != U_ZERO_ERROR) {
         const std::int32_t code = static_cast<std::int32_t>(hostStatus);
         CopyOut(status, &code, sizeof(code), savedErrno, caller);
+    } else {
+        ClearNotTerminated(status, savedErrno, caller);
     }
     return dest + offset;
 }
