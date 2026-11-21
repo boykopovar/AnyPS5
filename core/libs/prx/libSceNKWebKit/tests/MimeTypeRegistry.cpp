@@ -189,8 +189,8 @@ void TestTypePredicates() {
     Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("image/svg+xml")));
     Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("application/json")));
     Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("application/javascript")));
-    Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("application/x-ftp-directory")));
-    Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("APPLICATION/X-FTP-DIRECTORY")));
+    Require(!_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("application/x-ftp-directory")));
+    Require(!_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("APPLICATION/X-FTP-DIRECTORY")));
     Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("multipart/x-mixed-replace")));
     Require(!_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("application/pdf")));
     Require(!_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("image/png")));
@@ -476,8 +476,6 @@ void TestCanShowMIMEType() {
     Require(canShow(MakeString("application/xhtml+xml")));
     Require(canShow(MakeString("application/javascript")));
     Require(canShow(MakeString("application/ecmascript")));
-    Require(canShow(MakeString("application/x-ftp-directory")));
-    Require(canShow(MakeString("APPLICATION/X-FTP-DIRECTORY")));
     Require(canShow(MakeString("text/javascript")));
     Require(canShow(MakeString("application/json")));
     Require(canShow(MakeString("application/vnd.api+json")));
@@ -491,6 +489,7 @@ void TestCanShowMIMEType() {
     Require(!canShow(MakeString(nullptr)));
     RequireThrowsNotImplemented([&] { (void)canShow(MakeString("video/mp4")); });
     RequireThrowsNotImplemented([&] { (void)canShow(MakeString("application/octet-stream")); });
+    RequireThrowsNotImplemented([&] { (void)canShow(MakeString("application/x-ftp-directory")); });
     RequireThrowsNotImplemented([&] { (void)canShow(MakeString("application/x-mpegurl")); });
 }
 
