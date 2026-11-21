@@ -14,9 +14,12 @@ constexpr int GuestErrorFromHost(int hostError) {
 #ifdef _WIN32
         case WSAEINTR: return 4;
         case WSAEBADF: return 9;
+        case WSA_INVALID_HANDLE: return 9;
+        case WSA_NOT_ENOUGH_MEMORY: return 12;
         case WSAEACCES: return 13;
         case WSAEFAULT: return 14;
         case WSAEINVAL: return 22;
+        case WSA_INVALID_PARAMETER: return 22;
         case WSAEMFILE: return 24;
         case WSAEWOULDBLOCK: return 35;
         case WSAEINPROGRESS: return 36;
@@ -45,8 +48,11 @@ constexpr int GuestErrorFromHost(int hostError) {
         case WSAETOOMANYREFS: return 59;
         case WSAETIMEDOUT: return 60;
         case WSAECONNREFUSED: return 61;
+        case WSAELOOP: return 62;
+        case WSAENAMETOOLONG: return 63;
         case WSAEHOSTDOWN: return 64;
         case WSAEHOSTUNREACH: return 65;
+        case WSAECANCELLED: return 85;
 #else
         case EPERM: return 1;
         case EINTR: return 4;
@@ -58,6 +64,7 @@ constexpr int GuestErrorFromHost(int hostError) {
         case ENFILE: return 23;
         case EMFILE: return 24;
         case EPIPE: return 32;
+        case EDOM: return 33;
         case EAGAIN: return 35;
 #if EWOULDBLOCK != EAGAIN
         case EWOULDBLOCK: return 35;
@@ -72,6 +79,9 @@ constexpr int GuestErrorFromHost(int hostError) {
         case EPROTONOSUPPORT: return 43;
         case ESOCKTNOSUPPORT: return 44;
         case EOPNOTSUPP: return 45;
+#if ENOTSUP != EOPNOTSUPP
+        case ENOTSUP: return 45;
+#endif
         case EPFNOSUPPORT: return 46;
         case EAFNOSUPPORT: return 47;
         case EADDRINUSE: return 48;
@@ -88,8 +98,11 @@ constexpr int GuestErrorFromHost(int hostError) {
         case ETOOMANYREFS: return 59;
         case ETIMEDOUT: return 60;
         case ECONNREFUSED: return 61;
+        case ELOOP: return 62;
+        case ENAMETOOLONG: return 63;
         case EHOSTDOWN: return 64;
         case EHOSTUNREACH: return 65;
+        case ECANCELED: return 85;
         case EPROTO: return 92;
 #endif
         default: return GuestErrorIo;
