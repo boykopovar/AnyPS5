@@ -103,14 +103,16 @@ GuestLocale::OutputIterator APS5_VABI _ZNKSt7num_putIcSt19ostreambuf_iteratorIcS
     const bool hex = (stream->flags & IosHexFloat) == IosHexFloat;
     const std::size_t foundExp = raw.find_first_of(hex ? "pP" : "eE");
     const std::size_t exponent = foundExp == std::string::npos ? count : foundExp;
-    const char hostPoint = localeconv_nid_postfix()->decimal_point[0];
-    const std::size_t pointOffset = raw.find(hostPoint);
+    char widenedPoint = localeconv_nid_postfix()->decimal_point[0];
     std::string text = raw;
     if (count != 0) {
         if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix)) {
-            reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->widenRange(ctype, raw.data(), raw.data() + count, text.data());
+            const auto* ctypeVtable = reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable);
+            ctypeVtable->widenRange(ctype, raw.data(), raw.data() + count, text.data());
+            widenedPoint = ctypeVtable->widen(ctype, widenedPoint);
         }
     }
+    const std::size_t pointOffset = text.find(widenedPoint);
     const GuestLocale::Facet* punct = StreamCharNumpunct(stream);
     const auto* charPunct = reinterpret_cast<const GuestLocale::NumpunctFacet*>(punct);
     const auto& vtable = *reinterpret_cast<const GuestLocale::NumpunctVtable*>(punct->vtable);
