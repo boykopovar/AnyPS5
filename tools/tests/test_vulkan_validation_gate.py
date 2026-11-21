@@ -81,6 +81,7 @@ class ReportTests(unittest.TestCase):
         inserted = 'Insert instance layer "VK_LAYER_KHRONOS_validation"'
         text = ('<testsuite><testcase name="probe"><system-err>' + inserted + '\n'
                 'Validation Error: [ Undefined-Value-ShaderFragmentOutputMismatch ] pStages[1] writes to location 2\n'
+                'Validation Performance Warning: [ BestPractices-vkBindBufferMemory-small-dedicated-allocation ] | MessageID = 0x10b59d4b\n'
                 'Validation Warning: [ WARNING-Shader-OutputNotConsumed ] vertex output [ 3 ] is not consumed\n'
                 'Validation Error: [ SubmitValidation-WaitEvents-WrongQueue ] wrong queue\n'
                 'Validation Error: [ SubmitValidation-WaitEvents-WrongQueue ] wrong queue\n'
@@ -89,6 +90,7 @@ class ReportTests(unittest.TestCase):
                 '</system-err></testcase></testsuite>')
         tests, problems = self.report(text)
         self.assertEqual(tests["probe"]["diagnostics"], {
+            "BestPractices-vkBindBufferMemory-small-dedicated-allocation": 1,
             "Undefined-Value-ShaderFragmentOutputMismatch": 1,
             "WARNING-Shader-OutputNotConsumed": 1,
             "SubmitValidation-WaitEvents-WrongQueue": 2,
@@ -101,7 +103,7 @@ class ReportTests(unittest.TestCase):
             {"side": "candidate", "iteration": 1, "returncode": 0, "problems": [], "tests": tests},
         ])
         self.assertEqual(report["new_diagnostics"], {
-            "probe": ["SubmitValidation-WaitEvents-WrongQueue", "Undefined-Value-ShaderFragmentOutputMismatch", "WARNING-Shader-OutputNotConsumed"]})
+            "probe": ["BestPractices-vkBindBufferMemory-small-dedicated-allocation", "SubmitValidation-WaitEvents-WrongQueue", "Undefined-Value-ShaderFragmentOutputMismatch", "WARNING-Shader-OutputNotConsumed"]})
         self.assertEqual(report["exit_code"], 1)
 
     def test_a_test_without_the_layer_insertion_line_is_not_a_success(self):
@@ -786,16 +788,27 @@ class NestedContainmentTests(FixtureTests):
                         "-c", "commit.gpgSign=false", "commit", "-qam", "custom probe"], check=True)
         return source, gate.git(source, "rev-parse", "HEAD")
 
+    def unlink_once_released(self, path, timeout=30.0):
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                path.unlink()
+                return
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    return
+            time.sleep(0.01)
+
     def test_ctest_descendant_with_devnull_stdio_is_terminated_after_test_exit(self):
         ready = self.root / "nested.ready"
         marker = self.root / "nested.marker"
-        child = f"import time; from pathlib import Path; Path({str(ready)!r}).touch(); time.sleep(1); Path({str(marker)!r}).touch()"
+        child = f"import time; from pathlib import Path; held = open({str(marker)!r}, 'w'); Path({str(ready)!r}).touch(); time.sleep(300)"
         body = (f"subprocess.Popen([sys.executable, '-c', {child!r}], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
                 f"while not Path({str(ready)!r}).exists(): time.sleep(.01)\n")
         code, report = self.execute(self.source("nested-base"), self.probe_source("nested-head", body), "--repeat", "1")
         self.assertEqual(code, 0, report)
         self.assertTrue(ready.exists())
-        time.sleep(1.2)
+        self.unlink_once_released(marker)
         self.assertFalse(marker.exists())
 
     def test_breakaway_is_refused_directly_and_contained_under_ctest(self):
@@ -817,14 +830,14 @@ class NestedContainmentTests(FixtureTests):
 
         ready = self.root / "breakaway-ctest.ready"
         ctest_marker = self.root / "breakaway-ctest.marker"
-        ctest_child = f"import time; from pathlib import Path; Path({str(ready)!r}).touch(); time.sleep(1); Path({str(ctest_marker)!r}).touch()"
+        ctest_child = f"import time; from pathlib import Path; held = open({str(ctest_marker)!r}, 'w'); Path({str(ready)!r}).touch(); time.sleep(300)"
         body = (f"subprocess.Popen([sys.executable, '-c', {ctest_child!r}], stdin=subprocess.DEVNULL, "
                 f"stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=0x01000000)\n"
                 f"while not Path({str(ready)!r}).exists(): time.sleep(.01)\n")
         code, report = self.execute(self.source("breakaway-base"), self.probe_source("breakaway-head", body), "--repeat", "1")
         self.assertEqual(code, 0, report)
         self.assertTrue(ready.exists())
-        time.sleep(1.2)
+        self.unlink_once_released(ctest_marker)
         self.assertFalse(ctest_marker.exists())
 
 

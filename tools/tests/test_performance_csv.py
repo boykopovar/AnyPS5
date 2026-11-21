@@ -131,6 +131,13 @@ class PerformanceCsvTests(unittest.TestCase):
         self.assertEqual(result.stdout, b"")
         self.assertIn(b"recorded configuration differs", result.stderr)
 
+    def test_trace_output_directory_does_not_block_csv_export(self):
+        self.before["env"]["APS5_TRACE_DIR"] = "baseline"
+        self.after["env"]["APS5_TRACE_DIR"] = "candidate"
+        rows = self.rows(self.run_csv("--require-matching-context"))
+        self.assertTrue(any(row["kind"] == "metric" for row in rows))
+        self.assertFalse(any(row["kind"] == "configuration" for row in rows))
+
     def test_missing_and_empty_context_values_stay_distinct(self):
         self.before.pop("cpu", None)
         self.after["cpu"] = ""
@@ -333,6 +340,20 @@ class SafeCellTests(unittest.TestCase):
         for value in ("abc", "1-2", " x", "", 5, 2.5, None):
             with self.subTest(value=value):
                 self.assertEqual(performance_csv.safe_cell(value), value)
+
+class CellEscapeTests(unittest.TestCase):
+    def test_safe_cell_prefixes_formula_triggers_with_a_tab(self):
+        for value in ('=1+1', '+x', '-y', '@z'):
+            with self.subTest(value=value):
+                self.assertEqual(performance_csv.safe_cell(value), '\t' + value)
+        self.assertEqual(performance_csv.safe_cell('plain'), 'plain')
+        self.assertEqual(performance_csv.safe_cell(3), 3)
+
+    def test_configuration_cell_names_missing_values_and_escapes_backslashes(self):
+        self.assertEqual(performance_csv.configuration_cell(None), '<missing>')
+        self.assertEqual(performance_csv.configuration_cell('<missing>'), '\\<missing>')
+        self.assertEqual(performance_csv.configuration_cell('\\lead'), '\\\\lead')
+        self.assertEqual(performance_csv.configuration_cell('value'), 'value')
 
 
 if __name__ == "__main__":

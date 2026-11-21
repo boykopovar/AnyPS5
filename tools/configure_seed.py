@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 CHECK = re.compile(r"^//(Have (include|includes|function|symbol|library) |Test |Result of (TRY_COMPILE|TRY_RUN|try_run\(\)|TEST_BIG_ENDIAN|check_)|CHECK_TYPE_SIZE: )")
-ENTRY = re.compile(r"^([^#/:][^:]*):([A-Z]+)=(.*)$")
+ENTRY = re.compile(r"^([^#:][^:]*):([A-Z]+)=(.*)$")
 QUOTED_ENTRY = re.compile(r'^"(.*)":([A-Z]+)=(.*)$')
 QUOTED_DELIMITER = re.compile(r'":[A-Z]+=')
 
@@ -48,6 +48,8 @@ def write_seed(path, text):
         metadata = destination.stat()
     except FileNotFoundError:
         metadata = None
+    if metadata is not None and not stat.S_ISREG(metadata.st_mode):
+        raise OSError(f"Seed output must be a regular file: {path}")
     if metadata is not None and os.name == "nt" and metadata.st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
         raise PermissionError(f"Seed output is read-only: {path}")
     destination.parent.mkdir(parents=True, exist_ok=True)

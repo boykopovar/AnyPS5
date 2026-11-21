@@ -323,6 +323,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::UnlinkedCall: return Invoke(EmitUnlinkedCall, ctx, inst);
         case IrOpcode::WindowLaneGuard: return Invoke(EmitWindowLaneGuard, ctx, inst);
         case IrOpcode::DescriptorFault: return Invoke(EmitDescriptorFault, ctx, inst);
+        case IrOpcode::SplitStateGuard: return Invoke(EmitSplitStateGuard, ctx, inst);
         case IrOpcode::GetUserData: return Invoke(EmitGetUserData, ctx, inst);
         case IrOpcode::GetShaderBase: return Invoke(EmitGetShaderBase, ctx, inst);
         case IrOpcode::ShaderClock: return Invoke(EmitShaderClock, ctx, inst);
@@ -346,6 +347,8 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::SetVectorRegister: return Invoke(EmitSetVectorRegister, ctx, inst);
         case IrOpcode::LoadVectorWindow: return Invoke(EmitLoadVectorWindow, ctx, inst);
         case IrOpcode::StoreVectorWindow: return Invoke(EmitStoreVectorWindow, ctx, inst);
+        case IrOpcode::LoadSplitState: return Invoke(EmitLoadSplitState, ctx, inst);
+        case IrOpcode::StoreSplitState: return Invoke(EmitStoreSplitState, ctx, inst);
         case IrOpcode::GetGotoVariable: return Invoke(EmitGetGotoVariable, ctx, inst);
         case IrOpcode::SetGotoVariable: return Invoke(EmitSetGotoVariable, ctx, inst);
         case IrOpcode::GetScc: return Invoke(EmitGetScc, ctx, inst);
@@ -732,6 +735,8 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::ImageAtomicAnd64: return Invoke(EmitImageAtomicAnd64, ctx, inst);
         case IrOpcode::ImageAtomicOr64: return Invoke(EmitImageAtomicOr64, ctx, inst);
         case IrOpcode::ImageAtomicXor64: return Invoke(EmitImageAtomicXor64, ctx, inst);
+        case IrOpcode::ImageAtomicInc64: return Invoke(EmitImageAtomicInc64, ctx, inst);
+        case IrOpcode::ImageAtomicDec64: return Invoke(EmitImageAtomicDec64, ctx, inst);
         case IrOpcode::ImageAtomicCmpSwap64: return Invoke(EmitImageAtomicCmpSwap64, ctx, inst);
         case IrOpcode::GetAttribute: return Invoke(EmitGetAttribute, ctx, inst);
         case IrOpcode::GetInterpolationParameter: return Invoke(EmitGetInterpolationParameter, ctx, inst);
@@ -1502,6 +1507,12 @@ void EmitDescriptorFault(SpirvValueEmitContext& ctx, const IrValue& inst, std::u
     auto& state = ctx.state;
     if (state.faultBufferVariable == 0) ctx.Fail(inst, "reports an invalid descriptor without a fault buffer");
     EmitIfCondition(state, condition, [&] { RecordBdaFaultWords(state, low, high, ConstantU32(state, 0u), programCounter, BdaAbi::FaultReason::InvalidDescriptor); });
+}
+
+void EmitSplitStateGuard(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t condition, std::uint32_t saved, std::uint32_t current, std::uint32_t reg) {
+    auto& state = ctx.state;
+    if (state.faultBufferVariable == 0) ctx.Fail(inst, "checks an assumed split state register without a fault buffer");
+    EmitIfCondition(state, condition, [&] { RecordBdaFaultWords(state, saved, current, reg, ConstantU32(state, 0u), BdaAbi::FaultReason::SplitState); });
 }
 
 void EmitControlNop(SpirvValueEmitContext& context) {
