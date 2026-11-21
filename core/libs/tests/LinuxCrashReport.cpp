@@ -206,6 +206,14 @@ void Scenario(const std::string& name) {
     }
     if (name == "near-null" || name == "logged" || name == "redirected") WriteNearNull();
     if (name == "trap") Trap();
+    if (name == "hint") {
+        void* handle = dlopen(library, RTLD_NOW | RTLD_LOCAL);
+        Check(handle != nullptr, "cannot reopen the library for the crash hint\n");
+        auto set = reinterpret_cast<void (*)(const char*)>(dlsym(handle, "LibcSetCrashHint_nid_no_patch"));
+        Check(set != nullptr, "crash hint setter missing\n");
+        set("fixture crash hint");
+        WriteNearNull();
+    }
     if (name == "locked-monitorx") asm volatile(".byte 0xf0, 0x0f, 0x01, 0xfa");
     if (name == "guest-abort") asm volatile("int $0x45");
     if (name == "guest-assert") asm volatile("int $0x41");
@@ -414,6 +422,7 @@ int main(int argc, char** argv) {
         const auto redirected = run("redirected", SIGSEGV);
         Expect(Has(redirected, "[libc] fatal SIGSEGV (code 1) at address 0x0000000000000018") && Has(redirected, "  stack words that point at code, from rsp:"), "report did not reach the kept host standard error after a redirect");
         Expect(Has(run("divide", SIGFPE), "[libc] fatal SIGFPE"), "divide report missing");
+        Expect(Has(run("hint", SIGSEGV), "  note: fixture crash hint"), "crash hint missing from the report");
         Expect(Has(run("bus", SIGBUS), "[libc] fatal SIGBUS"), "bus report missing");
         Expect(Has(run("sent", SIGSEGV), "[libc] fatal SIGSEGV (code 0)"), "sent signal report missing");
         Expect(Has(run("overflow", SIGSEGV), "[libc] fatal SIGSEGV"), "alternate-stack overflow report missing");

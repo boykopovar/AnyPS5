@@ -129,6 +129,20 @@ extern "C" void LibcSetEndFlush_nid_no_patch(void (*flush)()) {
     std::call_once(installed, [] { previousAbortHandler = std::signal(SIGABRT, FlushOnAbort); });
 }
 
+namespace {
+
+std::atomic<const char*> crashHint{nullptr};
+
+}
+
+extern "C" void LibcSetCrashHint_nid_no_patch(const char* text) {
+    crashHint.store(text, std::memory_order_release);
+}
+
+extern "C" const char* LibcCrashHint_nid_no_patch() {
+    return crashHint.load(std::memory_order_acquire);
+}
+
 extern "C" void LibcRunEndFlush_nid_no_patch() {
     if (const auto flush = endFlush.load(std::memory_order_acquire)) flush();
     LogFileFlush_nid_no_patch();
