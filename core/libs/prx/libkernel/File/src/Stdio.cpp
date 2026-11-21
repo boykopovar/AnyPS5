@@ -343,6 +343,7 @@ static std::int64_t NativePositionedTransfer(int descriptor, void* buf, std::siz
         errno = write ? EBADF : EISDIR;
         return -1;
     }
+    if (File::IsNullDevice(descriptor)) return write ? static_cast<std::int64_t>(nbytes) : 0;
     LARGE_INTEGER position{};
     if (::GetFileType(handle) != FILE_TYPE_DISK || !::SetFilePointerEx(handle, LARGE_INTEGER{}, &position, FILE_CURRENT)) {
         errno = ESPIPE;
