@@ -22,6 +22,10 @@ struct Rewrite {
 };
 
 std::optional<Rewrite> _rewrite(const std::uint8_t map, const bool wide, const bool vector256, const bool memory, const std::uint8_t opcode) {
+    if (map == kMap0F38 && memory && (opcode == 0x8C || opcode == 0x8E)) {
+        if (opcode == 0x8C) return wide ? Rewrite{"VPMASKMOVQ", 0x2D} : Rewrite{"VPMASKMOVD", 0x2C};
+        return wide ? Rewrite{"VPMASKMOVQ", 0x2F} : Rewrite{"VPMASKMOVD", 0x2E};
+    }
     if (wide) return std::nullopt;
     if (map == kMap0F3A) {
         if (opcode == 0x38 && vector256) return Rewrite{"VINSERTI128", 0x18};
@@ -31,6 +35,7 @@ std::optional<Rewrite> _rewrite(const std::uint8_t map, const bool wide, const b
         return std::nullopt;
     }
     if (map != kMap0F38 || !memory) return std::nullopt;
+    if (opcode == 0x2A && vector256) return Rewrite{"VMOVNTDQA", 0x6F};
     if (opcode == 0x5A && vector256) return Rewrite{"VBROADCASTI128", 0x1A};
     if (opcode == 0x58) return Rewrite{"VPBROADCASTD", 0x18};
     if (opcode == 0x59) return Rewrite{"VPBROADCASTQ", vector256 ? std::uint8_t{0x19} : std::uint8_t{0x12}};
@@ -52,6 +57,9 @@ std::optional<Avx2Twin> DecodeAvx2Twin(const std::uint8_t* data, const std::size
     if (!rewrite) return std::nullopt;
     Avx2Twin twin{rewrite->Name, std::vector<std::uint8_t>(data, data + length)};
     twin.Replacement[vex + 3] = rewrite->Opcode;
+    twin.Replacement[vex + 2] = static_cast<std::uint8_t>(data[vex + 2] & 0x7F);
+    if (map == kMap0F38 && data[vex + 3] == 0x2A)
+        twin.Replacement[vex + 1] = static_cast<std::uint8_t>((data[vex + 1] & 0xE0) | kMap0F);
     if (map == kMap0F38 && data[vex + 3] == 0x59 && !vector256) {
         twin.Replacement[vex + 1] = static_cast<std::uint8_t>((data[vex + 1] & 0xE0) | kMap0F);
         twin.Replacement[vex + 2] = static_cast<std::uint8_t>((data[vex + 2] & 0x78) | kPrefixF2);
