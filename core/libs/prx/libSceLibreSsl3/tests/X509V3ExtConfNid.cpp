@@ -144,6 +144,8 @@ void TestAsn1() {
     CheckValue(Conf(83, "ASN1:FORMAT:HEX,BITSTRING:80"), 83, 0, {0x03, 0x02, 0x00, 0x80});
     CheckValue(Conf(83, "ASN1:FORMAT:HEX,BITSTRING:0100"), 83, 0, {0x03, 0x03, 0x00, 0x01, 0x00});
     CheckValue(Conf(83, "ASN1:BITSTRING:ab"), 83, 0, {0x03, 0x03, 0x00, 'a', 'b'});
+    CheckValue(Conf(83, "ASN1:OBJECT:DES-EDE3"), 83, 0, {0x06, 0x00});
+    CheckValue(Conf(83, "ASN1:OID:des-ede3"), 83, 0, {0x06, 0x00});
 }
 
 void TestMalformed() {
@@ -222,6 +224,11 @@ void TestErrorQueue() {
     RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:99999999999999999999x"), {0x0dfff0bc, 0x22fff074});
     RequireQueue(Conf(83, "ASN1:FORMAT:HEX,UTF8:x"), {0x0dfff0b1, 0x22fff074});
     RequireQueue(Conf(83, "ASN1:OID:bogus"), {0x0dfff0b7, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:OBJECT:undefined"), {0x0dfff0b7, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:  OID:UNDEF"), {0x0dfff0b7, 0x22fff074});
+    RequireQueue(Conf(126, "undefined"), {0x22fff06e});
+    RequireQueue(Conf(126, "serverAuth,UNDEF"), {0x22fff06e});
+    RequireQueue(Conf(126, "serverAuth:undefined"), {0x22fff06e});
     RequireQueue(Conf(83, ""), {0x22fff06c, 0x22fff069});
     RequireQueue(Conf(83, "digitalSignature,"), {0x22fff06c, 0x22fff069});
     RequireQueue(Conf(83, "digitalSignature:"), {0x22fff06d, 0x22fff069});
@@ -281,6 +288,10 @@ void TestPlain() {
         {0x30, 0x14, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01,
             0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x02});
     CheckValue(Conf(83, "critical,digitalSignature"), 83, 1, {0x03, 0x02, 0x07, 0x80});
+    CheckValue(Conf(126, "serverAuth,idea-cfb"), 126, 0,
+        {0x30, 0x0c, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01, 0x06, 0x00});
+    CheckValue(Conf(126, "UNDEF:serverAuth"), 126, 0,
+        {0x30, 0x0a, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01});
 }
 
 void TestPlainLineBreaks() {
