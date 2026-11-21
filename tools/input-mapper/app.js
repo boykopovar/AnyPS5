@@ -208,6 +208,7 @@ function renderChordControl(entry, label) {
     });
     control.dir = 'ltr';
     control.append(summary, options);
+    control.addEventListener('toggle', filterActions);
     updateSummary();
     return control;
 }
@@ -263,7 +264,7 @@ function renderBinding(entry, position) {
     return row;
 }
 
-function render() {
+function render(focusEntry) {
     const container = byId('mappings');
     container.replaceChildren();
     for (const group of groups) {
@@ -275,10 +276,9 @@ function render() {
             article.dataset.action = action;
             const heading = element('div', undefined, 'action-heading');
             const add = button(t('add'), t('addLabel', {action}), () => {
-                entries.push({action, type: 'KEY', value: ''});
-                render();
-                const rows = document.querySelectorAll(`[data-action="${action}"] .binding`);
-                rows[rows.length - 1].querySelectorAll('.dropdown-trigger')[1].focus();
+                const entry = {action, type: 'KEY', value: ''};
+                entries.push(entry);
+                render(entry);
             });
             add.className = 'add-binding';
             const title = element('div', undefined, 'action-title');
@@ -300,14 +300,19 @@ function render() {
         }
         container.append(section);
     }
+    bindingControls.get(focusEntry)?.focus();
     updateOutput();
 }
 
 function filterActions() {
     const searchField = byId('search');
     const search = searchField.value.trim().toLowerCase();
-    const focusedAction = document.activeElement?.closest('.action');
+    const focused = document.activeElement;
+    const focusedAction = focused?.closest('.action');
     const inputActions = actionsForInput(search, entries);
+    if (focused?.closest('.binding')?.querySelector('[aria-invalid="true"]') || focused?.closest('.chord-picker')?.open) {
+        inputActions.add(focusedAction.dataset.action);
+    }
     if (activeView === 'controls') byId('group-title').textContent = search ? t('search') : groupLabel(selectedGroup);
     for (const category of byId('categories').children) {
         category.setAttribute('aria-pressed', String(!search && category.dataset.group === selectedGroup));

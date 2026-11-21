@@ -730,6 +730,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         libraries = libraryKeys(keys, context, state, vertexInput, resources, shaders, narrowLibraryKeys);
         std::vector<VkDynamicState> dynamicStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
         if (state.stencilReplayReference) dynamicStates.push_back(VK_DYNAMIC_STATE_STENCIL_REFERENCE);
+        if (state.stencilReplayReference && state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && state.cullMode != VK_CULL_MODE_NONE && context.graphicsPipelineLibrary) dynamicStates.push_back(VK_DYNAMIC_STATE_FRONT_FACE_EXT);
         if (depthBounds) dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BOUNDS);
         if (depthBias) dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BIAS);
         if (libraries) dynamicStates.assign(PipelineLibraryDynamicStates().begin(), PipelineLibraryDynamicStates().end());
@@ -1099,6 +1100,28 @@ void Pipeline::ContinueSecondChannel(CommandState& recording, const State& state
     Require(secondChannel != VK_NULL_HANDLE, "the pipeline blends every channel in one pass");
     recording.BindPipeline(context, secondChannel, dynamicSlots);
     setColorWriteMasks(recording, state, masked, true);
+}
+
+bool Pipeline::MasksStencilReplayPasses(const State& state) const {
+    return libraries && (dynamicColorWriteMask || std::ranges::all_of(state.blends, [](const VkPipelineColorBlendAttachmentState& blend) { return blend.colorWriteMask == 0u; }));
+}
+
+void Pipeline::SetStencilReplayMasks(CommandState& recording, const State& state, const State* masked, bool colorAndDepth, std::uint32_t stencilBits) const {
+    Require(MasksStencilReplayPasses(state) && state.depth.has_value(), "stencil replay passes need dynamic depth, stencil and color write masks");
+    recording.SetDepthWriteEnable(context, colorAndDepth && state.depthWrite);
+    if (colorAndDepth) setColorWriteMasks(recording, state, masked, false);
+    else if (dynamicColorWriteMask && !state.blends.empty()) {
+        const std::vector<VkColorComponentFlags> none(state.blends.size(), 0u);
+        recording.SetColorWriteMasks(context, none);
+    }
+    const auto front = state.stencilFront.writeMask & stencilBits;
+    const auto back = state.stencilBack.writeMask & stencilBits;
+    if (front == back) {
+        recording.SetStencilWriteMask(context, VK_STENCIL_FACE_FRONT_AND_BACK, front);
+        return;
+    }
+    recording.SetStencilWriteMask(context, VK_STENCIL_FACE_FRONT_BIT, front);
+    recording.SetStencilWriteMask(context, VK_STENCIL_FACE_BACK_BIT, back);
 }
 
 void Pipeline::setColorWriteMasks(CommandState& recording, const State& state, const State* masked, bool secondChannel) const {

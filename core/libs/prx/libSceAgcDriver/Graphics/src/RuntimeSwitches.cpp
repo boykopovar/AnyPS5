@@ -32,6 +32,7 @@ constexpr std::array<const char*, SwitchCount> SwitchNames{
     "APS5_NO_ALIAS_VIEWS",
     "APS5_NO_TARGET_MEMO",
     "APS5_NO_TARGET_MEMO_OVERLAP_CACHE",
+    "APS5_NO_STAGE_POOL_REUSE",
     "APS5_INDEX_IN_PLACE_BEHIND_WRITER",
     "APS5_WIDE_LIBRARY_KEYS",
 };
@@ -55,6 +56,7 @@ struct SwitchValues {
             std::getenv("APS5_NO_ALIAS_VIEWS") != nullptr,
             std::getenv("APS5_NO_TARGET_MEMO") != nullptr,
             std::getenv("APS5_NO_TARGET_MEMO_OVERLAP_CACHE") != nullptr,
+            std::getenv("APS5_NO_STAGE_POOL_REUSE") != nullptr,
             std::getenv("APS5_INDEX_IN_PLACE_BEHIND_WRITER") != nullptr,
             std::getenv("APS5_WIDE_LIBRARY_KEYS") != nullptr,
         };

@@ -37,7 +37,10 @@ class MockElement extends EventTarget {
         this.children = [];
         this.append(...nodes);
     }
-    focus() { this.focused = true; }
+    focus() {
+        this.focused = true;
+        document.activeElement = this;
+    }
     click() { this.dispatchEvent(new Event('click')); }
     closest(selector) {
         for (let node = this; node; node = node.parentElement) {
@@ -66,6 +69,7 @@ class MockElement extends EventTarget {
 
 function matches(node, selector) {
     if (selector.startsWith('.')) return node.className.split(/\s+/u).includes(selector.slice(1));
+    if (selector === '[aria-invalid="true"]') return node.getAttribute('aria-invalid') === 'true';
     const attr = /^\[data-action="([^"]+)"\]$/u.exec(selector);
     if (attr) return node.dataset.action === attr[1];
     return node.tagName === selector.toUpperCase();
@@ -164,4 +168,50 @@ test('cancelling replacement preserves an earlier import report until replacemen
     assert.equal(app.dialogOpens(), 2);
     assert.equal(app.get('import-report').children[0].textContent, 'Import read successfully');
     assert.equal(app.get('preview').value, 'Cross = KEY:Space\n');
+});
+
+test('replacing a built-in search result keeps the new binding reachable until it has a value', async t => {
+    const app = await setup(t, 'search-add');
+    const search = app.get('search');
+    search.value = 'F12';
+    search.dispatchEvent(new Event('input'));
+    const mappings = app.get('mappings');
+    mappings.querySelector('[data-action="Screenshot"] .add-binding').click();
+    const action = mappings.querySelector('[data-action="Screenshot"]');
+    const value = action.querySelectorAll('select')[1];
+    assert.equal(action.hidden, false);
+    assert.equal(action.parentElement.hidden, false);
+    assert.equal(document.activeElement, action.querySelectorAll('.dropdown-trigger')[1]);
+    assert.equal(search.value, 'F12');
+    assert.equal(app.get('download').disabled, true);
+
+    value.value = 'K';
+    value.dispatchEvent(new Event('change'));
+    assert.equal(action.hidden, true);
+    assert.equal(document.activeElement, search);
+    assert.equal(app.get('download').disabled, false);
+    assert.equal(app.get('preview').value, 'Screenshot = KEY:K\n');
+});
+
+test('a chord search result stays visible while changing its buttons in the open picker', async t => {
+    const app = await setup(t, 'search-edit-chord');
+    await app.importFile('input.ini', 'Screenshot = PAD:L1+R1\n');
+    const search = app.get('search');
+    search.value = 'PAD:L1+R1';
+    search.dispatchEvent(new Event('input'));
+    const action = app.get('mappings').querySelector('[data-action="Screenshot"]');
+    const picker = action.querySelector('.chord-picker');
+    const r1 = picker.querySelectorAll('input').find(input => input.value === 'R1');
+    picker.open = true;
+    r1.focus();
+    r1.checked = false;
+    picker.querySelector('.chord-buttons').dispatchEvent(new Event('change'));
+    assert.equal(action.hidden, false);
+    assert.equal(app.get('preview').value, 'Screenshot = PAD:L1\n');
+
+    picker.querySelector('summary').focus();
+    picker.open = false;
+    picker.dispatchEvent(new Event('toggle'));
+    assert.equal(action.hidden, true);
+    assert.equal(document.activeElement, search);
 });

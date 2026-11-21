@@ -800,7 +800,7 @@ int APS5_VABI sigtimedwait_nid_postfix(const GuestSignalSet* set, void* info, co
     if (set == nullptr) { *__error_nid_postfix() = 22; return -1; }
     GuestSignalSet requestedSet{};
     if (!GuestCopyIn_nid_no_patch(&requestedSet, set, sizeof(requestedSet))) { *__error_nid_postfix() = 14; return -1; }
-    if (!SetHasSignal(requestedSet)) { *__error_nid_postfix() = 22; return -1; }
+    if (timeout == nullptr && !SetHasSignal(requestedSet)) { *__error_nid_postfix() = 22; return -1; }
     KernelTimespec requestedTimeout{};
     if (timeout != nullptr) {
         if (!GuestCopyIn_nid_no_patch(&requestedTimeout, timeout, sizeof(requestedTimeout))) { *__error_nid_postfix() = 14; return -1; }
