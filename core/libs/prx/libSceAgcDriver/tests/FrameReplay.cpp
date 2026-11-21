@@ -78,6 +78,19 @@ std::uint64_t at(const volatile void* pointer) {
     return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer));
 }
 
+int runTool(std::string command) {
+#ifdef _WIN32
+    command = "\"" + command + "\"";
+#elif defined(__APPLE__)
+    if (const char* path = std::getenv("DYLD_LIBRARY_PATH"); path != nullptr) {
+        std::string quoted = "'";
+        for (const char character : std::string(path)) quoted += character == '\'' ? std::string("'\\''") : std::string(1, character);
+        command = "DYLD_LIBRARY_PATH=" + quoted + "' " + command;
+    }
+#endif
+    return std::system(command.c_str());
+}
+
 class Request final : public AgcDriver::IFlipRequest {
 public:
     explicit Request(std::atomic<int>& ready) : ready(ready) {}
@@ -145,7 +158,7 @@ Layout allocate(std::size_t bytes = BlockBytes, std::size_t registrationBytes = 
     auto* const block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
     check(block != nullptr, "cannot allocate guest memory");
     GuestArena::GuestArenaCommit_nid_postfix(block, bytes, 0x04, bytes);
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, bytes);
 #endif
     {
@@ -263,10 +276,7 @@ void testCaptureAndReplay(const std::filesystem::path& tool, bool pipelines) {
         std::filesystem::remove(secondDump);
         auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict " + options + " --dump " + std::to_string(at(layout.firstTarget)) + ":" + std::to_string(DataBytes) + ":\"" +
                        firstDump.string() + "\" --dump " + std::to_string(at(late.firstTarget)) + ":" + std::to_string(DataBytes) + ":\"" + secondDump.string() + "\" > \"" + output.string() + "\" 2> \"" + output.string() + ".log\"";
-#ifdef _WIN32
-        command = "\"" + command + "\"";
-#endif
-        const auto code = std::system(command.c_str());
+        const auto code = runTool(command);
         check(code == 0, "agc_frame_replay " + options + " exited with " + std::to_string(code));
         check(readFile(firstDump) == first, "the replay " + options + " did not reproduce the first copy");
         check(readFile(secondDump) == second, "the replay " + options + " did not reproduce the second copy");
@@ -342,10 +352,7 @@ void testConcurrentCopies(const std::filesystem::path& tool) {
 
     const auto dump = capture / "targets.bin";
     auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --dump " + std::to_string(at(targets)) + ":" + std::to_string(Copies * DataBytes) + ":\"" + dump.string() + "\"";
-#ifdef _WIN32
-    command = "\"" + command + "\"";
-#endif
-    const auto code = std::system(command.c_str());
+    const auto code = runTool(command);
     check(code == 0, "agc_frame_replay exited with " + std::to_string(code));
     const auto replayed = readFile(dump);
     check(replayed.size() == Copies * DataBytes, "the replay dumped " + std::to_string(replayed.size()) + " bytes of the copy targets");
@@ -395,10 +402,7 @@ void testParkedRewindReplays(const std::filesystem::path& tool) {
 
     const auto dump = capture / "rewind.bin";
     auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --dump " + std::to_string(at(layout.firstTarget)) + ":" + std::to_string(DataBytes) + ":\"" + dump.string() + "\"";
-#ifdef _WIN32
-    command = "\"" + command + "\"";
-#endif
-    const auto code = std::system(command.c_str());
+    const auto code = runTool(command);
     check(code == 0, "agc_frame_replay exited with " + std::to_string(code));
     check(readFile(dump) == copied, "the replay did not run the copy chained from the released REWIND tail");
 }
@@ -456,12 +460,9 @@ void testRewindTargetReuse(const std::filesystem::path& tool) {
     check(!reader.Truncated(), "the capture is truncated");
     const auto firstDump = capture / "first.bin";
     const auto secondDump = capture / "second.bin";
-    auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --no-pace --repeat 5 --dump " + std::to_string(at(layout.firstTarget)) + ":4:\"" + firstDump.string() + "\" --dump " +
+    const auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --no-pace --repeat 5 --dump " + std::to_string(at(layout.firstTarget)) + ":4:\"" + firstDump.string() + "\" --dump " +
                    std::to_string(at(layout.secondTarget)) + ":4:\"" + secondDump.string() + "\"";
-#ifdef _WIN32
-    command = "\"" + command + "\"";
-#endif
-    const auto code = std::system(command.c_str());
+    const auto code = runTool(command);
     check(code == 0, "agc_frame_replay exited with " + std::to_string(code));
     const auto replayedFirst = readFile(firstDump);
     const auto replayedSecond = readFile(secondDump);
@@ -501,10 +502,7 @@ void testReservationError(const std::filesystem::path& tool) {
     const auto result = capture / "reservation error.json";
     const auto log = capture / "reservation error.log";
     auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --repeat 2 --strict > \"" + result.string() + "\" 2> \"" + log.string() + "\"";
-#ifdef _WIN32
-    command = "\"" + command + "\"";
-#endif
-    check(std::system(command.c_str()) != 0, "the replay accepted an incompatible reservation on the second pass");
+    check(runTool(command) != 0, "the replay accepted an incompatible reservation on the second pass");
     const auto errors = readFile(log);
     check(std::string(reinterpret_cast<const char*>(errors.data()), errors.size()).find("EOP flip token is reserved for a different flip") != std::string::npos, "the repeated replay did not report the incompatible reservation");
     const auto report = readFile(result);
@@ -569,10 +567,7 @@ std::filesystem::path checkCapture(std::uint64_t inFlight) {
 std::vector<std::byte> replayed(const std::filesystem::path& tool, const std::filesystem::path& capture, const void* address, std::size_t bytes, const std::string& options = "") {
     const auto dump = capture / "dump.bin";
     auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict" + options + " --dump " + std::to_string(at(address)) + ":" + std::to_string(bytes) + ":\"" + dump.string() + "\"";
-#ifdef _WIN32
-    command = "\"" + command + "\"";
-#endif
-    const auto code = std::system(command.c_str());
+    const auto code = runTool(command);
     check(code == 0, "agc_frame_replay exited with " + std::to_string(code));
     return readFile(dump);
 }

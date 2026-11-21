@@ -8,6 +8,9 @@
 #include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#ifdef __APPLE__
+#include <sys/mman.h>
+#endif
 #include <limits>
 #include <string_view>
 #include <barrier>
@@ -31,7 +34,7 @@ std::byte* allocate(std::size_t size, bool gpu = true) {
     auto* bytes = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(size, 65536));
     check(bytes != nullptr, "guest allocation failed");
     GuestArena::GuestArenaCommit_nid_postfix(bytes, size, 0x04, size);
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(bytes, size);
 #endif
     GuestAllocations::Mutation mutation;
@@ -75,7 +78,7 @@ void testMemoryOrder(const std::filesystem::path& directory) {
 }
 
 void testReusedMemory(const std::filesystem::path& directory) {
-#if defined(_WIN32) || defined(__linux__)
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
     constexpr std::size_t Size = 2 * FrameCaptureWriter::BlockBytes;
     auto* bytes = allocate(Size);
     auto* cpu = allocate(FrameCaptureWriter::BlockBytes, false);
@@ -100,7 +103,7 @@ void testReusedMemory(const std::filesystem::path& directory) {
 }
 
 void testSharedPage(const std::filesystem::path& directory) {
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     constexpr std::size_t Page = 65536;
     auto* page = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(Page, Page));
     check(page != nullptr, "guest reservation failed");
@@ -125,10 +128,36 @@ void testSharedPage(const std::filesystem::path& directory) {
 #endif
 }
 
+void testWatchedRestore(const std::filesystem::path& directory) {
+#if defined(__linux__) || defined(__APPLE__)
+    constexpr std::size_t Size = 65536;
+    auto* page = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(Size, Size));
+    check(page != nullptr, "guest reservation failed");
+    GuestArena::GuestArenaRelease_nid_postfix(page, Size);
+    std::uintptr_t base = 0;
+    std::size_t arenaSize = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&base, &arenaSize);
+    FrameCaptureWriter writer(directory);
+    writer.WriteRange(address(page), Size, FrameRangeKind::Watched, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable | FrameRangeAccess::Gpu);
+    writer.Finish("{\"arena_base\":" + std::to_string(base) + "}");
+    const FrameCaptureReader reader(directory);
+    const auto skipped = restoreMemory(reader);
+    check(skipped.bytes == 0, "a watched range was skipped");
+    check(GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(address(page), Size), "the replay did not put a watched range under the write watch");
+#else
+    static_cast<void>(directory);
+#endif
+}
+
 void testHostNeighbors(const std::filesystem::path& directory) {
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
-    void* mapped = mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#ifdef __APPLE__
+    void* const hint = reinterpret_cast<void*>(0x400000000000ull);
+#else
+    void* const hint = nullptr;
+#endif
+    void* mapped = mmap(hint, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     check(mapped != MAP_FAILED, "host allocation failed");
     auto* occupied = static_cast<std::byte*>(mapped);
     auto* available = occupied + page;
@@ -803,6 +832,24 @@ void testBlockingSubmission(const std::filesystem::path& directory) {
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
 }
 
+void testReadTrappedPages(const std::filesystem::path& directory) {
+    constexpr std::size_t Size = FrameCaptureWriter::BlockBytes;
+    auto* bytes = allocate(Size);
+    std::fill_n(bytes, Size, std::byte{0x5a});
+    check(GuestWriteWatch::GuestWriteWatchSetReadTrapResolver_nid_postfix([](std::uintptr_t begin, std::uintptr_t end) { GuestWriteWatch::GuestWriteWatchReleaseReads_nid_postfix(begin, end - begin); }), "the write watch has no read trap resolver");
+    check(GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(address(bytes), Size), "the guest pages could not be read-trapped");
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    recorder->FrameBoundary();
+    GuestWriteWatch::GuestWriteWatchReleaseReads_nid_postfix(address(bytes), Size);
+    const FrameCaptureReader reader(directory);
+    const bool covered = std::any_of(reader.Chunks().begin(), reader.Chunks().end(), [&](const FrameMemoryChunk& chunk) {
+        return chunk.kind == FrameMemoryKind::Range && chunk.address <= address(bytes) && address(bytes) + Size <= chunk.address + chunk.bytes && (chunk.access & FrameRangeAccess::Gpu) != 0;
+    });
+    check(covered, "read-trapped guest pages were left out of the capture's ranges");
+}
+
 void testShaderCode(const std::filesystem::path& directory, bool host, std::string_view mode = {}) {
     const bool prologue = mode.starts_with("shader_prologue_");
     const bool readOnly = mode.ends_with("readonly");
@@ -812,7 +859,7 @@ void testShaderCode(const std::filesystem::path& directory, bool host, std::stri
     auto* shader = reinterpret_cast<Shader*>(bytes);
     auto* code = bytes + (1u << 19) + 256;
     constexpr std::size_t CodeBytes = 3 * FrameCaptureWriter::BlockBytes;
-#if defined(_WIN32) || defined(__linux__)
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
     if (host) {
 #ifdef _WIN32
         auto* memory = static_cast<std::byte*>(VirtualAlloc(nullptr, CodeBytes + 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
@@ -848,7 +895,7 @@ void testShaderCode(const std::filesystem::path& directory, bool host, std::stri
 #ifdef _WIN32
         DWORD previous = 0;
         check(VirtualProtect(hostMemory, CodeBytes + 4096, PAGE_READONLY, &previous) != 0, "cannot protect host shader pages");
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__APPLE__)
         check(mprotect(hostMemory, CodeBytes + 4096, PROT_READ) == 0, "cannot protect host shader pages");
 #endif
     }
@@ -1109,6 +1156,7 @@ int main(int argc, char** argv) {
         else if (mode.starts_with("shader_prologue_")) testShaderCode(directory, true, mode);
         else if (mode == "shared_page") testSharedPage(directory);
         else if (mode == "host_neighbors") testHostNeighbors(directory);
+        else if (mode == "watched_restore") testWatchedRestore(directory);
         else if (mode == "unwatched") testUnwatched();
         else if (mode == "once") testPagesCollectedOnce(directory);
         else if (mode == "pending_result") testPendingResultRead(directory);
@@ -1127,6 +1175,7 @@ int main(int argc, char** argv) {
         else if (mode == "tokens") testEopTokens();
         else if (mode == "reservations" || mode == "reservation_failure") testRepeatedReservations(directory, mode == "reservation_failure");
         else if (mode == "blocking") testBlockingSubmission(directory);
+        else if (mode == "read_trapped") testReadTrappedPages(directory);
         else if (mode == "environment") testColdPipelines();
         else if (mode == "shader" || mode == "shader_host") testShaderCode(directory, mode == "shader_host");
         else throw std::runtime_error("unknown test");
