@@ -23,7 +23,7 @@ endif()
 install(FILES ${CMAKE_SOURCE_DIR}/3rdparty/nghttp2/COPYING DESTINATION licenses/nghttp2)
 
 set(http2ZlibDir ${CMAKE_SOURCE_DIR}/3rdparty/libjpeg-turbo/src/spng/zlib)
-add_library(anyps5_http2_transport STATIC EXCLUDE_FROM_ALL Transport.cpp
+add_library(anyps5_http2_transport STATIC EXCLUDE_FROM_ALL 
     ${http2ZlibDir}/adler32.c ${http2ZlibDir}/crc32.c ${http2ZlibDir}/inffast.c
     ${http2ZlibDir}/inflate.c ${http2ZlibDir}/inftrees.c ${http2ZlibDir}/zutil.c)
 target_include_directories(anyps5_http2_transport PRIVATE ${LIBS_INCLUDE_DIR} ${http2ZlibDir})
@@ -142,4 +142,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_http2_auth_status PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>")
     endif()
+endif()
+
+# --- small-size libraries split from Transport.cpp ---
+add_library(anyps5_http2_transport_Transport_Chunk01 STATIC chunks/Transport_Chunk01.cpp)
+add_library(anyps5_http2_transport_Transport_Chunk02 STATIC chunks/Transport_Chunk02.cpp)
+target_link_libraries(anyps5_http2_transport PUBLIC anyps5_http2_transport_Transport_Chunk01 anyps5_http2_transport_Transport_Chunk02)
+get_target_property(anyps5_http2_transport_incdirs anyps5_http2_transport INCLUDE_DIRECTORIES)
+if(anyps5_http2_transport_incdirs)
+    target_include_directories(anyps5_http2_transport_Transport_Chunk01 PRIVATE ${anyps5_http2_transport_incdirs})
+    target_include_directories(anyps5_http2_transport_Transport_Chunk02 PRIVATE ${anyps5_http2_transport_incdirs})
 endif()

@@ -376,7 +376,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Dispatch/DispatchTiming.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Dispatch/IndirectDispatch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Dispatch/VariantValidation.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/Draw.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawProgramTrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawCache.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawCacheStatistics.cpp
@@ -406,12 +406,12 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Packets/PacketTiming.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Presentation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/QueueWorker.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/Submission.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/StallPrompt.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/SubmissionRing.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/WorkerAffinity.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Shaders/ShaderDiagnostics.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Shaders/ShaderRegistry.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Synchronization/DeferredLabels.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Synchronization/LabelHistory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Synchronization/SynchronizationStatistics.cpp
@@ -421,7 +421,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/HostAllocator.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PerformanceTrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PerformanceTraceThread.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/TraceFile.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ThreadPriority.cpp
         
         
@@ -431,7 +431,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/HostReportSources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/HostReportVulkan.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ShaderDeviceProfile.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Pm4.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/SubmissionCapture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FrameCapture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Frame
@@ -1691,4 +1691,56 @@ target_link_libraries(libSceAgcDriver_MultisampleTextureLayout_Chunk01 PUBLIC li
 get_target_property(libSceAgcDriver_MultisampleTextureLayout_Chunk01_incdirs libSceAgcDriver_MultisampleTextureLayout_Chunk01 INCLUDE_DIRECTORIES)
 if(libSceAgcDriver_MultisampleTextureLayout_Chunk01_incdirs)
     target_include_directories(libSceAgcDriver_MultisampleTextureLayout_Chunk01_MultisampleTextureLayout_Chunk01 PRIVATE ${libSceAgcDriver_MultisampleTextureLayout_Chunk01_incdirs})
+endif()
+
+# --- small-size libraries split from Pm4.cpp ---
+add_library(libSceAgcDriver_Pm4_Chunk01 STATIC Execution/src/chunks/Pm4_Chunk01.cpp)
+add_library(libSceAgcDriver_Pm4_Chunk02 STATIC Execution/src/chunks/Pm4_Chunk02.cpp)
+add_library(libSceAgcDriver_Pm4_Chunk03 STATIC Execution/src/chunks/Pm4_Chunk03.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_Pm4_Chunk01 libSceAgcDriver_Pm4_Chunk02 libSceAgcDriver_Pm4_Chunk03)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_Pm4_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Pm4_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Pm4_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from Submission.cpp ---
+add_library(libSceAgcDriver_Submission_Chunk01 STATIC Execution/src/Driver/Queues/chunks/Submission_Chunk01.cpp)
+add_library(libSceAgcDriver_Submission_Chunk02 STATIC Execution/src/Driver/Queues/chunks/Submission_Chunk02.cpp)
+add_library(libSceAgcDriver_Submission_Chunk03 STATIC Execution/src/Driver/Queues/chunks/Submission_Chunk03.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_Submission_Chunk01 libSceAgcDriver_Submission_Chunk02 libSceAgcDriver_Submission_Chunk03)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_Submission_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Submission_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Submission_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from Draw.cpp ---
+add_library(libSceAgcDriver_Draw_Chunk01 STATIC Execution/src/Driver/Draw/chunks/Draw_Chunk01.cpp)
+add_library(libSceAgcDriver_Draw_Chunk02 STATIC Execution/src/Driver/Draw/chunks/Draw_Chunk02.cpp)
+add_library(libSceAgcDriver_Draw_Chunk03 STATIC Execution/src/Driver/Draw/chunks/Draw_Chunk03.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_Draw_Chunk01 libSceAgcDriver_Draw_Chunk02 libSceAgcDriver_Draw_Chunk03)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_Draw_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Draw_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Draw_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from ShaderRegistry.cpp ---
+add_library(libSceAgcDriver_ShaderRegistry_Chunk01 STATIC Execution/src/Driver/Shaders/chunks/ShaderRegistry_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_ShaderRegistry_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_ShaderRegistry_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+# --- small-size libraries split from TraceFile.cpp ---
+add_library(libSceAgcDriver_TraceFile_Chunk01 STATIC Execution/src/chunks/TraceFile_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_TraceFile_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_TraceFile_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
 endif()
