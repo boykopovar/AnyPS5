@@ -25,7 +25,7 @@ bool isAvx1Vector256(const std::uint8_t map, const std::uint8_t prefix, const st
             if (opcode >= 0x10 && opcode <= 0x17) return true;
             if (opcode >= 0x28 && opcode <= 0x2F) return true;
             if (opcode >= 0x50 && opcode <= 0x5F) return true;
-            if (opcode == 0x6F || opcode == 0x7F || opcode == 0xE7) return true;
+            if (opcode == 0x6F || opcode == 0x7F || opcode == 0xE6 || opcode == 0xE7) return true;
             if (opcode == 0x77 || opcode == 0x7C || opcode == 0x7D) return true;
             return opcode == 0xC2 || opcode == 0xC6 || opcode == 0xD0;
         }
@@ -33,14 +33,14 @@ bool isAvx1Vector256(const std::uint8_t map, const std::uint8_t prefix, const st
             if (opcode == 0x10 || opcode == 0x11 || opcode == 0x12 || opcode == 0x16) return true;
             if (opcode >= 0x2A && opcode <= 0x2F) return true;
             if (opcode >= 0x51 && opcode <= 0x5F) return true;
-            if (opcode == 0x6F || opcode == 0x7E || opcode == 0x7F) return true;
+            if (opcode == 0x6F || opcode == 0x7E || opcode == 0x7F || opcode == 0xE6) return true;
             return opcode == 0xC2;
         }
         if (prefix == PrefixF2) {
             if (opcode == 0x10 || opcode == 0x11 || opcode == 0x12) return true;
             if (opcode >= 0x2A && opcode <= 0x2F) return true;
             if (opcode >= 0x51 && opcode <= 0x5F) return true;
-            if (opcode == 0x7C || opcode == 0x7D) return true;
+            if (opcode == 0x7C || opcode == 0x7D || opcode == 0xE6) return true;
             return opcode == 0xC2 || opcode == 0xD0 || opcode == 0xF0;
         }
         return false;
