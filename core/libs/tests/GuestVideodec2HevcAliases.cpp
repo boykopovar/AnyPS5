@@ -50,6 +50,7 @@ int main() {
         const InputData empty{sizeof(InputData), nullptr, 0, 0, 0, 0};
         const auto error = sceVideodec2Decode_nid_postfix(reference, &empty, &frame, &output);
         Require(error != 0 && sceVideodec2Decode_nid_postfix(handle, &empty, &frame, &output) == error, "decoder error code differs");
+        Require(Failure([&] { sceVideodec2Decode_nid_postfix(handle, reinterpret_cast<const InputData*>(0x10), &frame, &output); }) == "Videodec2: invalid argument pointer", "unreadable input pointer did not throw");
         Require(sceVideodec2DeleteDecoder_nid_postfix(reference) == 0, "generic deletion failed");
         std::size_t pictures = 0;
         const auto take = [&] {
