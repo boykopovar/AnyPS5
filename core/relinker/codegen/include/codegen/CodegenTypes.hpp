@@ -45,6 +45,7 @@ struct ConvertResult {
     std::vector<TrampolineSite> Trampolines;
     std::vector<Amd64OnlySubstitutionReport> Reports;
     std::size_t KeptCount = 0;
+    std::uint64_t RequiredHostCpuFeatures = 0;
 };
 
 enum class ControlFlowKind : std::uint8_t {

@@ -4,6 +4,7 @@
 #include <codegen/CodegenTypes.hpp>
 #include <domain/Types.hpp>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -21,7 +22,8 @@ public:
         const std::string& runPath,
         bool lazyBinding,
         bool dependencyDiagnostics,
-        const std::vector<Codegen::TrampolineSite>& trampolines
+        const std::vector<Codegen::TrampolineSite>& trampolines,
+        std::optional<std::uint64_t> hostCpuFeatures = std::nullopt
     ) = 0;
 };
 
