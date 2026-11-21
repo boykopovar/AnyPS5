@@ -1,4 +1,5 @@
 #include "prx/libSceErrorDialog/include/Api.hpp"
+#include "prx/libSceErrorDialog/include/ErrorDialogRequest.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
@@ -130,6 +131,25 @@ void ShownDialog() {
     ModalDialogSetPresenter_nid_postfix(false);
 }
 
+void RequestOwnership() {
+    ModalDialogRequest request = ErrorDialog::BuildRequest(static_cast<std::int32_t>(0x80020001));
+    Require(request.owner == ModalDialogOwnerErrorDialog);
+    ModalDialogSetPresenter_nid_postfix(true);
+    Require(ModalDialogOpen_nid_postfix(request));
+    std::size_t chosen = 0;
+    Require(ModalDialogPoll_nid_postfix(chosen, ModalDialogOwnerErrorDialog) == ModalDialogState::Showing);
+    Require(ModalDialogPoll_nid_postfix(chosen, ModalDialogOwnerMsgDialog) == ModalDialogState::Idle);
+    ModalDialogClose_nid_postfix(ModalDialogOwnerMsgDialog);
+    Require(ModalDialogPoll_nid_postfix(chosen, ModalDialogOwnerErrorDialog) == ModalDialogState::Showing);
+    ModalDialogClose_nid_postfix(ModalDialogOwnerErrorDialog);
+    Require(ModalDialogPoll_nid_postfix(chosen, ModalDialogOwnerErrorDialog) == ModalDialogState::Closed);
+    ModalDialogReset_nid_postfix(ModalDialogOwnerMsgDialog);
+    Require(ModalDialogPoll_nid_postfix(chosen, ModalDialogOwnerErrorDialog) == ModalDialogState::Closed);
+    ModalDialogReset_nid_postfix(ModalDialogOwnerErrorDialog);
+    Require(ModalDialogPoll_nid_postfix(chosen, ModalDialogOwnerErrorDialog) == ModalDialogState::Idle);
+    ModalDialogSetPresenter_nid_postfix(false);
+}
+
 }
 
 int main() {
@@ -191,6 +211,7 @@ int main() {
     CloseAndFallback();
     WithoutFlips();
     OtherLibraryDialog();
+    RequestOwnership();
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }
