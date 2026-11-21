@@ -223,7 +223,7 @@ int _mapFlexible(void** addr, size_t len, int prot, int flags) {
         std::fprintf(stderr, "[memory] flexible memory exhausted: request 0x%zx with 0x%zx of 0x%zx in use\n", len, used, configured);
         return SCE_KERNEL_ERROR_ENOMEM;
     }
-    const int result = DoMapAnon(addr, len, prot, flags);
+    const int result = DoMapFlexibleAnon(addr, len, prot, flags);
     if (result == 0) {
         const auto start = reinterpret_cast<uintptr_t>(*addr);
         _releaseFlexibleLocked(start, len);
@@ -742,6 +742,10 @@ int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, 
    result = DoMprotect(entry.start, entry.length, static_cast<uint8_t>(entry.protection));
    break;
   case OpTypeProtect:
+   if (UndefinedProtection(static_cast<uint8_t>(entry.protection))) {
+    result = SCE_KERNEL_ERROR_EINVAL;
+    break;
+   }
    result = DoMtypeprotect(entry.start, entry.length, static_cast<uint8_t>(entry.type), static_cast<uint8_t>(entry.protection));
    break;
   case OpMapFlexible:

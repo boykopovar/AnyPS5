@@ -56,6 +56,9 @@ void APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix(Ubsan::CfiCheckFailData
 int GuestDup2_nid_no_patch(int from, int to);
 int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* const* envp);
 int GuestExecvpe_nid_no_patch(const char* name, char* const* argv, char* const* envp);
+std::uint64_t GuestIsDevelopmentMode_nid_no_patch();
+int GuestNamedObjectCreate_nid_no_patch(const char* name, void* object, std::uint32_t type);
+int GuestNamedObjectDelete_nid_no_patch(std::uint32_t id, std::uint32_t type);
 int APS5_VABI _dup2_nid_postfix(int from, int to);
 int APS5_VABI _execve_nid_postfix(const char* path, char* const* argv, char* const* envp);
 int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* const* envp);

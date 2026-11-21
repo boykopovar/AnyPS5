@@ -2,8 +2,10 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <numbers>
 #include <stdexcept>
 
 #include "Ngs2Internal.hpp"
@@ -90,6 +92,46 @@ void Ngs2ConfigureFilter(Ngs2Filter& filter, const Ngs2SamplerVoiceFilterParam& 
     }
 }
 
+static void ConfigureMasteringLfe(Ngs2MasteringLfe& filter, std::uint32_t designRate) {
+    constexpr double rippleDb = 0.1;
+    const double epsilon = std::sqrt(std::pow(10.0, rippleDb / 10.0) - 1.0);
+    const double mu = std::asinh(1.0 / epsilon) / 4.0;
+    const double cutoff = std::tan(std::numbers::pi * filter.cutoff / designRate);
+    double gain = std::pow(10.0, -rippleDb / 20.0);
+    for (std::size_t i = 0; i < filter.sections.size(); i++) {
+        const double angle = (i == 0 ? 3.0 : 1.0) * std::numbers::pi / 8.0;
+        const std::complex<double> analogPole(-std::sinh(mu) * std::sin(angle), std::cosh(mu) * std::cos(angle));
+        const auto pole = (1.0 + cutoff * analogPole) / (1.0 - cutoff * analogPole);
+        const double a1 = 2.0 * pole.real();
+        const double a2 = -std::norm(pole);
+        filter.sections[i].a1 = static_cast<float>(a1);
+        filter.sections[i].a2 = static_cast<float>(a2);
+        gain *= (1.0 - a1 - a2) * 0.25;
+    }
+    filter.sections[0].gain = static_cast<float>(gain);
+    filter.sections[1].gain = 1.0f;
+    filter.designRate = designRate;
+}
+
+void Ngs2ApplyMasteringLfe(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate) {
+    auto& filter = voice.masteringLfe;
+    if (voice.channels < 4) throw std::runtime_error("NGS2: mastering LFE on a voice without channel 3 is not implemented");
+    const auto designRate = sampleRate == 96000 ? 88200u : sampleRate;
+    if (filter.designRate != designRate) ConfigureMasteringLfe(filter, designRate);
+    float* samples = voice.samples.data() + 3 * grain;
+    const auto count = grain - grain % 4;
+    for (auto& section : filter.sections) {
+        auto& h = section.history;
+        for (std::uint32_t i = 0; i < count; i++) {
+            const float x = samples[i];
+            const float y = section.gain * x + (2.0f * section.gain) * h.x1 + section.gain * h.x2 + section.a1 * h.y1 + section.a2 * h.y2;
+            h = {x, h.x1, y, h.y1};
+            samples[i] = y;
+        }
+    }
+    if (!voice.hasSamples) voice.hasSamples = std::any_of(samples, samples + count, [](float sample) { return sample != 0.0f; });
+}
+
 static bool Bypasses(const Ngs2Filter& filter, std::uint32_t channel) {
     return channel < 64 && (filter.bypassMask & (std::uint64_t{1} << channel)) != 0;
 }
@@ -107,6 +149,10 @@ void Ngs2ResetFilterHistory(Ngs2Voice& voice) {
     for (auto& filter : voice.filters) std::fill(filter.history.begin(), filter.history.end(), Ngs2FilterHistory{});
 }
 
+void Ngs2ResetCustomFilterHistory(Ngs2Voice& voice) {
+    for (auto& filter : voice.customFilter) std::fill(filter.history.begin(), filter.history.end(), Ngs2FilterHistory{});
+}
+
 void Ngs2ApplyFilter(Ngs2Voice& voice, Ngs2Filter& filter, std::uint32_t grain) {
     if (filter.location >= 2) {
         const std::size_t target = filter.location - 2;
@@ -115,10 +161,14 @@ void Ngs2ApplyFilter(Ngs2Voice& voice, Ngs2Filter& filter, std::uint32_t grain) 
             if (port != target && voice.ports[port].dest != nullptr) throw std::runtime_error("NGS2: a PRE_SEND sampler filter on a voice with another patched port is not implemented");
         }
     }
-    for (std::uint32_t channel = 0; channel < voice.channels; channel++) {
+    Ngs2FilterChannels(filter, voice.samples.data(), voice.channels, grain);
+}
+
+void Ngs2FilterChannels(Ngs2Filter& filter, float* buffer, std::uint32_t channels, std::uint32_t grain) {
+    for (std::uint32_t channel = 0; channel < channels; channel++) {
         if (Bypasses(filter, channel)) continue;
         auto& h = filter.history[channel];
-        float* samples = voice.samples.data() + static_cast<std::size_t>(channel) * grain;
+        float* samples = buffer + static_cast<std::size_t>(channel) * grain;
         for (std::uint32_t k = 0; k < grain; k += 4) {
             const float x[4] = {samples[k], samples[k + 1], samples[k + 2], samples[k + 3]};
             float y[4];
