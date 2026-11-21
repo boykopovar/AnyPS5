@@ -162,11 +162,22 @@ Pad::KeyboardMouse::StickInput Pad::KeyboardMouse::stickInput() const {
     return input;
 }
 
+bool Pad::KeyboardMouse::isToggleBinding(const InputBinding& binding) const {
+    const bool keyOrMouse = binding.key != SDL_SCANCODE_UNKNOWN || binding.mouseButton != MouseButton::None;
+    return keyOrMouse && binding.control == InputControl::Button && (configuration.toggleButtons & static_cast<std::uint32_t>(binding.button)) != 0;
+}
+
+bool Pad::KeyboardMouse::bindingHeld(std::size_t index) const {
+    const auto& binding = configuration.bindings[index];
+    if (isToggleBinding(binding)) return toggles.Held(static_cast<std::uint32_t>(binding.button));
+    return pressed[index];
+}
+
 std::array<double, 2> Pad::KeyboardMouse::triggerTargets() const {
     std::array<double, 2> targets{};
     for (std::size_t index = 0; index < configuration.bindings.size(); ++index) {
         const auto& binding = configuration.bindings[index];
-        if (!pressed[index] || binding.control != InputControl::Button) continue;
+        if (binding.control != InputControl::Button || !bindingHeld(index)) continue;
         if (binding.button == PadButton::L2) targets[0] = 1.0;
         if (binding.button == PadButton::R2) targets[1] = 1.0;
     }
@@ -230,6 +241,7 @@ void Pad::KeyboardMouse::SetTitleReadsMouse(bool reads) {
 
 void Pad::KeyboardMouse::Release() {
     std::fill(pressed.begin(), pressed.end(), false);
+    toggles.Clear();
     std::fill(wheelReleaseTimes.begin(), wheelReleaseTimes.end(), Clock::time_point{});
     stickAxes = {};
     triggerAxes = {};
@@ -316,6 +328,7 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
             ? binding.key != SDL_SCANCODE_UNKNOWN && binding.key == event.key.keysym.scancode
             : binding.mouseButton != MouseButton::None && binding.mouseButton == static_cast<MouseButton>(event.button.button);
         if (!matches) continue;
+        if (down && !pressed[index] && isToggleBinding(binding)) toggles.Toggle(static_cast<std::uint32_t>(binding.button));
         if (binding.control == InputControl::ToggleFullscreen && keyboard && down && !pressed[index]) requests.toggleFullscreen = true;
         if (binding.control == InputControl::TogglePerformanceOverlay && keyboard && down && !pressed[index]) requests.togglePerformanceOverlay = true;
         if (binding.control == InputControl::Screenshot && keyboard && down && !pressed[index]) requests.screenshot = true;
@@ -354,7 +367,7 @@ Pad::InputRequests Pad::KeyboardMouse::PadChordRequests(std::uint32_t buttons) {
 PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const {
     PadInputState state = controller;
     for (std::size_t index = 0; index < configuration.bindings.size(); ++index) {
-        if (!pressed[index]) continue;
+        if (!bindingHeld(index)) continue;
         const auto& binding = configuration.bindings[index];
         switch (binding.control) {
             case InputControl::Button:

@@ -193,7 +193,8 @@ def package(platform, build, output, version):
         staging = Path(temporary)
         if needs_freetype_notices:
             attribution = staging / "freetype-attribution.txt"
-            attribution.write_text("This software is based in part on the work of the FreeType Team.\nhttps://freetype.org/\n", encoding="utf-8", newline="\n")
+            with attribution.open("w", encoding="utf-8", newline="\n") as notice:
+                notice.write("This software is based in part on the work of the FreeType Team.\nhttps://freetype.org/\n")
             licenses.append((attribution, "libs/licenses/freetype-attribution.txt"))
         for stem, entries in archives.items():
             with zipfile.ZipFile(staging / (stem + ".zip"), "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as archive:

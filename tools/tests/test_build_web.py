@@ -776,6 +776,21 @@ class WebReleaseValidationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Cannot resolve release revision: 0000000000000000000000000000000000000000"):
                 build_web.release_web_files("0" * 40)
 
+    def test_request_sends_github_token_only_to_the_github_api(self):
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "secret"}), \
+                patch.object(build_web.urllib.request, "urlopen", return_value="response") as urlopen:
+            self.assertEqual(build_web.request("https://api.github.com/repos/x/releases"), "response")
+            api = urlopen.call_args[0][0]
+            self.assertEqual(api.get_header("Authorization"), "Bearer secret")
+            self.assertEqual(api.get_header("User-agent"), "AnyPS5-Pages")
+            self.assertEqual(urlopen.call_args[1], {"timeout": 60})
+            build_web.request("https://github.com/x/prx.zip")
+            self.assertIsNone(urlopen.call_args[0][0].get_header("Authorization"))
+        with patch.dict(os.environ, clear=True), \
+                patch.object(build_web.urllib.request, "urlopen", return_value="response") as urlopen:
+            build_web.request("https://api.github.com/repos/x/releases")
+            self.assertIsNone(urlopen.call_args[0][0].get_header("Authorization"))
+
 
 if __name__ == "__main__":
     unittest.main()

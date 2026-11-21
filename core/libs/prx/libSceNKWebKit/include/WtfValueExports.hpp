@@ -123,7 +123,7 @@ NKWebKit::WtfAbi::Encoder& APS5_VABI _ZN3WTF11Persistence7EncoderlsEm(NKWebKit::
 NKWebKit::WtfAbi::Encoder& APS5_VABI _ZN3WTF11Persistence7EncoderlsEf(NKWebKit::WtfAbi::Encoder* self, float value);
 NKWebKit::WtfAbi::Encoder& APS5_VABI _ZN3WTF11Persistence7EncoderlsEd(NKWebKit::WtfAbi::Encoder* self, double value);
 bool APS5_VABI _ZN3WTF11Persistence7Decoder14verifyChecksumEv(NKWebKit::WtfAbi::Decoder* self);
-bool APS5_VABI _ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(const NKWebKit::WtfAbi::Decoder* self, unsigned long size);
+bool APS5_VABI _ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(const NKWebKit::WtfAbi::Decoder* self, std::size_t size);
 void APS5_VABI _ZN3WTF11Persistence5CoderINS_10AtomStringEE6encodeERNS0_7EncoderERKS2_(NKWebKit::WtfAbi::Encoder& encoder, const NKWebKit::WtfAbi::AtomString& string);
 void APS5_VABI _ZN3WTF11Persistence5CoderINS_6StringEE6encodeERNS0_7EncoderERKS2_(NKWebKit::WtfAbi::Encoder& encoder, const NKWebKit::WtfAbi::String& string);
 void APS5_VABI _ZN3WTF11Persistence5CoderINS_7CStringEE6encodeERNS0_7EncoderERKS2_(NKWebKit::WtfAbi::Encoder& encoder, const NKWebKit::WtfAbi::CString& string);
