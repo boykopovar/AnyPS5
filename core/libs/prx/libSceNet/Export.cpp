@@ -2586,13 +2586,7 @@ int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
 
 static int fill_sock_info6(int s, NetSockInfo6& record, bool includeIpv4) {
     SockInfoSource socket;
-    {
-        std::lock_guard lk(g_mutex);
-        const auto it = g_socks.find(s);
-        if (it == g_socks.end()) return NET_EBADF;
-        const Sock& registered = it->second;
-        socket = {registered.native, registered.native->value, registered.family, registered.guestType, registered.native->nonblock, registered.rcv_buffer, registered.snd_buffer};
-    }
+    if (!find_sock_info_source(s, socket)) return NET_EBADF;
     const bool ipv6 = socket.family == NET_AF_INET6;
     if (!ipv6 && !(includeIpv4 && socket.family == NET_AF_INET)) return NET_EAFNOSUPPORT;
     sockaddr_storage local{};
@@ -2640,10 +2634,20 @@ int APS5_VABI sceNetGetSockInfo6(std::int32_t s, NetSockInfo6* info, std::uint32
     const bool includeIpv4 = (flags & NET_SOCKINFO6_IPV46) != 0;
     std::vector<int> listed;
     if (s < 0) {
-        std::lock_guard lk(g_mutex);
-        for (const auto& [descriptor, socket] : g_socks) {
-            if (socket.family == NET_AF_INET6 || (includeIpv4 && socket.family == NET_AF_INET)) listed.push_back(descriptor);
+        {
+            std::lock_guard lk(g_mutex);
+            for (const auto& [descriptor, socket] : g_socks) {
+                if (socket.family == NET_AF_INET6 || (includeIpv4 && socket.family == NET_AF_INET)) listed.push_back(descriptor);
+            }
         }
+        std::vector<int> kernel;
+        KernelListSockets_nid_no_patch(&kernel);
+        for (const int descriptor : kernel) {
+            KernelSocketPoll::Description description;
+            if (KernelDescribeSocket_nid_no_patch(descriptor, &description) &&
+                (description.family == NET_AF_INET6 || (includeIpv4 && description.family == NET_AF_INET))) listed.push_back(descriptor);
+        }
+        std::sort(listed.begin(), listed.end());
     }
     if (!info) return s < 0 ? static_cast<int>(listed.size()) : fail(NET_EINVAL);
     if (static_cast<std::int32_t>(capacity) < 1) return fail(NET_EINVAL);

@@ -566,6 +566,18 @@ void destroyImport(const Context& context, const HostImport& entry) {
 #endif
 }
 
+#ifndef _WIN32
+void discardFailedImport(const Context& context, HostImport& entry) {
+    if (entry.buffer != VK_NULL_HANDLE || entry.memory != VK_NULL_HANDLE) destroyImport(context, entry);
+    entry.buffer = VK_NULL_HANDLE;
+    entry.memory = VK_NULL_HANDLE;
+    entry.address = 0;
+    entry.lead = 0;
+    entry.chunk.reset();
+    entry.dmaBuf = false;
+}
+#endif
+
 using ImportNode = std::map<std::uint64_t, HostImport>::node_type;
 
 // Frees a dropped import's Vulkan objects when it is released. Never copied: a copy would destroy the
@@ -2590,17 +2602,22 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     }, watchedHostPointer);
 #ifndef _WIN32
     if (dmaBufOnly) {
+        const bool hostFallback = GuestArena::GuestArenaSharedBackingHostFallback_nid_no_patch(static_cast<std::uintptr_t>(base), static_cast<std::size_t>(bytes));
         GuestMemory::ImportWatched(base, bytes, [&] {
             try {
                 step = createSharedBackingImport(context, entry, result);
             } catch (const std::exception& error) {
-                throw DmaBufImportFailure(error.what());
+                if (!hostFallback) throw DmaBufImportFailure(error.what());
+                std::fprintf(stderr, "[gpu] dma-buf import of 0x%llx+0x%llx failed (%s)\n", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), error.what());
+                step = "dma-buf import";
             }
             return step == nullptr;
         }, watchedDmaBuf);
-        if (step != nullptr && (std::strcmp(step, "UDMABUF_CREATE") == 0 || std::strcmp(step, "UDMABUF_CREATE_LIST") == 0)) {
+        const bool refused = step != nullptr && (std::strcmp(step, "UDMABUF_CREATE") == 0 || std::strcmp(step, "UDMABUF_CREATE_LIST") == 0);
+        if (step != nullptr && (refused || hostFallback)) {
             if (requester == ImportRequester::ColorTarget && !watchedHostPointer) return failedImport();
-            std::fprintf(stderr, "[gpu] dma-buf import of 0x%llx+0x%llx refused by udmabuf; host-pointer import\n", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes));
+            std::fprintf(stderr, "[gpu] dma-buf import of 0x%llx+0x%llx %s at %s; host-pointer import\n", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), refused ? "refused by udmabuf" : "of flexible memory failed", step);
+            discardFailedImport(context, entry);
             GuestMemory::ImportWatched(base, bytes, [&] {
                 step = createHostPointerImport(context, entry, result);
                 return step == nullptr;
