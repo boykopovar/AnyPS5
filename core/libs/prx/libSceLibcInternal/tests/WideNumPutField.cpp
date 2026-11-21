@@ -148,6 +148,12 @@ void CheckGroupingAndWiden() {
     g_grouping = "\x7f";
     Require(PutWideInteger(&locale, 0, 0, "12345") == u"12345", "wide _Iput does not group when first group is CHAR_MAX");
     g_grouping = "";
+    _ZNSt8numpunctIwE2idE_nid_postfix = 0;
+    _ZNSt5ctypeIwE2idE_nid_postfix = 0;
+    GuestLocale::Implementation emptyImpl{{nullptr, 1, 0}, nullptr, 0, 0, false, "C"};
+    GuestLocale::Implementation* emptyLocale = &emptyImpl;
+    Require(PutWideInteger(&emptyLocale, 0, 0, "12345") == u"12345", "wide _Iput initializes zero facet IDs lazily");
+    Require(_ZNSt8numpunctIwE2idE_nid_postfix != 0 && _ZNSt5ctypeIwE2idE_nid_postfix != 0, "wide _Iput assigns nonzero facet IDs");
     _ZNSt8numpunctIwE2idE_nid_postfix = savedPunctId;
     _ZNSt5ctypeIwE2idE_nid_postfix = savedCtypeId;
 }
