@@ -1,9 +1,17 @@
 #include "prx/libc/include/Api.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -84,6 +92,103 @@ void CheckSingleWordDivisors() {
     }
 }
 
+void CheckInvalidGuestPointers() {
+    errno = 71;
+    Require(_ZNSt8__sce_v27_MP_GetEPy_nid_postfix(nullptr) == 0, "null get", "value");
+    Require(errno == 71, "null get", "errno");
+    errno = 71;
+    _ZNSt8__sce_v27_MP_AddEPyy_nid_postfix(nullptr, 0x123456789abcdef);
+    Require(errno == 71, "null add", "errno");
+    errno = 71;
+    _ZNSt8__sce_v27_MP_MulEPyyy_nid_postfix(nullptr, 0x123456789abcdef, 0xfedcba9876543210);
+    Require(errno == 71, "null mul", "errno");
+    errno = 71;
+    _ZNSt8__sce_v27_MP_RemEPyy_nid_postfix(nullptr, 0x123456789);
+    Require(errno == 71, "null rem", "errno");
+
+#ifdef _WIN32
+    const std::size_t pageSize = static_cast<std::size_t>([] { SYSTEM_INFO info{}; GetSystemInfo(&info); return static_cast<long long>(info.dwPageSize); }());
+    auto* page = static_cast<std::uint64_t*>(VirtualAlloc(nullptr, pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* raw = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    auto* page = static_cast<std::uint64_t*>(raw == MAP_FAILED ? nullptr : raw);
+#endif
+    Require(page != nullptr, "guest page", "allocation");
+    const std::uint64_t digit = 0x5a5a5a5a;
+    for (int index = 0; index < 5; ++index) page[index] = digit ^ static_cast<std::uint64_t>(index);
+
+    Require(_ZNSt8__sce_v27_MP_GetEPy_nid_postfix(page) == ((digit ^ 1u) << 32) + (digit ^ 0u), "rw page get", "value");
+    _ZNSt8__sce_v27_MP_AddEPyy_nid_postfix(page, 0x5);
+    Require(page[0] == (digit + 5) && page[1] == (digit ^ 1u) && page[2] == (digit ^ 2u) && page[3] == (digit ^ 3u) && page[4] == (digit ^ 4u), "rw page add", "words");
+    for (int index = 0; index < 5; ++index) page[index] = digit ^ static_cast<std::uint64_t>(index);
+    _ZNSt8__sce_v27_MP_MulEPyyy_nid_postfix(page, 3, 4);
+    Require(page[0] == 12 && page[1] == 0 && page[2] == 0 && page[3] == 0 && page[4] == 0, "rw page mul", "words");
+    page[0] = 0xffffffff;
+    page[1] = 0xffffffff;
+    page[2] = 0xffffffff;
+    page[3] = 0xffffffff;
+    page[4] = 0x0;
+    _ZNSt8__sce_v27_MP_RemEPyy_nid_postfix(page, 0x8000000000000001);
+    Require(page[0] == 3 && page[1] == 0 && page[2] == 0 && page[3] == 0 && page[4] == 0, "rw page rem", "words");
+
+    for (int index = 0; index < 5; ++index) page[index] = digit ^ static_cast<std::uint64_t>(index);
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0, "readonly page", "protect");
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0, "readonly page", "protect");
+#endif
+    errno = 71;
+    Require(_ZNSt8__sce_v27_MP_GetEPy_nid_postfix(page) == ((digit ^ 1u) << 32) + (digit ^ 0u), "readonly page get", "value");
+    Require(errno == 71, "readonly page get", "errno");
+    errno = 71;
+    _ZNSt8__sce_v27_MP_AddEPyy_nid_postfix(page, 0x5);
+    Require(errno == 71, "readonly page add", "errno");
+    errno = 71;
+    _ZNSt8__sce_v27_MP_MulEPyyy_nid_postfix(page, 3, 4);
+    Require(errno == 71, "readonly page mul", "errno");
+    errno = 71;
+    _ZNSt8__sce_v27_MP_RemEPyy_nid_postfix(page, 0x8000000000000001);
+    Require(errno == 71, "readonly page rem", "errno");
+    for (int index = 0; index < 5; ++index) {
+        Require(page[index] == (digit ^ static_cast<std::uint64_t>(index)), "readonly page", "unchanged");
+    }
+
+#ifdef _WIN32
+    Require(VirtualProtect(page, pageSize, PAGE_NOACCESS, &oldProtect) != 0, "noaccess page", "protect");
+#else
+    Require(mprotect(page, pageSize, PROT_NONE) == 0, "noaccess page", "protect");
+#endif
+    errno = 71;
+    Require(_ZNSt8__sce_v27_MP_GetEPy_nid_postfix(page) == 0, "noaccess page get", "value");
+    Require(errno == 71, "noaccess page get", "errno");
+    errno = 71;
+    _ZNSt8__sce_v27_MP_AddEPyy_nid_postfix(page, 0x5);
+    Require(errno == 71, "noaccess page add", "errno");
+    errno = 71;
+    _ZNSt8__sce_v27_MP_MulEPyyy_nid_postfix(page, 3, 4);
+    Require(errno == 71, "noaccess page mul", "errno");
+    errno = 71;
+    _ZNSt8__sce_v27_MP_RemEPyy_nid_postfix(page, 0x8000000000000001);
+    Require(errno == 71, "noaccess page rem", "errno");
+
+#ifdef _WIN32
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0, "noaccess page", "reprotect");
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0, "noaccess page", "reprotect");
+#endif
+    for (int index = 0; index < 5; ++index) {
+        Require(page[index] == (digit ^ static_cast<std::uint64_t>(index)), "noaccess page", "unchanged");
+    }
+
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0, "guest page", "release");
+#else
+    Require(munmap(page, pageSize) == 0, "guest page", "release");
+#endif
+}
+
 }
 
 int main() {
@@ -112,5 +217,6 @@ int main() {
         Check(entry, words);
     }
     CheckSingleWordDivisors();
+    CheckInvalidGuestPointers();
     return 0;
 }
