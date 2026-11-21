@@ -1,0 +1,7 @@
+if(BUILD_TESTING)
+    add_test_executable(libc_remove_tree_tests tests/RemoveTree.cpp)
+    target_include_directories(libc_remove_tree_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(libc_remove_tree_tests)
+    add_test(NAME libc_remove_tree COMMAND libc_remove_tree_tests)
+    set_tests_properties(libc_remove_tree PROPERTIES TIMEOUT 20)
+endif()
