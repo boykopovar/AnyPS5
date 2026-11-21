@@ -2124,8 +2124,19 @@ int main(int argc, char** argv) {
         const auto drawn = LoadSamples(*device, block);
         CheckSamples(state, drawn, {});
         CheckFirstSampleReads(*device, TargetDescriptor(block, SampleShift), drawn, true, "from the drawn 4x target");
-        CheckFirstSampleReads(*device, TargetDescriptor(block, SampleShift), drawn, true, "from the drawn 4x target", AdjustedPlaneCode, "image_sample_a");
-        std::puts("a DIM 2D image_sample_a read of a 4x color target returns each pixel's sample 0");
+        if (TargetHasCapability(device->Target(), spv::CapabilityComputeDerivativeGroupLinearKHR)) {
+            CheckFirstSampleReads(*device, TargetDescriptor(block, SampleShift), drawn, true, "from the drawn 4x target", AdjustedPlaneCode, "image_sample_a");
+            std::puts("a DIM 2D image_sample_a read of a 4x color target returns each pixel's sample 0");
+        } else {
+            std::vector<std::uint32_t> userData;
+            std::string refusal;
+            try {
+                static_cast<void>(CompileProgram(*device, AdjustedPlaneCode, TargetDescriptor(block, SampleShift), userData, PointMipSampler));
+            } catch (const std::runtime_error& error) {
+                refusal = error.what();
+            }
+            Require(refusal.find("compute texture derivatives require enabled ComputeDerivativeGroupLinearKHR") != std::string::npos, "a DIM 2D image_sample_a without compute derivatives was not refused: " + refusal);
+        }
         Draw(*device, state, 0, 2u, Unorm8PixelCode);
         const auto redrawn = LoadSamples(*device, block);
         Require(redrawn != drawn, "drawing the 4x target again with another color left its samples unchanged");

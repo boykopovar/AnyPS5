@@ -4,12 +4,14 @@
 #include "Recompiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include <string>
+#include <span>
 #include <vector>
 
 namespace AgcDriver {
 
 class ShaderDeviceProfile {
 public:
+    static const char* ComputeDerivativeExtension(std::span<const VkExtensionProperties> extensions);
     ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& target, const VkDeviceCreateInfo& deviceInfo, const VkPhysicalDeviceLimits& limits);
     ShaderDeviceProfile(const ShaderDeviceProfile&) = delete;
     ShaderDeviceProfile& operator=(const ShaderDeviceProfile&) = delete;

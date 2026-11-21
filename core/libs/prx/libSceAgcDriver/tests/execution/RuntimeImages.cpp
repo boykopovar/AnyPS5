@@ -44,7 +44,9 @@ void Run(AgcDriver::VulkanDevice& device) {
         for (std::uint32_t lane = 0u; lane < 32u; ++lane) Require(output[lane] == expected, "runtime image/sampler selection failed: iteration=" + std::to_string(iteration) + " value=" + std::to_string(output[lane]) + " expected=" + std::to_string(expected));
     }
     auto alphaCode = code;
-    alphaCode[4] = 0xf0800808u;
+    const bool implicit = TargetHasCapability(device.Target(), spv::CapabilityComputeDerivativeGroupLinearKHR);
+    alphaCode[4] = implicit ? 0xf0800808u : 0xf09c0808u;
+    if (!implicit) std::cout << "runtime image alpha checks use level zero because the device lacks compute derivatives\n";
     struct Case {
         std::uint32_t format;
         std::uint32_t swizzle;
