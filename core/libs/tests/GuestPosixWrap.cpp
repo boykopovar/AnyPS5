@@ -123,9 +123,22 @@ void TestMsetnameSchedAndMmapNp() {
     Require(errno == 73);
     Require(sceKernelReleaseFlexibleMemory(flex, 16384) == 0);
 
-    KernelSchedParam param{0};
-    Require(Throws<std::runtime_error>([&] { pthread_setschedparam_np(pthread_self_nid_postfix(), 2, &param); }));
-    Require(pthread_setschedparam_np(pthread_self_nid_postfix(), 0, &param) == pthread_setschedparam_nid_postfix(pthread_self_nid_postfix(), 0, &param));
+    Pthread self = pthread_self_nid_postfix();
+    const int originalPriority = pthread_getprio_nid_postfix(self);
+    KernelSchedParam param{896};
+    *__error_nid_postfix() = 73;
+    Require(pthread_setschedparam_np(self, 2, &param) == 0);
+    Require(pthread_getprio_nid_postfix(self) == 896 && *__error_nid_postfix() == 73);
+    param.sched_priority = originalPriority;
+    Require(pthread_setschedparam_np(self, 2, &param) == 0);
+    param.sched_priority = 100;
+    *__error_nid_postfix() = 73;
+    Require(pthread_setschedparam_np(self, 2, &param) == Einval && *__error_nid_postfix() == Einval);
+    *__error_nid_postfix() = 73;
+    Require(pthread_setschedparam_np(nullptr, 2, &param) == Einval && *__error_nid_postfix() == 73);
+    Require(pthread_setschedparam_np(nullptr, 2, nullptr) == Efault && *__error_nid_postfix() == 73);
+    Require(pthread_setschedparam_np(nullptr, 2, reinterpret_cast<const KernelSchedParam*>(std::uintptr_t{0x10})) == Efault && *__error_nid_postfix() == 73);
+    Require(pthread_setschedparam_np(self, 0, &param) == pthread_setschedparam_nid_postfix(self, 0, &param));
 
     *__error_nid_postfix() = 0;
     Require(mmap_np(nullptr, 16384, 3, 0x1012, -1, 0, nullptr) == reinterpret_cast<void*>(-1));
