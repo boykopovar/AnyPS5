@@ -1213,28 +1213,31 @@ void converterAddressSizeJumpTableTargets() {
     const Bytes dispatch = {0x48, 0x63, 0x04, 0x81, 0x48, 0x01, 0xC8, 0xFF, 0xE0, 0x48, 0x83, 0xC1, 0x01, 0xC5, 0xFC, 0x11, 0x07, 0x48, 0x83, 0xC2, 0x01, 0xC3};
     for (const bool addressSize32 : {false, true}) {
         for (const std::uint8_t segment : {0x00, 0x64, 0x65}) {
-            for (const std::uint64_t table : {0x3000ull, 0x80001010ull}) {
-                Bytes first;
-                first.reserve(9);
-                if (segment != 0) first.push_back(segment);
-                if (addressSize32) first.push_back(0x67);
-                first.insert(first.end(), {0x48, 0x8D, 0x0D, 0, 0, 0, 0});
-                write<std::uint32_t>(first, first.size() - 4, static_cast<std::uint32_t>(table - (0x1000 + first.size())));
-                Bytes file(0x400, 0xCC);
-                std::copy(first.begin(), first.end(), file.begin() + 0x200);
-                std::copy(dispatch.begin(), dispatch.end(), file.begin() + static_cast<std::ptrdiff_t>(0x200 + first.size()));
-                write<std::uint32_t>(file, 0x300, static_cast<std::uint32_t>(0x1000 + first.size() + 9 - table));
-                write<std::uint32_t>(file, 0x304, static_cast<std::uint32_t>(0x1000 + first.size() + 17 - table));
-                const auto size = first.size() + dispatch.size();
-                const auto result = converter->Convert(file, {{1, 5, 0x200, 0x1000, 0, size, size, 16}, {1, 4, 0x300, table, 0, 8, 8, 16}});
-                const bool reachableTable = addressSize32 || table == 0x3000;
-                const auto expectedOffset = 0x200 + first.size() + (reachableTable ? 9 : 13);
-                require(result.Trampolines.size() == 1 && result.Trampolines[0].Offset == expectedOffset && result.Trampolines[0].Length == 8,
-                        "A jump table's address size did not protect the instruction after a 256-bit store");
-                if (reachableTable) {
-                    const auto target = 0x200 + first.size() + 17;
-                    require(std::equal(file.begin() + static_cast<std::ptrdiff_t>(target), file.begin() + static_cast<std::ptrdiff_t>(target + 4), result.Bytes.begin() + static_cast<std::ptrdiff_t>(target)),
-                            "Conversion overwrote a jump-table destination");
+            for (const auto& operand : {Bytes{}, Bytes{0x48}, Bytes{0x66, 0x48}}) {
+                for (const std::uint64_t table : {0x3000ull, 0x8000100Eull}) {
+                    Bytes first;
+                    first.reserve(10);
+                    if (segment != 0) first.push_back(segment);
+                    if (addressSize32) first.push_back(0x67);
+                    first.insert(first.end(), operand.begin(), operand.end());
+                    first.insert(first.end(), {0x8D, 0x0D, 0, 0, 0, 0});
+                    write<std::uint32_t>(first, first.size() - 4, static_cast<std::uint32_t>(table - (0x1000 + first.size())));
+                    Bytes file(0x400, 0xCC);
+                    std::copy(first.begin(), first.end(), file.begin() + 0x200);
+                    std::copy(dispatch.begin(), dispatch.end(), file.begin() + static_cast<std::ptrdiff_t>(0x200 + first.size()));
+                    write<std::uint32_t>(file, 0x300, static_cast<std::uint32_t>(0x1000 + first.size() + 9 - table));
+                    write<std::uint32_t>(file, 0x304, static_cast<std::uint32_t>(0x1000 + first.size() + 17 - table));
+                    const auto size = first.size() + dispatch.size();
+                    const auto result = converter->Convert(file, {{1, 5, 0x200, 0x1000, 0, size, size, 16}, {1, 4, 0x300, table, 0, 8, 8, 16}});
+                    const bool reachableTable = addressSize32 || operand.empty() || table == 0x3000;
+                    const auto expectedOffset = 0x200 + first.size() + (reachableTable ? 9 : 13);
+                    require(result.Trampolines.size() == 1 && result.Trampolines[0].Offset == expectedOffset && result.Trampolines[0].Length == 8,
+                            "A jump table's address or operand size did not protect the instruction after a 256-bit store");
+                    if (reachableTable) {
+                        const auto target = 0x200 + first.size() + 17;
+                        require(std::equal(file.begin() + static_cast<std::ptrdiff_t>(target), file.begin() + static_cast<std::ptrdiff_t>(target + 4), result.Bytes.begin() + static_cast<std::ptrdiff_t>(target)),
+                                "Conversion overwrote a jump-table destination");
+                    }
                 }
             }
         }
