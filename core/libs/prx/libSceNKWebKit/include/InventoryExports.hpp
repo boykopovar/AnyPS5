@@ -1442,10 +1442,6 @@ int APS5_VABI _ZN7WebCore10ScrollView36scrollOffsetChangedViaPlatformWidgetERKNS
 int APS5_VABI _ZN7WebCore10ScrollView4hideEv();
 int APS5_VABI _ZN7WebCore10ScrollView4showEv();
 int APS5_VABI _ZN7WebCore10ScrollView8addChildERNS_6WidgetE();
-int APS5_VABI _ZN7WebCore10StorageMap10removeItemERKN3WTF6StringERS2_();
-int APS5_VABI _ZN7WebCore10StorageMap20setItemIgnoringQuotaERKN3WTF6StringES4_();
-int APS5_VABI _ZN7WebCore10StorageMap3keyEj();
-int APS5_VABI _ZN7WebCore10StorageMap7setItemERKN3WTF6StringES4_RS2_Rb();
 int APS5_VABI _ZN7WebCore10TreeWalker10firstChildEv();
 int APS5_VABI _ZN7WebCore10TreeWalker10parentNodeEv();
 int APS5_VABI _ZN7WebCore10TreeWalker11nextSiblingEv();
@@ -4747,8 +4743,6 @@ int APS5_VABI _ZNK7WebCore10ScrollView23rootViewToTotalContentsERKNS_8IntPointE(
 int APS5_VABI _ZNK7WebCore10ScrollView29unobscuredContentRectInternalENS_14ScrollableArea36VisibleContentRectIncludesScrollbarsE();
 int APS5_VABI _ZNK7WebCore10ScrollView42documentScrollPositionRelativeToViewOriginEv();
 int APS5_VABI _ZNK7WebCore10StorageMap6lengthEv();
-int APS5_VABI _ZNK7WebCore10StorageMap7getItemERKN3WTF6StringE();
-int APS5_VABI _ZNK7WebCore10StorageMap8containsERKN3WTF6StringE();
 int APS5_VABI _ZNK7WebCore11CSSPageRule12selectorTextEv();
 int APS5_VABI _ZNK7WebCore11CachedImage20imageSizeForRendererEPKNS_13RenderElementENS0_8SizeTypeE();
 int APS5_VABI _ZNK7WebCore11EventRegioneqERKS0_();
