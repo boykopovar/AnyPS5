@@ -17,15 +17,20 @@ using FaultToken = std::uint32_t;
 
 enum class FaultStage : std::uint32_t { unknown = 0, graphics = 1, compute = 2, mesh = 3, task = 4, copy = 5 };
 
-enum class CheckpointKind : std::uint8_t { none = 0, draw, dispatch, copy, blit, clear, fill, update, barrier, renderPassBegin, renderPassEnd, query, execute, commandBufferBegin, commandBufferEnd, count };
+enum class CheckpointKind : std::uint8_t { none = 0, draw, dispatch, copy, blit, clear, fill, update, barrier, renderPassBegin, renderPassEnd, query, execute, commandBufferBegin, commandBufferEnd, event, wait, count };
+
+static_assert(sizeof(std::uintptr_t) == 8, "command checkpoint markers need 64-bit pointers");
 
 inline constexpr unsigned CheckpointKindShift = 40;
+inline constexpr unsigned CheckpointTagShift = 48;
+inline constexpr std::uintptr_t CheckpointTag = 0xA65C;
 
 inline std::uintptr_t CheckpointMarker(FaultToken token, CheckpointKind kind) noexcept {
-    return static_cast<std::uintptr_t>(token) | (static_cast<std::uintptr_t>(kind) << CheckpointKindShift);
+    return static_cast<std::uintptr_t>(token) | (static_cast<std::uintptr_t>(kind) << CheckpointKindShift) | (CheckpointTag << CheckpointTagShift);
 }
 
 inline CheckpointKind CheckpointKindOf(const void* marker) noexcept {
+    if ((reinterpret_cast<std::uintptr_t>(marker) >> CheckpointTagShift) != CheckpointTag) return CheckpointKind::none;
     const auto kind = (reinterpret_cast<std::uintptr_t>(marker) >> CheckpointKindShift) & 0xffu;
     return kind < static_cast<std::uintptr_t>(CheckpointKind::count) ? static_cast<CheckpointKind>(kind) : CheckpointKind::none;
 }
@@ -46,6 +51,8 @@ inline const char* CheckpointKindName(CheckpointKind kind) noexcept {
     case CheckpointKind::execute: return "execute commands";
     case CheckpointKind::commandBufferBegin: return "command buffer begin";
     case CheckpointKind::commandBufferEnd: return "command buffer end";
+    case CheckpointKind::event: return "event";
+    case CheckpointKind::wait: return "wait events";
     default: return "none";
     }
 }

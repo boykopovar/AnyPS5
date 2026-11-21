@@ -425,12 +425,14 @@ void CheckpointKindMarkers() {
         Require(AgcDriver::CheckpointKindOf(reinterpret_cast<const void*>(marker)) == static_cast<AgcDriver::CheckpointKind>(kind), "a command kind did not survive its marker");
     }
     Require(AgcDriver::CheckpointKindOf(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x1234u))) == AgcDriver::CheckpointKind::none, "a plain token marker decoded a command kind");
-    const auto outOfRange = static_cast<std::uintptr_t>(0xFEu) << AgcDriver::CheckpointKindShift;
+    const auto tag = AgcDriver::CheckpointTag << AgcDriver::CheckpointTagShift;
+    const auto outOfRange = tag | (static_cast<std::uintptr_t>(0xFEu) << AgcDriver::CheckpointKindShift);
     Require(AgcDriver::CheckpointKindOf(reinterpret_cast<const void*>(outOfRange)) == AgcDriver::CheckpointKind::none, "an unknown command kind was not decoded as none");
-    const auto highNibble = static_cast<std::uintptr_t>(0x13u) << AgcDriver::CheckpointKindShift;
+    const auto highNibble = tag | (static_cast<std::uintptr_t>(0x13u) << AgcDriver::CheckpointKindShift);
     Require(AgcDriver::CheckpointKindOf(reinterpret_cast<const void*>(highNibble)) == AgcDriver::CheckpointKind::none, "a kind byte above the known kinds was decoded from its low bits");
-    Require(AgcDriver::CheckpointMarker(0x1234u, AgcDriver::CheckpointKind::copy) == (static_cast<std::uintptr_t>(0x1234u) | (static_cast<std::uintptr_t>(3u) << 40u)), "the copy kind is not stored from bit 40 of the marker");
-    const char* const names[] = {"none", "draw", "dispatch", "copy", "blit", "clear", "fill", "update", "barrier", "render pass begin", "render pass end", "query", "execute commands", "command buffer begin", "command buffer end"};
+    Require(AgcDriver::CheckpointKindOf(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x000001A2B3C4D5E6ull))) == AgcDriver::CheckpointKind::none, "a pointer-like marker from the driver decoded a command kind");
+    Require(AgcDriver::CheckpointKindOf(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(AgcDriver::CheckpointMarker(7u, AgcDriver::CheckpointKind::barrier)) ^ (static_cast<std::uintptr_t>(1u) << 63u))) == AgcDriver::CheckpointKind::none, "a marker with another tag decoded a command kind");
+    const char* const names[] = {"none", "draw", "dispatch", "copy", "blit", "clear", "fill", "update", "barrier", "render pass begin", "render pass end", "query", "execute commands", "command buffer begin", "command buffer end", "event", "wait events"};
     static_assert(sizeof(names) / sizeof(names[0]) == static_cast<std::size_t>(AgcDriver::CheckpointKind::count));
     for (std::uint32_t kind = 0; kind < static_cast<std::uint32_t>(AgcDriver::CheckpointKind::count); ++kind) {
         Require(std::strcmp(AgcDriver::CheckpointKindName(static_cast<AgcDriver::CheckpointKind>(kind)), names[kind]) == 0, "a command kind lost its name");

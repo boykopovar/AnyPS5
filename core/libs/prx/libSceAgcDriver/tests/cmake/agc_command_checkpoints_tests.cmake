@@ -6,7 +6,7 @@ configure_windows_unwind(agc_command_checkpoints_tests)
 
 if(BUILD_TESTING)
     set_target_properties(agc_command_checkpoints_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
-    add_test(NAME agc_command_checkpoints COMMAND agc_command_checkpoints_tests)
+    add_test(NAME agc_command_checkpoints COMMAND agc_command_checkpoints_tests ${CMAKE_CURRENT_SOURCE_DIR})
     set_tests_properties(agc_command_checkpoints PROPERTIES ENVIRONMENT "APS5_GPU_CHECKPOINTS=1")
     if(WIN32)
         set_tests_properties(agc_command_checkpoints PROPERTIES ENVIRONMENT_MODIFICATION

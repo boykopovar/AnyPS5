@@ -74,6 +74,20 @@ enum class Slot : std::size_t {
     CmdCopyQueryPoolResults,
     CmdWriteTimestamp,
     CmdExecuteCommands,
+    CmdSetEvent,
+    CmdResetEvent,
+    CmdWaitEvents,
+    CmdSetEvent2,
+    CmdResetEvent2,
+    CmdWaitEvents2,
+    CmdDrawIndirectCountCore,
+    CmdDrawIndexedIndirectCountCore,
+    CmdPipelineBarrier2KHR,
+    CmdBeginRenderingKHR,
+    CmdEndRenderingKHR,
+    CmdSetEvent2KHR,
+    CmdResetEvent2KHR,
+    CmdWaitEvents2KHR,
 };
 
 template<Slot TCommand, typename TFunction>
@@ -87,8 +101,9 @@ struct Real {
     }
     static void Store(PFN_vkVoidFunction real, const char* name) {
         const auto function = reinterpret_cast<TFunction>(real);
-        TFunction expected = nullptr;
-        if (Holder().compare_exchange_strong(expected, function, std::memory_order_acq_rel) || expected == function) return;
+        TFunction expected = Holder().load(std::memory_order_acquire);
+        if (expected == nullptr && Holder().compare_exchange_strong(expected, function, std::memory_order_acq_rel)) return;
+        if (expected == function) return;
         throw std::runtime_error(std::string("AGC graphics: command checkpoints got two different functions for ") + name);
     }
 };
@@ -126,14 +141,16 @@ VKAPI_ATTR void VKAPI_CALL checkpointedDrawIndexedIndirect(VkCommandBuffer comma
     Real<Slot::CmdDrawIndexedIndirect, PFN_vkCmdDrawIndexedIndirect>::Get()(commands, buffer, offset, drawCount, stride);
 }
 
+template<Slot TCommand>
 VKAPI_ATTR void VKAPI_CALL checkpointedDrawIndirectCount(VkCommandBuffer commands, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countOffset, std::uint32_t maxDrawCount, std::uint32_t stride) {
     mark(commands, AgcDriver::CheckpointKind::draw);
-    Real<Slot::CmdDrawIndirectCount, PFN_vkCmdDrawIndirectCountKHR>::Get()(commands, buffer, offset, countBuffer, countOffset, maxDrawCount, stride);
+    Real<TCommand, PFN_vkCmdDrawIndirectCountKHR>::Get()(commands, buffer, offset, countBuffer, countOffset, maxDrawCount, stride);
 }
 
+template<Slot TCommand>
 VKAPI_ATTR void VKAPI_CALL checkpointedDrawIndexedIndirectCount(VkCommandBuffer commands, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countOffset, std::uint32_t maxDrawCount, std::uint32_t stride) {
     mark(commands, AgcDriver::CheckpointKind::draw);
-    Real<Slot::CmdDrawIndexedIndirectCount, PFN_vkCmdDrawIndexedIndirectCountKHR>::Get()(commands, buffer, offset, countBuffer, countOffset, maxDrawCount, stride);
+    Real<TCommand, PFN_vkCmdDrawIndexedIndirectCountKHR>::Get()(commands, buffer, offset, countBuffer, countOffset, maxDrawCount, stride);
 }
 
 VKAPI_ATTR void VKAPI_CALL checkpointedDrawMeshTasks(VkCommandBuffer commands, std::uint32_t x, std::uint32_t y, std::uint32_t z) {
@@ -221,9 +238,10 @@ VKAPI_ATTR void VKAPI_CALL checkpointedPipelineBarrier(VkCommandBuffer commands,
     Real<Slot::CmdPipelineBarrier, PFN_vkCmdPipelineBarrier>::Get()(commands, source, destination, dependency, memoryCount, memory, bufferCount, buffers, imageCount, images);
 }
 
+template<Slot TCommand>
 VKAPI_ATTR void VKAPI_CALL checkpointedPipelineBarrier2(VkCommandBuffer commands, const VkDependencyInfo* dependency) {
     mark(commands, AgcDriver::CheckpointKind::barrier);
-    Real<Slot::CmdPipelineBarrier2, PFN_vkCmdPipelineBarrier2>::Get()(commands, dependency);
+    Real<TCommand, PFN_vkCmdPipelineBarrier2>::Get()(commands, dependency);
 }
 
 VKAPI_ATTR void VKAPI_CALL checkpointedBeginRenderPass(VkCommandBuffer commands, const VkRenderPassBeginInfo* begin, VkSubpassContents contents) {
@@ -236,14 +254,16 @@ VKAPI_ATTR void VKAPI_CALL checkpointedEndRenderPass(VkCommandBuffer commands) {
     Real<Slot::CmdEndRenderPass, PFN_vkCmdEndRenderPass>::Get()(commands);
 }
 
+template<Slot TCommand>
 VKAPI_ATTR void VKAPI_CALL checkpointedBeginRendering(VkCommandBuffer commands, const VkRenderingInfo* info) {
     mark(commands, AgcDriver::CheckpointKind::renderPassBegin);
-    Real<Slot::CmdBeginRendering, PFN_vkCmdBeginRendering>::Get()(commands, info);
+    Real<TCommand, PFN_vkCmdBeginRendering>::Get()(commands, info);
 }
 
+template<Slot TCommand>
 VKAPI_ATTR void VKAPI_CALL checkpointedEndRendering(VkCommandBuffer commands) {
     mark(commands, AgcDriver::CheckpointKind::renderPassEnd);
-    Real<Slot::CmdEndRendering, PFN_vkCmdEndRendering>::Get()(commands);
+    Real<TCommand, PFN_vkCmdEndRendering>::Get()(commands);
 }
 
 VKAPI_ATTR void VKAPI_CALL checkpointedResetQueryPool(VkCommandBuffer commands, VkQueryPool pool, std::uint32_t first, std::uint32_t count) {
@@ -276,6 +296,39 @@ VKAPI_ATTR void VKAPI_CALL checkpointedExecuteCommands(VkCommandBuffer commands,
     Real<Slot::CmdExecuteCommands, PFN_vkCmdExecuteCommands>::Get()(commands, count, buffers);
 }
 
+VKAPI_ATTR void VKAPI_CALL checkpointedSetEvent(VkCommandBuffer commands, VkEvent event, VkPipelineStageFlags stage) {
+    mark(commands, AgcDriver::CheckpointKind::event);
+    Real<Slot::CmdSetEvent, PFN_vkCmdSetEvent>::Get()(commands, event, stage);
+}
+
+VKAPI_ATTR void VKAPI_CALL checkpointedResetEvent(VkCommandBuffer commands, VkEvent event, VkPipelineStageFlags stage) {
+    mark(commands, AgcDriver::CheckpointKind::event);
+    Real<Slot::CmdResetEvent, PFN_vkCmdResetEvent>::Get()(commands, event, stage);
+}
+
+VKAPI_ATTR void VKAPI_CALL checkpointedWaitEvents(VkCommandBuffer commands, std::uint32_t eventCount, const VkEvent* events, VkPipelineStageFlags source, VkPipelineStageFlags destination, std::uint32_t memoryCount, const VkMemoryBarrier* memory, std::uint32_t bufferCount, const VkBufferMemoryBarrier* buffers, std::uint32_t imageCount, const VkImageMemoryBarrier* images) {
+    mark(commands, AgcDriver::CheckpointKind::wait);
+    Real<Slot::CmdWaitEvents, PFN_vkCmdWaitEvents>::Get()(commands, eventCount, events, source, destination, memoryCount, memory, bufferCount, buffers, imageCount, images);
+}
+
+template<Slot TCommand>
+VKAPI_ATTR void VKAPI_CALL checkpointedSetEvent2(VkCommandBuffer commands, VkEvent event, const VkDependencyInfo* dependency) {
+    mark(commands, AgcDriver::CheckpointKind::event);
+    Real<TCommand, PFN_vkCmdSetEvent2>::Get()(commands, event, dependency);
+}
+
+template<Slot TCommand>
+VKAPI_ATTR void VKAPI_CALL checkpointedResetEvent2(VkCommandBuffer commands, VkEvent event, VkPipelineStageFlags2 stage) {
+    mark(commands, AgcDriver::CheckpointKind::event);
+    Real<TCommand, PFN_vkCmdResetEvent2>::Get()(commands, event, stage);
+}
+
+template<Slot TCommand>
+VKAPI_ATTR void VKAPI_CALL checkpointedWaitEvents2(VkCommandBuffer commands, std::uint32_t eventCount, const VkEvent* events, const VkDependencyInfo* dependencies) {
+    mark(commands, AgcDriver::CheckpointKind::wait);
+    Real<TCommand, PFN_vkCmdWaitEvents2>::Get()(commands, eventCount, events, dependencies);
+}
+
 struct Hook {
     const char* name;
     void (*store)(PFN_vkVoidFunction real, const char* name);
@@ -295,8 +348,10 @@ const Hook* findHook(const char* name) noexcept {
         hook<Slot::CmdDrawIndexed, PFN_vkCmdDrawIndexed>("vkCmdDrawIndexed", &checkpointedDrawIndexed),
         hook<Slot::CmdDrawIndirect, PFN_vkCmdDrawIndirect>("vkCmdDrawIndirect", &checkpointedDrawIndirect),
         hook<Slot::CmdDrawIndexedIndirect, PFN_vkCmdDrawIndexedIndirect>("vkCmdDrawIndexedIndirect", &checkpointedDrawIndexedIndirect),
-        hook<Slot::CmdDrawIndirectCount, PFN_vkCmdDrawIndirectCountKHR>("vkCmdDrawIndirectCountKHR", &checkpointedDrawIndirectCount),
-        hook<Slot::CmdDrawIndexedIndirectCount, PFN_vkCmdDrawIndexedIndirectCountKHR>("vkCmdDrawIndexedIndirectCountKHR", &checkpointedDrawIndexedIndirectCount),
+        hook<Slot::CmdDrawIndirectCount, PFN_vkCmdDrawIndirectCountKHR>("vkCmdDrawIndirectCountKHR", &checkpointedDrawIndirectCount<Slot::CmdDrawIndirectCount>),
+        hook<Slot::CmdDrawIndirectCountCore, PFN_vkCmdDrawIndirectCountKHR>("vkCmdDrawIndirectCount", &checkpointedDrawIndirectCount<Slot::CmdDrawIndirectCountCore>),
+        hook<Slot::CmdDrawIndexedIndirectCount, PFN_vkCmdDrawIndexedIndirectCountKHR>("vkCmdDrawIndexedIndirectCountKHR", &checkpointedDrawIndexedIndirectCount<Slot::CmdDrawIndexedIndirectCount>),
+        hook<Slot::CmdDrawIndexedIndirectCountCore, PFN_vkCmdDrawIndexedIndirectCountKHR>("vkCmdDrawIndexedIndirectCount", &checkpointedDrawIndexedIndirectCount<Slot::CmdDrawIndexedIndirectCountCore>),
         hook<Slot::CmdDrawMeshTasks, PFN_vkCmdDrawMeshTasksEXT>("vkCmdDrawMeshTasksEXT", &checkpointedDrawMeshTasks),
         hook<Slot::CmdDrawMeshTasksIndirect, PFN_vkCmdDrawMeshTasksIndirectEXT>("vkCmdDrawMeshTasksIndirectEXT", &checkpointedDrawMeshTasksIndirect),
         hook<Slot::CmdDispatch, PFN_vkCmdDispatch>("vkCmdDispatch", &checkpointedDispatch),
@@ -314,20 +369,29 @@ const Hook* findHook(const char* name) noexcept {
         hook<Slot::CmdFillBuffer, PFN_vkCmdFillBuffer>("vkCmdFillBuffer", &checkpointedFillBuffer),
         hook<Slot::CmdUpdateBuffer, PFN_vkCmdUpdateBuffer>("vkCmdUpdateBuffer", &checkpointedUpdateBuffer),
         hook<Slot::CmdPipelineBarrier, PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier", &checkpointedPipelineBarrier),
-        hook<Slot::CmdPipelineBarrier2, PFN_vkCmdPipelineBarrier2>("vkCmdPipelineBarrier2", &checkpointedPipelineBarrier2),
-        hook<Slot::CmdPipelineBarrier2, PFN_vkCmdPipelineBarrier2>("vkCmdPipelineBarrier2KHR", &checkpointedPipelineBarrier2),
+        hook<Slot::CmdPipelineBarrier2, PFN_vkCmdPipelineBarrier2>("vkCmdPipelineBarrier2", &checkpointedPipelineBarrier2<Slot::CmdPipelineBarrier2>),
+        hook<Slot::CmdPipelineBarrier2KHR, PFN_vkCmdPipelineBarrier2>("vkCmdPipelineBarrier2KHR", &checkpointedPipelineBarrier2<Slot::CmdPipelineBarrier2KHR>),
         hook<Slot::CmdBeginRenderPass, PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass", &checkpointedBeginRenderPass),
         hook<Slot::CmdEndRenderPass, PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass", &checkpointedEndRenderPass),
-        hook<Slot::CmdBeginRendering, PFN_vkCmdBeginRendering>("vkCmdBeginRendering", &checkpointedBeginRendering),
-        hook<Slot::CmdBeginRendering, PFN_vkCmdBeginRendering>("vkCmdBeginRenderingKHR", &checkpointedBeginRendering),
-        hook<Slot::CmdEndRendering, PFN_vkCmdEndRendering>("vkCmdEndRendering", &checkpointedEndRendering),
-        hook<Slot::CmdEndRendering, PFN_vkCmdEndRendering>("vkCmdEndRenderingKHR", &checkpointedEndRendering),
+        hook<Slot::CmdBeginRendering, PFN_vkCmdBeginRendering>("vkCmdBeginRendering", &checkpointedBeginRendering<Slot::CmdBeginRendering>),
+        hook<Slot::CmdBeginRenderingKHR, PFN_vkCmdBeginRendering>("vkCmdBeginRenderingKHR", &checkpointedBeginRendering<Slot::CmdBeginRenderingKHR>),
+        hook<Slot::CmdEndRendering, PFN_vkCmdEndRendering>("vkCmdEndRendering", &checkpointedEndRendering<Slot::CmdEndRendering>),
+        hook<Slot::CmdEndRenderingKHR, PFN_vkCmdEndRendering>("vkCmdEndRenderingKHR", &checkpointedEndRendering<Slot::CmdEndRenderingKHR>),
         hook<Slot::CmdResetQueryPool, PFN_vkCmdResetQueryPool>("vkCmdResetQueryPool", &checkpointedResetQueryPool),
         hook<Slot::CmdBeginQuery, PFN_vkCmdBeginQuery>("vkCmdBeginQuery", &checkpointedBeginQuery),
         hook<Slot::CmdEndQuery, PFN_vkCmdEndQuery>("vkCmdEndQuery", &checkpointedEndQuery),
         hook<Slot::CmdCopyQueryPoolResults, PFN_vkCmdCopyQueryPoolResults>("vkCmdCopyQueryPoolResults", &checkpointedCopyQueryPoolResults),
         hook<Slot::CmdWriteTimestamp, PFN_vkCmdWriteTimestamp>("vkCmdWriteTimestamp", &checkpointedWriteTimestamp),
         hook<Slot::CmdExecuteCommands, PFN_vkCmdExecuteCommands>("vkCmdExecuteCommands", &checkpointedExecuteCommands),
+        hook<Slot::CmdSetEvent, PFN_vkCmdSetEvent>("vkCmdSetEvent", &checkpointedSetEvent),
+        hook<Slot::CmdResetEvent, PFN_vkCmdResetEvent>("vkCmdResetEvent", &checkpointedResetEvent),
+        hook<Slot::CmdWaitEvents, PFN_vkCmdWaitEvents>("vkCmdWaitEvents", &checkpointedWaitEvents),
+        hook<Slot::CmdSetEvent2, PFN_vkCmdSetEvent2>("vkCmdSetEvent2", &checkpointedSetEvent2<Slot::CmdSetEvent2>),
+        hook<Slot::CmdSetEvent2KHR, PFN_vkCmdSetEvent2>("vkCmdSetEvent2KHR", &checkpointedSetEvent2<Slot::CmdSetEvent2KHR>),
+        hook<Slot::CmdResetEvent2, PFN_vkCmdResetEvent2>("vkCmdResetEvent2", &checkpointedResetEvent2<Slot::CmdResetEvent2>),
+        hook<Slot::CmdResetEvent2KHR, PFN_vkCmdResetEvent2>("vkCmdResetEvent2KHR", &checkpointedResetEvent2<Slot::CmdResetEvent2KHR>),
+        hook<Slot::CmdWaitEvents2, PFN_vkCmdWaitEvents2>("vkCmdWaitEvents2", &checkpointedWaitEvents2<Slot::CmdWaitEvents2>),
+        hook<Slot::CmdWaitEvents2KHR, PFN_vkCmdWaitEvents2>("vkCmdWaitEvents2KHR", &checkpointedWaitEvents2<Slot::CmdWaitEvents2KHR>),
     };
     for (const auto& entry : hooks) {
         if (std::strcmp(name, entry.name) == 0) return &entry;

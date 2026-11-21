@@ -3,7 +3,12 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <map>
+#include <regex>
+#include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -94,32 +99,66 @@ std::map<std::string, PFN_vkVoidFunction>& Functions() {
         add("vkCmdPushConstants", static_cast<PFN_vkCmdPushConstants>([](VkCommandBuffer c, VkPipelineLayout, VkShaderStageFlags, std::uint32_t, std::uint32_t, const void*) { Log("vkCmdPushConstants", c); }));
         add("vkCmdWriteBufferMarkerAMD", static_cast<PFN_vkCmdWriteBufferMarkerAMD>([](VkCommandBuffer c, VkPipelineStageFlagBits, VkBuffer, VkDeviceSize, std::uint32_t) { Log("vkCmdWriteBufferMarkerAMD", c); }));
         add("vkCmdNextSubpass", static_cast<PFN_vkCmdNextSubpass>([](VkCommandBuffer c, VkSubpassContents) { Log("vkCmdNextSubpass", c); }));
+        add("vkCmdSetEvent", static_cast<PFN_vkCmdSetEvent>([](VkCommandBuffer c, VkEvent, VkPipelineStageFlags) { Log("vkCmdSetEvent", c); }));
+        add("vkCmdResetEvent", static_cast<PFN_vkCmdResetEvent>([](VkCommandBuffer c, VkEvent, VkPipelineStageFlags) { Log("vkCmdResetEvent", c); }));
+        add("vkCmdWaitEvents", static_cast<PFN_vkCmdWaitEvents>([](VkCommandBuffer c, std::uint32_t, const VkEvent*, VkPipelineStageFlags, VkPipelineStageFlags, std::uint32_t, const VkMemoryBarrier*, std::uint32_t, const VkBufferMemoryBarrier*, std::uint32_t, const VkImageMemoryBarrier*) { Log("vkCmdWaitEvents", c); }));
+        add("vkCmdSetEvent2", static_cast<PFN_vkCmdSetEvent2>([](VkCommandBuffer c, VkEvent, const VkDependencyInfo*) { Log("vkCmdSetEvent2", c); }));
+        add("vkCmdResetEvent2", static_cast<PFN_vkCmdResetEvent2>([](VkCommandBuffer c, VkEvent, VkPipelineStageFlags2) { Log("vkCmdResetEvent2", c); }));
+        add("vkCmdWaitEvents2", static_cast<PFN_vkCmdWaitEvents2>([](VkCommandBuffer c, std::uint32_t, const VkEvent*, const VkDependencyInfo*) { Log("vkCmdWaitEvents2", c); }));
         add("vkDestroyBuffer", static_cast<PFN_vkDestroyBuffer>([](VkDevice, VkBuffer, const VkAllocationCallbacks*) {}));
         return made;
     }();
     return functions;
 }
 
-bool splitBarrier = false;
+std::map<std::string, PFN_vkVoidFunction> splits;
+bool anyCommand = false;
 bool otherCheckpoint = false;
 const char* missing = nullptr;
 
-VKAPI_ATTR void VKAPI_CALL otherBarrier2(VkCommandBuffer commands, const VkDependencyInfo*) {
-    Log("other barrier2", commands);
+template<typename TFunction>
+struct Other;
+
+template<typename... TArguments>
+struct Other<void (VKAPI_PTR*)(VkCommandBuffer, TArguments...)> {
+    static VKAPI_ATTR void VKAPI_CALL Call(VkCommandBuffer commands, TArguments...) {
+        Log("other", commands);
+    }
+};
+
+template<typename TFunction>
+PFN_vkVoidFunction OtherFunction() {
+    return reinterpret_cast<PFN_vkVoidFunction>(&Other<TFunction>::Call);
 }
 
 VKAPI_ATTR void VKAPI_CALL otherSetCheckpoint(VkCommandBuffer, const void*) {
 }
 
+const char* Canonical(const char* name) {
+    static const std::map<std::string, const char*> aliases = {
+        {"vkCmdDrawIndirectCount", "vkCmdDrawIndirectCountKHR"},
+        {"vkCmdDrawIndexedIndirectCount", "vkCmdDrawIndexedIndirectCountKHR"},
+        {"vkCmdBeginRendering", "vkCmdBeginRenderingKHR"},
+        {"vkCmdEndRendering", "vkCmdEndRenderingKHR"},
+        {"vkCmdPipelineBarrier2KHR", "vkCmdPipelineBarrier2"},
+        {"vkCmdSetEvent2KHR", "vkCmdSetEvent2"},
+        {"vkCmdResetEvent2KHR", "vkCmdResetEvent2"},
+        {"vkCmdWaitEvents2KHR", "vkCmdWaitEvents2"},
+    };
+    const auto found = aliases.find(name);
+    return found == aliases.end() ? name : found->second;
+}
+
+VKAPI_ATTR void VKAPI_CALL anySourceCommand() {
+}
+
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
     if (missing != nullptr && std::strcmp(name, missing) == 0) return nullptr;
     if (otherCheckpoint && std::strcmp(name, "vkCmdSetCheckpointNV") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&otherSetCheckpoint);
-    if (splitBarrier && std::strcmp(name, "vkCmdPipelineBarrier2KHR") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&otherBarrier2);
-    if (std::strcmp(name, "vkCmdBeginRendering") == 0) name = "vkCmdBeginRenderingKHR";
-    if (std::strcmp(name, "vkCmdEndRendering") == 0) name = "vkCmdEndRenderingKHR";
-    if (std::strcmp(name, "vkCmdPipelineBarrier2KHR") == 0) name = "vkCmdPipelineBarrier2";
-    const auto found = Functions().find(name);
-    return found == Functions().end() ? nullptr : found->second;
+    if (const auto split = splits.find(name); split != splits.end()) return split->second;
+    const auto found = Functions().find(Canonical(name));
+    if (found != Functions().end()) return found->second;
+    return anyCommand && std::strncmp(name, "vkCmd", 5) == 0 ? reinterpret_cast<PFN_vkVoidFunction>(&anySourceCommand) : nullptr;
 }
 
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL otherProc(VkDevice device, const char* name) {
@@ -141,7 +180,7 @@ CheckpointKind KindOf(const Event& event) {
 
 void CheckCommand(PFN_vkGetDeviceProcAddr proc, const char* name, CheckpointKind kind, void (*call)(PFN_vkVoidFunction function, VkCommandBuffer commands), const char* logged = nullptr) {
     const auto wrapper = proc(Device(), name);
-    Expect(wrapper != nullptr && wrapper != Functions()[name == std::string("vkCmdBeginRendering") ? "vkCmdBeginRenderingKHR" : name == std::string("vkCmdEndRendering") ? "vkCmdEndRenderingKHR" : name == std::string("vkCmdPipelineBarrier2KHR") ? "vkCmdPipelineBarrier2" : name], std::string(name) + " was not wrapped");
+    Expect(wrapper != nullptr && wrapper != Functions()[Canonical(name)], std::string(name) + " was not wrapped");
     if (wrapper == nullptr) return;
     events.clear();
     call(wrapper, Commands(0x10));
@@ -183,19 +222,22 @@ void EveryCommandRecordsItsKind(PFN_vkGetDeviceProcAddr proc) {
     CheckCommand(proc, "vkCmdUpdateBuffer", CheckpointKind::update, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdUpdateBuffer>(f)(c, VK_NULL_HANDLE, 0, 4, nullptr); });
     CheckCommand(proc, "vkCmdPipelineBarrier", CheckpointKind::barrier, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdPipelineBarrier>(f)(c, 0, 0, 0, 0, nullptr, 0, nullptr, 0, nullptr); });
     CheckCommand(proc, "vkCmdPipelineBarrier2", CheckpointKind::barrier, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdPipelineBarrier2>(f)(c, nullptr); });
-    CheckCommand(proc, "vkCmdPipelineBarrier2KHR", CheckpointKind::barrier, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdPipelineBarrier2>(f)(c, nullptr); }, "vkCmdPipelineBarrier2");
     CheckCommand(proc, "vkCmdBeginRenderPass", CheckpointKind::renderPassBegin, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdBeginRenderPass>(f)(c, nullptr, VK_SUBPASS_CONTENTS_INLINE); });
     CheckCommand(proc, "vkCmdEndRenderPass", CheckpointKind::renderPassEnd, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdEndRenderPass>(f)(c); });
     CheckCommand(proc, "vkCmdBeginRendering", CheckpointKind::renderPassBegin, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdBeginRendering>(f)(c, nullptr); });
-    CheckCommand(proc, "vkCmdBeginRenderingKHR", CheckpointKind::renderPassBegin, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdBeginRendering>(f)(c, nullptr); }, "vkCmdBeginRendering");
     CheckCommand(proc, "vkCmdEndRendering", CheckpointKind::renderPassEnd, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdEndRendering>(f)(c); });
-    CheckCommand(proc, "vkCmdEndRenderingKHR", CheckpointKind::renderPassEnd, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdEndRendering>(f)(c); }, "vkCmdEndRendering");
     CheckCommand(proc, "vkCmdResetQueryPool", CheckpointKind::query, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdResetQueryPool>(f)(c, VK_NULL_HANDLE, 0, 1); });
     CheckCommand(proc, "vkCmdBeginQuery", CheckpointKind::query, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdBeginQuery>(f)(c, VK_NULL_HANDLE, 0, 0); });
     CheckCommand(proc, "vkCmdEndQuery", CheckpointKind::query, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdEndQuery>(f)(c, VK_NULL_HANDLE, 0); });
     CheckCommand(proc, "vkCmdCopyQueryPoolResults", CheckpointKind::query, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdCopyQueryPoolResults>(f)(c, VK_NULL_HANDLE, 0, 1, VK_NULL_HANDLE, 0, 8, 0); });
     CheckCommand(proc, "vkCmdWriteTimestamp", CheckpointKind::query, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdWriteTimestamp>(f)(c, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_NULL_HANDLE, 0); });
     CheckCommand(proc, "vkCmdExecuteCommands", CheckpointKind::execute, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdExecuteCommands>(f)(c, 0, nullptr); });
+    CheckCommand(proc, "vkCmdSetEvent", CheckpointKind::event, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdSetEvent>(f)(c, VK_NULL_HANDLE, VK_PIPELINE_STAGE_TRANSFER_BIT); });
+    CheckCommand(proc, "vkCmdResetEvent", CheckpointKind::event, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdResetEvent>(f)(c, VK_NULL_HANDLE, VK_PIPELINE_STAGE_TRANSFER_BIT); });
+    CheckCommand(proc, "vkCmdWaitEvents", CheckpointKind::wait, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdWaitEvents>(f)(c, 0, nullptr, 0, 0, 0, nullptr, 0, nullptr, 0, nullptr); });
+    CheckCommand(proc, "vkCmdSetEvent2", CheckpointKind::event, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdSetEvent2>(f)(c, VK_NULL_HANDLE, nullptr); });
+    CheckCommand(proc, "vkCmdResetEvent2", CheckpointKind::event, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdResetEvent2>(f)(c, VK_NULL_HANDLE, 0); });
+    CheckCommand(proc, "vkCmdWaitEvents2", CheckpointKind::wait, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdWaitEvents2>(f)(c, 0, nullptr, nullptr); });
     CheckCommand(proc, "vkEndCommandBuffer", CheckpointKind::commandBufferEnd, [](PFN_vkVoidFunction f, VkCommandBuffer c) { static_cast<void>(As<PFN_vkEndCommandBuffer>(f)(c)); });
     const auto begin = Resolve<PFN_vkBeginCommandBuffer>(proc, "vkBeginCommandBuffer");
     events.clear();
@@ -278,26 +320,78 @@ void RejectsMismatchedSetups() {
         threw = true;
     }
     Expect(threw, "a second, different device resolver was accepted");
-    Expect(AgcDriver::Graphics::CheckpointCommandKinds(Device(), &mockProc) != nullptr, "the same resolver was refused on a second device");
+    Expect(AgcDriver::Graphics::CheckpointCommandKinds(Device(), &mockProc) != nullptr, "the same resolver was refused when set up again");
 }
 
 void RejectsTwoFunctionsForOneCommand(PFN_vkGetDeviceProcAddr proc) {
-    static_cast<void>(proc(Device(), "vkCmdPipelineBarrier2"));
-    Expect(proc(Device(), "vkCmdPipelineBarrier2") != nullptr, "resolving one command twice was refused");
-    splitBarrier = true;
+    static_cast<void>(proc(Device(), "vkCmdDispatch"));
+    Expect(proc(Device(), "vkCmdDispatch") != nullptr, "resolving one command twice was refused");
+    splits["vkCmdDispatch"] = OtherFunction<PFN_vkCmdDispatch>();
     bool threw = false;
     try {
-        static_cast<void>(proc(Device(), "vkCmdPipelineBarrier2KHR"));
+        static_cast<void>(proc(Device(), "vkCmdDispatch"));
     } catch (const std::runtime_error&) {
         threw = true;
     }
-    splitBarrier = false;
-    Expect(threw, "an alias resolving to another function shared the command's slot");
+    splits.erase("vkCmdDispatch");
+    Expect(threw, "a command resolving to a second, different function was accepted");
+}
+
+void KeepsAliasesApart(PFN_vkGetDeviceProcAddr proc) {
+    splits["vkCmdDrawIndirectCount"] = OtherFunction<PFN_vkCmdDrawIndirectCountKHR>();
+    splits["vkCmdDrawIndexedIndirectCount"] = OtherFunction<PFN_vkCmdDrawIndexedIndirectCountKHR>();
+    splits["vkCmdPipelineBarrier2KHR"] = OtherFunction<PFN_vkCmdPipelineBarrier2>();
+    splits["vkCmdBeginRenderingKHR"] = OtherFunction<PFN_vkCmdBeginRendering>();
+    splits["vkCmdEndRenderingKHR"] = OtherFunction<PFN_vkCmdEndRendering>();
+    splits["vkCmdSetEvent2KHR"] = OtherFunction<PFN_vkCmdSetEvent2>();
+    splits["vkCmdResetEvent2KHR"] = OtherFunction<PFN_vkCmdResetEvent2>();
+    splits["vkCmdWaitEvents2KHR"] = OtherFunction<PFN_vkCmdWaitEvents2>();
+    CheckCommand(proc, "vkCmdDrawIndirectCount", CheckpointKind::draw, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdDrawIndirectCountKHR>(f)(c, VK_NULL_HANDLE, 0, VK_NULL_HANDLE, 0, 1, 16); }, "other");
+    CheckCommand(proc, "vkCmdDrawIndexedIndirectCount", CheckpointKind::draw, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdDrawIndexedIndirectCountKHR>(f)(c, VK_NULL_HANDLE, 0, VK_NULL_HANDLE, 0, 1, 20); }, "other");
+    CheckCommand(proc, "vkCmdPipelineBarrier2KHR", CheckpointKind::barrier, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdPipelineBarrier2>(f)(c, nullptr); }, "other");
+    CheckCommand(proc, "vkCmdBeginRenderingKHR", CheckpointKind::renderPassBegin, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdBeginRendering>(f)(c, nullptr); }, "other");
+    CheckCommand(proc, "vkCmdEndRenderingKHR", CheckpointKind::renderPassEnd, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdEndRendering>(f)(c); }, "other");
+    CheckCommand(proc, "vkCmdSetEvent2KHR", CheckpointKind::event, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdSetEvent2>(f)(c, VK_NULL_HANDLE, nullptr); }, "other");
+    CheckCommand(proc, "vkCmdResetEvent2KHR", CheckpointKind::event, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdResetEvent2>(f)(c, VK_NULL_HANDLE, 0); }, "other");
+    CheckCommand(proc, "vkCmdWaitEvents2KHR", CheckpointKind::wait, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdWaitEvents2>(f)(c, 0, nullptr, nullptr); }, "other");
+    CheckCommand(proc, "vkCmdPipelineBarrier2", CheckpointKind::barrier, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdPipelineBarrier2>(f)(c, nullptr); });
+    CheckCommand(proc, "vkCmdDrawIndirectCountKHR", CheckpointKind::draw, [](PFN_vkVoidFunction f, VkCommandBuffer c) { As<PFN_vkCmdDrawIndirectCountKHR>(f)(c, VK_NULL_HANDLE, 0, VK_NULL_HANDLE, 0, 1, 16); });
+}
+
+void ClassifiesEverySourceCommand(PFN_vkGetDeviceProcAddr proc, const std::filesystem::path& root) {
+    const std::regex literal("\"(vkCmd[A-Za-z0-9]+)\"");
+    const std::regex type("PFN_(vkCmd[A-Za-z0-9]+)");
+    const std::regex macro("X\\((Cmd[A-Za-z0-9]+)\\)");
+    std::set<std::string> names;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+        if (!entry.is_regular_file()) continue;
+        const auto relative = std::filesystem::relative(entry.path(), root).generic_string();
+        if (relative.rfind("tests/", 0) == 0) continue;
+        const auto extension = entry.path().extension().string();
+        if (extension != ".cpp" && extension != ".hpp" && extension != ".h" && extension != ".inl") continue;
+        std::ifstream file(entry.path(), std::ios::binary);
+        std::stringstream text;
+        text << file.rdbuf();
+        const auto content = text.str();
+        for (std::sregex_iterator match(content.begin(), content.end(), literal), end; match != end; ++match) names.insert((*match)[1].str());
+        for (std::sregex_iterator match(content.begin(), content.end(), type), end; match != end; ++match) names.insert((*match)[1].str());
+        for (std::sregex_iterator match(content.begin(), content.end(), macro), end; match != end; ++match) names.insert("vk" + (*match)[1].str());
+    }
+    Expect(names.size() > 20, "the source scan found too few vkCmd names under " + root.generic_string());
+    anyCommand = true;
+    for (const auto& name : names) {
+        try {
+            static_cast<void>(proc(Device(), name.c_str()));
+        } catch (const std::runtime_error& error) {
+            Expect(false, name + " in the driver sources is not classified: " + error.what());
+        }
+    }
+    anyCommand = false;
 }
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         const auto proc = AgcDriver::Graphics::CheckpointCommandKinds(Device(), &mockProc);
         Expect(proc != nullptr && proc != &mockProc, "command checkpoints did not return their own resolver");
@@ -307,6 +401,9 @@ int main() {
         PassesStateThroughAndRejectsUnknownCommands(proc);
         RejectsMismatchedSetups();
         RejectsTwoFunctionsForOneCommand(proc);
+        KeepsAliasesApart(proc);
+        Expect(argc == 2, "the test needs the libSceAgcDriver source directory");
+        if (argc == 2) ClassifiesEverySourceCommand(proc, argv[1]);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "agc_command_checkpoints: %s\n", error.what());
         return 1;
