@@ -1095,6 +1095,10 @@ static void CheckVibrationForce(int user, int handle) {
     Require(scePadSetVibrationForce(special, &strong) == PAD_OK && VibrationIs(0, 5, 6));
     Require(scePadSetVibrationForce(special, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadClose_nid_postfix(special) == PAD_OK);
+    Require(scePadClose_nid_postfix(special) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadDisableVibration(special, true) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadDisableVibration(special, false) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetVibrationMode(special, 1) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetVibration(special, &strong) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetVibration(special, nullptr) == PAD_ERROR_INVALID_HANDLE);
     const PadVibrationParam off{0, 0};
@@ -1736,6 +1740,9 @@ int main() {
     Require(!scePadIsValidHandle(PAD_HANDLE, PAD_PORT_TYPE_STANDARD));
     const PadVibrationParam earlyVibration{1, 2};
     for (const PadVibrationParam* param : {static_cast<const PadVibrationParam*>(nullptr), &earlyVibration}) Require(scePadSetVibrationForce(PAD_HANDLE, param) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse(true) == PAD_OK);
+    Require(scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse(false) == PAD_OK);
+    Require(scePadSetPS4BcVibrationMode(0) == PAD_ERROR_NOT_INITIALIZED);
     Pad::SetLightBar(0, true, 1, 2, 3);
     Require(scePadResetLightBarAll() == PAD_OK && LightBarIs(0, true, 1, 2, 3));
     Require(scePadResetLightBarAllByPortType(3) == PAD_ERROR_INVALID_ARG && scePadResetLightBarAllByPortType(PAD_PORT_TYPE_STANDARD) == PAD_OK && LightBarIs(0, true, 1, 2, 3));
@@ -2050,8 +2057,14 @@ int main() {
     Require(scePadResetOrientation(-1) == PAD_ERROR_INVALID_HANDLE);
 
     Require(scePadClose_nid_postfix(handle2) == 0);
+    Require(scePadClose_nid_postfix(handle2) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadGetHandle(user2, 0, 0) == noHandle);
     Require(!scePadIsValidHandle(handle2, PAD_PORT_TYPE_STANDARD));
+    Require(scePadDisableVibration(handle2, true) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadDisableVibration(handle2, false) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetVibration(handle2, &vibMixed) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetVibration(handle2, nullptr) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetVibrationMode(handle2, 1) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetAngularVelocityDeadbandState(handle2, false) == PAD_OK);
     Require(scePadSetAngularVelocityDeadbandState(handle2 + 1, false) == PAD_ERROR_INVALID_HANDLE);
     CheckPortZeroWithdrawn();
