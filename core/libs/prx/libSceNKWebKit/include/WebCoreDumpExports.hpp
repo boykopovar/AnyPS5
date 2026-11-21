@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 #include "prx/libSceNKWebKit/src/WtfTextAbi.hpp"
+#include "prx/libSceNKWebKit/include/RegionExports.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -12,6 +13,15 @@ struct FloatPoint3D {
     float m_x;
     float m_y;
     float m_z;
+};
+
+enum class TouchAction : std::uint8_t {
+    Auto = 1 << 0,
+    None = 1 << 1,
+    Manipulation = 1 << 2,
+    PanX = 1 << 3,
+    PanY = 1 << 4,
+    PinchZoom = 1 << 5,
 };
 
 enum class CompositeOperator : std::uint8_t {
@@ -165,6 +175,9 @@ NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_15
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_20TransformationMatrixE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::TransformationMatrix& value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_7IntRectE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::IntRect& value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_7IntSizeE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::IntSize& value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS0_9OptionSetINS_13ActivityState4FlagEEE(NKWebKit::WtfAbi::TextStream& stream, std::uint32_t flags);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_11TouchActionE(NKWebKit::WtfAbi::TextStream& stream, WebCore::TouchAction touchAction);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::Region& region);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_8IntPointE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::IntPoint& value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9FloatRectE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::FloatRect& value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9FloatSizeE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::FloatSize& value);
