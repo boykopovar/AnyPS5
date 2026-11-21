@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureService.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
@@ -12,6 +13,7 @@
 #include "ImageTableAbi.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "VulkanTestDevice.hpp"
+#include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -560,6 +562,36 @@ void ForEachSpirvInstruction(std::span<const std::uint32_t> words, Visit&& visit
     }
 }
 
+void RequireMissRingStoresExempt(std::span<const std::uint32_t> words) {
+    std::set<std::uint32_t> pointerTypes;
+    std::set<std::uint32_t> heapVariables;
+    ForEachSpirvInstruction(words, [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
+        if (opcode == spv::OpTypePointer && instruction.size() == 4u && instruction[2] == spv::StorageClassPhysicalStorageBuffer) pointerTypes.insert(instruction[1]);
+        if (opcode == spv::OpDecorate && instruction.size() == 4u && instruction[2] == spv::DecorationDescriptorSet && instruction[3] == ShaderRecompiler::BindlessImageAbi::HeapDescriptorSet) heapVariables.insert(instruction[1]);
+    });
+    std::set<std::uint32_t> pointers;
+    ForEachSpirvInstruction(words, [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
+        if (opcode != spv::OpTypePointer && instruction.size() > 2u && pointerTypes.contains(instruction[1])) pointers.insert(instruction[2]);
+    });
+    std::uint32_t stores = 0;
+    ForEachSpirvInstruction(words, [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
+        const bool store = (opcode == spv::OpStore || opcode == spv::OpAtomicStore) && instruction.size() > 1u && pointers.contains(instruction[1]);
+        const bool atomic = (opcode == spv::OpAtomicExchange || opcode == spv::OpAtomicCompareExchange || opcode == spv::OpAtomicIAdd || opcode == spv::OpAtomicOr) && instruction.size() > 3u && pointers.contains(instruction[3]);
+        if (store || atomic) ++stores;
+    });
+    Require(stores != 0u, "bindless heap: the lowered module writes no miss ring or seen table through the heap header's addresses");
+    Require(!AgcDriver::Graphics::SpirvStoresThroughAddresses(words), "bindless heap: the guest store scan counts the stores the emitter writes through the heap header's addresses");
+    std::vector<std::uint32_t> moved(words.begin(), words.end());
+    std::uint32_t rebound = 0;
+    for (std::size_t cursor = 5; cursor < moved.size(); cursor += moved[cursor] >> 16u) {
+        if ((moved[cursor] & 0xffffu) != spv::OpDecorate || (moved[cursor] >> 16u) != 4u || moved[cursor + 2u] != spv::DecorationBinding || moved[cursor + 3u] != ShaderRecompiler::BindlessImageAbi::HeaderBinding || !heapVariables.contains(moved[cursor + 1u])) continue;
+        moved[cursor + 3u] = ShaderRecompiler::BindlessImageAbi::HeaderBinding + 1u;
+        ++rebound;
+    }
+    Require(rebound == 1u, "bindless heap: the lowered module does not declare exactly one heap header binding");
+    Require(AgcDriver::Graphics::SpirvStoresThroughAddresses(moved), "bindless heap: the guest store scan exempts stores through addresses that do not come from the heap header");
+}
+
 struct Outcome {
     std::vector<std::uint32_t> words;
     std::string log;
@@ -608,6 +640,7 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
     outcome.bindlessHeap = result.bindlessHeap;
     outcome.bindlessTables = result.bindlessTables;
     if (result.bindlessHeap) {
+        RequireMissRingStoresExempt(result.spirv.Words());
         constexpr std::uint32_t SpirvConstant = 43u;
         std::set<std::uint32_t> constants;
         ForEachSpirvInstruction(result.spirv.Words(), [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
