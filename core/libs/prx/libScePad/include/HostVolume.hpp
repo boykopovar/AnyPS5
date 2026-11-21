@@ -25,15 +25,15 @@ public:
     }
 
     bool SetMuteOnFocusLoss(bool enabled) {
-        const bool before = FocusMuted();
+        const bool before = Silent();
         muteOnFocusLoss = enabled;
-        return before != FocusMuted();
+        return before != Silent();
     }
 
     bool FocusChanged(bool hasFocus) {
-        const bool before = FocusMuted();
+        const bool before = Silent();
         focused = hasFocus;
-        return before != FocusMuted();
+        return before != Silent();
     }
 
     bool SetVolume(int value) {
