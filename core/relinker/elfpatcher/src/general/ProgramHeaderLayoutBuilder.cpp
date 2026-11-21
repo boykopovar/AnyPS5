@@ -15,7 +15,9 @@ namespace {
 
 constexpr std::size_t kExtendedProgramHeaderCount = 0xffff;
 
-bool hasWritableLoadCoverage(
+}
+
+bool HasWritableLoadCoverage(
     const std::vector<Domain::ProgramHeader>& headers,
     const Domain::ProgramHeader& relro
 ) {
@@ -47,8 +49,6 @@ bool hasWritableLoadCoverage(
         if (coveredUntil >= relroEnd) return true;
     }
     return false;
-}
-
 }
 
 ProgramHeaderLayoutBuilder::ProgramHeaderLayoutBuilder(
@@ -146,7 +146,7 @@ std::vector<Domain::ProgramHeader> ProgramHeaderLayoutBuilder::_keptHeaders(cons
     std::vector<Domain::ProgramHeader> kept;
     for (const auto& ph : originalHeaders) {
         if (_segmentFilter->ShouldSkip(ph)) continue;
-        if (ph.Type == PT_GNU_RELRO && !hasWritableLoadCoverage(originalHeaders, ph)) continue;
+        if (ph.Type == PT_GNU_RELRO && !HasWritableLoadCoverage(originalHeaders, ph)) continue;
         if (ph.Type == PT_GNU_STACK && &ph != lastStackPtr) continue;
         kept.push_back(ph);
     }
