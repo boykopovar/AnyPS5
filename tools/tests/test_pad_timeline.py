@@ -377,6 +377,7 @@ class TimelineTests(unittest.TestCase):
             self.assertTrue(output.read_text(encoding="utf-8").startswith("APS5_PAD_TIMELINE 1 "))
             self.assertIn("200 100 18432\n", output.read_text(encoding="utf-8"))
 
+    @unittest.skipUnless(os.name != "nt", "Windows cannot resolve surrogates in Path operations")
     def test_unencodable_command_path_still_reports_success(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
