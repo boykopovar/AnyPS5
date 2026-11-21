@@ -109,20 +109,22 @@ void EmitReturnTerminator(SpirvValueEmitContext& ctx) {
         const auto value = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, TypeI32(state), value, state.stencilRefVariable);
         const auto reference = Unary(state, spv::OpBitcast, TypeU32(state), value);
-        const auto masked = Binary(state, spv::OpBitwiseAnd, TypeU32(state), reference, ConstantU32(state, 0xffu));
         const auto offset = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::StencilReferenceOffset, state.program.Metadata().bindings.stencilReferenceDword);
         const auto pointer = state.module.AllocateId();
         state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0u), offset);
         const auto expected = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, TypeU32(state), expected, pointer);
         if (state.stencilReplayLateStore) {
-            EmitIfCondition(state, Binary(state, spv::OpUGreaterThan, TypeBool(state), expected, ConstantU32(state, 0xffu)), [&] {
+            EmitIfCondition(state, Binary(state, spv::OpUGreaterThan, TypeBool(state), expected, ConstantU32(state, 0xffffu)), [&] {
                 const auto address = state.module.AllocateId();
                 state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), address, Unary(state, spv::OpUConvert, TypeScalarU64(state), ConstantU32(state, 0u)));
                 state.module.AddFunction(spv::OpStore, address, ConstantU32(state, 0u), spv::MemoryAccessAlignedMask, 4u);
             });
         }
-        EmitKillIfBoolFalse(state, Binary(state, spv::OpIEqual, TypeBool(state), masked, expected));
+        const auto ignored = Binary(state, spv::OpShiftRightLogical, TypeU32(state), expected, ConstantU32(state, 8u));
+        const auto checked = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Unary(state, spv::OpNot, TypeU32(state), ignored), ConstantU32(state, 0xffu));
+        const auto differs = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpBitwiseXor, TypeU32(state), reference, expected), checked);
+        EmitKillIfBoolFalse(state, Binary(state, spv::OpIEqual, TypeBool(state), differs, ConstantU32(state, 0u)));
     }
     EmitReturnReleasingScratch(state);
 }
