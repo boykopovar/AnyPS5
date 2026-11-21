@@ -262,9 +262,9 @@ def fold(root, write):
                 continue
             previous = claimed.get(key)
             if previous is not None and previous.fragment == operation.fragment:
-                problems.append(f"{previous.fragment}:{previous.line} and {operation.fragment}:{operation.line} both {operation.kind} the same {operation.library} entry; name each entry once per fragment")
+                problems.append(f"{previous.fragment}:{previous.line} and {operation.fragment}:{operation.line} both target the same {operation.library} entry; name each entry once per fragment")
             elif previous is not None:
-                problems.append(f"{operation.fragment}:{operation.line} and {previous.fragment}:{previous.line} both {operation.kind} the same {operation.library} entry; merge them into one fragment")
+                problems.append(f"{operation.fragment}:{operation.line} and {previous.fragment}:{previous.line} both target the same {operation.library} entry; merge them into one fragment")
             claimed[key] = operation
     if problems:
         raise FoldError("\n".join(problems))
