@@ -2,7 +2,7 @@
 
 ## add Functional
 
-- [`_Rint`, `_FRint` and `_LRint`](../../../core/libs/prx/libSceLibcInternal/Rint.cpp) (libSceLibcInternal, NIDs `TzxDRcns9e4`, `g1w82G7uFhI`, `8SfvO-J3H6E`) implement floating-point rounding to integral value according to IEEE-754 semantics using libc's `rint`, `rintf` and `rintl`. Prototypes follow Dinkumware V6.00 `xmath.h`. Console floating-point flags and rounding mode controls are unverified.
+- [`_Rint`, `_FRint` and `_LRint`](../../../core/libs/prx/libSceLibcInternal/Rint.cpp) (libSceLibcInternal, NIDs `TzxDRcns9e4`, `TLvAYmLtdVw`, `fJmOr59K8QY`) implement floating-point rounding to integral value according to IEEE-754 semantics using libc's `rint`, `rintf` and `rintl`. Prototypes follow Dinkumware V6.00 `xmath.h`. Console floating-point flags and rounding mode controls are unverified.
 
 ## change `_Restore_state` (NID `77uWF3Z2q90`), `_Rint`
 
