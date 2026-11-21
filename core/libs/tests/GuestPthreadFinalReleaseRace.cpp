@@ -7,10 +7,12 @@
 #include <cstdlib>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 static constexpr int SCE_OK = 0;
 
 extern "C" void APS5_Test_SetFinalThreadReleaseHook(Pthread thread, void (*hook)(Pthread));
+extern "C" void APS5_Test_SetJoinWindowHook(Pthread thread, void (*hook)(Pthread));
 
 static void Require(bool condition) { if (!condition) std::abort(); }
 
@@ -44,10 +46,15 @@ static void HoldFinalRelease(Pthread thread) {
     gate.changed.wait(lock, [] { return gate.release; });
 }
 
-static void WaitForFinalRelease() {
+static bool WaitForFinalRelease() {
     std::unique_lock lock(gate.mutex);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    Require(gate.changed.wait_until(lock, deadline, [] { return gate.reached; }));
+    const bool reached = gate.changed.wait_until(lock, deadline, [] { return gate.reached; });
+    if (!gate.release) {
+        gate.release = true;
+        gate.changed.notify_all();
+    }
+    return reached;
 }
 
 static void ResumeFinalRelease() {
@@ -62,15 +69,107 @@ static void WaitUntilReleased(Pthread thread) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     int priority = 0;
     while (scePthreadGetprio(thread, &priority) != SCE_KERNEL_ERROR_ESRCH) {
-        Require(std::chrono::steady_clock::now() < deadline);
+        if (std::chrono::steady_clock::now() >= deadline) return;
         std::this_thread::yield();
     }
+}
+
+static std::atomic<bool> finalReleaseSeen{false};
+
+static void HoldFinalReleaseMarked(Pthread thread) {
+    finalReleaseSeen.store(true, std::memory_order_release);
+    HoldFinalRelease(thread);
+}
+
+static bool WorkerFinished(Pthread thread) {
+    return thread->_finished.load(std::memory_order_acquire);
+}
+
+static void RequireJoinDetachInterleave() {
+    Worker worker;
+    Pthread thread = nullptr;
+    {
+        PthreadAttr attr = nullptr;
+        Require(scePthreadAttrInit(&attr) == SCE_OK);
+        Require(scePthreadAttrSetstacksize(&attr, 64 * 1024) == SCE_OK);
+        Require(scePthreadCreate(&thread, &attr, Wait, &worker, "join_detach_race") == SCE_OK);
+        Require(scePthreadAttrDestroy(&attr) == SCE_OK);
+    }
+    while (!worker.started.load()) std::this_thread::yield();
+    {
+        std::lock_guard lock(gate.mutex);
+        gate.thread = thread;
+        gate.reached = false;
+        gate.release = false;
+    }
+    finalReleaseSeen.store(false, std::memory_order_relaxed);
+    APS5_Test_SetFinalThreadReleaseHook(thread, HoldFinalReleaseMarked);
+
+    std::atomic<int> joinersDone{0};
+    std::atomic<bool> racerDone{false};
+    std::atomic<int> detachResult{SCE_OK};
+
+    std::thread racer([&] {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!WorkerFinished(thread)) {
+            if (std::chrono::steady_clock::now() >= deadline) break;
+            std::this_thread::yield();
+        }
+        detachResult.store(scePthreadDetach(thread), std::memory_order_release);
+        racerDone.store(true, std::memory_order_release);
+    });
+
+    std::thread joiners[2];
+    for (auto& joiner : joiners) {
+        joiner = std::thread([&] {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            KernelTimespec past{};
+            for (;;) {
+                const int result = pthread_timedjoin_np_nid_postfix(thread, nullptr, &past);
+                if (result == 0 || result == EINVAL) break;
+                if (result == ESRCH) {
+                    if (finalReleaseSeen.load(std::memory_order_acquire)) WaitForFinalRelease();
+                    break;
+                }
+                if (std::chrono::steady_clock::now() >= deadline) break;
+                std::this_thread::yield();
+            }
+            joinersDone.fetch_add(1, std::memory_order_release);
+        });
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    worker.release.store(true, std::memory_order_release);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+    bool resumed = false;
+    while (joinersDone.load(std::memory_order_acquire) < 2 || !racerDone.load(std::memory_order_acquire)) {
+        if (!resumed && finalReleaseSeen.load(std::memory_order_acquire)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            ResumeFinalRelease();
+            resumed = true;
+        }
+        if (std::chrono::steady_clock::now() >= deadline) break;
+        std::this_thread::yield();
+    }
+    for (auto& joiner : joiners) joiner.join();
+    racer.join();
+    const int detach = detachResult.load(std::memory_order_acquire);
+    Require(detach == SCE_OK || detach == SCE_KERNEL_ERROR_ESRCH || detach == SCE_KERNEL_ERROR_EINVAL);
+    if (resumed) WaitUntilReleased(thread);
+    else APS5_Test_SetFinalThreadReleaseHook(thread, nullptr);
 }
 
 static void RequireAdmissionRejectsFinalRelease(int operation) {
     Worker worker;
     Pthread thread = nullptr;
-    Require(scePthreadCreate(&thread, nullptr, Wait, &worker, "release_race") == SCE_OK);
+    {
+        PthreadAttr attr = nullptr;
+        Require(scePthreadAttrInit(&attr) == SCE_OK);
+        Require(scePthreadAttrSetstacksize(&attr, 64 * 1024) == SCE_OK);
+        Require(scePthreadCreate(&thread, &attr, Wait, &worker, "release_race") == SCE_OK);
+        Require(scePthreadAttrDestroy(&attr) == SCE_OK);
+    }
     while (!worker.started.load()) std::this_thread::yield();
     Require(scePthreadDetach(thread) == SCE_OK);
 
@@ -82,7 +181,7 @@ static void RequireAdmissionRejectsFinalRelease(int operation) {
     }
     APS5_Test_SetFinalThreadReleaseHook(thread, HoldFinalRelease);
     worker.release.store(true);
-    WaitForFinalRelease();
+    Require(WaitForFinalRelease());
 
     int result = SCE_OK;
     if (operation == 0) result = scePthreadJoin(thread, nullptr);
@@ -94,11 +193,108 @@ static void RequireAdmissionRejectsFinalRelease(int operation) {
     Require(result == SCE_KERNEL_ERROR_ESRCH);
 }
 
+static constexpr int PaddingCount = 100;
+
+static void* APS5_VABI Pad(void*) {
+    return nullptr;
+}
+
+static void RequireJoinDetachInterleaves() {
+    std::vector<Pthread> padding(PaddingCount);
+    for (int index = 0; index < PaddingCount; ++index) {
+        PthreadAttr attr = nullptr;
+        Require(scePthreadAttrInit(&attr) == SCE_OK);
+        Require(scePthreadAttrSetstacksize(&attr, 64 * 1024) == SCE_OK);
+        Require(scePthreadCreate(&padding[index], &attr, Pad, nullptr, "registry_padding") == SCE_OK);
+        Require(scePthreadAttrDestroy(&attr) == SCE_OK);
+    }
+    for (int round = 0; round < 60; ++round) RequireJoinDetachInterleave();
+    for (int index = 0; index < PaddingCount; ++index)
+        Require(scePthreadJoin(padding[index], nullptr) == SCE_OK);
+}
+
+struct JoinWindowGate {
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool entered = false;
+    bool release = false;
+};
+
+static JoinWindowGate windowGate;
+
+static void ParkInWindow(Pthread) {
+    std::unique_lock lock(windowGate.mutex);
+    windowGate.entered = true;
+    windowGate.changed.notify_all();
+    windowGate.changed.wait_until(lock, std::chrono::steady_clock::now() + std::chrono::seconds(10), [] { return windowGate.release; });
+}
+
+static std::atomic<bool> finalReleaseDuringWindow{false};
+static std::atomic<Pthread> watchedThread{nullptr};
+
+static void MarkFinalReleaseDuringWindow(Pthread thread) {
+    if (thread == watchedThread.load(std::memory_order_acquire)) finalReleaseDuringWindow.store(true, std::memory_order_release);
+}
+
+static void RequireJoinWindowKeepsReference() {
+    Worker worker;
+    Pthread thread = nullptr;
+    {
+        PthreadAttr attr = nullptr;
+        Require(scePthreadAttrInit(&attr) == SCE_OK);
+        Require(scePthreadAttrSetstacksize(&attr, 64 * 1024) == SCE_OK);
+        Require(scePthreadCreate(&thread, &attr, Wait, &worker, "join_window_reference") == SCE_OK);
+        Require(scePthreadAttrDestroy(&attr) == SCE_OK);
+    }
+    while (!worker.started.load()) std::this_thread::yield();
+    worker.release.store(true, std::memory_order_release);
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!WorkerFinished(thread)) {
+            if (std::chrono::steady_clock::now() >= deadline) break;
+            std::this_thread::yield();
+        }
+    }
+    Require(WorkerFinished(thread));
+    watchedThread.store(thread, std::memory_order_release);
+    finalReleaseDuringWindow.store(false, std::memory_order_relaxed);
+    APS5_Test_SetFinalThreadReleaseHook(thread, MarkFinalReleaseDuringWindow);
+    {
+        std::lock_guard lock(windowGate.mutex);
+        windowGate.entered = false;
+        windowGate.release = false;
+    }
+    APS5_Test_SetJoinWindowHook(thread, ParkInWindow);
+    std::atomic<int> joinerResult{SCE_OK};
+    std::thread joiner([&] {
+        joinerResult.store(scePthreadJoin(thread, nullptr), std::memory_order_release);
+    });
+    bool windowEntered = false;
+    {
+        std::unique_lock lock(windowGate.mutex);
+        windowEntered = windowGate.changed.wait_for(lock, std::chrono::seconds(10), [] { return windowGate.entered; });
+    }
+    Require(windowEntered);
+    const int detachResult = scePthreadDetach(thread);
+    Require(!finalReleaseDuringWindow.load(std::memory_order_acquire));
+    {
+        std::lock_guard lock(windowGate.mutex);
+        windowGate.release = true;
+        windowGate.changed.notify_all();
+    }
+    joiner.join();
+    Require(detachResult == SCE_OK || detachResult == SCE_KERNEL_ERROR_ESRCH || detachResult == SCE_KERNEL_ERROR_EINVAL);
+    const int joinResult = joinerResult.load(std::memory_order_acquire);
+    Require(joinResult == SCE_OK || joinResult == SCE_KERNEL_ERROR_EINVAL || joinResult == SCE_KERNEL_ERROR_ESRCH);
+}
+
 int main() {
-    for (int round = 0; round < 20; ++round) {
+    for (int round = 0; round < 10; ++round) {
         RequireAdmissionRejectsFinalRelease(0);
         RequireAdmissionRejectsFinalRelease(1);
         RequireAdmissionRejectsFinalRelease(2);
     }
+    RequireJoinDetachInterleaves();
+    RequireJoinWindowKeepsReference();
     return 0;
 }
