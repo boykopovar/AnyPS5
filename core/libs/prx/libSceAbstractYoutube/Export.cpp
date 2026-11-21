@@ -70,11 +70,11 @@ int APS5_VABI _ZN15AbstractStorage13YoutubeFolder13RemoveContentERKSbIcSt11char_
 }
 
 int APS5_VABI _ZN15AbstractStorage13YoutubeFolder4OpenENS_8ItemTypeE() {
-    NotImplemented_nid_no_patch(__func__);
+    return static_cast<int>(0x809E0005u);
 }
 
 int APS5_VABI _ZN15AbstractStorage13YoutubeFolder5CloseEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return static_cast<int>(0x809E0005u);
 }
 
 }
