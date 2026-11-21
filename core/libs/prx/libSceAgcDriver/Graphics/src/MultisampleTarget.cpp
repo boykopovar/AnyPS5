@@ -985,11 +985,13 @@ private:
     }
 
     static bool copyCurrent(const GuestMemory::UnchangedQuery& range, DccCopy& copy) {
-        if (GuestMemory::NewestStamp(range.address, range.bytes) != copy.stamp) return false;
+        const auto stamp = GuestMemory::NewestStamp(range.address, range.bytes);
+        if (stamp != copy.stamp && !GuestMemory::OnlyRewatchedSince(range.address, range.bytes, copy.stamp)) return false;
         const auto epoch = GuestMemory::CollectEpoch();
         const std::array<std::uint64_t, 2> seen{epoch, GuestMemory::ForgetSerial()};
-        if (epoch != 0 && (seen[1] & 1u) == 0 && copy.checked == seen) return true;
+        if (stamp == copy.stamp && epoch != 0 && (seen[1] & 1u) == 0 && copy.checked == seen) return true;
         if (!GuestMemory::EqualsCommittedUnsynced(range.address, copy.bytes)) return false;
+        copy.stamp = stamp;
         copy.checked = seen;
         return true;
     }
