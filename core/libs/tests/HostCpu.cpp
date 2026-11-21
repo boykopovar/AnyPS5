@@ -1,6 +1,8 @@
 #include "prx/libkernel/System/include/HostCpu.hpp"
+#include "prx/libc/include/HostCpuFeatures.hpp"
 #include <cstdint>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -34,6 +36,11 @@ static std::string Text(const std::vector<std::string>& names) {
 
 static void CheckMissing(const HostCpuRegisters& registers, const std::vector<std::string>& expected, const std::string& label) {
     const auto missing = MissingHostCpuFeatures(registers);
+    Require(missing == expected, label + ": expected [" + Text(expected) + "], got [" + Text(missing) + "]");
+}
+
+static void CheckMissing(const HostCpuRegisters& registers, const std::vector<std::string>& expected, const std::string& label, const std::optional<std::uint64_t> recorded) {
+    const auto missing = MissingHostCpuFeatures(registers, recorded);
     Require(missing == expected, label + ": expected [" + Text(expected) + "], got [" + Text(missing) + "]");
 }
 
@@ -96,6 +103,32 @@ static void CheckPreHaswell() {
     CheckMissing(registers, {"LZCNT", "BMI1", "BMI2", "MOVBE", "AVX2", "FMA"}, "AVX host without AVX2");
 }
 
+static void CheckRecordedFeatures() {
+    auto preHaswell = Zen2();
+    preHaswell.Leaf1Ecx &= ~(Bit(12) | Bit(22));
+    preHaswell.Leaf7Ebx = 0;
+    preHaswell.Leaf80000001Ecx &= ~Bit(5);
+    CheckMissing(preHaswell, {}, "empty record", std::uint64_t{0});
+    CheckMissing(preHaswell, {"FMA"}, "recorded FMA", HostCpuFeatureBits::Fma);
+    CheckMissing(preHaswell, {"BMI1", "FMA"}, "recorded BMI1 and FMA", HostCpuFeatureBits::Bmi1 | HostCpuFeatureBits::Fma);
+    CheckMissing(Zen2(), {}, "recorded extensions the host has", HostCpuFeatureBits::All);
+    auto noSse2 = Zen2();
+    noSse2.Leaf1Edx &= ~Bit(26);
+    CheckMissing(noSse2, {"SSE2"}, "empty record keeps the baseline", std::uint64_t{0});
+    auto noAvx = Zen2();
+    noAvx.Leaf1Ecx &= ~Bit(28);
+    CheckMissing(noAvx, {"AVX"}, "empty record keeps AVX", std::uint64_t{0});
+    CheckHostCpu(preHaswell, "Pre-Haswell", std::uint64_t{0});
+    try {
+        CheckHostCpu(preHaswell, "Pre-Haswell", HostCpuFeatureBits::Fma);
+        throw std::logic_error("a recorded missing FMA did not throw");
+    } catch (const std::runtime_error& error) {
+        const std::string message = error.what();
+        Require(message.find("(Pre-Haswell) lacks FMA.") != std::string::npos, "unexpected recorded message: " + message);
+        Require(message.find("BMI1") == std::string::npos, "the recorded message names an extension the record does not require: " + message);
+    }
+}
+
 static void CheckError() {
     auto registers = Zen2();
     registers.Leaf7Ebx &= ~Bit(8);
@@ -145,6 +178,7 @@ int main() {
         CheckSingleMissingExtension();
         CheckAvxWithoutOsState();
         CheckPreHaswell();
+        CheckRecordedFeatures();
         CheckError();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

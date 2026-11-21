@@ -76,6 +76,7 @@ inline constexpr std::uint32_t ET_EXEC = 2;
 inline constexpr std::uint32_t ET_DYN = 3;
 inline constexpr std::uint32_t PT_SCE_DYNLIBDATA = 0x61000000;
 inline constexpr std::uint32_t PT_OS_PROCPARAM = 0x61000001;
+inline constexpr std::uint32_t PT_OS_HOSTCPU = 0x61000002;
 inline constexpr std::uint32_t PT_OS_RELRO = 0x61000010;
 
 inline constexpr std::uint32_t PT_LOOS = 0x61000000;

@@ -1,0 +1,105 @@
+#include <codegen/x86/HostCpuFeatureClassifier.hpp>
+#include "HostCpuFeatures.hpp"
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <initializer_list>
+#include <vector>
+
+using namespace Codegen;
+
+namespace {
+
+void Require(const bool condition, const char* message) {
+    if (!condition) {
+        std::fprintf(stderr, "Requirement failed: %s\n", message);
+        std::abort();
+    }
+}
+
+void Expect(const std::initializer_list<std::uint8_t> bytes, const std::uint64_t expected, const char* label) {
+    const std::vector<std::uint8_t> instruction(bytes);
+    const auto actual = RequiredHostCpuFeatures(instruction.data(), instruction.size());
+    if (actual != expected) {
+        std::fprintf(stderr, "%s: got 0x%llx, expected 0x%llx\n", label,
+                     static_cast<unsigned long long>(actual), static_cast<unsigned long long>(expected));
+        std::abort();
+    }
+}
+
+void TestLegacy() {
+    Expect({0x0F, 0xBD, 0xC1}, 0, "BSR");
+    Expect({0xF3, 0x0F, 0xBD, 0xC1}, HostCpuFeatureBits::Lzcnt, "LZCNT");
+    Expect({0xF3, 0x48, 0x0F, 0xBD, 0xC1}, HostCpuFeatureBits::Lzcnt, "LZCNT with REX.W");
+    Expect({0x0F, 0xBC, 0xC1}, 0, "BSF");
+    Expect({0xF3, 0x0F, 0xBC, 0xC1}, HostCpuFeatureBits::Bmi1, "TZCNT");
+    Expect({0x0F, 0x38, 0xF0, 0x01}, HostCpuFeatureBits::Movbe, "MOVBE load");
+    Expect({0x0F, 0x38, 0xF1, 0x01}, HostCpuFeatureBits::Movbe, "MOVBE store");
+    Expect({0xF2, 0x0F, 0x38, 0xF0, 0xC1}, 0, "CRC32 is not MOVBE");
+    Expect({0x66, 0x0F, 0x70, 0xC1, 0x1B}, 0, "PSHUFD");
+    Expect({0x90}, 0, "NOP");
+    Expect({0x62, 0xF1, 0x7C, 0x48, 0x58, 0xC1}, 0, "EVEX");
+}
+
+void TestBmi() {
+    Expect({0xC4, 0xE2, 0x70, 0xF2, 0xC2}, HostCpuFeatureBits::Bmi1, "ANDN");
+    Expect({0xC4, 0xE2, 0x70, 0xF3, 0xC2}, HostCpuFeatureBits::Bmi1, "BLSR");
+    Expect({0xC4, 0xE2, 0x70, 0xF7, 0xC2}, HostCpuFeatureBits::Bmi1, "BEXTR");
+    Expect({0xC4, 0xE2, 0x70, 0xF5, 0xC2}, HostCpuFeatureBits::Bmi2, "BZHI");
+    Expect({0xC4, 0xE2, 0x73, 0xF6, 0xC2}, HostCpuFeatureBits::Bmi2, "MULX");
+    Expect({0xC4, 0xE2, 0x71, 0xF7, 0xC2}, HostCpuFeatureBits::Bmi2, "SHLX");
+    Expect({0xC4, 0xE2, 0x72, 0xF7, 0xC2}, HostCpuFeatureBits::Bmi2, "SARX");
+    Expect({0xC4, 0xE2, 0x73, 0xF7, 0xC2}, HostCpuFeatureBits::Bmi2, "SHRX");
+    Expect({0xC4, 0xE3, 0x7B, 0xF0, 0xC2, 0x01}, HostCpuFeatureBits::Bmi2, "RORX");
+}
+
+void TestFmaAndF16c() {
+    Expect({0xC4, 0xE2, 0x71, 0x98, 0xC1}, HostCpuFeatureBits::Fma, "VFMADD132PS");
+    Expect({0xC4, 0xE2, 0xF1, 0x9B, 0xC1}, HostCpuFeatureBits::Fma, "VFMSUB132SD");
+    Expect({0xC4, 0xE2, 0x71, 0xA6, 0xC1}, HostCpuFeatureBits::Fma, "VFMADDSUB213PS");
+    Expect({0xC4, 0xE2, 0x71, 0xBF, 0xC1}, HostCpuFeatureBits::Fma, "VFNMSUB231PS");
+    Expect({0xC4, 0xE2, 0x79, 0x13, 0xC1}, HostCpuFeatureBits::F16c, "VCVTPH2PS");
+    Expect({0xC4, 0xE3, 0x79, 0x1D, 0xC1, 0x00}, HostCpuFeatureBits::F16c, "VCVTPS2PH");
+}
+
+void TestAvx() {
+    Expect({0xC5, 0xFC, 0x58, 0xC2}, 0, "VADDPS ymm");
+    Expect({0xC5, 0xF5, 0x58, 0xC2}, 0, "VADDPD ymm");
+    Expect({0xC5, 0xFD, 0x5A, 0xC1}, 0, "VCVTPD2PS ymm");
+    Expect({0xC5, 0xFD, 0x6F, 0xC1}, 0, "VMOVDQA ymm");
+    Expect({0xC5, 0xFD, 0xE7, 0x01}, 0, "VMOVNTDQ ymm");
+    Expect({0xC5, 0xFF, 0xF0, 0x01}, 0, "VLDDQU ymm");
+    Expect({0xC5, 0xFA, 0x10, 0xC1}, 0, "VMOVSS");
+    Expect({0xC5, 0xF8, 0x77}, 0, "VZEROUPPER");
+    Expect({0xC4, 0xE3, 0x6D, 0x06, 0xC1, 0x00}, 0, "VPERM2F128");
+    Expect({0xC4, 0xE3, 0x6D, 0x40, 0xC1, 0x01}, 0, "VDPPS ymm");
+    Expect({0xC4, 0xE2, 0x7D, 0x1A, 0x01}, 0, "VBROADCASTF128");
+    Expect({0xC4, 0xE2, 0x7D, 0x18, 0x01}, 0, "VBROADCASTSS ymm");
+    Expect({0xC4, 0xE3, 0x69, 0x4C, 0xC1, 0x00}, 0, "VPBLENDVB xmm");
+    Expect({0xC5, 0xF1, 0xFE, 0xC2}, 0, "VPADDD xmm");
+    Expect({0xC4, 0xE2, 0x71, 0x20, 0xC1}, 0, "VPMOVSXBW xmm");
+}
+
+void TestAvx2() {
+    Expect({0xC5, 0xF5, 0xFE, 0xC2}, HostCpuFeatureBits::Avx2, "VPADDD ymm");
+    Expect({0xC5, 0xF5, 0xEF, 0xC2}, HostCpuFeatureBits::Avx2, "VPXOR ymm");
+    Expect({0xC4, 0xE2, 0x75, 0x36, 0xC2}, HostCpuFeatureBits::Avx2, "VPERMD ymm");
+    Expect({0xC4, 0xE3, 0xED, 0x00, 0xC1, 0x01}, HostCpuFeatureBits::Avx2, "VPERMQ ymm");
+    Expect({0xC4, 0xE2, 0x79, 0x58, 0xC1}, HostCpuFeatureBits::Avx2, "VPBROADCASTD xmm");
+    Expect({0xC4, 0xE2, 0x69, 0x47, 0xC1}, HostCpuFeatureBits::Avx2, "VPSLLVD xmm");
+    Expect({0xC4, 0xE2, 0x69, 0x90, 0xC1}, HostCpuFeatureBits::Avx2, "VPGATHERDD xmm");
+    Expect({0xC4, 0xE3, 0x69, 0x02, 0xC1, 0x00}, HostCpuFeatureBits::Avx2, "VPBLENDD xmm");
+    Expect({0xC4, 0xE3, 0x6D, 0x0E, 0xC1, 0x00}, HostCpuFeatureBits::Avx2, "VPBLENDW ymm");
+    Expect({0xC4, 0xE2, 0x7D, 0x25, 0xC1}, HostCpuFeatureBits::Avx2, "VPMOVSXDQ ymm");
+}
+
+}
+
+int main() {
+    TestLegacy();
+    TestBmi();
+    TestFmaAndF16c();
+    TestAvx();
+    TestAvx2();
+    return 0;
+}

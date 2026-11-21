@@ -1,4 +1,6 @@
 #include "prx/libkernel/System/include/HostCpu.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/HostCpuFeatures.hpp"
 #include "prx/libc/include/general/LogMacros.hpp"
 #if defined(__x86_64__) || defined(__i386__)
 #include <cpuid.h>
@@ -28,40 +30,41 @@ struct FeatureBit {
     Register Source;
     unsigned Bit;
     bool Required;
+    std::uint64_t RecordMask;
 };
 
 constexpr FeatureBit kFeatures[] = {
-    {"SSE", Register::Leaf1Edx, 25, true},
-    {"SSE2", Register::Leaf1Edx, 26, true},
-    {"SSE3", Register::Leaf1Ecx, 0, true},
-    {"SSSE3", Register::Leaf1Ecx, 9, true},
-    {"SSE4.1", Register::Leaf1Ecx, 19, true},
-    {"SSE4.2", Register::Leaf1Ecx, 20, true},
-    {"POPCNT", Register::Leaf1Ecx, 23, true},
-    {"LZCNT", Register::Leaf80000001Ecx, 5, true},
-    {"BMI1", Register::Leaf7Ebx, 3, true},
-    {"BMI2", Register::Leaf7Ebx, 8, true},
-    {"MOVBE", Register::Leaf1Ecx, 22, true},
-    {"CMPXCHG16B", Register::Leaf1Ecx, 13, true},
-    {"LAHF/SAHF", Register::Leaf80000001Ecx, 0, true},
-    {"AVX", Register::Leaf1Ecx, 28, true},
-    {"AVX2", Register::Leaf7Ebx, 5, true},
-    {"FMA", Register::Leaf1Ecx, 12, true},
-    {"F16C", Register::Leaf1Ecx, 29, true},
-    {"AES", Register::Leaf1Ecx, 25, false},
-    {"PCLMULQDQ", Register::Leaf1Ecx, 1, false},
-    {"RDRAND", Register::Leaf1Ecx, 30, false},
-    {"RDSEED", Register::Leaf7Ebx, 18, false},
-    {"ADX", Register::Leaf7Ebx, 19, false},
-    {"SHA", Register::Leaf7Ebx, 29, false},
-    {"CLFLUSHOPT", Register::Leaf7Ebx, 23, false},
-    {"CLWB", Register::Leaf7Ebx, 24, false},
-    {"RDPID", Register::Leaf7Ecx, 22, false},
-    {"XSAVEOPT", Register::LeafDSub1Eax, 0, false},
-    {"XSAVEC", Register::LeafDSub1Eax, 1, false},
-    {"SSE4A", Register::Leaf80000001Ecx, 6, false},
-    {"PREFETCHW", Register::Leaf80000001Ecx, 8, false},
-    {"CLZERO", Register::Leaf80000008Ebx, 0, false},
+    {"SSE", Register::Leaf1Edx, 25, true, 0},
+    {"SSE2", Register::Leaf1Edx, 26, true, 0},
+    {"SSE3", Register::Leaf1Ecx, 0, true, 0},
+    {"SSSE3", Register::Leaf1Ecx, 9, true, 0},
+    {"SSE4.1", Register::Leaf1Ecx, 19, true, 0},
+    {"SSE4.2", Register::Leaf1Ecx, 20, true, 0},
+    {"POPCNT", Register::Leaf1Ecx, 23, true, 0},
+    {"LZCNT", Register::Leaf80000001Ecx, 5, true, HostCpuFeatureBits::Lzcnt},
+    {"BMI1", Register::Leaf7Ebx, 3, true, HostCpuFeatureBits::Bmi1},
+    {"BMI2", Register::Leaf7Ebx, 8, true, HostCpuFeatureBits::Bmi2},
+    {"MOVBE", Register::Leaf1Ecx, 22, true, HostCpuFeatureBits::Movbe},
+    {"CMPXCHG16B", Register::Leaf1Ecx, 13, true, 0},
+    {"LAHF/SAHF", Register::Leaf80000001Ecx, 0, true, 0},
+    {"AVX", Register::Leaf1Ecx, 28, true, 0},
+    {"AVX2", Register::Leaf7Ebx, 5, true, HostCpuFeatureBits::Avx2},
+    {"FMA", Register::Leaf1Ecx, 12, true, HostCpuFeatureBits::Fma},
+    {"F16C", Register::Leaf1Ecx, 29, true, HostCpuFeatureBits::F16c},
+    {"AES", Register::Leaf1Ecx, 25, false, 0},
+    {"PCLMULQDQ", Register::Leaf1Ecx, 1, false, 0},
+    {"RDRAND", Register::Leaf1Ecx, 30, false, 0},
+    {"RDSEED", Register::Leaf7Ebx, 18, false, 0},
+    {"ADX", Register::Leaf7Ebx, 19, false, 0},
+    {"SHA", Register::Leaf7Ebx, 29, false, 0},
+    {"CLFLUSHOPT", Register::Leaf7Ebx, 23, false, 0},
+    {"CLWB", Register::Leaf7Ebx, 24, false, 0},
+    {"RDPID", Register::Leaf7Ecx, 22, false, 0},
+    {"XSAVEOPT", Register::LeafDSub1Eax, 0, false, 0},
+    {"XSAVEC", Register::LeafDSub1Eax, 1, false, 0},
+    {"SSE4A", Register::Leaf80000001Ecx, 6, false, 0},
+    {"PREFETCHW", Register::Leaf80000001Ecx, 8, false, 0},
+    {"CLZERO", Register::Leaf80000008Ebx, 0, false, 0},
 };
 
 constexpr unsigned kOsxsaveBit = 27;
@@ -158,18 +161,20 @@ std::string HostCpuModel() {
 #endif
 }
 
-std::vector<HostCpuFeature> HostCpuFeatures(const HostCpuRegisters& registers) {
+std::vector<HostCpuFeature> HostCpuFeatures(const HostCpuRegisters& registers, const std::optional<std::uint64_t> recorded) {
     std::vector<HostCpuFeature> features;
     features.reserve(std::size(kFeatures) + 1);
-    for (const auto& feature : kFeatures)
-        features.push_back({feature.Name, feature.Required, (Value(registers, feature.Source) >> feature.Bit & 1) != 0});
+    for (const auto& feature : kFeatures) {
+        const bool required = recorded && feature.RecordMask != 0 ? (*recorded & feature.RecordMask) != 0 : feature.Required;
+        features.push_back({feature.Name, required, (Value(registers, feature.Source) >> feature.Bit & 1) != 0});
+    }
     features.push_back({"OS AVX state (XCR0)", true, AvxStateEnabled(registers)});
     return features;
 }
 
-std::vector<std::string> MissingHostCpuFeatures(const HostCpuRegisters& registers) {
+std::vector<std::string> MissingHostCpuFeatures(const HostCpuRegisters& registers, const std::optional<std::uint64_t> recorded) {
     std::vector<std::string> missing;
-    for (const auto& feature : HostCpuFeatures(registers))
+    for (const auto& feature : HostCpuFeatures(registers, recorded))
         if (feature.Required && !feature.Present) missing.emplace_back(feature.Name);
     return missing;
 }
@@ -195,16 +200,20 @@ HostCpuText HostCpuModel_nid_no_patch() {
 }
 
 HostCpuText MissingHostCpuFeatures_nid_no_patch(const HostCpuRegisters* registers) {
-    return PackText(Join(MissingHostCpuFeatures(*registers)));
+    return PackText(Join(MissingHostCpuFeatures(*registers, ApplicationHostCpuFeatures_nid_no_patch())));
 }
 
 }
 
-void CheckHostCpu(const HostCpuRegisters& registers, const std::string& model) {
-    const auto missing = MissingHostCpuFeatures(registers);
+void CheckHostCpu(const HostCpuRegisters& registers, const std::string& model, const std::optional<std::uint64_t> recorded) {
+    const auto missing = MissingHostCpuFeatures(registers, recorded);
     if (missing.empty()) return;
-    throw std::runtime_error("The host CPU (" + DisplayModel(model) + ") lacks " + Join(missing) +
-        ". The PS5's Zen 2 CPU has these extensions and titles run their instructions natively, so this CPU cannot run them.");
+    std::string message = "The host CPU (" + DisplayModel(model) + ") lacks " + Join(missing) + ".";
+    if (recorded)
+        message += " The converted executable records that it still uses these extensions.";
+    else
+        message += " The PS5's Zen 2 CPU has these extensions and titles run their instructions natively, so this CPU cannot run them; relink with --to-avx to lower the extensions it can.";
+    throw std::runtime_error(message);
 }
 
 #if (defined(__x86_64__) || defined(__i386__)) && !defined(__APPLE__)
@@ -213,12 +222,13 @@ namespace {
 const bool HostCpuChecked = [] {
     const auto registers = ReadHostCpuRegisters();
     const auto model = HostCpuModel();
+    const auto recorded = ApplicationHostCpuFeatures_nid_no_patch();
     std::vector<std::string> present;
     std::vector<std::string> absent;
-    for (const auto& feature : HostCpuFeatures(registers))
+    for (const auto& feature : HostCpuFeatures(registers, recorded))
         (feature.Present ? present : absent).emplace_back(feature.Name);
     APS5_LOG_OUT("host CPU %s: has %s; lacks %s", DisplayModel(model).c_str(), Join(present).c_str(), absent.empty() ? "none" : Join(absent).c_str());
-    CheckHostCpu(registers, model);
+    CheckHostCpu(registers, model, recorded);
     return true;
 }();
 

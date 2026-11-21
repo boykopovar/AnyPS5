@@ -22,7 +22,8 @@ public:
         const std::string& runPath,
         bool lazyBinding,
         bool dependencyDiagnostics,
-        const std::vector<Codegen::TrampolineSite>& trampolines
+        const std::vector<Codegen::TrampolineSite>& trampolines,
+        std::optional<std::uint64_t> hostCpuFeatures = std::nullopt
     ) override;
 
 private:
