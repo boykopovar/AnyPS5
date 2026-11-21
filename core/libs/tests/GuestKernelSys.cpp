@@ -1668,6 +1668,12 @@ int main() {
     CheckUnsupportedPathconf(fpathconf_nid_postfix, kqueueDescriptor);
     CheckUnsupportedPathconf(_fpathconf_nid_postfix, kqueueDescriptor);
     Require(close_nid_postfix(kqueueDescriptor) == 0);
+    std::intptr_t semaphore = -1;
+    Require(ksem_init_nid_postfix(&semaphore, 0) == 0 && semaphore >= 0);
+    CheckUnsupportedPathconf(fpathconf_nid_postfix, static_cast<int>(semaphore));
+    CheckUnsupportedPathconf(_fpathconf_nid_postfix, static_cast<int>(semaphore));
+    Require(fchdir_nid_postfix(static_cast<int>(semaphore)) == -1 && Error() == 22);
+    Require(ksem_destroy_nid_postfix(semaphore) == 0);
     const std::string namedSharedMemory = "/anyps5-kernel-sys-pathconf-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     const int sharedMemoryDescriptor = shm_open_nid_postfix(namedSharedMemory.c_str(), SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT, 0600);
