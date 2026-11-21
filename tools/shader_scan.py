@@ -9,6 +9,7 @@ TEXTURE_FORMATS = f"{AGC_DRIVER}Graphics/src/TextureFormat.cpp"
 SCANNED_DIRECTORIES = (RECOMPILER.rstrip("/"), AGC_DRIVER.rstrip("/"))
 FORMS = ("base", "vop3", "dpp16", "dpp8")
 TEST_PATH = re.compile(r"/tests?/")
+COMMENT_OR_LITERAL = re.compile(r"[/\"']")
 
 
 class ScanError(Exception):
@@ -18,6 +19,12 @@ class ScanError(Exception):
 
 def skip_literal(source, start):
     quote = source[start]
+    if quote == "'" and start + 1 < len(source) and source[start + 1] in "0123456789abcdefABCDEF":
+        begin = start
+        while begin and (source[begin - 1].isalnum() or source[begin - 1] in "_.'"):
+            begin -= 1
+        if begin < start and (source[begin].isdigit() or (source[begin] == "." and source[begin + 1].isdigit())):
+            return start
     j = start + 1
     while j < len(source) and source[j] != quote and source[j] != "\n":
         j += 2 if source[j] == "\\" else 1
@@ -44,8 +51,10 @@ def strip_comments(source):
             out.append(source[i:j + 1])
             i = j + 1
         else:
-            out.append(c)
-            i += 1
+            match = COMMENT_OR_LITERAL.search(source, i + 1)
+            stop = match.start() if match else n
+            out.append(source[i:stop])
+            i = stop
     return "".join(out)
 
 

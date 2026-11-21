@@ -169,6 +169,9 @@ public:
 class BundleScriptWorld final : public ObjectOf<ObjectType::BundleScriptWorld> {
 public:
     Retained<String> name;
+    std::uint64_t clearedWrappersCount = 0;
+    bool allShadowRootsOpen = false;
+    bool overrideBuiltinsDisabled = false;
     static BundleScriptWorld* NormalWorld() {
         static auto world = Make<BundleScriptWorld>();
         return world.Get();
@@ -195,6 +198,13 @@ public:
     Retained<BundleScriptWorld> scriptWorld;
 };
 
+class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
+public:
+    Retained<BundleNodeHandle> document;
+    Retained<BundleFrame> documentFrame;
+    Retained<BundleFrame> htmlIFrameElementContentFrame;
+};
+
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
 public:
     Retained<URL> absoluteImageURL;
@@ -204,18 +214,14 @@ public:
     Retained<String> linkLabel;
     Retained<String> linkTitle;
     Retained<String> linkSuggestedFilename;
+    Retained<BundleNodeHandle> nodeHandle;
+    Retained<BundleNodeHandle> urlElementHandle;
+    RectValue imageRect{{0.0, 0.0}, {0.0, 0.0}};
     bool isSelected = false;
     bool isDownloadableMedia = false;
     bool mediaHasAudio = false;
     bool mediaIsInFullscreen = false;
     std::uint32_t mediaType = 0;
-};
-
-class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
-public:
-    Retained<BundleNodeHandle> document;
-    Retained<BundleFrame> documentFrame;
-    Retained<BundleFrame> htmlIFrameElementContentFrame;
 };
 
 class BundleInspector final : public ObjectOf<ObjectType::BundleInspector> {
@@ -228,13 +234,22 @@ public:
 class BundlePage final : public ObjectOf<ObjectType::BundlePage> {
 public:
     mutable Retained<BundleInspector> inspector;
+    double backingScaleFactor = 1.0;
+    bool isControlledByAutomation = false;
+    bool isSuspended = false;
+    bool usesEphemeralSession = false;
+    std::uint64_t renderTreeSize = 0;
+    bool hasComposition = false;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
 public:
     Retained<Object> request;
     Retained<Object> originatingPage;
-    bool wasUserInitiated = false;
+    std::uint64_t id = 0;
+    Retained<Data> resumeData;
+    Retained<Array> redirectChain;
+    bool wasUserInitiated = true;
     bool isCancelled = false;
 };
 
@@ -244,6 +259,8 @@ public:
     Retained<String> description;
     Retained<String> helpText;
     Retained<String> url;
+    std::uint32_t role = 0;
+    std::uint32_t buttonState = 0;
 };
 
 class MediaSessionMetadata final : public ObjectOf<ObjectType::MediaSessionMetadata> {
@@ -357,6 +374,10 @@ public:
     }
 };
 
+enum class NotificationDirection : std::uint8_t { Auto, Ltr, Rtl };
+
+std::uint64_t GenerateNotificationIdentifier();
+
 class Notification final : public ObjectOf<ObjectType::Notification> {
 public:
     std::u16string title;
@@ -364,8 +385,8 @@ public:
     std::u16string iconURL;
     std::u16string tag;
     std::u16string lang;
-    std::u16string dir;
-    std::uint64_t notificationID = 0;
+    NotificationDirection dir = NotificationDirection::Auto;
+    std::uint64_t notificationID = GenerateNotificationIdentifier();
 };
 
 class Frame final : public ObjectOf<ObjectType::Frame> {
@@ -455,6 +476,14 @@ public:
         lastCachesCleared = cachesToClear;
         std::erase(origins, origin);
     }
+};
+
+class View final : public ObjectOf<ObjectType::View> {
+public:
+    double pageScaleFactor = 1.0;
+    double viewScaleFactor = 1.0;
+    bool drawsBackground = true;
+    bool isFullScreen = false;
 };
 
 class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListStore> {
