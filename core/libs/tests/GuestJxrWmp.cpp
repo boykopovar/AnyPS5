@@ -415,6 +415,20 @@ void TestTranscode(std::vector<std::uint8_t> encoded, std::uint8_t alphaMode) {
 constexpr std::size_t GuestOrientationOffset = 40;
 constexpr std::size_t GuestIgnoreOverlapOffset = 40;
 
+struct GuestEncoderTail {
+    std::int32_t hasAlpha;
+    std::int64_t imageOffset;
+    std::int64_t imageByteCount;
+    std::int64_t alphaOffset;
+    std::int64_t alphaByteCount;
+    std::int32_t orientation;
+    std::int32_t bandedState;
+    std::uint64_t temporary;
+};
+
+static_assert(sizeof(GuestEncoderTail) == 56 && offsetof(GuestEncoderTail, orientation) == GuestOrientationOffset);
+static_assert(offsetof(GuestEncoderTail, imageByteCount) == 16 && offsetof(GuestEncoderTail, bandedState) == 44);
+
 void TestEncoderOrientation(std::int32_t banded) {
     constexpr std::int32_t orientation = 2;
     const auto pixels = Pixels(3);
@@ -495,6 +509,66 @@ void TestDecoderIgnoreOverlap(std::vector<std::uint8_t> encoded) {
     Require(liveBlocks == blocksBefore);
 }
 
+void TestEncoderCallbackFailure() {
+    constexpr std::int32_t orientation = 2;
+    auto pixels = Pixels(3);
+    const auto stride = Width * 3;
+    auto parameters = Parameters(0, 0);
+    const auto blocksBefore = liveBlocks;
+    std::vector<std::uint8_t> output(Capacity);
+    auto* stream = MemoryStream(output, output.size());
+    auto* encoder = CreateEncoder();
+    Require(encoder->initialize(encoder, stream, parameters.data(), parameters.size()) == 0);
+    Require(encoder->setPixelFormat(encoder, JxrGuest_GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
+    Require(encoder->setSize(encoder, Width, Height) == 0);
+    auto* tail = reinterpret_cast<std::byte*>(encoder) + JxrWmpReferenceEncoderTailOffset();
+    Require(JxrWmpReferenceEncoderTailOffset() + sizeof(GuestEncoderTail) <= sizeof(Jxr::ImageEncode));
+    GuestEncoderTail guest{};
+    std::memcpy(&guest, tail, sizeof(guest));
+    Require(guest.imageByteCount == 0 && guest.alphaOffset == 0 && guest.bandedState == 0);
+    guest.orientation = orientation;
+    std::memcpy(tail, &guest, sizeof(guest));
+
+    const auto write = stream->write;
+    stream->write = nullptr;
+    RequireThrow(std::invalid_argument, [&] { encoder->writePixels(encoder, Height, pixels.data(), stride); });
+    std::memcpy(&guest, tail, sizeof(guest));
+    Require(guest.orientation == orientation && guest.bandedState != 0);
+    Require(guest.imageByteCount == 0 && guest.alphaOffset == 0);
+
+    stream->write = write;
+    encoder->stream = stream;
+    Require(encoder->release(&encoder) == 0 && encoder == nullptr);
+    Require(liveBlocks == blocksBefore);
+}
+
+void TestDecoderCallbackFailure(std::vector<std::uint8_t> encoded) {
+    const auto stride = Width * 3;
+    const auto blocksBefore = liveBlocks;
+    auto* stream = MemoryStream(encoded, encoded.size());
+    auto* decoder = CreateDecoder();
+    Require(decoder->initialize(decoder, stream) == 0);
+    JxrWmpReferenceConfigureDecoder(decoder);
+    auto* slot = reinterpret_cast<std::byte*>(decoder) + JxrWmpReferenceDecoderTailOffset() + GuestIgnoreOverlapOffset;
+    const std::int32_t ignoreOverlap = 1;
+    std::memcpy(slot, &ignoreOverlap, sizeof(ignoreOverlap));
+
+    const auto getPosition = stream->getPosition;
+    stream->getPosition = nullptr;
+    std::vector<std::uint8_t> pixels(stride * Height);
+    const Rect rect{0, 0, static_cast<std::int32_t>(Width), 16};
+    RequireThrow(std::invalid_argument, [&] { decoder->copy(decoder, &rect, pixels.data(), stride); });
+    std::int32_t kept = -1;
+    std::memcpy(&kept, slot, sizeof(kept));
+    Require(kept == ignoreOverlap);
+
+    stream->getPosition = getPosition;
+    decoder->stream = stream;
+    Require(decoder->release(&decoder) == 0 && decoder == nullptr);
+    Require(stream->close(&stream) == 0 && stream == nullptr);
+    Require(liveBlocks == blocksBefore);
+}
+
 void TestRefusals() {
     const auto blocksBefore = liveBlocks;
     auto parameters = Parameters(0, 0);
@@ -559,6 +633,8 @@ int main() {
     TestEncoderOrientation(0);
     TestEncoderOrientation(1);
     TestDecoderIgnoreOverlap(plain);
+    TestEncoderCallbackFailure();
+    TestDecoderCallbackFailure(plain);
     TestRefusals();
     Require(liveBlocks == 0);
     return 0;

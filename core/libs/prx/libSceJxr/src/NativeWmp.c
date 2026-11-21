@@ -312,6 +312,14 @@ static void DecoderToGuest(PKImageDecode* pID) {
     memcpy(DecoderTail(pID), &guest, sizeof(guest));
 }
 
+static void EncoderRestore(PKImageEncode** pIE) {
+    if (*pIE != NULL) EncoderToGuest(*pIE);
+}
+
+static void DecoderRestore(PKImageDecode** pID) {
+    if (*pID != NULL) DecoderToGuest(*pID);
+}
+
 static int KnownFormat(const PKPixelFormatGUID* format) {
     PKPixelInfo info;
     memset(&info, 0, sizeof(info));
@@ -372,9 +380,11 @@ int64_t JxrWmpEncodeWritePixels_nid_no_patch(void* encoder, uint32_t lines, uint
     *refusal = EncoderRefusal(pIE, 1, !pIE->fHeaderDone);
     if (*refusal != JXR_WMP_ACCEPTED) return WMP_errSuccess;
     Enter(&scope, &pIE->pStream);
-    EncoderToHost(pIE);
-    err = PKImageEncode_WritePixels_WMP(pIE, lines, pixels, stride);
-    EncoderToGuest(pIE);
+    {
+        PKImageEncode* hostLayout __attribute__((cleanup(EncoderRestore))) = pIE;
+        EncoderToHost(pIE);
+        err = PKImageEncode_WritePixels_WMP(pIE, lines, pixels, stride);
+    }
     Leave(&scope);
     return err;
 }
@@ -386,9 +396,11 @@ int64_t JxrWmpEncodeBandedBegin_nid_no_patch(void* encoder, void* temporary, int
         *refusal = JXR_WMP_REFUSE_STATE;
         return WMP_errSuccess;
     }
-    EncoderToHost(pIE);
-    err = PKImageEncode_WritePixelsBandedBegin_WMP(pIE, Retain(pIE, (struct WMPStream*)temporary));
-    EncoderToGuest(pIE);
+    {
+        PKImageEncode* hostLayout __attribute__((cleanup(EncoderRestore))) = pIE;
+        EncoderToHost(pIE);
+        err = PKImageEncode_WritePixelsBandedBegin_WMP(pIE, Retain(pIE, (struct WMPStream*)temporary));
+    }
     return err;
 }
 
@@ -408,9 +420,11 @@ int64_t JxrWmpEncodeBanded_nid_no_patch(void* encoder, uint32_t lines, uint8_t* 
         if (*refusal != JXR_WMP_ACCEPTED) return WMP_errSuccess;
     }
     Enter(&scope, &pIE->pStream);
-    EncoderToHost(pIE);
-    err = PKImageEncode_WritePixelsBanded_WMP(pIE, lines, pixels, stride, last);
-    EncoderToGuest(pIE);
+    {
+        PKImageEncode* hostLayout __attribute__((cleanup(EncoderRestore))) = pIE;
+        EncoderToHost(pIE);
+        err = PKImageEncode_WritePixelsBanded_WMP(pIE, lines, pixels, stride, last);
+    }
     Leave(&scope);
     return err;
 }
@@ -426,9 +440,11 @@ int64_t JxrWmpEncodeBandedEnd_nid_no_patch(void* encoder, int32_t* refusal) {
     *refusal = EncoderRefusal(pIE, 0, 0);
     if (*refusal != JXR_WMP_ACCEPTED) return WMP_errSuccess;
     Enter(&scope, &pIE->pStream);
-    EncoderToHost(pIE);
-    err = PKImageEncode_WritePixelsBandedEnd_WMP(pIE);
-    EncoderToGuest(pIE);
+    {
+        PKImageEncode* hostLayout __attribute__((cleanup(EncoderRestore))) = pIE;
+        EncoderToHost(pIE);
+        err = PKImageEncode_WritePixelsBandedEnd_WMP(pIE);
+    }
     Leave(&scope);
     return err;
 }
@@ -449,7 +465,7 @@ int64_t JxrWmpEncodeTranscode_nid_no_patch(void* encoder, void* decoder, void* p
     JxrWmpProxy encoderStream;
     JxrWmpScope scope;
     struct WMPStream* pWSEnc = pIE->pStream;
-    int hostTail = 0;
+    PKImageEncode* hostLayout __attribute__((cleanup(EncoderRestore))) = NULL;
 
     scope.guest = NULL;
     memset(&PI, 0, sizeof(PI));
@@ -500,7 +516,7 @@ int64_t JxrWmpEncodeTranscode_nid_no_patch(void* encoder, void* decoder, void* p
     }
     Enter(&scope, &pIE->pStream);
     EncoderToHost(pIE);
-    hostTail = 1;
+    hostLayout = pIE;
     Call(WriteContainerPre(pIE));
 
     if (fPlanarAlpha)
@@ -536,7 +552,10 @@ int64_t JxrWmpEncodeTranscode_nid_no_patch(void* encoder, void* decoder, void* p
 Refuse:
     *refusal = JXR_WMP_REFUSE_CALLBACK;
 Cleanup:
-    if (hostTail) EncoderToGuest(pIE);
+    if (hostLayout != NULL) {
+        EncoderToGuest(hostLayout);
+        hostLayout = NULL;
+    }
     if (scope.guest != NULL) Leave(&scope);
     return err;
 }
@@ -571,9 +590,11 @@ int64_t JxrWmpDecodeInitialize_nid_no_patch(void* decoder, void* stream) {
     PKImageDecode* pID = (PKImageDecode*)decoder;
     struct WMPStream* proxy = Retain(pID, (struct WMPStream*)stream);
     ERR err;
-    DecoderToHost(pID);
-    err = PKImageDecode_Initialize_WMP(pID, proxy);
-    DecoderToGuest(pID);
+    {
+        PKImageDecode* hostLayout __attribute__((cleanup(DecoderRestore))) = pID;
+        DecoderToHost(pID);
+        err = PKImageDecode_Initialize_WMP(pID, proxy);
+    }
     Restore(&pID->pStream, proxy);
     return err;
 }
@@ -609,9 +630,11 @@ int64_t JxrWmpDecodeCopy_nid_no_patch(void* decoder, const void* rectangle, uint
         return WMP_errSuccess;
     }
     Enter(&scope, &pID->pStream);
-    DecoderToHost(pID);
-    err = PKImageDecode_Copy_WMP(pID, (const PKRect*)rectangle, pixels, stride);
-    DecoderToGuest(pID);
+    {
+        PKImageDecode* hostLayout __attribute__((cleanup(DecoderRestore))) = pID;
+        DecoderToHost(pID);
+        err = PKImageDecode_Copy_WMP(pID, (const PKRect*)rectangle, pixels, stride);
+    }
     Leave(&scope);
     return err;
 }
@@ -633,9 +656,11 @@ int64_t JxrWmpDecodeGetColorContext_nid_no_patch(void* decoder, uint8_t* buffer,
 int64_t JxrWmpDecodeGetDescriptiveMetadata_nid_no_patch(void* decoder, void* metadata) {
     PKImageDecode* pID = (PKImageDecode*)decoder;
     ERR err;
-    DecoderToHost(pID);
-    err = PKImageDecode_GetDescriptiveMetadata_WMP(pID, (DESCRIPTIVEMETADATA*)metadata);
-    DecoderToGuest(pID);
+    {
+        PKImageDecode* hostLayout __attribute__((cleanup(DecoderRestore))) = pID;
+        DecoderToHost(pID);
+        err = PKImageDecode_GetDescriptiveMetadata_WMP(pID, (DESCRIPTIVEMETADATA*)metadata);
+    }
     return err;
 }
 
