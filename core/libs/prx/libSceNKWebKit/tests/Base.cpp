@@ -2785,6 +2785,72 @@ static void TestContext() {
     Require(!WKContextGetUsesSingleWebProcess(context));
     WKContextSetUsesSingleWebProcess(context, true);
     Require(WKContextGetUsesSingleWebProcess(context));
+
+    auto url = NKWebKit::Make<NKWebKit::URL>("https://example.com/file.bin");
+    auto request = NKWebKit::Make<NKWebKit::URLRequest>(url);
+    const auto* dlReq = WKContextDownloadURLRequest(context, request.Get());
+    Require(dlReq != nullptr);
+    Require(WKGetTypeID(dlReq) == WKDownloadGetTypeID());
+    const auto* copyReq = WKDownloadCopyRequest(dlReq);
+    Require(copyReq != nullptr);
+    Require(WKGetTypeID(copyReq) == WKURLRequestGetTypeID());
+    WKRelease(copyReq);
+    WKRelease(dlReq);
+
+    auto resumeData = NKWebKit::Make<NKWebKit::Data>(std::vector<std::uint8_t>{1, 2, 3, 4});
+    const auto* dlResume = WKContextResumeDownload(context, resumeData.Get(), nullptr);
+    Require(dlResume != nullptr);
+    Require(WKGetTypeID(dlResume) == WKDownloadGetTypeID());
+    const auto* gotResume = WKDownloadGetResumeData(dlResume);
+    Require(gotResume != nullptr);
+    Require(WKGetTypeID(gotResume) == WKDataGetTypeID());
+    WKRelease(dlResume);
+
+    auto bundleUrl = NKWebKit::Make<NKWebKit::URL>("https://example.com/bundle");
+    const auto* dlResumeWithBundle = WKContextResumeDownload(context, resumeData.Get(), bundleUrl.Get());
+    Require(dlResumeWithBundle != nullptr);
+    WKRelease(dlResumeWithBundle);
+
+    bool threw = false;
+    try {
+        WKContextDownloadURLRequest(nullptr, request.Get());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKContextDownloadURLRequest(context, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKContextResumeDownload(nullptr, resumeData.Get(), nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKContextResumeDownload(context, nullptr, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKContextResumeDownload(context, resumeData.Get(), context);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
     WKRelease(context);
 
     const auto* config = WKContextConfigurationCreate();

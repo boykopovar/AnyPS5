@@ -52,7 +52,6 @@ int main() {
     Require(WKBundlePageGetBackForwardList() == 0);
     Require(WKBundlePageIsUsingDarkAppearance() == 0);
     Require(WKContextCopyPlugInAutoStartOriginHashes() == 0);
-    Require(WKContextDownloadURLRequest() == 0);
     Require(WKContextGetIconDatabase() == 0);
     Require(WKContextGetMaximumNumberOfProcesses() == static_cast<int>(0xffffffffu));
     Require(WKContextMenuCopySubmenuItems() == 0);
@@ -66,7 +65,6 @@ int main() {
     Require(WKContextMenuItemGetType() == 0);
     Require(WKContextMenuItemGetUserData() == 0);
     Require(WKContextMenuItemSeparatorItem() == 0);
-    Require(WKContextResumeDownload() == 0);
     Require(WKFrameCanShowMIMEType() == 0);
     Require(WKFrameCreateFrameInfo() == 0);
     Require(WKFrameIsFrameSet() == 0);

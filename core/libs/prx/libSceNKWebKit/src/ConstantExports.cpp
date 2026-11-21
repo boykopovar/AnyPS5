@@ -154,10 +154,6 @@ int APS5_VABI WKContextCopyPlugInAutoStartOriginHashes() {
     return 0;
 }
 
-int APS5_VABI WKContextDownloadURLRequest() {
-    return 0;
-}
-
 int APS5_VABI WKContextGetIconDatabase() {
     return 0;
 }
@@ -207,10 +203,6 @@ int APS5_VABI WKContextMenuItemGetUserData() {
 }
 
 int APS5_VABI WKContextMenuItemSeparatorItem() {
-    return 0;
-}
-
-int APS5_VABI WKContextResumeDownload() {
     return 0;
 }
 
