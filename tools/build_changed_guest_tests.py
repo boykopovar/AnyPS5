@@ -9,6 +9,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_mingw_host_only_tests as host_only
+from check_test_registration import testfile_commands
 from select_tests import chunks
 
 BROAD_CHANGES = {
@@ -65,22 +66,12 @@ def script_test_indices(build_dir, patterns):
     return sorted(indices)
 
 
-TESTFILE_ADD_TEST = re.compile(r'^\s*add_test\(\s*(?:"((?:[^"\\]|\\.)*)"|\[=\[(.*?)\]=\])\s*(.*)\)\s*$')
-TESTFILE_ARGUMENT = re.compile(r'"((?:[^"\\]|\\.)*)"|\[=\[(.*?)\]=\]|(\S+)')
-
-
 def registered_test_commands(build_dir):
     commands = {}
-    for root, _, files in os.walk(build_dir):
-        if "CTestTestfile.cmake" not in files:
-            continue
-        for line in (Path(root) / "CTestTestfile.cmake").read_text(encoding="utf-8", errors="replace").splitlines():
-            match = TESTFILE_ADD_TEST.match(line)
-            if match:
-                name = match.group(1) if match.group(1) is not None else match.group(2)
-                commands[re.sub(r"\\(.)", r"\1", name)] = [
-                    re.sub(r"\\(.)", r"\1", next(part for part in argument.groups() if part is not None))
-                    for argument in TESTFILE_ARGUMENT.finditer(match.group(3))]
+    for entries in testfile_commands(build_dir):
+        for command, arguments in entries:
+            if command == "add_test" and arguments:
+                commands[arguments[0]] = arguments[1:]
     return commands
 
 

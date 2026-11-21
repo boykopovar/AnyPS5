@@ -55,10 +55,10 @@ int main() {
     std::uint32_t eventStatus = 0xDEADBEEF;
     std::uint64_t eventState = 0xDEADBEEFDEADBEEFull;
 
-    Require(sizeof(SceSystemLogger2Timestamp) == 0x20);
+    Require(sizeof(SceSystemLogger2Timestamp) == 0x30);
     Require(offsetof(SceSystemLogger2Timestamp, clockSource) == 8);
 
-    Require(sceSystemLogger2GetTimestamp(&timestamp) == kNotInitialized);
+    Require(sceSystemLogger2GetTimestamp(&timestamp) == 0);
     Require(sceSystemLogger2SetEventAsync(nullptr) == kNotInitialized);
     Require(sceSystemLogger2TerminateWithResourceRelease() == kNotInitialized);
 
@@ -69,8 +69,9 @@ int main() {
     std::memset(&timestamp, 0xAA, sizeof(timestamp));
     Require(sceSystemLogger2GetTimestamp(&timestamp) == 0);
     Require(timestamp.tick >= kUnixEpochTick);
-    Require(std::strcmp(timestamp.clockSource, "networkClock") == 0);
-    for (std::size_t index = std::strlen("networkClock") + 1; index < sizeof(timestamp.clockSource); ++index) {
+    Require(timestamp.tick % 1000000 == 0);
+    Require(std::strcmp(timestamp.clockSource, "secureClock") == 0);
+    for (std::size_t index = std::strlen("secureClock") + 1; index < sizeof(timestamp.clockSource); ++index) {
         Require(timestamp.clockSource[index] == 0);
     }
 
@@ -187,7 +188,6 @@ int main() {
     Require(sceSystemLogger2Terminate() == 0);
     Require(sceSystemLogger2GetTimestamp(&timestamp) == 0);
     Require(sceSystemLogger2TerminateWithResourceRelease() == 0);
-    Require(sceSystemLogger2GetTimestamp(&timestamp) == kNotInitialized);
     Require(sceSystemLogger2TerminateWithResourceRelease() == kNotInitialized);
 
     Require(sceSystemLogger2Initialize() == 0);

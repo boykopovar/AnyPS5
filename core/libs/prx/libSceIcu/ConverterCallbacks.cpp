@@ -1,5 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
+#include "unicode/ucnv_cb.h"
+#include "unicode/ucnv_err.h"
 #include <array>
 #include <cstdint>
 
@@ -7,6 +9,11 @@ namespace {
 
 void ValidateReason(std::int32_t reason) {
     if (reason < 0 || reason > 7) APS5_INVALID_ARG_EX;
+}
+
+void RequireCallbackPointers(const void* arguments, std::int32_t reason, const void* error) {
+    ValidateReason(reason);
+    if (!arguments || !error) APS5_INVALID_ARG_EX;
 }
 
 void ClearError(std::int32_t* error) {
@@ -53,6 +60,32 @@ void APS5_VABI UCNV_TO_U_CALLBACK_STOP_nid_postfix(const void*, Icu::ConverterTo
 void APS5_VABI UCNV_TO_U_CALLBACK_SKIP_nid_postfix(const void* context, Icu::ConverterToUnicodeArgs*, const char*, std::int32_t, std::int32_t reason, std::int32_t* error) {
     ValidateReason(reason);
     if (reason <= 2 && ContextSkips(context, reason)) ClearError(error);
+}
+
+void APS5_VABI UCNV_FROM_U_CALLBACK_SUBSTITUTE_nid_postfix(const void* context, Icu::ConverterFromUnicodeArgs* arguments, const char16_t* codeUnits, std::int32_t length, std::int32_t codePoint, std::int32_t reason, std::int32_t* error) {
+    RequireCallbackPointers(arguments, reason, error);
+    UCNV_FROM_U_CALLBACK_SUBSTITUTE(context, reinterpret_cast<UConverterFromUnicodeArgs*>(arguments), reinterpret_cast<const UChar*>(codeUnits), length, codePoint, static_cast<UConverterCallbackReason>(reason), reinterpret_cast<UErrorCode*>(error));
+}
+
+void APS5_VABI UCNV_FROM_U_CALLBACK_ESCAPE_nid_postfix(const void* context, Icu::ConverterFromUnicodeArgs* arguments, const char16_t* codeUnits, std::int32_t length, std::int32_t codePoint, std::int32_t reason, std::int32_t* error) {
+    RequireCallbackPointers(arguments, reason, error);
+    if (!codeUnits && length > 0) APS5_INVALID_ARG_EX;
+    UCNV_FROM_U_CALLBACK_ESCAPE(context, reinterpret_cast<UConverterFromUnicodeArgs*>(arguments), reinterpret_cast<const UChar*>(codeUnits), length, codePoint, static_cast<UConverterCallbackReason>(reason), reinterpret_cast<UErrorCode*>(error));
+}
+
+void APS5_VABI UCNV_TO_U_CALLBACK_SUBSTITUTE_nid_postfix(const void* context, Icu::ConverterToUnicodeArgs* arguments, const char* codeUnits, std::int32_t length, std::int32_t reason, std::int32_t* error) {
+    RequireCallbackPointers(arguments, reason, error);
+    UCNV_TO_U_CALLBACK_SUBSTITUTE(context, reinterpret_cast<UConverterToUnicodeArgs*>(arguments), codeUnits, length, static_cast<UConverterCallbackReason>(reason), reinterpret_cast<UErrorCode*>(error));
+}
+
+void APS5_VABI UCNV_TO_U_CALLBACK_ESCAPE_nid_postfix(const void* context, Icu::ConverterToUnicodeArgs* arguments, const char* codeUnits, std::int32_t length, std::int32_t reason, std::int32_t* error) {
+    RequireCallbackPointers(arguments, reason, error);
+    if (!codeUnits && length > 0) APS5_INVALID_ARG_EX;
+    UCNV_TO_U_CALLBACK_ESCAPE(context, reinterpret_cast<UConverterToUnicodeArgs*>(arguments), codeUnits, length, static_cast<UConverterCallbackReason>(reason), reinterpret_cast<UErrorCode*>(error));
+}
+
+void APS5_VABI ucnv_cbFromUWriteSub_nid_postfix(Icu::ConverterFromUnicodeArgs* arguments, std::int32_t offsetIndex, std::int32_t* error) {
+    ucnv_cbFromUWriteSub(reinterpret_cast<UConverterFromUnicodeArgs*>(arguments), offsetIndex, reinterpret_cast<UErrorCode*>(error));
 }
 
 }

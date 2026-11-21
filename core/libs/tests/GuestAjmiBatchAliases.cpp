@@ -31,11 +31,13 @@ void Require(bool condition, const char* message, std::source_location location 
 
 class Module {
 public:
-    explicit Module(const char* path) {
+    explicit Module(const std::filesystem::path& path) {
 #ifdef _WIN32
-        handle = LoadLibraryW(std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(path))).c_str());
+        handle = LoadLibraryW(path.c_str());
+        if (!handle) std::fprintf(stderr, "LoadLibraryW failed: %lu\n", GetLastError());
 #else
-        handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+        handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+        if (!handle) std::fprintf(stderr, "%s\n", dlerror());
 #endif
         Require(handle != nullptr, "load module");
     }
@@ -188,6 +190,91 @@ void CheckRun(decltype(&sceAjmiBatchJobRunBufferRa_nid_no_patch) call) {
     }
 }
 
+using ControlBufferRa = decltype(&sceAjmiBatchJobControlBufferRa_nid_no_patch);
+using RunSplitBufferRa = decltype(&sceAjmiBatchJobRunSplitBufferRa_nid_no_patch);
+
+void CheckControl(ControlBufferRa call, ControlBufferRa reference) {
+    std::array<std::uint8_t, 48> sidebandInput{};
+    std::array<std::uint8_t, 32> sidebandOutput{};
+    std::array<std::uint8_t, 1> returnAddress{};
+    constexpr std::array<std::uint64_t, 7> flagsValues{0, 0x6001, 0x000060000000E7FFull, 0x0000800000001001ull, 0x8000000000000000ull, 0xFFFF9FFFFFFF1800ull, std::numeric_limits<std::uint64_t>::max()};
+    constexpr std::array<std::size_t, 4> sizes{0, 48, 0xFFFFFFFFull, 0x100000001ull};
+    for (const std::uint8_t fill : {0u, 0xCCu, 0xFFu}) {
+        for (const std::uint32_t instance : {0u, 1u, 0x12345u, 0xFFFFFFFFu}) {
+            for (const auto flags : flagsValues) {
+                for (const auto size : sizes) {
+                    for (const bool withReturn : {false, true}) {
+                        Bytes batch{};
+                        batch.fill(fill);
+                        auto expected = batch;
+                        const void* input = size ? sidebandInput.data() : nullptr;
+                        void* output = size ? sidebandOutput.data() : nullptr;
+                        void* ret = withReturn ? returnAddress.data() : nullptr;
+                        void* result = call(batch.data() + 3, instance, flags, input, size, output, size / 2, ret);
+                        void* wanted = reference(expected.data() + 3, instance, flags, input, size, output, size / 2, ret);
+                        Require(result == batch.data() + (static_cast<std::uint8_t*>(wanted) - expected.data()), "control returned pointer");
+                        Require(batch == expected, "control bytes match the module's sceAjm builder");
+                        Require(static_cast<std::uint8_t*>(result) - (batch.data() + 3) == (withReturn ? 0x40 : 0x30), "control record size");
+                    }
+                }
+            }
+        }
+    }
+    Bytes batch{};
+    batch.fill(0xCC);
+    Require(call(batch.data(), 0x12345, std::numeric_limits<std::uint64_t>::max(), sidebandInput.data(), 0x30, sidebandOutput.data(), 0x20, returnAddress.data()) == batch.data() + 0x40, "measured control end");
+    Require(Word(batch, 0x00) == 0xCC48D140u && Word(batch, 0x04) == 0x38u, "measured control header");
+    Require(Word(batch, 0x08) == 0xCCCCCCC6u && Word(batch, 0x18) == 0xCCCCCCC2u && Word(batch, 0x1C) == 0x30u, "measured control return and input records");
+    Require(Word(batch, 0x28) == 0xCC180003u && Word(batch, 0x2C) == 0xE7FFu, "measured control flags");
+    Require(Word(batch, 0x30) == 0xCCCCCCD2u && Word(batch, 0x34) == 0x20u, "measured control sideband output");
+    Require(std::all_of(batch.begin() + 0x40, batch.end(), [](std::uint8_t byte) { return byte == 0xCC; }), "control writes nothing past the record");
+    Require(std::all_of(sidebandInput.begin(), sidebandInput.end(), [](std::uint8_t byte) { return byte == 0; }) && std::all_of(sidebandOutput.begin(), sidebandOutput.end(), [](std::uint8_t byte) { return byte == 0; }) && returnAddress[0] == 0, "control only writes the batch");
+}
+
+void CheckSplit(RunSplitBufferRa call, RunSplitBufferRa reference) {
+    std::array<std::uint8_t, 64> first{};
+    std::array<std::uint8_t, 96> second{};
+    std::array<std::uint8_t, 128> third{};
+    std::array<std::uint8_t, 160> fourth{};
+    std::array<std::uint8_t, 32> sideband{};
+    std::array<std::uint8_t, 1> returnAddress{};
+    const AjmBuffer inputs[3] = {{first.data(), first.size()}, {second.data(), second.size()}, {third.data(), 0x100000001ull}};
+    const AjmBuffer outputs[3] = {{third.data(), third.size()}, {fourth.data(), fourth.size()}, {first.data(), 0xFFFFFFFFull}};
+    constexpr std::array<std::uint64_t, 6> flagsValues{0, 0x000060000000E7FFull, 0x0000800000001001ull, 0x0000E00000001FFFull, 0xFFFF1FFFFFFFE000ull, std::numeric_limits<std::uint64_t>::max()};
+    for (const std::uint8_t fill : {0u, 0xCCu, 0xFFu}) {
+        for (const std::uint32_t instance : {0u, 0x12345u, 0xFFFFFFFFu}) {
+            for (const auto flags : flagsValues) {
+                for (std::size_t inputCount = 0; inputCount <= 3; ++inputCount) {
+                    for (std::size_t outputCount = 0; outputCount <= 3; ++outputCount) {
+                        for (const bool withReturn : {false, true}) {
+                            Bytes batch{};
+                            batch.fill(fill);
+                            auto expected = batch;
+                            const AjmBuffer* in = inputCount ? inputs : nullptr;
+                            const AjmBuffer* out = outputCount ? outputs : nullptr;
+                            void* ret = withReturn ? returnAddress.data() : nullptr;
+                            void* result = call(batch.data() + 5, instance, flags, in, inputCount, out, outputCount, sideband.data(), sideband.size(), ret);
+                            void* wanted = reference(expected.data() + 5, instance, flags, in, inputCount, out, outputCount, sideband.data(), sideband.size(), ret);
+                            Require(result == batch.data() + (static_cast<std::uint8_t*>(wanted) - expected.data()), "split returned pointer");
+                            Require(batch == expected, "split bytes match the module's sceAjm builder");
+                            Require(static_cast<std::size_t>(static_cast<std::uint8_t*>(result) - (batch.data() + 5)) == 0x20 + 16 * (inputCount + outputCount) + (withReturn ? 16 : 0), "split record size");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Bytes batch{};
+    batch.fill(0xCC);
+    Require(call(batch.data(), 0x12345, std::numeric_limits<std::uint64_t>::max(), inputs, 2, outputs, 2, sideband.data(), sideband.size(), returnAddress.data()) == batch.data() + 0x70, "measured split end");
+    Require(Word(batch, 0x00) == 0xCC48D140u && Word(batch, 0x04) == 0x68u, "measured split header");
+    Require(Word(batch, 0x18) == 0xCCCCCCC1u && Word(batch, 0x1C) == 0x40u && Word(batch, 0x28) == 0xCCCCCCC1u && Word(batch, 0x2C) == 0x60u, "measured split inputs");
+    Require(Word(batch, 0x38) == 0xCC380004u && Word(batch, 0x3C) == 0x1FFFu, "measured split flags");
+    Require(Word(batch, 0x40) == 0xCCCCCCD1u && Word(batch, 0x44) == 0x80u && Word(batch, 0x50) == 0xCCCCCCD1u && Word(batch, 0x54) == 0xA0u, "measured split outputs");
+    Require(Word(batch, 0x60) == 0xCCCCCCD2u && Word(batch, 0x64) == 0x20u, "measured split sideband");
+    Require(std::all_of(batch.begin() + 0x70, batch.end(), [](std::uint8_t byte) { return byte == 0xCC; }), "split writes nothing past the record");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -195,12 +282,18 @@ int main(int argc, char** argv) {
     const bool patched = std::string_view(argv[3]) == "nid";
     Require(patched || std::string_view(argv[3]) == "unpatched", "known variant");
     try {
-        Module module(argv[1]);
+        const std::filesystem::path aliasPath = std::u8string(reinterpret_cast<const char8_t*>(argv[1]));
+        Module nativeModule(aliasPath.parent_path() / "libSceAjm.native.prx");
+        Module module(aliasPath);
         if (std::string_view(argv[2]) == "inline") {
             CheckInline(module.Import<decltype(&sceAjmiBatchJobInlineBuffer_nid_no_patch)>(patched ? "4MsUK9kAnKg" : "4MsUK9kAnKg_nid_no_patch_cut"));
-        } else {
-            Require(std::string_view(argv[2]) == "run", "known operation");
+        } else if (std::string_view(argv[2]) == "run") {
             CheckRun(module.Import<decltype(&sceAjmiBatchJobRunBufferRa_nid_no_patch)>(patched ? "m0xisYC6U2w" : "m0xisYC6U2w_nid_no_patch_cut"));
+        } else if (std::string_view(argv[2]) == "control") {
+            CheckControl(module.Import<ControlBufferRa>(patched ? "J3UwQ5e6sNU" : "J3UwQ5e6sNU_nid_no_patch_cut"), module.Import<ControlBufferRa>(patched ? "dmDybN--Fn8" : "sceAjmBatchJobControlBufferRa_nid_disambig1"));
+        } else {
+            Require(std::string_view(argv[2]) == "split", "known operation");
+            CheckSplit(module.Import<RunSplitBufferRa>(patched ? "r7NMFYcJi08" : "r7NMFYcJi08_nid_no_patch_cut"), module.Import<RunSplitBufferRa>(patched ? "7jdAXK+2fMo" : "sceAjmBatchJobRunSplitBufferRa_nid_disambig1"));
         }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
