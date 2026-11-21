@@ -141,6 +141,9 @@ struct Socket : KernelSocketPoll::NativeOwner {
     bool connecting = false;
     int connectFailure = 0;
 #endif
+#ifdef __linux__
+    bool connectPending = false;
+#endif
     std::uint32_t inode = 0;
     std::weak_ptr<Socket> peer;
     bool externalPeer = false;
@@ -1017,6 +1020,13 @@ int UnsupportedLevelError(const Socket& socket, int level, int option, bool set)
 bool SendBeforeConnect(Socket& socket) {
     if (socket.type != 1) return false;
     std::lock_guard lock(socket.modeMutex);
+#ifdef __linux__
+    if (socket.connectPending) {
+        pollfd entry{socket.value, POLLOUT, 0};
+        if (::poll(&entry, 1, 0) == 0) return true;
+        socket.connectPending = false;
+    }
+#endif
     return !socket.connectStarted;
 }
 bool LocalDatagram(const Socket& socket) {
@@ -1858,17 +1868,36 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
     std::unique_lock lock(socket->modeMutex);
     socket->options.reportedError = 0;
     socket->connectStarted = true;
+#ifdef __linux__
+    if (socket->type == 1) socket->connectPending = true;
+#endif
     if (socket->type != 2) lock.unlock();
     if (::connect(socket->value, reinterpret_cast<sockaddr*>(&native), size)) {
 #ifdef _WIN32
         if (socket->type == 1) return Fail(NoteConnectError(*socket));
 #endif
+#ifdef __linux__
+        const int host = errno;
+        const int error = ConnectError();
+        if (socket->type == 1 && host != EINPROGRESS && host != EALREADY && host != EINTR) {
+            std::lock_guard failed(socket->modeMutex);
+            socket->connectPending = false;
+        }
+        return Fail(error);
+#else
         return Fail(ConnectError());
+#endif
     }
 #ifdef _WIN32
     if (socket->type == 1) {
         std::lock_guard connected(socket->modeMutex);
         socket->connecting = false;
+    }
+#endif
+#ifdef __linux__
+    if (socket->type == 1) {
+        std::lock_guard connected(socket->modeMutex);
+        socket->connectPending = false;
     }
 #endif
     if (socket->type == 2) socket->localAddressCleared = false;
