@@ -1,0 +1,10 @@
+add_test_executable(guest_dl_iterate_phdr_tests ${LIBS_INCLUDE_DIR}/tests/GuestDlIteratePhdr.cpp)
+target_include_directories(guest_dl_iterate_phdr_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_dl_iterate_phdr_tests PRIVATE libc)
+configure_windows_unwind(guest_dl_iterate_phdr_tests)
+add_test(NAME guest_dl_iterate_phdr COMMAND guest_dl_iterate_phdr_tests)
+set_tests_properties(guest_dl_iterate_phdr PROPERTIES TIMEOUT 20)
+if(WIN32)
+    set_tests_properties(guest_dl_iterate_phdr PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()
