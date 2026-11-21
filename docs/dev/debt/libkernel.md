@@ -453,6 +453,3 @@
 
 
 ### Silent stubs
-
-- [sceKernelIsTrinityMode](../../../core/libs/prx/libkernel/System/src/chunks/Process_Chunk03.cpp) (libkernel) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after Process.cpp was split into small-size libraries.
-- [sceKernelHasTrinityMode](../../../core/libs/prx/libkernel/System/src/chunks/Process_Chunk03.cpp) (libkernel) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after Process.cpp was split into small-size libraries.
