@@ -324,7 +324,7 @@ extern "C" {
 
 const void* APS5_VABI WKSecurityOriginCreate(const void* protocol, const void* host, int port) {
     std::optional<std::uint16_t> validPort;
-    if (port && port <= 65535) validPort = static_cast<std::uint16_t>(port);
+    if (port > 0 && port <= 65535) validPort = static_cast<std::uint16_t>(port);
     return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(
         *NKWebKit::Cast<NKWebKit::String>(protocol, __func__), *NKWebKit::Cast<NKWebKit::String>(host, __func__), validPort));
 }
