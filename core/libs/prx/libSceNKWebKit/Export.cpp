@@ -2993,10 +2993,6 @@ int APS5_VABI _ZN7WebCore4Page28setPaginationLineGridEnabledEb() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore14SecurityOrigin12createUniqueEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore8Document15createElementNSERKN3WTF10AtomStringERKNS1_6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -15758,10 +15754,6 @@ int APS5_VABI _ZN7WebCore13endOfDocumentERKNS_15VisiblePositionE() {
 }
 
 int APS5_VABI _ZN7WebCore13endOfSentenceERKNS_15VisiblePositionE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore13internalErrorERKN3WTF3URLE() {
     NotImplemented_nid_no_patch(__func__);
 }
 

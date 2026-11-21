@@ -68,7 +68,7 @@ inline FT_UInt ResolveGlyphIndexWithFallback(FT_Face face, std::uint32_t codepoi
     const auto code = static_cast<FT_ULong>(codepoint);
     const FT_CharMap original = face->charmap;
     FT_UInt glyphIndex = FT_Get_Char_Index(face, code);
-    if (glyphIndex != 0 || !face->charmaps || face->num_charmaps <= 1) return glyphIndex;
+    if (glyphIndex != 0 || !face->charmaps) return glyphIndex;
     for (int i = 0; i < face->num_charmaps; ++i) {
         const FT_CharMap charmap = face->charmaps[i];
         if (!charmap || charmap == original) continue;
@@ -76,7 +76,8 @@ inline FT_UInt ResolveGlyphIndexWithFallback(FT_Face face, std::uint32_t codepoi
         glyphIndex = FT_Get_Char_Index(face, code);
         if (glyphIndex != 0) break;
     }
-    if (original && face->charmap != original) FT_Set_Charmap(face, original);
+    if (!original) face->charmap = nullptr;
+    else if (face->charmap != original) FT_Set_Charmap(face, original);
     return glyphIndex;
 }
 

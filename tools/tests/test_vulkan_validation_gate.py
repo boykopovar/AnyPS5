@@ -81,6 +81,7 @@ class ReportTests(unittest.TestCase):
         inserted = 'Insert instance layer "VK_LAYER_KHRONOS_validation"'
         text = ('<testsuite><testcase name="probe"><system-err>' + inserted + '\n'
                 'Validation Error: [ Undefined-Value-ShaderFragmentOutputMismatch ] pStages[1] writes to location 2\n'
+                'Validation Performance Warning: [ BestPractices-vkBindBufferMemory-small-dedicated-allocation ] | MessageID = 0x10b59d4b\n'
                 'Validation Warning: [ WARNING-Shader-OutputNotConsumed ] vertex output [ 3 ] is not consumed\n'
                 'Validation Error: [ SubmitValidation-WaitEvents-WrongQueue ] wrong queue\n'
                 'Validation Error: [ SubmitValidation-WaitEvents-WrongQueue ] wrong queue\n'
@@ -89,6 +90,7 @@ class ReportTests(unittest.TestCase):
                 '</system-err></testcase></testsuite>')
         tests, problems = self.report(text)
         self.assertEqual(tests["probe"]["diagnostics"], {
+            "BestPractices-vkBindBufferMemory-small-dedicated-allocation": 1,
             "Undefined-Value-ShaderFragmentOutputMismatch": 1,
             "WARNING-Shader-OutputNotConsumed": 1,
             "SubmitValidation-WaitEvents-WrongQueue": 2,
@@ -101,7 +103,7 @@ class ReportTests(unittest.TestCase):
             {"side": "candidate", "iteration": 1, "returncode": 0, "problems": [], "tests": tests},
         ])
         self.assertEqual(report["new_diagnostics"], {
-            "probe": ["SubmitValidation-WaitEvents-WrongQueue", "Undefined-Value-ShaderFragmentOutputMismatch", "WARNING-Shader-OutputNotConsumed"]})
+            "probe": ["BestPractices-vkBindBufferMemory-small-dedicated-allocation", "SubmitValidation-WaitEvents-WrongQueue", "Undefined-Value-ShaderFragmentOutputMismatch", "WARNING-Shader-OutputNotConsumed"]})
         self.assertEqual(report["exit_code"], 1)
 
     def test_a_test_without_the_layer_insertion_line_is_not_a_success(self):
