@@ -12820,11 +12820,11 @@ void verifySpannedShuffleThroughMemory() {
     const std::span<const std::uint32_t> straight{code};
     const auto native = compile(straight, 32u, true, false);
     require(native.fullSubgroups, "spanned shuffle: the wave64 compute program did not span two 32-lane subgroups");
-    const auto nativeCounts = count(native.spirv);
+    const auto nativeCounts = count(native.spirv.Words());
     require(nativeCounts.shuffles >= 1u && nativeCounts.subgroupBarriers == 0u, "spanned shuffle: without the flag the lane read is not the native subgroup shuffle");
     const auto exchanged = compile(straight, 32u, true, true);
     require(exchanged.fullSubgroups, "spanned shuffle: the flagged wave64 compute program did not span two 32-lane subgroups");
-    const auto exchangedCounts = count(exchanged.spirv);
+    const auto exchangedCounts = count(exchanged.spirv.Words());
     require(exchangedCounts.shuffles == 0u, "spanned shuffle: with the flag the lane read still uses OpGroupNonUniformShuffle, which NVIDIA's compiler crashes on in the title's shader");
     require(exchangedCounts.workgroupVariables >= 1u && exchangedCounts.workgroupBarriers >= nativeCounts.workgroupBarriers + 2u, "spanned shuffle: with the flag the lane read does not go through a workgroup array between two more workgroup-scope barriers");
     require(exchangedCounts.subgroupBarriers == 0u, "spanned shuffle: with the flag the exchange uses a subgroup-scope barrier, which did not make LDS writes visible on NVIDIA");
@@ -12833,9 +12833,9 @@ void verifySpannedShuffleThroughMemory() {
     require(!unspanned.fullSubgroups && unspanned.spirv == unspannedNative.spirv, "spanned shuffle: the flag changed a program that does not span subgroups");
     const auto predicatedNative = compile(lanePredicated, 32u, true, false);
     const auto predicated = compile(lanePredicated, 32u, true, true);
-    require(predicated.fullSubgroups && count(predicated.spirv).shuffles == 0u && count(predicated.spirv).workgroupBarriers >= count(predicatedNative.spirv).workgroupBarriers + 2u, "spanned shuffle: a lane-predicated lane read did not go through the workgroup exchange");
-    require(!SpannedBarrierInDivergentFlow(predicated.spirv).has_value(), "spanned shuffle: the exchange's workgroup barriers of a lane-predicated lane read sit in divergent control flow, which would hang instead of crash");
-    require(!SpannedBarrierInDivergentFlow(exchanged.spirv).has_value(), "spanned shuffle: the exchange's workgroup barriers sit in divergent control flow, which would hang instead of crash");
+    require(predicated.fullSubgroups && count(predicated.spirv.Words()).shuffles == 0u && count(predicated.spirv.Words()).workgroupBarriers >= count(predicatedNative.spirv.Words()).workgroupBarriers + 2u, "spanned shuffle: a lane-predicated lane read did not go through the workgroup exchange");
+    require(!SpannedBarrierInDivergentFlow(predicated.spirv.Words()).has_value(), "spanned shuffle: the exchange's workgroup barriers of a lane-predicated lane read sit in divergent control flow, which would hang instead of crash");
+    require(!SpannedBarrierInDivergentFlow(exchanged.spirv.Words()).has_value(), "spanned shuffle: the exchange's workgroup barriers sit in divergent control flow, which would hang instead of crash");
 }
 
 void verifyPixelQuadPermReads() {
