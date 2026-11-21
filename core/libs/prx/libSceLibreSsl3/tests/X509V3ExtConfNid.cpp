@@ -133,6 +133,25 @@ void TestAsn1() {
     CheckValue(Conf(83, "ASN1:FORMAT:HEX,OCTETSTRING:0102"), 83, 0, {0x04, 0x02, 0x01, 0x02});
     CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:0"), 83, 0, {0x03, 0x02, 0x07, 0x80});
     CheckValue(Conf(83, "critical,ASN1:INTEGER:5"), 83, 1, {0x02, 0x01, 0x05});
+    CheckValue(Conf(83, "ASN1:UTF8String:a,b"), 83, 0, {0x0c, 0x03, 'a', ',', 'b'});
+    CheckValue(Conf(83, "ASN1:IA5STRING:a, b "), 83, 0, {0x16, 0x05, 'a', ',', ' ', 'b', ' '});
+    CheckValue(Conf(83, "ASN1:OCTETSTRING:x,FORMAT:HEX"), 83, 0,
+        {0x04, 0x0c, 'x', ',', 'F', 'O', 'R', 'M', 'A', 'T', ':', 'H', 'E', 'X'});
+    CheckValue(Conf(83, "ASN1:FORMAT:UTF8,UTF8String:a,b"), 83, 0, {0x0c, 0x03, 'a', ',', 'b'});
+    CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:1,5"), 83, 0, {0x03, 0x02, 0x02, 0x44});
+    CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:9, 0 "), 83, 0, {0x03, 0x03, 0x06, 0x80, 0x40});
+    CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:+3,3,-0"), 83, 0, {0x03, 0x02, 0x04, 0x90});
+    CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-0000"), 83, 0, {0x03, 0x02, 0x07, 0x80});
+    CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:+0001"), 83, 0, {0x03, 0x02, 0x06, 0x40});
+    CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-18446744073709551615"), 83, 0, {0x03, 0x02, 0x06, 0x40});
+    CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-18446744073709551609"), 83, 0, {0x03, 0x02, 0x00, 0x01});
+    CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-18446744073709551614,1"), 83, 0, {0x03, 0x02, 0x05, 0x60});
+    CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-00018446744073709551608"), 83, 0, {0x03, 0x03, 0x07, 0x00, 0x80});
+    CheckValue(Conf(83, "ASN1:FORMAT:HEX,BITSTRING:80"), 83, 0, {0x03, 0x02, 0x00, 0x80});
+    CheckValue(Conf(83, "ASN1:FORMAT:HEX,BITSTRING:0100"), 83, 0, {0x03, 0x03, 0x00, 0x01, 0x00});
+    CheckValue(Conf(83, "ASN1:BITSTRING:ab"), 83, 0, {0x03, 0x03, 0x00, 'a', 'b'});
+    CheckValue(Conf(83, "ASN1:OBJECT:DES-EDE3"), 83, 0, {0x06, 0x00});
+    CheckValue(Conf(83, "ASN1:OID:des-ede3"), 83, 0, {0x06, 0x00});
 }
 
 void TestMalformed() {
@@ -149,6 +168,159 @@ void TestMalformed() {
     Require(Conf(83, "ASN1:FORMAT:HEX,INTEGER:5") == nullptr);
     Require(Conf(83, "ASN1:NULL,INTEGER:5") == nullptr);
     Require(Conf(83, "ASN1:NULL ") == nullptr);
+    Require(Conf(83, "ASN1:INTEGER:1,2") == nullptr);
+    Require(Conf(83, "ASN1:INTEGER:5 ") == nullptr);
+    Require(Conf(83, "ASN1:BOOLEAN:TRUE,x") == nullptr);
+    Require(Conf(83, "ASN1:BOOLEAN:true ") == nullptr);
+    Require(Conf(83, "ASN1:NULL:,") == nullptr);
+    Require(Conf(83, "ASN1:NULL: ") == nullptr);
+    Require(Conf(83, "ASN1:OBJECT:1.2.3,4") == nullptr);
+    Require(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:") == nullptr);
+    Require(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:1,") == nullptr);
+    Require(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:1,,2") == nullptr);
+    Require(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:1,x") == nullptr);
+    Require(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:1 2") == nullptr);
+    Require(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-1") == nullptr);
+    Require(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:+") == nullptr);
+    Require(Conf(83, "ASN1:FORMAT:BITLIST,OCTETSTRING:1") == nullptr);
+    Require(allocations.empty());
+}
+
+void RequireQueue(LibreSsl3X509Extension* extension, std::initializer_list<std::uint64_t> expected,
+    std::source_location location = std::source_location::current()) {
+    Require(extension == nullptr, location);
+    for (const std::uint64_t code : expected) Require(ERR_get_error_nid_postfix() == code, location);
+    Require(ERR_get_error_nid_postfix() == 0, location);
+}
+
+void TestErrorQueue() {
+    ERR_clear_error_nid_postfix();
+    RequireQueue(Conf(83, "ASN1:INTEGER:NO"), {0x22fff064, 0x0dfff0b4, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:INT:0x"), {0x22fff064, 0x0dfff0b4, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:NOPE:1"), {0x0dfff0c2, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:"), {0x0dfff0c2, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:INTEGER,x"), {0x0dfff0bd, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:UTCTIME,x"), {0x0dfff0bd, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT,INTEGER:5"), {0x0dfff0b1, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:XYZ,INTEGER:5"), {0x0dfff0c3, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:HEX"), {0x22fff074});
+    RequireQueue(Conf(83, "ASN1:SEQUENCE:section"), {0x0dfff0c0, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:SET:section", reinterpret_cast<void*>(1)), {0x0dfff0c0, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:HEX,INTEGER:5"), {0x0dfff0b9, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:HEX,BOOLEAN:TRUE"), {0x0dfff0be, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:HEX,OBJECT:1.2"), {0x0dfff0bf, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:HEX,IA5:ab"), {0x0dfff0b1, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,OCTETSTRING:1"), {0x0dfff0af, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:NULL:x"), {0x0dfff0b6, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:BOOLEAN:maybe"), {0x22fff068, 0x0dfff0b0, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:HEX,OCTETSTRING:0"), {0x22fff070, 0x0dfff0b2, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:HEX,OCTETSTRING:0g"), {0x22fff071, 0x0dfff0b2, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:IA5:\xc3\xa9"), {0x0dfff07c, 0x0dfff041, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:UTF8,IA5:\xc3"), {0x0dfff086, 0x0dfff041, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:UTF8,UTF8:\xed\xa0\x80"), {0x0dfff086, 0x0dfff041, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:1x"), {0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:"), {0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-1"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:1,-9223372036854775808"),
+        {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:18446744073709551616"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-18446744073709551616"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-9223372036854775808"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:9223372036854775808"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:99999999999999999999x"), {0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-18446744073709551617"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-00018446744073709551617"),
+        {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-18446744073709551617,1"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-1000000000000000000000000000000"),
+        {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:1000000000000000000000000000000"),
+        {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:18446744073709551617"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:+18446744073709551616"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:18446744073709551615"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:+0009223372036854775808"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-9223372036854775807"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-4294967296"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-2147483648"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-0001"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:0,-1"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:123456789012345678901234567890"),
+        {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-123456789012345678901234567890"),
+        {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:+123456789012345678901234567890"),
+        {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:99999999999999999999999999999999999999999999999999"
+                      "99999999999999999999999999999999999999999999999999"),
+        {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-99999999999999999999999999999999999999999999999999"
+                      "99999999999999999999999999999999999999999999999999"),
+        {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:123456789012345678901234567890x"),
+        {0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-123456789012345678901234567890x"),
+        {0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:99999999999999999999999999999999999999999999999999"
+                      "99999999999999999999999999999999999999999999999999x"),
+        {0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-99999999999999999999999999999999999999999999999999"
+                      "999999999999999999999999999999999999999999999999997x"),
+        {0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:123456789012345678901234567890x,1"),
+        {0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:1,99999999999999999999999999999999999999999999999999"
+                      "99999999999999999999999999999999999999999999999999"),
+        {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:HEX,UTF8:x"), {0x0dfff0b1, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:OID:bogus"), {0x0dfff0b7, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:OBJECT:undefined"), {0x0dfff0b7, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:  OID:UNDEF"), {0x0dfff0b7, 0x22fff074});
+    RequireQueue(Conf(126, "undefined"), {0x22fff06e});
+    RequireQueue(Conf(126, "serverAuth,UNDEF"), {0x22fff06e});
+    RequireQueue(Conf(126, "serverAuth:undefined"), {0x22fff06e});
+    RequireQueue(Conf(126, "serverAuth,C "), {0x22fff06e});
+    RequireQueue(Conf(126, "C\n"), {0x22fff06e});
+    RequireQueue(Conf(126, "serverAuth:C\t"), {0x22fff06e});
+    RequireQueue(Conf(126, " L \r\n"), {0x22fff06e});
+    RequireQueue(Conf(126, "O:C ,serverAuth"), {0x22fff06e});
+    RequireQueue(Conf(126, "serverAuth, "), {0x22fff06c, 0x22fff069});
+    RequireQueue(Conf(83, ""), {0x22fff06c, 0x22fff069});
+    RequireQueue(Conf(83, "digitalSignature,"), {0x22fff06c, 0x22fff069});
+    RequireQueue(Conf(83, "digitalSignature:"), {0x22fff06d, 0x22fff069});
+    RequireQueue(Conf(126, "serverAuth,,clientAuth"), {0x22fff06c, 0x22fff069});
+    RequireQueue(Conf(126, "serverAuth:x,"), {0x22fff06c, 0x22fff069});
+    RequireQueue(Conf(126, "serverAuth:,"), {0x22fff06d, 0x22fff069});
+    RequireNotImplemented([] { Conf(83, "ASN1:INT:--"); });
+    RequireNotImplemented([] { Conf(83, "ASN1:INT:-0x-"); });
+    RequireNotImplemented([] { Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-9223372036854775809"); });
+    RequireNotImplemented([] { Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-18446744071562067968"); });
+    ERR_clear_error_nid_postfix();
+    Require(allocations.empty());
+}
+
+void TestSequenceContext() {
+    LibreSsl3X509V3Context context{};
+    X509V3_set_ctx_nid_postfix(&context, nullptr, nullptr, nullptr, nullptr, 0);
+    const auto conf = [&context](const char* value) {
+        return X509V3_EXT_conf_nid_nid_postfix(nullptr, &context, 83, value);
+    };
+    ERR_clear_error_nid_postfix();
+    RequireQueue(conf("ASN1:SEQUENCE:sect"), {0x22fff094, 0x22fff074});
+    RequireQueue(conf("ASN1:SEQ:"), {0x22fff094, 0x22fff074});
+    RequireQueue(conf("ASN1:FORMAT:HEX,SET:x"), {0x22fff094, 0x22fff074});
+    RequireQueue(conf("ASN1:SEQUENCE,x"), {0x0dfff0bd, 0x22fff074});
+    CheckValue(conf("ASN1:SEQUENCE"), 83, 0, {0x30, 0x00});
+    CheckValue(conf("ASN1:SEQ"), 83, 0, {0x30, 0x00});
+    CheckValue(conf("ASN1:SET"), 83, 0, {0x31, 0x00});
+    CheckValue(conf("ASN1:FORMAT:HEX,SEQUENCE"), 83, 0, {0x30, 0x00});
+    CheckValue(conf("critical,ASN1:SET"), 83, 1, {0x31, 0x00});
+    Require(ERR_get_error_nid_postfix() == 0);
+    int database = 0;
+    context.database = &database;
+    RequireNotImplemented([&conf] { conf("ASN1:SEQUENCE:sect"); });
+    ERR_clear_error_nid_postfix();
+    CheckValue(conf("ASN1:SET"), 83, 0, {0x31, 0x00});
     Require(allocations.empty());
 }
 
@@ -174,6 +346,32 @@ void TestPlain() {
         {0x30, 0x14, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01,
             0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x02});
     CheckValue(Conf(83, "critical,digitalSignature"), 83, 1, {0x03, 0x02, 0x07, 0x80});
+    CheckValue(Conf(126, "serverAuth,idea-cfb"), 126, 0,
+        {0x30, 0x0c, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01, 0x06, 0x00});
+    CheckValue(Conf(126, "UNDEF:serverAuth"), 126, 0,
+        {0x30, 0x0a, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01});
+    CheckValue(Conf(126, " O"), 126, 0, {0x30, 0x05, 0x06, 0x03, 0x55, 0x04, 0x0a});
+    CheckValue(Conf(126, "CN \t"), 126, 0, {0x30, 0x05, 0x06, 0x03, 0x55, 0x04, 0x03});
+    CheckValue(Conf(126, "serverAuth, L"), 126, 0,
+        {0x30, 0x0f, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01, 0x06, 0x03, 0x55, 0x04, 0x07});
+    CheckValue(Conf(71, " client "), 71, 0, {0x03, 0x02, 0x07, 0x80});
+}
+
+void TestPlainLineBreaks() {
+    CheckValue(Conf(83, "digitalSignature,\ncRLSign"), 83, 0, {0x03, 0x02, 0x01, 0x82});
+    CheckValue(Conf(83, "digitalSignature,\n cRLSign \r\n"), 83, 0, {0x03, 0x02, 0x01, 0x82});
+    CheckValue(Conf(83, "\ndigitalSignature"), 83, 0, {0x03, 0x02, 0x07, 0x80});
+    CheckValue(Conf(83, "keyCertSign:\nx"), 83, 0, {0x03, 0x02, 0x02, 0x04});
+    CheckValue(Conf(71, "client,\r\nserver"), 71, 0, {0x03, 0x02, 0x06, 0xc0});
+    CheckValue(Conf(126, "serverAuth,\nclientAuth"), 126, 0,
+        {0x30, 0x14, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01,
+            0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x02});
+    Require(Conf(83, "digitalSignature\r\nbogus") == nullptr);
+    Require(Conf(83, "digitalSignature,\ncRLSign:x") == nullptr);
+    Require(Conf(83, "digitalSignature,\n") == nullptr);
+    Require(Conf(126, "serverAuth\nclientAuth") == nullptr);
+    Require(Conf(126, "serverAuth,\nclientAuth,codeSigning") == nullptr);
+    Require(allocations.empty());
 }
 
 void TestPlainFailures() {
@@ -215,8 +413,11 @@ int main() {
     TestDer();
     TestAsn1();
     TestMalformed();
+    TestErrorQueue();
+    TestSequenceContext();
     TestUnknownNid();
     TestPlain();
+    TestPlainLineBreaks();
     TestPlainFailures();
     TestAllocationFailures();
     Require(allocations.empty());

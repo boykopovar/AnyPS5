@@ -1,3 +1,4 @@
+#include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libSceLibcInternal/include/TimeGetFields.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -27,6 +28,15 @@ extern std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix;
 
 namespace {
 
+struct WideTimeGetView {
+    GuestLocale::Facet base;
+    const char16_t* days;
+    const char16_t* months;
+    const char16_t* amPm;
+    std::int32_t dateOrder;
+    std::uint32_t reserved;
+};
+
 struct WideTimeGetStorage {
     GuestLocale::Facet base;
     const char16_t* days;
@@ -42,6 +52,7 @@ struct TimePutCharStorage {
     GuestLocale::TimeInfo names;
 };
 
+static_assert(sizeof(WideTimeGetView) == 0x30);
 static_assert(sizeof(WideTimeGetStorage) == 0x60);
 static_assert(sizeof(TimePutCharStorage) == 0xb8);
 
@@ -68,6 +79,8 @@ int APS5_VABI OverflowWide(GuestLocale::Streambuf* self, int character) {
 const GuestLocale::StreambufVtable g_narrowOutVtable{{}, OverflowNarrow};
 const GuestLocale::StreambufVtable g_wideOutVtable{{}, OverflowWide};
 
+void* g_lastFreed = nullptr;
+std::size_t g_freeCount = 0;
 #ifdef _WIN32
 HMODULE g_library = nullptr;
 #else
@@ -75,7 +88,11 @@ void* g_library = nullptr;
 #endif
 
 void* APS5_VABI HeapAllocate(std::size_t size) { return std::malloc(size); }
-void APS5_VABI TestHeapFree(void* pointer) { std::free(pointer); }
+void APS5_VABI TestHeapFree(void* pointer) {
+    g_lastFreed = pointer;
+    ++g_freeCount;
+    std::free(pointer);
+}
 void* APS5_VABI HeapCalloc(std::size_t count, std::size_t size) { return std::calloc(count, size); }
 void* APS5_VABI HeapReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
 void* APS5_VABI HeapAlign(std::size_t, std::size_t size) { return std::malloc(size); }
@@ -110,6 +127,162 @@ bool Throws(TCall&& call) {
     } catch (...) {
         return true;
     }
+}
+
+void CheckB2AdditionalCtorsAndGetcat(bool hasLibrary) {
+    const std::uint64_t before = NotImplementedCalls_nid_no_patch();
+    GuestLocale::LocinfoStorage info{};
+    _ZNSt8_LocinfoC1EPKc_nid_postfix(&info, "C");
+    const GuestLocale::TimeInfo* expectedTimes = _Getptimes_nid_postfix();
+
+    const std::size_t largeRefs = (std::size_t{0x23456789u} << 32) | 9u;
+    for (const bool complete : {true, false}) {
+        WideTimeGetStorage storage{};
+        storage.untouchedSuffix.fill(std::byte{0x5a});
+        const auto expectedSuffix = storage.untouchedSuffix;
+        if (complete) {
+            _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1Em_nid_postfix(&storage.base, largeRefs);
+        } else {
+            _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2Em_nid_postfix(&storage.base, largeRefs);
+        }
+        Require(storage.base.vtable != nullptr && storage.base.references == 9 && storage.base.reserved == 0x23456789u, "wide time_get refs ctor stores full 64-bit refs");
+        Require(storage.dateOrder == 2 && storage.reserved == 0 && storage.untouchedSuffix == expectedSuffix, "wide time_get refs ctor sets 0x30 layout without suffix write");
+    }
+
+    for (const bool complete : {true, false}) {
+        WideTimeGetStorage storage{};
+        storage.untouchedSuffix.fill(std::byte{0x3c});
+        const auto expectedSuffix = storage.untouchedSuffix;
+        if (complete) {
+            _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1ERKSt8_Locinfom_nid_postfix(&storage.base, &info, largeRefs);
+        } else {
+            _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix(&storage.base, &info, largeRefs);
+        }
+        Require(storage.base.vtable != nullptr && storage.base.references == 9 && storage.base.reserved == 0x23456789u, "wide time_get locinfo ctor stores full 64-bit refs");
+        Require(storage.dateOrder == 2 && storage.reserved == 0 && storage.untouchedSuffix == expectedSuffix, "wide time_get locinfo ctor sets 0x30 layout");
+    }
+
+    {
+        auto* heapWideGet = static_cast<WideTimeGetStorage*>(_Znwm_nid_postfix(sizeof(WideTimeGetStorage)));
+        std::memset(heapWideGet, 0, sizeof(*heapWideGet));
+        _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1Em_nid_postfix(&heapWideGet->base, 1);
+        const std::size_t freesBefore = g_freeCount;
+        g_lastFreed = nullptr;
+        _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEED0Ev_nid_postfix(&heapWideGet->base);
+        Require(g_freeCount == freesBefore + 1 && g_lastFreed == heapWideGet, "wide time_get D0 frees object");
+    }
+
+    {
+        GuestLocale::Implementation classicLoc{{nullptr, 1, 0}, nullptr, 0, 5, false, "C"};
+        GuestLocale::Implementation* classicPtr = &classicLoc;
+        GuestLocale::Facet* catFacet = nullptr;
+        const std::size_t catMask = _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(&catFacet, &classicPtr);
+        Require(catMask == 5 && catFacet != nullptr && catFacet->references == 0, "wide time_get _Getcat allocates C facet with 0 refs");
+        GuestLocale::Facet* const savedCatFacet = catFacet;
+        const std::size_t freesBeforeReuse = g_freeCount;
+        Require(_ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(&catFacet, &classicPtr) == 5, "wide time_get _Getcat preserves existing non-null facet");
+        Require(catFacet == savedCatFacet && g_freeCount == freesBeforeReuse, "wide time_get _Getcat leaves existing pointer untouched");
+        Require(_ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(nullptr, nullptr) == 5, "wide time_get _Getcat returns mask when facet pointer is null");
+        const auto* wideView = reinterpret_cast<const WideTimeGetView*>(catFacet);
+        Require(wideView->dateOrder == 2 && std::u16string_view(wideView->days).starts_with(u":Sun:"), "wide time_get _Getcat initializes fields");
+        catFacet->vtable->deleteObject(catFacet);
+
+        GuestLocale::Implementation badLoc{{nullptr, 1, 0}, nullptr, 0, 5, false, "fr_FR"};
+        GuestLocale::Implementation* badPtr = &badLoc;
+        GuestLocale::Facet* badFacet = nullptr;
+        const std::size_t freesBefore = g_freeCount;
+        Require(Throws([&] { _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(&badFacet, &badPtr); }), "wide time_get _Getcat rejects non-C locale");
+        Require(badFacet == nullptr && g_freeCount == freesBefore + 1, "wide time_get _Getcat frees allocation on error without writing output");
+    }
+
+    {
+        auto* heapPutChar = static_cast<TimePutCharStorage*>(_Znwm_nid_postfix(sizeof(TimePutCharStorage)));
+        std::memset(heapPutChar, 0, sizeof(*heapPutChar));
+        _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC1Em_nid_postfix(&heapPutChar->base, 7);
+        Require(heapPutChar->base.vtable != nullptr && heapPutChar->base.references == 7, "time_put<char> C1Em initializes facet header");
+        Require(std::memcmp(&heapPutChar->names, expectedTimes, sizeof(*expectedTimes)) == 0, "time_put<char> C1Em initializes TimeInfo");
+
+        const void* savedVtable = heapPutChar->base.vtable;
+        heapPutChar->base.references = 42;
+        std::memset(&heapPutChar->names, 0, sizeof(heapPutChar->names));
+        _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE5_InitERKSt8_Locinfo_nid_postfix(&heapPutChar->base, &info);
+        Require(heapPutChar->base.vtable == savedVtable && heapPutChar->base.references == 42, "time_put<char> _Init preserves vtable and refs");
+        Require(std::memcmp(&heapPutChar->names, expectedTimes, sizeof(*expectedTimes)) == 0, "time_put<char> _Init populates TimeInfo");
+
+        const std::size_t freesBefore = g_freeCount;
+        g_lastFreed = nullptr;
+        _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEED0Ev_nid_postfix(&heapPutChar->base);
+        Require(g_freeCount == freesBefore + 1 && g_lastFreed == heapPutChar, "time_put<char> D0 frees object");
+    }
+
+    Require(Throws([&] { _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1Em_nid_postfix(nullptr, 0); }), "wide time_get C1Em null throws");
+    Require(Throws([&] { _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2Em_nid_postfix(nullptr, 0); }), "wide time_get C2Em null throws");
+    Require(Throws([&] { _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1ERKSt8_Locinfom_nid_postfix(nullptr, &info, 0); }), "wide time_get C1Locinfo null self throws");
+    WideTimeGetStorage tmpWide{};
+    Require(Throws([&] { _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1ERKSt8_Locinfom_nid_postfix(&tmpWide.base, nullptr, 0); }), "wide time_get C1Locinfo null locinfo throws");
+    Require(Throws([&] { _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix(&tmpWide.base, nullptr, 0); }), "wide time_get C2Locinfo null locinfo throws");
+    Require(Throws([] { _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEED0Ev_nid_postfix(nullptr); }), "wide time_get D0 null throws");
+    GuestLocale::Facet* nullCat = nullptr;
+    Require(Throws([&] { _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(&nullCat, nullptr); }), "wide time_get _Getcat null locale throws");
+    Require(Throws([] { _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC1Em_nid_postfix(nullptr, 0); }), "char time_put C1Em null throws");
+    TimePutCharStorage tmpPutChar{};
+    Require(Throws([&] { _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE5_InitERKSt8_Locinfo_nid_postfix(nullptr, &info); }), "char time_put _Init null self throws");
+    Require(Throws([&] { _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE5_InitERKSt8_Locinfo_nid_postfix(&tmpPutChar.base, nullptr); }), "char time_put _Init null locinfo throws");
+    Require(Throws([] { _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEED0Ev_nid_postfix(nullptr); }), "char time_put D0 null throws");
+    Require(Throws([] { libSceLibcInternalInventory_197_nid_no_patch(); }), "unsupported wide time_put constructor remains throwing");
+    Require(Throws([] { libSceLibcInternalInventory_198_nid_no_patch(); }), "unsupported wide time_put constructor remains throwing");
+    Require(Throws([] { libSceLibcInternalInventory_199_nid_no_patch(); }), "unsupported wide time_put constructor remains throwing");
+    Require(NotImplementedCalls_nid_no_patch() > before, "B2 error paths reported");
+
+    if (hasLibrary) {
+        using GetcatFn = std::size_t (APS5_VABI*)(GuestLocale::Facet**, const GuestLocale::Implementation* const*);
+        using RefsCtorFn = void (APS5_VABI*)(GuestLocale::Facet*, std::size_t);
+        using LocinfoCtorFn = void (APS5_VABI*)(GuestLocale::Facet*, const GuestLocale::LocinfoStorage*, std::size_t);
+        using InitFn = void (APS5_VABI*)(GuestLocale::Facet*, const GuestLocale::LocinfoStorage*);
+        using DtorFn = void (APS5_VABI*)(GuestLocale::Facet*);
+
+        const auto nidGetcat = ResolveExport<GetcatFn>("_ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix");
+        const auto nidGetC1Loc = ResolveExport<LocinfoCtorFn>("_ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1ERKSt8_Locinfom_nid_postfix");
+        const auto nidGetC1Refs = ResolveExport<RefsCtorFn>("_ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1Em_nid_postfix");
+        const auto nidGetC2Loc = ResolveExport<LocinfoCtorFn>("_ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix");
+        const auto nidGetC2Refs = ResolveExport<RefsCtorFn>("_ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2Em_nid_postfix");
+        const auto nidGetD0 = ResolveExport<DtorFn>("_ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEED0Ev_nid_postfix");
+        const auto nidPutInit = ResolveExport<InitFn>("_ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE5_InitERKSt8_Locinfo_nid_postfix");
+        const auto nidPutC1Refs = ResolveExport<RefsCtorFn>("_ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC1Em_nid_postfix");
+        const auto nidPutD0 = ResolveExport<DtorFn>("_ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEED0Ev_nid_postfix");
+        const auto nidWidePutInit = ResolveExport<InitFn>("_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo_nid_postfix");
+
+        GuestLocale::Implementation classicLoc{{nullptr, 1, 0}, nullptr, 0, 5, false, "C"};
+        GuestLocale::Implementation* classicPtr = &classicLoc;
+        GuestLocale::Facet* facet = nullptr;
+        Require(nidGetcat(&facet, &classicPtr) == 5 && facet != nullptr, "NID _Getcat works");
+        nidGetD0(facet);
+
+        for (const auto fn : {nidGetC1Refs, nidGetC2Refs}) {
+            auto* obj = static_cast<WideTimeGetStorage*>(_Znwm_nid_postfix(sizeof(WideTimeGetStorage)));
+            fn(&obj->base, 2);
+            Require(obj->dateOrder == 2 && obj->base.references == 2, "NID wide time_get refs ctor");
+            nidGetD0(&obj->base);
+        }
+        for (const auto fn : {nidGetC1Loc, nidGetC2Loc}) {
+            auto* obj = static_cast<WideTimeGetStorage*>(_Znwm_nid_postfix(sizeof(WideTimeGetStorage)));
+            fn(&obj->base, &info, 3);
+            Require(obj->dateOrder == 2 && obj->base.references == 3, "NID wide time_get locinfo ctor");
+            nidGetD0(&obj->base);
+        }
+
+        auto* charPut = static_cast<TimePutCharStorage*>(_Znwm_nid_postfix(sizeof(TimePutCharStorage)));
+        nidPutC1Refs(&charPut->base, 4);
+        std::memset(&charPut->names, 0, sizeof(charPut->names));
+        nidPutInit(&charPut->base, &info);
+        Require(std::memcmp(&charPut->names, expectedTimes, sizeof(*expectedTimes)) == 0, "NID time_put<char> _Init");
+        nidPutD0(&charPut->base);
+
+        GuestLocale::Facet widePutFacet{};
+        Require(Throws([&] { nidWidePutInit(&widePutFacet, &info); }), "NID ZolDcuDSD0Q still throws");
+    }
+
+    _ZNSt8_LocinfoD1Ev_nid_postfix(&info);
 }
 
 void CheckGroup1ConstructionAndLifetime() {
@@ -1349,6 +1522,7 @@ int main(int argc, char** argv) {
     };
     ApplicationHeapRegister_nid_no_patch(api.data());
     CheckGroup1ConstructionAndLifetime();
+    CheckB2AdditionalCtorsAndGetcat(hasLibrary);
     CheckGroup2GetInt();
     CheckGroup3Fields();
     CheckGroup4GetAndGetFmt();
