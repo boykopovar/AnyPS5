@@ -144,6 +144,7 @@ if(BUILD_TESTING)
         set_tests_properties(guest_user_service_initial_user_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
     endif()
+
     add_test_executable(guest_user_service_age_level_guest_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserServiceAgeLevelGuestBounds.cpp)
     target_include_directories(guest_user_service_age_level_guest_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_user_service_age_level_guest_bounds_tests PRIVATE libSceUserService libSceSystemService libc)
@@ -152,6 +153,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_user_service_age_level_guest_bounds PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_user_service_age_level_guest_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
+    endif()
+
+    add_test_executable(guest_user_service_accessibility_gamepresets_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserServiceAccessibilityGamePresetsBounds.cpp)
+    target_include_directories(guest_user_service_accessibility_gamepresets_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_user_service_accessibility_gamepresets_bounds_tests PRIVATE libSceUserService libSceSystemService libc)
+    configure_windows_unwind(guest_user_service_accessibility_gamepresets_bounds_tests)
+    add_test(NAME guest_user_service_accessibility_gamepresets_bounds COMMAND guest_user_service_accessibility_gamepresets_bounds_tests)
+    set_tests_properties(guest_user_service_accessibility_gamepresets_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_user_service_accessibility_gamepresets_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
     endif()
 endif()
