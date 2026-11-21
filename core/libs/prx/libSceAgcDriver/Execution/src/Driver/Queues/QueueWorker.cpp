@@ -19,6 +19,17 @@ namespace {
 
 constexpr auto IdleResultsQuietPeriod = std::chrono::milliseconds(50);
 
+bool IdleStoreEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_IDLE_STORE") == nullptr;
+    return enabled;
+}
+
+}
+
+bool Driver::noteResultsForIdleStore() {
+    if (!IdleStoreEnabled() || !Graphics::StorageTexture::AnyPending()) return false;
+    idleEpoch.fetch_add(1, std::memory_order_release);
+    return true;
 }
 
 FrameTiming* Driver::frameTiming() {
@@ -94,8 +105,9 @@ void Driver::submitOpenWork(const std::shared_ptr<SubmissionProgress>& progress)
 }
 
 void Driver::wakeQueueZeroForCompletions() {
-    if (!completionsPending()) return;
     std::lock_guard lock(mutex);
+    const bool results = noteResultsForIdleStore();
+    if (!results && !completionsPending()) return;
     changed.notify_all();
 }
 
@@ -120,7 +132,8 @@ void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, st
                 driver.forgetUnfinishedWrites(driver.workers.at(0), labelWrites);
                 const auto found = std::find(driver.queue0Uncommitted.begin(), driver.queue0Uncommitted.end(), received);
                 if (found != driver.queue0Uncommitted.end()) driver.queue0Uncommitted.erase(found);
-                notify = driver.idleWaiters != 0 || driver.orderHolders.load(std::memory_order_acquire) != 0 || completionsPending();
+                const bool results = driver.noteResultsForIdleStore();
+                notify = results || driver.idleWaiters != 0 || driver.orderHolders.load(std::memory_order_acquire) != 0 || completionsPending();
             }
             if (notify) driver.changed.notify_all();
         }
@@ -166,7 +179,7 @@ void Driver::run(std::uint32_t id) noexcept {
     StartWorkerSampler(id);
     Submission submission;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    static const bool idleStore = std::getenv("APS5_NO_IDLE_STORE") == nullptr;
+    const bool idleStore = IdleStoreEnabled();
     auto& costs = submissionCosts(id);
     try {
         PerformanceTrace::BindThread(role);
