@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 570" role="img" aria-label="AnyPS5 iOS ARM64 feature treemap">
+<rect width="1200" height="570" fill="#0d1117"/>
+<style>text{font-family:Arial,Helvetica,sans-serif}.heading{fill:#e6edf3;font-size:35px;font-weight:700}.body{fill:#e6edf3;font-size:18px}.muted{fill:#9da7b2;font-size:15px}.cell{fill:#10151d;font-size:12px;font-weight:600}</style>
+<text class="heading" x="36" y="60">Status — iOS / ARM64</text>
+<path d="M36 81 H1164" stroke="#30363d"/>
+<rect x="36" y="111" width="155" height="48" fill="#3d4249"/>
+<text class="body" x="55" y="142">CPU features*</text>
+<rect x="191" y="111" width="123" height="48" fill="#56c900"/>
+<text class="body" x="209" y="142">76.5%</text>
+<rect x="327" y="111" width="166" height="48" fill="#3d4249"/>
+<text class="body" x="343" y="142">Milestone</text>
+<rect x="493" y="111" width="108" height="48" fill="#56c900"/>
+<text class="body" x="512" y="142">M4</text>
+<text class="body" x="36" y="204">Experimental CPU feature inventory: 76.5% (13/17)</text>
+<text class="muted" x="36" y="229">Green = implemented · Grey = planned · Amber = in progress</text>
+<rect x="36" y="246" width="368" height="264" fill="#242a31" stroke="#51565d"/>
+<rect x="36" y="246" width="368" height="31" fill="#333941"/>
+<text class="body" x="46" y="268">CPU foundations</text>
+<rect x="44.0" y="285.0" width="85.8" height="107.0" fill="#37b84e" stroke="#171c23" stroke-width="1"/>
+<text class="cell" x="49.0" y="302.0">Registers and</text>
+<text class="cell" x="49.0" y="317.0">execution</text>
+<text class="cell" x="49.0" y="332.0">budget</text>
+<rect x="132.8" y="285.0" width="85.8" height="107.0" fill="#37b84e" stroke="#171c23" stroke-width="1"/>
+<text class="cell" x="137.8" y="302.0">Branches and</text>
+<text class="cell" x="137.8" y="317.0">comparisons</text>
+<rect x="221.5" y="285.0" width="85.8" height="107.0" fill="#37b84e" stroke="#171c23" stroke-width="1"/>
+<text class="cell" x="226.5" y="302.0">CALL / RET</text>
+<text class="cell" x="226.5" y="317.0">and stack</text>
+<rect x="310.3" y="285.0" width="85.8" height="107.0" fill="#37b84e" stroke="#171c23" stroke-width="1"/>
+<text class="cell" x="315.3" y="302.0">Guest memory</text>
+<text class="cell" x="315.3" y="317.0">bounds</text>
+<rect x="44.0" y="395.0" width="85.8" height="107.0" fill="#666971" stroke="#171c23" stroke-width="1"/>
+<text class="cell" x="49.0" y="412.0">Full x86-64</text>
+<text class="cell" x="49.0" y="427.0">instruction</text>
+<text class="cell" x="49.0" y="442.0">coverage</text>
+<rect x="416" y="246" width="368" height="264" fill="#242a31" stroke="#51565d"/>
+<rect x="416" y="246" width="368" height="31" fill="#333941"/>
+<text class="body" x="426" y="268">Instruction decoding</text>
+<rect x="424.0" y="285.0" width="85.8" height="107.0" fill="#37b84e" stroke="#171c23" stroke-width="1"/>
+<text class="cell" x="429.0" y="302.0">MOV register</text>
+<text class="cell" x="429.0" y="317.0">/ memory</text>
+<rect x="512.8" y="285.0" width="85.8" height="107.0" fill="#37b84e" stroke="#171c23" stroke-width="1"/>
+<text class="cell" x="517.8" y="302.0">ModR/M and</text>
+<text class="cell" x="517.8" y="317.0">SIB</text>
+<text class="cell" x="517.8" y="332.0">addressing</text>
+<rect x="601.5" y="285.0" width="85.8" height="107.0" fill="#37b84e" stroke="#171c23" stroke-width="1"/>
+<text class="cell" x="606.5" y="302.0">32/64-bit MOV</text>
+<text class="cell" x="606.5" y="317.0">variants</text>
+<rect x="690.3" y="285.0" width="85.8" height="107.0" fill="#37b84e" stroke="#171c23" stroke-width="1"/>
+<text class="cell" x="695.3" y="302.0">RIP-relative</text>
+<text class="cell" x="695.3" y="317.0">addressing</text>
+<rect x="424.0" y="395.0" width="85.8" height="107.0" fill="#37b84e" stroke="#171c23" stroke-width="1"/>
+<text class="cell" x="429.0" y="412.0">Arithmetic</text>
+<text class="cell" x="429.0" y="427.0">ModR/M</text>
+<text class="cell" x="429.0" y="442.0">instructions</text>
+<rect x="512.8" y="395.0" width="85.8" height="107.0" fill="#666971" stroke="#171c23" stroke-width="1"/>
+<text class="cell" x="517.8" y="412.0">SIMD / AVX</text>
+<text class="cell" x="517.8" y="427.0">instructions</text>
+<rect x="796" y="246" width="368" height="264" fill="#242a31" stroke="#51565d"/>
+<rect x="796" y="246" width="368" height="31" fill="#333941"/>
+<text class="body" x="806" y="268">Platform integration</text>
+<rect x="804.0" y="285.0" width="85.8" height="107.0" fill="#37b84e" stroke="#171c23" stroke-width="1"/>
+<text class="cell" x="809.0" y="302.0">Portable</text>
+<text class="cell" x="809.0" y="317.0">C++20 library</text>
+<rect x="892.8" y="285.0" width="85.8" height="107.0" fill="#37b84e" stroke="#171c23" stroke-width="1"/>
+<text class="cell" x="897.8" y="302.0">Cross-platform</text>
+<text class="cell" x="897.8" y="317.0">CI configured</text>
+<rect x="981.5" y="285.0" width="85.8" height="107.0" fill="#37b84e" stroke="#171c23" stroke-width="1"/>
+<text class="cell" x="986.5" y="302.0">iOS ARM64</text>
+<text class="cell" x="986.5" y="317.0">compilation</text>
+<text class="cell" x="986.5" y="332.0">target</text>
+<rect x="1070.3" y="285.0" width="85.8" height="107.0" fill="#666971" stroke="#171c23" stroke-width="1"/>
+<text class="cell" x="1075.3" y="302.0">iPhone</text>
+<text class="cell" x="1075.3" y="317.0">runtime</text>
+<text class="cell" x="1075.3" y="332.0">integration</text>
+<rect x="804.0" y="395.0" width="85.8" height="107.0" fill="#666971" stroke="#171c23" stroke-width="1"/>
+<text class="cell" x="809.0" y="412.0">PS5</text>
+<text class="cell" x="809.0" y="427.0">executable</text>
+<text class="cell" x="809.0" y="442.0">loading</text>
+<rect x="892.8" y="395.0" width="85.8" height="107.0" fill="#666971" stroke="#171c23" stroke-width="1"/>
+<text class="cell" x="897.8" y="412.0">Graphics and</text>
+<text class="cell" x="897.8" y="427.0">system</text>
+<text class="cell" x="897.8" y="442.0">services</text>
+<text class="muted" x="36" y="545">*Percentage covers only the listed experimental features, NOT total PS5 emulator completion or game compatibility.</text>
+<text class="muted" x="1020" y="545">2026-10-16</text>
+</svg>
