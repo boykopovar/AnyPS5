@@ -96,7 +96,7 @@ extern "C" {
 NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6String18simplifyWhiteSpaceEPFbDsE(const NKWebKit::WtfAbi::String* self, bool (APS5_VABI *predicate)(char16_t)) {
     if (!self) throw std::invalid_argument("null WTF String");
     NKWebKit::WtfAbi::StringImpl* impl = nullptr;
-    if (!GuestCopyIn_nid_no_patch(&impl, &self->impl, sizeof(impl))) throw std::invalid_argument("String::simplifyWhiteSpace: unreadable String");
+    if (!GuestCopyIn_nid_no_patch(&impl, self, sizeof(impl))) throw std::invalid_argument("String::simplifyWhiteSpace: unreadable String");
     if (!impl) return NKWebKit::WtfAbi::String();
     impl->refCount += 2;
     const NKWebKit::WtfAbi::String string(impl);
