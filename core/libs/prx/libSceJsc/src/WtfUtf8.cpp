@@ -97,8 +97,6 @@ using Jsc::WtfAbi::UTF8ConversionError;
 
 constexpr unsigned MaxLength = 0x7FFFFFFFu;
 constexpr char32_t ReplacementCharacter = 0xFFFD;
-constexpr unsigned char Lead3T1Bits[16] = {0x20, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x10, 0x30, 0x30};
-constexpr unsigned char Lead4T1Bits[16] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1E, 0x0F, 0x0F, 0x0F, 0x00, 0x00, 0x00, 0x00};
 
 template<typename T> T& Require(T* value, const char* function) {
     if (!value) throw std::invalid_argument(std::string(function) + ": null WTF argument");
@@ -143,75 +141,8 @@ bool AppendUTF8(unsigned char* target, std::ptrdiff_t& index, std::ptrdiff_t cap
     return true;
 }
 
-bool AppendUTF16(char16_t* target, std::ptrdiff_t& index, std::ptrdiff_t capacity, std::uint32_t character, const char* function) {
-    if (character <= 0xFFFF) {
-        RequireRoom(index, capacity, function);
-        target[index++] = static_cast<char16_t>(character);
-    } else if (character <= 0x10FFFF && index + 1 < capacity) {
-        target[index++] = static_cast<char16_t>((character >> 10) + 0xD7C0);
-        target[index++] = static_cast<char16_t>((character & 0x3FF) | 0xDC00);
-    } else {
-        return false;
-    }
-    return true;
-}
-
-std::int32_t NextUTF8(const unsigned char* source, std::ptrdiff_t& index, std::ptrdiff_t length, std::int32_t substitute) {
-    std::int32_t character = source[index++];
-    if (character < 0x80) return character;
-    std::uint8_t trail = 0;
-    if (index == length) return substitute;
-    if (character >= 0xE0) {
-        if (character < 0xF0) {
-            character &= 0xF;
-            trail = source[index];
-            if (!(Lead3T1Bits[character] & (1 << (trail >> 5)))) return substitute;
-            trail &= 0x3F;
-        } else {
-            character -= 0xF0;
-            if (character > 4) return substitute;
-            trail = source[index];
-            if (!(Lead4T1Bits[trail >> 4] & (1 << character))) return substitute;
-            character = (character << 6) | (trail & 0x3F);
-            if (++index == length) return substitute;
-            trail = static_cast<std::uint8_t>(source[index] - 0x80);
-            if (trail > 0x3F) return substitute;
-        }
-        character = (character << 6) | trail;
-        if (++index == length) return substitute;
-    } else {
-        if (character < 0xC2) return substitute;
-        character &= 0x1F;
-    }
-    trail = static_cast<std::uint8_t>(source[index] - 0x80);
-    if (trail > 0x3F) return substitute;
-    character = (character << 6) | trail;
-    ++index;
-    return character;
-}
-
-template<bool ReplaceInvalidSequences> bool ConvertUTF8ToUTF16(const char* source, const char* sourceEnd, char16_t** targetStart, char16_t* targetEnd, bool* sourceAllASCII, const char* function) {
-    if (sourceEnd - source > std::numeric_limits<int>::max()) throw std::length_error(std::string(function) + ": source longer than INT_MAX");
-    char16_t* target = Require(targetStart, function);
-    if (targetEnd - target > std::numeric_limits<int>::max()) throw std::length_error(std::string(function) + ": target longer than INT_MAX");
-    const auto* bytes = reinterpret_cast<const unsigned char*>(source);
-    const std::ptrdiff_t sourceLength = sourceEnd - source;
-    const std::ptrdiff_t capacity = targetEnd - target;
-    std::uint32_t orAllData = 0;
-    std::ptrdiff_t targetOffset = 0;
-    for (std::ptrdiff_t sourceOffset = 0; sourceOffset < sourceLength;) {
-        const std::int32_t character = NextUTF8(bytes, sourceOffset, sourceLength, ReplaceInvalidSequences ? 0xFFFD : -1);
-        if (character < 0) return false;
-        if (!AppendUTF16(target, targetOffset, capacity, static_cast<std::uint32_t>(character), function)) return false;
-        orAllData |= static_cast<std::uint32_t>(character);
-    }
-    *targetStart = target + targetOffset;
-    if (sourceAllASCII) *sourceAllASCII = !(orAllData & ~0x7Fu);
-    return true;
-}
-
 ConversionResult ConvertUTF16ToUTF8(const char16_t** sourceStart, const char16_t* sourceEnd, char** targetStart, char* targetEnd, bool strict, const char* function) {
-    ConversionResult result = Jsc::WtfAbi::ConversionOK;
+    ConversionResult result = ConversionResult::ConversionOK;
     const char16_t* source = *sourceStart;
     char* target = *targetStart;
     auto* bytes = reinterpret_cast<unsigned char*>(target);
@@ -225,17 +156,17 @@ ConversionResult ConvertUTF16ToUTF8(const char16_t** sourceStart, const char16_t
         }
         if (IsSurrogate(character)) {
             if (source + j == sourceEnd && IsLeadSurrogate(character)) {
-                result = Jsc::WtfAbi::SourceExhausted;
+                result = ConversionResult::SourceExhausted;
                 break;
             }
             if (strict) {
-                result = Jsc::WtfAbi::SourceIllegal;
+                result = ConversionResult::SourceIllegal;
                 break;
             }
             character = ReplacementCharacter;
         }
         if (!AppendUTF8(bytes, i, targetEnd - target, static_cast<std::uint32_t>(character), function)) {
-            result = Jsc::WtfAbi::TargetExhausted;
+            result = ConversionResult::TargetExhausted;
             break;
         }
         source += j;
@@ -272,8 +203,8 @@ UTF8ConversionError Utf8Impl(const char16_t* characters, unsigned length, char*&
         const char16_t* charactersEnd = characters + length;
         while (characters < charactersEnd) {
             const ConversionResult result = ConvertUTF16ToUTF8(&characters, charactersEnd, &buffer, bufferEnd, true, function);
-            if (result == Jsc::WtfAbi::TargetExhausted) throw std::length_error("WTF::StringImpl::utf8Impl: target buffer exhausted");
-            if (result != Jsc::WtfAbi::ConversionOK) {
+            if (result == ConversionResult::TargetExhausted) throw std::length_error("WTF::StringImpl::utf8Impl: target buffer exhausted");
+            if (result != ConversionResult::ConversionOK) {
                 PutUTF8Triple(buffer, bufferEnd, static_cast<char16_t>(ReplacementCharacter));
                 ++characters;
             }
@@ -282,9 +213,9 @@ UTF8ConversionError Utf8Impl(const char16_t* characters, unsigned length, char*&
     }
     const bool strict = mode == Jsc::WtfAbi::StrictConversion;
     const ConversionResult result = ConvertUTF16ToUTF8(&characters, characters + length, &buffer, bufferEnd, strict, function);
-    if (result == Jsc::WtfAbi::TargetExhausted) throw std::length_error("WTF::StringImpl::utf8Impl: target buffer exhausted");
-    if (result == Jsc::WtfAbi::SourceIllegal) return UTF8ConversionError::IllegalSource;
-    if (result == Jsc::WtfAbi::SourceExhausted) {
+    if (result == ConversionResult::TargetExhausted) throw std::length_error("WTF::StringImpl::utf8Impl: target buffer exhausted");
+    if (result == ConversionResult::SourceIllegal) return UTF8ConversionError::IllegalSource;
+    if (result == ConversionResult::SourceExhausted) {
         if (strict) return UTF8ConversionError::SourceExhausted;
         PutUTF8Triple(buffer, bufferEnd, *characters);
     }
@@ -349,26 +280,6 @@ OwnedCString::~OwnedCString() {
 }  // namespace Jsc::WtfAbi
 
 extern "C" {
-
-bool APS5_VABI _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(const unsigned char** sourceStart, const unsigned char* sourceEnd, char** targetStart, char* targetEnd) {
-    Require(sourceStart, __func__);
-    Require(targetStart, __func__);
-    return ConvertLatin1ToUTF8(sourceStart, sourceEnd, targetStart, targetEnd, __func__);
-}
-
-ConversionResult APS5_VABI _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(const char16_t** sourceStart, const char16_t* sourceEnd, char** targetStart, char* targetEnd, bool strict) {
-    Require(sourceStart, __func__);
-    Require(targetStart, __func__);
-    return ConvertUTF16ToUTF8(sourceStart, sourceEnd, targetStart, targetEnd, strict, __func__);
-}
-
-bool APS5_VABI _ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb(const char* source, const char* sourceEnd, char16_t** targetStart, char16_t* targetEnd, bool* sourceAllASCII) {
-    return ConvertUTF8ToUTF16<false>(source, sourceEnd, targetStart, targetEnd, sourceAllASCII, __func__);
-}
-
-bool APS5_VABI _ZN3WTF7Unicode43convertUTF8ToUTF16ReplacingInvalidSequencesEPKcS2_PPDsS3_Pb(const char* source, const char* sourceEnd, char16_t** targetStart, char16_t* targetEnd, bool* sourceAllASCII) {
-    return ConvertUTF8ToUTF16<true>(source, sourceEnd, targetStart, targetEnd, sourceAllASCII, __func__);
-}
 
 UTF8ConversionError APS5_VABI _ZN3WTF10StringImpl8utf8ImplEPKDsjRPcmNS_14ConversionModeE(const char16_t* characters, unsigned length, char*& buffer, std::size_t bufferSize, ConversionMode mode) {
     return Utf8Impl(characters, length, buffer, bufferSize, mode);
