@@ -74,6 +74,10 @@ void testPacket() {
     std::uint32_t filler = 0x80000000u;
     expectFailure([&] { sceAgcSetPacketPredication(&filler, 1); });
     check(packet[0] == header && filler == 0x80000000u, "rejected calls modified a packet");
+    expectFailure([&] { sceAgcSetPacketPredication(reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10}), 1); });
+    static const std::uint32_t readOnly = 0xc0001000u;
+    expectFailure([&] { sceAgcSetPacketPredication(const_cast<std::uint32_t*>(&readOnly), 1); });
+    check(readOnly == 0xc0001000u, "a predication patch of a read-only packet changed it");
 }
 
 void testRange() {

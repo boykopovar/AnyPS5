@@ -12,8 +12,11 @@ extern "C" {
 int APS5_VABI sceAgcSetPacketPredication(uint32_t* packet, uint32_t predication) {
     Agc::Command::Require(packet != nullptr, __func__, "null packet");
     Agc::Command::CheckBits(predication, 1, __func__);
-    Agc::Command::Require((packet[0] >> 30u) == 3u, __func__, "packet is not a type-3 packet");
-    packet[0] = (packet[0] & ~1u) | predication;
+    std::uint32_t header = 0;
+    Agc::Command::Require(GuestCopyIn_nid_no_patch(&header, packet, sizeof(header)), __func__, "packet is not readable");
+    Agc::Command::Require((header >> 30u) == 3u, __func__, "packet is not a type-3 packet");
+    header = (header & ~1u) | predication;
+    Agc::Command::Require(GuestCopyOut_nid_no_patch(packet, &header, sizeof(header)), __func__, "packet is not writable");
     return 0;
 }
 
