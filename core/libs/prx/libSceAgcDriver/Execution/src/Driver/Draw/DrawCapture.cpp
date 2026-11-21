@@ -64,6 +64,7 @@ void TraceShaderRequestFailure(std::uint64_t token, const Submission& submission
 struct PendingMaterialize {
     std::mutex mutex;
     bool finished = false;
+    bool waited = false;
     std::shared_ptr<const ShaderRecompiler::RecompileResult> result;
     std::exception_ptr failure;
 };
@@ -150,6 +151,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeInBackground
             }
         });
     }
+    AwaitBackgroundJob(job->mutex, job->finished, job->waited);
     {
         std::lock_guard lock(job->mutex);
         if (!job->finished) throw DrawCompilePending("the draw's shader is still being specialized in the background");
