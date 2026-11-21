@@ -150,22 +150,15 @@ void SharedResultsAreChargedOnce() {
 
 void DecodeChargedAndReleased() {
     RegisterShaders();
-    Sources.front() = {1.0f, 0.0f, 0.0f, 1.0f};
-    const auto input = std::span<const ShaderInput>{Sources}.first(1);
+    for (std::size_t i = 0; i < Sources.size(); ++i) Sources[i] = {static_cast<float>(i + 1) / static_cast<float>(Draws + 1), 0.0f, 0.0f, 1.0f};
+    auto commands = EveryDraw();
     auto& driver = AgcDriver::DriverDetail::Driver::Get();
-    const auto populate = [&](std::uint32_t scissorRight) {
-        auto commands = EveryDraw(input, scissorRight);
-        Pass(commands);
-        Pass(commands);
-        return driver.DrawCacheSize();
-    };
-    const auto one = populate(64);
-    const auto two = populate(48);
-    const auto three = populate(32);
-    Require(one.entries == 1 && two.entries == 2 && three.entries == 2, "expected two cached draws and one eviction");
-    std::cout << "Draw-cache decode bytes with one, two and two entries after eviction: " << one.variantBytes << ", " << two.variantBytes << ", " << three.variantBytes << '\n';
-    Require(two.variantBytes == 2 * one.variantBytes, "each distinct DrawDecode must be charged once (two entries should cost twice one)");
-    Require(three.variantBytes == two.variantBytes, "evicting one entry must release its DrawDecode charge, leaving two distinct decodes charged");
+    const auto seen = Pass(commands);
+    const auto inserted = Pass(commands);
+    const auto footprint = driver.DrawCacheSize();
+    std::cout << footprint.entries << " distinct draws held " << footprint.variantBytes << " accounted bytes, byte evictions " << (inserted.byteEvictions - seen.byteEvictions) << '\n';
+    Require(inserted.byteEvictions > seen.byteEvictions, "the retained DrawDecode storage did not trigger a draw-cache byte eviction; the decode is not charged against the byte budget");
+    Require(footprint.variantBytes <= AgcDriver::DriverDetail::Driver::DrawCacheBytes(), "the draw cache exceeds its byte budget after evicting for the decode charge");
 }
 
 }
