@@ -604,6 +604,25 @@ static void TestWebCorePure() {
     Require(std::abs(around.m_size.m_width - 200.0f) < 1e-3f);
     Require(std::abs(around.m_size.m_height - 200.0f) < 1e-3f);
 
+    const auto rectIs = [](const FloatRect& rect, float x, float y, float width, float height) {
+        return rect.m_location.m_x == x && rect.m_location.m_y == y && rect.m_size.m_width == width && rect.m_size.m_height == height;
+    };
+    const FloatRect flat{FloatPoint{0.0f, 0.0f}, FloatSize{10.0f, 0.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(2.0f, flat), 5.0f, 0.0f, 0.0f, 0.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(2.0f, flat), 0.0f, -2.5f, 10.0f, 5.0f));
+    const FloatRect offsetFlat{FloatPoint{4.0f, 6.0f}, FloatSize{8.0f, 0.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(0.5f, offsetFlat), 8.0f, 6.0f, 0.0f, 0.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(0.5f, offsetFlat), 4.0f, -2.0f, 8.0f, 16.0f));
+    const FloatRect empty{FloatPoint{3.0f, 7.0f}, FloatSize{0.0f, 0.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(2.0f, empty), 3.0f, 7.0f, 0.0f, 0.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(2.0f, empty), 3.0f, 7.0f, 0.0f, 0.0f));
+    const FloatRect thin{FloatPoint{1.0f, 2.0f}, FloatSize{0.0f, 10.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(2.0f, thin), 1.0f, 7.0f, 0.0f, 0.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(2.0f, thin), -9.0f, 2.0f, 20.0f, 10.0f));
+    const FloatRect mirrored{FloatPoint{0.0f, 0.0f}, FloatSize{-10.0f, 0.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(2.0f, mirrored), 0.0f, 2.5f, -10.0f, -5.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(2.0f, mirrored), -5.0f, 0.0f, 0.0f, 0.0f));
+
     FloatRect fr{FloatPoint{10.2f, 20.8f}, FloatSize{100.4f, 50.6f}};
     IntRect ir = _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(fr);
     Require(ir.m_location.m_x == 10);
