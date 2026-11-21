@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include <cstdlib>
 #include <cerrno>
 #include <algorithm>
@@ -98,6 +99,24 @@ void Replace(std::vector<char*>& entries, std::string_view name, char* replaceme
 bool ValidEnvironmentName(const char* name) {
     return name && *name && !std::strchr(name, '=');
 }
+
+constexpr std::size_t EnvironmentNameLimit = 0x10000;
+constexpr std::size_t EnvironmentTextLimit = 0x100000;
+
+int ReadableGuestText(const char* text, std::size_t limit) {
+    if (text == nullptr) return 0;
+    constexpr std::size_t Chunk = 512;
+    constexpr std::size_t Page = 4096;
+    char chunk[Chunk];
+    const auto address = reinterpret_cast<std::uintptr_t>(text);
+    for (std::size_t offset = 0; offset < limit;) {
+        const std::size_t count = std::min({Chunk, Page - (address + offset) % Page, limit - offset});
+        if (!GuestCopyIn_nid_no_patch(chunk, text + offset, count)) return 14;
+        if (std::memchr(chunk, 0, count)) return 0;
+        offset += count;
+    }
+    return 63;
+}
 int EnvironmentError(int error) { errno = error; return -1; }
 }
 
@@ -127,6 +146,7 @@ bool CopyGuestEnvironment_nid_no_patch(const char* name, std::string& value) {
 }
 
 char* APS5_VABI getenv_nid_postfix(const char* name) {
+    if (const int error = ReadableGuestText(name, EnvironmentNameLimit)) { errno = error; return nullptr; }
     if (!ValidEnvironmentName(name)) { errno = 22; return nullptr; }
     auto& environment = Environment();
     std::lock_guard lock(environment.mutex);
@@ -135,6 +155,8 @@ char* APS5_VABI getenv_nid_postfix(const char* name) {
 }
 
 int APS5_VABI setenv_nid_postfix(const char* name, const char* value, int overwrite) {
+    if (const int error = ReadableGuestText(name, EnvironmentNameLimit)) return EnvironmentError(error);
+    if (const int error = ReadableGuestText(value, EnvironmentTextLimit)) return EnvironmentError(error);
     if (!ValidEnvironmentName(name) || !value) return EnvironmentError(22);
     try {
         auto& environment = Environment();
@@ -168,6 +190,7 @@ int APS5_VABI setenv_nid_postfix(const char* name, const char* value, int overwr
 }
 
 int APS5_VABI unsetenv_nid_postfix(const char* name) {
+    if (const int error = ReadableGuestText(name, EnvironmentNameLimit)) return EnvironmentError(error);
     if (!ValidEnvironmentName(name)) return EnvironmentError(22);
     try {
         auto& environment = Environment();
@@ -182,6 +205,7 @@ int APS5_VABI unsetenv_nid_postfix(const char* name) {
 }
 
 int APS5_VABI putenv_nid_postfix(char* text) {
+    if (const int error = ReadableGuestText(text, EnvironmentTextLimit)) return EnvironmentError(error);
     const char* separator = text ? std::strchr(text, '=') : nullptr;
     if (!separator || separator == text) return EnvironmentError(22);
     try {
