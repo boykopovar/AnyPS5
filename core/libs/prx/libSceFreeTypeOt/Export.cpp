@@ -240,21 +240,16 @@ int APS5_VABI sceFreeTypeOtUnknown_4_SScYDT5Pg_nid_no_patch() {
 APS5_EXPORT("4+SScYDT5Pg", sceFreeTypeOtUnknown_4_SScYDT5Pg_nid_no_patch);
 
 int APS5_VABI ft_corner_is_flat_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y) {
-    const __int128 ax = static_cast<__int128>(in_x) + static_cast<__int128>(out_x);
-    const __int128 ay = static_cast<__int128>(in_y) + static_cast<__int128>(out_y);
-    const auto hypot = [](__int128 x, __int128 y) -> unsigned __int128 {
-        const auto ux = static_cast<unsigned __int128>(x < 0 ? -x : x);
-        const auto uy = static_cast<unsigned __int128>(y < 0 ? -y : y);
-        return ux > uy ? ux + ((3 * uy) >> 3) : uy + ((3 * ux) >> 3);
+    const char* function = __func__;
+    const auto position = [function](__int128 value) {
+        if (value < std::numeric_limits<std::int64_t>::min() || value > std::numeric_limits<std::int64_t>::max()) NotImplemented_nid_no_patch(function);
+        return value;
     };
-    const auto inDist = hypot(in_x, in_y);
-    const auto outDist = hypot(out_x, out_y);
-    const auto hypotDist = hypot(ax, ay);
-    const auto sumDist = inDist + outDist;
-    if (sumDist < hypotDist) {
-        return 1;
-    }
-    return (sumDist - hypotDist) < (hypotDist >> 4) ? 1 : 0;
+    const auto distance = [&position](__int128 x, __int128 y) { return position(position(x < 0 ? -x : x) + position(y < 0 ? -y : y)); };
+    const __int128 in = distance(in_x, in_y);
+    const __int128 out = distance(out_x, out_y);
+    const __int128 corner = distance(position(static_cast<__int128>(out_x) + in_x), position(static_cast<__int128>(out_y) + in_y));
+    return position(position(in + out) - corner) < (corner >> 4) ? 1 : 0;
 }
 
 int APS5_VABI ft_corner_orientation_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y) {

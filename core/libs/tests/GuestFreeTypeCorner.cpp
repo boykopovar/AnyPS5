@@ -272,6 +272,61 @@ void CheckCornerOrientationMeasured() {
     }
 }
 
+void CheckCornerIsFlatMeasured() {
+    const CornerVector vectors[] = {
+        {10, 0, 10, 0, 1},
+        {10, 0, 0, 10, 1},
+        {100, 0, 100, 1, 1},
+        {100, 0, 100, 10, 1},
+        {100, 0, 100, 25, 1},
+        {100, 0, -100, 0, 0},
+        {0, 0, 0, 0, 0},
+        {1099511627776, 0, 1099511627776, 0, 1},
+        {100, 0, 100, -1, 1},
+        {64, 0, 0, 64, 1},
+        {1000, 0, 1000, 3, 1},
+        {1, 0, 1, 1, 0},
+        {64, 0, 64, 0, 1},
+        {64, 0, 63, 11, 1},
+        {64, 0, 60, 22, 1},
+        {64, 0, 55, 32, 1},
+        {64, 0, 45, 45, 1},
+        {64, 0, 32, 55, 1},
+        {64, 0, 11, 63, 1},
+        {64, 0, -11, 63, 0},
+        {64, 0, -32, 55, 0},
+        {64, 0, -55, 32, 0},
+        {64, 0, -64, 0, 0},
+        {100, 0, 100, 0, 1},
+        {100, 0, 98, 17, 1},
+        {100, 0, 94, 34, 1},
+        {100, 0, 87, 50, 1},
+        {100, 0, 71, 71, 1},
+        {100, 0, 50, 87, 1},
+        {100, 0, 17, 98, 1},
+        {100, 0, 0, 100, 1},
+        {100, 0, -17, 98, 0},
+        {100, 0, -50, 87, 0},
+        {100, 0, -87, 50, 0},
+        {100000, 0, 100000, 0, 1},
+        {100000, 0, 98481, 17365, 1},
+        {100000, 0, 93969, 34202, 1},
+        {100000, 0, 86603, 50000, 1},
+        {100000, 0, 70711, 70711, 1},
+        {100000, 0, 50000, 86603, 1},
+        {100000, 0, 17365, 98481, 1},
+        {100000, 0, 0, 100000, 1},
+        {100000, 0, -17365, 98481, 0},
+        {100000, 0, -50000, 86603, 0},
+        {100000, 0, -86603, 50000, 0},
+        {100000, 0, -100000, 0, 0},
+    };
+    for (const CornerVector& vector : vectors) {
+        Require(ft_corner_is_flat_nid_postfix(vector.inX, vector.inY, vector.outX, vector.outY) == vector.expected,
+            "ft_corner_is_flat returns the value measured on a PS5");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -283,18 +338,18 @@ int main() {
 
     Require(ft_corner_is_flat_nid_postfix(100, 0, 100, 0) == 1, "parallel vectors are flat");
     Require(ft_corner_is_flat_nid_postfix(1000, 1, 1000, -1) == 1, "nearly parallel vectors are flat");
-    Require(ft_corner_is_flat_nid_postfix(100, 0, 0, 100) == 0, "perpendicular vectors are not flat");
+    Require(ft_corner_is_flat_nid_postfix(100, 0, 0, 100) == 1, "perpendicular vectors are flat under the L1 norm");
     Require(ft_corner_is_flat_nid_postfix(100, 0, -100, 0) == 0, "reversing vectors are not flat");
     Require(ft_corner_is_flat_nid_postfix(100000, 0, 1, 10) == 1, "dominant in vector is flat");
     Require(ft_corner_is_flat_nid_postfix(1, 10, 100000, 0) == 1, "dominant out vector is flat");
     Require(ft_corner_is_flat_nid_postfix(0, 0, 0, 0) == 0, "zero vectors are not flat");
     Require(ft_corner_is_flat_nid_postfix(-100, -50, -200, -100) == 1, "negative coordinates flat");
-    Require(ft_corner_is_flat_nid_postfix(INT64_MAX, 0, 1, 0) == 1, "INT64_MAX boundary does not overflow");
-    Require(ft_corner_is_flat_nid_postfix(INT64_MIN, 0, -1, 0) == 1, "INT64_MIN boundary does not overflow");
-    Require(ft_corner_is_flat_nid_postfix(INT64_MAX, INT64_MAX, 1, 1) == 1, "large positive diagonal boundary");
-    Require(ft_corner_is_flat_nid_postfix(INT64_MAX, INT64_MAX, INT64_MAX, INT64_MAX) == 1, "identical full-range vectors are flat");
-    Require(ft_corner_is_flat_nid_postfix(INT64_MAX, 0, 0, INT64_MAX) == 0, "full-range perpendicular vectors are not flat");
-    Require(ft_corner_is_flat_nid_postfix(INT64_MAX, 1, 1, INT64_MAX) == 0, "full-range near-perpendicular vectors are not flat");
+    CheckCornerIsFlatMeasured();
+    Require(ft_corner_is_flat_nid_postfix(0x3fffffffffffffffLL, 0, 0x3fffffffffffffffLL, 0) == 1, "the largest sums that fit FT_Pos");
+    Require(Throws([] { ft_corner_is_flat_nid_postfix(INT64_MAX, 0, 1, 0); }), "an overflowing corner sum throws");
+    Require(Throws([] { ft_corner_is_flat_nid_postfix(INT64_MIN, 0, -1, 0); }), "negating INT64_MIN throws");
+    Require(Throws([] { ft_corner_is_flat_nid_postfix(INT64_MAX, INT64_MAX, 1, 1); }), "an overflowing distance throws");
+    Require(Throws([] { ft_corner_is_flat_nid_postfix(INT64_MAX, 0, 0, INT64_MAX); }), "an overflowing corner distance throws");
 
     CheckMulDivNoRound();
     CheckMatrixMultiplyScaled();
