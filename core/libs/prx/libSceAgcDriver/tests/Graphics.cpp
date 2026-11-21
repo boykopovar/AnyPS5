@@ -4764,7 +4764,7 @@ void multisampleTests() {
     queue.context[0x2f8] = 0;
     queue.context[0x0] = 0;
     queue.context[0x202] = 0xcc0020;
-    expectFailure([&] { DecodeColorMetadataPass(queue); }, "multisampled color target");
+    expectFailure([&] { DecodeColorMetadataPass(queue); }, "fast-clear eliminate of a multisampled target without a CMASK address");
     queue.context[0x31c] |= 0x10000000u;
     queue.context[0x325] = 0;
     expectFailure([&] { DecodeColorMetadataPass(queue); }, "multisampled DCC targets require pipe-aligned single-layer SW_64KB_R_X");
@@ -4785,6 +4785,15 @@ void multisampleTests() {
     Require(fmaskPass->targets[0].dccControl == 0x00100038u, "FMASK decompress lost its DCC control");
     queue.context[0x31e] |= 0x80u;
     Require(DecodeColorMetadataPass(queue)->targets[0].dccControl == 0x001000b8u, "FMASK decompress hid an unsupported DCC control from the importer");
+    queue.context[0x318] = static_cast<std::uint32_t>(resolvedAddress >> 8u);
+    queue.context[0x390] = static_cast<std::uint32_t>(resolvedAddress >> 40u);
+    queue.context[0x31e] = 0x00100038u;
+    queue.context[0x3b8] = 0x4dc6c000u;
+    queue.context[0x202] = 0x00cc0020;
+    const auto eliminatePass = DecodeColorMetadataPass(queue);
+    Require(eliminatePass.has_value() && eliminatePass->mode == ColorMetadataPass::Mode::EliminateFastClear && eliminatePass->targets.size() == 1 && eliminatePass->targets[0].samples == 4 && eliminatePass->targets[0].cmaskAddress == cmaskAddress && eliminatePass->targets[0].cmaskFastClear && eliminatePass->targets[0].dccAddress != 0, "a fast-clear eliminate of a 4x multisampled target with CMASK and DCC did not decode");
+    queue.context[0x202] = 0x00cc0060;
+    expectFailure([&] { DecodeColorMetadataPass(queue); }, "CB DCC decompress over a multisampled color target");
     queue = makeState();
     queue.context[0x0] = 0;
     queue.context[0x202] = 0x00cc0050;

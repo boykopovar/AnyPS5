@@ -5191,6 +5191,10 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
         return;
     }
     for (const auto& color : pass.targets) {
+        if (color.samples != 1u) {
+            MaterializeMultisampleTargetClear(context, color);
+            continue;
+        }
         if (color.cmaskAddress != 0) {
             const auto resident = metadataPassResident(context, color);
             if (materializeCmaskClear(context, color, resident) && resident != nullptr) resident->MarkDirty();

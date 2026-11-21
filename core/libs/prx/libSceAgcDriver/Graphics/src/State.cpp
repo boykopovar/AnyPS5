@@ -2832,8 +2832,9 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
         if (fmaskDecompress) {
             Require(target.samples > 1, "CB metadata pass over a single-sample target");
             Require(target.cmaskAddress != 0, "FMASK decompress of a target without a CMASK address");
-        } else {
-            Require(target.samples == 1, "CB metadata pass over a multisampled color target, whose texels are on the host, is unsupported (only a CB resolve is modeled)");
+        } else if (target.samples != 1) {
+            Require(pass.mode == ColorMetadataPass::Mode::EliminateFastClear, "CB DCC decompress over a multisampled color target, whose texels are on the host, is unsupported");
+            Require(target.cmaskAddress != 0, "fast-clear eliminate of a multisampled target without a CMASK address");
         }
         Require((read(cx, 0x31c + slot * 0xfu) & 0x10000000u) == 0 || target.dccAddress != 0, "CB metadata pass over a mipmapped DCC color target, whose keys are not modeled");
         if (target.dccAddress != 0 || (target.cmaskAddress != 0 && pass.mode != ColorMetadataPass::Mode::EliminateFastClear)) requireCovered(target);
