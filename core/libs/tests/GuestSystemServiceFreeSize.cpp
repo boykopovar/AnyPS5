@@ -1,8 +1,10 @@
+#include "prx/libSceSystemService/HostUrl.hpp"
 #include "prx/libSceSystemService/include/SystemService.hpp"
 
 #include <cstdint>
 #include <cerrno>
 #include <cstdlib>
+#include <string_view>
 
 namespace {
 
@@ -20,5 +22,30 @@ int main() {
     Require(errno == 71);
     Require(freeSize != 0 && totalSize != 0 && freeSize <= totalSize);
     Require(sceShellCoreUtilGetFreeSizeOfAvContentsTmp() != 0);
+
+    const std::string_view invalidIpv6Urls[] = {
+        "http://[abc]/",
+        "http://[:::]/",
+        "http://[1::2::3]/",
+        "http://[12345::1]/",
+        "http://[1:2:3:4:5:6:7:8:9]/",
+        "http://[1:2:3]/",
+        "http://[:1]/",
+        "http://[1:]/",
+        "http://[::ffff:999.0.0.1]/",
+    };
+    for (const std::string_view url : invalidIpv6Urls)
+        Require(ValidateHostUrl(url) == HostUrlVerdict::BadAuthority);
+
+    const std::string_view validIpv6Urls[] = {
+        "http://[::1]/",
+        "http://[::1]:8080/path",
+        "https://[2001:db8::1]/",
+        "http://[::ffff:192.0.2.1]/",
+        "http://[2001:0db8:85a3:0000:0000:8a2e:0370:7334]/",
+    };
+    for (const std::string_view url : validIpv6Urls)
+        Require(ValidateHostUrl(url) == HostUrlVerdict::Ok);
+
     return 0;
 }

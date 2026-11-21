@@ -67,6 +67,68 @@ constexpr HostUrlVerdict ValidatePort(std::string_view port) {
     return value >= 1 && value <= HOST_URL_MAX_PORT ? HostUrlVerdict::Ok : HostUrlVerdict::BadPort;
 }
 
+constexpr bool IsValidIpv4Address(std::string_view address) {
+    if (address.empty()) return false;
+    std::size_t octets = 0;
+    std::size_t pos = 0;
+    while (true) {
+        const std::size_t dot = address.find('.', pos);
+        const bool isLast = dot == std::string_view::npos;
+        const std::string_view segment = isLast ? address.substr(pos) : address.substr(pos, dot - pos);
+        if (segment.empty() || segment.size() > 3) return false;
+        if (segment.size() > 1 && segment.front() == '0') return false;
+        int value = 0;
+        for (const char digit : segment) {
+            if (digit < '0' || digit > '9') return false;
+            value = value * 10 + (digit - '0');
+        }
+        if (value > 255) return false;
+        ++octets;
+        if (isLast) break;
+        pos = dot + 1;
+    }
+    return octets == 4;
+}
+
+constexpr bool CountIpv6Groups(std::string_view part, bool allowIpv4, std::size_t& groups) {
+    if (part.empty()) return true;
+    std::size_t pos = 0;
+    while (true) {
+        const std::size_t colon = part.find(':', pos);
+        const bool isLast = colon == std::string_view::npos;
+        const std::string_view segment = isLast ? part.substr(pos) : part.substr(pos, colon - pos);
+        if (segment.empty()) return false;
+        if (isLast && allowIpv4 && segment.find('.') != std::string_view::npos) {
+            if (!IsValidIpv4Address(segment)) return false;
+            groups += 2;
+        } else {
+            if (segment.size() > 4) return false;
+            for (const char value : segment)
+                if (!IsHexDigit(value)) return false;
+            ++groups;
+        }
+        if (isLast) break;
+        pos = colon + 1;
+    }
+    return true;
+}
+
+constexpr bool IsValidIpv6Literal(std::string_view host) {
+    if (host.empty()) return false;
+    const std::size_t doubleColon = host.find("::");
+    if (doubleColon == std::string_view::npos) {
+        std::size_t groups = 0;
+        return CountIpv6Groups(host, true, groups) && groups == 8;
+    }
+    if (host.find("::", doubleColon + 1) != std::string_view::npos) return false;
+    const std::string_view left = host.substr(0, doubleColon);
+    const std::string_view right = host.substr(doubleColon + 2);
+    std::size_t groups = 0;
+    if (!CountIpv6Groups(left, false, groups)) return false;
+    if (!CountIpv6Groups(right, true, groups)) return false;
+    return groups < 8;
+}
+
 constexpr HostUrlVerdict ValidateAuthority(std::string_view authority) {
     if (authority.empty()) return HostUrlVerdict::BadAuthority;
     if (authority.find('@') != std::string_view::npos) return HostUrlVerdict::Credentials;
@@ -77,8 +139,7 @@ constexpr HostUrlVerdict ValidateAuthority(std::string_view authority) {
         const std::size_t close = authority.find(']');
         if (close == std::string_view::npos || close == 1) return HostUrlVerdict::BadAuthority;
         host = authority.substr(1, close - 1);
-        for (const char value : host)
-            if (!IsHexDigit(value) && value != ':' && value != '.') return HostUrlVerdict::BadAuthority;
+        if (!IsValidIpv6Literal(host)) return HostUrlVerdict::BadAuthority;
         const std::string_view rest = authority.substr(close + 1);
         if (!rest.empty()) {
             if (rest.front() != ':') return HostUrlVerdict::BadAuthority;
