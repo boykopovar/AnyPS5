@@ -1651,15 +1651,32 @@ static void TestDownload() {
     Require(threw);
 }
 
+static void RequireEmptyStringCopy(const void* string, int line) {
+    Check(string != nullptr, line);
+    Check(WKGetTypeID(string) == WKStringGetTypeID(), line);
+    Check(WKStringIsEmpty(string), line);
+    Check(!static_cast<const NKWebKit::String*>(string)->null, line);
+    WKRelease(string);
+}
+
 static void TestAXObject() {
     Require(WKAXObjectGetTypeID() == 132);
     auto ax = NKWebKit::Make<NKWebKit::AccessibilityObject>();
     const void* ref = ax.Get();
 
-    Require(WKAXObjectCopyTitle(ref) == nullptr);
-    Require(WKAXObjectCopyDescription(ref) == nullptr);
-    Require(WKAXObjectCopyHelpText(ref) == nullptr);
-    Require(WKAXObjectCopyURL(ref) == nullptr);
+    RequireEmptyStringCopy(WKAXObjectCopyTitle(ref), __LINE__);
+    RequireEmptyStringCopy(WKAXObjectCopyDescription(ref), __LINE__);
+    RequireEmptyStringCopy(WKAXObjectCopyHelpText(ref), __LINE__);
+    RequireEmptyStringCopy(WKAXObjectCopyURL(ref), __LINE__);
+
+    ax->title = NKWebKit::Make<NKWebKit::String>();
+    ax->description = NKWebKit::Make<NKWebKit::String>();
+    ax->helpText = NKWebKit::Make<NKWebKit::String>();
+    ax->url = NKWebKit::Make<NKWebKit::String>();
+    RequireEmptyStringCopy(WKAXObjectCopyTitle(ref), __LINE__);
+    RequireEmptyStringCopy(WKAXObjectCopyDescription(ref), __LINE__);
+    RequireEmptyStringCopy(WKAXObjectCopyHelpText(ref), __LINE__);
+    RequireEmptyStringCopy(WKAXObjectCopyURL(ref), __LINE__);
 
     ax->title = NKWebKit::String::FromUtf8("Submit Button");
     ax->description = NKWebKit::String::FromUtf8("Submits the form");
@@ -1668,6 +1685,7 @@ static void TestAXObject() {
 
     auto* title = WKAXObjectCopyTitle(ref);
     Require(title != nullptr);
+    Require(title != static_cast<const NKWebKit::Object*>(ax->title.Get()));
     Require(WKStringIsEqualToUTF8CString(title, "Submit Button"));
     WKRelease(title);
 
@@ -1704,11 +1722,14 @@ static void TestPopupMenuItem() {
     Require(WKPopupMenuItemIsEnabled(ref));
     Require(WKPopupMenuItemIsItem(ref));
     Require(!WKPopupMenuItemIsSeparator(ref));
-    Require(WKPopupMenuItemCopyText(ref) == nullptr);
+    RequireEmptyStringCopy(WKPopupMenuItemCopyText(ref), __LINE__);
+    item->text = NKWebKit::Make<NKWebKit::String>();
+    RequireEmptyStringCopy(WKPopupMenuItemCopyText(ref), __LINE__);
 
     item->text = NKWebKit::String::FromUtf8("Option 1");
     auto* text = WKPopupMenuItemCopyText(ref);
     Require(text != nullptr);
+    Require(text != static_cast<const NKWebKit::Object*>(item->text.Get()));
     Require(WKStringIsEqualToUTF8CString(text, "Option 1"));
     WKRelease(text);
 
