@@ -17,6 +17,7 @@ target_sources(libSceIcu PRIVATE Properties.cpp CaseMapping.cpp CaseProperties.c
 target_sources(libSceIcu PRIVATE Bidi.cpp CharsetDetection.cpp Normalization.cpp CodePoints.cpp)
 target_link_libraries(libSceIcu PRIVATE icu_common icu_i18n)
 target_sources(libSceIcu PRIVATE Availability.cpp StringHash.cpp InvariantChars.cpp)
+target_sources(libSceIcu PRIVATE CollatorAvailability.cpp)
 target_sources(libSceIcu PRIVATE Locale.cpp LocaleMap.cpp DefaultLocale.cpp)
 target_sources(libSceIcu PRIVATE UtcTime.cpp)
 
@@ -844,9 +845,15 @@ if(BUILD_TESTING)
     target_link_libraries(guest_icu_right_to_left_tests PRIVATE libSceIcu)
     configure_windows_unwind(guest_icu_right_to_left_tests)
     add_test(NAME guest_icu_right_to_left COMMAND guest_icu_right_to_left_tests)
-    set_tests_properties(guest_icu_right_to_left PROPERTIES TIMEOUT 20)
+    add_test_executable(guest_icu_right_to_left_data_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/RightToLeftData.cpp)
+    target_include_directories(guest_icu_right_to_left_data_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_right_to_left_data_tests PRIVATE libSceIcu icu_common)
+    configure_windows_unwind(guest_icu_right_to_left_data_tests)
+    add_test(NAME guest_icu_right_to_left_data COMMAND guest_icu_right_to_left_data_tests
+        "${PROJECT_SOURCE_DIR}/3rdparty/icu/icu4j/main/core/src/main/resources/com/ibm/icu/impl/data/icudata/langInfo.res")
+    set_tests_properties(guest_icu_right_to_left guest_icu_right_to_left_data PROPERTIES TIMEOUT 20)
     if(WIN32)
-        set_tests_properties(guest_icu_right_to_left PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_icu_right_to_left guest_icu_right_to_left_data PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()
@@ -929,6 +936,21 @@ if(BUILD_TESTING)
         set_tests_properties(guest_icu_field_position_iterator PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_collator_availability_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/CollatorAvailability.cpp)
+    target_include_directories(guest_icu_collator_availability_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_collator_availability_tests PRIVATE libSceIcu libc libkernel icu_common)
+    configure_windows_unwind(guest_icu_collator_availability_tests)
+    foreach(mode empty data)
+        add_test(NAME guest_icu_collator_availability_${mode} COMMAND guest_icu_collator_availability_tests ${mode})
+        set_tests_properties(guest_icu_collator_availability_${mode} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_icu_collator_availability_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+        endif()
+    endforeach()
 endif()
 
 if(BUILD_TESTING)
