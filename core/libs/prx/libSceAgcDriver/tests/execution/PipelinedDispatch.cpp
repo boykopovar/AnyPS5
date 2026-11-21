@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -250,9 +251,85 @@ std::string Describe(const Handling& handling) {
     return std::to_string(handling.drains) + " drains (" + std::to_string(handling.packetDrains) + " at the dispatch packet), " + (handling.queued ? "queued" : "not queued");
 }
 
+std::vector<std::uint32_t> DispatchBatch(std::size_t dispatches) {
+    const auto codeAddress = reinterpret_cast<std::uintptr_t>(Code.data());
+    const auto input = BufferDescriptor(Input, BufferBytes);
+    const auto output = BufferDescriptor(Output, BufferBytes);
+    std::vector<std::uint32_t> words{
+        0xc0027600u, 0x20cu, static_cast<std::uint32_t>(codeAddress >> 8u), static_cast<std::uint32_t>(codeAddress >> 40u),
+        0xc0037600u, 0x207u, Lanes, 1u, 1u,
+        0xc0017600u, 0x213u, 8u << 1u,
+        0xc0087600u, 0x240u, input[0], input[1], input[2], input[3], output[0], output[1], output[2], output[3],
+    };
+    for (std::size_t index = 0; index < dispatches; ++index) words.insert(words.end(), {0xc0031500u, 1u, 1u, 1u, 0x8041u});
+    return words;
 }
 
-int main() {
+double Median(std::vector<double> values) {
+    std::sort(values.begin(), values.end());
+    const auto middle = values.size() / 2u;
+    return values.size() % 2u == 1u ? values[middle] : (values[middle - 1u] + values[middle]) / 2.0;
+}
+
+void MeasureDispatchOverhead() {
+    using AgcDriver::Graphics::RuntimeSwitch;
+    namespace RuntimeSwitches = AgcDriver::Graphics::RuntimeSwitches;
+    constexpr std::size_t PerBatch = 250;
+    constexpr std::size_t Batches = 24;
+    const bool initial = RuntimeSwitches::Set(RuntimeSwitch::NoPipelineDispatch);
+    constexpr std::uint32_t value = 0x51515151u;
+    for (std::size_t warm = 0; warm < 2; ++warm) Settle(Round(Input, value, Code.data()));
+    const auto batch = DispatchBatch(PerBatch);
+    std::array<std::vector<double>, 2> perDispatchUs;
+    std::array<std::uint64_t, 2> drains{};
+    std::array<DrawPipeline::HandoffCounts, 2> handoffs{};
+    for (std::size_t round = 0; round <= Batches; ++round) {
+        for (const bool off : {round % 2u == 0u, round % 2u != 0u}) {
+            RuntimeSwitches::Assign(RuntimeSwitch::NoPipelineDispatch, off);
+            auto words = batch;
+            const auto drainsBefore = DrawPipeline::DrainRequestsByOpcode(DispatchOpcode);
+            const auto handoffsBefore = DrawPipeline::Handoffs();
+            const auto start = std::chrono::steady_clock::now();
+            Submit(words);
+            AgcDriverWaitIdle_nid_postfix();
+            const auto elapsed = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+            const auto batchDrains = DrawPipeline::DrainRequestsByOpcode(DispatchOpcode) - drainsBefore;
+            const auto handoffsAfter = DrawPipeline::Handoffs();
+            if (round == 0u) continue;
+            auto& arm = handoffs[off ? 1u : 0u];
+            arm.committerWakes += handoffsAfter.committerWakes - handoffsBefore.committerWakes;
+            arm.fullWaits += handoffsAfter.fullWaits - handoffsBefore.fullWaits;
+            arm.producerWakes += handoffsAfter.producerWakes - handoffsBefore.producerWakes;
+            perDispatchUs[off ? 1u : 0u].push_back(elapsed / static_cast<double>(PerBatch));
+            drains[off ? 1u : 0u] += batchDrains;
+        }
+    }
+    RuntimeSwitches::Assign(RuntimeSwitch::NoPipelineDispatch, initial);
+    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output), BufferBytes);
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+        check(Output[lane] == value + 1u, "dispatch overhead: lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(value + 1u));
+    }
+    std::vector<double> ratios;
+    for (std::size_t index = 0; index < Batches; ++index) ratios.push_back(perDispatchUs[0][index] / perDispatchUs[1][index]);
+    const auto pipelined = Median(perDispatchUs[0]);
+    const auto inlined = Median(perDispatchUs[1]);
+    const auto ratio = Median(ratios);
+    std::printf("pipelined dispatch: overhead over %zu batches of %zu cached dispatches per arm: median %.2f us per dispatch pipelined (%llu dispatch drains), %.2f us inline (%llu dispatch drains), median ratio of adjacent batches %.2f\n", Batches, PerBatch, pipelined, static_cast<unsigned long long>(drains[0]), inlined, static_cast<unsigned long long>(drains[1]), ratio);
+    const auto perDispatch = [](std::uint64_t count) { return static_cast<double>(count) / static_cast<double>(Batches * PerBatch); };
+    std::printf("pipelined dispatch: hand-offs per pipelined dispatch: %.3f committer wakes, %.3f full-queue waits, %.3f producer wakes; per inline dispatch: %.3f committer wakes\n", perDispatch(handoffs[0].committerWakes), perDispatch(handoffs[0].fullWaits), perDispatch(handoffs[0].producerWakes), perDispatch(handoffs[1].committerWakes));
+    check(drains[0] == 0u, "dispatch overhead: the pipelined arm drained the pipeline " + std::to_string(drains[0]) + " times at a dispatch, so it did not measure pipelined dispatches");
+    check(drains[1] >= Batches * PerBatch, "dispatch overhead: the inline arm drained the pipeline " + std::to_string(drains[1]) + " times for " + std::to_string(Batches * PerBatch) + " dispatches");
+    const auto refill = DrawPipeline::Depth() / 2u;
+    check(refill != 0, "dispatch overhead: the draw pipeline is too shallow to bound its full-queue waits");
+    const auto fullWaitLimit = Batches * (PerBatch / refill + 2u);
+    check(handoffs[0].fullWaits <= fullWaitLimit, "dispatch overhead: the pipelined arm waited on a full queue " + std::to_string(handoffs[0].fullWaits) + " times for " + std::to_string(Batches * PerBatch) + " dispatches; producers that resume at half the depth of " + std::to_string(DrawPipeline::Depth()) + " wait at most " + std::to_string(fullWaitLimit) + " times");
+    check(handoffs[0].producerWakes <= handoffs[0].fullWaits + 2u * Batches, "dispatch overhead: the pipelined arm woke producers " + std::to_string(handoffs[0].producerWakes) + " times for " + std::to_string(handoffs[0].fullWaits) + " full-queue waits and " + std::to_string(Batches) + " drained batches");
+    check(handoffs[1].committerWakes <= Batches * 2u, "dispatch overhead: the inline arm woke the committer " + std::to_string(handoffs[1].committerWakes) + " times for " + std::to_string(Batches) + " batches of dispatches that run on the worker");
+}
+
+}
+
+int main(int argc, char** argv) {
 #ifdef _WIN32
     _putenv_s("APS5_PIPELINED_DRAWS", "1");
 #else
@@ -263,8 +340,11 @@ int main() {
             const auto probe = OpenVulkanTestDevice();
             if (!probe) return VulkanTestSkipped;
         }
-        const char* dispatchSwitch = std::getenv("APS5_PIPELINE_DISPATCH");
-        const bool pipelinedDispatch = dispatchSwitch != nullptr && dispatchSwitch[0] != '\0' && dispatchSwitch[0] != '0';
+        using AgcDriver::Graphics::RuntimeSwitch;
+        namespace RuntimeSwitches = AgcDriver::Graphics::RuntimeSwitches;
+        const bool flips = argc > 1 && std::string(argv[1]) == "--flip";
+        const bool overhead = argc > 1 && std::string(argv[1]) == "--overhead";
+        const bool pipelinedDispatch = !RuntimeSwitches::Set(RuntimeSwitch::NoPipelineDispatch);
         const bool dispatchMisses = pipelinedDispatch && std::getenv("APS5_PIPELINE_DISPATCH_MISSES") != nullptr;
 
         Shader shader{};
@@ -297,6 +377,12 @@ int main() {
         check((reinterpret_cast<std::uintptr_t>(TargetA) >> 32u) == (reinterpret_cast<std::uintptr_t>(TargetB) >> 32u), "the two targets do not share their high address dword");
         const auto initialDescriptor = BufferDescriptor(TargetA, BufferBytes);
         std::copy(initialDescriptor.begin(), initialDescriptor.end(), Table);
+        if (overhead) {
+            MeasureDispatchOverhead();
+            LibcRunShutdown_nid_postfix();
+            std::puts("pipelined dispatch overhead test passed");
+            return 0;
+        }
         const std::array<std::uint32_t, 5> values{0x0a0b0c0du, 0x11112222u, 0x33334444u, 0x55556666u, 0x77778888u};
         for (std::size_t round = 0; round < values.size(); ++round) {
             const auto value = values[round];
@@ -311,7 +397,7 @@ int main() {
                 check(Output[lane] == value + 1u, "round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(value + 1u) + " (the dispatch did not see the fill before it)");
             }
             std::printf("pipelined dispatch: input fill round %zu, fill 0x%08x, dispatch drains %llu\n", round, value, static_cast<unsigned long long>(drains));
-            if (!pipelinedDispatch) check(drains >= 1, "a dispatch did not drain the pipeline, and APS5_PIPELINE_DISPATCH is off");
+            if (!pipelinedDispatch) check(drains >= 1, "a dispatch did not drain the pipeline, and APS5_NO_PIPELINE_DISPATCH is set");
             if (pipelinedDispatch) check(drains <= 1, "a dispatch drained the pipeline more than once (" + std::to_string(drains) + ")");
         }
         for (std::size_t round = 0; round < 3; ++round) {
@@ -328,8 +414,28 @@ int main() {
                 check(Output[lane] == Input[lane] + 1u, "scratch round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(Input[lane] + 1u));
             }
             std::printf("pipelined dispatch: scratch fill round %zu, fill 0x%08x, dispatch drains %llu\n", round, value, static_cast<unsigned long long>(drains));
-            if (!pipelinedDispatch) check(drains >= 1, "a dispatch did not drain the pipeline, and APS5_PIPELINE_DISPATCH is off");
+            if (!pipelinedDispatch) check(drains >= 1, "a dispatch did not drain the pipeline, and APS5_NO_PIPELINE_DISPATCH is set");
             if (pipelinedDispatch) check(drains == 0, "a dispatch that reads nothing pending drained the pipeline (" + std::to_string(drains) + ")");
+        }
+        if (flips) {
+            for (const bool off : {true, false, true, false}) {
+                RuntimeSwitches::Assign(RuntimeSwitch::NoPipelineDispatch, off);
+                const auto value = off ? 0xf1f10000u : 0xf0f00000u;
+                const auto drainsBefore = DrawPipeline::DrainRequestsByOpcode(DispatchOpcode);
+                auto words = Round(Scratch, value, Code.data());
+                Submit(words);
+                AgcDriverWaitIdle_nid_postfix();
+                AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Scratch), BufferBytes);
+                AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output), BufferBytes);
+                const auto drains = DrawPipeline::DrainRequestsByOpcode(DispatchOpcode) - drainsBefore;
+                for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+                    check(Output[lane] == Input[lane] + 1u, std::string("switched round, ") + (off ? "off" : "on") + ": lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(Input[lane] + 1u));
+                }
+                std::printf("pipelined dispatch: switched %s in the run, dispatch drains %llu\n", off ? "off" : "on", static_cast<unsigned long long>(drains));
+                if (off) check(drains >= 1, "a dispatch did not drain the pipeline after APS5_NO_PIPELINE_DISPATCH was set in the run");
+                if (!off) check(drains == 0, "a dispatch drained the pipeline after APS5_NO_PIPELINE_DISPATCH was cleared in the run (" + std::to_string(drains) + ")");
+            }
+            RuntimeSwitches::Assign(RuntimeSwitch::NoPipelineDispatch, !pipelinedDispatch);
         }
         const std::array<std::uint32_t, 4> tableValues{0x6a6a0001u, 0x6b6b0002u, 0x6c6c0003u, 0x6d6d0004u};
         for (std::size_t round = 0; round < tableValues.size(); ++round) {
@@ -360,7 +466,7 @@ int main() {
                 check(Output[lane] == value + 1u, "descriptor round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(value + 1u) + " (the dispatch read the buffer the table named before the pending fill of the table)");
             }
             std::printf("pipelined dispatch: descriptor round %zu, fill 0x%08x, dispatch drains %llu\n", round, value, static_cast<unsigned long long>(drains));
-            if (!pipelinedDispatch) check(drains >= 1, "a dispatch did not drain the pipeline, and APS5_PIPELINE_DISPATCH is off");
+            if (!pipelinedDispatch) check(drains >= 1, "a dispatch did not drain the pipeline, and APS5_NO_PIPELINE_DISPATCH is set");
             if (pipelinedDispatch) check(drains == 1, "a dispatch whose table entry is pending a write drained " + std::to_string(drains) + " times, expected once");
         }
         const std::array<std::uint32_t, 5> scalarValues{0x13572468u, 0x2468ace0u, 0x0f1e2d3cu, 0x9abcdef0u, 0x31415926u};
@@ -376,7 +482,7 @@ int main() {
                 check(Output[lane] == value + 1u, "scalar round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(value + 1u) + " (a stale input)");
             }
             std::printf("pipelined dispatch: scalar read round %zu, fill 0x%08x, dispatch drains %llu\n", round, value, static_cast<unsigned long long>(drains));
-            if (!pipelinedDispatch) check(drains >= 1, "a dispatch did not drain the pipeline, and APS5_PIPELINE_DISPATCH is off");
+            if (!pipelinedDispatch) check(drains >= 1, "a dispatch did not drain the pipeline, and APS5_NO_PIPELINE_DISPATCH is set");
             if (pipelinedDispatch) check(drains <= 1, "a dispatch drained the pipeline more than once (" + std::to_string(drains) + ")");
         }
         std::uint32_t missKey = 0;
