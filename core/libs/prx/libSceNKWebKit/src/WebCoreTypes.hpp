@@ -121,7 +121,7 @@ struct LayoutRect {
 
 enum class ScrollBehaviorForFixedElements : bool { StickToDocumentBounds, StickToViewportBounds };
 
-enum class LayoutViewportConstraint : bool { Unconstrained, ConstrainedToDocumentRect };
+enum class LayoutViewportConstraint : std::int32_t { ConstrainedToDocumentRect, Unconstrained };
 
 struct RoundedRect {
     struct Radii {
@@ -378,7 +378,8 @@ static_assert(sizeof(LayoutPoint) == 8);
 static_assert(sizeof(LayoutSize) == 8);
 static_assert(sizeof(LayoutRect) == 16);
 static_assert(sizeof(ScrollBehaviorForFixedElements) == 1);
-static_assert(sizeof(LayoutViewportConstraint) == 1);
+static_assert(sizeof(LayoutViewportConstraint) == 4);
+static_assert(static_cast<std::int32_t>(LayoutViewportConstraint::ConstrainedToDocumentRect) == 0);
 static_assert(sizeof(RoundedRect) == 48);
 static_assert(sizeof(FourCC) == 4);
 static_assert(alignof(FourCC) == 4);
