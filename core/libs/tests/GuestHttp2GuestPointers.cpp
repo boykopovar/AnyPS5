@@ -1,3 +1,4 @@
+#include "prx/libSceSsl/include/Ssl.hpp"
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include <cerrno>
 #include <cstdint>
@@ -33,7 +34,9 @@ void APS5_VABI ErrorCallback(std::int32_t, std::int32_t, void*) {}
 }
 
 int main() {
-    const int context = sceHttp2Init(1, 1, 0x10000, 4);
+    const int ssl = sceSslInit_nid_postfix(0x80000);
+    Require(ssl > 0);
+    const int context = sceHttp2Init(1, ssl, 0x80000, 4);
     Require(context > 0);
     const int tmpl = sceHttp2CreateTemplate(context, "agent", 3, 0);
     Require(tmpl > 0);
@@ -76,6 +79,9 @@ int main() {
 #endif
     Require(sceHttp2DeleteRequest(request) == 0);
 
+    Require(sceHttp2DeleteCookieBox(box) == 0);
+    Require(sceHttp2Term(context) == 0);
+    Require(sceSslTerm_nid_postfix(ssl) == 0);
     std::puts("guest_http2_guest_pointers ok");
     return 0;
 }
