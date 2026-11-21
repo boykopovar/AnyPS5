@@ -12,7 +12,7 @@ CTEST_SKIP = re.compile(r"SKIP_RETURN_CODE=\d+|SKIP_REGULAR_EXPRESSION_MATCHED",
 SANITIZERS = ("address", "undefined", "thread")
 REPORT_LINES = (
     re.compile(r"SUMMARY: \w+Sanitizer: .*"),
-    re.compile(r"(?:ERROR|WARNING): \w+Sanitizer: .*"),
+    re.compile(r"(?:ERROR|WARNING|FATAL): \w+Sanitizer: .*"),
     re.compile(r"^.*runtime error: .*", re.MULTILINE),
 )
 REPORT_LENGTH = 200

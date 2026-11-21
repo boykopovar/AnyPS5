@@ -20,8 +20,6 @@ namespace {
 std::atomic<int> g_status{0};
 std::atomic<bool> g_open{false};
 
-constexpr int COMMON_DIALOG_ERROR_BUSY = static_cast<int>(0x80B80007u);
-
 bool CopyIn(void* dst, const void* src, std::size_t size) {
     const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(dst, src, size);
@@ -75,7 +73,7 @@ int APS5_VABI sceWebBrowserDialogTerminate(void) {
         return 0;
     }
     if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
-    return COMMON_DIALOG_ERROR_BUSY;
+    return COMMON_DIALOG_ERROR_RESULT_NONE;
 }
 
 int APS5_VABI sceWebBrowserDialogClose(void) {
@@ -114,7 +112,7 @@ int APS5_VABI sceWebBrowserDialogGetStatus(void) {
 int APS5_VABI sceWebBrowserDialogOpen(const void* param) {
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
-    if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
+    if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_INVALID_STATE;
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     std::uint8_t probe = 0;
     if (!CopyIn(&probe, param, 1)) return COMMON_DIALOG_ERROR_ARG_NULL;
@@ -166,7 +164,7 @@ int APS5_VABI sceWebBrowserDialogOpenForPredeterminedContent(const void* param, 
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     std::uint8_t probe = 0;
     if (!CopyIn(&probe, param, 1)) return COMMON_DIALOG_ERROR_ARG_NULL;
-    if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
+    if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_INVALID_STATE;
     g_status = COMMON_DIALOG_STATUS_FINISHED;
     g_open = true;
     PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::GenericFeature);

@@ -155,6 +155,11 @@ static void TestUnitedBoundingBoxes() {
     Require(RectIs(United(quads, 2), 1, -3, 11, 12));
     Require(RectIs(United(quads, 3), 1, -3, 19, 23));
     Require(RectIs(United(quads + 2, 1), 20, 20, 0, 0));
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const auto nonFinite = Quad(1, 2, 2, 1, nan, nan, 0, 3);
+    Require(RectIs(United(&nonFinite, 1), 1, 1, 1, 1));
+    Require(RectIs(_ZNK7WebCore9FloatQuad11boundingBoxEv(&nonFinite), 1, 1, 1, 1));
+    Require(Throws([] { _ZNK7WebCore9FloatQuad11boundingBoxEv(nullptr); }));
     Require(Throws([&] { United(nullptr, 2); }));
 }
 

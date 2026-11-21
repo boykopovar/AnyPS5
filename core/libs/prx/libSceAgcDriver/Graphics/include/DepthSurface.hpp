@@ -28,6 +28,7 @@ DepthSampleLocations DepthSurfaceSampleLocations(const Context& context, const D
 enum class DepthPlaneScope { Overlapped, Whole };
 std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint64_t address, std::size_t bytes, DepthPlaneScope scope = DepthPlaneScope::Overlapped);
 bool DepthPlanesStale();
+bool DepthSurfacePendingResultsOverlap(std::uint64_t address, std::size_t bytes);
 struct DepthPlaneStoreStatistics {
     std::uint64_t stores = 0;
     std::uint64_t units = 0;
@@ -48,7 +49,8 @@ std::uint64_t DirectDepthCopyCount();
 void SetDepthTransferPasses(bool enabled);
 std::uint64_t DepthTransferPassCount();
 std::uint64_t MultisampledDepthBytes_nid_no_patch(VkExtent2D extent, std::uint32_t bytesPerTexel, std::uint32_t samples);
-void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t bytes, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear = std::nullopt, bool allowPublication = true);
+enum class DepthReadCause { Access, Reuse };
+void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t bytes, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear = std::nullopt, bool allowPublication = true, DepthReadCause cause = DepthReadCause::Access);
 void AppendHostWrittenDepthRanges(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
 enum class DepthPublicationStage { ReadCaptured, GuestCopied, BeforeCommit, PlaneCommitted, StencilPlaneRead };
 void SetDepthPublicationHookForTest(void (*hook)(DepthPublicationStage));

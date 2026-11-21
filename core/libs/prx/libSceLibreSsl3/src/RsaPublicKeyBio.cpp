@@ -250,6 +250,7 @@
 #include "prx/libSceLibreSsl3/include/PkeyState.hpp"
 #include "prx/libSceLibreSsl3/include/RsaCrypto.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libc/include/General.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -499,12 +500,20 @@ extern "C" {
 LibreSsl3Rsa* APS5_VABI d2i_RSAPublicKey_bio_nid_postfix(LibreSsl::Bio* bio, LibreSsl3Rsa** output) {
     std::vector<unsigned char> bytes;
     if (!ReadDerObjectFromBio_nid_no_patch(bio, bytes)) return nullptr;
-    if (output && *output) {
-        RSA_free_nid_disambig1_nid_postfix(*output);
-        *output = nullptr;
+    if (output) {
+        LibreSsl3Rsa* previous = nullptr;
+        if (!GuestCopyIn_nid_no_patch(&previous, output, sizeof(previous))) return nullptr;
+        if (previous) {
+            RSA_free_nid_disambig1_nid_postfix(previous);
+            LibreSsl3Rsa* cleared = nullptr;
+            if (!GuestCopyOut_nid_no_patch(output, &cleared, sizeof(cleared))) return nullptr;
+        }
     }
     auto* rsa = DecodeRsaPublicKey(bytes);
-    if (rsa && output) *output = rsa;
+    if (rsa && output && !GuestCopyOut_nid_no_patch(output, &rsa, sizeof(rsa))) {
+        RSA_free_nid_disambig1_nid_postfix(rsa);
+        return nullptr;
+    }
     return rsa;
 }
 

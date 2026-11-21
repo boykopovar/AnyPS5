@@ -50,6 +50,7 @@ constexpr int Asn1RTooLong = 155;
 constexpr int Asn1RWrongTag = 168;
 constexpr int EvpRUnsupportedPrivateKeyAlgorithm = 118;
 constexpr int EvpRUnsupportedAlgorithm = 156;
+constexpr int EvpRExpectingAnRsaKey = 127;
 constexpr int X509RUnsupportedAlgorithm = 111;
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -235,6 +236,56 @@ void TestRsaPublicKeys() {
     PKCS8_PRIV_KEY_INFO_free_nid_postfix(p8);
     EVP_PKEY_free_nid_disambig1_nid_postfix(evpPriv);
     EVP_PKEY_free_nid_disambig1_nid_postfix(evpPub);
+}
+
+void TestRsaPubkey() {
+    std::vector<unsigned char> spkiWithTrailing = RsaSpkiDer;
+    spkiWithTrailing.push_back(0xaa);
+    const unsigned char* cursor = spkiWithTrailing.data();
+    LibreSsl3Rsa* rsa = d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(
+        nullptr, &cursor, static_cast<std::int64_t>(spkiWithTrailing.size()));
+    Require(rsa != nullptr && rsa->references == 1 && rsa->d == nullptr);
+    Require(cursor == spkiWithTrailing.data() + RsaSpkiDer.size());
+    cursor = RsaSpkiDer.data();
+    LibreSsl3EvpPkey* pkey = d2i_PUBKEY_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(RsaSpkiDer.size()));
+    Require(pkey != nullptr);
+    CompareRsaKeys(rsa, static_cast<const LibreSsl3Rsa*>(pkey->key), false);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(pkey);
+
+    LibreSsl3Rsa* output = rsa;
+    cursor = RsaSpkiDer.data();
+    LibreSsl3Rsa* replaced = d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(
+        &output, &cursor, static_cast<std::int64_t>(RsaSpkiDer.size()));
+    Require(replaced != nullptr && output == replaced && cursor == RsaSpkiDer.data() + RsaSpkiDer.size());
+
+    cursor = P256SpkiDer.data();
+    ERR_clear_error_nid_postfix();
+    Require(d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(
+        &output, &cursor, static_cast<std::int64_t>(P256SpkiDer.size())) == nullptr);
+    Require(output == replaced && cursor == P256SpkiDer.data());
+    ExpectError(ErrLibEvp, EvpRExpectingAnRsaKey);
+
+    const std::array<unsigned char, 4> malformed{0x30, 0x05, 0x02, 0x01};
+    cursor = malformed.data();
+    ERR_clear_error_nid_postfix();
+    Require(d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(
+        &output, &cursor, static_cast<std::int64_t>(malformed.size())) == nullptr);
+    Require(output == replaced && cursor == malformed.data());
+    ExpectError(ErrLibAsn1, Asn1RTooLong);
+
+    cursor = RsaSpkiDer.data();
+    Require(d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(&output, &cursor, -1) == nullptr);
+    Require(output == replaced && cursor == RsaSpkiDer.data() && ERR_get_error_nid_postfix() == 0);
+
+    bool threw = false;
+    try {
+        d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(&output, nullptr, 1);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Require(threw && output == replaced);
+
+    RSA_free_nid_disambig1_nid_postfix(output);
 }
 
 void TestRsaPrivateRoundTrip() {
@@ -735,6 +786,7 @@ int main() {
     };
     ApplicationHeapRegister_nid_no_patch(heapApi.data());
     TestRsaPublicKeys();
+    TestRsaPubkey();
     TestRsaPrivateRoundTrip();
     TestEcPublicAndPrivate(Secp256r1, P256Pkcs8Der, &P256SpkiDer, &P256Sec1Der);
     TestEcPublicAndPrivate(Secp384r1, P384Pkcs8Der, nullptr, nullptr);

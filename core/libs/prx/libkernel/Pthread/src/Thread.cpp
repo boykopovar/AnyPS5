@@ -801,16 +801,8 @@ bool GuestThreadCpuNanos(int cpuClockThread, std::uint64_t* nanos) {
     }
     if (WaitForSingleObject(thread->nativeHandle, 0) == WAIT_OBJECT_0)
         return false;
-    FILETIME creation{};
-    FILETIME exitTime{};
-    FILETIME kernel{};
-    FILETIME user{};
-    if (!GetThreadTimes(thread->nativeHandle, &creation, &exitTime, &kernel, &user))
+    if (!HostThreadCpuNanos_nid_no_patch(thread->nativeHandle, nanos))
         throw std::system_error(GetLastError(), std::system_category(), "Querying guest thread CPU time");
-    const auto toTicks = [](const FILETIME& time) {
-        return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
-    };
-    *nanos = (toTicks(user) + toTicks(kernel)) * 100ULL;
 #else
     if (!thread->hostCpuClockBound) {
         *nanos = 0;

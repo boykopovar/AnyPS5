@@ -51,8 +51,8 @@ constexpr auto Substitution = MakeSubstitution();
 constexpr auto InverseSubstitution = MakeInverse(Substitution);
 static_assert(Substitution[0x00] == 0x63 && Substitution[0x53] == 0xed && Substitution[0xff] == 0x16);
 
-std::uint32_t LoadBig32(const unsigned char* p) {
-    return std::uint32_t(p[0]) << 24 | std::uint32_t(p[1]) << 16 | std::uint32_t(p[2]) << 8 | std::uint32_t(p[3]);
+std::uint32_t LoadLittle32(const unsigned char* p) {
+    return std::uint32_t(p[3]) << 24 | std::uint32_t(p[2]) << 16 | std::uint32_t(p[1]) << 8 | std::uint32_t(p[0]);
 }
 
 void StoreBig32(unsigned char* p, std::uint32_t value) {
@@ -65,11 +65,11 @@ std::uint32_t SubstituteWord(std::uint32_t word) {
 }
 
 std::uint32_t InverseMixWord(std::uint32_t word) {
-    const std::uint8_t a[4] {std::uint8_t(word >> 24), std::uint8_t(word >> 16), std::uint8_t(word >> 8), std::uint8_t(word)};
+    const std::uint8_t a[4] {std::uint8_t(word), std::uint8_t(word >> 8), std::uint8_t(word >> 16), std::uint8_t(word >> 24)};
     std::uint32_t result = 0;
     for (int row = 0; row < 4; ++row) {
         const std::uint8_t value = Multiply(a[row], 14) ^ Multiply(a[(row + 1) % 4], 11) ^ Multiply(a[(row + 2) % 4], 13) ^ Multiply(a[(row + 3) % 4], 9);
-        result |= std::uint32_t(value) << (24 - 8 * row);
+        result |= std::uint32_t(value) << (8 * row);
     }
     return result;
 }
@@ -85,12 +85,12 @@ void ExpandKey(const unsigned char* userKey, int bits, AesKey& key) {
     const int words = bits / 32;
     const int total = 4 * (key.rounds + 1);
     auto* w = key.roundKeys;
-    for (int i = 0; i < words; ++i) w[i] = LoadBig32(userKey + 4 * i);
+    for (int i = 0; i < words; ++i) w[i] = LoadLittle32(userKey + 4 * i);
     std::uint8_t roundConstant = 1;
     for (int i = words; i < total; ++i) {
         std::uint32_t temp = w[i - 1];
         if (i % words == 0) {
-            temp = SubstituteWord(temp << 8 | temp >> 24) ^ (std::uint32_t(roundConstant) << 24);
+            temp = SubstituteWord(temp >> 8 | temp << 24) ^ std::uint32_t(roundConstant);
             roundConstant = Multiply(roundConstant, 2);
         } else if (words > 6 && i % words == 4) {
             temp = SubstituteWord(temp);
@@ -172,12 +172,12 @@ void WriteChanged(void* destination, const void* before, const void* after, std:
 void LoadState(std::uint8_t (&state)[16], const unsigned char* in, const std::uint32_t* roundKey) {
     for (int column = 0; column < 4; ++column)
         for (int row = 0; row < 4; ++row)
-            state[4 * column + row] = in[4 * column + row] ^ std::uint8_t(roundKey[column] >> (24 - 8 * row));
+            state[4 * column + row] = in[4 * column + row] ^ std::uint8_t(roundKey[column] >> (8 * row));
 }
 
 void AddRoundKey(std::uint8_t (&state)[16], const std::uint32_t* roundKey) {
     for (int column = 0; column < 4; ++column)
-        for (int row = 0; row < 4; ++row) state[4 * column + row] ^= std::uint8_t(roundKey[column] >> (24 - 8 * row));
+        for (int row = 0; row < 4; ++row) state[4 * column + row] ^= std::uint8_t(roundKey[column] >> (8 * row));
 }
 
 void EncryptBlock(const unsigned char* in, unsigned char* out, const AesKey& key) {

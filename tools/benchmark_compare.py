@@ -368,7 +368,8 @@ def compare_benchmark_runs(path, require_matching_context=False):
             identity = source["_identity"]
             if identity in seen_files or source["sha256"] in seen_hashes or source["decoded_sha256"] in seen_decoded:
                 raise ValueError(f"{attempt['id']}: duplicate capture evidence cannot count as another run")
-            seen_files.add(identity)
+            if identity[1]:
+                seen_files.add(identity)
             seen_hashes.add(source["sha256"])
             seen_decoded.add(source["decoded_sha256"])
             total_frames += sum(len(interval["frame_us"]) for interval in loaded["data"]["intervals"])
