@@ -1,0 +1,5 @@
+﻿# libc
+
+## change [fdopen]
+
+- [fdopen](../../../core/libs/prx/libc/src/FileAndHeap.cpp) (libc) - for a closed or unknown descriptor it returns a stream whose later flush and close fail with `EBADF`, and whose read, write, seek and tell operations do not report `EBADF`, as the system `libSceLibcInternal` of PS5 firmware 13.60 does; the other results of those operations on that stream are unverified. A null mode returns null with `EINVAL`, where the console returns a stream; on Linux a mode the descriptor's access does not allow returns null with `EINVAL`, as the host `fdopen` checks it. Otherwise it follows the console: a mode whose first letter is not `r`, `w` or `a` fails with `EINVAL` before the descriptor is looked at, a negative descriptor then returns null without setting `errno`, and the descriptor's access mode is not checked, so the first read or write it does not allow fails instead

@@ -106,6 +106,7 @@ class FileStream {
     bool guestError = false;
     bool randomDevice = false;
     bool directory = false;
+    bool _badDescriptor = false;
     std::atomic<int> _orientation{0};
     char16_t lowSurrogate = 0;
     unsigned pushedBack = 0;
@@ -145,6 +146,12 @@ class FileStream {
     }
 #endif
 
+    enum class BadDescriptorTag { Value };
+    explicit FileStream(BadDescriptorTag, int descriptor = -1) : _handle(nullptr), _dynamic(true), _badDescriptor(true) {
+        _guest.flags = 0x10;
+        _guest.descriptor = descriptor >= 0 && descriptor <= 32767 ? static_cast<std::int16_t>(descriptor) : -1;
+    }
+
 public:
     explicit FileStream(std::FILE* handle, bool dynamic = false) : _handle(handle), _dynamic(dynamic) {
         if (!_handle) throw std::runtime_error("FileStream: null handle");
@@ -173,7 +180,15 @@ public:
     }
 
     bool IsOpen() const {
-        return _handle != nullptr;
+        return _handle != nullptr || _badDescriptor;
+    }
+
+    bool IsBadDescriptor() const {
+        return _badDescriptor;
+    }
+
+    static FileStream* CreateBadDescriptorStream(int descriptor) {
+        return new FileStream(BadDescriptorTag::Value, descriptor);
     }
 
     int Orientation(int mode) {
@@ -189,6 +204,7 @@ public:
 
     GuestFilePrefix& GuestState() { return _guest; }
     bool IsHostStandard() const {
+        if (!_handle) return false;
 #ifdef _WIN32
         return _handle == __acrt_iob_func(0) || _handle == __acrt_iob_func(1) || _handle == __acrt_iob_func(2);
 #else
@@ -206,6 +222,7 @@ public:
 #endif
         _orientation.store(0, std::memory_order_relaxed);
         _handle = nullptr;
+        _badDescriptor = false;
         _guest.flags = 0;
         _guest.descriptor = -1;
         lowSurrogate = 0;
@@ -380,11 +397,19 @@ public:
     }
 
     void SyncStatus() {
+        if (_badDescriptor) {
+            PublishStatus(false, true);
+            return;
+        }
         if (!_handle) return;
         PublishStatus(std::feof(GetHandle()) != 0, std::ferror(GetHandle()) != 0 || guestError);
     }
 
     void SyncUnlockedStatus() {
+        if (_badDescriptor) {
+            PublishStatus(false, true);
+            return;
+        }
         if (!_handle) return;
 #ifdef _WIN32
         const bool endOfFile = std::feof(GetHandle()) != 0;
@@ -524,6 +549,7 @@ public:
     }
 
     void ClearError() {
+        if (_badDescriptor) return;
         if (!_handle) return;
         std::clearerr(GetHandle());
         guestError = false;
@@ -549,6 +575,17 @@ public:
     }
 
     int Close() {
+        if (_badDescriptor) {
+            errno = 9;
+            _badDescriptor = false;
+            _handle = nullptr;
+            _guest.flags = 0;
+            _guest.descriptor = -1;
+            _orientation.store(0, std::memory_order_relaxed);
+            lowSurrogate = 0;
+            pushedBack = 0;
+            return -1;
+        }
         GetHandle();
 #ifdef _WIN32
         GuestFileLockForget_nid_no_patch(::_fileno(_handle));
