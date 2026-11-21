@@ -146,6 +146,8 @@ void CheckPunctuationAndWiden() {
     Require(PutWideFloat(&locale, 0, 0, "-1234e+05") == u"-1'234E+05", "wide _Fput widens through ctype<wchar_t> and stops grouping at exponent");
     Require(PutWideFloat(&locale, 0, 0, "inf") == u"inf", "wide _Fput does not group inf");
     g_grouping = "";
+    Require(PutWideFloat(&locale, 0, 0, "12345.67") == u"12345,67", "wide _Fput handles empty grouping pattern with decimal point");
+    Require(PutWideFloat(&locale, 0, 0, "12345") == u"12345", "wide _Fput handles empty grouping pattern without decimal point");
     _ZNSt8numpunctIwE2idE_nid_postfix = savedPunctId;
     _ZNSt5ctypeIwE2idE_nid_postfix = savedCtypeId;
 }
