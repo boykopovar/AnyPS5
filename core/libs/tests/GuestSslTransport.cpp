@@ -13,16 +13,19 @@
 #include "prx/libSceSsl/SslTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SslCertificateFixture.hpp"
+#include "ProcessParametersFixture.hpp"
 
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
 #include <mbedtls/net_sockets.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/ssl.h>
+#include <mbedtls/ssl_cache.h>
 #include <mbedtls/x509_crt.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -37,11 +40,14 @@ namespace {
 constexpr int ParallelConnections = 4;
 constexpr int ErrorInvalidId = static_cast<int>(0x8095f006);
 constexpr int ErrorInvalidValue = static_cast<int>(0x8095f007);
+constexpr int ErrorInvalidCert = static_cast<int>(0x8095f00a);
 constexpr int ErrorCnCheck = static_cast<int>(0x8095f00b);
 constexpr int ErrorUnknownCa = static_cast<int>(0x8095f00c);
 constexpr int ErrorNotAfterCheck = static_cast<int>(0x8095f00d);
 constexpr int ErrorNotBeforeCheck = static_cast<int>(0x8095f00e);
+constexpr int ErrorEagain = static_cast<int>(0x8095f00f);
 constexpr int ErrorFatalAlert = static_cast<int>(0x8095f010);
+constexpr int ErrorBusy = static_cast<int>(0x8095f012);
 constexpr int ErrorWantPollIn = static_cast<int>(0x8095f013);
 constexpr int ErrorWantPollOut = static_cast<int>(0x8095f014);
 constexpr int ErrorCallbackCheck = static_cast<int>(0x8095f0fd);
@@ -57,9 +63,10 @@ constexpr int GuestSocketLevel = 0xffff;
 constexpr int GuestNonBlocking = 0x1200;
 constexpr int GuestReceiveTimeout = 0x1006;
 constexpr int WaitRounds = 2000;
+constexpr std::size_t SplitRequestSize = 20000;
 const char* ServerProtocols[] = {"http/1.1", nullptr};
 
-enum class Serve { Close, Exchange, Drop, Reset, Alert, HelloReset, HelloPlain };
+enum class Serve { Close, Exchange, Split, Drop, Reset, Alert, HelloReset, HelloPlain };
 enum class Leaf { Valid, Expired, Future };
 
 struct GuestTimeval {
@@ -94,6 +101,8 @@ struct CallbackRecord {
     int calls = 0;
     void* leaf = nullptr;
     std::string commonName;
+    int reuseConnection = 0;
+    int reuseResult = 0;
 };
 
 int APS5_VABI RecordingCallback(int id, unsigned int error, void** certificates, int count, void* argument) {
@@ -102,6 +111,7 @@ int APS5_VABI RecordingCallback(int id, unsigned int error, void** certificates,
     record.error = error;
     record.count = count;
     ++record.calls;
+    if (record.reuseConnection) record.reuseResult = sceSslReuseConnection(record.reuseConnection, 1000);
     if (count > 0 && certificates && certificates[0]) {
         record.leaf = certificates[0];
         void* name = sceSslGetSubjectName(record.context, record.leaf);
@@ -131,8 +141,21 @@ struct Server {
     mbedtls_pk_context expiredKey;
     mbedtls_pk_context futureKey;
     mbedtls_ssl_config configs[3];
+    mbedtls_ssl_cache_context cache;
+    std::atomic<int> resumed{0};
     std::uint16_t port = 0;
     std::string failure;
+
+    static int CacheGet(void* data, const unsigned char* id, std::size_t length, mbedtls_ssl_session* session) {
+        auto& server = *static_cast<Server*>(data);
+        const int result = mbedtls_ssl_cache_get(&server.cache, id, length, session);
+        if (result == 0) ++server.resumed;
+        return result;
+    }
+
+    static int CacheSet(void* data, const unsigned char* id, std::size_t length, const mbedtls_ssl_session* session) {
+        return mbedtls_ssl_cache_set(&static_cast<Server*>(data)->cache, id, length, session);
+    }
 
     Server() {
         mbedtls_net_init(&listener);
@@ -146,6 +169,7 @@ struct Server {
         mbedtls_pk_init(&expiredKey);
         mbedtls_pk_init(&futureKey);
         for (auto& config : configs) mbedtls_ssl_config_init(&config);
+        mbedtls_ssl_cache_init(&cache);
         Require(mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, nullptr, 0) == 0, "seed server random generator");
         Require(mbedtls_x509_crt_parse(&certificate, reinterpret_cast<const unsigned char*>(ServerPem), sizeof(ServerPem)) == 0,
             "parse server certificate");
@@ -172,6 +196,7 @@ struct Server {
             mbedtls_ssl_conf_authmode(&config, MBEDTLS_SSL_VERIFY_REQUIRED);
             mbedtls_ssl_conf_ca_chain(&config, &authority, nullptr);
             Require(mbedtls_ssl_conf_alpn_protocols(&config, ServerProtocols) == 0, "set server protocols");
+            mbedtls_ssl_conf_session_cache(&config, this, CacheGet, CacheSet);
         }
         Require(mbedtls_net_bind(&listener, "127.0.0.1", "0", MBEDTLS_NET_PROTO_TCP) == 0, "bind loopback listener");
         sockaddr_in address{};
@@ -186,6 +211,7 @@ struct Server {
 
     ~Server() {
         for (auto& config : configs) mbedtls_ssl_config_free(&config);
+        mbedtls_ssl_cache_free(&cache);
         mbedtls_pk_free(&futureKey);
         mbedtls_pk_free(&expiredKey);
         mbedtls_pk_free(&key);
@@ -216,6 +242,7 @@ struct Server {
             const int handshake = mbedtls_ssl_handshake(&ssl);
             if (handshake != 0) failure = "server handshake failed, error " + std::to_string(handshake);
             else if (mode == Serve::Exchange) Exchange(ssl);
+            else if (mode == Serve::Split) Split(ssl);
             else if (mode == Serve::Close) mbedtls_ssl_close_notify(&ssl);
             else if (mode == Serve::Reset) Reset(ssl, client);
         }
@@ -286,6 +313,29 @@ struct Server {
         client.fd = -1;
     }
 
+    void Split(mbedtls_ssl_context& ssl) {
+        std::string request(SplitRequestSize, '\0');
+        std::size_t received = 0;
+        while (received < request.size()) {
+            const int result = mbedtls_ssl_read(&ssl, reinterpret_cast<unsigned char*>(request.data()) + received, request.size() - received);
+            if (result <= 0) {
+                failure = "split server read failed, error " + std::to_string(result);
+                return;
+            }
+            received += static_cast<std::size_t>(result);
+        }
+        if (request.compare(0, 4, "ping") != 0) {
+            failure = "split server received the wrong request";
+            return;
+        }
+        if (mbedtls_ssl_write(&ssl, reinterpret_cast<const unsigned char*>("po"), 2) != 2
+            || mbedtls_ssl_write(&ssl, reinterpret_cast<const unsigned char*>("ng"), 2) != 2) {
+            failure = "split server write failed";
+            return;
+        }
+        if (mbedtls_ssl_close_notify(&ssl) != 0) failure = "split server close notify failed";
+    }
+
     void Exchange(mbedtls_ssl_context& ssl) {
         std::array<unsigned char, 4> request{};
         std::size_t received = 0;
@@ -330,6 +380,22 @@ struct Sockets {
     int Close(int descriptor) const { return net ? sceNetSocketClose(descriptor) : close_nid_postfix(descriptor); }
 };
 
+struct SslError {
+    int error = 0;
+    std::uint32_t detail = 0;
+    bool operator==(const SslError&) const = default;
+};
+
+SslError LastError(int connection) {
+    SslError result{1, 1};
+    Require(sceSslGetSslError(connection, &result.error, &result.detail) == 0, "read the connection's SSL error");
+    return result;
+}
+
+std::array<std::byte, 64> processParameters{};
+
+void SetSdkVersion(std::uint32_t version) { std::memcpy(processParameters.data() + 16, &version, sizeof(version)); }
+
 std::size_t InUse(int context) {
     SceSsl::MemoryPoolStats stats{};
     Require(sceSslGetMemoryPoolStats(context, &stats) == 0, "read pool statistics");
@@ -343,17 +409,18 @@ int main(int argc, char** argv) {
 #ifndef _WIN32
     std::signal(SIGPIPE, SIG_IGN);
 #endif
+    const std::uint64_t processSize = processParameters.size();
+    const std::uint32_t processMagic = 0x4942524f;
+    std::memcpy(processParameters.data(), &processSize, sizeof(processSize));
+    std::memcpy(processParameters.data() + 8, &processMagic, sizeof(processMagic));
+    SetSdkVersion(0x09000000);
+    Require(ProcessParametersFixture::Install(processParameters.data(), processParameters.size()), "install the process parameters");
     const Sockets sockets{std::strcmp(argv[1], "net") == 0};
     if (sockets.net) Require(sceNetInit_nid_postfix() == 0, "initialize libSceNet");
     Server server;
     std::thread serving([&] {
-        server.Serve(Serve::Close, false);
-        server.Serve(Serve::Close, false);
-        server.Serve(Serve::Close, false);
-        server.Serve(Serve::Close);
-        server.Serve(Serve::Close);
-        server.Serve(Serve::Close);
-        server.Serve(Serve::Close);
+        for (int index = 0; index < 4; ++index) server.Serve(Serve::Close, false);
+        for (int index = 0; index < 6; ++index) server.Serve(Serve::Close);
         server.Serve(Serve::Exchange);
         server.Serve(Serve::Exchange);
         server.Serve(Serve::Drop);
@@ -366,6 +433,11 @@ int main(int argc, char** argv) {
         server.Serve(Serve::Close, true, Leaf::Future);
         server.Serve(Serve::Close, true, Leaf::Future);
         if (sockets.net) server.Serve(Serve::Exchange);
+        for (int index = 0; index < 3; ++index) server.Serve(Serve::Exchange);
+        server.Serve(Serve::Close);
+        server.Serve(Serve::Close);
+        server.Serve(Serve::Split);
+        server.Serve(Serve::Exchange);
         for (int index = 0; index < ParallelConnections; ++index) server.Serve(Serve::Exchange);
     });
 
@@ -375,6 +447,7 @@ int main(int argc, char** argv) {
     const int untrusted = sceSslCreateConnection(empty, untrustedSocket, "localhost");
     Require(sceSslConnect(untrusted) == ErrorUnknownCa, "a server certificate without a loaded CA passed the initial verify options");
     Require(sceSslConnect(untrusted) == ErrorUnknownCa, "a second connect did not repeat the verification result");
+    Require(LastError(untrusted) == SslError{ErrorInvalidCert, KnownCaCheck}, "an unknown CA was not recorded as the connection's SSL error");
     std::array<char, 16> scratch{};
     Require(Throws([&] { sceSslRead(untrusted, scratch.data(), 1, 0); }), "a connection that failed verification was readable");
     Require(sceSslClose(untrusted) == 0, "close a connection that failed verification");
@@ -383,8 +456,22 @@ int main(int argc, char** argv) {
         && sceSslConnect(untrusted) == ErrorInvalidId && sceSslRead(untrusted, scratch.data(), 1, 0) == ErrorInvalidId
         && sceSslWrite(untrusted, scratch.data(), 1, 0) == ErrorInvalidId && sceSslSetAlpn(untrusted, "h2") == ErrorInvalidId
         && sceSslEnableVerifyOption(untrusted, CnCheck) == ErrorInvalidId && sceSslDisableVerifyOption(untrusted, CnCheck) == ErrorInvalidId
-        && sceSslSetMinSslVersion(untrusted, VersionTls12) == ErrorInvalidId && sceSslSetVerifyCallback(untrusted, nullptr, nullptr) == ErrorInvalidId,
+        && sceSslSetMinSslVersion(untrusted, VersionTls12) == ErrorInvalidId && sceSslSetVerifyCallback(untrusted, nullptr, nullptr) == ErrorInvalidId
+        && sceSslReuseConnection(untrusted, untrustedSocket) == ErrorInvalidId,
         "a deleted connection did not report an invalid id");
+    SslError untouched{7, 7};
+    Require(sceSslGetSslError(untrusted, &untouched.error, &untouched.detail) == ErrorInvalidId && untouched == SslError{7, 7}
+        && sceSslGetSslError(0, &untouched.error, &untouched.detail) == ErrorInvalidId, "the SSL error of a deleted connection or id 0 was read");
+    Require(sceSslGetSslError(untrusted, nullptr, &untouched.detail) == ErrorInvalidValue && sceSslGetSslError(untrusted, &untouched.error, nullptr) == ErrorInvalidValue,
+        "a null SSL error output was accepted");
+    std::uint8_t pending = 0;
+    Require(sceSslCheckRecvPending(untrusted, &pending) == ErrorInvalidId && pending == 1,
+        "a pending check of a deleted connection did not store 1 before reporting the invalid id");
+    pending = 0;
+    Require(sceSslCheckRecvPending(0, &pending) == ErrorInvalidId && pending == 1, "a pending check of connection id 0 changed");
+    Require(sceSslCheckRecvPending(untrusted, nullptr) == ErrorInvalidValue, "a pending check accepted a null output");
+    Require(sceSslCheckRecvPending(untrusted, reinterpret_cast<std::uint8_t*>(0x10)) == ErrorInvalidValue,
+        "a pending check accepted an unwritable output");
 
     const int unverifiedSocket = sockets.Open(server.port);
     const int unverified = sceSslCreateConnection(empty, unverifiedSocket, "localhost");
@@ -403,7 +490,13 @@ int main(int argc, char** argv) {
     Require(accepting.count == 1 && accepting.commonName == "commonName=localhost", "the verify callback did not receive the peer chain");
     Require(sceSslConnect(accepted) == 0 && accepting.calls == 1, "a second connect after an accepted callback ran the callback again");
     Require(sceSslRead(accepted, scratch.data(), scratch.size(), 0) == 0, "an accepted connection was not readable");
+    Require(LastError(accepted) == SslError{0, KnownCaCheck}, "a failure the callback accepted was not recorded as detail only");
     Require(sceSslDeleteConnection(accepted) == 0 && sockets.Close(acceptedSocket) == 0, "release the accepted connection");
+    const int bothSocket = sockets.Open(server.port);
+    const int both = sceSslCreateConnection(empty, bothSocket, "example.com");
+    Require(sceSslConnect(both) == ErrorCnCheck, "an unknown CA took precedence over the host name check");
+    Require(LastError(both) == SslError{ErrorInvalidCert, KnownCaCheck | CnCheck}, "both failed checks were not recorded");
+    Require(sceSslDeleteConnection(both) == 0 && sockets.Close(bothSocket) == 0, "release the connection that failed both checks");
     Require(Throws([&] { sceSslGetSubjectName(empty, accepting.leaf); }), "a peer certificate handle outlived its connection");
     Require(sceSslTerm_nid_postfix(empty) == 0, "release the context without CA");
     Require(sceSslTerm_nid_postfix(empty) == ErrorInvalidId, "a second context termination did not report an invalid id");
@@ -422,13 +515,19 @@ int main(int argc, char** argv) {
     const int closed = sceSslCreateConnection(context, 1000, "localhost");
     Require(sceSslConnect(closed) == ErrorNetBadDescriptor, "a handshake over a closed descriptor did not report the bad descriptor");
     Require(sceSslClose(closed) == 0, "close a connection that never connected");
+    Require(sceSslReuseConnection(closed, 1000) == 0, "a connection without a handshake was not reused");
+    Require(sceSslConnect(closed) == ErrorNetBadDescriptor, "a reused connection over a closed descriptor did not report it");
     Require(sceSslDeleteConnection(closed) == 0, "delete connection over a closed descriptor");
 
     const int mismatchSocket = sockets.Open(server.port);
     const int mismatch = sceSslCreateConnection(context, mismatchSocket, "example.com");
+    Require(LastError(mismatch) == SslError{}, "a new connection had an SSL error");
+    Require(sceSslGetSslError(mismatch, reinterpret_cast<int*>(0x10), &untouched.detail) == ErrorInvalidValue, "an unwritable SSL error output was accepted");
     Require(sceSslConnect(mismatch) == ErrorCnCheck, "a certificate for another host passed the host name check");
     Require(sceSslConnect(mismatch) == ErrorCnCheck, "a second connect did not repeat the host name result");
+    Require(LastError(mismatch) == SslError{ErrorInvalidCert, CnCheck}, "a host name mismatch was not recorded");
     Require(Throws([&] { sceSslRead(mismatch, root.data(), 1, 0); }), "a failed verification left the connection usable");
+    Require(sceSslReuseConnection(mismatch, mismatchSocket) == 0, "a connection that failed verification was not reused");
     Require(sceSslDeleteConnection(mismatch) == 0 && sockets.Close(mismatchSocket) == 0, "release the mismatched connection");
 
     const int lenientSocket = sockets.Open(server.port);
@@ -446,8 +545,24 @@ int main(int argc, char** argv) {
     Require(sceSslConnect(rejected) == ErrorCallbackCheck && rejecting.calls == 2, "a second connect did not run the callback again");
     Require(sceSslRead(rejected, scratch.data(), 1, 0) == ErrorCallbackCheck && rejecting.calls == 3, "a read after the rejection did not run the callback again");
     Require(sceSslWrite(rejected, scratch.data(), 1, 0) == ErrorCallbackCheck && rejecting.calls == 4, "a write after the rejection did not run the callback again");
+    Require(LastError(rejected) == SslError{ErrorInvalidCert, 0}, "a callback rejection was not recorded");
     Require(sceSslClose(rejected) == 0, "close the rejected connection");
     Require(sceSslDeleteConnection(rejected) == 0 && sockets.Close(rejectedSocket) == 0, "release the rejected connection");
+
+    CallbackRecord custom{context, -5};
+    const int customSocket = sockets.Open(server.port);
+    const int customRejected = sceSslCreateConnection(context, customSocket, "localhost");
+    Require(sceSslSetVerifyCallback(customRejected, RecordingCallback, &custom) == 0, "set the callback returning -5");
+    Require(sceSslConnect(customRejected) == -5 && LastError(customRejected) == SslError{}, "a callback result other than -1 was not returned as it is");
+    Require(sceSslDeleteConnection(customRejected) == 0 && sockets.Close(customSocket) == 0, "release the connection with the -5 callback");
+    SetSdkVersion(0x07400000);
+    CallbackRecord older{context, -1};
+    const int olderSocket = sockets.Open(server.port);
+    const int olderRejected = sceSslCreateConnection(context, olderSocket, "localhost");
+    Require(sceSslSetVerifyCallback(olderRejected, RecordingCallback, &older) == 0, "set the callback of the older title");
+    Require(sceSslConnect(olderRejected) == -1 && LastError(olderRejected) == SslError{}, "a -1 from a title built before SDK 7.50 was not returned as it is");
+    Require(sceSslDeleteConnection(olderRejected) == 0 && sockets.Close(olderSocket) == 0, "release the older title's connection");
+    SetSdkVersion(0x09000000);
 
     const int earlySocket = sockets.Open(server.port);
     const int early = sceSslCreateConnection(context, earlySocket, "localhost");
@@ -498,6 +613,8 @@ int main(int argc, char** argv) {
     }
     Require(sceSslRead(polling, buffer.data(), buffer.size(), 0) == ErrorWantPollIn, "a non-blocking read with nothing to read did not ask to poll");
     Require(sceSslRead(polling, buffer.data(), buffer.size(), 1) == ErrorWantPollIn, "a non-blocking partial read with nothing to read did not ask to poll");
+    std::uint8_t idle = 0;
+    Require(sceSslCheckRecvPending(polling, &idle) == 0 && idle == 1, "a pending check of a live connection did not report pending data");
     Require(sceSslWrite(polling, request, 4, 0) == 4, "write the non-blocking request");
     int received;
     for (rounds = 0; (received = sceSslRead(polling, buffer.data(), buffer.size(), 1)) == ErrorWantPollIn; Settle())
@@ -580,6 +697,93 @@ int main(int argc, char** argv) {
         Require(sceSslRead(timed, buffer.data(), buffer.size(), 0) == 0, "close notify did not end the timed stream");
         Require(sceSslDeleteConnection(timed) == 0 && sockets.Close(timedSocket) == 0, "release the timed connection");
     }
+
+    CallbackRecord resuming{context, 0};
+    const auto exchange = [&](int id) {
+        return sceSslWrite(id, request, 4, 0) == 4 && sceSslRead(id, buffer.data(), buffer.size(), 0) == 4
+            && std::memcmp(buffer.data(), "pong", 4) == 0 && sceSslRead(id, buffer.data(), buffer.size(), 0) == 0;
+    };
+    const int firstSocket = sockets.Open(server.port);
+    const int reused = sceSslCreateConnection(context, firstSocket, "localhost");
+    Require(sceSslReuseConnection(reused, firstSocket) == 0, "a connection was not reused before its first handshake");
+    Require(sceSslSetAlpn(reused, "http/1.1") == 0 && sceSslSetVerifyCallback(reused, RecordingCallback, &resuming) == 0,
+        "configure the connection to reuse");
+    resuming.reuseConnection = reused;
+    Require(sceSslConnect(reused) == 0 && resuming.calls == 1, "the full handshake of the connection to reuse");
+    Require(resuming.reuseResult == ErrorBusy, "a reuse from inside the verify callback did not report the busy connection");
+    resuming.reuseConnection = 0;
+    Require(exchange(reused), "exchange over the first socket");
+    const int resumedBefore = server.resumed;
+    const int secondSocket = sockets.Open(server.port);
+    Require(sceSslReuseConnection(reused, secondSocket) == 0, "reuse the session on a second socket");
+    Require(sceSslGetAlpnSelected(reused) == nullptr, "the old handshake's protocol was reported after the reuse");
+    Require(sceSslReuseConnection(reused, secondSocket) == 0, "a second reuse before the handshake failed");
+    Require(sceSslConnect(reused) == 0 && server.resumed == resumedBefore, "a second reuse without a handshake in between kept the saved session");
+    Require(resuming.calls == 1, "the verify callback ran again after it had accepted a chain that passed");
+    Require(exchange(reused), "exchange over the second socket");
+    const int thirdSocket = sockets.Open(server.port);
+    Require(sceSslReuseConnection(reused, thirdSocket) == 0, "reuse the session on a third socket");
+    Require(sceSslConnect(reused) == 0 && server.resumed == resumedBefore + 1, "the server did not resume the saved session");
+    Require(resuming.calls == 1, "the verify callback ran on a resumed handshake");
+    Require(LastError(reused) == SslError{}, "a verified connection had an SSL error");
+    selected = sceSslGetAlpnSelected(reused);
+    Require(selected && std::strcmp(selected, "http/1.1") == 0, "the resumed handshake did not negotiate the protocol");
+    Require(exchange(reused), "exchange over the resumed session");
+    Require(sceSslDeleteConnection(reused) == 0 && sockets.Close(firstSocket) == 0 && sockets.Close(secondSocket) == 0
+        && sockets.Close(thirdSocket) == 0, "release the reused connection and its sockets");
+    Require(sceSslReuseConnection(reused, thirdSocket) == ErrorInvalidId && sceSslReuseConnection(0, thirdSocket) == ErrorInvalidId,
+        "a deleted connection or id 0 was reused");
+    Require(InUse(context) == loaded, "the saved session's pool memory was not returned");
+
+    const int refusedSocket = sockets.Open(server.port);
+    const int refused = sceSslCreateConnection(context, refusedSocket, "example.com");
+    Require(sceSslConnect(refused) == ErrorCnCheck, "the handshake whose session must not be resumed passed the host name check");
+    const int refusedResumed = server.resumed;
+    const int retrySocket = sockets.Open(server.port);
+    Require(sceSslReuseConnection(refused, retrySocket) == 0, "reuse a connection that failed verification");
+    Require(sceSslDisableVerifyOption(refused, CnCheck) == 0, "disable the host name check after the failure");
+    Require(sceSslConnect(refused) == ErrorCnCheck && server.resumed == refusedResumed,
+        "a session that failed verification was resumed, or its recorded failure was forgotten");
+    Require(LastError(refused) == SslError{ErrorInvalidCert, CnCheck}, "the reused connection's SSL error changed");
+    Require(sceSslDeleteConnection(refused) == 0 && sockets.Close(refusedSocket) == 0 && sockets.Close(retrySocket) == 0,
+        "release the connection that failed verification");
+
+    Require(sceSslCreateSslConnection(context, 1000, nullptr) == ErrorInvalidValue, "a single-transfer connection accepted a null host");
+    Require(sceSslCreateSslConnection(empty, 1000, "localhost") == ErrorInvalidId, "a single-transfer connection accepted a terminated context");
+    const int singleSocket = sockets.Open(server.port);
+    const int single = sceSslCreateSslConnection(context, singleSocket, "localhost");
+    Require(single > 0 && sceSslConnect(single) == 0, "the handshake of a single-transfer connection");
+    std::string large(SplitRequestSize, 'x');
+    large.replace(0, 4, "ping");
+    int writes = 0;
+    for (std::size_t sent = 0; sent < large.size(); ++writes) {
+        const int count = sceSslWrite(single, large.data() + sent, large.size() - sent, 0);
+        Require(count > 0 && static_cast<std::size_t>(count) <= 16384, "a single-transfer write sent more than one record");
+        sent += static_cast<std::size_t>(count);
+    }
+    Require(writes > 1, "a single-transfer write sent the whole buffer at once");
+    Require(sceSslRecv(single, buffer.data(), 4) == 2 && std::memcmp(buffer.data(), "po", 2) == 0, "a single-transfer read waited for a second record");
+    Require(sceSslRead(single, buffer.data(), 4, 0) == 2 && std::memcmp(buffer.data(), "ng", 2) == 0, "a single-transfer read missed the second record");
+    Require(sceSslRead(single, buffer.data(), buffer.size(), 0) == 0, "close notify did not end the single-transfer stream");
+    std::uint8_t drained = 0;
+    Require(sceSslCheckRecvPending(single, &drained) == 0 && drained == 1, "a pending check of a single-transfer connection failed");
+    Require(sceSslDeleteSslConnection(single) == 0 && sockets.Close(singleSocket) == 0, "release the single-transfer connection");
+    Require(sceSslDeleteSslConnection(single) == ErrorInvalidId && sceSslConnect(single) == ErrorInvalidId, "a deleted single-transfer connection was still known");
+
+    const int eagainSocket = sockets.Open(server.port);
+    Require(sockets.Set(eagainSocket, GuestNonBlocking, &enabled, sizeof(enabled)) == 0, "make the single-transfer socket non-blocking");
+    const int eagain = sceSslCreateSslConnection(context, eagainSocket, "localhost");
+    for (int result, round = 0; (result = sceSslConnect(eagain)) != 0; Settle()) {
+        Require(result == ErrorEagain, "a single-transfer handshake that would block did not report SSL_ERROR_EAGAIN");
+        Require(++round < WaitRounds, "a single-transfer non-blocking handshake did not finish");
+    }
+    Require(sceSslRead(eagain, buffer.data(), buffer.size(), 0) == ErrorEagain, "a single-transfer read with nothing to read did not report SSL_ERROR_EAGAIN");
+    Require(sceSslWrite(eagain, request, 4, 0) == 4, "write the single-transfer non-blocking request");
+    for (rounds = 0; (received = sceSslRead(eagain, buffer.data(), buffer.size(), 0)) == ErrorEagain; Settle())
+        Require(++rounds < WaitRounds, "the single-transfer non-blocking reply did not arrive");
+    Require(received == 4 && std::memcmp(buffer.data(), "pong", 4) == 0, "read the single-transfer non-blocking reply");
+    Require(sceSslDeleteConnection(eagain) == 0 && sockets.Close(eagainSocket) == 0, "a single-transfer connection was not released by sceSslDeleteConnection");
+    Require(InUse(context) == loaded, "the single-transfer connections did not return their pool memory");
 
     std::array<std::thread, ParallelConnections> clients;
     for (auto& client : clients) {
