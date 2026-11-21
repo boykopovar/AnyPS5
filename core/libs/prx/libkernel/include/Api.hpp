@@ -309,6 +309,7 @@ int APS5_VABI _fstatfs_nid_postfix(int d, KernelStatfs* buf);
 int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int d, FileStat* sb);
 int64_t APS5_VABI _fstat_nid_postfix(int d, FileStat* sb);
 int APS5_VABI ftruncate_nid_postfix(int d, int64_t length);
+int APS5_VABI posix_fallocate_nid_postfix(int fd, int64_t offset, int64_t len);
 int APS5_VABI sceKernelFtruncate(int d, int64_t length);
 int64_t APS5_VABI lseek_nid_postfix(int d, int64_t offset, int whence);
 int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode);
