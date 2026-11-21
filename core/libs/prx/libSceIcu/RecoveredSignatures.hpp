@@ -1,19 +1,17 @@
 #pragma once
 
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceIcu/DateFormat.hpp"
+#include "prx/libSceIcu/FieldPositionIterator.hpp"
 #include "prx/libSceIcu/Enumeration.hpp"
 #include <cstdint>
 
 struct UBreakIterator;
-struct UCalendar;
 struct UCollator;
 struct UConstrainedFieldPosition;
-struct UDateFormat;
 struct UDateIntervalFormat;
 struct UDateTimePatternGenerator;
 struct UDataMemory;
-struct UFieldPosition;
-struct UFieldPositionIterator;
 struct UFormattedDateInterval;
 struct UFormattedList;
 struct UFormattedNumber;
@@ -112,16 +110,6 @@ USet* APS5_VABI ucol_getTailoredSet_nid_postfix(const UCollator* coll, std::int3
 UCollator* APS5_VABI ucol_open_nid_postfix(const char* locale, std::int32_t* status);
 void APS5_VABI ucol_setAttribute_nid_postfix(UCollator* coll, UColAttribute attr, UColAttributeValue value, std::int32_t* status);
 
-void APS5_VABI udat_close_nid_postfix(UDateFormat*);
-std::int32_t APS5_VABI udat_countSymbols_nid_postfix(const UDateFormat* fmt, std::int32_t type);
-std::int32_t APS5_VABI udat_format_nid_postfix(const UDateFormat* format, double dateToFormat, char16_t* result, std::int32_t resultLength, UFieldPosition* position, std::int32_t* status);
-std::int32_t APS5_VABI udat_formatForFields_nid_postfix(const void* format, double dateToFormat, char16_t* result, std::int32_t resultLength, void* fpositer, std::int32_t* status);
-const UCalendar* APS5_VABI udat_getCalendar_nid_postfix(const UDateFormat* fmt);
-std::int32_t APS5_VABI udat_getSymbols_nid_postfix(const void* fmt, std::int32_t type, std::int32_t index, char16_t* result,
-                                                   std::int32_t resultLength, std::int32_t* status);
-UDateFormat* APS5_VABI udat_open_nid_postfix(std::int32_t, std::int32_t, const char*, const char16_t*, std::int32_t, const char16_t*, std::int32_t, std::int32_t*);
-std::int32_t APS5_VABI udat_toPattern_nid_postfix(const UDateFormat* fmt, std::int8_t localized, char16_t* result, std::int32_t resultLength, std::int32_t* status);
-
 void APS5_VABI udatpg_close_nid_postfix(UDateTimePatternGenerator*);
 std::int32_t APS5_VABI udatpg_getBestPattern_nid_postfix(UDateTimePatternGenerator* dtpg, const char16_t* skeleton, std::int32_t length,
                                                          char16_t* bestPattern, std::int32_t capacity, std::int32_t* status);
@@ -150,10 +138,6 @@ void APS5_VABI udtitvfmt_formatToResult_nid_postfix(const UDateIntervalFormat* f
 UDateIntervalFormat* APS5_VABI udtitvfmt_open_nid_postfix(const char* locale, const char16_t* skeleton, std::int32_t skeletonLength, const char16_t* tzID, std::int32_t tzIDLength, std::int32_t* status);
 UFormattedDateInterval* APS5_VABI udtitvfmt_openResult_nid_postfix(std::int32_t* status);
 const UFormattedValue* APS5_VABI udtitvfmt_resultAsValue_nid_postfix(const UFormattedDateInterval* result, std::int32_t* status);
-
-std::int32_t APS5_VABI ufieldpositer_next_nid_postfix(UFieldPositionIterator*, std::int32_t*, std::int32_t*);
-void APS5_VABI ufieldpositer_close_nid_postfix(UFieldPositionIterator*);
-UFieldPositionIterator* APS5_VABI ufieldpositer_open_nid_postfix(std::int32_t*);
 
 const char16_t* APS5_VABI ufmtval_getString_nid_postfix(const UFormattedValue* ufmtval, std::int32_t* pLength, std::int32_t* ec);
 std::int8_t APS5_VABI ufmtval_nextPosition_nid_postfix(const UFormattedValue* ufmtval, UConstrainedFieldPosition* ucfpos, std::int32_t* ec);

@@ -769,6 +769,7 @@ if(BUILD_TESTING)
         tests/Collator.cpp
         tests/DataMemoryClose.cpp
         tests/DateFormat.cpp
+        tests/DateFormatBehavior.cpp
         tests/DateIntervalFormat.cpp
         tests/DateTimePatternGenerator.cpp
         tests/FieldPositionIterator.cpp
@@ -788,7 +789,7 @@ if(BUILD_TESTING)
     list(TRANSFORM ICU_RECOVERED_TESTS PREPEND ${CMAKE_CURRENT_SOURCE_DIR}/)
     add_test_executable(guest_icu_recovered_signatures_tests ${ICU_RECOVERED_TESTS})
     target_include_directories(guest_icu_recovered_signatures_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_icu_recovered_signatures_tests PRIVATE libSceIcu icu_common)
+    target_link_libraries(guest_icu_recovered_signatures_tests PRIVATE libSceIcu icu_i18n)
     configure_windows_unwind(guest_icu_recovered_signatures_tests)
     add_test(NAME guest_icu_recovered_signatures COMMAND guest_icu_recovered_signatures_tests)
     set_tests_properties(guest_icu_recovered_signatures PROPERTIES TIMEOUT 30)
@@ -830,11 +831,11 @@ if(BUILD_TESTING)
     target_include_directories(guest_icu_open_standard_names_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_icu_open_standard_names_tests PRIVATE libSceIcu icu_common)
     configure_windows_unwind(guest_icu_open_standard_names_tests)
-    add_test(NAME guest_icu_open_standard_names_reduced COMMAND guest_icu_open_standard_names_tests)
+    add_test(NAME guest_icu_open_standard_names_bundled COMMAND guest_icu_open_standard_names_tests)
     add_test(NAME guest_icu_open_standard_names_full COMMAND guest_icu_open_standard_names_tests full)
-    set_tests_properties(guest_icu_open_standard_names_reduced guest_icu_open_standard_names_full PROPERTIES TIMEOUT 20)
+    set_tests_properties(guest_icu_open_standard_names_bundled guest_icu_open_standard_names_full PROPERTIES TIMEOUT 20)
     if(WIN32)
-        set_tests_properties(guest_icu_open_standard_names_reduced guest_icu_open_standard_names_full PROPERTIES
+        set_tests_properties(guest_icu_open_standard_names_bundled guest_icu_open_standard_names_full PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()
