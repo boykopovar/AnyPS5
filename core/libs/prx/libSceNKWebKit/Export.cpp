@@ -18141,10 +18141,6 @@ int APS5_VABI _ZN7WebCore17PageConsoleClientD2Ev() {
 
 
 
-int APS5_VABI _ZN7WebCore17ResourceErrorBase7setTypeENS0_4TypeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore17SQLiteTransaction5beginEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -27390,14 +27386,6 @@ int APS5_VABI _ZNK7WebCore17ParsedContentType9serializeEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-
-int APS5_VABI _ZNK7WebCore17ResourceErrorBase12isolatedCopyEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore17ResourceErrorBase8lazyInitEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZNK7WebCore17SMILTimeContainer19animationFrameDelayEv() {
     NotImplemented_nid_no_patch(__func__);
