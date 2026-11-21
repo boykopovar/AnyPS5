@@ -9,6 +9,20 @@
 
 static void Require(bool value) { if (!value) std::abort(); }
 
+static void CheckIso8859OneWideIdentity() {
+    const std::uint8_t* profile = sceCesRefersUcsProfileIso8859_1();
+    for (std::uint32_t byte = 0; byte < 256; ++byte) {
+        const auto sbc = static_cast<std::uint8_t>(byte);
+        std::uint16_t ucs2 = 0xA5A5;
+        Require(sceCesSbcToUcs2(profile, sbc, &ucs2) == 0 && ucs2 == byte);
+        std::uint16_t utf16 = 0xA5A5;
+        std::uint32_t length = 7;
+        Require(sceCesSbcToUtf16(profile, sbc, &utf16, 1, &length) == 0 && utf16 == byte && length == 1);
+        std::uint32_t utf32 = 0xA5A5A5A5;
+        Require(sceCesSbcToUtf32(profile, sbc, &utf32) == 0 && utf32 == byte);
+    }
+}
+
 static void RequireSbcToUtf8(const std::uint8_t* profile, std::uint8_t sbc, const char* expected) {
     std::uint8_t utf8[4] = {};
     std::uint32_t length = 0;
@@ -580,6 +594,7 @@ int main() {
     const std::uint8_t* profile = sceCesRefersUcsProfileCp1252();
     Require(profile != nullptr && profile == sceCesRefersUcsProfileCp1252());
     CheckSingleByteProfiles();
+    CheckIso8859OneWideIdentity();
     CheckCp864Profile();
 
     RequireSbcToUtf8(profile, 'A', "A");

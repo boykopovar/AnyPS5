@@ -1,11 +1,21 @@
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <vector>
 #include "prx/libSceIcu/libSceIcu.hpp"
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 
 
@@ -112,6 +122,80 @@ void Domains() {
     }
 }
 
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(memory + size, size, PAGE_NOACCESS, &previous) != 0);
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        memory = static_cast<char*>(mmap(nullptr, 2 * size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+        Require(mprotect(memory + size, size, PROT_NONE) == 0);
+#endif
+    }
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, 2 * size);
+#endif
+    }
+    GuardedPage(const GuardedPage&) = delete;
+    GuardedPage& operator=(const GuardedPage&) = delete;
+    std::uint16_t* Tail(std::size_t units) const { return reinterpret_cast<std::uint16_t*>(memory + size) - units; }
+    void ReadOnly() const {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(memory, size, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(memory, size, PROT_READ) == 0);
+#endif
+    }
+
+private:
+    char* memory = nullptr;
+    std::size_t size = 0;
+};
+
+template <typename TCall>
+void RequireUnreadable(TCall call) {
+    errno = 71;
+    bool rejected = false;
+    try {
+        call();
+    } catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected && errno == 71);
+}
+
+void GuestPointers() {
+    const auto* unmapped = reinterpret_cast<const std::uint16_t*>(std::uintptr_t{0x10});
+    for (const auto length : {-1, 1, 4}) RequireUnreadable([&] { u_countChar32_nid_postfix(unmapped, length); });
+    RequireUnreadable([&] { u_strHasMoreChar32Than_nid_postfix(unmapped, -1, 1); });
+    RequireUnreadable([&] { u_strHasMoreChar32Than_nid_postfix(unmapped, 4, 2); });
+    GuardedPage page;
+    const std::uint16_t text[] = {0x61, 0xd800, 0xdc00, 0x62, 0};
+    auto* tail = page.Tail(5);
+    std::memcpy(tail, text, sizeof(text));
+    auto* open = page.Tail(2);
+    page.ReadOnly();
+    Require(tail[4] == 0);
+    errno = 71;
+    Require(u_countChar32_nid_postfix(tail, -1) == 3 && errno == 71);
+    Require(u_countChar32_nid_postfix(tail, 5) == 4);
+    Require(u_strHasMoreChar32Than_nid_postfix(tail, -1, 2) == 1);
+    Require(u_strHasMoreChar32Than_nid_postfix(tail, -1, 3) == 0);
+    Require(u_strHasMoreChar32Than_nid_postfix(tail + 1, 3, 2) == 0 && errno == 71);
+    RequireUnreadable([&] { u_countChar32_nid_postfix(open, 3); });
+    RequireUnreadable([&] { u_strHasMoreChar32Than_nid_postfix(open, 4, 2); });
+}
+
 } // namespace
 
 int main() {
@@ -119,4 +203,5 @@ int main() {
     Enumerate(text, 5);
     Check({0xffff, 0xdbff, 0xdfff, 0xd800, 0xdc00, 0x61, 0xd800, 0xdc00});
     Domains();
+    GuestPointers();
 }

@@ -151,6 +151,43 @@ class PerformanceConsoleTests(unittest.TestCase):
             opened.assert_not_called()
             kernel.FreeConsole.assert_not_called()
 
+    def test_windows_free_console_failure_is_reported(self):
+        with console_probe() as (kernel, user, streams, opened):
+            kernel.GetConsoleWindow.side_effect = (0, 42)
+            kernel.FreeConsole.return_value = False
+            with self.assertRaisesRegex(OSError, "could not release the owned console"):
+                with performance_console.InteractiveConsole():
+                    pass
+            self.assertEqual(kernel.SetStdHandle.call_count, 6)
+
+    def test_windows_standard_handle_restore_failure_is_actionable(self):
+        with console_probe() as (kernel, user, streams, opened):
+            kernel.GetConsoleWindow.return_value = 0
+            kernel.SetStdHandle.return_value = False
+            with self.assertRaisesRegex(OSError, "could not restore the parent's standard handles"):
+                with performance_console.InteractiveConsole():
+                    self.fail("failed handle restore was accepted")
+            opened.assert_not_called()
+
+    def test_windows_allocated_console_without_window_is_rejected(self):
+        with console_probe() as (kernel, user, streams, opened):
+            kernel.GetConsoleWindow.side_effect = (0, 0)
+            with self.assertRaisesRegex(RuntimeError, "no console window.*interactive terminal"):
+                with performance_console.InteractiveConsole():
+                    self.fail("windowless console was accepted")
+            kernel.FreeConsole.assert_called_once_with()
+            user.ShowWindow.assert_not_called()
+
+    def test_windows_interrupt_closes_and_allows_reuse(self):
+        with console_probe() as (kernel, user, streams, opened):
+            opened.side_effect = (streams[0], KeyboardInterrupt())
+            console = performance_console.InteractiveConsole()
+            with self.assertRaises(KeyboardInterrupt):
+                console.__enter__()
+            streams[0].close.assert_called_once_with()
+            self.assertIsNone(console.stdout)
+            self.assertFalse(console._active)
+
     def test_context_rejects_reentry(self):
         with console_probe():
             with performance_console.InteractiveConsole() as console:

@@ -1,11 +1,33 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
+#include <string>
 
 namespace {
+
+void CopyGuest(bool copied, int savedErrno, const char* what) {
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string("u_unescape: ") + what);
+}
+
+std::string ReadSource(const char* source) {
+    std::string text;
+    for (;;) {
+        char chunk[0x1000];
+        const auto address = reinterpret_cast<std::uintptr_t>(source + text.size());
+        const std::size_t count = 0x1000 - address % 0x1000;
+        const int savedErrno = errno;
+        CopyGuest(GuestCopyIn_nid_no_patch(chunk, source + text.size(), count), savedErrno, "unreadable source");
+        const auto* end = static_cast<const char*>(std::memchr(chunk, 0, count));
+        text.append(chunk, end ? end - chunk : count);
+        if (end) return text;
+    }
+}
 
 bool IsLead(std::int32_t value) {
     return value >= 0xd800 && value <= 0xdbff;
@@ -118,15 +140,33 @@ extern "C" {
 
 std::int32_t APS5_VABI u_unescapeAt_nid_postfix(Icu::UnescapeCharacterAt characterAt, std::int32_t* offset, std::int32_t length, void* context) {
     if (!offset) APS5_INVALID_ARG_EX;
+    std::int32_t probed = 0;
+    const int savedErrno = errno;
+    const bool usable = GuestCopyIn_nid_no_patch(&probed, offset, sizeof(probed)) && GuestCopyOut_nid_no_patch(offset, &probed, sizeof(probed));
+    errno = savedErrno;
+    if (!usable) throw std::invalid_argument("u_unescapeAt: unusable offset");
     return Decode(characterAt, *offset, length, context);
 }
 
-std::int32_t APS5_VABI u_unescape_nid_postfix(const char* source, char16_t* destination, std::int32_t capacity) {
-    if (!source) APS5_INVALID_ARG_EX;
-    const auto bytes = std::strlen(source);
+std::int32_t APS5_VABI u_unescape_nid_postfix(const char* guestSource, char16_t* guestDestination, std::int32_t capacity) {
+    if (!guestSource) APS5_INVALID_ARG_EX;
+    const auto text = ReadSource(guestSource);
+    const char* source = text.c_str();
+    const auto bytes = text.size();
     if (bytes > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()))
         NotImplemented_nid_no_patch(__func__);
     const auto length = static_cast<std::int32_t>(bytes);
+    std::u16string output(guestDestination && capacity > 0 ? std::min<std::size_t>(static_cast<std::size_t>(capacity), bytes + 1) : 0, u'\0');
+    char16_t* const destination = guestDestination ? output.data() : nullptr;
+    std::size_t filled = 0;
+    const auto put = [&](std::int32_t index, char16_t unit) {
+        destination[index] = unit;
+        filled = (std::max)(filled, static_cast<std::size_t>(index) + 1);
+    };
+    const auto flush = [&] {
+        const int savedErrno = errno;
+        CopyGuest(GuestCopyOut_nid_no_patch(guestDestination, output.data(), filled * sizeof(char16_t)), savedErrno, "unwritable destination");
+    };
     const auto room = [&](std::int32_t used) {
         if (destination && static_cast<std::int64_t>(capacity) - used < std::numeric_limits<std::int32_t>::min())
             NotImplemented_nid_no_patch("u_unescape: capacity minus the output length overflows");
@@ -136,30 +176,32 @@ std::int32_t APS5_VABI u_unescape_nid_postfix(const char* source, char16_t* dest
     for (std::int32_t position = 0; position < length;) {
         const auto byte = static_cast<unsigned char>(source[position++]);
         if (byte != '\\') {
-            if (destination && written < capacity) destination[written] = byte;
+            if (destination && written < capacity) put(written, byte);
             ++written;
             continue;
         }
         if (written != segment) room(segment);
         const auto value = Decode(ByteAt, position, length, const_cast<char*>(source));
         if (value < 0) {
-            if (destination && capacity > 0) destination[0] = 0;
+            if (destination && capacity > 0) put(0, 0);
+            flush();
             return 0;
         }
         room(written);
         const int units = value > 0xffff ? 2 : 1;
         if (destination && written <= capacity && units <= capacity - written) {
-            if (units == 1) destination[written] = static_cast<char16_t>(value);
+            if (units == 1) put(written, static_cast<char16_t>(value));
             else {
-                destination[written] = static_cast<char16_t>(0xd800 + ((value - 0x10000) >> 10));
-                destination[written + 1] = static_cast<char16_t>(0xdc00 + ((value - 0x10000) & 0x3ff));
+                put(written, static_cast<char16_t>(0xd800 + ((value - 0x10000) >> 10)));
+                put(written + 1, static_cast<char16_t>(0xdc00 + ((value - 0x10000) & 0x3ff)));
             }
         }
         written += units;
         segment = written;
     }
     if (written != segment) room(segment);
-    if (destination && written < capacity) destination[written] = 0;
+    if (destination && written < capacity) put(written, 0);
+    flush();
     return written;
 }
 

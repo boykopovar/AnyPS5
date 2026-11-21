@@ -188,6 +188,13 @@ static void MarkBufferReused(const AudioOut2Port& setter) {
     }
 }
 
+static bool ReadGuestPortBytes(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return ok;
+}
+
 static void TraceAttribute(AudioOut2PortHandle handle, const AudioOut2Port& port, const AudioOut2Attribute& attribute, const char* verdict) {
     if (!AudioOut2TraceEnabled()) return;
     char values[128] = "";
@@ -197,7 +204,7 @@ static void TraceAttribute(AudioOut2PortHandle handle, const AudioOut2Port& port
         for (std::size_t index = 0; index < words && used < sizeof(values); index++) {
             std::uint32_t bits = 0;
             float value = 0.0f;
-            std::memcpy(&bits, static_cast<const std::uint8_t*>(attribute.value) + index * sizeof(bits), sizeof(bits));
+            if (!ReadGuestPortBytes(&bits, static_cast<const std::uint8_t*>(attribute.value) + index * sizeof(bits), sizeof(bits))) break;
             std::memcpy(&value, &bits, sizeof(value));
             used += static_cast<std::size_t>(std::snprintf(values + used, sizeof(values) - used, " %08x(%g)", bits, static_cast<double>(value)));
         }
@@ -312,12 +319,15 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
     if (!entry) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     if (!attributes && num != 0) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     for (uint32_t index = 0; index < num; index++) {
-        const auto& attribute = attributes[index];
+        AudioOut2Attribute attribute{};
+        if (!ReadGuestPortBytes(&attribute, attributes + index, sizeof(attribute))) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
         const char* verdict = "ignored";
         if (attribute.value == nullptr) {
             verdict = "null value";
         } else if (attribute.attribute_id == ATTRIBUTE_DATA && attribute.value_size == sizeof(entry->data)) {
-            std::memcpy(&entry->data, attribute.value, sizeof(entry->data));
+            void* nextData = nullptr;
+            if (!ReadGuestPortBytes(&nextData, attribute.value, sizeof(nextData))) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+            entry->data = nextData;
             MarkBufferReused(*entry);
             AudioOut2QueuedData queued{entry->data, CopyGrain(*entry)};
             entry->repeatedData = entry->data != nullptr && entry->lastBuffer == nullptr ? entry->data : nullptr;
@@ -329,7 +339,11 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
             entry->dataSets++;
             verdict = "pcm data pointer";
         } else if (attribute.attribute_id == ATTRIBUTE_VOLUME && entry->channels != 0 && attribute.value_size == entry->channels * sizeof(float)) {
-            std::memcpy(entry->volume, attribute.value, attribute.value_size);
+            float nextVolume[AUDIO_OUT2_PORT_CHANNELS_MAX]{};
+            if (attribute.value_size > sizeof(nextVolume) || !ReadGuestPortBytes(nextVolume, attribute.value, attribute.value_size)) {
+                return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+            }
+            std::memcpy(entry->volume, nextVolume, attribute.value_size);
             verdict = "volume";
         }
         const auto traces = entry->attributeTraces++;

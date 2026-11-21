@@ -67,8 +67,18 @@ static void Defaults() {
     Error(0x0501);
     glBlendFuncSeparate_nid_postfix(1, 0x0308, 1, 0);
     Error(0x0500);
-    glBlendFuncSeparate_nid_postfix(0x8001, 0x8003, 1, 0);
-    Error(0x0502);
+    glBlendFuncSeparate_nid_postfix(0x8001, 0x8003, 0x8002, 0x8004);
+    Error(0);
+    Require(Integer(0x80c9) == 0x8001);
+    Require(Integer(0x80c8) == 0x8003);
+    Require(Integer(0x80cb) == 0x8002);
+    Require(Integer(0x80ca) == 0x8004);
+    glBlendFunc_nid_postfix(0x8004, 0x8002);
+    Error(0);
+    Require(Integer(0x80c9) == 0x8004);
+    Require(Integer(0x80c8) == 0x8002);
+    glBlendFunc_nid_postfix(1, 0);
+    Error(0);
     Require(Integer(0x80c9) == 1);
     glClearColor_nid_postfix(-1, 2, 0.5f, 1);
     glGetFloatv_nid_postfix(0x0c22, attr.data());
@@ -1055,6 +1065,40 @@ static void GuestPointerFaults(EGLDisplay display, EGLConfig config, EGLContext 
     glGetBooleanv_nid_postfix(0x0bd0, static_cast<GLboolean*>(unmapped));
     Error(0x0501);
     Require(errno == 71);
+
+    const GLuint infoLogShader = glCreateShader_nid_postfix(0x8b31);
+    const GLuint infoLogProgram = glCreateProgram_nid_postfix();
+    Require(infoLogShader != 0 && infoLogProgram != 0);
+    Error(0);
+
+    GLsizei logLength = -99;
+    char log[2] = {'x', 'x'};
+
+    errno = 71;
+    glGetShaderInfoLog_nid_postfix(infoLogShader, 1, &logLength, static_cast<GLchar*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    Require(logLength == -99);
+
+    errno = 71;
+    glGetShaderInfoLog_nid_postfix(infoLogShader, 0, static_cast<GLsizei*>(unmapped), static_cast<GLchar*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+
+    errno = 71;
+    glGetProgramInfoLog_nid_postfix(infoLogProgram, 1, static_cast<GLsizei*>(unmapped), log);
+    Error(0x0501);
+    Require(errno == 71);
+    Require(log[0] == 0);
+
+    errno = 71;
+    glGetProgramInfoLog_nid_postfix(infoLogProgram, 0, nullptr, static_cast<GLchar*>(unmapped));
+    Error(0);
+    Require(errno == 71);
+
+    glDeleteShader_nid_postfix(infoLogShader);
+    glDeleteProgram_nid_postfix(infoLogProgram);
+    Error(0);
 
     glVertexAttribPointer_nid_postfix(6, 3, 0x1406, 0, 12, nullptr);
     errno = 71;
