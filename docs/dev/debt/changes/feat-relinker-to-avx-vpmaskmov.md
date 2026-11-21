@@ -1,0 +1,5 @@
+# relinker
+
+## change [AVX2 twin lowering]
+
+- [AVX2 twin lowering](../../../core/relinker/codegen/src/x86/Avx2TwinLowering.cpp) under `--to-avx`: the execution test does not place an inactive VPMASKMOVD or VPMASKMOVQ element on an unmapped page, so that their VMASKMOVPS and VMASKMOVPD replacements do not fault there rests on the Intel SDM's VMASKMOV and VPMASKMOV entries. Integer and floating-point twins can differ in bypass latency on some cores; the values are the same. It rewrites in place VINSERTI128, VEXTRACTI128, VPERM2I128, VPBLENDD and VBROADCASTI128 as VINSERTF128, VEXTRACTF128, VPERM2F128, VBLENDPS and VBROADCASTF128, the memory forms of VPBROADCASTD and VPBROADCASTQ as VBROADCASTSS and VBROADCASTSD (256-bit) or VMOVDDUP (128-bit), and VPMASKMOVD and VPMASKMOVQ as VMASKMOVPS and VMASKMOVPD with VEX.W cleared. Register-source broadcasts, VPBROADCASTB, VPBROADCASTW, VPERMQ, VPERMD, VPERMPS, VPERMPD, variable shifts, gathers and 256-bit integer arithmetic have no same-length AVX form.
