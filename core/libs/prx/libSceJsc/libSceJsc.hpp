@@ -21,6 +21,7 @@
 #include "prx/libSceJsc/include/WtfLoggerExports.hpp"
 #include "prx/libSceJsc/include/WtfPageBlockExports.hpp"
 #include "prx/libSceJsc/include/WtfRandomExports.hpp"
+#include "prx/libSceJsc/include/WtfStringCreateExports.hpp"
 #include "prx/libSceJsc/include/WtfStringSearchExports.hpp"
 #include "prx/libSceJsc/include/WtfThreadingExports.hpp"
 #include "prx/libSceJsc/include/WtfUnicodeExports.hpp"
