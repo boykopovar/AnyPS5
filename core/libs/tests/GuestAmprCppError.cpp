@@ -4,6 +4,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -40,6 +41,10 @@ extern const unsigned char _ZTISt9exception_nid_postfix[];
 extern const unsigned char _ZTISt11logic_error_nid_postfix[];
 extern const unsigned char _ZTISt13runtime_error_nid_postfix[];
 extern const unsigned char _ZTISt12system_error_nid_postfix[];
+
+int APS5_VABI __cxa_guard_acquire_nid_postfix(std::uint64_t* guardObject);
+void APS5_VABI __cxa_guard_release_nid_postfix(std::uint64_t* guardObject);
+void APS5_VABI __cxa_guard_abort_nid_postfix(std::uint64_t* guardObject);
 
 void APS5_VABI GuestCatch(int code);
 
@@ -196,6 +201,27 @@ static void CheckConstructor() {
     Require(threw, 54);
 }
 
+static void CheckGuardNesting() {
+    std::array<std::uint64_t, 80> deepGuards {};
+    for (std::size_t i = 0; i < deepGuards.size(); ++i)
+        Require(__cxa_guard_acquire_nid_postfix(&deepGuards[i]) == 1, 60);
+    for (std::size_t i = deepGuards.size(); i > 0; --i)
+        __cxa_guard_release_nid_postfix(&deepGuards[i - 1]);
+    for (std::size_t i = 0; i < deepGuards.size(); ++i)
+        Require(__cxa_guard_acquire_nid_postfix(&deepGuards[i]) == 0, 61);
+
+    std::uint64_t guardA {};
+    std::uint64_t guardB {};
+    Require(__cxa_guard_acquire_nid_postfix(&guardA) == 1, 62);
+    Require(__cxa_guard_acquire_nid_postfix(&guardB) == 1, 63);
+    __cxa_guard_release_nid_postfix(&guardA);
+    Require(__cxa_guard_acquire_nid_postfix(&guardA) == 0, 64);
+    __cxa_guard_abort_nid_postfix(&guardB);
+    Require(__cxa_guard_acquire_nid_postfix(&guardB) == 1, 65);
+    __cxa_guard_release_nid_postfix(&guardB);
+    Require(__cxa_guard_acquire_nid_postfix(&guardB) == 0, 66);
+}
+
 static void CheckCErrorReturns(int code) {
     try {
         _ZSt14_Throw_C_errori_nid_postfix(code);
@@ -209,6 +235,7 @@ int main() {
     const std::array<void*, 10> api {};
     ApplicationHeapRegister_nid_no_patch(api.data());
     CheckConstructor();
+    CheckGuardNesting();
     FixtureOtherType = _ZTISt11logic_error_nid_postfix;
     for (int code = 0; code < static_cast<int>(std::size(Errors)); ++code) Catch(_ZTISt12system_error_nid_postfix, code);
     Catch(_ZTISt13runtime_error_nid_postfix, 5);
