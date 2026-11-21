@@ -7499,6 +7499,7 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder, const DrawBindings* bind
     if (usesBda && !bdaReadOnly) {
         std::vector<std::pair<std::uint64_t, std::uint64_t>> reachable;
         guestMemory.AddressStores(reachable);
+        narrowToStoreWindows(recorder, reachable);
         recorder.NotePendingReach(reachable);
     }
     guestMemory.MarkDirectWrites();
