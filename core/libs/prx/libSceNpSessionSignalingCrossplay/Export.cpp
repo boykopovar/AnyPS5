@@ -29,20 +29,27 @@ static_assert(offsetof(NpSessionSignalingCrossplayMemoryInfo, poolSize) == 0x00)
 static_assert(offsetof(NpSessionSignalingCrossplayMemoryInfo, currentInuseSize) == 0x08);
 static_assert(offsetof(NpSessionSignalingCrossplayMemoryInfo, maxInuseSize) == 0x10);
 
+struct ErrnoGuard {
+    int savedErrno = errno;
+
+    ErrnoGuard() = default;
+    ErrnoGuard(const ErrnoGuard&) = delete;
+    ErrnoGuard& operator=(const ErrnoGuard&) = delete;
+    ~ErrnoGuard() {
+        errno = savedErrno;
+    }
+};
+
 template <typename T>
 bool CopyGuestIn(T* destination, const T* source) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, sizeof(T));
-    errno = savedErrno;
-    return copied;
+    const ErrnoGuard errnoGuard;
+    return GuestCopyIn_nid_no_patch(destination, source, sizeof(T));
 }
 
 template <typename T>
 bool CopyGuestOut(T* destination, const T& source) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, &source, sizeof(T));
-    errno = savedErrno;
-    return copied;
+    const ErrnoGuard errnoGuard;
+    return GuestCopyOut_nid_no_patch(destination, &source, sizeof(T));
 }
 
 } // namespace
@@ -51,6 +58,7 @@ extern "C" {
 
 int APS5_VABI sceNpSessionSignalingCrossplayInitialize(const NpSessionSignalingCrossplayInitParam* parameter) {
     if (parameter == nullptr) return ErrorInvalidArgument;
+    const ErrnoGuard errnoGuard;
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_initialized) return ErrorAlreadyInitialized;
     NpSessionSignalingCrossplayInitParam localParam{};
@@ -62,6 +70,7 @@ int APS5_VABI sceNpSessionSignalingCrossplayInitialize(const NpSessionSignalingC
 }
 
 int APS5_VABI sceNpSessionSignalingCrossplayTerminate(void) {
+    const ErrnoGuard errnoGuard;
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
     sceNpMemoryHeapDestroy(&g_heap);
@@ -119,10 +128,11 @@ int APS5_VABI sceNpSessionSignalingCrossplayUnknown05(void) {
 
 int APS5_VABI sceNpSessionSignalingCrossplayGetMemoryInfo(NpSessionSignalingCrossplayMemoryInfo* info) {
     if (info == nullptr) return ErrorInvalidArgument;
+    const ErrnoGuard errnoGuard;
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_initialized) return ErrorNotInitialized;
     NpHeapStat stat{};
-    if (sceNpHeapGetStat(&g_heap.heap, &stat) < 0) return ErrorInvalidArgument;
+    if (sceNpHeapGetStat(&g_heap.heap, &stat) != 0) return ErrorInvalidArgument;
     const NpSessionSignalingCrossplayMemoryInfo localInfo{
         stat.maxSystemSize,
         stat.currentInuseSize,
