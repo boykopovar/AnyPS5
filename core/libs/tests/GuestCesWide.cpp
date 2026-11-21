@@ -379,6 +379,13 @@ int main() {
     sbc = 0x5A;
     Require(sceCesUtf16ToSbc(lowSurrogate, 1, &length, iso8859_15, &sbc) == illegalCode);
 
+    std::uint16_t lowSurrogateBe = 0;
+    std::memcpy(&lowSurrogateBe, "\xDC\x00", 2);
+    std::uint16_t lowSurrogateLe = 0;
+    std::memcpy(&lowSurrogateLe, "\x00\xDC", 2);
+    Require(sceCesUtf16beToSbc(&lowSurrogateBe, 1, &length, cp1252, &sbc) == invalidEncode);
+    Require(sceCesUtf16leToSbc(&lowSurrogateLe, 1, &length, cp1252, &sbc) == invalidEncode);
+
     utf16 = 0x5A5A;
     Require(sceCesSbcToUtf16(nullptr, 'A', &utf16, 1, &length) == invalidProfile && utf16 == 0);
 

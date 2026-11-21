@@ -2037,10 +2037,10 @@ int utf16ToSbc(
             if (utf16Len && !CesGuest::Store(utf16Len, length)) return CES_ERROR_INVALID_DST_BUFFER;
         }
 
-        if (decoded == CES_ERROR_INVALID_ENCODE
+        if (measuredNative
+            && decoded == CES_ERROR_INVALID_ENCODE
             && code >= 0xDC00
             && code <= 0xDFFF
-            && measuredNative
             && isMeasuredUcs2SurrogateProfile(profile)) {
             return CES_ERROR_ILLEGAL_CODE;
         }
