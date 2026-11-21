@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [Out-of-place DB expand]
+
+- [Out-of-place DB expand](../../../core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp) (libSceAgcDriver) - not measured on the console. A draw with `DB_RENDER_CONTROL.DEPTH_COMPRESS_DISABLE` and `DB_Z_WRITE_BASE` != `DB_Z_READ_BASE` copies the read depth plane, uncompressed, to the write base. Its geometry, samples and HTILE words are not read (a CPU- or DMA-cleared HTILE counts as expanded); HTILE stencil clears are unmodeled and no pixel shader runs. A live surface the write covers whole is retired first, losing host-only depth; a later depth bind there reads guest memory. A CPU read after a label misses the plane (see Pending storage-image results). Only a single-sample `Z_32_FLOAT` or `Z_16` `SW_64KB_Z_X` surface at the first slice, with 64 KiB-aligned bases, no depth, stencil or bounds tests and no color writes is taken; other forms, a live surface it covers in part or whose stencil alone it writes over host-only depth, and a 32-bit integer view of the write base throw.
