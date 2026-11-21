@@ -1584,6 +1584,27 @@ static void LongDirectoryFchdir(const std::filesystem::path& root) {
     for (auto level = levels.rbegin(); level != levels.rend(); ++level) Require(::RemoveDirectoryW(verbatim(*level).c_str()) != FALSE);
     longTree.clear();
 }
+#else
+static void CheckUnreadableEmptyRmdir(const std::filesystem::path& root) {
+    if (::geteuid() == 0) return;
+    const auto native = root / "native-unreadable-empty";
+    Require(std::filesystem::create_directory(native));
+    std::filesystem::permissions(native, std::filesystem::perms::none);
+    Require(::rmdir(native.c_str()) == 0);
+    const auto direct = root / "direct-unreadable-empty";
+    Require(std::filesystem::create_directory(direct));
+    std::filesystem::permissions(direct, std::filesystem::perms::none);
+    Require(rmdir_nid_postfix(direct.string().c_str()) == 0);
+    Require(!std::filesystem::exists(direct));
+    const auto guest = root / "guest-unreadable-empty";
+    Require(std::filesystem::create_directory(guest));
+    std::filesystem::permissions(guest, std::filesystem::perms::none);
+    const int base = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(base >= 0);
+    Require(unlinkat_nid_postfix(base, "guest-unreadable-empty", 0x800) == 0);
+    Require(!std::filesystem::exists(guest));
+    Require(sceKernelClose(base) == 0);
+}
 #endif
 
 int main() {
@@ -1626,6 +1647,8 @@ int main() {
 #ifdef _WIN32
     LongDirectoryAtCalls(root);
     LongDirectoryFchdir(root);
+#else
+    CheckUnreadableEmptyRmdir(root);
 #endif
     DirectoryRenameTests(root);
     OwnershipAndLinkTests(root);
