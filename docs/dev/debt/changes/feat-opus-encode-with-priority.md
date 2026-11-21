@@ -1,0 +1,11 @@
+# libSceOpusCeltEnc
+
+## change [sceOpusCeltEncEncodeWithPriority and sceOpusCeltEncEncodeFloatWithPriority]
+
+- [sceOpusCeltEncEncodeWithPriority and sceOpusCeltEncEncodeFloatWithPriority](../../../core/libs/prx/libSceOpusCeltEnc/Export.cpp) - EncodeWithPriority ignores its priority: past the checks it encodes as sceOpusCeltEncEncode does, through libopus, while the console hands the priority to AJM with the job. EncodeFloatWithPriority throws through `NotImplemented_nid_no_patch` after its stack reservation; the code past it, priority check included, was not read. The checks are firmware 13.42 disassembly, not measured: null state +0x01, null samples +0x02, null data +0x04, maxDataBytes 0 +0x05, priority outside 20 to 100 +0x15, no 32-bit marker +0x16, then +0x03 for a frame size whose 32-bit product with 400, 200, 100, 50 or 25 is not the rate word at +0x14 and with 50 not three times it; the float version checks null state, null samples, frame 0 (+0x03) and the marker. Closes when: packets of different priorities are compared on a console or the library runs through our AJM
+
+# libSceOpusSilkEnc
+
+## change [sceOpusSilkEncEncodeWithPriority, sceOpusSilkEncEncodeFloatWithPriority, sceOpusSilkEncEncodeWithPriorityAndTimeout and sceOpusSilkEncEncodeFloatWithPriorityAndTimeout]
+
+- [sceOpusSilkEncEncodeWithPriority, sceOpusSilkEncEncodeFloatWithPriority, sceOpusSilkEncEncodeWithPriorityAndTimeout and sceOpusSilkEncEncodeFloatWithPriorityAndTimeout](../../../core/libs/prx/libSceOpusSilkEnc/Export.cpp) - EncodeWithPriority encodes as sceOpusSilkEncEncode does, through libopus, and ignores the priority the console hands to AJM with the job. The timeout versions throw past the checks (the use of timeout and batch id was not read), the float versions after their stack reservation (the code past it was not read). Checks, from firmware 13.42 disassembly, not measured: null state +0x01, null samples +0x02, null data +0x04, maxDataBytes 0 +0x05, priority outside 20 to 100 +0x14, no 32-bit marker at +0xE8 +0x15, then +0x03 for a frame size whose 32-bit product with 100, 50 or 25 is not the rate word at +0x14 and with 50 not three times it. Closes when: packets of different priorities are compared on a console or the library runs through our AJM

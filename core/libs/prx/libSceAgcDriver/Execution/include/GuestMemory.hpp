@@ -118,6 +118,8 @@ bool UnchangedSinceAll(std::span<const UnchangedQuery> queries);
 std::uint64_t CollectCommittedWrites(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
 std::uint64_t WriteGeneration();
 std::uint64_t CollectWrittenBlocks(std::uint64_t address, std::size_t bytes, std::uint64_t since, std::vector<std::pair<std::uint64_t, std::uint64_t>>& written);
+std::uint64_t ChangedSince(std::uint64_t address, std::size_t bytes, std::uint64_t since, std::vector<std::pair<std::uint64_t, std::uint64_t>>& changed);
+void SetChangedSinceWalkFailureForTest(bool fail);
 bool UnchangedCommittedSince(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::uint64_t generation);
 // Returns the generation the blocks were stamped with (0 when the arena is not write-watched):
 // UnchangedSince(range, it) holds until the next store over the range.
@@ -132,6 +134,7 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std:
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> source);
 void SetOwnStoreCompare(bool compare);
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
+bool DriverStoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 bool StoredAllSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // Collect epoch: within one epoch a range already collected is not walked again, CollectWrites
 // returns the current generation instead. A guest write landing between two collects of the same

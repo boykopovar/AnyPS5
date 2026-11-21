@@ -934,6 +934,9 @@ if(BUILD_TESTING)
         add_test(NAME title_run_paths COMMAND ${Python3_EXECUTABLE} -u
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_paths.py -v)
         set_tests_properties(title_run_paths PROPERTIES TIMEOUT 300)
+        add_test(NAME title_run_summary_atomic COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_summary_atomic.py)
+        set_tests_properties(title_run_summary_atomic PROPERTIES TIMEOUT 30)
         add_test(NAME title_run_identity COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_identity.py)
         set_tests_properties(title_run_identity PROPERTIES TIMEOUT 30)
@@ -1046,6 +1049,11 @@ endfunction()
 if(NOT ANYPS5_USE_SYSTEM_DEPS)
     anyps5_add_bundled_sdl2()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        get_directory_property(ANYPS5_SDL_WAYLAND DIRECTORY 3rdparty/SDL2 DEFINITION HAVE_WAYLAND)
+        if(ANYPS5_SDL_WAYLAND)
+            get_directory_property(ANYPS5_SDL_WAYLAND_LIBDECOR DIRECTORY 3rdparty/SDL2 DEFINITION HAVE_WAYLAND_LIBDECOR)
+            include(cmake/PatchSdlWayland.cmake)
+        endif()
         get_directory_property(ANYPS5_SDL_X11_XRANDR DIRECTORY 3rdparty/SDL2 DEFINITION HAVE_X11_XRANDR)
         if(NOT ANYPS5_SDL_X11_XRANDR)
             message(FATAL_ERROR "SDL has no XRandR support, so X11 display refresh rates cannot be queried. "
