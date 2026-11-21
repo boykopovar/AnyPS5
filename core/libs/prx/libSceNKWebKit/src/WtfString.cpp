@@ -66,6 +66,7 @@
  * Derived from Source/WTF/wtf/text/StringHasher.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
  */
 
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
@@ -76,6 +77,7 @@
 #include <cstdlib>
 #include <vector>
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstring>
 #include <limits>
@@ -220,13 +222,21 @@ unsigned int APS5_VABI _ZN3WTF7Unicode51calculateStringHashAndLengthFromUTF8Mask
 double APS5_VABI _ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm(
     const char16_t* string, std::size_t length, std::size_t& parsedLength) {
     std::vector<char> buffer(length + 1);
-    for (std::size_t i = 0; i < length; ++i) {
-        char16_t ch = string[i];
-        buffer[i] = (ch < 0x80) ? static_cast<char>(ch) : 0;
+    std::array<char16_t, 2048> units;
+    for (std::size_t done = 0; done < length;) {
+        const std::size_t count = std::min(units.size(), length - done);
+        if (!GuestCopyIn_nid_no_patch(units.data(), string + done, count * sizeof(char16_t)))
+            throw std::invalid_argument("WTF::Internal::parseDoubleFromLongString: unreadable string");
+        for (std::size_t i = 0; i < count; ++i) buffer[done + i] = (units[i] < 0x80) ? static_cast<char>(units[i]) : 0;
+        done += count;
     }
     buffer[length] = '\0';
 
-    return _ZN3WTF17double_conversion23StringToDoubleConverter14StringToDoubleEPKcmPm(buffer.data(), length, &parsedLength);
+    std::size_t parsed = 0;
+    const double value = _ZN3WTF17double_conversion23StringToDoubleConverter14StringToDoubleEPKcmPm(buffer.data(), length, &parsed);
+    if (!GuestCopyOut_nid_no_patch(&parsedLength, &parsed, sizeof(parsed)))
+        throw std::invalid_argument("WTF::Internal::parseDoubleFromLongString: unwritable parsed length");
+    return value;
 }
 
 }

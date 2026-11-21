@@ -579,6 +579,19 @@ static void TestString() {
         std::size_t parsed = 99;
         Require(_ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm(item.text, item.length, parsed) == item.value && parsed == item.parsed);
     }
+    std::u16string longNumber(5000, u'0');
+    longNumber[4999] = u'7';
+    longNumber += u" tail";
+    parsedLen = 0;
+    d = _ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm(longNumber.data(), longNumber.size(), parsedLen);
+    Require(d == 7.0 && parsedLen == 5000);
+    bool threw = false;
+    try {
+        _ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm(reinterpret_cast<const char16_t*>(std::uintptr_t{0x10}), 4, parsedLen);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && parsedLen == 5000);
 }
 
 static void TestWebCorePure() {
