@@ -1,6 +1,8 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include <cerrno>
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -12,6 +14,12 @@
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using GetBasic = LibreSslOcspBasicResponse* (APS5_VABI*)(LibreSslOcspResponse*);
 using FreeBasic = void (APS5_VABI*)(LibreSslOcspBasicResponse*);
@@ -649,6 +657,98 @@ void TestAllocationFailures() {
     RequireAllocationFailure(bits, 2, {65, 65, 58, 58, 110});
 }
 
+template<typename TAction> void RequireRejected(TAction action, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    bool rejected = false;
+    try { action(); } catch (const std::runtime_error&) { rejected = errno == 71; }
+    Require(rejected, location);
+}
+
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = static_cast<unsigned char*>(VirtualAlloc(nullptr, bytes * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(data != nullptr);
+        DWORD previous{};
+        Require(VirtualProtect(data + bytes, bytes, PAGE_NOACCESS, &previous) != 0);
+#else
+        bytes = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, bytes * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        data = static_cast<unsigned char*>(mapped);
+        Require(mprotect(data + bytes, bytes, PROT_NONE) == 0);
+#endif
+    }
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes * 2);
+#endif
+    }
+    GuardedPage(const GuardedPage&) = delete;
+    GuardedPage& operator=(const GuardedPage&) = delete;
+    unsigned char* Tail(const unsigned char* value, std::size_t size) {
+        std::memcpy(data + bytes - size, value, size);
+        return data + bytes - size;
+    }
+private:
+    unsigned char* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+void TestUnreadablePointers() {
+    auto* const unmapped = reinterpret_cast<void*>(0x10);
+    RequireRejected([&] { OCSP_response_get1_basic_nid_postfix(static_cast<LibreSslOcspResponse*>(unmapped)); });
+    auto* response = Decode(Raw(GoodEc, sizeof(GoodEc)));
+    auto* bytes = static_cast<LibreSslOcspResponseBytes*>(response->responseBytes);
+    void* const savedBytes = response->responseBytes;
+    LibreSslAsn1Object* const savedType = bytes->responseType;
+    Asn1String* const savedOctets = bytes->response;
+    const std::size_t before = live.size();
+
+    response->responseBytes = unmapped;
+    RequireRejected([&] { OCSP_response_get1_basic_nid_postfix(response); });
+    response->responseBytes = savedBytes;
+    bytes->responseType = static_cast<LibreSslAsn1Object*>(unmapped);
+    RequireRejected([&] { OCSP_response_get1_basic_nid_postfix(response); });
+    bytes->responseType = savedType;
+    bytes->response = static_cast<Asn1String*>(unmapped);
+    RequireRejected([&] { OCSP_response_get1_basic_nid_postfix(response); });
+    bytes->response = savedOctets;
+    Require(live.size() == before);
+
+    GuardedPage typePage;
+    const unsigned char* const savedTypeData = savedType->data;
+    const int savedTypeLength = savedType->length;
+    savedType->data = typePage.Tail(savedTypeData, static_cast<std::size_t>(savedTypeLength));
+    savedType->length = INT_MAX;
+    RequireRejected([&] { OCSP_response_get1_basic_nid_postfix(response); });
+    savedType->data = savedTypeData;
+    savedType->length = savedTypeLength;
+
+    GuardedPage octetPage;
+    unsigned char* const savedData = savedOctets->data;
+    const int savedLength = savedOctets->length;
+    savedOctets->data = octetPage.Tail(savedData, static_cast<std::size_t>(savedLength));
+    savedOctets->length = INT_MAX;
+    RequireRejected([&] { OCSP_response_get1_basic_nid_postfix(response); });
+    savedOctets->length = savedLength;
+    Require(live.size() == before);
+    ERR_clear_error_nid_postfix();
+    auto* basic = OCSP_response_get1_basic_nid_postfix(response);
+    Require(basic != nullptr && OCSP_resp_count_nid_postfix(basic) == 1);
+    RequireErrors({});
+    OCSP_BASICRESP_free_nid_postfix(basic);
+    savedOctets->data = savedData;
+    OCSP_RESPONSE_free_nid_postfix(response);
+    Require(live.empty());
+}
+
 }
 
 int main() {
@@ -659,6 +759,7 @@ int main() {
     TestSynthetic();
     TestMalformed();
     TestAllocationFailures();
+    TestUnreadablePointers();
     OCSP_BASICRESP_free_nid_postfix(nullptr);
     std::puts("libSceLibreSsl OCSP basic response decode tests passed");
 }
