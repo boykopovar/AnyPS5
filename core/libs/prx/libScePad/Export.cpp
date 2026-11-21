@@ -710,8 +710,26 @@ int APS5_VABI scePadDeviceOpen(std::uint64_t deviceId, std::int32_t type, std::i
 }
 
 int APS5_VABI scePadGetDataInternal(std::uint8_t port, PadData* data) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (data == nullptr) return PAD_ERROR_INVALID_ARG;
+    PadData localData;
+    WriteDefaultData(&localData);
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(data, &localData, sizeof(localData))) {
+        errno = savedErrno;
+        return PAD_ERROR_INVALID_ARG;
+    }
+    errno = savedErrno;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (port >= PAD_MAX_CONTROLLERS) return PAD_ERROR_INVALID_ARG;
+
+    localData = Pad::ReadState(port);
+    const int savedErrno2 = errno;
+    if (!GuestCopyOut_nid_no_patch(data, &localData, sizeof(localData))) {
+        errno = savedErrno2;
+        return PAD_ERROR_INVALID_ARG;
+    }
+    errno = savedErrno2;
+    return PAD_OK;
 }
 
 int APS5_VABI scePadSetUserColor(std::int32_t handle, std::uint32_t color) {
