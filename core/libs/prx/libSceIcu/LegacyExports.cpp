@@ -8735,10 +8735,6 @@ int APS5_VABI sceIcuLegacyUnknown_uJbTUKDL3hE_nid_no_patch() {
 }
 APS5_EXPORT("uJbTUKDL3hE", sceIcuLegacyUnknown_uJbTUKDL3hE_nid_no_patch);
 
-int APS5_VABI uloc_openKeywordList_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_uM7LE3DSVGc_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
