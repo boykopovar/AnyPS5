@@ -26,6 +26,12 @@ constexpr int PosixEinval = 22;
 constexpr int PosixEnotsock = 38;
 constexpr int PosixEnoprotoopt = 42;
 
+#ifdef _WIN32
+constexpr bool StreamRefusesBroadcast = true;
+#else
+constexpr bool StreamRefusesBroadcast = false;
+#endif
+
 void Require(bool condition) {
     if (!condition) {
         std::abort();
@@ -134,7 +140,7 @@ void TestSetsockoptLengthBoundaries() {
                 Require(_setsockopt_nid_postfix(fd, SolSocket, opt, &val, shortLen) == -1 && *__error_nid_postfix() == PosixEinval);
             }
 
-            if (fd == stream && opt == SoBroadcast) {
+            if (fd == stream && opt == SoBroadcast && StreamRefusesBroadcast) {
                 Require(setsockopt_nid_postfix(fd, SolSocket, opt, &val, sizeof(val)) == -1 && *__error_nid_postfix() == PosixEnoprotoopt);
                 Require(setsockopt_nid_postfix(fd, SolSocket, opt, wideBuffer.data(), 8) == -1 && *__error_nid_postfix() == PosixEnoprotoopt);
                 Require(setsockopt_nid_postfix(fd, SolSocket, opt, wideBuffer.data(), wideBuffer.size()) == -1 && *__error_nid_postfix() == PosixEnoprotoopt);
@@ -246,7 +252,7 @@ void TestOptionTogglingAndReadback() {
         const int fd = descriptors[i];
         const bool isStream = (i % 2 == 0);
         for (const int opt : {SoDebug, SoDontRoute, SoBroadcast}) {
-            if (isStream && opt == SoBroadcast) {
+            if (isStream && opt == SoBroadcast && StreamRefusesBroadcast) {
                 int readValue = -1;
                 std::uint32_t len = sizeof(readValue);
                 Require(getsockopt_nid_postfix(fd, SolSocket, opt, &readValue, &len) == -1 && *__error_nid_postfix() == PosixEnoprotoopt);
