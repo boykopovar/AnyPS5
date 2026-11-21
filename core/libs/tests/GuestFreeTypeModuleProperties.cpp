@@ -11,6 +11,7 @@
 #include <array>
 #include <bit>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -63,6 +64,11 @@ static void UnreadableLibrary(const Api& api) {
     Require(value == 0xA5A5A5A5);
     const std::uint32_t version = 35;
     Require(RefusesUnreadable([&] { api.set(unreadable, "truetype", "interpreter-version", &version); }));
+    alignas(std::max_align_t) std::array<std::byte, 64> misalignedStorage{};
+    auto* const misaligned = reinterpret_cast<GuestLibrary*>(misalignedStorage.data() + 1);
+    Require(RefusesUnreadable([&] { api.get(misaligned, "truetype", "interpreter-version", &value); }));
+    Require(value == 0xA5A5A5A5);
+    Require(RefusesUnreadable([&] { api.set(misaligned, "truetype", "interpreter-version", &version); }));
 }
 
 template <typename TValue>

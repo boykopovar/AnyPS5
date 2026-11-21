@@ -223,7 +223,7 @@ int _mapFlexible(void** addr, size_t len, int prot, int flags) {
         std::fprintf(stderr, "[memory] flexible memory exhausted: request 0x%zx with 0x%zx of 0x%zx in use\n", len, used, configured);
         return SCE_KERNEL_ERROR_ENOMEM;
     }
-    const int result = DoMapAnon(addr, len, prot, flags);
+    const int result = DoMapFlexibleAnon(addr, len, prot, flags);
     if (result == 0) {
         const auto start = reinterpret_cast<uintptr_t>(*addr);
         _releaseFlexibleLocked(start, len);

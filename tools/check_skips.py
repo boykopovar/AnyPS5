@@ -5,7 +5,7 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device (has no|reports|lacks|does not|imports (no|shared memory through host pointers\b)|flushes|binds fewer)|the host (has not enough free disk space|cannot allocate a buffer|has no interface that can join|mounts /dev/shm noexec)|no display|no usable Vulkan device|host imports are unavailable|not enough free disk space|cannot create a raw socket)", re.IGNORECASE)
+DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device (has no|reports|lacks|does not|imports (no|shared memory through host pointers\b)|flushes|binds fewer)|the host (has not enough free disk space|cannot allocate a buffer|has no interface that can join|mounts /dev/shm noexec)|no display|no usable Vulkan device|host imports are unavailable|host imports unavailable|host imports? (is|are) compared, not (write-)?watched|host import of the test block refused|unproven on CPU Vulkan \(llvmpipe\)|not enough free disk space|cannot create a raw socket)", re.IGNORECASE)
 
 HOST_LIMITATION = re.compile(r"^skipping: (not enough free disk space for a file|cannot allocate a buffer) of more than 2 GiB", re.IGNORECASE | re.MULTILINE)
 
@@ -16,6 +16,11 @@ NO_VULKAN_DEVICE = re.compile(r"skipped,.*no usable Vulkan device", re.IGNORECAS
 NO_RAW_SOCKET = re.compile(r"skipped,.*cannot create a raw socket", re.IGNORECASE)
 
 HIGH_REFRESH_LIMITATION = re.compile(r"current display does not provide 120 Hz", re.IGNORECASE)
+DEVICE_LOG_SOURCE = re.compile(r"\[[^\]]*:\d+ [^\]]*\] ")
+DEVICE_LOG_SUBSYSTEM = re.compile(r"\[(?:float-controls|gpu|pipeline-cache|shader-disk-cache|time|write-watch)\] ")
+HDR_OUTPUT_STATUS = re.compile(
+    r"\[videoout\] HDR output (?:available: peak [0-9]+\.[0-9] nits, full frame [0-9]+\.[0-9] nits, black [0-9]+\.[0-9]{4} nits"
+    r"|unavailable \(display in HDR: (?:yes|no), surface offers HDR10: (?:yes|no)\))")
 CTEST_SKIP_STATUS = re.compile(r"SKIP_RETURN_CODE=\d+|SKIP_REGULAR_EXPRESSION_MATCHED", re.IGNORECASE)
 
 WINDOWS_PREFIX = "agc"
@@ -39,6 +44,12 @@ def high_refresh_limitation(output):
     reasons = []
     for line in output.splitlines():
         reason = line.strip()
+        if not reason:
+            continue
+        if HDR_OUTPUT_STATUS.fullmatch(reason):
+            continue
+        if (DEVICE_LOG_SOURCE.match(reason) or DEVICE_LOG_SUBSYSTEM.match(reason)) and not re.search(r"skipped,", reason, re.IGNORECASE):
+            continue
         if match := re.search(r"skipped,", reason, re.IGNORECASE):
             reason = reason[match.end():].strip()
         if reason:
@@ -116,8 +127,12 @@ def main(argv=None):
             {"name": name, "output": "\n".join(outputs), "occurrences": len(outputs), "expected": name not in unexpected}
             for name, outputs in sorted(grouped.items())], "unexpected": unexpected}, sort_keys=True))
         return int(bool(unexpected))
+    reasons = {}
+    for name, output in found:
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        reasons.setdefault(name, next((line for line in lines if re.search(r"skipped,", line, re.IGNORECASE)), lines[0] if lines else "no output"))
     for name in unexpected:
-        print(f"error: {name} skipped")
+        print(f"error: {name} skipped: {reasons[name]}")
     if unexpected:
         print(f"{len(unexpected)} test(s) skipped for a reason that is not expected: the job lost that coverage and ctest still reports every test as passed")
         return 1

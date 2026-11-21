@@ -230,7 +230,48 @@ static int TestOfflineRequest(bool asynchronous, bool queued) {
     return 0;
 }
 
+static int TestOfflineDeclaredLength() {
+    const int networkError = static_cast<int>(0x80431063);
+    const int context = sceHttp2Init(1, 1, 0x10000, 4);
+    const int tmpl = sceHttp2CreateTemplate(context, "offline-test", 3, 0);
+    const std::array<char, 4> body{'b', 'o', 'd', 'y'};
+    const int online = sceHttp2CreateRequestWithURL(tmpl, "POST", "https://example.invalid/online", 64);
+    Require(context > 0 && tmpl > 0 && online > 0);
+    Require(Throws([&] { sceHttp2SendRequest(online, body.data(), 0); }));
+    Require(sceHttp2DeleteRequest(online) == 0);
+#ifdef _WIN32
+    _putenv("APS5_NET_DISCONNECTED=1");
+#else
+    setenv("APS5_NET_DISCONNECTED", "1", 1);
+#endif
+    Http2SetLookupHook_nid_no_patch(OfflineLookup);
+    for (const bool asynchronous : {false, true}) {
+        const int request = sceHttp2CreateRequestWithURL(tmpl, "POST", "https://example.invalid/declared", 64);
+        Require(request > 0);
+        if (asynchronous) {
+            Require(sceHttp2SendRequestAsync(request, body.data(), 0, nullptr, nullptr) == 0);
+            Http2AsyncResult result{};
+            Require(sceHttp2WaitAsync(request, &result, nullptr, nullptr) == 0);
+            Require(result.req_id == request && result.event_type == 0 && result.result == networkError);
+        } else {
+            Require(sceHttp2SendRequest(request, body.data(), body.size()) == networkError);
+        }
+        Require(sceHttp2DeleteRequest(request) == 0);
+    }
+#ifdef _WIN32
+    _putenv("APS5_NET_DISCONNECTED=");
+#else
+    unsetenv("APS5_NET_DISCONNECTED");
+#endif
+    Require(sceHttp2DeleteTemplate(tmpl) == 0);
+    Require(sceHttp2Term(context) == 0);
+    Require(offlineLookups == 0);
+    Http2SetLookupHook_nid_no_patch(nullptr);
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--offline-declared-length") == 0) return TestOfflineDeclaredLength();
     if (argc == 2 && std::strcmp(argv[1], "--offline-sync") == 0) return TestOfflineRequest(false, false);
     if (argc == 2 && std::strcmp(argv[1], "--offline-async") == 0) return TestOfflineRequest(true, false);
     if (argc == 2 && std::strcmp(argv[1], "--offline-queued") == 0) return TestOfflineRequest(true, true);
