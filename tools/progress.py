@@ -15,6 +15,9 @@ tokenizer_spec = importlib.util.spec_from_file_location("anyps5_cpp_tokenizer", 
 tokenizer = importlib.util.module_from_spec(tokenizer_spec)
 tokenizer_spec.loader.exec_module(tokenizer)
 CPP_TOKEN = tokenizer.CPP_TOKEN
+LITERALS, _, CODE_TOKEN = CPP_TOKEN.pattern.rpartition("|(?P<code>")
+CODE_RUN = re.compile(LITERALS + "|(?P<code>(?:" + CODE_TOKEN[:-1] + r""")(?:(?![/"']|(?:u8|[uUL])?R?["'])(?:"""
+                      + CODE_TOKEN[:-1] + r"|\s+))*)")
 BRACE = re.compile(r"[{}]")
 
 scan_spec = importlib.util.spec_from_file_location("anyps5_shader_scan", Path(__file__).with_name("shader_scan.py"))
@@ -118,7 +121,7 @@ def blank(match):
 
 
 def code(text):
-    return re.sub(r"\n(?:[ \t]*\n)+", "\n", CPP_TOKEN.sub(blank, text.replace("\\\n", "").replace("\\\r\n", "")))
+    return re.sub(r"\n(?:[ \t]*\n)+", "\n", CODE_RUN.sub(blank, text.replace("\\\n", "").replace("\\\r\n", "")))
 
 def body_end(text, start):
     depth = 0
