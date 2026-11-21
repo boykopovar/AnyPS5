@@ -27,6 +27,7 @@ namespace {
 constexpr int Efault = 14;
 constexpr int Ebusy = 16;
 constexpr int Einval = 22;
+constexpr int Enotty = 25;
 constexpr int Enospc = 28;
 constexpr int Eagain = 35;
 constexpr int Etimedout = 60;
@@ -264,6 +265,26 @@ private:
     std::size_t size = 0;
 };
 
+void Controls() {
+    std::intptr_t id = -1;
+    Require(ksem_init_nid_postfix(&id, 2) == 0 && id >= 0);
+    const int d = static_cast<int>(id);
+    for (const std::uint64_t request : {0x4004667full, 0x4004667aull, 0x8004667eull, 0x8004667dull, 0xc0047801ull}) {
+        int value = 1;
+        Require(ioctl_nid_postfix(d, request, &value) == -1 && Error() == Enotty && value == 1);
+        Require(_ioctl_nid_postfix(d, request, &value) == -1 && Error() == Enotty && value == 1);
+    }
+    UnreadablePage page;
+    for (const std::uint64_t request : {0x8004667eull, 0x8004667dull, 0x80047801ull}) {
+        Require(ioctl_nid_postfix(d, request, page.Address()) == -1 && Error() == Efault);
+        Require(ioctl_nid_postfix(d, request, nullptr) == -1 && Error() == Efault);
+    }
+    Require(ioctl_nid_postfix(d, 0x20006601, nullptr) == 0 && fcntl_nid_postfix(d, 1) == 1);
+    Require(ioctl_nid_postfix(d, 0x20006602, nullptr) == 0 && fcntl_nid_postfix(d, 1) == 0);
+    Require(Value(id) == 2);
+    Require(ksem_destroy_nid_postfix(id) == 0);
+}
+
 void BadPointers() {
     UnreadablePage page;
     void* const bad[] = {reinterpret_cast<void*>(0x10), page.Address()};
@@ -299,6 +320,7 @@ int main() {
     Identifiers();
     Duplicates();
     Limit();
+    Controls();
     std::puts("ksem unnamed semaphores passed");
     return 0;
 }
