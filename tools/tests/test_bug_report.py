@@ -223,6 +223,16 @@ class MainTests(unittest.TestCase):
             self.assertEqual(sorted(bundle.namelist()), ["README.txt", "anyps5-report.json", "anyps5-settings.txt", "anyps5.log", "host.txt"])
             self.assertEqual(bundle.read("anyps5.log").decode("utf-8"), "opened ~/title.elf on <host>\n")
 
+    def test_bundle_redacts_environment_settings_once(self):
+        target = self.root / "bundle.zip"
+        identity = {"home": "C:/Users/user", "user": "user", "host": "host"}
+        environ = {"ANYPS5_INPUT_CONFIG": "C:/Users/user/host.ini", "APS5_TEST": "user@192.0.2.1"}
+        with patch.object(bug_report, "identities", return_value=identity), patch.dict(os.environ, environ, clear=True):
+            code, _, err = self.run_main(["--report", str(self.report), "--log", "", "--input-config", "", "--out", str(target)])
+        self.assertEqual(code, 0, err)
+        with zipfile.ZipFile(target) as bundle:
+            self.assertEqual(bundle.read("anyps5-settings.txt"), b"ANYPS5_INPUT_CONFIG=~/<host>.ini\nAPS5_TEST=<user>@<ip>\n")
+
     def test_colliding_redacted_keys_refuse_the_bundle(self):
         first, second = "192.0.2.1", "192.0.2.2"
         self.report.write_text(json.dumps({"addresses": [{first: 1, second: 2}]}), encoding="utf-8")
