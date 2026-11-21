@@ -1,5 +1,6 @@
 #include "prx/libSceCompanionHttpd/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -65,6 +66,9 @@ void CheckStates() {
     Require(sceCompanionHttpdUnregisterRequestCallback() == 0, "an unregistration before initialization must return 0");
     RequireSecondaryCallsReturnZero("a secondary call before initialization must return 0");
     Require(sceCompanionHttpdInitialize(nullptr) == 0, "a null parameter must return 0");
+    errno = 71;
+    Require(sceCompanionHttpdInitialize(reinterpret_cast<const CompanionHttpdOptParam*>(0x10)) == InvalidParam, "an unmapped parameter must return InvalidParam");
+    Require(errno == 71, "errno preserved on unmapped parameter");
     Require(sceCompanionHttpdInitialize(option) == 0, "sceCompanionHttpdInitialize failed");
     Require(sceCompanionHttpdInitialize(option) == 0, "a second initialization must return 0");
     RequireSecondaryCallsReturnZero("a secondary call while initialized must return 0");
