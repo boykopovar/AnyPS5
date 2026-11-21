@@ -5061,6 +5061,115 @@ bool carriedShadowTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+bool readOnlyMirrorTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    if (context.hostImportAlignment == 0) {
+        std::cout << "skipped, host imports unavailable: read-only mirrors not tested\n";
+        return false;
+    }
+    struct AnyGpu {
+        AnyGpu() { AgcDriver::Graphics::SetReadOnlyMirrorOnAnyGpuForTests(true); }
+        ~AnyGpu() { AgcDriver::Graphics::SetReadOnlyMirrorOnAnyGpuForTests(false); }
+    } anyGpu;
+    constexpr std::size_t bytes = 24u << 20u;
+    void* block = AllocateWatched(bytes, 65536);
+    Require(block != nullptr, "cannot allocate the test block");
+    struct Cleanup {
+        const Context& context;
+        void* block;
+        ~Cleanup() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes);
+            ReleaseWatched(block, bytes);
+        }
+    };
+    std::memset(block, 0x11, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    const Cleanup cleanup{context, block};
+    if (HostImportFor(context, address, bytes) == nullptr) {
+        std::cout << "skipped, host import of the test block refused: read-only mirrors not tested\n";
+        return false;
+    }
+    const bool watched = AgcDriver::GuestMemory::Watched(address, bytes);
+    const auto element = address + std::max<std::uint64_t>(4096, context.hostImportAlignment);
+    constexpr std::size_t elementBytes = 20u << 20u;
+    constexpr std::size_t smallBytes = 1u << 20u;
+    std::vector<std::unique_ptr<GuestBufferMemory>> kept;
+    const auto use = [&](std::uint64_t at, std::size_t size) -> GuestBufferMemory& {
+        auto& memory = *kept.emplace_back(std::make_unique<GuestBufferMemory>(context));
+        memory.AllowDeviceStaging();
+        memory.AddReadable(at, size);
+        memory.Upload(false);
+        memory.NoteCarriedShadows(recorder);
+        return memory;
+    };
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    static_cast<void>(AgcDriver::GuestMemory::CollectWrites(element, elementBytes));
+    if (!watched) {
+        Require(!use(element, elementBytes).InPlaceReads().empty(), "a read-only element of unwatched memory was mirrored");
+        recorder.Sync();
+        kept.clear();
+        return true;
+    }
+    const auto handleOf = [&](GuestBufferMemory& memory) {
+        std::uint32_t adjustment = 0;
+        return memory.Descriptor(element, elementBytes, adjustment).buffer;
+    };
+    auto& firstBuild = use(element, elementBytes);
+    Require(firstBuild.InPlaceReads().empty(), "a large read-only element was bound in place");
+    const auto firstHandle = handleOf(firstBuild);
+    {
+        const auto first = GuestBufferMemory::CarriedShadowCopies();
+        Require(handleOf(use(element, elementBytes)) == firstHandle, "a reused read-only mirror was bound to another buffer");
+        Require(GuestBufferMemory::CarriedShadowCopies() == first + 1, "a read-only mirror nobody wrote since its last use was copied in again");
+        recorder.Sync();
+        Require(std::all_of(static_cast<const std::byte*>(block), static_cast<const std::byte*>(block) + bytes, [](std::byte value) { return value == std::byte{0x11}; }), "a read-only mirror changed the guest bytes");
+        std::memset(reinterpret_cast<void*>(element + 8192), 0x22, 4096);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        const auto beforeWrite = GuestBufferMemory::CarriedShadowCopies();
+        Require(handleOf(use(element, elementBytes)) == firstHandle, "a mirror copied in again after a CPU write was bound to another buffer");
+        Require(GuestBufferMemory::CarriedShadowCopies() == beforeWrite, "a read-only mirror the CPU wrote since its last use was reused");
+        const auto written = address + (22u << 20u);
+        const auto usedWritten = [&] {
+            auto& memory = *kept.emplace_back(std::make_unique<GuestBufferMemory>(context));
+            memory.AllowDeviceStaging();
+            memory.AddWritable(written, 1u << 20u, false, true);
+            memory.Upload(false);
+            recorder.NotePendingWrites(memory.Writes());
+            memory.NoteCarriedShadows(recorder);
+        };
+        static_cast<void>(AgcDriver::GuestMemory::CollectWrites(written, 1u << 20u));
+        usedWritten();
+        const auto beforeWritten = GuestBufferMemory::CarriedShadowCopies();
+        usedWritten();
+        Require(GuestBufferMemory::CarriedShadowCopies() == beforeWritten, "a written staged region without its copy-back was carried to the next use");
+    }
+    recorder.Sync();
+    Require(!use(element, smallBytes).InPlaceReads().empty(), "a read-only element under the minimum was not bound in place");
+    recorder.Sync();
+    const auto uncarried = element + (512u << 10u);
+    AgcDriver::Graphics::SetDeviceLocalFullForTests(true);
+    const bool refusedInPlace = !use(uncarried, elementBytes).InPlaceReads().empty();
+    AgcDriver::Graphics::SetDeviceLocalFullForTests(false);
+    Require(refusedInPlace, "a read-only element was mirrored with no device memory left");
+    recorder.Sync();
+    const auto overLimit = element + (1u << 20u);
+    AgcDriver::Graphics::SetLiveShadowLimitForTests(elementBytes + smallBytes);
+    const bool overLimitInPlace = !use(overLimit, elementBytes).InPlaceReads().empty();
+    AgcDriver::Graphics::SetLiveShadowLimitForTests(0);
+    Require(overLimitInPlace, "a read-only element was mirrored past the staging shadow limit");
+    recorder.Sync();
+    kept.clear();
+    return true;
+}
+
 bool readWrittenStagingTests(const Device& device, Recorder& recorder) {
     const auto& context = device.GetContext();
     if (context.hostImportAlignment == 0) {
@@ -18385,6 +18494,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--carried-shadow-only") {
             if (!carriedShadowTests(device, recorder)) return 77;
             std::cout << "carried shadow tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--read-only-mirror-only") {
+            if (!readOnlyMirrorTests(device, recorder)) return 77;
+            std::cout << "read-only mirror tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--read-written-staging-only") {

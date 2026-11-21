@@ -242,6 +242,8 @@ bool HostImportsReconciledUnchanged(const Context& context, const HostImportsPro
 HostImportsProof HostImportsIdentity(const Context& context);
 std::uint64_t RetiredImportSerial();
 void SetDeviceLocalFullForTests(bool full);
+void SetReadOnlyMirrorOnAnyGpuForTests(bool any);
+void SetLiveShadowLimitForTests(std::uint64_t bytes);
 std::uint64_t StagingShadowsRefused();
 std::uint64_t ChangedCopySnapshotBytes();
 std::uint64_t ChangedCopySnapshotsMade();
@@ -621,6 +623,7 @@ private:
     // Independent of the import, so UploadPrepare and UploadFinish decide alike.
     bool stagingEligible(const Region& region, bool addressable) const;
     bool stagingWanted(const Region& region, bool addressable) const;
+    bool readOnlyMirrored(const Region& region) const;
     bool adaptiveInPlace(const Region& region, bool use) const;
     bool overlayCandidate(const Region& inside, bool readOnly) const;
     void resolveOverlays();

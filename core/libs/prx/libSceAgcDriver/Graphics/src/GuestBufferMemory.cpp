@@ -6430,6 +6430,18 @@ std::uint64_t writtenShadowMax(bool discreteGpu) {
     return discreteGpu ? DiscreteWrittenShadowMax : std::uint64_t{2048} << 10u;
 }
 
+std::atomic<bool> readOnlyMirrorAnyGpuForTests{false};
+
+bool readOnlyMirrorEnabled() {
+    static const bool disabled = std::getenv("APS5_NO_READONLY_MIRROR") != nullptr;
+    return !disabled;
+}
+
+std::uint64_t readOnlyMirrorMin() {
+    static const std::uint64_t bytes = std::max(std::min(kibSetting("APS5_READONLY_MIRROR_MIN_KIB", 16384), DiscreteSweptShadowMax), writtenShadowMin());
+    return bytes;
+}
+
 std::uint64_t atomicStageMax() {
     static const std::uint64_t bytes = kibSetting("APS5_ATOMIC_STAGE_MAX_KIB", 1024);
     return bytes;
@@ -6516,9 +6528,18 @@ bool deviceLocalHasRoom(const Context& context, std::size_t bytes) {
     return bytes <= room.load(std::memory_order_relaxed);
 }
 
+std::atomic<std::uint64_t> liveShadowLimitForTests{0};
+
+std::uint64_t liveShadowCap() {
+    const auto forced = liveShadowLimitForTests.load(std::memory_order_relaxed);
+    return forced != 0 ? forced : liveShadowLimit.load(std::memory_order_relaxed);
+}
+
+std::shared_ptr<Buffer> peekCarriedBuffer(VkDevice device, std::uint64_t begin, std::uint64_t end);
+
 std::shared_ptr<Buffer> stagingBuffer(const Context& context, std::size_t bytes, VkBufferUsageFlags usage) {
     const bool room = deviceLocalHasRoom(context, bytes);
-    if ((!room && (deviceLocalFullForTests.load(std::memory_order_relaxed) || RuntimeSwitches::Set(RuntimeSwitch::NoStagePoolReuse))) || liveShadowBytes.load(std::memory_order_relaxed) + bytes > liveShadowLimit.load(std::memory_order_relaxed)) {
+    if ((!room && (deviceLocalFullForTests.load(std::memory_order_relaxed) || RuntimeSwitches::Set(RuntimeSwitch::NoStagePoolReuse))) || liveShadowBytes.load(std::memory_order_relaxed) + bytes > liveShadowCap()) {
         Copies().stagingRefused.fetch_add(1, std::memory_order_relaxed);
         return nullptr;
     }
@@ -6650,6 +6671,10 @@ bool GuestBufferMemory::stagingEligible(const Region& region, bool addressable) 
     return !region.adaptiveInPlace && stagingWanted(region, addressable);
 }
 
+bool GuestBufferMemory::readOnlyMirrored(const Region& region) const {
+    return region.gpuCopy && region.deviceLocal && !region.sparse && region.mirror == nullptr && region.bufferEnd == 0 && !WritesOverlap(region.begin, static_cast<std::size_t>(region.end - region.begin));
+}
+
 bool GuestBufferMemory::adaptiveInPlace(const Region& region, bool use) const {
     if (!region.swept || region.atomic || region.overlay) return false;
     return AdaptiveStagingGate::Get().InPlace(region.begin, region.end, use);
@@ -6667,7 +6692,9 @@ bool GuestBufferMemory::StagingDecisionsCurrent() const {
 bool GuestBufferMemory::stagingWanted(const Region& region, bool addressable) const {
     if (!stagingAllowed || (addressable && !region.overlay) || region.unstaged || !gpuCopiesEnabled() || region.sparse || region.mirror != nullptr) return false;
     const auto bytes = region.end - region.begin;
-    if (!WritesOverlap(region.begin, static_cast<std::size_t>(bytes))) return false;
+    if (!WritesOverlap(region.begin, static_cast<std::size_t>(bytes))) {
+        return (context.discreteGpu || readOnlyMirrorAnyGpuForTests.load(std::memory_order_relaxed)) && readOnlyMirrorEnabled() && !region.atomic && bytes >= readOnlyMirrorMin() && bytes <= DiscreteSweptShadowMax && GuestMemory::Watched(region.begin, static_cast<std::size_t>(bytes));
+    }
     if (region.atomic && atomicStagingEnabled() && bytes <= atomicStageMax()) return true;
     return writtenShadowEnabled() && bytes >= writtenShadowMin() && bytes <= (region.swept ? std::max(writtenShadowMax(context.discreteGpu), context.discreteGpu ? DiscreteSweptShadowMax : SweptShadowMax) : writtenShadowMax(context.discreteGpu));
 }
@@ -6850,7 +6877,8 @@ void GuestBufferMemory::UploadPrepare(bool addressable) {
             region.adaptiveInPlace = Recorder::Active() != nullptr && stagingWanted(region, addressable) && adaptiveInPlace(region, true);
             bool staged = Recorder::Active() != nullptr && stagingEligible(region, addressable);
             const bool misaligned = !bindableInPlace(HostImportOffset(*entry, region.begin), addressable);
-            if (staged) {
+            if (staged && !WritesOverlap(region.begin, static_cast<std::size_t>(region.end - region.begin))) region.buffer = peekCarriedBuffer(context.device, region.begin, region.end);
+            if (staged && region.buffer == nullptr) {
                 const auto allocateStart = std::chrono::steady_clock::now();
                 region.buffer = stagingBuffer(context, static_cast<std::size_t>(region.end - region.begin), gpuCopyUsage(context, addressable));
                 if (profile) allocateUs.fetch_add(microsecondsSince(allocateStart), std::memory_order_relaxed);
@@ -7326,11 +7354,12 @@ struct CarriedShadow {
     std::uint64_t importSerial = 0;
     std::uint64_t note = 0;
     std::uint64_t generation = 0;
+    bool readOnly = false;
 };
 
 struct CarriedShadows {
     static constexpr std::size_t MaxEntries = 256;
-    static constexpr std::uint64_t MaxBytes = std::uint64_t{512} << 20u;
+    static constexpr std::uint64_t MaxBytes = std::uint64_t{1024} << 20u;
     AgcDriver::Mutex mutex;
     std::map<std::pair<std::uint64_t, std::uint64_t>, CarriedShadow> entries;
     std::uint64_t bytes = 0;
@@ -7339,6 +7368,15 @@ struct CarriedShadows {
 CarriedShadows& Carried() {
     static CarriedShadows shadows;
     return shadows;
+}
+
+std::shared_ptr<Buffer> peekCarriedBuffer(VkDevice device, std::uint64_t begin, std::uint64_t end) {
+    if (!carriedShadowsEnabled()) return nullptr;
+    auto& shadows = Carried();
+    std::lock_guard lock(shadows.mutex);
+    const auto found = shadows.entries.find({begin, end});
+    if (found == shadows.entries.end() || found->second.device != device || !found->second.readOnly) return nullptr;
+    return found->second.buffer;
 }
 
 void clearCarriedShadows(VkDevice device) {
@@ -7367,7 +7405,7 @@ std::shared_ptr<Buffer> takeCarriedShadow(const Context& context, const Recorder
         shadows.entries.erase(found);
     }
     const auto bytes = static_cast<std::size_t>(end - begin);
-    if (shadow.device != context.device || shadow.recorderId != recorder.Id() || shadow.note == 0 || recorder.NewestWriteNote(begin, bytes) != shadow.note) return nullptr;
+    if (shadow.device != context.device || shadow.recorderId != recorder.Id() || (shadow.note == 0 && !shadow.readOnly) || recorder.NewestWriteNote(begin, bytes) != shadow.note) return nullptr;
     if (shadow.importSerial == 0 || HostImportSerial(context, begin, bytes, false) != shadow.importSerial) return nullptr;
     static_cast<void>(GuestMemory::CollectWrites(begin, bytes));
     if (!GuestMemory::UnchangedSince(begin, bytes, shadow.generation)) return nullptr;
@@ -7385,7 +7423,7 @@ void GuestBufferMemory::NoteCarriedShadows(const Recorder& recorder) const {
     auto& shadows = Carried();
     std::uint64_t generation = 0;
     for (const auto& region : regions) {
-        if (!region.gpuCopy || !region.deviceLocal || !region.copiedBack || region.buffer == nullptr || region.sparse || region.mirror != nullptr || region.bufferEnd != 0) continue;
+        if (!region.gpuCopy || !region.deviceLocal || (!region.copiedBack && !readOnlyMirrored(region)) || region.buffer == nullptr || region.sparse || region.mirror != nullptr || region.bufferEnd != 0) continue;
         const auto bytes = region.end - region.begin;
         const auto serial = HostImportSerial(context, region.begin, static_cast<std::size_t>(bytes), false);
         if (serial == 0) continue;
@@ -7394,7 +7432,7 @@ void GuestBufferMemory::NoteCarriedShadows(const Recorder& recorder) const {
         std::lock_guard lock(shadows.mutex);
         auto [entry, inserted] = shadows.entries.try_emplace({region.begin, region.end});
         if (inserted) shadows.bytes += bytes;
-        entry->second = {region.buffer, context.device, recorder.Id(), serial, note, generation};
+        entry->second = {region.buffer, context.device, recorder.Id(), serial, note, generation, readOnlyMirrored(region)};
         if (shadows.entries.size() > CarriedShadows::MaxEntries || shadows.bytes > CarriedShadows::MaxBytes) {
             shadows.entries.clear();
             shadows.bytes = 0;
@@ -7435,6 +7473,8 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
     for (auto* region : copies) {
         const auto bytes = region->end - region->begin;
         copiedBytes += bytes;
+        const bool mirrored = readOnlyMirrored(*region);
+        std::shared_ptr<Buffer> carried;
         if (region->buffer == nullptr) {
             // Not made by UploadPrepare (the registry was stale then): made here, under the lock.
             const auto allocateStart = std::chrono::steady_clock::now();
@@ -7455,7 +7495,7 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
         std::shared_ptr<Buffer> inputSnapshot;
         auto copySource = region->copySource;
         auto copyOffset = region->begin - region->copySourceBase;
-        if (!pendingWriter && !writable) {
+        if (!pendingWriter && !writable && !(mirrored && region->deviceLocal)) {
             inputSnapshot = std::make_shared<Buffer>(context, static_cast<std::size_t>(bytes), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             std::memcpy(inputSnapshot->Bytes().data(), reinterpret_cast<const void*>(address), static_cast<std::size_t>(bytes));
             copySource = inputSnapshot->Handle();
@@ -7471,8 +7511,7 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
             }
         }
         recorder->Keep(region->buffer);
-        std::shared_ptr<Buffer> carried;
-        if (region->deviceLocal && inputSnapshot == nullptr && !region->sparse && region->mirror == nullptr && region->bufferEnd == 0) carried = takeCarriedShadow(context, *recorder, region->begin, region->end);
+        if (carried == nullptr && region->deviceLocal && inputSnapshot == nullptr && !region->sparse && region->mirror == nullptr && region->bufferEnd == 0) carried = takeCarriedShadow(context, *recorder, region->begin, region->end);
         if (carried != nullptr) {
             carriedShadowCopies.fetch_add(1, std::memory_order_relaxed);
             if (carried->Handle() != region->buffer->Handle()) {
@@ -8441,6 +8480,14 @@ bool HostImportsReconciledUnchanged(const Context& context, const HostImportsPro
 
 std::uint64_t RetiredImportSerial() {
     return retiredImports.load(std::memory_order_acquire);
+}
+
+void SetLiveShadowLimitForTests(std::uint64_t bytes) {
+    liveShadowLimitForTests.store(bytes, std::memory_order_relaxed);
+}
+
+void SetReadOnlyMirrorOnAnyGpuForTests(bool any) {
+    readOnlyMirrorAnyGpuForTests.store(any, std::memory_order_relaxed);
 }
 
 void SetDeviceLocalFullForTests(bool full) {
