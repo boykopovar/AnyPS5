@@ -12,39 +12,58 @@ inline std::u16string DecodeUtf8(const std::string& bytes) {
     std::size_t index = 0;
     while (index < bytes.size()) {
         const auto lead = static_cast<std::uint8_t>(bytes[index]);
-        std::size_t length = 1;
-        char32_t code = lead;
-        if (lead >= 0xC2 && lead <= 0xDF) {
+        if (lead < 0x80u) {
+            text.push_back(static_cast<char16_t>(lead));
+            ++index;
+            continue;
+        }
+        std::size_t length = 0;
+        char32_t code = 0;
+        std::uint8_t secondMin = 0x80u;
+        std::uint8_t secondMax = 0xBFu;
+        if (lead >= 0xC2u && lead <= 0xDFu) {
             length = 2;
             code = lead & 0x1Fu;
-        } else if (lead >= 0xE0 && lead <= 0xEF) {
+        } else if (lead >= 0xE0u && lead <= 0xEFu) {
             length = 3;
             code = lead & 0x0Fu;
-        } else if (lead >= 0xF0 && lead <= 0xF4) {
+            if (lead == 0xE0u) {
+                secondMin = 0xA0u;
+            } else if (lead == 0xEDu) {
+                secondMax = 0x9Fu;
+            }
+        } else if (lead >= 0xF0u && lead <= 0xF4u) {
             length = 4;
             code = lead & 0x07u;
-        } else if (lead >= 0x80) {
-            text.push_back(u'�');
+            if (lead == 0xF0u) {
+                secondMin = 0x90u;
+            } else if (lead == 0xF4u) {
+                secondMax = 0x8Fu;
+            }
+        } else {
+            text.push_back(u'\uFFFD');
             ++index;
             continue;
         }
-        bool valid = index + length <= bytes.size();
-        for (std::size_t follow = 1; valid && follow < length; ++follow) {
+        std::size_t follow = 1;
+        for (; follow < length && index + follow < bytes.size(); ++follow) {
             const auto next = static_cast<std::uint8_t>(bytes[index + follow]);
-            valid = (next & 0xC0u) == 0x80u;
+            const std::uint8_t minByte = follow == 1 ? secondMin : 0x80u;
+            const std::uint8_t maxByte = follow == 1 ? secondMax : 0xBFu;
+            if (next < minByte || next > maxByte) {
+                break;
+            }
             code = (code << 6) | (next & 0x3Fu);
         }
-        if (valid && length == 3 && (code < 0x800 || (code >= 0xD800 && code <= 0xDFFF))) valid = false;
-        if (valid && length == 4 && (code < 0x10000 || code > 0x10FFFF)) valid = false;
-        if (!valid) {
-            text.push_back(u'�');
-            ++index;
+        if (follow < length) {
+            text.push_back(u'\uFFFD');
+            index += follow;
             continue;
         }
-        if (code >= 0x10000) {
-            code -= 0x10000;
-            text.push_back(static_cast<char16_t>(0xD800 + (code >> 10)));
-            text.push_back(static_cast<char16_t>(0xDC00 + (code & 0x3FF)));
+        if (code >= 0x10000u) {
+            code -= 0x10000u;
+            text.push_back(static_cast<char16_t>(0xD800u + (code >> 10)));
+            text.push_back(static_cast<char16_t>(0xDC00u + (code & 0x3FFu)));
         } else {
             text.push_back(static_cast<char16_t>(code));
         }

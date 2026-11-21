@@ -25,6 +25,15 @@ int main() {
     Require(MsgDialog::DecodeUtf8("\xE0\x80\x80") == u"���", "an overlong three-byte sequence");
     Require(MsgDialog::DecodeUtf8("\xED\xA0\x80") == u"���", "an encoded surrogate");
     Require(MsgDialog::DecodeUtf8("\xF4\x90\x80\x80") == u"����", "a code point past U+10FFFF");
-    Require(MsgDialog::DecodeUtf8("a\xE2\x82") == u"a��", "a truncated sequence");
+    Require(MsgDialog::DecodeUtf8("a\xE2\x82") == u"a�", "a truncated sequence");
     Require(MsgDialog::DecodeUtf8("\xE2\x28\xA1") == u"�(�", "a broken continuation byte");
+    Require(MsgDialog::DecodeUtf8("\xE3\x81" "A") == u"\uFFFDA", "an interrupted three-byte sequence");
+    Require(MsgDialog::DecodeUtf8("\xF0\x9F") == u"\uFFFD", "a truncated two-byte prefix of a four-byte sequence");
+    Require(MsgDialog::DecodeUtf8("\xF0\x9F\x98") == u"\uFFFD", "a truncated three-byte prefix of a four-byte sequence");
+    Require(MsgDialog::DecodeUtf8("\xF0\x9F\x98" "Z") == u"\uFFFDZ", "an interrupted four-byte sequence");
+    Require(MsgDialog::DecodeUtf8("\xE0\xA0") == u"\uFFFD", "a truncated E0 sequence with a valid second byte");
+    Require(MsgDialog::DecodeUtf8("\xE3\x81\xE3\x81\x82") == u"\uFFFD\u3042", "a truncated three-byte sequence followed by a valid sequence");
+    Require(MsgDialog::DecodeUtf8("\xF0\x9F\x98" "\xE3\x81\x82") == u"\uFFFD\u3042", "a truncated four-byte sequence followed by a valid sequence");
+    Require(MsgDialog::DecodeUtf8("\xE0\x9F\x80") == u"\uFFFD\uFFFD\uFFFD", "an overlong E0 sequence below 0xA0");
+    Require(MsgDialog::DecodeUtf8("\xF0\x8F\x80\x80") == u"\uFFFD\uFFFD\uFFFD\uFFFD", "an overlong F0 sequence below 0x90");
 }
