@@ -23,7 +23,8 @@ std::size_t APS5_VABI WKStringGetCharacters(const void* stringRef, unsigned shor
     const auto* string = NKWebKit::Cast<NKWebKit::String>(stringRef, __func__);
     if (!buffer || bufferLength == 0) return 0;
     const std::size_t count = std::min(string->characters.size(), bufferLength);
-    std::memcpy(buffer, string->characters.data(), count * sizeof(char16_t));
+    if (!GuestCopyOut_nid_no_patch(buffer, string->characters.data(), count * sizeof(char16_t)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return count;
 }
 

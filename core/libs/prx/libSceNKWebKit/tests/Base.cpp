@@ -450,6 +450,16 @@ static void TestDictionary() {
     Require(WKArrayGetSize(allKeys) == 2);
     WKRelease(allKeys);
 
+    auto* k1Again = WKStringCreateWithUTF8CString("key1");
+    const void* repeatedKeys[] = { k1, k2, k1Again, k2 };
+    const void* repeatedVals[] = { v1, v2, v2, v1 };
+    auto* repeated = WKDictionaryCreate(repeatedKeys, repeatedVals, 4);
+    Require(WKDictionaryGetSize(repeated) == 2);
+    Require(WKDictionaryGetItemForKey(repeated, k1) == v1);
+    Require(WKDictionaryGetItemForKey(repeated, k2) == v2);
+    WKRelease(repeated);
+    WKRelease(k1Again);
+
     auto* mutDict = WKMutableDictionaryCreate();
     Require(WKDictionarySetItem(mutDict, k1, v1) == true);
     Require(WKDictionarySetItem(mutDict, k1, v2) == false);
