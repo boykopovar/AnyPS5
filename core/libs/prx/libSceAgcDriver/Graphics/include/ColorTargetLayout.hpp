@@ -26,11 +26,16 @@ enum class ColorTileMode : std::uint32_t {
     GcnDisplay1D = 0x101,
     GcnDisplay2D = 0x102,
     GcnThin2D = 0x103,
-    GcnLinear = 0x104
+    GcnLinear = 0x104,
+    GcnDisplayPrt = 0x105,
+    GcnDisplay2DPrt = 0x106,
+    GcnThinPrt = 0x107,
+    GcnThin2DPrt = 0x108
 };
 
 constexpr bool ColorTileModeIsGcn(ColorTileMode mode) {
-    return mode == ColorTileMode::GcnThin1D || mode == ColorTileMode::GcnDisplay1D || mode == ColorTileMode::GcnDisplay2D || mode == ColorTileMode::GcnThin2D || mode == ColorTileMode::GcnLinear;
+    return mode == ColorTileMode::GcnThin1D || mode == ColorTileMode::GcnDisplay1D || mode == ColorTileMode::GcnDisplay2D || mode == ColorTileMode::GcnThin2D || mode == ColorTileMode::GcnLinear
+        || mode == ColorTileMode::GcnDisplayPrt || mode == ColorTileMode::GcnDisplay2DPrt || mode == ColorTileMode::GcnThinPrt || mode == ColorTileMode::GcnThin2DPrt;
 }
 
 constexpr bool ColorTileModeIsLinear(ColorTileMode mode) {
@@ -50,6 +55,10 @@ constexpr TextureTileMode ColorTextureTileMode(ColorTileMode mode) {
     if (mode == ColorTileMode::GcnDisplay1D) return TextureTileMode::kGcnDisplay1D;
     if (mode == ColorTileMode::GcnDisplay2D) return TextureTileMode::kGcnDisplay2D;
     if (mode == ColorTileMode::GcnThin2D) return TextureTileMode::kGcnThin2D;
+    if (mode == ColorTileMode::GcnDisplayPrt) return TextureTileMode::kGcnDisplayPrt;
+    if (mode == ColorTileMode::GcnDisplay2DPrt) return TextureTileMode::kGcnDisplay2DPrt;
+    if (mode == ColorTileMode::GcnThinPrt) return TextureTileMode::kGcnThinPrt;
+    if (mode == ColorTileMode::GcnThin2DPrt) return TextureTileMode::kGcnThin2DPrt;
     return ColorTileModeIsLinear(mode) ? TextureTileMode::kLinear : mode == ColorTileMode::Standard4KB ? TextureTileMode::kStandard4KB : mode == ColorTileMode::Standard64KB ? TextureTileMode::kStandard64KB : mode == ColorTileMode::S4KBX ? TextureTileMode::kS4KBX : mode == ColorTileMode::D4KBX ? TextureTileMode::kD4KBX : mode == ColorTileMode::D64KBX ? TextureTileMode::kD64KBX : mode == ColorTileMode::Z64KBX ? TextureTileMode::kZ64KBX : TextureTileMode::kR64KBX;
 }
 
