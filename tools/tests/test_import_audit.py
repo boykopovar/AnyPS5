@@ -240,10 +240,10 @@ def build_macho(names, needed=(), trie_command=0x80000033):
         name = library.encode() + b"\0"
         size = (24 + len(name) + 7) // 8 * 8
         commands.append(struct.pack("<IIIIII", 0xc, size, 24, 2, 0, 0) + name.ljust(size - 24, b"\0"))
-    trie_size = 48 if trie_command == 0x80000022 else 16
+    trie_size = 16 if trie_command == 0x80000033 else 48
     size = sum(len(command) for command in commands) + trie_size
     data = 32 + size
-    if trie_command == 0x80000022:
+    if trie_size == 48:
         commands.append(struct.pack("<12I", trie_command, 48, 0, 0, 0, 0, 0, 0, 0, 0, data, len(trie)))
     else:
         commands.append(struct.pack("<IIII", trie_command, 16, data, len(trie)))
@@ -3594,12 +3594,22 @@ class ImportAuditTests(unittest.TestCase):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(build_macho(["AAAAAAAAAAA", "BBBBBBBBBBB#A#A"], ["@rpath/libkernel.prx", "/usr/lib/libSystem.B.dylib"]))
         (work.libs / "libSceB.prx").write_bytes(build_macho(["AAAAAAAAAAA"], trie_command=0x80000022))
+        (work.libs / "libSceC.prx").write_bytes(build_macho(["CCCCCCCCCCC#A#A"], trie_command=0x22))
         exports, libraries = import_audit.built_libraries([work.libs])
-        self.assertEqual(exports, {"AAAAAAAAAAA": ["libSceA.prx", "libSceB.prx"], "BBBBBBBBBBB": ["libSceA.prx"]})
-        self.assertEqual(libraries, {"libSceA.prx", "libSceB.prx"})
+        self.assertEqual(exports, {"AAAAAAAAAAA": ["libSceA.prx", "libSceB.prx"], "BBBBBBBBBBB": ["libSceA.prx"],
+                                   "CCCCCCCCCCC": ["libSceC.prx"]})
+        self.assertEqual(libraries, {"libSceA.prx", "libSceB.prx", "libSceC.prx"})
         direct, windows = import_audit.built_host_dependencies([work.libs])
-        self.assertEqual(direct, {"libSceA.prx": ["libkernel.prx"], "libSceB.prx": []})
+        self.assertEqual(direct, {"libSceA.prx": ["libkernel.prx"], "libSceB.prx": [], "libSceC.prx": []})
         self.assertEqual(windows, set())
+
+    def test_macho_export_range_must_be_in_its_load_command(self):
+        for command, length in ((0x22, 40), (0x80000022, 40), (0x80000033, 8)):
+            with self.subTest(command=command):
+                image = bytearray(build_macho(["AAAAAAAAAAA"], trie_command=command))
+                struct.pack_into("<I", image, 36, length)
+                with self.assertRaisesRegex(import_audit.AuditError, "Mach-O.*command"):
+                    import_audit.read_exports(self.work.libs / "short.prx", bytes(image))
 
     def test_malformed_macho_export_tries_are_audit_errors(self):
         path = self.work.libs / "libSceA.prx"

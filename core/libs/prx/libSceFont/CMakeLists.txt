@@ -2,6 +2,12 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/FontLibrary.cmake)
 add_sce_font_library(libSceFont)
 
 if(BUILD_TESTING)
+    add_test_executable(font_float_conversion_tests ${LIBS_INCLUDE_DIR}/tests/FontFloatConversion.cpp)
+    target_include_directories(font_float_conversion_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(font_float_conversion_tests PRIVATE freetype)
+    configure_host_test_executable(font_float_conversion_tests)
+    add_test(NAME font_float_conversion COMMAND font_float_conversion_tests)
+
     add_test_executable(guest_font_interface_contracts_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontInterfaceContracts.cpp)
     target_include_directories(guest_font_interface_contracts_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_font_interface_contracts_tests PRIVATE libSceFont libc)

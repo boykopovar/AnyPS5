@@ -1,9 +1,12 @@
+import io
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 TOOL = Path(__file__).resolve().parents[1] / "memory_trace_address.py"
 if TOOL.is_file():
@@ -51,6 +54,24 @@ class ParseTests(FeatureRequired):
     def test_ignores_unknown_operations_and_lines_without_the_prefix(self):
         self.assertEqual(trace.parse_events(["[memory] unmapped 0x1+0x1\n", "map anon 0x1+0x1\n",
                                              "[memory]map anon 0x1+0x1\n"]), [])
+
+    def test_reads_events_on_demand_and_reports_late_errors(self):
+        events = trace.iter_events(["[memory] unmap 0x10+0x20", "[memory] protect truncated"])
+        self.assertEqual(next(events).operation, "unmap")
+        with self.assertRaisesRegex(ValueError, "line 2: protect event has no address range"):
+            next(events)
+
+    def test_parses_a_null_pointer_printed_by_glibc(self):
+        events = trace.parse_events([
+            "[memory] unmap (nil)+0x1000\n",
+            "[memory] protect (nil)+0x2000 prot=0x1\n",
+            "[memory] map anon 0x4000+0x1000 prot=0x3 flags=0x0\n",
+        ])
+        self.assertEqual([(event.line, event.operation, event.address, event.size) for event in events], [
+            (1, "unmap", 0, 0x1000),
+            (2, "protect", 0, 0x2000),
+            (3, "map anon", 0x4000, 0x1000),
+        ])
 
     def test_rejects_a_truncated_mapping_event(self):
         with self.assertRaisesRegex(ValueError, "line 1: protect event has no address range"):
@@ -106,6 +127,16 @@ class SelectionTests(FeatureRequired):
 
 
 class CliTests(FeatureRequired):
+    def test_cli_streams_the_trace_when_limiting_matches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.log"
+            path.write_text("[memory] protect 0x1000+0x10\n[memory] unmap 0x1000+0x10\n", encoding="utf-8")
+            output = io.StringIO()
+            with patch.object(trace, "parse_events", side_effect=AssertionError("eager parse")), redirect_stdout(output):
+                self.assertEqual(trace.main([str(path), "--address", "0x1000", "--limit", "1"]), 0)
+            self.assertEqual(output.getvalue().splitlines()[1:],
+                             ["Showing the last 1 of 2 matching events.", "line 2: unmap 0x1000+0x10"])
+
     def test_cli_prints_only_operations_overlapping_the_requested_range(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "run.log"
@@ -119,6 +150,18 @@ class CliTests(FeatureRequired):
             self.assertNotIn("protect", result.stdout)
             self.assertNotIn("allocate physical", result.stdout)
 
+    def test_cli_ignores_empty_ranges_when_limiting_matches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.log"
+            path.write_text("[memory] map anon 0x2000+0x1000 prot=0x3 flags=0x0\n"
+                            "[memory] protect 0x2100+0x0 prot=0x1\n"
+                            "[memory] unmap 0x2200+0x0\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), str(path), "--address", "0x1000",
+                                     "--length", "0x2000", "--limit", "1"],
+                                    capture_output=True, text=True, encoding="utf-8", timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.splitlines()[1:], ["line 1: map anon 0x2000+0x1000 prot=0x3 flags=0x0"])
+
     def test_cli_reads_a_first_line_event_after_a_utf8_bom(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "run.log"
@@ -128,6 +171,17 @@ class CliTests(FeatureRequired):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("line 1: map anon 0x1000+0x1000", result.stdout)
             self.assertNotIn("No traced mapping operations", result.stdout)
+
+    def test_cli_reads_a_first_line_event_in_a_utf16_trace(self):
+        line = "[memory] map anon 0x1000+0x1000 prot=0x3\r\n"
+        for encoding, bom in (("utf-16-le", b"\xff\xfe"), ("utf-16-be", b"\xfe\xff")):
+            with self.subTest(encoding=encoding), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "run.log"
+                path.write_bytes(bom + line.encode(encoding))
+                result = subprocess.run([sys.executable, str(TOOL), str(path), "--address", "0x1800"],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("line 1: map anon 0x1000+0x1000", result.stdout)
 
     def test_cli_reports_a_non_ascii_trace_path_as_utf8(self):
         with tempfile.TemporaryDirectory() as directory:

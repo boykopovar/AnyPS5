@@ -620,6 +620,15 @@ class PreparationTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
 
+    def test_reset_work_removes_a_read_only_file(self):
+        work = self.root / "work"
+        (work / "cert_cache").mkdir(parents=True)
+        cached = work / "cert_cache" / "CA_LIST.cer"
+        cached.write_bytes(b"list")
+        cached.chmod(stat.S_IREAD)
+        title_run.reset_work(work)
+        self.assertEqual(list(work.iterdir()), [])
+
     def test_a_running_title_is_left_alone(self):
         package(self.root / "games/PPSA00001", "PPSA00001")
         out = self.root / "out"
@@ -912,6 +921,7 @@ class PreparationTests(unittest.TestCase):
         source = package(self.root / "pkg", "PPSA00001")
         (source / "id1").mkdir()
         (source / "id1/autoexec.cfg").write_text("old\n", encoding="utf-8")
+        (source / "id1/pak0.pak").write_bytes(b"bundled data")
         work = self.root / "work"
         title_run.link_tree(source, work / "app0", {"sce_module"})
         content = self.root / "content"
@@ -923,8 +933,26 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual((work / "app0/id1/autoexec.cfg").read_bytes(), b"r_rtshadows 0\n")
         self.assertEqual((source / "id1/autoexec.cfg").read_text(encoding="utf-8"), "old\n")
         self.assertEqual((work / "app0/id1/pak0.pak").read_bytes(), b"PACK")
+        self.assertEqual((source / "id1/pak0.pak").read_bytes(), b"bundled data")
         self.assertFalse((work / "data/media/clip.mp4").exists())
-        self.assertEqual(title_run.stage_files({"app0/id1/pak0.pak": {"content": "quake/pak0.pak"}}, work, None), ["quake/pak0.pak"])
+
+    def test_missing_external_content_preserves_the_staged_package_file(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        (source / "id1").mkdir()
+        (source / "id1/pak0.pak").write_bytes(b"bundled data")
+        content = self.root / "content"
+        content.mkdir()
+        files = {"app0/id1/pak0.pak": {"content": "quake/pak0.pak"},
+                 "data/clip.mp4": {"content": "media/clip.mp4"}}
+        for index, content_dir in enumerate((None, content)):
+            with self.subTest(content=content_dir):
+                work = self.root / f"work-{index}"
+                title_run.link_tree(source, work / "app0", {"sce_module"})
+                missing = title_run.stage_files(files, work, content_dir)
+                target = work / "app0/id1/pak0.pak"
+                self.assertTrue(target.is_file(), "the run must retain the package's data file")
+                self.assertEqual(target.read_bytes(), b"bundled data")
+                self.assertEqual(missing, ["media/clip.mp4"])
 
     def test_a_non_ascii_title_name_is_reported_as_utf8(self):
         package(self.root / "games/PPSA00001", "PPSA00001", name="テスト")
@@ -938,6 +966,32 @@ class PreparationTests(unittest.TestCase):
         stdout = done.stdout.decode("utf-8")
         self.assertIn("| テスト | PPSA00001 |", stdout)
         self.assertIn(f"written to {out.resolve()}", stdout)
+
+    def test_repeated_title_ids_run_once_in_request_order(self):
+        first, second = "PPSA00002", "PPSA00001"
+        games = self.root / "games"
+        out = self.root / "out"
+        for title_id in (first, second):
+            package(games / title_id, title_id)
+
+        def prepare(title_id, found, entry, platform, build, work):
+            (work / "relink.log").write_text("", encoding="utf-8")
+            return work / title_id
+
+        with patch.object(title_run, "prepare", side_effect=prepare) as prepared, \
+                patch.object(title_run, "Session") as session, patch("sys.stdout"):
+            session.return_value.alive.return_value = False
+            session.return_value.exit_code.return_value = 0
+            result = title_run.main(["--games", str(games), "--out", str(out), "--runs", "2", first, second, first])
+
+        self.assertEqual(result, 0)
+        self.assertEqual([call.args[0] for call in prepared.call_args_list], [first, second])
+        self.assertEqual(session.call_count, 4)
+        [report] = out.glob("*/summary.json")
+        self.assertTrue(report.with_suffix(".md").is_file())
+        titles = json.loads(report.read_text(encoding="utf-8"))["titles"]
+        self.assertEqual({title_id: [run["cache"] for run in title["runs"]] for title_id, title in titles.items()},
+                         {first: ["cold", "warm"], second: ["cold", "warm"]})
 
     def test_json_comparison_is_the_only_output_on_stdout(self):
         package(self.root / "games/PPSA00001", "PPSA00001")
@@ -1706,6 +1760,16 @@ class CollectFramesTests(unittest.TestCase):
             destination = Path(directory) / "frames"
             self.assertEqual(title_run.collect_frames(Path(directory), destination), [])
             self.assertTrue(destination.is_dir())
+
+    def test_only_collects_numbered_bitmap_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            for name in ("frame_005.bmp", "frame_preview.bmp", "frame_5_preview.bmp"):
+                (work / name).write_bytes(b"x")
+            (work / "frame_006.bmp").mkdir()
+            self.assertEqual(title_run.collect_frames(work, work / "out"), ["frame_005.bmp"])
+            self.assertEqual(sorted(path.name for path in work.iterdir()),
+                             ["frame_006.bmp", "frame_5_preview.bmp", "frame_preview.bmp", "out"])
 
     def test_single_frame_is_kept(self):
         with tempfile.TemporaryDirectory() as directory:
