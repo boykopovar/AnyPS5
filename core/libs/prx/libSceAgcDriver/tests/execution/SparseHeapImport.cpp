@@ -57,7 +57,7 @@ public:
 #ifdef _WIN32
         block = static_cast<std::uint32_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 #else
-        block = static_cast<std::uint32_t*>(std::aligned_alloc(Block, bytes));
+        block = static_cast<std::uint32_t*>(std::aligned_alloc(Block, (bytes + Block - 1) / Block * Block));
 #endif
         Require(block != nullptr, "sparse heap import: cannot allocate the output block");
         GuestAllocations::Mutation().Add(block, bytes, true, true, true);
