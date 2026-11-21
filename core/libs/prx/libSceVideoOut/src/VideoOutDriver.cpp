@@ -5,6 +5,7 @@
 #include <cstring>
 #include <cstdio>
 #include <exception>
+#include <memory>
 #include <thread>
 #include <limits>
 #include <optional>
@@ -827,12 +828,9 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             const bool quit = OnMainThread([&] {
                 SDL_Event event;
                 while (SDL_PollEvent(&event)) {
+                    const std::unique_ptr<char, decltype(&SDL_free)> extendedText(event.type == SDL_TEXTEDITING_EXT ? event.editExt.text : nullptr, SDL_free);
                     if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE) windowCloseSeen = true;
                     if (event.type == SDL_QUIT) return true;
-                    if (event.type == SDL_TEXTEDITING_EXT && window.Handle() == nullptr) {
-                        SDL_free(event.editExt.text);
-                        continue;
-                    }
                     const bool padOwnedMouse = padInput->MouseModeEnabled();
                     padInput->HandleEvent(event, window);
                     if (window.Handle() != nullptr) {

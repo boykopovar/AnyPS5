@@ -2,7 +2,6 @@
 #include "prx/libSceIme/include/ImeInput.hpp"
 
 #include <cstring>
-#include <memory>
 
 #include "SDL_keyboard.h"
 
@@ -25,12 +24,10 @@ bool IsPasteShortcut(const SDL_KeyboardEvent& key) {
 void ImeTextInput::HandleEvent(const SDL_Event& event, unsigned windowId) {
     ImeHostInput input{};
     switch (event.type) {
-        case SDL_TEXTEDITING_EXT: {
-            const std::unique_ptr<char, decltype(&SDL_free)> text(event.editExt.text, SDL_free);
-            if (event.editExt.windowID != windowId || text == nullptr) return;
-            ImePublishPreedit_nid_postfix(text.get(), std::strlen(text.get()), event.editExt.start, event.editExt.length);
+        case SDL_TEXTEDITING_EXT:
+            if (event.editExt.windowID != windowId || event.editExt.text == nullptr) return;
+            ImePublishPreedit_nid_postfix(event.editExt.text, std::strlen(event.editExt.text), event.editExt.start, event.editExt.length);
             return;
-        }
         case SDL_TEXTEDITING:
             if (event.edit.windowID != windowId) return;
             static_assert(sizeof(input.text) >= sizeof(event.edit.text));
