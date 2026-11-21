@@ -193,6 +193,34 @@ void ShutdownJoinsDrawFinisher() {
     Require(DrawFinisher::Finishers() == 0, "a draw finished after the shutdown started a draw finisher");
 }
 
+void StoppingFromTheDrawFinisherRunsItsQueue() {
+    using namespace AgcDriver::DriverDetail;
+    auto& finisher = DrawFinisher::Get();
+    const auto caller = std::this_thread::get_id();
+    std::promise<void> gate;
+    auto opened = gate.get_future().share();
+    std::thread::id stoppedOn;
+    std::thread::id queuedOn;
+    finisher.Enqueue([&stoppedOn, &finisher, opened] {
+        opened.wait();
+        stoppedOn = std::this_thread::get_id();
+        finisher.Stop();
+    });
+    finisher.Enqueue([&] { queuedOn = std::this_thread::get_id(); });
+    gate.set_value();
+    finisher.Drain();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (DrawFinisher::Finishers() != 0 && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(stoppedOn != std::thread::id{} && stoppedOn != caller, "the stopping draw ran on the caller instead of the draw finisher");
+    Require(queuedOn == stoppedOn, "a draw queued before the finisher stopped itself did not run on the finisher");
+    Require(DrawFinisher::Finishers() == 0, "a draw finisher that stopped itself kept running after its queue emptied");
+    bool ranHere = false;
+    finisher.Enqueue([&] { ranHere = std::this_thread::get_id() == caller; });
+    Require(ranHere, "a draw finished after the finisher stopped itself ran on another thread");
+    finisher.Stop();
+    Require(DrawFinisher::Finishers() == 0, "a draw finished after the finisher stopped itself started a draw finisher");
+}
+
 void ShutdownJoinsShaderCacheWriter(bool lateInitialization = false) {
     namespace Cache = ShaderRecompiler::ShaderDiskCache;
     const auto directory = std::filesystem::temp_directory_path() / ("aps5-shutdown-shader-cache-" + std::to_string(std::random_device{}()));
@@ -244,6 +272,7 @@ int main(int argc, char** argv) {
         else if (mode == "--compare-helpers") StoppingJoinsCompareHelpers();
         else if (mode == "--draw-committer") ShutdownJoinsDrawCommitter();
         else if (mode == "--draw-finisher") ShutdownJoinsDrawFinisher();
+        else if (mode == "--draw-finisher-self-stop") StoppingFromTheDrawFinisherRunsItsQueue();
         else if (mode == "--shader-cache-writer") ShutdownJoinsShaderCacheWriter();
         else if (mode == "--late-shader-cache") ShutdownJoinsShaderCacheWriter(true);
         else if (mode == "--async-log-held") ShutdownPassesHeldAsyncLog();
