@@ -819,7 +819,12 @@ static void TestVerify() {
     for (const auto& parameter : {Bytes {0x04, 0x00}, Bytes {0x05, 0x01, 0x00}, Bytes {0x30, 0x00}, Bytes {0x80, 0x00}, Bytes {0x01, 0x01, 0x00}, Concat({Null, Null})})
         Require(Verify(DigestSha256, digest, Sign(DigestInfo(sha256, parameter, digest)), rsa) == 0);
     const auto algorithm = Encode(0x30, Concat({Encode(0x06, sha256), Null}));
-    Require(Verify(DigestSha256, digest, Sign(Concat({DigestInfo(sha256, Null, digest), {0x00}})), rsa) == 0);
+    for (const auto& excess : {Bytes {0x00}, Bytes {0x05, 0x00}, Bytes(8, 0xFF)}) {
+        ERR_clear_error_nid_postfix();
+        Require(Verify(DigestSha256, digest, Sign(Concat({DigestInfo(sha256, Null, digest), excess})), rsa) == 0);
+        Require(ERR_get_error_nid_postfix() == 0x04fff068);
+        Require(ERR_get_error_nid_postfix() == 0);
+    }
     Require(Verify(DigestSha256, digest, Sign(Encode(0x30, Concat({algorithm, Encode(0x04, digest), Null}))), rsa) == 0);
     Require(Verify(DigestSha256, digest, Sign(Encode(0x30, algorithm)), rsa) == 0);
     Require(Verify(DigestSha256, digest, Sign(Encode(0x30, Concat({algorithm, Encode(0x03, digest)}))), rsa) == 0);

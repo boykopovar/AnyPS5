@@ -79,6 +79,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (device->Target().subgroupSize != 32u) {
+            std::printf("skipped, the faulting wave64 case needs 32-lane subgroups, device reports %u\n", device->Target().subgroupSize);
+            return VulkanTestSkipped;
+        }
         GuestBlock guest;
         for (std::uint32_t lane = 0; lane < Threads; ++lane) {
             guest.At(lane * 4u) = Passes(lane);

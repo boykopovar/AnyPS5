@@ -117,6 +117,15 @@ void CheckBadVariantAccess() {
     Require(releases == 1 && lastReleased == allocated, "bad_variant_access D0 releases the object through operator delete");
 }
 
+void CheckBadException() {
+    auto* allocated = static_cast<LibcException::ExceptionObject*>(_Znwm_nid_postfix(sizeof(void*)));
+    allocated->vtable = &_ZTVSt18bad_variant_access_nid_postfix[2];
+    releases = 0;
+    lastReleased = nullptr;
+    _ZNSt13bad_exceptionD0Ev_nid_postfix(allocated);
+    Require(releases == 1 && lastReleased == allocated, "bad_exception D0 releases the object through operator delete");
+}
+
 TypeRecord Named(const char* name) {
     return {_ZTISt9exception_nid_postfix.vtable, name, nullptr};
 }
@@ -220,6 +229,7 @@ int main() {
 
     CheckCategories();
     CheckBadVariantAccess();
+    CheckBadException();
     CheckOverflow();
     CheckMutex();
     CheckErrno();

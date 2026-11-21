@@ -189,8 +189,8 @@ void TestTypePredicates() {
     Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("image/svg+xml")));
     Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("application/json")));
     Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("application/javascript")));
-    Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("application/x-ftp-directory")));
-    Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("APPLICATION/X-FTP-DIRECTORY")));
+    Require(!_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("application/x-ftp-directory")));
+    Require(!_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("APPLICATION/X-FTP-DIRECTORY")));
     Require(_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("multipart/x-mixed-replace")));
     Require(!_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("application/pdf")));
     Require(!_ZN7WebCore16MIMETypeRegistry27isSupportedNonImageMIMETypeERKN3WTF6StringE(MakeString("image/png")));
@@ -301,6 +301,33 @@ void TestAllowedAndEncoding() {
     Require(Contains(combinedMimes, "image/jpeg"));
     Require(_ZN7WebCore16MIMETypeRegistry32containsImageMIMETypeForEncodingERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEES8_(sampleMimes, emptyExts));
     Require(Equals(_ZN7WebCore16MIMETypeRegistry33preferredImageMIMETypeForEncodingERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEES8_(sampleMimes, emptyExts), "image/png"));
+
+    const auto units = [](const String& value) {
+        std::u16string text;
+        if (!value.impl) return text;
+        for (unsigned i = 0; i < value.impl->length; ++i)
+            text.push_back((value.impl->hashAndFlags & 4) ? static_cast<const unsigned char*>(value.impl->data)[i] : static_cast<const char16_t*>(value.impl->data)[i]);
+        return text;
+    };
+    Vector<String> accentedMimes;
+    accentedMimes.append(MakeString("A/\xC3\x89t\xC3\xA9"));
+    accentedMimes.append(MakeString("a/\xC3\xA8"));
+    accentedMimes.append(MakeString(nullptr));
+    accentedMimes.append(MakeString("a/\xC3\x89T\xC3\xA9"));
+    accentedMimes.append(MakeString("a/\xE2\x82\xAC"));
+    accentedMimes.append(MakeString(""));
+    accentedMimes.append(MakeString(nullptr));
+    accentedMimes.append(MakeString("a/\xC3\xA9t\xC3\xA9"));
+    auto accented = _ZN7WebCore16MIMETypeRegistry16allowedMIMETypesERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEES8_(accentedMimes, sampleExts);
+    Require(accented.size == 8);
+    Require(units(accented[0]) == u"a/\u00C9t\u00E9");
+    Require(units(accented[1]) == u"a/\u00E8");
+    Require(!accented[2].impl);
+    Require(units(accented[3]) == u"a/\u20AC");
+    Require(accented[4].impl && !accented[4].impl->length);
+    Require(units(accented[5]) == u"a/\u00E9t\u00E9");
+    Require(Equals(accented[6], "image/png"));
+    Require(Equals(accented[7], "text/html"));
 
     Vector<String> nonPngMimes;
     nonPngMimes.append(MakeString("image/jpeg"));
@@ -449,8 +476,6 @@ void TestCanShowMIMEType() {
     Require(canShow(MakeString("application/xhtml+xml")));
     Require(canShow(MakeString("application/javascript")));
     Require(canShow(MakeString("application/ecmascript")));
-    Require(canShow(MakeString("application/x-ftp-directory")));
-    Require(canShow(MakeString("APPLICATION/X-FTP-DIRECTORY")));
     Require(canShow(MakeString("text/javascript")));
     Require(canShow(MakeString("application/json")));
     Require(canShow(MakeString("application/vnd.api+json")));
@@ -464,6 +489,7 @@ void TestCanShowMIMEType() {
     Require(!canShow(MakeString(nullptr)));
     RequireThrowsNotImplemented([&] { (void)canShow(MakeString("video/mp4")); });
     RequireThrowsNotImplemented([&] { (void)canShow(MakeString("application/octet-stream")); });
+    RequireThrowsNotImplemented([&] { (void)canShow(MakeString("application/x-ftp-directory")); });
     RequireThrowsNotImplemented([&] { (void)canShow(MakeString("application/x-mpegurl")); });
 }
 
