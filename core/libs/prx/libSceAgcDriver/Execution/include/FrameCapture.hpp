@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <list>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -79,13 +81,22 @@ public:
     static constexpr std::string_view CallsName = "calls.bin";
     static constexpr std::string_view MemoryName = "memory.bin";
     static constexpr std::string_view HeaderName = "capture.json";
-    static constexpr std::string_view CallsMagic = "aps5-frame-calls 2\n";
+    static constexpr std::string_view CallsMagic = "aps5-frame-calls 3\n";
+    static constexpr std::string_view CallsMagicV2 = "aps5-frame-calls 2\n";
     static constexpr std::string_view CallsMagicV1 = "aps5-frame-calls 1\n";
-    static constexpr std::string_view MemoryMagic = "aps5-frame-memory 1\n";
+    static constexpr std::string_view MemoryMagic = "aps5-frame-memory 2\n";
+    static constexpr std::string_view MemoryMagicV1 = "aps5-frame-memory 1\n";
     static constexpr std::size_t BlockBytes = 64u * 1024u;
     static constexpr std::size_t ChunkBytes = 4u * 1024u * 1024u;
+    static constexpr std::uint64_t CachedDeltaBytes = 512u * 1024u * 1024u;
 
-    explicit FrameCaptureWriter(const std::filesystem::path& directory, int level = 1);
+    struct DeltaCosts {
+        std::uint64_t compared = 0;
+        std::uint64_t evicted = 0;
+        double compareSeconds = 0;
+    };
+
+    explicit FrameCaptureWriter(const std::filesystem::path& directory, int level = 1, std::uint64_t cacheBudget = CachedDeltaBytes);
     FrameCaptureWriter(const FrameCaptureWriter&) = delete;
     FrameCaptureWriter& operator=(const FrameCaptureWriter&) = delete;
 
@@ -98,11 +109,22 @@ public:
 
     std::uint64_t RawBytes() const;
     std::uint64_t StoredBytes() const;
+    std::uint64_t SharedBytes() const;
+    DeltaCosts Costs() const;
     const std::filesystem::path& Directory() const;
 
 private:
-    void writeChunk(const FrameMemoryChunk& chunk, std::span<const std::byte> payload);
+    using DeltaKey = std::pair<std::uint64_t, std::uint64_t>;
+    struct DeltaPayload {
+        std::uint64_t offset = 0;
+        std::uint64_t compressedBytes = 0;
+        std::shared_ptr<const std::vector<std::byte>> bytes;
+        std::list<DeltaKey>::iterator use;
+    };
+
+    std::uint64_t writeChunk(const FrameMemoryChunk& chunk, std::span<const std::byte> payload, std::uint64_t sharedOffset = 0);
     std::vector<std::byte> compress(std::span<const std::byte> bytes) const;
+    void cacheDelta(const DeltaKey& key, std::uint64_t offset, std::uint64_t compressedBytes, std::shared_ptr<const std::vector<std::byte>> bytes);
 
     std::filesystem::path directory;
     int level;
@@ -111,6 +133,13 @@ private:
     std::ofstream memory;
     std::uint64_t rawBytes = 0;
     std::uint64_t storedBytes = 0;
+    std::uint64_t sharedBytes = 0;
+    std::uint64_t cacheBudget = CachedDeltaBytes;
+    std::uint64_t cachedBytes = 0;
+    DeltaCosts costs;
+    std::uint64_t memoryOffset = 0;
+    std::map<DeltaKey, DeltaPayload> deltaPayloads;
+    std::list<DeltaKey> deltaUses;
     bool finished = false;
 };
 
@@ -139,7 +168,7 @@ private:
     std::vector<FrameCall> calls;
     std::vector<FrameMemoryChunk> chunks;
     std::string header;
-    std::uint32_t version = 2;
+    std::uint32_t version = 3;
     bool truncated = false;
 };
 

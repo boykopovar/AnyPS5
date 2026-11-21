@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <limits>
@@ -572,6 +573,57 @@ void testGpuWriteBeforeDelta(const std::filesystem::path& directory) {
     if (stale != replayed.end()) throw std::runtime_error("the replay restored a memory delta while a GPU write over its range was still pending, and the next read landed that write over it: the page holds byte " + std::to_string(static_cast<int>(*stale)) + ", not the 0 the capture recorded after the write");
 }
 
+void testUnwrittenDeltaBesideBusyQueue(const std::filesystem::path& directory) {
+    auto* block = allocate(1u << 20);
+    std::fill_n(block, 1u << 20, std::byte{0});
+    auto* commands = reinterpret_cast<std::uint32_t*>(block);
+    auto* gate = reinterpret_cast<std::uint32_t*>(block + 4096);
+    auto* done = gate + 1;
+    const auto low = [](const void* pointer) { return static_cast<std::uint32_t>(address(pointer)); };
+    const auto high = [](const void* pointer) { return static_cast<std::uint32_t>(address(pointer) >> 32u); };
+    const std::array<std::uint32_t, 12> words{0xc0053c00u, 0x13u, low(gate), high(gate), 1u, 0xffffffffu, 4u, 0xc0033700u, 0x00100200u, low(done), high(done), 1u};
+    std::memcpy(commands, words.data(), sizeof(words));
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    Packet packet{commands, static_cast<std::uint32_t>(words.size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "the gated label write was not submitted");
+    const auto parked = [&] {
+        std::array<AgcDriver::AwaitedWait, 8> waits{};
+        const auto count = AgcDriverAwaitedWaits_nid_postfix(waits.data(), waits.size());
+        return std::any_of(waits.begin(), waits.begin() + static_cast<std::ptrdiff_t>(count), [&](const auto& wait) { return wait.address == address(gate); });
+    };
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!parked()) {
+        check(std::chrono::steady_clock::now() < deadline, "the queue never waited on its gate");
+        std::this_thread::yield();
+    }
+    struct ActiveRecorder {
+        std::unique_ptr<AgcDriver::Graphics::Recorder> recorder;
+        void reset() {
+            AgcDriver::GuestMemory::SetFlushHook(nullptr);
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            recorder.reset();
+        }
+        ~ActiveRecorder() { reset(); }
+    } active{std::make_unique<AgcDriver::Graphics::Recorder>(mockContext())};
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        active.recorder->Activate();
+        active.recorder->NotePendingWrite(address(gate), sizeof(std::uint32_t));
+    }
+    AgcDriver::GuestMemory::SetFlushHook([](std::uint64_t, std::size_t) {});
+    check(!AgcDriverSettled_nid_postfix(), "the queue counts as waiting on the title while a GPU write over its gate is pending, so the test cannot tell whether a delta waits for it");
+    recorder->Suspend([] {});
+    active.reset();
+    std::atomic_ref<std::uint32_t>(*gate).store(1, std::memory_order_release);
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(*done).load(std::memory_order_acquire) == 1, "the queue did not pass its gate");
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    check(reader.Header().find("neither finished nor waited") == std::string::npos, "a memory delta with no written or unwatched block waited for GPU work it would not read, and the capture stopped");
+}
+
 void testVersionOneRefused(const std::filesystem::path& directory) {
     constexpr std::size_t Size = FrameCaptureWriter::BlockBytes;
     constexpr std::string_view VersionOne = "aps5-frame-calls 1\n";
@@ -601,6 +653,90 @@ void testVersionOneRefused(const std::filesystem::path& directory) {
     check(!refusal.empty(), "the replay restored a calls format 1 capture, which does not record whether GPU writes had landed before its memory deltas were read");
     if (refusal.find("record the capture again") == std::string::npos) throw std::runtime_error("the calls format 1 capture was refused for another reason: " + refusal);
     check(std::all_of(bytes, bytes + Size, [](std::byte value) { return value == std::byte{0x55}; }), "the replay restored memory before refusing the calls format 1 capture");
+}
+
+void testMergedBlocks() {
+    using Blocks = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
+    Blocks aligned{{0x20000, 0x30000}, {0x10000, 0x20000}, {0x18000, 0x28000}, {0x30000, 0x40000}};
+    AgcDriver::FrameRecorder::MergeOverlappingBlocks(aligned);
+    check(aligned == Blocks{{0x10000, 0x30000}, {0x30000, 0x40000}}, "aligned overlapping blocks are not merged into their union, or touching blocks are");
+    Blocks unaligned{{0x10000, 0x20000}, {0x1fffe, 0x20006}, {0x20002, 0x20010}, {0x20004, 0x20008}};
+    AgcDriver::FrameRecorder::MergeOverlappingBlocks(unaligned);
+    check(unaligned == Blocks{{0x10000, 0x20000}, {0x1fffe, 0x20006}, {0x20002, 0x20010}, {0x20004, 0x20008}}, "a block with an unaligned edge was merged, so its GPU-stored words would be kept whole");
+}
+
+void testForgottenUnwatchedHashes() {
+    constexpr std::uint64_t Block = FrameCaptureWriter::BlockBytes;
+    const std::pair<std::uint64_t, std::uint64_t> sample{0x1234, 7};
+    AgcDriver::FrameRecorder::UnwatchedHashes hashes;
+    hashes.Keep(0x100000, Block, sample);
+    hashes.Keep(0x100000 + Block, Block / 2 + 2 * Block, sample);
+    hashes.Keep(0x100000 + 4 * Block, Block, sample);
+    hashes.Forget(0x100000 + 3 * Block + 0x4000, 0x100000 + 3 * Block + 0x5000);
+    check(!hashes.samples.contains({0x100000 + Block, Block / 2 + 2 * Block}), "a store into the tail of a merged unwatched block longer than a capture block left its hash, so an unchanged later sample would skip the store");
+    check(hashes.samples.contains({0x100000, Block}) && hashes.samples.contains({0x100000 + 4 * Block, Block}), "a store forgot hashes of unwatched blocks it does not touch");
+    hashes.Forget(0x100000 + 4 * Block - 1, 0x100000 + 4 * Block);
+    check(hashes.samples.contains({0x100000 + 4 * Block, Block}), "a store just before an unwatched block forgot its hash");
+    hashes.Forget(0x100000 + Block - 1, 0x100000 + Block);
+    check(!hashes.samples.contains({0x100000, Block}), "a store into the last byte of an unwatched block left its hash");
+}
+
+void testCapturedSpans() {
+    constexpr std::uint64_t Page = AgcDriver::FrameRecorder::HostPageBytes;
+    constexpr std::uint64_t Base = 0x7f0000000000;
+    AgcDriver::FrameRecorder::CapturedSpans captured;
+    captured.Add(Base, Base + 3 * Page);
+    captured.Add(Base + Page + 0x100, Base + Page + 0x200);
+    captured.Add(Base + 4 * Page - 0x80, Base + 4 * Page + 0x80);
+    captured.Add(Base + 4 * Page, Base + 5 * Page);
+    captured.Add(Base + 7 * Page, Base + 8 * Page);
+    captured.Add(Base + 8 * Page, Base + 9 * Page);
+    const auto covered = [&](std::uint64_t begin, std::uint64_t end) {
+        std::uint64_t bytes = 0;
+        captured.Covering(begin, end, [&](std::uint64_t first, std::uint64_t stop) { bytes += stop - first; });
+        return bytes;
+    };
+    check(covered(Base + Page, Base + 2 * Page) == Page, "a page inside a readable range was not covered once, so a smaller range starting inside it hid the rest or counted twice");
+    check(covered(Base + Page + 0x300, Base + Page + 0x400) == 0x100, "bytes of a readable range after a smaller range it contains were missed");
+    check(covered(Base + 4 * Page, Base + 5 * Page) == Page, "a host page overlapping the tail of a readable range was not covered once");
+    check(covered(Base + 3 * Page, Base + 4 * Page) == 0x80, "the tail of a readable range ending inside a page was not covered");
+    check(covered(Base + 6 * Page, Base + 10 * Page) == 2 * Page, "adjacent readable ranges were not covered once each");
+    check(captured.spans.size() == 3, "overlapping or adjacent readable ranges were not merged into disjoint spans");
+}
+
+std::vector<std::byte> fillWords(std::initializer_list<std::uint32_t> words) {
+    std::vector<std::byte> bytes(words.size() * 4);
+    std::size_t at = 0;
+    for (const auto word : words) {
+        std::memcpy(bytes.data() + at, &word, 4);
+        at += 4;
+    }
+    return bytes;
+}
+
+void testUnalignedGpuFill() {
+    using Runs = std::vector<std::pair<std::size_t, std::size_t>>;
+    constexpr std::uint64_t Base = 0x100000;
+    constexpr std::array<std::uint32_t, 4> Pattern{0xa1a1a1a1u, 0xb2b2b2b2u, 0xc3c3c3c3u, 0xd4d4d4d4u};
+    Runs runs;
+    {
+        AgcDriver::FrameRecorder::GpuStores stores;
+        stores.Fill(Base + 4, 20, Pattern);
+        const auto title = fillWords({0x11111111u, Pattern[0], Pattern[1], 0x22222222u, Pattern[3], Pattern[0], 0x33333333u, 0x44444444u});
+        const auto driver = stores.KeepTitleWords(Base, title, runs, false);
+        check(driver == 16, "a 20-byte fill at an address that is not 16-aligned was not matched word by word from its own start");
+        check(runs == Runs{{0, 4}, {12, 4}, {24, 8}}, "the title's words around and inside a 20-byte fill at an address that is not 16-aligned were not kept");
+    }
+    {
+        AgcDriver::FrameRecorder::GpuStores stores;
+        stores.Fill(Base + 4, 20, Pattern);
+        const std::array<std::byte, 2> stored{std::byte{0x5a}, std::byte{0x6b}};
+        stores.Store(Base + 14, stored);
+        const auto title = fillWords({0x11111111u, Pattern[0], Pattern[1], 0x6b5ac3c3u, Pattern[3], Pattern[0], 0x33333333u});
+        const auto driver = stores.KeepTitleWords(Base, title, runs, false);
+        check(driver == 20, "a store that split a 20-byte fill at an address that is not 16-aligned changed the pattern of the pieces it left");
+        check(runs == Runs{{0, 4}, {24, 4}}, "a store that split a 20-byte fill at an address that is not 16-aligned kept driver words as the title's");
+    }
 }
 
 void testEopTokens() {
@@ -907,6 +1043,286 @@ void testShaderCode(const std::filesystem::path& directory, bool host, std::stri
     check(listed && *listed == expected, "the offline shader listing read other code than the capture holds at the registration");
 }
 
+void testDeltaPaths(const std::filesystem::path& directory, std::string_view mode) {
+    constexpr std::size_t Block = FrameCaptureWriter::BlockBytes;
+    constexpr std::size_t PieceBytes = Block + Block / 2;
+    const bool host = mode != "shader_unaligned_restored";
+    const bool rewritten = mode == "shader_host_rewritten";
+    const std::size_t codeBytes = host ? 3 * Block : Block;
+    Shader* shader = nullptr;
+    std::byte* code = nullptr;
+    if (host) {
+        shader = reinterpret_cast<Shader*>(allocate(1u << 20));
+        std::byte* memory = nullptr;
+#ifdef _WIN32
+        memory = static_cast<std::byte*>(VirtualAlloc(nullptr, codeBytes + 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#elif defined(__linux__)
+        void* mapped = mmap(nullptr, codeBytes + 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        memory = mapped != MAP_FAILED ? static_cast<std::byte*>(mapped) : nullptr;
+#endif
+        check(memory != nullptr, "host shader allocation failed");
+        GuestAllocations::Mutation mutation;
+        mutation.Add(memory, codeBytes + 4096, true, true, true);
+        code = memory + 256;
+    } else {
+        auto* block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(2 * Block, Block));
+        check(block != nullptr, "guest reservation failed");
+        GuestArena::GuestArenaRelease_nid_postfix(block, 2 * Block);
+        auto* piece = block + Block / 2;
+        GuestArena::GuestArenaCommit_nid_postfix(piece, PieceBytes, 0x04, PieceBytes);
+#ifdef _WIN32
+        AgcDriver::GuestMemory::Unwatch(address(piece), PieceBytes);
+#endif
+        check(!AgcDriver::GuestMemory::Watched(address(piece), PieceBytes), "the unaligned shader range is write-watched");
+        GuestAllocations::Mutation mutation;
+        mutation.Add(piece, PieceBytes, true, true, false);
+        shader = reinterpret_cast<Shader*>(piece);
+        code = piece + 256;
+    }
+    *shader = {};
+    shader->file_header = 0x34333231u;
+    shader->version = 0x18u;
+    shader->header_size = sizeof(Shader);
+    shader->shader_size = codeBytes;
+    shader->code = code;
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    const auto store = [&](unsigned seed) {
+        std::vector<std::byte> bytes(codeBytes);
+        for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<std::byte>(i * 31 + seed);
+        std::memcpy(code, bytes.data(), bytes.size());
+        return bytes;
+    };
+    const auto checked = rewritten ? FrameCallKind::RegisterShader : FrameCallKind::Flip;
+    const auto call = [&](FrameCallKind kind) {
+        if (kind == FrameCallKind::Flip) recorder->Flip(AgcDriver::FlipInfo{}, {});
+        else recorder->RegisterShader(shader);
+    };
+    const auto expected = store(17);
+    call(checked);
+    store(29);
+    call(rewritten ? FrameCallKind::Flip : FrameCallKind::RegisterShader);
+    store(17);
+    call(checked);
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    CapturedMemory memory(reader);
+    std::map<std::uint64_t, std::vector<const FrameMemoryChunk*>> groups;
+    for (const auto& chunk : reader.Chunks()) {
+        if (chunk.kind == FrameMemoryKind::Delta) groups[chunk.group].push_back(&chunk);
+    }
+    std::size_t seen = 0;
+    std::optional<std::vector<std::byte>> replayed;
+    for (const auto& captured : reader.Calls()) {
+        if (captured.kind == checked && ++seen == 2) {
+            replayed = memory.Read(address(code), codeBytes);
+            break;
+        }
+        if (captured.kind != FrameCallKind::Memory) continue;
+        if (const auto found = groups.find(captured.values.at(0)); found != groups.end()) memory.Apply(found->second);
+    }
+    check(seen == 2, "the capture lost a call of the test");
+    check(replayed && *replayed == expected, rewritten ? "the second registration replays the host code a flip's delta wrote, not the code the title registered again" :
+        host ? "after the second flip the replay keeps the host code a shader delta wrote, not the code the title restored" :
+        "after the second flip the replay keeps the code a shader delta wrote into an unaligned unwatched range, not the code the title restored");
+}
+
+void testRemappedRange(const std::filesystem::path& directory) {
+    constexpr std::size_t Block = FrameCaptureWriter::BlockBytes;
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    auto* piece = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(Block, Block));
+    check(piece != nullptr, "guest reservation failed");
+    GuestArena::GuestArenaCommit_nid_postfix(piece, Block, 0x04, Block);
+#ifdef _WIN32
+    AgcDriver::GuestMemory::Unwatch(address(piece), Block);
+#endif
+    check(!AgcDriver::GuestMemory::Watched(address(piece), Block), "the remapped range is write-watched");
+    const auto map = [&] {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(piece, Block, true, true, false);
+    };
+    const std::vector<std::byte> first(Block, std::byte{0x3a});
+    const std::vector<std::byte> second(Block, std::byte{0xc5});
+    std::memcpy(piece, first.data(), Block);
+    map();
+    recorder->Flip(AgcDriver::FlipInfo{}, {});
+    recorder->Flip(AgcDriver::FlipInfo{}, {});
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(piece);
+    }
+    map();
+    std::memcpy(piece, second.data(), Block);
+    recorder->Flip(AgcDriver::FlipInfo{}, {});
+    std::memcpy(piece, first.data(), Block);
+    recorder->Flip(AgcDriver::FlipInfo{}, {});
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    CapturedMemory memory(reader);
+    std::map<std::uint64_t, std::vector<const FrameMemoryChunk*>> groups;
+    for (const auto& chunk : reader.Chunks()) {
+        if (chunk.kind == FrameMemoryKind::Delta) groups[chunk.group].push_back(&chunk);
+    }
+    std::vector<std::optional<std::vector<std::byte>>> replayed;
+    for (const auto& call : reader.Calls()) {
+        if (call.kind == FrameCallKind::Flip) replayed.push_back(memory.Read(address(piece), Block));
+        if (call.kind != FrameCallKind::Memory) continue;
+        if (const auto found = groups.find(call.values.at(0)); found != groups.end()) memory.Apply(found->second);
+    }
+    check(replayed.size() == 4, "the capture lost a flip of the test");
+    check(replayed[2] == second, "the replay does not see the bytes the title wrote into the range mapped again at the same address");
+    check(replayed[3] == first, "after the title restored the bytes sampled before the range was mapped again, the replay keeps the bytes written after the remap");
+}
+
+void testHostShaderPageGpuStore(const std::filesystem::path& directory) {
+    constexpr std::size_t Page = AgcDriver::FrameRecorder::HostPageBytes;
+    constexpr std::size_t CodeBytes = 256;
+    constexpr std::uint32_t Stored = 0x600dcafeu;
+    auto* block = allocate(1u << 20);
+    auto* shader = reinterpret_cast<Shader*>(block);
+    auto* commands = reinterpret_cast<std::uint32_t*>(block + Page);
+#ifdef _WIN32
+    auto* host = static_cast<std::byte*>(VirtualAlloc(nullptr, Page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+    void* mapped = mmap(nullptr, Page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    auto* host = mapped != MAP_FAILED ? static_cast<std::byte*>(mapped) : nullptr;
+#endif
+    check(host != nullptr, "host shader allocation failed");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(host, Page, true, true, true);
+    }
+    auto* code = host + 256;
+    auto* label = reinterpret_cast<std::uint32_t*>(host + 2048);
+    *shader = {};
+    shader->file_header = 0x34333231u;
+    shader->version = 0x18u;
+    shader->header_size = sizeof(Shader);
+    shader->shader_size = CodeBytes;
+    shader->code = code;
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    const auto store = [&](unsigned seed) {
+        std::vector<std::byte> bytes(CodeBytes);
+        for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<std::byte>(i * 31 + seed);
+        std::memcpy(code, bytes.data(), bytes.size());
+        return bytes;
+    };
+    store(17);
+    recorder->RegisterShader(shader);
+    const std::array<std::uint32_t, 5> write{0xc0033700u, 0x00100200u, static_cast<std::uint32_t>(address(label)), static_cast<std::uint32_t>(address(label) >> 32u), Stored};
+    std::memcpy(commands, write.data(), sizeof(write));
+    Packet packet{commands, static_cast<std::uint32_t>(write.size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "the label write was not submitted");
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(*label).load(std::memory_order_acquire) == Stored, "the queue did not write the label");
+    const auto expected = store(29);
+    recorder->RegisterShader(shader);
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    CapturedMemory memory(reader);
+    std::map<std::uint64_t, std::vector<const FrameMemoryChunk*>> groups;
+    for (const auto& chunk : reader.Chunks()) {
+        if (chunk.kind == FrameMemoryKind::Delta) groups[chunk.group].push_back(&chunk);
+    }
+    std::size_t registrations = 0;
+    std::optional<std::vector<std::byte>> replayedCode;
+    std::optional<std::vector<std::byte>> replayedLabel;
+    for (const auto& call : reader.Calls()) {
+        if (call.kind == FrameCallKind::RegisterShader && ++registrations == 2) {
+            replayedCode = memory.Read(address(code), CodeBytes);
+            replayedLabel = memory.Read(address(label), sizeof(std::uint32_t));
+            break;
+        }
+        if (call.kind != FrameCallKind::Memory) continue;
+        if (const auto found = groups.find(call.values.at(0)); found != groups.end()) memory.Apply(found->second);
+    }
+    check(registrations == 2, "the capture lost a registration of the test");
+    check(replayedCode && *replayedCode == expected, "the shader delta of a host page did not hold the code the title stored before the second registration");
+    std::uint32_t value = 0;
+    std::memcpy(&value, replayedLabel->data(), sizeof(value));
+    check(value != Stored, "the shader delta of a host page carried a label the GPU stored there, so a replay would see it before the work that writes it");
+}
+
+bool insideRanges(const FrameCaptureReader& reader, const FrameMemoryChunk& chunk) {
+    std::map<std::uint64_t, std::uint64_t> ranges;
+    for (const auto& range : reader.Chunks()) {
+        if (range.kind == FrameMemoryKind::Range) ranges[range.address] = std::max(ranges[range.address], range.address + range.bytes);
+    }
+    auto cursor = chunk.address;
+    for (const auto& [begin, end] : ranges) {
+        if (begin <= cursor && cursor < end) cursor = end;
+    }
+    return cursor >= chunk.address + chunk.bytes;
+}
+
+void testShaderBlockHole(const std::filesystem::path& directory) {
+    constexpr std::size_t Block = FrameCaptureWriter::BlockBytes;
+    constexpr std::size_t Page = 4096;
+    auto* block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(2 * Block, Block));
+    check(block != nullptr, "guest reservation failed");
+    GuestArena::GuestArenaRelease_nid_postfix(block, 2 * Block);
+    auto* tail = block + 8 * Page;
+    for (const auto& [piece, bytes] : {std::pair{block, 7 * Page}, std::pair{tail, Block - 8 * Page}}) {
+        GuestArena::GuestArenaCommit_nid_postfix(piece, bytes, 0x04, bytes);
+#ifdef _WIN32
+        AgcDriver::GuestMemory::Unwatch(address(piece), bytes);
+#endif
+        GuestAllocations::Mutation mutation;
+        mutation.Add(piece, bytes, true, true, false);
+    }
+    auto* shader = reinterpret_cast<Shader*>(tail + 0x2b0);
+    *shader = {};
+    shader->file_header = 0x34333231u;
+    shader->version = 0x18u;
+    shader->header_size = sizeof(Shader);
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    recorder->RegisterShader(shader);
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    bool shaderDelta = false;
+    for (const auto& chunk : reader.Chunks()) {
+        if (chunk.kind != FrameMemoryKind::Delta) continue;
+        check(insideRanges(reader, chunk), "a memory delta of the shader's block reaches a page that no range of the capture holds");
+        shaderDelta = shaderDelta || (chunk.address <= address(shader) && address(shader) + sizeof(Shader) <= chunk.address + chunk.bytes);
+    }
+    check(shaderDelta, "the capture holds no memory delta with the registered shader");
+}
+
+void testDeltaOutsideRanges(const std::filesystem::path& directory) {
+    constexpr std::size_t Block = FrameCaptureWriter::BlockBytes;
+    constexpr std::size_t Page = 4096;
+    auto* block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(Block, Block));
+    check(block != nullptr, "guest reservation failed");
+    GuestArena::GuestArenaRelease_nid_postfix(block, Block);
+    std::uintptr_t base = 0;
+    std::size_t arenaSize = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&base, &arenaSize);
+    const std::vector<std::byte> delta(Block, std::byte{0x5a});
+    FrameCaptureWriter writer(directory);
+    writer.WriteRange(address(block), 7 * Page, FrameRangeKind::Section, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable);
+    writer.WriteRange(address(block) + 8 * Page, Block - 8 * Page, FrameRangeKind::Section, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable);
+    writer.WriteDelta(2, 0, address(block), delta);
+    writer.WriteCall(memoryCall(2, 1));
+    writer.Finish("{\"arena_base\":" + std::to_string(base) + "}");
+    const FrameCaptureReader reader(directory);
+    std::string message;
+    try {
+        restoreMemory(reader);
+    } catch (const std::exception& error) {
+        message = error.what();
+    }
+    char hole[48];
+    std::snprintf(hole, sizeof(hole), "reaches 0x%llx", static_cast<unsigned long long>(address(block) + 7 * Page));
+    check(message.find(hole) != std::string::npos, ("the replay accepted a memory delta across a page that no range of the capture maps: " + message).c_str());
+}
+
 void writeInspectionCapture(const std::filesystem::path& directory) {
     constexpr std::uint64_t Commands = 0x1000000001ull;
     constexpr std::uint64_t Header = 0x2000000000ull;
@@ -1122,13 +1538,23 @@ int main(int argc, char** argv) {
         else if (mode == "fresh_note") testFreshNote(directory);
 #endif
         else if (mode == "gpu_write_before_delta") testGpuWriteBeforeDelta(directory);
+        else if (mode == "unwritten_delta") testUnwrittenDeltaBesideBusyQueue(directory);
         else if (mode == "calls_v1") testVersionOneRefused(directory);
         else if (mode == "trace_window") testTraceWindow(directory);
         else if (mode == "tokens") testEopTokens();
+        else if (mode == "merge_blocks") testMergedBlocks();
+        else if (mode == "forget_unwatched_hashes") testForgottenUnwatchedHashes();
+        else if (mode == "unaligned_gpu_fill") testUnalignedGpuFill();
+        else if (mode == "captured_spans") testCapturedSpans();
+        else if (mode == "remapped_range") testRemappedRange(directory);
         else if (mode == "reservations" || mode == "reservation_failure") testRepeatedReservations(directory, mode == "reservation_failure");
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "environment") testColdPipelines();
         else if (mode == "shader" || mode == "shader_host") testShaderCode(directory, mode == "shader_host");
+        else if (mode == "shader_host_rewritten" || mode == "shader_host_restored" || mode == "shader_unaligned_restored") testDeltaPaths(directory, mode);
+        else if (mode == "shader_host_gpu_store") testHostShaderPageGpuStore(directory);
+        else if (mode == "shader_hole") testShaderBlockHole(directory);
+        else if (mode == "delta_hole") testDeltaOutsideRanges(directory);
         else throw std::runtime_error("unknown test");
         if (mode != "reservation_failure") AgcDriverShutdown_nid_postfix();
         std::puts("frame replay state test passed");

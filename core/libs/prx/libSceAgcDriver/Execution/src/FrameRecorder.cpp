@@ -350,7 +350,7 @@ void FrameRecorder::emitDelta() {
     std::vector<std::size_t> owners;
     for (std::size_t index = 0; index < ranges.size(); ++index) {
         const auto& range = ranges[index];
-        if (range.kind != FrameRangeKind::Watched && range.kind != FrameRangeKind::Unwatched) continue;
+        if (!range.readable || ((range.access & FrameRangeAccess::Writable) == 0 && range.kind != FrameRangeKind::Watched && range.kind != FrameRangeKind::Unwatched)) continue;
         spans.push_back({range.address, range.bytes, range.since});
         owners.push_back(index);
     }
@@ -422,11 +422,35 @@ void FrameRecorder::emitShaderDelta(std::span<const Shader* const> shaders) {
     std::set<std::uint64_t> hostPages;
     collectShaderPages(shaders, blocks, hostPages);
     if (blocks.empty() && hostPages.empty()) return;
+    const auto added = newRanges();
+    CapturedSpans captured;
+    for (const auto& list : {std::span<const Range>(ranges), std::span<const Range>(added)}) {
+        for (const auto& range : list) {
+            if (range.readable) captured.Add(range.address, range.address + range.bytes);
+        }
+    }
+    const auto inside = [&](std::uint64_t begin, std::uint64_t end, const auto& visit) { captured.Covering(begin, end, visit); };
     std::vector<Span> spans;
-    for (const auto block : blocks) spans.push_back({block, FrameCaptureWriter::BlockBytes, blockSince(block)});
-    const std::vector<std::uint64_t> pages(hostPages.begin(), hostPages.end());
-    writeDelta(spans, pages);
-    for (const auto& span : spans) shaderMarks[span.address] = span.since;
+    for (const auto block : blocks) {
+        const auto since = blockSince(block);
+        inside(block, block + FrameCaptureWriter::BlockBytes, [&](std::uint64_t first, std::uint64_t stop) { spans.push_back({first, stop - first, since}); });
+    }
+    const auto blockSpans = spans.size();
+    std::vector<std::uint64_t> pages;
+    for (const auto page : hostPages) {
+        std::uint64_t covered = 0;
+        inside(page, page + HostPageBytes, [&](std::uint64_t first, std::uint64_t stop) { covered += stop - first; });
+        if (covered == HostPageBytes) pages.push_back(page);
+        else inside(page, page + HostPageBytes, [&](std::uint64_t first, std::uint64_t stop) { spans.push_back({first, stop - first, startGeneration}); });
+    }
+    writeDelta(spans, pages, added);
+    std::map<std::uint64_t, std::uint64_t> marks;
+    for (std::size_t index = 0; index < blockSpans; ++index) {
+        const auto block = spans[index].address & ~std::uint64_t{FrameCaptureWriter::BlockBytes - 1};
+        const auto [found, inserted] = marks.try_emplace(block, spans[index].since);
+        if (!inserted) found->second = std::min(found->second, spans[index].since);
+    }
+    for (const auto& [block, since] : marks) shaderMarks[block] = since;
 }
 
 std::uint64_t FrameRecorder::blockSince(std::uint64_t block) const {
@@ -443,33 +467,92 @@ std::uint64_t FrameRecorder::blockSince(std::uint64_t block) const {
     return covered == FrameCaptureWriter::BlockBytes ? std::max(mark, since) : mark;
 }
 
+void FrameRecorder::CapturedSpans::Add(std::uint64_t begin, std::uint64_t end) {
+    if (begin >= end) return;
+    auto next = spans.upper_bound(begin);
+    if (next != spans.begin() && std::prev(next)->second >= begin) --next;
+    while (next != spans.end() && next->first <= end) {
+        begin = std::min(begin, next->first);
+        end = std::max(end, next->second);
+        next = spans.erase(next);
+    }
+    spans.emplace(begin, end);
+}
+
+void FrameRecorder::UnwatchedHashes::Keep(std::uint64_t begin, std::uint64_t bytes, std::pair<std::uint64_t, std::uint64_t> sample) {
+    samples[{begin, bytes}] = sample;
+    longest = std::max(longest, bytes);
+}
+
+void FrameRecorder::UnwatchedHashes::Forget(std::uint64_t begin, std::uint64_t end) {
+    auto found = samples.lower_bound({begin - std::min(begin, longest), 0});
+    while (found != samples.end() && found->first.first < end) {
+        if (found->first.first + found->first.second > begin) found = samples.erase(found);
+        else ++found;
+    }
+}
+
+void FrameRecorder::MergeOverlappingBlocks(std::vector<std::pair<std::uint64_t, std::uint64_t>>& blocks) {
+    std::ranges::sort(blocks);
+    std::size_t merged = 0;
+    for (const auto& block : blocks) {
+        const bool aligned = block.first % 4 == 0 && block.second % 4 == 0 && merged != 0 && blocks[merged - 1].first % 4 == 0 && blocks[merged - 1].second % 4 == 0;
+        if (aligned && block.first < blocks[merged - 1].second) blocks[merged - 1].second = std::max(blocks[merged - 1].second, block.second);
+        else blocks[merged++] = block;
+    }
+    blocks.resize(merged);
+}
+
 void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added) {
     if (abandonIfDiskLow()) return;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> blocks;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
     for (auto& span : spans) {
-        span.since = GuestMemory::CollectWrittenBlocks(span.address, static_cast<std::size_t>(span.bytes), span.since, written);
+        if (const auto since = GuestMemory::CollectWrittenBlocks(span.address, static_cast<std::size_t>(span.bytes), span.since, written); since != 0) span.since = since;
         blocks.insert(blocks.end(), written.begin(), written.end());
+        for (std::uint64_t offset = 0; offset < span.bytes;) {
+            const auto at = span.address + offset;
+            const auto bytes = static_cast<std::size_t>(std::min<std::uint64_t>(FrameCaptureWriter::BlockBytes, span.bytes - offset));
+            if (!GuestMemory::Watched(at, bytes)) blocks.emplace_back(at, at + bytes);
+            offset += bytes;
+        }
     }
+    MergeOverlappingBlocks(blocks);
     auto& driver = DriverDetail::Driver::Get();
     const struct Hold {
         DriverDetail::Driver& driver;
         ~Hold() { driver.ReleaseSettled(); }
     } hold{driver};
     auto [accepted, completed] = driver.SerialProgress();
-    if (completed < accepted && (!added.empty() || !blocks.empty())) {
+    if (completed < accepted && (!added.empty() || !blocks.empty() || !hostPages.empty())) {
         if (!driver.WaitSettledFor(std::chrono::seconds(10))) {
             stop("stopped: the GPU work submitted before a memory delta neither finished nor waited for the title within 10 s");
             return;
         }
         std::tie(accepted, completed) = driver.SerialProgress();
     }
-    std::vector<std::uint64_t> parked;
-    for (const auto& wait : driver.AwaitedWaits()) parked.push_back(wait.address);
+    std::vector<std::array<std::uint64_t, 4>> parked;
+    for (const auto& wait : driver.AwaitedWaits()) {
+        if (wait.bytes == 0) parked.push_back({wait.address, 0, 0, 0});
+        else parked.push_back({wait.address, wait.reference, wait.mask, wait.function | (std::uint64_t{wait.bytes} << 32u)});
+    }
     std::ranges::sort(parked);
     const auto group = deltaGroups + 1;
     bool any = false;
     std::vector<std::byte> bytes;
+    std::vector<std::pair<std::size_t, std::size_t>> runs;
+    const auto writeTitleWords = [&](std::uint64_t address, bool zero = false) {
+        keepTitleWords(address, bytes, runs, zero);
+        for (const auto& [offset, length] : runs) {
+            writer->WriteDelta(group, completed, address + offset, std::span<const std::byte>(bytes).subspan(offset, length));
+            deltaBytes += length;
+            any = true;
+        }
+    };
+    const auto forget = [&](std::uint64_t begin, std::uint64_t end) {
+        hostPageHashes.erase(hostPageHashes.lower_bound(begin & ~std::uint64_t{HostPageBytes - 1}), hostPageHashes.lower_bound(end));
+        unwatchedHashes.Forget(begin, end);
+    };
     for (const auto& range : added) {
         writer->WriteRange(range.address, range.bytes, range.kind, range.protection, range.access);
         auto& stored = ranges.emplace_back(range);
@@ -484,11 +567,7 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
             bytes.resize(static_cast<std::size_t>(std::min<std::uint64_t>(FrameCaptureWriter::BlockBytes, range.bytes - at)));
             readGuest(range.address + at, bytes);
             const bool zero = std::all_of(bytes.begin(), bytes.end(), [](std::byte value) { return value == std::byte{0}; });
-            if (!zero || collected) {
-                writer->WriteDelta(group, completed, range.address + at, bytes);
-                deltaBytes += bytes.size();
-                any = true;
-            }
+            writeTitleWords(range.address + at, zero && !collected);
             at += bytes.size();
         }
     }
@@ -497,19 +576,32 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
         bytes.resize(HostPageBytes);
         std::memcpy(bytes.data(), reinterpret_cast<const void*>(static_cast<std::uintptr_t>(page)), HostPageBytes);
         const auto hash = contentHash(bytes);
-        auto& known = hostPageHashes[page];
-        if (known == hash) continue;
-        known = hash;
-        writer->WriteDelta(group, completed, page, bytes);
-        deltaBytes += bytes.size();
-        any = true;
+        if (const auto found = hostPageHashes.find(page); found != hostPageHashes.end() && found->second == hash) continue;
+        forget(page, page + HostPageBytes);
+        hostPageHashes[page] = hash;
+        writeTitleWords(page);
     }
     for (const auto& [begin, end] : blocks) {
         bytes.resize(static_cast<std::size_t>(end - begin));
+        const auto read = std::chrono::steady_clock::now();
         readGuest(begin, bytes);
-        writer->WriteDelta(group, completed, begin, bytes);
-        deltaBytes += bytes.size();
-        any = true;
+        const bool unwatched = !GuestMemory::Watched(begin, bytes.size());
+        const bool sampled = accepted == completed && unwatched;
+        const auto sample = sampled ? std::pair{contentHash(bytes), accepted} : std::pair<std::uint64_t, std::uint64_t>{};
+        if (unwatched) {
+            unwatchedReadBytes += bytes.size();
+            unwatchedReadSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - read).count();
+        }
+        if (sampled) {
+            const auto key = std::pair{begin, static_cast<std::uint64_t>(bytes.size())};
+            const auto found = unwatchedHashes.samples.find(key);
+            if (found != unwatchedHashes.samples.end() && found->second == sample) continue;
+            forget(begin, end);
+            unwatchedHashes.Keep(key.first, key.second, sample);
+        } else {
+            forget(begin, end);
+        }
+        writeTitleWords(begin);
     }
     if (!any) return;
     deltaGroups = group;
@@ -518,8 +610,142 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
     call.accepted = accepted;
     call.completed = completed;
     call.values = {group, parked.size()};
-    call.values.insert(call.values.end(), parked.begin(), parked.end());
+    for (const auto& wait : parked) call.values.insert(call.values.end(), wait.begin(), wait.end());
     writer->WriteCall(call);
+}
+
+void FrameRecorder::endGpuStores() {
+    notingGpuStores = false;
+    std::lock_guard lock(gpuStoresMutex);
+    gpuStores.words.clear();
+    gpuStores.fills.clear();
+}
+
+void FrameRecorder::noteGpuStore(std::uint64_t address, std::span<const std::byte> bytes) {
+    std::lock_guard lock(gpuStoresMutex);
+    gpuStores.Store(address, bytes);
+}
+
+void FrameRecorder::noteGpuFill(std::uint64_t address, std::uint64_t bytes, const std::array<std::uint32_t, 4>& pattern) {
+    std::lock_guard lock(gpuStoresMutex);
+    gpuStores.Fill(address, bytes, pattern);
+}
+
+void FrameRecorder::keepTitleWords(std::uint64_t address, std::span<const std::byte> bytes, std::vector<std::pair<std::size_t, std::size_t>>& runs, bool zero) {
+    std::lock_guard lock(gpuStoresMutex);
+    gpuStoreBytes += gpuStores.KeepTitleWords(address, bytes, runs, zero);
+}
+
+void FrameRecorder::GpuStores::Store(std::uint64_t address, std::span<const std::byte> bytes) {
+    if (bytes.empty()) return;
+    const auto end = address + bytes.size();
+    Forget(address, end);
+    if (bytes.size() > WordLimit) return;
+    for (auto at = address; at < end;) {
+        const auto word = at & ~std::uint64_t{3};
+        auto& stored = words[word];
+        for (; at < end && at < word + 4; ++at) {
+            const auto shift = static_cast<std::uint32_t>(at - word) * 8u;
+            stored.value = (stored.value & ~(0xffu << shift)) | (std::to_integer<std::uint32_t>(bytes[at - address]) << shift);
+            stored.known |= static_cast<std::uint8_t>(1u << (at - word));
+        }
+    }
+}
+
+void FrameRecorder::GpuStores::Fill(std::uint64_t address, std::uint64_t bytes, const std::array<std::uint32_t, 4>& pattern) {
+    if (bytes == 0) return;
+    Forget(address, address + bytes);
+    if (address % 4 == 0 && bytes % 4 == 0) fills.emplace(address, FillRun{address, address + bytes, pattern});
+}
+
+std::uint32_t FrameRecorder::GpuStores::FillRun::At(std::uint64_t word) const {
+    return pattern[((word - origin) % 16) / 4];
+}
+
+void FrameRecorder::GpuStores::Forget(std::uint64_t begin, std::uint64_t end) {
+    const auto low = begin & ~std::uint64_t{3};
+    const auto high = (end + 3) & ~std::uint64_t{3};
+    const auto outside = [&](std::uint64_t word) {
+        std::uint8_t mask = 0;
+        for (std::uint64_t byte = 0; byte < 4; ++byte) {
+            if (word + byte < begin || word + byte >= end) mask |= static_cast<std::uint8_t>(1u << byte);
+        }
+        return mask;
+    };
+    for (auto word = words.lower_bound(low); word != words.end() && word->first < end;) {
+        word->second.known &= outside(word->first);
+        if (word->second.known == 0) word = words.erase(word);
+        else ++word;
+    }
+    auto fill = fills.upper_bound(begin);
+    if (fill != fills.begin()) --fill;
+    while (fill != fills.end() && fill->first < end) {
+        if (fill->second.end <= begin) {
+            ++fill;
+            continue;
+        }
+        const auto start = fill->first;
+        const auto kept = fill->second;
+        fill = fills.erase(fill);
+        if (start < low) fills.emplace(start, FillRun{kept.origin, low, kept.pattern});
+        if (high < kept.end) fills.emplace(high, FillRun{kept.origin, kept.end, kept.pattern});
+        for (const auto word : {low, high - 4}) {
+            const auto mask = outside(word);
+            if (mask != 0 && start <= word && word < kept.end) words[word] = StoredWord{kept.At(word), mask};
+        }
+    }
+}
+
+std::uint64_t FrameRecorder::GpuStores::KeepTitleWords(std::uint64_t address, std::span<const std::byte> bytes, std::vector<std::pair<std::size_t, std::size_t>>& runs, bool zero) {
+    runs.clear();
+    const auto end = address + bytes.size();
+    auto word = words.lower_bound(address & ~std::uint64_t{3});
+    auto fill = fills.upper_bound(address);
+    if (fill != fills.begin()) --fill;
+    if (fill != fills.end() && fill->second.end <= address) ++fill;
+    const bool stored = word != words.end() && word->first < end;
+    const bool filled = fill != fills.end() && fill->first < end;
+    if (zero && !stored && !filled) return 0;
+    if (!stored && !filled) {
+        if (!bytes.empty()) runs.emplace_back(0, bytes.size());
+        return 0;
+    }
+    std::uint64_t driverBytes = 0;
+    std::size_t open = bytes.size();
+    for (auto at = address & ~std::uint64_t{3}; at < end; at += 4) {
+        std::uint32_t expected = 0;
+        std::uint8_t known = 0;
+        if (word != words.end() && word->first == at) {
+            expected = word->second.value;
+            known = word->second.known;
+            ++word;
+        } else {
+            while (fill != fills.end() && fill->second.end <= at) ++fill;
+            if (fill != fills.end() && fill->first <= at) {
+                expected = fill->second.At(at);
+                known = 0xf;
+            }
+        }
+        const auto first = std::max(at, address);
+        const auto last = std::min(at + 4, end);
+        std::uint32_t current = 0;
+        std::memcpy(reinterpret_cast<std::byte*>(&current) + (first - at), bytes.data() + (first - address), static_cast<std::size_t>(last - first));
+        const auto differs = current ^ expected;
+        for (auto byte = first; byte < last; ++byte) {
+            const auto offset = static_cast<std::size_t>(byte - address);
+            const bool driver = (known & (1u << (byte - at))) != 0 && ((differs >> ((byte - at) * 8u)) & 0xffu) == 0;
+            if (driver) {
+                ++driverBytes;
+                if (open != bytes.size()) runs.emplace_back(open, offset - open);
+                open = bytes.size();
+            } else if (open == bytes.size()) {
+                open = offset;
+            }
+        }
+    }
+    if (open != bytes.size()) runs.emplace_back(open, bytes.size() - open);
+    for (const auto& [offset, length] : runs) Forget(address + offset, address + offset + length);
+    return driverBytes;
 }
 
 void FrameRecorder::snapshot(const Range& range) {
@@ -560,6 +786,7 @@ void FrameRecorder::stop(const char* reason) {
         std::fprintf(stderr, "[frame-capture] %s\n", failure.what());
     }
     writer.reset();
+    endGpuStores();
     state = State::Done;
 }
 
@@ -585,6 +812,7 @@ void FrameRecorder::start() {
     allocationsGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     ranges = committedRanges();
     writer = std::make_unique<FrameCaptureWriter>(directory);
+    notingGpuStores = true;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
     for (auto& range : ranges) {
         if (range.kind == FrameRangeKind::Watched || range.kind == FrameRangeKind::Unwatched) range.since = GuestMemory::CollectWrittenBlocks(range.address, static_cast<std::size_t>(range.bytes), std::numeric_limits<std::uint64_t>::max(), written);
@@ -644,10 +872,15 @@ void FrameRecorder::finish() {
     writer->WriteCall(end);
     writeReferenceFrames();
     writer->Finish(header());
+    const auto costs = writer->Costs();
+    std::fprintf(stderr, "[frame-capture] delta costs: %.1f MiB of unwatched blocks read in %.2f s, %llu repeated parts compared in %.2f s, %llu parts evicted from the delta cache\n",
+                 static_cast<double>(unwatchedReadBytes) / (1024.0 * 1024.0), unwatchedReadSeconds, static_cast<unsigned long long>(costs.compared), costs.compareSeconds,
+                 static_cast<unsigned long long>(costs.evicted));
     std::fprintf(stderr, "[frame-capture] %llu frames, %llu calls, %llu memory deltas (%.1f MiB), %.1f MiB raw, %.1f MiB stored in %s\n", static_cast<unsigned long long>(recordedFrames),
                  static_cast<unsigned long long>(recordedCalls), static_cast<unsigned long long>(deltaGroups), static_cast<double>(deltaBytes) / (1024.0 * 1024.0),
                  static_cast<double>(writer->RawBytes()) / (1024.0 * 1024.0), static_cast<double>(writer->StoredBytes()) / (1024.0 * 1024.0), directory.string().c_str());
     writer.reset();
+    endGpuStores();
     state = State::Done;
 }
 
@@ -662,7 +895,7 @@ std::string FrameRecorder::header() const {
     text += ",\"start_boundary\":" + std::to_string(startBoundary) + ",\"frames\":" + std::to_string(recordedFrames);
     text += ",\"calls\":" + std::to_string(recordedCalls) + ",\"prologue_calls\":" + std::to_string(prologue.size());
     text += ",\"ranges\":" + std::to_string(ranges.size()) + ",\"late_ranges\":" + std::to_string(lateRanges) + ",\"snapshot_bytes\":" + std::to_string(snapshotBytes) + ",\"unreadable_bytes\":" + std::to_string(unreadableBytes) + ",\"host_only_sample_bytes\":" + std::to_string(hostOnlySampleBytes);
-    text += ",\"memory_groups\":" + std::to_string(deltaGroups) + ",\"delta_bytes\":" + std::to_string(deltaBytes);
+    text += ",\"memory_groups\":" + std::to_string(deltaGroups) + ",\"delta_bytes\":" + std::to_string(deltaBytes) + ",\"gpu_store_bytes\":" + std::to_string(gpuStoreBytes) + ",\"shared_delta_bytes\":" + std::to_string(writer->SharedBytes());
     text += ",\"capture_seconds\":" + std::to_string(std::chrono::duration<double>(std::chrono::steady_clock::now() - startedAt).count());
     text += ",\"env\":{";
     bool first = true;
