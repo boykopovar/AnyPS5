@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
+#include <atomic>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
@@ -11,6 +12,7 @@
 #include <vector>
 
 extern "C" {
+extern std::int32_t _ZNSt6locale2id7_Id_cntE_nid_postfix;
 extern std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix;
 }
 
@@ -22,11 +24,18 @@ constexpr std::int32_t IosAdjustField = 0x0e;
 constexpr std::int32_t IosHex = 0x40;
 constexpr std::int32_t IosBaseField = 0x70;
 
-const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uint64_t id) {
-    if (id == 0 || stream == nullptr || stream->locale == nullptr || *stream->locale == nullptr) return nullptr;
+const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uint64_t& id) {
+    if (stream == nullptr || stream->locale == nullptr || *stream->locale == nullptr) return nullptr;
+    std::atomic_ref<std::uint64_t> slot(id);
+    if (slot.load() == 0) {
+        _Locksyslock_nid_postfix();
+        if (slot.load() == 0) slot.store(static_cast<std::uint64_t>(++_ZNSt6locale2id7_Id_cntE_nid_postfix));
+        _Unlocksyslock_nid_postfix();
+    }
+    const std::uint64_t index = slot.load();
     const GuestLocale::Implementation* locale = *stream->locale;
-    const std::size_t index = static_cast<std::size_t>(id);
-    if (index < locale->facetCount && locale->facets[index] != nullptr) return locale->facets[index];
+    const GuestLocale::Facet* facet = index < locale->facetCount ? locale->facets[index] : nullptr;
+    if (facet != nullptr || !locale->transparent) return facet;
     const GuestLocale::Implementation* global = _ZNSt6locale16_GetgloballocaleEv_nid_postfix();
     return global != nullptr && index < global->facetCount ? global->facets[index] : nullptr;
 }
@@ -117,11 +126,13 @@ GuestLocale::OutputIterator APS5_VABI _ZNKSt7num_putIwSt19ostreambuf_iteratorIwS
     }
     std::vector<std::uint16_t> text = WidenDigits(stream, raw.data(), count);
     const GuestLocale::Facet* punct = StreamWideNumpunct(stream);
-    const auto* widePunct = reinterpret_cast<const GuestLocale::WideNumpunctFacet*>(punct);
-    const auto& vtable = *reinterpret_cast<const GuestLocale::WideNumpunctVtable*>(punct->vtable);
-    const std::string grouping = TakeGrouping(widePunct, vtable);
-    if (!grouping.empty() && static_cast<signed char>(grouping[0]) != CHAR_MAX && static_cast<signed char>(grouping[0]) > 0) {
-        InsertWideSeparators(text, grouping, vtable.thousandsSep(widePunct), count, prefix);
+    if (punct != nullptr) {
+        const auto* widePunct = reinterpret_cast<const GuestLocale::WideNumpunctFacet*>(punct);
+        const auto& vtable = *reinterpret_cast<const GuestLocale::WideNumpunctVtable*>(punct->vtable);
+        const std::string grouping = TakeGrouping(widePunct, vtable);
+        if (!grouping.empty() && static_cast<signed char>(grouping[0]) != CHAR_MAX && static_cast<signed char>(grouping[0]) > 0) {
+            InsertWideSeparators(text, grouping, vtable.thousandsSep(widePunct), count, prefix);
+        }
     }
     return PutWideField(out, stream, fill, text, prefix);
 }
