@@ -1,5 +1,6 @@
 #include "prx/libkernel/File/include/HostStreams.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #ifdef _WIN32
@@ -17,13 +18,17 @@ void IgnoreInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsi
 #endif
 
 bool OpenAtStart(int fd) {
+    const int savedErrno = errno;
 #ifdef _WIN32
     const auto previous = _set_thread_local_invalid_parameter_handler(IgnoreInvalidParameter);
-    const bool open = _get_osfhandle(fd) != -1;
+    const std::intptr_t handle = _get_osfhandle(fd);
     _set_thread_local_invalid_parameter_handler(previous);
-    return open;
+    errno = savedErrno;
+    return handle != -1 && handle != -2 && handle != 0;
 #else
-    return ::fcntl(fd, F_GETFD) != -1;
+    const bool open = ::fcntl(fd, F_GETFD) != -1;
+    errno = savedErrno;
+    return open;
 #endif
 }
 
