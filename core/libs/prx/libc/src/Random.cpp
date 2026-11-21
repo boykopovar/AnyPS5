@@ -233,4 +233,14 @@ char* APS5_VABI setstate_nid_postfix(char* state) {
     return previous;
 }
 
+void APS5_VABI _ZNSt3__113random_deviceC2ERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEE_nid_postfix(void*, const void*) {}
+
+void APS5_VABI _ZNSt3__113random_deviceD1Ev_nid_postfix(void*) {}
+
+std::uint32_t APS5_VABI _ZNSt3__113random_deviceclEv_nid_postfix(void*) {
+    std::uint32_t value = 0;
+    HostEntropy_nid_no_patch(&value, sizeof(value));
+    return value;
+}
+
 }

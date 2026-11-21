@@ -64,6 +64,20 @@ class IntervalCsvTests(unittest.TestCase):
             row = list(csv.DictReader(io.StringIO(completed.stdout.decode(), newline="")))[0]
             self.assertEqual(row["busiest_worker"], "\t=1+1")
 
+    def test_spreadsheet_safe_cli_distinguishes_flags_from_numbers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.jsonl"
+            first = interval_line(0.0, 30.0, 20.0, 5.0, commit="a" * 40)
+            second = interval_line(30.0, 60.0, 40.0, 10.0, commit="b" * 40, trace_dropped=True)
+            path.write_text("\n".join(map(json.dumps, (first, second))) + "\n", encoding="utf-8")
+            command = [sys.executable, str(Path(trace_intervals_csv.__file__)), str(path), "--spreadsheet-safe"]
+            completed = subprocess.run(command, capture_output=True)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            rows = list(csv.DictReader(io.StringIO(completed.stdout.decode(), newline=""), quoting=csv.QUOTE_NONNUMERIC))
+            self.assertEqual([(row["trace_dropped"], row["identity_changed"]) for row in rows],
+                             [("False", "False"), ("True", "True")])
+            self.assertEqual([row["gpu_busy_ms_per_present"] for row in rows], [5.0, 10.0])
+
     def test_spreadsheet_safe_cli_with_complete_capture_requirement(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "summary.jsonl"

@@ -76,7 +76,7 @@ test("translate returns German, falls back to English for unknown keys and unkno
   assert.equal(translate("de", "cancelButton"), messages.de.cancelButton);
   assert.notEqual(messages.de.cancelButton, messages.en.cancelButton);
   assert.equal(translate("de", "__does_not_exist__"), "__does_not_exist__");
-  assert.equal(translate("fr", "cancelButton"), messages.en.cancelButton);
+  assert.equal(translate("xx", "cancelButton"), messages.en.cancelButton);
 });
 
 test("translate substitutes placeholders", () => {
