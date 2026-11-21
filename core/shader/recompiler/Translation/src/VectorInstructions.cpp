@@ -186,7 +186,7 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
         }
         throw std::runtime_error("f32 denormal mode " + std::to_string(denormals) + " at pc " + std::to_string(inst.programCounter) + " is not implemented");
     }
-    if (!ExactF32Arithmetic()) return 0u;
+    if (!ExactF32Arithmetic() || ShaderOptOn(ShaderOpt::PlainFloat)) return 0u;
     if (denormals != 0u) return 0u;
     return flush == 3u && float32FlushToZero && flushesInHardware(inst) ? 4u : flush;
 }
