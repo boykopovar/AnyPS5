@@ -1,0 +1,5 @@
+# shader
+
+## change [Spanned wave64 ballot]
+
+- [Spanned wave64 ballot](../../../core/shader/recompiler/SpirvBackend/src/SpirvMemory/SpirvSubgroup.cpp) (shader recompiler) - a spanned ballot writes each host subgroup's native ballot to a workgroup `wave_ballot` slot picked by a per-invocation parity toggle and waits on one barrier, so it needs full 32-lane host subgroups. A program compiled for any subgroup size (`spannedAnySubgroup`) uses the three-barrier ballot, which sets each lane's bit through workgroup memory. On Intel's Windows driver (UHD Graphics `a7a8`, 101.7084, SIMD16) any-size spanned programs give wrong 16-lane runs of results, cause not found, so [VulkanDevice.cpp](../../../core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp) pins that driver to 32 lanes; Mesa ANV (Arc) passes the tests on it. An earlier one-barrier ballot lost the device before a015284ee9; this one ran two cold Ghost of Yōtei runs to frame 1100 on NVIDIA only, on a downstream fork (#15305). The test does not catch a slot-reuse race.
