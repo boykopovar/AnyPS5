@@ -1,6 +1,23 @@
 #include "prx/libc/include/exceptions/Unwind.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
 
+namespace {
+
+_Unwind_Reason_Code FatalError(_Unwind_Action actions) {
+    return (actions & _UA_SEARCH_PHASE) ? _URC_FATAL_PHASE1_ERROR : _URC_FATAL_PHASE2_ERROR;
+}
+
+bool ValidActions(_Unwind_Action actions, bool allowHandlerFrame) {
+    const bool search = (actions & _UA_SEARCH_PHASE) != 0;
+    const bool cleanup = (actions & _UA_CLEANUP_PHASE) != 0;
+    if (search == cleanup) return false;
+    if (search && (actions & (_UA_HANDLER_FRAME | _UA_FORCE_UNWIND))) return false;
+    if ((actions & _UA_HANDLER_FRAME) && (!allowHandlerFrame || (actions & _UA_FORCE_UNWIND))) return false;
+    return true;
+}
+
+}
+
 extern "C" _Unwind_Reason_Code APS5_VABI __gxx_personality_v0_nid_postfix(
     int version, _Unwind_Action actions, std::uint64_t exceptionClass,
     _Unwind_Exception* exception, _Unwind_Context* context
@@ -8,6 +25,8 @@ extern "C" _Unwind_Reason_Code APS5_VABI __gxx_personality_v0_nid_postfix(
     using namespace LibcUnwind;
     using namespace LibcException;
     if (version != 1) return _URC_FATAL_PHASE1_ERROR;
+    if (!ValidActions(actions, true)) return FatalError(actions);
+    if (!exception) return FatalError(actions);
     if (!context || !context->lsda) return _URC_CONTINUE_UNWIND;
     const Byte* p = reinterpret_cast<const Byte*>(context->lsda);
     Byte landingEncoding = *p++;
@@ -35,20 +54,22 @@ extern "C" _Unwind_Reason_Code APS5_VABI __gxx_personality_v0_nid_postfix(
             std::memcpy(&adjusted, adjusted, sizeof(adjusted));
         if (action) {
             const Byte* record = actionsBegin + action - 1;
+            bool actionTerminated = false;
             for (unsigned steps = 0; steps < 4096; ++steps) {
                 auto filter = Sleb(record);
                 const Byte* nextField = record;
                 auto next = Sleb(record);
                 if (filter == 0) cleanup = true;
-                else if (filter > 0 && !(actions & _UA_FORCE_UNWIND) && typeTable) {
+                else if (filter > 0 && !(actions & _UA_FORCE_UNWIND)) {
+                    if (!typeTable) return FatalError(actions);
                     const Byte* entry = typeTable - filter * EncodingSize(typeEncoding);
                     auto* caught = reinterpret_cast<const std::type_info*>(Encoded(entry, typeEncoding, context->dataBase, context->region, context->textBase));
                     void* candidate = adjusted;
                     if (!caught || (header && Match(caught, Primary(header)->type, candidate))) {
-                        matched = true; selector = filter; adjusted = candidate; break;
+                        matched = true; selector = filter; adjusted = candidate; actionTerminated = true; break;
                     }
                 } else if (filter < 0 && !(actions & _UA_FORCE_UNWIND)) {
-                    if (!typeTable) return (actions & _UA_SEARCH_PHASE) ? _URC_FATAL_PHASE1_ERROR : _URC_FATAL_PHASE2_ERROR;
+                    if (!typeTable) return FatalError(actions);
                     const Byte* spec = typeTable + static_cast<std::size_t>(-(filter + 1));
                     bool allowed = false;
                     bool terminated = false;
@@ -63,13 +84,14 @@ extern "C" _Unwind_Reason_Code APS5_VABI __gxx_personality_v0_nid_postfix(
                         }
                     }
                     if (!allowed) {
-                        if (!terminated) return (actions & _UA_SEARCH_PHASE) ? _URC_FATAL_PHASE1_ERROR : _URC_FATAL_PHASE2_ERROR;
-                        matched = true; selector = filter; break;
+                        if (!terminated) return FatalError(actions);
+                        matched = true; selector = filter; actionTerminated = true; break;
                     }
                 }
-                if (!next) break;
+                if (!next) { actionTerminated = true; break; }
                 record = nextField + next;
             }
+            if (!actionTerminated) return FatalError(actions);
         }
         if (actions & _UA_SEARCH_PHASE) {
             if (!matched) return _URC_CONTINUE_UNWIND;
@@ -100,6 +122,7 @@ extern "C" _Unwind_Reason_Code APS5_VABI __gcc_personality_v0_nid_postfix(
 ) {
     using namespace LibcUnwind;
     if (version != 1) return _URC_FATAL_PHASE1_ERROR;
+    if (!ValidActions(actions, false)) return FatalError(actions);
     if (!context || !(actions & _UA_CLEANUP_PHASE) || !context->lsda) return _URC_CONTINUE_UNWIND;
     const Byte* p = reinterpret_cast<const Byte*>(context->lsda);
     Byte landingEncoding = *p++;
