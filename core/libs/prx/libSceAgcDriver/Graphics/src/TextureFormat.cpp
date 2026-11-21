@@ -169,6 +169,26 @@ std::uint32_t ScaledSampledFormats(PFN_vkGetPhysicalDeviceFormatProperties forma
     return formats;
 }
 
+constexpr std::array<std::uint32_t, 3> kOptionalTextureFormats{51u, 55u, 137u};
+
+std::uint32_t OptionalSampledBit(std::uint32_t guestFormat) {
+    for (std::uint32_t index = 0; index < kOptionalTextureFormats.size(); ++index) {
+        if (kOptionalTextureFormats[index] == guestFormat) return 1u << index;
+    }
+    return 0u;
+}
+
+std::uint32_t OptionalSampledFormats(PFN_vkGetPhysicalDeviceFormatProperties formatProperties, VkPhysicalDevice physical) {
+    std::uint32_t formats = 0;
+    for (const auto format : kOptionalTextureFormats) {
+        VkFormatProperties properties{};
+        formatProperties(physical, ResolveTextureFormat(format), &properties);
+        constexpr VkFormatFeatureFlags required = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+        if ((properties.optimalTilingFeatures & required) == required) formats |= OptionalSampledBit(format);
+    }
+    return formats;
+}
+
 std::uint32_t SrgbDecodeFormats(PFN_vkGetPhysicalDeviceFormatProperties formatProperties, VkPhysicalDevice physical) {
     const char* forced = std::getenv("APS5_SRGB_SHADER_DECODE");
     const bool always = forced != nullptr && (std::strcmp(forced, "1") == 0 || std::strcmp(forced, "copy") == 0);
@@ -201,6 +221,8 @@ bool SampledDepth24S8(const Context& context) {
 VkFormat SampledTextureFormat(const Context& context, std::uint32_t guestFormat) {
     const auto scaled = ScaledSampledBit(guestFormat);
     Require(scaled == 0u || (context.scaledSampledFormats & scaled) != 0u, "unsupported guest texture format " + std::to_string(guestFormat));
+    const auto optional = OptionalSampledBit(guestFormat);
+    Require(optional == 0u || (context.optionalSampledFormats & optional) != 0u, "unsupported guest texture format " + std::to_string(guestFormat));
     if (IsRepackedTextureFormat(guestFormat) || guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float)) return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
     const auto format = static_cast<ShaderRecompiler::IrBufferFormat>(guestFormat);
     if (format == ShaderRecompiler::IrBufferFormat::Format8_24UNorm && !SampledDepth24S8(context)) return VK_FORMAT_R32_SFLOAT;

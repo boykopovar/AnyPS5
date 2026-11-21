@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## add Functional
+
+- [10_10_10_2 SNORM and SINT textures](../../../core/libs/prx/libSceAgcDriver/Graphics/src/TextureFormat.cpp) (libSceAgcDriver, guest formats 51 and 55) sample through `A2B10G10R10_SNORM_PACK32` and `A2B10G10R10_SINT_PACK32`, optional Vulkan formats, and throw `unsupported guest texture format` on a device whose optimal tiling lacks the sampled-image or transfer-destination feature for them (uploads copy into the image); there is no emulated path. 4_4 textures (guest format 137, `R4G4_UNORM_PACK8`, also optional) take the same check: per GiannisG1's `vulkaninfo` data in #22717, Mesa ANV on an HD Graphics 630 and llvmpipe/lavapipe list no features for R4G4, while the GTX 1050 Ti (580.178.04), the RTX 5080 and gfx1036 sample it. Neither an NVIDIA GeForce RTX 5080 (driver 610.74) nor gfx1036 (AMD Windows driver 32.0.21045.16010) reports any feature for them. On gfx1036 hardware `image_load` decodes X, Y and Z as signed 10-bit fields (SNORM c / 511 with -512 giving -1.0; SINT sign-extended) and W as a signed 2-bit field (SNORM 1 is 1.0, -2 and -1 are -1.0; SINT -2 and -1). The PS5's gfx1013 is not measured.
