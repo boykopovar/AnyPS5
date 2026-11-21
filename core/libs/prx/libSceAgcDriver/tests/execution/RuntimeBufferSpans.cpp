@@ -132,7 +132,7 @@ constexpr Case Cases[]{
     {"short", 1024, 3},
     {"empty", 1024, 0},
     {"split", BlockBytes - 4, 1024},
-    {"swizzled", 1024, 1024, true},
+    {"swizzle bit without index", 1024, 1024, true},
     {"wrapped offset", 1024, 16, false, true},
     {"structured", 1024, 37, false, false, 16},
     {"structured partial", 1024, 10, false, false, 6},
@@ -201,9 +201,9 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t compo
         for (std::uint32_t component = 0; component < components; ++component) {
             const std::uint32_t offset = (test.wrappedIndex ? 0xfffffff8u : test.wrap ? 0xfffffffcu : test.stride != 0u ? 0u : lane * 16u) + component * 4u;
             std::uint32_t value = 0;
-            const bool inBounds = test.stride != 0u ? lane < test.records && offset < test.stride : test.records >= 4u && offset <= test.records - 4u && (!test.swizzle || test.wrappedIndex || offset <= 1020u);
+            const bool inBounds = test.stride != 0u ? lane < test.records && offset < test.stride : test.records >= 4u && offset <= test.records - 4u;
             if (inBounds) {
-                const auto physical = test.base + (test.wrappedIndex ? offset + 8u : test.stride != 0u ? lane * test.stride + offset : offset * (test.swizzle ? 8u : 1u));
+                const auto physical = test.base + (test.wrappedIndex ? offset + 8u : test.stride != 0u ? lane * test.stride + offset : offset);
                 std::memcpy(&value, reinterpret_cast<const std::byte*>(expected.data()) + physical, 4u);
             }
             expected[OutputBase / 4u + lane * 4u + component] = value;
