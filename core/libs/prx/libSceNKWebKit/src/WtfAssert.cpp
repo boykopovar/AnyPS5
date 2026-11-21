@@ -408,10 +408,12 @@ void* APS5_VABI WTFLogChannelByName(void** channels, std::size_t count, const ch
         return nullptr;
     }
     for (std::size_t i = 0; i < count; ++i) {
-        if (!channels[i]) {
+        void* channel = nullptr;
+        if (!GuestCopyIn_nid_no_patch(&channel, channels + i, sizeof(channel))) throw std::invalid_argument("WTFLogChannelByName: unreadable channels");
+        if (!channel) {
             continue;
         }
-        auto* ch = static_cast<WTFLogChannel*>(channels[i]);
+        auto* ch = static_cast<WTFLogChannel*>(channel);
         if (ch->name && StrCaseCmp(ch->name, name) == 0) {
             return ch;
         }
@@ -424,10 +426,12 @@ void APS5_VABI WTFInitializeLogChannelStatesFromString(void** channels, std::siz
         return;
     }
     for (std::size_t i = 0; i < count; ++i) {
-        if (!channels[i]) {
+        void* channel = nullptr;
+        if (!GuestCopyIn_nid_no_patch(&channel, channels + i, sizeof(channel))) throw std::invalid_argument("WTFInitializeLogChannelStatesFromString: unreadable channels");
+        if (!channel) {
             continue;
         }
-        auto* ch = static_cast<WTFLogChannel*>(channels[i]);
+        auto* ch = static_cast<WTFLogChannel*>(channel);
         if (StrCaseCmp(logLevel, "all") == 0 || (ch->name && StrCaseCmp(logLevel, ch->name) == 0)) {
             ch->state = 1;
         }
@@ -464,7 +468,9 @@ void APS5_VABI WTFPrintBacktrace(void** stack, int size) {
         return;
     }
     for (int i = 0; i < size; ++i) {
-        std::fprintf(stderr, "%-3d %p\n", i, stack[i]);
+        void* frame = nullptr;
+        if (!GuestCopyIn_nid_no_patch(&frame, stack + i, sizeof(frame))) throw std::invalid_argument("WTFPrintBacktrace: unreadable stack");
+        std::fprintf(stderr, "%-3d %p\n", i, frame);
     }
 }
 
