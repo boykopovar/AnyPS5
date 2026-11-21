@@ -567,6 +567,18 @@ static void TestString() {
     double d = _ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm(numStr, sizeof(numStr) / sizeof(char16_t) - 1, parsedLen);
     Require(std::abs(d - 123.456) < 1e-6);
     Require(parsedLen == 7);
+    struct LongStringCase {
+        const char16_t* text;
+        std::size_t length;
+        double value;
+        std::size_t parsed;
+    };
+    for (const LongStringCase& item : {LongStringCase{u" 12", 3, 0.0, 0}, LongStringCase{u"0x1A", 4, 0.0, 1}, LongStringCase{u"inf", 3, 0.0, 0},
+             LongStringCase{u"infinity", 8, 0.0, 0}, LongStringCase{u"nan", 3, 0.0, 0}, LongStringCase{u"-2.5e3x", 7, -2500.0, 6},
+             LongStringCase{u"12é34", 5, 12.0, 2}, LongStringCase{u"", 0, 0.0, 0}}) {
+        std::size_t parsed = 99;
+        Require(_ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm(item.text, item.length, parsed) == item.value && parsed == item.parsed);
+    }
 }
 
 static void TestWebCorePure() {
@@ -591,6 +603,25 @@ static void TestWebCorePure() {
     FloatRect around = _ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(1.0f, container);
     Require(std::abs(around.m_size.m_width - 200.0f) < 1e-3f);
     Require(std::abs(around.m_size.m_height - 200.0f) < 1e-3f);
+
+    const auto rectIs = [](const FloatRect& rect, float x, float y, float width, float height) {
+        return rect.m_location.m_x == x && rect.m_location.m_y == y && rect.m_size.m_width == width && rect.m_size.m_height == height;
+    };
+    const FloatRect flat{FloatPoint{0.0f, 0.0f}, FloatSize{10.0f, 0.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(2.0f, flat), 5.0f, 0.0f, 0.0f, 0.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(2.0f, flat), 0.0f, -2.5f, 10.0f, 5.0f));
+    const FloatRect offsetFlat{FloatPoint{4.0f, 6.0f}, FloatSize{8.0f, 0.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(0.5f, offsetFlat), 8.0f, 6.0f, 0.0f, 0.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(0.5f, offsetFlat), 4.0f, -2.0f, 8.0f, 16.0f));
+    const FloatRect empty{FloatPoint{3.0f, 7.0f}, FloatSize{0.0f, 0.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(2.0f, empty), 3.0f, 7.0f, 0.0f, 0.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(2.0f, empty), 3.0f, 7.0f, 0.0f, 0.0f));
+    const FloatRect thin{FloatPoint{1.0f, 2.0f}, FloatSize{0.0f, 10.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(2.0f, thin), 1.0f, 7.0f, 0.0f, 0.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(2.0f, thin), -9.0f, 2.0f, 20.0f, 10.0f));
+    const FloatRect mirrored{FloatPoint{0.0f, 0.0f}, FloatSize{-10.0f, 0.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(2.0f, mirrored), 0.0f, 2.5f, -10.0f, -5.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(2.0f, mirrored), -5.0f, 0.0f, 0.0f, 0.0f));
 
     FloatRect fr{FloatPoint{10.2f, 20.8f}, FloatSize{100.4f, 50.6f}};
     IntRect ir = _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(fr);
