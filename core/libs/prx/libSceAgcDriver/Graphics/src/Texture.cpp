@@ -4145,7 +4145,15 @@ std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segme
             const auto* words = reinterpret_cast<const std::uint32_t*>(static_cast<std::uintptr_t>(address));
             if (!GuestMemory::Accessible(words, static_cast<std::size_t>(bytes))) continue;
             const auto value = words[0];
-            if (!std::all_of(words, words + bytes / 4, [value](std::uint32_t word) { return word == value; })) continue;
+            const auto count = static_cast<std::size_t>(bytes / 4);
+            bool repeated = true;
+            for (std::size_t block = 0; block < count && repeated; block += 1024) {
+                std::uint32_t differing = 0;
+                const auto end = std::min<std::size_t>(count, block + 1024);
+                for (auto word = block; word < end; ++word) differing |= words[word] ^ value;
+                repeated = differing == 0;
+            }
+            if (!repeated) continue;
             fills.push_back({total, bytes, value});
             source.buffer = VK_NULL_HANDLE;
             source.offset = total;
