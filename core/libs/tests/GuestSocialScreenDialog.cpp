@@ -43,6 +43,9 @@ int main() {
     Require(sceSocialScreenDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceSocialScreenDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceSocialScreenDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     std::memset(result, 0x5a, sizeof(result));
     Require(sceSocialScreenDialogGetResult(nullptr) == kErrArgNull);
     Require(sceSocialScreenDialogGetResult(result) == kErrNotFinished);

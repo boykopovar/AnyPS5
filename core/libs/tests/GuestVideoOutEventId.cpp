@@ -110,6 +110,9 @@ int main() {
 
     data = Unwritten;
     passed = Returns("sceVideoOutGetEventId of a null event", [] { return sceVideoOutGetEventId(nullptr); }, InvalidAddress) && passed;
+    errno = 71;
+    passed = Returns("sceVideoOutGetEventId with an unreadable event pointer", [&] { return sceVideoOutGetEventId(reinterpret_cast<const KernelEvent*>(0x10)); }, InvalidAddress) && passed;
+    passed = (errno == 71) && passed;
     passed = Returns("sceVideoOutGetEventData of a null event", [&] { return sceVideoOutGetEventData(nullptr, &data); }, InvalidAddress) && passed;
     passed = Returns("sceVideoOutGetEventData with a null data pointer", [&] { return sceVideoOutGetEventData(&flip, nullptr); }, InvalidAddress) && passed;
     errno = 71;

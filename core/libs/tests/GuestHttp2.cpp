@@ -230,7 +230,48 @@ static int TestOfflineRequest(bool asynchronous, bool queued) {
     return 0;
 }
 
+static int TestOfflineDeclaredLength() {
+    const int networkError = static_cast<int>(0x80431063);
+    const int context = sceHttp2Init(1, 1, 0x10000, 4);
+    const int tmpl = sceHttp2CreateTemplate(context, "offline-test", 3, 0);
+    const std::array<char, 4> body{'b', 'o', 'd', 'y'};
+    const int online = sceHttp2CreateRequestWithURL(tmpl, "POST", "https://example.invalid/online", 64);
+    Require(context > 0 && tmpl > 0 && online > 0);
+    Require(Throws([&] { sceHttp2SendRequest(online, body.data(), 0); }));
+    Require(sceHttp2DeleteRequest(online) == 0);
+#ifdef _WIN32
+    _putenv("APS5_NET_DISCONNECTED=1");
+#else
+    setenv("APS5_NET_DISCONNECTED", "1", 1);
+#endif
+    Http2SetLookupHook_nid_no_patch(OfflineLookup);
+    for (const bool asynchronous : {false, true}) {
+        const int request = sceHttp2CreateRequestWithURL(tmpl, "POST", "https://example.invalid/declared", 64);
+        Require(request > 0);
+        if (asynchronous) {
+            Require(sceHttp2SendRequestAsync(request, body.data(), 0, nullptr, nullptr) == 0);
+            Http2AsyncResult result{};
+            Require(sceHttp2WaitAsync(request, &result, nullptr, nullptr) == 0);
+            Require(result.req_id == request && result.event_type == 0 && result.result == networkError);
+        } else {
+            Require(sceHttp2SendRequest(request, body.data(), body.size()) == networkError);
+        }
+        Require(sceHttp2DeleteRequest(request) == 0);
+    }
+#ifdef _WIN32
+    _putenv("APS5_NET_DISCONNECTED=");
+#else
+    unsetenv("APS5_NET_DISCONNECTED");
+#endif
+    Require(sceHttp2DeleteTemplate(tmpl) == 0);
+    Require(sceHttp2Term(context) == 0);
+    Require(offlineLookups == 0);
+    Http2SetLookupHook_nid_no_patch(nullptr);
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--offline-declared-length") == 0) return TestOfflineDeclaredLength();
     if (argc == 2 && std::strcmp(argv[1], "--offline-sync") == 0) return TestOfflineRequest(false, false);
     if (argc == 2 && std::strcmp(argv[1], "--offline-async") == 0) return TestOfflineRequest(true, false);
     if (argc == 2 && std::strcmp(argv[1], "--offline-queued") == 0) return TestOfflineRequest(true, true);
@@ -312,14 +353,35 @@ int main(int argc, char** argv) {
         Require(sceHttp2SslEnableOption(id, 0x3d) == 0);
         Require(sceHttp2SslDisableOption(id, 0x20) == 0);
         Require(Throws([&] { sceHttp2SetMinSslVersion(id, 99); }));
-        Require(Throws([&] { sceHttp2SslEnableOption(id, 0x80000000); }));
+        for (const std::uint32_t flags : {0x40u, 0x200u, 0x400u, 0x1000u, 0x4000u, 0x80000000u}) {
+            Require(sceHttp2SslEnableOption(id, flags) == InvalidValue);
+            Require(sceHttp2SslDisableOption(id, flags) == InvalidValue);
+        }
+        Require(sceHttp2SslDisableOption(id, 0x100) == InvalidValue);
+        for (const std::uint32_t flags : {0x2u, 0x80u, 0x100u, 0x2000u}) {
+            Require(Throws([&] { sceHttp2SslEnableOption(id, flags); }));
+        }
+        for (const std::uint32_t flags : {0x2u, 0x80u, 0x2000u}) {
+            Require(Throws([&] { sceHttp2SslDisableOption(id, flags); }));
+        }
     }
     Require(sceHttp2SslEnableOption(context, 0x3d) == 0);
     Require(sceHttp2SslDisableOption(context, 0x20) == 0);
-    Require(Throws([&] { sceHttp2SslEnableOption(context, 0x80000000); }));
+    Require(sceHttp2SslEnableOption(context, 0x80000000) == InvalidValue);
+    Require(sceHttp2SslEnableOption(-1, 0x40) == InvalidValue);
+    Require(sceHttp2SslDisableOption(-1, 0x100) == InvalidValue);
+    Require(sceHttp2SslEnableOption(-1, 0x4) == InvalidId);
     Http2MemoryPoolStats stats{1, 2, 3, 4};
+    std::memset(reinterpret_cast<unsigned char*>(&stats) + 28, 0x5a, 4);
     Require(sceHttp2GetMemoryPoolStats(context, &stats) == 0);
     Require(stats.pool_size == 0x10000 && stats.max_inuse_size == 0 && stats.current_inuse_size == 0 && stats.reserved == 0);
+    const auto* statBytes = reinterpret_cast<const unsigned char*>(&stats);
+    Require(statBytes[28] == 0 && statBytes[29] == 0 && statBytes[30] == 0 && statBytes[31] == 0);
+    Http2MemoryPoolStats missing{1, 2, 3, 4};
+    std::memset(reinterpret_cast<unsigned char*>(&missing) + 28, 0x5a, 4);
+    Require(sceHttp2GetMemoryPoolStats(static_cast<int>(0x7fffffff), &missing) == static_cast<int>(0x817B1100));
+    const auto* missingBytes = reinterpret_cast<const unsigned char*>(&missing);
+    Require(missingBytes[28] == 0 && missingBytes[29] == 0 && missingBytes[30] == 0 && missingBytes[31] == 0);
     KernelEqueue eq = 0;
     Require(sceKernelCreateEqueue(&eq, "http2-unsupported-async") == 0);
     Require(sceKernelAddUserEventEdge(eq, request) == 0);

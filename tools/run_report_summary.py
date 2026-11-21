@@ -41,6 +41,9 @@ def render(report):
     for key in ("game", "system", "run", "coverage", "missing", "shaders", "truncated", "stop"):
         if not isinstance(report.get(key), dict):
             raise ValueError(f"report field {key!r} must be an object")
+    for key in ("milestones", "missing", "shaders", "unsupported"):
+        if type(report["coverage"].get(key)) is not bool:
+            raise ValueError(f"report field 'coverage.{key}' must be a boolean")
 
     game = report["game"]
     system = report["system"]
@@ -143,7 +146,7 @@ def main():
     parser.add_argument("report", type=Path, help="path to anyps5-report.json")
     args = parser.parse_args()
     try:
-        report = json.loads(args.report.read_text(encoding="utf-8"))
+        report = json.loads(args.report.read_text(encoding="utf-8-sig"))
         if hasattr(sys.stdout, "reconfigure"):
             sys.stdout.reconfigure(encoding="utf-8")
         print(render(report))

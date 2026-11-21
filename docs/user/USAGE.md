@@ -10,6 +10,19 @@ The online converter can save Linux output as an uncompressed folder in supporte
 
 Select or drop multiple app ZIP archives to convert them into one ZIP bundle. The converter inspects each app separately and puts its executable, libraries and `app0/` files in a numbered folder, so archives with the same filename remain separate. Batch output uses ZIP mode; saving to an uncompressed folder remains available for one Linux app at a time. The 256 MiB memory-download limit applies to the whole bundle, so use **Save ZIP to disk** for larger batches. If a batch is cancelled or any app fails, the converter aborts the incomplete bundle; any cleanup failure is reported instead of offering it as a completed result.
 
+## Verify a release download
+
+Download the file from the [official AnyPS5 releases](https://github.com/boykopovar/AnyPS5/releases). Under **Assets** for that release, copy the `sha256:` digest next to the exact file name. If the file downloaded successfully, calculate its SHA-256 hash before opening it:
+
+- Windows PowerShell: `Get-FileHash -Algorithm SHA256 -LiteralPath "path\to\downloaded-file"`
+- Linux: `sha256sum -- "path/to/downloaded-file"`
+
+- macOS: `shasum -a 256 -- "path/to/downloaded-file"`
+
+Compare the hash with the part after `sha256:`, ignoring letter case. If it differs, discard the file. A matching hash confirms that the file matches the published asset.
+
+If a browser or antivirus blocks the download, leave it blocked. Report the release link, file name, exact warning and the browser or antivirus that showed it. Include the file size in bytes and the hash if the file is available.
+
 ## Input and conversion
 
 The relinker does not extract or decrypt package files. It needs an extracted, decrypted ELF executable and its bundled modules.
@@ -95,7 +108,7 @@ The executable and the module libraries carry an ad-hoc code signature, so they 
 
 Add `--to-intel` for Intel hosts, or `--to-rosetta` for Rosetta. A title that runs under Rosetta on Apple silicon is relinked with `--macos --to-rosetta`.
 
-- `--to-intel` rewrites AMD-specific instructions found in the executable and bundled modules. It cannot translate AMD-specific instructions that a title generates at runtime, so such titles need an AMD host.
+- `--to-intel` rewrites AMD-specific instructions found in the executable and bundled modules. It cannot translate AMD-specific instructions that a title generates at runtime, so such titles need an AMD host. Without it, the first such instruction on a CPU that lacks it ends the run, and the crash report names the instruction on Linux and Windows.
 - The output format defaults to Linux ELF whatever the filename is. `.exe` alone does not select Windows.
 
 ### Security warning
@@ -147,9 +160,9 @@ All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath`
 | `unused-filter=1`             | Filter unused non-PLT imports using control-flow and GOT access analysis, treating address-taken code as reachable; preserve PLT imports.                                                                                                                                                                                                                                                                                                                                   |
 | `unused-filter=2`             | Apply strict unused-import analysis and compact the PLT. Unsupported analysis cases cause an error.                                                                                                                                                                                                                                                                                                                                                                         |
 | `--registry`                  | Write `<output-stem>.registry.json` beside the output executable, and `<output-stem>.<module>.registry.json` for each converted bundled module.                                                                                                                                                                                                                                                                                                                             |
-| `--rpath <path>`              | Set the system library search path. Quote `$ORIGIN` to prevent shell expansion, for example `--rpath '$ORIGIN/libs'` in Bash or PowerShell. On Linux every colon-separated entry must be nonempty, and with guest modules each must be absolute or begin with `$ORIGIN`. Windows requires a nonempty ASCII path and supports `$ORIGIN` as the executable directory.                                                                                                         |
+| `--rpath <path>`              | Set the system library search path. Quote `$ORIGIN` to prevent shell expansion, for example `--rpath '$ORIGIN/libs'` in Bash or PowerShell. On Linux and macOS every colon-separated entry must be nonempty, and with guest modules each must be absolute or begin with `$ORIGIN`. Windows requires a nonempty ASCII path and supports `$ORIGIN` as the executable directory.                                                                                               |
 | `--omit-unavailable-dependencies` | Linux output: leave out a bundled module's dependency that no converted module provides, from which the module imports nothing, and that no `--rpath` directory holds when converting. Every run path directory must exist at that time. Without the switch such a dependency is kept and the conversion prints a note naming it. Use it only when the run path holds every system library: a library found later through `LD_LIBRARY_PATH` is no longer loaded. Cannot be used with `--windows` or `--macos`. |
-| `--autorun`                   | Run the output after conversion, print its exit code, and wait for Enter. Requires the target OS and prepared runtime layout.                                                                                                                                                                                                                                                                                                                                               |
+| `--autorun`                   | Run the output after conversion, print its exit code, and wait for Enter. Set `ANYPS5_AUTORUN_NO_PAUSE=1` to skip the wait. Requires the target OS and prepared runtime layout.                                                                                                                                                                                                                                                                                                                                               |
 | `--sce-module-path <path>`    | Parent of the module directories, not the module directory itself. Default: input ELF parent; relative input paths resolve from the process working directory. Explicit absolute path: used directly. Explicit relative path (including `.` and `..`): relative to the process working directory. Output path has no effect. Requires one nonempty value; repeats, nonexistent or nondirectory paths, access failures, and combination with `--skip-sce-module` are errors. |
 | `--module-dir <dir>`          | Relink the ELF modules of a directory under the module parent directory, besides `sce_module`/`sce_modules`/`prx`; outputs keep the relative path. Needed modules are mapped at startup. On Linux, modules in these extra directories initialize only when explicitly loaded, with the arguments from `sceKernelLoadStartModule` (for example Unity plugins in `Media/Plugins`). On Windows, such a module initializes when explicitly loaded, after the modules it needs that initialize the same way (they receive the same start arguments), unless a module outside these directories needs it, directly or through other modules, then it initializes at startup; the first explicit load of any such module also initializes, best effort, the others that a module depends on. On macOS, a module another module or the executable needs initializes at startup. Other modules initialize when loaded. Repeatable; `.` is the parent itself, without the input ELF. Conflicts with `--skip-sce-module`.  |
 | `--executable <path>`         | Also convert another executable of the title, which it starts with `sceSystemServiceLoadExec`; the path is relative to the module parent directory, for example `picker/picker.bin`. It is written beside the output, named after the path with `/` replaced by `.` and given the output's extension (`picker.picker.bin.exe`), and uses the same `libs/`, `app0/` and guest modules. It is an error if a guest module converts differently for it. Repeatable. Conflicts with `--skip-sce-module`. |
@@ -367,6 +380,8 @@ The game chooses its video-output resolution; AnyPS5 uses that mode for renderin
 
 `ANYPS5_DISPLAY_INDEX=<n>` opens the window centred on display `n`, counted from 0 in the order SDL lists the displays. Unset, the first display is used. A value that is not the index of a connected display, including an empty value, stops the game at start with an error that names the variable.
 
+On Linux, the bundled SDL2 requests server-side window decorations when the Wayland compositor advertises xdg-decoration. Compositors without xdg-decoration, including GNOME, use libdecor when it is available. If libdecor fails to configure the window within three seconds, AnyPS5 retries with xdg-shell. The retry can open without decorations, and startup reports an error if the compositor fails to configure that window too. Set `SDL_VIDEO_WAYLAND_ALLOW_LIBDECOR=0` to disable libdecor, `SDL_VIDEO_WAYLAND_PREFER_LIBDECOR=1` to try it first, or `SDL_VIDEODRIVER=x11` to select X11 or XWayland.
+
 ### VR compatibility
 
 AnyPS5 does not currently support PS VR2 headsets or PC VR headsets connected through an OpenXR runtime. It does not provide headset tracking, stereoscopic output or reprojection. A VR title may skip its headset setup when no device is detected, but that does not mean its VR gameplay is supported.
@@ -444,6 +459,10 @@ This is a host-side convenience, not console behaviour: the game does not send t
 ### Video-out and pad telemetry
 
 Set `APS5_VIDEOOUT_TELEMETRY_DIR` to a directory before launching the application to write the run's presents and pad changes to `<directory>/videoout.jsonl`, one JSON object per line, appended when the file already exists. Every line starts with `"v":1`, the host's steady-clock nanoseconds in `t_ns` and the event name in `ev`. A run starts with a `contract` line, `{"v":1,"t_ns":<ns>,"ev":"contract","contract":"v1-pad","commit":"<12 hex>","pid":<pid>,"prx":"libSceVideoOut"}`: `commit` is the source commit the libraries were built from (`unknown` when Git was not found at configuration) and `pid` tells apart the runs that appended to the same file. A `pad` line is written when the pad state the title reads changes in its buttons, sticks or triggers, `{"v":1,"t_ns":<ns>,"ev":"pad","n":<present>,"buttons":<bits>,"sticks":[<left x>,<left y>,<right x>,<right y>],"triggers":[<L2>,<R2>]}`, where `n` is the number of presents completed when the change was published, the count the window title shows. `buttons` is the button bit field in decimal, stick axes run 0-255 with 128 at the centre, and both triggers run 0-255. Motion, touch and the device kind are not compared, so a run that only moves the controller writes no `pad` line. The state a `pad` line reports is the controller and keyboard/mouse input read through SDL; input fed by `APS5_PAD_INPUT_FILE` is applied later, in `libScePad`, so a scripted run writes no `pad` line. A `present` line is written after the first present and every 30 presents after that, `{"v":1,"t_ns":<ns>,"ev":"present","n":<present>,"fps":<rate>}`, with the count and rate the window title shows. A background thread writes the lines and the title is not waited for: when it falls behind, the line is dropped and a `drops` line with the number dropped so far, `{"v":1,"t_ns":<ns>,"ev":"drops","dropped":<count>}`, is written every ten seconds while the count grows, and once at a normal exit, only when lines were dropped; an exit that skips static destructors writes no last line. A pad line the full queue refused counts as dropped even though a later publish writes the change. Without the variable no file is opened and no thread is started; an empty value is the same as an unset one, and a directory that cannot be written stops the title when video output starts, with an error naming the file.
+
+To measure completed guest flip cadence, set `APS5_VIDEOOUT_FLIP_TIMING=FIRST:COUNT` and use a fresh `APS5_VIDEOOUT_TELEMETRY_DIR` for each run. For example, `601:600` records flips 601 through 1200. The first flip number is positive and the count is 2–100000. The capture uses the first main output that completes a flip. The contract adds `flip_start` and `flip_count`, and each `flip_complete` line gives the completion sequence `n`, output `generation`, and guest flip status timestamp `process_us` in monotonic microseconds since process start. Adjacent `process_us` values measure the interval between completed flips, including cleared frames.
+
+Use one ordered, contiguous sequence covering the contract’s entire window in a single generation. Missing records indicate an incomplete capture, for example after a queue drop, output reopen, or early exit. Use the existing `drops` event to inspect lost telemetry records.
 
 ### Controller-speaker fallback audio
 
@@ -604,7 +623,51 @@ An empty value of either variable is the same as an unset one. The start fails o
 
 ### Benchmark reports
 
-To measure how a title runs on a machine, start it with `APS5_TRACE_SUMMARY_EVERY=30 APS5_TRACE_BENCH=1`, play the scene for a few minutes and quit. Every 30 seconds the runtime rewrites `aps5-bench-<commit>-<pid>.json.gz` in `APS5_TRACE_DIR` or the working directory and appends a line to `aps5-summary.jsonl`. The file holds the time between every two presents, the commit, GPU, driver, OS, CPU name, thread count and physical memory, and, when `app0/sce_sys/param.json` is present, the title ID, name and content version. It holds no game data. The first interval includes shader compilation; compare later intervals. The interval still open when the title exits is not written. The fields are described under [summaries for a long session](../dev/BUILD.md#summaries-for-a-long-session).
+To measure how a title runs on a machine, start it with `APS5_TRACE_SUMMARY_EVERY=30 APS5_TRACE_BENCH=1`, play the scene for a few minutes and quit. Every 30 seconds the runtime rewrites `aps5-bench-<commit>-<pid>.json.gz` in `APS5_TRACE_DIR` or the working directory and appends a line to `aps5-summary.jsonl`. The file holds the time between every two presents, the commit, GPU, driver, OS, CPU name, thread count and physical memory, and, when `app0/sce_sys/param.json` is present, the title ID, name and content version. It holds no game data. Only completed intervals are saved, keeping the most recent 240; `intervals_dropped` counts older intervals removed from the file. The interval still open when the title exits is not written. The fields are described under [summaries for a long session](../dev/BUILD.md#summaries-for-a-long-session).
+
+Read a capture with Python 3 from the source checkout:
+
+```sh
+python3 tools/benchmark_compare.py summarize captures/run.json.gz
+python3 tools/benchmark_compare.py summarize captures/run.json.gz --intervals 1:2 --json
+```
+
+`--intervals START:COUNT` selects whole completed intervals by their zero-based position in the retained file: `1:2` selects positions 1 and 2. Without it, all retained intervals are included. An interval recorded during loading or shader compilation stays included unless you select a later range. The report shows the selected intervals' recorded times and global present numbers, including when earlier history was dropped. A selected range that crosses a gap is refused.
+
+FPS uses the frame count divided by the sum of the selected intervals' elapsed times. Mean frame time and p50, p90, p99 and maximum frame time pool their recorded frame durations, which are truncated to microseconds. Those values can differ from the reciprocal of FPS. Saturated durations produce a warning and make affected raw-duration metrics unavailable.
+
+For repeated A/B runs, write a series JSON beside the captures. List attempts in the order they ran, using `baseline` and `candidate` as the arms. Give each intended matched pair the same `pair` value. This example records A, B, B, A, then two unsuccessful attempts:
+
+```json
+{
+  "format": "aps5-bench-series/1",
+  "recipe": {
+    "scene": "Load the same save and stand still after loading",
+    "save": "Local save slot 1",
+    "input": "No input during the selected intervals",
+    "cache": "Warm caches"
+  },
+  "runs": [
+    {"id": "A1", "arm": "baseline", "pair": "1", "capture": "captures/base-1.json.gz", "intervals": [1, 2]},
+    {"id": "B1", "arm": "candidate", "pair": "1", "capture": "captures/change-1.json.gz", "intervals": [1, 2]},
+    {"id": "B2", "arm": "candidate", "pair": "2", "capture": "captures/change-2.json.gz", "intervals": [1, 2]},
+    {"id": "A2", "arm": "baseline", "pair": "2", "capture": "captures/base-2.json.gz", "intervals": [1, 2]},
+    {"id": "B3", "arm": "candidate", "pair": "3", "status": "failed", "reason": "No benchmark was produced"},
+    {"id": "A3", "arm": "baseline", "pair": "3", "status": "excluded", "reason": "The display slept during the run"}
+  ]
+}
+```
+
+Capture paths are relative to the series file. `intervals` is `[START, COUNT]` and may be omitted to include all retained intervals. An included run may supply `sha256` to require that the original capture bytes match that digest. Failed and excluded attempts require a reason and have no capture. Keep them in the series so the report shows every supplied attempt. Reusing the same capture, including a renamed or recompressed copy, is refused as duplicate evidence.
+
+```sh
+python3 tools/benchmark_compare.py compare series.json
+python3 tools/benchmark_compare.py compare series.json --require-matching-context --json
+```
+
+The comparison preserves run order, reports each pair and counts complete pairs separately. Changes are candidate minus baseline; the aggregate reports the mean and range of paired percentage changes. A pair with a failed, excluded or missing arm contributes no paired change.
+
+Recorded context differences, dirty builds and missing identity fields appear in the report. `--require-matching-context` rejects recorded context differences. The recipe records the operator's account of the scene, save, input and caches. Check that the runs reached the same scene: matching metadata and hashes do not prove independent runs or that a code change caused a speed difference. The tool reads existing files and prints Markdown, or JSON with `--json`.
 
 ### Run report
 
@@ -664,6 +727,7 @@ F10 cycles a performance overlay over the presented image through three states: 
 | `DRAWS` | Draw packets per frame over the last second, or of the last frame below 1 fps, then dispatch packets per frame (`DISPATCH`), as the packet workers execute them; packets that predication skips are not counted. Shown once the title has submitted either. |
 | `SHADERS` | Pipelines created in the last second, or during the last frame below 1 fps, then since the start (`TOTAL`): a graphics pipeline for each draw state the pipeline cache had not seen and a compute pipeline for each new dispatch shader. A rise while the game stutters points at pipeline compilation. Shown once a pipeline was created. |
 | `VRAM` | Usage and budget of the GPU's largest device-local memory heap from `VK_EXT_memory_budget`, read once a second. Not shown when the driver lacks the extension. |
+| `CPU` | CPU package temperature in degrees Celsius, read once a second from the Linux sysfs thermal and hwmon sensors (`/sys/class`). Not shown when no sensor reports one, and not read on Windows. |
 | `RAM` | The process's private memory, read once a second: `PrivateUsage` of `GetProcessMemoryInfo` on Windows, `RssAnon` plus `VmSwap` of `/proc/self/status` on Linux. The title's direct memory is shared memory on both systems and is not included. |
 | `RES` | The display buffer's size, then the window's swapchain size, for example `RES: 1920X1080 / 2560X1440`. Not shown for frames without a display buffer. |
 
@@ -716,6 +780,7 @@ ANYPS5_LOG_FILE=run.log ./app.elf
 `python3 tools/bug_report.py` gathers what a bug report needs into one zip file: the run report `anyps5-report.json`, the log, and the input mapping, with your personal details redacted. It also writes `host.txt` with the operating system, machine and Python version, and a `README.txt` that says what was redacted.
 
 - By default it reads `./anyps5-report.json`, the log named by `ANYPS5_LOG_FILE` and the input mapping named by `ANYPS5_INPUT_CONFIG` (or `./anyps5-input.ini`), and writes `bug-report.zip`. Use `--report`, `--log`, `--input-config` and `--out` to choose other files.
+- If the report names a title, the tool looks for `anyps5-input.<TITLEID>.ini` beside the shared mapping, even if the shared file is absent. The bundle includes that title's overrides as `anyps5-input-profile.ini`.
 - Redaction replaces your home directory with `~`, your user and host names with `<user>` and `<host>`, and IPv4 addresses with `<ip>`. It matches whole words only, so a user name inside another word is not changed. It does not know other personal details, such as a name typed into a title, a file name that contains your name, or an IPv6 address; open the bundle and check it before you attach it.
 - A missing log or input mapping is left out of the bundle. The run report must be valid JSON. An existing bundle is never overwritten: the command exits with status 1 and names the file.
 
@@ -723,7 +788,7 @@ ANYPS5_LOG_FILE=run.log ./app.elf
 
 A small panel over the presented image lists the controllers of the four player slots, one line for each slot that has had a controller since the game started (with `ANYPS5_PAD_STATUS` unset or 0, since the first F9 press, because controllers are not tracked before that): `P1 DUALSENSE  WIRED`, `P2 XBOX  BATTERY MEDIUM`, `P3 DISCONNECTED`. It is never shown permanently: it disappears 4 seconds after the last thing that showed it. With no controller seen yet it reads `NO CONTROLLER`.
 
-F9 shows it, in the game window; pressing F9 while it is shown starts the 4 seconds again. The key is `ShowPadStatus` in the [input mapping](INPUT_MAPPING.md) and accepts only keyboard keys. With `ANYPS5_PAD_STATUS=1` it also appears by itself when a controller connects (including a controller already connected when the game starts), disconnects, is replaced by another one in its slot, or its battery enters a lower class (full, medium, low, empty); each new event starts the 4 seconds again. `ANYPS5_PAD_STATUS=0` is the same as unset: only F9 shows it. For this variable an empty value is the same as an unset one, and any other value stops the game when video output starts, with an error that names the variable.
+Press F9 (the default `ShowPadStatus` binding) to show the panel in the game window. Triggering the action again restarts the four-second timer. You can bind it to another key or a `PAD:` chord in the [input mapping](INPUT_MAPPING.md). With `ANYPS5_PAD_STATUS=1` it also appears by itself when a controller connects (including a controller already connected when the game starts), disconnects, is replaced by another one in its slot, or its battery enters a lower class (full, medium, low, empty); each new event starts the 4 seconds again. With `ANYPS5_PAD_STATUS=0` or the variable unset, the panel appears only when you trigger `ShowPadStatus`. For this variable an empty value is the same as an unset one, and any other value stops the game when video output starts, with an error that names the variable.
 
 A line is the player number (the controller's slot: a controller that reconnects takes the lowest free slot, which can be another player), the controller type and its power. The type is `DUALSENSE`, `DUALSHOCK 4`, `DUALSHOCK 3`, `XBOX` or `SWITCH`; for any other controller it is the name SDL reports, reduced to the characters of the overlay font and cut to 12 characters with a final dot, or `PAD` when SDL gives no name. The power is `WIRED` or one of SDL's battery classes, `BATTERY EMPTY` (up to 5%), `BATTERY LOW` (up to 20%), `BATTERY MEDIUM` (up to 70%) and `BATTERY FULL`; a controller whose driver or connection reports no level reads `BATTERY UNKNOWN`. What is reported depends on SDL, the operating system and the controller.
 
@@ -779,7 +844,7 @@ relinker --registry source/input.elf app.elf
 python3 tools/import_audit.py app.registry.json app.libc.prx.guest.prx.registry.json --libs build/core/libs/libs --modules source/sce_module
 ```
 
-`--registry` writes `app.registry.json` for the executable and one `app.<module>.registry.json` for each converted bundled module; pass all of them. `--libs` is the directory the `libs` target fills ([build instructions](../dev/BUILD.md)); the exports are read from the built `.prx` files, so the result matches what the loader finds. Imports are counted once per NID and library, and every reference lands in exactly one class:
+`--registry` writes `app.registry.json` for the executable and one `app.<module>.registry.json` for each converted bundled module; pass all of them. A module's imports are counted from its registry when that is passed with the executable's registry, and from its file in `--modules` otherwise, so a module passed both ways is not counted twice; the file still provides the module's exports and the libraries it needs, and imports taken from a registry are not marked with the module's file name in the report. `--libs` is the directory the `libs` target fills ([build instructions](../dev/BUILD.md)); the exports are read from the built `.prx` files, so the result matches what the loader finds. Imports are counted once per NID and library, and every reference lands in exactly one class:
 
 | Class | Meaning |
 |-------|---------|
@@ -793,7 +858,7 @@ An import that names a library requires the literal export name. If its implemen
 
 Module registries mark ELF weak imports with `"weak": true`, allowing the audit's current-stop selection to skip them. Strong imports omit the field. Older module registries do not preserve weak bindings; regenerate them to distinguish optional imports.
 
-ELF modules in `--modules` are audited regardless of filename: their undefined symbols are classified against the built libraries and the other modules' exports, with the module file named in the report, and the libraries they need must have a file in `--libs` or `--modules`. Ordinary non-module sidecars are ignored; malformed ELF, SELF containers and non-ELF files with module extensions remain errors; the converted `*.guest.prx` PE modules of a Windows build are accepted, and any other PE file is an error. The audit reads dynamic tables from ELF section headers or, for sectionless files, from `PT_DYNAMIC` and a SysV or GNU hash table. When both views are present, their import, export and dependency inventories must agree; contradictory metadata is an error. A PS4 module has no `DT_STRTAB` or `DT_SYMTAB`: the SCE tags `0x61000035` and `0x61000039` give the offsets of its string and symbol tables in its SCE dynamic library data segment (`0x61000000`), `0x61000037` and `0x6100003b` give the string table size and the symbol entry size, and `0x6100003f` gives the symbol table size. A module that names both standard and SCE tables is an error; the `0x6100003f` that PS5 modules carry beside their standard tables does not change how they are read.
+ELF modules in `--modules` are audited regardless of filename: their undefined symbols are classified against the built libraries and the other modules' exports, with the module file named in the report, and the libraries they need must have a file in `--libs` or `--modules`. A module whose registry is passed with the executable's registry has its imports counted from that registry instead, and they are not marked with its file name; the libraries it needs are still read from its file. Ordinary non-module sidecars are ignored; malformed ELF, SELF containers and non-ELF files with module extensions remain errors; the converted `*.guest.prx` PE modules of a Windows build are accepted, and any other PE file is an error. The audit reads dynamic tables from ELF section headers or, for sectionless files, from `PT_DYNAMIC` and a SysV or GNU hash table. When both views are present, their import, export and dependency inventories must agree; contradictory metadata is an error. A PS4 module has no `DT_STRTAB` or `DT_SYMTAB`: the SCE tags `0x61000035` and `0x61000039` give the offsets of its string and symbol tables in its SCE dynamic library data segment (`0x61000000`), `0x61000037` and `0x6100003b` give the string table size and the symbol entry size, and `0x6100003f` gives the symbol table size. A module that names both standard and SCE tables is an error; the `0x6100003f` that PS5 modules carry beside their standard tables does not change how they are read.
 
 Each registry has a companion with the same prefix and the suffix `.needed.json`, listing its host library dependencies, including declared `DT_NEEDED` entries with no imports. Dependencies supplied by converted bundled modules, including their aliases, are omitted. The executable's companion includes host dependencies of its bundled modules. The audit reads these companions automatically; keep them beside the registries. Older registries without companions still work, but cannot report dependencies that have no imports; regenerate them with `--registry` to include those dependencies.
 
