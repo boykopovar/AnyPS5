@@ -87,6 +87,9 @@ public:
     std::vector<std::uint8_t> data;
 };
 
+class CertificateInfo final : public ObjectOf<ObjectType::CertificateInfo> {
+};
+
 template<ObjectType kind, typename Value>
 class Number final : public ObjectOf<kind> {
 public:
@@ -249,7 +252,7 @@ public:
     std::uint64_t id = 0;
     Retained<Data> resumeData;
     Retained<Array> redirectChain;
-    bool wasUserInitiated = false;
+    bool wasUserInitiated = true;
     bool isCancelled = false;
 };
 
@@ -259,6 +262,8 @@ public:
     Retained<String> description;
     Retained<String> helpText;
     Retained<String> url;
+    std::uint32_t role = 0;
+    std::uint32_t buttonState = 0;
 };
 
 class MediaSessionMetadata final : public ObjectOf<ObjectType::MediaSessionMetadata> {

@@ -21,6 +21,25 @@ Game-controller bindings are enabled automatically. Keyboard and mouse overrides
 
 Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`, `LeftStickLeft`, `LeftStickRight`, `LeftStickUp`, `LeftStickDown`, `RightStickLeft`, `RightStickRight`, `RightStickUp`, `RightStickDown`, `TouchLeft`, `TouchRight`, `StickModifier`, `Shake`, `ToggleMouse`, `ToggleFullscreen` (F11), `TogglePerformanceOverlay` (F10, the [performance overlay](USAGE.md#performance-overlay)), `Screenshot` (F12, saves the next displayed frame as described in [screenshots](USAGE.md#screenshots)), and `ShowPadStatus` (F9, shows the [controller status panel](USAGE.md#controller-status-panel) for a few seconds). `ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot` and `ShowPadStatus` also accept `PAD:` chords.
 
+### SDL controller detection and layout
+
+If SDL sees a joystick but the game shows `NO CONTROLLER`, or the D-pad or buttons report the wrong inputs, supply an SDL2 mapping for the controller's GUID and operating system. USB and Bluetooth can use different mappings. Download `gamecontrollerdb.txt` from [SDL GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB), or save the mapping line from SDL2's `controllermap` tool in a plain text file, including its `platform:` field.
+
+With `gamecontrollerdb.txt` beside the converted game, start the game from that directory. On Windows, the setting applies to programs launched from the same PowerShell session until it closes.
+
+```powershell
+$env:SDL_GAMECONTROLLERCONFIG_FILE = (Resolve-Path -LiteralPath '.\gamecontrollerdb.txt').Path
+.\app.exe
+```
+
+On Linux, set the variable for the game process.
+
+```sh
+SDL_GAMECONTROLLERCONFIG_FILE="$PWD/gamecontrollerdb.txt" ./app.elf
+```
+
+Press F9 to check the [controller status panel](USAGE.md#controller-status-panel). SDL loads the file at startup. A matching file entry overrides SDL's built-in mapping, and a mapping set directly in `SDL_GAMECONTROLLERCONFIG` takes priority over the file. The `SDLButton:` entries in `anyps5-input.ini` then assign the resulting SDL buttons to PlayStation buttons.
+
 ### Controller button remapping
 
 Use `SDLButton:button = Button` to assign an SDL controller button to a PlayStation button. For example, this swaps Cross and Circle, then disables the Back button.

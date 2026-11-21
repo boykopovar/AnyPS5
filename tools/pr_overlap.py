@@ -97,6 +97,13 @@ def own(prs, sha):
     return {n: pr for n, pr in prs.items() if pr["sha"] not in ancestors}
 
 
+def without_own_pull_request(prs, name):
+    matching = [number for number, pr in prs.items() if pr.get("branch") == name]
+    if len(matching) == 1:
+        del prs[matching[0]]
+    return prs
+
+
 def gh(*args, attempts=3, delay=0.5):
     for attempt in range(attempts):
         try:
@@ -105,7 +112,8 @@ def gh(*args, attempts=3, delay=0.5):
             raise ValueError("GitHub CLI 'gh' is required on PATH") from error
         if result.returncode == 0:
             return result.stdout
-        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "TLS handshake", "stream error:", "unexpected EOF"))
+        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "TLS handshake", "stream error:", "unexpected EOF",
+                                                          "A connection attempt failed because the connected party did not properly respond"))
         if attempt + 1 == attempts or not transient:
             raise subprocess.CalledProcessError(result.returncode, ["gh", *args], output=result.stdout, stderr=result.stderr)
         time.sleep(delay * (2 ** attempt))
@@ -227,6 +235,7 @@ def open_prs(base):
         prs[pr["number"]] = {
             "ref": f"refs/pr/{pr['number']}",
             "sha": pr["head"]["sha"],
+            "branch": pr["head"]["ref"],
             "author": pr["user"]["login"],
             "title": pr.get("title") or "",
             "depends": depends_on(pr["body"]),
@@ -847,7 +856,11 @@ def main_status(names, ref):
 
 
 def lookup_report(names, found, status, prs, blob):
-    lines = []
+    lines = [
+        "PS5 exports only. Internal functions and instruction opcodes are not checked.",
+        "Inspect candidate pull requests and run --branch <branch> to check file and line overlaps.",
+        "",
+    ]
     for requested in names:
         name = canonical(requested)
         lines.append(name)
@@ -855,12 +868,12 @@ def lookup_report(names, found, status, prs, blob):
         if libraries:
             lines.extend(f"  main: {library} ({state})" for library, state in sorted(libraries.items()))
         else:
-            lines.append("  main: not declared")
+            lines.append("  main: no matching PS5 export")
         numbers = sorted(found.get(name, ()))
         if numbers:
             lines.extend(f"  open: {pull(blob, number)} by {prs[number]['author']}: {prs[number].get('title', '')}" for number in numbers)
         else:
-            lines.append("  open: none")
+            lines.append("  open: no matching PS5 export changes")
     return "\n".join(lines) + "\n"
 
 
@@ -914,7 +927,7 @@ def main(argv=None):
             return 0
         if args.branch:
             sha = branch_sha
-            prs = own(prs, sha)
+            prs = without_own_pull_request(own(prs, sha), args.branch)
             prs[0] = {"ref": sha, "author": None, "depends": set()}
         scan_all(prs, args.jobs)
         current_exports = base_exports(BASE_REF)

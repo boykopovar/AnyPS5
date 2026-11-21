@@ -621,7 +621,7 @@ static int PositionedArgumentError(int descriptor, bool write, bool nullBuffer, 
 }
 
 static int TransferArgumentError(int descriptor, bool nullBuffer) {
-    if (!nullBuffer) return 0;
+    if (!nullBuffer || IsKqueueDescriptor_nid_no_patch(descriptor)) return 0;
     return (GuestSockets::IsOpen(descriptor) || DescriptorIsOpen_nid_no_patch(descriptor)) ? GUEST_EFAULT : GUEST_EBADF;
 }
 
@@ -2272,6 +2272,7 @@ int APS5_VABI sceKernelFutimes(int d, const KernelTimeval* times) {
             if (times[i].tv_usec < 0 || times[i].tv_usec >= 1000000) return SceErrorFromErrno(GUEST_EINVAL);
         }
     }
+    if (IsKqueueDescriptor_nid_no_patch(d)) return SceErrorFromErrno(GUEST_EINVAL);
     if (NativeFutimes(d, times) != 0) return SceErrorFromErrno(errno);
     return 0;
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "prx/libSceNKWebKit/src/Object.hpp"
+#include "prx/libSceNKWebKit/src/Preferences.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include <cstdint>
 #include <optional>
@@ -52,7 +53,6 @@ public:
     std::optional<std::u16string> customTextEncodingName;
     bool backgroundExtendsBeyondPage = false;
 };
-class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
 
@@ -131,6 +131,9 @@ public:
     std::vector<std::string> emptyDocumentSchemes;
     std::vector<std::string> secureSchemes;
     std::vector<std::string> fontAllowList;
+    bool initialProcessWarmed = false;
+    bool useSeparateServiceWorkerProcess = false;
+    bool currentModifierStateCleared = false;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
@@ -246,7 +249,9 @@ public:
 class PageGroup final : public ObjectOf<ObjectType::PageGroup> {
 public:
     explicit PageGroup(std::u16string identifier)
-        : identifier(std::move(identifier)), userContentController(Make<UserContentController>()) {}
+        : identifier(std::move(identifier)),
+          preferences(Make<Preferences>(this->identifier)),
+          userContentController(Make<UserContentController>()) {}
 
     std::u16string identifier;
     Retained<Object> preferences;

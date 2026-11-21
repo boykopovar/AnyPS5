@@ -41,6 +41,7 @@ async function setup(t, name, overrides = {}) {
   const globals = {
     document: {
       documentElement: { lang: "", dir: "" },
+      activeElement: null,
       getElementById: get,
       createElement: () => new Element(),
       createTextNode: text => ({ textContent: text }),
@@ -200,6 +201,19 @@ async function selected(get, workers, name) {
   get("acknowledge").listeners.get("change")();
   return current;
 }
+
+test("changing the input returns keyboard focus to the ZIP picker", async t => {
+  const { get, workers } = await setup(t, "change-focus");
+  await selected(get, workers, "first.zip");
+  document.activeElement = get("change");
+  get("choose").focus = () => {
+    assert.equal(get("drop").hidden, false);
+    assert.equal(get("choose").disabled, false);
+    document.activeElement = get("choose");
+  };
+  get("change").onclick();
+  assert.equal(document.activeElement, get("choose"));
+});
 
 for (const outcome of ["error", "handle", "writable", "directory"]) {
   test(`a cancelled ${outcome} callback cannot change the replacement worker`, async t => {
@@ -362,6 +376,10 @@ test("a visible error follows a language switch", async t => {
   assert.equal(document.documentElement.lang, "fr");
   assert.equal(document.documentElement.dir, "ltr");
   assert.equal(get("error").children[0].textContent, "Impossible de charger les informations de version (404). release.json est généré lors de la génération du site ; il est donc absent quand demo/web est servi directement.");
+  get("locale").onclick();
+  assert.equal(document.documentElement.lang, "pt-BR");
+  assert.equal(document.documentElement.dir, "ltr");
+  assert.equal(get("error").children[0].textContent, "Não foi possível carregar as informações da versão (404). O release.json é gerado durante o build do site, por isso não existe quando demo/web é servido diretamente.");
   get("locale").onclick();
   assert.equal(document.documentElement.lang, "ru");
   assert.equal(document.documentElement.dir, "ltr");
