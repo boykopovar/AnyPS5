@@ -241,6 +241,24 @@ bool IsSrgbTextureFormat(std::uint32_t guestFormat) {
     }
 }
 
+bool IsSrgbViewFormat(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R8_SRGB:
+        case VK_FORMAT_R8G8_SRGB:
+        case VK_FORMAT_R8G8B8_SRGB:
+        case VK_FORMAT_B8G8R8_SRGB:
+        case VK_FORMAT_R8G8B8A8_SRGB:
+        case VK_FORMAT_B8G8R8A8_SRGB:
+        case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
+        case VK_FORMAT_BC1_RGB_SRGB_BLOCK:
+        case VK_FORMAT_BC1_RGBA_SRGB_BLOCK:
+        case VK_FORMAT_BC2_SRGB_BLOCK:
+        case VK_FORMAT_BC3_SRGB_BLOCK:
+        case VK_FORMAT_BC7_SRGB_BLOCK: return true;
+        default: return false;
+    }
+}
+
 bool IgnoresForcedDegamma(std::uint32_t guestFormat) {
     switch (guestFormat) {
         case 7u: case 8u: case 13u: case 22u: case 23u: case 24u: case 29u: case 36u: case 50u: case 64u: case 65u: case 66u: case 71u: case 77u:
