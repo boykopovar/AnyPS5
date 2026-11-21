@@ -11,12 +11,12 @@ using namespace FreeType;
 extern "C" {
 
 const char* APS5_VABI FT_Get_X11_Font_Format_nid_postfix(GuestFaceRec* face) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     return FT_Get_X11_Font_Format(owner ? owner->host : nullptr);
 }
 
 std::uint16_t APS5_VABI FT_Get_FSType_Flags_nid_postfix(GuestFaceRec* face) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     return FT_Get_FSType_Flags(owner ? owner->host : nullptr);
 }
 

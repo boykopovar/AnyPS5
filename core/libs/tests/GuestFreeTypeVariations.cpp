@@ -67,7 +67,7 @@ struct FacePair {
         guest.library = &libraries.guest;
         Require(FT_New_Memory_Face(libraries.guest.host, bytes.data(), static_cast<FT_Long>(bytes.size()), 0, &guest.host) == 0);
         Require(FT_New_Memory_Face(libraries.native, bytes.data(), static_cast<FT_Long>(bytes.size()), 0, &oracle) == 0);
-        SyncFace(guest);
+        SyncFace_nid_no_patch(guest);
     }
 
     ~FacePair() {

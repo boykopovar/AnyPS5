@@ -72,7 +72,7 @@ struct Face {
     Face(GuestLibrary& library, std::vector<unsigned char> font) : bytes(std::move(font)) {
         guest.library = &library;
         Require(FT_New_Memory_Face(library.host, bytes.data(), static_cast<FT_Long>(bytes.size()), 0, &guest.host) == 0);
-        SyncFace(guest);
+        SyncFace_nid_no_patch(guest);
     }
 
     ~Face() { Require(FT_Done_Face(guest.host) == 0); }

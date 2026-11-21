@@ -201,7 +201,7 @@ void* GuestTable(GuestSfntTables& tables, FT_Sfnt_Tag tag, void* native) {
 extern "C" {
 
 void* APS5_VABI FT_Get_Sfnt_Table_nid_postfix(GuestFaceRec* face, std::int32_t tag) {
-    GuestFace* owner = FaceOf(face);
+    GuestFace* owner = FaceOf_nid_no_patch(face);
     void* native = FT_Get_Sfnt_Table(owner ? owner->host : nullptr, static_cast<FT_Sfnt_Tag>(tag));
     if constexpr (sizeof(FT_Long) == 8) {
         return native;

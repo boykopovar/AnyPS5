@@ -43,7 +43,7 @@ struct RasterTargetSpan {
     std::size_t bytes = 0;
 };
 
-RasterTargetSpan RasterTargetSpan_nid_no_patch(const GuestBitmap& target);
+extern "C" RasterTargetSpan RasterTargetSpan_nid_no_patch(const GuestBitmap& target);
 
 struct GuestStreamBridge {
     GuestStreamRec* guest = nullptr;
@@ -72,15 +72,15 @@ struct GuestFace {
     ~GuestFace() { UnregisterBitmap_nid_no_patch(&slot.bitmap); }
 };
 
-void RegisterBitmap_nid_no_patch(GuestFace& face);
+extern "C" void RegisterBitmap_nid_no_patch(GuestFace& face);
 extern "C" int FreeTypeNewGlyph_nid_no_patch(GuestLibrary* library, std::uint32_t format, GuestGlyphRec** target);
 
-GuestFace* FaceOf(const GuestFaceRec* face);
-GuestFace* FaceOf(const GuestGlyphSlotRec* slot);
-void SyncFace(GuestFace& face);
+extern "C" GuestFace* FaceOf_nid_no_patch(const GuestFaceRec* face);
+extern "C" GuestFace* FaceOfSlot_nid_no_patch(const GuestGlyphSlotRec* slot);
+extern "C" void SyncFace_nid_no_patch(GuestFace& face);
 void SyncSize(GuestFace& face);
-void SyncSizePointer_nid_no_patch(GuestFace& face);
-void SyncSizeRecord_nid_no_patch(GuestFace& face, GuestSizeRec& rec, FT_Size host);
+extern "C" void SyncSizePointer_nid_no_patch(GuestFace& face);
+extern "C" void SyncSizeRecord_nid_no_patch(GuestFace& face, GuestSizeRec& rec, FT_Size host);
 void SyncSlot(GuestFace& face);
 
 }

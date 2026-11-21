@@ -16,7 +16,7 @@ using namespace FreeType;
 extern "C" {
 
 int APS5_VABI FT_Get_Track_Kerning_nid_postfix(GuestFaceRec* face, std::int64_t pointSize, std::int32_t degree, std::int64_t* kerning) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     if (!owner || !kerning) return FT_Get_Track_Kerning(owner ? owner->host : nullptr, 0, degree, nullptr);
     GuestArena::HostWrite write(kerning, sizeof(*kerning));
     if (!write.Open() || !GuestWritable_nid_no_patch(kerning, sizeof(*kerning))) return FT_Err_Invalid_Argument;

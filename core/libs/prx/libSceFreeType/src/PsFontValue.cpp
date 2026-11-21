@@ -51,7 +51,7 @@ std::int64_t WidenedLongValue(FT_Face host, std::int32_t key, std::uint32_t inde
 extern "C" {
 
 std::int64_t APS5_VABI FT_Get_PS_Font_Value_nid_postfix(GuestFaceRec* face, std::int32_t key, std::uint32_t index, void* value, std::int64_t valueLength) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     if (!owner) return FT_Get_PS_Font_Value(nullptr, static_cast<PS_Dict_Keys>(key), index, nullptr, 0);
     if (sizeof(FT_Long) != sizeof(std::int64_t) && HostLongValue(key)) return WidenedLongValue(owner->host, key, index, value, valueLength);
     const FT_Long required = FT_Get_PS_Font_Value(owner->host, static_cast<PS_Dict_Keys>(key), index, nullptr, 0);

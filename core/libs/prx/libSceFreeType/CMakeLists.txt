@@ -362,6 +362,21 @@ if(BUILD_TESTING)
     target_link_libraries(guest_freetype_charmap_tests PRIVATE libSceFreeType freetype libc)
     configure_windows_unwind(guest_freetype_charmap_tests)
     add_test(NAME guest_freetype_charmap COMMAND guest_freetype_charmap_tests)
+    if(APPLE)
+        add_test_executable(guest_freetype_imports_tests
+                ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeImports.cpp
+                ${LIBS_INCLUDE_DIR}/nid/src/NidCompute.cpp
+                ${LIBS_INCLUDE_DIR}/nid/src/Sha1.cpp
+        )
+        target_include_directories(guest_freetype_imports_tests PRIVATE ${LIBS_INCLUDE_DIR} ${LIBS_INCLUDE_DIR}/nid/include)
+        target_link_libraries(guest_freetype_imports_tests PRIVATE freetype)
+        add_custom_target(guest_freetype_imports_libraries DEPENDS
+            libSceFreeType ${PATCHED_DIR}/libSceFreeType.prx ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
+        add_dependencies(guest_freetype_imports_tests guest_freetype_imports_libraries)
+        add_test(NAME guest_freetype_imports_unpatched COMMAND guest_freetype_imports_tests $<TARGET_FILE:libSceFreeType> unpatched)
+        add_test(NAME guest_freetype_imports_patched COMMAND guest_freetype_imports_tests ${PATCHED_DIR}/libSceFreeType.prx patched)
+        set_tests_properties(guest_freetype_imports_unpatched guest_freetype_imports_patched PROPERTIES TIMEOUT 20)
+    endif()
     add_test_executable(guest_freetype_names_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeNames.cpp)
     target_include_directories(guest_freetype_names_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_names_tests PRIVATE libSceFreeType freetype libc)
