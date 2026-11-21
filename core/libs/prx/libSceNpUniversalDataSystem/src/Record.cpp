@@ -10,7 +10,6 @@
 #include <memory>
 #include <mutex>
 #include <new>
-#include <stdexcept>
 #include <string>
 
 namespace {
@@ -356,11 +355,10 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetBinary(void* record, cons
     if (array == nullptr) return kNullArray;
     if (value == nullptr) return kNullValue;
     Uds::Binary bytes;
+    if (size > bytes.max_size()) return kOutOfMemory;
     try {
         bytes.resize(size);
     } catch (const std::bad_alloc&) {
-        return kOutOfMemory;
-    } catch (const std::length_error&) {
         return kOutOfMemory;
     }
     if (!GuestCopyIn_nid_no_patch(bytes.data(), value, size)) return kNullValue;
@@ -516,11 +514,10 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetBinary(void* record, con
     key = name.c_str();
     if (value == nullptr) return kNullValue;
     Uds::Binary bytes;
+    if (size > bytes.max_size()) return kOutOfMemory;
     try {
         bytes.resize(size);
     } catch (const std::bad_alloc&) {
-        return kOutOfMemory;
-    } catch (const std::length_error&) {
         return kOutOfMemory;
     }
     if (!GuestCopyIn_nid_no_patch(bytes.data(), value, size)) return kNullValue;
