@@ -1,5 +1,7 @@
 #pragma once
 
+#include "prx/libSceNKWebKit/include/AdditionalCallableExports.hpp"
+
 #include "SceTypes.hpp"
 
 extern "C" {
