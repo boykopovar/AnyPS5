@@ -2,6 +2,12 @@
 #include <glslang/Public/ShaderLang.h>
 #include <limits>
 #include <mutex>
+#include <string>
+
+#if defined(__MINGW32__) && defined(__GLIBCXX__)
+template class std::basic_string<char>;
+template class std::basic_string<wchar_t>;
+#endif
 
 using namespace Slim;
 

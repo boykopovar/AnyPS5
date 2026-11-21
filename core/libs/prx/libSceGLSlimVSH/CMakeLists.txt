@@ -39,6 +39,12 @@ elseif(APPLE)
         "LINKER:-exported_symbol,_scePiglet*"
         "LINKER:-exported_symbol,_sceSlimgl*")
 endif()
+if(MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set(glslimStdExportScript "${CMAKE_CURRENT_BINARY_DIR}/libSceGLSlimVSHStdExports.ver")
+    file(CONFIGURE OUTPUT "${glslimStdExportScript}" CONTENT "{\n  local:\n    _ZSt*;\n    _ZNSt*;\n    _ZNKSt*;\n    _ZNRSt*;\n    _ZNKRSt*;\n    _ZNOSt*;\n    _ZNKOSt*;\n    _ZNSa*;\n    _ZNKSa*;\n    _ZN7glslang*;\n    _ZNK7glslang*;\n    _ZTIN7glslang*;\n    _ZTSN7glslang*;\n    _ZTVN7glslang*;\n};\n")
+    target_link_options(libSceGLSlimVSH PRIVATE "LINKER:--version-script=${glslimStdExportScript}")
+    set_property(TARGET libSceGLSlimVSH APPEND PROPERTY LINK_DEPENDS "${glslimStdExportScript}")
+endif()
 configure_windows_unwind(libSceGLSlimVSH)
 
 if(BUILD_TESTING)
