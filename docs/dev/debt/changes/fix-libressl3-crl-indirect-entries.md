@@ -1,0 +1,5 @@
+# libSceLibreSsl3
+
+## add Functional
+
+- [X509_CRL entries with certificateIssuer](../../../core/libs/prx/libSceLibreSsl3/src/X509Crl.cpp) (libSceLibreSsl3) - not compared with the console. LibreSSL 4.0.0 [`crl_set_issuers`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_crl.c#L189-L253) gives a revoked entry the names of its `certificateIssuer` extension, or of the nearest earlier entry that has one, and the lookup compares the certificate issuer with those names, not with the CRL issuer. This model does not decode `GENERAL_NAMES`: `rev->issuer` stays null, and `X509_CRL_get0_by_cert` throws through `NotImplemented_nid_no_patch` when the entry whose serial number matches has that extension or follows an entry that has it. Not modelled: `EXFLAG_INVALID` and the stop at an entry extension that does not decode, the sort of the revoked stack on the first lookup, and reason -1 for an entry without `reasonCode`. Closes when: `GENERAL_NAMES` are decoded.
