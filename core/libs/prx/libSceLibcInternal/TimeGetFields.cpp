@@ -943,6 +943,16 @@ std::int32_t APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traits
     return GetIntImpl<std::uint16_t>(self, first, last, lo, hi, val, ctype, __func__);
 }
 
+bool APS5_VABI _ZNKSt19istreambuf_iteratorIcSt11char_traitsIcEE5equalERKS2__nid_postfix(GuestLocale::InputIterator* self, GuestLocale::InputIterator* right) {
+    if (self == nullptr || right == nullptr) throw std::invalid_argument(std::string(__func__) + ": null iterator");
+    return Equal<char>(*self, *right);
+}
+
+bool APS5_VABI _ZNKSt19istreambuf_iteratorIwSt11char_traitsIwEE5equalERKS2__nid_postfix(GuestLocale::InputIterator* self, GuestLocale::InputIterator* right) {
+    if (self == nullptr || right == nullptr) throw std::invalid_argument(std::string(__func__) + ": null iterator");
+    return Equal<std::uint16_t>(*self, *right);
+}
+
 GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE11do_get_timeES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time) {
     return DoGetTimeImpl<char>(self, first, last, stream, state, time, __func__);
 }
