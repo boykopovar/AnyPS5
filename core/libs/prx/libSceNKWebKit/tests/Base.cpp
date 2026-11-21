@@ -108,6 +108,31 @@ static void TestStrings() {
 
     Require(WKStringGetUTF8CString(s, buf, 0) == 0);
 
+    struct SurrogateCase {
+        std::u16string text;
+        std::size_t strict;
+        std::size_t lenient;
+        unsigned char bytes[5];
+    };
+    for (const SurrogateCase& item : {
+             SurrogateCase{{u'a', char16_t{0xD83D}}, 0, 0, {}},
+             SurrogateCase{{char16_t{0xD83D}}, 0, 0, {}},
+             SurrogateCase{{char16_t{0xD83D}, u'a'}, 0, 5, {0xEF, 0xBF, 0xBD, 0x61, 0x00}},
+             SurrogateCase{{u'a', char16_t{0xDC00}}, 0, 5, {0x61, 0xEF, 0xBF, 0xBD, 0x00}},
+             SurrogateCase{{char16_t{0xDC00}}, 0, 4, {0xEF, 0xBF, 0xBD, 0x00, 0x00}},
+             SurrogateCase{{char16_t{0xD83D}, char16_t{0xDE00}}, 5, 5, {0xF0, 0x9F, 0x98, 0x80, 0x00}},
+         }) {
+        auto owner = NKWebKit::Make<NKWebKit::String>(item.text);
+        const void* reference = NKWebKit::ToRef(owner);
+        char utf8[16];
+        Require(WKStringGetUTF8CString(reference, utf8, sizeof(utf8)) == item.strict);
+        if (item.strict) Require(std::memcmp(utf8, item.bytes, item.strict) == 0);
+        std::memset(utf8, 0x7F, sizeof(utf8));
+        Require(WKStringGetUTF8CStringNonStrict(reference, utf8, sizeof(utf8)) == item.lenient);
+        if (item.lenient) Require(std::memcmp(utf8, item.bytes, item.lenient) == 0);
+        WKRelease(reference);
+    }
+
     auto* s2 = WKStringCreateWithUTF8CString("hello, world!");
     Require(!WKStringIsEqual(s, s2));
     Require(WKStringIsEqualToUTF8CString(s, "Hello, World!"));
@@ -1921,6 +1946,7 @@ static void TestProtectionSpace() {
     Require(WKProtectionSpaceGetAuthenticationScheme(space) == 2);
     Require(!WKProtectionSpaceGetIsProxy(space));
     Require(WKProtectionSpaceGetReceivesCredentialSecurely(space));
+    Require(WKProtectionSpaceCopyCertificateInfo(space) == nullptr);
     WKRelease(space);
 
     const Server servers[] = {Server::HTTP, Server::HTTPS, Server::FTP, Server::FTPS, Server::ProxyHTTP, Server::ProxyHTTPS, Server::ProxyFTP, Server::ProxySOCKS};
@@ -1962,7 +1988,16 @@ static void TestProtectionSpace() {
     Require(WKProtectionSpaceGetAuthenticationScheme(empty) == 1);
     Require(!WKProtectionSpaceGetIsProxy(empty));
     Require(!WKProtectionSpaceGetReceivesCredentialSecurely(empty));
+    Require(WKProtectionSpaceCopyCertificateInfo(empty) == nullptr);
     WKRelease(empty);
+
+    auto certInfo = NKWebKit::Make<NKWebKit::CertificateInfo>();
+    auto* spaceWithCert = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::ProtectionSpace>(
+        NKWebKit::String::FromUtf8("secure.example.com"), 443, Server::HTTPS, NKWebKit::String::FromUtf8("Secure Realm"), Scheme::ServerTrustEvaluationRequested, certInfo));
+    auto* copiedCert = WKProtectionSpaceCopyCertificateInfo(spaceWithCert);
+    Require(copiedCert == NKWebKit::ToRef(certInfo));
+    WKRelease(copiedCert);
+    WKRelease(spaceWithCert);
 
     auto* notSpace = NKWebKit::ToRef(NKWebKit::String::FromUtf8("not a protection space"));
     bool threw = false;
@@ -1972,11 +2007,27 @@ static void TestProtectionSpace() {
         threw = true;
     }
     Require(threw);
+
+    threw = false;
+    try {
+        WKProtectionSpaceCopyCertificateInfo(notSpace);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
     WKRelease(notSpace);
 
     threw = false;
     try {
         WKProtectionSpaceCopyHost(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKProtectionSpaceCopyCertificateInfo(nullptr);
     } catch (const std::invalid_argument&) {
         threw = true;
     }

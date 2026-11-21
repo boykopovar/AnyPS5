@@ -97,6 +97,13 @@ def own(prs, sha):
     return {n: pr for n, pr in prs.items() if pr["sha"] not in ancestors}
 
 
+def without_own_pull_request(prs, name):
+    matching = [number for number, pr in prs.items() if pr.get("branch") == name]
+    if len(matching) == 1:
+        del prs[matching[0]]
+    return prs
+
+
 def gh(*args, attempts=3, delay=0.5):
     for attempt in range(attempts):
         try:
@@ -227,6 +234,7 @@ def open_prs(base):
         prs[pr["number"]] = {
             "ref": f"refs/pr/{pr['number']}",
             "sha": pr["head"]["sha"],
+            "branch": pr["head"]["ref"],
             "author": pr["user"]["login"],
             "title": pr.get("title") or "",
             "depends": depends_on(pr["body"]),
@@ -918,7 +926,7 @@ def main(argv=None):
             return 0
         if args.branch:
             sha = branch_sha
-            prs = own(prs, sha)
+            prs = without_own_pull_request(own(prs, sha), args.branch)
             prs[0] = {"ref": sha, "author": None, "depends": set()}
         scan_all(prs, args.jobs)
         current_exports = base_exports(BASE_REF)

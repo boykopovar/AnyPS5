@@ -159,7 +159,7 @@ def warning_counts(text):
 
 def read_summary(path):
     lines = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if path.is_file() else []:
+    for line in path.read_text(encoding="utf-8", errors="replace").split("\n") if path.is_file() else []:
         try:
             decoded = json.loads(line)
         except ValueError:
@@ -557,7 +557,8 @@ def is_module(path):
 
 
 def stage_inputs(package, entry, source):
-    (source / "sce_module").mkdir(parents=True)
+    if not (package / "sce_modules").is_dir():
+        (source / "sce_module").mkdir(parents=True)
     unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
     executables = [path for path in (package / "eboot.bin", *(package / name for name in entry.get("executables", []))) if path.is_file()]
     for directory in dict.fromkeys([*STANDARD_MODULE_DIRS, *module_dirs(entry)]):

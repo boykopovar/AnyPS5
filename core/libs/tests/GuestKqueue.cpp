@@ -2012,6 +2012,11 @@ static void KqueueDescriptorOperations() {
     RequireFailure(static_cast<int>(write_nid_postfix(kq, "x", 1)), GuestEopnotsupp);
     Require(read_nid_postfix(kq, &byte, 0) == 0);
     RequireFailure(static_cast<int>(write_nid_postfix(kq, "x", 0)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(read_nid_postfix(kq, nullptr, 1)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(_read_nid_postfix(kq, nullptr, 1)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(write_nid_postfix(kq, nullptr, 1)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(_write_nid_postfix(kq, nullptr, 1)), GuestEopnotsupp);
+    Require(read_nid_postfix(kq, nullptr, 0) == 0);
     KernelIovec one{&byte, 1};
     KernelIovec none{&byte, 0};
     RequireFailure(static_cast<int>(readv_nid_postfix(kq, &one, 1)), GuestEopnotsupp);
@@ -2022,6 +2027,9 @@ static void KqueueDescriptorOperations() {
     RequireFailure(fsync_nid_postfix(kq), GuestEinval);
     RequireFailure(fdatasync_nid_postfix(kq), GuestEinval);
     RequireFailure(flock_nid_postfix(kq, 1), GuestEopnotsupp);
+    RequireFailure(futimes_nid_postfix(kq, nullptr), GuestEinval);
+    const KernelTimeval times[2] = {{1, 0}, {2, 0}};
+    Require(sceKernelFutimes(kq, times) == SceEinval);
     Require(close_nid_postfix(kq) == 0);
 }
 

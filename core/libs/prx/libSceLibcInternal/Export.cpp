@@ -667,11 +667,6 @@ int APS5_VABI _Daysto_nid_postfix(int year, int month) {
     return static_cast<int>(leapDays + static_cast<std::uint32_t>(common ? DaysBeforeMonth[month] : LeapDaysBeforeMonth[month]));
 }
 
-int APS5_VABI _Deletegloballocale_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 double APS5_VABI _Erfc_nid_postfix(double x) {
     return ErfcTail(x, erfc_nid_postfix, __func__);
 }
@@ -691,11 +686,6 @@ int APS5_VABI _FQuad_nid_postfix() {
 }
 
 int APS5_VABI _FQuadph_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FRint_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1102,11 +1092,6 @@ int APS5_VABI _LQuad_nid_postfix() {
 }
 
 int APS5_VABI _LQuadph_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LRint_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

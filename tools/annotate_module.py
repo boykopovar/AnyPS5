@@ -40,6 +40,7 @@ STT_GNU_IFUNC = 10
 SHN_COMMON = 0xFFF2
 GHIDRA_MAX_NAME_LENGTH = 2000
 DT_GNU_HASH = 0x6ffffef5
+DT_TLSDESC_PLT = 0x6ffffef6
 DT_FLAGS_1 = 0x6ffffffb
 DF_1_PIE = 0x8000000
 R_X86_64_64 = 1
@@ -52,6 +53,7 @@ R_X86_64_COPY = 5
 R_X86_64_IRELATIVE = 37
 DYNAMIC_VALUE_TAGS = {
     12: "DT_INIT", 13: "DT_FINI",
+    DT_TLSDESC_PLT: "DT_TLSDESC_PLT",
     25: "DT_INIT_ARRAY", 27: "DT_INIT_ARRAYSZ", 26: "DT_FINI_ARRAY", 28: "DT_FINI_ARRAYSZ",
     32: "DT_PREINIT_ARRAY", 33: "DT_PREINIT_ARRAYSZ",
     DT_HASH: "DT_HASH", DT_STRTAB: "DT_STRTAB", DT_SYMTAB: "DT_SYMTAB",
@@ -338,7 +340,7 @@ def ghidra_symbols(module, namer):
                                                      offset + address - start < len(module.data)
                                                      for start, offset, size, flags in module.loads):
             rows.add((address, True, name, name))
-    for tag, name in ((12, "elf_init"), (13, "elf_fini")):
+    for tag, name in ((12, "elf_init"), (13, "elf_fini"), (DT_TLSDESC_PLT, "elf_tlsdesc_plt")):
         address = module.tags.get(tag)
         if address is None or address in exported_functions:
             continue
