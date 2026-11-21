@@ -4610,7 +4610,6 @@ int APS5_VABI _ZN9Inspector8Protocol13BindingTraitsINS0_8Debugger8LocationEE26as
 int APS5_VABI _ZN9Inspector8Protocol13BindingTraitsINS0_8Debugger9CallFrameEE26assertValueHasExpectedTypeEPN3WTF8JSONImpl5ValueE();
 int APS5_VABI _ZN9Inspector8Protocol13BindingTraitsINS0_8Timeline9EventTypeEE26assertValueHasExpectedTypeEPN3WTF8JSONImpl5ValueE();
 int APS5_VABI _ZNK14OpaqueJSString6stringEv();
-int APS5_VABI _ZNK3JSC10CodeOrigin4dumpERN3WTF11PrintStreamE();
 int APS5_VABI _ZNK3JSC10JSFunction10sourceCodeEv();
 int APS5_VABI _ZNK3JSC10JSFunction23isHostFunctionNonInlineEv();
 int APS5_VABI _ZNK3JSC11ArrayBuffer5sliceEd();
@@ -4633,7 +4632,6 @@ int APS5_VABI _ZNK3JSC18BasicBlockLocation8dumpDataEv();
 int APS5_VABI _ZNK3JSC18BytecodeCacheError7isValidEv();
 int APS5_VABI _ZNK3JSC18BytecodeCacheError7messageEv();
 int APS5_VABI _ZNK3JSC18GCActivityCallback9isEnabledEv();
-int APS5_VABI _ZNK3JSC19CacheableIdentifier4dumpERN3WTF11PrintStreamE();
 int APS5_VABI _ZNK3JSC19ControlFlowProfiler8dumpDataEv();
 int APS5_VABI _ZNK3JSC19HeapSnapshotBuilder18descriptionForCellEPNS_6JSCellE();
 int APS5_VABI _ZNK3JSC22FullGCActivityCallback13didGCRecentlyEv();
