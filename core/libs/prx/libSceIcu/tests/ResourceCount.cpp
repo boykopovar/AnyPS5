@@ -180,8 +180,8 @@ void AllResourceTypes() {
     }
 
     root[40] = 4;
-    const std::array<std::uint32_t, 2> wideContainers{
-        0x40000028, 0x80000028};
+    const std::array<std::uint32_t, 3> wideContainers{
+        0x20000028, 0x40000028, 0x80000028};
     for (const auto resource : wideContainers) {
         root[20] = static_cast<std::int32_t>(resource);
         Require(ures_countArrayItems_nid_postfix(
@@ -189,13 +189,6 @@ void AllResourceTypes() {
             "wide container count");
         Require(status == 0, "wide container status");
     }
-
-    reinterpret_cast<std::uint16_t*>(root.data())[20] = 7;
-    root[20] = 0x20000028;
-    Require(ures_countArrayItems_nid_postfix(
-        reinterpret_cast<const UResourceBundle*>(&bundle), "alpha", &status) == 7,
-        "table byte offset count");
-    Require(status == 0, "table byte offset status");
 
     for (const auto resource : {0x50000004U, 0x90000004U}) {
         root[20] = static_cast<std::int32_t>(resource);
