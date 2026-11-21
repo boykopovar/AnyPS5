@@ -474,6 +474,11 @@ public:
     static void SetFlushFailureForTest(bool fail);
     static int TakeFlushFailureForTest();
     static bool OrderedFlushArmedForTest();
+    struct DrawnStoreCounts {
+        std::uint64_t stores;
+        std::uint64_t regions;
+    };
+    static DrawnStoreCounts TakeDrawnStoreCounts();
     // A consumer found the image current and used it (Refresh, the fast revalidation).
     void NoteProved() const;
     void NoteUsed() const {
