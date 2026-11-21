@@ -17,9 +17,9 @@ public:
         if (tryAcquire())
             return true;
         for (int spin = 0; spin < spins; ++spin) {
+            pause();
             if (tryAcquire())
                 return true;
-            pause();
         }
         for (int round = 0; round < yields; ++round) {
             yield();

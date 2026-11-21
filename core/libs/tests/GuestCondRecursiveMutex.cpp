@@ -82,7 +82,80 @@ static void WaitWithRecursiveMutex(int (*wait)(Context&)) {
     Require(scePthreadMutexDestroy(&context.mutex) == SCE_OK);
 }
 
+static void SpinAcquirePausesBeforeRetrying() {
+    {
+        int tryCalls = 0;
+        int pauseCalls = 0;
+        int yieldCalls = 0;
+        const bool acquired = MutexOperations::SpinAcquire(
+            1,
+            0,
+            [&]() {
+                ++tryCalls;
+                return pauseCalls > 0;
+            },
+            [&]() { ++pauseCalls; },
+            [&]() { ++yieldCalls; });
+        Require(acquired);
+        Require(tryCalls == 2);
+        Require(pauseCalls == 1);
+        Require(yieldCalls == 0);
+    }
+
+    {
+        char events[8]{};
+        int count = 0;
+        const bool acquired = MutexOperations::SpinAcquire(
+            2,
+            1,
+            [&]() {
+                if (count < 8)
+                    events[count] = 'T';
+                ++count;
+                return false;
+            },
+            [&]() {
+                if (count < 8)
+                    events[count] = 'P';
+                ++count;
+            },
+            [&]() {
+                if (count < 8)
+                    events[count] = 'Y';
+                ++count;
+            });
+        Require(!acquired);
+        Require(count == 7);
+        const char expected[7] = {'T', 'P', 'T', 'P', 'T', 'Y', 'T'};
+        for (int i = 0; i < 7; ++i)
+            Require(events[i] == expected[i]);
+    }
+
+    const int zeroOrNegative[2] = {0, -2};
+    for (int spins : zeroOrNegative) {
+        for (int yields : zeroOrNegative) {
+            int tryCalls = 0;
+            int pauseCalls = 0;
+            int yieldCalls = 0;
+            const bool acquired = MutexOperations::SpinAcquire(
+                spins,
+                yields,
+                [&]() {
+                    ++tryCalls;
+                    return false;
+                },
+                [&]() { ++pauseCalls; },
+                [&]() { ++yieldCalls; });
+            Require(!acquired);
+            Require(tryCalls == 1);
+            Require(pauseCalls == 0);
+            Require(yieldCalls == 0);
+        }
+    }
+}
+
 int main() {
+    SpinAcquirePausesBeforeRetrying();
     WaitWithRecursiveMutex(SceWait);
     WaitWithRecursiveMutex(SceTimedwait);
     WaitWithRecursiveMutex(PosixWait);
