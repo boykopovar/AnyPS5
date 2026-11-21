@@ -29,8 +29,8 @@ std::uint64_t APS5_VABI _ZNK7WebCore6ISOBox4sizeEv(const Box* self) {
     return Checked(self, "ISOBox::size").size;
 }
 
-std::uint32_t APS5_VABI _ZNK7WebCore6ISOBox7boxTypeEv(const Box* self) {
-    return Checked(self, "ISOBox::boxType").boxType;
+const std::uint32_t* APS5_VABI _ZNK7WebCore6ISOBox7boxTypeEv(const Box* self) {
+    return &Checked(self, "ISOBox::boxType").boxType;
 }
 
 const ByteVector& APS5_VABI _ZNK7WebCore6ISOBox12extendedTypeEv(const Box* self) {
