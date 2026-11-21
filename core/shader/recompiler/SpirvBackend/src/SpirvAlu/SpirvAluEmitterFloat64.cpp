@@ -734,20 +734,21 @@ public:
         const Product total{pick(subtract, differenceHigh, sumHigh), pick(subtract, differenceLow, sumLow)};
         const auto sign = pick(logical(spv::OpLogicalOr, productLarger, Unary(state, spv::OpLogicalNot, boolean, subtract)), productSign, addendSign);
         const auto cancelled = testConstant(spv::OpIEqual, op(spv::OpBitwiseOr, total.high, total.low), 0u);
-        const auto zeros = pick(testConstant(spv::OpIEqual, total.high, 0u), withConstant(spv::OpIAdd, leadingZerosWide(total.low), 64u), leadingZerosWide(total.high));
-        const auto top = testConstant(spv::OpIEqual, zeros, 0u);
-        const auto leftShift = pick(top, constant(0u), withConstant(spv::OpISub, zeros, 1u));
+        const auto narrowConstant = [&](std::uint32_t value) { return ConstantU32(state, value); };
+        const auto zeros = Select(state, u32, testConstant(spv::OpIEqual, total.high, 0u), Binary(state, spv::OpIAdd, u32, leadingZeros32(total.low), narrowConstant(64u)), leadingZeros32(total.high));
+        const auto top = Binary(state, spv::OpIEqual, boolean, zeros, narrowConstant(0u));
+        const auto leftShift = Select(state, u32, top, narrowConstant(0u), Binary(state, spv::OpISub, u32, zeros, narrowConstant(1u)));
         const auto raised = shiftLeft128(total, leftShift);
         const auto lowered = shiftRightJam128(total, constant(1u));
         const auto wideHigh = pick(top, lowered.high, raised.high);
         const auto wideLow = pick(top, lowered.low, raised.low);
-        const auto unbounded = pick(top, withConstant(spv::OpIAdd, alignedExponent, 1u), op(spv::OpISub, alignedExponent, leftShift));
+        const auto unbounded = Binary(state, spv::OpISub, u32, Binary(state, spv::OpIAdd, u32, narrow(alignedExponent), narrowConstant(1u)), zeros);
         const auto wide = op(spv::OpBitwiseOr, wideHigh, pick(testConstant(spv::OpINotEqual, wideLow, 0u), constant(1u), constant(0u)));
-        const auto tiny = test(spv::OpSLessThan, unbounded, constant(1u));
-        const auto significandBits = pick(tiny, shiftRightJam(wide, op(spv::OpISub, constant(1u), unbounded)), wide);
-        auto finite = roundPack(sign, pick(tiny, constant(1u), unbounded), significandBits, rounding);
+        const auto tiny = Binary(state, spv::OpSLessThan, boolean, unbounded, narrowConstant(1u));
+        const auto significandBits = pick(tiny, shiftRightJam32(wide, Binary(state, spv::OpISub, u32, narrowConstant(1u), unbounded)), wide);
+        auto finite = roundPack(sign, widen(Select(state, u32, tiny, narrowConstant(1u), unbounded)), significandBits, rounding);
         if (flushResult) {
-            const auto reachesNormal = logical(spv::OpLogicalAnd, testConstant(spv::OpIEqual, unbounded, 0u),
+            const auto reachesNormal = logical(spv::OpLogicalAnd, Binary(state, spv::OpIEqual, boolean, unbounded, narrowConstant(0u)),
                 logical(spv::OpLogicalAnd, testConstant(spv::OpIEqual, withConstant(spv::OpShiftRightLogical, wide, 10u), (1ull << 53u) - 1u), roundsUp(sign, wide, rounding)));
             finite = pick(logical(spv::OpLogicalAnd, tiny, Unary(state, spv::OpLogicalNot, boolean, reachesNormal)), sign, finite);
         }
@@ -870,23 +871,24 @@ private:
         return op(spv::OpBitwiseOr, withConstant(spv::OpBitwiseAnd, magnitude, FractionMask), pick(testConstant(spv::OpIEqual, field, 0u), constant(0u), constant(ImplicitBit)));
     }
 
-    std::uint32_t leadingZeros(std::uint32_t value) const {
+    std::uint32_t leadingZeros32(std::uint32_t value) const {
         const auto high = narrow(withConstant(spv::OpShiftRightLogical, value, 32u));
         const auto highZero = Binary(state, spv::OpIEqual, boolean, high, ConstantU32(state, 0u));
         const auto highMsb = Binary(state, spv::OpIAdd, u32, Glsl(state, u32, GLSLstd450FindUMsb, high), ConstantU32(state, 32u));
         const auto msb = Select(state, u32, highZero, Glsl(state, u32, GLSLstd450FindUMsb, narrow(value)), highMsb);
-        return widen(Binary(state, spv::OpISub, u32, ConstantU32(state, 63u), msb));
+        return Binary(state, spv::OpISub, u32, ConstantU32(state, 63u), msb);
     }
 
-    std::uint32_t leadingZerosWide(std::uint32_t value) const {
-        auto count = constant(0u);
-        auto bits = value;
-        for (const std::uint64_t step : {32u, 16u, 8u, 4u, 2u, 1u}) {
-            const auto clear = testConstant(spv::OpIEqual, withConstant(spv::OpShiftRightLogical, bits, 64u - step), 0u);
-            count = pick(clear, withConstant(spv::OpIAdd, count, step), count);
-            bits = pick(clear, withConstant(spv::OpShiftLeftLogical, bits, step), bits);
-        }
-        return count;
+    std::uint32_t leadingZeros(std::uint32_t value) const {
+        return widen(leadingZeros32(value));
+    }
+
+    std::uint32_t shiftRightJam32(std::uint32_t value, std::uint32_t count) const {
+        const auto inRange = Binary(state, spv::OpULessThan, boolean, count, ConstantU32(state, 64u));
+        const auto amount = Select(state, u32, inRange, count, ConstantU32(state, 0u));
+        const auto lost = op(spv::OpBitwiseAnd, value, withConstant(spv::OpISub, op(spv::OpShiftLeftLogical, constant(1u), amount), 1u));
+        const auto shifted = op(spv::OpBitwiseOr, op(spv::OpShiftRightLogical, value, amount), pick(testConstant(spv::OpINotEqual, lost, 0u), constant(1u), constant(0u)));
+        return pick(inRange, shifted, pick(testConstant(spv::OpINotEqual, value, 0u), constant(1u), constant(0u)));
     }
 
     std::uint32_t shiftRightJam(std::uint32_t value, std::uint32_t count) const {
@@ -930,10 +932,10 @@ private:
     }
 
     Product shiftLeft128(Product value, std::uint32_t count) const {
-        const auto below = testConstant(spv::OpULessThan, count, 64u);
-        const auto near = pick(below, count, constant(0u));
-        const auto far = pick(below, constant(0u), withConstant(spv::OpISub, count, 64u));
-        const auto carried = op(spv::OpShiftRightLogical, withConstant(spv::OpShiftRightLogical, value.low, 1u), op(spv::OpISub, constant(63u), near));
+        const auto below = Binary(state, spv::OpULessThan, boolean, count, ConstantU32(state, 64u));
+        const auto near = Select(state, u32, below, count, ConstantU32(state, 0u));
+        const auto far = Select(state, u32, below, ConstantU32(state, 0u), Binary(state, spv::OpISub, u32, count, ConstantU32(state, 64u)));
+        const auto carried = op(spv::OpShiftRightLogical, withConstant(spv::OpShiftRightLogical, value.low, 1u), Binary(state, spv::OpISub, u32, ConstantU32(state, 63u), near));
         return {pick(below, op(spv::OpBitwiseOr, op(spv::OpShiftLeftLogical, value.high, near), carried), op(spv::OpShiftLeftLogical, value.low, far)), pick(below, op(spv::OpShiftLeftLogical, value.low, near), constant(0u))};
     }
 
