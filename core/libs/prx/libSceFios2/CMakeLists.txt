@@ -89,6 +89,5 @@ if(BUILD_TESTING)
         set_tests_properties(guest_fios2_iofilter_cache_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFios2>")
     endif()
-    endif()
 endif()
 
