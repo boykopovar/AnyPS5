@@ -247,6 +247,7 @@ const LibreSslAsn1Object* ObjectByName(std::string_view text) {
     if (text.empty()) return nullptr;
     for (int nid = 0; nid < LibreSslObjectCount; ++nid) {
         const LibreSslAsn1Object& object = LibreSslObjects_nid_no_patch[nid];
+        if (object.nid == 0) continue;
         if (object.shortName && text == object.shortName) return &object;
         if (object.longName && text == object.longName) return &object;
     }
