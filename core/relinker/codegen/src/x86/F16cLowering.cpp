@@ -125,15 +125,9 @@ public:
 
     void AluImm32(const std::uint8_t ext, const std::uint8_t dst, const std::uint32_t imm) {
         _rex(0, dst);
-        if (static_cast<std::int32_t>(imm) >= -128 && static_cast<std::int32_t>(imm) <= 127) {
-            _bytes.push_back(0x83);
-            _bytes.push_back(static_cast<std::uint8_t>(0xC0 | (ext << 3) | (dst & 7)));
-            _bytes.push_back(static_cast<std::uint8_t>(imm));
-        } else {
-            _bytes.push_back(0x81);
-            _bytes.push_back(static_cast<std::uint8_t>(0xC0 | (ext << 3) | (dst & 7)));
-            Append32(_bytes, static_cast<std::int32_t>(imm));
-        }
+        _bytes.push_back(0x81);
+        _bytes.push_back(static_cast<std::uint8_t>(0xC0 | (ext << 3) | (dst & 7)));
+        Append32(_bytes, static_cast<std::int32_t>(imm));
     }
 
     void AddImm32(const std::uint8_t dst, const std::uint32_t imm) { AluImm32(0, dst, imm); }
