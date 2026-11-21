@@ -4550,6 +4550,22 @@ static void CheckArenaFirstFitAfterPartialRelease() {
     GuestArenaRelease_nid_postfix(wrapped, page);
 }
 
+static void CheckArenaHintInsideHostRegion() {
+    constexpr std::size_t page = 0x4000;
+    using namespace GuestArena;
+    const std::uintptr_t hint = 0x0000002000000000ull + GuestAddressOffset;
+#ifdef _WIN32
+    if (!GuestArenaHostRegionOverlaps_nid_postfix(hint, page)) return;
+#else
+    if (!GuestArenaOverlapsHostRegion_nid_no_patch(hint, page)) return;
+#endif
+    const auto highest = GuestArenaHighestFree_nid_no_patch(page, page);
+    void* placed = GuestArenaAllocateFromHint_nid_postfix(hint, page, page);
+    Require(reinterpret_cast<std::uintptr_t>(placed) == highest);
+    Require(reinterpret_cast<std::uintptr_t>(placed) > hint);
+    GuestArenaRelease_nid_postfix(placed, page);
+}
+
 static void CheckArenaFirstFitAgainstPageModel() {
     constexpr std::size_t page = 0x4000;
     constexpr std::size_t pages = 128;
@@ -4631,6 +4647,7 @@ int main(int argc, char** argv) {
     CheckResidentMappingBookkeepingStaysSmall();
     CheckArenaFirstFitAcrossDefaultAndLowRanges();
     CheckArenaFirstFitAfterPartialRelease();
+    CheckArenaHintInsideHostRegion();
     CheckArenaFirstFitAgainstPageModel();
     CheckAvailableDirectMemoryIsLargestFreeBlock();
     CheckOverlapQueriesSeeRangesStartingBelowTheAddress();

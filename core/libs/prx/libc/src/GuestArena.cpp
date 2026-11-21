@@ -99,7 +99,7 @@ public:
     void* AllocateFromHint(std::uintptr_t hint, std::size_t bytes, std::size_t alignment) {
         RequireAllocatable(alignment);
         std::lock_guard lock(_lock);
-        auto candidate = hint < _end ? FindAtOrAbove(hint, bytes, alignment) : 0;
+        auto candidate = hint >= _end ? 0 : InsideHostRegion(hint) ? HighestFreeLocked(bytes, alignment, hint) : FindAtOrAbove(hint, bytes, alignment);
         if (candidate == 0 && hint > _base) candidate = FindAtOrAbove(hint < DefaultAllocationStart ? _base : DefaultAllocationStart, bytes, alignment);
         return Claim(candidate, bytes);
     }
@@ -108,10 +108,19 @@ public:
         if (_base == 0) throw std::runtime_error("guest address space arena is unavailable");
         if (bytes == 0 || alignment == 0 || (alignment & (alignment - 1)) != 0) throw std::invalid_argument("invalid guest arena window");
         std::lock_guard lock(_lock);
+        return HighestFreeLocked(bytes, alignment, _base);
+    }
+
+    bool InsideHostRegion(std::uintptr_t address) const {
+        if (address >= SystemReservedStart && address < SystemReservedEnd) return false;
+        return _hostIndex.Overlaps(_hostRegions, address, 1);
+    }
+
+    std::uintptr_t HighestFreeLocked(std::size_t bytes, std::size_t alignment, std::uintptr_t floor) const {
         auto limit = _end;
-        while (limit >= _base && bytes <= limit - _base) {
+        while (limit >= floor && bytes <= limit - floor) {
             const auto candidate = (limit - bytes) & ~(alignment - 1);
-            if (candidate < _base) break;
+            if (candidate < floor) break;
             const auto next = _used.lower_bound(candidate + bytes);
             if (next == _used.begin() || std::prev(next)->second <= candidate) return candidate;
             limit = std::prev(next)->first;
