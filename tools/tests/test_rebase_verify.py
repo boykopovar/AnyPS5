@@ -28,8 +28,9 @@ class RebaseVerifyTests(unittest.TestCase):
         cls.addClassCleanup(directory.cleanup)
         cls.template = Path(directory.name)
         git = lambda *arguments: run_git(cls.template, *arguments)
-        write = lambda name, text: (cls.template / name).write_text(text, encoding="utf-8")
+        write = lambda name, text: (cls.template / name).write_bytes(text.encode("utf-8"))
         git("init", "-q", "-b", "main")
+        git("config", "core.autocrlf", "false")
         git("config", "core.filemode", "false")
         write("f.txt", "a\nb\nc\n")
         git("add", "f.txt")
@@ -58,7 +59,7 @@ class RebaseVerifyTests(unittest.TestCase):
         return run_git(self.root, *arguments)
 
     def write(self, name, text):
-        (self.root / name).write_text(text, encoding="utf-8")
+        (self.root / name).write_bytes(text.encode("utf-8"))
 
     def verify(self):
         return rebase_verify.verify(self.root, "old", "new", "main")[3]
@@ -69,6 +70,25 @@ class RebaseVerifyTests(unittest.TestCase):
 
     def test_a_clean_rebase_keeps_every_line_author_and_commit(self):
         self.assertEqual(self.verify(), [])
+
+    def test_rebase_reports_a_crlf_line_changed_to_lf(self):
+        path = "windows.txt"
+        self.git("checkout", "-q", "old")
+        self.write(path, "first\r\nsecond\r\n")
+        self.git("add", "--", path)
+        self.git("commit", "-q", "-m", "feat(tools): add a Windows fixture")
+        self.git("checkout", "-q", "new")
+        self.git("cherry-pick", "old")
+        self.assertEqual(self.verify(), [])
+
+        self.write(path, "first\r\nsecond\n")
+        self.git("commit", "-q", "-a", "--amend", "--no-edit")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            status = rebase_verify.main(["old", "new", "--onto", "main", "--repo", str(self.root)])
+        self.assertEqual(status, 1, output.getvalue())
+        self.assertIn(f"error: {path}: an added line is missing (1x): second\\r\n", output.getvalue())
+        self.assertIn(f"error: {path}: a line is added that the branch did not add (1x): second\n", output.getvalue())
 
     def test_relative_diff_cannot_hide_lost_lines_from_a_subdirectory(self):
         nested = self.root / "nested"
@@ -326,7 +346,7 @@ class RebaseDiffTextTests(unittest.TestCase):
     def changes(self, text, sign="+"):
         from unittest.mock import patch
         diff = "diff --git a/f.cpp b/f.cpp\n--- a/f.cpp\n+++ b/f.cpp\n@@ -1 +1 @@\n" + sign + text + "\n"
-        with patch.object(rebase_verify, "git", return_value=diff):
+        with patch.object(rebase_verify, "git", return_value=diff.encode("utf-8")):
             return rebase_verify.changed_lines(Path("."), "base", "head")
 
     def test_unicode_separators_cannot_hide_changed_added_text(self):

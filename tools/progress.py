@@ -15,6 +15,7 @@ tokenizer_spec = importlib.util.spec_from_file_location("anyps5_cpp_tokenizer", 
 tokenizer = importlib.util.module_from_spec(tokenizer_spec)
 tokenizer_spec.loader.exec_module(tokenizer)
 CPP_TOKEN = tokenizer.CPP_TOKEN
+BRACE = re.compile(r"[{}]")
 
 scan_spec = importlib.util.spec_from_file_location("anyps5_shader_scan", Path(__file__).with_name("shader_scan.py"))
 shader_scan = importlib.util.module_from_spec(scan_spec)
@@ -121,13 +122,13 @@ def code(text):
 
 def body_end(text, start):
     depth = 0
-    for i in range(start, len(text)):
-        if text[i] == "{":
+    for brace in BRACE.finditer(text, start):
+        if brace.group() == "{":
             depth += 1
-        elif text[i] == "}":
+        else:
             depth -= 1
             if depth == 0:
-                return i
+                return brace.start()
     return len(text)
 
 
@@ -505,8 +506,8 @@ def inert_body(body, wrappers, signature):
     return True
 
 
-def inert_wrappers(text):
-    bodies = {m.group(1): (text[m.end() - 1:body_end(text, m.end() - 1)], m.group()) for m in STUB_WRAPPER.finditer(text)}
+def inert_wrappers(helpers):
+    bodies = {name: (group[-1].body, group[-1].signature) for name, group in helpers.items()}
     names = set()
     while True:
         found = {name for name, (body, signature) in bodies.items() if name not in names and inert_body(body, names, signature)}
@@ -545,10 +546,10 @@ def scan_library(path):
                 live.add(name)
     headers = [code(header.read_text(encoding="utf-8", errors="ignore")) for pattern in ("*.h", "*.hpp")
                for header in path.rglob(pattern) if "tests" not in flavor(str(header)).relative_to(path_flavored).parts]
-    for text, (_, definitions) in zip(texts, reaching_definitions(texts, headers, assembled)):
+    for text, (helpers, definitions) in zip(texts, reaching_definitions(texts, headers, assembled)):
         if not definitions:
             continue
-        wrappers = inert_wrappers(text)
+        wrappers = inert_wrappers(helpers)
         linkage = Linkage(text)
         for definition in definitions:
             name = definition.name
