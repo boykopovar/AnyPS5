@@ -18,6 +18,7 @@ let outputTransaction;
 let downloadUrl;
 let logs = [];
 let release;
+let progressState = null;
 const canSaveZip = typeof window.showSaveFilePicker === "function" && window.isSecureContext;
 const canStream = typeof window.showDirectoryPicker === "function" && window.isSecureContext;
 const supported = window.isSecureContext && window.Worker && window.WebAssembly && window.ReadableStream && window.WritableStream && window.crypto?.subtle;
@@ -103,7 +104,16 @@ function update() {
       : release ? translate(locale, "readyLibraries", { tag: release.tag, mode: multi ? translate(locale, "readyModeBatch") : $("save").value === "disk" ? translate(locale, "readyModeDisk") : translate(locale, "readyModeZip") })
       : translate(locale, "readyLoading"))
     : translate(locale, "readyChooseInput");
+  renderProgress();
   renderError();
+}
+
+function renderProgress() {
+  if (!progressState) return;
+  const { phaseKey, phase, stage, appCount, appIndex, fileKey, fileValues } = progressState;
+  const text = phaseKey ? translate(locale, phaseKey) : phase ?? translate(locale, `stage${stage}`);
+  $("phase").textContent = appCount > 1 ? translate(locale, "appProgress", { index: appIndex + 1, count: appCount, phase: text }) : text;
+  if (fileKey) $("current-file").textContent = translate(locale, fileKey, fileValues);
 }
 
 function lock(value) {
@@ -143,6 +153,7 @@ function renderError() {
 async function fail(value) {
   if (failing) return;
   failing = true;
+  progressState = null;
   errorState = {
     message: value,
     appended: [],
@@ -165,11 +176,13 @@ async function fail(value) {
   outputDirectory = null;
   if (transaction) {
     $("status").hidden = false;
-    $("phase").textContent = translate(locale, "removingOutputFolder");
+    progressState = { phaseKey: "removingOutputFolder" };
+    renderProgress();
   }
   const activeSink = sink;
   sink = null;
   errorState.appended = await abortAndDiscardOutput(transaction, activeSink, locale);
+  progressState = null;
   $("error").hidden = false;
   $("status").hidden = true;
   $("cancel").hidden = true;
@@ -194,8 +207,8 @@ async function onMessage({ data }, currentWorker) {
         $("log").textContent = logs.join("\n");
         return;
       }
-      const phase = data.phase ?? translate(locale, `stage${data.stage}`);
-      $("phase").textContent = data.appCount > 1 ? translate(locale, "appProgress", { index: data.appIndex + 1, count: data.appCount, phase }) : phase;
+      progressState = data;
+      renderProgress();
       $("current-file").textContent = [data.appName, data.input].filter(Boolean).join(" · ");
       if (Number.isFinite(data.total) && data.total > 0) {
         const percent = Math.min(100, Math.floor(data.completed / data.total * 100));
@@ -208,6 +221,7 @@ async function onMessage({ data }, currentWorker) {
     } else if (data.type === "inspected") {
       summaries[data.index] = data.summary;
     } else if (data.type === "inspection-complete") {
+      progressState = null;
       inspectionComplete = true;
       working = false;
       $("selection").hidden = false;
@@ -328,6 +342,7 @@ async function selectInputs(inputs) {
   summaries = [];
   inspectionComplete = false;
   working = true;
+  progressState = inputs.length > 1 ? { phaseKey: "inspectingFiles", fileKey: "inspectingBatch", fileValues: { count: inputs.length } } : { phaseKey: "inspectingFiles" };
   logs = [];
   $("log").textContent = "";
   for (const id of ["error", "done", "download", "warnings", "selection"]) $(id).hidden = true;
