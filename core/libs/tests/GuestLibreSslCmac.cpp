@@ -33,6 +33,8 @@ decltype(&CMAC_Final_nid_postfix) cmacFinal;
 decltype(&EVP_aes_128_cbc_nid_postfix) aes128Method;
 decltype(&EVP_aes_192_cbc_nid_postfix) aes192Method;
 decltype(&EVP_aes_256_cbc_nid_postfix) aes256Method;
+decltype(&EVP_aes_128_wrap_nid_postfix) aes128WrapMethod;
+decltype(&EVP_aes_256_wrap_nid_postfix) aes256WrapMethod;
 decltype(&ERR_clear_error_nid_postfix) clearError;
 decltype(&ERR_get_error_nid_postfix) getError;
 decltype(&ApplicationHeapRegister_nid_no_patch) registerHeap;
@@ -68,6 +70,8 @@ void InitializePatched(const char* directory) {
     Resolve(aes128Method, library, "rV07jlO-+6Q");
     Resolve(aes192Method, library, "0X5DnA3olsk");
     Resolve(aes256Method, library, "J44dsZUcK4I");
+    Resolve(aes128WrapMethod, library, "MPYmtcrGwQw");
+    Resolve(aes256WrapMethod, library, "mcYVamD0JVM");
     Resolve(clearError, library, "sieQ--PINWg");
     Resolve(getError, library, "DJg+qWX1rwY");
     Resolve(registerHeap, libc, "ApplicationHeapRegister_nid_no_patch");
@@ -82,6 +86,8 @@ void InitializePatched(const char* directory) {
 #define EVP_aes_128_cbc_nid_postfix aes128Method
 #define EVP_aes_192_cbc_nid_postfix aes192Method
 #define EVP_aes_256_cbc_nid_postfix aes256Method
+#define EVP_aes_128_wrap_nid_postfix aes128WrapMethod
+#define EVP_aes_256_wrap_nid_postfix aes256WrapMethod
 #define ERR_clear_error_nid_postfix clearError
 #define ERR_get_error_nid_postfix getError
 #define ApplicationHeapRegister_nid_no_patch registerHeap
@@ -265,6 +271,18 @@ void Lifecycle() {
     CMAC_CTX_free_nid_postfix(nullptr);
 }
 
+void WrapCiphers() {
+    auto context = NewContext();
+    const std::array<unsigned char, 32> key{};
+    for (const auto* wrap : {EVP_aes_128_wrap_nid_postfix(), EVP_aes_256_wrap_nid_postfix()}) {
+        const auto* cipher = reinterpret_cast<const LibreSslCipher*>(wrap);
+        ERR_clear_error_nid_postfix();
+        Require(CMAC_Init_nid_postfix(context.get(), key.data(), static_cast<std::size_t>(cipher->keyLength), cipher, nullptr) == 0, "reject a wrap-mode cipher");
+        Require(ERR_get_error_nid_postfix() == 0x06fff0aa, "wrap-mode cipher publishes EVP_R_WRAP_MODE_NOT_ALLOWED");
+        Require(ERR_get_error_nid_postfix() == 0, "wrap-mode rejection queues one error");
+    }
+}
+
 void AllocationFailures() {
     allocationsUntilFailure = 0;
     Require(CMAC_CTX_new_nid_postfix() == nullptr, "context allocation failure");
@@ -435,6 +453,7 @@ int main(int argc, char** argv) {
     RfcVectors();
     Differential();
     Lifecycle();
+    WrapCiphers();
     Callbacks();
     AllocationFailures();
     CipherCallbacks();

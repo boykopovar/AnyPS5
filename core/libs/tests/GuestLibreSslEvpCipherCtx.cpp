@@ -1321,7 +1321,7 @@ static void TestEvpCleanup() {
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
 }
 
-constexpr std::uint64_t WrapFlagsValue = 0x111037;
+constexpr std::uint64_t WrapFlagsValue = 0x111032;
 
 static void RequireWrapDescriptor(const Cipher* cipher, int nid, int keyLength) {
     Require(cipher != nullptr && cipher->nid == nid && cipher->blockSize == 8 && cipher->keyLength == keyLength);
