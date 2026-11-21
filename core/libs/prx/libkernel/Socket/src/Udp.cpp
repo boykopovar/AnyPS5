@@ -710,11 +710,12 @@ bool SourceFaults(const void* pointer, std::uint64_t length) {
 }
 bool PendingFits(const Socket& socket, void* buffer, std::uint64_t usable, int flags, int& error) {
     error = 0;
+    const int peekFlags = NativeReceiveFlags((flags & ~GuestWaitAll) | GuestPeek, socket.type);
     if (socket.type == 2) {
         sockaddr_storage ignored{};
         socklen_t ignoredSize = sizeof(ignored);
-        const auto peeked = ::recvfrom(socket.value, static_cast<char*>(buffer), static_cast<int>(usable),
-            NativeReceiveFlags((flags & ~GuestWaitAll) | GuestPeek, socket.type), reinterpret_cast<sockaddr*>(&ignored), &ignoredSize);
+        const auto peeked = ::recvfrom(socket.value, static_cast<char*>(buffer), static_cast<int>(usable), peekFlags,
+            reinterpret_cast<sockaddr*>(&ignored), &ignoredSize);
         if (peeked >= 0) return true;
         if (WSAGetLastError() == WSAEMSGSIZE) return false;
         error = NativeError();
@@ -723,7 +724,7 @@ bool PendingFits(const Socket& socket, void* buffer, std::uint64_t usable, int f
     char probe[1];
     sockaddr_storage ignored{};
     socklen_t ignoredSize = sizeof(ignored);
-    const auto first = ::recvfrom(socket.value, probe, sizeof(probe), NativeReceiveFlags((flags & ~GuestWaitAll) | GuestPeek, socket.type),
+    const auto first = ::recvfrom(socket.value, probe, sizeof(probe), peekFlags,
         reinterpret_cast<sockaddr*>(&ignored), &ignoredSize);
     if (first < 0) {
         error = NativeError();
@@ -1272,12 +1273,18 @@ int ReceiveNative(Socket& socket, void* buffer, int length, int flags, sockaddr*
     return Transfer(socket, false, flags, length, [&](int offset) {
         if (partialBuffer && offset == 0) {
             int error = 0;
-            if (!PendingFits(socket, buffer, length, flags, error)) {
+            const bool fits = PendingFits(socket, buffer, length, flags, error);
+            if (error != 0) return -1;
+            if (ThreadCancel::IoInterrupted()) {
+                WSASetLastError(WSAEINTR);
+                return -1;
+            }
+            if (ReceiveShut(socket)) return 0;
+            if (!fits) {
                 DropDatagram(socket, flags);
                 WSASetLastError(WSAEFAULT);
                 return -1;
             }
-            if (error != 0) return -1;
         }
         auto* destination = offset == 0 ? static_cast<char*>(buffer) : static_cast<char*>(buffer) + offset;
         return address ? ::recvfrom(socket.value, destination, length - offset, NativeReceiveFlags(flags, socket.type), address, addressLength)
@@ -2248,6 +2255,9 @@ std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std:
     if (socket->type == 1 && PairPeerGone(*socket)) return Fail(32);
 #endif
     if (const int waited = WaitForTransfer(*socket, true, flags)) return Fail(waited);
+#ifdef _WIN32
+    if (SourceFaults(buffer, length)) return Fail(14);
+#endif
     const auto result = Transfer(*socket, true, flags, static_cast<int>(length), [&](int offset) {
         return ::send(socket->value, offset == 0 ? static_cast<const char*>(buffer) : static_cast<const char*>(buffer) + offset,
             static_cast<int>(length) - offset, SocketSendFlags(*socket, flags));
@@ -2276,9 +2286,13 @@ static std::int64_t Receive(int descriptor, void* buffer, std::uint64_t length, 
 #endif
     if (const int waited = WaitForTransfer(*socket, false, flags, descriptor)) return Fail(waited);
     if (ReceiveShut(*socket)) return 0;
-    const auto result = ReceiveNative(*socket, buffer, static_cast<int>(length), flags, nullptr, nullptr);
+    std::uint64_t limit = length;
 #ifdef _WIN32
-    if (result < 0 && socket->type == 2 && WSAGetLastError() == WSAEMSGSIZE) return static_cast<std::int64_t>(length);
+    if (length != 0) limit = GuestPrefix(buffer, length, WritableProtection);
+#endif
+    const auto result = ReceiveNative(*socket, buffer, static_cast<int>(limit), flags, nullptr, nullptr, limit < length);
+#ifdef _WIN32
+    if (result < 0 && socket->type == 2 && WSAGetLastError() == WSAEMSGSIZE) return static_cast<std::int64_t>(limit);
 #endif
     return result < 0 ? Fail(NativeError()) : result;
 }
