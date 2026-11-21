@@ -2,6 +2,12 @@
 #include <cstdio>
 #include <cstdlib>
 
+#ifdef __APPLE__
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/exceptions/Runtime.hpp"
+#include <cstring>
+#endif
+
 namespace LibcUnwind {
 _Unwind_Reason_Code CallPersonality(Word personality, _Unwind_Action actions, _Unwind_Exception* exception, _Unwind_Context* context);
 }
@@ -38,6 +44,45 @@ static void RequireInstalled(Frame& frame) {
     Require(frame.context.registers[1] == 0);
     Require(frame.context.registers[16] == region + 0x40);
 }
+
+#ifdef __APPLE__
+static void CheckHostCatch(bool guestRethrow) {
+    void* retained = nullptr;
+    try {
+        _ZSt6_ThrowRKSt20bad_array_new_length_nid_postfix(nullptr);
+    } catch (...) {
+        const auto* caught = __cxa_current_exception_type_nid_postfix();
+        Require(caught != nullptr && std::strcmp(caught->name(), "St20bad_array_new_length") == 0);
+        Require(__cxa_uncaught_exceptions_nid_postfix() == 0);
+        retained = __cxa_current_primary_exception_nid_postfix();
+        Require(retained != nullptr);
+    }
+    Require(__cxa_current_exception_type_nid_postfix() == nullptr);
+    Require(__cxa_current_primary_exception_nid_postfix() == nullptr);
+
+    try {
+        try {
+            __cxa_rethrow_primary_exception_nid_postfix(retained);
+            std::abort();
+        } catch (...) {
+            Require(__cxa_current_exception_type_nid_postfix() != nullptr);
+            if (guestRethrow) __cxa_rethrow_nid_postfix();
+            throw;
+        }
+    } catch (...) {
+        const auto* caught = __cxa_current_exception_type_nid_postfix();
+        Require(caught != nullptr && std::strcmp(caught->name(), "St20bad_array_new_length") == 0);
+        Require(__cxa_uncaught_exceptions_nid_postfix() == 0);
+        void* primary = __cxa_current_primary_exception_nid_postfix();
+        Require(primary == retained);
+        __cxa_decrement_exception_refcount_nid_postfix(primary);
+    }
+    Require(__cxa_current_exception_type_nid_postfix() == nullptr);
+    Require(__cxa_current_primary_exception_nid_postfix() == nullptr);
+    Require(__cxa_uncaught_exceptions_nid_postfix() == 0);
+    __cxa_decrement_exception_refcount_nid_postfix(retained);
+}
+#endif
 
 int main() {
     {
@@ -87,6 +132,10 @@ int main() {
         Require(LibcUnwind::CallPersonality(0x1000, _UA_SEARCH_PHASE, &frame.exception, &frame.context) == _URC_FATAL_PHASE1_ERROR);
         Require(LibcUnwind::CallPersonality(0x1000, _UA_CLEANUP_PHASE, &frame.exception, &frame.context) == _URC_FATAL_PHASE2_ERROR);
     }
+#ifdef __APPLE__
+    CheckHostCatch(false);
+    CheckHostCatch(true);
+#endif
     std::puts("exception personality tests passed");
     return 0;
 }

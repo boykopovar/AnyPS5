@@ -144,9 +144,26 @@ void Release(void* object) {
     }
 }
 
+#ifdef __APPLE__
+void RecordHostCatch(Header* header) {
+    __cxa_begin_catch_nid_postfix(&header->unwind);
+    header->hostCatch = 1;
+}
+#endif
+
 static void APS5_VABI Cleanup(_Unwind_Reason_Code reason, _Unwind_Exception* exception) {
     if (reason != _URC_FOREIGN_EXCEPTION_CAUGHT) Terminate();
     auto* header = FromUnwind(exception);
+#ifdef __APPLE__
+    if (header->hostCatch) {
+        header->hostCatch = 0;
+        if (--header->handlers != 0) return;
+        auto** caught = &globals.caught;
+        while (*caught && *caught != header) caught = &(*caught)->next;
+        if (*caught) *caught = header->next;
+        header->next = nullptr;
+    }
+#endif
     if (exception->exception_class == DependentClass) {
         Release(reinterpret_cast<void*>(header->type));
         header->~Header();
@@ -384,6 +401,9 @@ void APS5_VABI __cxa_end_catch_nid_postfix() {
     using namespace LibcException;
     auto* header = globals.caught;
     if (!header) Terminate();
+#ifdef __APPLE__
+    if (header->hostCatch) abi::__cxa_rethrow();
+#endif
     header->handlers = -header->handlers;
     if (Native(header->unwind.exception_class)) ++globals.uncaught;
     _Unwind_RaiseException_nid_postfix(UnwindOf(header));
