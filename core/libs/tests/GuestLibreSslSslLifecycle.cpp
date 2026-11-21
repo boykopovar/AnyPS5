@@ -18,6 +18,7 @@ using namespace SslLayout;
 namespace {
 
 bool failHostAllocations = false;
+bool failGuestAllocations = false;
 
 }
 
@@ -53,6 +54,7 @@ void APS5_VABI Release(void* pointer) {
 }
 
 void* APS5_VABI AllocateZeroed(std::size_t count, std::size_t size) {
+    if (failGuestAllocations) return nullptr;
     void* pointer = std::calloc(count, size);
     if (pointer) live.insert(pointer);
     return pointer;
@@ -559,6 +561,79 @@ void TestDescriptors() {
     SSL_CTX_free_nid_postfix(ctx);
 }
 
+void TestSetSession() {
+    LibreSslCtx* ctx = SSL_CTX_new_nid_postfix(TLS_client_method_nid_postfix());
+    LibreSslSsl* ssl = SSL_new_nid_postfix(ctx);
+    Require(ssl != nullptr);
+    ERR_clear_error_nid_postfix();
+    RequireThrows([&] { SSL_set_session_nid_postfix(nullptr, nullptr); });
+
+    LibreSslSession first{};
+    first.sslVersion = Tls1_2Version;
+    first.verifyResult = 7;
+    first.references = 1;
+    Require(SSL_set_session_nid_postfix(ssl, &first) == 1);
+    Require(ssl->session == &first && first.references == 2 && ssl->verifyResult == 7 && SSL_get_verify_result_nid_postfix(ssl) == 7);
+    const auto* method = static_cast<const LibreSslMethod*>(ssl->method);
+    Require(method != ctx->method && method->internal->version == Tls1_2Version);
+    Require(method->internal->minVersion == Tls1_2Version && method->internal->maxVersion == Tls1_2Version);
+    Require(method->internal->getSslMethod(Tls1_2Version) == method && method->internal->getSslMethod(0x0300) == nullptr);
+    Require(TLS_client_method_nid_postfix()->internal->getSslMethod(Tls1_2Version) == method);
+    Require(SSLv23_server_method_nid_postfix()->internal->getSslMethod(Tls1_2Version) != method);
+    Require(DTLSv1_client_method_nid_postfix()->internal->getSslMethod(Dtls1Version) == DTLSv1_client_method_nid_postfix());
+    Require(DTLSv1_server_method_nid_postfix()->internal->getSslMethod(Tls1_2Version) == nullptr);
+    Require(ssl->s3 != nullptr && ssl->version == Tls1_2Version);
+
+    Require(SSL_set_session_nid_postfix(ssl, &first) == 1);
+    Require(ssl->session == &first && first.references == 2);
+
+    SSL_set_connect_state_nid_postfix(ssl);
+    LibreSslSession second{};
+    second.sslVersion = Tls1Version;
+    second.verifyResult = 9;
+    second.references = 1;
+    Require(SSL_set_session_nid_postfix(ssl, &second) == 1);
+    method = static_cast<const LibreSslMethod*>(ssl->method);
+    Require(ssl->session == &second && second.references == 2 && first.references == 1 && ssl->verifyResult == 9);
+    Require(method->internal->version == Tls1Version && ssl->version == Tls1Version && ssl->s3 != nullptr);
+    Require(ssl->internal->handshakeFunc == reinterpret_cast<void*>(method->internal->sslConnect));
+
+    LibreSslSession older{};
+    older.sslVersion = Tls1_1Version;
+    older.references = 1;
+    void* const state = ssl->s3;
+    failGuestAllocations = true;
+    Require(SSL_set_session_nid_postfix(ssl, &older) == 0);
+    failGuestAllocations = false;
+    Require(ssl->method == method && ssl->s3 == state && ssl->version == Tls1Version);
+    Require(ssl->session == &second && second.references == 2 && older.references == 1);
+    Require(ssl->internal->handshakeFunc == reinterpret_cast<void*>(method->internal->sslConnect));
+
+    LibreSslSession unknown{};
+    unknown.sslVersion = 0x0300;
+    unknown.references = 1;
+    Require(SSL_set_session_nid_postfix(ssl, &unknown) == 0);
+    const std::uint64_t code = ERR_get_error_nid_postfix();
+    Require(Library(code) == 20 && Reason(code) == ReasonUnableToFindSslMethod && ERR_get_error_nid_postfix() == 0);
+    Require(ssl->session == &second && unknown.references == 1 && ssl->method == method);
+
+    second.references = 1;
+    RequireThrows([&] { SSL_set_session_nid_postfix(ssl, &first); });
+    Require(ssl->session == &second && second.references == 1 && first.references == 1);
+    RequireThrows([&] { SSL_set_session_nid_postfix(ssl, nullptr); });
+    Require(ssl->session == &second && second.references == 1);
+
+    second.references = 2;
+    Require(SSL_set_session_nid_postfix(ssl, nullptr) == 1);
+    Require(ssl->session == nullptr && second.references == 1);
+    Require(ssl->method == ctx->method && ssl->version == Tls1_2Version && ssl->s3 != nullptr);
+    Require(ssl->internal->handshakeFunc == reinterpret_cast<void*>(TLS_client_method_nid_postfix()->internal->sslConnect));
+    Require(SSL_set_session_nid_postfix(ssl, nullptr) == 1);
+
+    SSL_free_nid_postfix(ssl);
+    SSL_CTX_free_nid_postfix(ctx);
+}
+
 }
 
 int main() {
@@ -575,6 +650,7 @@ int main() {
     Run(TestInheritedDefaults);
     Run(TestInheritedLists);
     Run(TestDescriptors);
+    Run(TestSetSession);
     Require(live.empty());
     std::puts("libSceLibreSsl SSL lifecycle tests passed");
     return 0;

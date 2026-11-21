@@ -662,7 +662,11 @@ struct LibreSslCert {
 };
 
 struct LibreSslSession {
-    unsigned char beforeCipher[168];
+    int sslVersion;
+    unsigned char beforeVerifyResult[132];
+    std::int64_t verifyResult;
+    unsigned char beforeReferences[16];
+    int references;
     const void* cipher;
     unsigned char rest[56];
 };
@@ -956,7 +960,7 @@ int APS5_VABI SSL_set_bio_nid_postfix(void);
 void APS5_VABI SSL_set_connect_state_nid_postfix(LibreSslSsl* ssl);
 int APS5_VABI SSL_set_ex_data_nid_postfix(LibreSslSsl* ssl, int index, void* value);
 int APS5_VABI SSL_set_fd_nid_postfix(LibreSslSsl* ssl, int fd);
-int APS5_VABI SSL_set_session_nid_postfix(void);
+int APS5_VABI SSL_set_session_nid_postfix(LibreSslSsl* ssl, void* session);
 void APS5_VABI SSL_set_verify_nid_postfix(LibreSslSsl* ssl, int mode, void* callback);
 int APS5_VABI SSL_shutdown_nid_postfix(LibreSslSsl* ssl);
 int APS5_VABI SSL_use_PrivateKey_ASN1_nid_postfix(void);
