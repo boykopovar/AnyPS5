@@ -1,0 +1,9 @@
+# libSceJsc
+
+## change [WTF::SHA1::computeHash]
+
+- [WTF::SHA1::computeHash](../../../core/libs/prx/libSceJsc/src/WtfSha1.cpp) (libSceJsc) - not compared with a console module: the console WTF version and the 104-byte layout (64-byte buffer, 64-bit cursor at 64, 64-bit byte count at 72, five 32-bit words at 80) are unverified. It follows the non-Cocoa branch of pinned [SHA1.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/SHA1.cpp#L115-L201) on the members of [SHA1.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/SHA1.h#L81-L84): it pads the pending block, writes the big-endian digest and resets the object. libSceJsc exports neither the constructor nor `addBytes`, so the object comes from guest code or another module. A cursor of 64 or more, where WebKit asserts and writes past the buffer, and null arguments throw. Closes when: compared with a console module.
+
+## add Functional
+
+- [WTF::SHA1::hexDigest](../../../core/libs/prx/libSceJsc/src/WtfSha1.cpp) (libSceJsc) - not compared with a console module; the console WTF version and 16-byte `CStringBuffer` layout (`refCount` at 0, `length` at 8, NUL-terminated 40-byte uppercase hex payload at 16) are unverified. Following pinned [SHA1.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/SHA1.cpp#L203-L213) and [CString.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/CString.h), it returns a non-trivial 8-byte `CString` via sret allocated through the `libSceNKWebKit` `fastMalloc` allocator registered via `RegisterPersistenceAllocator_nid_no_patch`. Calling unregistered throws `std::runtime_error`; null or unreadable digests throw `std::invalid_argument` while preserving `errno`, and allocation failure throws `std::bad_alloc`. Closes when: compared with a console module.

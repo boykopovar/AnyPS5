@@ -1,10 +1,12 @@
 #pragma once
 
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceJsc/include/WtfFileSystemExports.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 
 namespace Jsc::WtfAbi {
 
@@ -16,6 +18,17 @@ struct SHA1 {
 };
 
 using SHA1Digest = std::array<std::uint8_t, 20>;
+
+struct OwnedCString {
+    CStringBuffer* buffer = nullptr;
+
+    OwnedCString() = default;
+    explicit OwnedCString(CStringBuffer* value) : buffer(value) {}
+    OwnedCString(const OwnedCString& other) : buffer(other.buffer) {}
+    OwnedCString(OwnedCString&& other) noexcept : buffer(other.buffer) { other.buffer = nullptr; }
+    OwnedCString& operator=(const OwnedCString&) = default;
+    ~OwnedCString() {}
+};
 
 struct PersistenceDecoder {
     const std::uint8_t* buffer;
@@ -49,6 +62,10 @@ static_assert(offsetof(SHA1, cursor) == 64);
 static_assert(offsetof(SHA1, totalBytes) == 72);
 static_assert(offsetof(SHA1, hash) == 80);
 static_assert(sizeof(SHA1Digest) == 20);
+static_assert(sizeof(OwnedCString) == 8);
+static_assert(alignof(OwnedCString) == 8);
+static_assert(offsetof(OwnedCString, buffer) == 0);
+static_assert(!std::is_trivially_destructible_v<OwnedCString>);
 static_assert(sizeof(PersistenceDecoder) == 128);
 static_assert(offsetof(PersistenceDecoder, buffer) == 0);
 static_assert(offsetof(PersistenceDecoder, bufferPosition) == 8);
@@ -69,6 +86,7 @@ static_assert(offsetof(OptionalSHA1Digest, value) == 1);
 extern "C" {
 
 void APS5_VABI _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(Jsc::WtfAbi::SHA1* self, Jsc::WtfAbi::SHA1Digest* digest);
+Jsc::WtfAbi::OwnedCString APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE(const Jsc::WtfAbi::SHA1Digest* digest);
 Jsc::WtfAbi::OptionalSHA1Digest APS5_VABI _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(Jsc::WtfAbi::PersistenceDecoder* decoder);
 void APS5_VABI _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(Jsc::WtfAbi::PersistenceEncoder* encoder, const Jsc::WtfAbi::SHA1Digest* digest);
 void RegisterPersistenceAllocator_nid_no_patch(const Jsc::WtfAbi::PersistenceAllocator* allocator);
