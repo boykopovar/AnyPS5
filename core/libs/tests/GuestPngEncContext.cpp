@@ -292,6 +292,109 @@ int main() {
     errno = EAGAIN;
     Require(scePngEncDelete(guardHandle) == 0 && errno == EAGAIN);
 
+    PngEncCreateParam large{sizeof(PngEncCreateParam), 0, 64u, 4};
+    const int largeSize = scePngEncQueryMemorySize(&large);
+    Require(largeSize > 0);
+    constexpr std::size_t canaryBytes = 64;
+    std::vector<std::uint8_t> workMem2(canaryBytes + 5 + static_cast<std::size_t>(largeSize) + canaryBytes, 0xA5);
+    void* workPtr2 = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(workMem2.data()) + canaryBytes + 5);
+    const std::uint32_t workMem2Size = static_cast<std::uint32_t>(largeSize);
+    auto CheckWorkCanaries = [&]() {
+        Require(std::all_of(workMem2.begin(), workMem2.begin() + canaryBytes + 5, [](std::uint8_t b) { return b == 0xA5; }));
+        Require(std::all_of(workMem2.begin() + canaryBytes + 5 + largeSize, workMem2.end(), [](std::uint8_t b) { return b == 0xA5; }));
+    };
+    void* handle = nullptr;
+    Require(scePngEncCreate(&large, workPtr2, workMem2Size, &handle) == 0);
+
+    constexpr std::uint32_t largeRows = 4;
+    std::vector<std::uint8_t> largeImage(largeRows * 288, 0);
+    for (std::uint32_t y = 0; y < largeRows; ++y) {
+        for (std::uint32_t x = 0; x < 64; ++x) {
+            std::uint8_t* pixel = &largeImage[y * 288 + x * 4];
+            pixel[0] = static_cast<std::uint8_t>(x * 4);
+            pixel[1] = static_cast<std::uint8_t>(y * 64);
+            pixel[2] = static_cast<std::uint8_t>(200 - x * 3);
+            pixel[3] = static_cast<std::uint8_t>(100 + x + y);
+        }
+    }
+    std::vector<std::uint8_t> largePng(4096);
+    PngEncEncodeParam largeEncode{largeImage.data(), largePng.data(), static_cast<std::uint32_t>(largeImage.size()), static_cast<std::uint32_t>(largePng.size()),
+                                 64, largeRows, 288u, 0, 19, 8, 0, 15, 6};
+    PngEncOutputInfo largeInfo{};
+    errno = EAGAIN;
+    const int largeEncoded = scePngEncEncode(handle, &largeEncode, &largeInfo);
+    Require(errno == EAGAIN);
+    Require(largeEncoded > 1 && static_cast<std::size_t>(largeEncoded) < largePng.size()
+            && largeInfo.data_size == static_cast<std::uint32_t>(largeEncoded) && largeInfo.processed_height == largeRows);
+    const auto largeDecoded = Decoder::Png::Decode(std::span<const std::uint8_t>(largePng.data(), largeEncoded));
+    Require(largeDecoded.has_value() && largeDecoded->width == 64u && largeDecoded->height == largeRows);
+    for (std::uint32_t y = 0; y < largeRows; ++y) {
+        for (std::uint32_t x = 0; x < 64; ++x) {
+            const std::uint8_t* source = &largeImage[y * 288 + x * 4];
+            const std::uint8_t* result = &largeDecoded->pixels[(y * 64u + x) * 4u];
+            Require(result[0] == source[0] && result[1] == source[1]);
+            Require(result[2] == source[2] && result[3] == source[3]);
+        }
+    }
+
+    errno = EAGAIN;
+    Require(scePngEncDelete(handle) == 0);
+    Require(errno == EAGAIN);
+    CheckWorkCanaries();
+
+    PngEncCreateParam small{sizeof(PngEncCreateParam), 0, 8u, 4};
+    void* smallHandle = nullptr;
+    Require(scePngEncCreate(&small, workPtr2, workMem2Size, &smallHandle) == 0);
+
+    std::vector<std::uint8_t> largeImageCopy = largeImage;
+    std::vector<std::uint8_t> largePngCopy = largePng;
+    PngEncEncodeParam rejectedEncode = largeEncode;
+    rejectedEncode.image_mem_addr = largeImageCopy.data();
+    rejectedEncode.png_mem_addr = largePngCopy.data();
+    PngEncOutputInfo rejectedInfo{123, 456};
+    errno = EAGAIN;
+    const int rejected = scePngEncEncode(smallHandle, &rejectedEncode, &rejectedInfo);
+    Require(rejected == static_cast<int>(0x80690103));
+    Require(errno == EAGAIN);
+    Require(rejectedInfo.data_size == 123 && rejectedInfo.processed_height == 456);
+    Require(std::equal(largePngCopy.begin(), largePngCopy.end(), largePng.begin()));
+
+    constexpr std::uint32_t smallRows = 4;
+    std::vector<std::uint8_t> smallImage(smallRows * 36, 0);
+    for (std::uint32_t y = 0; y < smallRows; ++y) {
+        for (std::uint32_t x = 0; x < 8; ++x) {
+            std::uint8_t* pixel = &smallImage[y * 36 + x * 4];
+            pixel[0] = static_cast<std::uint8_t>(x * 32);
+            pixel[1] = static_cast<std::uint8_t>(y * 64);
+            pixel[2] = static_cast<std::uint8_t>(150 - x * 16);
+            pixel[3] = static_cast<std::uint8_t>(200 + x + y);
+        }
+    }
+    std::vector<std::uint8_t> smallPng(4096);
+    PngEncEncodeParam smallEncode{smallImage.data(), smallPng.data(), static_cast<std::uint32_t>(smallImage.size()), static_cast<std::uint32_t>(smallPng.size()),
+                                 8, smallRows, 36u, 0, 19, 8, 0, 15, 6};
+    PngEncOutputInfo smallInfo{};
+    errno = EAGAIN;
+    const int smallEncoded = scePngEncEncode(smallHandle, &smallEncode, &smallInfo);
+    Require(errno == EAGAIN);
+    Require(smallEncoded > 1 && static_cast<std::size_t>(smallEncoded) < smallPng.size()
+            && smallInfo.data_size == static_cast<std::uint32_t>(smallEncoded) && smallInfo.processed_height == smallRows);
+    const auto smallDecoded = Decoder::Png::Decode(std::span<const std::uint8_t>(smallPng.data(), smallEncoded));
+    Require(smallDecoded.has_value() && smallDecoded->width == 8u && smallDecoded->height == smallRows);
+    for (std::uint32_t y = 0; y < smallRows; ++y) {
+        for (std::uint32_t x = 0; x < 8; ++x) {
+            const std::uint8_t* source = &smallImage[y * 36 + x * 4];
+            const std::uint8_t* result = &smallDecoded->pixels[(y * 8u + x) * 4u];
+            Require(result[0] == source[0] && result[1] == source[1]);
+            Require(result[2] == source[2] && result[3] == source[3]);
+        }
+    }
+
+    errno = EAGAIN;
+    Require(scePngEncDelete(smallHandle) == 0);
+    Require(errno == EAGAIN);
+    CheckWorkCanaries();
+
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }
