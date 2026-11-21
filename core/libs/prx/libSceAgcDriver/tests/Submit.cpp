@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -1223,8 +1224,48 @@ void testWaitProducerChain() {
 
 }
 
+void testAbPhasesFromCpuFlips() {
+    using AgcDriver::Graphics::RuntimeSwitch;
+    namespace RuntimeSwitches = AgcDriver::Graphics::RuntimeSwitches;
+    check(AgcDriver::Graphics::AbConfigured(), "APS5_AB is not seen");
+    check(!RuntimeSwitches::Set(RuntimeSwitch::NoBarrierBatch), "APS5_NO_BARRIER_BATCH started set");
+    struct Output final : AgcDriver::IVideoOutput, AgcDriver::IFlipRequest, std::enable_shared_from_this<Output> {
+        std::atomic<int> ready{0};
+        std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override { return shared_from_this(); }
+        void GpuReady(const std::shared_ptr<AgcDriver::FrameTiming>&) override { ready.fetch_add(1); }
+        void Fail(std::exception_ptr error) noexcept override { if (!error) std::terminate(); }
+    };
+    const auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(7, output);
+    std::array<std::uint32_t, 8> words{0xc0064900, 0, 0, 0, 0, 0, 0, 0};
+    Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "release submit before the CPU flips failed");
+    AgcDriverWaitIdle_nid_postfix();
+    const auto flip = [&](int expected) {
+        std::thread([] { AgcDriverSubmitFlip_nid_postfix(AgcDriver::FlipInfo{7, -1, 1, 0}); }).join();
+        AgcDriverWaitIdle_nid_postfix();
+        check(output->ready.load() == expected, "a CPU flip from a thread that never submitted queue 0 was not handed to its output");
+    };
+    flip(1);
+    flip(2);
+    check(!RuntimeSwitches::Set(RuntimeSwitch::NoBarrierBatch), "phase A changed APS5_NO_BARRIER_BATCH");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    flip(3);
+    check(RuntimeSwitches::Set(RuntimeSwitch::NoBarrierBatch), "CPU flips from a thread that never submitted queue 0 did not begin A/B phase B");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    flip(4);
+    check(!RuntimeSwitches::Set(RuntimeSwitch::NoBarrierBatch), "CPU flips from a thread that never submitted queue 0 did not bring back A/B phase A");
+    AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
+}
+
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--ab-cpu-flips") {
+            testAbPhasesFromCpuFlips();
+            LibcRunShutdown_nid_postfix();
+            std::puts("AGC A/B phases from CPU flips passed");
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--eop-interrupts") {
             testEndOfPipeInterrupts();
             std::array<std::uint32_t, 8> typed{0xc0064900, 0, 1u << 24u, 0, 0, 0, 0, 0x08000038u};
