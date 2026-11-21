@@ -28,6 +28,9 @@
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <cerrno>
+#include <stdexcept>
+
 static_assert(sizeof(WTF::Seconds) == 8);
 static_assert(alignof(WTF::Seconds) == 8);
 static_assert(sizeof(WebCore::UserGestureToken*) == 8);
@@ -53,7 +56,12 @@ void APS5_VABI _ZN7WebCore16UserGestureToken60setMaximumIntervalForUserGestureFo
 }
 
 WebCore::UserGestureToken** APS5_VABI _ZN7WebCore20UserGestureIndicator18currentUserGestureEv(WebCore::UserGestureToken** result) {
-    *result = nullptr;
+    if (!result) throw std::invalid_argument("currentUserGesture: null result");
+    WebCore::UserGestureToken* none = nullptr;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &none, sizeof(none));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("currentUserGesture: unwritable result");
     if (!_ZN3WTF12isMainThreadEv()) {
         return result;
     }
