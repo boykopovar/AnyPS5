@@ -26,6 +26,8 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
             const auto type = static_cast<std::uint32_t>(info);
             const auto symbolIndex = info >> 32;
             const auto& symbol = guest.Symbols.at(symbolIndex);
+            const bool ownTls = symbolIndex == 0 || (symbol.Section == 0 && symbol.Name.empty() && symbol.Info == 6);
+            const bool imported = symbolIndex != 0 && symbol.Section == 0 && !ownTls;
             const auto rva = image.GetRva(target, 8);
             for (const auto& header : guest.Headers) {
                 if (header.Type != 7 || header.FileSize == 0) continue;
@@ -33,25 +35,25 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
                 const auto templateEnd = static_cast<std::uint64_t>(templateRva) + header.FileSize;
                 if (rva >= templateEnd || static_cast<std::uint64_t>(rva) + 8 <= templateRva) continue;
                 if (rva < templateRva || templateEnd - rva < 8) throw Domain::RelinkerException("Guest relocation crosses the TLS template boundary", target);
-                if (type == 16 || (symbolIndex != 0 && symbol.Section == 0)) throw Domain::RelinkerException("Runtime-bound guest TLS template relocation is not supported", target);
+                if (type == 16 || imported) throw Domain::RelinkerException("Runtime-bound guest TLS template relocation is not supported", target);
             }
             image.RequireWritable(target, 8);
             if (type == 8) {
                 image.WritePointer(target, image.GetRelocatedAddress(addend));
                 relocations.push_back(rva);
             } else if (type == 16) {
-                if (symbolIndex != 0 && symbol.Section == 0) {
+                if (imported) {
                     image.WritePointer(target, 0);
                     runtime.Imports.push_back({symbol.Name, rva, 0, 16, symbol.Library});
                 } else tlsModules.emplace_back(target, rva);
             } else if (type == 17) {
-                if (symbolIndex != 0 && symbol.Section == 0) {
+                if (imported) {
                     image.WritePointer(target, 0);
                     runtime.Imports.push_back({symbol.Name, rva, addend, 17, symbol.Library});
                 } else image.WritePointer(target, symbol.Value + addend);
             } else if (type == 18) {
                 const auto tls = std::find_if(guest.Headers.begin(), guest.Headers.end(), [](const auto& header) { return header.Type == 7; });
-                if (tls == guest.Headers.end() || (symbolIndex != 0 && (symbol.Section == 0 || (symbol.Info & 15) != 6))) throw Domain::RelinkerException("Unsupported external static TLS relocation", target);
+                if (tls == guest.Headers.end() || (!ownTls && (imported || (symbol.Info & 15) != 6))) throw Domain::RelinkerException("Unsupported external static TLS relocation", target);
                 const auto threadPointerOffset = Io::AlignUp64(tls->MemorySize, std::max<std::uint64_t>(tls->Alignment, 1));
                 image.WritePointer(target, symbol.Value + addend - threadPointerOffset);
             } else if (type == 1 || type == 6 || type == 7) {
