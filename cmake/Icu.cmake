@@ -35,8 +35,8 @@ add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/filterednormalizer2.cpp
     ${ICU_SOURCE_DIR}/common/loadednormalizer2impl.cpp
     ${ICU_SOURCE_DIR}/common/errorcode.cpp
-        ${ICU_SOURCE_DIR}/common/locavailable.cpp
-        ${ICU_SOURCE_DIR}/common/locmap.cpp
+    ${ICU_SOURCE_DIR}/common/locavailable.cpp
+    ${ICU_SOURCE_DIR}/common/locmap.cpp
     ${ICU_SOURCE_DIR}/common/normalizer2.cpp
     ${ICU_SOURCE_DIR}/common/normalizer2impl.cpp
     ${ICU_SOURCE_DIR}/common/parsepos.cpp
@@ -166,3 +166,5 @@ target_sources(icu_i18n PRIVATE
     ${ICU_SOURCE_DIR}/i18n/fpositer.cpp
     ${CMAKE_SOURCE_DIR}/core/libs/prx/libSceIcu/FieldPositionBackend.cpp
     ${ICU_SOURCE_DIR}/i18n/fphdlimp.cpp)
+
+include(${CMAKE_CURRENT_LIST_DIR}/IcuData.cmake)
