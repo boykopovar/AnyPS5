@@ -799,8 +799,34 @@ GuestLocale::InputIterator APS5_VABI CharNumGetBool(const GuestLocale::Facet*, G
     return ToGuestIterator(inFirst);
 }
 
-GuestLocale::InputIterator APS5_VABI UnimplementedCharNumGetPointer(const GuestLocale::Facet*, GuestLocale::InputIterator, GuestLocale::InputIterator, GuestLocale::IosBase*, std::int32_t*, void**) {
-    NotImplemented_nid_no_patch("_ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERPv_nid_postfix");
+GuestLocale::InputIterator APS5_VABI CharNumGetPointer(const GuestLocale::Facet*, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, void** value) {
+    ValidateNumGetArgs(stream, state, value);
+    auto inFirst = FromGuestIterator<char>(first);
+    auto inLast = FromGuestIterator<char>(last);
+    GuestLocale::IosBase pointerStream = *stream;
+    pointerStream.flags = (pointerStream.flags & ~IosBaseField) | IosHex;
+    char digits[MaxIntDigits];
+    const auto parsed = ParseIntField(digits, inFirst, inLast, &pointerStream);
+    if (parsed.base < 0) {
+        *state = IosFailBit;
+        *value = nullptr;
+    } else {
+        char* end = nullptr;
+        int error = 0;
+        int& guestErrno = *__error_nid_postfix();
+        const int savedErrno = guestErrno;
+        const auto parsedValue = _Stoullx_nid_postfix(digits, &end, parsed.base, &error);
+        guestErrno = savedErrno;
+        if (end == digits || error != 0) {
+            *state = IosFailBit;
+            *value = nullptr;
+        } else {
+            *value = reinterpret_cast<void*>(static_cast<std::uintptr_t>(parsedValue));
+            if (parsed.badGrouping) *state = IosFailBit;
+        }
+    }
+    if (InputEnded(inFirst, inLast)) *state |= IosEofBit;
+    return ToGuestIterator(inFirst);
 }
 
 const GuestLocale::NumGetVtable g_charNumGetVtable{
@@ -815,7 +841,7 @@ const GuestLocale::NumGetVtable g_charNumGetVtable{
     _ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERf_nid_postfix,
     _ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERd_nid_postfix,
     _ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERe_nid_postfix,
-    UnimplementedCharNumGetPointer};
+    CharNumGetPointer};
 
 }
 

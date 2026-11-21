@@ -296,12 +296,12 @@ GuestLocale::IosBase MakeIos(std::int32_t flags, GuestLocale::Implementation** l
 }
 
 template<typename TValue, typename TFn>
-GuestLocale::InputIterator RunCharGet(TFn fn, const std::string& text, std::int32_t flags, GuestLocale::Implementation** locale, std::int32_t& state, TValue& value, bool buffered = true) {
+GuestLocale::InputIterator RunCharGet(TFn fn, const std::string& text, std::int32_t flags, GuestLocale::Implementation** locale, std::int32_t& state, TValue& value, bool buffered = true, const GuestLocale::Facet* facet = nullptr) {
     auto sb = MakeCharStreambuf(text, buffered);
     AttachCharStreambuf(sb);
     auto ios = MakeIos(flags, locale);
     GuestLocale::Facet dummy{};
-    return fn(&dummy, BeginIterator(&sb.base), EndIterator(), &ios, &state, &value);
+    return fn(facet != nullptr ? facet : &dummy, BeginIterator(&sb.base), EndIterator(), &ios, &state, &value);
 }
 
 template<typename TValue, typename TFn>
@@ -476,6 +476,49 @@ void CheckCharIntegers() {
         RunCharGet(_ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERl_nid_postfix,
             "1,,234", DecFlag, &customPtr, state, val);
         Require(val == 1234 && state == (FailBit | EofBit), "adjacent char separators fail");
+    }
+
+    {
+        GuestLocale::Facet* pointerFacet = nullptr;
+        const GuestLocale::Implementation* pointerLocale = *classic;
+        Require(_ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(
+                    &pointerFacet, &pointerLocale)
+                == 4
+                && pointerFacet != nullptr
+                && pointerFacet->vtable != nullptr,
+            "num_get::get(pointer) obtains a callable facet");
+
+        const auto getPointer = Export<NumGetExport<void*>>("my9ujasm6-0");
+        std::int32_t state = 0;
+        void* value = nullptr;
+        auto result = RunCharGet(getPointer, "1f", DecFlag, classic, state, value, true, pointerFacet);
+        Require(reinterpret_cast<std::uintptr_t>(value) == 0x1f && state == EofBit,
+            "num_get::get(pointer) always parses hexadecimal");
+
+        state = 0;
+        value = nullptr;
+        result = RunCharGet(getPointer, "0x1F ", 0, classic, state, value, true, pointerFacet);
+        Require(reinterpret_cast<std::uintptr_t>(value) == 0x1f && state == 0
+                && ViewOf<char>(result).buffer != nullptr && ViewOf<char>(result).value == ' ',
+            "num_get::get(pointer) accepts a prefix and stops before trailing text");
+
+        state = 0;
+        value = reinterpret_cast<void*>(0x1234);
+        RunCharGet(getPointer, "zz", HexFlag, classic, state, value, true, pointerFacet);
+        Require(value == nullptr && state == FailBit,
+            "num_get::get(pointer) rejects input without hexadecimal digits");
+
+        state = 0;
+        value = reinterpret_cast<void*>(0x1234);
+        RunCharGet(getPointer, "0x", HexFlag, classic, state, value, true, pointerFacet);
+        Require(value == nullptr && state == (FailBit | EofBit),
+            "num_get::get(pointer) rejects a bare hexadecimal prefix");
+
+        state = 0;
+        value = reinterpret_cast<void*>(0x1234);
+        RunCharGet(getPointer, "10000000000000000", HexFlag, classic, state, value, true, pointerFacet);
+        Require(value == nullptr && state == (FailBit | EofBit),
+            "num_get::get(pointer) rejects values above uintptr_t");
     }
 }
 
