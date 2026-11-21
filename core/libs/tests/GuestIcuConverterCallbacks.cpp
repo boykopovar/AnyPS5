@@ -1,10 +1,13 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "ucnv_bld.h"
 #include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
+
+#undef ucnv_cbFromUWriteBytes
 
 namespace {
 
@@ -191,6 +194,57 @@ void ReplacementCallbacks() {
     Require(status == 10, "invalid replacement reasons preserve the error");
 }
 
+void WriteBytes() {
+    std::array<char, 8> target{'L', 'x', 'x', 'x', 'x', 'x', 'x', 'R'};
+    std::array<std::int32_t, 8> offsets{11, 12, 13, 14, 15, 16, 17, 18};
+    const std::array<char, 4> source{'a', '\0', static_cast<char>(0xff), 'z'};
+    UConverterFromUnicodeArgs arguments{};
+    arguments.size = sizeof(arguments);
+    arguments.target = target.data() + 2;
+    arguments.targetLimit = target.data() + 6;
+    arguments.offsets = offsets.data() + 2;
+    std::int32_t error = U_ZERO_ERROR;
+    errno = 73;
+    ucnv_cbFromUWriteBytes(reinterpret_cast<Icu::ConverterFromUnicodeArgs*>(&arguments), source.data(), 4, -19, &error);
+    Require(error == U_ZERO_ERROR, "byte writer success status");
+    Require(arguments.target == target.data() + 6, "byte writer advances target");
+    Require(arguments.offsets == offsets.data() + 6, "byte writer advances offsets");
+    Require(target == std::array<char, 8>{'L', 'x', 'a', '\0', static_cast<char>(0xff), 'z', 'x', 'R'}, "byte writer output and guards");
+    Require(offsets == std::array<std::int32_t, 8>{11, 12, -19, -19, -19, -19, 17, 18}, "byte writer offsets and guards");
+    Require(source == std::array<char, 4>{'a', '\0', static_cast<char>(0xff), 'z'}, "byte writer preserves source");
+    Require(errno == 73, "byte writer preserves errno");
+
+    UConverter converter{};
+    target = {'L', 'x', 'x', 'x', 'x', 'x', 'x', 'R'};
+    offsets = {11, 12, 13, 14, 15, 16, 17, 18};
+    arguments.converter = &converter;
+    arguments.target = target.data() + 2;
+    arguments.targetLimit = target.data() + 4;
+    arguments.offsets = offsets.data() + 2;
+    error = U_ZERO_ERROR;
+    ucnv_cbFromUWriteBytes(reinterpret_cast<Icu::ConverterFromUnicodeArgs*>(&arguments), source.data(), 4, 23, &error);
+    Require(error == U_BUFFER_OVERFLOW_ERROR, "byte writer overflow status");
+    Require(arguments.target == target.data() + 4 && arguments.offsets == offsets.data() + 4, "byte writer overflow advances output pointers");
+    Require(target == std::array<char, 8>{'L', 'x', 'a', '\0', 'x', 'x', 'x', 'R'}, "byte writer overflow target and guards");
+    Require(offsets == std::array<std::int32_t, 8>{11, 12, 23, 23, 15, 16, 17, 18}, "byte writer overflow offsets and guards");
+    Require(converter.charErrorBufferLength == 2 && converter.charErrorBuffer[0] == 0xff && converter.charErrorBuffer[1] == 'z', "byte writer overflow buffer");
+
+    arguments.converter = reinterpret_cast<UConverter*>(std::uintptr_t{1});
+    arguments.target = target.data() + 4;
+    arguments.targetLimit = target.data() + 4;
+    arguments.offsets = nullptr;
+    error = U_ZERO_ERROR;
+    ucnv_cbFromUWriteBytes(reinterpret_cast<Icu::ConverterFromUnicodeArgs*>(&arguments), reinterpret_cast<const char*>(std::uintptr_t{1}), 0, INT32_MIN, &error);
+    Require(error == U_ZERO_ERROR && arguments.target == target.data() + 4, "byte writer zero length no access");
+    ucnv_cbFromUWriteBytes(reinterpret_cast<Icu::ConverterFromUnicodeArgs*>(&arguments), reinterpret_cast<const char*>(std::uintptr_t{1}), -1, INT32_MAX, &error);
+    Require(error == U_ZERO_ERROR && arguments.target == target.data() + 4, "byte writer negative length no access");
+
+    error = U_ILLEGAL_ARGUMENT_ERROR;
+    errno = 91;
+    ucnv_cbFromUWriteBytes(reinterpret_cast<Icu::ConverterFromUnicodeArgs*>(std::uintptr_t{1}), reinterpret_cast<const char*>(std::uintptr_t{1}), INT32_MAX, INT32_MIN, &error);
+    Require(error == U_ILLEGAL_ARGUMENT_ERROR && errno == 91, "byte writer prefailed no access");
+}
+
 }
 
 int main() {
@@ -198,4 +252,5 @@ int main() {
     IgnoredPointers();
     InvalidReasons();
     ReplacementCallbacks();
+    WriteBytes();
 }
