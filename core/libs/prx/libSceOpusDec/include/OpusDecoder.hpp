@@ -82,18 +82,32 @@ public:
         std::lock_guard lock(mutex);
         const auto found = decoders.find(state);
         if (found == decoders.end()) return error(1);
-        if (bytes == 0) fail("packet loss concealment is not implemented");
         auto& decoder = *found->second;
         if (decoder.unknownFlag != 0) fail("decoding with request 4050 set is not implemented");
-        if (celtOnly && (data[0] >> 3) < 16) fail("SILK and hybrid packets are not implemented");
-        const int samples = opus_packet_get_nb_samples(data, bytes, decoder.sampleRate);
-        if (samples <= 0) fail("invalid packet duration");
-        const int outputBytes = samples * decoder.channels * 2;
+        int samples;
+        std::vector<std::int16_t> decoded;
+        if (bytes == 0) {
+            samples = capacity / (decoder.channels * static_cast<int>(sizeof(std::int16_t)));
+            const int plcFrameSamples = decoder.sampleRate / 400;
+            const int maximumFrameSamples = decoder.sampleRate * 120 / 1000;
+            if (samples < plcFrameSamples || samples > maximumFrameSamples || samples % plcFrameSamples != 0)
+                fail("invalid packet loss concealment duration");
+            decoded.resize(static_cast<std::size_t>(samples) * decoder.channels);
+            samples = opus_decode(decoder.codec.get(), nullptr, 0, decoded.data(), samples, 0);
+            if (samples < 0) fail("libopus rejected the packet loss concealment duration");
+        } else {
+            if (celtOnly && (data[0] >> 3) < 16) fail("SILK and hybrid packets are not implemented");
+            samples = opus_packet_get_nb_samples(data, bytes, decoder.sampleRate);
+            if (samples <= 0) fail("invalid packet duration");
+            const int outputBytes = samples * decoder.channels * static_cast<int>(sizeof(std::int16_t));
+            if (capacity < outputBytes) fail("PCM buffer is too small");
+            decoded.resize(static_cast<std::size_t>(samples) * decoder.channels);
+            const int result = opus_decode(decoder.codec.get(), data, bytes, decoded.data(), samples, 0);
+            if (result < 0) fail("libopus rejected the packet");
+            if (result != samples) fail("unexpected libopus PCM duration");
+        }
+        const int outputBytes = samples * decoder.channels * static_cast<int>(sizeof(std::int16_t));
         if (capacity < outputBytes) fail("PCM buffer is too small");
-        std::vector<std::int16_t> decoded(static_cast<std::size_t>(samples) * decoder.channels);
-        const int result = opus_decode(decoder.codec.get(), data, bytes, decoded.data(), samples, 0);
-        if (result < 0) fail("libopus rejected the packet");
-        if (result != samples) fail("unexpected libopus PCM duration");
         opus_uint32 range = 0;
         if (opus_decoder_ctl(decoder.codec.get(), OPUS_GET_FINAL_RANGE(&range)) != OPUS_OK) fail("libopus did not report the final range");
         decoder.finalRange = range;
