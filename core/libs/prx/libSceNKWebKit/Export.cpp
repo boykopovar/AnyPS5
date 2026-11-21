@@ -16095,10 +16095,6 @@ int APS5_VABI _ZN7WebCore14ScrollbarTheme5themeEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore14SecurityOrigin16createFromStringERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore14SecurityPolicy27resetOriginAccessAllowlistsEv() {
     NotImplemented_nid_no_patch(__func__);
 }

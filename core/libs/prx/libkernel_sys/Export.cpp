@@ -1210,8 +1210,8 @@ int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
                 return static_cast<int>(Fail(GuestEnotdir));
             return static_cast<int>(Fail(GuestEnoent));
         }
-        if (!DirectoryIsEmpty(native, statusError)) return static_cast<int>(Fail(GuestEnotempty));
 #ifdef _WIN32
+        if (!DirectoryIsEmpty(native, statusError)) return static_cast<int>(Fail(GuestEnotempty));
         struct _stat64 status{};
         const bool unlocked = ::_wstat64(native.c_str(), &status) == 0 && !(status.st_mode & _S_IWRITE) &&
             ::_wchmod(native.c_str(), _S_IREAD | _S_IWRITE) == 0;

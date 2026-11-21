@@ -202,6 +202,176 @@ async function selected(get, workers, name) {
   return current;
 }
 
+const validReleaseResponse = () => ({ ok: true, json: async () => ({ tag: "v1-test", platforms: { linux: { expandedBytes: 1024 }, windows: { expandedBytes: 1024 } } }) });
+
+test("selecting an input retries release information after a transient failure", async t => {
+  let calls = 0;
+  const { get, workers } = await setup(t, "retry-release-info", { fetch: async () => {
+    calls++;
+    if (calls === 1) throw new TypeError("temporary network failure");
+    return validReleaseResponse();
+  } });
+  assert.equal(get("error").hidden, false);
+  get("file").files = [{ name: "first.zip" }];
+  get("file").onchange();
+  await inspect(workers[0], 1);
+  get("acknowledge").checked = true;
+  get("acknowledge").listeners.get("change")();
+  await setImmediate();
+  assert.equal(calls, 2);
+  assert.equal(get("error").hidden, true);
+  assert.equal(get("convert").disabled, false);
+  assert.match(get("ready-note").textContent, /v1-test/);
+});
+
+test("selecting an input does not duplicate an in-flight release request", async t => {
+  const pending = deferred();
+  let calls = 0;
+  const { get, workers } = await setup(t, "release-in-flight", { fetch: () => { calls++; return pending.promise; } });
+  get("file").files = [{ name: "first.zip" }];
+  get("file").onchange();
+  await inspect(workers[0], 1);
+  get("acknowledge").checked = true;
+  get("acknowledge").listeners.get("change")();
+  assert.equal(calls, 1);
+  assert.equal(get("convert").disabled, true);
+  pending.resolve(validReleaseResponse());
+  await setImmediate();
+  assert.equal(get("convert").disabled, false);
+});
+
+test("release information retry can fail again and later recover", async t => {
+  let calls = 0;
+  const { get, workers } = await setup(t, "release-repeat-failure", { fetch: async () => {
+    calls++;
+    if (calls < 3) throw new TypeError("temporary network failure");
+    return validReleaseResponse();
+  } });
+  get("file").files = [{ name: "first.zip" }];
+  get("file").onchange();
+  await setImmediate();
+  assert.equal(calls, 2);
+  assert.equal(workers[0].terminated, true);
+  assert.equal(get("error").hidden, false);
+  get("file").files = [{ name: "second.zip" }];
+  get("file").onchange();
+  await inspect(workers[1], 1);
+  get("acknowledge").checked = true;
+  get("acknowledge").listeners.get("change")();
+  await setImmediate();
+  assert.equal(calls, 3);
+  assert.equal(get("error").hidden, true);
+  assert.equal(get("convert").disabled, false);
+});
+
+
+test("a rejected release request cannot replace cancellation or terminate a newer inspection", async t => {
+  const pending = deferred();
+  let calls = 0;
+  const { get, workers } = await setup(t, "stale-release-rejection", { fetch: async () => {
+    calls++;
+    if (calls === 1) throw new TypeError("initial failure");
+    if (calls === 2) return pending.promise;
+    return validReleaseResponse();
+  } });
+  get("file").files = [{ name: "old.zip" }];
+  get("file").onchange();
+  await inspect(workers[0], 1);
+  get("cancel").onclick();
+  await setImmediate();
+  const cancelled = get("error").children[0].textContent;
+  pending.reject(new TypeError("stale failure"));
+  await setImmediate();
+  assert.equal(get("error").children[0].textContent, cancelled);
+  get("file").files = [{ name: "new.zip" }];
+  get("file").onchange();
+  await inspect(workers[1], 1);
+  get("acknowledge").checked = true;
+  get("acknowledge").listeners.get("change")();
+  await setImmediate();
+  assert.equal(calls, 3);
+  assert.equal(workers[1].terminated, false);
+  assert.equal(get("error").hidden, true);
+  assert.equal(get("convert").disabled, false);
+});
+
+test("a late rejected release request does not affect an active replacement worker", async t => {
+  const old = deferred();
+  const replacement = deferred();
+  let calls = 0;
+  const { get, workers } = await setup(t, "stale-release-after-replacement", { fetch: async () => {
+    calls++;
+    if (calls === 1) throw new TypeError("initial failure");
+    return calls === 2 ? old.promise : replacement.promise;
+  } });
+  get("file").files = [{ name: "old.zip" }];
+  get("file").onchange();
+  await inspect(workers[0], 1);
+  get("cancel").onclick();
+  await setImmediate();
+  get("file").files = [{ name: "new.zip" }];
+  get("file").onchange();
+  const current = workers[1];
+  old.reject(new TypeError("stale failure"));
+  await setImmediate();
+  assert.equal(current.terminated, false);
+  assert.equal(get("error").hidden, true);
+  await inspect(current, 1);
+  get("acknowledge").checked = true;
+  get("acknowledge").listeners.get("change")();
+  replacement.resolve(validReleaseResponse());
+  await setImmediate();
+  assert.equal(calls, 3);
+  assert.equal(get("convert").disabled, false);
+});
+
+test("a late successful release request cannot hide a replacement request failure", async t => {
+  const old = deferred();
+  const replacement = deferred();
+  let calls = 0;
+  const { get, workers } = await setup(t, "stale-release-success", { fetch: async () => {
+    calls++;
+    if (calls === 1) throw new TypeError("initial failure");
+    return calls === 2 ? old.promise : replacement.promise;
+  } });
+  get("file").files = [{ name: "old.zip" }];
+  get("file").onchange();
+  await inspect(workers[0], 1);
+  get("cancel").onclick();
+  await setImmediate();
+  get("file").files = [{ name: "new.zip" }];
+  get("file").onchange();
+  replacement.reject(new TypeError("replacement failure"));
+  await setImmediate();
+  assert.equal(get("error").hidden, false);
+  assert.equal(workers[1].terminated, true);
+  old.resolve(validReleaseResponse());
+  await setImmediate();
+  assert.equal(get("error").hidden, false);
+  assert.equal(get("convert").disabled, true);
+});
+
+
+for (const [name, bad] of [
+  ["HTTP error", { ok: false, status: 503 }],
+  ["invalid manifest", { ok: true, json: async () => ({ tag: "bad" }) }]
+]) {
+  test(`selecting an input retries release information after ${name}`, async t => {
+    let calls = 0;
+    const { get, workers } = await setup(t, `retry-${name}`, { fetch: async () => ++calls === 1 ? bad : validReleaseResponse() });
+    assert.equal(get("error").hidden, false);
+    get("file").files = [{ name: "retry.zip" }];
+    get("file").onchange();
+    await inspect(workers[0], 1);
+    get("acknowledge").checked = true;
+    get("acknowledge").listeners.get("change")();
+    await setImmediate();
+    assert.equal(calls, 2);
+    assert.equal(get("error").hidden, true);
+    assert.equal(get("convert").disabled, false);
+  });
+}
+
 test("changing the input returns keyboard focus to the ZIP picker", async t => {
   const { get, workers } = await setup(t, "change-focus");
   await selected(get, workers, "first.zip");
