@@ -2,8 +2,10 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
+#include <climits>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <exception>
 #include <stdexcept>
 
@@ -21,6 +23,25 @@ static void APS5_VABI TestConstraintHandler(const char* message, void* pointer, 
     gCapturedConstraintPointer = pointer;
     gCapturedConstraintError = error;
     ++gCapturedConstraintCalls;
+}
+
+static void VerifyDefaultSonyLconv(const SonyLconv* locale) {
+    Require(locale != nullptr, "SonyLocaleconv returned null");
+    Require(locale->decimal_point != nullptr && std::strcmp(locale->decimal_point, ".") == 0, "decimal_point was not default '.'");
+    Require(locale->grouping != nullptr && std::strcmp(locale->grouping, "") == 0, "grouping was not empty");
+    Require(locale->thousands_sep != nullptr && std::strcmp(locale->thousands_sep, "") == 0, "thousands_sep was not empty");
+    Require(locale->frac_grouping != nullptr && std::strcmp(locale->frac_grouping, "") == 0, "frac_grouping was not empty");
+    Require(locale->frac_sep != nullptr && std::strcmp(locale->frac_sep, "") == 0, "frac_sep was not empty");
+    Require(locale->false_text != nullptr && std::strcmp(locale->false_text, "false") == 0, "false_text was not 'false'");
+    Require(locale->true_text != nullptr && std::strcmp(locale->true_text, "true") == 0, "true_text was not 'true'");
+    Require(locale->no_text != nullptr && std::strcmp(locale->no_text, "") == 0, "no_text was not empty");
+    Require(locale->yes_text != nullptr && std::strcmp(locale->yes_text, "") == 0, "yes_text was not empty");
+    for (const auto byte : locale->chars) {
+        Require(byte == CHAR_MAX, "SonyLconv chars element was not CHAR_MAX");
+    }
+    for (const auto* pointer : locale->monetary) {
+        Require(pointer != nullptr && std::strcmp(pointer, "") == 0, "SonyLconv monetary element was not empty");
+    }
 }
 
 int main() {
@@ -71,6 +92,21 @@ int main() {
 
         void* const previousCustom = SonySetConstraintHandlerS_nid_no_patch(nullptr);
         Require(previousCustom == reinterpret_cast<void*>(&TestConstraintHandler), "SonySetConstraintHandlerS did not return the previous custom handler");
+
+        SonyLconv* const initialLocale = SonyLocaleconv_nid_no_patch();
+        VerifyDefaultSonyLconv(initialLocale);
+
+        char customPoint[] = ",";
+        char customGrouping[] = "\x03";
+        char customMonetary[] = "$";
+        initialLocale->decimal_point[0] = ',';
+        initialLocale->decimal_point = customPoint;
+        initialLocale->grouping = customGrouping;
+        initialLocale->chars[0] = 3;
+        initialLocale->monetary[0] = customMonetary;
+
+        SonyLconv* const resetLocale = SonyLocaleconv_nid_no_patch();
+        VerifyDefaultSonyLconv(resetLocale);
 
         std::puts("AMM ranges placed below the used top of the guest arena");
         return 0;

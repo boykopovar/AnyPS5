@@ -1,6 +1,7 @@
 #include "prx/libc/include/SonyCrt.hpp"
 
 #include <climits>
+#include <cstring>
 #include <mutex>
 
 std::mutex& SonyConstraintMutex() {
@@ -44,24 +45,27 @@ extern "C" void SonyInvokeConstraintHandler_nid_no_patch(const char* message, vo
 }
 
 extern "C" SonyLconv* SonyLocaleconv_nid_no_patch(void) {
-    static char empty[] = "";
-    static char point[] = ".";
-    static char falseText[] = "false";
-    static char trueText[] = "true";
-    static SonyLconv value = [] {
-        SonyLconv init{};
-        for (auto& pointer : init.monetary) pointer = empty;
-        for (auto& byte : init.chars) byte = CHAR_MAX;
-        init.decimal_point = point;
-        init.grouping = empty;
-        init.thousands_sep = empty;
-        init.frac_grouping = empty;
-        init.frac_sep = empty;
-        init.false_text = falseText;
-        init.true_text = trueText;
-        init.no_text = empty;
-        init.yes_text = empty;
-        return init;
-    }();
+    thread_local char empty[] = "";
+    thread_local char point[] = ".";
+    thread_local char falseText[] = "false";
+    thread_local char trueText[] = "true";
+    thread_local SonyLconv value{};
+
+    std::memcpy(empty, "", sizeof(empty));
+    std::memcpy(point, ".", sizeof(point));
+    std::memcpy(falseText, "false", sizeof(falseText));
+    std::memcpy(trueText, "true", sizeof(trueText));
+    value = SonyLconv{};
+    for (auto& pointer : value.monetary) pointer = empty;
+    for (auto& byte : value.chars) byte = CHAR_MAX;
+    value.decimal_point = point;
+    value.grouping = empty;
+    value.thousands_sep = empty;
+    value.frac_grouping = empty;
+    value.frac_sep = empty;
+    value.false_text = falseText;
+    value.true_text = trueText;
+    value.no_text = empty;
+    value.yes_text = empty;
     return &value;
 }
