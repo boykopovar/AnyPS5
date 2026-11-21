@@ -611,7 +611,7 @@ static bool IsSeekableDescriptor(int descriptor) {
 }
 
 static int PositionedArgumentError(int descriptor, bool write, bool nullBuffer, std::int64_t offset) {
-    if (IsKqueueDescriptor_nid_no_patch(descriptor)) return GUEST_ESPIPE;
+    if (IsKqueueDescriptor_nid_no_patch(descriptor) || IsKsemDescriptor(descriptor)) return GUEST_ESPIPE;
     if (!nullBuffer && offset >= 0) return 0;
     if (!GuestSockets::IsOpen(descriptor) && !DescriptorIsOpen_nid_no_patch(descriptor)) return GUEST_EBADF;
     if (!IsSeekableDescriptor(descriptor)) return GUEST_ESPIPE;
@@ -621,7 +621,7 @@ static int PositionedArgumentError(int descriptor, bool write, bool nullBuffer, 
 }
 
 static int TransferArgumentError(int descriptor, bool nullBuffer) {
-    if (!nullBuffer) return 0;
+    if (!nullBuffer || IsKqueueDescriptor_nid_no_patch(descriptor) || IsKsemDescriptor(descriptor)) return 0;
     return (GuestSockets::IsOpen(descriptor) || DescriptorIsOpen_nid_no_patch(descriptor)) ? GUEST_EFAULT : GUEST_EBADF;
 }
 
@@ -1843,7 +1843,7 @@ static std::int64_t TransferIovecs(int d, const KernelIovec* guestIov, int iovcn
     if (offset != nullptr) {
         if (const int error = PositionedArgumentError(d, write, false, *offset)) return SceErrorFromErrno(error);
     }
-    if (offset == nullptr && IsKqueueDescriptor_nid_no_patch(d)) return KqueueIovecsResult(iov, iovcnt, write);
+    if (offset == nullptr && (IsKqueueDescriptor_nid_no_patch(d) || IsKsemDescriptor(d))) return KqueueIovecsResult(iov, iovcnt, write);
     std::size_t total = 0;
     for (int i = 0; i < iovcnt; ++i) {
         if (iov[i].base == nullptr && iov[i].length != 0) return SceErrorFromErrno(GUEST_EFAULT);
@@ -1963,7 +1963,7 @@ int64_t APS5_VABI sceKernelReadv(int d, const KernelIovec* guestIov, int iovcnt)
     std::vector<KernelIovec> vectors;
     if (const int error = CopyIovecs(guestIov, iovcnt, vectors)) return error;
     const auto* iov = vectors.data();
-    if (IsKqueueDescriptor_nid_no_patch(d)) return KqueueIovecsResult(iov, iovcnt, false);
+    if (IsKqueueDescriptor_nid_no_patch(d) || IsKsemDescriptor(d)) return KqueueIovecsResult(iov, iovcnt, false);
     std::deque<GuestArena::HostWrite> destinations;
     if (!OpenIovecs(iov, iovcnt, destinations)) return SceErrorFromErrno(GUEST_EFAULT);
     if (GuestSockets::IsOpen(d)) {
@@ -1985,7 +1985,7 @@ int64_t APS5_VABI sceKernelWritev(int d, const KernelIovec* guestIov, int iovcnt
     std::vector<KernelIovec> vectors;
     if (const int error = CopyIovecs(guestIov, iovcnt, vectors)) return error;
     const auto* iov = vectors.data();
-    if (IsKqueueDescriptor_nid_no_patch(d)) return KqueueIovecsResult(iov, iovcnt, true);
+    if (IsKqueueDescriptor_nid_no_patch(d) || IsKsemDescriptor(d)) return KqueueIovecsResult(iov, iovcnt, true);
     if (GuestSockets::IsOpen(d)) {
         const auto result = GuestSockets::Writev(d, reinterpret_cast<const GuestSockets::Iovec*>(iov), iovcnt);
         return result < 0 ? SceKernelError(*__error_nid_postfix()) : result;
