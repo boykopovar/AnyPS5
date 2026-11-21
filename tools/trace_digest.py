@@ -600,7 +600,8 @@ def markdown_intervals(result):
     lines += ["", "| # | seconds | presents | p50 | p90 | p99 | max | GPU busy | busiest worker | largest phase |", "|---|---|---|---|---|---|---|---|---|---|"]
     for index, row in enumerate(rows, 1):
         frame = row["frame_ms"]
-        worker = f"{row['busiest_worker']['pct']:.0f} %" if row["busiest_worker"] else "-"
+        busiest = row["busiest_worker"]
+        worker = table_cell(f"{busiest['thread']} {busiest['pct']:.0f} %") if busiest else "-"
         phase = f"{row['top_phase']['name']} {row['top_phase']['ms_per_frame']:.1f}" if row["top_phase"] else "-"
         lines.append(f"| {index} | {row['start_s']:.0f}-{row['end_s']:.0f}{' (dropped)' if row['trace_dropped'] else ''} | {row['presents']} | {frame['p50']:.1f} | {frame['p90']:.1f} "
                      f"| {frame['p99']:.1f} | {frame['max']:.1f} | {row['gpu_busy_ms_per_present']:.1f} | {worker} | {table_cell(phase)} |")
