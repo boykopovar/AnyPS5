@@ -1,5 +1,6 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -28,17 +29,26 @@ extern "C" {
 
 int APS5_VABI FreeTypeOutlineGetBitmap_nid_no_patch(GuestLibrary* library, GuestOutline* outline, const GuestBitmap* bitmap) {
     FT_Library host = library ? library->host : nullptr;
-    if (!bitmap) return FT_Outline_Get_Bitmap(host, nullptr, nullptr);
-    const FT_Bitmap target{bitmap->rows, bitmap->width, bitmap->pitch, bitmap->buffer, bitmap->num_grays, bitmap->pixel_mode, bitmap->palette_mode, bitmap->palette};
-    if (!outline) return FT_Outline_Get_Bitmap(host, nullptr, &target);
-    std::vector<FT_Vector> points;
-    points.reserve(outline->n_points);
-    for (std::size_t index = 0; index < outline->n_points; ++index) {
-        points.push_back({HostCoordinate(outline->points[index].x), HostCoordinate(outline->points[index].y)});
+    GuestBitmap source{};
+    if (!bitmap || !GuestCopyIn_nid_no_patch(&source, bitmap, sizeof(source))) return FT_Outline_Get_Bitmap(host, nullptr, nullptr);
+    const FT_Bitmap target{source.rows, source.width, source.pitch, source.buffer, source.num_grays, source.pixel_mode, source.palette_mode, source.palette};
+    GuestOutline header{};
+    if (!outline || !GuestCopyIn_nid_no_patch(&header, outline, sizeof(header))) return FT_Outline_Get_Bitmap(host, nullptr, &target);
+    std::vector<GuestVector> guestPoints(header.n_points);
+    std::vector<unsigned char> tags(header.n_points);
+    std::vector<std::uint16_t> contours(header.n_contours);
+    if (!GuestCopyIn_nid_no_patch(guestPoints.data(), header.points, guestPoints.size() * sizeof(GuestVector)) ||
+        !GuestCopyIn_nid_no_patch(tags.data(), header.tags, tags.size()) ||
+        !GuestCopyIn_nid_no_patch(contours.data(), header.contours, contours.size() * sizeof(std::uint16_t))) {
+        return FT_Outline_Get_Bitmap(host, nullptr, &target);
     }
-    FT_Outline native{outline->n_contours, outline->n_points, points.data(), outline->tags, outline->contours, outline->flags};
-    const std::size_t pitch = static_cast<std::size_t>(bitmap->pitch < 0 ? -static_cast<std::int64_t>(bitmap->pitch) : bitmap->pitch);
-    GuestArena::HostWrite write(bitmap->buffer, bitmap->buffer ? pitch * bitmap->rows : 0);
+    std::vector<FT_Vector> points;
+    points.reserve(guestPoints.size());
+    for (const GuestVector& point : guestPoints) points.push_back({HostCoordinate(point.x), HostCoordinate(point.y)});
+    FT_Outline native{header.n_contours, header.n_points, points.data(), tags.data(), contours.data(), header.flags};
+    const RasterTargetSpan written = RasterTargetSpan_nid_no_patch(source);
+    GuestArena::HostWrite write(written.begin, written.bytes);
+    if (written.bytes != 0 && (!write.Open() || !GuestWritable_nid_no_patch(written.begin, written.bytes))) return FT_Err_Invalid_Argument;
     return FT_Outline_Get_Bitmap(host, &native, &target);
 }
 

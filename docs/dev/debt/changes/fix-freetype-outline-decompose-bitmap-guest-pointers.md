@@ -1,0 +1,9 @@
+# libSceFreeType
+
+## change [FT_Outline_Get_Bitmap]
+
+- [FT_Outline_Get_Bitmap](../../../core/libs/prx/libSceFreeType/src/OutlineBitmap.cpp) (libSceFreeType) - console signature and errors are unverified; the adapter follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftoutln.c) on a native copy of the guest outline and renders into the guest bitmap buffer in place. Records and arrays are read through checked guest copies; an unreadable bitmap record returns the null-bitmap error, an unreadable outline record or array the null-outline error, and a buffer whose `|pitch| * rows` bytes are not all writable `Invalid_Argument`; the console's response is unmeasured. A guest coordinate outside the host `FT_Pos` range throws on Windows, where the native type is 32 bits
+
+## change [FT_Outline_Decompose]
+
+- [FT_Outline_Decompose](../../../core/libs/prx/libSceFreeType/src/OutlineDecompose.cpp) (libSceFreeType) - console callback ABI and FreeType-version equivalence are unverified; the LP64 adapter follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftoutln.c). Nonempty outlines with shifts outside 0-62, contour endpoints at or beyond `n_points` or signed 64-bit overflow in scaling, translation or midpoint sums throw; native behavior there is undefined. The outline record and contour end are copied per contour with that contour's points and tags, and the callback record before each callback, as the native loop re-reads them; points or tags a callback changes in the current contour are not seen. Unreadable outline data returns `Invalid_Outline` and an unreadable callback record `Invalid_Argument`; the console's response is unmeasured. Callers must supply the callbacks their contours use.
