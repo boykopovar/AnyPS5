@@ -11,6 +11,7 @@
 #include "prx/libSceNKWebKit/include/GLContextExtensionsExports.hpp"
 #include "prx/libSceNKWebKit/include/FormDataExports.hpp"
 #include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"
+#include "prx/libSceNKWebKit/include/PasteboardWriterDataExports.hpp"
 #include "prx/libSceNKWebKit/include/IsoBoxExports.hpp"
 #include "prx/libSceNKWebKit/include/TrackPrivateBaseExports.hpp"
 #include "prx/libSceNKWebKit/include/LegacyExports.hpp"
