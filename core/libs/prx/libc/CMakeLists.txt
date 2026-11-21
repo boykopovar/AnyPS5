@@ -208,34 +208,34 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MemoryResource.cpp
         
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestStacks.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestWriteWatch.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Interfaces.cpp
+        
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestHeap.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/HeapDiagnostics.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Mspace.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/ApplicationHeap.cpp
+        
+        
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ApplicationProcessParameters.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/JumpBuffer.cpp
         
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ScanWideField.cpp
         
         
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/RuntimeSupport.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/IntegerBuiltins.cpp
         
         ${CMAKE_CURRENT_SOURCE_DIR}/src/SonyCrt.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Process.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Hostname.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DeviceName.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Environment.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Directory.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Filesystem.cpp
+        
+        
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedFilesystem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedFilesystemCalls.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AtomicWait.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxMutex.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Rename.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Errors.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Syslog.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/RealPath.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/CxxAbiSupport.cpp
@@ -414,7 +414,7 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatingPoint.cpp)
-target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/CodecvtUtf.cpp)
+target_sources(libc PRIVATE )
 
 if(BUILD_TESTING)
     add_test_executable(guest_memset_extent_tests ${LIBS_INCLUDE_DIR}/tests/GuestMemsetExtent.cpp)
@@ -2900,4 +2900,88 @@ target_link_libraries(libc PUBLIC libc_ScanningWide_Chunk01)
 get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
 if(libc_incdirs)
     target_include_directories(libc_ScanningWide_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_Interfaces_Chunk01 STATIC src/chunks/Interfaces_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_Interfaces_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_Interfaces_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_HeapDiagnostics_Chunk01 STATIC src/chunks/HeapDiagnostics_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_HeapDiagnostics_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_HeapDiagnostics_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_Mspace_Chunk01 STATIC src/chunks/Mspace_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_Mspace_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_Mspace_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_ApplicationHeap_Chunk01 STATIC src/chunks/ApplicationHeap_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_ApplicationHeap_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_ApplicationHeap_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_RuntimeSupport_Chunk01 STATIC src/chunks/RuntimeSupport_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_RuntimeSupport_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_RuntimeSupport_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_Filesystem_Chunk01 STATIC src/chunks/Filesystem_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_Filesystem_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_Filesystem_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_Environment_Chunk01 STATIC src/chunks/Environment_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_Environment_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_Environment_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_Process_Chunk01 STATIC src/chunks/Process_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_Process_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_Process_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_Directory_Chunk01 STATIC src/chunks/Directory_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_Directory_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_Directory_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_Errors_Chunk01 STATIC src/chunks/Errors_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_Errors_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_Errors_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_GuestWriteWatch_Chunk01 STATIC src/chunks/GuestWriteWatch_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_GuestWriteWatch_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_GuestWriteWatch_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_CodecvtUtf_Chunk01 STATIC src/chunks/CodecvtUtf_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_CodecvtUtf_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_CodecvtUtf_Chunk01 PRIVATE ${libc_incdirs})
 endif()
