@@ -169,12 +169,16 @@ struct DinkumwareCondition {
     DinkumwareNativeCondition native;
 };
 
+char destroyedMutexMarker;
+
 DinkumwareMutex* ResolveMutex(void** handle, const char* function) {
     if (!handle)
         throw std::invalid_argument(std::string(function) + ": null mutex handle pointer");
     auto* mutex = static_cast<DinkumwareMutex*>(*handle);
     if (!mutex)
         throw std::invalid_argument(std::string(function) + ": null mutex handle");
+    if (*handle == &destroyedMutexMarker)
+        throw std::invalid_argument(std::string(function) + ": destroyed mutex");
     if (mutex->tag != mutexTag)
         throw std::invalid_argument(std::string(function) + ": not a mutex created by _Mtx_init");
     return mutex;
@@ -222,14 +226,14 @@ int APS5_VABI _Mtx_init_with_default_name_override_nid_postfix(void** handle, in
 void APS5_VABI _Mtx_destroy_nid_postfix(void** handle) {
     if (!handle)
         throw std::invalid_argument("_Mtx_destroy: null mutex handle pointer");
-    if (!*handle)
+    if (!*handle || *handle == &destroyedMutexMarker)
         return;
     auto* mutex = ResolveMutex(handle, "_Mtx_destroy");
     if (mutex->count != 0)
         throw std::logic_error("_Mtx_destroy: mutex destroyed while locked");
     mutex->tag = 0;
     delete mutex;
-    *handle = nullptr;
+    *handle = &destroyedMutexMarker;
 }
 
 int APS5_VABI _Mtx_lock_nid_postfix(void** handle) {
@@ -254,6 +258,18 @@ int APS5_VABI _Mtx_lock_nid_postfix(void** handle) {
 }
 
 int APS5_VABI _Mtx_trylock_nid_postfix(void** handle) {
+    if (handle && *handle == &destroyedMutexMarker)
+        return threadError;
+    if (handle && !*handle) {
+        auto* created = new (std::nothrow) DinkumwareMutex();
+        if (!created)
+            return threadNomem;
+        void* expected = nullptr;
+        if (!__atomic_compare_exchange_n(handle, &expected, static_cast<void*>(created), false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+            delete created;
+    }
+    if (handle && *handle && static_cast<const DinkumwareMutex*>(*handle)->tag != mutexTag)
+        return threadError;
     auto* mutex = ResolveMutex(handle, "_Mtx_trylock");
     const auto self = std::this_thread::get_id();
     if (mutex->owner.load(std::memory_order_acquire) == self) {
@@ -573,6 +589,7 @@ void APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(GuestPad* pad) {
     const int locked = _Mtx_lock_nid_postfix(&pad->mutex);
     if (locked != threadSuccess) {
         _Mtx_destroy_nid_postfix(&pad->mutex);
+        pad->mutex = nullptr;
         _Cnd_destroy_nid_postfix(&pad->condition);
 
         RequireThrd(locked, "_Pad::_Pad: _Mtx_lock");
@@ -606,6 +623,7 @@ void APS5_VABI _ZNSt4_PadD2Ev_nid_postfix(GuestPad* pad) {
     if (!pad) APS5_INVALID_ARG_EX;
     RequireThrd(_Mtx_unlock_nid_postfix(&pad->mutex), "_Pad::~_Pad: _Mtx_unlock");
     _Mtx_destroy_nid_postfix(&pad->mutex);
+    pad->mutex = nullptr;
     _Cnd_destroy_nid_postfix(&pad->condition);
 
 }

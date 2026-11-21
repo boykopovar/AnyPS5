@@ -120,6 +120,23 @@ void TestMtxTrylock() {
     }).join();
 
     _Mtx_destroy_nid_postfix(&recMutex);
+
+    alignas(8) unsigned char destroyed[128] = {};
+    void* staleHandle = destroyed;
+    Require(_Mtx_trylock_nid_postfix(&staleHandle) == 4);
+
+    void* lazyHandle = nullptr;
+    Require(_Mtx_trylock_nid_postfix(&lazyHandle) == threadSuccess && lazyHandle != nullptr);
+    Require(_Mtx_trylock_nid_postfix(&lazyHandle) == threadBusy);
+    Require(_Mtx_unlock_nid_postfix(&lazyHandle) == threadSuccess);
+    _Mtx_destroy_nid_postfix(&lazyHandle);
+
+    void* destroyedHandle = nullptr;
+    Require(_Mtx_init_nid_postfix(&destroyedHandle, mutexTryable) == threadSuccess && destroyedHandle != nullptr);
+    _Mtx_destroy_nid_postfix(&destroyedHandle);
+    Require(_Mtx_trylock_nid_postfix(&destroyedHandle) == 4);
+    _Mtx_destroy_nid_postfix(&destroyedHandle);
+    Require(_Mtx_trylock_nid_postfix(&destroyedHandle) == 4);
 }
 
 void TestThrdSleep() {
