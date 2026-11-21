@@ -1040,6 +1040,7 @@ namespace {
 std::atomic<SharedBackingResolver> sharedBackingResolver{nullptr};
 std::atomic<SharedBackingWriter> sharedBackingWriter{nullptr};
 std::atomic<SharedBackingRunsResolver> sharedBackingRunsResolver{nullptr};
+std::atomic<SharedBackingHostFallback> sharedBackingHostFallback{nullptr};
 
 }
 
@@ -1068,6 +1069,15 @@ void GuestArenaSetSharedBackingRuns_nid_postfix(SharedBackingRunsResolver resolv
 bool GuestArenaSharedBackingRuns_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, SharedBackingRun* runs, std::size_t capacity, std::size_t* count) {
     const auto resolver = sharedBackingRunsResolver.load(std::memory_order_acquire);
     return resolver != nullptr && resolver(address, bytes, file, runs, capacity, count);
+}
+
+void GuestArenaSetSharedBackingHostFallback_nid_no_patch(SharedBackingHostFallback fallback) {
+    sharedBackingHostFallback.store(fallback, std::memory_order_release);
+}
+
+bool GuestArenaSharedBackingHostFallback_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    const auto fallback = sharedBackingHostFallback.load(std::memory_order_acquire);
+    return fallback != nullptr && fallback(address, bytes);
 }
 
 bool GuestArenaOverlapsHostRegion_nid_no_patch(std::uintptr_t address, std::size_t bytes) {

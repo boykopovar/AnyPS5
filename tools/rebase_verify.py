@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 CANDIDATES = ("upstream/main", "origin/main", "main")
+NO_NEWLINE = "\\ No newline at end of file"
 
 
 def git(root, *arguments, raw=False):
@@ -39,8 +40,10 @@ def changed_lines(root, base, tip):
     added = collections.defaultdict(collections.Counter)
     deleted = collections.defaultdict(collections.Counter)
     old_path, new_path, in_hunk = None, None, False
-    for line in git(root, "diff", "-U0", "--no-renames", "--no-relative", "--no-color", "--no-ext-diff", "--no-textconv",
-                    "--src-prefix=a/", "--dst-prefix=b/", base, tip).split("\n"):
+    diff = git(root, "diff", "-U0", "--no-renames", "--no-relative", "--no-color", "--no-ext-diff", "--no-textconv",
+               "--src-prefix=a/", "--dst-prefix=b/", base, tip, raw=True)
+    lines = diff.decode("utf-8", "replace").split("\n")
+    for index, line in enumerate(lines):
         if line.startswith("diff --git "):
             old_path, new_path, in_hunk = None, None, False
         elif not in_hunk and line.startswith("--- "):
@@ -50,7 +53,10 @@ def changed_lines(root, base, tip):
         elif line.startswith("@@"):
             in_hunk = True
         elif in_hunk and line.startswith("+") and new_path is not None:
-            added[new_path][line[1:]] += 1
+            text = line[1:]
+            if lines[index + 1:index + 2] == [NO_NEWLINE]:
+                text += "\n" + NO_NEWLINE
+            added[new_path][text] += 1
         elif in_hunk and line.startswith("-") and old_path is not None:
             deleted[old_path][line[1:]] += 1
     return added, deleted
@@ -62,11 +68,20 @@ def differences(old, new, deleted=False):
         before, after = old.get(path, collections.Counter()), new.get(path, collections.Counter())
         for text, count in sorted((before - after).items()):
             description = "a deleted line is missing" if deleted else "an added line is missing"
-            problems.append(f"{path}: {description} ({count}x): {text[:100]}")
+            problems.append(f"{path}: {description} ({count}x): {shown(text)}")
         for text, count in sorted((after - before).items()):
             description = "a line is deleted that the branch did not delete" if deleted else "a line is added that the branch did not add"
-            problems.append(f"{path}: {description} ({count}x): {text[:100]}")
+            problems.append(f"{path}: {description} ({count}x): {shown(text)}")
     return problems
+
+
+def text_only(lines):
+    return collections.Counter(text.partition("\n")[0] for text in lines.elements())
+
+
+def shown(text):
+    text, unterminated, _ = text.partition("\n")
+    return text[:100].replace("\r", "\\r") + (" (no newline at end of file)" if unterminated else "")
 
 
 def changed_modes(root, base, tip):
@@ -112,7 +127,7 @@ def verify(root, old, new, onto):
     problems += differences(old_added, new_added)
     upstream_added, upstream_deleted = changed_lines(root, old_base, new_base) if old_deleted else ({}, {})
     expected_deleted = {
-        path: lines - (upstream_deleted.get(path, collections.Counter()) - upstream_added.get(path, collections.Counter()))
+        path: lines - (upstream_deleted.get(path, collections.Counter()) - text_only(upstream_added.get(path, collections.Counter())))
         for path, lines in old_deleted.items()
     }
     problems += differences(expected_deleted, new_deleted, deleted=True)
