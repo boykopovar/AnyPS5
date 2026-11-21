@@ -314,6 +314,15 @@ void UprvMemoryWithUserFunctions() {
     char* empty = uprv_strndup_nid_postfix("abc", 0);
     Require(empty[0] == 0 && g_log.lastSize == 1);
 
+    const auto* const unreadable = reinterpret_cast<const char*>(0x10);
+    errno = 71;
+    RequireThrows([&] { uprv_strdup_nid_postfix(unreadable); });
+    RequireThrows([&] { uprv_strndup_nid_postfix(unreadable, 4); });
+    Require(errno == 71);
+    std::memset(g_arena, 0x55, sizeof(g_arena));
+    char* nothing = uprv_strndup_nid_postfix(unreadable, 0);
+    Require(nothing[0] == 0 && g_log.lastSize == 1);
+
     std::memset(g_arena, 0x55, sizeof(g_arena));
     const int before = g_log.allocations;
     auto* cleared = static_cast<unsigned char*>(uprv_calloc_nid_postfix(5, 8));

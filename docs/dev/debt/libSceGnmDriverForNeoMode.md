@@ -1,5 +1,10 @@
 # libSceGnmDriverForNeoMode technical debt
 
+### Silent stubs
+
+- [sceGnmGpuPaDebugEnter, sceGnmGpuPaDebugLeave, sceGnmRegisterGnmLiveCallbackConfig, sceGnmSetWaveLimitMultiplier, sceGnmSetWaveLimitMultipliers](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) (libSceGnmDriverForNeoMode) - the first three are a lone `ret` in PS4 firmware 10.71 `system/common/lib/libSceGnmDriverForNeoMode.sprx` (sha256 of the decrypted ELF `fd3e06cd7d130b675334cd0e1dfb52d2aab0d6960624d51d2db8ffd7842cf07b`), read from disassembly, not run on a console (0x5a0, 0x5b0, 0x3900) and do nothing here. The wave limit calls (0x56f0, 0x5710) pass the limits to the GC device with ioctl `0xc030811e` and return whether it succeeded; AnyPS5 does not limit shader waves and returns 1 without applying them.
+- [sceGnmDingDongForWorkload](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) (libSceGnmDriverForNeoMode) - returns 0 and rings nothing. In PS4 firmware 10.71 `libSceGnmDriverForNeoMode.sprx` (0x4090) it returns at once for queue 0. Otherwise it records the call in the coredump area, then rings the queue through an ioctl or stores the offset in the write pointer of the queue `sceGnmMapComputeQueueWithPriority` mapped. No queue can be mapped here, so there is none to ring.
+
 ### Unknown function info
 
 - [sceGnmDingDongForWorkload, sceGnmRegisterOwner](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) - the first throws through `NotImplemented_nid_no_patch` and `sceGnmRegisterOwner` returns `Failure` (0x8EEE00FF) without registering anything; behaviour and the PS5 prototypes are unmeasured. The only source of the parameter lists is shadPS4's PS4-derived prototypes (GPLv2, used as a reference only), with no second reference; structure pointers are `void*` because no layout is known.

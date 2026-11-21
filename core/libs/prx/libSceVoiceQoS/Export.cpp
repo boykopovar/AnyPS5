@@ -1,5 +1,6 @@
 #include "prx/libSceVoiceQoS/include/Api.hpp"
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
@@ -49,10 +50,27 @@ struct Connection {
     std::int32_t remote;
 };
 
+constexpr std::int32_t VOICE_QOS_CONNECTION_ATTR_MAX_BITRATE = 4;
+constexpr std::int32_t VOICE_QOS_CONNECTION_ATTR_BITRATE = 9;
+constexpr std::size_t VOICE_QOS_CONNECTION_RECORDS = 15;
+constexpr std::int32_t VoiceQoSBitrates[] = {3850, 4650, 5700, 7300, 14400, 16000, 22533, 24000, 28000, 32000, 36000, 40000, 44000, 48000};
+struct ConnectionBitrate {
+    std::int32_t maximum = 0;
+    std::int32_t current = 0;
+};
+std::int32_t QuantizeBitrate(std::int32_t bitrate) {
+    std::int32_t result = VoiceQoSBitrates[0];
+    for (const std::int32_t supported : VoiceQoSBitrates) {
+        if (bitrate >= supported) result = supported;
+    }
+    return result;
+}
 struct QoS {
     std::mutex mutex;
     bool initialized = false;
+    std::int32_t appType = 0;
     std::int32_t endpointLimit = 0;
+    std::array<ConnectionBitrate, VOICE_QOS_CONNECTION_RECORDS> bitrates{};
     std::map<std::int32_t, Endpoint> locals;
     std::map<std::int32_t, Endpoint> remotes;
     std::map<std::int32_t, Connection> connections;
@@ -115,6 +133,9 @@ int APS5_VABI sceVoiceQoSInit(void* memBlock, uint32_t memSize, int32_t appType)
         return result;
     }
     qos.endpointLimit = appType == VOICE_QOS_APP_TYPE_10000000 ? 15 : 7;
+    qos.appType = appType;
+    const ConnectionBitrate initial = appType == VOICE_QOS_APP_TYPE_10000000 ? ConnectionBitrate{22533, 3850} : ConnectionBitrate{7300, 3850};
+    qos.bitrates.fill(initial);
     qos.initialized = true;
     return 0;
 }
@@ -226,8 +247,20 @@ int APS5_VABI sceVoiceQoSDisconnect(int32_t connectionId) {
 }
 
 int APS5_VABI sceVoiceQoSSetConnectionAttribute(std::int32_t connectionId, std::int32_t attributeId, const void* value, std::int32_t size) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return Locked([&](QoS& qos) {
+        if (connectionId < 0 || connectionId >= qos.endpointLimit || !value) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        if ((attributeId != VOICE_QOS_CONNECTION_ATTR_MAX_BITRATE && attributeId != VOICE_QOS_CONNECTION_ATTR_BITRATE) || size != 4) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        std::int32_t requested = 0;
+        if (!CopyIn(&requested, value, sizeof(requested))) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        ConnectionBitrate& record = qos.bitrates[static_cast<std::size_t>(connectionId)];
+        if (attributeId == VOICE_QOS_CONNECTION_ATTR_MAX_BITRATE) {
+            const std::int32_t cap = qos.appType == VOICE_QOS_APP_TYPE_10000000 ? 22533 : 7300;
+            record.maximum = std::min(std::max(requested, record.current), cap);
+        } else {
+            record.current = QuantizeBitrate(std::min(std::max(requested, 3850), record.maximum));
+        }
+        return 0;
+    });
 }
 
 int APS5_VABI sceVoiceQoSSetLocalEndpointAttribute(int32_t localId, int32_t attributeId, const void* value, int32_t size) {
@@ -322,12 +355,13 @@ int APS5_VABI sceVoiceQoSGetRemoteEndpointAttribute(int32_t remoteId, int32_t at
 }
 
 int APS5_VABI sceVoiceQoSGetConnectionAttribute(int32_t connectionId, int32_t attributeId, void* value, int32_t size) {
-    (void)connectionId;
-    (void)attributeId;
-    (void)value;
-    (void)size;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Locked([&](QoS& qos) {
+        if (connectionId < 0 || connectionId >= qos.endpointLimit || !value) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        if ((attributeId != VOICE_QOS_CONNECTION_ATTR_MAX_BITRATE && attributeId != VOICE_QOS_CONNECTION_ATTR_BITRATE) || size != 4) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        const ConnectionBitrate& record = qos.bitrates[static_cast<std::size_t>(connectionId)];
+        const std::int32_t result = attributeId == VOICE_QOS_CONNECTION_ATTR_MAX_BITRATE ? record.maximum : record.current;
+        return CopyOut(value, &result, sizeof(result)) ? 0 : SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+    });
 }
 
 int APS5_VABI sceVoiceQoSGetLocalEndpoint(int32_t connectionId, int32_t* localId) {

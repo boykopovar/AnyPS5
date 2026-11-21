@@ -87,6 +87,57 @@ def provides(name, nid):
 
 
 class ExportGapTests(unittest.TestCase):
+    def test_test_definitions_aliases_and_macros_do_not_hide_missing_exports(self):
+        missing = ["sceTestDefinition", "sceTestAlias", "sceTestMacro"]
+        present = ["sceProductionHeader", "sceProductionFilename"]
+        for folder in ("test", "tests", "Test", "TESTS", "nested/tests/fixtures"):
+            with self.subTest(folder=folder), tempfile.TemporaryDirectory() as directory:
+                root, prx, tables = tree(Path(directory) / "tests")
+                write_module(prx, MODULE, {
+                    "src/contest/Api.hpp": "int APS5_VABI sceProductionHeader(void) { return 0; }\n",
+                    "src/tests.cpp": "int APS5_VABI sceProductionFilename(void) { return 0; }\n",
+                    folder + "/Mocks.hpp": (
+                        "int APS5_VABI sceTestDefinition(void) { return 0; }\n"
+                        f'APS5_EXPORT("{nid_of(missing[1])}", test_alias);\n'
+                        "#define TEST_EXPORT(NAME) int APS5_VABI NAME(void) { return 0; }\n"
+                        "TEST_EXPORT(sceTestMacro)\n"),
+                })
+                write_table(tables, MODULE, [nid_of(name) for name in missing + present])
+                database = write_db(directory, [(nid_of(name), name) for name in missing + present])
+                output = Path(directory) / "missing.txt"
+                code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables),
+                                                   "--db", str(database), "--out", str(output)])
+                self.assertEqual(code, 0)
+                self.assertEqual(output.read_text(encoding="utf-8").splitlines(), [nid_of(name) for name in missing])
+                self.assertIn(f"{MODULE}: 3 missing, 2 already provided, 0 unknown", report)
+
+    def test_test_sources_do_not_confirm_shared_library_exports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, prx, _ = tree(directory)
+            library = write_module(prx, MODULE, {
+                "CMakeLists.txt": "include(${CMAKE_CURRENT_SOURCE_DIR}/../libExample.native/Shared.cmake)\n",
+                "Api.hpp": "int APS5_VABI Present(void);\nint APS5_VABI Missing(void);\n",
+                "tests/Api.hpp": "int APS5_VABI OnlyTestDeclaration(void);\n",
+            })
+            write_module(prx, "libExample.native", {
+                "Export.cpp": "int APS5_VABI Present(void) { return 0; }\nint APS5_VABI OnlyTestDeclaration(void) { return 0; }\n",
+                "tests/Mock.cpp": "int APS5_VABI Missing(void) { return 0; }\n",
+            })
+            self.assertEqual(set(export_gap.collect_provided(library)), {nid_of("Present")})
+
+    def test_self_call_report_excludes_test_callers(self):
+        name = "sceExampleSelfCall"
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, _ = tree(directory)
+            library = write_module(prx, MODULE, {
+                "src/Caller.cpp": "int use(void) {\n    return sceExampleSelfCall(1);\n}\n",
+                "tests/Caller.cpp": "int test(void) { return sceExampleSelfCall(2); }\n",
+                "nested/test/Fixture.hpp": "int test(void) { return sceExampleSelfCall(3); }\n",
+            })
+            with patch.object(export_gap, "ROOT", root):
+                calls = export_gap.find_self_calls(library, {nid_of(name): name})
+            self.assertEqual(calls, [(name, nid_of(name), f"core/libs/prx/{MODULE}/src/Caller.cpp", 2, "")])
+
     def test_export_table_ignores_comments_strings_and_macro_definitions(self):
         active = nid_of("sceExampleActive")
         commented = nid_of("sceExampleCommented")
@@ -151,6 +202,23 @@ class ExportGapTests(unittest.TestCase):
             self.assertFalse([line for line in report.splitlines() if line.startswith("missing ")])
             self.assertIn("already provided", report)
             self.assertIn("sceExamplePostfixBase_nid_postfix", report)
+
+    def test_gap_report_distinguishes_data_definitions_from_declarations(self):
+        names = ["Exported", "Declared", "Private"]
+        nids = [nid_of(name) for name in names]
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            write_module(prx, MODULE, {
+                "Export.cpp": 'extern "C" { int Exported_nid_postfix = 1; static int Private_nid_postfix; }',
+                "Api.hpp": 'extern "C" int Declared_nid_postfix;',
+            })
+            write_table(tables, MODULE, nids)
+            db = write_db(directory, zip(nids, names))
+            out = Path(directory) / "gaps.txt"
+            code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+            self.assertEqual(code, 0)
+            self.assertEqual(set(out.read_text().splitlines()), set(nids[1:]))
+            self.assertIn("defined as data", report)
 
     def test_assembly_postfix_name_counts_as_provided(self):
         name = "sceExampleAsm_nid_postfix"
@@ -846,6 +914,141 @@ class ExportGapTests(unittest.TestCase):
             bad.write_text("not-a-nid-too-long\n", encoding="utf-8")
             with self.assertRaises(export_gap.GapError):
                 export_gap.parse_nids_file(bad)
+
+
+    def test_normalize_module_strips_prx_suffix_only_with_a_stem(self):
+        self.assertEqual(export_gap.normalize_module("libSceFoo.prx"), "libSceFoo")
+        self.assertEqual(export_gap.normalize_module("libSceFoo.PRX"), "libSceFoo")
+        self.assertEqual(export_gap.normalize_module(".prx"), ".prx")
+        self.assertEqual(export_gap.normalize_module("libSceFoo"), "libSceFoo")
+
+
+    def test_base_of_ignores_postfix_without_a_stem(self):
+        postfix = export_gap.POSTFIXES[0]
+        self.assertEqual(export_gap.base_of("foo" + postfix), ("foo", postfix))
+        self.assertEqual(export_gap.base_of(postfix), (postfix, None))
+        self.assertEqual(export_gap.base_of("foo"), ("foo", None))
+
+
+    def test_strip_disambig_requires_digit_tail(self):
+        marker = export_gap.DISAMBIG
+        self.assertEqual(export_gap.strip_disambig("foo" + marker + "12"), "foo")
+        self.assertEqual(export_gap.strip_disambig("foo" + marker), "foo" + marker)
+        self.assertEqual(export_gap.strip_disambig("foo"), "foo")
+
+
+    def test_unreadable_input_files_raise_gap_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "missing.txt"
+            with self.assertRaises(export_gap.GapError):
+                export_gap.parse_nids_file(missing)
+            with self.assertRaises(export_gap.GapError):
+                export_gap.parse_export_table(missing)
+
+class RecordProvidedTests(unittest.TestCase):
+    def test_no_patch_cut_registers_the_base_name(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo_nid_no_patch_cut")
+        self.assertEqual(provided, {"sceFoo": "literally as sceFoo under sceFoo_nid_no_patch_cut"})
+
+    def test_no_patch_registers_the_full_name(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo_nid_no_patch", "libX")
+        self.assertEqual(provided, {"sceFoo_nid_no_patch": "libX literally as sceFoo_nid_no_patch"})
+
+    def test_plain_and_postfixed_names_register_the_computed_nid(self):
+        nid = nid_names.compute_nid("sceFoo")
+        plain, postfixed = {}, {}
+        export_gap.record_provided(plain, "sceFoo")
+        export_gap.record_provided(postfixed, "sceFoo_nid_postfix", "libX")
+        self.assertEqual(plain, {nid: "under its own name sceFoo"})
+        self.assertEqual(postfixed, {nid: "libX under sceFoo_nid_postfix for sceFoo"})
+
+    def test_first_origin_wins(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo", "first")
+        export_gap.record_provided(provided, "sceFoo", "second")
+        self.assertEqual(list(provided.values()), ["first under its own name sceFoo"])
+
+class MaskCodeTests(unittest.TestCase):
+    def test_comments_are_blanked_and_layout_is_preserved(self):
+        source = "int a; // note\nint b; /* block\nmore */ int c;\n"
+        masked = export_gap.mask_code(source)
+        self.assertEqual(len(masked), len(source))
+        self.assertEqual(masked.count("\n"), source.count("\n"))
+        self.assertNotIn("note", masked)
+        self.assertNotIn("block", masked)
+        self.assertNotIn("more", masked)
+        for kept in ("int a;", "int b;", "int c;"):
+            self.assertIn(kept, masked)
+
+    def test_string_literal_contents_are_blanked(self):
+        masked = export_gap.mask_code('call("hidden text");\n')
+        self.assertNotIn("hidden", masked)
+        self.assertTrue(masked.startswith("call("))
+        self.assertTrue(masked.endswith(");\n"))
+
+
+class MaskDirectivesTests(unittest.TestCase):
+    def test_directive_lines_and_continuations_are_blanked(self):
+        source = "#define X 1 \\\n  continued\nint a;\n  #if Y\nint b;\n"
+        masked = export_gap.mask_directives(source)
+        self.assertEqual(len(masked), len(source))
+        self.assertEqual(masked.splitlines()[2], "int a;")
+        self.assertEqual(masked.splitlines()[4], "int b;")
+        for blanked in (0, 1, 3):
+            self.assertEqual(masked.splitlines()[blanked].strip(), "")
+        self.assertNotIn("continued", masked)
+
+    def test_text_without_directives_is_unchanged(self):
+        source = "int a;\r\nint b = 1 \\\n  + 2;\r\n"
+        self.assertEqual(export_gap.mask_directives(source), source)
+
+
+class RecordProvidedTests(unittest.TestCase):
+    def test_no_patch_cut_registers_the_base_name(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo_nid_no_patch_cut")
+        self.assertEqual(provided, {"sceFoo": "literally as sceFoo under sceFoo_nid_no_patch_cut"})
+
+    def test_no_patch_registers_the_full_name(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo_nid_no_patch", "libX")
+        self.assertEqual(provided, {"sceFoo_nid_no_patch": "libX literally as sceFoo_nid_no_patch"})
+
+    def test_plain_and_postfixed_names_register_the_computed_nid(self):
+        nid = nid_names.compute_nid("sceFoo")
+        plain, postfixed = {}, {}
+        export_gap.record_provided(plain, "sceFoo")
+        export_gap.record_provided(postfixed, "sceFoo_nid_postfix", "libX")
+        self.assertEqual(plain, {nid: "under its own name sceFoo"})
+        self.assertEqual(postfixed, {nid: "libX under sceFoo_nid_postfix for sceFoo"})
+
+    def test_first_origin_wins(self):
+        provided = {}
+        export_gap.record_provided(provided, "sceFoo", "first")
+        export_gap.record_provided(provided, "sceFoo", "second")
+        self.assertEqual(list(provided.values()), ["first under its own name sceFoo"])
+
+
+class LoadConsoleNidsTests(unittest.TestCase):
+    def test_export_table_that_is_not_a_directory_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "tables"
+            with self.assertRaisesRegex(export_gap.GapError, "not a directory"):
+                export_gap.load_console_nids([MODULE], str(missing), None)
+
+    def test_module_without_a_table_file_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(export_gap.GapError, "export table not found"):
+                export_gap.load_console_nids([MODULE], directory, None)
+
+    def test_without_a_table_directory_every_module_gets_a_copy_of_the_nids_file(self):
+        with patch.object(export_gap, "parse_nids_file", return_value=["AAAAAAAAAAA", "BBBBBBBBBBB"]) as parse:
+            console = export_gap.load_console_nids(["libA", "libB"], None, "nids.txt")
+        parse.assert_called_once_with("nids.txt")
+        self.assertEqual(console, {"libA": ["AAAAAAAAAAA", "BBBBBBBBBBB"], "libB": ["AAAAAAAAAAA", "BBBBBBBBBBB"]})
+        self.assertIsNot(console["libA"], console["libB"])
 
 
 if __name__ == "__main__":

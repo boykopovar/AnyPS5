@@ -446,5 +446,11 @@ extern "C" char APS5_VABI NumpunctThousandsSep_nid_no_patch(const GuestLocale::N
 extern "C" GuestLocale::String* APS5_VABI NumpunctGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
 extern "C" GuestLocale::String* APS5_VABI NumpunctFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
 extern "C" GuestLocale::String* APS5_VABI NumpunctTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" char APS5_VABI CtypeDoTolower_nid_no_patch(const GuestLocale::CtypeFacet* self, char character);
+extern "C" const char* APS5_VABI CtypeDoTolowerRange_nid_no_patch(const GuestLocale::CtypeFacet* self, char* first, const char* last);
+extern "C" char APS5_VABI CtypeDoToupper_nid_no_patch(const GuestLocale::CtypeFacet* self, char character);
+extern "C" const char* APS5_VABI CtypeDoToupperRange_nid_no_patch(const GuestLocale::CtypeFacet* self, char* first, const char* last);
+extern "C" void APS5_VABI CtypeDestroy_nid_no_patch(GuestLocale::CtypeFacet* self);
+extern "C" void APS5_VABI CtypeDelete_nid_no_patch(GuestLocale::CtypeFacet* self);
 
 #endif

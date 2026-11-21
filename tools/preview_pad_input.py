@@ -26,7 +26,7 @@ def main(argv=None):
             parser.error("stick axes must be between 0 and 255")
     touch = ""
     if args.touch is not None:
-        if any(not 0 <= value <= limit for value, limit in zip(args.touch, (1919, 942, 127, 1))):
+        if any(not 0 <= value <= limit for value, limit in zip(args.touch, (1919, 1079, 127, 1))):
             parser.error("invalid touch coordinates, ID or active flag")
         touch = " touch(" + ",".join(map(str, args.touch)) + ")"
     try:

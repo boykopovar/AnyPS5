@@ -2,6 +2,7 @@
 #include "prx/libfreetype/include/GuestStream.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -55,4 +56,13 @@ int main() {
     source.memory = nullptr;
     Require(FT_Stream_OpenBzip2_nid_postfix(&output, &source) == UnimplementedFeature);
     Require(std::memcmp(&output, &untouched, sizeof(output)) == 0 && source.pos == 0 && allocations == 0);
+    errno = 71;
+    Require(FT_Stream_OpenBzip2_nid_postfix(reinterpret_cast<LegacyFreeType::GuestStreamRec*>(0x10), &source) == UnimplementedFeature);
+    Require(errno == 71);
+    errno = 71;
+    Require(FT_Stream_OpenBzip2_nid_postfix(&output, reinterpret_cast<LegacyFreeType::GuestStreamRec*>(0x10)) == UnimplementedFeature);
+    Require(errno == 71);
+    errno = 71;
+    Require(FT_Stream_OpenBzip2_nid_postfix(reinterpret_cast<LegacyFreeType::GuestStreamRec*>(0x10), reinterpret_cast<LegacyFreeType::GuestStreamRec*>(0x10)) == UnimplementedFeature);
+    Require(errno == 71);
 }

@@ -31,7 +31,7 @@ std::uint64_t APS5_VABI sceAgcAcbWaitOnAddressGetSize(std::uint32_t size) {
 
 std::uint32_t* APS5_VABI sceAgcAcbEventWrite(CommandBuffer* buf, std::uint8_t eventType, const volatile void* address) {
     Agc::Command::CheckBits(eventType, 0x3fu, __func__);
-    Agc::Command::Require(address == nullptr, __func__, "ACB event address is not supported");
+    Agc::Command::Require(address == nullptr || (eventType & 0xfeu) != 0x38u, __func__, "ACB event address is not supported");
     return Agc::Command::Emit(buf, 0x46u, {eventType | (eventType == 7 ? 0x400u : 0u)}, __func__);
 }
 

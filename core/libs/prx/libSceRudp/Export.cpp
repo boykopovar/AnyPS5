@@ -47,6 +47,7 @@ constexpr uint8_t RUDP_MUXMODE_SERVER = 2;
 constexpr uint16_t RUDP_AUTO_VPORT_BASE = 0x2710;
 constexpr std::size_t RUDP_AUTO_VPORT_COUNT = 0x10000 - RUDP_AUTO_VPORT_BASE;
 constexpr int RUDP_MAX_BACKLOG = 0x80;
+constexpr std::uint32_t RUDP_GETSOCKNAME_LENGTH = 0x10;
 
 constexpr int RUDP_POLL_OP_ADD = 1;
 constexpr int RUDP_POLL_OP_MODIFY = 2;
@@ -754,10 +755,8 @@ int APS5_VABI sceRudpGetLocalInfo(int ctxId, int* socketId, void* addr, std::uin
     if (!GuestCopyIn_nid_no_patch(&requested, addrLen, sizeof(requested))) return RUDP_ERROR_INVALID_ARGUMENT;
     if (requested == 0) return 0;
     std::uint8_t socketAddress[0x1c]{};
-    std::uint32_t socketAddressSize = sizeof(socketAddress);
-    if (sceNetGetsockname(context.socketId, socketAddress, &socketAddressSize) != 0) {
-        throw std::runtime_error("sceRudpGetLocalInfo: the answer for a socket sceNetGetsockname rejects was not measured");
-    }
+    std::uint32_t socketAddressSize = RUDP_GETSOCKNAME_LENGTH;
+    static_cast<void>(sceNetGetsockname(context.socketId, socketAddress, &socketAddressSize));
     const std::uint32_t copied = requested > sizeof(socketAddress) ? static_cast<std::uint32_t>(sizeof(socketAddress)) : requested;
     if (!GuestCopyOut_nid_no_patch(addr, socketAddress, copied)) return RUDP_ERROR_INVALID_ARGUMENT;
     if (!GuestCopyOut_nid_no_patch(addrLen, &copied, sizeof(copied))) return RUDP_ERROR_INVALID_ARGUMENT;
@@ -782,7 +781,7 @@ int APS5_VABI sceRudpListen(int ctxId, int backlog) {
     if (!context.bound || context.muxMode != RUDP_MUXMODE_SERVER) {
         return RUDP_ERROR_NOT_ACCEPTABLE;
     }
-    if (context.activated) NotImplemented_nid_no_patch(__func__);
+    if (context.activated) return RUDP_ERROR_NOT_ACCEPTABLE;
     if (context.listening) {
         return RUDP_ERROR_IN_PROGRESS;
     }
