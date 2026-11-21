@@ -181,8 +181,13 @@ std::uint32_t maximumNumberOfProcesses = 0xffffffffu;
     bool canHandleHTTPSServerTrustEvaluation = true;
     Retained<String> customWebContentServiceBundleIdentifier;
     std::uint32_t terminatedNetworkProcessesCount = 0;
-mutable Retained<IconDatabase> iconDatabase;
+    mutable Retained<IconDatabase> iconDatabase;
     std::optional<std::u16string> iconDatabasePath;
+    bool clientConfigured = false;
+    bool historyClientConfigured = false;
+    using InvalidMessageFunction = void (*)(const void* messageName);
+    static InvalidMessageFunction GetInvalidMessageFunction();
+    static void SetInvalidMessageFunction(InvalidMessageFunction function);
 };
 
 class WebsiteDataStoreConfiguration final : public ObjectOf<ObjectType::WebsiteDataStoreConfiguration> {

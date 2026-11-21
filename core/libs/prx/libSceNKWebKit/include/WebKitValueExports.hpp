@@ -670,6 +670,9 @@ void APS5_VABI WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest(const void
 void APS5_VABI WKContextRegisterURLSchemeAsEmptyDocument(const void* contextRef, const void* urlSchemeRef);
 void APS5_VABI WKContextRegisterURLSchemeAsSecure(const void* contextRef, const void* urlSchemeRef);
 void APS5_VABI WKContextClearCurrentModifierStateForTesting(const void* contextRef);
+void APS5_VABI WKContextSetClient(const void* contextRef, const void* client);
+void APS5_VABI WKContextSetHistoryClient(const void* contextRef, const void* client);
+void APS5_VABI WKContextSetInvalidMessageFunction(void (*function)(const void* messageName));
 void APS5_VABI WKContextSetUseSeparateServiceWorkerProcess(const void* contextRef, bool useSeparateServiceWorkerProcess);
 void APS5_VABI WKContextWarmInitialProcess(const void* contextRef);
 std::uint32_t APS5_VABI WKContextGetMaximumNumberOfProcesses(const void* contextRef);
