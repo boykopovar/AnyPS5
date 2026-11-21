@@ -84,6 +84,8 @@ int main() {
     RequireError(PrioProcess, self + 1, 3);
     RequireError(PrioProcess, -1, 3);
     RequireError(PrioGroup, self + 1, 3);
+    RequireError(PrioGroup, -1, 3);
+    RequireError(PrioGroup, -100, 3);
     RequireError(PrioUser, 1000, 3);
     RequireError(3, 0, 22);
     RequireError(-1, self, 22);
