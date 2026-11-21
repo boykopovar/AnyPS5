@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -955,6 +956,26 @@ struct CompiledShaderArtifact {
     std::uint64_t variantId = 0;
 };
 
+struct ImageTableRecordLayout {
+    std::uint64_t start = 0;
+    std::uint32_t stride = 0;
+    std::uint32_t bytes = 0;
+
+    bool operator==(const ImageTableRecordLayout& other) const = default;
+
+    [[nodiscard]] std::pair<std::uint64_t, std::uint64_t> KeysOverlapping(std::uint64_t address, std::uint64_t length, std::uint64_t keys) const {
+        constexpr auto top = std::numeric_limits<std::uint64_t>::max();
+        if (length == 0u || bytes == 0u || stride == 0u || keys == 0u) return {0u, 0u};
+        const auto last = address + std::min<std::uint64_t>(length - 1u, top - address);
+        if (last < start) return {0u, 0u};
+        const auto firstLast = start + std::min<std::uint64_t>(bytes - 1u, top - start);
+        const auto lastKey = (last - start) / stride;
+        const auto past = lastKey >= keys ? keys : lastKey + 1u;
+        const auto missed = address <= firstLast ? 0u : (address - firstLast - 1u) / stride + 1u;
+        return {std::min(missed, past), past};
+    }
+};
+
 struct ShaderInvocation {
     std::vector<PipelineSpecializationConstant> specialization;
     std::uint64_t specializationId = 0;
@@ -967,6 +988,7 @@ struct ShaderInvocation {
     std::vector<ImageTableEntryPoison> imageTablePoison;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
     std::vector<std::vector<std::pair<std::uint64_t, std::uint64_t>>> imageTableReadRanges;
+    std::vector<ImageTableRecordLayout> imageTableRecords;
     std::uint64_t imageTableShader = 0;
     std::uint32_t imageTableFaults = 0;
 };

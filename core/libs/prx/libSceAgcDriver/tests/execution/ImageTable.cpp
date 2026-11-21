@@ -17,8 +17,10 @@
 #include <functional>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -528,11 +530,11 @@ Outcome Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, Cod
 }
 
 template <std::size_t CodeWords>
-Outcome RunPointer(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& code, std::uint32_t groups) {
+Outcome RunPointer(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& code, std::uint32_t groups, std::uint32_t outputWord = 0u) {
     auto* root = Root.data();
     const auto palette = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(root)) + PaletteOffset + 0x100u;
     const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
-    const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+    const auto output = outputWord != 0u ? Buffer(root + outputWord, groups * Lanes * 16u) : Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
     std::copy(keys.begin(), keys.end(), root);
     std::copy(output.begin(), output.end(), root + 4);
     std::copy(PointClamp.begin(), PointClamp.end(), root + 8);
@@ -544,7 +546,9 @@ Outcome RunPointer(AgcDriver::VulkanDevice& device, const std::array<std::uint32
         {reinterpret_cast<std::uintptr_t>(root), std::as_bytes(std::span(root, PaletteBytes / 4u))},
         {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
     }};
-    return Execute(device, span, root, memory, groups, Lanes, 64);
+    auto outcome = Execute(device, span, root, memory, groups, Lanes, 64);
+    if (outputWord != 0u) outcome.words.assign(root + outputWord, root + outputWord + groups * Lanes * 4u);
+    return outcome;
 }
 
 template <std::size_t CodeWords>
@@ -668,6 +672,24 @@ void SetClassRecords() {
     SetRecord(6, {0u, 0u, 0u, 0u}, {0u, 0u, 0u, 0u});
     SetRecord(7, PointClamp, {0x1234u, 0x5678u, 0x9abcu, 0x1000ffacu});
     for (std::uint32_t record = 8; record < Records; ++record) SetRecord(record, PointClamp, floatImage);
+}
+
+void RunRecordRangeTests() {
+    using Keys = std::pair<std::uint64_t, std::uint64_t>;
+    constexpr auto top = std::numeric_limits<std::uint64_t>::max();
+    const ShaderRecompiler::ImageTableRecordLayout middle{0x1000u, Stride, 16u};
+    Require(middle.KeysOverlapping(0x1000u + Stride * 5u + 8u, Stride * 2u, 64u) == Keys{5u, 8u}, "image table records: a store over records 5 to 7 did not select keys 5 to 7");
+    const ShaderRecompiler::ImageTableRecordLayout high{top - Stride * 4u + 1u, Stride, 16u};
+    Require(high.KeysOverlapping(high.start + Stride * 3u + 4u, 1000u, 4u) == Keys{3u, 4u}, "image table records: a store running past the top of the address space did not select the last record");
+    Require(high.KeysOverlapping(high.start, Stride * 4u, 4u) == Keys{0u, 4u}, "image table records: a store ending at the top of the address space did not select all four records");
+    const ShaderRecompiler::ImageTableRecordLayout last{top, Stride, 16u};
+    Require(last.KeysOverlapping(top, 1u, 4u) == Keys{0u, 1u}, "image table records: a one-byte store at the last address did not select the record that starts there");
+    Require(last.KeysOverlapping(top - 10u, 11u, 4u) == Keys{0u, 1u}, "image table records: a store ending at the last address did not select the record that starts there");
+    const ShaderRecompiler::ImageTableRecordLayout empty{0x1000u, Stride, 0u};
+    const auto [emptyFirst, emptyPast] = empty.KeysOverlapping(0x1000u + Stride * 2u, 10u, 64u);
+    Require(emptyFirst == emptyPast, "image table records: a store over records of zero bytes selected keys");
+    const auto [beyondFirst, beyondPast] = middle.KeysOverlapping(0x1000u + Stride * 64u + 8u, Stride, 64u);
+    Require(beyondFirst == beyondPast && beyondPast == 64u, "image table records: a store past the last of 64 records selected keys");
 }
 
 void RunBorderSwizzleTests(AgcDriver::VulkanDevice& device) {
@@ -1412,6 +1434,18 @@ void RunPointerTests(AgcDriver::VulkanDevice& device) {
         Require(Group(reads, group) == Group(control, 0), "pointer image table read: key " + Hex(readKeys[group]) + " differs from the direct binding of its masked entry");
     }
     RequireRed(reads, 4, Lanes, [](std::uint32_t x) { return UintTexels[x]; }, "pointer image table read: key 0x1ff masked to entry 255");
+
+    Keys = {};
+    Keys[0] = 0u;
+    Keys[1] = 1u;
+    Keys[2] = 2u;
+    constexpr std::uint32_t BesideOutput = (PaletteOffset + 128u * 32u) / 4u;
+    const auto beside = RunPointer(device, PointerCode, 3, BesideOutput);
+    Require(!Faulted(beside), "pointer image table: a store into entries no key of the dispatch selects faulted:\n" + beside.log);
+    for (std::uint32_t group = 0; group < 3u; ++group) Require(Group(beside, group) == Group(palette, group), "pointer image table: key " + std::to_string(group) + " beside a store into other entries differs from the palette run");
+    constexpr std::uint32_t OverOutput = (PaletteOffset + 2u * 32u) / 4u;
+    const auto over = RunPointer(device, PointerCode, 3, OverOutput);
+    Require(Faulted(over) && over.log.find("is written by its own dispatch") != std::string::npos, "pointer image table: a store over a selected entry did not fault:\n" + over.log);
 }
 
 void RunPointerRecordTests(AgcDriver::VulkanDevice& device) {
@@ -2305,6 +2339,7 @@ int main(int argc, char** argv) {
 #else
         setenv("APS5_SRGB_SHADER_DECODE", "1", 1);
 #endif
+        RunRecordRangeTests();
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (argc == 2 && std::strcmp(argv[1], "--nested") == 0) {

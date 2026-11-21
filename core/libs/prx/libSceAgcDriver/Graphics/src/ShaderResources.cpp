@@ -6813,16 +6813,35 @@ void ShaderResources::finishImageTables() {
                 const auto& reads = table.program->imageTableReadRanges[index];
                 return std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return overlaps(range.first, range.second, address, bytes); });
             };
-            bool written = false;
-            for (const auto& allocation : allocations) written = written || (allocation.guest && allocation.written && tableOverlaps(allocation.address, allocation.size));
-            for (std::size_t image = 0; image < storageTextures.size(); ++image) written = written || (storageWritten[image] && storageTextures[image] != nullptr && tableOverlaps(storageTextures[image]->Descriptor().baseAddress, storageTextures[image]->GuestBytes()));
-            if (!written) continue;
+            std::vector<std::pair<std::uint64_t, std::uint64_t>> stores;
+            for (const auto& allocation : allocations) {
+                if (allocation.guest && allocation.written && tableOverlaps(allocation.address, allocation.size)) stores.emplace_back(allocation.address, allocation.size);
+            }
+            for (std::size_t image = 0; image < storageTextures.size(); ++image) {
+                if (storageWritten[image] && storageTextures[image] != nullptr && tableOverlaps(storageTextures[image]->Descriptor().baseAddress, storageTextures[image]->GuestBytes())) stores.emplace_back(storageTextures[image]->Descriptor().baseAddress, storageTextures[image]->GuestBytes());
+            }
+            if (stores.empty()) continue;
+            const auto poisonCode = Abi::PoisonCode(static_cast<std::uint32_t>(table.poison.size()));
+            const auto records = index < table.program->imageTableRecords.size() ? table.program->imageTableRecords[index] : ShaderRecompiler::ImageTableRecordLayout{};
+            const auto mapStart = static_cast<std::uint64_t>(map[header + Abi::TableMapStart]);
+            const auto keys = static_cast<std::uint64_t>(map[header + Abi::TableKeyCount]);
+            bool poisoned = true;
+            if (records.stride != 0u && mapStart + keys <= map.size()) {
+                poisoned = false;
+                for (const auto& [address, bytes] : stores) {
+                    const auto [first, past] = records.KeysOverlapping(address, bytes, keys);
+                    for (auto key = first; key < past; ++key) map[mapStart + key] = poisonCode;
+                    poisoned = poisoned || first < past;
+                }
+            } else {
+                map[header + Abi::TableFault] = poisonCode;
+            }
+            if (!poisoned) continue;
             ShaderRecompiler::ImageTableEntryPoison poison{};
             poison.resource = index;
             poison.reason = static_cast<std::uint32_t>(Abi::PoisonReason::HeapWritten);
             table.poison.push_back(poison);
             table.messages.push_back(std::make_shared<const std::string>("the table at 0x" + HexText(base) + " is written by its own dispatch"));
-            map[header + Abi::TableFault] = Abi::PoisonCode(static_cast<std::uint32_t>(table.poison.size() - 1u));
             faultChecks = true;
         }
         map[Abi::HeaderPoisonCount] = static_cast<std::uint32_t>(table.poison.size());

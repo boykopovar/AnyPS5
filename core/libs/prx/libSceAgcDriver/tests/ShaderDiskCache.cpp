@@ -199,6 +199,7 @@ void requireSameResult(const RecompileResult& left, const RecompileResult& right
     require(left.shaderDataUserWords == right.shaderDataUserWords, prefix + "shader-data user words differ");
     require(left.imageTableRanges == right.imageTableRanges && left.imageTableShader == right.imageTableShader && left.imageTableFaults == right.imageTableFaults && left.imageTablePoison.size() == right.imageTablePoison.size(), prefix + "image table invocation data differs");
     require(left.imageTableReadRanges == right.imageTableReadRanges, prefix + "image table read ranges differ");
+    require(left.imageTableRecords == right.imageTableRecords, prefix + "image table record layouts differ");
     require(left.userDataRegisterReads == right.userDataRegisterReads, prefix + "user data register read mask differs");
     for (std::size_t i = 0; i < left.imageTablePoison.size(); ++i) {
         const auto& a = left.imageTablePoison[i];
@@ -303,6 +304,7 @@ RecompileResult sampleResult() {
     result.imageTablePoison = {{{1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}, 8u, 2u, 6u}, {{9u, 0u, 0u, 0u, 0u, 0u, 0u, 0u}, 4u, 0xffffffffu, 19u}};
     result.imageTableRanges = {{0x1000u, 0x200u}, {0x5000000000ull, 48u}};
     result.imageTableReadRanges = {{{0x1000u, 32u}, {0x1040u, 32u}}, {}, {{0x5000000000ull, 16u}}};
+    result.imageTableRecords = {{0x1000u, 32u, 32u}, {}, {0x5000000000ull, 64u, 16u}};
     result.imageTableShader = 0x80003aa700ull;
     result.imageTableFaults = 3u;
     result.userDataRegisterReads = (std::uint64_t{1} << 63u) | (std::uint64_t{1} << 32u) | 0x25u;
