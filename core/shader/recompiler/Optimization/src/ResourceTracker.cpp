@@ -1176,6 +1176,7 @@ private:
     }
 
     static constexpr std::uint32_t phiSearchDepth = 8u;
+    static constexpr std::uint32_t descriptorDwordDepth = 16u;
     static constexpr std::uint32_t firstLaneMultipleDepth = 32u;
 
     static bool SplittableImageRead(const IrValue& inst) {
@@ -1365,7 +1366,7 @@ private:
         }
         if (value->IsPhi()) {
             IrValue* incoming = PhiIncoming(*value, predecessor);
-            return incoming == nullptr ? nullptr : Rematerialize(incoming, position, emit, phiSearchDepth);
+            return incoming == nullptr ? nullptr : Rematerialize(incoming, position, emit, descriptorDwordDepth);
         }
         std::vector<IrValue*> arguments;
         for (std::size_t index = 0; index < value->ArgumentCount(); index++) {
@@ -1469,7 +1470,7 @@ private:
         for (const IrBlock* arm : arms) {
             for (std::uint32_t slot = 0; slot < handleCount; slot++) {
                 for (std::size_t dword = 0; split[slot] && dword < handles[slot]->ArgumentCount(); dword++) {
-                    if (SubstituteEdge(handles[slot]->Argument(dword), arm, inst, false, phiSearchDepth) == nullptr) {
+                    if (SubstituteEdge(handles[slot]->Argument(dword), arm, inst, false, descriptorDwordDepth) == nullptr) {
                         return false;
                     }
                 }
@@ -1485,7 +1486,7 @@ private:
             conditions.push_back(&EdgeSelector(*block, edges));
         }
         ReplaceWithArmCopies(inst, handles, split, handleCount, conditions, false, [&](std::uint32_t arm, std::uint32_t slot, std::size_t dword) {
-            return SubstituteEdge(handles[slot]->Argument(dword), arms[arm], inst, true, phiSearchDepth);
+            return SubstituteEdge(handles[slot]->Argument(dword), arms[arm], inst, true, descriptorDwordDepth);
         });
         return true;
     }
@@ -1666,7 +1667,7 @@ private:
                 return &m_builder.Constant(DescriptorWeb::foldedArm);
             }
             for (IrValue* value : tuple) {
-                if (Rematerialize(value, position, false, phiSearchDepth) == nullptr) {
+                if (Rematerialize(value, position, false, descriptorDwordDepth) == nullptr) {
                     if (StrictDescriptorWebs()) {
                         return GiveUp(web, "a descriptor dword is not rebuilt from user data, the SRT and uniform operations before the read (" + RebuildBlocker(value, phiSearchDepth) + ")");
                     }
@@ -1737,6 +1738,14 @@ private:
         return &selector;
     }
 
+    bool LaneInvariantDword(const IrValue& value) const {
+        if (value.Type() != IrType::U32) {
+            return false;
+        }
+        constexpr SrtWalker walker;
+        return walker.ValidateRuntimeValue(m_program.Resources(), &value);
+    }
+
     IrValue* LaneSelector(const std::vector<IrValue*>& tuple, IrValue& first, DescriptorWeb& web, IrValue& position) {
         IrBlock* block = first.Parent();
         const auto op = first.Opcode();
@@ -1756,7 +1765,7 @@ private:
                 if (select) {
                     right.push_back(value->Argument(2u));
                 }
-            } else if (value->HasImmediate() || (select && !value->IsPhi() && value->Opcode() != IrOpcode::ReadFirstLane)) {
+            } else if (value->HasImmediate() || LaneInvariantDword(*value) || (select && !value->IsPhi() && value->Opcode() != IrOpcode::ReadFirstLane)) {
                 left.push_back(value);
                 if (select) {
                     right.push_back(value);
@@ -1863,7 +1872,7 @@ private:
             conditions.push_back(EmitBefore(inst, IrOpcode::IEqual32, IrType::Bool, compare));
         }
         ReplaceWithArmCopies(inst, handles, split, handleCount, conditions, true, [&](std::uint32_t arm, std::uint32_t slot, std::size_t dword) {
-            return Rematerialize(web.arms[arm][offsets[slot] + dword], inst, true, phiSearchDepth);
+            return Rematerialize(web.arms[arm][offsets[slot] + dword], inst, true, descriptorDwordDepth);
         });
     }
 
