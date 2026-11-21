@@ -531,7 +531,8 @@ class JobInput {
 public:
     JobInput(const JobHeader& job, const AjmBuffer* inputs) {
         if (job.inputCount == 1) {
-            guest = static_cast<const std::uint8_t*>(inputs[0].ptr);
+            single = true;
+            guest = reinterpret_cast<std::uintptr_t>(inputs[0].ptr);
             bytes = static_cast<std::size_t>(inputs[0].size);
             return;
         }
@@ -548,13 +549,14 @@ public:
     bool empty() const { return bytes == 0; }
     void Copy(std::size_t offset, void* destination, std::size_t length) const {
         if (length == 0) return;
-        if (guest != nullptr) CopyBatchIn(destination, guest + offset, length, "AJM job input is unreadable");
+        if (single) CopyBatchIn(destination, reinterpret_cast<const void*>(guest + offset), length, "AJM job input is unreadable");
         else std::memcpy(destination, joined.data() + offset, length);
     }
 
 private:
     std::vector<std::uint8_t> joined;
-    const std::uint8_t* guest = nullptr;
+    std::uintptr_t guest = 0;
+    bool single = false;
     std::size_t bytes = 0;
 };
 
@@ -1681,12 +1683,12 @@ std::size_t ControlInitializeSize(std::uint32_t codec) {
 
 void Control(Instance& instance, const JobHeader& job, const AjmBuffer* inputs) {
     const std::size_t inputSize = job.inputCount ? inputs[0].size : 0;
-    std::vector<std::uint8_t> copied(inputSize);
-    if (inputSize != 0) CopyBatchIn(copied.data(), inputs[0].ptr, inputSize, "AJM control job input is unreadable");
-    const auto* input = job.inputCount ? copied.data() : nullptr;
     const std::size_t gaplessSize = (job.flags & SIDEBAND_GAPLESS_DECODE) ? sizeof(SidebandGaplessDecode) : 0;
     const std::size_t initializeSize = (job.flags & CONTROL_INITIALIZE) ? ControlInitializeSize(instance.codec) : 0;
     if (inputSize != gaplessSize + initializeSize) NotImplemented_nid_no_patch("sceAjmBatchJobControl (sideband input size other than the gapless decode and the codec's initialize parameters)");
+    std::vector<std::uint8_t> copied(inputSize);
+    if (inputSize != 0) CopyBatchIn(copied.data(), inputs[0].ptr, inputSize, "AJM control job input is unreadable");
+    const auto* input = job.inputCount ? copied.data() : nullptr;
     std::int32_t result = 0;
     if (job.flags & CONTROL_RESET) ClearContext(instance);
     if (job.flags & CONTROL_INITIALIZE) result = InitializeInstance(instance, input + gaplessSize, initializeSize);

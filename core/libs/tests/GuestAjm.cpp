@@ -899,6 +899,9 @@ void TestJobBuffersUnmapped(std::uint32_t context) {
     Require(sceAjmBatchJobDecode(&info, instance, unmapped, 64, pcm.data(), pcmBytes, &sideband) == 0);
     Require(BatchFailure(context, info) == "AJM job input is unreadable");
     Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobDecode(&info, instance, nullptr, 64, pcm.data(), pcmBytes, &sideband) == 0);
+    Require(BatchFailure(context, info) == "AJM job input is unreadable");
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
     Require(sceAjmBatchJobDecode(&info, instance, OPUS_STEREO, sizeof(OPUS_STEREO), unmapped, pcmBytes, &sideband) == 0);
     Require(BatchFailure(context, info) == "AJM job output buffer is unwritable");
     Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
