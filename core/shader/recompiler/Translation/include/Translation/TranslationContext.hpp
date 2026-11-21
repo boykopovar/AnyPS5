@@ -73,6 +73,7 @@ private:
     IrU32 shareVectorWrite(const RdnaOperand& operand, IrU32 merged, IrU32 written, bool readByInstruction);
     void trackInactiveExecHalves(const RdnaInstruction& inst);
     IrF32 applyF32ResultModifiers(const RdnaOperand& operand, IrF32 value);
+    IrValue& f32OverflowBits(IrValue& sign);
     IrF32 scaleF32Result(std::uint32_t omod, IrF32 value);
     IrF32 applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value);
     IrF32 applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> overflowSources);

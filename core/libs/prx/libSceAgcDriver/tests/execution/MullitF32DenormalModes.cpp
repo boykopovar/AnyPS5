@@ -20,8 +20,9 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Threads = 64;
 constexpr std::uint32_t Inputs = 4;
 constexpr std::uint32_t ConstantForms = 4;
+constexpr std::uint32_t ModifierForms = 8;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
-alignas(256) std::array<std::uint32_t, Threads * ConstantForms> Output{};
+alignas(256) std::array<std::uint32_t, Threads * ModifierForms> Output{};
 
 alignas(256) constexpr std::array<std::uint32_t, 11> MullitCode{
     0x34020084u, 0x34040082u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x7e140280u, 0xd550000au, 0x041a0b04u,
@@ -35,6 +36,28 @@ alignas(256) constexpr std::array<std::uint32_t, 17> ConstantMullitCode{
 };
 
 constexpr const char* ConstantNames[ConstantForms] = {"v_mullit_f32 1.0, v4, v6", "v_mullit_f32 v4, 2.0, v6", "v_mullit_f32 0x1, v5, v6", "v_mullit_f32 0x3fc00000, v4, v6"};
+
+alignas(256) constexpr std::array<std::uint32_t, 26> OutputModifierCode{
+    0x34020084u, 0x34040085u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0xd550000au, 0x041a0b04u, 0xd550000bu,
+    0x0c1a0b04u, 0xd550000cu, 0x141a0b04u, 0xd550000du, 0x1c1a0b04u, 0xd550800eu, 0x041a0b04u, 0xd550800fu,
+    0x0c1a0b04u, 0xd5508010u, 0x141a0b04u, 0xd5508011u, 0x1c1a0b04u, 0xe0781000u, 0x80010a02u, 0xe0781010u,
+    0x80010e02u, 0xbf810000u,
+};
+
+struct ModifierVector {
+    std::array<std::uint32_t, 3> inputs;
+    std::array<std::uint32_t, ModifierForms> expected;
+};
+
+constexpr ModifierVector ModifierVectors[] = {
+    {{0x3f000000u, 0x3f000000u, 0x3f800000u}, {0x3e800000u, 0x3f000000u, 0x3f800000u, 0x3e000000u, 0x3e800000u, 0x3f000000u, 0x3f800000u, 0x3e000000u}},
+    {{0x3f400000u, 0x3f800000u, 0x3f800000u}, {0x3f400000u, 0x3fc00000u, 0x40400000u, 0x3ec00000u, 0x3f400000u, 0x3f800000u, 0x3f800000u, 0x3ec00000u}},
+    {{0xbf000000u, 0x3f800000u, 0x3f800000u}, {0xbf000000u, 0xbf800000u, 0xc0000000u, 0xbe800000u, 0u, 0u, 0u, 0u}},
+    {{0x3f000000u, 0x3f000000u, 0u}, {0xff7fffffu, 0xff800000u, 0xff800000u, 0xfeffffffu, 0u, 0u, 0u, 0u}},
+    {{0x7fc12345u, 0x3f800000u, 0x3f800000u}, {0x7fc12345u, 0x7fc12345u, 0x7fc12345u, 0x7fc12345u, 0x7fc12345u, 0x7fc12345u, 0x7fc12345u, 0x7fc12345u}},
+    {{0x00800000u, 0x3f800000u, 0x3f800000u}, {0x00800000u, 0x01000000u, 0x01800000u, 0u, 0x00800000u, 0x01000000u, 0x01800000u, 0u}},
+    {{0x7f7fffffu, 0x3f800000u, 0x3f800000u}, {0x7f7fffffu, 0x7f800000u, 0x7f800000u, 0x7effffffu, 0x3f800000u, 0x3f800000u, 0x3f800000u, 0x3f800000u}},
+};
 
 struct Vector {
     std::uint32_t lhs;
@@ -117,7 +140,7 @@ constexpr ConstantVector ConstantVectors[] = {
     {{0x807fffffu, 0x00800001u, 0x3f800000u}, {{0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u}, {0x80000000u, 0x80fffffeu, 0x00000000u, 0x80bffffeu}, {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u}, {0x807fffffu, 0x80fffffeu, 0x00000000u, 0x80bffffeu}}},
 };
 
-static_assert(std::size(Vectors) <= Threads && std::size(ConstantVectors) <= Threads);
+static_assert(std::size(Vectors) <= Threads && std::size(ConstantVectors) <= Threads && std::size(ModifierVectors) <= Threads);
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
@@ -135,7 +158,7 @@ bool KeepsDenormals(const AgcDriver::VulkanDevice& device) {
     return target.float32DenormPreserve && !target.float32FlushToZero;
 }
 
-bool Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t denorm32, bool ieee) {
+bool Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t denorm32, bool ieee, bool dx10Clamp = true, std::uint32_t round32 = 0u) {
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
@@ -151,7 +174,7 @@ bool Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    request.context.floatMode = ShaderRecompiler::ShaderFloatMode{(denorm32 << 4u) | (3u << 6u), true, ieee, false};
+    request.context.floatMode = ShaderRecompiler::ShaderFloatMode{round32 | (denorm32 << 4u) | (3u << 6u), dx10Clamp, ieee, false};
     std::optional<decltype(ShaderRecompiler::Recompile(request))> result;
     try {
         result.emplace(ShaderRecompiler::Recompile(request));
@@ -188,6 +211,44 @@ void CheckConstants(std::uint32_t denorm32, bool ieee) {
     }
 }
 
+void CheckOutputModifiers(std::uint32_t denorm32, bool ieee, bool dx10Clamp) {
+    const bool scale = !ieee && denorm32 < 2u;
+    for (std::size_t row = 0; row < std::size(ModifierVectors); ++row) {
+        for (std::size_t form = 0; form < ModifierForms; ++form) {
+            const bool clamp = form >= 4u;
+            auto expected = ModifierVectors[row].expected[scale ? form : (clamp ? 4u : 0u)];
+            if (clamp && dx10Clamp && (expected & 0x7fffffffu) > 0x7f800000u) expected = 0u;
+            const auto actual = Output[row * ModifierForms + form];
+            Require(actual == expected, "v_mullit_f32 output modifier " + std::to_string(form) + " row " + std::to_string(row) + " denorm32 " +
+                std::to_string(denorm32) + " IEEE " + std::to_string(ieee) + " DX10_CLAMP " + std::to_string(dx10Clamp) + " is " + Hex(actual) + ", expected " + Hex(expected));
+        }
+    }
+}
+
+void CheckScaleOverflow(AgcDriver::VulkanDevice& device) {
+    constexpr std::array<std::uint32_t, 4> inputs{0x7f7fffffu, 0xff7fffffu, 0x7f800000u, 0xff800000u};
+    constexpr std::uint32_t overflow[4][2] = {
+        {0x7f800000u, 0xff800000u}, {0x7f800000u, 0xff7fffffu}, {0x7f7fffffu, 0xff800000u}, {0x7f7fffffu, 0xff7fffffu},
+    };
+    Input.fill(0u);
+    for (std::size_t row = 0; row < inputs.size(); ++row) {
+        Input[row * Inputs] = inputs[row];
+        Input[row * Inputs + 1u] = 0x3f800000u;
+        Input[row * Inputs + 2u] = 0x3f800000u;
+    }
+    for (std::uint32_t round32 = 0; round32 < 4u; ++round32) {
+        Require(Run(device, OutputModifierCode, 0u, false, true, round32), "v_mullit_f32 scale overflow dispatch");
+        for (std::size_t row = 0; row < inputs.size(); ++row) {
+            const auto expected = row < 2u ? overflow[round32][row] : inputs[row];
+            for (const auto form : {1u, 2u}) {
+                const auto actual = Output[row * ModifierForms + form];
+                Require(actual == expected, "v_mullit_f32 scale " + std::to_string(form) + " round32 " + std::to_string(round32) +
+                    " input " + Hex(inputs[row]) + " is " + Hex(actual) + ", expected " + Hex(expected));
+            }
+        }
+    }
+}
+
 }
 
 int main() {
@@ -196,6 +257,7 @@ int main() {
         if (!device) return VulkanTestSkipped;
         const bool keeps = KeepsDenormals(*device);
         std::uint32_t checked = 0u;
+        std::uint32_t modifierRuns = 0u;
         for (std::uint32_t denorm32 = 0u; denorm32 < 4u; ++denorm32) {
             if (denorm32 == 3u && !keeps) continue;
             for (const bool ieee : {false, true}) {
@@ -215,9 +277,22 @@ int main() {
                     CheckConstants(denorm32, ieee);
                     ++checked;
                 }
+                Input.fill(0u);
+                for (std::size_t row = 0; row < std::size(ModifierVectors); ++row) {
+                    const auto& inputs = ModifierVectors[row].inputs;
+                    std::copy(inputs.begin(), inputs.end(), Input.begin() + row * Inputs);
+                }
+                for (const bool dx10Clamp : {false, true}) {
+                    if (Run(*device, OutputModifierCode, denorm32, ieee, dx10Clamp)) {
+                        CheckOutputModifiers(denorm32, ieee, dx10Clamp);
+                        ++modifierRuns;
+                    }
+                }
             }
         }
+        CheckScaleOverflow(*device);
         std::printf("v_mullit_f32 denormal mode tests passed (%u of 16 runs checked; denormal modes 1 and 2 need DenormPreserve 32, mode 3 is checked only where the device keeps f32 denormals)\n", checked);
+        std::printf("v_mullit_f32 output modifier modes checked: %u of 16\n", modifierRuns);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
