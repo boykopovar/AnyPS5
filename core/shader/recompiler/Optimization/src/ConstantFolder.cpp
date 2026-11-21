@@ -671,6 +671,29 @@ bool replaceBinaryIdentity(IrValue& inst, IrType type, std::uint64_t identity) {
     return false;
 }
 
+bool foldXorCancellation(IrBuilder& builder, IrValue& inst) {
+    auto& lhs = resolveArg(inst, 0);
+    auto& rhs = resolveArg(inst, 1);
+    if (&lhs == &rhs) {
+        replaceWith(inst, builder.Constant(0u));
+        return true;
+    }
+    for (std::size_t side = 0; side < 2u; ++side) {
+        auto& inner = side == 0u ? lhs : rhs;
+        const auto& other = side == 0u ? rhs : lhs;
+        if (inner.Opcode() != IrOpcode::BitwiseXor32) {
+            continue;
+        }
+        for (std::size_t index = 0; index < 2u; ++index) {
+            if (&resolveArg(inner, index) == &other) {
+                replaceWith(inst, resolveArg(inner, 1u - index));
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 bool foldSelect(IrValue& inst) {
     auto& condition = resolveArg(inst, 0);
     if (isImmediate(condition, IrType::U1)) {
@@ -1208,7 +1231,8 @@ bool tryFoldValue(IrProgram& program, IrValue& value, OperandFacts& facts) {
                 return true;
             }
             if (replaceBinaryIdentity(value, IrType::U32, 0u)) return true;
-            return opcode == IrOpcode::BitwiseOr32 && mergeMaskedParts(program, value);
+            if (opcode == IrOpcode::BitwiseXor32) return foldXorCancellation(builder, value);
+            return mergeMaskedParts(program, value);
         }
         case IrOpcode::BitwiseNot32: {
             auto& operand = resolveArg(value, 0);
