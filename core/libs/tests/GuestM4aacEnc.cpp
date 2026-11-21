@@ -55,6 +55,7 @@ void CheckCreate() {
     int32_t context[2] = {7, -1};
     Require(sceM4aacEncCreateEncoderEx(nullptr, 2, 48000, 128000, 0, 0, &error) == ErrorInvalidPointer, "CreateEx: null context");
     Require(sceM4aacEncCreateEncoderEx(context, 2, 48000, 128000, 0, 0, nullptr) == ErrorInvalidPointer, "CreateEx: null error");
+    Require(sceM4aacEncTerminate(nullptr) == ErrorInvalidPointer, "Terminate: null context");
     Require(sceM4aacEncCreateEncoderEx(context, 3, 48000, 128000, 0, 0, &error) == ErrorChannels, "CreateEx: channels");
     Require(sceM4aacEncCreateEncoderEx(context, 2, 48000, 128000, 0, 0x10002, &error) == ErrorOutputFormat, "CreateEx: format");
     Require(context[0] == 7 && context[1] == -1, "CreateEx: a failed check leaves the context");
