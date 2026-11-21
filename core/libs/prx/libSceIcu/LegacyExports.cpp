@@ -2630,10 +2630,9 @@ int APS5_VABI _ZN6icu_686LocaleC1Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceIcuLegacyUnknown_F2SOocy4qmw_nid_no_patch() {
+int APS5_VABI _ZNK6icu_6813UnicodeString7indexOfEDs() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("F2SOocy4qmw", sceIcuLegacyUnknown_F2SOocy4qmw_nid_no_patch);
 
 int APS5_VABI _ZNK6icu_6810ICUService14getDisplayNameERKNS_13UnicodeStringERS1_RKNS_6LocaleE_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -3281,10 +3280,9 @@ int APS5_VABI ures_getSize_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceIcuLegacyUnknown_JZk2NwEVM1U_nid_no_patch() {
+int APS5_VABI _ZNK6icu_686Locale10getCountryEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("JZk2NwEVM1U", sceIcuLegacyUnknown_JZk2NwEVM1U_nid_no_patch);
 
 int APS5_VABI _ZN6icu_6817CanonicalIterator9setSourceERKNS_13UnicodeStringER10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -3613,10 +3611,9 @@ int APS5_VABI _ZN6icu_6822RuleBasedBreakIteratorD2Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceIcuLegacyUnknown_Lbl6TNS8Zbc_nid_no_patch() {
+int APS5_VABI _ZN6icu_6816ReorderingBufferD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("Lbl6TNS8Zbc", sceIcuLegacyUnknown_Lbl6TNS8Zbc_nid_no_patch);
 
 int APS5_VABI _ZNK6icu_6813UnicodeString17hasMoreChar32ThanEiii_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -4007,10 +4004,9 @@ int APS5_VABI _ZN6icu_6811ICU_Utility12appendToRuleERNS_13UnicodeStringERKS1_aaS
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceIcuLegacyUnknown_ObwzLI6lyr0_nid_no_patch() {
+int APS5_VABI _ZNK6icu_686Locale9getScriptEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("ObwzLI6lyr0", sceIcuLegacyUnknown_ObwzLI6lyr0_nid_no_patch);
 
 int APS5_VABI uprv_pathIsAbsolute_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -4090,10 +4086,9 @@ int APS5_VABI sceIcuLegacyUnknown_PLZ_minus_4VHBXKs_nid_no_patch() {
 }
 APS5_EXPORT("PLZ-4VHBXKs", sceIcuLegacyUnknown_PLZ_minus_4VHBXKs_nid_no_patch);
 
-int APS5_VABI sceIcuLegacyUnknown_PM_plus__minus_qdc3ZUk_nid_no_patch() {
+int APS5_VABI _ZNK6icu_686Locale11getLanguageEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("PM+-qdc3ZUk", sceIcuLegacyUnknown_PM_plus__minus_qdc3ZUk_nid_no_patch);
 
 int APS5_VABI sceIcuLegacyUnknown_PN_minus_GmlJsZD4_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -4506,10 +4501,9 @@ int APS5_VABI sceIcuLegacyUnknown_RiAyC7qKRko_nid_no_patch() {
 }
 APS5_EXPORT("RiAyC7qKRko", sceIcuLegacyUnknown_RiAyC7qKRko_nid_no_patch);
 
-int APS5_VABI sceIcuLegacyUnknown_RlDX8OKyzIs_nid_no_patch() {
+int APS5_VABI _ZNK6icu_686Locale10getVariantEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("RlDX8OKyzIs", sceIcuLegacyUnknown_RlDX8OKyzIs_nid_no_patch);
 
 int APS5_VABI sceIcuLegacyUnknown_RqjeXZhdFqQ_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -6463,10 +6457,9 @@ int APS5_VABI _ZN6icu_6823StringCharacterIteratorC2ERKS0__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceIcuLegacyUnknown_fdsGd_plus_CTb4Y_nid_no_patch() {
+int APS5_VABI _ZN6icu_6816ReorderingBufferD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("fdsGd+CTb4Y", sceIcuLegacyUnknown_fdsGd_plus_CTb4Y_nid_no_patch);
 
 int APS5_VABI _ZN6icu_6818UnicodeSetIteratorD0Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -8265,10 +8258,9 @@ int APS5_VABI _ZN6icu_6810UnicodeSet10setToBogusEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceIcuLegacyUnknown_qisHypG_plus_THA_nid_no_patch() {
+int APS5_VABI _ZNK6icu_686Locale7getNameEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("qisHypG+THA", sceIcuLegacyUnknown_qisHypG_plus_THA_nid_no_patch);
 
 int APS5_VABI _ZN6icu_6822SimpleLocaleKeyFactoryC1EPNS_7UObjectERKNS_6LocaleEii_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
