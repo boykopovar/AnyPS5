@@ -11,7 +11,7 @@ add_custom_command(OUTPUT "${fontconfigData}"
         "${fontconfigSource}/src/fcobjs.h"
         "${fontconfigSource}/fontconfig/fontconfig.h"
     VERBATIM)
-add_library(libfontconfig SHARED EXCLUDE_FROM_ALL Export.cpp Config.cpp Sets.cpp Objects.cpp src/PatternFormat.cpp "${fontconfigData}")
+add_library(libfontconfig SHARED EXCLUDE_FROM_ALL Export.cpp Config.cpp Sets.cpp  src/PatternFormat.cpp "${fontconfigData}")
 target_include_directories(libfontconfig PRIVATE ${LIBS_INCLUDE_DIR} "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(libfontconfig PRIVATE libSceFreeType freetype)
 configure_windows_unwind(libfontconfig)
@@ -73,4 +73,11 @@ if(BUILD_TESTING)
         set_tests_properties(guest_fontconfig_format PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libfontconfig>")
     endif()
+endif()
+
+add_library(libfontconfig_Objects_Chunk01 STATIC chunks/Objects_Chunk01.cpp)
+target_link_libraries(libfontconfig PUBLIC libfontconfig_Objects_Chunk01)
+get_target_property(libfontconfig_incdirs libfontconfig INCLUDE_DIRECTORIES)
+if(libfontconfig_incdirs)
+    target_include_directories(libfontconfig_Objects_Chunk01 PRIVATE ${libfontconfig_incdirs})
 endif()

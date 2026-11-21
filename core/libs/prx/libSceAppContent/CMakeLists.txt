@@ -1,4 +1,4 @@
-add_library(libSceAppContent SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceAppContent SHARED EXCLUDE_FROM_ALL )
 target_include_directories(libSceAppContent PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceAppContent)
 
@@ -50,4 +50,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_appcontent_entitlements PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAppContent>")
     endif()
+endif()
+
+add_library(libSceAppContent_Export_Chunk01 STATIC chunks/Export_Chunk01.cpp)
+add_library(libSceAppContent_Export_Chunk02 STATIC chunks/Export_Chunk02.cpp)
+target_link_libraries(libSceAppContent PUBLIC libSceAppContent_Export_Chunk01 libSceAppContent_Export_Chunk02)
+get_target_property(libSceAppContent_incdirs libSceAppContent INCLUDE_DIRECTORIES)
+if(libSceAppContent_incdirs)
+    target_include_directories(libSceAppContent_Export_Chunk01 PRIVATE ${libSceAppContent_incdirs})
+    target_include_directories(libSceAppContent_Export_Chunk02 PRIVATE ${libSceAppContent_incdirs})
 endif()

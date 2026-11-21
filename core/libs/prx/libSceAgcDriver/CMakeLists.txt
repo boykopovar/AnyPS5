@@ -367,7 +367,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/DeviceAccess.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Diagnostics.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Dispatch/DataHitVerification.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Dispatch/Dispatch.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Dispatch/DispatchAhead.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Dispatch/DispatchCache.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Dispatch/DispatchCacheStatistics.cpp
@@ -383,7 +383,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawCapture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawDecode.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawLookup.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawPipeline.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawPrecheck.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawRegisterKey.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawRelocate.cpp
@@ -399,10 +399,10 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Memory/WrittenBuffers.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Memory/WrittenBufferIndex.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Packets/CommandValidation.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Packets/PacketExecution.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Packets/PacketFlush.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Packets/PacketHistory.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Packets/PacketMemory.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Packets/PacketTiming.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Presentation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/QueueWorker.cpp
@@ -433,7 +433,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ShaderDeviceProfile.cpp
         
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/SubmissionCapture.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FrameCapture.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Frame
         
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Float16NanProbe.cpp
@@ -442,19 +442,19 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Float16ConversionProbe.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/AspectFit.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationScaler.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationPass.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationUpscaler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PerformanceOverlay.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/KeyboardOverlay.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PadStatusOverlay.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Screenshot.cpp
         
         
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MultisampleTarget.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/FirstSampleCopy.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ColorTargetLayout.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ColorTargetTransfer.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Pipeline.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineLibrary.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineCache.cpp
         
@@ -474,7 +474,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ReferenceStorage.cpp
         
         
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderValidation.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DescriptorValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/State.cpp
         
@@ -1057,7 +1057,7 @@ configure_windows_unwind(agc_frame_replay)
 
 add_executable(agc_pm4_replay EXCLUDE_FROM_ALL
         tools/Pm4Replay.cpp
-        tools/Pm4Analysis.cpp
+        
 )
 target_include_directories(agc_pm4_replay PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(agc_pm4_replay PRIVATE libSceAgcDriver libc)
@@ -1738,4 +1738,101 @@ target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_TraceFile_Chunk01)
 get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
 if(libSceAgcDriver_incdirs)
     target_include_directories(libSceAgcDriver_TraceFile_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_FrameCapture_Chunk01 STATIC Execution/src/chunks/FrameCapture_Chunk01.cpp)
+add_library(libSceAgcDriver_FrameCapture_Chunk02 STATIC Execution/src/chunks/FrameCapture_Chunk02.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_FrameCapture_Chunk01 libSceAgcDriver_FrameCapture_Chunk02)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_FrameCapture_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_FrameCapture_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_KeyboardOverlay_Chunk01 STATIC Execution/src/chunks/KeyboardOverlay_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_KeyboardOverlay_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_KeyboardOverlay_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_PresentationPass_Chunk01 STATIC Execution/src/chunks/PresentationPass_Chunk01.cpp)
+add_library(libSceAgcDriver_PresentationPass_Chunk02 STATIC Execution/src/chunks/PresentationPass_Chunk02.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_PresentationPass_Chunk01 libSceAgcDriver_PresentationPass_Chunk02)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_PresentationPass_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_PresentationPass_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_Dispatch_Chunk01 STATIC Execution/src/Driver/Dispatch/chunks/Dispatch_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_Dispatch_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_Dispatch_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_DrawPipeline_Chunk01 STATIC Execution/src/Driver/Draw/chunks/DrawPipeline_Chunk01.cpp)
+add_library(libSceAgcDriver_DrawPipeline_Chunk02 STATIC Execution/src/Driver/Draw/chunks/DrawPipeline_Chunk02.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_DrawPipeline_Chunk01 libSceAgcDriver_DrawPipeline_Chunk02)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_DrawPipeline_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_DrawPipeline_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_PacketExecution_Chunk01 STATIC Execution/src/Driver/Packets/chunks/PacketExecution_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_PacketExecution_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_PacketExecution_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_PacketMemory_Chunk01 STATIC Execution/src/Driver/Packets/chunks/PacketMemory_Chunk01.cpp)
+add_library(libSceAgcDriver_PacketMemory_Chunk02 STATIC Execution/src/Driver/Packets/chunks/PacketMemory_Chunk02.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_PacketMemory_Chunk01 libSceAgcDriver_PacketMemory_Chunk02)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_PacketMemory_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_PacketMemory_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_MultisampleTarget_Chunk01 STATIC Graphics/src/chunks/MultisampleTarget_Chunk01.cpp)
+add_library(libSceAgcDriver_MultisampleTarget_Chunk02 STATIC Graphics/src/chunks/MultisampleTarget_Chunk02.cpp)
+add_library(libSceAgcDriver_MultisampleTarget_Chunk03 STATIC Graphics/src/chunks/MultisampleTarget_Chunk03.cpp)
+add_library(libSceAgcDriver_MultisampleTarget_Chunk04 STATIC Graphics/src/chunks/MultisampleTarget_Chunk04.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_MultisampleTarget_Chunk01 libSceAgcDriver_MultisampleTarget_Chunk02 libSceAgcDriver_MultisampleTarget_Chunk03 libSceAgcDriver_MultisampleTarget_Chunk04)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_MultisampleTarget_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_MultisampleTarget_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_MultisampleTarget_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_MultisampleTarget_Chunk04 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_Pipeline_Chunk01 STATIC Graphics/src/chunks/Pipeline_Chunk01.cpp)
+add_library(libSceAgcDriver_Pipeline_Chunk02 STATIC Graphics/src/chunks/Pipeline_Chunk02.cpp)
+add_library(libSceAgcDriver_Pipeline_Chunk03 STATIC Graphics/src/chunks/Pipeline_Chunk03.cpp)
+add_library(libSceAgcDriver_Pipeline_Chunk04 STATIC Graphics/src/chunks/Pipeline_Chunk04.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_Pipeline_Chunk01 libSceAgcDriver_Pipeline_Chunk02 libSceAgcDriver_Pipeline_Chunk03 libSceAgcDriver_Pipeline_Chunk04)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_Pipeline_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Pipeline_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Pipeline_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Pipeline_Chunk04 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_ShaderValidation_Chunk01 STATIC Graphics/src/chunks/ShaderValidation_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_ShaderValidation_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_ShaderValidation_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(agc_oracle_support_Pm4Analysis_Chunk01 STATIC tools/chunks/Pm4Analysis_Chunk01.cpp)
+target_link_libraries(agc_oracle_support PUBLIC agc_oracle_support_Pm4Analysis_Chunk01)
+get_target_property(agc_oracle_support_incdirs agc_oracle_support INCLUDE_DIRECTORIES)
+if(agc_oracle_support_incdirs)
+    target_include_directories(agc_oracle_support_Pm4Analysis_Chunk01 PRIVATE ${agc_oracle_support_incdirs})
 endif()
