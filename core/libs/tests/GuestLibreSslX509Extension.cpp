@@ -1,15 +1,25 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 
 static void Require(bool value, const char* what) {
     if (value) return;
     std::fprintf(stderr, "failed: %s\n", what);
     std::abort();
+}
+
+template<typename TAction>
+static void RequireRejected(TAction action, const char* what) {
+    errno = 71;
+    bool rejected = false;
+    try { action(); } catch (const std::runtime_error&) { rejected = errno == 71; }
+    Require(rejected, what);
 }
 
 int main() {
@@ -56,5 +66,9 @@ int main() {
     auto* borrowed = static_cast<unsigned char*>(X509_EXTENSION_get_data_nid_postfix(extension));
     borrowed[3] = 0x5a;
     Require(octetString[3] == 0x5a, "data is borrowed, not copied or decoded");
+    const void* unmapped = reinterpret_cast<const void*>(std::uintptr_t{0x10});
+    RequireRejected([&] { X509_EXTENSION_get_critical_nid_postfix(unmapped); }, "unmapped extension critical flag");
+    RequireRejected([&] { X509_EXTENSION_get_data_nid_postfix(unmapped); }, "unmapped extension data");
+    RequireRejected([&] { X509_EXTENSION_get_object_nid_postfix(unmapped); }, "unmapped extension object");
     std::puts("libSceLibreSsl X509 extension tests passed");
 }
