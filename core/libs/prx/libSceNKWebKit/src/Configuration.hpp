@@ -131,6 +131,10 @@ public:
     std::vector<std::string> emptyDocumentSchemes;
     std::vector<std::string> secureSchemes;
     std::vector<std::string> fontAllowList;
+    Retained<Object> injectedBundleInitializationUserData;
+    Retained<Object> lastInjectedBundleMessageName;
+    Retained<Object> lastInjectedBundleMessageBody;
+    bool injectedBundleClientConfigured = false;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {

@@ -9549,10 +9549,6 @@ int APS5_VABI WKContextGetNotificationManager() {
 }
 
 
-int APS5_VABI WKContextPostMessageToInjectedBundle() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKContextSetClient() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9567,14 +9563,6 @@ int APS5_VABI WKContextSetDomainRelaxationForbiddenForURLScheme() {
 
 
 int APS5_VABI WKContextSetHistoryClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKContextSetInitializationUserDataForInjectedBundle() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKContextSetInjectedBundleClient() {
     NotImplemented_nid_no_patch(__func__);
 }
 
