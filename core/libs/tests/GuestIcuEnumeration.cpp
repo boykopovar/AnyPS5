@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -33,7 +34,7 @@ void APS5_VABI Free_nid_no_patch(void* pointer) {
     std::free(pointer);
 }
 void* APS5_VABI Calloc_nid_no_patch(std::size_t, std::size_t) { throw std::runtime_error("unexpected calloc"); }
-void* APS5_VABI Reallocate_nid_no_patch(void*, std::size_t) { throw std::runtime_error("unexpected realloc"); }
+void* APS5_VABI Reallocate_nid_no_patch(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
 void* APS5_VABI Align_nid_no_patch(std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned allocation"); }
 void* APS5_VABI Realign_nid_no_patch(void*, std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned reallocation"); }
 int APS5_VABI PosixAlign_nid_no_patch(void**, std::size_t, std::size_t) { throw std::runtime_error("unexpected posix_memalign"); }
@@ -83,6 +84,29 @@ const char16_t* APS5_VABI UnicodeNext(UEnumeration* enumeration, std::int32_t* l
     const char16_t* word = Wide[static_cast<std::size_t>(words.index++)];
     if (length) *length = static_cast<std::int32_t>(std::strlen(Narrow[static_cast<std::size_t>(words.index - 1)]));
     return word;
+}
+
+const char* APS5_VABI LongNext(UEnumeration* enumeration, std::int32_t* length, std::int32_t*) {
+    static constexpr const char* Long = "abcdefghijklmnopqrstuvwxyz0123456789";
+    if (State(enumeration).index++ != 0) return nullptr;
+    *length = static_cast<std::int32_t>(std::strlen(Long));
+    return Long;
+}
+
+const char16_t* APS5_VABI VariantNext(UEnumeration*, std::int32_t* length, std::int32_t*) {
+    *length = 3;
+    return u"a@\u00e9";
+}
+
+void APS5_VABI Reset(UEnumeration* enumeration, std::int32_t* status) {
+    State(enumeration).index = 0;
+    *status = -128;
+}
+
+std::int32_t BufferLength(const UEnumeration& enumeration) {
+    std::int32_t length;
+    std::memcpy(&length, enumeration.baseContext, sizeof(length));
+    return length;
 }
 
 UEnumeration Enumeration(Words& words) {
@@ -162,6 +186,86 @@ void GuestMemory() {
     free_nid_postfix(leftover);
 }
 
+void ResetDispatch() {
+    Words words;
+    UEnumeration enumeration = Enumeration(words);
+    enumeration.reset = Reset;
+    words.index = 2;
+    std::int32_t status = IllegalArgument;
+    uenum_reset_nid_postfix(&enumeration, &status);
+    Require(words.index == 2 && status == IllegalArgument, "reset with an error set");
+    status = Success;
+    uenum_reset_nid_postfix(&enumeration, &status);
+    Require(words.index == 0 && status == -128, "reset dispatches and keeps the callback status");
+    enumeration.reset = nullptr;
+    status = Success;
+    uenum_reset_nid_postfix(&enumeration, &status);
+    Require(status == Unsupported, "reset without a callback");
+    status = Success;
+    uenum_reset_nid_postfix(nullptr, &status);
+    uenum_reset_nid_postfix(nullptr, nullptr);
+    Require(status == Success, "null enumeration reset");
+    Require(Rejects([&] { uenum_reset_nid_postfix(&enumeration, nullptr); }), "null status reset");
+}
+
+void UnicodeDefault() {
+    freed.clear();
+    Words words;
+    UEnumeration enumeration{nullptr, &words, Close, nullptr, uenum_unextDefault_nid_postfix, Next, nullptr};
+    std::int32_t status = Success;
+    std::int32_t length = -1;
+    const char16_t* word = uenum_unext_nid_postfix(&enumeration, &length, &status);
+    Require(word && std::u16string_view(word) == u"alpha" && word[5] == 0 && length == 5 && status == Success, "unext default widens next");
+    Require(word == reinterpret_cast<const char16_t*>(static_cast<char*>(enumeration.baseContext) + 4) && BufferLength(enumeration) == 20, "unext default buffer");
+    void* base = enumeration.baseContext;
+    word = uenum_unextDefault_nid_postfix(&enumeration, nullptr, &status);
+    Require(word && std::u16string_view(word) == u"be" && enumeration.baseContext == base, "unext default reuses the buffer");
+    word = uenum_unextDefault_nid_postfix(&enumeration, &length, &status);
+    Require(word && word[0] == 0 && length == 0, "unext default empty string");
+    length = 9;
+    Require(uenum_unextDefault_nid_postfix(&enumeration, &length, &status) == nullptr && length == 0 && status == Success, "unext default end");
+    words.index = 0;
+    enumeration.next = LongNext;
+    word = uenum_unextDefault_nid_postfix(&enumeration, &length, &status);
+    Require(word && std::u16string_view(word) == u"abcdefghijklmnopqrstuvwxyz0123456789" && length == 36 && BufferLength(enumeration) == 82, "unext default grows the buffer");
+    base = enumeration.baseContext;
+    uenum_close_nid_postfix(&enumeration);
+    Require(words.closes == 1 && freed == std::vector<void*>{base}, "close frees the default buffer");
+    UEnumeration missing{nullptr, &words, nullptr, nullptr, nullptr, nullptr, nullptr};
+    length = 9;
+    Require(uenum_unextDefault_nid_postfix(&missing, &length, &status) == nullptr && status == Unsupported && length == 0 && !missing.baseContext, "unext default without next");
+    Require(Rejects([&] { uenum_unextDefault_nid_postfix(nullptr, &length, &status); }), "null enumeration unext default");
+    Require(Rejects([&] { uenum_unextDefault_nid_postfix(&missing, &length, nullptr); }), "null status unext default");
+}
+
+void NarrowDefault() {
+    freed.clear();
+    Words words;
+    UEnumeration enumeration{nullptr, &words, Close, nullptr, UnicodeNext, uenum_nextDefault_nid_postfix, nullptr};
+    std::int32_t status = Success;
+    std::int32_t length = -1;
+    const char* word = uenum_next_nid_postfix(&enumeration, &length, &status);
+    Require(word && std::string_view(word) == "alpha" && length == 5 && status == Success, "next default narrows unext");
+    Require(word == static_cast<char*>(enumeration.baseContext) + 4 && BufferLength(enumeration) == 14, "next default buffer");
+    word = uenum_next_nid_postfix(&enumeration, nullptr, &status);
+    Require(word && std::string_view(word) == "be", "next default through a null length");
+    word = uenum_nextDefault_nid_postfix(&enumeration, &length, &status);
+    Require(word && *word == 0 && length == 0, "next default empty string");
+    Require(uenum_nextDefault_nid_postfix(&enumeration, &length, &status) == nullptr && status == Success, "next default end");
+    enumeration.uNext = VariantNext;
+    word = uenum_nextDefault_nid_postfix(&enumeration, &length, &status);
+    Require(word && word[0] == 'a' && word[1] == 0 && word[2] == 0 && word[3] == 0 && length == 3, "next default zeroes variant characters");
+    void* base = enumeration.baseContext;
+    uenum_close_nid_postfix(&enumeration);
+    Require(freed == std::vector<void*>{base}, "close frees the default buffer");
+    UEnumeration missing{nullptr, &words, nullptr, nullptr, nullptr, nullptr, nullptr};
+    status = Success;
+    Require(uenum_nextDefault_nid_postfix(&missing, &length, &status) == nullptr && status == Unsupported && !missing.baseContext, "next default without unext");
+    Require(Rejects([&] { uenum_nextDefault_nid_postfix(nullptr, &length, &status); }), "null enumeration next default");
+    Require(Rejects([&] { uenum_nextDefault_nid_postfix(&missing, nullptr, &status); }), "null length next default");
+    Require(Rejects([&] { uenum_nextDefault_nid_postfix(&missing, &length, nullptr); }), "null status next default");
+}
+
 }
 
 int main() {
@@ -174,5 +278,8 @@ int main() {
     Failures();
     MissingCallbacks();
     GuestMemory();
+    ResetDispatch();
+    UnicodeDefault();
+    NarrowDefault();
     return 0;
 }
