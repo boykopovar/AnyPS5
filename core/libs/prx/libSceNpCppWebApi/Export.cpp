@@ -6,6 +6,7 @@
 #include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 static constexpr int SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN = static_cast<int>(0x80552907);
 static constexpr std::size_t ReferenceCountOffset = 0;
@@ -6936,101 +6937,107 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_17TitleCloudStora
     return self->object;
 }
 
+static void* ReadIntrusivePtrObject(const IntrusivePtr* self) {
+    IntrusivePtr value{};
+    if (!GuestPtr<IntrusivePtr>(self).CopyIn(value)) return nullptr;
+    return value.object;
+}
+
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V111AddedPlayerEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V113RemovedPlayerEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V116JoinMatchRequestEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V117LeaveMatchRequestEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V118CreateMatchRequestEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V118RequestMatchPlayerEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V118RequestTeamResultsEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V119CreateMatchResponseEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V119RequestInGameRosterEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V119RequestMatchResultsEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V120ReportResultsRequestEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V120RequestPlayerResultsEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V120RequestTeamStatisticEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V122GetMatchDetailResponseEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V122RequestMatchStatisticsEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V124RequestCompetitiveResultEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V124UpdateMatchDetailRequestEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V124UpdateMatchStatusRequestEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_12Leaderboards2V15EntryEEEEEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_14SessionManager2V111GameSessionEEEEEEdeEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_14SessionManager2V118GameSessionForReadEEEEEEdeEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_14SessionManager2V118GameSessionForReadEEEEEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_14SessionManager2V120PlayerSessionForReadEEEEEEdeEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadIntrusivePtrObject(self);
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11Matchmaking2V120GetOfferResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE18getResponseHeadersERSA_() {
