@@ -1,5 +1,12 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -239,6 +246,44 @@ void TestNullArgumentsThrow() {
     Require(std::memcmp(&config, &expected, sizeof(config)) == 0);
 }
 
+void TestGuardedPointersThrow() {
+    const WebRtcEchoCanceller3Config source = Pattern(9);
+#ifdef _WIN32
+    SYSTEM_INFO sys{};
+    GetSystemInfo(&sys);
+    const std::size_t pageSize = sys.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+    std::memcpy(page, &source, sizeof(source));
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+    std::memcpy(page, &source, sizeof(source));
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    auto* ro = static_cast<WebRtcEchoCanceller3Config*>(page);
+    RequireInvalidArgument([&] { _ZN6webrtc20EchoCanceller3ConfigC1Ev_nid_postfix(ro); });
+    RequireInvalidArgument([&] { _ZN6webrtc20EchoCanceller3ConfigC1ERKS0__nid_postfix(ro, &source); });
+    RequireInvalidArgument([&] { _ZN6webrtc20EchoCanceller3ConfigaSERKS0__nid_postfix(ro, &source); });
+    RequireInvalidArgument([&] { _ZN6webrtc20EchoCanceller3ConfigaSERKS0__nid_postfix(ro, ro); });
+#ifdef _WIN32
+    Require(VirtualProtect(page, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_NONE) == 0);
+#endif
+    WebRtcEchoCanceller3Config target = source;
+    RequireInvalidArgument([&] { _ZN6webrtc20EchoCanceller3ConfigC1ERKS0__nid_postfix(&target, ro); });
+    RequireInvalidArgument([&] { _ZN6webrtc20EchoCanceller3ConfigaSERKS0__nid_postfix(&target, ro); });
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
+}
+
 }
 
 int main() {
@@ -246,5 +291,6 @@ int main() {
     TestCopyConstructor();
     TestAssignment();
     TestNullArgumentsThrow();
+    TestGuardedPointersThrow();
     return 0;
 }

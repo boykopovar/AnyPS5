@@ -2,6 +2,13 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -358,6 +365,31 @@ void TestRemixQuadToStereoAndUpmix() {
     _ZN6webrtc13PushResamplerIsED1Ev_nid_postfix(&monoResampler);
 }
 
+void TestGuardedPointersThrow() {
+#ifdef _WIN32
+    SYSTEM_INFO sys{};
+    GetSystemInfo(&sys);
+    const std::size_t pageSize = sys.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    RequireInvalidArgument([&] { _ZN6webrtc17PushSincResamplerC1Emm_nid_postfix(static_cast<WebRtcPushSincResampler*>(page), 160, 480); });
+    RequireInvalidArgument([&] { _ZN6webrtc17PushSincResamplerD1Ev_nid_postfix(static_cast<WebRtcPushSincResampler*>(page)); });
+    RequireInvalidArgument([&] { _ZN6webrtc13PushResamplerIsED1Ev_nid_postfix(static_cast<WebRtcPushResampler16*>(page)); });
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
+}
+
 }
 
 int main() {
@@ -377,5 +409,6 @@ int main() {
     TestPushResamplerMonoMatchesTheFloatPath();
     TestRemixDownmixesThenResamples();
     TestRemixQuadToStereoAndUpmix();
+    TestGuardedPointersThrow();
     return 0;
 }

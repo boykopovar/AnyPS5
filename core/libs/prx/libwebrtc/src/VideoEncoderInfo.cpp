@@ -43,7 +43,9 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/GuestStringStorage.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -56,6 +58,11 @@ constexpr std::uint8_t MaxFramerateFraction = 255;
 constexpr std::int32_t VideoFrameBufferTypeI420 = 1;
 constexpr char DefaultImplementationName[] = "unknown";
 constexpr std::uint64_t AllocatedBit = 1;
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
 
 template<std::size_t TInlineBytes>
 void InitInlined(WebRtcInlinedVector<TInlineBytes>& vector) {
@@ -106,60 +113,80 @@ extern "C" {
 void APS5_VABI _ZN6webrtc12VideoEncoder11EncoderInfoC1Ev_nid_postfix(WebRtcVideoEncoderInfo* info) {
     if (!info)
         throw std::invalid_argument("EncoderInfo constructor requires an object");
-    info->qpThresholdLow = 0;
-    info->qpThresholdHigh = 0;
-    info->hasQpThresholds = false;
-    info->minPixelsPerFrame = DefaultMinPixelsPerFrame;
-    info->requestedResolutionAlignment = 1;
-    info->applyAlignmentToAllSimulcastLayers = false;
-    info->supportsNativeHandle = false;
-    WebRtcGuestString& name = info->implementationName;
+    WebRtcVideoEncoderInfo host{};
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(info, sizeof(*info)) ||
+            !GuestPtr<const WebRtcVideoEncoderInfo>(info).CopyIn(host))
+            throw std::invalid_argument("EncoderInfo constructor requires a writable object");
+    }
+    host.qpThresholdLow = 0;
+    host.qpThresholdHigh = 0;
+    host.hasQpThresholds = false;
+    host.minPixelsPerFrame = DefaultMinPixelsPerFrame;
+    host.requestedResolutionAlignment = 1;
+    host.applyAlignmentToAllSimulcastLayers = false;
+    host.supportsNativeHandle = false;
+    WebRtcGuestString& name = host.implementationName;
     name.reserved = 0;
     std::memcpy(name.buffer, DefaultImplementationName, sizeof(DefaultImplementationName));
     name.size = sizeof(DefaultImplementationName) - 1;
     name.capacity = WebRtcGuestStringInlineCapacity;
-    info->hasTrustedRateController = false;
-    info->isHardwareAccelerated = true;
-    for (auto& fractions : info->fpsAllocation)
+    host.hasTrustedRateController = false;
+    host.isHardwareAccelerated = true;
+    for (auto& fractions : host.fpsAllocation)
         InitInlined(fractions);
-    info->fpsAllocation[0].metadata = 1 << 1;
-    info->fpsAllocation[0].inlined[0] = MaxFramerateFraction;
-    info->resolutionBitrateLimitsBegin = nullptr;
-    info->resolutionBitrateLimitsEnd = nullptr;
-    info->resolutionBitrateLimitsCapacity = nullptr;
-    info->supportsSimulcast = false;
-    InitInlined(info->preferredPixelFormats);
-    info->preferredPixelFormats.metadata = 1 << 1;
-    std::memcpy(info->preferredPixelFormats.inlined, &VideoFrameBufferTypeI420, sizeof(VideoFrameBufferTypeI420));
-    info->isQpTrusted = false;
-    info->hasIsQpTrusted = false;
-    info->minQp = 0;
-    info->hasMinQp = false;
+    host.fpsAllocation[0].metadata = 1 << 1;
+    host.fpsAllocation[0].inlined[0] = MaxFramerateFraction;
+    host.resolutionBitrateLimitsBegin = nullptr;
+    host.resolutionBitrateLimitsEnd = nullptr;
+    host.resolutionBitrateLimitsCapacity = nullptr;
+    host.supportsSimulcast = false;
+    InitInlined(host.preferredPixelFormats);
+    host.preferredPixelFormats.metadata = 1 << 1;
+    std::memcpy(host.preferredPixelFormats.inlined, &VideoFrameBufferTypeI420, sizeof(VideoFrameBufferTypeI420));
+    host.isQpTrusted = false;
+    host.hasIsQpTrusted = false;
+    host.minQp = 0;
+    host.hasMinQp = false;
+    ErrnoGuard guard;
+    if (!GuestPtr<WebRtcVideoEncoderInfo>(info).CopyOut(host))
+        throw std::invalid_argument("EncoderInfo constructor requires a writable object");
 }
 
 void APS5_VABI _ZN6webrtc12VideoEncoder11EncoderInfoD1Ev_nid_postfix(WebRtcVideoEncoderInfo* info) {
     if (!info)
         throw std::invalid_argument("EncoderInfo destructor requires an object");
-    ValidateString(info->implementationName);
-    for (const auto& fractions : info->fpsAllocation)
+    WebRtcVideoEncoderInfo host{};
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(info, sizeof(*info)) ||
+            !GuestPtr<const WebRtcVideoEncoderInfo>(info).CopyIn(host))
+            throw std::invalid_argument("EncoderInfo destructor requires a writable object");
+    }
+    ValidateString(host.implementationName);
+    for (const auto& fractions : host.fpsAllocation)
         ValidateInlined(fractions, sizeof(std::uint8_t), WebRtcFpsAllocationInlineCapacity);
-    ValidateLimits(*info);
-    ValidateInlined(info->preferredPixelFormats, sizeof(std::int32_t), WebRtcPreferredPixelFormatsInlineCapacity);
-    ReleaseInlined(info->preferredPixelFormats, sizeof(std::int32_t));
-    if (info->resolutionBitrateLimitsBegin)
-        GuestStringStorage::Deallocate(info->resolutionBitrateLimitsBegin,
-            static_cast<std::size_t>(info->resolutionBitrateLimitsCapacity - info->resolutionBitrateLimitsBegin) * sizeof(WebRtcResolutionBitrateLimits));
-    info->resolutionBitrateLimitsBegin = nullptr;
-    info->resolutionBitrateLimitsEnd = nullptr;
-    info->resolutionBitrateLimitsCapacity = nullptr;
+    ValidateLimits(host);
+    ValidateInlined(host.preferredPixelFormats, sizeof(std::int32_t), WebRtcPreferredPixelFormatsInlineCapacity);
+    ReleaseInlined(host.preferredPixelFormats, sizeof(std::int32_t));
+    if (host.resolutionBitrateLimitsBegin)
+        GuestStringStorage::Deallocate(host.resolutionBitrateLimitsBegin,
+            static_cast<std::size_t>(host.resolutionBitrateLimitsCapacity - host.resolutionBitrateLimitsBegin) * sizeof(WebRtcResolutionBitrateLimits));
+    host.resolutionBitrateLimitsBegin = nullptr;
+    host.resolutionBitrateLimitsEnd = nullptr;
+    host.resolutionBitrateLimitsCapacity = nullptr;
     for (std::size_t index = WebRtcMaxSpatialLayers; index-- > 0;)
-        ReleaseInlined(info->fpsAllocation[index], sizeof(std::uint8_t));
-    WebRtcGuestString& name = info->implementationName;
+        ReleaseInlined(host.fpsAllocation[index], sizeof(std::uint8_t));
+    WebRtcGuestString& name = host.implementationName;
     if (name.capacity > WebRtcGuestStringInlineCapacity)
         GuestStringStorage::Deallocate(name.pointer, name.capacity + 1);
     name.buffer[0] = '\0';
     name.size = 0;
     name.capacity = WebRtcGuestStringInlineCapacity;
+    ErrnoGuard guard;
+    if (!GuestPtr<WebRtcVideoEncoderInfo>(info).CopyOut(host))
+        throw std::invalid_argument("EncoderInfo destructor requires a writable object");
 }
 
 }

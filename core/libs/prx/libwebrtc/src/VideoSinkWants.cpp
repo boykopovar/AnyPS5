@@ -52,63 +52,136 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/libc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
 #include <limits>
 #include <stdexcept>
+#include <vector>
+
+namespace {
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+bool ReadableResolutions(const WebRtcVideoSinkFrameSize* begin, std::size_t count) {
+    if (count == 0)
+        return true;
+    if (!begin)
+        return false;
+    constexpr std::size_t maxChunkElements = 512;
+    std::vector<WebRtcVideoSinkFrameSize> chunk(std::min(count, maxChunkElements));
+    std::size_t offset = 0;
+    ErrnoGuard guard;
+    while (offset < count) {
+        const std::size_t n = std::min(count - offset, chunk.size());
+        if (!GuestPtr<const WebRtcVideoSinkFrameSize>(begin + offset).CopyIn(chunk.data(), n))
+            return false;
+        offset += n;
+    }
+    return true;
+}
+
+}
 
 extern "C" {
 
 void APS5_VABI _ZN3rtc14VideoSinkWantsC1Ev_nid_postfix(WebRtcVideoSinkWants* wants) {
     if (!wants) throw std::invalid_argument("VideoSinkWants requires an object");
-    wants->rotationApplied = false;
-    wants->blackFrames = false;
-    wants->maxPixelCount = std::numeric_limits<std::int32_t>::max();
-    wants->hasTargetPixelCount = false;
-    wants->maxFramerateFps = std::numeric_limits<std::int32_t>::max();
-    wants->resolutionAlignment = 1;
-    wants->resolutionsBegin = nullptr;
-    wants->resolutionsEnd = nullptr;
-    wants->resolutionsCapacity = nullptr;
-    wants->hasRequestedResolution = false;
-    wants->isActive = false;
-    wants->hasAggregates = false;
+    WebRtcVideoSinkWants host{};
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(wants, sizeof(*wants)) ||
+            !GuestPtr<const WebRtcVideoSinkWants>(wants).CopyIn(host))
+            throw std::invalid_argument("VideoSinkWants requires a writable object");
+    }
+    host.rotationApplied = false;
+    host.blackFrames = false;
+    host.maxPixelCount = std::numeric_limits<std::int32_t>::max();
+    host.hasTargetPixelCount = false;
+    host.maxFramerateFps = std::numeric_limits<std::int32_t>::max();
+    host.resolutionAlignment = 1;
+    host.resolutionsBegin = nullptr;
+    host.resolutionsEnd = nullptr;
+    host.resolutionsCapacity = nullptr;
+    host.hasRequestedResolution = false;
+    host.isActive = false;
+    host.hasAggregates = false;
+    ErrnoGuard guard;
+    if (!GuestPtr<WebRtcVideoSinkWants>(wants).CopyOut(host))
+        throw std::invalid_argument("VideoSinkWants requires a writable object");
 }
 
 void APS5_VABI _ZN3rtc14VideoSinkWantsC1ERKS0__nid_postfix(WebRtcVideoSinkWants* wants, const WebRtcVideoSinkWants* other) {
     if (!wants || !other || wants == other) throw std::invalid_argument("VideoSinkWants copy requires distinct objects");
-    const auto begin = reinterpret_cast<std::uintptr_t>(other->resolutionsBegin);
-    const auto end = reinterpret_cast<std::uintptr_t>(other->resolutionsEnd);
-    const auto capacity = reinterpret_cast<std::uintptr_t>(other->resolutionsCapacity);
+    WebRtcVideoSinkWants hostWants{};
+    WebRtcVideoSinkWants hostOther{};
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(wants, sizeof(*wants)) ||
+            !GuestPtr<const WebRtcVideoSinkWants>(wants).CopyIn(hostWants) ||
+            !GuestPtr<const WebRtcVideoSinkWants>(other).CopyIn(hostOther))
+            throw std::invalid_argument("VideoSinkWants copy requires valid objects");
+    }
+    const auto begin = reinterpret_cast<std::uintptr_t>(hostOther.resolutionsBegin);
+    const auto end = reinterpret_cast<std::uintptr_t>(hostOther.resolutionsEnd);
+    const auto capacity = reinterpret_cast<std::uintptr_t>(hostOther.resolutionsCapacity);
     if (end < begin || capacity < end || (!begin && capacity) ||
         begin % alignof(WebRtcVideoSinkFrameSize) || (end - begin) % sizeof(WebRtcVideoSinkFrameSize) ||
         (capacity - begin) % sizeof(WebRtcVideoSinkFrameSize))
         throw std::invalid_argument("VideoSinkWants requires a valid resolutions vector");
     const auto count = (end - begin) / sizeof(WebRtcVideoSinkFrameSize);
+    if (!ReadableResolutions(hostOther.resolutionsBegin, count))
+        throw std::invalid_argument("VideoSinkWants requires a readable resolutions vector");
     auto* resolutions = count ? static_cast<WebRtcVideoSinkFrameSize*>(_Znwm_nid_postfix(end - begin)) : nullptr;
-    for (std::size_t i = 0; i < count; ++i) {
-        resolutions[i].width = other->resolutionsBegin[i].width;
-        resolutions[i].height = other->resolutionsBegin[i].height;
+    if (count > 0) {
+        std::vector<WebRtcVideoSinkFrameSize> scratch(count);
+        bool copied = false;
+        {
+            ErrnoGuard guard;
+            copied = GuestPtr<const WebRtcVideoSinkFrameSize>(hostOther.resolutionsBegin).CopyIn(scratch.data(), count) &&
+                     GuestPtr<WebRtcVideoSinkFrameSize>(resolutions).CopyOut(scratch.data(), count);
+        }
+        if (!copied) {
+            _ZdlPv_nid_postfix(resolutions);
+            throw std::invalid_argument("VideoSinkWants copy failed while copying resolutions");
+        }
     }
-    wants->rotationApplied = other->rotationApplied;
-    wants->blackFrames = other->blackFrames;
-    wants->maxPixelCount = other->maxPixelCount;
-    wants->hasTargetPixelCount = other->hasTargetPixelCount;
-    if (other->hasTargetPixelCount) wants->targetPixelCount = other->targetPixelCount;
-    wants->maxFramerateFps = other->maxFramerateFps;
-    wants->resolutionAlignment = other->resolutionAlignment;
-    wants->resolutionsBegin = resolutions;
-    wants->resolutionsEnd = count ? resolutions + count : nullptr;
-    wants->resolutionsCapacity = wants->resolutionsEnd;
-    wants->hasRequestedResolution = other->hasRequestedResolution;
-    if (other->hasRequestedResolution) wants->requestedResolution = other->requestedResolution;
-    wants->isActive = other->isActive;
-    wants->hasAggregates = other->hasAggregates;
-    if (other->hasAggregates) wants->anyActiveWithoutRequestedResolution = other->anyActiveWithoutRequestedResolution;
+    hostWants.rotationApplied = hostOther.rotationApplied;
+    hostWants.blackFrames = hostOther.blackFrames;
+    hostWants.maxPixelCount = hostOther.maxPixelCount;
+    hostWants.hasTargetPixelCount = hostOther.hasTargetPixelCount;
+    if (hostOther.hasTargetPixelCount) hostWants.targetPixelCount = hostOther.targetPixelCount;
+    hostWants.maxFramerateFps = hostOther.maxFramerateFps;
+    hostWants.resolutionAlignment = hostOther.resolutionAlignment;
+    hostWants.resolutionsBegin = resolutions;
+    hostWants.resolutionsEnd = count ? resolutions + count : nullptr;
+    hostWants.resolutionsCapacity = hostWants.resolutionsEnd;
+    hostWants.hasRequestedResolution = hostOther.hasRequestedResolution;
+    if (hostOther.hasRequestedResolution) hostWants.requestedResolution = hostOther.requestedResolution;
+    hostWants.isActive = hostOther.isActive;
+    hostWants.hasAggregates = hostOther.hasAggregates;
+    if (hostOther.hasAggregates) hostWants.anyActiveWithoutRequestedResolution = hostOther.anyActiveWithoutRequestedResolution;
+    ErrnoGuard guard;
+    if (!GuestPtr<WebRtcVideoSinkWants>(wants).CopyOut(hostWants)) {
+        if (resolutions)
+            _ZdlPv_nid_postfix(resolutions);
+        throw std::invalid_argument("VideoSinkWants copy requires a writable destination");
+    }
 }
 
 void APS5_VABI _ZN3rtc14VideoSinkWantsD1Ev_nid_postfix(WebRtcVideoSinkWants* wants) {
     if (!wants) throw std::invalid_argument("VideoSinkWants destructor requires an object");
-    _ZdlPv_nid_postfix(wants->resolutionsBegin);
+    WebRtcVideoSinkWants hostWants{};
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(wants, sizeof(*wants)) ||
+            !GuestPtr<const WebRtcVideoSinkWants>(wants).CopyIn(hostWants))
+            throw std::invalid_argument("VideoSinkWants destructor requires a valid object");
+    }
+    _ZdlPv_nid_postfix(hostWants.resolutionsBegin);
 }
 
 }

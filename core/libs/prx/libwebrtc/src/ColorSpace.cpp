@@ -41,33 +41,50 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <array>
+#include <cerrno>
 #include <cstddef>
-#include <cstring>
 #include <stdexcept>
 
 namespace {
 
 constexpr std::size_t ColorSpaceCopySize = offsetof(WebRtcColorSpace, hasHdrMetadata) + sizeof(bool);
 
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+void CopyColorSpace(WebRtcColorSpace* colorSpace, const WebRtcColorSpace* other, const char* targetMessage, const char* sourceMessage) {
+    if (!colorSpace)
+        throw std::invalid_argument(targetMessage);
+    if (!other)
+        throw std::invalid_argument(sourceMessage);
+    ErrnoGuard guard;
+    if (colorSpace == other) {
+        if (!GuestWritable_nid_no_patch(colorSpace, ColorSpaceCopySize))
+            throw std::invalid_argument(targetMessage);
+        return;
+    }
+    std::array<std::byte, ColorSpaceCopySize> host{};
+    if (!GuestBytes(other).CopyIn(host.data(), host.size()))
+        throw std::invalid_argument(sourceMessage);
+    if (!GuestBytes(colorSpace).CopyOut(host.data(), host.size()))
+        throw std::invalid_argument(targetMessage);
+}
+
 }
 
 extern "C" {
 
 void APS5_VABI _ZN6webrtc10ColorSpaceC1ERKS0__nid_postfix(WebRtcColorSpace* colorSpace, const WebRtcColorSpace* other) {
-    if (!colorSpace)
-        throw std::invalid_argument("ColorSpace copy constructor requires a color space");
-    if (!other)
-        throw std::invalid_argument("ColorSpace copy constructor requires a source");
-    std::memmove(colorSpace, other, ColorSpaceCopySize);
+    CopyColorSpace(colorSpace, other, "ColorSpace copy constructor requires a color space", "ColorSpace copy constructor requires a source");
 }
 
 WebRtcColorSpace* APS5_VABI _ZN6webrtc10ColorSpaceaSERKS0__nid_postfix(WebRtcColorSpace* colorSpace, const WebRtcColorSpace* other) {
-    if (!colorSpace)
-        throw std::invalid_argument("ColorSpace::operator= requires a color space");
-    if (!other)
-        throw std::invalid_argument("ColorSpace::operator= requires a source");
-    std::memmove(colorSpace, other, ColorSpaceCopySize);
+    CopyColorSpace(colorSpace, other, "ColorSpace::operator= requires a color space", "ColorSpace::operator= requires a source");
     return colorSpace;
 }
 

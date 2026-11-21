@@ -1,5 +1,12 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -114,6 +121,42 @@ void TestNullArgumentsThrow() {
     Require(SameFields(colorSpace, Hdr()));
 }
 
+void TestGuardedPointersThrow() {
+    const WebRtcColorSpace valid = Hdr();
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+    std::memcpy(page, &valid, sizeof(valid));
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+    std::memcpy(page, &valid, sizeof(valid));
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    auto* ro = static_cast<WebRtcColorSpace*>(page);
+    RequireInvalidArgument([&] { _ZN6webrtc10ColorSpaceC1ERKS0__nid_postfix(ro, &valid); });
+    RequireInvalidArgument([&] { _ZN6webrtc10ColorSpaceaSERKS0__nid_postfix(ro, &valid); });
+    RequireInvalidArgument([&] { _ZN6webrtc10ColorSpaceaSERKS0__nid_postfix(ro, ro); });
+#ifdef _WIN32
+    Require(VirtualProtect(page, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_NONE) == 0);
+#endif
+    RequireInvalidArgument([&] { _ZN6webrtc10ColorSpaceC1ERKS0__nid_postfix(const_cast<WebRtcColorSpace*>(&valid), ro); });
+    RequireInvalidArgument([&] { _ZN6webrtc10ColorSpaceaSERKS0__nid_postfix(const_cast<WebRtcColorSpace*>(&valid), ro); });
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
+}
+
 }
 
 int main() {
@@ -121,5 +164,6 @@ int main() {
     TestAssignment();
     TestTailPaddingUntouched();
     TestNullArgumentsThrow();
+    TestGuardedPointersThrow();
     return 0;
 }

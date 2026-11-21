@@ -1,9 +1,17 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
+#include <stdexcept>
 
 namespace {
 
@@ -81,11 +89,55 @@ void TestGetMappedFrameBuffer() {
     Require(result == nullptr);
 }
 
+void TestGuardedPointersThrow() {
+#ifdef _WIN32
+    SYSTEM_INFO sys{};
+    GetSystemInfo(&sys);
+    const std::size_t pageSize = sys.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    FakeBuffer native(CountAddRef, FieldType, 0);
+    const WebRtcVideoFrameBufferTypes emptyView{nullptr, 0};
+    auto expectThrow = [](auto call) {
+        try {
+            call();
+        } catch (const std::invalid_argument&) {
+            return;
+        }
+        Require(false);
+    };
+    expectThrow([&] { _ZN6webrtc19I420BufferInterface6ToI420Ev_nid_postfix(static_cast<void**>(page), &native.base); });
+    expectThrow([&] { _ZN6webrtc16VideoFrameBuffer20GetMappedFrameBufferEN3rtc9ArrayViewINS0_4TypeELln4711EEE_nid_postfix(static_cast<void**>(page), &native.base, emptyView); });
+#ifdef _WIN32
+    Require(VirtualProtect(page, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_NONE) == 0);
+#endif
+    void* out = nullptr;
+    expectThrow([&] { _ZN6webrtc19I420BufferInterface6ToI420Ev_nid_postfix(&out, static_cast<WebRtcVideoFrameBuffer*>(page)); });
+    expectThrow([&] { _ZN6webrtc16VideoFrameBuffer20GetMappedFrameBufferEN3rtc9ArrayViewINS0_4TypeELln4711EEE_nid_postfix(&out, static_cast<WebRtcVideoFrameBuffer*>(page), emptyView); });
+    Require(native.addRefs == 0);
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
+}
+
 }
 
 int main() {
     TestGetI420();
     TestToI420();
     TestGetMappedFrameBuffer();
+    TestGuardedPointersThrow();
     return 0;
 }

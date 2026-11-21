@@ -42,15 +42,39 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/GuestStringStorage.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
 constexpr std::size_t ImplementationNameSlot = 8;
 constexpr std::size_t StringCapacityMask = 15;
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+std::string ReadGuestCString(const char* source) {
+    if (!source)
+        throw std::invalid_argument("VideoDecoder::GetDecoderInfo: ImplementationName returned null");
+    std::string out;
+    ErrnoGuard guard;
+    for (std::size_t i = 0;; ++i) {
+        char ch = '\0';
+        if (!GuestCopyIn_nid_no_patch(&ch, source + i, sizeof(ch)))
+            throw std::invalid_argument("VideoDecoder::GetDecoderInfo requires a readable implementation name");
+        if (ch == '\0')
+            break;
+        out.push_back(ch);
+    }
+    return out;
+}
 
 }
 
@@ -61,27 +85,40 @@ WebRtcVideoDecoderInfo* APS5_VABI _ZNK6webrtc12VideoDecoder14GetDecoderInfoEv_ni
         throw std::invalid_argument("VideoDecoder::GetDecoderInfo requires a result");
     if (!decoder)
         throw std::invalid_argument("VideoDecoder::GetDecoderInfo requires a decoder");
-    const void* const* vtable;
-    std::memcpy(&vtable, decoder, sizeof(vtable));
-    if (!vtable || !vtable[ImplementationNameSlot])
-        throw std::invalid_argument("VideoDecoder::GetDecoderInfo requires ImplementationName");
     using ImplementationName = const char*(APS5_VABI*)(const WebRtcVideoDecoder*);
-    const char* name = reinterpret_cast<ImplementationName>(const_cast<void*>(vtable[ImplementationNameSlot]))(decoder);
-    if (!name)
-        throw std::invalid_argument("VideoDecoder::GetDecoderInfo: ImplementationName returned null");
-    const std::size_t length = std::strlen(name);
-    WebRtcGuestString& string = info->implementationName;
-    string.reserved = 0;
-    char* data = string.buffer;
-    string.capacity = WebRtcGuestStringInlineCapacity;
-    if (length > WebRtcGuestStringInlineCapacity) {
-        string.capacity = length | StringCapacityMask;
-        data = static_cast<char*>(GuestStringStorage::Allocate(string.capacity + 1));
-        string.pointer = data;
+    const void* const* vtable = nullptr;
+    ImplementationName callback = nullptr;
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(info, sizeof(*info)))
+            throw std::invalid_argument("VideoDecoder::GetDecoderInfo requires a writable result");
+        if (!GuestPtr<const void* const*>(decoder).CopyIn(vtable) || !vtable ||
+            !GuestCopyIn_nid_no_patch(&callback, vtable + ImplementationNameSlot, sizeof(callback)) || !callback)
+            throw std::invalid_argument("VideoDecoder::GetDecoderInfo requires ImplementationName");
     }
-    std::memcpy(data, name, length + 1);
-    string.size = length;
-    info->isHardwareAccelerated = false;
+    const std::string hostName = ReadGuestCString(callback(decoder));
+    const std::size_t length = hostName.size();
+    WebRtcVideoDecoderInfo hostInfo{};
+    hostInfo.implementationName.reserved = 0;
+    hostInfo.implementationName.size = length;
+    hostInfo.implementationName.capacity = WebRtcGuestStringInlineCapacity;
+    if (length > WebRtcGuestStringInlineCapacity) {
+        hostInfo.implementationName.capacity = length | StringCapacityMask;
+        char* data = static_cast<char*>(GuestStringStorage::Allocate(hostInfo.implementationName.capacity + 1));
+        std::memcpy(data, hostName.c_str(), length + 1);
+        hostInfo.implementationName.pointer = data;
+    } else {
+        std::memcpy(hostInfo.implementationName.buffer, hostName.c_str(), length + 1);
+    }
+    hostInfo.isHardwareAccelerated = false;
+    {
+        ErrnoGuard guard;
+        if (!GuestPtr<WebRtcVideoDecoderInfo>(info).CopyOut(hostInfo)) {
+            if (hostInfo.implementationName.capacity > WebRtcGuestStringInlineCapacity)
+                GuestStringStorage::Deallocate(hostInfo.implementationName.pointer, hostInfo.implementationName.capacity + 1);
+            throw std::invalid_argument("VideoDecoder::GetDecoderInfo requires a writable result");
+        }
+    }
     return info;
 }
 

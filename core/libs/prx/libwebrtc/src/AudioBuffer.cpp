@@ -46,9 +46,11 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -261,6 +263,13 @@ void APS5_VABI _ZN6webrtc11AudioBufferC1Emmmmmm_nid_postfix(WebRtcAudioBuffer* b
                                                             std::size_t bufferChannels, std::size_t outputRate, std::size_t) {
     if (!buffer)
         throw std::invalid_argument("AudioBuffer constructor requires an object");
+    {
+        const int savedErrno = errno;
+        const bool writable = GuestWritable_nid_no_patch(buffer, sizeof(*buffer));
+        errno = savedErrno;
+        if (!writable)
+            throw std::invalid_argument("AudioBuffer constructor requires a writable object");
+    }
     const std::size_t inputFrames = FramesFromRate(inputRate);
     const std::size_t bufferFrames = FramesFromRate(bufferRate);
     const std::size_t outputFrames = FramesFromRate(outputRate);
@@ -297,7 +306,13 @@ void APS5_VABI _ZN6webrtc11AudioBufferC1Emmmmmm_nid_postfix(WebRtcAudioBuffer* b
         ReleaseParts(&built);
         throw;
     }
-    *buffer = built;
+    const int savedErrno = errno;
+    const bool copiedOut = GuestPtr<WebRtcAudioBuffer>(buffer).CopyOut(built);
+    errno = savedErrno;
+    if (!copiedOut) {
+        ReleaseParts(&built);
+        throw std::invalid_argument("AudioBuffer constructor requires a writable object");
+    }
 }
 
 void APS5_VABI _ZN6webrtc11AudioBuffer8CopyFromEPKsRKNS_12StreamConfigE_nid_postfix(WebRtcAudioBuffer* buffer, const std::int16_t* interleaved,

@@ -2,6 +2,13 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -89,6 +96,35 @@ void TestNullExtensionThrows() {
     Require(false);
 }
 
+void TestGuardedExtensionThrows() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    bool threw = false;
+    try {
+        _ZN6webrtc12RtpExtensionD1Ev_nid_postfix(static_cast<WebRtcRtpExtension*>(page));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
+}
+
 }
 
 int main() {
@@ -102,5 +138,6 @@ int main() {
     TestHeapUri();
     TestLargeHeapUri();
     TestNullExtensionThrows();
+    TestGuardedExtensionThrows();
     return 0;
 }
