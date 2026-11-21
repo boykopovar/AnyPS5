@@ -594,6 +594,8 @@ def run_with_standard_pipes(executable_path, capture_stdout, capture_stderr):
 
 
 def main():
+    if os.name == 'nt':
+        ctypes.windll.kernel32.SetErrorMode(0x8003)
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix='anyps5-import-modules-') as directory:
         work = Path(directory)
