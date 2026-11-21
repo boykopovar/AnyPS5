@@ -410,10 +410,6 @@ int APS5_VABI _ZN3JSC12CachePayloadD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF13StringBuilder6resizeEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC2VM29scopedArgumentsTableSpaceSlowEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -439,10 +435,6 @@ int APS5_VABI _ZN9Inspector14InspectorAgentD1Ev() {
 }
 
 int APS5_VABI _ZN9Inspector22InspectorDebuggerAgentnaEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF15base64URLDecodeERKNS_6StringENS_33SignedOrUnsignedCharVectorAdapterE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -563,10 +555,6 @@ int APS5_VABI _ZThn16_N9Inspector21InspectorConsoleAgent13clearMessagesERN3WTF6S
 }
 
 int APS5_VABI _ZN9Inspector21CSSFrontendDispatcher15styleSheetAddedEN3WTF6RefPtrINS_8Protocol3CSS19CSSStyleSheetHeaderENS1_13DumbPtrTraitsIS5_EEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC18sanitizeStackForVMERNS_2VME() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -806,55 +794,11 @@ int APS5_VABI _ZN10Deprecated18ScriptFunctionCallD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEN3JSC7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEPKc() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEi() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEl() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandler14appendArgumentEx() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandlerC1EPN3JSC14JSGlobalObjectE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandlerC2EPN3JSC14JSGlobalObjectE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandlerD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated25ScriptCallArgumentHandlerD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1090,10 +1034,6 @@ int APS5_VABI _ZN3JSC19JSSymbolTableObject14deletePropertyEPNS_6JSCellEPNS_14JSG
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC20speculationFromValueENS_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC23JSModuleNamespaceObject10putByIndexEPNS_6JSCellEPNS_14JSGlobalObjectEjNS_7JSValueEb() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1123,10 +1063,6 @@ int APS5_VABI _ZN3JSC23JSModuleNamespaceObject3putEPNS_6JSCellEPNS_14JSGlobalObj
 }
 
 int APS5_VABI _ZN3JSC23createBuiltinExecutableERNS_2VMERKNS_10SourceCodeERKNS_10IdentifierENS_15ConstructorKindENS_16ConstructAbilityE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC23errorMesasgeForTransferEPNS_11ArrayBufferE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1554,10 +1490,6 @@ int APS5_VABI _ZN3WTF17TextBreakIteratorC2ENS_10StringViewENS0_4ModeERKNS_10Atom
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF19initializeThreadingEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF21LineBreakIteratorPool10sharedPoolEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1571,10 +1503,6 @@ int APS5_VABI _ZN3WTF24acquireLineBreakIteratorENS_10StringViewERKNS_10AtomStrin
 }
 
 int APS5_VABI _ZN3WTF24releaseLineBreakIteratorEP14UBreakIterator() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF25createCanonicalUUIDStringEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 

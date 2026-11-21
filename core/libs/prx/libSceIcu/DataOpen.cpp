@@ -62,8 +62,8 @@ UDataMemory* OpenData(const char* path, const char* type, const char* name, std:
     errno = savedErrno;
     if (!readable) NotImplemented_nid_no_patch(caller);
     if (incoming > 0) return nullptr;
-    if (incoming < U_ERROR_WARNING_START) APS5_INVALID_ARG_EX;
-    auto hostStatus = static_cast<UErrorCode>(incoming);
+    const std::int32_t entered = incoming < U_ERROR_WARNING_START ? 0 : incoming;
+    auto hostStatus = static_cast<UErrorCode>(entered);
 
     std::string nameCopy, pathCopy, typeCopy;
     const char* hostName = CopyText(name, nameCopy, hostStatus, caller);
@@ -81,7 +81,7 @@ UDataMemory* OpenData(const char* path, const char* type, const char* name, std:
         udata_close);
     if (choice && choice->exception) std::rethrow_exception(choice->exception);
     const auto outgoing = static_cast<std::int32_t>(hostStatus);
-    if (outgoing != incoming) {
+    if (outgoing != entered) {
         const int savedErrno = errno;
         const bool written = GuestCopyOut_nid_no_patch(status, &outgoing, sizeof(outgoing));
         errno = savedErrno;

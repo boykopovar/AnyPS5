@@ -10,6 +10,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from nid_names import CPP_TOKEN
 from sanitizer_report import cell
 
+NON_NEWLINE = re.compile(r"[^\r\n]")
+READER_TOKENS = {
+    "getenv": ("getenv",),
+    "_wgetenv": ("wgetenv",),
+    "IsEnvironmentSet": ("IsEnvironmentSet",),
+    "MaskFromEnvironment": ("MaskFromEnvironment",),
+    "kibSetting": ("kibSetting",),
+    "EnvInt": ("EnvInt",),
+    "configured": ("configured", "PipelineSwitch"),
+    "environmentCount": ("environmentCount",),
+    "EnvironmentNumber": ("EnvironmentNumber",),
+    "GetEnvironmentVariableA": ("GetEnvironmentVariableA",),
+    "GetEnvironmentVariableW": ("GetEnvironmentVariableW",),
+    "addWideString": ("addWideString",),
+    "MebibytesFromEnvironment": ("MebibytesFromEnvironment",),
+    "EnvironmentPath": ("EnvironmentPath",),
+    "CapturedEnvironmentEntry": (".first",),
+}
+ALL_READER_TOKENS = tuple(dict.fromkeys(token for tokens in READER_TOKENS.values() for token in tokens))
+
 PREFIXES = ("APS5_", "ANYPS5_")
 DOC = "docs/dev/ENVIRONMENT.md"
 ROOTS = ("core",)
@@ -54,12 +74,16 @@ def forms(prefixes=PREFIXES):
         ("MebibytesFromEnvironment", re.compile(r'\bMebibytesFromEnvironment\(\s*"(?P<name>' + name + r')"'
                                                 r'\s*,\s*(?P<default>' + INTEGER + r')')),
         ("EnvironmentPath", re.compile(r'\bEnvironmentPath\(\s*L"(?P<name>' + name + r')"\s*,\s*"(?P=name)"\s*\)')),
+        ("CapturedEnvironmentEntry", re.compile(r'[A-Za-z_]\w*(?:\s*\[\s*[^\]]*\s*\])?\s*\.first\s*==\s*'
+                                                r'"(?P<name>' + name + r')"')),
     )
     return tuple((reader, re.compile(form.pattern.replace(r"\(", r"\s*\(", 1), form.flags)) for reader, form in readers)
 
 
 def line_reads(line, prefixes=PREFIXES):
-    return [(reader, match) for reader, form in forms(tuple(prefixes)) for match in form.finditer(line)
+    return [(reader, match) for reader, form in forms(tuple(prefixes))
+            if any(token in line for token in READER_TOKENS[reader])
+            for match in form.finditer(line)
             if match.start() == 0 or not (line[match.start() - 1].isalnum() or line[match.start() - 1] == "_")]
 
 
@@ -131,8 +155,16 @@ def source_files(root):
 
 
 def cpp_reads(text):
-    return CPP_TOKEN.sub(lambda match: re.sub(r"[^\r\n]", " ", match.group())
+    if "//" not in text and "/*" not in text and 'R"' not in text and "'" not in text:
+        return text
+    return CPP_TOKEN.sub(lambda match: NON_NEWLINE.sub(" ", match.group())
                          if match.lastgroup in ("comment", "raw", "char") else match.group(), text)
+
+
+def _blank_non_code(text):
+    if '"' not in text and "'" not in text and "//" not in text and "/*" not in text:
+        return text
+    return CPP_TOKEN.sub(lambda token: token.group() if token.group("code") else " " * len(token.group()), text)
 
 
 class _NamedRead:
@@ -173,6 +205,8 @@ def literal_start(prefixes=PREFIXES):
 
 
 def uncommented(text):
+    if "//" not in text and "/*" not in text:
+        return text
     return CPP_TOKEN.sub(lambda token: " " * len(token.group()) if token.group("comment") else token.group(), text)
 
 
@@ -196,11 +230,32 @@ def shadowed_names(commentless, prefixes=PREFIXES):
     return names
 
 
-def visible_constants(path, sources, commentless, declared):
+def _source_index(sources):
     by_name = {}
+    full = {}
     for other in sources:
-        by_name.setdefault(other.name, []).append(other)
-    full = {other.as_posix(): other for other in sources}
+        posix = other.as_posix()
+        full[posix] = other
+        by_name.setdefault(other.name, []).append((other, posix))
+    return by_name, full
+
+
+def _resolve_includes(path, commentless_text, index):
+    by_name, full = index
+    parent = path.parent.as_posix()
+    resolved = []
+    for include in INCLUDE.findall(commentless_text):
+        relative = posixpath.normpath(posixpath.join(parent, include))
+        if relative in full:
+            resolved.append(full[relative])
+        else:
+            suffix = "/" + include
+            resolved.extend(other for other, posix in by_name.get(PurePosixPath(include).name, ())
+                            if posix.endswith(suffix) or posix == include)
+    return tuple(resolved)
+
+
+def _visible_constants(path, includes_of, declared):
     seen, pending, found = set(), [path], {}
     while pending:
         current = pending.pop()
@@ -209,14 +264,13 @@ def visible_constants(path, sources, commentless, declared):
         seen.add(current)
         for ident, names in declared[current].items():
             found.setdefault(ident, set()).update(names)
-        for include in INCLUDE.findall(commentless[current]):
-            relative = posixpath.normpath(posixpath.join(current.parent.as_posix(), include))
-            if relative in full:
-                pending.append(full[relative])
-            else:
-                pending.extend(other for other in by_name.get(PurePosixPath(include).name, [])
-                               if other.as_posix().endswith("/" + include) or other.as_posix() == include)
+        pending.extend(includes_of(current))
     return found
+
+
+def visible_constants(path, sources, commentless, declared):
+    index = _source_index(sources)
+    return _visible_constants(path, lambda current: _resolve_includes(current, commentless[current], index), declared)
 
 
 def identifier_reads(code, constants, shadowed, prefixes=PREFIXES):
@@ -234,25 +288,74 @@ def identifier_reads(code, constants, shadowed, prefixes=PREFIXES):
 
 def reads(roots, prefixes=PREFIXES):
     found = {}
-    sources = []
+    prefixes = tuple(prefixes)
+    raw_sources = []
     for root in roots:
         for path in source_files(root):
             try:
-                text = path.read_text(encoding="utf-8")
-                if path.suffix != ".py":
-                    text = cpp_reads(text)
+                raw = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError) as error:
                 raise ValueError(f"cannot read {path.as_posix()}: {error}") from error
-            sources.append((path, text))
-    commentless = {path: uncommented(text) for path, text in sources}
-    declared = {path: declared_constants(commentless[path], prefixes) for path, _ in sources}
-    for path, text in sources:
-        constants = visible_constants(path, [item for item, _ in sources], commentless, declared)
-        matches = line_reads(text, prefixes)
-        code = CPP_TOKEN.sub(lambda token: token.group() if token.group("code") else " " * len(token.group()), text)
-        matches += identifier_reads(code, constants, shadowed_names(commentless[path], prefixes), prefixes)
+            raw_sources.append((path, raw))
+    raw_by_path = dict(raw_sources)
+    cleaned = {}
+    uncommented_cache = {}
+
+    def text_of(path):
+        text = cleaned.get(path)
+        if text is None:
+            raw = raw_by_path[path]
+            text = cpp_reads(raw) if path.suffix != ".py" else raw
+            cleaned[path] = text
+        return text
+
+    def commentless_of(path):
+        text = uncommented_cache.get(path)
+        if text is None:
+            text = text_of(path) if path.suffix != ".py" else uncommented(raw_by_path[path])
+            uncommented_cache[path] = text
+        return text
+
+    quoted_prefixes = (tuple('"' + prefix for prefix in prefixes)
+                       if prefixes and all(prefix and not prefix[0].isspace() for prefix in prefixes) else None)
+    declared = {}
+    has_declared = False
+    for path, raw in raw_sources:
+        if quoted_prefixes is None or any(prefix in raw for prefix in quoted_prefixes):
+            item = declared_constants(commentless_of(path), prefixes)
+            if item:
+                has_declared = True
+            declared[path] = item
+        else:
+            declared[path] = {}
+
+    includes_cache = {}
+    index = _source_index([path for path, _ in raw_sources]) if has_declared else None
+
+    def includes_of(path):
+        targets = includes_cache.get(path)
+        if targets is None:
+            raw = raw_by_path[path]
+            targets = _resolve_includes(path, commentless_of(path), index) if "#" in raw and "include" in raw else ()
+            includes_cache[path] = targets
+        return targets
+
+    for path, raw in raw_sources:
+        has_literal = ((quoted_prefixes is None or any(prefix in raw for prefix in quoted_prefixes))
+                       and any(token in raw for token in ALL_READER_TOKENS))
+        matches = line_reads(text_of(path), prefixes) if has_literal else []
+        code = None
+        if has_declared and any(reader in raw for reader in IDENTIFIER_READERS):
+            constants = _visible_constants(path, includes_of, declared)
+            if constants:
+                text = text_of(path)
+                code = _blank_non_code(text)
+                matches += identifier_reads(code, constants, shadowed_names(commentless_of(path), prefixes), prefixes)
         if not matches:
             continue
+        text = text_of(path)
+        if code is None:
+            code = _blank_non_code(text)
         starts = [0] + [match.end() for match in re.finditer("\n", text)]
         for reader, match in matches:
             number = bisect.bisect_right(starts, match.start())
