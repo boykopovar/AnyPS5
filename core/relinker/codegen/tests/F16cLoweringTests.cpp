@@ -331,9 +331,12 @@ std::vector<std::uint32_t> singleToHalfInputs() {
         0x3F800000u, 0xBF800000u, 0x3F800FFFu, 0x3F801000u,
         0x3F801001u, 0x3F802FFFu, 0x3F803000u, 0x3F803001u,
         0xBF800FFFu, 0xBF801000u, 0xBF801001u, 0xBF803000u,
-        0x387FC000u, 0x387FDFFFu, 0x387FE000u, 0x387FE001u,
-        0x387FFFFFu, 0x38800000u, 0x38800FFFu, 0x38801000u,
-        0x38801001u, 0xB87FE000u, 0xB87FFFFFu, 0xB8801000u,
+        0x38002000u, 0x38002001u, 0x38001FFFu, 0x38006000u,
+        0x38006001u, 0x38005FFFu, 0xB8002000u, 0xB8002001u,
+        0xB8006000u, 0xB8005FFFu, 0x387FC000u, 0x387FDFFFu,
+        0x387FE000u, 0x387FE001u, 0x387FFFFFu, 0x38800000u,
+        0x38800FFFu, 0x38801000u, 0x38801001u, 0xB87FE000u,
+        0xB87FFFFFu, 0xB8801000u,
     };
     for (std::uint32_t exp = 102u; exp <= 113u; ++exp) {
         const unsigned shift = exp >= 113u ? 13u : 126u - exp;
@@ -344,6 +347,12 @@ std::vector<std::uint32_t> singleToHalfInputs() {
                     const auto mant = static_cast<std::uint32_t>(static_cast<std::int64_t>(baseMant) + static_cast<std::int64_t>(half) + delta);
                     if (mant <= 0x7FFFFFu) values.push_back(sign | (exp << 23) | mant);
                 }
+                if ((baseMant | (half >> 1u)) <= 0x7FFFFFu)
+                    values.push_back(sign | (exp << 23) | baseMant | (half >> 1u));
+                if ((baseMant | 1u) <= 0x7FFFFFu)
+                    values.push_back(sign | (exp << 23) | baseMant | 1u);
+                if ((baseMant | half | (half >> 1u)) <= 0x7FFFFFu)
+                    values.push_back(sign | (exp << 23) | baseMant | half | (half >> 1u));
             }
             values.push_back(sign | (exp << 23));
             values.push_back(sign | (exp << 23) | 1u);
