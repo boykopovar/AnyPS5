@@ -592,7 +592,10 @@ int APS5_VABI sceHttpGetLastErrno(int request_id, int* errno_out) {
     if (errno_out == nullptr) {
         return ERROR_INVALID_VALUE;
     }
-    *errno_out = 0;
+    const int zeroErrno = 0;
+    if (!HttpGuest::Store(errno_out, zeroErrno)) {
+        return ERROR_INVALID_VALUE;
+    }
     return 0;
 }
 
@@ -731,12 +734,18 @@ int APS5_VABI sceHttpGetAuthEnabled(int id, int* enable) {
 }
 
 int APS5_VABI sceHttpSetEpollId(std::int32_t id, std::int32_t epollId, void* userArg) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    (void)userArg;
+    return SetHttpEpollId(id, epollId) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttpGetEpollId(std::int32_t id, std::int32_t* epollId, void** userArg) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    if (!epollId) return ERROR_INVALID_VALUE;
+    const auto options = FindHttpOptions(id);
+    if (!options) return ERROR_INVALID_ID;
+    if (!HttpGuest::Store(epollId, options->epollId)) return ERROR_INVALID_VALUE;
+    (void)userArg;
     return 0;
 }
 

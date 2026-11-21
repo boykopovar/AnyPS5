@@ -116,6 +116,7 @@ int APS5_VABI sceNpCmpNpIdInOrder(const NpIdFull* npId1, const NpIdFull* npId2, 
     const bool copied2 = GuestCopyIn_nid_no_patch(&localId2, npId2, sizeof(localId2));
     errno = savedErrno;
     if (!copied1 || !copied2) return NP_ERROR_INVALID_ARGUMENT;
+    if (localId1.reserved[0] != 1 || localId2.reserved[0] != 1) return NP_UTIL_ERROR_INVALID_NP_ID;
     int compare = std::strncmp(localId1.handle.data, localId2.handle.data, ONLINE_ID_MAX_LENGTH);
     if (compare == 0) compare = compareBytes(localId1.opt, localId2.opt, sizeof(localId1.opt));
     if (compare == 0) compare = compareBytes(localId1.reserved, localId2.reserved, sizeof(localId1.reserved));

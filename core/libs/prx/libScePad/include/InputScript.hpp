@@ -293,6 +293,7 @@ private:
         if (error || (time == liveTime && size == liveSize)) return;
         const std::uint64_t offset = size < liveOffset ? 0 : liveOffset;
         if (size == offset) {
+            if (offset == 0) liveLine = 0;
             liveTime = time;
             liveSize = size;
             liveOffset = offset;

@@ -133,6 +133,20 @@ int main() {
         Pad::InputScript::Report preexistingReport;
         static_cast<void>(preexisting.Sample(3000000, &preexistingReport));
         Check(preexistingReport.errors.size() == 1 && preexistingReport.errors[0].find("line 3:") != std::string::npos, "line numbers count the lines present at startup");
+        {
+            std::ofstream(path, std::ios::binary | std::ios::trunc);
+        }
+        Pad::InputScript::Report emptyReport;
+        static_cast<void>(preexisting.Sample(4000000, &emptyReport));
+        Check(emptyReport.errors.empty(), "an empty live file reports no error");
+        append("0 invalid\n");
+        Pad::InputScript::Report restartedReport;
+        static_cast<void>(preexisting.Sample(5000000, &restartedReport));
+        Check(restartedReport.errors.size() == 1 && restartedReport.errors[0].find("line 1:") != std::string::npos, "line numbers restart after polling an empty truncated file");
+        append("0 cross 100\n0 invalid\n");
+        Pad::InputScript::Report continuedReport;
+        Check(preexisting.Sample(6000000, &continuedReport).buttons == (Cross | 0x40), "appended valid input still runs after truncation");
+        Check(continuedReport.errors.size() == 1 && continuedReport.errors[0].find("line 3:") != std::string::npos, "line numbers continue from the truncated file");
         std::filesystem::remove(path);
     } catch (const std::exception& error) {
         std::cerr << error.what() << "\n";
