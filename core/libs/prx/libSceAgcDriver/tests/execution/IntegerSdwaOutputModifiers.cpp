@@ -154,6 +154,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (device->Target().subgroupSize < 32) {
+            std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
+            return VulkanTestSkipped;
+        }
         Check(*device);
         std::puts("integer sdwa output modifier tests passed");
         return 0;
