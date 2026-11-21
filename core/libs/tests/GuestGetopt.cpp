@@ -229,6 +229,15 @@ public:
     template<typename TElement>
     TElement* Last(std::size_t count) { return reinterpret_cast<TElement*>(memory + pageSize) - count; }
 
+    void Revoke() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Expect(VirtualProtect(memory, pageSize, PAGE_NOACCESS, &previous) != 0, "page revocation succeeds");
+#else
+        Expect(mprotect(memory, pageSize, PROT_NONE) == 0, "page revocation succeeds");
+#endif
+    }
+
 private:
     std::byte* memory = nullptr;
     std::size_t pageSize = 0;
@@ -273,6 +282,13 @@ void GuardedMemory() {
     Place(argumentPages, "-a", 3);
     Reset();
     Expect(getopt_nid_postfix(2, vector, "ab") == 'a' && getopt_nid_postfix(2, vector, "ab") == -1 && optind_nid_postfix == 2, "a terminated argument before a guard page ends the parse");
+
+    GuardedPages stalePages;
+    char* stale[] = {arguments.Values()[0], Place(stalePages, "-ab", 4), nullptr};
+    Reset();
+    Expect(getopt_nid_postfix(2, stale, "ab") == 'a' && getopt_nid_postfix(2, stale, "ab") == 'b' && optind_nid_postfix == 2, "grouped options before an exhausted argument list");
+    stalePages.Revoke();
+    Expect(getopt_nid_postfix(2, stale, "ab") == -1 && optind_nid_postfix == 2, "an exhausted argument list returns -1 without reading the stale option position");
 
     GuardedPages vectorPages;
     char** guardedVector = vectorPages.Last<char*>(2);

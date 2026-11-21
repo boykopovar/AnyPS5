@@ -346,7 +346,7 @@ extern "C" {
 int APS5_VABI getopt_nid_postfix(int count, char* const* arguments, const char* options) {
     constexpr const char* Function = "getopt";
     if (!options) throw std::invalid_argument("getopt: null option string");
-    if (optreset_nid_postfix || ReadCharacter(g_shortPlace, Function) == '\0') {
+    if (optreset_nid_postfix || optind_nid_postfix >= count || ReadCharacter(g_shortPlace, Function) == '\0') {
         optreset_nid_postfix = 0;
         if (optind_nid_postfix >= count) {
             g_shortPlace = g_emptyMessage;
