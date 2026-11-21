@@ -12,6 +12,7 @@ from test_guest_intel_trampolines import PLAIN_SITE, SITE, elf_loads, guest_fixt
 from test_guest_syscall_trap import GENERIC_STUB
 import test_jmprel_table_bounds
 from test_guest_none_relocations import JUMP_SLOT, RELATIVE, TARGET, module
+from test_macos_output import MachO
 
 
 def patch_site(image):
@@ -173,6 +174,39 @@ def main():
         assert result.returncode == 1 and "mismatch: flip_bit eboot.bin" in result.stdout and "patch is not applied" in result.stdout and "applied: picker/picker.bin" in result.stdout, (result.stdout, result.stderr)
         result = run("--verify-patches", str(work / "plain" / "out" / "app.patches.toml"), str(output), "--verify-output")
         assert result.returncode == 2 and "linux_base" in result.stderr, (result.stdout, result.stderr)
+
+        for base, options in (("default", []), ("fixed", ["--macos-fixed-base", "0x800000"])):
+            root, source, output = case(f"macos-{base}")
+            output = output.with_suffix("")
+            extra = "picker/picker.bin"
+            (source.parent / "picker").mkdir()
+            (source.parent / extra).write_bytes(image)
+            (source.parent / "sce_module").mkdir()
+            config = root / "p.toml"
+            config.write_text(patch_text(address, expected) + patch_text(address, expected, target=extra).replace("format = 1\n", "", 1))
+            result = run("--macos", *options, "--executable", extra, "--patches", str(config), str(source), str(output))
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            manifest = output.parent / "app.patches.toml"
+            text = manifest.read_text(encoding="utf-8")
+            assert "output_rva" not in text and "linux_base" not in text, text
+            verify = ("--verify-patches", str(manifest), str(output), "--verify-output", "--executable", extra)
+            result = run(*verify)
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            assert "applied: eboot.bin" in result.stdout and f"applied: {extra}" in result.stdout, result.stdout
+
+            extra_output = output.parent / "picker.picker.bin"
+            tampered = bytearray(extra_output.read_bytes())
+            macho = MachO(tampered)
+            _, _, meta_offset = macho.sections[("__APS5DATA", "__meta")]
+            mapped = (address + struct.unpack_from("<Q", tampered, meta_offset + 8)[0]) & ((1 << 64) - 1)
+            segment = next(s for s in macho.segments if s["name"].startswith("__ELF") and s["vmaddr"] <= mapped < s["vmaddr"] + s["filesize"])
+            offset = segment["fileoff"] + mapped - segment["vmaddr"]
+            assert tampered[offset] == expected ^ 1
+            tampered[offset] = expected
+            extra_output.write_bytes(tampered)
+            result = run(*verify)
+            assert result.returncode == 1 and "applied: eboot.bin" in result.stdout, (result.stdout, result.stderr)
+            assert f"mismatch: {extra} va={address:#x} off={offset:#x} patch is not applied" in result.stdout, result.stdout
 
         relocation_overlap(relinker, work)
         writer_overlap(relinker, work)

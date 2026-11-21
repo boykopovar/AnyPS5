@@ -1,11 +1,13 @@
 #include <relinker/patching/GamePatch.hpp>
 #include <domain/Types.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
+#include <elfpatcher/macos/MacOsImage.hpp>
 #include <io/BufferUtils.hpp>
 #include <io/NativePath.hpp>
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <set>
 #include <sstream>
@@ -394,21 +396,21 @@ VerifyResult VerifyOne(const PatchEntry& entry, const EntryRange& resolved, cons
     return result;
 }
 
-struct PeSectionRange {
-    std::uint64_t Rva = 0;
+struct ImageRange {
+    std::uint64_t Address = 0;
     std::uint64_t VirtualSize = 0;
     std::uint64_t RawSize = 0;
     std::uint64_t RawOffset = 0;
 };
 
-std::optional<std::vector<PeSectionRange>> ReadPeSections(const std::vector<std::uint8_t>& bytes) {
+std::optional<std::vector<ImageRange>> ReadPeSections(const std::vector<std::uint8_t>& bytes) {
     if (bytes.size() < 0x40 || bytes[0] != 'M' || bytes[1] != 'Z') return std::nullopt;
     const std::uint64_t header = Io::ReadU32(bytes, 0x3c);
     if (header > bytes.size() || bytes.size() - header < 26 || Io::ReadU32(bytes, header) != 0x4550 || Io::ReadU16(bytes, header + 24) != 0x20b) return std::nullopt;
     const std::uint64_t table = header + 24 + Io::ReadU16(bytes, header + 20);
     const std::uint64_t count = Io::ReadU16(bytes, header + 6);
     if (table > bytes.size() || count * 40 > bytes.size() - table) return std::nullopt;
-    std::vector<PeSectionRange> sections;
+    std::vector<ImageRange> sections;
     for (std::uint64_t index = 0; index < count; ++index) {
         const auto at = static_cast<std::size_t>(table + index * 40);
         sections.push_back({Io::ReadU32(bytes, at + 12), Io::ReadU32(bytes, at + 8), Io::ReadU32(bytes, at + 16), Io::ReadU32(bytes, at + 20)});
@@ -416,7 +418,84 @@ std::optional<std::vector<PeSectionRange>> ReadPeSections(const std::vector<std:
     return sections;
 }
 
-VerifyResult VerifyPeEntry(const PatchEntry& entry, const std::vector<PeSectionRange>& sections, const std::vector<std::uint8_t>& bytes) {
+struct MachOPatchImage {
+    std::uint64_t LoadBias;
+    std::vector<ImageRange> Segments;
+};
+
+std::string_view MachOName(const std::vector<std::uint8_t>& bytes, const std::size_t offset) {
+    const std::string_view name(reinterpret_cast<const char*>(bytes.data() + offset), 16);
+    return name.substr(0, name.find('\0'));
+}
+
+std::optional<MachOPatchImage> ReadMachOPatchImage(const std::vector<std::uint8_t>& bytes) {
+    using namespace Elfpatcher::MacOs;
+    constexpr std::size_t headerSize = 32;
+    constexpr std::size_t segmentSize = 72;
+    constexpr std::size_t sectionSize = 80;
+    constexpr std::size_t metaSize = MetaLoadBias + sizeof(std::uint64_t);
+    if (bytes.size() < headerSize || Io::ReadU32(bytes, 0) != MhMagic64 ||
+        Io::ReadU32(bytes, 4) != CpuTypeX8664 || Io::ReadU32(bytes, 12) != MhExecute)
+        return std::nullopt;
+
+    const auto commandCount = Io::ReadU32(bytes, 16);
+    const auto commandBytes = Io::ReadU32(bytes, 20);
+    if (commandBytes > bytes.size() - headerSize)
+        throw Domain::RelinkerException("Mach-O load commands are out of bounds");
+    const auto end = headerSize + commandBytes;
+    std::size_t offset = headerSize;
+    std::optional<std::uint64_t> loadBias;
+    std::vector<ImageRange> segments;
+    for (std::uint32_t index = 0; index < commandCount; ++index) {
+        if (end - offset < 8)
+            throw Domain::RelinkerException("Mach-O load command is truncated");
+        const auto kind = Io::ReadU32(bytes, offset);
+        const auto size = Io::ReadU32(bytes, offset + 4);
+        if (size < 8 || size > end - offset)
+            throw Domain::RelinkerException("Mach-O load command size is out of bounds");
+        const auto at = offset;
+        offset += size;
+        if (kind != LcSegment64) continue;
+        if (size < segmentSize)
+            throw Domain::RelinkerException("Mach-O segment command is truncated");
+
+        const auto name = MachOName(bytes, at + 8);
+        if (!name.starts_with("__ELF") && name != "__APS5DATA") continue;
+        const ImageRange range{Io::ReadU64(bytes, at + 24), Io::ReadU64(bytes, at + 32),
+                               Io::ReadU64(bytes, at + 48), Io::ReadU64(bytes, at + 40)};
+        if (range.RawOffset > bytes.size() || range.RawSize > bytes.size() - range.RawOffset ||
+            range.RawSize > range.VirtualSize || range.VirtualSize > std::numeric_limits<std::uint64_t>::max() - range.Address)
+            throw Domain::RelinkerException("Mach-O segment range is out of bounds");
+        if (name.starts_with("__ELF")) {
+            segments.push_back(range);
+            continue;
+        }
+
+        const auto sectionCount = Io::ReadU32(bytes, at + 64);
+        if (sectionCount > (size - segmentSize) / sectionSize)
+            throw Domain::RelinkerException("Mach-O metadata section table is out of bounds");
+        for (std::size_t index = 0; index < sectionCount; ++index) {
+            const auto section = at + segmentSize + index * sectionSize;
+            if (MachOName(bytes, section) != "__meta") continue;
+            const auto metaOffset = Io::ReadU32(bytes, section + 48);
+            const auto sectionBytes = Io::ReadU64(bytes, section + 40);
+            if (sectionBytes < metaSize || metaOffset < range.RawOffset || metaOffset - range.RawOffset > range.RawSize ||
+                sectionBytes > range.RawSize - (metaOffset - range.RawOffset))
+                throw Domain::RelinkerException("AnyPS5 Mach-O metadata is out of bounds");
+            if (loadBias || Io::ReadU64(bytes, metaOffset) != MetaVersion)
+                throw Domain::RelinkerException("Unsupported AnyPS5 Mach-O metadata");
+            loadBias = Io::ReadU64(bytes, static_cast<std::size_t>(metaOffset) + MetaLoadBias);
+        }
+    }
+    if (offset != end)
+        throw Domain::RelinkerException("Mach-O load command size does not match the header");
+    if (!loadBias || segments.empty())
+        throw Domain::RelinkerException("Mach-O output lacks AnyPS5 load metadata or guest segments: verify the input instead");
+    return MachOPatchImage{*loadBias, std::move(segments)};
+}
+
+VerifyResult VerifyMappedEntry(const PatchEntry& entry, const std::vector<ImageRange>& sections, const std::vector<std::uint8_t>& bytes,
+                              const std::uint64_t address, const std::string_view unmapped) {
     VerifyResult result;
     result.Name = entry.Name;
     result.Target = entry.Target;
@@ -426,10 +505,10 @@ VerifyResult VerifyPeEntry(const PatchEntry& entry, const std::vector<PeSectionR
     bool stored = false;
     for (const auto& section : sections) {
         for (std::size_t index = 0; index < found.size(); ++index) {
-            const std::uint64_t rva = std::uint64_t{*entry.OutputRva} + index;
-            if (rva < section.Rva || rva - section.Rva >= section.VirtualSize) continue;
+            const auto location = address + index;
+            if (location < section.Address || location - section.Address >= section.VirtualSize) continue;
             mapped[index] = true;
-            const std::uint64_t delta = rva - section.Rva;
+            const auto delta = location - section.Address;
             if (delta >= section.RawSize) continue;
             if (section.RawOffset > bytes.size() || delta >= bytes.size() - section.RawOffset) {
                 result.Detail = "section file data is out of bounds";
@@ -441,7 +520,7 @@ VerifyResult VerifyPeEntry(const PatchEntry& entry, const std::vector<PeSectionR
         }
     }
     if (std::find(mapped.begin(), mapped.end(), false) != mapped.end()) {
-        result.Detail = "range is not inside the sections of the PE output";
+        result.Detail = unmapped;
         return result;
     }
     Compare(result, entry, found, true);
@@ -681,6 +760,7 @@ std::string_view StatusName(const VerifyStatus status) {
 }
 
 std::vector<VerifyResult> VerifyPatches(const PatchFile& file, const std::vector<VerifyTarget>& executables, const std::vector<VerifyTarget>& modules, const bool outputMode) {
+    std::map<std::string, MachOPatchImage> machOImages;
     if (outputMode) {
         if (!file.MainTarget) throw Domain::RelinkerException("The patch file has no main_target, so its entries cannot be matched to an output: verify the input executable, or verify the manifest written by the conversion");
         for (std::size_t index = 0; index < executables.size(); ++index)
@@ -691,8 +771,13 @@ std::vector<VerifyResult> VerifyPatches(const PatchFile& file, const std::vector
                 if (file.LinuxBase) throw Domain::RelinkerException(executable.Name + " is a Windows PE output, but the patch file has linux_base = " + HexValue(*file.LinuxBase) + ": verify the output of the conversion that wrote it");
                 continue;
             }
+            if (auto image = ReadMachOPatchImage(executable.Bytes)) {
+                if (file.LinuxBase) throw Domain::RelinkerException(executable.Name + " is a macOS Mach-O output, but the patch file has linux_base = " + HexValue(*file.LinuxBase) + ": verify the output of the conversion that wrote it");
+                machOImages.emplace(executable.Name, std::move(*image));
+                continue;
+            }
             const bool fixed = IsElfOfType(executable.Bytes, Elfpatcher::ET_EXEC);
-            if (!fixed && !IsElfOfType(executable.Bytes, Elfpatcher::ET_DYN)) throw Domain::RelinkerException(executable.Name + " is not a Linux ELF or Windows PE output (Mach-O outputs are not supported): verify the input instead");
+            if (!fixed && !IsElfOfType(executable.Bytes, Elfpatcher::ET_DYN)) throw Domain::RelinkerException(executable.Name + " is not a Linux ELF, Windows PE or macOS Mach-O output: verify the input instead");
             if (fixed && !file.LinuxBase) throw Domain::RelinkerException(executable.Name + " is an ET_EXEC Linux ELF output, but the patch file has no linux_base: verify the manifest written by its conversion");
             if (!fixed && file.LinuxBase) throw Domain::RelinkerException(executable.Name + " is an ET_DYN Linux ELF output, but the patch file has linux_base = " + HexValue(*file.LinuxBase) + ": verify the output of the conversion that wrote it");
         }
@@ -724,19 +809,29 @@ std::vector<VerifyResult> VerifyPatches(const PatchFile& file, const std::vector
             }
             continue;
         }
-        if (const auto sections = outputMode ? ReadPeSections(target->Bytes) : std::nullopt) {
+        const auto machO = machOImages.find(name);
+        const bool isMachO = machO != machOImages.end();
+        const auto peSections = outputMode && !isMachO ? ReadPeSections(target->Bytes) : std::nullopt;
+        if (peSections || isMachO) {
             std::vector<PatchEntry> own;
             std::vector<EntryRange> ranges;
             for (const auto other : indices) {
                 const auto& entry = file.Entries[other];
                 ValidateWidth(entry);
-                if (!entry.OutputRva) throw Domain::RelinkerException(Describe(entry) + " has no output_rva, but " + name + " is a Windows PE output: verify the manifest written by its conversion");
+                if (isMachO && entry.OutputRva) throw Domain::RelinkerException(Describe(entry) + " has output_rva, but " + name + " is a macOS Mach-O output: verify the manifest written by its conversion");
+                if (!isMachO && !entry.OutputRva) throw Domain::RelinkerException(Describe(entry) + " has no output_rva, but " + name + " is a Windows PE output: verify the manifest written by its conversion");
+                const std::uint64_t address = isMachO ? entry.VirtualAddress + machO->second.LoadBias : *entry.OutputRva;
+                if (entry.Value.size() > std::numeric_limits<std::uint64_t>::max() - address)
+                    throw Domain::RelinkerException(Describe(entry) + " lies outside the output address space");
                 own.push_back(entry);
-                ranges.push_back({PatchedRange{*entry.OutputRva, entry.Value.size(), entry.VirtualAddress}, {}});
+                ranges.push_back({PatchedRange{address, entry.Value.size(), entry.VirtualAddress}, {}});
             }
             RejectEntryOverlaps(own, ranges);
-            for (const auto other : indices) {
-                results[other] = VerifyPeEntry(file.Entries[other], *sections, target->Bytes);
+            const auto& sections = isMachO ? machO->second.Segments : *peSections;
+            const auto unmapped = isMachO ? "range is not inside the guest segments of the Mach-O output" : "range is not inside the sections of the PE output";
+            for (std::size_t position = 0; position < indices.size(); ++position) {
+                const auto other = indices[position];
+                results[other] = VerifyMappedEntry(own[position], sections, target->Bytes, ranges[position].Range->Offset, unmapped);
                 done[other] = true;
             }
             continue;
