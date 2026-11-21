@@ -26,6 +26,18 @@ struct EncodingView {
     std::int32_t padding;
 };
 
+struct NameBufferView {
+    std::size_t length;
+    unsigned char* data;
+    std::size_t max;
+};
+
+struct AuthorityKeyIdView {
+    const void* keyId;
+    LibreSslStack* issuer;
+    const void* serial;
+};
+
 static_assert(sizeof(LibreSslX509Object) == 16);
 static_assert(offsetof(LibreSslX509Object, data) == 8);
 static_assert(sizeof(EncodingView) == sizeof(LibreSsl3CertificateInfo::encoding));
@@ -107,25 +119,31 @@ void Require(bool condition, std::source_location location = std::source_locatio
     std::abort();
 }
 
+long LiveBlocks = 0;
+
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
     void* result = std::malloc(size);
     Require(result != nullptr);
+    ++LiveBlocks;
     return result;
 }
 
 void APS5_VABI Free_nid_no_patch(void* pointer) {
+    if (pointer) --LiveBlocks;
     std::free(pointer);
 }
 
 void* APS5_VABI Calloc_nid_no_patch(std::size_t count, std::size_t size) {
     void* result = std::calloc(count, size);
     Require(result != nullptr);
+    ++LiveBlocks;
     return result;
 }
 
 void* APS5_VABI Reallocate_nid_no_patch(void* pointer, std::size_t size) {
     void* result = std::realloc(pointer, size);
     Require(result != nullptr);
+    if (!pointer) ++LiveBlocks;
     return result;
 }
 
@@ -886,6 +904,126 @@ void TestExplicitWrapperLengths() {
         {8, {0xa0, 0x04}}}), 13, 0, {0x05}), 0x0dfff077);
 }
 
+void RequireNameBytes(const LibreSslX509Name* name, const Bytes& der, std::size_t offset, std::size_t length) {
+    Require(name != nullptr && name->modified == 0 && name->bytes != nullptr);
+    const auto* buffer = static_cast<const NameBufferView*>(name->bytes);
+    Require(buffer->length == length && buffer->max == (length + 3) / 3 * 4 && buffer->data != nullptr);
+    Require(std::memcmp(buffer->data, der.data() + offset, length) == 0);
+}
+
+std::string CertificateIdHashes(const LibreSsl3Certificate* subject, const LibreSsl3Certificate* issuer) {
+    OCSP_CERTID* id = OCSP_cert_to_id_nid_postfix(nullptr, subject, issuer);
+    Require(id != nullptr && id->issuerNameHash != nullptr && id->issuerKeyHash != nullptr);
+    const std::string hashes = Hex(id->issuerNameHash->data, static_cast<std::size_t>(id->issuerNameHash->length)) + "/" +
+        Hex(id->issuerKeyHash->data, static_cast<std::size_t>(id->issuerKeyHash->length));
+    OCSP_CERTID_free_nid_postfix(id);
+    return hashes;
+}
+
+int CheckDirectoryName(const LibreSsl3Certificate* issuer, const LibreSslX509Name* name) {
+    LibreSslGeneralName general{4, const_cast<LibreSslX509Name*>(name)};
+    AuthorityKeyIdView id{nullptr, sk_new_nid_postfix(nullptr), nullptr};
+    Require(id.issuer != nullptr && sk_push_nid_postfix(id.issuer, &general) == 1);
+    const int result = X509_check_akid_nid_postfix(const_cast<LibreSsl3Certificate*>(issuer), &id);
+    sk_free_nid_postfix(id.issuer);
+    return result;
+}
+
+void TestNameEncodings() {
+    const Bytes der = DerFromPem(CertificateA);
+    const Bytes indefiniteIssuer = Replace(Ended(der, 52, 20), {{0, {0x30, 0x82, 0x02, 0xea}}, {4, {0x30, 0x82, 0x01, 0xd2}},
+        {50, {0x30, 0x80}}});
+    const Bytes longSubject = Replace(der, {{0, {0x30, 0x82, 0x02, 0xe9}}, {4, {0x30, 0x82, 0x01, 0xd1}}, {104, {0x30, 0x81, 0x14}}});
+    const char* const nameA = "b0da6e051e7d2372ce7b92d0e5227d3bf5f094c8";
+    const std::string keyA = "/f3006eb7ae85f79d7e1e1c39f72f2e1ca319e320";
+    const struct {
+        const Bytes& der;
+        std::size_t issuerOffset;
+        std::size_t issuerLength;
+        std::size_t subjectOffset;
+        std::size_t subjectLength;
+        std::string issuerId;
+        std::string subjectId;
+    } cases[] = {
+        {der, 50, 22, 104, 22, nameA + keyA, nameA + keyA},
+        {indefiniteIssuer, 50, 24, 106, 22, "dff75a848cfc826192576cb0c3006023b1dcb10d" + keyA, nameA + keyA},
+        {longSubject, 50, 22, 104, 23, nameA + keyA, "908e5e205534fd745df947a0aae21dd365cefe60" + keyA},
+    };
+    LibreSslX509Store* reference = nullptr;
+    for (const auto& test : cases) {
+        const std::string path = WriteFile("libressl3-load-locations-name-bytes.pem", PemText(test.der));
+        LibreSslX509Store* store = NewStore();
+        Require(X509_STORE_load_locations_nid_postfix(store, path.c_str(), nullptr) == 1 && ObjectCount(store) == 1);
+        RequireNameBytes(LoadedName(store, false), test.der, test.issuerOffset, test.issuerLength);
+        RequireNameBytes(LoadedName(store, true), test.der, test.subjectOffset, test.subjectLength);
+        const auto* certificate = reinterpret_cast<const LibreSsl3Certificate*>(StoredObject(store, 0)->data);
+        Require(CertificateIdHashes(certificate, certificate) == test.issuerId);
+        Require(CertificateIdHashes(nullptr, certificate) == test.subjectId);
+        if (!reference) reference = store;
+        Require(remove_nid_postfix(path.c_str()) == 0);
+    }
+    const Bytes empty{0x30, 0x00};
+    const std::string emptyPem = CertificatePem(empty);
+    const std::string path = WriteFile("libressl3-load-locations-name-bytes.pem", emptyPem);
+    LibreSslX509Store* store = NewStore();
+    Require(X509_STORE_load_locations_nid_postfix(store, path.c_str(), nullptr) == 1 && ObjectCount(store) == 1);
+    for (const bool subject : {false, true}) {
+        const LibreSslX509Name* name = LoadedName(store, subject);
+        Require(name->canonEnc == nullptr && name->canonEnclen == 0);
+        RequireNameBytes(name, empty, 0, 2);
+    }
+    const auto* certificate = reinterpret_cast<const LibreSsl3Certificate*>(StoredObject(store, 0)->data);
+    const auto* certificateA = reinterpret_cast<const LibreSsl3Certificate*>(StoredObject(reference, 0)->data);
+    const std::string emptyId = "f944dcd635f9801f7ac90a407fbc479964dec024/7d831708cc9d3366b14ae91cb78aa10e345e96a0";
+    Require(CertificateIdHashes(certificate, certificate) == emptyId);
+    Require(CertificateIdHashes(nullptr, certificate) == emptyId);
+    Require(CheckDirectoryName(certificate, LoadedName(store, true)) == 0);
+    Require(CheckDirectoryName(certificate, LoadedName(reference, true)) == 31);
+    Require(CheckDirectoryName(certificateA, LoadedName(store, false)) == 31);
+    Require(CheckDirectoryName(certificateA, LoadedName(reference, false)) == 0);
+    Require(remove_nid_postfix(path.c_str()) == 0);
+}
+
+void TestLongNameEncoding() {
+    const Bytes name = Element(0x30, Element(0x31, Attribute(3, 0x0c, Bytes(300, 'x'))));
+    Require(name.size() == 321);
+    const std::string path = WriteFile("libressl3-load-locations-long-name.pem", CertificatePem(name));
+    LibreSslX509Store* store = NewStore();
+    Require(X509_STORE_load_locations_nid_postfix(store, path.c_str(), nullptr) == 1 && ObjectCount(store) == 1);
+    for (const bool subject : {false, true}) {
+        const LibreSslX509Name* loaded = LoadedName(store, subject);
+        RequireNameBytes(loaded, name, 0, 321);
+        Require(static_cast<const NameBufferView*>(loaded->bytes)->max == 432);
+    }
+    const auto* certificate = reinterpret_cast<const LibreSsl3Certificate*>(StoredObject(store, 0)->data);
+    const std::string id = "b7a0fffa91adeaef88e94ece3f0b7b3043a60057/7d831708cc9d3366b14ae91cb78aa10e345e96a0";
+    Require(CertificateIdHashes(certificate, certificate) == id);
+    Require(CertificateIdHashes(nullptr, certificate) == id);
+    Require(remove_nid_postfix(path.c_str()) == 0);
+}
+
+long LiveBlocksAfterLoad(const std::string& contents, int result, int objects, bool release) {
+    const std::string path = WriteFile("libressl3-load-locations-live-blocks.pem", contents);
+    ERR_clear_error_nid_postfix();
+    const long before = LiveBlocks;
+    LibreSslX509Store* store = NewStore();
+    Require(X509_STORE_load_locations_nid_postfix(store, path.c_str(), nullptr) == result && ObjectCount(store) == objects);
+    ERR_clear_error_nid_postfix();
+    if (release) X509_STORE_free_nid_postfix(store);
+    const long live = LiveBlocks - before;
+    Require(remove_nid_postfix(path.c_str()) == 0);
+    return live;
+}
+
+void TestNameEncodingsReleased() {
+    const Bytes der = DerFromPem(CertificateA);
+    const Bytes emptyKey = Replace(Spliced(der, 126, 294, {0x30, 0x00}), {{0, {0x30, 0x82, 0x01, 0xc3}}, {4, {0x30, 0x81, 0xac}}});
+    Require(LiveBlocksAfterLoad(PemText(emptyKey), 0, 0, true) == 0);
+    const long single = LiveBlocksAfterLoad(CertificateA, 1, 1, false);
+    Require(single > 0);
+    Require(LiveBlocksAfterLoad(std::string(CertificateA) + CertificateA, 1, 1, false) == single);
+}
+
 void TestLatin1LookupName() {
     const std::filesystem::path directory = std::filesystem::temp_directory_path() / "anyps5-libressl3-latin1-ca";
     std::error_code ignored;
@@ -1146,6 +1284,9 @@ int main() {
     TestNegativeControl();
     TestBerLengths();
     TestExplicitWrapperLengths();
+    TestNameEncodings();
+    TestLongNameEncoding();
+    TestNameEncodingsReleased();
     TestConvertedNameStrings();
     TestRejectedNameStrings();
     TestLatin1LookupName();

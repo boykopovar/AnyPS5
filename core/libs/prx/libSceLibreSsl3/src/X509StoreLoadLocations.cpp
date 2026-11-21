@@ -25,6 +25,7 @@
 namespace {
 
 constexpr int Asn1Library = 13;
+constexpr int BufLibrary = 7;
 constexpr int X509Library = 11;
 constexpr int AnyFunction = 0xfff;
 constexpr int MallocFailure = 65;
@@ -52,6 +53,7 @@ constexpr int InvalidUtf8String = 134;
 constexpr int BmpStringWrongLength = 214;
 constexpr int UniversalStringWrongLength = 215;
 constexpr std::uint32_t UnicodeMax = 0x10ffff;
+constexpr std::size_t BufferLimitBeforeExpansion = 0x5ffffffc;
 
 constexpr int FileTypePem = 1;
 constexpr int FileTypeDefault = 0;
@@ -108,6 +110,12 @@ struct Encoding {
     std::int32_t padding;
 };
 
+struct NameBuffer {
+    std::size_t length;
+    unsigned char* data;
+    std::size_t max;
+};
+
 struct CertificateObject {
     LibreSsl3CertificateInfo* certInfo;
     LibreSsl3X509Algor* sigAlg;
@@ -136,6 +144,8 @@ static_assert(offsetof(CertificateObject, references) == 28);
 static_assert(sizeof(DirectoryList) == 8);
 static_assert(sizeof(LibreSslX509NameEntry) == 24);
 static_assert(sizeof(LibreSslX509Name) == 40);
+static_assert(sizeof(NameBuffer) == 24);
+static_assert(offsetof(LibreSslX509Name, bytes) == 16);
 
 void PutAsn1Error(int reason) {
     LibreSslPutError_nid_no_patch(Asn1Library, AnyFunction, reason);
@@ -330,8 +340,18 @@ void FreeStack(const LibreSsl3Stack* stack, void (*release)(void*)) {
 
 void FreeExtension(void* element);
 
+void FreeNameBuffer(NameBuffer* buffer) {
+    if (!buffer) return;
+    if (buffer->data) {
+        std::memset(buffer->data, 0, buffer->max);
+        free_nid_postfix(buffer->data);
+    }
+    free_nid_postfix(buffer);
+}
+
 void FreeName(LibreSslX509Name* name) {
     if (!name) return;
+    FreeNameBuffer(static_cast<NameBuffer*>(name->bytes));
     FreeStack(reinterpret_cast<const LibreSsl3Stack*>(reinterpret_cast<const LibreSslStack*>(name->entries)), FreeNameEntry);
     free_nid_postfix(name->canonEnc);
     free_nid_postfix(name);
@@ -890,7 +910,31 @@ LibreSslX509NameEntry* DecodeNameEntry(std::span<const unsigned char>& input, in
     return entry;
 }
 
-LibreSslX509Name* DecodeName(std::span<const unsigned char> content) {
+bool StoreNameBytes(LibreSslX509Name* name, std::span<const unsigned char> encoded) {
+    auto* buffer = static_cast<NameBuffer*>(calloc_nid_postfix(1, sizeof(NameBuffer)));
+    if (!buffer) {
+        LibreSslPutError_nid_no_patch(BufLibrary, AnyFunction, MallocFailure);
+        PutAsn1Error(MallocFailure);
+        return false;
+    }
+    name->bytes = buffer;
+    if (encoded.size() > BufferLimitBeforeExpansion) {
+        LibreSslPutError_nid_no_patch(BufLibrary, AnyFunction, MallocFailure);
+        return false;
+    }
+    const std::size_t capacity = (encoded.size() + 3) / 3 * 4;
+    buffer->data = static_cast<unsigned char*>(calloc_nid_postfix(capacity, 1));
+    if (!buffer->data) {
+        LibreSslPutError_nid_no_patch(BufLibrary, AnyFunction, MallocFailure);
+        return false;
+    }
+    std::memcpy(buffer->data, encoded.data(), encoded.size());
+    buffer->length = encoded.size();
+    buffer->max = capacity;
+    return true;
+}
+
+LibreSslX509Name* DecodeName(const Tlv& sequence) {
     auto* name = static_cast<LibreSslX509Name*>(calloc_nid_postfix(1, sizeof(LibreSslX509Name)));
     if (!name) {
         PutAsn1Error(MallocFailure);
@@ -901,7 +945,7 @@ LibreSslX509Name* DecodeName(std::span<const unsigned char> content) {
         free_nid_postfix(name);
         return nullptr;
     }
-    std::span<const unsigned char> body = content;
+    std::span<const unsigned char> body = sequence.content;
     int set = 0;
     while (!body.empty()) {
         Tlv rdn;
@@ -928,6 +972,10 @@ LibreSslX509Name* DecodeName(std::span<const unsigned char> content) {
             }
         }
         ++set;
+    }
+    if (!StoreNameBytes(name, sequence.encoded)) {
+        FreeName(name);
+        return nullptr;
     }
     return name;
 }
@@ -1210,7 +1258,7 @@ LibreSsl3CertificateInfo* DecodeCertificateInfo(const Tlv& tbs) {
         FreeCertificateInfo(info);
         return nullptr;
     }
-    info->issuer = DecodeName(issuer.content);
+    info->issuer = DecodeName(issuer);
     if (!info->issuer) {
         FreeCertificateInfo(info);
         return nullptr;
@@ -1229,7 +1277,7 @@ LibreSsl3CertificateInfo* DecodeCertificateInfo(const Tlv& tbs) {
         FreeCertificateInfo(info);
         return nullptr;
     }
-    info->subject = DecodeName(subject.content);
+    info->subject = DecodeName(subject);
     if (!info->subject) {
         FreeCertificateInfo(info);
         return nullptr;
@@ -1730,8 +1778,8 @@ void FreeAlgor_nid_no_patch(LibreSsl3X509Algor* algor) {
     FreeAlgor(algor);
 }
 
-LibreSslX509Name* DecodeName_nid_no_patch(std::span<const unsigned char> content) {
-    LibreSslX509Name* name = DecodeName(content);
+LibreSslX509Name* DecodeName_nid_no_patch(std::span<const unsigned char> content, std::span<const unsigned char> encoded) {
+    LibreSslX509Name* name = DecodeName(Tlv{SequenceTag, false, content, encoded});
     if (name && !StoreCanonicalName(name, __func__)) {
         FreeName(name);
         return nullptr;
