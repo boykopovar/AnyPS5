@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -160,6 +161,40 @@ void TestFloatSerialization() {
     Require(Text(_ZN7WebCore19serializationForCSSERKNS_9DisplayP3IfEE(nearlyOpaque)) == "color(display-p3 0 0 0 / 0.9999)");
 }
 
+void TestColorSerialization() {
+    constexpr std::uint64_t valid = 1ULL << 50;
+    constexpr std::uint64_t srgb = 17ULL << 56;
+    const WebCore::Color opaque{0xFF0080FFULL | valid | srgb};
+    const WebCore::Color half{0x0A141E80ULL | valid | srgb};
+    const WebCore::Color semantic{0x01020300ULL | valid | srgb | (1ULL << 48)};
+    const WebCore::Color invalid{};
+    Require(Text(_ZN7WebCore19serializationForCSSERKNS_5ColorE(opaque)) == "rgb(255, 0, 128)");
+    Require(Text(_ZN7WebCore19serializationForCSSERKNS_5ColorE(half)) == "rgba(10, 20, 30, 0.5)");
+    Require(Text(_ZN7WebCore19serializationForCSSERKNS_5ColorE(semantic)) == "rgba(1, 2, 3, 0)");
+    Require(Text(_ZN7WebCore19serializationForCSSERKNS_5ColorE(invalid)) == "rgba(0, 0, 0, 0)");
+    Require(Text(_ZN7WebCore32serializationForRenderTreeAsTextERKNS_5ColorE(opaque)) == "#FF0080");
+    Require(Text(_ZN7WebCore32serializationForRenderTreeAsTextERKNS_5ColorE(half)) == "#0A141E80");
+    Require(Text(_ZN7WebCore32serializationForRenderTreeAsTextERKNS_5ColorE(invalid)) == "#00000000");
+
+    const WebCore::Color colorFunction{0x0A141E80ULL | valid | srgb | (1ULL << 49)};
+    const WebCore::Color outOfLine{0x123450ULL | valid | (1ULL << 51)};
+    for (const WebCore::Color& color : {colorFunction, outOfLine}) {
+        bool cssThrew = false;
+        bool textThrew = false;
+        try {
+            _ZN7WebCore19serializationForCSSERKNS_5ColorE(color);
+        } catch (const std::runtime_error&) {
+            cssThrew = true;
+        }
+        try {
+            _ZN7WebCore32serializationForRenderTreeAsTextERKNS_5ColorE(color);
+        } catch (const std::runtime_error&) {
+            textThrew = true;
+        }
+        Require(cssThrew && textThrew);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -168,6 +203,7 @@ int main() {
     TestHsl();
     TestByteSerialization();
     TestFloatSerialization();
+    TestColorSerialization();
     std::puts("WebCore color space tests passed");
     return 0;
 }
