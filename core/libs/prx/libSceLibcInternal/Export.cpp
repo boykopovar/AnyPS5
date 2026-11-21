@@ -53,11 +53,6 @@ Slot MessagesSlot(const void* self, Slot GuestLocale::MessagesVtable::*member, c
 
 extern "C" {
 
-int APS5_VABI _ZNKSt8ios_base7failure8_DoraiseEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 void* APS5_VABI _ZNKSt8messagesIcE3getEiiiRKSs_nid_postfix(void* result, const void* self, int catalog, int set, int message, const void* fallback) {
     return MessagesSlot(self, &GuestLocale::MessagesVtable::get, "messages<char>::get")(static_cast<GuestLocale::String*>(result), static_cast<const GuestLocale::Facet*>(self), catalog, set, message, static_cast<const GuestLocale::String*>(fallback));
 }
@@ -196,11 +191,6 @@ int APS5_VABI _ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE6do
 }
 
 int APS5_VABI _ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE8_PutmfldES3_bRSt8ios_basewbSbIwS2_SaIwEEw_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -695,11 +685,6 @@ int APS5_VABI _FHypot_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _FLogpoly_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _FQuad_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1116,11 +1101,6 @@ int APS5_VABI _LHypot_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _LLogpoly_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _LQuad_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1176,11 +1156,6 @@ int APS5_VABI _Locterm_nid_postfix() {
 }
 
 int APS5_VABI _Locvar_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Logpoly_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
