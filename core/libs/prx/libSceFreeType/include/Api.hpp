@@ -10,6 +10,13 @@
 
 extern "C" {
 
+std::int64_t APS5_VABI FT_MulDiv_nid_postfix(std::int64_t a, std::int64_t b, std::int64_t c);
+std::int64_t APS5_VABI FT_MulFix_nid_postfix(std::int64_t a, std::int64_t b);
+std::int64_t APS5_VABI FT_DivFix_nid_postfix(std::int64_t a, std::int64_t b);
+std::int64_t APS5_VABI FT_RoundFix_nid_postfix(std::int64_t a);
+std::int64_t APS5_VABI FT_CeilFix_nid_postfix(std::int64_t a);
+std::int64_t APS5_VABI FT_FloorFix_nid_postfix(std::int64_t a);
+
 std::int32_t APS5_VABI FT_Outline_GetInsideBorder_nid_postfix(const FreeType::GuestOutline* outline);
 std::int32_t APS5_VABI FT_Outline_GetOutsideBorder_nid_postfix(const FreeType::GuestOutline* outline);
 
@@ -161,6 +168,7 @@ int APS5_VABI FreeTypeSetVarDesignCoordinates_nid_no_patch(FreeType::GuestFaceRe
 int APS5_VABI FT_Get_Multi_Master_nid_postfix(FreeType::GuestFaceRec* face, void* master);
 int APS5_VABI FT_Done_MM_Var_nid_postfix(FreeType::GuestLibrary* library, void* master);
 int APS5_VABI FT_Set_Renderer_nid_postfix(FreeType::GuestLibrary* library, void* renderer, std::uint32_t count, const FreeType::GuestParameter* parameters);
+int APS5_VABI FreeTypeSetRenderer_nid_no_patch(FreeType::GuestLibrary* library, void* renderer, std::uint32_t count, const FreeType::GuestParameter* parameters);
 
 int APS5_VABI FT_Outline_New_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t numPoints, std::int32_t numContours, FreeType::GuestOutline* outline);
 int APS5_VABI FT_Outline_Done_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline);

@@ -1,14 +1,29 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -298,6 +313,124 @@ void ToArguments() {
     RequireThrows([&] { u_strToJavaModifiedUTF8_nid_postfix(buffer.data(), 4, &length, text.data(), 1, nullptr); });
 }
 
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        base = static_cast<char*>(VirtualAlloc(nullptr, size * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous{};
+        Require(VirtualProtect(base + size, size, PAGE_NOACCESS, &previous) != 0);
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, size * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<char*>(mapped);
+        Require(mprotect(base + size, size, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, size * 2);
+#endif
+    }
+
+    char* End() const { return base + size; }
+
+    void ReadOnly() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(base, size, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(base, size, PROT_READ) == 0);
+#endif
+    }
+
+private:
+    char* base = nullptr;
+    std::size_t size = 0;
+};
+
+template<typename TAction>
+void RequireRefused(TAction action) {
+    errno = 71;
+    RequireThrows(action);
+    Require(errno == 71);
+}
+
+template<typename TAction>
+void RequireRefusedAsInvalid(TAction action) {
+    errno = 71;
+    bool refused = false;
+    try { action(); } catch (const std::invalid_argument&) { refused = true; }
+    Require(refused && errno == 71);
+}
+
+void GuestPointers() {
+    auto* badInt = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    auto* badText = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    auto* badUnits = reinterpret_cast<const char16_t*>(std::uintptr_t{0x10});
+    std::array<char16_t, 8> units{};
+    std::array<char, 8> bytes{};
+    std::int32_t length = -77;
+    std::int32_t substitutions = -77;
+    std::int32_t status = 0;
+
+    RequireRefused([&] { u_strFromJavaModifiedUTF8WithSub_nid_postfix(units.data(), 8, &length, "a", 1, -1, nullptr, badInt); });
+    RequireRefused([&] { u_strFromJavaModifiedUTF8WithSub_nid_postfix(units.data(), 8, &length, badText, 1, -1, nullptr, &status); });
+    RequireRefused([&] { u_strFromJavaModifiedUTF8WithSub_nid_postfix(units.data(), 8, &length, badText, -1, -1, nullptr, &status); });
+    RequireRefusedAsInvalid([&] { u_strFromJavaModifiedUTF8WithSub_nid_postfix(units.data(), 8, &length, badText, std::numeric_limits<std::int32_t>::max(), -1, nullptr, &status); });
+    RequireRefused([&] { u_strFromJavaModifiedUTF8WithSub_nid_postfix(reinterpret_cast<char16_t*>(std::uintptr_t{0x10}), 8, &length, "a", 1, -1, nullptr, &status); });
+    RequireRefused([&] { u_strFromJavaModifiedUTF8WithSub_nid_postfix(units.data(), 8, badInt, "a", 1, -1, nullptr, &status); });
+    RequireRefused([&] { u_strFromJavaModifiedUTF8WithSub_nid_postfix(units.data(), 8, &length, "a", 1, -1, badInt, &status); });
+    Require(status == 0);
+
+    RequireRefused([&] { u_strToJavaModifiedUTF8_nid_postfix(bytes.data(), 8, &length, u"a", 1, badInt); });
+    RequireRefused([&] { u_strToJavaModifiedUTF8_nid_postfix(bytes.data(), 8, &length, badUnits, 1, &status); });
+    RequireRefused([&] { u_strToJavaModifiedUTF8_nid_postfix(bytes.data(), 8, &length, badUnits, -1, &status); });
+    RequireRefusedAsInvalid([&] { u_strToJavaModifiedUTF8_nid_postfix(bytes.data(), 8, &length, badUnits, std::numeric_limits<std::int32_t>::max(), &status); });
+    RequireRefused([&] { u_strToJavaModifiedUTF8_nid_postfix(reinterpret_cast<char*>(std::uintptr_t{0x10}), 8, &length, u"a", 1, &status); });
+    RequireRefused([&] { u_strToJavaModifiedUTF8_nid_postfix(bytes.data(), 8, badInt, u"a", 1, &status); });
+    Require(status == 0);
+
+    GuardedPage text;
+    std::memcpy(text.End() - 4, "abc", 4);
+    errno = 71;
+    Require(u_strFromJavaModifiedUTF8WithSub_nid_postfix(units.data(), 8, &length, text.End() - 4, -1, -1, &substitutions, &status) == units.data());
+    Require(errno == 71 && status == 0 && length == 3 && substitutions == 0 && units[0] == u'a' && units[2] == u'c' && units[3] == 0);
+    std::memcpy(text.End() - 3, "abc", 3);
+    RequireRefused([&] { u_strFromJavaModifiedUTF8WithSub_nid_postfix(units.data(), 8, &length, text.End() - 3, -1, -1, nullptr, &status); });
+
+    GuardedPage wide;
+    const char16_t terminated[] = {u'a', u'b', 0};
+    std::memcpy(wide.End() - sizeof(terminated), terminated, sizeof(terminated));
+    Require(u_strToJavaModifiedUTF8_nid_postfix(bytes.data(), 8, &length, reinterpret_cast<const char16_t*>(wide.End() - sizeof(terminated)), -1, &status) == bytes.data());
+    Require(errno == 71 && status == 0 && length == 2 && bytes[0] == 'a' && bytes[1] == 'b' && bytes[2] == 0);
+    std::memcpy(wide.End() - 4, terminated, 4);
+    RequireRefused([&] { u_strToJavaModifiedUTF8_nid_postfix(bytes.data(), 8, &length, reinterpret_cast<const char16_t*>(wide.End() - 4), -1, &status); });
+
+    GuardedPage readOnly;
+    auto* lockedStatus = reinterpret_cast<std::int32_t*>(readOnly.End() - 32);
+    auto* lockedUnits = reinterpret_cast<char16_t*>(readOnly.End() - 16);
+    *lockedStatus = 0;
+    std::fill(lockedUnits, lockedUnits + 8, Fill);
+    readOnly.ReadOnly();
+    Require(u_strFromJavaModifiedUTF8WithSub_nid_postfix(units.data(), 8, &length, "a", 1, -1, nullptr, lockedStatus) == units.data());
+    Require(*lockedStatus == 0 && errno == 71);
+    RequireRefused([&] { u_strFromJavaModifiedUTF8WithSub_nid_postfix(units.data(), 1, &length, "a", 1, -1, nullptr, lockedStatus); });
+    Require(*lockedStatus == 0);
+    RequireRefused([&] { u_strFromJavaModifiedUTF8WithSub_nid_postfix(lockedUnits, 8, &length, "a", 1, -1, nullptr, &status); });
+    Require(lockedUnits[0] == Fill && lockedUnits[1] == Fill);
+    RequireRefused([&] { u_strToJavaModifiedUTF8_nid_postfix(reinterpret_cast<char*>(lockedUnits), 8, &length, u"a", 1, &status); });
+    Require(lockedUnits[0] == Fill);
+}
+
 void RoundTrip() {
     for (std::uint32_t unit = 0; unit <= 0xffff; ++unit) {
         const char16_t text[2] = {static_cast<char16_t>(unit), 0};
@@ -326,6 +459,7 @@ int main() {
     ToValid();
     ToCapacity();
     ToArguments();
+    GuestPointers();
     RoundTrip();
     std::puts("ICU Java modified UTF-8 tests passed");
 }

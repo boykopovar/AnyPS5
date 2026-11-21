@@ -1579,6 +1579,80 @@ const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address
     return import;
 }
 
+namespace {
+
+constexpr std::array<const char*, static_cast<std::size_t>(IndexBehindWriter::Count)> IndexBehindWriterNames{
+    "taken", "off", "no writer", "vertex attributes", "index limit", "mesh stage", "primitive restart", "vertex offset",
+    "unit shadow", "pending storage", "label or store", "copied writer", "no import", "refused"
+};
+
+std::array<ProfileCounter, static_cast<std::size_t>(IndexBehindWriter::Count)>& indexBehindWriterEvents() {
+    static std::array<ProfileCounter, static_cast<std::size_t>(IndexBehindWriter::Count)> events;
+    return events;
+}
+
+const bool indexBehindWriterProfiled = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+
+void reportIndexBehindWriter() {
+    using Clock = std::chrono::steady_clock;
+    static std::atomic<std::int64_t> reported{Clock::now().time_since_epoch().count()};
+    static std::array<std::uint64_t, static_cast<std::size_t>(IndexBehindWriter::Count)> previous{};
+    const auto now = Clock::now().time_since_epoch().count();
+    auto last = reported.load(std::memory_order_relaxed);
+    if (Clock::duration(now - last) < std::chrono::seconds(10) || !reported.compare_exchange_strong(last, now, std::memory_order_relaxed)) return;
+    std::string line;
+    for (std::size_t index = 0; index < previous.size(); ++index) {
+        const auto total = indexBehindWriterEvents()[index].Sum();
+        const auto count = total - previous[index];
+        previous[index] = total;
+        if (count == 0) continue;
+        line += (line.empty() ? " " : ", ") + std::string(IndexBehindWriterNames[index]) + " " + std::to_string(count);
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[index-behind-writer] (10 s, all threads, index ranges behind a pending GPU writer):%s\n", line.empty() ? " none" : line.c_str());
+}
+
+}
+
+std::array<std::uint64_t, static_cast<std::size_t>(IndexBehindWriter::Count)> IndexBehindWriterCounts() {
+    std::array<std::uint64_t, static_cast<std::size_t>(IndexBehindWriter::Count)> counts{};
+    for (std::size_t index = 0; index < counts.size(); ++index) counts[index] = indexBehindWriterEvents()[index].Sum();
+    return counts;
+}
+
+const HostImport* InPlaceIndexBehindWriter(const Context& context, std::uint64_t address, std::size_t bytes, std::uint32_t indexSize, bool vertexAttributes, bool meshStage, bool primitiveRestart, std::uint32_t firstVertex, IndexBehindWriter* outcome) {
+    const bool enabled = RuntimeSwitches::Set(RuntimeSwitch::IndexInPlaceBehindWriter);
+    const auto leave = [&](IndexBehindWriter result, const HostImport* import) {
+        if (outcome != nullptr) *outcome = result;
+        if (enabled) {
+            indexBehindWriterEvents()[static_cast<std::size_t>(result)].Add(1);
+            if (indexBehindWriterProfiled) reportIndexBehindWriter();
+        }
+        return import;
+    };
+    auto* recorder = context.recorder;
+    if (!enabled || recorder == nullptr || (indexSize != 2 && indexSize != 4) || bytes < indexSize) return leave(IndexBehindWriter::Off, nullptr);
+    if (!recorder->PendingWriteOverlaps(address, bytes)) return leave(IndexBehindWriter::NoWriter, nullptr);
+    if (vertexAttributes) return leave(IndexBehindWriter::VertexAttributes, nullptr);
+    if (context.limits.maxDrawIndexedIndexValue != std::numeric_limits<std::uint32_t>::max()) return leave(IndexBehindWriter::IndexLimit, nullptr);
+    if (meshStage) return leave(IndexBehindWriter::MeshStage, nullptr);
+    if (primitiveRestart) return leave(IndexBehindWriter::PrimitiveRestart, nullptr);
+    const std::uint32_t largestIndex = indexSize == 2 ? 0xffffu : std::numeric_limits<std::uint32_t>::max();
+    if (firstVertex > std::numeric_limits<std::uint32_t>::max() - largestIndex) return leave(IndexBehindWriter::VertexOffset, nullptr);
+    if (AnyShadowedOverlaps(address, bytes)) return leave(IndexBehindWriter::UnitShadow, nullptr);
+    if (PendingStorageOverlaps(address, bytes, nullptr)) return leave(IndexBehindWriter::PendingStorage, nullptr);
+    if (recorder->PendingLabelIn(address, bytes) || recorder->CompletionLabelIn(address, bytes) || recorder->QueuedStoreOverlaps(address, bytes)) return leave(IndexBehindWriter::LabelOrStore, nullptr);
+    const auto overlaps = [&](const auto& writer) { return writer->WritesOverlap(address, bytes); };
+    const auto drawWriters = DrawCopiedWriters();
+    if ((context.copiedWriters != nullptr && std::any_of(context.copiedWriters->begin(), context.copiedWriters->end(), overlaps)) || std::any_of(drawWriters->begin(), drawWriters->end(), overlaps)) return leave(IndexBehindWriter::CopiedWriter, nullptr);
+    const auto* existing = ExistingHostImportFor(context, address, bytes);
+    if (existing == nullptr || HostImportOffset(*existing, address) % indexSize != 0) return leave(IndexBehindWriter::NoImport, nullptr);
+    auto inPlace = context;
+    inPlace.drawInputsInPlace = true;
+    bool behind = false;
+    const auto* import = InPlaceDrawInput(inPlace, address, bytes, indexSize, &behind);
+    return leave(import != nullptr ? IndexBehindWriter::Taken : IndexBehindWriter::Refused, import);
+}
+
 InPlaceIndices InPlaceIndexRange(Recorder& recorder, std::uint64_t address, std::size_t bytes, std::uint32_t indexSize, bool skipRestart) {
     const std::span<const std::byte> range(reinterpret_cast<const std::byte*>(address), bytes);
     InPlaceIndices indices;
@@ -1627,6 +1701,7 @@ struct DrawInputs {
     std::vector<VkDeviceSize> vertexOffsets;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> inPlaceReads;
     bool vertexInputBehindGpuWrite = false;
+    bool indexInputBehindGpuWrite = false;
     std::uint32_t fragmentOutputs = 0;
     VkPipelineStageFlags shaderStages = 0;
     std::uint32_t meshGroups = 0;
@@ -1806,7 +1881,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     const auto indexBytes = inputs.indexBytes;
     if (draw.indexed) GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
     APS5_LOG_CHARS_OUT_DEBUG("Index buffer range OK");
-    if (draw.indexed) RequireNoMultisampleTarget(draw.indexAddress, static_cast<std::size_t>(indexBytes), "an index buffer read");
+    if (draw.indexed) RequireNoMultisampleTarget(draw.indexAddress, static_cast<std::size_t>(indexBytes), "an index buffer read", DepthReadCause::Reuse);
     if (state.pixelKill && !state.pixelEarlyZ && std::ranges::any_of(state.colors, [](const ColorTarget& color) { return color.partialWriteMask != 0; })) {
         const auto* recorder = Recorder::Active();
         Require(recorder == nullptr || !recorder->CountingSamples(), "a partial write of a packed color target merges inside the pixel shader after early depth and stencil tests, which a shader that kills pixels under late tests cannot use while occlusion queries count samples: the early tests would count the pixels it kills");
@@ -1932,13 +2007,17 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const bool skipRestart = state.primitiveRestart && (!listTopology || context.primitiveListRestart || state.stages.mesh);
         const auto use = draw.indexSize == 2 ? (skipRestart ? Recorder::SnapshotUse::Index16Restart : Recorder::SnapshotUse::Index16) : (skipRestart ? Recorder::SnapshotUse::Index32Restart : Recorder::SnapshotUse::Index32);
         const bool restartTable = skipRestart && state.stages.mesh && (state.stages.mesh->inputPrimitive == 5 || state.stages.mesh->inputPrimitive == 6);
-        const auto* import = InPlaceDrawInput(context, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, nullptr, static_cast<std::size_t>(indexBytes), reads);
+        const auto* behindWriter = InPlaceIndexBehindWriter(context, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, !shaders.front().program->vertexAttributes.empty(), static_cast<bool>(state.stages.mesh), skipRestart, draw.firstVertex);
+        const auto* import = behindWriter != nullptr ? behindWriter : InPlaceDrawInput(context, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, nullptr, static_cast<std::size_t>(indexBytes), reads);
         DrawInputCopy copy;
         if (import == nullptr) copy = CopyDrawInput(context, context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, use, 0, !BindsIndexCopy(state));
         else GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
         std::optional<std::uint32_t> highest;
         std::uint32_t lowest = 0;
-        if (import != nullptr) {
+        if (behindWriter != nullptr) {
+            highest = draw.indexSize == 2 ? 0xffffu : std::numeric_limits<std::uint32_t>::max();
+            inputs.indexInputBehindGpuWrite = true;
+        } else if (import != nullptr) {
             const auto range = InPlaceIndexRange(*context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, skipRestart);
             highest = range.highest;
             lowest = range.lowest;
@@ -2059,7 +2138,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto [begin, end] = plan.copies[range];
         const auto bytes = static_cast<std::size_t>(end - begin);
         GuestMemory::CheckRange(reinterpret_cast<const void*>(begin), bytes, 1);
-        RequireNoMultisampleTarget(begin, bytes, "a vertex buffer read");
+        RequireNoMultisampleTarget(begin, bytes, "a vertex buffer read", DepthReadCause::Reuse);
         if (const auto* import = InPlaceDrawInput(context, begin, bytes, plan.alignments[range], &inputs.vertexInputBehindGpuWrite, bytes - std::min(rangeFrom[range], bytes), reads)) {
             rangeHandles.push_back(import->buffer);
             rangeOffsets.push_back(HostImportOffset(*import, begin));
@@ -2693,6 +2772,18 @@ void patchDepthRemapPush(std::array<std::byte, PipelinePushConstantBytes>& block
     std::memcpy(block.data() + ShaderRecompiler::DepthRemapPushOffsetBytes, words.data(), sizeof(words));
 }
 
+VkFrontFace FlippedFrontFace(VkFrontFace face) {
+    return face == VK_FRONT_FACE_CLOCKWISE ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
+}
+
+bool StencilReplayStrip(const Context& context, const State& state, std::span<const CompiledShader> shaders) {
+    const auto same = [](const VkStencilOpState& left, const VkStencilOpState& right) {
+        return left.failOp == right.failOp && left.passOp == right.passOp && left.depthFailOp == right.depthFailOp && left.compareOp == right.compareOp && left.compareMask == right.compareMask && left.writeMask == right.writeMask && left.reference == right.reference;
+    };
+    return state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && (state.cullMode == VK_CULL_MODE_NONE || context.graphicsPipelineLibrary) && same(state.stencilFront, state.stencilBack) &&
+        std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && std::ranges::none_of(shader.program->fragmentParameters, [](const ShaderRecompiler::FragmentParameter& parameter) { return parameter.flat || parameter.perVertex || parameter.flatP10 || parameter.flatP20 || parameter.vertexOrder; }); });
+}
+
 void recordStencilReplay(const Context& context, CommandState& recording, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes = nullptr, VkShaderStageFlags stages = 0) {
     const auto commands = recording.Commands();
     State selected = state;
@@ -2706,10 +2797,12 @@ void recordStencilReplay(const Context& context, CommandState& recording, const 
     Require(fragment != shaders.end(), "stencil replay fragment stage is missing");
     const auto referenceOffset = fragment->pushConstantOffset + fragment->program->stencilReferenceDword * sizeof(std::uint32_t);
     Require(referenceOffset <= block.size() - sizeof(std::uint32_t), "stencil replay reference exceeds the push block");
-    const auto run = [&](const Pm4::DrawParameters& piece, std::optional<std::uint32_t> firstIndex) {
+    const bool faceDynamic = state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && state.cullMode != VK_CULL_MODE_NONE;
+    const auto run = [&](const Pm4::DrawParameters& piece, std::optional<std::uint32_t> firstIndex, bool reversed) {
         std::uint32_t unusedSubdraw = 0;
         for (const auto& [reference, pipeline] : replay) {
             selected.stencilReplayReference = reference;
+            if (faceDynamic) recording.SetFrontFace(context, reversed ? FlippedFrontFace(state.frontFace) : state.frontFace);
             selected.stencilFront.reference = reference;
             selected.stencilBack.reference = reference;
             recording.SetStencilReference(context, VK_STENCIL_FACE_FRONT_AND_BACK, reference);
@@ -2719,18 +2812,21 @@ void recordStencilReplay(const Context& context, CommandState& recording, const 
         }
     };
     if (replay.size() == 1u) {
-        run(draw, std::nullopt);
+        run(draw, std::nullopt, false);
         return;
     }
     const auto indexCount = draw.indexed ? inputs.indexCount.value_or(draw.indexCount) : draw.indexCount;
+    const bool strip = state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    const std::uint32_t triangles = strip ? (indexCount >= 3u ? indexCount - 2u : 0u) : indexCount / 3u;
     for (std::uint32_t instance = 0; instance < draw.instanceCount; ++instance) {
-        for (std::uint32_t first = 0; first < indexCount - indexCount % 3u; first += 3u) {
+        for (std::uint32_t triangle = 0; triangle < triangles; ++triangle) {
+            const std::uint32_t first = strip ? triangle : triangle * 3u;
             auto piece = draw;
             piece.instanceCount = 1u;
             piece.firstInstance = draw.firstInstance + instance;
             piece.indexCount = 3u;
             if (!draw.indexed) piece.firstVertex += first;
-            run(piece, draw.indexed ? first : 0u);
+            run(piece, draw.indexed ? first : 0u, strip && (triangle & 1u) != 0u);
         }
     }
 }
@@ -2952,7 +3048,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
     resources.RequireGuestBuffers();
     if (UsesMeshWindow(shaders)) PrepareMeshWindow(context);
-    const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || captured || !record.staged.empty() || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
+    const auto start = recorder->StartDrawPass(passKey, inputs.indexInputBehindGpuWrite || capture || readsTarget || gpuIndirect || meshIndirect || captured || !record.staged.empty() || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
     if (record.spaceKeep != nullptr) *record.spaceKeep = reserveSpaceKeep(*recorder, resources);
     for (const auto& target : record.multisampleTargets) KeepMultisampleTarget_nid_no_patch(target);
     const bool continued = start.continued;
@@ -3002,8 +3098,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             countBarrier(1);
         }
         APS5_LOG_CHARS_OUT_DEBUG("Upload barrier recorded");
-        if (inputs.vertexInputBehindGpuWrite) {
-            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);
+        if (inputs.vertexInputBehindGpuWrite || inputs.indexInputBehindGpuWrite) {
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, (inputs.vertexInputBehindGpuWrite ? VkAccessFlags{VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT} : VkAccessFlags{0}) | (inputs.indexInputBehindGpuWrite ? VkAccessFlags{VK_ACCESS_INDEX_READ_BIT} : VkAccessFlags{0}));
             countBarrier(1);
         }
         const auto pixelLdsSubgroup = PixelFunctionLdsSubgroup(shaders);
@@ -3816,7 +3912,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         }
     }
     if (!stencilReferences.empty()) {
-        Require(!draw.indirect && !state.primitiveRestart && !state.rectList && !state.quadList && !state.stages.mesh && !state.stages.tessellation && state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, "stencil replay supports direct triangle lists without restart, mesh or tessellation");
+        Require(!draw.indirect && !state.primitiveRestart && !state.rectList && !state.quadList && !state.stages.mesh && !state.stages.tessellation && (state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || StencilReplayStrip(context, state, shaders)), "stencil replay supports direct triangle lists, and triangle strips whose triangles share one face state and have no flat parameters, without restart, mesh or tessellation");
         Require(!state.depthBiasPerFace && !ShadersWriteMemory(shaders), "stencil replay refuses face splits and shader memory writes");
         Require(std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->stencilReplaySafe && (shader.stage == ShaderRecompiler::ShaderStage::Vertex || shader.stage == ShaderRecompiler::ShaderStage::Fragment); }), "stencil replay refuses stages with side effects, clocks, subgroup dependencies or primitive ID inputs");
         if (stencilReferences.size() == 256u) {
@@ -3828,7 +3924,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             Require((shader.program->hostSubgroupSize == 1u || shader.program->hostSubgroupSize == context.subgroup.subgroupSize) && shader.program->spirv.size() >= 5u && shader.program->spirv[1] >= 0x00010000u && shader.program->spirv[1] < 0x00010600u, "stencil replay vertex subgroup contract differs from the physical device");
         }
         Require(static_cast<std::uint64_t>(draw.firstInstance) + draw.instanceCount <= 0x100000000ull && (draw.indexed || static_cast<std::uint64_t>(draw.firstVertex) + draw.indexCount <= 0x100000000ull), "stencil replay draw indices overflow");
-        Require(state.samples == 1u && (!state.depth || HasStencil(state.depth->format)), "stencil replay requires single-sample rendering and an eight-bit stencil format");
+        Require(!state.depth || HasStencil(state.depth->format), "stencil replay requires an eight-bit stencil format");
         recipeOut = nullptr;
     }
     if (state.quadList || StripPatches(state, shaders)) recipeOut = nullptr;
@@ -4115,8 +4211,12 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             Require(!imageRead && !resources->ReadsImage(target.resident.get()) && !resources->ReadsOverlap(target.color.MemoryAddress(), static_cast<std::size_t>(target.color.bytes)) && !inputOverlaps(target.color.MemoryAddress(), target.color.bytes), "stencil replay refuses attachment feedback reads");
         }
         if (state.depth) {
-            const auto bytes = static_cast<std::size_t>(state.depth->extent.width) * state.depth->extent.height * 4u;
+            const auto bytes = static_cast<std::size_t>(state.depth->extent.width) * state.depth->extent.height * 4u * std::max(state.depth->samples, 1u);
             Require(!resources->ReadsOverlap(state.depth->address, bytes) && !resources->ReadsOverlap(state.depth->stencilAddress, bytes) && !inputOverlaps(state.depth->address, bytes) && !inputOverlaps(state.depth->stencilAddress, bytes), "stencil replay refuses depth or stencil feedback reads");
+            const auto boundPlane = [&](std::uint64_t address, std::uint64_t length) {
+                const auto overlaps = [&](std::uint64_t plane) { return plane != 0u && address < plane + bytes && plane < address + length; };
+                return overlaps(state.depth->address) || overlaps(state.depth->stencilAddress);
+            };
             for (const auto& shader : shaders) {
                 for (const auto& binding : shader.program->bindings) {
                     if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages && binding.role != ShaderRecompiler::DescriptorRole::ImageTable) continue;
@@ -4124,7 +4224,9 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
                         const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(offset, 8u);
                         if (words[0] == 0u && (words[1] & 0xffu) == 0u) continue;
                         const auto texture = DecodeTextureResource(words);
-                        Require(!DepthSurfaceAt(context, words, texture), "stencil replay refuses sampled depth-surface feedback");
+                        if (!DepthSurfaceAt(context, words, texture)) continue;
+                        const auto sampledBytes = static_cast<std::uint64_t>(texture.width) * texture.height * 4u * std::max(texture.samples, 1u) * (static_cast<std::uint64_t>(texture.depthOrLastArray) + 1u);
+                        Require(!boundPlane(texture.baseAddress, sampledBytes), "stencil replay refuses sampled depth-surface feedback");
                     }
                 }
             }
@@ -4305,7 +4407,14 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             noteShapeMemoVerified(true);
         }
         const bool repeated = pipeline != nullptr;
-        if (!repeated) pipeline = CachedPipeline(context, pipelineState, inputs.VertexLayout(), layouts, shaders, attachmentLayout, nullptr, &storeHash);
+        if (!repeated && DefersPipelineBuild(shaders)) {
+            pipeline = ResidentPipelineOrDeferredBuild(context, pipelineState, inputs.VertexLayout(), layouts, shaders, attachmentLayout, &storeHash);
+            if (pipeline == nullptr) {
+                report(" pipeline building in the background");
+                return false;
+            }
+        }
+        if (!repeated && pipeline == nullptr) pipeline = CachedPipeline(context, pipelineState, inputs.VertexLayout(), layouts, shaders, attachmentLayout, nullptr, &storeHash);
         if (memoized) rememberShape(context, prepared.shape, targets, repeated ? nullptr : &pipeline, storeHash, inputs.VertexLayout(), layouts, shaders, attachmentLayout, inputs.fragmentOutputs);
     }
     // Resident targets' views are stable while their storage image lives, so the framebuffer is
@@ -4509,8 +4618,8 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         countBarrier();
     }
     APS5_LOG_CHARS_OUT_DEBUG("Upload barrier recorded");
-    if (inputs.vertexInputBehindGpuWrite) {
-        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);
+    if (inputs.vertexInputBehindGpuWrite || inputs.indexInputBehindGpuWrite) {
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, (inputs.vertexInputBehindGpuWrite ? VkAccessFlags{VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT} : VkAccessFlags{0}) | (inputs.indexInputBehindGpuWrite ? VkAccessFlags{VK_ACCESS_INDEX_READ_BIT} : VkAccessFlags{0}));
         countBarrier();
     }
     const auto pixelLdsSubgroup = PixelFunctionLdsSubgroup(shaders);

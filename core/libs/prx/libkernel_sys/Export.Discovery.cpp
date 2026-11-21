@@ -291,11 +291,6 @@ int APS5_VABI pthread_get_user_context_np_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_getstack_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI pthread_multi_np_nid_postfix(void) {
     pthread_resume_all_np_nid_postfix();
     return 0;
@@ -1398,27 +1393,7 @@ int APS5_VABI sceKernelLoadStartModuleInternalForMono(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelLwfsAllocateBlock(int32_t fd, int64_t size) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int64_t APS5_VABI sceKernelLwfsLseek(int32_t fd, int64_t offset, int32_t whence) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelLwfsSetAttribute(int32_t fd, int32_t attribute) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelLwfsTrimBlock(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int64_t APS5_VABI sceKernelLwfsWrite(int32_t fd, const void* data, std::size_t size) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1634,11 +1609,6 @@ int APS5_VABI sceKernelSetCallRecord(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelSetCompressionAttribute(int32_t fd, int32_t attribute) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelSetCoredumpAppInfo(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1769,41 +1739,6 @@ int APS5_VABI sceKernelSlvNotifyError(void) {
 }
 
 int APS5_VABI sceKernelSpawn(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelStreamWriteActivate(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelStreamWriteCreate(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelStreamWriteDeactivate(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelStreamWriteDelete(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelStreamWriteRead(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelStreamWriteStat(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelStreamWriteWrite(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

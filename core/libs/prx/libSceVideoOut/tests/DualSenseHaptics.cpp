@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -80,6 +81,17 @@ void BufferAveragesTo3kHz() {
     Require(!partial.Take(block), "less than a block is not taken");
 }
 
+void BufferCancelsLargeSamples() {
+    const float peak = std::numeric_limits<float>::max();
+    const std::array<float, 4> samples{peak, peak, -peak, -peak};
+    PadHapticBuffer buffer;
+    for (std::size_t i = 0; i < PadHapticBuffer::BlockFrames; ++i)
+        buffer.Push(samples.data(), samples.data(), 1, 4, 12000);
+    std::array<std::int8_t, PadHapticBuffer::BlockFrames * 2> block{};
+    Require(buffer.Take(block), "a block of cancelling samples is available");
+    for (auto value : block) Require(value == 0, "equal positive and negative samples average to silence");
+}
+
 void BufferFollowsTheInputRate() {
     PadHapticBuffer buffer;
     std::vector<float> pad(441 * 4, 0.5f);
@@ -125,6 +137,7 @@ int main() {
     ReportLayout();
     PowerReportLayout();
     BufferAveragesTo3kHz();
+    BufferCancelsLargeSamples();
     BufferFollowsTheInputRate();
     BufferScalesByRumblePercent();
     ReportsArePaced();

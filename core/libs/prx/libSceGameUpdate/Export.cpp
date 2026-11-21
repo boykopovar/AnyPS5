@@ -171,8 +171,13 @@ int APS5_VABI sceGameUpdateGetAddcontLatestVersion(uint32_t serviceLabel, const 
             return SCE_GAME_UPDATE_ERROR_NOT_INITIALIZED;
         }
     }
-    constexpr bool found = false;
+    NpUnifiedEntitlementLabel localLabel{};
     const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localLabel, entitlementLabel, sizeof(localLabel))) {
+        errno = savedErrno;
+        return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
+    }
+    constexpr bool found = false;
     const bool copied = GuestCopyOut_nid_no_patch(&info->found, &found, sizeof(found));
     errno = savedErrno;
     return copied ? 0 : SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;

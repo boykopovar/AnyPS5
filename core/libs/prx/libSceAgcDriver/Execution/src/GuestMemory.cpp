@@ -2372,6 +2372,19 @@ void MarkProofThread() {
     proofThread = true;
 }
 
+void CollectWritesForGpuUse(const UnchangedQuery& range, GpuUseObservation& observation) {
+    const auto epoch = CollectEpoch();
+    const auto unwatched = UnwatchSerial();
+    const auto mapping = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    if (proofThread && epoch != 0 && observation.address == range.address && observation.bytes == range.bytes && observation.generation == range.generation && observation.epoch == epoch && observation.unwatched == unwatched && observation.mapping == mapping) return;
+    const auto collected = CollectWritesUncached(range.address, range.bytes);
+    if (!proofThread || epoch == 0 || collected == 0) {
+        observation = {};
+        return;
+    }
+    observation = {range.address, range.bytes, range.generation, epoch, unwatched, mapping};
+}
+
 std::uint64_t CollectEpoch() {
     return collectMemoEnabled() ? HostThreadSlot<std::uint64_t, CollectEpochSlot>::Get() : 0;
 }
@@ -3524,6 +3537,14 @@ void ForgetKnownZero(std::uint64_t address, std::size_t bytes) {
 #else
     static_cast<void>(address);
     static_cast<void>(bytes);
+#endif
+}
+
+std::uint64_t KnownZeroMarks() {
+#ifdef _WIN32
+    return GuestArena::GuestArenaKnownZeroMarks_nid_no_patch();
+#else
+    return 0;
 #endif
 }
 

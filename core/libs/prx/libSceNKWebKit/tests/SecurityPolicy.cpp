@@ -1,11 +1,22 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 namespace {
 
@@ -74,11 +85,91 @@ void Test() {
     Check(secure, unicode, true, "non-ASCII UTF-16 prefix");
 }
 
+void Require(bool condition, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "shouldHideReferrer guest pointer check failed at line %d\n", line);
+        std::abort();
+    }
+}
+
+bool Rejected(const String* referrer) {
+    const URL url{};
+    errno = 71;
+    bool rejected = false;
+    try {
+        _ZN7WebCore14SecurityPolicy18shouldHideReferrerERKN3WTF3URLERKNS1_6StringE(&url, referrer);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    return rejected && errno == 71;
+}
+
+unsigned char* MapGuardedPage() {
+#ifdef _WIN32
+    auto* pages = static_cast<unsigned char*>(VirtualAlloc(nullptr, 8192, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(pages != nullptr, __LINE__);
+    DWORD previous = 0;
+    Require(VirtualProtect(pages + 4096, 4096, PAGE_NOACCESS, &previous) != 0, __LINE__);
+#else
+    void* mapped = mmap(nullptr, 8192, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Require(mapped != MAP_FAILED, __LINE__);
+    auto* pages = static_cast<unsigned char*>(mapped);
+    Require(mprotect(pages + 4096, 4096, PROT_NONE) == 0, __LINE__);
+#endif
+    return pages;
+}
+
+void UnmapGuardedPage(unsigned char* pages) {
+#ifdef _WIN32
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0, __LINE__);
+#else
+    Require(munmap(pages, 8192) == 0, __LINE__);
+#endif
+}
+
+void TestGuestPointers() {
+    Require(Rejected(reinterpret_cast<const String*>(std::uintptr_t{0x10})), __LINE__);
+    {
+        String unmapped(reinterpret_cast<NKWebKit::WtfAbi::StringImpl*>(std::uintptr_t{0x10}));
+        Require(Rejected(&unmapped), __LINE__);
+        unmapped.impl = nullptr;
+    }
+    NKWebKit::WtfAbi::StringImpl impl{2, 0, nullptr, 4};
+    String referrer(&impl);
+    impl.length = INT32_MAX;
+    impl.data = reinterpret_cast<const void*>(std::uintptr_t{0x10});
+    Require(Rejected(&referrer), __LINE__);
+    impl.hashAndFlags = 0;
+    Require(Rejected(&referrer), __LINE__);
+
+    unsigned char* pages = MapGuardedPage();
+    std::memset(pages, ' ', 4096);
+    impl.data = pages;
+    impl.length = 8192;
+    impl.hashAndFlags = 4;
+    Require(Rejected(&referrer), __LINE__);
+
+    const URL url{};
+    std::memcpy(pages + 4096 - 5, "http:", 5);
+    impl.data = pages + 4096 - 5;
+    impl.length = 100;
+    Require(!_ZN7WebCore14SecurityPolicy18shouldHideReferrerERKN3WTF3URLERKNS1_6StringE(&url, &referrer), __LINE__);
+    const char16_t wide[] = u"http:";
+    std::memcpy(pages + 4096 - 10, wide, 10);
+    impl.data = pages + 4096 - 10;
+    impl.hashAndFlags = 0;
+    Require(!_ZN7WebCore14SecurityPolicy18shouldHideReferrerERKN3WTF3URLERKNS1_6StringE(&url, &referrer), __LINE__);
+    UnmapGuardedPage(pages);
+    referrer.impl = nullptr;
+    std::puts("shouldHideReferrer: unreadable referrers throw and keep errno, reads stop at the scheme");
+}
+
 }
 
 int main() {
     try {
         Test();
+        TestGuestPointers();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "SecurityPolicy test exception: %s\n", error.what());
         return 1;

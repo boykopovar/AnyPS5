@@ -1067,6 +1067,15 @@ int APS5_VABI RsaKeyBits(const LibreSsl3EvpPkey* key) {
     return LibreSsl3::RsaBitCount_nid_no_patch(static_cast<const LibreSsl3Rsa*>(key->key));
 }
 
+int APS5_VABI RsaKeySecurityBits(const LibreSsl3EvpPkey* key) {
+    return LibreSsl3::RsaSecurityBits_nid_no_patch(static_cast<const LibreSsl3Rsa*>(key->key));
+}
+
+int APS5_VABI RsaPublicKeyCompare(const LibreSsl3EvpPkey* first, const LibreSsl3EvpPkey* second) {
+    return LibreSsl3::RsaPublicCompare_nid_no_patch(static_cast<const LibreSsl3Rsa*>(first->key),
+        static_cast<const LibreSsl3Rsa*>(second->key));
+}
+
 void APS5_VABI RsaKeyFree(LibreSsl3EvpPkey* key) {
     LibreSsl3::FreeRsa_nid_no_patch(static_cast<LibreSsl3Rsa*>(key->key));
 }
@@ -1219,14 +1228,14 @@ const LibreSsl3PkeyAsn1Method RsaAsn1Method {
     "OpenSSL RSA method",
     nullptr,
     nullptr,
-    nullptr,
+    &RsaPublicKeyCompare,
     nullptr,
     nullptr,
     nullptr,
     nullptr,
     &RsaKeySize,
     &RsaKeyBits,
-    nullptr,
+    &RsaKeySecurityBits,
     nullptr,
     nullptr,
     nullptr,
@@ -1255,14 +1264,14 @@ const LibreSsl3PkeyAsn1Method RsaPssAsn1Method {
     "OpenSSL RSA-PSS method",
     nullptr,
     nullptr,
-    nullptr,
+    &RsaPublicKeyCompare,
     nullptr,
     nullptr,
     nullptr,
     nullptr,
     &RsaKeySize,
     &RsaKeyBits,
-    nullptr,
+    &RsaKeySecurityBits,
     nullptr,
     nullptr,
     nullptr,
@@ -1813,9 +1822,11 @@ int APS5_VABI EVP_SignFinal_nid_postfix(LibreSsl3::DigestContext* ctx, unsigned 
     LibreSsl3::DigestContext copy = {};
     LibreSsl3PkeyContext* pkctx = nullptr;
     std::size_t sltmp = 0;
+    unsigned int written = 0;
     int ret = 0;
 
-    *siglen = 0;
+    const unsigned int zero = 0;
+    if (!GuestCopyOut_nid_no_patch(siglen, &zero, sizeof(zero))) return 0;
 
     if (!DigestCopy(&copy, ctx)) goto err;
     if (!DigestFinal(&copy, digest, &digestLength)) goto err;
@@ -1830,7 +1841,8 @@ int APS5_VABI EVP_SignFinal_nid_postfix(LibreSsl3::DigestContext* ctx, unsigned 
             static_cast<void*>(const_cast<DigestMethod*>(ctx->digest))) <= 0)
         goto err;
     if (EVP_PKEY_sign_nid_postfix(pkctx, sigret, &sltmp, digest, digestLength) <= 0) goto err;
-    *siglen = static_cast<unsigned int>(sltmp);
+    written = static_cast<unsigned int>(sltmp);
+    if (!GuestCopyOut_nid_no_patch(siglen, &written, sizeof(written))) goto err;
     ret = 1;
 
 err:

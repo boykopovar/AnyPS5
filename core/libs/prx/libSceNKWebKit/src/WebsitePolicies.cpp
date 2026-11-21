@@ -29,7 +29,7 @@ std::uint32_t APS5_VABI WKWebsitePoliciesGetAllowedAutoplayQuirks(const void* we
 }
 
 void APS5_VABI WKWebsitePoliciesSetAllowedAutoplayQuirks(const void* websitePolicies, std::uint32_t allowedQuirks) {
-    NKWebKit::Cast<NKWebKit::WebsitePolicies>(websitePolicies, __func__)->allowedAutoplayQuirks = allowedQuirks;
+    NKWebKit::Cast<NKWebKit::WebsitePolicies>(websitePolicies, __func__)->allowedAutoplayQuirks = allowedQuirks & 0xFu;
 }
 
 std::uint32_t APS5_VABI WKWebsitePoliciesGetAutoplayPolicy(const void* websitePolicies) {
@@ -37,7 +37,8 @@ std::uint32_t APS5_VABI WKWebsitePoliciesGetAutoplayPolicy(const void* websitePo
 }
 
 void APS5_VABI WKWebsitePoliciesSetAutoplayPolicy(const void* websitePolicies, std::uint32_t policy) {
-    NKWebKit::Cast<NKWebKit::WebsitePolicies>(websitePolicies, __func__)->autoplayPolicy = policy;
+    auto* policies = NKWebKit::Cast<NKWebKit::WebsitePolicies>(websitePolicies, __func__);
+    if (policy <= 3) policies->autoplayPolicy = policy;
 }
 
 std::uint32_t APS5_VABI WKWebsitePoliciesGetPopUpPolicy(const void* websitePolicies) {
@@ -45,7 +46,8 @@ std::uint32_t APS5_VABI WKWebsitePoliciesGetPopUpPolicy(const void* websitePolic
 }
 
 void APS5_VABI WKWebsitePoliciesSetPopUpPolicy(const void* websitePolicies, std::uint32_t policy) {
-    NKWebKit::Cast<NKWebKit::WebsitePolicies>(websitePolicies, __func__)->popUpPolicy = policy;
+    auto* policies = NKWebKit::Cast<NKWebKit::WebsitePolicies>(websitePolicies, __func__);
+    if (policy <= 2) policies->popUpPolicy = policy;
 }
 
 const void* APS5_VABI WKWebsitePoliciesGetDataStore(const void* websitePolicies) {
