@@ -44,6 +44,7 @@ using Jsc::WtfAbi::ConversionResult;
 constexpr UChar32 ReplacementCharacter = 0xFFFD;
 
 template<typename T> void RequireRange(const T* start, const T* end, const char* function) {
+    if (!start && end) throw std::invalid_argument(std::string(function) + ": null buffer");
     if (end - start > std::numeric_limits<int>::max()) throw std::length_error(std::string(function) + ": range above INT_MAX");
 }
 
