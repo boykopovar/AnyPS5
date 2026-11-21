@@ -16,10 +16,14 @@ static inline HANDLE WindowsDescriptorHandle_nid_no_patch(int descriptor) {
     const auto previous = _set_thread_local_invalid_parameter_handler(ignore);
     const auto handle = ::_get_osfhandle(descriptor);
     _set_thread_local_invalid_parameter_handler(previous);
+    if (handle < 0)
+        return INVALID_HANDLE_VALUE;
     return reinterpret_cast<HANDLE>(handle);
 }
 
 static inline ACCESS_MASK WindowsHandleAccess_nid_no_patch(HANDLE handle, int descriptor, const char* function) {
+    if (handle == nullptr || handle == INVALID_HANDLE_VALUE || handle == reinterpret_cast<HANDLE>(static_cast<std::intptr_t>(-2)))
+        throw std::runtime_error(std::string(function) + ": cannot read the access of descriptor " + std::to_string(descriptor) + ", status=-1");
     using QueryObject = NTSTATUS(NTAPI*)(HANDLE, OBJECT_INFORMATION_CLASS, PVOID, ULONG, PULONG);
     static const auto query = reinterpret_cast<QueryObject>(reinterpret_cast<void*>(::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"), "NtQueryObject")));
     PUBLIC_OBJECT_BASIC_INFORMATION information{};
