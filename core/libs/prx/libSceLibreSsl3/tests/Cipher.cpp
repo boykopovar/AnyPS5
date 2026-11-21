@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -92,11 +93,36 @@ void TestSslCipherId() {
     Require(SSL_CIPHER_get_id_nid_postfix(&cipher) == 0x0300c02fULL);
 }
 
+template<typename TAction>
+void RequireRejected(TAction action, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    bool rejected = false;
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected && errno == 71, location);
+}
+
+void TestGuestPointers() {
+    auto* badEvpCipher = reinterpret_cast<const LibreSsl3EvpCipher*>(std::uintptr_t{0x10});
+    auto* badSslCipher = reinterpret_cast<const LibreSsl3Cipher*>(std::uintptr_t{0x10});
+    RequireRejected([&] { EVP_CIPHER_key_length_nid_postfix(nullptr); });
+    RequireRejected([&] { EVP_CIPHER_iv_length_nid_postfix(nullptr); });
+    RequireRejected([&] { EVP_CIPHER_key_length_nid_postfix(badEvpCipher); });
+    RequireRejected([&] { EVP_CIPHER_iv_length_nid_postfix(badEvpCipher); });
+    RequireRejected([&] { SSL_CIPHER_get_id_nid_postfix(badSslCipher); });
+    errno = 71;
+    Require(SSL_CIPHER_get_id_nid_postfix(nullptr) == 0 && errno == 71);
+}
+
 }
 
 int main() {
     TestKeyLength();
     TestIvLength();
     TestSslCipherId();
+    TestGuestPointers();
     std::puts("LibreSSL3 EVP_CIPHER tests passed");
 }
