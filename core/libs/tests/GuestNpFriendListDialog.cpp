@@ -49,6 +49,33 @@ void RequireNotices() {
     Require(sceNpFriendListDialogTerminate() == 0);
 }
 
+void RequireUnsuffixed() {
+    std::uint64_t param = 0;
+    std::int32_t result[2];
+    std::memset(result, 0x5a, sizeof(result));
+    Require(sceNpFriendListDialogOpen(&param) == kErrNotInitialized);
+    Require(sceNpFriendListDialogGetResult(result) == kErrNotInitialized);
+    Require(sceNpFriendListDialogInitialize() == 0);
+    Require(sceNpFriendListDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceNpFriendListDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
+    Require(sceNpFriendListDialogGetResult(nullptr) == kErrArgNull);
+    Require(sceNpFriendListDialogGetResult(result) == kErrNotFinished);
+    Require(result[0] == 0x5a5a5a5a);
+    Require(sceNpFriendListDialogOpen(&param) == 0);
+    Require(sceNpFriendListDialogGetStatus() == kStatusFinished);
+    Require(sceNpFriendListDialogGetResult(result) == 0);
+    Require(result[0] == kResultUserCanceled);
+    Require(result[1] == 0x5a5a5a5a);
+    std::memset(result, 0x5a, sizeof(result));
+    Require(sceNpFriendListDialogGetResultA(result) == 0);
+    Require(result[0] == kResultUserCanceled);
+    Require(sceNpFriendListDialogTerminate() == 0);
+    Require(sceNpFriendListDialogOpen(&param) == kErrNotInitialized);
+    Require(sceNpFriendListDialogGetResult(nullptr) == kErrNotInitialized);
+}
+
 }
 
 int main() {
@@ -124,4 +151,5 @@ int main() {
     Require(sceNpFriendListDialogGetStatus() == kStatusNone);
     Require(sceNpFriendListDialogUpdateStatus() == kStatusNone);
     RequireNotices();
+    RequireUnsuffixed();
 }
