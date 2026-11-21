@@ -1751,6 +1751,7 @@ LinkedCalls LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> 
     const auto end = instructionEndProgramCounter(program.instructions.back()) / 4u;
     std::vector<std::uint32_t> linked(program.code.begin(), program.code.begin() + end);
     std::vector<std::uint32_t> fallbacks;
+    std::vector<std::uint32_t> tableLiterals;
     const auto callWord = [&](std::uint32_t programCounter, const char* kind) {
         const auto index = instructionIndexOfProgramCounter(program, programCounter);
         if (index == InvalidControlFlowId || program.instructions[index].op != RdnaOpcode::SSwappcB64 || program.instructions[index].wordCount != 1u) {
@@ -1801,9 +1802,17 @@ LinkedCalls LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> 
         for (std::size_t callee = 0; callee < count; ++callee) {
             for (const bool sccOne : {false, true}) {
                 const auto next = sccOne ? one(callee + 1u) : segments[callee + 1u];
-                linked.insert(linked.end(), {0xbf07ff00u | table.targetRegister, static_cast<std::uint32_t>(callees[callee].target)});
+                const bool fromTable = table.descriptorInUserData && callees[callee].entryOffset.has_value();
+                const auto literal = [&](std::uint32_t half) {
+                    if (!fromTable) return static_cast<std::uint32_t>(callees[callee].target >> (32u * half));
+                    tableLiterals.insert(tableLiterals.end(), {static_cast<std::uint32_t>(linked.size()), table.userDataRegister, *callees[callee].entryOffset + 4u * half});
+                    return 0u;
+                };
+                linked.push_back(0xbf07ff00u | table.targetRegister);
+                linked.push_back(literal(0u));
                 branch(0xbf850000u, next);
-                linked.insert(linked.end(), {0xbf07ff00u | (table.targetRegister + 1u), static_cast<std::uint32_t>(callees[callee].target >> 32u)});
+                linked.push_back(0xbf07ff00u | (table.targetRegister + 1u));
+                linked.push_back(literal(1u));
                 branch(0xbf850000u, next);
                 if (sccOne) linked.push_back(0xbf068080u);
                 else branch(0xbf820000u, segments[callee] + 14u);
@@ -1821,7 +1830,7 @@ LinkedCalls LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> 
         branch(0xbf820000u, back(count));
     }
     linked.push_back(0xbf9f0000u);
-    return {std::move(linked), std::move(fallbacks)};
+    return {std::move(linked), std::move(fallbacks), std::move(tableLiterals)};
 }
 
 namespace {

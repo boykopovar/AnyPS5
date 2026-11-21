@@ -61,7 +61,10 @@ struct TableCall {
 struct TableCallee {
     std::uint64_t target = 0;
     std::vector<std::uint32_t> code;
+    std::optional<std::uint32_t> entryOffset;
 };
+
+inline constexpr std::uint32_t TableLiteralWords = 3u;
 
 [[nodiscard]] std::optional<std::uint32_t> UnresolvableSwappcTarget(const RdnaProgram& program, const SwappcInfo* swappc);
 [[nodiscard]] std::vector<UserDataCall> FindUserDataCalls(const RdnaProgram& program, const SwappcInfo& swappc);
@@ -106,6 +109,7 @@ struct TableCallContinuation {
 struct LinkedCalls {
     std::vector<std::uint32_t> code;
     std::vector<std::uint32_t> fallbacks;
+    std::vector<std::uint32_t> tableLiterals;
 };
 
 [[nodiscard]] LinkedCalls LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> userDataCalls, std::span<const std::vector<std::uint32_t>> userDataCallees,

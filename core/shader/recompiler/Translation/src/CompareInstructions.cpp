@@ -1,4 +1,5 @@
 #include "Translation/TranslationContext.hpp"
+#include "ControlFlow/GraphBuilder.hpp"
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -95,9 +96,28 @@ void TranslationContext::emitCompareConstant(const RdnaInstruction& inst, bool v
     emitCompareResult(inst, IrU1(ir.ConstantBool(value)), scalar, cmpx);
 }
 
+IrValue* TranslationContext::readScalarCompareOperand(const RdnaInstruction& inst, const RdnaOperand& operand, IrType type) {
+    if (operand.kind != RdnaOperandKind::LiteralConstant || inst.family != RdnaInstructionFamily::SOPC || type != IrType::U32) return readOperand(operand, type);
+    const auto word = inst.programCounter / 4u + 1u;
+    for (std::size_t index = 0; index + TableLiteralWords <= tableLiterals.size(); index += TableLiteralWords) {
+        if (tableLiterals[index] != word) continue;
+        const auto descriptor = tableLiterals[index + 1u];
+        MemoryInfo memory;
+        memory.kind = ResourceKind::ScalarBuffer;
+        memory.resource = descriptor / 4u;
+        memory.offset = tableLiterals[index + 2u];
+        memory.dataDwords = 1u;
+        memory.componentCount = 1u;
+        IrValue* resource = &ir.Emit(IrOpcode::GetBufferResource, IrOpcodeType(IrOpcode::GetBufferResource), {&ir.GetUserData(static_cast<ScalarReg>(descriptor)), &ir.GetUserData(static_cast<ScalarReg>(descriptor + 1u)),
+            &ir.GetUserData(static_cast<ScalarReg>(descriptor + 2u)), &ir.GetUserData(static_cast<ScalarReg>(descriptor + 3u))});
+        return &ir.Emit(IrOpcode::ReadConstBuffer, IrOpcodeType(IrOpcode::ReadConstBuffer), {resource, &ir.Constant(0u)}, addMemoryInfo(memory, inst.programCounter));
+    }
+    return readOperand(operand, type);
+}
+
 void TranslationContext::emitIntegerCompare(const RdnaInstruction& inst, IrOpcode opcode, IrType type, bool scalar, bool cmpx) {
-    IrValue* lhs = readOperand(sourceAt(inst, 0u), type);
-    IrValue* rhs = readOperand(sourceAt(inst, 1u), type);
+    IrValue* lhs = scalar ? readScalarCompareOperand(inst, sourceAt(inst, 0u), type) : readOperand(sourceAt(inst, 0u), type);
+    IrValue* rhs = scalar ? readScalarCompareOperand(inst, sourceAt(inst, 1u), type) : readOperand(sourceAt(inst, 1u), type);
     emitCompareResult(inst, IrU1(ir.Emit(opcode, IrType::U1, {lhs, rhs})), scalar, cmpx);
 }
 
