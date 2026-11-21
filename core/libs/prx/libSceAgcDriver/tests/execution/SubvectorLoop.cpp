@@ -152,8 +152,14 @@ void Check(const char* variant, const Case& testCase) {
     }
 }
 
-void CheckWave32Throws(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
+void CheckWave32(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
+    for (std::uint32_t lane = 0; lane < 32; ++lane) Input[lane] = 1u;
+    Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
+    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
+    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{32, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -163,13 +169,29 @@ void CheckWave32Throws(AgcDriver::VulkanDevice& device, std::span<const std::uin
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    try {
-        static_cast<void>(ShaderRecompiler::Recompile(request));
-    } catch (const std::runtime_error& error) {
-        Require(std::string(error.what()).find("s_subvector_loop_begin in a wave32 shader is not measured") != std::string::npos, std::string("wave32 subvector loop threw an unexpected error: ") + error.what());
-        return;
+    const auto result = ShaderRecompiler::Recompile(request);
+    Require(!result.spirv.empty(), "wave32 subvector loop recompilation produced empty SPIR-V");
+    if (device.Target().subgroupSize >= 32u) {
+        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device.WaitIdle();
+        Require(Output[0] != 0xdeadbeefu, "wave32 subvector loop execution produced no output");
+        for (std::uint32_t lane = 0; lane < 32u; ++lane) {
+            Require(Output[0 * Threads + lane] == 1u, "wave32 lane " + std::to_string(lane) + " passes != 1");
+            Require(Output[1 * Threads + lane] == 1u, "wave32 lane " + std::to_string(lane) + " last pass != 1");
+            Require(Output[2 * Threads + lane] == 0u, "wave32 lane " + std::to_string(lane) + " s38 in pass != 0");
+            Require(Output[3 * Threads + lane] == Ones, "wave32 lane " + std::to_string(lane) + " exec lo in pass != Ones");
+            Require(Output[4 * Threads + lane] == 0u, "wave32 lane " + std::to_string(lane) + " exec hi in pass != 0");
+            Require(Output[5 * Threads + lane] == 0u, "wave32 lane " + std::to_string(lane) + " s38 after loop != 0");
+            Require(Output[6 * Threads + lane] == Ones, "wave32 lane " + std::to_string(lane) + " exec lo after loop != Ones");
+            Require(Output[7 * Threads + lane] == 0u, "wave32 lane " + std::to_string(lane) + " exec hi after loop != 0");
+            Require(Output[8 * Threads + lane] == 1u, "wave32 lane " + std::to_string(lane) + " total passes != 1");
+        }
+        for (std::uint32_t lane = 32u; lane < 64u; ++lane) {
+            for (std::uint32_t col = 0; col < Columns; ++col) {
+                Require(Output[col * Threads + lane] == 0xdeadbeefu, "wave32 inactive lane " + std::to_string(lane) + " modified");
+            }
+        }
     }
-    Require(false, "a wave32 subvector loop was recompiled");
 }
 
 void RunCases(AgcDriver::VulkanDevice& device, const char* variant, std::span<const std::uint32_t> code, const std::vector<Case>& cases) {
@@ -185,7 +207,7 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        CheckWave32Throws(*device, ExecKeptCode);
+        CheckWave32(*device, ExecKeptCode);
         if (device->Target().subgroupSize < 32u) {
             std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
             return VulkanTestSkipped;
