@@ -203,6 +203,28 @@ bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
     return drawShapeSightings->SeenBefore(shape);
 }
 
+std::uint64_t Driver::decodeBytes(const DrawDecode& decode) {
+    const auto held = [](const auto& values) { return values.empty() ? std::uint64_t{0} : static_cast<std::uint64_t>(values.capacity() * sizeof(values[0])); };
+    std::uint64_t bytes = sizeof(DrawDecode) + held(decode.programs) + held(decode.roles);
+    for (const auto& program : decode.programs) bytes += held(program.userData);
+    return bytes;
+}
+
+void Driver::acquireDecode(const std::shared_ptr<const DrawDecode>& decode) {
+    if (decode == nullptr) return;
+    if (drawCacheDecodeReferences[decode.get()]++ == 0) drawCacheVariantBytes += decodeBytes(*decode);
+}
+
+void Driver::releaseDecode(const std::shared_ptr<const DrawDecode>& decode) {
+    if (decode == nullptr) return;
+    const auto found = drawCacheDecodeReferences.find(decode.get());
+    if (found == drawCacheDecodeReferences.end()) return;
+    if (--found->second == 0) {
+        drawCacheVariantBytes -= decodeBytes(*decode);
+        drawCacheDecodeReferences.erase(found);
+    }
+}
+
 void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::shared_ptr<const DrawDecode> decode, std::uint64_t shape, bool replaceShape) {
     std::lock_guard cacheLock(drawCacheMutex);
     struct CacheUpdate {
@@ -211,6 +233,7 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         ~CacheUpdate() {
             if (committed) return;
             driver.drawCacheResultReferences.clear();
+            driver.drawCacheDecodeReferences.clear();
             driver.drawCache.clear();
             driver.drawShapes.clear();
             driver.drawOrder.clear();
@@ -226,6 +249,7 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
                 for (const auto& variants : previous->second->stages) {
                     for (const auto& variant : variants) accountDrawVariant(*variant, false);
                 }
+                releaseDecode(previous->second->decode);
                 drawOrder.erase(previous->second->order);
                 drawCache.erase(previous);
             }
@@ -264,6 +288,13 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
     }
     replacement->touched = drawCacheHits;
     if (replacement->decode != nullptr && shape != 0) drawShapes[shape] = key;
+    {
+        const std::shared_ptr<const DrawDecode> oldDecode = found != drawCache.end() ? found->second->decode : nullptr;
+        if (oldDecode.get() != replacement->decode.get()) {
+            acquireDecode(replacement->decode);
+            releaseDecode(oldDecode);
+        }
+    }
     if (found == drawCache.end()) {
         drawOrder.push_front(key);
         replacement->order = drawOrder.begin();
@@ -286,6 +317,7 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         }
         if (traceDrawCache()) traceInsert(traceKeysEvicted, last->first);
         if (const auto shapeOf = drawShapes.find(last->second->shape); shapeOf != drawShapes.end() && shapeOf->second == last->first) drawShapes.erase(shapeOf);
+        releaseDecode(last->second->decode);
         drawOrder.erase(last->second->order);
         drawCache.erase(last);
         ++drawCacheEvictions;
@@ -305,6 +337,7 @@ void Driver::eraseDrawEntry(std::uint64_t key, const std::shared_ptr<DrawEntry>&
         for (const auto& variant : variants) accountDrawVariant(*variant, false);
     }
     if (const auto shapeOf = drawShapes.find(found->second->shape); shapeOf != drawShapes.end() && shapeOf->second == key) drawShapes.erase(shapeOf);
+    releaseDecode(found->second->decode);
     drawOrder.erase(found->second->order);
     drawCache.erase(found);
 }
