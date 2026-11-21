@@ -5,6 +5,7 @@
 #include FT_MODULE_H
 #include FT_RENDER_H
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -95,6 +96,10 @@ int main() {
     Require(FT_Set_Renderer_nid_postfix(nullptr, local, 1, unreadable.data()) == FT_Set_Renderer(nullptr, static_cast<FT_Renderer>(local), 0, nullptr));
     Require(FT_Set_Renderer_nid_postfix(&first.guest, nullptr, 1, unreadable.data()) == FT_Set_Renderer(first.guest.host, nullptr, 0, nullptr));
     Require(FT_Set_Renderer_nid_postfix(&first.guest, foreign, 1, unreadable.data()) == FT_Set_Renderer(first.guest.host, static_cast<FT_Renderer>(foreign), 0, nullptr));
+    errno = 71;
+    Require(FT_Set_Renderer_nid_postfix(reinterpret_cast<GuestLibrary*>(std::uintptr_t{0x10}), local, 0, nullptr) == FT_Err_Invalid_Argument && errno == 71);
+    Require(FT_Set_Renderer_nid_postfix(&first.guest, local, 1, unreadable.data()) == FT_Err_Invalid_Argument && errno == 71);
+    Require(FT_Set_Renderer_nid_postfix(&first.guest, local, 0, unreadable.data()) == 0 && errno == 71);
     GuestParameter wide[1] = {{0xFFFFFFFFFFFFFFFFull, nullptr}};
     FT_Parameter nativeWide[1] = {{static_cast<FT_ULong>(0xFFFFFFFFFFFFFFFFull), nullptr}};
     if (sizeof(FT_ULong) == 8) {
