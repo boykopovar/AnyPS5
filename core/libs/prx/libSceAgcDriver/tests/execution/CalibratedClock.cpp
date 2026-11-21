@@ -36,7 +36,7 @@ int main() {
         double firstGpuNs = 0.0;
         std::chrono::steady_clock::time_point firstCpu;
         if (!device->CalibrateClock(firstGpuNs, firstCpu)) {
-            std::cout << "skipped, the device calibrates its timestamps against no host clock the driver reads\n";
+            std::cout << "skipped, the device reports no calibrated timestamps on a host clock the driver reads\n";
             return VulkanTestSkipped;
         }
         const double offsetMs = std::abs(Milliseconds(std::chrono::steady_clock::now() - firstCpu));

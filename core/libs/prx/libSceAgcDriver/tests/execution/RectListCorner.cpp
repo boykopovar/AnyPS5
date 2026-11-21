@@ -138,7 +138,7 @@ int Run(AgcDriver::VulkanDevice& device, std::uint32_t maximumVersion) {
     std::cout << "device: " << device.DeviceName() << "\n";
     auto target = device.Target();
     if (!target.tessellation.has_value() || !TargetHasCapability(target, spv::CapabilityTessellation)) {
-        std::cout << "skipped, device has no tessellation\n";
+        std::cout << "skipped, the device has no tessellation\n";
         return VulkanTestSkipped;
     }
     if (target.spirvVersion > maximumVersion) target.spirvVersion = maximumVersion;

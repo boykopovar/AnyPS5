@@ -267,7 +267,7 @@ void Run(const char* what, std::optional<std::uint8_t> key) {
 int main() {
     try {
         if (!DeviceRoutesLayers()) {
-            std::puts("skipped, no Vulkan device with VK_EXT_shader_viewport_index_layer");
+            std::puts("skipped, the device lacks VK_EXT_shader_viewport_index_layer");
             return VulkanTestSkipped;
         }
         BuildBands();

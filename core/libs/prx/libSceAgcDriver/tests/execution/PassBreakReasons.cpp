@@ -137,7 +137,7 @@ int main() {
         if (!device) return VulkanTestSkipped;
         const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
         if ((context.limits.framebufferColorSampleCounts & Samples) == 0 || (context.limits.framebufferDepthSampleCounts & Samples) == 0) {
-            std::puts("skipped, the device cannot render four-sample color and depth");
+            std::puts("skipped, the device does not support four-sample color and depth targets");
             return VulkanTestSkipped;
         }
         const auto shaders = Compile(*device);
