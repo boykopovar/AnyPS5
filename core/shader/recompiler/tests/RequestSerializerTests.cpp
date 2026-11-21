@@ -226,7 +226,7 @@ void VerifyTargetOptions() {
                     Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
                     Require(serializer.Serialize(replay.request) == encoded);
                     auto bytes = DecodeBase64(encoded);
-                    Require(bytes[4] == 63u && bytes.back() == 0u);
+                    Require(bytes[4] == 64u && bytes.back() == 0u);
                     for (std::size_t missing = 1u; missing <= 6u; ++missing) {
                         auto truncated = bytes;
                         truncated.resize(truncated.size() - missing);
@@ -239,9 +239,11 @@ void VerifyTargetOptions() {
                         Require(rejected);
                     }
                     auto legacy62Bytes = bytes;
+                    legacy62Bytes.pop_back();
                     legacy62Bytes[4] = 62u;
                     const auto legacy62 = serializer.Deserialize(EncodeBase64(legacy62Bytes));
                     Require(legacy62.request.target.fixedPushSlots == fixed && legacy62.request.target.maxImageArrayLayers == layers && !legacy62.request.graphics.has_value());
+                    bytes.pop_back();
                     bytes.pop_back();
                     bytes[4] = 57u;
                     const auto legacy57 = serializer.Deserialize(EncodeBase64(bytes));
@@ -407,7 +409,7 @@ int VerifyVersion56Compatibility() {
             Require(request.graphics->draw.indexAddress == 0xabcdef3400u && request.graphics->draw.indexCount == 57u && request.graphics->draw.indexElementBytes == 4u && request.graphics->draw.instanceCount == 9u);
             Require(request.target.float16DenormPreserve == preserve);
             auto upgraded = bytes;
-            upgraded[4] = 57u;
+            upgraded[4] = 56u;
             InsertMeshBarycentricFlag(upgraded);
             if (fixture.pixel) upgraded.insert(upgraded.begin() + 258u, {0u, 0u, 0u});
             if (fixture.pixel) InsertPixelDefaultsAfterFrontFace(upgraded);
@@ -456,7 +458,7 @@ int VerifyVersion56Compatibility() {
                     layerRejected = std::string_view(error.what()) == "RequestSerializer: truncated data";
                 }
                 Require(layerRejected);
-                layered[4] = 57u;
+                layered[4] = 56u;
                 InsertMeshBarycentricFlag(layered);
                 layered.insert(layered.begin() + 259u, {0u, 0u});
                 InsertPixelDefaultsAfterFrontFace(layered);
@@ -491,7 +493,7 @@ int VerifyVersion56Compatibility() {
             Require(replay.request.context.pixel->rasterPrimitive == ShaderRecompiler::RasterPrimitive::Rectangle);
             Require(replay.request.context.vertex->paClVsOutCntl == 0x00050a05u);
             Require(replay.request.target.float16DenormPreserve == preserve);
-            bytes[4] = 57u;
+            bytes[4] = 56u;
             InsertMeshBarycentricFlag(bytes);
             bytes.insert(bytes.begin() + 259u, {0u, 0u});
             InsertPixelDefaultsAfterFrontFace(bytes);
@@ -630,7 +632,7 @@ int VerifyVersion56Compatibility() {
                 if (fixture.pixel) main38.insert(main38.begin() + 259u, {0u, 0u});
                 if (fixture.pixel) InsertPixelDefaultsAfterFrontFace(main38, false, false);
                 auto upgraded = main38;
-                upgraded[4] = 57u;
+                upgraded[4] = 56u;
                 if (fixture.pixel) {
                     const auto tail = PixelTailDefaults(true, true);
                     upgraded.insert(upgraded.begin() + 317u, tail.begin(), tail.end());
@@ -665,7 +667,6 @@ int VerifyVersion56Compatibility() {
                         const auto version56 = DecodeBase64(SerializeVersion56(pointed));
                         Require(version56.size() > 21u && version56[4] == 56u);
                         auto version55 = version56;
-                        version55.pop_back();
                         version55[4] = 55u;
                         Require(version55.size() > 21u && version55[4] == 55u && version55[version55.size() - 1u] == 0u && version55[version55.size() - 2u] == 0u && version55[version55.size() - 3u] == 0u && version55[version55.size() - 4u] == 0u);
                         const auto replay55 = serializer.Deserialize(EncodeBase64(version55));
@@ -736,7 +737,7 @@ int VerifyVersion56Compatibility() {
                     const auto replay25 = serializer.Deserialize(EncodeBase64(main25));
                     Require(!fixture.pixel || (replay25.request.context.pixel->layerExported == layer && replay25.request.context.pixel->ditheredAlphaToCoverage == dither && replay25.request.context.pixel->reversedBlend == 0u));
                     Require(replay25.request.target.float16DenormPreserve == preserve && (!fixture.tessellation || replay25.request.graphics->tessellation->primitiveGroupSize == 37u));
-                    main25[4] = 57u;
+                    main25[4] = 56u;
                     InsertMeshBarycentricFlag(main25);
                     if (fixture.pixel) {
                         main25.insert(main25.begin() + 260u, 0u);
@@ -770,9 +771,8 @@ int VerifyVersion56Compatibility() {
         const auto replay = serializer.Deserialize(encoded);
         Require(replay.request.target.float16DenormPreserve == preserve && replay.request.target.float32FlushToZero == !preserve && replay.request.target.float32DenormPreserve == preserve && replay.request.target.largePixelFunctionLdsBuffer == !preserve && replay.request.target.pixelFunctionStorageDwords == request.target.pixelFunctionStorageDwords);
         auto bytes = DecodeBase64(encoded);
-        Require(bytes.size() >= 8u && bytes[4] == 57u && bytes[5] == 0u && bytes[6] == 0u && bytes[7] == 0u);
+        Require(bytes.size() >= 8u && bytes[4] == 56u && bytes[5] == 0u && bytes[6] == 0u && bytes[7] == 0u);
         auto version40 = bytes;
-        version40.pop_back();
         version40.pop_back();
         version40.pop_back();
         version40.pop_back();
@@ -863,7 +863,6 @@ int VerifyVersion56Compatibility() {
     version42.pop_back();
     version42.pop_back();
     version42.pop_back();
-    version42.pop_back();
     version42[4] = 42u;
     const auto replay42 = serializer.Deserialize(EncodeBase64(version42));
     Require(replay42.request.context.pixel.has_value() && replay42.request.context.pixel->sampleOrder == pixel.sampleOrder && replay42.request.context.pixel->targetMerges.empty());
@@ -886,7 +885,6 @@ int VerifyVersion56Compatibility() {
         version35.pop_back();
         version35.pop_back();
         version35.pop_back();
-        version35.pop_back();
         version35.resize(version35.size() - sizeof(std::uint32_t));
         version35.pop_back();
         version35.pop_back();
@@ -904,7 +902,8 @@ int VerifyVersion56Compatibility() {
         Require(replay35.request.target.spannedWaves == spanned && !replay35.request.target.float32FlushToZero);
         request.target.spannedAnySubgroup = spanned;
         auto version62 = DecodeBase64(serializer.Serialize(request));
-        Require(version62[4] == 63u && version62.back() == (spanned ? 1u : 0u));
+        Require(version62[4] == 64u && version62[version62.size() - 2u] == (spanned ? 1u : 0u) && version62.back() == 0u);
+        version62.pop_back();
         version62[4] = 62u;
         Require(serializer.Deserialize(EncodeBase64(version62)).request.target.spannedAnySubgroup == spanned);
         auto version57 = version62;
@@ -979,7 +978,6 @@ int VerifyVersion56Compatibility() {
     legacy43.pop_back();
     legacy43.pop_back();
     legacy43.resize(legacy43.size() - 4u);
-    legacy43.pop_back();
     legacy43.pop_back();
     legacy43.pop_back();
     legacy43.pop_back();
@@ -1066,7 +1064,6 @@ int VerifyVersion56Compatibility() {
     version46Dither.pop_back();
     version46Dither.pop_back();
     version46Dither.pop_back();
-    version46Dither.pop_back();
     version46Dither[4] = 46u;
     Require(rejectsDither(version46Dither));
     version46Dither[ditherByte] = 1u;
@@ -1081,9 +1078,9 @@ int VerifyVersion56Compatibility() {
         domain.target.tessellationEvaluationSubgroups = subgroups;
         const auto encoded = SerializeVersion56(domain);
         auto bytes = DecodeBase64(encoded);
-        Require(bytes.size() > 11u && bytes[4] == 57u && bytes[bytes.size() - 1u] == 0u && bytes[bytes.size() - 2u] == 0u && bytes[bytes.size() - 3u] == 0u && bytes[bytes.size() - 4u] == 0u && bytes[bytes.size() - 5u] == 0u && bytes[bytes.size() - 6u] == (subgroups ? 1u : 0u));
+        Require(bytes.size() > 11u && bytes[4] == 56u && bytes[bytes.size() - 1u] == 0u && bytes[bytes.size() - 2u] == 0u && bytes[bytes.size() - 3u] == 0u && bytes[bytes.size() - 4u] == 0u && bytes[bytes.size() - 5u] == (subgroups ? 1u : 0u));
         Require(serializer.Deserialize(encoded).request.target.tessellationEvaluationSubgroups == subgroups);
-        bytes.resize(bytes.size() - 3u);
+        bytes.resize(bytes.size() - 2u);
         bytes.pop_back();
         bytes[4] = 52u;
         Require(serializer.Deserialize(EncodeBase64(bytes)).request.target.tessellationEvaluationSubgroups == subgroups);
@@ -1102,7 +1099,7 @@ int VerifyVersion56Compatibility() {
         const auto replay49 = serializer.Deserialize(EncodeBase64(bytes));
         Require(replay49.request.shader.stage == ShaderRecompiler::ShaderStage::TessellationEvaluation && replay49.request.target.tessellationEvaluationSubgroups);
         auto upgraded = bytes;
-        upgraded[4] = 57u;
+        upgraded[4] = 56u;
         upgraded.push_back(1u);
         upgraded.push_back(0u);
         upgraded.push_back(0u);
@@ -1127,9 +1124,9 @@ int VerifyVersion56Compatibility() {
         const auto replay = serializer.Deserialize(hostFirstEncoded[hostFirst]);
         Require(replay.request.target.hostInterpolationFirst == hostFirst && SerializeVersion56(replay.request) == hostFirstEncoded[hostFirst]);
         auto bytes = DecodeBase64(hostFirstEncoded[hostFirst]);
-        Require(bytes[4] == 57u && bytes[bytes.size() - 4u] == 0u && bytes[bytes.size() - 5u] == (hostFirst ? 1u : 0u));
+        Require(bytes[4] == 56u && bytes[bytes.size() - 3u] == 0u && bytes[bytes.size() - 4u] == (hostFirst ? 1u : 0u));
         EraseTargetMergeVersion55Fields(bytes, ditherMerge);
-        bytes.resize(bytes.size() - 3u);
+        bytes.resize(bytes.size() - 2u);
         bytes.pop_back();
         bytes[4] = 52u;
         Require(serializer.Deserialize(EncodeBase64(bytes)).request.target.hostInterpolationFirst == hostFirst);
@@ -1160,10 +1157,10 @@ int VerifyVersion56Compatibility() {
             Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
             Require(SerializeVersion56(replay.request) == encoded);
             const auto bytes = DecodeBase64(encoded);
-        Require(bytes[4] == 57u && bytes[bytes.size() - 3u] == (widen ? 1u : 0u) && bytes[bytes.size() - 2u] == (narrow ? 1u : 0u));
-        auto version53 = bytes;
-        EraseTargetMergeVersion55Fields(version53, ditherMerge);
-        version53.resize(version53.size() - 3u);
+            Require(bytes[4] == 56u && bytes[bytes.size() - 2u] == (widen ? 1u : 0u) && bytes[bytes.size() - 1u] == (narrow ? 1u : 0u));
+            auto version53 = bytes;
+            EraseTargetMergeVersion55Fields(version53, ditherMerge);
+            version53.resize(version53.size() - 2u);
             version53[4] = 53u;
             const auto replay53 = serializer.Deserialize(EncodeBase64(version53));
             Require(!replay53.request.target.float16WidenNans && !replay53.request.target.float16NarrowNans);
@@ -1208,7 +1205,7 @@ void VerifySingleSampleVersion63() {
         request.context.pixel->ditheredAlphaSamples = 1u;
         request.context.pixel->singleSampleDither = mode;
         const auto bytes = DecodeBase64(serializer.Serialize(request));
-        Require(bytes[4] == 63u);
+        Require(bytes[4] == 64u);
         const auto replay = serializer.Deserialize(EncodeBase64(bytes));
         Require(replay.request.context.pixel->singleSampleDither == mode && replay.request.context.pixel->ditheredAlphaSamples == 1u);
         Require(replay.request.target.maxImageArrayLayers == 4097u && replay.request.target.fixedPushSlots && replay.request.target.spannedAnySubgroup);
@@ -1242,14 +1239,15 @@ void VerifySingleSampleVersion63() {
             request.context.pixel->singleSampleDither = ShaderRecompiler::SingleSampleDither::None;
             auto legacy = DecodeBase64(serializer.Serialize(request));
             legacy[4] = version;
-            if (version < 57u) legacy.resize(legacy.size() - 6u);
-            else if (version < 62u) legacy.pop_back();
+            if (version < 57u) legacy.resize(legacy.size() - 7u);
+            else if (version < 62u) { legacy.pop_back(); legacy.pop_back(); }
+            else legacy.pop_back();
             const auto replay = serializer.Deserialize(EncodeBase64(legacy));
             Require(replay.request.context.pixel->ditheredAlphaSamples == samples && replay.request.context.pixel->singleSampleDither == ShaderRecompiler::SingleSampleDither::None);
             Require(replay.request.target.maxImageArrayLayers == (version >= 57u ? 4097u : 0u) && replay.request.target.fixedPushSlots == (version >= 57u) && replay.request.target.spannedAnySubgroup == (version >= 62u));
         }
     }
-    for (const auto [version, dither] : {std::pair{63u, 5u}, std::pair{64u, 3u}}) {
+    for (const auto [version, dither] : {std::pair{63u, 5u}, std::pair{65u, 3u}}) {
         auto invalid = first;
         invalid[4] = version;
         invalid[ditherByte] = dither;

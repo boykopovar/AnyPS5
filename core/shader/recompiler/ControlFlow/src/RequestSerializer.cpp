@@ -981,8 +981,8 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteU32(request.target.maxImageArrayLayers);
     writer.WriteBool(request.target.fixedPushSlots);
     writer.WriteBool(request.target.spannedAnySubgroup);
-    if (request.graphics.has_value() && request.graphics->emulateBarycentrics) writer.WriteBool(true);
     writer.WriteBool(request.target.meshAsCompute);
+    if (request.graphics.has_value() && request.graphics->emulateBarycentrics) writer.WriteBool(true);
     return base64Encode(buffer);
 }
 
@@ -1067,12 +1067,12 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         result.request.target.fixedPushSlots = reader.ReadBool();
     }
     if (version >= 62u) result.request.target.spannedAnySubgroup = reader.ReadBool();
+    if (version >= 64u) result.request.target.meshAsCompute = reader.ReadBool();
     if (version >= 63u && reader.Remaining() != 0u) {
         if (!reader.ReadBool()) throw std::runtime_error("RequestSerializer: a written emulated barycentrics flag is clear");
         if (!result.request.graphics.has_value()) throw std::runtime_error("RequestSerializer: emulated barycentrics without a graphics context");
         result.request.graphics->emulateBarycentrics = true;
     }
-    if (version >= 64u) result.request.target.meshAsCompute = reader.ReadBool();
     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
     return result;
 }

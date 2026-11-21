@@ -2999,7 +2999,7 @@ std::shared_ptr<Buffer> recordMeshCompute(const Context& context, VkCommandBuffe
     std::memcpy(arguments.Bytes().data() + ShaderRecompiler::MeshOutputAddressDword * 4u, &address, sizeof(address));
     context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, output->Handle(), 0, ShaderRecompiler::MeshOutputHeaderBytes, 0u);
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
-    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.MeshCompute());
+    context.BindComputePipeline(commands, pipeline.MeshCompute());
     bind(VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.MeshComputeLayout());
     pushDrawConstants(pipeline, commands, state, draw, shaders, resources, pushBytes, pushStages, arguments.DeviceAddress(), !inputs.restartTable.empty(), inputs.meshLayerStride, true);
     if (indirect) context.Function<PFN_vkCmdDispatchIndirect>("vkCmdDispatchIndirect")(commands, arguments.Handle(), 0);
