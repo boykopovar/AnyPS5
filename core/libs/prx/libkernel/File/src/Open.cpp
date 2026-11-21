@@ -392,32 +392,49 @@ struct ClosedDescriptorRegistration {
 
 const ClosedDescriptorRegistration g_closedDescriptorRegistration;
 
+int KernelFileResult(int saved, int result) {
+    *__error_nid_postfix() = result < 0 ? (result & 0xffff) : saved;
+    return result;
+}
+
+std::int64_t KernelFileResult(int saved, std::int64_t result) {
+    *__error_nid_postfix() = result < 0 ? (static_cast<int>(result) & 0xffff) : saved;
+    return result;
+}
+
+template <typename TCall>
+auto RunKernelFileCall(TCall call) {
+    const int saved = *__error_nid_postfix();
+    return KernelFileResult(saved, call());
+}
+
 }
 
 extern "C" {
 
 int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
-    if (File::InvalidOpenFlags(flags)) return SCE_KERNEL_ERROR_EINVAL;
+    const int savedErrno = *__error_nid_postfix();
+    if (File::InvalidOpenFlags(flags)) return KernelFileResult(savedErrno, SCE_KERNEL_ERROR_EINVAL);
     std::string copy;
-    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceKernelError(error);
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return KernelFileResult(savedErrno, SceKernelError(error));
     path = copy.c_str();
-    if (copy.empty()) return SCE_KERNEL_ERROR_ENOENT;
+    if (copy.empty()) return KernelFileResult(savedErrno, SCE_KERNEL_ERROR_ENOENT);
     APS5_LOG_OUT("path=%s flags=0x%X nativeFlags=0x%X mode=0%o", path, flags, MapFlags(flags), mode);
     if (path != nullptr && File::IsRandomDevicePath(path)) {
         if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY) throw std::runtime_error(std::string(__func__) + ": writing to " + path + " is not implemented");
         const int fd = File::OpenRandomDevice();
-        if (fd < 0) return SceErrorFromErrno(errno);
+        if (fd < 0) return KernelFileResult(savedErrno, SceErrorFromErrno(errno));
         File::RememberDescriptor(fd, flags);
-        return fd;
+        return KernelFileResult(savedErrno, fd);
     }
     std::filesystem::path native;
     const bool module = (flags & (SCE_KERNEL_O_ACCMODE | SCE_KERNEL_O_CREAT)) == SCE_KERNEL_O_RDONLY;
     if (const int error = ResolvePathError_nid_no_patch(path, native, module, true)) {
-        const int result = SceKernelError(error);
+        const int result = KernelFileResult(savedErrno, SceKernelError(error));
         APS5_LOG_ERR("open failed path=%s resolveError=%d result=0x%08X", path != nullptr ? path : "<null>", error, static_cast<unsigned>(result));
         return result;
     }
-    const int result = OpenNative(native, flags, mode);
+    const int result = KernelFileResult(savedErrno, OpenNative(native, flags, mode));
     if (result < 0) {
         const auto resolved = native.u8string();
         APS5_LOG_ERR("open failed path=%s resolvedPath=%s result=0x%08X", path != nullptr ? path : "<null>", reinterpret_cast<const char*>(resolved.c_str()), static_cast<unsigned>(result));
@@ -434,23 +451,24 @@ int OpenInDirectory_nid_no_patch(int directory, const char* path, int flags, std
 }
 
 int APS5_VABI sceKernelClose(int d) {
-    if (File::IsHostStream(d)) return SCE_KERNEL_ERROR_EPERM;
+    const int savedErrno = *__error_nid_postfix();
+    if (File::IsHostStream(d)) return KernelFileResult(savedErrno, SCE_KERNEL_ERROR_EPERM);
     int socketError = 0;
-    if (KernelCloseSocket_nid_no_patch(d, &socketError)) return socketError == 0 ? 0 : SceKernelError(socketError);
-    if (GuestSockets::IsOpen(d)) return GuestSockets::Close(d) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
+    if (KernelCloseSocket_nid_no_patch(d, &socketError)) return KernelFileResult(savedErrno, socketError == 0 ? 0 : SceKernelError(socketError));
+    if (GuestSockets::IsOpen(d)) return KernelFileResult(savedErrno, GuestSockets::Close(d) == 0 ? 0 : SceKernelError(*__error_nid_postfix()));
     EqueueDescriptorClosed(d);
 #ifdef _WIN32
     const auto positioned = File::LockPositionedTransfer(d);
 #endif
     File::ForgetClosedDescriptor(d);
     if (NativeClose(d) != 0) {
-        if (errno == EBADF) return SCE_KERNEL_ERROR_EBADF;
+        if (errno == EBADF) return KernelFileResult(savedErrno, SCE_KERNEL_ERROR_EBADF);
         throw std::runtime_error(std::string(__func__) + ": close failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
     }
-    return 0;
+    return KernelFileResult(savedErrno, 0);
 }
 
-std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
+static std::int64_t KernelRead(int d, void* buf, std::size_t nbytes) {
     if (File::IsDirectoryDescriptor(d)) return SceErrorFromErrno(EISDIR);
     if (IsKqueueDescriptor_nid_no_patch(d)) return nbytes == 0 ? 0 : SCE_KERNEL_ERROR_EOPNOTSUPP;
     if (GuestSockets::IsOpen(d)) {
@@ -460,7 +478,7 @@ std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
     if (buf == nullptr) {
         if (nbytes != 0) return SceIoErrorFromErrno(DescriptorIsOpen_nid_no_patch(d) ? EFAULT : EBADF);
         char empty = 0;
-        return sceKernelRead(d, &empty, 0);
+        return KernelRead(d, &empty, 0);
     }
     const GuestArena::HostWrite destination(buf, nbytes);
     if (!destination.Open()) errno = EFAULT;
@@ -471,7 +489,11 @@ std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
     return static_cast<std::int64_t>(n);
 }
 
-std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes) {
+std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
+    return RunKernelFileCall([&] { return KernelRead(d, buf, nbytes); });
+}
+
+static std::int64_t KernelWrite(int d, const void* buf, std::size_t nbytes) {
     if (File::IsVirtualDirectoryDescriptor(d)) return SceErrorFromErrno(EISDIR);
     if (IsKqueueDescriptor_nid_no_patch(d)) return SCE_KERNEL_ERROR_EOPNOTSUPP;
     if (GuestSockets::IsOpen(d)) {
@@ -481,13 +503,17 @@ std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes
     if (buf == nullptr) {
         if (nbytes != 0) return SceIoErrorFromErrno(DescriptorIsOpen_nid_no_patch(d) ? EFAULT : EBADF);
         const char empty = 0;
-        return sceKernelWrite(d, &empty, 0);
+        return KernelWrite(d, &empty, 0);
     }
     const File::WriteSync sync(d);
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(buf, nbytes);
     auto n = NativeWrite(d, buf, nbytes);
     if (n < 0) return SceIoErrorFromErrno(errno);
     return static_cast<std::int64_t>(n);
+}
+
+std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes) {
+    return RunKernelFileCall([&] { return KernelWrite(d, buf, nbytes); });
 }
 
 static bool SeekOverflows(int d, std::int64_t offset, int whence) {
@@ -503,22 +529,23 @@ static bool SeekOverflows(int d, std::int64_t offset, int whence) {
 }
 
 std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence) {
-    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return SCE_KERNEL_ERROR_ESPIPE;
+    const int savedErrno = *__error_nid_postfix();
+    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return KernelFileResult(savedErrno, static_cast<std::int64_t>(SCE_KERNEL_ERROR_ESPIPE));
     if (whence < 0 || whence > 2) {
         throw std::invalid_argument(std::string(__func__) + ": invalid whence=" + std::to_string(whence));
     }
-    if (const auto archived = File::SeekArchivedFile(d, offset, whence)) return *archived < 0 ? SceIoErrorFromErrno(-*archived) : *archived;
+    if (const auto archived = File::SeekArchivedFile(d, offset, whence)) return KernelFileResult(savedErrno, *archived < 0 ? static_cast<std::int64_t>(SceIoErrorFromErrno(-*archived)) : *archived);
     if (const auto directory = File::SeekDirectoryDescriptor(d, offset, whence)) {
-        if (*directory < 0) return SceIoErrorFromErrno(errno);
-        return *directory;
+        if (*directory < 0) return KernelFileResult(savedErrno, static_cast<std::int64_t>(SceIoErrorFromErrno(errno)));
+        return KernelFileResult(savedErrno, *directory);
     }
     std::int64_t result = NativeLseek(d, offset, whence);
     if (result < 0) {
         const int error = errno;
-        if (error == EINVAL && offset > 0 && (whence == 1 || whence == 2) && SeekOverflows(d, offset, whence)) return SceIoErrorFromErrno(EOVERFLOW);
-        return SceIoErrorFromErrno(error);
+        if (error == EINVAL && offset > 0 && (whence == 1 || whence == 2) && SeekOverflows(d, offset, whence)) return KernelFileResult(savedErrno, static_cast<std::int64_t>(SceIoErrorFromErrno(EOVERFLOW)));
+        return KernelFileResult(savedErrno, static_cast<std::int64_t>(SceIoErrorFromErrno(error)));
     }
-    return result;
+    return KernelFileResult(savedErrno, result);
 }
 
 constexpr int GuestEfault = 14;
@@ -555,13 +582,15 @@ static int StatNative(const std::filesystem::path& native, bool directory, FileS
 }
 
 int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
-    std::string copy;
-    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceKernelError(error);
-    path = copy.c_str();
-    if (copy.empty()) return SceErrorFromErrno(2);
-    std::filesystem::path native;
-    if (const int error = ResolvePathError_nid_no_patch(path, native, true, true)) return SceKernelError(error);
-    return StatNative(native, std::string_view(path).back() == '/', sb);
+    return RunKernelFileCall([&] {
+        std::string copy;
+        if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceKernelError(error);
+        path = copy.c_str();
+        if (copy.empty()) return SceErrorFromErrno(2);
+        std::filesystem::path native;
+        if (const int error = ResolvePathError_nid_no_patch(path, native, true, true)) return SceKernelError(error);
+        return StatNative(native, std::string_view(path).back() == '/', sb);
+    });
 }
 
 int StatInDirectory_nid_no_patch(int directory, const char* path, FileStat* sb, bool follow) {
@@ -577,7 +606,7 @@ int StatInDirectory_nid_no_patch(int directory, const char* path, FileStat* sb, 
     return 0;
 }
 
-int APS5_VABI sceKernelUnlink(const char* path) {
+static int KernelUnlink(const char* path) {
     std::string copy;
     if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceKernelError(error);
     path = copy.c_str();
@@ -636,6 +665,10 @@ int APS5_VABI sceKernelUnlink(const char* path) {
     }
     RecordWrittenPath_nid_no_patch(native);
     return 0;
+}
+
+int APS5_VABI sceKernelUnlink(const char* path) {
+    return RunKernelFileCall([&] { return KernelUnlink(path); });
 }
 
 int APS5_VABI sceKernelFcntl(int d, int command, ...) {
