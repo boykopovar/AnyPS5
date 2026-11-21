@@ -18,7 +18,7 @@ public:
             for (;;) {
                 const auto end = module.find('/', start);
                 const auto name = module.substr(start, end == std::string::npos ? end : end - start);
-                node = &node->children[name];
+                if (!name.empty()) node = &node->children[name];
                 if (end == std::string::npos) break;
                 start = end + 1;
             }
