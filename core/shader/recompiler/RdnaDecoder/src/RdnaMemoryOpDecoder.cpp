@@ -67,6 +67,15 @@ constexpr MemoryOpcodeInfo smemOpcodes[] = {
     {0x0au, RdnaOpcode::SBufferLoadDwordx4, 4, 32, false, false, false},
     {0x0bu, RdnaOpcode::SBufferLoadDwordx8, 8, 32, false, false, false},
     {0x0cu, RdnaOpcode::SBufferLoadDwordx16, 16, 32, false, false, false},
+    {0x10u, RdnaOpcode::SStoreDword, 1, 32, false, false, false},
+    {0x11u, RdnaOpcode::SStoreDwordx2, 2, 32, false, false, false},
+    {0x12u, RdnaOpcode::SStoreDwordx4, 4, 32, false, false, false},
+    {0x15u, RdnaOpcode::SScratchStoreDword, 1, 32, false, false, false},
+    {0x16u, RdnaOpcode::SScratchStoreDwordx2, 2, 32, false, false, false},
+    {0x17u, RdnaOpcode::SScratchStoreDwordx4, 4, 32, false, false, false},
+    {0x18u, RdnaOpcode::SBufferStoreDword, 1, 32, false, false, false},
+    {0x19u, RdnaOpcode::SBufferStoreDwordx2, 2, 32, false, false, false},
+    {0x1au, RdnaOpcode::SBufferStoreDwordx4, 4, 32, false, false, false},
 };
 
 constexpr MemoryOpcodeInfo mubufOpcodes[] = {
@@ -785,9 +794,26 @@ RdnaInstruction DecodeRdnaSmem(std::uint32_t programCounter, std::span<const std
     applyMemoryInfo(instruction, info);
     setRawWords(instruction, code, wordIndex, 2u);
 
-    instruction.destination = scalarDestination(sdst);
+    const bool store = (opcode >= 0x10u && opcode <= 0x12u) ||
+                       (opcode >= 0x15u && opcode <= 0x1au);
+    const bool bufferStore = opcode >= 0x18u && opcode <= 0x1au;
+    if (store) {
+        if (sdst <= 105u && sdst + info.dataDwords - 1u > 105u) {
+            throw std::runtime_error("SMEM store data register range overflow");
+        }
+        instruction.source2 = scalarDestination(sdst);
+    } else {
+        instruction.destination = scalarDestination(sdst);
+    }
+
+    if (bufferStore) {
+        const auto baseReg = sbase * 2u;
+        if (baseReg % 4u != 0u) {
+            throw std::runtime_error("SMEM buffer store descriptor is not 4-SGPR aligned");
+        }
+        instruction.source0 = scalarDescriptorBase(baseReg, 4u, "SMEM buffer store descriptor register range overflow");
     // The base pair may also be VCC (s106:107), which compilers use as a scratch address register.
-    if (sbase * 2u == 106u) {
+    } else if (sbase * 2u == 106u) {
         RdnaOperand vcc{};
         vcc.kind = RdnaOperandKind::VccLo;
         instruction.source0 = vcc;
@@ -799,7 +825,7 @@ RdnaInstruction DecodeRdnaSmem(std::uint32_t programCounter, std::span<const std
         instruction.source0 = scalarDescriptorBase(sbase * 2u, 2u, "SMEM base register range overflow");
     }
     instruction.source1 = scalarSource(soffsetCode);
-    instruction.sourceCount = 2;
+    instruction.sourceCount = store ? 3u : 2u;
     return instruction;
 }
 
