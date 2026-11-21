@@ -63,6 +63,24 @@ int main() {
         Require(errno == 71, "unmapped input text buffer check preserves errno");
         Require(sceImeDialogGetStatus() == StatusNone, "an unreadable input text buffer leaves no dialog open");
     }
+    {
+        char16_t text[8]{};
+        Param param{};
+        param.max_text_length = 8;
+        param.input_text_buffer = text;
+        Require(sceImeDialogInit(&param, nullptr) == 0, "a writable buffer opens the dialog");
+        for (const std::uintptr_t address : {std::uintptr_t{1}, ~std::uintptr_t{0xfff}}) {
+            errno = 71;
+            Require(sceImeDialogGetCurrentStarState(static_cast<std::int64_t>(address)) == ErrorInvalidAddress, "an unmapped star state pointer returns ErrorInvalidAddress");
+            Require(errno == 71, "unmapped star state check preserves errno");
+        }
+        std::uint32_t star = 0xa5a5a5a5u;
+        errno = 71;
+        Require(sceImeDialogGetCurrentStarState(static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(&star))) == 0, "a writable star state pointer succeeds");
+        Require(errno == 71, "writing the star state preserves errno");
+        Require(star == 0, "the star state is written as 0");
+        Require(sceImeDialogTerm() == 0, "the star state dialog closes");
+    }
 #ifdef __linux__
     {
         void* page = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
