@@ -98,6 +98,19 @@ int APS5_VABI SSL_CTX_clear_chain_certs_nid_postfix(LibreSslCtx* context) {
         if (stackCopy.num < 0 || stackCopy.numAlloc < 0 || stackCopy.num > stackCopy.numAlloc || (stackCopy.num > 0 && !stackCopy.data)) {
             return 0;
         }
+        void* nullExtra = nullptr;
+        savedErrno = errno;
+        const bool written = GuestCopyOut_nid_no_patch(&context->extraCerts, &nullExtra, sizeof(nullExtra));
+        errno = savedErrno;
+        if (!written) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+
+        struct StackGuard {
+            LibreSslStack* ptr;
+            ~StackGuard() {
+                if (ptr) sk_free_nid_postfix(ptr);
+            }
+        } guard{stack};
+
         if (stackCopy.data && stackCopy.num > 0) {
             for (int index = 0; index < stackCopy.num; ++index) {
                 char* rawCert = nullptr;
@@ -108,12 +121,6 @@ int APS5_VABI SSL_CTX_clear_chain_certs_nid_postfix(LibreSslCtx* context) {
                 ReleaseCertificate(rawCert);
             }
         }
-        sk_free_nid_postfix(stack);
-        void* nullExtra = nullptr;
-        savedErrno = errno;
-        const bool written = GuestCopyOut_nid_no_patch(&context->extraCerts, &nullExtra, sizeof(nullExtra));
-        errno = savedErrno;
-        if (!written) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
     return 1;
 }

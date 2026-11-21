@@ -347,6 +347,38 @@ void TestNonpositiveReferences() {
     Require(activeAllocations == baseline);
 }
 
+void TestClearDetachesBeforeRelease() {
+    LibreSslCtx context{};
+    const auto baseline = activeAllocations;
+
+    auto* cert1 = static_cast<LibreSsl3X509*>(Allocate_nid_no_patch(sizeof(LibreSsl3X509)));
+    cert1->certInfo = nullptr;
+    cert1->sigAlg = nullptr;
+    cert1->signature = nullptr;
+    cert1->valid = 1;
+    cert1->references = 1;
+
+    Require(SSL_CTX_add0_chain_cert_nid_postfix(&context, cert1) == 1);
+    auto* stack = static_cast<LibreSslStack*>(context.extraCerts);
+    Require(stack != nullptr);
+
+    char* badCert = reinterpret_cast<char*>(static_cast<std::uintptr_t>(0xDEADBEEF));
+    stack->data[0] = badCert;
+
+    bool threw = false;
+    try {
+        SSL_CTX_clear_chain_certs_nid_postfix(&context);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(context.extraCerts == nullptr);
+    Require(SSL_CTX_clear_chain_certs_nid_postfix(&context) == 1);
+    Require(context.extraCerts == nullptr);
+    Free_nid_no_patch(cert1);
+    Require(activeAllocations == baseline);
+}
+
 void TestAllocationTracking() {
     Require(activeAllocations == 0);
 }
@@ -372,6 +404,7 @@ int main() {
     TestReleaseWithOwnedSubAllocations();
     TestVerifyModeLayoutIndependence();
     TestNonpositiveReferences();
+    TestClearDetachesBeforeRelease();
     TestAllocationTracking();
 
     std::puts("libSceLibreSsl3 SSL_CTX chain certs tests passed");
