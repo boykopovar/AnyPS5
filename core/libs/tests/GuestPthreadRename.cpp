@@ -97,7 +97,7 @@ static void CheckUnusableNames(Pthread thread) {
         std::memset(memory, 'a', Page);
         Require(pthread_rename_np_nid_postfix(thread, name) == 14);
         Require(scePthreadRename(thread, name) == SCE_KERNEL_ERROR_EFAULT);
-        Require(pthread_rename_np_nid_postfix(nullptr, name) == 22);
+        Require(pthread_rename_np_nid_postfix(nullptr, name) == 3);
         Require(*__error_nid_postfix() == savedError);
         CheckStoredName(thread, kept);
     }
@@ -112,11 +112,16 @@ static void CheckUnusableNames(Pthread thread) {
     Require(scePthreadRename(thread, fits) == 0);
     CheckStoredName(thread, std::string(31, 'a'));
     Require(scePthreadRename(reinterpret_cast<Pthread>(0x10), kept.c_str()) == SCE_KERNEL_ERROR_ESRCH);
-    Require(scePthreadRename(thread, nullptr) == SCE_KERNEL_ERROR_EINVAL);
-    Require(pthread_rename_np_nid_postfix(thread, nullptr) == 22);
+    Require(scePthreadRename(nullptr, kept.c_str()) == SCE_KERNEL_ERROR_ESRCH);
+    Require(pthread_rename_np_nid_postfix(nullptr, kept.c_str()) == 3);
+    Require(pthread_rename_np_nid_postfix(nullptr, nullptr) == 3);
     std::memset(memory, 'b', Page);
     Require(scePthreadRename(thread, memory) == SCE_KERNEL_ERROR_ENAMETOOLONG);
     CheckStoredName(thread, std::string(31, 'a'));
+    Require(scePthreadRename(thread, nullptr) == 0);
+    CheckStoredName(thread, "");
+    Require(pthread_rename_np_nid_postfix(thread, nullptr) == 0);
+    CheckStoredName(thread, "");
     Require(mprotect_nid_postfix(end, Page, 3) == 0);
     Require(munmap_nid_postfix(memory, 2 * Page) == 0);
     Require(pthread_rename_np_nid_postfix(thread, kept.c_str()) == 0);
