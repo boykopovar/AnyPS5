@@ -566,6 +566,7 @@ int main() {
             };
             alignas(256) const std::array<std::uint32_t, 4> record{3u, 1u, 0u, 0u};
             Draw(*device, PlainPixelCode, plain, replace(0xeeu));
+            const auto singleDraws = LastDraws;
             Draw(*device, fullscreen, 0x45u, replace(), 0u, 0u, false, [](AgcDriver::Graphics::State& state) {
                 state.depthTest = true;
                 state.depthWrite = true;
@@ -576,6 +577,7 @@ int main() {
                 draw.indirect->instanceRule = IndirectDraw::Rule::Constant;
             });
             Check(even, "an indirect fullscreen triangle with depth, kill and an unbounded operation-value export");
+            Require(LastDraws == singleDraws + (bitPasses ? 9u : 255u), "an indirect unbounded replace export recorded " + std::to_string(LastDraws + 1u - singleDraws) + " passes");
             Draw(*device, PlainPixelCode, plain, equal(4u));
             Check([](std::uint32_t x, std::uint32_t) { return x == 4u; }, "each kept column replaces its own operation value");
             Draw(*device, PlainPixelCode, plain, equal(0xeeu));
