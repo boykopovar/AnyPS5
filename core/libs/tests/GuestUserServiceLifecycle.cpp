@@ -380,6 +380,7 @@ int main() {
 
     Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
     Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_ERROR_ALREADY_INITIALIZED);
+    Require(sceUserServiceGetLoginUserIdList(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     UserServiceLoginUserIdList list{};
     Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
     Require(list.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
