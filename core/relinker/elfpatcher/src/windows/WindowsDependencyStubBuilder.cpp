@@ -647,7 +647,13 @@ WindowsDependencyStub WindowsDependencyStubBuilder::Build(WindowsStubEmitter& co
     a.Test(Dx);
     a.Jump("walkDone", 0x84);
     a.Test(Si);
+    a.Jump("walkLookupTable", 0x85);
+    a.Load(Si, Ax, 16, 4);
+    a.Test(Si);
     a.Jump("invalid", 0x84);
+    a.AddValue(Bp, 20);
+    a.Jump("descriptor");
+    a.Mark("walkLookupTable");
     a.Mov(Cx, Bx);
     a.Call("string");
     a.Mov(Cx, Ax);
