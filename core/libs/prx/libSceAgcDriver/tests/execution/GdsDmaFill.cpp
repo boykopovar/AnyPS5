@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -215,10 +216,10 @@ int main() {
         }
 
         {
-            std::atomic<bool> release{false};
+            const auto release = std::make_shared<std::atomic<bool>>(false);
             const auto address = Address(held);
-            DrawPipeline::Queue0().Enqueue([&release] {
-                while (!release.load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            DrawPipeline::Queue0().Enqueue([release] {
+                while (!release->load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }, {{address, address + 16}});
             const auto drainsBefore = DrawPipeline::DrainRequestsByOpcode(0x50);
             words.clear();
@@ -229,7 +230,7 @@ int main() {
             while (!DrawPipeline::Queue0().Overlaps(gds, FillBytes) && DrawPipeline::DrainRequestsByOpcode(0x50) == drainsBefore && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
             const bool queued = DrawPipeline::Queue0().Overlaps(gds, FillBytes);
             const auto drains = DrawPipeline::DrainRequestsByOpcode(0x50);
-            release.store(true, std::memory_order_release);
+            release->store(true, std::memory_order_release);
             check(drains == drainsBefore, "an immediate DMA_DATA fill of GDS drained the draw pipeline");
             check(queued, "an immediate DMA_DATA fill of GDS was not queued behind the held draw pipeline item");
         }
