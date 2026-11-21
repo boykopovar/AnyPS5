@@ -6,6 +6,7 @@
 #include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 static constexpr int SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN = static_cast<int>(0x80552907);
 static constexpr std::size_t ReferenceCountOffset = 0;
@@ -5076,7 +5077,9 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6Stri
 }
 
 CommonString* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEdeEv(const CommonIterator* self) {
-    return static_cast<CommonString*>(self->element);
+    CommonIterator value;
+    if (!GuestPtr<CommonIterator>(self).CopyIn(value)) return nullptr;
+    return static_cast<CommonString*>(value.element);
 }
 
 // --------------------------------------------------------------------------
@@ -5121,7 +5124,8 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V124G
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V118GetFriendsResponseEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    const IntrusivePtr empty{};
+    GuestPtr<IntrusivePtr>(self).CopyOut(empty);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V115BasicProfileApi28ParameterToGetPublicProfiles10initializeEPNS1_6Common10LibContextEPKc() {
@@ -5147,8 +5151,10 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11
 
 int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V113BasicPresence12setAccountIdERKm(void* self, const std::uint64_t* accountId) {
     auto* object = static_cast<std::uint8_t*>(self);
-    *reinterpret_cast<std::uint64_t*>(object + 0x10) = *accountId;
-    object[0x18] = 1;
+    std::uint64_t value;
+    if (!GuestPtr<std::uint64_t>(accountId).CopyIn(value)) return ParameterInvalidArgument;
+    const std::uint8_t isSet = 1;
+    if (!GuestPtr<std::uint64_t>(object + 0x10).CopyOut(value) || !GuestPtr<std::uint8_t>(object + 0x18).CopyOut(isSet)) return ParameterInvalidArgument;
     return 0;
 }
 
@@ -5181,13 +5187,16 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_1
 
 int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V113BasicPresence12setInContextERKb(void* self, const bool* inContext) {
     auto* object = static_cast<std::uint8_t*>(self);
-    object[0x21] = *inContext ? 1 : 0;
-    object[0x22] = 1;
+    bool flag;
+    if (!GuestPtr<bool>(inContext).CopyIn(flag)) return ParameterInvalidArgument;
+    const std::uint8_t fields[2] = {static_cast<std::uint8_t>(flag ? 1 : 0), 1};
+    if (!GuestPtr<std::uint8_t>(object + 0x21).CopyOut(fields, 2)) return ParameterInvalidArgument;
     return 0;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V112BasicProfileEEEEEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    const IntrusivePtr empty{};
+    GuestPtr<IntrusivePtr>(self).CopyOut(empty);
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() {
@@ -5212,9 +5221,13 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V118G
 
 int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V112BasicProfile11setOnlineIdERK13SceNpOnlineId(void* self, const void* onlineId) {
     auto* object = static_cast<std::uint8_t*>(self);
-    std::memcpy(object + 0x10, onlineId, 0x10);
-    *reinterpret_cast<std::uint32_t*>(object + 0x20) = *reinterpret_cast<const std::uint32_t*>(static_cast<const std::uint8_t*>(onlineId) + 0x10);
-    object[0x24] = 1;
+    std::uint8_t id[0x14];
+    if (!GuestBytes(onlineId).CopyIn(id, sizeof(id))) return ParameterInvalidArgument;
+    const std::uint8_t isSet = 1;
+    if (!GuestBytes(object + 0x10).CopyOut(id, 0x10) || !GuestBytes(object + 0x20).CopyOut(id + 0x10, 4) ||
+        !GuestPtr<std::uint8_t>(object + 0x24).CopyOut(isSet)) {
+        return ParameterInvalidArgument;
+    }
     return 0;
 }
 
@@ -5223,7 +5236,9 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_1
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V113BasicPresenceEEEEEE3getEv(const IntrusivePtr* self) {
-    return self->object;
+    IntrusivePtr value;
+    if (!GuestPtr<IntrusivePtr>(self).CopyIn(value)) return nullptr;
+    return value.object;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEED1Ev(IntrusivePtr* self) {
@@ -5235,7 +5250,8 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile17getPersonal
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V125GetBasicPresencesResponseEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    const IntrusivePtr empty{};
+    GuestPtr<IntrusivePtr>(self).CopyOut(empty);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEEENS4_INS2_18ResponseHeaderBaseEEEEC1ERKSB_(void* self) {
@@ -5244,13 +5260,16 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_30
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V112BasicProfileEEEEEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    IntrusivePtr value;
+    if (!GuestPtr<IntrusivePtr>(self).CopyIn(value)) return nullptr;
+    return value.object;
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile11getOnlineIdEv(void* out, const void* self) {
-    std::memcpy(out, static_cast<const std::uint8_t*>(self) + 0x10, 0x10);
-    *reinterpret_cast<std::uint32_t*>(static_cast<std::uint8_t*>(out) + 0x10) =
-        *reinterpret_cast<const std::uint32_t*>(static_cast<const std::uint8_t*>(self) + 0x20);
+    std::uint8_t id[0x14];
+    const auto* object = static_cast<const std::uint8_t*>(self);
+    if (!GuestBytes(object + 0x10).CopyIn(id, 0x10) || !GuestBytes(object + 0x20).CopyIn(id + 0x10, 4)) return nullptr;
+    if (!GuestBytes(out).CopyOut(id, sizeof(id))) return nullptr;
     return out;
 }
 
@@ -5279,7 +5298,9 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_1
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V114PersonalDetailEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    IntrusivePtr value;
+    if (!GuestPtr<IntrusivePtr>(self).CopyIn(value)) return nullptr;
+    return value.object;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEEC1ERKS7_(IntrusivePtr* self, const IntrusivePtr* source) {
@@ -5308,7 +5329,8 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V113B
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V125GetPublicProfilesResponseEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    const IntrusivePtr empty{};
+    GuestPtr<IntrusivePtr>(self).CopyOut(empty);
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile23getIsOfficiallyVerifiedEv(const void* self) {
@@ -5316,7 +5338,9 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile23getIsOfficia
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V112BasicProfileEEEEEE3getEv(const IntrusivePtr* self) {
-    return self->object;
+    IntrusivePtr value;
+    if (!GuestPtr<IntrusivePtr>(self).CopyIn(value)) return nullptr;
+    return value.object;
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERS8_() {
@@ -5328,11 +5352,13 @@ int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V115BasicProfileApi17getPublicPr
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V113BasicPresenceEEEEEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    const IntrusivePtr empty{};
+    GuestPtr<IntrusivePtr>(self).CopyOut(empty);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    const IntrusivePtr empty{};
+    GuestPtr<IntrusivePtr>(self).CopyOut(empty);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V112BasicProfileEEEEEEaSERKSA_(IntrusivePtr* self, const IntrusivePtr* source) {
@@ -5344,7 +5370,9 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_1
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V125GetPublicProfilesResponseEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    IntrusivePtr value;
+    if (!GuestPtr<IntrusivePtr>(self).CopyIn(value)) return nullptr;
+    return value.object;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V125GetPublicProfilesResponseEED1Ev(IntrusivePtr* self) {
@@ -5384,13 +5412,16 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V124GetBlockingUsersResponseEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    const IntrusivePtr empty{};
+    GuestPtr<IntrusivePtr>(self).CopyOut(empty);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V112BasicProfile23setIsOfficiallyVerifiedERKb(void* self, const bool* verified) {
     auto* object = static_cast<std::uint8_t*>(self);
-    object[0xa9] = *verified ? 1 : 0;
-    object[0xaa] = 1;
+    bool flag;
+    if (!GuestPtr<bool>(verified).CopyIn(flag)) return ParameterInvalidArgument;
+    const std::uint8_t fields[2] = {static_cast<std::uint8_t>(flag ? 1 : 0), 1};
+    if (!GuestPtr<std::uint8_t>(object + 0xa9).CopyOut(fields, 2)) return ParameterInvalidArgument;
     return 0;
 }
 
@@ -5445,7 +5476,9 @@ std::int64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12Intru
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    IntrusivePtr value;
+    if (!GuestPtr<IntrusivePtr>(self).CopyIn(value)) return nullptr;
+    return value.object;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsers9setoffsetEi() {
@@ -5458,8 +5491,10 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11User
 
 int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V113BasicPresence15setOnlineStatusERKNS3_12OnlineStatusE(void* self, const std::uint32_t* status) {
     auto* object = static_cast<std::uint8_t*>(self);
-    *reinterpret_cast<std::uint32_t*>(object + 0x1c) = *status;
-    object[0x20] = 1;
+    std::uint32_t value;
+    if (!GuestPtr<std::uint32_t>(status).CopyIn(value)) return ParameterInvalidArgument;
+    const std::uint8_t isSet = 1;
+    if (!GuestPtr<std::uint32_t>(object + 0x1c).CopyOut(value) || !GuestPtr<std::uint8_t>(object + 0x20).CopyOut(isSet)) return ParameterInvalidArgument;
     return 0;
 }
 
@@ -5468,7 +5503,9 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEEdeEv(const void* self) {
-    return static_cast<const CommonIterator*>(self)->element;
+    CommonIterator value;
+    if (!GuestPtr<CommonIterator>(self).CopyIn(value)) return nullptr;
+    return value.element;
 }
 
 void* APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEEENS4_INS2_18ResponseHeaderBaseEEEEaSERKSB_(void* self, const void* source) {
@@ -5862,7 +5899,8 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_15DefaultResponseENS2
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V121PlayerForTicketCreateEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    const IntrusivePtr empty{};
+    GuestPtr<IntrusivePtr>(self).CopyOut(empty);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V121PlayerForTicketCreateEED1Ev(IntrusivePtr* self) {
@@ -5874,7 +5912,8 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V123S
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V123SubmitTicketRequestBodyEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    const IntrusivePtr empty{};
+    GuestPtr<IntrusivePtr>(self).CopyOut(empty);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V123SubmitTicketRequestBodyEED1Ev(IntrusivePtr* self) {
@@ -5882,7 +5921,8 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V123S
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V19AttributeEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    const IntrusivePtr empty{};
+    GuestPtr<IntrusivePtr>(self).CopyOut(empty);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V19AttributeEED1Ev(IntrusivePtr* self) {
@@ -5898,7 +5938,8 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V1
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V118RequestGameSessionEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    const IntrusivePtr empty{};
+    GuestPtr<IntrusivePtr>(self).CopyOut(empty);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V118RequestGameSessionEED1Ev(IntrusivePtr* self) {
