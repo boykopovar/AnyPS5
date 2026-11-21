@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 #include <cstdio>
@@ -104,11 +105,14 @@ void TestExtract() {
     Require(libSceJpegParserUnknown_v3aOHSEXfjo_nid_no_patch(config.data()) == 0, "initialize");
     Require(allocations.back() == 0x168, "context allocation size");
     Require(libSceJpegParserUnknown_v3aOHSEXfjo_nid_no_patch(nullptr) == static_cast<int>(0x809D4014u), "double initialize");
-    const std::string longPath = "/jpeg_thumbnail_test.jpg";
-    const std::string shortPath = "/thumb.jpg";
-    for (bool little : {true, false}) {
-        const std::string& name = little ? shortPath : longPath;
-        const auto host = std::filesystem::path(name.substr(1));
+    const std::array fixtures{
+        std::pair{true, std::u8string_view(u8"thumb.jpg")},
+        std::pair{false, std::u8string_view(u8"jpeg_thumbnail_test.jpg")},
+        std::pair{true, std::u8string_view(u8"\u5199\u771f-\u00e9.jpg")},
+    };
+    for (const auto& [little, filename] : fixtures) {
+        const auto host = std::filesystem::path(filename);
+        const std::string name = "/" + std::string(filename.begin(), filename.end());
         GuestString path{};
         path.size = name.size();
         path.capacity = std::max<std::size_t>(15, name.size());
