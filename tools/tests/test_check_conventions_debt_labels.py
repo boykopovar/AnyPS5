@@ -58,6 +58,41 @@ class DebtLabelTests(unittest.TestCase):
         self.assertEqual(check.findings, [("debt-labels", DEBT, 10, "nightly"), ("debt-labels", DEBT, 11, "consle")])
         self.assertEqual(status, 0)
 
+    def test_crlf_line_endings_do_not_change_the_findings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def git(*args):
+                return subprocess.run(["git", "-c", f"safe.directory={root}", "-c", "user.name=Conventions Test",
+                                       "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", *args],
+                                      cwd=root, capture_output=True, check=True, encoding="utf-8").stdout
+
+            def write(text):
+                (root / DEBT).parent.mkdir(parents=True, exist_ok=True)
+                (root / DEBT).write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+
+            exact = "- [sceExact](../../../core/libs/prx/libSceExample/Export.cpp) (libSceExample) - "
+            exact += "x" * (check_conventions.DEBT_ENTRY_LIMIT - len(exact))
+            git("init", "-q")
+            git("config", "core.autocrlf", "false")
+            write(f"# libSceExample technical debt\n\n### Functional\n\n{SHORT}\n")
+            git("add", ".")
+            git("commit", "-qm", "docs: add base")
+            write(f"# libSceExample technical debt\n\n### Functional\n\n{SHORT}\n{SHORT}. Labels: console, tested.\n{LABELLED}\n{exact}\n{exact}x\n")
+            git("commit", "-qam", "docs(debt): label an entry")
+            self.assertIn(b"tested.\r\n", subprocess.run(["git", "show", f"HEAD:{DEBT}"], cwd=root, capture_output=True, check=True).stdout)
+
+            previous = Path.cwd()
+            try:
+                os.chdir(root)
+                check = Check("HEAD~1", "HEAD")
+                check.debt_entries()
+            finally:
+                os.chdir(previous)
+
+        self.assertEqual(check.findings, [("debt-labels", DEBT, 7, "nightly"),
+                                          ("debt-length", DEBT, 9, f"{check_conventions.DEBT_ENTRY_LIMIT + 1} characters")])
+
 
 if __name__ == "__main__":
     unittest.main()
