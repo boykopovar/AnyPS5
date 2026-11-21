@@ -386,8 +386,12 @@ int APS5_VABI sceKernelMapFlexibleMemory(void** addr_in_out, size_t len, int pro
 int APS5_VABI sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment, const char* name) {
  if (UndefinedProtection(prot)) return SCE_KERNEL_ERROR_EINVAL;
  const int result = DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
- if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
- if (result == 0) NameMappedRange(*addr, len, name);
+ if (result != 0) return result;
+ _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
+ if (!name) return SCE_KERNEL_ERROR_EFAULT;
+ constexpr std::size_t NameLimit = 32;
+ if (std::string copy; CopyRangeName(name, NameLimit, copy) == 63) return SCE_KERNEL_ERROR_ENAMETOOLONG;
+ NameMappedRange(*addr, len, name);
  return result;
 }
 
