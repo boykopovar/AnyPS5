@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <source_location>
 #include <stdexcept>
 
 static constexpr int SYSTEM_USER = 255;
@@ -20,7 +21,13 @@ static constexpr int RESOURCE_BUSY = static_cast<int>(0x80290009);
 static constexpr int UNSUPPORTED_OUTPUT_MODE = static_cast<int>(0x80290016);
 static constexpr int UNKNOWN_OUTPUT_MODE = static_cast<int>(0x8029001E);
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, const std::source_location location = std::source_location::current()) {
+    if (!value) {
+        std::fprintf(stderr, "Check failed at %s:%u in %s\n", location.file_name(), location.line(), location.function_name());
+        std::fflush(stderr);
+        std::abort();
+    }
+}
 
 int main() {
     VideoOutTestEnvironment environment;
@@ -41,6 +48,10 @@ int main() {
     Require(sceVideoOutOpen(SYSTEM_USER, HMD2_MAIN_BUS, 0, zeroedOpenParam.data()) == INVALID_VALUE);
     Require(sceVideoOutOpen(0, HMD2_MAIN_BUS, 0, nullptr) == INVALID_VALUE);
 
+    for (int badHandle : {-1000, -100, -1, 0, 4, 10, 100, 9999, 0x7FFFFFFF}) {
+        Require(sceVideoOutClose(badHandle) == INVALID_HANDLE);
+    }
+
     int handle = 0;
     try {
         for (int unopened : {-1, 0, 1, 0x7FFFFFFF}) {
@@ -57,6 +68,7 @@ int main() {
     }
     Require(handle > 0);
     Require(sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, nullptr) == RESOURCE_BUSY);
+    Require(sceVideoOutOpen(0, MAIN_BUS, 0, nullptr) == RESOURCE_BUSY);
     Require(sceVideoOutIsOutputSupported(handle, 1, &options, nullptr, 0) == 1);
     Require(sceVideoOutIsOutputSupported(handle, 1, nullptr, nullptr, 0) == 1);
     const int highFrameRate = sceVideoOutIsOutputSupported(handle, 15, &options, nullptr, 0);
@@ -111,7 +123,53 @@ int main() {
     Require(sceVideoOutConfigureOutput(handle, 1, nullptr, nullptr, 0) == 0);
 
     Require(sceVideoOutClose(handle) == 0);
+    Require(sceVideoOutClose(handle) == INVALID_HANDLE);
     Require(sceVideoOutIsOutputSupported(handle, 1, &options, nullptr, 0) == INVALID_HANDLE);
     Require(sceVideoOutConfigureOutput(handle, 1, &options, nullptr, 0) == INVALID_HANDLE);
+
+    const int userZero = sceVideoOutOpen(0, MAIN_BUS, 0, nullptr);
+    Require(userZero > 0);
+    Require(sceVideoOutClose(userZero) == 0);
+
+    struct VideoOutOpenParam {
+        std::uint32_t firstWord = 16;
+        std::uint32_t setPriority = 0;
+        std::int32_t priority = 0;
+        std::uint32_t setAffinity = 0;
+        std::uint64_t affinity = 0;
+    };
+    static_assert(offsetof(VideoOutOpenParam, affinity) == 16);
+
+    VideoOutOpenParam p1{};
+    p1.setPriority = 1;
+    p1.priority = 256;
+    const int h1 = sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, &p1);
+    Require(h1 > 0);
+    Require(sceVideoOutClose(h1) == 0);
+
+    VideoOutOpenParam p2{};
+    p2.setPriority = 1;
+    p2.priority = 767;
+    const int h2 = sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, &p2);
+    Require(h2 > 0);
+    Require(sceVideoOutClose(h2) == 0);
+
+    VideoOutOpenParam p3{};
+    p3.setAffinity = 1;
+    p3.affinity = 0x1FFF;
+    const int h3 = sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, &p3);
+    Require(h3 > 0);
+    Require(sceVideoOutClose(h3) == 0);
+
+    VideoOutOpenParam p4{};
+    p4.setPriority = 1;
+    p4.priority = 512;
+    p4.setAffinity = 1;
+    p4.affinity = 0x3E;
+    const int h4 = sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, &p4);
+    Require(h4 > 0);
+    Require(sceVideoOutClose(h4) == 0);
+
     LibcRunShutdown_nid_postfix();
+    return 0;
 }
