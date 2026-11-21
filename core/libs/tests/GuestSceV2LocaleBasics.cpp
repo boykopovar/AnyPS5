@@ -19,6 +19,10 @@ extern "C" {
 extern const TypeRecord _ZTISt9exception_nid_postfix;
 extern GuestLocale::Implementation* _ZNSt8__sce_v26locale7_Locimp8_ClocptrE_nid_postfix;
 extern GuestLocale::Implementation* _ZNSt8__sce_v221_sceLibcClassicLocaleE_nid_postfix;
+extern std::uint64_t _ZNSt8__sce_v25ctypeIcE2idE_nid_postfix;
+extern std::uint64_t _ZNSt8__sce_v25ctypeIwE2idE_nid_postfix;
+extern std::uint64_t _ZNSt8__sce_v27codecvtIwc9_MbstatetE2idE_nid_postfix;
+extern std::uint64_t _ZNSt8__sce_v28time_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix;
 
 void APS5_VABI SceV2Catch(Thrower thrower, const void* argument);
 
@@ -86,6 +90,13 @@ static bool IsEmptyLocimp(const GuestLocale::Implementation* locimp, bool transp
 static void CheckClassic() {
     auto* classic = _ZNSt8__sce_v221_sceLibcClassicLocaleE_nid_postfix;
     Require(_ZNSt8__sce_v26locale7_Locimp8_ClocptrE_nid_postfix == classic, "_Clocptr points at the classic _Locimp");
+    Require(_ZNSt8__sce_v26locale5_InitEb_nid_postfix(false) == classic, "_Init builds and returns the classic locale");
+    Require(classic->base.references == 4 && classic->facetCount == 40 && classic->category == 0x3f && std::strcmp(classic->name, "C") == 0, "the classic locale is C with all categories, held by the global and _Clocptr");
+    Require(_ZNSt8__sce_v25ctypeIcE2idE_nid_postfix == 1 && _ZNSt8__sce_v25ctypeIwE2idE_nid_postfix == 14 && _ZNSt8__sce_v28time_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix == 25, "the classic facets take the first 25 ids");
+    Require(_ZNSt8__sce_v27codecvtIwc9_MbstatetE2idE_nid_postfix == 0, "the classic locale has no codecvt<wchar_t>");
+    bool filled = classic->facets[0] == nullptr;
+    for (std::size_t id = 1; id < 40; ++id) filled = filled && (id <= 25) == (classic->facets[id] != nullptr) && (id > 25 || classic->facets[id]->references == 2);
+    Require(filled, "the classic locale holds 25 facets with two references each");
     auto* facade = _ZNSt8__sce_v26locale7classicEv_nid_postfix();
     Require(facade != nullptr && facade->implementation == classic, "classic() holds the classic _Locimp");
     Require(_ZNSt8__sce_v26locale7classicEv_nid_postfix() == facade, "classic() returns the same object");
