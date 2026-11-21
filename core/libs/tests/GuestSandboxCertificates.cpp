@@ -165,7 +165,7 @@ int main() {
     }
     std::filesystem::permissions(
         conflictTemp,
-        std::filesystem::perms::owner_read | std::filesystem::perms::group_read | std::filesystem::others_read);
+        std::filesystem::perms::owner_read | std::filesystem::perms::group_read | std::filesystem::perms::others_read);
     Require((std::filesystem::status(conflictTemp).permissions() & std::filesystem::perms::owner_write) == std::filesystem::perms::none);
     std::filesystem::current_path(conflictRoot);
     Require(ReadKernel("/system/common/cert/CA_LIST.cer") == text);
