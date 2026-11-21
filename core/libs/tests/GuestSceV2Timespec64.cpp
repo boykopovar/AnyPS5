@@ -76,6 +76,18 @@ void CheckGetSys() {
         thrown = true;
     }
     Require(thrown, "get_sys null output throws");
+    const auto throwsInvalid = [](auto call) {
+        try {
+            call();
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+        return false;
+    };
+    auto* unmapped = reinterpret_cast<Xtime*>(std::uintptr_t{0x10});
+    Require(throwsInvalid([&] { _ZNSt8__sce_v219_Timespec64_get_sysEP8timespec_nid_postfix(unmapped); }), "get_sys unwritable output throws");
+    Require(throwsInvalid([&] { _ZNSt8__sce_v222_Timespec64_diff_to_tsEPK8timespec_nid_postfix(unmapped); }), "diff_to_ts unreadable target throws");
+    Require(throwsInvalid([&] { _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postfix(unmapped); }), "diff_to_useconds unreadable target throws");
 }
 
 void CheckRemaining(const char* label, const Xtime& target, Wide normalized) {

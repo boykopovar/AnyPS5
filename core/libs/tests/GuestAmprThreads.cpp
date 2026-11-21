@@ -133,6 +133,15 @@ static void TestThreadJoin() {
     Require(_Thrd_join_nid_postfix(Start(ReturnArgument, reinterpret_cast<void*>(std::intptr_t{0x100000003})), &code) == ThrdSuccess);
     Require(code == 3);
     Require(_Thrd_join_nid_postfix(Start(ReturnArgument, nullptr), nullptr) == ThrdSuccess);
+    auto* const unwritableCode = reinterpret_cast<int*>(std::uintptr_t{0x10});
+    const auto pending = Start(ReturnArgument, reinterpret_cast<void*>(std::intptr_t{11}));
+    Require(_Thrd_join_nid_postfix(pending, unwritableCode) == ThrdError);
+    code = 0;
+    Require(_Thrd_join_nid_postfix(pending, &code) == ThrdSuccess && code == 11);
+    const auto pendingV2 = Start(ReturnArgument, reinterpret_cast<void*>(std::intptr_t{12}));
+    Require(_ZNSt8__sce_v210_Thrd_joinEP7pthreadPi_nid_postfix(pendingV2, unwritableCode) == ThrdError);
+    code = 0;
+    Require(_ZNSt8__sce_v210_Thrd_joinEP7pthreadPi_nid_postfix(pendingV2, &code) == ThrdSuccess && code == 12);
 
     static std::atomic<bool> release{false};
     const auto detached = Start(WaitForRelease, &release);
