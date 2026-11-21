@@ -3,6 +3,7 @@
 
 #include <cstdint>
 
+bool IsKsemDescriptor(int descriptor);
 void DuplicateKsemDescriptor(int from, int to);
 
 #ifdef ANYPS5_KSEM_TESTING
