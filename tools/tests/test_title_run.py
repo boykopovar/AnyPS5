@@ -1187,6 +1187,28 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual((source / "id1/pak0.pak").read_bytes(), b"bundled data")
         self.assertFalse((work / "data/media/clip.mp4").exists())
 
+    def test_files_override_read_only_bundled_assets(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        content = self.root / "content"
+        content.mkdir()
+        (content / "replacement.bin").write_bytes(b"external")
+        files = {"app0/config.ini": {"text": "override"}, "app0/asset.bin": {"content": "replacement.bin"}}
+        for name in ("config.ini", "asset.bin"):
+            original = source / name
+            original.write_bytes(b"bundled")
+            original.chmod(stat.S_IREAD)
+        work = self.root / "work"
+        title_run.link_tree(source, work / "app0", {"sce_module"})
+
+        self.assertEqual(title_run.stage_files(files, work, content), [])
+
+        self.assertEqual((work / "app0/config.ini").read_bytes(), b"override")
+        self.assertEqual((work / "app0/asset.bin").read_bytes(), b"external")
+        for name in ("config.ini", "asset.bin"):
+            original = source / name
+            self.assertEqual(original.read_bytes(), b"bundled")
+            self.assertFalse(original.stat().st_mode & stat.S_IWRITE)
+
     def test_missing_external_content_preserves_the_staged_package_file(self):
         source = package(self.root / "pkg", "PPSA00001")
         (source / "id1").mkdir()
