@@ -22,11 +22,14 @@ constexpr int NestedAsn1Error = 58;
 constexpr int MallocFailure = 65;
 constexpr int BadObjectHeader = 102;
 constexpr int InvalidTimeFormat = 132;
+constexpr int MissingEoc = 137;
 constexpr int StringTooShort = 152;
 constexpr int SequenceLengthMismatch = 148;
 constexpr int SequenceNotConstructed = 149;
 constexpr int TooLong = 155;
+constexpr int UnexpectedEoc = 159;
 constexpr int WrongTag = 168;
+constexpr int NestedAsn1String = 197;
 constexpr int InvalidObjectEncoding = 216;
 constexpr int InvalidBitStringBitsLeft = 220;
 constexpr int TypeNotPrimitive = 231;
@@ -50,6 +53,7 @@ constexpr std::int64_t BitsLeftFlag = 0x08;
 constexpr int ObjectDynamic = 0x01;
 constexpr int ObjectDynamicData = 0x08;
 constexpr std::uint8_t ContextClass = 2;
+constexpr int MaxStringNesting = 5;
 
 enum class Decoder {
     Unsupported,
@@ -174,7 +178,51 @@ bool ReadLength(std::span<const unsigned char>& input, Header& header) {
     return true;
 }
 
-std::optional<std::span<const unsigned char>> PrimitiveContent(std::span<const unsigned char> input, std::uint32_t expectedTag) {
+bool ReadCheckedLength(std::span<const unsigned char>& input, Header& header) {
+    if (!ReadLength(input, header) || (header.indefinite && !header.constructed)) {
+        PutHeaderError(BadObjectHeader);
+        return false;
+    }
+    if ((!header.indefinite && header.length > input.size()) ||
+        header.tag > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
+        PutHeaderError(TooLong);
+        return false;
+    }
+    return true;
+}
+
+bool Collect(std::span<const unsigned char>& input, bool indefinite, int depth, std::vector<unsigned char>& collected) {
+    if (depth > MaxStringNesting) {
+        PutError(NestedAsn1String);
+        return false;
+    }
+    while (!input.empty()) {
+        if (input.size() >= 2 && input[0] == 0 && input[1] == 0) {
+            input = input.subspan(2);
+            if (indefinite) return true;
+            PutError(UnexpectedEoc);
+            return false;
+        }
+        Header header;
+        if (!ReadIdentifier(input, header)) {
+            PutHeaderError(BadObjectHeader);
+            return false;
+        }
+        if (!ReadCheckedLength(input, header)) return false;
+        if (header.constructed) {
+            if (!Collect(input, header.indefinite, depth + 1, collected)) return false;
+            continue;
+        }
+        collected.insert(collected.end(), input.begin(), input.begin() + static_cast<std::ptrdiff_t>(header.length));
+        input = input.subspan(header.length);
+    }
+    if (!indefinite) return true;
+    PutError(MissingEoc);
+    return false;
+}
+
+std::optional<std::span<const unsigned char>> Content(std::span<const unsigned char> input, std::uint32_t expectedTag,
+                                                      std::vector<unsigned char>* collected = nullptr) {
     std::span<const unsigned char> remaining = input;
     Header header;
     if (!ReadIdentifier(remaining, header)) {
@@ -185,27 +233,14 @@ std::optional<std::span<const unsigned char>> PrimitiveContent(std::span<const u
         PutHeaderError(WrongTag);
         return std::nullopt;
     }
-    if (!ReadLength(remaining, header)) {
-        PutHeaderError(BadObjectHeader);
-        return std::nullopt;
-    }
-    if (header.indefinite && !header.constructed) {
-        PutHeaderError(BadObjectHeader);
-        return std::nullopt;
-    }
-    if (!header.indefinite && header.length > remaining.size()) {
-        PutHeaderError(TooLong);
-        return std::nullopt;
-    }
-    if (header.tag > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
-        PutHeaderError(TooLong);
-        return std::nullopt;
-    }
-    if (header.constructed) {
+    if (!ReadCheckedLength(remaining, header)) return std::nullopt;
+    if (!header.constructed) return remaining.first(header.length);
+    if (!collected) {
         PutError(TypeNotPrimitive);
         return std::nullopt;
     }
-    return remaining.first(header.length);
+    if (!Collect(remaining, header.indefinite, 0, *collected)) return std::nullopt;
+    return std::span<const unsigned char>(*collected);
 }
 
 Asn1String* NewString(std::int32_t type, std::span<const unsigned char> content) {
@@ -457,33 +492,34 @@ void* Decode(const LibreSsl3X509Extension& extension, Decoder decoder) {
     if (encoded->length > 0 && !encoded->data)
         throw std::invalid_argument(std::string(__func__) + ": null extension value data");
     const std::span<const unsigned char> value(encoded->data, static_cast<std::size_t>(encoded->length));
+    std::vector<unsigned char> collected;
     switch (decoder) {
     case Decoder::OcspNonce:
         return NewString(OctetStringType, value);
     case Decoder::BitString: {
-        const auto content = PrimitiveContent(value, BitStringTag);
+        const auto content = Content(value, BitStringTag, &collected);
         return content ? NewBitString(*content) : nullptr;
     }
     case Decoder::OctetString: {
-        const auto content = PrimitiveContent(value, OctetStringTag);
+        const auto content = Content(value, OctetStringTag, &collected);
         return content ? NewString(OctetStringType, *content) : nullptr;
     }
     case Decoder::Integer:
         return NewInteger(value);
     case Decoder::Enumerated: {
-        const auto content = PrimitiveContent(value, EnumeratedTag);
+        const auto content = Content(value, EnumeratedTag);
         return content ? NewEnumerated(*content) : nullptr;
     }
     case Decoder::Ia5String: {
-        const auto content = PrimitiveContent(value, Ia5StringTag);
+        const auto content = Content(value, Ia5StringTag, &collected);
         return content ? NewString(Ia5StringType, *content) : nullptr;
     }
     case Decoder::GeneralizedTime: {
-        const auto content = PrimitiveContent(value, GeneralizedTimeTag);
+        const auto content = Content(value, GeneralizedTimeTag, &collected);
         return content ? NewGeneralizedTime(*content) : nullptr;
     }
     case Decoder::Object: {
-        const auto content = PrimitiveContent(value, ObjectTag);
+        const auto content = Content(value, ObjectTag);
         return content ? NewObject(*content) : nullptr;
     }
     case Decoder::AuthorityKeyId:
