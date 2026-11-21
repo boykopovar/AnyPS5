@@ -85,6 +85,10 @@ struct Fixture {
     }
 
     void SetSkid(Asn1String* value) {
+        std::memcpy(certificate.bytes + 88, &value, sizeof(value));
+    }
+
+    void SetAkid(AuthorityKeyId* value) {
         std::memcpy(certificate.bytes + 96, &value, sizeof(value));
     }
 
@@ -136,6 +140,9 @@ void TestKeyId() {
     Require(fixture.Check(&id) == 30);
 
     fixture.SetSkid(nullptr);
+    Require(fixture.Check(&id) == 0);
+    AuthorityKeyId issuerAkid{&keyId, nullptr, nullptr};
+    fixture.SetAkid(&issuerAkid);
     Require(fixture.Check(&id) == 0);
 
     Asn1String emptyKey{0, OctetString, nullptr, 0};

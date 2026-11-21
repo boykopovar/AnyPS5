@@ -16,7 +16,7 @@ constexpr int SkidMismatch = 30;
 constexpr int IssuerSerialMismatch = 31;
 constexpr int NegativeFlag = 0x100;
 constexpr int DirectoryName = 4;
-constexpr std::size_t SkidOffset = 96;
+constexpr std::size_t SkidOffset = 88;
 
 struct AuthorityKeyId {
     const Asn1String* keyId;
