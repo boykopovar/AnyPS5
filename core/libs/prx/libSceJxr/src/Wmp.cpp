@@ -188,6 +188,18 @@ void JxrWmpMissingCallback_nid_no_patch(const char* name) {
     throw std::invalid_argument(std::string("JXR WMP stream has no ") + name + " callback");
 }
 
+std::int64_t JxrWmpCallWithHostTail_nid_no_patch(void* record, JxrWmpTailConversion toHost, JxrWmpTailConversion toGuest,
+                                                 JxrWmpTailCall call, void* context) {
+    struct Restore {
+        void* record;
+        JxrWmpTailConversion toGuest;
+        ~Restore() { toGuest(record); }
+    };
+    toHost(record);
+    const Restore restore{record, toGuest};
+    return call(context);
+}
+
 std::int64_t APS5_VABI PKImageEncode_Create_WMP_nid_postfix(Jxr::ImageEncode** encoder) {
     const auto result = PKImageEncode_Create_nid_postfix(encoder);
     if (result < 0) return result;

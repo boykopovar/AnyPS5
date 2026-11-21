@@ -312,12 +312,28 @@ static void DecoderToGuest(PKImageDecode* pID) {
     memcpy(DecoderTail(pID), &guest, sizeof(guest));
 }
 
-static void EncoderRestore(PKImageEncode** pIE) {
-    if (*pIE != NULL) EncoderToGuest(*pIE);
+static void EncoderTailToHost(void* record) {
+    EncoderToHost((PKImageEncode*)record);
 }
 
-static void DecoderRestore(PKImageDecode** pID) {
-    if (*pID != NULL) DecoderToGuest(*pID);
+static void EncoderTailToGuest(void* record) {
+    EncoderToGuest((PKImageEncode*)record);
+}
+
+static void DecoderTailToHost(void* record) {
+    DecoderToHost((PKImageDecode*)record);
+}
+
+static void DecoderTailToGuest(void* record) {
+    DecoderToGuest((PKImageDecode*)record);
+}
+
+static ERR WithEncoderTail(PKImageEncode* pIE, JxrWmpTailCall call, void* context) {
+    return (ERR)JxrWmpCallWithHostTail_nid_no_patch(pIE, EncoderTailToHost, EncoderTailToGuest, call, context);
+}
+
+static ERR WithDecoderTail(PKImageDecode* pID, JxrWmpTailCall call, void* context) {
+    return (ERR)JxrWmpCallWithHostTail_nid_no_patch(pID, DecoderTailToHost, DecoderTailToGuest, call, context);
 }
 
 static int KnownFormat(const PKPixelFormatGUID* format) {
@@ -368,6 +384,70 @@ int64_t JxrWmpEncodeSetDescriptiveMetadata_nid_no_patch(void* encoder, const voi
     return PKImageEncode_SetDescriptiveMetadata_WMP(pIE, (const DESCRIPTIVEMETADATA*)metadata);
 }
 
+typedef struct JxrWmpPixelsCall {
+    PKImageEncode* pIE;
+    uint32_t lines;
+    uint8_t* pixels;
+    uint32_t stride;
+    int32_t last;
+} JxrWmpPixelsCall;
+
+typedef struct JxrWmpBeginCall {
+    PKImageEncode* pIE;
+    void* temporary;
+} JxrWmpBeginCall;
+
+typedef struct JxrWmpInitializeCall {
+    PKImageDecode* pID;
+    struct WMPStream* stream;
+} JxrWmpInitializeCall;
+
+typedef struct JxrWmpCopyCall {
+    PKImageDecode* pID;
+    const void* rectangle;
+    uint8_t* pixels;
+    uint32_t stride;
+} JxrWmpCopyCall;
+
+typedef struct JxrWmpMetadataCall {
+    PKImageDecode* pID;
+    void* metadata;
+} JxrWmpMetadataCall;
+
+static int64_t CallWritePixels(void* context) {
+    const JxrWmpPixelsCall* call = (const JxrWmpPixelsCall*)context;
+    return PKImageEncode_WritePixels_WMP(call->pIE, call->lines, call->pixels, call->stride);
+}
+
+static int64_t CallBandedBegin(void* context) {
+    const JxrWmpBeginCall* call = (const JxrWmpBeginCall*)context;
+    return PKImageEncode_WritePixelsBandedBegin_WMP(call->pIE, Retain(call->pIE, (struct WMPStream*)call->temporary));
+}
+
+static int64_t CallBanded(void* context) {
+    const JxrWmpPixelsCall* call = (const JxrWmpPixelsCall*)context;
+    return PKImageEncode_WritePixelsBanded_WMP(call->pIE, call->lines, call->pixels, call->stride, call->last);
+}
+
+static int64_t CallBandedEnd(void* context) {
+    return PKImageEncode_WritePixelsBandedEnd_WMP((PKImageEncode*)context);
+}
+
+static int64_t CallDecodeInitialize(void* context) {
+    const JxrWmpInitializeCall* call = (const JxrWmpInitializeCall*)context;
+    return PKImageDecode_Initialize_WMP(call->pID, call->stream);
+}
+
+static int64_t CallDecodeCopy(void* context) {
+    const JxrWmpCopyCall* call = (const JxrWmpCopyCall*)context;
+    return PKImageDecode_Copy_WMP(call->pID, (const PKRect*)call->rectangle, call->pixels, call->stride);
+}
+
+static int64_t CallDecodeMetadata(void* context) {
+    const JxrWmpMetadataCall* call = (const JxrWmpMetadataCall*)context;
+    return PKImageDecode_GetDescriptiveMetadata_WMP(call->pID, (DESCRIPTIVEMETADATA*)call->metadata);
+}
+
 int64_t JxrWmpEncodeWritePixels_nid_no_patch(void* encoder, uint32_t lines, uint8_t* pixels, uint32_t stride,
                                              int32_t* refusal) {
     PKImageEncode* pIE = (PKImageEncode*)encoder;
@@ -381,9 +461,8 @@ int64_t JxrWmpEncodeWritePixels_nid_no_patch(void* encoder, uint32_t lines, uint
     if (*refusal != JXR_WMP_ACCEPTED) return WMP_errSuccess;
     Enter(&scope, &pIE->pStream);
     {
-        PKImageEncode* hostLayout __attribute__((cleanup(EncoderRestore))) = pIE;
-        EncoderToHost(pIE);
-        err = PKImageEncode_WritePixels_WMP(pIE, lines, pixels, stride);
+        JxrWmpPixelsCall call = {pIE, lines, pixels, stride, 0};
+        err = WithEncoderTail(pIE, CallWritePixels, &call);
     }
     Leave(&scope);
     return err;
@@ -397,9 +476,8 @@ int64_t JxrWmpEncodeBandedBegin_nid_no_patch(void* encoder, void* temporary, int
         return WMP_errSuccess;
     }
     {
-        PKImageEncode* hostLayout __attribute__((cleanup(EncoderRestore))) = pIE;
-        EncoderToHost(pIE);
-        err = PKImageEncode_WritePixelsBandedBegin_WMP(pIE, Retain(pIE, (struct WMPStream*)temporary));
+        JxrWmpBeginCall call = {pIE, temporary};
+        err = WithEncoderTail(pIE, CallBandedBegin, &call);
     }
     return err;
 }
@@ -421,9 +499,8 @@ int64_t JxrWmpEncodeBanded_nid_no_patch(void* encoder, uint32_t lines, uint8_t* 
     }
     Enter(&scope, &pIE->pStream);
     {
-        PKImageEncode* hostLayout __attribute__((cleanup(EncoderRestore))) = pIE;
-        EncoderToHost(pIE);
-        err = PKImageEncode_WritePixelsBanded_WMP(pIE, lines, pixels, stride, last);
+        JxrWmpPixelsCall call = {pIE, lines, pixels, stride, last};
+        err = WithEncoderTail(pIE, CallBanded, &call);
     }
     Leave(&scope);
     return err;
@@ -441,11 +518,68 @@ int64_t JxrWmpEncodeBandedEnd_nid_no_patch(void* encoder, int32_t* refusal) {
     if (*refusal != JXR_WMP_ACCEPTED) return WMP_errSuccess;
     Enter(&scope, &pIE->pStream);
     {
-        PKImageEncode* hostLayout __attribute__((cleanup(EncoderRestore))) = pIE;
-        EncoderToHost(pIE);
-        err = PKImageEncode_WritePixelsBandedEnd_WMP(pIE);
+        err = WithEncoderTail(pIE, CallBandedEnd, pIE);
     }
     Leave(&scope);
+    return err;
+}
+
+typedef struct JxrWmpTranscodeCall {
+    PKImageEncode* pIE;
+    PKImageDecode* pID;
+    CWMTranscodingParam* pParam;
+    struct WMPStream* pWSEnc;
+    Bool fPlanarAlpha;
+    int32_t* refusal;
+} JxrWmpTranscodeCall;
+
+static int64_t CallTranscode(void* context) {
+    const JxrWmpTranscodeCall* call = (const JxrWmpTranscodeCall*)context;
+    PKImageEncode* pIE = call->pIE;
+    PKImageDecode* pID = call->pID;
+    CWMTranscodingParam* pParam = call->pParam;
+    ERR err = WMP_errSuccess;
+    CWMTranscodingParam tcParamAlpha;
+    size_t offPos = 0;
+    struct WMPStream* pWSDec = NULL;
+    JxrWmpProxy decoderStream;
+    JxrWmpProxy encoderStream;
+
+    Call(WriteContainerPre(pIE));
+
+    if (call->fPlanarAlpha)
+        tcParamAlpha = *pParam;
+
+    if (pID->GetRawStream == NULL) goto Refuse;
+    Call(((JxrGuestDecodeGetRawStream)pID->GetRawStream)(pID, &pWSDec));
+    if (pWSDec == NULL) {
+        *call->refusal = JXR_WMP_REFUSE_STREAM;
+        goto Cleanup;
+    }
+    Bind(&decoderStream, pWSDec);
+    Bind(&encoderStream, call->pWSEnc);
+
+    FailIf(ICERR_OK != WMPhotoTranscode(&decoderStream.stream, &encoderStream.stream, pParam), WMP_errFail);
+    Call(pIE->pStream->GetPos(pIE->pStream, &offPos));
+    pIE->WMP.nCbImage = (Long)offPos - pIE->WMP.nOffImage;
+
+    if (call->fPlanarAlpha)
+    {
+        pIE->WMP.nOffAlpha = (Long)offPos;
+
+        Call(decoderStream.stream.SetPos(&decoderStream.stream, pID->WMP.wmiDEMisc.uAlphaOffset));
+
+        FailIf(ICERR_OK != WMPhotoTranscode(&decoderStream.stream, &encoderStream.stream, &tcParamAlpha), WMP_errFail);
+        Call(pIE->pStream->GetPos(pIE->pStream, &offPos));
+        pIE->WMP.nCbAlpha = (Long)offPos - pIE->WMP.nOffAlpha;
+    }
+
+    Call(WriteContainerPost(pIE));
+    goto Cleanup;
+
+Refuse:
+    *call->refusal = JXR_WMP_REFUSE_CALLBACK;
+Cleanup:
     return err;
 }
 
@@ -456,16 +590,10 @@ int64_t JxrWmpEncodeTranscode_nid_no_patch(void* encoder, void* decoder, void* p
     ERR err = WMP_errSuccess;
     Float fResX = 0, fResY = 0;
     PKPixelFormatGUID pixGUID = {0};
-    CWMTranscodingParam tcParamAlpha;
-    size_t offPos = 0;
     Bool fPlanarAlpha;
     PKPixelInfo PI;
-    struct WMPStream* pWSDec = NULL;
-    JxrWmpProxy decoderStream;
-    JxrWmpProxy encoderStream;
     JxrWmpScope scope;
     struct WMPStream* pWSEnc = pIE->pStream;
-    PKImageEncode* hostLayout __attribute__((cleanup(EncoderRestore))) = NULL;
 
     scope.guest = NULL;
     memset(&PI, 0, sizeof(PI));
@@ -515,47 +643,15 @@ int64_t JxrWmpEncodeTranscode_nid_no_patch(void* encoder, void* decoder, void* p
         goto Cleanup;
     }
     Enter(&scope, &pIE->pStream);
-    EncoderToHost(pIE);
-    hostLayout = pIE;
-    Call(WriteContainerPre(pIE));
-
-    if (fPlanarAlpha)
-        tcParamAlpha = *pParam;
-
-    if (pID->GetRawStream == NULL) goto Refuse;
-    Call(((JxrGuestDecodeGetRawStream)pID->GetRawStream)(pID, &pWSDec));
-    if (pWSDec == NULL) {
-        *refusal = JXR_WMP_REFUSE_STREAM;
-        goto Cleanup;
-    }
-    Bind(&decoderStream, pWSDec);
-    Bind(&encoderStream, pWSEnc);
-
-    FailIf(ICERR_OK != WMPhotoTranscode(&decoderStream.stream, &encoderStream.stream, pParam), WMP_errFail);
-    Call(pIE->pStream->GetPos(pIE->pStream, &offPos));
-    pIE->WMP.nCbImage = (Long)offPos - pIE->WMP.nOffImage;
-
-    if (fPlanarAlpha)
     {
-        pIE->WMP.nOffAlpha = (Long)offPos;
-
-        Call(decoderStream.stream.SetPos(&decoderStream.stream, pID->WMP.wmiDEMisc.uAlphaOffset));
-
-        FailIf(ICERR_OK != WMPhotoTranscode(&decoderStream.stream, &encoderStream.stream, &tcParamAlpha), WMP_errFail);
-        Call(pIE->pStream->GetPos(pIE->pStream, &offPos));
-        pIE->WMP.nCbAlpha = (Long)offPos - pIE->WMP.nOffAlpha;
+        JxrWmpTranscodeCall call = {pIE, pID, pParam, pWSEnc, fPlanarAlpha, refusal};
+        err = WithEncoderTail(pIE, CallTranscode, &call);
     }
-
-    Call(WriteContainerPost(pIE));
     goto Cleanup;
 
 Refuse:
     *refusal = JXR_WMP_REFUSE_CALLBACK;
 Cleanup:
-    if (hostLayout != NULL) {
-        EncoderToGuest(hostLayout);
-        hostLayout = NULL;
-    }
     if (scope.guest != NULL) Leave(&scope);
     return err;
 }
@@ -591,9 +687,8 @@ int64_t JxrWmpDecodeInitialize_nid_no_patch(void* decoder, void* stream) {
     struct WMPStream* proxy = Retain(pID, (struct WMPStream*)stream);
     ERR err;
     {
-        PKImageDecode* hostLayout __attribute__((cleanup(DecoderRestore))) = pID;
-        DecoderToHost(pID);
-        err = PKImageDecode_Initialize_WMP(pID, proxy);
+        JxrWmpInitializeCall call = {pID, proxy};
+        err = WithDecoderTail(pID, CallDecodeInitialize, &call);
     }
     Restore(&pID->pStream, proxy);
     return err;
@@ -631,9 +726,8 @@ int64_t JxrWmpDecodeCopy_nid_no_patch(void* decoder, const void* rectangle, uint
     }
     Enter(&scope, &pID->pStream);
     {
-        PKImageDecode* hostLayout __attribute__((cleanup(DecoderRestore))) = pID;
-        DecoderToHost(pID);
-        err = PKImageDecode_Copy_WMP(pID, (const PKRect*)rectangle, pixels, stride);
+        JxrWmpCopyCall call = {pID, rectangle, pixels, stride};
+        err = WithDecoderTail(pID, CallDecodeCopy, &call);
     }
     Leave(&scope);
     return err;
@@ -657,9 +751,8 @@ int64_t JxrWmpDecodeGetDescriptiveMetadata_nid_no_patch(void* decoder, void* met
     PKImageDecode* pID = (PKImageDecode*)decoder;
     ERR err;
     {
-        PKImageDecode* hostLayout __attribute__((cleanup(DecoderRestore))) = pID;
-        DecoderToHost(pID);
-        err = PKImageDecode_GetDescriptiveMetadata_WMP(pID, (DESCRIPTIVEMETADATA*)metadata);
+        JxrWmpMetadataCall call = {pID, metadata};
+        err = WithDecoderTail(pID, CallDecodeMetadata, &call);
     }
     return err;
 }
