@@ -12,6 +12,7 @@ import tempfile
 import time
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 import unittest.mock
 from unittest.mock import patch
 
@@ -619,6 +620,15 @@ class PreparationTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
 
+    def test_reset_work_removes_a_read_only_file(self):
+        work = self.root / "work"
+        (work / "cert_cache").mkdir(parents=True)
+        cached = work / "cert_cache" / "CA_LIST.cer"
+        cached.write_bytes(b"list")
+        cached.chmod(stat.S_IREAD)
+        title_run.reset_work(work)
+        self.assertEqual(list(work.iterdir()), [])
+
     def test_a_running_title_is_left_alone(self):
         package(self.root / "games/PPSA00001", "PPSA00001")
         out = self.root / "out"
@@ -911,6 +921,7 @@ class PreparationTests(unittest.TestCase):
         source = package(self.root / "pkg", "PPSA00001")
         (source / "id1").mkdir()
         (source / "id1/autoexec.cfg").write_text("old\n", encoding="utf-8")
+        (source / "id1/pak0.pak").write_bytes(b"bundled data")
         work = self.root / "work"
         title_run.link_tree(source, work / "app0", {"sce_module"})
         content = self.root / "content"
@@ -922,8 +933,26 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual((work / "app0/id1/autoexec.cfg").read_bytes(), b"r_rtshadows 0\n")
         self.assertEqual((source / "id1/autoexec.cfg").read_text(encoding="utf-8"), "old\n")
         self.assertEqual((work / "app0/id1/pak0.pak").read_bytes(), b"PACK")
+        self.assertEqual((source / "id1/pak0.pak").read_bytes(), b"bundled data")
         self.assertFalse((work / "data/media/clip.mp4").exists())
-        self.assertEqual(title_run.stage_files({"app0/id1/pak0.pak": {"content": "quake/pak0.pak"}}, work, None), ["quake/pak0.pak"])
+
+    def test_missing_external_content_preserves_the_staged_package_file(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        (source / "id1").mkdir()
+        (source / "id1/pak0.pak").write_bytes(b"bundled data")
+        content = self.root / "content"
+        content.mkdir()
+        files = {"app0/id1/pak0.pak": {"content": "quake/pak0.pak"},
+                 "data/clip.mp4": {"content": "media/clip.mp4"}}
+        for index, content_dir in enumerate((None, content)):
+            with self.subTest(content=content_dir):
+                work = self.root / f"work-{index}"
+                title_run.link_tree(source, work / "app0", {"sce_module"})
+                missing = title_run.stage_files(files, work, content_dir)
+                target = work / "app0/id1/pak0.pak"
+                self.assertTrue(target.is_file(), "the run must retain the package's data file")
+                self.assertEqual(target.read_bytes(), b"bundled data")
+                self.assertEqual(missing, ["media/clip.mp4"])
 
     def test_a_non_ascii_title_name_is_reported_as_utf8(self):
         package(self.root / "games/PPSA00001", "PPSA00001", name="テスト")
@@ -1653,6 +1682,18 @@ class ModuleFileTests(unittest.TestCase):
             self.assertTrue(title_run.is_module(module))
             self.assertFalse(title_run.is_module(text))
 
+class PadTextTests(unittest.TestCase):
+    def test_repeat_and_gap_default_when_the_pad_omits_them(self):
+        with patch.object(title_run.pad_timeline, "compile_timeline", return_value="timeline") as compile_timeline:
+            self.assertEqual(title_run.pad_text({"events": [1, 2]}, "seq"), "timeline")
+        compile_timeline.assert_called_once_with({"version": 1, "events": [1, 2]}, "seq", 1, 200)
+
+    def test_repeat_and_gap_are_forwarded_from_the_pad(self):
+        with patch.object(title_run.pad_timeline, "compile_timeline", return_value="t") as compile_timeline:
+            title_run.pad_text({"events": [], "repeat": 3, "gap_ms": 50, "ignored": True}, "seq")
+        compile_timeline.assert_called_once_with({"version": 1, "events": []}, "seq", 3, 50)
+
+
 class CheckFilesTests(unittest.TestCase):
     def test_valid_text_and_content_entries_pass(self):
         title_run.check_files({"app0/a.txt": {"text": "hello"}, "data/b.bin": {"content": "sub/b.bin"}})
@@ -1693,6 +1734,16 @@ class CollectFramesTests(unittest.TestCase):
             destination = Path(directory) / "frames"
             self.assertEqual(title_run.collect_frames(Path(directory), destination), [])
             self.assertTrue(destination.is_dir())
+
+    def test_only_collects_numbered_bitmap_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            for name in ("frame_005.bmp", "frame_preview.bmp", "frame_5_preview.bmp"):
+                (work / name).write_bytes(b"x")
+            (work / "frame_006.bmp").mkdir()
+            self.assertEqual(title_run.collect_frames(work, work / "out"), ["frame_005.bmp"])
+            self.assertEqual(sorted(path.name for path in work.iterdir()),
+                             ["frame_006.bmp", "frame_5_preview.bmp", "frame_preview.bmp", "out"])
 
     def test_single_frame_is_kept(self):
         with tempfile.TemporaryDirectory() as directory:

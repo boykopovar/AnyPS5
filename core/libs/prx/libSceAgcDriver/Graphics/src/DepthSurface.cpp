@@ -933,6 +933,7 @@ class DepthSurface {
 public:
     DepthSurface(const Context& context, const DepthTarget& target, DepthSamplingState sampling = {}) : context(context), target(target), hostFormat(HostDepthFormat(context, target.format)), sampling(std::move(sampling)) {
         this->context.bufferPool.reset();
+        samplingObservations.resize(this->sampling.initial.size());
         VkFormatProperties properties{};
         context.formatProperties(context.physical, hostFormat, &properties);
         Require((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0, "depth/stencil format " + std::to_string(hostFormat) + " cannot be an attachment on this device");
@@ -1061,7 +1062,7 @@ public:
                 RecorderFor(context)->SyncThrough(range.address, range.bytes);
                 Require(!GuestMemory::WrittenSince(range.address, range.bytes, settled), "external GPU writes over native multisample depth are not implemented");
             }
-            GuestMemory::CollectWritesUncached(range.address, range.bytes);
+            GuestMemory::CollectWritesForGpuUse(range, samplingObservations[index]);
             const auto alias = MultisampleColorTargetOver(range.address, range.bytes);
             if (!alias || (index == 2u && sampling.unprovenStencil && stencilClearGeneration == 0u)) continue;
             if (index == 0u && sampling.depthAlias && sameDepthAlias(*sampling.depthAlias, range)) continue;
@@ -2028,6 +2029,7 @@ public:
     bool sampleable = true;
     bool samplingActive = false;
     DepthSamplingState sampling;
+    mutable std::vector<GuestMemory::GpuUseObservation> samplingObservations;
     bool clearPending = false;
     std::uint64_t clearGeneration = 0u;
     bool clearCompletionQueued = false;

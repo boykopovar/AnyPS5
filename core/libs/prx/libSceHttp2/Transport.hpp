@@ -53,7 +53,7 @@ struct Settings {
     std::vector<std::pair<std::string, std::string>> headers;
     std::uint64_t contentLength = 0;
     bool noContentLength = false;
-    bool inflateGzip = false;
+    bool inflateGzip = true;
     bool stripGzipHeaders = false;
     bool auth = true;
     int redirect = 1;

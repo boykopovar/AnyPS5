@@ -40,6 +40,18 @@ struct MediaTime {
     std::uint8_t timeFlags;
 };
 
+struct GraphemeClusterIteratorImpl {
+    const void* stringView;
+    bool hasBreakIterator;
+    void* breakIterator;
+    unsigned index;
+    unsigned indexEnd;
+};
+
+struct GraphemeClusterIterator {
+    GraphemeClusterIteratorImpl* impl;
+};
+
 static_assert(sizeof(HexConversionMode) == 4);
 static_assert(sizeof(HexResult) == 16);
 static_assert(offsetof(HexResult, first) == 0);
@@ -54,5 +66,11 @@ static_assert(alignof(MediaTime) == 8);
 static_assert(offsetof(MediaTime, timeValue) == 0);
 static_assert(offsetof(MediaTime, timeScale) == 8);
 static_assert(offsetof(MediaTime, timeFlags) == 12);
+static_assert(sizeof(GraphemeClusterIteratorImpl) == 32);
+static_assert(offsetof(GraphemeClusterIteratorImpl, hasBreakIterator) == 8);
+static_assert(offsetof(GraphemeClusterIteratorImpl, breakIterator) == 16);
+static_assert(offsetof(GraphemeClusterIteratorImpl, index) == 24);
+static_assert(offsetof(GraphemeClusterIteratorImpl, indexEnd) == 28);
+static_assert(sizeof(GraphemeClusterIterator) == 8);
 
 } // namespace Jsc::WtfAbi

@@ -226,6 +226,10 @@ void DefineInputs(SpirvEmitterState& state) {
             addBuiltin(StageInputKind::WorkgroupId, 3u, "gl_WorkGroupID");
         }
     }
+    if (state.splitState) {
+        addBuiltin(StageInputKind::LocalInvocationIndex, 1u, "gl_LocalInvocationIndex");
+        addBuiltin(StageInputKind::WorkgroupId, 3u, "gl_WorkGroupID");
+    }
     if ((state.requirements.ldsLock || ScratchPoolActive(state)) && std::none_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) {
         return input.kind == StageInputKind::LocalInvocationIndex;
     })) {
@@ -636,6 +640,14 @@ void DefineDescriptors(SpirvEmitterState& state) {
         if (state.spirvVersion >= 0x00010400u) {
             for (const auto variable : {state.meshWindowBufferVariable, state.meshWindowSlotVariable, state.meshWindowBaseVariable}) state.interfaceVariables.push_back(variable);
         }
+    }
+    if (state.splitState) {
+        state.splitStateVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, StorageBufferBlockType(state)), spv::StorageClassStorageBuffer);
+        state.module.AddName(state.splitStateVariable, "split_state");
+        state.module.AddAnnotation(spv::OpDecorate, state.splitStateVariable, spv::DecorationDescriptorSet, SplitStateDescriptorSet);
+        state.module.AddAnnotation(spv::OpDecorate, state.splitStateVariable, spv::DecorationBinding, 0u);
+        state.module.AddAnnotation(spv::OpDecorate, state.splitStateVariable, spv::DecorationRestrict);
+        if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(state.splitStateVariable);
     }
     if (state.pixelFunctionLdsBuffer) {
         state.ldsBufferVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, StorageBufferBlockType(state)), spv::StorageClassStorageBuffer);
