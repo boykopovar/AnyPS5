@@ -31,6 +31,7 @@ struct Parser {
     void* parser = nullptr;
     void* helper = nullptr;
     bool initializing = false;
+    bool finalizePending = false;
 };
 
 struct GuestString {
@@ -91,17 +92,30 @@ int APS5_VABI libSceGvMp4ParserUnknown_sSswLa3vxMA_nid_no_patch(const void* conf
         if (!parser) throw std::runtime_error("GvMp4 parser: a refused parser object allocation was not read on 13.42");
         helper = callbacks.allocate(kHelperBytes);
         if (!helper) throw std::runtime_error("GvMp4 parser: a refused second object allocation was not read on 13.42");
+        {
+            const std::lock_guard lock(g_mutex);
+            if (!g_parser.finalizePending) {
+                g_parser.initializing = false;
+                g_parser.parser = parser;
+                g_parser.helper = helper;
+                return 0;
+            }
+        }
     } catch (...) {
+        {
+            const std::lock_guard lock(g_mutex);
+            g_parser = {};
+        }
         if (parser) callbacks.release(parser);
-        const std::lock_guard lock(g_mutex);
-        g_parser = {};
         throw;
     }
-    const std::lock_guard lock(g_mutex);
-    g_parser.initializing = false;
-    g_parser.parser = parser;
-    g_parser.helper = helper;
-    return 0;
+    {
+        const std::lock_guard lock(g_mutex);
+        g_parser = {};
+    }
+    callbacks.release(parser);
+    callbacks.release(helper);
+    return kNotInitialized;
 }
 APS5_EXPORT("sSswLa3vxMA", libSceGvMp4ParserUnknown_sSswLa3vxMA_nid_no_patch);
 
@@ -109,7 +123,10 @@ int APS5_VABI _ZN23sceMetadataReaderWriter11gvMp4Parser19gvMp4ParserFinalizeEv()
     Parser saved;
     {
         const std::lock_guard lock(g_mutex);
-        if (g_parser.initializing) return 0;
+        if (g_parser.initializing) {
+            g_parser.finalizePending = true;
+            return 0;
+        }
         saved = g_parser;
         g_parser = {};
     }

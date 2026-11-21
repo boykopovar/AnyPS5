@@ -43,10 +43,12 @@ struct GuestString {
 std::vector<std::size_t> allocations;
 std::vector<void*> allocated;
 std::vector<void*> released;
-unsigned refuseAt = 0;
+std::size_t refuseAt = 0;
+std::size_t finalizeAt = 0;
 
 void* APS5_VABI Allocate(std::size_t size) {
     allocations.push_back(size);
+    if (allocations.size() == finalizeAt) Require(_ZN23sceMetadataReaderWriter11gvMp4Parser19gvMp4ParserFinalizeEv() == 0, "reentrant Finalize failed");
     if (refuseAt != 0 && allocations.size() == refuseAt) return nullptr;
     void* address = std::malloc(size);
     allocated.push_back(address);
@@ -114,11 +116,20 @@ int main() {
     Require(allocations.size() == 4 && allocations[2] == 0x7b8 && allocations[3] == 0x28, "Initialize after Finalize did not allocate both objects again");
     Require(_ZN23sceMetadataReaderWriter11gvMp4Parser19gvMp4ParserFinalizeEv() == 0 && released == allocated, "the second lifecycle did not release its objects");
 
-    refuseAt = 6;
-    Require(Rejects([&] { libSceGvMp4ParserUnknown_sSswLa3vxMA_nid_no_patch(config.data()); }), "a refused second allocation was not reported");
-    Require(released == allocated, "a refused second allocation leaked the parser object");
+    for (unsigned index : {1u, 2u}) {
+        refuseAt = allocations.size() + index;
+        Require(Rejects([&] { libSceGvMp4ParserUnknown_sSswLa3vxMA_nid_no_patch(config.data()); }), "a refused allocation was not reported");
+        Require(allocations.size() == refuseAt && released == allocated, "a refused allocation leaked or continued allocating");
+        RequireGates(shortPath, "a failed Initialize left a parser behind");
+    }
     refuseAt = 0;
-    RequireGates(shortPath, "a failed Initialize left a parser behind");
+    for (unsigned index : {1u, 2u}) {
+        finalizeAt = allocations.size() + index;
+        Require(libSceGvMp4ParserUnknown_sSswLa3vxMA_nid_no_patch(config.data()) == kNotInitialized, "a canceled Initialize reported success");
+        Require(released == allocated, "a canceled Initialize leaked an object");
+        RequireGates(shortPath, "a canceled Initialize published a parser");
+    }
+    finalizeAt = 0;
     Require(libSceGvMp4ParserUnknown_sSswLa3vxMA_nid_no_patch(config.data()) == 0, "Initialize after a refused allocation did not return 0");
     Require(_ZN23sceMetadataReaderWriter11gvMp4Parser19gvMp4ParserFinalizeEv() == 0, "the last Finalize did not return 0");
     Require(allocated.size() == released.size(), "allocations and releases do not balance");
