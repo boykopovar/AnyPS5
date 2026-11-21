@@ -30,17 +30,79 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*
+ * Copyright (C) 2011, 2014-2015 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Derived from Source/WTF/wtf/persistence/PersistentCoders.cpp@c55364d53f971f63a709976f168d932d558b8909
+ */
+
+/*
+ * Copyright (C) 2010, 2014 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Derived from Source/WTF/wtf/persistence/PersistentEncoder.cpp@c55364d53f971f63a709976f168d932d558b8909
+ */
+
 #include "prx/libSceJsc/include/WtfSha1Exports.hpp"
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <new>
 #include <stdexcept>
 
 namespace {
 
+using Jsc::WtfAbi::PersistenceAllocator;
+using Jsc::WtfAbi::PersistenceEncoder;
 using Jsc::WtfAbi::SHA1;
+
+std::atomic<const PersistenceAllocator*> registeredPersistenceAllocator{nullptr};
 
 constexpr std::size_t BlockSize = 64;
 constexpr std::size_t LengthOffset = 56;
@@ -116,6 +178,14 @@ void Finalize(SHA1& sha1) {
     ProcessBlock(sha1);
 }
 
+void AddBytes(SHA1& sha1, const std::uint8_t* input, std::size_t length) {
+    while (length--) {
+        sha1.buffer[sha1.cursor++] = *input++;
+        ++sha1.totalBytes;
+        if (sha1.cursor == BlockSize) ProcessBlock(sha1);
+    }
+}
+
 void Reset(SHA1& sha1) {
     sha1.cursor = 0;
     sha1.totalBytes = 0;
@@ -125,6 +195,25 @@ void Reset(SHA1& sha1) {
     sha1.hash[3] = 0x10325476;
     sha1.hash[4] = 0xc3d2e1f0;
     std::memset(sha1.buffer, 0, sizeof(sha1.buffer));
+}
+
+void EnsureEncoderCapacity(PersistenceEncoder& encoder, std::size_t additional) {
+    if (encoder.size > std::numeric_limits<unsigned>::max() - additional)
+        throw std::length_error("WTF::Persistence::Coder<SHA1::Digest>::encode: buffer size overflow");
+    const std::size_t required = static_cast<std::size_t>(encoder.size) + additional;
+    if (required <= encoder.capacity) return;
+    const auto* allocator = registeredPersistenceAllocator.load(std::memory_order_acquire);
+    if (!allocator || !allocator->allocate || !allocator->deallocate)
+        throw std::runtime_error("WTF::Persistence::Coder<SHA1::Digest>::encode: buffer growth requires libSceNKWebKit fastMalloc");
+    const std::size_t maxUnsigned = std::numeric_limits<unsigned>::max();
+    const std::size_t doubled = static_cast<std::size_t>(encoder.capacity) * 2;
+    const std::size_t nextCapacity = std::min(maxUnsigned, std::max(doubled, required));
+    auto* nextBuffer = static_cast<std::uint8_t*>(allocator->allocate(nextCapacity));
+    if (!nextBuffer) throw std::bad_alloc();
+    if (encoder.size) std::memcpy(nextBuffer, encoder.buffer, encoder.size);
+    if (encoder.buffer != encoder.inlineBuffer) allocator->deallocate(encoder.buffer);
+    encoder.buffer = nextBuffer;
+    encoder.capacity = static_cast<unsigned>(nextCapacity);
 }
 
 }
@@ -147,4 +236,52 @@ void APS5_VABI _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(SHA1* self, Jsc::WtfA
     Reset(*self);
 }
 
+Jsc::WtfAbi::OptionalSHA1Digest APS5_VABI _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(Jsc::WtfAbi::PersistenceDecoder* decoder) {
+    if (!decoder) throw std::invalid_argument("WTF::Persistence::Coder<SHA1::Digest>::decode requires a decoder");
+    if (decoder->sha1.cursor >= BlockSize) throw std::invalid_argument("WTF::Persistence::Coder<SHA1::Digest>::decode: buffer cursor out of range");
+    if (decoder->bufferPosition > decoder->bufferEnd) throw std::invalid_argument("WTF::Persistence::Coder<SHA1::Digest>::decode: position past the buffer end");
+    Jsc::WtfAbi::OptionalSHA1Digest result{};
+    if (static_cast<std::size_t>(decoder->bufferEnd - decoder->bufferPosition) < result.value.size()) return result;
+    std::memcpy(result.value.data(), decoder->bufferPosition, result.value.size());
+    decoder->bufferPosition += result.value.size();
+    const unsigned typeSalt = 101;
+    AddBytes(decoder->sha1, reinterpret_cast<const std::uint8_t*>(&typeSalt), sizeof(typeSalt));
+    AddBytes(decoder->sha1, result.value.data(), result.value.size());
+    result.hasValue = true;
+    return result;
 }
+
+void APS5_VABI _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(
+    PersistenceEncoder* encoder, const Jsc::WtfAbi::SHA1Digest* digest) {
+    if (!encoder || !digest)
+        throw std::invalid_argument("WTF::Persistence::Coder<SHA1::Digest>::encode requires an encoder and a digest");
+    if (encoder->sha1.cursor >= BlockSize)
+        throw std::invalid_argument("WTF::Persistence::Coder<SHA1::Digest>::encode: buffer cursor out of range");
+    if (!encoder->buffer || encoder->size > encoder->capacity)
+        throw std::invalid_argument("WTF::Persistence::Coder<SHA1::Digest>::encode: invalid encoder buffer state");
+    const Jsc::WtfAbi::SHA1Digest value = *digest;
+    EnsureEncoderCapacity(*encoder, value.size());
+    const unsigned typeSalt = 101;
+    AddBytes(encoder->sha1, reinterpret_cast<const std::uint8_t*>(&typeSalt), sizeof(typeSalt));
+    AddBytes(encoder->sha1, value.data(), value.size());
+    std::memcpy(encoder->buffer + encoder->size, value.data(), value.size());
+    encoder->size += static_cast<unsigned>(value.size());
+}
+
+void RegisterPersistenceAllocator_nid_no_patch(const PersistenceAllocator* allocator) {
+    registeredPersistenceAllocator.store(allocator, std::memory_order_release);
+}
+
+const PersistenceAllocator* RegisteredPersistenceAllocator_nid_no_patch() {
+    return registeredPersistenceAllocator.load(std::memory_order_acquire);
+}
+
+}
+
+namespace Jsc::WtfAbi {
+
+const PersistenceAllocator* RegisteredFastMalloc() {
+    return registeredPersistenceAllocator.load(std::memory_order_acquire);
+}
+
+} // namespace Jsc::WtfAbi
