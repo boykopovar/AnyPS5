@@ -8,20 +8,38 @@
 //   Corporation and others.  All Rights Reserved.
 
 #include "prx/libSceIcu/include/LegacyExports.hpp"
+#include "prx/libc/include/General.hpp"
+#include <cerrno>
+#include <stdexcept>
+#include <string>
+
+namespace {
+
+template<typename T>
+T Load(const void* value, const char* caller) {
+    T host{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&host, value, sizeof(host));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(caller) + ": unreadable value");
+    return host;
+}
+
+}
 
 extern "C" {
 
 std::int32_t APS5_VABI uprv_int32Comparator_nid_postfix(const void* context, const void* left, const void* right) {
     (void)context;
-    const auto l = static_cast<std::uint32_t>(*static_cast<const std::int32_t*>(left));
-    const auto r = static_cast<std::uint32_t>(*static_cast<const std::int32_t*>(right));
+    const auto l = static_cast<std::uint32_t>(Load<std::int32_t>(left, __func__));
+    const auto r = static_cast<std::uint32_t>(Load<std::int32_t>(right, __func__));
     return static_cast<std::int32_t>(l - r);
 }
 
 std::int32_t APS5_VABI uprv_uint32Comparator_nid_postfix(const void* context, const void* left, const void* right) {
     (void)context;
-    const auto l = *static_cast<const std::uint32_t*>(left);
-    const auto r = *static_cast<const std::uint32_t*>(right);
+    const auto l = Load<std::uint32_t>(left, __func__);
+    const auto r = Load<std::uint32_t>(right, __func__);
     if (l < r) return -1;
     if (l == r) return 0;
     return 1;
@@ -29,7 +47,7 @@ std::int32_t APS5_VABI uprv_uint32Comparator_nid_postfix(const void* context, co
 
 std::int32_t APS5_VABI uprv_uint16Comparator_nid_postfix(const void* context, const void* left, const void* right) {
     (void)context;
-    return static_cast<std::int32_t>(*static_cast<const std::uint16_t*>(left)) - static_cast<std::int32_t>(*static_cast<const std::uint16_t*>(right));
+    return static_cast<std::int32_t>(Load<std::uint16_t>(left, __func__)) - static_cast<std::int32_t>(Load<std::uint16_t>(right, __func__));
 }
 
 }

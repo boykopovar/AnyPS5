@@ -1,8 +1,10 @@
 #include "prx/libSceIcu/include/LegacyExports.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <stdexcept>
 
 namespace {
 
@@ -48,11 +50,36 @@ void TestInt32() {
     Require(CompareInt32(0, -7) == 7, "int32: zero against a negative value");
 }
 
+template<typename TCall>
+bool ThrowsKeepingErrno(TCall call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return errno == 71;
+    }
+    return false;
+}
+
+void TestUnreadable() {
+    const auto* unmapped = reinterpret_cast<const void*>(std::uintptr_t{0x10});
+    const std::uint32_t value = 1;
+    for (const void* bad : {unmapped, static_cast<const void*>(nullptr)}) {
+        Require(ThrowsKeepingErrno([&] { uprv_int32Comparator_nid_postfix(nullptr, bad, &value); }), "int32: unreadable left value throws");
+        Require(ThrowsKeepingErrno([&] { uprv_int32Comparator_nid_postfix(nullptr, &value, bad); }), "int32: unreadable right value throws");
+        Require(ThrowsKeepingErrno([&] { uprv_uint32Comparator_nid_postfix(nullptr, bad, &value); }), "uint32: unreadable left value throws");
+        Require(ThrowsKeepingErrno([&] { uprv_uint32Comparator_nid_postfix(nullptr, &value, bad); }), "uint32: unreadable right value throws");
+        Require(ThrowsKeepingErrno([&] { uprv_uint16Comparator_nid_postfix(nullptr, bad, &value); }), "uint16: unreadable left value throws");
+        Require(ThrowsKeepingErrno([&] { uprv_uint16Comparator_nid_postfix(nullptr, &value, bad); }), "uint16: unreadable right value throws");
+    }
+}
+
 }
 
 int main() {
     TestInt32();
     TestUint32();
     TestUint16();
+    TestUnreadable();
     return 0;
 }
