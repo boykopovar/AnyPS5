@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceDepth2/include/InventoryExports.hpp"
 #include "prx/libSceDepth2/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -65,43 +66,60 @@ int APS5_VABI sceDepth2QueryMemory(const SceDepth2Param* param, SceDepth2Memory*
     if (param == nullptr || mem == nullptr) {
         return ErrorNullPointer;
     }
-    if (param->size != 0x40) {
+    SceDepth2Param localParam{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) {
+        errno = savedErrno;
+        return ErrorNullPointer;
+    }
+    SceDepth2Memory localMem{};
+    if (!GuestCopyIn_nid_no_patch(&localMem, mem, sizeof(localMem))) {
+        errno = savedErrno;
+        return ErrorNullPointer;
+    }
+    errno = savedErrno;
+    if (localParam.size != 0x40) {
         return ErrorInvalidSize;
     }
-    if (param->type != 0 && param->type != 2 && param->type != 3 && param->type != 4) {
+    if (localParam.type != 0 && localParam.type != 2 && localParam.type != 3 && localParam.type != 4) {
         return ErrorInvalidType;
     }
-    if (param->mode != 0 && param->mode != 1) {
+    if (localParam.mode != 0 && localParam.mode != 1) {
         return ErrorInvalidMode;
     }
-    if (!IsValidResolution(param->inputWidth, param->inputHeight, param->mode, param->type)) {
-        return param->mode == 1 ? ErrorInvalidInputResolutionMode1 : ErrorInvalidMode;
+    if (!IsValidResolution(localParam.inputWidth, localParam.inputHeight, localParam.mode, localParam.type)) {
+        return localParam.mode == 1 ? ErrorInvalidInputResolutionMode1 : ErrorInvalidMode;
     }
-    if (param->unknown0c > 1) {
+    if (localParam.unknown0c > 1) {
         return ErrorInvalidInputProperty;
     }
-    if (!IsValidResolution(param->outputWidth, param->outputHeight, param->mode, param->type)) {
+    if (!IsValidResolution(localParam.outputWidth, localParam.outputHeight, localParam.mode, localParam.type)) {
         return ErrorInvalidMode;
     }
-    if (param->unknown18 > 1) {
+    if (localParam.unknown18 > 1) {
         return ErrorInvalidOutputProperty;
     }
-    if (param->reserved20 != 0 || param->reserved24 != 0) {
+    if (localParam.reserved20 != 0 || localParam.reserved24 != 0) {
         return ErrorReservedNotEmpty;
     }
-    if (param->unknown30 >= 7 || param->unknown34 >= 8) {
+    if (localParam.unknown30 >= 7 || localParam.unknown34 >= 8) {
         return ErrorInvalidValue;
     }
     uint64_t size = 0;
-    if ((param->inputWidth == 320 && param->inputHeight == 200) || (param->inputWidth == 480 && param->inputHeight == 270)) {
+    if ((localParam.inputWidth == 320 && localParam.inputHeight == 200) || (localParam.inputWidth == 480 && localParam.inputHeight == 270)) {
         size = 0xc00000;
-    } else if ((param->inputWidth == 640 && param->inputHeight == 400) || (param->inputWidth == 960 && param->inputHeight == 540)) {
+    } else if ((localParam.inputWidth == 640 && localParam.inputHeight == 400) || (localParam.inputWidth == 960 && localParam.inputHeight == 540)) {
         size = 0x2000000;
-    } else if ((param->inputWidth == 1280 && param->inputHeight == 800) || (param->inputWidth == 1920 && param->inputHeight == 1080)) {
+    } else if ((localParam.inputWidth == 1280 && localParam.inputHeight == 800) || (localParam.inputWidth == 1920 && localParam.inputHeight == 1080)) {
         size = 0x8000000;
     }
-    mem->size = size;
-    mem->alignment = 0x40000;
+    localMem.size = size;
+    localMem.alignment = 0x40000;
+    if (!GuestCopyOut_nid_no_patch(mem, &localMem, sizeof(localMem))) {
+        errno = savedErrno;
+        return ErrorNullPointer;
+    }
+    errno = savedErrno;
     return 0;
 }
 

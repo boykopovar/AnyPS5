@@ -1,6 +1,7 @@
 #include "prx/libSceDepth2/libSceDepth2.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 
@@ -28,6 +29,15 @@ void TestQueryMemory() {
 
     SceDepth2Param param{};
     Require(sceDepth2QueryMemory(&param, nullptr) == nullPointer);
+
+    auto* const unmappedParam = reinterpret_cast<const SceDepth2Param*>(0x10);
+    auto* const unmappedMem = reinterpret_cast<SceDepth2Memory*>(0x10);
+    errno = 73;
+    Require(sceDepth2QueryMemory(unmappedParam, &mem) == nullPointer);
+    Require(errno == 73);
+    errno = 73;
+    Require(sceDepth2QueryMemory(&param, unmappedMem) == nullPointer);
+    Require(errno == 73);
 
     param.size = 0x30;
     Require(sceDepth2QueryMemory(&param, &mem) == invalidSize);
