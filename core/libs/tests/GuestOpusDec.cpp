@@ -94,6 +94,12 @@ int main() {
     Require(sceOpusDecInitialize(reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(errorBase + 13));
     Require(errno == 71);
     Require(sceOpusDecDestroy(nullptr) == static_cast<int>(errorBase));
+    std::array<std::uint8_t, 640> implicitState{};
+    Require(sceOpusDecCreate(nullptr, 0, 0) == static_cast<int>(errorBase));
+    Require(sceOpusDecCreate(implicitState.data(), 0, 0) == static_cast<int>(errorBase + 2));
+    Require(sceOpusDecCreate(implicitState.data(), 48000, 0) == static_cast<int>(errorBase + 3));
+    Require(sceOpusDecCreate(implicitState.data(), 48000, 2) == 0);
+    Require(sceOpusDecDestroy(implicitState.data()) == 0);
     for (int rate : {8000, 12000, 16000, 24000, 48000})
         for (int channels : {1, 2}) CheckReference(rate, channels);
     std::uint32_t context = 0, otherContext = 0;
