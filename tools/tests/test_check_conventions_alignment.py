@@ -32,6 +32,7 @@ class OverAlignedTests(unittest.TestCase):
             ("alignas(65'536) char block[16];", "alignas(65'536)"),
             ("alignas(040000) char block[16];", "alignas(040000)"),
             ("alignas(0b100000000000000) char block[16];", "alignas(0b100000000000000)"),
+            ("alignas(8193) char block[16];", "alignas(8193)"),
             ("alignas(256) char small[4]; alignas(32768) char large[4];", "alignas(32768)"),
         ):
             with self.subTest(line=line):
@@ -157,8 +158,12 @@ class AlignmentRuleTests(unittest.TestCase):
         self.assertEqual(integer_literal("16384"), 16384)
         self.assertEqual(integer_literal("0x4000"), 16384)
         self.assertEqual(integer_literal("0X4'000"), 16384)
+        self.assertEqual(integer_literal("0XFF"), 255)
         self.assertEqual(integer_literal("0b1000"), 8)
+        self.assertEqual(integer_literal("0B1010"), 10)
+        self.assertEqual(integer_literal("0b1'000"), 8)
         self.assertEqual(integer_literal("010"), 8)
+        self.assertEqual(integer_literal("0'77"), 63)
         self.assertEqual(integer_literal("0"), 0)
         self.assertEqual(integer_literal("1'000"), 1000)
 
