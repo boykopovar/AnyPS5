@@ -80,18 +80,23 @@ void Driver::flushBetweenPackets(std::uint32_t queue, std::uint32_t header, bool
     }
     const auto localDevice = device.Load();
     if (record || recordAtLock) {
+        deferredDue = !deferred.labels.empty() && std::chrono::steady_clock::now() - deferred.since >= labelFlushDeadline();
         recordDeferredLabels(localDevice.get(), queue);
 
         if ((!labelPacket && packetFlush) || deferredDue) submit = true;
     }
     if (localDevice == nullptr) return;
     if (submit || capped) {
-
-        if (!Graphics::Recorder::PendingLabelSince().has_value() && (batchCap() == 0 || Graphics::Recorder::RecordedWorkSinceSubmit() < batchCap())) return;
+        const auto currentPending = Graphics::Recorder::PendingLabelSince();
+        const bool currentCap = batchCap() != 0 && Graphics::Recorder::RecordedWorkSinceSubmit() >= batchCap();
+        const bool currentDeadline = currentPending.has_value() && std::chrono::steady_clock::now() - *currentPending >= labelFlushDeadline();
+        const bool currentPacket = currentPending.has_value() && !labelPacket && packetFlush;
+        const bool recordedOverdue = currentPending.has_value() && deferredDue;
+        if (!currentCap && !currentDeadline && !currentPacket && !recordedOverdue) return;
         localDevice->SubmitRecorded(queue == 0);
-        if (capped) ++capFlushes;
-        else if (!labelPacket && packetFlush) ++packetFlushes;
-        else ++deadlineFlushes;
+        if (currentPacket) ++packetFlushes;
+        else if (currentDeadline || recordedOverdue) ++deadlineFlushes;
+        else ++capFlushes;
     } else if (reap) {
         localDevice->ReapRecorded();
         ++boundaryReaps;
