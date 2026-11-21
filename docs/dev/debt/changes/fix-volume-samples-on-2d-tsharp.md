@@ -1,0 +1,5 @@
+# shader
+
+## change [3D image accesses bound to a 2D or 2D-array T#]
+
+- [3D image accesses bound to a 2D or 2D-array T#](../../../core/shader/recompiler/Optimization/src/ResourceMaterializer.cpp) - DIM 3D samples with derivatives, comparison or an LOD clamp, gathers, `image_get_lod` and stores through a 2D T# throw; the PS5's gfx1013 is not measured. RDNA2 [hardware oracle](../HW_ORACLE.md) rows (gfx1036, #2023 and #2140's gfx1035): on a 2D T#, `image_sample`, `_lz`, `_l`, `_b` and `_lz_o` ignore r and the offset's z and equal DIM 2D (64 rows each, point and linear); `image_load` and `image_load_mip` read texel (x,y) when z is 0 and zero otherwise; `image_get_resinfo` returns (width, height, 1, levels). On a 2D-array T# they act as DIM 2D-array with r or z as the layer (`BASE_ARRAY` 0 and 1), and `image_get_resinfo` gives the layer count third. `image_store` and `image_store_mip` at mip 0 (8x8 32_FLOAT) write texel (x,y) of a 2D T# only when z is 0 and use z as a 2D-array T#'s layer; only the latter is implemented. Gathers equal DIM 2D on hardware too.
