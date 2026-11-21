@@ -946,6 +946,45 @@ class StageRefusalTests(unittest.TestCase):
                 audit_dump.stage(source, destination)
             self.assertFalse(destination.exists())
 
+class StageModulesTests(unittest.TestCase):
+    def stage(self, modules, source, elf_types):
+        def fake_stage(module, destination):
+            destination.write_bytes(module.read_bytes())
+
+        log = []
+        with mock.patch.object(audit_dump, "stage", side_effect=fake_stage), \
+                mock.patch.object(audit_dump, "elf_type", side_effect=lambda path: elf_types[path.name]):
+            return audit_dump.stage_modules(modules, source, log.append), log
+
+    def test_module_suffixes_are_staged_without_checking_the_elf_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            suffix = sorted(audit_dump.MODULE_SUFFIXES)[0]
+            module = Path(directory) / f"a{suffix}"
+            module.write_bytes(b"x")
+            source = Path(directory) / "source"
+            source.mkdir()
+            staged, log = self.stage([module], source, {})
+            self.assertEqual(staged, [module])
+            self.assertEqual(log, [])
+            self.assertTrue((source / module.name).is_file())
+
+    def test_other_files_need_a_shared_module_elf_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            source.mkdir()
+            names = ("shared.bin", "executable.bin", "plain.bin")
+            modules = []
+            for name in names:
+                module = Path(directory) / name
+                module.write_bytes(b"x")
+                modules.append(module)
+            types = {"shared.bin": audit_dump.SHARED_MODULE_TYPES[0], "executable.bin": 2, "plain.bin": None}
+            staged, log = self.stage(modules, source, types)
+            self.assertEqual([module.name for module in staged], ["shared.bin"])
+            self.assertEqual(log, ["skipped executable.bin: not a shared module (ELF type 0x2)",
+                                   "skipped plain.bin: not a shared module (ELF type unknown)"])
+            self.assertEqual(sorted(path.name for path in source.iterdir()), ["shared.bin"])
+
 class ElfTypeTests(unittest.TestCase):
     def test_reads_the_little_endian_type_field(self):
         with tempfile.TemporaryDirectory() as directory:
