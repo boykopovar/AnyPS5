@@ -286,7 +286,7 @@ bool TranslationContext::vDivFixupF16(const RdnaInstruction& inst) {
 }
 
 bool TranslationContext::float16Binary(const RdnaInstruction& inst, IrOpcode opcode, bool reverse) {
-    if (nativeFloat16Mode()) return float16Native(inst, opcode, sourceAt(inst, reverse ? 1u : 0u), sourceAt(inst, reverse ? 0u : 1u));
+    if (nativeFloat16Mode()) return float16Native(inst, opcode, sourceAt(inst, reverse ? 1u : 0u), sourceAt(inst, reverse ? 0u : 1u), reverse);
     const bool measured = (opcode == IrOpcode::FPAdd32 || opcode == IrOpcode::FPSub32 || opcode == IrOpcode::FPMul32) && floatMode.has_value() && (floatMode->floatMode & 0x0cu) == 0u;
     const auto read = [&](const RdnaOperand& operand) {
         const IrF32 value = readF16AsF32(operand);
@@ -331,15 +331,21 @@ bool TranslationContext::float16Ternary(const RdnaInstruction& inst, IrOpcode op
     return true;
 }
 
-bool TranslationContext::float16Native(const RdnaInstruction& inst, IrOpcode opcode, const RdnaOperand& lhsOperand, const RdnaOperand& rhsOperand) {
+bool TranslationContext::float16Native(const RdnaInstruction& inst, IrOpcode opcode, const RdnaOperand& lhsOperand, const RdnaOperand& rhsOperand, bool reverse) {
     const IrU32 lhs = readF16Bits(lhsOperand);
     const IrU32 rhs = readF16Bits(rhsOperand);
-    IrU32 result;
-    if (opcode == IrOpcode::FPMul32) {
-        result = IrU32(ir.Emit(IrOpcode::FPMul16x2, IrType::U32, {&lhs.Value(), &rhs.Value()}));
-    } else {
-        const IrU32 addend = opcode == IrOpcode::FPSub32 ? IrU32(ir.BitwiseXor(rhs.Value(), ir.Constant(0x8000u))) : rhs;
-        result = IrU32(ir.Emit(IrOpcode::FPAdd16x2, IrType::U32, {&lhs.Value(), &addend.Value()}));
+    const IrU32 second = opcode == IrOpcode::FPSub32 ? IrU32(ir.BitwiseXor(rhs.Value(), ir.Constant(0x8000u))) : rhs;
+    const auto isNan = [&](const IrU32& value) { return IrU1(ir.UGreaterThan(ir.BitwiseAnd(value.Value(), ir.Constant(0x7fffu)), ir.Constant(0x7c00u))); };
+    const bool hostNans = hostFloat16Nans(inst, 2u, false);
+    const IrU32& first = reverse ? second : lhs;
+    const IrU32& last = reverse ? lhs : second;
+    const IrU32 left = hostNans ? IrU32(ir.Select(isNan(first).Value(), first.Value(), lhs.Value())) : lhs;
+    const IrU32 right = hostNans ? IrU32(ir.Select(isNan(first).Value(), first.Value(), second.Value())) : second;
+    IrU32 result(ir.Emit(opcode == IrOpcode::FPMul32 ? IrOpcode::FPMul16x2 : IrOpcode::FPAdd16x2, IrType::U32, {&left.Value(), &right.Value()}));
+    if (!hostNans) {
+        result = IrU32(ir.Select(isNan(result).Value(), ir.Constant(0xfe00u), result.Value()));
+        result = IrU32(ir.Select(isNan(last).Value(), quietNan16(last).Value(), result.Value()));
+        result = IrU32(ir.Select(isNan(first).Value(), quietNan16(first).Value(), result.Value()));
     }
     if (fp16Overflow()) {
         const auto infinite = [&](const IrU32& value) { return IrU1(ir.IEqual(ir.BitwiseAnd(value.Value(), ir.Constant(0x7fffu)), ir.Constant(0x7c00u))); };
