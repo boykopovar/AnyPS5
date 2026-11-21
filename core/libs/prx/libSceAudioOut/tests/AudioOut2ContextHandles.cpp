@@ -130,6 +130,10 @@ void ContextMemoryNullSize() {
     AudioOut2ContextParam params{};
     Require(sceAudioOut2ContextResetParam(&params) == 0, "the context parameters did not reset");
     Require(sceAudioOut2ContextQueryMemory(&params, nullptr) == static_cast<int>(0x80268001), "a null size pointer was not refused with the console code");
+    std::size_t size = 0;
+    errno = 73;
+    Require(sceAudioOut2ContextQueryMemory(reinterpret_cast<const AudioOut2ContextParam*>(0x10), &size) == static_cast<int>(0x80260502), "an unmapped parameter pointer was accepted");
+    Require(errno == 73, "a rejected parameter query changed errno");
 }
 
 void ContextMemoryQuery() {

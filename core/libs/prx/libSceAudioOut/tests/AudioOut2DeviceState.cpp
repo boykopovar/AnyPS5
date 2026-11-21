@@ -103,6 +103,9 @@ void ContextSetAttributesChecksArguments(AudioOut2ContextHandle context) {
     Require(sceAudioOut2ContextSetAttributes(context, nullptr, 1) == errorInvalidArgument);
     Require(sceAudioOut2ContextSetAttributes(context, nullptr, 0) == 0);
     Require(sceAudioOut2ContextSetAttributes(context, &attribute, 1) == 0);
+    errno = 73;
+    Require(sceAudioOut2ContextSetAttributes(context, reinterpret_cast<const AudioOut2Attribute*>(0x10), 1) == errorInvalidArgument);
+    Require(errno == 73);
 }
 
 void SpeakerInfoReportsTheFrontPair() {
