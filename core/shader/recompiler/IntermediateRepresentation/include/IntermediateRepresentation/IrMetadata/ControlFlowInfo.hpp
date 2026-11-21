@@ -48,6 +48,8 @@ struct TableColumn {
     std::vector<KeyDomain> keyDomains;
     bool unkeyed = false;
     bool indirect = false;
+    bool laneKey = false;
+    bool implicitDerivatives = false;
     std::uint32_t indirectOffset = 0;
     std::uint32_t indirectImmediate = 0;
     std::vector<PointerHop> pointerHops;
@@ -57,7 +59,7 @@ struct TableColumn {
     std::uint32_t selection = 0;
 
     bool operator==(const TableColumn& other) const {
-        return heapSource == other.heapSource && stride == other.stride && addend == other.addend && offset == other.offset && dwordCount == other.dwordCount && sampler == other.sampler && address == other.address && buffer == other.buffer && indirect == other.indirect && indirectOffset == other.indirectOffset && indirectImmediate == other.indirectImmediate && pointerHops == other.pointerHops && foldedAddend == other.foldedAddend && foldedCarry == other.foldedCarry && selected == other.selected && selection == other.selection;
+        return heapSource == other.heapSource && stride == other.stride && addend == other.addend && offset == other.offset && dwordCount == other.dwordCount && sampler == other.sampler && address == other.address && buffer == other.buffer && indirect == other.indirect && laneKey == other.laneKey && implicitDerivatives == other.implicitDerivatives && indirectOffset == other.indirectOffset && indirectImmediate == other.indirectImmediate && pointerHops == other.pointerHops && foldedAddend == other.foldedAddend && foldedCarry == other.foldedCarry && selected == other.selected && selection == other.selection;
     }
 };
 
