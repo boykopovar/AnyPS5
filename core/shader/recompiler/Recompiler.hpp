@@ -138,7 +138,9 @@ enum class ColorExportPacking : std::uint8_t {
     UintClamp8,
     UintClamp16,
     UintMask8,
-    UintMask16
+    UintMask16,
+    UintClamp10_10_10_2,
+    UintMask10_10_10_2
 };
 
 enum class RasterPrimitive : std::uint8_t {
