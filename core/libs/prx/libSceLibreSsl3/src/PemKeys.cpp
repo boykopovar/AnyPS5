@@ -121,6 +121,7 @@
  */
 
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libSceLibreSsl3/include/PemEncryption.hpp"
 #include "prx/libSceLibreSsl3/include/PkeyState.hpp"
 #include "prx/libSceLibreSsl/include/Bio.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
@@ -154,6 +155,7 @@ constexpr int PemNotDekInfo = 105;
 constexpr int PemNotEncrypted = 106;
 constexpr int PemNotProcType = 107;
 constexpr int PemNoStartLine = 108;
+constexpr int PemReadKey = 111;
 constexpr int PemShortHeader = 112;
 constexpr int PemErrorConvertingPrivateKey = 115;
 
@@ -166,7 +168,7 @@ constexpr int RsaType = 6;
 constexpr int DsaType = 116;
 constexpr int EcType = 408;
 
-constexpr int PemBufferSize = 1024;
+constexpr int PemBufferSize = LibreSsl3PemBufferSize;
 constexpr int PemEncodeChunk = PemBufferSize * 5;
 constexpr int PemWriteBufferLength = PemBufferSize * 8;
 constexpr int EncodeLineBytes = 48;
@@ -218,10 +220,6 @@ constexpr const char* BinaryToAscii = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmno
 
 void PutPemError(int reason) {
     LibreSslPutError_nid_no_patch(PemLibrary, AnyFunction, reason);
-}
-
-[[noreturn]] void EncryptedPrivateKeyUnsupported() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 [[noreturn]] void OldPrivateKeyDecodeUnsupported() {
@@ -628,8 +626,9 @@ bool CheckPem(const std::string& found, const char* wanted) {
     return ameth != nullptr && ameth->oldPrivDecode;
 }
 
-bool GetCipherInfo(const std::string& headerText) {
+bool GetCipherInfo(const std::string& headerText, LibreSsl3PemCipherInfo& info) {
     const char* header = headerText.c_str();
+    info.cipher = nullptr;
     if (*header == '\0' || *header == '\n') return true;
     if (std::strncmp(header, "Proc-Type: ", 11) != 0) {
         PutPemError(PemNotProcType);
@@ -655,18 +654,21 @@ bool GetCipherInfo(const std::string& headerText) {
         PutPemError(PemNotDekInfo);
         return false;
     }
-    EncryptedPrivateKeyUnsupported();
+    header += 10;
+    return PemCipherInfoFromDekInfo_nid_no_patch(header, info);
 }
 
 bool ReadKeyBytes(LibreSsl::Bio* bio, const char* label, std::string& name, std::vector<unsigned char>& data,
-    int& length) {
+    int& length, LibreSslPemPasswordCallback passwordCallback, void* userData) {
     std::string header;
     for (;;) {
         if (!ReadPem(bio, name, header, data, length)) return false;
         if (CheckPem(name, label)) break;
         ClearBytes(data.data(), data.size());
     }
-    return GetCipherInfo(header);
+    LibreSsl3PemCipherInfo info;
+    if (!GetCipherInfo(header, info)) return false;
+    return PemDoHeader_nid_no_patch(info, data, length, passwordCallback, userData);
 }
 
 int WriteBytes(LibreSsl::Bio* bio, const char* text, int count) {
@@ -764,6 +766,47 @@ int WritePkcs8PrivateKey(LibreSsl::Bio* bio, const LibreSsl3EvpPkey* key) {
     return written > 0 ? 1 : 0;
 }
 
+int WriteEncryptedPkcs8PrivateKey(LibreSsl::Bio* bio, const LibreSsl3EvpPkey* key,
+    const LibreSsl3EvpCipher* cipher, const char* keyString, int keyLength,
+    LibreSslPemPasswordCallback passwordCallback, void* userData) {
+    std::unique_ptr<LibreSsl3Pkcs8PrivKeyInfo, decltype(&PKCS8_PRIV_KEY_INFO_free_nid_postfix)> p8inf(
+        EVP_PKEY2PKCS8_nid_postfix(key), PKCS8_PRIV_KEY_INFO_free_nid_postfix);
+    if (p8inf.get() == nullptr) {
+        PutPemError(PemErrorConvertingPrivateKey);
+        return 0;
+    }
+    std::vector<unsigned char> phrase;
+    const ClearOnExit clearPhrase{phrase};
+    const char* password = keyString;
+    if (password == nullptr) {
+        phrase.assign(static_cast<std::size_t>(PemBufferSize), 0);
+        keyLength = PemReadPassword_nid_no_patch(reinterpret_cast<char*>(phrase.data()), 1, passwordCallback,
+            userData);
+        if (keyLength <= 0) {
+            PutPemError(PemReadKey);
+            return 0;
+        }
+        password = reinterpret_cast<const char*>(phrase.data());
+    }
+    std::vector<unsigned char> plain;
+    const ClearOnExit clearPlain{plain};
+    int encoded = 0;
+    const int estimated = i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(p8inf.get(), nullptr);
+    if (estimated > 0) {
+        plain.assign(static_cast<std::size_t>(estimated), 0);
+        unsigned char* cursor = plain.data();
+        encoded = i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(p8inf.get(), &cursor);
+        if (encoded > estimated)
+            throw std::length_error("i2d_PKCS8_PRIV_KEY_INFO: encoding longer than its estimate");
+    }
+    std::vector<unsigned char> record;
+    if (!PemEncryptPkcs8_nid_no_patch(cipher, plain.data(), encoded, password, keyLength, record)) record.clear();
+    const unsigned char empty = 0;
+    const int written = WritePem(bio, EncryptedPrivateKeyLabel, "", record.empty() ? &empty : record.data(),
+        static_cast<int>(record.size()));
+    return written > 0 ? 1 : 0;
+}
+
 template<typename T>
 bool CopyGuestInPreservingErrno(T& destination, const T* source) {
     const int savedErrno = errno;
@@ -793,13 +836,11 @@ extern "C" {
 
 LibreSsl3EvpPkey* APS5_VABI PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(LibreSsl::Bio* bio,
     LibreSsl3EvpPkey** key, LibreSslPemPasswordCallback passwordCallback, void* userData) {
-    static_cast<void>(passwordCallback);
-    static_cast<void>(userData);
     std::string name;
     std::vector<unsigned char> data;
     const ClearOnExit clearData{data};
     int length = 0;
-    if (!ReadKeyBytes(bio, AnyPrivateKeyLabel, name, data, length)) return nullptr;
+    if (!ReadKeyBytes(bio, AnyPrivateKeyLabel, name, data, length, passwordCallback, userData)) return nullptr;
 
     const unsigned char* cursor = data.data();
     LibreSsl3EvpPkey* ret = nullptr;
@@ -815,7 +856,25 @@ LibreSsl3EvpPkey* APS5_VABI PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(Li
             PKCS8_PRIV_KEY_INFO_free_nid_postfix(p8inf);
         }
     } else if (name == EncryptedPrivateKeyLabel) {
-        EncryptedPrivateKeyUnsupported();
+        bool asn1Failure = true;
+        auto* p8inf = PemDecryptPkcs8_nid_no_patch(cursor, length, passwordCallback, userData, asn1Failure);
+        if (p8inf == nullptr) {
+            if (!asn1Failure) return nullptr;
+        } else {
+            ret = EVP_PKCS82PKEY_nid_postfix(p8inf);
+            PKCS8_PRIV_KEY_INFO_free_nid_postfix(p8inf);
+            if (key != nullptr) {
+                LibreSsl3EvpPkey* previous = nullptr;
+                if (!CopyGuestInPreservingErrno(previous, key)
+                    || !GuestWritablePreservingErrno(key, sizeof(previous))) {
+                    EVP_PKEY_free_nid_disambig1_nid_postfix(ret);
+                    throw std::invalid_argument("PEM_read_bio_PrivateKey: inaccessible key slot");
+                }
+                EVP_PKEY_free_nid_disambig1_nid_postfix(previous);
+                if (!CopyGuestOutPreservingErrno(key, ret))
+                    throw std::invalid_argument("PEM_read_bio_PrivateKey: inaccessible key slot");
+            }
+        }
     } else if ((suffixLength = PemCheckSuffix(name.c_str(), PrivateKeySuffix)) > 0) {
         const PkeyAmeth* ameth = FindAmethByString(name.c_str(), suffixLength);
         if (ameth != nullptr && ameth->oldPrivDecode) {
@@ -859,13 +918,11 @@ LibreSsl3Rsa* APS5_VABI PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(
 
 LibreSsl3EvpPkey* APS5_VABI PEM_read_bio_PUBKEY_nid_postfix(LibreSsl::Bio* bio, LibreSsl3EvpPkey** key,
     LibreSslPemPasswordCallback passwordCallback, void* userData) {
-    static_cast<void>(passwordCallback);
-    static_cast<void>(userData);
     std::string name;
     std::vector<unsigned char> data;
     const ClearOnExit clearData{data};
     int length = 0;
-    if (!ReadKeyBytes(bio, PublicKeyLabel, name, data, length)) return nullptr;
+    if (!ReadKeyBytes(bio, PublicKeyLabel, name, data, length, passwordCallback, userData)) return nullptr;
 
     const unsigned char* cursor = data.data();
     LibreSsl3EvpPkey* ret = d2i_PUBKEY_nid_postfix(key, &cursor, length);
@@ -876,12 +933,10 @@ LibreSsl3EvpPkey* APS5_VABI PEM_read_bio_PUBKEY_nid_postfix(LibreSsl::Bio* bio, 
 int APS5_VABI PEM_write_bio_PrivateKey_nid_postfix(LibreSsl::Bio* bio, LibreSsl3EvpPkey* key,
     const LibreSsl3EvpCipher* cipher, unsigned char* keyString, int keyLength,
     LibreSslPemPasswordCallback passwordCallback, void* userData) {
-    static_cast<void>(keyString);
-    static_cast<void>(keyLength);
-    static_cast<void>(passwordCallback);
-    static_cast<void>(userData);
-    if (cipher != nullptr) EncryptedPrivateKeyUnsupported();
     if (key == nullptr) throw std::invalid_argument("PEM_write_bio_PrivateKey: null key");
+    if (cipher != nullptr)
+        return WriteEncryptedPkcs8PrivateKey(bio, key, cipher, reinterpret_cast<const char*>(keyString), keyLength,
+            passwordCallback, userData);
     return WritePkcs8PrivateKey(bio, key);
 }
 

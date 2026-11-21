@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <initializer_list>
 #include <random>
 #include <source_location>
 #include <stdexcept>
@@ -47,6 +48,47 @@ constexpr int Asn1FieldMissing = 121;
 constexpr int Asn1IntegerTooLargeForLong = 128;
 constexpr int Asn1TooLarge = 223;
 constexpr int Asn1WrongTag = 168;
+constexpr int Asn1Errors = 13;
+constexpr int Asn1DataIsWrong = 109;
+constexpr int Asn1NullIsWrongLength = 144;
+constexpr int Asn1SequenceLengthMismatch = 148;
+constexpr int Asn1SequenceNotConstructed = 149;
+constexpr int Asn1UnexpectedEoc = 159;
+constexpr int Asn1InvalidObjectEncoding = 216;
+constexpr int Asn1BooleanIsWrongLength = 106;
+constexpr int Asn1StringTooShort = 152;
+constexpr int Asn1TypeNotConstructed = 156;
+constexpr int Asn1BmpStringIsWrongLength = 214;
+constexpr int Asn1UniversalStringIsWrongLength = 215;
+constexpr int Asn1InvalidBitStringBitsLeft = 220;
+constexpr int Asn1TypeNotPrimitive = 231;
+constexpr int ErrorReasonBufLibrary = 7;
+constexpr int PemBadDecrypt = 101;
+constexpr int PemBadIvChars = 103;
+constexpr int PemBadPasswordRead = 104;
+constexpr int PemReadKey = 111;
+constexpr int PemUnsupportedEncryption = 114;
+constexpr int PemPasswordBufferSize = 1024;
+constexpr int EvpErrors = 6;
+constexpr int EvpBadDecrypt = 100;
+constexpr int EvpUnsupportedCipher = 107;
+constexpr int EvpWrongFinalBlockLength = 109;
+constexpr int EvpDecodeError = 114;
+constexpr int EvpKeygenFailure = 120;
+constexpr int EvpUnknownPbeAlgorithm = 121;
+constexpr int EvpCipherParameterError = 122;
+constexpr int EvpUnsupportedKeylength = 123;
+constexpr int EvpUnsupportedKeyDerivationFunction = 124;
+constexpr int EvpUnsupportedPrf = 125;
+constexpr int EvpUnsupportedSaltType = 126;
+constexpr int EvpNoCipherSet = 131;
+constexpr int EvpUnsupportedNumberOfRounds = 135;
+constexpr int Pkcs12Errors = 35;
+constexpr int Pkcs12DecodeError = 101;
+constexpr int Pkcs12EncryptError = 103;
+constexpr int Pkcs12AlgorCipherInitError = 115;
+constexpr int Pkcs12CipherFinalError = 116;
+constexpr int Pkcs12PbeCryptError = 117;
 
 constexpr char RsaTraditionalPem[] =
     "-----BEGIN RSA PRIVATE KEY-----\n"
@@ -157,6 +199,198 @@ constexpr char EncryptedHeaderPem[] =
     "\n"
     "gdF0NqYlgIOCD9E5EYDdckZ7x6fNI9rUzDNpNUGEtKOIRsM6zEJ5WeAgDHykETce\n"
     "-----END RSA PRIVATE KEY-----\n";
+
+constexpr char TestPassword[] = "anyps5-pem-test";
+
+constexpr char EcTraditionalAes128Pem[] =
+    "-----BEGIN EC PRIVATE KEY-----\n"
+    "Proc-Type: 4,ENCRYPTED\n"
+    "DEK-Info: AES-128-CBC,0F30DE72C44D2D625DE44863C11CBA88\n"
+    "\n"
+    "VPROzD/J1zDpb5F5VLpOkZSSU0Ht+NSOON5z1KO2ILCnS2hYrCfeP+ByUKJAxX24\n"
+    "h4QrC67UIyPHVggHAPKuIQB8uf/KvKcNHCNDOxuU6mHPA+GpWTl//tM5zzOouTaw\n"
+    "y+9vcVn9NimiD6o/kkSflMwraGGVTVd0eUr0Njyxosk=\n"
+    "-----END EC PRIVATE KEY-----\n";
+
+constexpr char EcTraditionalAes192Pem[] =
+    "-----BEGIN EC PRIVATE KEY-----\n"
+    "Proc-Type: 4,ENCRYPTED\n"
+    "DEK-Info: AES-192-CBC,C26A1104E06BAE5517A52D8E3643F687\n"
+    "\n"
+    "6n0s4fLkyeCzQSzoYKFRRrmWB9R/p8hg3L+jFSY8YFp3M/1bRR0pFNj1gAI6E8vA\n"
+    "yOdE93vn3KUtpqTUW5GhZR1MY7CqJkPH7bGU4ET8Nd9GNjOyA1bElCAaYnyKElXP\n"
+    "9d6BGS9RNDXPeEr+0xg0nNlG2MluBzhb4iq/4U70+tQ=\n"
+    "-----END EC PRIVATE KEY-----\n";
+
+constexpr char EcTraditionalAes256Pem[] =
+    "-----BEGIN EC PRIVATE KEY-----\n"
+    "Proc-Type: 4,ENCRYPTED\n"
+    "DEK-Info: AES-256-CBC,01F59F9F7108AB477D1CFFB938766907\n"
+    "\n"
+    "ThA5ze1KSTqVrYBxdgD4762G4hVwS0t9PN3adt6GZWuo5CD7+JhcFxeORxnDuTbN\n"
+    "Zu1iLuzE3a9w4WIudxKDuxh5pImjR/hCEe2/ZHv32JcUSH7+q02IYdt7tx+wlY6y\n"
+    "Rwx4aw3jlRfnTHuNcxBHvls7HUYqqZ/DWNeq5+m08P8=\n"
+    "-----END EC PRIVATE KEY-----\n";
+
+constexpr char EcTraditionalDes3Pem[] =
+    "-----BEGIN EC PRIVATE KEY-----\n"
+    "Proc-Type: 4,ENCRYPTED\n"
+    "DEK-Info: DES-EDE3-CBC,8B3B291B1CE9F357\n"
+    "\n"
+    "1zSjjmi96kgY+tnYKEpgRpCA/rJnmJLO0TRC8XXcFcO0O0sanld/GUvx6vPG1veQ\n"
+    "N15YXsKKYCS5AjnTaqj/tWBVGggvec3gdYRT9s/2ApQzsqU2rWOoLgHi3AMJYKb0\n"
+    "Cn7JI3I70eS2iX2ZiuSzG1QA2qO8SGAwBNyOn0H6Feo=\n"
+    "-----END EC PRIVATE KEY-----\n";
+
+constexpr char RsaTraditionalAes256Pem[] =
+    "-----BEGIN RSA PRIVATE KEY-----\n"
+    "Proc-Type: 4,ENCRYPTED\n"
+    "DEK-Info: AES-256-CBC,3914FF53FACD163B4BE4F90CCDDDC77E\n"
+    "\n"
+    "FjdInz7wgLn8tUb/Ku3KHFsjAcs/bn+rf6SabeGqM4uFGiqBKLC2aaPnFR13EQiz\n"
+    "ykYHxeOOHHcTlgKYnzWIQYaBH1E+T83lBB8Sxke27/p+ulMf9K8X/PlWoZwHnGYG\n"
+    "ZLLf+Mpq/OvCyYM0ST2NkZxiHZ6JBgOH1xJtjDsTXqhUw2jQMOmpl6cjTPN6431t\n"
+    "F4+AaWufulCuZQukk7kN8NZQhOSVKL9DQ6JBlfOiwp2v0NppObrEmS9dohI3NxR/\n"
+    "GhlCQjLJqyd7xtyUd75qOOmck589WEMOl3w3nHNb/1CpaC9OehXr+sVhZ8a0uX9S\n"
+    "4OqVdA32bwhTUa54FvYuELL3j2k5PG9z6BaRJ859ukWhQeWSqI1fvSfmMVxHgmc1\n"
+    "2Uqu9c6KUXYJ3D3IM/AcDKA4BvZqPlJxl+c4/OcUDhLizzeGDZuHJlJE9OHgK3O5\n"
+    "CUB/kOWw+dBbF6Vj8SGMRETrgKNn4EVmGH0qpKdX+kwJlyYzy0HmhHkVhck33lxP\n"
+    "lzLifMTXtzns+KVE+BpG2ezg7HBXi/A8qVqdaspDKrwf7ukHpmpWnP2m92hZEzxg\n"
+    "R0JsI5hlgGHhRX5142KOsonhvagycvDI9AEMLeUADUNZqg4GZCdNufALXyBjx52k\n"
+    "9+oap4DWafWiDielpmHgZCxGX7VzH2/KLM1d6AjmL4DSvPHt/fcxOum7+bdaAcrv\n"
+    "p7EhdAJ4mfNPWpZ6Kjz03tRiSoklwNzRNGTf65tVTOuRAMRnVxrMTouBlYXUrHAq\n"
+    "4NXDiDM9sLcQexHF6IXTdMM333imQU8/y3FOPPGBiPL88df26ly/fSq6525GXQ+4\n"
+    "LKqKGjMrJfd3hXA4ZG6iaQAC78Kls0UoY435ZT6TodL0kDLMaCZsjReMGT+hx5xA\n"
+    "7Nf/SK7bBoTIeFwV+2SQMGmwMNXvko0emNf6uTDa5QvAJg+hossAfY/IInDpXfN8\n"
+    "WF8B+PiRYy9zk3E4/MEJXHAEV0lwdP/RTj6ABamVl6eQjyYVS4nddUDtO5MWnLVt\n"
+    "oT6Od+UXYDL48t7QLjSn0a+ISpRkNiSn5MYnpeKd8YP9LeH8+2KE5+7JPXJhykGI\n"
+    "grmAckq75lu5p9DPZdsT0h4dwQbwdM24sklrZeh1NCo7ahomJJOfdpcJHYkJn096\n"
+    "lamauDCWaMuOVQuyws4/TOL641mS5gj8Ay5rQ6LA/Bp9HBEyBTdjf9ywHKT1w5Qy\n"
+    "nsDWoZk7K+fUNEdcTh3WB9hvSUMP4+gusbc2pjXIlMK5F7I8JVfWnlupAhJr5Zil\n"
+    "lqxez0WTLgDgOD4zWwtUSkJZFm3v29cHOQN/4m7spjoCdEO9yx7lrZORGfdLQxJE\n"
+    "TSF59N2wHQbfzT3B5MiPnoBQCOvyZtAwKk8eFpkBcBZ9cn4dOI+sojgMGfDy8ltz\n"
+    "fm6DvkiBKnKEbzuOh12kLUKqfPddzOG/hWVwCkV1XXqMGeixUH1KCwvtkAJsr4js\n"
+    "qgORtrgjw1vY8Rz1smeRgQxXxX84AMjLiQGfLlPqhZ6djAf4J9oeTHpycv60NBP9\n"
+    "5kADVGEcqUmP4+1lX/JZDcmYcgHPyLLQbjlUkslQ/QJgoGJMhavBSwZWIrUijgKc\n"
+    "-----END RSA PRIVATE KEY-----\n";
+
+constexpr char EcPkcs8Aes256Sha256Pem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIH0MF8GCSqGSIb3DQEFDTBSMDEGCSqGSIb3DQEFDDAkBBAyL3afHfsE/IjQiayr\n"
+    "j2e8AgIIADAMBggqhkiG9w0CCQUAMB0GCWCGSAFlAwQBKgQQyAIpYZm21dRlhhMZ\n"
+    "5AO8BASBkNPslCzj+QLviW4tjmJH5+C07ef4tmhnQF+R2isJr/jomE0zHC/QcD03\n"
+    "IJ5uTf0cVMHYHQ3AHUAddCaH7dS+lcTRREz34vs2JN5RmMPjstUEsvkGUiQbBJk5\n"
+    "hWkeJJbniFx2cPhOjXy7uGUQMGFO9wPG2gZSUijyLcDUQXUqWekCezJNUdVhnRlW\n"
+    "MMKj98YTBg==\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char EcPkcs8Aes128Sha1Pem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIHmMFEGCSqGSIb3DQEFDTBEMCMGCSqGSIb3DQEFDDAWBBA6ia4oaggPx1cBcpEq\n"
+    "sYxTAgID6DAdBglghkgBZQMEAQIEEIXNe1RSxgkQgquWCQdPuz4EgZCDPSa6P/h8\n"
+    "fyXbrFlaY0ItZamEDKLZ/mpIFtRGH9PXV+542ucge/mDznz1xow+63xdqyxpuWhw\n"
+    "SDmU6b7vxXzHHIB02X1YtY2fLe/7G8Nidm2W4ochhmJAt99CYB/4X/B9kVhDOcrm\n"
+    "c0NUYI9rlYVt4ZO5Sc6qyFwleapP/LAk5oqOweOR9OWb+AO1iVwMgm4=\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char EcPkcs8Aes192Sha512Pem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIHzMF4GCSqGSIb3DQEFDTBRMDAGCSqGSIb3DQEFDDAjBBCNkUoKsFBO/oxx6UEh\n"
+    "6EChAgEBMAwGCCqGSIb3DQILBQAwHQYJYIZIAWUDBAEWBBBt7nvlIySKqPCqwBRK\n"
+    "OTl2BIGQ9RGsi2UU0ApNamMC6jjMm0y3qoSn3LbEkOknL7ZFGWPv4ZTVApCeIQKM\n"
+    "BU/dRZleJHFrQkEr9kllOOp/Q43MIz7IvCG24OnyGnLdvtPLJIwDq2aJV4gVhQQf\n"
+    "+PbIx4+gGTktYqcViQDOrdaI8JD3wuHKUirOaB7Ho6TzGY14q2bM1bLGIuQwqcom\n"
+    "jr6pfRS8\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char EcPkcs8Aes256Sha384Pem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIHzMF4GCSqGSIb3DQEFDTBRMDAGCSqGSIb3DQEFDDAjBBByuRUNTt98Tud+msei\n"
+    "YdobAgEDMAwGCCqGSIb3DQIKBQAwHQYJYIZIAWUDBAEqBBDsuDyr3hzn/rRAOg+I\n"
+    "9KNCBIGQFfW5cSU82N1nYAAu7+Cd//INHv0NHed6yNq6WhpHqJtsQEz5bQFFqQke\n"
+    "yQ1pTzH6xpSqd16kA8YELkp1d2pJYnoqpoziaf2XmmUPr+TcM3qi1gPF3Ls5YSV+\n"
+    "XUOV/DZQ1Kym4r/doODcnmagg4acZgjkKl1XPtylhbc+5OzvpS13eCqi1vLh/z+o\n"
+    "up/rgKtJ\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char EcPkcs8Aes128Md5Pem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIHzMF4GCSqGSIb3DQEFDTBRMDAGCSqGSIb3DQEFDDAjBBAZYflFLGOuac4aYLHX\n"
+    "3Bv3AgEFMAwGCCqGSIb3DQIGBQAwHQYJYIZIAWUDBAECBBDPQxs0lzZzGRMZ5e5Q\n"
+    "ElZuBIGQS3IK0vJj7vkB/JPnbu4LfRoSYMutDWEbJuISu2QfYU2HoVjaGFB/Rgwd\n"
+    "XoQvhwO/0edc04PV/hpudK1saHeu5TlcHeup5R02zWEntlz4yJBCOyPTEKD87yX4\n"
+    "lLaSvh4te8R5RtUBSc6K7hKlMehRZlzmp7WhRfC6dCq7CnTASMdFMqeKxqXJeUvW\n"
+    "N2P7vpHH\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char EcPkcs8Aes128Sha224Pem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIHzMF4GCSqGSIb3DQEFDTBRMDAGCSqGSIb3DQEFDDAjBBB6lNHGJu0y4V+fB2iG\n"
+    "N8I8AgEFMAwGCCqGSIb3DQIIBQAwHQYJYIZIAWUDBAECBBCnuht/I+hgzUr1xHT6\n"
+    "IwpwBIGQL20vdqxo4Eo3GLBYZe4C3qnbLUk0jo8x3CDfuGGg/JrER3UicaTMwWxq\n"
+    "DJM3ZuPc/qfApD/zdlRQ/0sxSo6CKtnBMw5cWekyUkTrAULUGNd3ja4IVWt3y7Fb\n"
+    "CV8C64xx87G7wtImQ22d4HSlXaS0nJ+eZforvaNeV7V2F+3e8JblXwry5xEAroQm\n"
+    "yth9kPBS\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char EcPkcs8Aes128Sha512_256Pem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIHzMF4GCSqGSIb3DQEFDTBRMDAGCSqGSIb3DQEFDDAjBBASig5i22ujz+RS3kx0\n"
+    "MOd5AgEFMAwGCCqGSIb3DQINBQAwHQYJYIZIAWUDBAECBBD6vg5aJO699rUPQhJG\n"
+    "AMaSBIGQuZPWYLb2oBrg6lWC24vow0HlWlwYf8kheH7Flq6bs/Hjj4ied/NVCJrh\n"
+    "ScurvVWeihzgkZ5rjQiFqI000qvqgXrBpJc9yjaeKTc5N+2B/0nZSih5uScWxX9k\n"
+    "aEgUVLZj8q50doSRnkgYj98s2lO7Li28QUUytRUH9xmOAntRDGMZtUAVTiyrle/w\n"
+    "CQFOO9nO\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char EcPkcs8Des3Pem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIHrMFYGCSqGSIb3DQEFDTBJMDEGCSqGSIb3DQEFDDAkBBD/rekLFhD5JoIqZBgN\n"
+    "IOfiAgIIADAMBggqhkiG9w0CCQUAMBQGCCqGSIb3DQMHBAhuKr8QtUo7HQSBkIDI\n"
+    "9g6DiQvARZhxmwrw8XP4+P5ns8uQyuhvyjK3IPuKSvg7ow4kkJV3fGrJJKyWeHhY\n"
+    "/ZyH2YhvpozqlI32sJSyPPZNsnSc75ErBWrfBYdtzhj2kZ/EWoySb+zw4qjFj6Ir\n"
+    "tRSPPvnB+W+itLgyXoC2wQlyOHhPdEXSdC/EjELR8+TCMjcNotkUGi4RkmHcbA==\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char EcPkcs8Pbes1Pem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIGxMBwGCiqGSIb3DQEMAQMwDgQIq5h3SktflhkCAggABIGQ2F0udCaW/kHkY2ls\n"
+    "0UdbMwBYJCzNpTlPyZm8EcOXO7vFZ2Tyj+/YfFTmJXy2+e4VF2JJj7mRrJBHQahA\n"
+    "1oiQckUiFXg4eMr+w2qmVgPYiPAo+xqYOa1SgThBv9xJi4V0pprvMuAjZyocAJVu\n"
+    "AqFRJ5tUAETg546DXBSBZEWt9v4F4xGeOTVjcdld5otuZS+2\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char RsaPkcs8Aes256Sha256Pem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIIFNTBfBgkqhkiG9w0BBQ0wUjAxBgkqhkiG9w0BBQwwJAQQy6h8dzuTommLJUNw\n"
+    "bmosygICCAAwDAYIKoZIhvcNAgkFADAdBglghkgBZQMEASoEEL8nSTHEXTzJXRSN\n"
+    "CVQht88EggTQj17T2ar4isghif/o5hBINtjktt/0UDUai4aiUU3Rq9RNbADzv+v/\n"
+    "AlZv2xmLvOy4EVXZ6Wf9DDQ8VaqxJ8ehPmPpWeqd3Ng/b0rZaZFqtB/zriCmQo45\n"
+    "Ow/P1xRCY74N3w8P3c9NEdjxroUqChodEjq0iVfgzkdXju/9f7Xz/UIM1wyDJQzj\n"
+    "iw+Pkkn36lZL7ESTqgYHk2jXPxFPrpi8EFdPqjBOZMNZWRc6N24dp8Y56vlMXm5y\n"
+    "b6bVPXUXKSdGGvtLb3KGXh+maJFWukoWpb1/BhLqi76vOnalxMtoVvW2dWp0UYrf\n"
+    "5XD3ShuXm7FM2hy5hflbRy9oyiLcrdcEIoZ99feUWHkD9E6lRfPX8M/Q0Dx989Wb\n"
+    "t1H8J/fiUEhZ+oYF/vn9zWZWwCVUQijmdjifQJXQgZeOMQmKA04kxPk3MImF3bfu\n"
+    "o9+B6T37xnOAoV5MBF6sATQjbf/QC6BFFGN/exl1FySQdspVyGIJco1CpEkk8SfB\n"
+    "yqpTGpeb0XVBtih6dKMAZjhP1FB45uYMccX48PwF1HdZRubc3V2WXRdmefq2KePo\n"
+    "HQVD67T8PJKFG3UGq1XZIUh+TSOZWU80W/CzWlbHBZem4/Cazwy6B6SvkI3TmX6f\n"
+    "jSZxS+Qfst5aWmGHkO7d2Z6EcjSw44Q0K/fJh4/qAr0mdvwJ1DEAJZOk8zIPfb6w\n"
+    "OrYLgsLzoTmswbnHwmSsRYm0qZWzETvj1mUETXrIWo7hm8/EtGaOxMJf348cfkEJ\n"
+    "Bp7iLEy0GL5IUXArqFAK3mxYHyd0N4r9UtQI28HbDUWdm/r8y5uBC0USiO3PCjjI\n"
+    "7Nl5FGK/hC4T4ItKp07BGC4zcC43XotXaUvNjpiyOsqoEgXEXeayq+4LFGGVYNaX\n"
+    "4r+WDgx6m8pPnX1LhcNKDLaYr3VkdCbOf5IsUvcbatxvS9w4/gGu1e78i+AaWrii\n"
+    "YR3M9OjSTKkLxvuLWVkq4fi8mVt07Se63AB45Yi3zK2Mi8vdPBNlKkXOqS7/JNgG\n"
+    "cPLUZPuVbO6Hd3sLi59e1bRuAvNmJ+MrjxFmeHa1c1I1Dseiocb/zXnCSkT7Wxv1\n"
+    "rndZh6V0HdYwJvqBCo06MelS1Kri0O4DjMIciEQ8wK0qGeEX1nrJXAkLXMN4CPon\n"
+    "3Z9Hvt+nAyPct4awPKuvTecuNyogBUUGYSOvywFiobQF3yzbFCJRlAV+IICNLDtJ\n"
+    "CL48vxSvv6yRMNRRfdWqGjcd6V1UNVGeO7VBmLhWxxuOFzd1/N5bKaZkt/ltS7Rs\n"
+    "5M5bVK+7vFImTt+PpbWqeRXh6zs0eg0ly7ai+w6AhyfAlQXWIVKzVxT6uCP3k2oj\n"
+    "Y/VE/lhfnxVBU6WaOjR7ZuPv0EZpNhYooEuB0+l4w/8/d9dJnOdnPmN010eagTgu\n"
+    "e3j8bwfWjaKVNdVMLa669fm1tows1/NcIzJOEwckJyFj+aq/7P089+jAjBB7C96v\n"
+    "mG2EIsxWShM+De4r7t5HJN5/Rh0cnijDihAeJ1dV9P+F6ciMkl5t3WBrZb3FOGvc\n"
+    "A3nU0doF7NOVlDd1gHMTyz3kFeqVifkzIVvY+r6QOt/e0rE5Af0M7oKQY8AlnCEN\n"
+    "4yLghb4lJZm34or5Ytv2/ISULM5bwDFwC4iEMlH6fcEUvyOsNyWAkK0=\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
 
 constexpr char Ec256TraditionalPem[] =
     "-----BEGIN EC PRIVATE KEY-----\n"
@@ -746,35 +980,788 @@ void TestPasswordCallbackNotCalled() {
     EVP_PKEY_free_nid_disambig1_nid_postfix(privateRead);
 }
 
-void TestEncryptedRejected() {
+using Bytes = std::vector<unsigned char>;
+using ErrorList = std::vector<std::pair<int, int>>;
+
+const Bytes Pbes2OidBytes{0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0d};
+const Bytes Pbkdf2OidBytes{0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0c};
+const Bytes HmacSha256OidBytes{0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x09};
+const Bytes HmacSha512_224OidBytes{0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x0c};
+const Bytes HmacSha3_256OidBytes{0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x0e};
+const Bytes Aes128CbcOidBytes{0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x01, 0x02};
+const Bytes Aes192CbcOidBytes{0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x01, 0x16};
+const Bytes Aes256CbcOidBytes{0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x01, 0x2a};
+const Bytes UnknownOidBytes{0x2a, 0x03};
+
+struct PasswordRequest {
+    const char* text = nullptr;
+    int result = 0;
+    int calls = 0;
+    int lastSize = 0;
+    int lastWriteFlag = -1;
+};
+
+int APS5_VABI SupplyPasswordCallback(char* buffer, int size, int writeFlag, void* userData) {
+    auto* request = static_cast<PasswordRequest*>(userData);
+    ++request->calls;
+    request->lastSize = size;
+    request->lastWriteFlag = writeFlag;
+    if (request->text == nullptr) return request->result;
+    const std::size_t length = std::strlen(request->text);
+    Require(size >= 0 && length <= static_cast<std::size_t>(size));
+    std::memcpy(buffer, request->text, length);
+    return static_cast<int>(length);
+}
+
+template<typename Call>
+void ExpectUnimplemented(Call call, std::source_location location = std::source_location::current()) {
     bool thrown = false;
     try {
-        ReadPrivateKey(BytesOf(RsaEncryptedPem), nullptr, CountingPasswordCallback, nullptr);
+        call();
     } catch (const std::runtime_error&) {
         thrown = true;
     }
-    Require(thrown);
+    Require(thrown, location);
+}
 
-    thrown = false;
+template<typename Call>
+void ExpectInvalidArgument(Call call, std::source_location location = std::source_location::current()) {
+    bool thrown = false;
     try {
-        ReadPrivateKey(BytesOf(EncryptedHeaderPem), nullptr, CountingPasswordCallback, nullptr);
-    } catch (const std::runtime_error&) {
+        call();
+    } catch (const std::invalid_argument&) {
         thrown = true;
     }
-    Require(thrown);
+    Require(thrown, location);
+}
 
-    thrown = false;
-    auto* key = KeyFromPkcs8Der(BodyBytes(BytesOf(RsaPkcs8Pem)));
-    const void* cipher = EVP_aes_256_cbc_nid_postfix();
-    Require(cipher != nullptr);
-    try {
-        WrittenPrivateBytes(key, static_cast<const LibreSsl3EvpCipher*>(cipher));
-    } catch (const std::runtime_error&) {
-        thrown = true;
+ErrorList DrainErrors() {
+    ErrorList errors;
+    for (std::uint64_t code = ERR_get_error_nid_postfix(); code != 0; code = ERR_get_error_nid_postfix())
+        errors.push_back({static_cast<int>((code >> 24) & 0xff), static_cast<int>(code & 0xfff)});
+    return errors;
+}
+
+bool Contains(const ErrorList& errors, const std::pair<int, int>& wanted) {
+    for (const std::pair<int, int>& error : errors) {
+        if (error == wanted) return true;
     }
-    Require(thrown);
-    Require(passwordCallbackCalls == 0);
+    return false;
+}
+
+ErrorList CipherInitFailure(ErrorList errors) {
+    errors.push_back({Pkcs12Errors, Pkcs12AlgorCipherInitError});
+    errors.push_back({Pkcs12Errors, Pkcs12PbeCryptError});
+    errors.push_back({PemLibrary, ErrorReasonAsn1Library});
+    return errors;
+}
+
+ErrorList KeygenFailure(ErrorList errors) {
+    errors.push_back({EvpErrors, EvpKeygenFailure});
+    return CipherInitFailure(std::move(errors));
+}
+
+ErrorList StructureFailure(ErrorList errors) {
+    errors.push_back({PemLibrary, ErrorReasonAsn1Library});
+    return errors;
+}
+
+LibreSsl3EvpPkey* ReadWithPassword(const Bytes& pem, const char* password,
+    std::source_location location = std::source_location::current()) {
+    PasswordRequest request{password};
+    ERR_clear_error_nid_postfix();
+    auto* key = ReadPrivateKey(pem, nullptr, SupplyPasswordCallback, &request);
+    Require(request.calls == 1 && request.lastSize == PemPasswordBufferSize && request.lastWriteFlag == 0, location);
+    return key;
+}
+
+void ExpectFailedRead(const Bytes& pem, const char* password, int expectedCalls, const ErrorList& errors,
+    std::source_location location = std::source_location::current()) {
+    PasswordRequest request{password};
+    ERR_clear_error_nid_postfix();
+    Require(ReadPrivateKey(pem, nullptr, SupplyPasswordCallback, &request) == nullptr, location);
+    Require(request.calls == expectedCalls, location);
+    ExpectErrorSequence(errors, location);
+}
+
+void ExpectEcReference(LibreSsl3EvpPkey* key, const LibreSsl3EvpPkey* reference,
+    std::source_location location = std::source_location::current()) {
+    Require(key != nullptr && key->type == EcType, location);
+    CompareEc(static_cast<const EcKey*>(key->key), static_cast<const EcKey*>(reference->key), Secp256r1, true,
+        location);
+    ExpectEmptyQueue(location);
     EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+}
+
+void ExpectRsaReference(LibreSsl3EvpPkey* key, const LibreSsl3EvpPkey* reference,
+    std::source_location location = std::source_location::current()) {
+    Require(key != nullptr && key->type == RsaType, location);
+    CompareRsa(static_cast<const LibreSsl3Rsa*>(key->key), static_cast<const LibreSsl3Rsa*>(reference->key), true,
+        location);
+    ExpectEmptyQueue(location);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+}
+
+struct TraditionalRecord {
+    std::string label;
+    std::string dekInfo;
+    Bytes data;
+};
+
+TraditionalRecord SplitEncryptedRecord(const char* text) {
+    const std::string record(text);
+    const std::size_t labelEnd = record.find("-----\n");
+    const std::size_t dek = record.find("DEK-Info: ");
+    Require(labelEnd != std::string::npos && labelEnd > 11 && dek != std::string::npos);
+    const std::size_t dekEnd = record.find('\n', dek);
+    const std::size_t blank = record.find("\n\n");
+    Require(dekEnd != std::string::npos && blank != std::string::npos);
+    TraditionalRecord parts;
+    parts.label = record.substr(11, labelEnd - 11);
+    parts.dekInfo = record.substr(dek + 10, dekEnd - dek - 10);
+    const std::string clear = "-----BEGIN X-----\n" + record.substr(blank + 2);
+    parts.data = BodyBytes(Bytes(clear.begin(), clear.end()));
+    return parts;
+}
+
+Bytes EncryptedRecord(const std::string& label, const std::string& dekInfo, const Bytes& data) {
+    const Bytes plain = EncodePemRecord(label, data);
+    std::string text(plain.begin(), plain.end());
+    const std::size_t bodyStart = text.find('\n') + 1;
+    text.insert(bodyStart, "Proc-Type: 4,ENCRYPTED\nDEK-Info: " + dekInfo + "\n\n");
+    return Bytes(text.begin(), text.end());
+}
+
+Bytes Join(std::initializer_list<Bytes> parts) {
+    Bytes out;
+    for (const Bytes& part : parts) out.insert(out.end(), part.begin(), part.end());
+    return out;
+}
+
+Bytes Der(unsigned char tag, const Bytes& content) {
+    Bytes out{tag};
+    const std::size_t size = content.size();
+    Require(size <= 0xffff);
+    if (size < 0x80) {
+        out.push_back(static_cast<unsigned char>(size));
+    } else if (size <= 0xff) {
+        out.push_back(0x81);
+        out.push_back(static_cast<unsigned char>(size));
+    } else {
+        out.push_back(0x82);
+        out.push_back(static_cast<unsigned char>(size >> 8));
+        out.push_back(static_cast<unsigned char>(size & 0xff));
+    }
+    out.insert(out.end(), content.begin(), content.end());
+    return out;
+}
+
+struct Tlv {
+    unsigned char tag = 0;
+    Bytes content;
+};
+
+std::vector<Tlv> DerChildren(const Bytes& content) {
+    std::vector<Tlv> items;
+    std::size_t offset = 0;
+    while (offset < content.size()) {
+        Require(content.size() - offset >= 2);
+        Tlv item;
+        item.tag = content[offset];
+        std::size_t length = content[offset + 1];
+        std::size_t header = 2;
+        if ((length & 0x80) != 0) {
+            const std::size_t count = length & 0x7f;
+            Require(count >= 1 && count <= 2 && content.size() - offset >= 2 + count);
+            length = 0;
+            for (std::size_t index = 0; index < count; ++index) length = (length << 8) | content[offset + 2 + index];
+            header += count;
+        }
+        Require(content.size() - offset - header >= length);
+        const auto first = content.begin() + static_cast<std::ptrdiff_t>(offset + header);
+        item.content.assign(first, first + static_cast<std::ptrdiff_t>(length));
+        items.push_back(item);
+        offset += header + length;
+    }
+    return items;
+}
+
+struct Pbes2Parts {
+    Bytes salt;
+    Bytes iterations;
+    Bytes prfOid;
+    Bytes cipherOid;
+    Bytes iv;
+    Bytes data;
+};
+
+Pbes2Parts SplitPbes2(const Bytes& der) {
+    const std::vector<Tlv> top = DerChildren(der);
+    Require(top.size() == 1 && top[0].tag == 0x30);
+    const std::vector<Tlv> key = DerChildren(top[0].content);
+    Require(key.size() == 2 && key[0].tag == 0x30 && key[1].tag == 0x04);
+    const std::vector<Tlv> algorithm = DerChildren(key[0].content);
+    Require(algorithm.size() == 2 && algorithm[0].tag == 0x06 && algorithm[0].content == Pbes2OidBytes);
+    const std::vector<Tlv> scheme = DerChildren(algorithm[1].content);
+    Require(algorithm[1].tag == 0x30 && scheme.size() == 2 && scheme[0].tag == 0x30 && scheme[1].tag == 0x30);
+    const std::vector<Tlv> keyFunction = DerChildren(scheme[0].content);
+    Require(keyFunction.size() == 2 && keyFunction[0].content == Pbkdf2OidBytes && keyFunction[1].tag == 0x30);
+    const std::vector<Tlv> kdf = DerChildren(keyFunction[1].content);
+    Require((kdf.size() == 2 || kdf.size() == 3) && kdf[0].tag == 0x04 && kdf[1].tag == 0x02);
+    const std::vector<Tlv> encryption = DerChildren(scheme[1].content);
+    Require(encryption.size() == 2 && encryption[0].tag == 0x06 && encryption[1].tag == 0x04);
+    Pbes2Parts parts;
+    parts.salt = kdf[0].content;
+    parts.iterations = kdf[1].content;
+    if (kdf.size() == 3) {
+        const std::vector<Tlv> prf = DerChildren(kdf[2].content);
+        Require(kdf[2].tag == 0x30 && prf.size() == 2 && prf[0].tag == 0x06 && prf[1].tag == 0x05);
+        parts.prfOid = prf[0].content;
+    }
+    parts.cipherOid = encryption[0].content;
+    parts.iv = encryption[1].content;
+    parts.data = key[1].content;
+    return parts;
+}
+
+Bytes PrfAlgorithm(const Bytes& oid) {
+    return Der(0x30, Join({Der(0x06, oid), Der(0x05, {})}));
+}
+
+Bytes KdfParameters(const Pbes2Parts& parts) {
+    Bytes body = Join({Der(0x04, parts.salt), Der(0x02, parts.iterations)});
+    if (!parts.prfOid.empty()) body = Join({body, PrfAlgorithm(parts.prfOid)});
+    return Der(0x30, body);
+}
+
+Bytes KeyFunction(const Bytes& kdfParameters) {
+    return Der(0x30, Join({Der(0x06, Pbkdf2OidBytes), kdfParameters}));
+}
+
+Bytes Encryption(const Bytes& cipherOid, const Bytes& parameter) {
+    return Der(0x30, Join({Der(0x06, cipherOid), parameter}));
+}
+
+Bytes Pbes2Algorithm(const Bytes& keyFunction, const Bytes& encryption) {
+    return Der(0x30, Join({Der(0x06, Pbes2OidBytes), Der(0x30, Join({keyFunction, encryption}))}));
+}
+
+Bytes EncryptedKey(const Bytes& algorithm, const Bytes& digest) {
+    return Der(0x30, Join({algorithm, digest}));
+}
+
+Bytes EncryptedKeyPem(const Bytes& der) {
+    return EncodePemRecord("ENCRYPTED PRIVATE KEY", der);
+}
+
+Bytes Rebuild(const Pbes2Parts& parts) {
+    return EncryptedKey(
+        Pbes2Algorithm(KeyFunction(KdfParameters(parts)), Encryption(parts.cipherOid, Der(0x04, parts.iv))),
+        Der(0x04, parts.data));
+}
+
+Bytes MemoryBytes(LibreSsl::Bio* bio) {
+    char* pointer = nullptr;
+    const std::int64_t length = BIO_ctrl_nid_postfix(bio, BioCommandMemPointer, 0, &pointer);
+    if (length <= 0 || pointer == nullptr) return {};
+    return Bytes(pointer, pointer + length);
+}
+
+void TestEncryptedTraditionalRead() {
+    auto* ecReference = KeyFromPkcs8Der(BodyBytes(BytesOf(Ec256Pkcs8Pem)));
+    auto* rsaReference = KeyFromPkcs8Der(BodyBytes(BytesOf(RsaPkcs8Pem)));
+    for (const char* record : {EcTraditionalAes128Pem, EcTraditionalAes192Pem, EcTraditionalAes256Pem})
+        ExpectEcReference(ReadWithPassword(BytesOf(record), TestPassword), ecReference);
+    ExpectRsaReference(ReadWithPassword(BytesOf(RsaTraditionalAes256Pem), TestPassword), rsaReference);
+
+    char phrase[] = "anyps5-pem-test";
+    ERR_clear_error_nid_postfix();
+    ExpectEcReference(ReadPrivateKey(BytesOf(EcTraditionalAes256Pem), nullptr, nullptr, phrase), ecReference);
+    ExpectUnimplemented([] { ReadPrivateKey(BytesOf(EcTraditionalAes256Pem), nullptr, nullptr, nullptr); });
+
+    const TraditionalRecord parts = SplitEncryptedRecord(EcTraditionalAes128Pem);
+    Require(parts.label == "EC PRIVATE KEY" && parts.dekInfo.size() == 44);
+    Require(parts.dekInfo.rfind("AES-128-CBC,", 0) == 0);
+    const std::string iv = parts.dekInfo.substr(12);
+    std::string lowered = iv;
+    for (char& character : lowered) {
+        if (character >= 'A' && character <= 'F') character = static_cast<char>(character - 'A' + 'a');
+    }
+    Require(lowered != iv);
+    for (const std::string& dekInfo : {"AES-128-CBC," + iv, "AES-128-CBC," + lowered, "AES128," + iv,
+             "AES-128-CBC;" + iv, "AES-128-CBC," + iv + "ZZ"})
+        ExpectEcReference(ReadWithPassword(EncryptedRecord(parts.label, dekInfo, parts.data), TestPassword),
+            ecReference);
+
+    EVP_PKEY_free_nid_disambig1_nid_postfix(rsaReference);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(ecReference);
+}
+
+void TestEncryptedTraditionalErrors() {
+    const Bytes record = BytesOf(EcTraditionalAes128Pem);
+    ExpectFailedRead(record, "wrong-password", 1, {{EvpErrors, EvpBadDecrypt}, {PemLibrary, PemBadDecrypt}});
+
+    {
+        PasswordRequest request{"wrong-207"};
+        ERR_clear_error_nid_postfix();
+        Require(ReadPrivateKey(record, nullptr, SupplyPasswordCallback, &request) == nullptr);
+        const ErrorList errors = DrainErrors();
+        Require(!errors.empty() && errors.back() == std::pair<int, int>{PemLibrary, ErrorReasonAsn1Library});
+        Require(!Contains(errors, {PemLibrary, PemBadDecrypt}));
+    }
+
+    for (const int result : {0, -1}) {
+        PasswordRequest request;
+        request.result = result;
+        ERR_clear_error_nid_postfix();
+        Require(ReadPrivateKey(record, nullptr, SupplyPasswordCallback, &request) == nullptr);
+        Require(request.calls == 1);
+        ExpectErrorSequence({{PemLibrary, PemBadPasswordRead}});
+    }
+    {
+        PasswordRequest request;
+        request.result = PemPasswordBufferSize + 1;
+        ExpectInvalidArgument([&] { ReadPrivateKey(record, nullptr, SupplyPasswordCallback, &request); });
+    }
+    char emptyPhrase[] = "";
+    ERR_clear_error_nid_postfix();
+    Require(ReadPrivateKey(record, nullptr, nullptr, emptyPhrase) == nullptr);
+    ExpectErrorSequence({{PemLibrary, PemBadPasswordRead}});
+    ExpectFailedRead(BytesOf(EncryptedHeaderPem), nullptr, 1, {{PemLibrary, PemBadPasswordRead}});
+
+    const TraditionalRecord parts = SplitEncryptedRecord(EcTraditionalAes128Pem);
+    const std::string iv = parts.dekInfo.substr(12);
+    for (const std::string& dekInfo : {"AES-128-CBX," + iv, "aes-128-cbc," + iv, "," + iv})
+        ExpectFailedRead(EncryptedRecord(parts.label, dekInfo, parts.data), TestPassword, 0,
+            {{PemLibrary, PemUnsupportedEncryption}});
+    for (const std::string& dekInfo : {"AES-128-CBC," + iv.substr(0, 30), "AES-128-CBC,G" + iv.substr(1),
+             std::string("AES-128-CBC"), "AES-128-CBC, " + iv})
+        ExpectFailedRead(EncryptedRecord(parts.label, dekInfo, parts.data), TestPassword, 0,
+            {{PemLibrary, PemBadIvChars}});
+
+    {
+        PasswordRequest request{TestPassword};
+        ExpectUnimplemented(
+            [&] { ReadPrivateKey(BytesOf(EcTraditionalDes3Pem), nullptr, SupplyPasswordCallback, &request); });
+        Require(request.calls == 0);
+    }
+
+    Bytes shortened = parts.data;
+    Require(shortened.size() > 16 && shortened.size() % 16 == 0);
+    shortened.resize(shortened.size() - 5);
+    ExpectFailedRead(EncryptedRecord(parts.label, parts.dekInfo, shortened), TestPassword, 1,
+        {{EvpErrors, EvpWrongFinalBlockLength}, {PemLibrary, PemBadDecrypt}});
+    shortened.resize(5);
+    ExpectFailedRead(EncryptedRecord(parts.label, parts.dekInfo, shortened), TestPassword, 1,
+        {{EvpErrors, EvpWrongFinalBlockLength}, {PemLibrary, PemBadDecrypt}});
+
+    const Bytes publicRecord = EncryptedRecord("PUBLIC KEY", parts.dekInfo, parts.data);
+    {
+        PasswordRequest request{"wrong-password"};
+        LibreSsl::Bio* bio = MemoryBio(publicRecord);
+        ERR_clear_error_nid_postfix();
+        Require(PEM_read_bio_PUBKEY_nid_postfix(bio, nullptr, SupplyPasswordCallback, &request) == nullptr);
+        BIO_free_nid_postfix(bio);
+        Require(request.calls == 1 && request.lastWriteFlag == 0);
+        ExpectErrorSequence({{EvpErrors, EvpBadDecrypt}, {PemLibrary, PemBadDecrypt}});
+    }
+}
+
+void TestEncryptedPkcs8Read() {
+    auto* ecReference = KeyFromPkcs8Der(BodyBytes(BytesOf(Ec256Pkcs8Pem)));
+    auto* rsaReference = KeyFromPkcs8Der(BodyBytes(BytesOf(RsaPkcs8Pem)));
+    for (const char* record : {EcPkcs8Aes256Sha256Pem, EcPkcs8Aes128Sha1Pem, EcPkcs8Aes192Sha512Pem,
+             EcPkcs8Aes256Sha384Pem, EcPkcs8Aes128Md5Pem, EcPkcs8Aes128Sha224Pem, EcPkcs8Aes128Sha512_256Pem})
+        ExpectEcReference(ReadWithPassword(BytesOf(record), TestPassword), ecReference);
+    Require(SplitPbes2(BodyBytes(BytesOf(EcPkcs8Aes128Sha1Pem))).prfOid.empty());
+    ExpectRsaReference(ReadWithPassword(BytesOf(RsaPkcs8Aes256Sha256Pem), TestPassword), rsaReference);
+
+    const Bytes record = BytesOf(EcPkcs8Aes256Sha256Pem);
+    char phrase[] = "anyps5-pem-test";
+    ERR_clear_error_nid_postfix();
+    ExpectEcReference(ReadPrivateKey(record, nullptr, nullptr, phrase), ecReference);
+    ExpectUnimplemented([&] { ReadPrivateKey(record, nullptr, nullptr, nullptr); });
+
+    const ErrorList badDecrypt{{EvpErrors, EvpBadDecrypt}, {Pkcs12Errors, Pkcs12CipherFinalError},
+        {Pkcs12Errors, Pkcs12PbeCryptError}, {PemLibrary, ErrorReasonAsn1Library}};
+    {
+        auto* slot = KeyFromPkcs8Der(BodyBytes(BytesOf(Ec384Pkcs8Pem)));
+        auto* const before = slot;
+        PasswordRequest wrong{"wrong-password"};
+        ERR_clear_error_nid_postfix();
+        Require(ReadPrivateKey(record, &slot, SupplyPasswordCallback, &wrong) == nullptr);
+        Require(wrong.calls == 1 && slot == before);
+        ExpectErrorSequence(badDecrypt);
+        PasswordRequest refused;
+        Require(ReadPrivateKey(record, &slot, SupplyPasswordCallback, &refused) == nullptr);
+        Require(refused.calls == 1 && slot == before);
+        ExpectErrorSequence({{PemLibrary, PemBadPasswordRead}});
+        PasswordRequest right{TestPassword};
+        auto* replaced = ReadPrivateKey(record, &slot, SupplyPasswordCallback, &right);
+        Require(replaced != nullptr && slot == replaced);
+        ExpectEcReference(replaced, ecReference);
+    }
+
+    {
+        PasswordRequest request{"wrong-104"};
+        ERR_clear_error_nid_postfix();
+        Require(ReadPrivateKey(BytesOf(EcPkcs8Aes192Sha512Pem), nullptr, SupplyPasswordCallback, &request) == nullptr);
+        const ErrorList errors = DrainErrors();
+        Require(errors.size() >= 2);
+        Require(errors[errors.size() - 2] == std::pair<int, int>{Pkcs12Errors, Pkcs12DecodeError});
+        Require(errors.back() == std::pair<int, int>{PemLibrary, ErrorReasonAsn1Library});
+        Require(!Contains(errors, {Pkcs12Errors, Pkcs12CipherFinalError}));
+    }
+
+    {
+        PasswordRequest request;
+        request.result = -1;
+        ERR_clear_error_nid_postfix();
+        Require(ReadPrivateKey(record, nullptr, SupplyPasswordCallback, &request) == nullptr);
+        Require(request.calls == 1 && request.lastSize == PemPasswordBufferSize && request.lastWriteFlag == 0);
+        ExpectErrorSequence({{PemLibrary, PemBadPasswordRead}});
+        request.result = PemPasswordBufferSize + 1;
+        ExpectInvalidArgument([&] { ReadPrivateKey(record, nullptr, SupplyPasswordCallback, &request); });
+    }
+
+    for (const char* unavailable : {EcPkcs8Des3Pem, EcPkcs8Pbes1Pem}) {
+        PasswordRequest request{TestPassword};
+        ExpectUnimplemented(
+            [&] { ReadPrivateKey(BytesOf(unavailable), nullptr, SupplyPasswordCallback, &request); });
+        Require(request.calls == 1);
+    }
+
+    EVP_PKEY_free_nid_disambig1_nid_postfix(rsaReference);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(ecReference);
+}
+
+void TestEncryptedPkcs8Structure() {
+    const Bytes der = BodyBytes(BytesOf(EcPkcs8Aes256Sha256Pem));
+    const Pbes2Parts parts = SplitPbes2(der);
+    Require(Rebuild(parts) == der);
+    Require(parts.cipherOid == Aes256CbcOidBytes && parts.prfOid == HmacSha256OidBytes && parts.iv.size() == 16);
+    const Bytes scheme =
+        Der(0x30, Join({KeyFunction(KdfParameters(parts)), Encryption(parts.cipherOid, Der(0x04, parts.iv))}));
+    const Bytes algorithm = Der(0x30, Join({Der(0x06, Pbes2OidBytes), scheme}));
+    const Bytes digest = Der(0x04, parts.data);
+    const Bytes body = Join({algorithm, digest});
+    auto* reference = KeyFromPkcs8Der(BodyBytes(BytesOf(Ec256Pkcs8Pem)));
+    const auto rejected = [](const Bytes& encoded, ErrorList errors,
+                              std::source_location location = std::source_location::current()) {
+        ExpectFailedRead(EncryptedKeyPem(encoded), TestPassword, 0, StructureFailure(std::move(errors)), location);
+    };
+
+    Bytes wrongOuter = der;
+    wrongOuter[0] = 0x31;
+    rejected(wrongOuter, {{Asn1Errors, Asn1WrongTag}, {Asn1Errors, Asn1NestedAsn1Error}});
+    Bytes primitiveOuter = der;
+    primitiveOuter[0] = 0x10;
+    rejected(primitiveOuter, {{Asn1Errors, Asn1SequenceNotConstructed}});
+    Bytes truncated = der;
+    truncated.pop_back();
+    rejected(truncated, {{Asn1Errors, Asn1TooLong}, {Asn1Errors, Asn1NestedAsn1Error}});
+    rejected(Der(0x30, {}), {{Asn1Errors, Asn1FieldMissing}});
+    rejected(Der(0x30, algorithm), {{Asn1Errors, Asn1FieldMissing}});
+    rejected(Der(0x30, Join({body, Der(0x05, {})})), {{Asn1Errors, Asn1SequenceLengthMismatch}});
+    rejected(EncryptedKey(algorithm, Der(0x02, parts.data)),
+        {{Asn1Errors, Asn1WrongTag}, {Asn1Errors, Asn1NestedAsn1Error}, {Asn1Errors, Asn1NestedAsn1Error}});
+    rejected(EncryptedKey(Der(0x30, {}), digest), {{Asn1Errors, Asn1FieldMissing}, {Asn1Errors, Asn1NestedAsn1Error}});
+    rejected(EncryptedKey(Der(0x30, Join({Der(0x06, {0x80, 0x01}), scheme})), digest),
+        {{Asn1Errors, Asn1InvalidObjectEncoding}, {Asn1Errors, Asn1NestedAsn1Error},
+            {Asn1Errors, Asn1NestedAsn1Error}});
+    rejected(EncryptedKey(Der(0x30, Join({Der(0x06, Pbes2OidBytes), Bytes{0x00, 0x00}})), digest),
+        {{Asn1Errors, Asn1UnexpectedEoc}, {Asn1Errors, Asn1NestedAsn1Error}});
+    rejected(EncryptedKey(Der(0x30, Join({Der(0x06, Pbes2OidBytes), Der(0x05, {0x00})})), digest),
+        {{Asn1Errors, Asn1NullIsWrongLength}, {Asn1Errors, Asn1NestedAsn1Error},
+            {Asn1Errors, Asn1NestedAsn1Error}});
+
+    const auto withParameter = [&](const Bytes& parameter) {
+        return EncryptedKey(Der(0x30, Join({Der(0x06, Pbes2OidBytes), parameter})), digest);
+    };
+    const std::pair<Bytes, int> refusedParameters[] = {
+        {Der(0x01, {0x00, 0x00}), Asn1BooleanIsWrongLength},
+        {Der(0x01, {}), Asn1BooleanIsWrongLength},
+        {Der(0x03, {}), Asn1StringTooShort},
+        {Der(0x03, {0x08, 0x00}), Asn1InvalidBitStringBitsLeft},
+        {Der(0x02, {}), Asn1LengthMismatch},
+        {Der(0x0a, {0xff, 0x80}), Asn1LengthMismatch},
+        {Der(0x1e, {0x00, 0x41, 0x00}), Asn1BmpStringIsWrongLength},
+        {Der(0x1c, {0x00, 0x00, 0x00}), Asn1UniversalStringIsWrongLength},
+        {Der(0x22, {}), Asn1TypeNotPrimitive},
+        {Der(0x25, {}), Asn1TypeNotPrimitive},
+        {Der(0x10, {}), Asn1TypeNotConstructed},
+        {Der(0x11, {}), Asn1TypeNotConstructed},
+    };
+    for (const auto& [parameter, reason] : refusedParameters)
+        rejected(withParameter(parameter),
+            {{Asn1Errors, reason}, {Asn1Errors, Asn1NestedAsn1Error}, {Asn1Errors, Asn1NestedAsn1Error}});
+    rejected(EncryptedKey(Der(0x30, Join({Der(0x26, Pbes2OidBytes), scheme})), digest),
+        {{Asn1Errors, Asn1TypeNotPrimitive}, {Asn1Errors, Asn1NestedAsn1Error}, {Asn1Errors, Asn1NestedAsn1Error}});
+    for (const Bytes& parameter : {Der(0x01, {0x7f}), Der(0x03, {0x07, 0xff}), Der(0x02, {0xff, 0x00}),
+             Der(0x1e, {0x00, 0x41}), Der(0x1c, {0x00, 0x00, 0x00, 0x41}), Der(0x0c, {0x41}), Der(0x80, {0x01}),
+             Der(0xa0, {0x05, 0x00})})
+        ExpectFailedRead(EncryptedKeyPem(withParameter(parameter)), TestPassword, 1,
+            KeygenFailure({{EvpErrors, EvpDecodeError}}));
+
+    Bytes longLength{0x30, 0x84, 0x00, 0x00, static_cast<unsigned char>(body.size() >> 8),
+        static_cast<unsigned char>(body.size() & 0xff)};
+    longLength.insert(longLength.end(), body.begin(), body.end());
+    ExpectEcReference(ReadWithPassword(EncryptedKeyPem(longLength), TestPassword), reference);
+    Bytes longTag = der;
+    longTag[0] = 0x3f;
+    longTag.insert(longTag.begin() + 1, 0x10);
+    ExpectEcReference(ReadWithPassword(EncryptedKeyPem(longTag), TestPassword), reference);
+    Bytes trailing = der;
+    trailing.push_back(0x00);
+    ExpectEcReference(ReadWithPassword(EncryptedKeyPem(trailing), TestPassword), reference);
+
+    Bytes indefinite{0x30, 0x80};
+    indefinite.insert(indefinite.end(), body.begin(), body.end());
+    indefinite.push_back(0x00);
+    indefinite.push_back(0x00);
+    for (const Bytes& unmodelled : {indefinite, EncryptedKey(algorithm, Der(0x24, digest)),
+             EncryptedKey(Der(0x30, Join({Der(0x06, Pbes2OidBytes), Der(0x17, {0x30})})), digest)}) {
+        PasswordRequest request{TestPassword};
+        ExpectUnimplemented(
+            [&] { ReadPrivateKey(EncryptedKeyPem(unmodelled), nullptr, SupplyPasswordCallback, &request); });
+        Require(request.calls == 0);
+    }
+
+    EVP_PKEY_free_nid_disambig1_nid_postfix(reference);
+}
+
+void TestEncryptedPkcs8Parameters() {
+    const Bytes der = BodyBytes(BytesOf(EcPkcs8Aes256Sha256Pem));
+    const Pbes2Parts parts = SplitPbes2(der);
+    const Bytes salt = Der(0x04, parts.salt);
+    const Bytes iterations = Der(0x02, parts.iterations);
+    const Bytes prf = PrfAlgorithm(parts.prfOid);
+    const Bytes kdf = KdfParameters(parts);
+    const Bytes keyFunction = KeyFunction(kdf);
+    const Bytes encryption = Encryption(parts.cipherOid, Der(0x04, parts.iv));
+    const Bytes digest = Der(0x04, parts.data);
+    auto* reference = KeyFromPkcs8Der(BodyBytes(BytesOf(Ec256Pkcs8Pem)));
+    const auto record = [&](const Bytes& algorithm) { return EncryptedKeyPem(EncryptedKey(algorithm, digest)); };
+    const auto withKdf = [&](const Bytes& kdfBody) {
+        return record(Pbes2Algorithm(KeyFunction(Der(0x30, kdfBody)), encryption));
+    };
+    const auto withEncryption = [&](const Bytes& alternative) {
+        return record(Pbes2Algorithm(keyFunction, alternative));
+    };
+
+    ExpectFailedRead(record(Der(0x30, Join({Der(0x06, UnknownOidBytes), Der(0x05, {})}))), TestPassword, 1,
+        CipherInitFailure({{EvpErrors, EvpUnknownPbeAlgorithm}}));
+    ExpectFailedRead(record(Der(0x30, Join({Der(0x06, Pbkdf2OidBytes), kdf}))), TestPassword, 1,
+        KeygenFailure({{EvpErrors, EvpNoCipherSet}}));
+    ExpectFailedRead(record(Der(0x30, Join({Der(0x06, Pbkdf2OidBytes), Der(0x05, {})}))), TestPassword, 1,
+        KeygenFailure({{EvpErrors, EvpNoCipherSet}}));
+    ExpectFailedRead(record(Der(0x30, Der(0x06, Pbes2OidBytes))), TestPassword, 1,
+        KeygenFailure({{EvpErrors, EvpDecodeError}}));
+    ExpectFailedRead(record(Der(0x30, Join({Der(0x06, Pbes2OidBytes), Der(0x05, {})}))), TestPassword, 1,
+        KeygenFailure({{EvpErrors, EvpDecodeError}}));
+    ExpectFailedRead(record(Der(0x30, Join({Der(0x06, Pbes2OidBytes), Der(0x30, keyFunction)}))), TestPassword, 1,
+        KeygenFailure({{Asn1Errors, Asn1FieldMissing}, {EvpErrors, EvpDecodeError}}));
+    ExpectFailedRead(record(Pbes2Algorithm(Der(0x30, Join({Der(0x06, Pbes2OidBytes), kdf})), encryption)), TestPassword,
+        1, KeygenFailure({{EvpErrors, EvpUnsupportedKeyDerivationFunction}}));
+    ExpectFailedRead(record(Pbes2Algorithm(Der(0x30, Der(0x06, Pbkdf2OidBytes)), encryption)), TestPassword, 1,
+        KeygenFailure({{EvpErrors, EvpDecodeError}}));
+
+    ExpectFailedRead(withEncryption(Encryption(UnknownOidBytes, Der(0x04, parts.iv))), TestPassword, 1,
+        KeygenFailure({{EvpErrors, EvpUnsupportedCipher}}));
+    ExpectFailedRead(withEncryption(Encryption(parts.cipherOid, Der(0x05, {}))), TestPassword, 1,
+        KeygenFailure({{Asn1Errors, Asn1DataIsWrong}, {EvpErrors, EvpCipherParameterError}}));
+    ExpectFailedRead(withEncryption(Encryption(parts.cipherOid, Der(0x04, Bytes(8, 0)))), TestPassword, 1,
+        KeygenFailure({{EvpErrors, EvpCipherParameterError}}));
+    {
+        PasswordRequest request{TestPassword};
+        ERR_clear_error_nid_postfix();
+        Require(ReadPrivateKey(withEncryption(Der(0x30, Der(0x06, parts.cipherOid))), nullptr, SupplyPasswordCallback,
+                    &request)
+            == nullptr);
+        const ErrorList errors = DrainErrors();
+        Require(errors.size() >= 2);
+        Require(errors[errors.size() - 2] == std::pair<int, int>{Pkcs12Errors, Pkcs12DecodeError});
+        Require(errors.back() == std::pair<int, int>{PemLibrary, ErrorReasonAsn1Library});
+    }
+
+    ExpectFailedRead(withKdf(Join({Der(0x02, {0x01}), iterations, prf})), TestPassword, 1,
+        KeygenFailure({{EvpErrors, EvpUnsupportedSaltType}}));
+    ExpectFailedRead(withKdf(Join({salt, Der(0x02, {0x00}), prf})), TestPassword, 1,
+        KeygenFailure({{EvpErrors, EvpUnsupportedNumberOfRounds}}));
+    ExpectFailedRead(withKdf(Join({salt, Der(0x02, {0xff}), prf})), TestPassword, 1,
+        KeygenFailure({{EvpErrors, EvpUnsupportedNumberOfRounds}}));
+    ExpectFailedRead(withKdf(Join({salt, Der(0x02, {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}), prf})),
+        TestPassword, 1, KeygenFailure({{Asn1Errors, Asn1TooLarge}, {EvpErrors, EvpUnsupportedNumberOfRounds}}));
+    ExpectFailedRead(withKdf(Join({salt, Der(0x02, {0x00, 0x01}), prf})), TestPassword, 1,
+        KeygenFailure({{Asn1Errors, Asn1LengthMismatch}, {Asn1Errors, Asn1NestedAsn1Error},
+            {EvpErrors, EvpDecodeError}}));
+    ExpectFailedRead(withKdf(Join({salt, iterations, Der(0x02, {0x10}), prf})), TestPassword, 1,
+        KeygenFailure({{EvpErrors, EvpUnsupportedKeylength}}));
+    ExpectFailedRead(withKdf(Join({salt, iterations, PrfAlgorithm(UnknownOidBytes)})), TestPassword, 1,
+        KeygenFailure({{EvpErrors, EvpUnsupportedPrf}}));
+    ExpectFailedRead(withKdf(Join({Bytes{0x00, 0x00}, iterations, prf})), TestPassword, 1,
+        KeygenFailure({{Asn1Errors, Asn1UnexpectedEoc}, {EvpErrors, EvpDecodeError}}));
+    ExpectFailedRead(withKdf(Join({salt, iterations, prf, Der(0x05, {})})), TestPassword, 1,
+        KeygenFailure({{Asn1Errors, Asn1SequenceLengthMismatch}, {EvpErrors, EvpDecodeError}}));
+    ExpectFailedRead(withKdf(salt), TestPassword, 1,
+        KeygenFailure({{Asn1Errors, Asn1FieldMissing}, {EvpErrors, EvpDecodeError}}));
+
+    ExpectEcReference(ReadWithPassword(withKdf(Join({salt, iterations, Der(0x02, {0x20}), prf})), TestPassword),
+        reference);
+    ExpectEcReference(ReadWithPassword(withKdf(Join({salt, iterations, Der(0x30, Der(0x06, parts.prfOid))})),
+                          TestPassword),
+        reference);
+
+    for (const Bytes& missingDigest : {HmacSha512_224OidBytes, HmacSha3_256OidBytes}) {
+        PasswordRequest request{TestPassword};
+        ExpectUnimplemented([&] {
+            ReadPrivateKey(withKdf(Join({salt, iterations, PrfAlgorithm(missingDigest)})), nullptr,
+                SupplyPasswordCallback, &request);
+        });
+        Require(request.calls == 1);
+    }
+
+    const ErrorList wrongFinalBlock{{EvpErrors, EvpWrongFinalBlockLength}, {Pkcs12Errors, Pkcs12CipherFinalError},
+        {Pkcs12Errors, Pkcs12PbeCryptError}, {PemLibrary, ErrorReasonAsn1Library}};
+    const Bytes algorithm = Pbes2Algorithm(keyFunction, encryption);
+    Bytes shortened = parts.data;
+    Require(shortened.size() > 16 && shortened.size() % 16 == 0);
+    shortened.pop_back();
+    ExpectFailedRead(EncryptedKeyPem(EncryptedKey(algorithm, Der(0x04, shortened))), TestPassword, 1, wrongFinalBlock);
+    ExpectFailedRead(EncryptedKeyPem(EncryptedKey(algorithm, Der(0x04, {}))), TestPassword, 1, wrongFinalBlock);
+
+    EVP_PKEY_free_nid_disambig1_nid_postfix(reference);
+}
+
+int WriteEncrypted(LibreSsl3EvpPkey* key, const LibreSsl3EvpCipher* cipher, unsigned char* keyString, int keyLength,
+    LibreSslPemPasswordCallback callback, void* userData, Bytes& written) {
+    auto* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr);
+    const int result = PEM_write_bio_PrivateKey_nid_postfix(bio, key, cipher, keyString, keyLength, callback, userData);
+    written = MemoryBytes(bio);
+    BIO_free_nid_postfix(bio);
+    return result;
+}
+
+const LibreSsl3EvpCipher* CipherObject(const void* cipher) {
+    Require(cipher != nullptr);
+    return static_cast<const LibreSsl3EvpCipher*>(cipher);
+}
+
+void TestEncryptedWrite() {
+    const Bytes plainPem = BytesOf(Ec256Pkcs8Pem);
+    const std::size_t plainLength = BodyBytes(plainPem).size();
+    auto* ecKey = KeyFromPkcs8Der(BodyBytes(plainPem));
+    auto* rsaKey = KeyFromPkcs8Der(BodyBytes(BytesOf(RsaPkcs8Pem)));
+    const auto* const aes128 = CipherObject(EVP_aes_128_cbc_nid_postfix());
+    const auto* const aes192 = CipherObject(EVP_aes_192_cbc_nid_postfix());
+    const auto* const aes256 = CipherObject(EVP_aes_256_cbc_nid_postfix());
+    unsigned char phrase[] = "anyps5-pem-test";
+    const int phraseLength = static_cast<int>(sizeof(phrase) - 1);
+    const std::string beginLine = "-----BEGIN ENCRYPTED PRIVATE KEY-----\n";
+    const std::string endLine = "-----END ENCRYPTED PRIVATE KEY-----\n";
+    Bytes written;
+
+    const std::pair<const LibreSsl3EvpCipher*, const Bytes*> ciphers[] = {
+        {aes128, &Aes128CbcOidBytes}, {aes192, &Aes192CbcOidBytes}, {aes256, &Aes256CbcOidBytes}};
+    for (const auto& [cipher, oid] : ciphers) {
+        ERR_clear_error_nid_postfix();
+        Require(WriteEncrypted(ecKey, cipher, phrase, phraseLength, nullptr, nullptr, written) == 1);
+        ExpectEmptyQueue();
+        const std::string text(written.begin(), written.end());
+        Require(text.size() > beginLine.size() + endLine.size());
+        Require(text.compare(0, beginLine.size(), beginLine) == 0);
+        Require(text.compare(text.size() - endLine.size(), endLine.size(), endLine) == 0);
+        const Bytes der = BodyBytes(written);
+        const Pbes2Parts parts = SplitPbes2(der);
+        Require(Rebuild(parts) == der);
+        Require(parts.cipherOid == *oid);
+        Require(parts.iv.size() == 16 && parts.salt.size() == 8);
+        Require(parts.iterations == Bytes({0x08, 0x00}));
+        Require(parts.prfOid.empty());
+        Require(parts.data.size() == (plainLength / 16 + 1) * 16);
+        ExpectEcReference(ReadWithPassword(written, TestPassword), ecKey);
+
+        Bytes again;
+        Require(WriteEncrypted(ecKey, cipher, phrase, phraseLength, nullptr, nullptr, again) == 1);
+        const Pbes2Parts repeated = SplitPbes2(BodyBytes(again));
+        Require(repeated.salt != parts.salt && repeated.iv != parts.iv);
+    }
+
+    Require(WriteEncrypted(rsaKey, aes256, phrase, phraseLength, nullptr, nullptr, written) == 1);
+    ExpectRsaReference(ReadWithPassword(written, TestPassword), rsaKey);
+
+    Require(WriteEncrypted(ecKey, aes256, phrase, -1, nullptr, nullptr, written) == 1);
+    ExpectEcReference(ReadWithPassword(written, TestPassword), ecKey);
+    Require(WriteEncrypted(ecKey, aes256, phrase, 6, nullptr, nullptr, written) == 1);
+    ExpectEcReference(ReadWithPassword(written, "anyps5"), ecKey);
+
+    PasswordRequest unused{"unused-phrase"};
+    Require(WriteEncrypted(ecKey, aes256, phrase, phraseLength, SupplyPasswordCallback, &unused, written) == 1);
+    Require(unused.calls == 0);
+    ExpectEcReference(ReadWithPassword(written, TestPassword), ecKey);
+
+    PasswordRequest request{TestPassword};
+    Require(WriteEncrypted(ecKey, aes256, nullptr, 0, SupplyPasswordCallback, &request, written) == 1);
+    Require(request.calls == 1 && request.lastSize == PemPasswordBufferSize && request.lastWriteFlag == 1);
+    ExpectEcReference(ReadWithPassword(written, TestPassword), ecKey);
+
+    char defaultPhrase[] = "anyps5-pem-test";
+    Require(WriteEncrypted(ecKey, aes256, nullptr, 0, nullptr, defaultPhrase, written) == 1);
+    ExpectEcReference(ReadWithPassword(written, TestPassword), ecKey);
+    ExpectUnimplemented([&] { WriteEncrypted(ecKey, aes256, nullptr, 0, nullptr, nullptr, written); });
+
+    std::string longPhrase(static_cast<std::size_t>(PemPasswordBufferSize) + 6, 'a');
+    const std::string cutPhrase(static_cast<std::size_t>(PemPasswordBufferSize), 'a');
+    const std::string shortPhrase(static_cast<std::size_t>(PemPasswordBufferSize) - 1, 'a');
+    ERR_clear_error_nid_postfix();
+    Require(WriteEncrypted(ecKey, aes128, nullptr, 0, nullptr, longPhrase.data(), written) == 1);
+    ExpectEcReference(ReadWithPassword(written, cutPhrase.c_str()), ecKey);
+    ExpectEcReference(ReadPrivateKey(written, nullptr, nullptr, longPhrase.data()), ecKey);
+    {
+        PasswordRequest shorter{shortPhrase.c_str()};
+        Require(ReadPrivateKey(written, nullptr, SupplyPasswordCallback, &shorter) == nullptr);
+        const ErrorList errors = DrainErrors();
+        Require(!errors.empty() && errors.back() == std::pair<int, int>{PemLibrary, ErrorReasonAsn1Library});
+    }
+
+    for (const int result : {0, -1}) {
+        PasswordRequest refused;
+        refused.result = result;
+        ERR_clear_error_nid_postfix();
+        Require(WriteEncrypted(ecKey, aes256, nullptr, 0, SupplyPasswordCallback, &refused, written) == 0);
+        Require(refused.calls == 1 && written.empty());
+        ExpectErrorSequence({{PemLibrary, PemReadKey}});
+    }
+    {
+        PasswordRequest oversized;
+        oversized.result = PemPasswordBufferSize + 1;
+        ExpectInvalidArgument(
+            [&] { WriteEncrypted(ecKey, aes256, nullptr, 0, SupplyPasswordCallback, &oversized, written); });
+    }
+
+    ERR_clear_error_nid_postfix();
+    Require(WriteEncrypted(ecKey, aes256, phrase, -2, nullptr, nullptr, written) == 0);
+    Require(std::string(written.begin(), written.end()) == beginLine + endLine);
+    ExpectErrorSequence({{EvpErrors, EvpKeygenFailure}, {Pkcs12Errors, Pkcs12AlgorCipherInitError},
+        {Pkcs12Errors, Pkcs12EncryptError}, {Pkcs12Errors, Pkcs12EncryptError}});
+
+    LibreSsl3EvpCipher foreign{};
+    foreign.nid = 419;
+    foreign.blockSize = 16;
+    foreign.keyLength = 16;
+    foreign.ivLength = 16;
+    ExpectUnimplemented([&] { WriteEncrypted(ecKey, &foreign, phrase, phraseLength, nullptr, nullptr, written); });
+
+    ERR_clear_error_nid_postfix();
+    Require(PEM_write_bio_PrivateKey_nid_postfix(nullptr, ecKey, aes256, phrase, phraseLength, nullptr, nullptr) == 0);
+    ExpectErrorCode(PemLibrary, ErrorReasonBufLibrary);
+    ERR_clear_error_nid_postfix();
+    ExpectInvalidArgument([&] { WriteEncrypted(nullptr, aes256, phrase, phraseLength, nullptr, nullptr, written); });
+
+    Require(WrittenPrivateBytes(ecKey, nullptr) == plainPem);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(rsaKey);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(ecKey);
 }
 
 void TestErrors() {
@@ -1389,18 +2376,28 @@ void TestRsaPrivateFile() {
         GuestPemFileFixture file(RsaEncryptedPem);
         LibreSsl3Rsa* slot = preserved;
         int callbackCount = 0;
-        bool threw = false;
-        try {
-            PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(
-                file.Get(), &slot, CountingRsaFilePasswordCallback, &callbackCount);
-        } catch (const std::runtime_error&) {
-            threw = true;
-        }
-        Require(threw);
-        Require(callbackCount == 0);
+        Require(PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(
+                    file.Get(), &slot, CountingRsaFilePasswordCallback, &callbackCount)
+            == nullptr);
+        Require(callbackCount == 1);
+        ExpectErrorSequence({{PemLibrary, PemBadPasswordRead}});
         Require(slot == preserved);
         Require(preserved->references == 2);
         file.CloseAndVerify();
+    }
+
+    for (const char* record : {RsaPkcs8Aes256Sha256Pem, RsaTraditionalAes256Pem}) {
+        ERR_clear_error_nid_postfix();
+        GuestPemFileFixture file(record);
+        PasswordRequest request{TestPassword};
+        LibreSsl3Rsa* key = PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(
+            file.Get(), nullptr, SupplyPasswordCallback, &request);
+        Require(key != nullptr);
+        Require(request.calls == 1 && request.lastWriteFlag == 0);
+        CompareRsa(key, rsaReference, true);
+        ExpectEmptyQueue();
+        file.CloseAndVerify();
+        RSA_free_nid_disambig1_nid_postfix(key);
     }
 
     {
@@ -1528,7 +2525,12 @@ int main() {
     TestTextBeforeBegin();
     TestOutputReplacement();
     TestPasswordCallbackNotCalled();
-    TestEncryptedRejected();
+    TestEncryptedTraditionalRead();
+    TestEncryptedTraditionalErrors();
+    TestEncryptedPkcs8Read();
+    TestEncryptedPkcs8Structure();
+    TestEncryptedPkcs8Parameters();
+    TestEncryptedWrite();
     TestHeaders();
     TestLabels();
     TestCorruptTraditionalEc();

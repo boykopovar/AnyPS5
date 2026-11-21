@@ -16,6 +16,7 @@ target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Inventory
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/DigestContext.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpCipherInit.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpCipherUpdate.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Pbkdf2.cpp)
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PemEncryption.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509V3Context.cpp)
 if(BUILD_TESTING)
     add_test_executable(guest_libressl3_evp_cipher_init_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/EvpCipherInit.cpp)
