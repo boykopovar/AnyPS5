@@ -99,8 +99,10 @@ int appSuspendBlocks = 0;
 
 int WriteStatus(bool* status, bool value, const char* function) {
     if (status == nullptr) NotImplemented_nid_no_patch((std::string(function) + " with a null output").c_str());
-    *status = value;
-    return SYSTEM_SERVICE_OK;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &value, sizeof(value));
+    errno = savedErrno;
+    return copied ? SYSTEM_SERVICE_OK : SYSTEM_SERVICE_ERROR_PARAMETER;
 }
 
 int WriteStatusOrRefuse(bool* status, bool value, int nullOutputError) {
