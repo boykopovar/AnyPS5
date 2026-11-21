@@ -1358,6 +1358,11 @@ class InertStatementTests(unittest.TestCase):
         self.assertIn('a', progress.inert_parameters('int f(int a, const char* b)'))
         self.assertIn('b', progress.inert_parameters('int f(int a, const char* b)'))
 
+    def test_code_blanks_comments_and_literals(self):
+        self.assertEqual(
+            progress.code('int a; // hi\nconst char *s = "//x"; /* c\nd */ int b;\n'),
+            "int a;      \nconst char *s = LITERAL;     \n     int b;\n")
+
 
 if __name__ == "__main__":
     unittest.main()
