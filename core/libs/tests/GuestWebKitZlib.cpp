@@ -16,6 +16,7 @@ constexpr int Z_OK = 0;
 constexpr int Z_STREAM_END = 1;
 constexpr int Z_STREAM_ERROR = -2;
 constexpr int Z_DATA_ERROR = -3;
+constexpr int Z_MEM_ERROR = -4;
 constexpr int Z_BUF_ERROR = -5;
 constexpr int Z_VERSION_ERROR = -6;
 constexpr int Z_NO_FLUSH = 0;
@@ -41,6 +42,45 @@ void* APS5_VABI CountingAlloc(void* opaque, std::uint32_t items, std::uint32_t s
 
 void APS5_VABI CountingFree(void* opaque, void* address) {
     ++static_cast<Allocations*>(opaque)->freed;
+    std::free(address);
+}
+
+struct FaultyAllocations {
+    int allocated;
+    int freed;
+    int live;
+    int failOnCall;
+    int calls;
+    bool opaqueMismatch;
+    void* expectedOpaque;
+};
+
+void* APS5_VABI FaultyAlloc(void* opaque, std::uint32_t items, std::uint32_t size) {
+    auto* state = static_cast<FaultyAllocations*>(opaque);
+    if (!state || opaque != state->expectedOpaque) {
+        if (state) state->opaqueMismatch = true;
+        return nullptr;
+    }
+    ++state->calls;
+    if (state->calls == state->failOnCall) return nullptr;
+    void* ptr = std::calloc(items, size);
+    if (ptr) {
+        ++state->allocated;
+        ++state->live;
+    }
+    return ptr;
+}
+
+void APS5_VABI FaultyFree(void* opaque, void* address) {
+    auto* state = static_cast<FaultyAllocations*>(opaque);
+    if (!state || opaque != state->expectedOpaque) {
+        if (state) state->opaqueMismatch = true;
+        return;
+    }
+    if (address) {
+        ++state->freed;
+        --state->live;
+    }
     std::free(address);
 }
 
@@ -224,6 +264,36 @@ void Uncompress() {
     Require(threw, "null length throws");
 }
 
+void InflateAllocatorRetry() {
+    const auto data = Sample();
+    GuestZStream deflater{};
+    Require(deflateInit2__nid_postfix(&deflater, 6, Z_DEFLATED, 15, 8, 0, "1.3.1", STREAM_SIZE) == Z_OK, "deflate init for inflate retry");
+    const auto compressed = Compress(deflater, data, 4096);
+    Require(deflateEnd_nid_postfix(&deflater) == Z_OK, "deflate end for inflate retry");
+
+    FaultyAllocations alloc{};
+    alloc.failOnCall = 1;
+    alloc.expectedOpaque = &alloc;
+
+    GuestZStream inflater{};
+    inflater.zalloc = FaultyAlloc;
+    inflater.zfree = FaultyFree;
+    inflater.opaque = &alloc;
+    Require(inflateInit2__nid_postfix(&inflater, 15, "1.3.1", STREAM_SIZE) == Z_MEM_ERROR, "inflate init oom");
+    Require(inflater.state == nullptr, "inflate init oom leaves null state");
+    Require(alloc.calls == 1 && alloc.allocated == 0 && alloc.freed == 0 && alloc.live == 0 && !alloc.opaqueMismatch, "inflate init oom leaves zero live allocations");
+
+    alloc.failOnCall = 0;
+    Require(inflateInit2__nid_postfix(&inflater, 15, "1.3.1", STREAM_SIZE) == Z_OK, "inflate init retry");
+    Require(inflater.state != nullptr && inflater.opaque == &alloc, "inflate init retry sets state and keeps opaque");
+    Require(alloc.allocated > 0 && alloc.live == alloc.allocated && !alloc.opaqueMismatch, "inflate init retry allocates");
+    Require(Decompress(inflater, compressed, 4096) == data, "inflate retry restores data");
+    Require(inflater.total_in == compressed.size() && inflater.total_out == data.size(), "inflate retry totals");
+    Require(inflateEnd_nid_postfix(&inflater) == Z_OK, "inflate end after retry");
+    Require(inflater.state == nullptr, "inflate end after retry clears state");
+    Require(alloc.allocated > 0 && alloc.freed == alloc.allocated && alloc.live == 0 && !alloc.opaqueMismatch, "inflate end frees all live blocks with matching opaque");
+}
+
 }
 
 int main() {
@@ -233,5 +303,6 @@ int main() {
     Errors();
     StaleChecksum();
     Uncompress();
+    InflateAllocatorRetry();
     return 0;
 }
