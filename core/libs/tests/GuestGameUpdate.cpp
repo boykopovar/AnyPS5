@@ -57,6 +57,17 @@ static void TestRequestArguments(int notInitialized, int invalidArgument, int in
     Require(sceGameUpdateCheck(-1, &param, &result) == notFound);
     param.reserved[8] = 0;
 
+    for (int id : {0, -1}) {
+        Require(sceGameUpdateCheckTitle(id, -1, nullptr) == notFound);
+    }
+    Require(sceGameUpdateCheckTitle(requestId, -1, &result) == invalidArgument);
+    Require(sceGameUpdateCheckTitle(requestId, 0, nullptr) == invalidArgument);
+    result.size = sizeof(result) - 1;
+    Require(sceGameUpdateCheckTitle(requestId, 0, &result) == invalidSize);
+    Require(sceGameUpdateCheckTitle(-1, 0, &result) == notFound);
+    result.size = sizeof(result);
+    Require(sceGameUpdateCheckTitle(requestId, 0, &result) == notInitialized);
+
     Require(sceGameUpdateCreateRequest() == notInitialized);
     Require(sceGameUpdateCheck(requestId, &param, &result) == notInitialized);
     Require(sceGameUpdateAbortRequest(requestId) == notInitialized);
@@ -64,6 +75,7 @@ static void TestRequestArguments(int notInitialized, int invalidArgument, int in
 
     Require(sceGameUpdateInitialize() == 0);
     Require(sceGameUpdateCheck(requestId, &param, &result) == notFound);
+    Require(sceGameUpdateCheckTitle(requestId, 0, &result) == notFound);
     Require(sceGameUpdateAbortRequest(requestId) == notFound);
     Require(sceGameUpdateDeleteRequest(requestId) == notFound);
     for (int id : {-1, -2, -100, -0x20000000}) {
@@ -112,6 +124,8 @@ static void TestRequestLifecycle(int notFound) {
     Require(sceGameUpdateDeleteRequest(ids[3]) == 0);
     Require(sceGameUpdateDeleteRequest(ids[3]) == notFound);
     Require(sceGameUpdateCheck(ids[3], &param, &result) == notFound);
+    Require(sceGameUpdateCheckTitle(ids[3], 0, &result) == notFound);
+    Require(sceGameUpdateCheckTitle(ids[2], -1, &result) == invalidArgument);
     Require(sceGameUpdateCreateRequest() >= 0x20000000);
     for (int id : {-1, -2, -0x20000000}) {
         Require(sceGameUpdateCheck(id, &param, &result) == notFound);
