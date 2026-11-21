@@ -993,6 +993,60 @@
         {"name": "aligned-carry", "input": ["0xffffffff", "0x00000000", "0x00000001", "0x00000000"]},
         {"name": "unaligned-carry", "input": ["0xffffffff", "0x00000000", "0x00000001", "0x00000000"]}
       ]
+    },
+    {
+      "id": "v-med3-f32-nan-ieee-off",
+      "instruction": "v_med3_f32",
+      "description": "NaN in each operand position, signed zeros and infinities with IEEE mode disabled.",
+      "body": "v_med3_f32 v10, v4, v5, v6",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 0,
+        "denorm16": 3,
+        "dx10_clamp": 1,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "nan-first", "input": ["0x7fc12345", "0x3f800000", "0x40000000", 0]},
+        {"name": "nan-second", "input": ["0x3f800000", "0x7fc12345", "0x40000000", 0]},
+        {"name": "nan-third", "input": ["0x3f800000", "0x40000000", "0x7fc12345", 0]},
+        {"name": "zeros-pnp", "input": ["0x00000000", "0x80000000", "0x00000000", 0]},
+        {"name": "zeros-npn", "input": ["0x80000000", "0x00000000", "0x80000000", 0]},
+        {"name": "infinities-nan", "input": ["0x7f800000", "0xff800000", "0x7fc12345", 0]}
+      ]
+    },
+    {
+      "id": "v-med3-f32-nan-ieee-on",
+      "instruction": "v_med3_f32",
+      "description": "NaN in each operand position, signalling NaN and signed zeros with IEEE mode enabled.",
+      "body": "v_med3_f32 v10, v4, v5, v6",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 1,
+        "denorm32": 0,
+        "denorm16": 3,
+        "dx10_clamp": 1,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "nan-first", "input": ["0x7fc12345", "0x3f800000", "0x40000000", 0]},
+        {"name": "nan-second", "input": ["0x3f800000", "0x7fc12345", "0x40000000", 0]},
+        {"name": "nan-third", "input": ["0x3f800000", "0x40000000", "0x7fc12345", 0]},
+        {"name": "snan-first", "input": ["0x7fa00000", "0x3f800000", "0x40000000", 0]},
+        {"name": "zeros-pnp", "input": ["0x00000000", "0x80000000", "0x00000000", 0]},
+        {"name": "zeros-npn", "input": ["0x80000000", "0x00000000", "0x80000000", 0]}
+      ]
     }
   ]
 }
