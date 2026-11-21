@@ -39,6 +39,7 @@ struct SpirvRequirements {
     bool sharedInt64Atomics = false;
     bool float64 = false;
     bool float64NeedsDevice = false;
+    bool float64Rounded = false;
     bool float64Interpolation = false;
     bool coherentBuffers = false;
     bool coherentBufferAlias = false;

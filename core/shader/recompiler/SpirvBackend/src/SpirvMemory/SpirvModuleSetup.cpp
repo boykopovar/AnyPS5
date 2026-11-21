@@ -491,7 +491,7 @@ void DefineModule(SpirvEmitterState& state) {
     state.integerInterpolation = state.requirements.float64Interpolation && !deviceFloat64;
     if (state.integerInterpolation) state.module.EmitCapability(spv::CapabilityInt64);
     state.integerFloat64 = state.requirements.float64 && !deviceFloat64 && !state.requirements.float64NeedsDevice;
-    if (state.integerFloat64) state.module.EmitCapability(spv::CapabilityInt64);
+    if (state.integerFloat64 || state.requirements.float64Rounded) state.module.EmitCapability(spv::CapabilityInt64);
     if (!state.integerFloat64 && (state.requirements.float64 || (state.requirements.float64Interpolation && deviceFloat64))) {
         if (!deviceFloat64) {
             throw std::runtime_error("64-bit float instructions need the Float64 capability, which the device lacks");
