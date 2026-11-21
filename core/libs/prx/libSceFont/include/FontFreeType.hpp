@@ -76,7 +76,8 @@ inline FT_UInt ResolveGlyphIndexWithFallback(FT_Face face, std::uint32_t codepoi
         glyphIndex = FT_Get_Char_Index(face, code);
         if (glyphIndex != 0) break;
     }
-    face->charmap = original;
+    if (!original) face->charmap = nullptr;
+    else if (face->charmap != original) FT_Set_Charmap(face, original);
     return glyphIndex;
 }
 
