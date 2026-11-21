@@ -28,7 +28,7 @@ constexpr int VIDEO_OUT_ERROR_0x8029001C = static_cast<int>(0x8029001Cu);
 
 } // namespace
 
-int main() {
+static int GuestMain(int, char**) {
     VideoOutTestEnvironment environment;
 
     int handle = 0;
@@ -78,3 +78,5 @@ int main() {
     LibcRunShutdown_nid_postfix();
     return 0;
 }
+
+int main(int argc, char** argv) { return RunAsGuest(argc, argv, GuestMain); }

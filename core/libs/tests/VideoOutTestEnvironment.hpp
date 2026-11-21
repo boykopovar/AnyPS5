@@ -2,12 +2,18 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <random>
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#ifdef __APPLE__
+#include <crt_externs.h>
+
+extern "C" [[noreturn]] void Aps5StartGuest_nid_no_patch(void (*entry)(void*, void*), void* block);
+#endif
 
 class VideoOutTestEnvironment final {
     std::filesystem::path previous;
@@ -51,3 +57,14 @@ public:
     VideoOutTestEnvironment(const VideoOutTestEnvironment&) = delete;
     VideoOutTestEnvironment& operator=(const VideoOutTestEnvironment&) = delete;
 };
+
+inline int RunAsGuest(int argc, char** argv, int (*run)(int, char**)) {
+#ifdef __APPLE__
+    static_cast<void>(argc);
+    static_cast<void>(argv);
+    static int (*const guest)(int, char**) = run;
+    Aps5StartGuest_nid_no_patch([](void*, void*) { std::exit(guest(*_NSGetArgc(), *_NSGetArgv())); }, nullptr);
+#else
+    return run(argc, argv);
+#endif
+}
