@@ -36,7 +36,7 @@ public:
     Waker() : thread([this] {
         while (!stop.load()) {
             KernelWakeSleepers_nid_no_patch();
-            std::this_thread::sleep_for(std::chrono::microseconds(50));
+            Idle(std::chrono::microseconds(50));
         }
     }) {}
     ~Waker() {
