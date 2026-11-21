@@ -81,7 +81,7 @@ std::uint64_t APS5_VABI sceAmprMeasureCommandSizeNopWithData(std::uint32_t dword
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizePopMarker();
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizePushMarker(const char* text);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizePushMarkerWithColor(const char* text, std::uint32_t color);
-uint32_t APS5_VABI sceAmprMeasureCommandSizeReadFile(void);
+uint32_t APS5_VABI sceAmprMeasureCommandSizeReadFile(std::uint32_t fileId, const void* destination, std::uint64_t size, std::uint64_t offset);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeReadFileGather(std::uint64_t size, std::uint64_t offset);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeReadFileGatherScatter(void* destination, std::uint64_t size, std::uint64_t offset);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeReadFileScatter(void* destination, std::uint64_t size);
