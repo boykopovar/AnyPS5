@@ -19,7 +19,7 @@ float APS5_VABI _FPow_nid_postfix(float x, float y, short* exponent);
 int APS5_VABI _FQuad_nid_postfix();
 int APS5_VABI _FQuadph_nid_postfix();
 int APS5_VABI _FRint_nid_postfix();
-int APS5_VABI _FSincos_nid_postfix();
+float APS5_VABI _FSincos_nid_postfix(float x, float* cosine);
 float APS5_VABI _FTan_nid_postfix(float x, int quadrants);
 int APS5_VABI _FTgamma_nid_postfix();
 float* APS5_VABI _FXp_addh_nid_postfix(float* p, int n, float x);
@@ -44,7 +44,7 @@ long double APS5_VABI _LPow_nid_postfix(long double x, long double y, short* exp
 int APS5_VABI _LQuad_nid_postfix();
 int APS5_VABI _LQuadph_nid_postfix();
 int APS5_VABI _LRint_nid_postfix();
-int APS5_VABI _LSincos_nid_postfix();
+long double APS5_VABI _LSincos_nid_postfix(long double x, long double* cosine);
 long double APS5_VABI _LTan_nid_postfix(long double x, int quadrants);
 int APS5_VABI _LTgamma_nid_postfix();
 long double* APS5_VABI _LXp_addh_nid_postfix(long double* p, int n, long double x);

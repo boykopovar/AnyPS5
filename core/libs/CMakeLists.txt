@@ -651,6 +651,13 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_kernel_sys PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAmpr>")
+        add_test_executable(guest_kernel_sys_substituted_drive_tests tests/GuestKernelSysSubstitutedDrive.cpp)
+        target_include_directories(guest_kernel_sys_substituted_drive_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        target_link_libraries(guest_kernel_sys_substituted_drive_tests PRIVATE libkernel_sys libkernel libc)
+        configure_windows_unwind(guest_kernel_sys_substituted_drive_tests)
+        add_test(NAME guest_kernel_sys_substituted_drive COMMAND guest_kernel_sys_substituted_drive_tests)
+        set_tests_properties(guest_kernel_sys_substituted_drive PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAmpr>")
     endif()
     add_test_executable(guest_kernel_sys_vm_map_timestamp_tests tests/GuestKernelSysVmMapTimestamp.cpp)
     target_include_directories(guest_kernel_sys_vm_map_timestamp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

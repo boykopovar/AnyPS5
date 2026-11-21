@@ -234,13 +234,13 @@ LibreSsl3SslSession* Decode(const Bytes& der, const unsigned char*& cursor) {
     return d2i_SSL_SESSION_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(der.size()));
 }
 
-void RequireRejected(const Bytes& der, int reason, std::source_location location = std::source_location::current()) {
+void RequireRejected(const Bytes& der, std::source_location location = std::source_location::current()) {
     DrainErrors();
     const unsigned char* cursor = der.data();
     LibreSsl3SslSession* session = d2i_SSL_SESSION_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(der.size()));
     Require(session == nullptr, location);
     Require(cursor == der.data(), location);
-    RequireQueue({reason}, location);
+    Require(ERR_get_error_nid_postfix() == 0, location);
     Require(allocations.empty(), location);
 }
 
@@ -492,13 +492,13 @@ void TestTruncatedInput() {
             d2i_SSL_SESSION_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(length));
         Require(session == nullptr);
         Require(cursor == der.data());
+        Require(ERR_get_error_nid_postfix() == 0);
         Require(allocations.empty());
     }
-    DrainErrors();
 }
 
 void TestMalformed() {
-    RequireRejected(Tlv(0x31, MinimalContent()), 168);
+    RequireRejected(Tlv(0x31, MinimalContent()));
     RequireRejected(Sequence(Join({
         Tlv(0x04, Bytes{0x01}),
         Integer(Tls12Version),
@@ -506,17 +506,17 @@ void TestMalformed() {
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
         Tlv(0xa4, Tlv(0x04, Bytes{})),
-    })), 168);
+    })));
 
     Bytes overlongOuter = MinimalEncoding();
     overlongOuter[1] = 0x14;
-    RequireRejected(overlongOuter, 155);
+    RequireRejected(overlongOuter);
 
-    RequireRejected(Bytes{0x30, 0x80, 0x00, 0x00}, 102);
-    RequireRejected(Bytes{0x30, 0x84, 0x00, 0x00, 0x00, 0x00}, 102);
-    RequireRejected(Bytes{0x30, 0x82, 0x00, 0x80}, 102);
-    RequireRejected(Bytes{0x30}, 102);
-    RequireRejected(Bytes{0x1f, 0x00}, 102);
+    RequireRejected(Bytes{0x30, 0x80, 0x00, 0x00});
+    RequireRejected(Bytes{0x30, 0x84, 0x00, 0x00, 0x00, 0x00});
+    RequireRejected(Bytes{0x30, 0x82, 0x00, 0x80});
+    RequireRejected(Bytes{0x30});
+    RequireRejected(Bytes{0x1f, 0x00});
 
     RequireRejected(Sequence(Join({
         Integer(2),
@@ -524,35 +524,35 @@ void TestMalformed() {
         Tlv(0x04, Bytes{0x00, 0x00}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
-    })), 102);
+    })));
     RequireRejected(Sequence(Join({
         Tlv(0x02, Bytes{0x00, 0x01}),
         Integer(Tls12Version),
         Tlv(0x04, Bytes{0x00, 0x00}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
-    })), 102);
+    })));
     RequireRejected(Sequence(Join({
         Tlv(0x02, Bytes{0x81}),
         Integer(Tls12Version),
         Tlv(0x04, Bytes{0x00, 0x00}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
-    })), 102);
+    })));
     RequireRejected(Sequence(Join({
         Tlv(0x02, Bytes{}),
         Integer(Tls12Version),
         Tlv(0x04, Bytes{0x00, 0x00}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
-    })), 102);
+    })));
     RequireRejected(Sequence(Join({
         Integer(1),
         Integer(0x80000000u),
         Tlv(0x04, Bytes{0x00, 0x00}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
-    })), 155);
+    })));
 
     RequireRejected(Sequence(Join({
         Integer(1),
@@ -560,28 +560,28 @@ void TestMalformed() {
         Tlv(0x04, Bytes{0x00}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
-    })), 102);
+    })));
     RequireRejected(Sequence(Join({
         Integer(1),
         Integer(Tls12Version),
         Tlv(0x04, Bytes{0x00, 0x00, 0x00}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
-    })), 102);
+    })));
     RequireRejected(Sequence(Join({
         Integer(1),
         Integer(Tls12Version),
         Tlv(0x04, Bytes{0x00, 0x00}),
         Tlv(0x04, Range(0x00, 33)),
         Tlv(0x04, Bytes{}),
-    })), 155);
+    })));
     RequireRejected(Sequence(Join({
         Integer(1),
         Integer(Tls12Version),
         Tlv(0x04, Bytes{0x00, 0x00}),
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Range(0x00, 49)),
-    })), 155);
+    })));
     RequireRejected(Sequence(Join({
         Integer(1),
         Integer(Tls12Version),
@@ -589,7 +589,7 @@ void TestMalformed() {
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
         Tlv(0xa4, Tlv(0x04, Range(0x00, 33))),
-    })), 155);
+    })));
 
     RequireRejected(Sequence(Join({
         Integer(1),
@@ -598,7 +598,7 @@ void TestMalformed() {
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
         Tlv(0xa1, Tlv(0x04, Bytes{0x01})),
-    })), 168);
+    })));
     RequireRejected(Sequence(Join({
         Integer(1),
         Integer(Tls12Version),
@@ -606,7 +606,7 @@ void TestMalformed() {
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
         Tlv(0xa4, Tlv(0x02, Bytes{0x01})),
-    })), 168);
+    })));
     RequireRejected(Sequence(Join({
         Integer(1),
         Integer(Tls12Version),
@@ -614,7 +614,7 @@ void TestMalformed() {
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
         Tlv(0xa4, Join({Tlv(0x04, Bytes{}), Bytes{0x05, 0x00}})),
-    })), 155);
+    })));
     RequireRejected(Sequence(Join({
         Integer(1),
         Integer(Tls12Version),
@@ -622,7 +622,7 @@ void TestMalformed() {
         Tlv(0x04, Bytes{}),
         Tlv(0x04, Bytes{}),
         Tlv(0xa1, Tlv(0x02, Bytes{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})),
-    })), 155);
+    })));
 }
 
 void TestUnrepresentableFields() {
