@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "StoreLoad.hpp"
 #include <cerrno>
 #include <climits>
 #include <cstddef>
@@ -284,8 +285,7 @@ void APS5_VABI SSL_CTX_set_cert_store_nid_postfix(LibreSslCtx* ctx, LibreSslX509
 
 int APS5_VABI SSL_CTX_load_verify_locations_nid_postfix(LibreSslCtx* ctx, const char* file, const char* path) {
     Context(ctx, __func__);
-    if (file || path) NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return LibreSsl::StoreLoadLocations_nid_no_patch(static_cast<LibreSslX509Store*>(ctx->certStore), file, path);
 }
 
 void APS5_VABI SSL_CTX_set_quiet_shutdown_nid_postfix(LibreSslCtx* ctx, int mode) {

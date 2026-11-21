@@ -220,7 +220,7 @@ void TestFileBundle() {
         Require(std::string(text) == expected);
         free_nid_postfix(der);
     }
-    Require(Throws([store] { X509_STORE_free_nid_postfix(store); }));
+    X509_STORE_free_nid_postfix(store);
     Require(remove_nid_postfix(path.c_str()) == 0);
 }
 
@@ -233,7 +233,7 @@ void TestDuplicateCertificate() {
     Require(X509_STORE_load_locations_nid_postfix(store, path.c_str(), nullptr) == 1);
     Require(ObjectCount(store) == 1);
     Require(LookupCount(store) == 1);
-    Require(Throws([store] { X509_STORE_free_nid_postfix(store); }));
+    X509_STORE_free_nid_postfix(store);
     Require(remove_nid_postfix(path.c_str()) == 0);
 }
 
@@ -298,8 +298,7 @@ int LoadedFrom(const std::string& name, const std::string& contents, int expecte
     LibreSslX509Store* store = NewStore();
     Require(X509_STORE_load_locations_nid_postfix(store, path.c_str(), nullptr) == expectedResult);
     const int count = ObjectCount(store);
-    if (count) Require(Throws([store] { X509_STORE_free_nid_postfix(store); }));
-    else X509_STORE_free_nid_postfix(store);
+    X509_STORE_free_nid_postfix(store);
     Require(remove_nid_postfix(path.c_str()) == 0);
     return count;
 }
@@ -402,7 +401,7 @@ void TestHashedDirectory() {
     LibreSslX509Store* empty = NewStore();
     Require(X509_STORE_load_locations_nid_postfix(empty, nullptr, "") == 0);
     X509_STORE_free_nid_postfix(empty);
-    Require(Throws([store] { X509_STORE_free_nid_postfix(store); }));
+    X509_STORE_free_nid_postfix(store);
     std::filesystem::remove_all(directory, ignored);
 }
 
@@ -417,7 +416,7 @@ void TestAddCertificate() {
     Require(certificate->references == 1);
     Require(X509_STORE_add_cert_nid_postfix(store, nullptr) == 0);
     Require(Throws([certificate] { X509_STORE_add_cert_nid_postfix(nullptr, certificate); }));
-    Require(Throws([store] { X509_STORE_free_nid_postfix(store); }));
+    X509_STORE_free_nid_postfix(store);
     Require(remove_nid_postfix(path.c_str()) == 0);
 }
 
@@ -435,7 +434,7 @@ void TestNegativeControl() {
     Require(!HoldsCertificates(store, 2));
     stack->num += 1;
     Require(HoldsCertificates(store, 2));
-    Require(Throws([store] { X509_STORE_free_nid_postfix(store); }));
+    X509_STORE_free_nid_postfix(store);
     Require(remove_nid_postfix(path.c_str()) == 0);
 }
 
@@ -528,7 +527,7 @@ void TestConvertedNameStrings() {
             Require(std::memcmp(name->canonEnc, test.canonical.data(), test.canonical.size()) == 0);
             Require(HashedFileName(name->canonEnc, test.canonical.size()) == test.hashedName);
         }
-        Throws([store] { X509_STORE_free_nid_postfix(store); });
+        X509_STORE_free_nid_postfix(store);
         Require(remove_nid_postfix(path.c_str()) == 0);
     }
 }
@@ -601,7 +600,7 @@ void TestLatin1LookupName() {
     result = {};
     Require(Throws([&] { bySubject(lookup, LibreSslX509LookupX509, &name, &result); }));
     sk_free_nid_postfix(entries);
-    Throws([store] { X509_STORE_free_nid_postfix(store); });
+    X509_STORE_free_nid_postfix(store);
     std::filesystem::remove_all(directory, ignored);
 }
 
