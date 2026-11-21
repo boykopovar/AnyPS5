@@ -15,14 +15,22 @@ using namespace SceJson;
 
 extern "C" {
 
-const std::int64_t _ZN3sce4Json5Value13s_nullintegerE = 0;
-const std::uint64_t _ZN3sce4Json5Value14s_nulluintegerE = 0;
-const double _ZN3sce4Json5Value10s_nullrealE = 0.0;
-const bool _ZN3sce4Json5Value10s_nullboolE = false;
-String* _ZN3sce4Json5Value12s_nullstringE = nullptr;
-Array* _ZN3sce4Json5Value11s_nullarrayE = nullptr;
-Object* _ZN3sce4Json5Value12s_nullobjectE = nullptr;
-InitParameter* _ZN3sce4Json11s_initparamE = nullptr;
+const std::int64_t _ZN3sce4Json5Value13s_nullintegerE_nid_no_patch = 0;
+APS5_EXPORT("dJSD90mnj1w", _ZN3sce4Json5Value13s_nullintegerE_nid_no_patch);
+const std::uint64_t _ZN3sce4Json5Value14s_nulluintegerE_nid_no_patch = 0;
+APS5_EXPORT("xxBnIBiUVzY", _ZN3sce4Json5Value14s_nulluintegerE_nid_no_patch);
+const double _ZN3sce4Json5Value10s_nullrealE_nid_no_patch = 0.0;
+APS5_EXPORT("GpEG1IcP86s", _ZN3sce4Json5Value10s_nullrealE_nid_no_patch);
+const bool _ZN3sce4Json5Value10s_nullboolE_nid_no_patch = false;
+APS5_EXPORT("bUw2Go-rxtE", _ZN3sce4Json5Value10s_nullboolE_nid_no_patch);
+String* _ZN3sce4Json5Value12s_nullstringE_nid_no_patch = nullptr;
+APS5_EXPORT("24kDIV0aDzs", _ZN3sce4Json5Value12s_nullstringE_nid_no_patch);
+Array* _ZN3sce4Json5Value11s_nullarrayE_nid_no_patch = nullptr;
+APS5_EXPORT("zwDiN3-CRTA", _ZN3sce4Json5Value11s_nullarrayE_nid_no_patch);
+Object* _ZN3sce4Json5Value12s_nullobjectE_nid_no_patch = nullptr;
+APS5_EXPORT("3YODFwSqgtc", _ZN3sce4Json5Value12s_nullobjectE_nid_no_patch);
+InitParameter* _ZN3sce4Json11s_initparamE_nid_no_patch = nullptr;
+APS5_EXPORT("7Xc95EMbk9I", _ZN3sce4Json11s_initparamE_nid_no_patch);
 
 }
 
@@ -55,7 +63,7 @@ void* AllocateFrom(const InitParameter& parameter, std::size_t size) {
 }
 
 void* Allocate(std::size_t size) {
-    const InitParameter* parameter = _ZN3sce4Json11s_initparamE;
+    const InitParameter* parameter = _ZN3sce4Json11s_initparamE_nid_no_patch;
     if (parameter == nullptr || parameter->allocator == nullptr) return nullptr;
     void* result = AllocateFrom(*parameter, size);
     if (result == nullptr) AllocationFailed();
@@ -69,7 +77,7 @@ void* AllocateRequired(std::size_t size) {
 }
 
 void Release(void* pointer) {
-    const InitParameter* parameter = _ZN3sce4Json11s_initparamE;
+    const InitParameter* parameter = _ZN3sce4Json11s_initparamE_nid_no_patch;
     if (parameter == nullptr || parameter->allocator == nullptr) AllocationFailed();
     const auto deallocate = reinterpret_cast<DeallocateFunction>(parameter->allocator->vtable[3]);
     deallocate(parameter->allocator, pointer, parameter->userData);
@@ -1226,7 +1234,7 @@ bool ParseValue(Value& value, InputStream& stream, Value* parent) {
 }
 
 int Parse(Value& value, ParserReadCallback read, void* context) {
-    if (_ZN3sce4Json11s_initparamE == nullptr) return ErrorNotInitialized;
+    if (_ZN3sce4Json11s_initparamE_nid_no_patch == nullptr) return ErrorNotInitialized;
     InputStream stream {read, context, -1, 0, false};
     try {
         if (ParseValue(value, stream, nullptr)) return 0;
@@ -1238,31 +1246,31 @@ int Parse(Value& value, ParserReadCallback read, void* context) {
 }
 
 void ReleaseShared() {
-    if (_ZN3sce4Json5Value12s_nullstringE != nullptr) {
-        DestroyString(*_ZN3sce4Json5Value12s_nullstringE);
-        Release(_ZN3sce4Json5Value12s_nullstringE);
-        _ZN3sce4Json5Value12s_nullstringE = nullptr;
+    if (_ZN3sce4Json5Value12s_nullstringE_nid_no_patch != nullptr) {
+        DestroyString(*_ZN3sce4Json5Value12s_nullstringE_nid_no_patch);
+        Release(_ZN3sce4Json5Value12s_nullstringE_nid_no_patch);
+        _ZN3sce4Json5Value12s_nullstringE_nid_no_patch = nullptr;
     }
-    if (_ZN3sce4Json5Value11s_nullarrayE != nullptr) {
-        DestroyArray(*_ZN3sce4Json5Value11s_nullarrayE);
-        Release(_ZN3sce4Json5Value11s_nullarrayE);
-        _ZN3sce4Json5Value11s_nullarrayE = nullptr;
+    if (_ZN3sce4Json5Value11s_nullarrayE_nid_no_patch != nullptr) {
+        DestroyArray(*_ZN3sce4Json5Value11s_nullarrayE_nid_no_patch);
+        Release(_ZN3sce4Json5Value11s_nullarrayE_nid_no_patch);
+        _ZN3sce4Json5Value11s_nullarrayE_nid_no_patch = nullptr;
     }
-    if (_ZN3sce4Json5Value12s_nullobjectE != nullptr) {
-        DestroyObject(*_ZN3sce4Json5Value12s_nullobjectE);
-        Release(_ZN3sce4Json5Value12s_nullobjectE);
-        _ZN3sce4Json5Value12s_nullobjectE = nullptr;
+    if (_ZN3sce4Json5Value12s_nullobjectE_nid_no_patch != nullptr) {
+        DestroyObject(*_ZN3sce4Json5Value12s_nullobjectE_nid_no_patch);
+        Release(_ZN3sce4Json5Value12s_nullobjectE_nid_no_patch);
+        _ZN3sce4Json5Value12s_nullobjectE_nid_no_patch = nullptr;
     }
-    Release(_ZN3sce4Json11s_initparamE);
-    _ZN3sce4Json11s_initparamE = nullptr;
+    Release(_ZN3sce4Json11s_initparamE_nid_no_patch);
+    _ZN3sce4Json11s_initparamE_nid_no_patch = nullptr;
 }
 
 int ParseFile(Value& value, const char* path) {
-    if (_ZN3sce4Json11s_initparamE == nullptr) return ErrorNotInitialized;
-    if (_ZN3sce4Json11s_initparamE->fileBufferSize == 0) return ErrorFileBufferSize;
+    if (_ZN3sce4Json11s_initparamE_nid_no_patch == nullptr) return ErrorNotInitialized;
+    if (_ZN3sce4Json11s_initparamE_nid_no_patch->fileBufferSize == 0) return ErrorFileBufferSize;
     try {
         FileReader reader {};
-        const std::size_t size = _ZN3sce4Json11s_initparamE->fileBufferSize;
+        const std::size_t size = _ZN3sce4Json11s_initparamE_nid_no_patch->fileBufferSize;
         reader.buffer = static_cast<char*>(Allocate(size));
         if (reader.buffer != nullptr) {
             reader.bufferSize = size;
@@ -1330,7 +1338,7 @@ void APS5_VABI _ZN3sce4Json11InitializerC2Ev_nid_no_patch(Initializer* self) {
 APS5_EXPORT("6qFqND4iwPA", _ZN3sce4Json11InitializerC2Ev_nid_no_patch);
 
 int APS5_VABI _ZN3sce4Json11Initializer9terminateEv_nid_no_patch(Initializer* self) {
-    if (_ZN3sce4Json11s_initparamE == nullptr || !self->initialized) return ErrorNotInitialized;
+    if (_ZN3sce4Json11s_initparamE_nid_no_patch == nullptr || !self->initialized) return ErrorNotInitialized;
     ReleaseShared();
     self->initialized = false;
     return 0;
@@ -1348,22 +1356,22 @@ void APS5_VABI _ZN3sce4Json11InitializerD2Ev_nid_no_patch(Initializer* self) {
 APS5_EXPORT("qQZGdYkEytk", _ZN3sce4Json11InitializerD2Ev_nid_no_patch);
 
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE_nid_no_patch(Initializer* self, const InitParameter* parameter) {
-    if (_ZN3sce4Json11s_initparamE != nullptr || self->initialized) return ErrorAlreadyInitialized;
+    if (_ZN3sce4Json11s_initparamE_nid_no_patch != nullptr || self->initialized) return ErrorAlreadyInitialized;
     auto* stored = static_cast<InitParameter*>(AllocateFrom(*parameter, sizeof(InitParameter)));
     *Required(stored) = {};
-    _ZN3sce4Json11s_initparamE = stored;
+    _ZN3sce4Json11s_initparamE_nid_no_patch = stored;
     *stored = *parameter;
     void* pending = nullptr;
     try {
         auto* text = static_cast<String*>(pending = AllocateFrom(*parameter, sizeof(String)));
         ConstructString(*Required(text));
-        _ZN3sce4Json5Value12s_nullstringE = text;
+        _ZN3sce4Json5Value12s_nullstringE_nid_no_patch = text;
         auto* array = static_cast<Array*>(pending = AllocateFrom(*parameter, sizeof(Array)));
         ConstructArray(*Required(array));
-        _ZN3sce4Json5Value11s_nullarrayE = array;
+        _ZN3sce4Json5Value11s_nullarrayE_nid_no_patch = array;
         auto* object = static_cast<Object*>(pending = AllocateFrom(*parameter, sizeof(Object)));
         ConstructObject(*Required(object));
-        _ZN3sce4Json5Value12s_nullobjectE = object;
+        _ZN3sce4Json5Value12s_nullobjectE_nid_no_patch = object;
     } catch (...) {
         if (pending != nullptr) Release(pending);
         ReleaseShared();
@@ -1627,13 +1635,13 @@ int APS5_VABI _ZN3sce4Json5Value18serialize_internalERSbIcSt11char_traitsIcENS0_
 APS5_EXPORT("bkVdWPESKhQ", _ZN3sce4Json5Value18serialize_internalERSbIcSt11char_traitsIcENS0_8StlAllocIcEEEPFiS7_PvES8_PS1__nid_no_patch);
 
 int APS5_VABI _ZN3sce4Json5Value9serializeERSbIcSt11char_traitsIcENS0_8StlAllocIcEEEPFiS7_PvES8__nid_no_patch(Value* self, String* out, SerializeCallback callback, void* context) {
-    if (_ZN3sce4Json11s_initparamE == nullptr) return ErrorNotInitialized;
+    if (_ZN3sce4Json11s_initparamE_nid_no_patch == nullptr) return ErrorNotInitialized;
     return Serialize(*self, *out, callback, context, nullptr);
 }
 APS5_EXPORT("HlDiu7tCnh8", _ZN3sce4Json5Value9serializeERSbIcSt11char_traitsIcENS0_8StlAllocIcEEEPFiS7_PvES8__nid_no_patch);
 
 int APS5_VABI _ZN3sce4Json5Value9serializeERSbIcSt11char_traitsIcENS0_8StlAllocIcEEE_nid_no_patch(Value* self, String* out) {
-    if (_ZN3sce4Json11s_initparamE == nullptr) return ErrorNotInitialized;
+    if (_ZN3sce4Json11s_initparamE_nid_no_patch == nullptr) return ErrorNotInitialized;
     return Serialize(*self, *out, DiscardSerialized, nullptr, nullptr);
 }
 APS5_EXPORT("GAccTNWvZ8o", _ZN3sce4Json5Value9serializeERSbIcSt11char_traitsIcENS0_8StlAllocIcEEE_nid_no_patch);
@@ -1685,43 +1693,43 @@ APS5_EXPORT("Z3mrBp7y1Lc", _ZN3sce4Json5Value10referValueERKSbIcSt11char_traitsI
 
 const String* APS5_VABI _ZNK3sce4Json5Value9getStringEv_nid_no_patch(const Value* self) {
     if (const Value* redirected = NullAccess(*self, TypeString)) return _ZNK3sce4Json5Value9getStringEv_nid_no_patch(redirected);
-    return self->type == TypeString ? self->payload.string : _ZN3sce4Json5Value12s_nullstringE;
+    return self->type == TypeString ? self->payload.string : _ZN3sce4Json5Value12s_nullstringE_nid_no_patch;
 }
 APS5_EXPORT("epJ6x2LV0kU", _ZNK3sce4Json5Value9getStringEv_nid_no_patch);
 
 const Array* APS5_VABI _ZNK3sce4Json5Value8getArrayEv_nid_no_patch(const Value* self) {
     if (const Value* redirected = NullAccess(*self, TypeArray)) return _ZNK3sce4Json5Value8getArrayEv_nid_no_patch(redirected);
-    return self->type == TypeArray ? self->payload.array : _ZN3sce4Json5Value11s_nullarrayE;
+    return self->type == TypeArray ? self->payload.array : _ZN3sce4Json5Value11s_nullarrayE_nid_no_patch;
 }
 APS5_EXPORT("ONT8As5R1ug", _ZNK3sce4Json5Value8getArrayEv_nid_no_patch);
 
 const Object* APS5_VABI _ZNK3sce4Json5Value9getObjectEv_nid_no_patch(const Value* self) {
     if (const Value* redirected = NullAccess(*self, TypeObject)) return _ZNK3sce4Json5Value9getObjectEv_nid_no_patch(redirected);
-    return self->type == TypeObject ? self->payload.object : _ZN3sce4Json5Value12s_nullobjectE;
+    return self->type == TypeObject ? self->payload.object : _ZN3sce4Json5Value12s_nullobjectE_nid_no_patch;
 }
 APS5_EXPORT("IlsmvBtMkak", _ZNK3sce4Json5Value9getObjectEv_nid_no_patch);
 
 const std::int64_t* APS5_VABI _ZNK3sce4Json5Value10getIntegerEv_nid_no_patch(const Value* self) {
     if (const Value* redirected = NullAccess(*self, TypeInteger)) return _ZNK3sce4Json5Value10getIntegerEv_nid_no_patch(redirected);
-    return self->type == TypeInteger || self->type == TypeUInteger ? &self->payload.integer : &_ZN3sce4Json5Value13s_nullintegerE;
+    return self->type == TypeInteger || self->type == TypeUInteger ? &self->payload.integer : &_ZN3sce4Json5Value13s_nullintegerE_nid_no_patch;
 }
 APS5_EXPORT("DIxvoy7Ngvk", _ZNK3sce4Json5Value10getIntegerEv_nid_no_patch);
 
 const std::uint64_t* APS5_VABI _ZNK3sce4Json5Value11getUIntegerEv_nid_no_patch(const Value* self) {
     if (const Value* redirected = NullAccess(*self, TypeUInteger)) return _ZNK3sce4Json5Value11getUIntegerEv_nid_no_patch(redirected);
-    return self->type == TypeUInteger || self->type == TypeInteger ? &self->payload.uinteger : &_ZN3sce4Json5Value14s_nulluintegerE;
+    return self->type == TypeUInteger || self->type == TypeInteger ? &self->payload.uinteger : &_ZN3sce4Json5Value14s_nulluintegerE_nid_no_patch;
 }
 APS5_EXPORT("sn4HNCtNRzY", _ZNK3sce4Json5Value11getUIntegerEv_nid_no_patch);
 
 const double* APS5_VABI _ZNK3sce4Json5Value7getRealEv_nid_no_patch(const Value* self) {
     if (const Value* redirected = NullAccess(*self, TypeReal)) return _ZNK3sce4Json5Value7getRealEv_nid_no_patch(redirected);
-    return self->type == TypeReal ? &self->payload.real : &_ZN3sce4Json5Value10s_nullrealE;
+    return self->type == TypeReal ? &self->payload.real : &_ZN3sce4Json5Value10s_nullrealE_nid_no_patch;
 }
 APS5_EXPORT("3qrge7L-AU4", _ZNK3sce4Json5Value7getRealEv_nid_no_patch);
 
 const bool* APS5_VABI _ZNK3sce4Json5Value10getBooleanEv_nid_no_patch(const Value* self) {
     if (const Value* redirected = NullAccess(*self, TypeBoolean)) return _ZNK3sce4Json5Value10getBooleanEv_nid_no_patch(redirected);
-    return self->type == TypeBoolean ? &self->payload.boolean : &_ZN3sce4Json5Value10s_nullboolE;
+    return self->type == TypeBoolean ? &self->payload.boolean : &_ZN3sce4Json5Value10s_nullboolE_nid_no_patch;
 }
 APS5_EXPORT("zTwZdI8AZ5Y", _ZNK3sce4Json5Value10getBooleanEv_nid_no_patch);
 
@@ -1800,7 +1808,7 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5__nid_no_patch(Val
 APS5_EXPORT("itqj2YmuAa8", _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5__nid_no_patch);
 
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm_nid_no_patch(Value* value, const char* text, std::size_t size) {
-    if (_ZN3sce4Json11s_initparamE == nullptr) return ErrorNotInitialized;
+    if (_ZN3sce4Json11s_initparamE_nid_no_patch == nullptr) return ErrorNotInitialized;
     BufferReader reader {text, text + size};
     return Parse(*value, ReadBuffer, &reader);
 }

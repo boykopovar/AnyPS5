@@ -127,12 +127,12 @@ static void Document() {
     Require(*_ZNK3sce4Json5Value11getUIntegerEv_nid_no_patch(&Element(b, 1)) == static_cast<std::uint64_t>(-2));
     Require(*_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&Element(b, 2)) == 0.5);
     Require(*_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&Element(b, 3)) == 100.0);
-    Require(_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&Element(b, 0)) == &_ZN3sce4Json5Value10s_nullrealE);
+    Require(_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&Element(b, 0)) == &_ZN3sce4Json5Value10s_nullrealE_nid_no_patch);
     Require(*_ZNK3sce4Json5Value10getBooleanEv_nid_no_patch(&Element(b, 4)));
     Require(!_ZNK3sce4Json5ValuecvbEv_nid_no_patch(&Element(b, 5)));
     Require(_ZNK3sce4Json5Value7getTypeEv_nid_no_patch(&Element(b, 6)) == TypeNull);
     Require(std::strcmp(Text(_ZNK3sce4Json5Value9getStringEv_nid_no_patch(&Element(b, 7))), "s\xc3\xa9\xf0\x9f\x98\x80/") == 0);
-    Require(_ZNK3sce4Json5Value9getStringEv_nid_no_patch(&Element(b, 0)) == _ZN3sce4Json5Value12s_nullstringE);
+    Require(_ZNK3sce4Json5Value9getStringEv_nid_no_patch(&Element(b, 0)) == _ZN3sce4Json5Value12s_nullstringE_nid_no_patch);
     Require(_ZNK3sce4Json5Value7getRootEv_nid_no_patch(&Element(b, 7)) == &root);
     Require(Serialize(root) ==
         "{\"a\":{\"k\":18446744073709551615,\"m\":-9223372036854775807,\"n\":-9223372036854775808},"
@@ -180,16 +180,16 @@ static void NullAccess() {
     Require(Parse(root, "{\"x\": [1]}") == 0);
     const Value& missing = Member(root, "zz");
     Require(&missing == root.root->nullValue);
-    Require(_ZNK3sce4Json5Value10getIntegerEv_nid_no_patch(&missing) == &_ZN3sce4Json5Value13s_nullintegerE);
+    Require(_ZNK3sce4Json5Value10getIntegerEv_nid_no_patch(&missing) == &_ZN3sce4Json5Value13s_nullintegerE_nid_no_patch);
     Value* x = _ZN3sce4Json5Value10referValueEm_nid_no_patch(&root, 0);
     Require(_ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6__nid_no_patch(x, OnNullAccess, &callbackCalls) == ErrorNotRoot);
     Require(_ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6__nid_no_patch(&root, OnNullAccess, &callbackCalls) == 0);
     Require(*_ZNK3sce4Json5Value10getIntegerEv_nid_no_patch(&missing) == 7);
     Require(callbackCalls == 1 && callbackType == TypeInteger && callbackParent == &root);
     Require(&Element(*x, 5) == root.root->nullValue);
-    Require(_ZNK3sce4Json5Value9getStringEv_nid_no_patch(&Member(*x, "a")) == _ZN3sce4Json5Value12s_nullstringE);
+    Require(_ZNK3sce4Json5Value9getStringEv_nid_no_patch(&Member(*x, "a")) == _ZN3sce4Json5Value12s_nullstringE_nid_no_patch);
     Require(Serialize(root) == "{\"x\":[1]}");
-    Require(_ZNK3sce4Json5Value10getIntegerEv_nid_no_patch(&missing) == &_ZN3sce4Json5Value13s_nullintegerE);
+    Require(_ZNK3sce4Json5Value10getIntegerEv_nid_no_patch(&missing) == &_ZN3sce4Json5Value13s_nullintegerE_nid_no_patch);
     _ZN3sce4Json5ValueD1Ev_nid_no_patch(&root);
     _ZN3sce4Json5ValueD1Ev_nid_no_patch(&fallback);
 }
@@ -364,8 +364,8 @@ static void FailedInitialize(InitParameter& parameter) {
         }
         failAllocation = 0;
         Require(threw && !initializer.initialized && liveAllocations == 0);
-        Require(_ZN3sce4Json11s_initparamE == nullptr && _ZN3sce4Json5Value12s_nullstringE == nullptr);
-        Require(_ZN3sce4Json5Value11s_nullarrayE == nullptr && _ZN3sce4Json5Value12s_nullobjectE == nullptr);
+        Require(_ZN3sce4Json11s_initparamE_nid_no_patch == nullptr && _ZN3sce4Json5Value12s_nullstringE_nid_no_patch == nullptr);
+        Require(_ZN3sce4Json5Value11s_nullarrayE_nid_no_patch == nullptr && _ZN3sce4Json5Value12s_nullobjectE_nid_no_patch == nullptr);
     }
 }
 
@@ -393,6 +393,6 @@ int main() {
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE_nid_no_patch(&initializer, &parameter) == 0);
     Files();
     _ZN3sce4Json11InitializerD1Ev_nid_no_patch(&initializer);
-    Require(_ZN3sce4Json11s_initparamE == nullptr && liveAllocations == 0);
+    Require(_ZN3sce4Json11s_initparamE_nid_no_patch == nullptr && liveAllocations == 0);
     return 0;
 }
