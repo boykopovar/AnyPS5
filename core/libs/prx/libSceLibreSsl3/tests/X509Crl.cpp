@@ -151,6 +151,10 @@ Bytes UtcTime(const char* text) {
     return Tlv(0x17, Ascii(text));
 }
 
+Bytes GeneralizedTime(const char* text) {
+    return Tlv(0x18, Ascii(text));
+}
+
 Bytes IssuerName(const char* commonName) {
     return Sequence({
         Tlv(0x31, Sequence({
@@ -742,6 +746,45 @@ void TestMalformed() {
     DrainErrors();
 }
 
+Bytes CrlWithTime(int position, const Bytes& time) {
+    const Bytes good = UtcTime("240101000000Z");
+    return BuildCrl(Join({
+        Tlv(0x02, Bytes{0x01}),
+        SignatureAlgorithm(),
+        IssuerName("Test CA"),
+        position == 0 ? time : good,
+        position == 1 ? time : good,
+        Tlv(0x30, Join({Sequence({Tlv(0x02, Bytes{0x10, 0x01}), position == 2 ? time : good})})),
+    }));
+}
+
+void TestTimes() {
+    for (const Bytes& time : {UtcTime("240229235959Z"), UtcTime("491231000000Z"), UtcTime("500101000000Z"),
+             GeneralizedTime("20500101000000Z"), GeneralizedTime("20000229000000Z"), GeneralizedTime("00000101000000Z"),
+             GeneralizedTime("99991231235959Z")}) {
+        for (int position = 0; position < 3; ++position) {
+            LibreSsl3X509Crl* crl = Parse(CrlWithTime(position, time));
+            Require(crl != nullptr);
+            FreeCrlValue(crl);
+            Require(allocations.empty());
+        }
+    }
+    RequireQueue({});
+
+    for (const Bytes& time : {UtcTime("2401010000Z"), UtcTime("240101000000"), UtcTime("240101000000z"), UtcTime("240101000000+0000"),
+             UtcTime("240101000000ZZ"), UtcTime("241301000000Z"), UtcTime("240001000000Z"), UtcTime("240100000000Z"),
+             UtcTime("230229000000Z"), UtcTime("240431000000Z"), UtcTime("240101240000Z"), UtcTime("240101006000Z"),
+             UtcTime("240101000060Z"), UtcTime("24010100000 Z"), UtcTime("2401010000-1Z"), UtcTime(""),
+             UtcTime("20240101000000Z"), GeneralizedTime("240101000000Z"), GeneralizedTime("20240101000000.0Z"),
+             GeneralizedTime("202401010000Z"), GeneralizedTime("21000229000000Z"), GeneralizedTime("20240101000000")}) {
+        for (int position = 0; position < 3; ++position) {
+            Require(Parse(CrlWithTime(position, time)) == nullptr);
+            RequireQueue({132});
+            Require(allocations.empty());
+        }
+    }
+}
+
 void TestArgumentErrors() {
     const Bytes der = BuildCrl(Join({TbsHead(), UtcTime("240201000000Z")}));
     const unsigned char* input = der.data();
@@ -833,6 +876,7 @@ int main() {
     TestRemoveFromCrl();
     TestTrailingData();
     TestMalformed();
+    TestTimes();
     TestArgumentErrors();
     TestReferenceCountedFree();
     TestAllocationFailures();
