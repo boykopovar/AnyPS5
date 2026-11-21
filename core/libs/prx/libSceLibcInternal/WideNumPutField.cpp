@@ -77,10 +77,12 @@ std::vector<std::uint16_t> WidenDigits(const GuestLocale::IosBase* stream, const
 }
 
 void InsertWideSeparators(std::vector<std::uint16_t>& text, const std::string& grouping, std::uint16_t separator, std::size_t offset, std::size_t prefix) {
+    if (grouping.empty() || offset <= prefix) return;
     const char* group = grouping.c_str();
-    while (static_cast<signed char>(*group) != CHAR_MAX && static_cast<signed char>(*group) > 0 && static_cast<std::size_t>(*group) < offset - prefix) {
+    while (*group != '\0' && static_cast<signed char>(*group) != CHAR_MAX && static_cast<signed char>(*group) > 0 && static_cast<std::size_t>(*group) < offset - prefix) {
         offset -= static_cast<std::size_t>(*group);
         text.insert(text.begin() + static_cast<std::ptrdiff_t>(offset), separator);
+        if (static_cast<signed char>(group[1]) == CHAR_MAX) break;
         if (static_cast<signed char>(group[1]) > 0) ++group;
     }
 }

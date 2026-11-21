@@ -145,6 +145,7 @@ void CheckGroupingAndWiden() {
     Require(PutWideInteger(&locale, 0, 0, "12345") == u"12'34'5", "wide _Iput follows each group in turn");
     g_grouping = "\2\x7f";
     Require(PutWideInteger(&locale, 0, 0, "12345") == u"123'45", "wide _Iput stops at CHAR_MAX");
+    Require(PutWideInteger(&locale, 0, 0, "1234567") == u"12345'67", "wide _Iput does not repeat after CHAR_MAX");
     g_grouping = "\x7f";
     Require(PutWideInteger(&locale, 0, 0, "12345") == u"12345", "wide _Iput does not group when first group is CHAR_MAX");
     g_grouping = "";
