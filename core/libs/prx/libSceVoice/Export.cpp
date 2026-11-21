@@ -121,8 +121,10 @@ int APS5_VABI sceVoiceInit(const VoiceInitParam* param, std::int32_t version) {
     std::lock_guard lock(voice.mutex);
     if (voice.initialized) return static_cast<std::int32_t>(0x804e0802u);
     if (!param || version != 100) return InvalidArgument;
-    if (param->app_type != 4 && param->app_type != 0x08000000 && param->app_type != 0x10000000 && param->app_type != 0x20000000) return InvalidArgument;
-    voice.appType = param->app_type;
+    VoiceInitParam local{};
+    if (!ReadGuest(param, local)) return InvalidArgument;
+    if (local.app_type != 4 && local.app_type != 0x08000000 && local.app_type != 0x10000000 && local.app_type != 0x20000000) return InvalidArgument;
+    voice.appType = local.app_type;
     voice.freePorts.clear();
     for (std::uint32_t id = 0; id < 128; ++id) voice.freePorts.push_back(id);
     voice.initialized = true;
