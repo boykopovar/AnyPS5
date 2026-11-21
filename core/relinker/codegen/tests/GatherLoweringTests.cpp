@@ -64,7 +64,7 @@ void decoding() {
     const auto absolute = Codegen::DecodeGather(noBase.data(), noBase.size());
     require(absolute && !absolute->Base && absolute->Memory.Displacement == 0x100, "a gather without a base register was not decoded");
     for (const Bytes bytes : {encode(kForms[0], true, {1, 1, 2, 0, 0, 0}), encode(kForms[0], true, {1, 2, 1, 0, 0, 0}), encode(kForms[0], true, {1, 2, 2, 0, 0, 0}),
-             Bytes{0xC4, 0xE2, 0x75, 0x90, 0x00}, Bytes{0xC4, 0xE2, 0x75, 0x90, 0xC1}, Bytes{0xC4, 0xE2, 0x75, 0x94, 0x04, 0x08}, Bytes{0x90}})
+             Bytes{0xC4, 0xE2, 0x75, 0x90, 0x00}, Bytes{0xC4, 0xE2, 0x75, 0x90, 0x05, 0x10, 0x00, 0x00, 0x00}, Bytes{0xC4, 0xE2, 0x75, 0x90, 0xC1}, Bytes{0xC4, 0xE2, 0x75, 0x94, 0x04, 0x08}, Bytes{0x90}})
         require(!Codegen::DecodeGather(bytes.data(), bytes.size()), "an undefined or unrelated instruction was decoded as a gather");
     for (const Bytes bytes : {Bytes{0xC4, 0xE2, 0x75, 0x90, 0x04, 0x10, 0x90}, Bytes{0x67, 0xC4, 0xE2, 0x75, 0x90, 0x04, 0x10}}) {
         bool rejected = false;
@@ -187,17 +187,37 @@ void execution() {
             }
         }
     }
-    for (const bool vector256 : {false, true}) {
-        const Site site{2, 3, 4, -1, 0, 0};
-        const auto instruction = encode(kForms[5], vector256, site);
-        auto machine = GprVectorExecution::Initial(77, LoweringExecution::kBaseFlags);
-        for (unsigned i = 0; i < 4; ++i) {
-            machine.Ymm[4][i] = middle + i * 24;
-            machine.Ymm[3][i] = i % 2 == 0 ? ~0ull : 0;
+    for (const auto& form : kForms) {
+        if ((form.Opcode & 1) == 0) continue;
+        for (const bool vector256 : {false, true}) {
+            for (const std::int32_t displacement : {0, 0x100, -0x48, 0x12345}) {
+                const Site site{2, 3, 4, -1, static_cast<std::uint8_t>(displacement == 0x100 ? 3 : displacement < 0 ? 1 : 0), displacement};
+                const auto instruction = encode(form, vector256, site);
+                const auto operands = Codegen::DecodeGather(instruction.data(), instruction.size());
+                require(operands && !operands->Base && operands->Memory.Displacement == displacement, std::string(form.Name) + " without a base register was not decoded");
+                auto machine = GprVectorExecution::Initial(seed += 0x9E3779B97F4A7C15ull, LoweringExecution::kBaseFlags);
+                const unsigned data = form.Wide ? 8 : 4;
+                const auto scale = std::int64_t{1} << site.ScaleBits;
+                for (unsigned i = 0; i < 4; ++i) {
+                    const auto target = static_cast<std::int64_t>(middle) + static_cast<std::int64_t>(i) * 24 - 96;
+                    machine.Ymm[4][i] = static_cast<std::uint64_t>((target - displacement) / scale);
+                }
+                for (unsigned i = 0; i < 32 / data; ++i) {
+                    const std::uint64_t sign = std::uint64_t{1} << (data * 8 - 1);
+                    const auto previous = element(machine.Ymm[3], data, i);
+                    setElement(machine.Ymm[3], data, i, i % 3 != 1 ? (previous | sign) : (previous & ~sign));
+                }
+                const auto start = machine;
+                Runner(lowered(instruction)).Run(machine);
+                const auto describe = std::string(form.Name) + (vector256 ? " ymm" : " xmm") + " without a base register, displacement " + std::to_string(displacement);
+                verify(start, machine, site, gathered(form, vector256, site, start), describe);
+                if (native) {
+                    auto hardware = start;
+                    Runner(instruction).Run(hardware);
+                    require(hardware.Ymm == machine.Ymm && hardware.Gpr == machine.Gpr, describe + " differs from the host AVX2 instruction");
+                }
+            }
         }
-        const auto start = machine;
-        Runner(lowered(instruction)).Run(machine);
-        verify(start, machine, site, gathered(kForms[5], vector256, site, start), "VPGATHERQQ without a base register");
     }
 }
 
