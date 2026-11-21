@@ -589,6 +589,18 @@ void CheckBed() {
     const float floats[8] = {};
     Require(sceAudio3dBedWrite(0, 2, 1, floats, 4) == 0, "float bed write");
     consume();
+    const float nonFiniteFloats[8] = {
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity(),
+        0.25f,
+        std::numeric_limits<float>::quiet_NaN(),
+        -std::numeric_limits<float>::infinity(),
+        std::numeric_limits<float>::infinity(),
+        -0.25f,
+    };
+    Require(sceAudio3dBedWrite(0, 2, 1, nonFiniteFloats, 4) == 0, "non-finite float bed write");
+    consume();
     const std::uint32_t granularity = parameters.granularity;
     std::vector<std::int16_t> wide(static_cast<std::size_t>(granularity) * 8, 0);
     Require(sceAudio3dBedWrite(0, 6, 0, wide.data(), granularity) == 0, "6 channel bed write");
