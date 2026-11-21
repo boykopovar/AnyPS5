@@ -632,7 +632,7 @@ public:
         if (reportEnd > reportStart) zero(context, reportStart, reportEnd);
     }
 
-    bool Collect(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear, Collection collection = Collection::All) {
+    bool Collect(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear, Collection collection = Collection::All, bool skipRefused = false) {
         std::lock_guard lock(mutex);
         const auto capacity = *count;
         *count = 0;
@@ -652,7 +652,7 @@ public:
                     if ((it->second.collected & (1u << ((at - it->first) / 4096))) == 0) return false;
                 }
             }
-        } else if (clear && !collectable(address, end)) return false;
+        } else if (clear && !skipRefused && !collectable(address, end)) return false;
         auto position = views.lower_bound(address & ~(pageBytes - 1));
         std::uintptr_t cleanStart = 0;
         std::uintptr_t cleanEnd = 0;
@@ -698,7 +698,12 @@ public:
                         }
                     }
                 }
-                if (view.protection == PAGE_NOACCESS) {
+                if (skipRefused && view.page->comparedWhenShared) {
+                    flushClean();
+                    cursor = stop;
+                    continue;
+                }
+                if (view.protection == PAGE_NOACCESS && !skipRefused) {
                     flushClean();
                     return false;
                 }
@@ -769,7 +774,13 @@ public:
                     continue;
                 }
                 const auto allocationEnd = privateAllocationEnd(cursor);
-                if (allocationEnd == 0) return false;
+                if (allocationEnd == 0) {
+                    if (!skipRefused) return false;
+                    const auto nextView = views.lower_bound(cursor);
+                    const auto nextPrivate = privateAllocations.upper_bound(cursor);
+                    cursor = std::min({end, nextView == views.end() ? end : nextView->first, nextPrivate == privateAllocations.end() ? end : nextPrivate->first});
+                    continue;
+                }
                 if (capacity == *count) return true;
                 const auto stop = ownedPending.empty() ? std::min(end, allocationEnd) : std::min({end, allocationEnd, (cursor & ~std::uintptr_t{4095}) + (capacity - *count) * 4096});
                 const auto touched = (((stop + 4095) & ~static_cast<std::uintptr_t>(4095)) - (cursor & ~static_cast<std::uintptr_t>(4095))) / 4096;

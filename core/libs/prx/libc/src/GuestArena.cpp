@@ -855,6 +855,10 @@ void GuestArenaCompareResidentWhenShared_nid_no_patch(std::uintptr_t address, st
     WindowsMappings::Get().CompareWhenShared(address, bytes, true);
 }
 
+void GuestArenaCollectWritesSkippingRefused_nid_no_patch(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count) {
+    WindowsMappings::Get().Collect(address, bytes, pages, count, true, WindowsMappings::Collection::All, true);
+}
+
 void GuestArenaComparedPages_nid_no_patch(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count) {
     WindowsMappings::Get().ComparedPages(address, bytes, pages, count, false);
 }

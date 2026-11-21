@@ -1143,6 +1143,19 @@ void CheckComparedSharingGenerations() {
         const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> committed{{{fixture.base, fixture.base + Block}}};
         Require(!UnchangedCommittedSince(committed, spanned), "committed ranges over shared compared memory read as unchanged");
     }
+    {
+        ComparedSharing fixture;
+        fixture.Share();
+        const auto neighbour = fixture.Collect(fixture.base + Block);
+        Require(neighbour != 0, "shared direct memory that never left the watch was not collected");
+        fixture.memory[Block + 8] = 0x47;
+        BumpCollectEpoch();
+        Require(CollectWrites(fixture.base, 2 * Block) == 0, "a collect over compared memory and its neighbour was not refused");
+        const std::array<std::uint64_t, 2> generations{neighbour, neighbour};
+        std::array<std::uint8_t, 2> changed{};
+        std::array<std::uint8_t, 2> cpu{};
+        Require(WrittenSince(fixture.base + Block, Block, neighbour) && ChangedBlocks(fixture.base, 2 * Block, generations, changed, cpu) && changed[1] == BlockWritten && cpu[1] == 1, "a refused collect over compared memory hid a CPU write in its never-compared neighbour");
+    }
     std::cout << "shared compared memory: reported written once at the sharing, never unchanged since an older generation, its neighbour still trusted\n";
 }
 
@@ -1884,7 +1897,54 @@ void CheckWidenedCollectBesideUncommittedPages() {
     Require(before != 0, "a collect beside uncommitted pages of its block failed");
     bytes[4096 + 8] = 19;
     BumpCollectEpoch();
-    Require(CollectWrites(base + 4096, 64) > before && !UnchangedSince(base + 4096, 64, before), "a collect beside uncommitted pages missed a CPU write");
+    const auto after = CollectWrites(base + 4096, 64);
+    Require(after > before && !UnchangedSince(base + 4096, 64, before), "a collect beside uncommitted pages missed a CPU write");
+    bytes[4096 + 8] = 23;
+    BumpCollectEpoch();
+    Require(CollectWrites(base, Block) == 0, "a collect over uncommitted pages was not refused");
+    const std::array<std::uint64_t, 1> generations{after};
+    std::array<std::uint8_t, 1> changed{};
+    std::array<std::uint8_t, 1> cpu{};
+    Require(!UnchangedSince(base, Block, after) && WrittenSince(base, Block, after), "a refused collect hid a CPU write beside the uncommitted pages it could not walk");
+    Require(ChangedBlocks(base, Block, generations, changed, cpu) && changed[0] == BlockWritten && cpu[0] == 1, "a refused collect left a CPU-written block reading as unchanged");
+}
+
+void CheckRefusedCollectBesideInaccessibleView() {
+    constexpr std::size_t bytes = 4 * Block;
+    constexpr std::size_t viewBytes = 16384;
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
+    Require(section != nullptr, "cannot create the inaccessible view backing");
+    auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, Block));
+    Require(memory != nullptr, "cannot allocate the inaccessible view address");
+    struct Cleanup {
+        std::uint8_t* memory;
+        HANDLE section;
+        ~Cleanup() {
+            GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(memory) + Block, viewBytes, PAGE_READWRITE);
+            GuestArena::GuestArenaReset_nid_postfix(memory, bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(memory, bytes);
+            GuestArena::GuestArenaForgetSection_nid_postfix(section);
+            CloseHandle(section);
+        }
+    } cleanup{memory, section};
+    GuestArena::GuestArenaMap_nid_postfix(memory, bytes, section, 0, PAGE_READWRITE);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    auto* view = static_cast<volatile std::uint8_t*>(memory);
+    BumpCollectEpoch();
+    const auto before = CollectWritesUncached(base, bytes);
+    Require(before != 0, "the shared views were not collected");
+    view[8] = 1;
+    view[Block + 8] = 2;
+    view[2 * Block + 8] = 3;
+    GuestArena::GuestArenaSetProtection_nid_postfix(base + Block, viewBytes, PAGE_NOACCESS);
+    BumpCollectEpoch();
+    Require(CollectWrites(base, bytes) == 0, "a collect over an inaccessible view was not refused");
+    Require(WrittenSince(base, Block, before) && WrittenSince(base + 2 * Block, Block, before), "a refused collect hid CPU writes on either side of an inaccessible view");
+    Require(WrittenSince(base + Block, Block, before), "a refused collect hid the CPU write and protection change of a view that became inaccessible");
+    Require(UnchangedSince(base + 3 * Block, Block, before), "a refused collect stamped a block nothing wrote");
+    const auto settled = TrackerGeneration();
+    BumpCollectEpoch();
+    Require(CollectWrites(base, bytes) == 0 && UnchangedSince(base, 3 * Block, settled), "a second refused collect stamped blocks the first had already collected");
 }
 #endif
 
@@ -2751,6 +2811,7 @@ int main(int argc, char** argv) {
         CheckCollectBoundaries();
 #ifdef _WIN32
         CheckWidenedCollectBesideUncommittedPages();
+        CheckRefusedCollectBesideInaccessibleView();
 #endif
         CheckImportWindow();
         CheckImportWindowZeroPages();
