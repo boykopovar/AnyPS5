@@ -282,11 +282,18 @@ static void CheckUserDataDescriptorTableCall() {
     for (std::size_t index = 0; index < linked.tableLiterals.size(); index += TableLiteralWords) {
         const auto word = linked.tableLiterals[index];
         Require(word > 0u && word < linked.code.size() && linked.code[word] == 0u && (linked.code[word - 1u] & 0xffffff00u) == 0xbf07ff00u);
-        Require(linked.tableLiterals[index + 1u] == 4u);
-        const auto entry = linked.tableLiterals[index + 2u];
+        Require(linked.tableLiterals[index + 1u] == static_cast<std::uint32_t>(TableLiteralSource::UserDataDescriptor) && linked.tableLiterals[index + 2u] == 4u && linked.tableLiterals[index + 4u] == NoNestedDescriptor);
+        const auto entry = linked.tableLiterals[index + 7u];
         Require(entry == 0x10u || entry == 0x14u || entry == 0x40u || entry == 0x44u);
         Require((entry & 4u) == 0u ? linked.code[word - 1u] == 0xbf07ff12u : linked.code[word - 1u] == 0xbf07ff13u);
     }
+    auto pointerCall = calls;
+    pointerCall[0].descriptorInUserData = false;
+    pointerCall[0].descriptorOffset = 0x30u;
+    pointerCall[0].nestedDescriptorOffset = 0x20u;
+    const auto pointerLinked = LinkCalls(program, {}, {}, pointerCall, boot);
+    Require(pointerLinked.code == LinkCalls(program, {}, {}, pointerCall, moved).code && pointerLinked.tableLiterals.size() == 8u * TableLiteralWords);
+    Require(pointerLinked.tableLiterals[1] == static_cast<std::uint32_t>(TableLiteralSource::UserDataPointer) && pointerLinked.tableLiterals[3] == 0x30u && pointerLinked.tableLiterals[4] == 0x20u);
     const std::vector<std::vector<TableCallee>> addressed{{{0x2011223340ull, first}, {0x2055667780ull, second}}};
     const auto legacy = LinkCalls(program, {}, {}, calls, addressed);
     Require(legacy.tableLiterals.empty() && std::ranges::find(legacy.code, 0x11223340u) != legacy.code.end());
@@ -300,6 +307,10 @@ static void CheckUserDataDescriptorTableCall() {
     const auto fromTable = ProgramToString(TranslateCode(linked.code, linkedSwappc, linked.tableLiterals));
     const auto plain = ProgramToString(TranslateCode(linked.code, linkedSwappc));
     Require(tableReads(fromTable) == tableReads(plain) + 8u);
+    const auto pointerText = ProgramToString(TranslateCode(pointerLinked.code, linkedSwappc, pointerLinked.tableLiterals));
+    std::size_t addressReads = 0;
+    for (auto at = pointerText.find("LoadAddressU32"); at != std::string::npos; at = pointerText.find("LoadAddressU32", at + 1u)) ++addressReads;
+    Require(addressReads >= 8u * 4u && tableReads(pointerText) >= tableReads(plain) + 8u * 5u);
 }
 
 static void CheckTableCalls() {

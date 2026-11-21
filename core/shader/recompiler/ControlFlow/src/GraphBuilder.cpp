@@ -1802,10 +1802,13 @@ LinkedCalls LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> 
         for (std::size_t callee = 0; callee < count; ++callee) {
             for (const bool sccOne : {false, true}) {
                 const auto next = sccOne ? one(callee + 1u) : segments[callee + 1u];
-                const bool fromTable = table.descriptorInUserData && callees[callee].entryOffset.has_value();
+                const bool fromTable = callees[callee].entryOffset.has_value();
+                const auto source = table.descriptorInUserData ? TableLiteralSource::UserDataDescriptor : table.constantPointer ? TableLiteralSource::ConstantPointer : TableLiteralSource::UserDataPointer;
                 const auto literal = [&](std::uint32_t half) {
                     if (!fromTable) return static_cast<std::uint32_t>(callees[callee].target >> (32u * half));
-                    tableLiterals.insert(tableLiterals.end(), {static_cast<std::uint32_t>(linked.size()), table.userDataRegister, *callees[callee].entryOffset + 4u * half});
+                    const auto pointer = table.constantPointer.value_or(0u);
+                    tableLiterals.insert(tableLiterals.end(), {static_cast<std::uint32_t>(linked.size()), static_cast<std::uint32_t>(source), table.userDataRegister, table.descriptorOffset,
+                        table.nestedDescriptorOffset.value_or(NoNestedDescriptor), static_cast<std::uint32_t>(pointer), static_cast<std::uint32_t>(pointer >> 32u), *callees[callee].entryOffset + 4u * half});
                     return 0u;
                 };
                 linked.push_back(0xbf07ff00u | table.targetRegister);
