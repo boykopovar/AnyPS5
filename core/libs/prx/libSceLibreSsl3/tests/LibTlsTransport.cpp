@@ -239,9 +239,9 @@ void TestHandshakeAndExchange(Server& server) {
 
     tls_free_nid_postfix(client);
     tls_config_free_nid_postfix(config);
-    Check(close_nid_postfix(sock) == 0);
     thread.join();
     Check(server.sawCloseNotify);
+    Check(close_nid_postfix(sock) == 0);
 }
 
 void TestImplicitHandshakeAndNoVerifyName(Server& server, const char* servername) {
@@ -267,9 +267,9 @@ void TestImplicitHandshakeAndNoVerifyName(Server& server, const char* servername
 
     tls_free_nid_postfix(client);
     tls_config_free_nid_postfix(config);
-    Check(close_nid_postfix(sock) == 0);
     thread.join();
     Check(server.sawCloseNotify);
+    Check(close_nid_postfix(sock) == 0);
 }
 
 void TestNonBlockingPoll(Server& server) {
@@ -333,9 +333,9 @@ void TestNonBlockingPoll(Server& server) {
 
     tls_free_nid_postfix(client);
     tls_config_free_nid_postfix(config);
-    Check(close_nid_postfix(sock) == 0);
     thread.join();
     Check(server.sawCloseNotify);
+    Check(close_nid_postfix(sock) == 0);
 }
 
 void TestCloseWithPendingWrite(Server& server) {
@@ -387,9 +387,9 @@ void TestCloseWithPendingWrite(Server& server) {
 
     tls_free_nid_postfix(client);
     tls_config_free_nid_postfix(config);
-    Check(close_nid_postfix(sock) == 0);
     thread.join();
     Check(server.sawCloseNotify);
+    Check(close_nid_postfix(sock) == 0);
 }
 
 void TestErrors(Server& server) {
@@ -557,11 +557,11 @@ void RunPingPongWithConfig(Server& server, TlsConfig* config) {
     Check(tls_close_nid_postfix(client) == 0);
 
     tls_free_nid_postfix(client);
+    thread.join();
+    Check(server.sawCloseNotify);
     CheckCallerOwnsSocket(sock, true);
     Check(close_nid_postfix(sock) == 0);
     CheckCallerOwnsSocket(sock, false);
-    thread.join();
-    Check(server.sawCloseNotify);
 }
 
 void RunSystemCaSuccess(Server& server) {
