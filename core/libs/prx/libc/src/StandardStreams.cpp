@@ -350,6 +350,7 @@ int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, st
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     if (mode < 0 || mode > 2) return -1;
     const int native = mode == 0 ? _IOFBF : mode == 1 ? _IOLBF : _IONBF;
+    if (native != _IONBF && (size & 0x80000000u) != 0) return -1;
     if (native != _IONBF && size == 0) {
         buffer = nullptr;
         size = BUFSIZ;
@@ -359,6 +360,10 @@ int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, st
     if (handle == __acrt_iob_func(1) && KeepHostStandardOutput_nid_no_patch() < 0) return -1;
     if (handle == __acrt_iob_func(2) && KeepHostStandardError_nid_no_patch() < 0) return -1;
     buffer = nullptr;
+    if (native != _IONBF) {
+        if (size > 0x7FFFFFFFu) throw std::length_error("setvbuf: buffer size above the host C library's limit");
+        if (size < 2) size = 2;
+    }
     ::_lock_file(handle);
     const int result = std::setvbuf(handle, buffer, native, size);
     if (result == 0 && native == _IONBF) reinterpret_cast<UcrtStreamState*>(handle)->bufferSize = 1;

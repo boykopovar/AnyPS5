@@ -46,6 +46,7 @@ struct State {
     std::int64_t result = -2;
     std::uint32_t addressLength = 28;
     std::array<char, 4> bytes{};
+    char* guardedBuffer = nullptr;
 };
 
 static State* current = nullptr;
@@ -57,7 +58,8 @@ static void BeforeWait(std::size_t progress) noexcept {
 }
 
 static void Read(State& state) {
-    const auto length = state.waitAll ? state.bytes.size() : 1;
+    const auto length = state.guardedBuffer ? 2 : state.waitAll ? state.bytes.size() : 1;
+    const auto buffer = state.guardedBuffer ? state.guardedBuffer : state.bytes.data();
     const int flags = state.waitAll ? 0x40 : 0;
     KernelIovec vector{state.bytes.data(), length};
     std::array<unsigned char, 28> address{};
@@ -70,8 +72,8 @@ static void Read(State& state) {
     else if (state.api == "alias") state.result = _read_nid_postfix(state.input, state.bytes.data(), length);
     else if (state.api == "readv") state.result = readv_nid_postfix(state.input, &vector, 1);
     else if (state.api == "readv_alias") state.result = _readv_nid_postfix(state.input, &vector, 1);
-    else if (state.api == "recv") state.result = recv_nid_postfix(state.input, state.bytes.data(), length, flags);
-    else if (state.api == "recvfrom") state.result = recvfrom_nid_postfix(state.input, state.bytes.data(), length, flags, address.data(), &state.addressLength);
+    else if (state.api == "recv") state.result = recv_nid_postfix(state.input, buffer, length, flags);
+    else if (state.api == "recvfrom") state.result = recvfrom_nid_postfix(state.input, buffer, length, flags, address.data(), &state.addressLength);
     else if (state.api == "recvfrom_alias") state.result = _recvfrom_nid_postfix(state.input, state.bytes.data(), length, flags, address.data(), &state.addressLength);
     else if (state.api == "recvmsg") state.result = recvmsg_nid_postfix(state.input, &message, flags);
     else if (state.api == "recvmsg_alias") state.result = _recvmsg_nid_postfix(state.input, &message, flags);
@@ -137,7 +139,7 @@ int main(int argc, char** argv) {
     state.disabled = scenario == "disabled";
     state.waitAll = scenario == "waitall";
     const bool native = scenario == "native";
-    const bool cancel = scenario == "cancel";
+    const bool cancel = scenario == "cancel" || scenario == "prefix_cancel";
     const bool parallel = scenario == "parallel";
     const bool datagram = std::string(argv[1]) == "datagram";
     int endpoints[2]{};
@@ -154,6 +156,16 @@ int main(int argc, char** argv) {
         Require(setsockopt_nid_postfix(state.input, 0xffff, 0x1006, timeout.data(), sizeof(timeout)) == 0, "set receive timeout");
     }
 #ifdef _WIN32
+    void* guarded = nullptr;
+    if (scenario.starts_with("prefix_")) {
+        SYSTEM_INFO system{};
+        GetSystemInfo(&system);
+        guarded = VirtualAlloc(nullptr, 2 * static_cast<std::size_t>(system.dwPageSize), MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+        Require(guarded != nullptr, "allocate guarded receive buffer");
+        DWORD previous = 0;
+        Require(VirtualProtect(guarded, system.dwPageSize, PAGE_READWRITE, &previous) != 0, "open writable prefix");
+        state.guardedBuffer = static_cast<char*>(guarded) + system.dwPageSize - 1;
+    }
     if (state.waitAll) {
         state.expected = 1;
         Require(write_nid_postfix(endpoints[1], "x", 1) == 1, "seed known partial progress");
@@ -218,6 +230,9 @@ int main(int argc, char** argv) {
     }
     Require(prompt, "shutdown needed unrelated peer activity or cancellation");
     GuestSocketReadWaitObserverForTest_nid_no_patch(nullptr);
+#ifdef _WIN32
+    if (guarded) Require(VirtualFree(guarded, 0, MEM_RELEASE) != 0, "release guarded receive buffer");
+#endif
     Require(scePthreadKeyDelete(state.key) == 0, "delete TSD key");
     if (alias >= 0) Require(close_nid_postfix(alias) == 0, "close receiver alias");
     Require(close_nid_postfix(endpoints[0]) == 0 && close_nid_postfix(endpoints[1]) == 0, "close endpoints");

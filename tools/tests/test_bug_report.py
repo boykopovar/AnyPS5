@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -223,6 +224,16 @@ class MainTests(unittest.TestCase):
             self.assertEqual(sorted(bundle.namelist()), ["README.txt", "anyps5-report.json", "anyps5-settings.txt", "anyps5.log", "host.txt"])
             self.assertEqual(bundle.read("anyps5.log").decode("utf-8"), "opened ~/title.elf on <host>\n")
 
+    def test_bundle_redacts_environment_settings_once(self):
+        target = self.root / "bundle.zip"
+        identity = {"home": "C:/Users/user", "user": "user", "host": "host"}
+        environ = {"ANYPS5_INPUT_CONFIG": "C:/Users/user/host.ini", "APS5_TEST": "user@192.0.2.1"}
+        with patch.object(bug_report, "identities", return_value=identity), patch.dict(os.environ, environ, clear=True):
+            code, _, err = self.run_main(["--report", str(self.report), "--log", "", "--input-config", "", "--out", str(target)])
+        self.assertEqual(code, 0, err)
+        with zipfile.ZipFile(target) as bundle:
+            self.assertEqual(bundle.read("anyps5-settings.txt"), b"ANYPS5_INPUT_CONFIG=~/<host>.ini\nAPS5_TEST=<user>@<ip>\n")
+
     def test_colliding_redacted_keys_refuse_the_bundle(self):
         first, second = "192.0.2.1", "192.0.2.2"
         self.report.write_text(json.dumps({"addresses": [{first: 1, second: 2}]}), encoding="utf-8")
@@ -266,6 +277,38 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 0)
         with zipfile.ZipFile(target) as bundle:
             self.assertEqual(bundle.read("anyps5-input.ini").decode("utf-8"), "Cross = KEY:~/F\n")
+
+    def test_bundle_includes_the_profile_next_to_the_configured_input_mapping(self):
+        self.report.write_text('{"game": {"titleId": "PPSA00001"}}', encoding="utf-8")
+        config = self.root / "config"
+        config.mkdir()
+        ini = config / "controls.ini"
+        ini.write_text("Cross = KEY:F\n", encoding="utf-8")
+        (config / "anyps5-input.PPSA00001.ini").write_text(
+            "# /home/ana/controls on serverfestivo\nCross = KEY:G\n", encoding="utf-8")
+        (config / "anyps5-input.PPSA00002.ini").write_text("Cross = KEY:H\n", encoding="utf-8")
+        target = self.root / "bundle.zip"
+        with patch.dict(os.environ, {"ANYPS5_INPUT_CONFIG": str(ini)}):
+            code, _, err = self.run_main(["--report", str(self.report), "--log", "", "--out", str(target)])
+        self.assertEqual(code, 0, err)
+        with zipfile.ZipFile(target) as bundle:
+            self.assertEqual(sorted(name for name in bundle.namelist() if name.endswith(".ini")),
+                             ["anyps5-input-profile.ini", "anyps5-input.ini"])
+            self.assertEqual(bundle.read("anyps5-input.ini").decode("utf-8"), "Cross = KEY:F\n")
+            self.assertEqual(bundle.read("anyps5-input-profile.ini").decode("utf-8"),
+                             "# ~/controls on <host>\nCross = KEY:G\n")
+
+    def test_bundle_includes_the_title_profile_without_a_default_shared_mapping(self):
+        self.report.write_text('{"game": {"titleId": "PPSA00001"}}', encoding="utf-8")
+        (self.root / "anyps5-input.PPSA00001.ini").write_text("Cross = KEY:G\n", encoding="utf-8")
+        env = {name: value for name, value in os.environ.items() if name != "ANYPS5_INPUT_CONFIG"}
+        result = subprocess.run([sys.executable, bug_report.__file__, "--log", ""], cwd=self.root, env=env,
+                                capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with zipfile.ZipFile(self.root / "bug-report.zip") as bundle:
+            self.assertNotIn("anyps5-input.ini", bundle.namelist())
+            self.assertIn("anyps5-input-profile.ini", bundle.namelist())
+            self.assertEqual(bundle.read("anyps5-input-profile.ini").decode("utf-8"), "Cross = KEY:G\n")
 
     def test_invalid_report_json_is_an_error(self):
         self.report.write_text("not json", encoding="utf-8")
