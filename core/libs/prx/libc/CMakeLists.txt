@@ -2847,7 +2847,6 @@ if(libc_incdirs)
     target_include_directories(libc_Threads_Chunk03 PRIVATE ${libc_incdirs})
 endif()
 
-# --- small-size libraries split from Formatting.cpp ---
 add_library(libc_Formatting_Chunk01 STATIC src/chunks/Formatting_Chunk01.cpp)
 add_library(libc_Formatting_Chunk02 STATIC src/chunks/Formatting_Chunk02.cpp)
 add_library(libc_Formatting_Chunk03 STATIC src/chunks/Formatting_Chunk03.cpp)
@@ -2859,7 +2858,6 @@ if(libc_incdirs)
     target_include_directories(libc_Formatting_Chunk03 PRIVATE ${libc_incdirs})
 endif()
 
-# --- small-size libraries split from Strings.cpp ---
 add_library(libc_Strings_Chunk01 STATIC src/chunks/Strings_Chunk01.cpp)
 target_link_libraries(libc PUBLIC libc_Strings_Chunk01)
 get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
@@ -2867,7 +2865,6 @@ if(libc_incdirs)
     target_include_directories(libc_Strings_Chunk01 PRIVATE ${libc_incdirs})
 endif()
 
-# --- small-size libraries split from General.cpp ---
 add_library(libc_General_Chunk01 STATIC src/chunks/General_Chunk01.cpp)
 add_library(libc_General_Chunk02 STATIC src/chunks/General_Chunk02.cpp)
 target_link_libraries(libc PUBLIC libc_General_Chunk01 libc_General_Chunk02)
@@ -2877,7 +2874,6 @@ if(libc_incdirs)
     target_include_directories(libc_General_Chunk02 PRIVATE ${libc_incdirs})
 endif()
 
-# --- small-size libraries split from LocaleSupport.cpp ---
 add_library(libc_LocaleSupport_Chunk01 STATIC src/chunks/LocaleSupport_Chunk01.cpp)
 target_link_libraries(libc PUBLIC libc_LocaleSupport_Chunk01)
 get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
@@ -2885,7 +2881,6 @@ if(libc_incdirs)
     target_include_directories(libc_LocaleSupport_Chunk01 PRIVATE ${libc_incdirs})
 endif()
 
-# --- small-size libraries split from GuestArena.cpp ---
 add_library(libc_GuestArena_Chunk01 STATIC src/chunks/GuestArena_Chunk01.cpp)
 target_link_libraries(libc PUBLIC libc_GuestArena_Chunk01)
 get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)

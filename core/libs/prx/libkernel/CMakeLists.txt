@@ -3504,7 +3504,6 @@ if(libkernel_incdirs)
     target_include_directories(libkernel_Udp_Chunk05 PRIVATE ${libkernel_incdirs})
 endif()
 
-# --- small-size libraries split from Stdio.cpp ---
 add_library(libkernel_Stdio_Chunk01 STATIC File/src/chunks/Stdio_Chunk01.cpp)
 add_library(libkernel_Stdio_Chunk02 STATIC File/src/chunks/Stdio_Chunk02.cpp)
 add_library(libkernel_Stdio_Chunk03 STATIC File/src/chunks/Stdio_Chunk03.cpp)
@@ -3516,7 +3515,6 @@ if(libkernel_incdirs)
     target_include_directories(libkernel_Stdio_Chunk03 PRIVATE ${libkernel_incdirs})
 endif()
 
-# --- small-size libraries split from DirectMemory.cpp ---
 add_library(libkernel_DirectMemory_Chunk01 STATIC DirectMemory/chunks/DirectMemory_Chunk01.cpp)
 add_library(libkernel_DirectMemory_Chunk02 STATIC DirectMemory/chunks/DirectMemory_Chunk02.cpp)
 add_library(libkernel_DirectMemory_Chunk03 STATIC DirectMemory/chunks/DirectMemory_Chunk03.cpp)
@@ -3527,11 +3525,27 @@ if(libkernel_incdirs)
     target_include_directories(libkernel_DirectMemory_Chunk02 PRIVATE ${libkernel_incdirs})
     target_include_directories(libkernel_DirectMemory_Chunk03 PRIVATE ${libkernel_incdirs})
 endif()
-ATE ${libkernel_incdirs})
+
+add_library(libkernel_Apr_Chunk01 STATIC Apr/src/chunks/Apr_Chunk01.cpp)
+target_link_libraries(libkernel PUBLIC libkernel_Apr_Chunk01)
+get_target_property(libkernel_incdirs libkernel INCLUDE_DIRECTORIES)
+if(libkernel_incdirs)
+    target_include_directories(libkernel_Apr_Chunk01 PRIVATE ${libkernel_incdirs})
+endif()
+
+add_library(libkernel_Thread_Chunk01 STATIC Pthread/src/chunks/Thread_Chunk01.cpp)
+add_library(libkernel_Thread_Chunk02 STATIC Pthread/src/chunks/Thread_Chunk02.cpp)
+add_library(libkernel_Thread_Chunk03 STATIC Pthread/src/chunks/Thread_Chunk03.cpp)
+add_library(libkernel_Thread_Chunk04 STATIC Pthread/src/chunks/Thread_Chunk04.cpp)
+target_link_libraries(libkernel PUBLIC libkernel_Thread_Chunk01 libkernel_Thread_Chunk02 libkernel_Thread_Chunk03 libkernel_Thread_Chunk04)
+get_target_property(libkernel_incdirs libkernel INCLUDE_DIRECTORIES)
+if(libkernel_incdirs)
+    target_include_directories(libkernel_Thread_Chunk01 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_Thread_Chunk02 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_Thread_Chunk03 PRIVATE ${libkernel_incdirs})
     target_include_directories(libkernel_Thread_Chunk04 PRIVATE ${libkernel_incdirs})
 endif()
 
-# --- small-size libraries split from SyncOnAddress.cpp ---
 add_library(libkernel_SyncOnAddress_Chunk01 STATIC SyncOnAddress/src/chunks/SyncOnAddress_Chunk01.cpp)
 target_link_libraries(libkernel PUBLIC libkernel_SyncOnAddress_Chunk01)
 get_target_property(libkernel_incdirs libkernel INCLUDE_DIRECTORIES)
@@ -3539,7 +3553,6 @@ if(libkernel_incdirs)
     target_include_directories(libkernel_SyncOnAddress_Chunk01 PRIVATE ${libkernel_incdirs})
 endif()
 
-# --- small-size libraries split from Equeue.cpp ---
 add_library(libkernel_Equeue_Chunk01 STATIC Equeue/chunks/Equeue_Chunk01.cpp)
 add_library(libkernel_Equeue_Chunk02 STATIC Equeue/chunks/Equeue_Chunk02.cpp)
 add_library(libkernel_Equeue_Chunk03 STATIC Equeue/chunks/Equeue_Chunk03.cpp)
@@ -3550,3 +3563,4 @@ if(libkernel_incdirs)
     target_include_directories(libkernel_Equeue_Chunk02 PRIVATE ${libkernel_incdirs})
     target_include_directories(libkernel_Equeue_Chunk03 PRIVATE ${libkernel_incdirs})
 endif()
+

@@ -55,7 +55,6 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-# --- small-size libraries split from Runtime.cpp ---
 add_library(libSceNpCommon_Runtime_Chunk01 STATIC chunks/Runtime_Chunk01.cpp)
 add_library(libSceNpCommon_Runtime_Chunk02 STATIC chunks/Runtime_Chunk02.cpp)
 add_library(libSceNpCommon_Runtime_Chunk03 STATIC chunks/Runtime_Chunk03.cpp)
@@ -69,7 +68,6 @@ if(libSceNpCommon_incdirs)
     target_include_directories(libSceNpCommon_Runtime_Chunk04 PRIVATE ${libSceNpCommon_incdirs})
 endif()
 
-# --- small-size libraries split from Strings.cpp ---
 add_library(libSceNpCommon_Strings_Chunk01 STATIC chunks/Strings_Chunk01.cpp)
 target_link_libraries(libSceNpCommon PUBLIC libSceNpCommon_Strings_Chunk01)
 get_target_property(libSceNpCommon_incdirs libSceNpCommon INCLUDE_DIRECTORIES)

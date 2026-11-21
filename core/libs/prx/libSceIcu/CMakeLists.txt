@@ -1022,7 +1022,6 @@ if(libSceIcu_incdirs)
     target_include_directories(libSceIcu_LegacyExports_Chunk20 PRIVATE ${libSceIcu_incdirs})
 endif()
 
-# --- small-size libraries split from LanguageTag.cpp ---
 add_library(libSceIcu_LanguageTag_Chunk01 STATIC chunks/LanguageTag_Chunk01.cpp)
 add_library(libSceIcu_LanguageTag_Chunk02 STATIC chunks/LanguageTag_Chunk02.cpp)
 target_link_libraries(libSceIcu PUBLIC libSceIcu_LanguageTag_Chunk01 libSceIcu_LanguageTag_Chunk02)

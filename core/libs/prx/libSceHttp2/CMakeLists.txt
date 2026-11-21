@@ -144,7 +144,6 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-# --- small-size libraries split from Transport.cpp ---
 add_library(anyps5_http2_transport_Transport_Chunk01 STATIC chunks/Transport_Chunk01.cpp)
 add_library(anyps5_http2_transport_Transport_Chunk02 STATIC chunks/Transport_Chunk02.cpp)
 target_link_libraries(anyps5_http2_transport PUBLIC anyps5_http2_transport_Transport_Chunk01 anyps5_http2_transport_Transport_Chunk02)

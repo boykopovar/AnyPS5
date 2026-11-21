@@ -259,7 +259,6 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-# --- small-size libraries split from Export.cpp ---
 add_library(libSceJsc_Export_Chunk01 STATIC chunks/Export_Chunk01.cpp)
 add_library(libSceJsc_Export_Chunk02 STATIC chunks/Export_Chunk02.cpp)
 target_link_libraries(libSceJsc PUBLIC libSceJsc_Export_Chunk01 libSceJsc_Export_Chunk02)

@@ -1212,7 +1212,6 @@ if(BUILD_TESTING)
         set_tests_properties(guest_libressl3_default_verify_paths PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
-# --- small-size libraries split from PemKeys.cpp ---
 add_library(libSceLibreSsl3_PemKeys_Chunk01 STATIC src/chunks/PemKeys_Chunk01.cpp)
 add_library(libSceLibreSsl3_PemKeys_Chunk02 STATIC src/chunks/PemKeys_Chunk02.cpp)
 target_link_libraries(libSceLibreSsl3 PUBLIC libSceLibreSsl3_PemKeys_Chunk01 libSceLibreSsl3_PemKeys_Chunk02)
