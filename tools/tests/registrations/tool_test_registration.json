@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "tests": [
+    {
+      "name": "tool_test_registration",
+      "script": "test_tool_test_registration.py",
+      "arguments": ["ToolTestRegistrationTests"],
+      "timeout": 30
+    },
+    {
+      "name": "tool_test_registration_cli",
+      "script": "test_tool_test_registration.py",
+      "arguments": ["ToolTestRegistrationCliTests"],
+      "timeout": 30
+    },
+    {
+      "name": "tool_test_registration_cmake",
+      "script": "test_tool_test_registration.py",
+      "arguments": ["ToolTestRegistrationCMakeTests"],
+      "timeout": 30
+    },
+    {
+      "name": "tool_test_registration_regeneration",
+      "script": "test_tool_test_registration.py",
+      "arguments": ["ToolTestRegistrationRegenerationTests"],
+      "timeout": 30
+    }
+  ]
+}
