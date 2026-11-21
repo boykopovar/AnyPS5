@@ -873,6 +873,23 @@ static void CheckSpecialPort(int user, int handle) {
         Require(scePadSetVibration(invalidHandle, &vibration) == PAD_ERROR_INVALID_HANDLE);
         Require(scePadSetVibration(invalidHandle, nullptr) == PAD_ERROR_INVALID_HANDLE);
     }
+    Require(scePadSetLightBar(special, &lightBar) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadResetLightBar(special) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetMotionSensorState(special, true) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetTiltCorrectionState(special, true) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadResetOrientation(special) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadGetControllerType(special, &specialType) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadDeviceClassParseData(special, data, &classData) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadDeviceClassGetExtendedInformation(special, &extended) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadDisableVibration(special, true) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadDisableTriggerEffect(special, true) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadIsLightBarBaseBrightnessControllable(special) == PAD_ERROR_INVALID_HANDLE);
+    Require(!scePadIsValidHandle(special, PAD_PORT_TYPE_SPECIAL));
+    for (const int invalidHandle : {-1, 0, 12345, PAD_SPECIAL_HANDLE + PAD_SPECIAL_HANDLE_COUNT}) {
+        Require(scePadClose_nid_postfix(invalidHandle) == PAD_ERROR_INVALID_HANDLE);
+        Require(!scePadIsValidHandle(invalidHandle, PAD_PORT_TYPE_STANDARD));
+        Require(!scePadIsValidHandle(invalidHandle, PAD_PORT_TYPE_SPECIAL));
+    }
     Require(scePadGetHandle(user, 0, 0) == handle);
     Require(scePadReadState(handle, data) == PAD_OK);
     const int other = user + 1;
@@ -1776,6 +1793,7 @@ int main() {
         Pad::SetVibration(0, 0);
     }
     constexpr int noHandle = static_cast<int>(0x80920008);
+    constexpr int invalidUserId = static_cast<int>(0x809b0001);
     constexpr int user = 0x10000000;
 
     Require(scePadGetHandle(user, 0, 0) == noHandle);
@@ -1783,9 +1801,12 @@ int main() {
     Require(scePadOpen_nid_postfix(user, 1, 0, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadOpen_nid_postfix(user, 0, 1, nullptr) == static_cast<int>(0x809b0003));
     for (const int type : {3, 4}) Require(scePadOpen_nid_postfix(user, type, 0, nullptr) == PAD_ERROR_INVALID_ARG);
-    for (const int type : {0, 2, 3, 4}) Require(scePadOpen_nid_postfix(-1, type, 0, nullptr) == static_cast<int>(0x809b0001));
-    Require(scePadOpen_nid_postfix(-1, 0, 1, nullptr) == static_cast<int>(0x809b0001));
-    Require(scePadOpen_nid_postfix(-1, 1, 0, nullptr) == PAD_ERROR_INVALID_ARG);
+    for (const int negativeUser : {-1, -2, -100, -2147483647 - 1}) {
+        for (const int type : {0, 2, 3, 4}) Require(scePadOpen_nid_postfix(negativeUser, type, 0, nullptr) == invalidUserId);
+        Require(scePadOpen_nid_postfix(negativeUser, 0, 1, nullptr) == invalidUserId);
+        Require(scePadOpen_nid_postfix(negativeUser, 1, 0, nullptr) == PAD_ERROR_INVALID_ARG);
+    }
+    Require(scePadOpen_nid_postfix(0, PAD_PORT_TYPE_SPECIAL, 0, nullptr) == noHandle);
     for (const int type : {5, 6, 16, 0xff, -1}) Require(scePadOpen_nid_postfix(user, type, 0, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetHandle(user, 0, 0) == noHandle);
     const unsigned char wheel[16]{0xb7, 0x0e, 0x04, 0x0e, 0x08, 0x6e, 0x01};
