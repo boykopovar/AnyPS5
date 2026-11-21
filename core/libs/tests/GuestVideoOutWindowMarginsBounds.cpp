@@ -12,6 +12,9 @@ namespace {
 
 constexpr int SystemUser = 255;
 constexpr int MainBus = 0;
+constexpr int InvalidHandle = -2144796661;
+constexpr int InvalidValue = -2144796671;
+constexpr int MarginRefused = 4096;
 
 void Require(bool value) {
     if (!value) std::abort();
@@ -31,9 +34,7 @@ void TestUnopenedHandleBounds() {
     for (const int badHandle : {-1000, -100, -1, 0, 1, 2, 8, 100, 9999, 0x7FFFFFFF}) {
         for (const int top : {-50, -1, 0, 10, 50, 100, 150, 1000}) {
             for (const int bottom : {-50, -1, 0, 10, 50, 100, 150, 1000}) {
-                Require(Throws([badHandle, top, bottom] {
-                    return sceVideoOutSetWindowModeMargins(badHandle, top, bottom);
-                }));
+                Require(sceVideoOutSetWindowModeMargins(badHandle, top, bottom) == InvalidHandle);
             }
         }
 
@@ -52,7 +53,8 @@ void TestUnopenedHandleBounds() {
 void TestOpenHandleOperations(int handle) {
     for (const int top : {-100, -10, 0, 1, 5, 10, 25, 50, 75, 100, 120, 200}) {
         for (const int bottom : {-100, -10, 0, 1, 5, 10, 25, 50, 75, 100, 120, 200}) {
-            Require(sceVideoOutSetWindowModeMargins(handle, top, bottom) == 0);
+            const bool refused = top < 0 || bottom < 0 || top >= MarginRefused || bottom >= MarginRefused;
+            Require(sceVideoOutSetWindowModeMargins(handle, top, bottom) == (refused ? InvalidValue : 0));
         }
     }
 
@@ -65,9 +67,7 @@ void TestOpenHandleOperations(int handle) {
 
 void TestClosedHandleBounds(int handle) {
     for (const int top : {0, 10, 50, 100}) {
-        Require(Throws([handle, top] {
-            return sceVideoOutSetWindowModeMargins(handle, top, top);
-        }));
+        Require(sceVideoOutSetWindowModeMargins(handle, top, top) == InvalidHandle);
     }
 
     Require(Throws([handle] {
