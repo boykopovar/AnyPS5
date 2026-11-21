@@ -96,10 +96,26 @@ constexpr std::int64_t kDtNeeded = 1;
 constexpr std::int64_t kDtSoname = 14;
 constexpr std::int64_t kDtRpath = 15;
 constexpr std::int64_t kDtRunpath = 29;
+constexpr std::int64_t kDtOsStrtab = 0x61000035;
+constexpr std::int64_t kDtOsStrsz = 0x61000037;
+constexpr std::int64_t kDtSceFilename = 0x61000009;
+constexpr std::int64_t kDtSceModuleInfo = 0x6100000d;
+constexpr std::int64_t kDtSceExportLib = 0x61000013;
+constexpr std::int64_t kDtSceImportLib = 0x61000015;
+constexpr std::int64_t kDtSceNeededModule = 0x6100000f;
+constexpr std::int64_t kDtSceModuleExport = 0x61000043;
+constexpr std::int64_t kDtSceModuleImport = 0x61000045;
 constexpr std::int64_t kDtNull = 0;
 
+inline bool IsPackedDynamicNameTag(std::int64_t tag) {
+    return tag == kDtSceModuleInfo || tag == kDtSceNeededModule ||
+        tag == kDtSceExportLib || tag == kDtSceImportLib ||
+        tag == kDtSceModuleExport || tag == kDtSceModuleImport;
+}
+
 inline bool IsDynamicNameTag(std::int64_t tag) {
-    return tag == kDtNeeded || tag == kDtSoname || tag == kDtRpath || tag == kDtRunpath;
+    return tag == kDtNeeded || tag == kDtSoname || tag == kDtRpath || tag == kDtRunpath ||
+        tag == kDtSceFilename || IsPackedDynamicNameTag(tag);
 }
 constexpr std::uint32_t kShtDynamic = 6u;
 constexpr std::uint32_t kShtHash = 5u;
