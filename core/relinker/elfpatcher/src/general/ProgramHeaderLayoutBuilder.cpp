@@ -1,6 +1,7 @@
 #include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <domain/Types.hpp>
+#include <HostCpuFeatures.hpp>
 #include <algorithm>
 #include <cstdint>
 
@@ -201,13 +202,16 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     auto kept = _outputHeaders(request.OriginalHeaders);
     const auto frameCount = std::count_if(kept.begin(), kept.end(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_EH_FRAME; });
 
-    const bool keepFrames = kept.size() + kSyntheticProgramHeaderCount <= request.PhNum;
+    const std::size_t syntheticCount = kSyntheticProgramHeaderCount + (request.HostCpuRecordVaddr ? 1u : 0u);
+    const bool keepFrames = kept.size() + syntheticCount <= request.PhNum;
     if (!keepFrames && frameCount > 0) {
         throw Domain::RelinkerException("No free program header slot for PT_GNU_EH_FRAME");
     }
     _sortLoadHeaders(kept);
 
-    const std::size_t neededPh = kept.size() + kSyntheticProgramHeaderCount;
+    const std::size_t neededPh = kept.size() + syntheticCount;
+    if (neededPh >= kExtendedProgramHeaderCount)
+        throw Domain::RelinkerException("Extended program header counts are not supported");
     if (neededPh > request.PhNum)
         throw Domain::RelinkerException(
             "Not enough program header slots: need " + std::to_string(neededPh) +
@@ -279,6 +283,22 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     layout.push_back(_makeLoadHeader(request.ExtraBlockOffset, extraBlockVaddr, request.ExtraBlockSize, kDefaultLoadAlignment, extraBlockPageEnd - extraBlockVaddr, PF_R | PF_W | PF_X));
     layout.push_back(_makeLoadHeader(0, headerBlockVaddr, headerBlockSize, headerBlockAlign, headerBlockSize, PF_R));
     layout.push_back(_makeDynamicHeader(request.DynamicSegmentOffset, dynamicSegmentVaddr, request.DynamicSegmentSize));
+    if (request.HostCpuRecordVaddr) {
+        const std::uint64_t recordVaddr = *request.HostCpuRecordVaddr;
+        if (recordVaddr < extraBlockVaddr || recordVaddr - extraBlockVaddr > request.ExtraBlockSize ||
+            HostCpuFeatureBits::RecordSize > request.ExtraBlockSize - (recordVaddr - extraBlockVaddr))
+            throw Domain::RelinkerException("Host CPU feature record does not fit within the extra block");
+        Domain::ProgramHeader hostCpu{};
+        hostCpu.Type = PT_OS_HOSTCPU;
+        hostCpu.Flags = PF_R;
+        hostCpu.Offset = request.ExtraBlockOffset + (recordVaddr - extraBlockVaddr);
+        hostCpu.MappedAddress = recordVaddr;
+        hostCpu.PhysicalAddress = recordVaddr;
+        hostCpu.FileSize = HostCpuFeatureBits::RecordSize;
+        hostCpu.MemorySize = HostCpuFeatureBits::RecordSize;
+        hostCpu.Alignment = 8;
+        layout.push_back(hostCpu);
+    }
 
     for (std::size_t index = 0; index < layout.size(); ++index)
         _writeProgramHeader(buf, static_cast<std::size_t>(request.PhOff) + index * request.PhEntSize, layout[index]);
