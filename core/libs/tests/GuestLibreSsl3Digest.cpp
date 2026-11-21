@@ -1,9 +1,12 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <source_location>
 #include <stdexcept>
 #include <string>
@@ -58,6 +61,14 @@ int main() {
     Require(EVP_MD_block_size_nid_postfix(EVP_sha384_nid_postfix()) == 128);
     Require(EVP_MD_block_size_nid_postfix(EVP_sha512_nid_postfix()) == 128);
     Require(EVP_MD_block_size_nid_postfix(nullptr) == -1);
+    errno = 71;
+    bool rejected = false;
+    try {
+        EVP_MD_block_size_nid_postfix(reinterpret_cast<const void*>(std::uintptr_t{0x10}));
+    } catch (const std::exception&) {
+        rejected = errno == 71;
+    }
+    Require(rejected);
 
     std::puts("libSceLibreSsl3 digest tests passed");
 }
