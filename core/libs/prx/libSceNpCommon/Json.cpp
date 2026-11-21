@@ -373,6 +373,7 @@ private:
     DecodedChar readChar(const char* data, std::size_t remaining) {
         DecodedChar out{};
         if (c->pendingNeed != 0) {
+            const std::size_t prior = static_cast<std::size_t>(c->pendingLength);
             const std::size_t take = c->pendingNeed < remaining ? static_cast<std::size_t>(c->pendingNeed) : remaining;
             std::memcpy(c->pending.bytes + c->pendingLength, data, take);
             c->pendingLength += take;
@@ -391,6 +392,7 @@ private:
                 out.length = out.raw = out.consumed = 1;
                 return out;
             }
+            out.consumed = out.raw > prior ? out.raw - prior : 0;
             c->pendingNeed = 0;
             c->pendingLength = 0;
             return out;
