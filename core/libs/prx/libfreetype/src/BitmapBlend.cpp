@@ -56,6 +56,18 @@ bool CopyPixels(const unsigned char* buffer, std::size_t bytes, std::vector<unsi
     return true;
 }
 
+FT_Library ReadLibraryHost(const FreeType::GuestLibrary* library) {
+    FT_Library host = nullptr;
+    if (!library || !CopyIn(&host, &library->host, sizeof(host))) return nullptr;
+    return host;
+}
+
+void SyncLibraryGlyphSlot(FreeType::GuestLibrary* library, const FreeType::GuestBitmap* target, const FT_Bitmap& nativeTarget) {
+    for (const auto& face : library->faces) {
+        if (target == &face->slot.bitmap && face->host != nullptr && face->host->glyph != nullptr) face->host->glyph->bitmap = nativeTarget;
+    }
+}
+
 }
 
 extern "C" {
@@ -63,7 +75,7 @@ extern "C" {
 int APS5_VABI freetypeLegacyBitmapBlend_nid_no_patch(FreeType::GuestLibrary* library, const FreeType::GuestBitmap* source, FreeType::GuestVector sourceOffset,
                                                      FreeType::GuestBitmap* target, FreeType::GuestVector* targetOffset, LegacyFreeType::Color color) {
     const FT_Color nativeColor{color.blue, color.green, color.red, color.alpha};
-    const FT_Library host = library ? library->host : nullptr;
+    const FT_Library host = ReadLibraryHost(library);
     if (!host || !source || !target || !targetOffset) return FT_Bitmap_Blend(nullptr, nullptr, {}, nullptr, nullptr, nativeColor);
     FreeType::GuestBitmap sourceRecord{};
     FreeType::GuestBitmap targetRecord{};
@@ -91,9 +103,7 @@ int APS5_VABI freetypeLegacyBitmapBlend_nid_no_patch(FreeType::GuestLibrary* lib
         return FT_Err_Invalid_Argument;
     }
     const FT_Error error = FT_Bitmap_Blend(host, &nativeSource, nativeSourceOffset, &nativeTarget, &nativeTargetOffset, nativeColor);
-    for (const auto& face : library->faces) {
-        if (target == &face->slot.bitmap && face->host != nullptr && face->host->glyph != nullptr) face->host->glyph->bitmap = nativeTarget;
-    }
+    SyncLibraryGlyphSlot(library, target, nativeTarget);
     const FreeType::GuestVector resultOffset{nativeTargetOffset.x, nativeTargetOffset.y};
     if (!FreeTypeSyncBitmap_nid_no_patch(target, nativeTarget) || !CopyOut(targetOffset, &resultOffset, sizeof(resultOffset))) return FT_Err_Invalid_Argument;
     return error;
