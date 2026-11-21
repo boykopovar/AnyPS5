@@ -9,12 +9,31 @@ namespace {
 
 using namespace HostPerformance;
 
+#if defined(__SANITIZE_ADDRESS__)
+constexpr bool DlcloseUnloads = false;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+constexpr bool DlcloseUnloads = false;
+#else
+constexpr bool DlcloseUnloads = true;
+#endif
+#else
+constexpr bool DlcloseUnloads = true;
+#endif
+
 void Require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
 
 bool Contains(const std::string& text, const std::string& part) {
     return text.find(part) != std::string::npos;
+}
+
+bool IsLibraryLoaded(const std::string& path) {
+    void* const handle = dlopen(path.c_str(), RTLD_NOLOAD);
+    if (handle == nullptr) return false;
+    dlclose(handle);
+    return true;
 }
 
 struct Fixture {
@@ -82,6 +101,44 @@ void MissingLibrariesAreUnavailable(const std::string& path, const std::string& 
     Require(second.Result == Outcome::Unavailable && Contains(second.Detail, missing), "a missing Foundation must be unavailable and named");
 }
 
+void PartialLoadFailureReleasesHandles(const std::string& fixtureNoPool, const std::string& missing) {
+    Require(!IsLibraryLoaded(fixtureNoPool), "the no-pool fixture must not be loaded before partial load failure checks");
+
+    {
+        MacActivity missingFoundation({fixtureNoPool, missing});
+        const auto first = missingFoundation.Begin();
+        Require(first.Result == Outcome::Unavailable && Contains(first.Detail, missing), "missing Foundation must return Unavailable on first Begin");
+        if (DlcloseUnloads) {
+            Require(!IsLibraryLoaded(fixtureNoPool), "failed Load on missing Foundation leaked runtime dlopen handle on first Begin");
+        }
+        const auto second = missingFoundation.Begin();
+        Require(second.Result == Outcome::Unavailable && Contains(second.Detail, missing), "missing Foundation must return Unavailable on second Begin");
+        if (DlcloseUnloads) {
+            Require(!IsLibraryLoaded(fixtureNoPool), "failed Load on missing Foundation leaked runtime dlopen handle on second Begin");
+        }
+    }
+    if (DlcloseUnloads) {
+        Require(!IsLibraryLoaded(fixtureNoPool), "missing Foundation left runtime dlopen handle loaded after destruction");
+    }
+
+    {
+        MacActivity missingPool({fixtureNoPool, fixtureNoPool});
+        const auto first = missingPool.Begin();
+        Require(first.Result == Outcome::Unavailable && Contains(first.Detail, "autorelease pool"), "runtime without pool functions must return Unavailable on first Begin");
+        if (DlcloseUnloads) {
+            Require(!IsLibraryLoaded(fixtureNoPool), "failed dlsym in Load leaked dlopen handle on first Begin");
+        }
+        const auto second = missingPool.Begin();
+        Require(second.Result == Outcome::Unavailable && Contains(second.Detail, "autorelease pool"), "runtime without pool functions must return Unavailable on second Begin");
+        if (DlcloseUnloads) {
+            Require(!IsLibraryLoaded(fixtureNoPool), "failed dlsym in Load leaked dlopen handle on second Begin");
+        }
+    }
+    if (DlcloseUnloads) {
+        Require(!IsLibraryLoaded(fixtureNoPool), "missing pool functions left dlopen handle loaded after destruction");
+    }
+}
+
 void MissingPoolFunctionsAreUnavailable(const std::string& path) {
     MacActivity activity({path, path});
     const auto begun = activity.Begin();
@@ -132,6 +189,7 @@ int main(int argc, char** argv) {
         ActivityIsBegunRetainedAndEndedOnce(argv[1]);
         DestructorEndsAHeldActivity(argv[1]);
         MissingLibrariesAreUnavailable(argv[1], argv[5]);
+        PartialLoadFailureReleasesHandles(argv[4], argv[5]);
         MissingPoolFunctionsAreUnavailable(argv[4]);
         MissingClassIsUnavailableAndPoolBalanced(argv[2]);
         NilActivityIsRefused(argv[3]);
