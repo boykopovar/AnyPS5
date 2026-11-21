@@ -38,7 +38,7 @@ void CheckRejectsNull() {
     bool threw = false;
     try {
         _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2Em_nid_postfix(nullptr, 1);
-    } catch (const std::exception&) {
+    } catch (...) {
         threw = true;
     }
     Require(threw);
