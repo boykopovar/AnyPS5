@@ -82,6 +82,28 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+if(BUILD_TESTING)
+    add_test_executable(guest_freetype_ot_glyph_mutation_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOtGlyphMutations.cpp)
+    target_include_directories(guest_freetype_ot_glyph_mutation_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_ot_glyph_mutation_tests PRIVATE freetype ${CMAKE_DL_LIBS})
+    if(WIN32)
+        target_link_libraries(guest_freetype_ot_glyph_mutation_tests PRIVATE libc)
+    endif()
+    configure_windows_unwind(guest_freetype_ot_glyph_mutation_tests)
+    add_custom_target(guest_freetype_ot_glyph_mutation_libraries DEPENDS
+        libSceFreeType libSceFreeTypeOt ${PATCHED_DIR}/libSceFreeType.prx ${PATCHED_DIR}/libSceFreeTypeOt.prx ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
+    add_dependencies(guest_freetype_ot_glyph_mutation_tests guest_freetype_ot_glyph_mutation_libraries)
+    add_test(NAME guest_freetype_ot_glyph_mutation COMMAND guest_freetype_ot_glyph_mutation_tests $<TARGET_FILE:libSceFreeType> $<TARGET_FILE:libSceFreeTypeOt> raw)
+    add_test(NAME guest_freetype_ot_glyph_mutation_patched COMMAND guest_freetype_ot_glyph_mutation_tests ${PATCHED_DIR}/libSceFreeType.prx ${PATCHED_DIR}/libSceFreeTypeOt.prx patched)
+    set_tests_properties(guest_freetype_ot_glyph_mutation guest_freetype_ot_glyph_mutation_patched PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_freetype_ot_glyph_mutation PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeTypeOt>")
+        set_tests_properties(guest_freetype_ot_glyph_mutation_patched PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${PATCHED_DIR}")
+    endif()
+endif()
+
 target_sources(libSceFreeTypeOt PRIVATE src/Memory.cpp src/Outline.cpp)
 if(BUILD_TESTING)
     add_test_executable(guest_freetype_ot_memory_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOtMemory.cpp)
