@@ -564,10 +564,6 @@ int APS5_VABI _ZN3JSC6Config23enableRestrictedOptionsEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WTFLogAlwaysV() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC2VM22boundFunctionSpaceSlowEv() {
     NotImplemented_nid_no_patch(__func__);
 }
