@@ -18,6 +18,9 @@ struct SpirvFormattedSource {
     std::uint32_t component = 0;
 };
 
+inline constexpr std::uint32_t StoreChannelCountMask = 7u;
+inline constexpr std::uint32_t StoreChannelInteger = 8u;
+
 [[nodiscard]] IrBufferFormat DecodeTBufferFormat(std::uint32_t dataFormat, std::uint32_t numberFormat);
 [[nodiscard]] SpirvFormatComponentType GetFormatComponentType(IrBufferFormat format);
 [[nodiscard]] SpirvBufferFormatInfo GetFormatInfo(IrBufferFormat format);
@@ -25,6 +28,7 @@ struct SpirvFormattedSource {
 [[nodiscard]] SpirvFormattedSource ResolveFormattedSource(const SpirvBufferFormatInfo& info, std::uint32_t selector);
 [[nodiscard]] std::uint32_t FormattedConstantBits(const SpirvBufferFormatInfo& info, SpirvFormattedSourceKind kind);
 [[nodiscard]] std::uint32_t GetFormatComponentByteOffset(const SpirvBufferFormatInfo& info, std::uint32_t component);
+[[nodiscard]] std::uint32_t StoreChannelClass(std::uint32_t code);
 
 }
 
