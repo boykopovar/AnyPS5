@@ -315,6 +315,35 @@ std::vector<unsigned char> BitStringContent(const std::vector<unsigned char>& by
     return content;
 }
 
+bool ParseBitList(std::string_view text, std::vector<unsigned char>& bytes) {
+    std::size_t start = 0;
+    for (;;) {
+        while (start < text.size() && IsSpace(text[start])) ++start;
+        const std::size_t comma = text.find(',', start);
+        std::size_t end = comma == std::string_view::npos ? text.size() : comma;
+        if (start == end) return false;
+        while (IsSpace(text[end - 1])) --end;
+        std::string_view element = text.substr(start, end - start);
+        const bool negative = element.front() == '-';
+        if (negative || element.front() == '+') element.remove_prefix(1);
+        if (element.empty()) return false;
+        unsigned long long bit = 0;
+        for (const char digit : element) {
+            if (digit < '0' || digit > '9') return false;
+            if (bit > (std::numeric_limits<unsigned long long>::max() - 9) / 10) return false;
+            bit = bit * 10 + static_cast<unsigned long long>(digit - '0');
+        }
+        if (negative && bit != 0) return false;
+        if (bit > static_cast<unsigned long long>(std::numeric_limits<std::int64_t>::max())) return false;
+        if (bit > static_cast<unsigned long long>(std::numeric_limits<int>::max())) NotImplemented_nid_no_patch(__func__);
+        const std::size_t index = static_cast<std::size_t>(bit) / 8;
+        if (bytes.size() <= index) bytes.resize(index + 1, 0);
+        bytes[index] |= static_cast<unsigned char>(0x80 >> (static_cast<std::size_t>(bit) % 8));
+        if (comma == std::string_view::npos) return true;
+        start = comma + 1;
+    }
+}
+
 struct BitName {
     int bit;
     const char* shortName;
@@ -542,7 +571,7 @@ bool ParseAsn1(std::string_view text, void* conf, Asn1Value& result) {
             if (colon == std::string_view::npos && (comma != std::string_view::npos || trimmed != end)) return false;
             result.type = type;
             result.format = format;
-            result.text.assign(value);
+            result.text.assign(colon == std::string_view::npos ? std::string_view() : text.substr(begin + colon + 1));
             return true;
         }
         if (name == "FORM" || name == "FORMAT") {
@@ -661,31 +690,25 @@ bool EncodeString(const Asn1Value& value, const std::string_view text, std::vect
     case SimpleType::OctetString:
     case SimpleType::BitString: {
         std::vector<unsigned char> bytes;
+        bool bitList = false;
         if (value.format == Format::Hex) {
             if (!ParseHex(text, bytes)) return false;
         } else if (value.format == Format::Ascii) {
             bytes.assign(text.begin(), text.end());
         } else if (value.format == Format::BitList && value.type == SimpleType::BitString) {
-            if (text.empty()) return false;
-            unsigned long long bit = 0;
-            for (const char digit : text) {
-                if (digit < '0' || digit > '9') return false;
-                if (bit > (std::numeric_limits<unsigned long long>::max() - 9) / 10) return false;
-                bit = bit * 10 + static_cast<unsigned long long>(digit - '0');
-            }
-            if (bit > static_cast<unsigned long long>(std::numeric_limits<std::size_t>::max() / 8)) return false;
-            const std::size_t size = static_cast<std::size_t>(bit) / 8 + 1;
-            bytes.assign(size, 0);
-            bytes[static_cast<std::size_t>(bit) / 8] |=
-                static_cast<unsigned char>(0x80 >> (static_cast<std::size_t>(bit) % 8));
+            if (!ParseBitList(text, bytes)) return false;
+            bitList = true;
         } else {
             return false;
         }
         if (value.type == SimpleType::OctetString) {
             AppendTlv(der, OctetStringTag, bytes);
-        } else {
+        } else if (bitList) {
             const std::vector<unsigned char> content = BitStringContent(bytes);
             AppendTlv(der, BitStringTag, content);
+        } else {
+            bytes.insert(bytes.begin(), 0);
+            AppendTlv(der, BitStringTag, bytes);
         }
         return true;
     }

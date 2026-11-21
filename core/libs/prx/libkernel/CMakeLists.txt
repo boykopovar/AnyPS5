@@ -32,6 +32,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/MemoryPool.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/MemoryPoolExport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Mutex.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/LibcxxMutexForwards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Cond.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Attr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Thread.cpp
@@ -46,6 +47,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Attr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Barrier.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Cond.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/LibcxxConditionForwards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Mutex.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Rwlock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Thread.cpp
@@ -53,6 +55,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Tsd.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Sem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Spinlock.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/LibcxxPlainMutexForwards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Pselect.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Socket.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Udp.cpp
@@ -2530,7 +2533,7 @@ if(BUILD_TESTING)
     target_include_directories(guest_kernel_app_archive_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_kernel_app_archive_tests PRIVATE libSceLibcInternal libkernel libc zarchive)
     configure_windows_unwind(guest_kernel_app_archive_tests)
-    foreach(mode archive plain mmap)
+    foreach(mode archive plain mmap mmap-failure mmap-damaged)
         add_test(NAME guest_kernel_app_archive_${mode} COMMAND guest_kernel_app_archive_tests ${mode})
         set_tests_properties(guest_kernel_app_archive_${mode} PROPERTIES TIMEOUT 20)
         if(WIN32)
