@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
 #include <atomic>
@@ -6,6 +7,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
+#include <stdexcept>
 #include <thread>
 
 namespace {
@@ -128,5 +131,40 @@ int main() {
     libcxxWaiter.join();
     Require(libcxxWoken.load() && _ZNSt3__123__libcpp_atomic_monitorEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEE_nid_postfix(&libcxx) == 6,
             "libc++ notify one wakes the waiter after a changed value");
+
+    bool threwHnsOverflow = false;
+    try {
+        (void)PreciseDeadlineTicks<PreciseHundredNanos>(
+            std::chrono::seconds((std::numeric_limits<std::int64_t>::max)()));
+    } catch (const std::overflow_error&) {
+        threwHnsOverflow = true;
+    }
+    Require(threwHnsOverflow, "PreciseDeadlineTicks<PreciseHundredNanos>(seconds::max) throws overflow_error");
+
+    bool threwNsOverflow = false;
+    try {
+        (void)PreciseDeadlineTicks<std::chrono::nanoseconds>(
+            std::chrono::seconds((std::numeric_limits<std::int64_t>::max)()));
+    } catch (const std::overflow_error&) {
+        threwNsOverflow = true;
+    }
+    Require(threwNsOverflow, "PreciseDeadlineTicks<nanoseconds>(seconds::max) throws overflow_error");
+
+    using ThreeTenthsNs = std::chrono::duration<std::int64_t, std::ratio<3, 10000000000LL>>;
+    Require(PreciseDeadlineTicks<std::chrono::nanoseconds>(ThreeTenthsNs(4000000000000000000LL)) == 1200000000000000000ULL,
+            "PreciseDeadlineTicks avoids intermediate int64_t overflow");
+    Require(PreciseDeadlineTicks<std::chrono::nanoseconds>(ThreeTenthsNs(1)) == 1ULL,
+            "PreciseDeadlineTicks rounds odd fractional tick count=1 up");
+    Require(PreciseDeadlineTicks<std::chrono::nanoseconds>(ThreeTenthsNs(4)) == 2ULL,
+            "PreciseDeadlineTicks rounds odd fractional tick count=4 up");
+
+    Require(PreciseHundredNanosToQpcTicks(10000000000000000000ULL, 24000000ULL) == (std::numeric_limits<std::uint64_t>::max)(),
+            "PreciseHundredNanosToQpcTicks saturates on wholeSeconds * freq overflow");
+    Require(PreciseHundredNanosToQpcTicks(9999999ULL, 2000000000000ULL) == 1999999800000ULL,
+            "PreciseHundredNanosToQpcTicks avoids remHundredNanos * freq overflow");
+    Require(PreciseHundredNanosToQpcTicks(0ULL, 24000000ULL) == 0ULL,
+            "PreciseHundredNanosToQpcTicks returns 0 for zero duration");
+    Require(PreciseHundredNanosToQpcTicks(100ULL, 0ULL) == 0ULL,
+            "PreciseHundredNanosToQpcTicks returns 0 for zero frequency");
     return 0;
 }
