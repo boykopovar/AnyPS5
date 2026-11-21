@@ -1,9 +1,14 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
+#include "prx/libSceAudioOut/src/AudioOutShutdown.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 static constexpr int SYSTEM_USER = 0xFF;
@@ -56,5 +61,30 @@ int main() {
     Require(sceAudioOutExClose(ac3) == 0, "close the mode 0 port");
     Require(Throws([ac3] { sceAudioOutExClose(ac3); }), "a closed port throws");
     Require(sceAudioOutExClose(eac3) == 0, "close the mode 4 port");
+
+    {
+        const AudioOutCall mainCall;
+        std::atomic<bool> workerEntered{false};
+        std::atomic<bool> workerDone{false};
+        std::thread worker([&] {
+            const AudioOutCall workerCall;
+            workerEntered.store(true);
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            workerDone.store(true);
+        });
+        while (!workerEntered.load()) std::this_thread::yield();
+        LibcRunShutdown_nid_postfix();
+        Require(workerDone.load(), "shutdown returned before worker AudioOutCall exited");
+        worker.join();
+    }
+
+    bool shutdownThrown = false;
+    try {
+        const AudioOutCall afterShutdown;
+    } catch (const ProcessShutdown&) {
+        shutdownThrown = true;
+    }
+    Require(shutdownThrown, "AudioOutCall after shutdown throws ProcessShutdown");
+
     return failed ? 1 : 0;
 }
