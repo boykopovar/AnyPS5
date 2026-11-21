@@ -35,8 +35,9 @@ struct Use {
     bool anyReads = false;
     bool anyWrites = false;
     Ranges writeOnly;
+    Ranges atomics;
 
-    PassAccess View() const { return {reads, writes, images, attachments, anyReads, anyWrites, writeOnly}; }
+    PassAccess View() const { return {reads, writes, images, attachments, anyReads, anyWrites, writeOnly, atomics}; }
 };
 
 void testRangeSet() {
@@ -254,6 +255,49 @@ void testWriteOnly() {
     Expect(hazards.Empty(), "cleared write-only stores");
 }
 
+void testAtomics() {
+    PassHazards hazards;
+    hazards.BeginPass();
+    Use counter;
+    counter.atomics = {{0x5000, 0x5080}};
+    hazards.Add(counter.View());
+    Expect(!hazards.Empty(), "atomics are tracked");
+    Expect(hazards.Check(counter.View(), true) == PassHazard::None, "draws only updating a counter atomically continue the pass");
+    Use reader;
+    reader.reads = {{0x5040, 0x5044}};
+    Expect(hazards.Check(reader.View(), true) == PassHazard::ReadAfterWrite, "a read of a counter the pass updates atomically");
+    Use writer;
+    writer.writes = {{0x5000, 0x6000}};
+    Expect(hazards.Check(writer.View(), true) == PassHazard::WriteAfterWrite, "a read-write use after atomics");
+    Use stores;
+    stores.writeOnly = {{0x5000, 0x5080}};
+    Expect(hazards.Check(stores.View(), true) == PassHazard::WriteAfterWrite, "write-only stores after atomics");
+    Use unknownReader;
+    unknownReader.anyReads = true;
+    Expect(hazards.Check(unknownReader.View(), true) == PassHazard::UnknownRead, "unknown reads after atomics");
+    Use elsewhere;
+    elsewhere.reads = {{0x6000, 0x7000}};
+    elsewhere.atomics = {{0x7000, 0x7004}};
+    Expect(hazards.Check(elsewhere.View(), true) == PassHazard::None, "atomics and reads elsewhere");
+    hazards.Clear();
+    hazards.BeginPass();
+    Use readOnly;
+    readOnly.reads = {{0x5000, 0x5100}};
+    hazards.Add(readOnly.View());
+    Expect(hazards.Check(counter.View(), true) == PassHazard::WriteAfterRead, "atomics after a read");
+    hazards.Clear();
+    hazards.BeginPass();
+    hazards.Add(stores.View());
+    Expect(hazards.Check(counter.View(), true) == PassHazard::WriteAfterWrite, "atomics after write-only stores");
+    hazards.Clear();
+    hazards.BeginPass();
+    hazards.Add(counter.View());
+    hazards.SealWriteOnly();
+    Expect(hazards.Check(counter.View(), true) == PassHazard::WriteAfterWrite, "atomics over atomics sealed by a flush");
+    hazards.Clear();
+    Expect(hazards.Empty(), "cleared atomics");
+}
+
 int main() {
     testRangeSet();
     testRanges();
@@ -261,6 +305,7 @@ int main() {
     testImages();
     testAttachments();
     testWriteOnly();
+    testAtomics();
     if (failures != 0) {
         std::fprintf(stderr, "%d pass hazard checks failed\n", failures);
         return 1;
