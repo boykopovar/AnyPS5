@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
@@ -16,6 +17,7 @@
 #include <cmath>
 #include <limits>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -40,6 +42,11 @@ constexpr std::size_t TexelBytes = 8192;
 constexpr std::size_t BlockBytes = 65536;
 
 alignas(256) std::array<std::uint32_t, Threads * 4> Input{};
+alignas(256) std::array<std::byte, 16384> Pixels{};
+
+alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
+    0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
+};
 
 alignas(256) constexpr std::array<std::uint32_t, 12> StoreCode{
     0x34020084, 0xe0381000, 0x80001401, 0xbf8c3f70, 0x7e3c0300, 0x7e3e0280, 0xf0201f08, 0x0001141e,
@@ -91,6 +98,30 @@ constexpr std::array<Format, 5> Formats{{
     {"8_8_8_8_UNORM", 56u, 4u, 8u, false},
     {"8_8_8_8_SNORM", 57u, 4u, 8u, true},
     {"16_16_16_16_UNORM", 65u, 4u, 16u, false},
+}};
+
+struct Case {
+    Format format;
+    std::uint32_t value;
+    std::uint32_t expected;
+};
+
+constexpr Format Unorm8{"8_UNORM", 1u, 1u, 8u, false};
+constexpr Format Unorm16{"16_UNORM", 7u, 1u, 16u, false};
+constexpr Format Snorm8{"8_SNORM", 2u, 1u, 8u, true};
+constexpr Format Snorm16{"16_SNORM", 8u, 1u, 16u, true};
+constexpr Format Float32{"32_FLOAT", 22u, 1u, 32u, false};
+
+constexpr std::array<Case, 9> Cases{{
+    {Unorm8, 0x3dcccccdu, 0x1au},
+    {Unorm8, 0x3c909091u, 0x05u},
+    {Unorm16, 0x3e99999au, 0x4ccdu},
+    {Snorm8, 0xbefbf7f0u, 0xc1u},
+    {Snorm8, 0x3d112245u, 0x05u},
+    {Snorm16, 0x3c004101u, 0x0101u},
+    {Float32, 0x3dcccccdu, 0x3dcccccdu},
+    {Float32, 0x7fc12345u, 0x7fc12345u},
+    {Float32, 0x00012345u, 0x00012345u},
 }};
 
 struct Write {
@@ -212,6 +243,7 @@ void Dispatch(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<c
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
+    Require(!result.registrationModule, "image store unorm rounding: the compute shader was emitted in registration form");
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(texels), TexelBytes, nullptr, "test");
@@ -225,6 +257,112 @@ void Store(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Format& 
     const auto initial = Initial();
     std::copy(initial.begin(), initial.end(), texels);
     Dispatch(device, texels, StoreCode, format.format, SwizzleOf(format), BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)));
+}
+
+std::array<std::uint32_t, 4> VertexBufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
+    const auto address = reinterpret_cast<std::uintptr_t>(data);
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
+}
+
+std::vector<std::uint32_t> CasePixelCode(std::uint32_t value) {
+    return {0x7e3c0f00u, 0x7e3e0f01u, 0x7e2802ffu, value, 0x7e2a02ffu, value, 0x7e2c02ffu, value, 0x7e2e02ffu, value, 0xf0201f08u, 0x0001141eu, 0x7e0e02f2u, 0xf800180fu, 0x07070707u, 0xbf810000u};
+}
+
+void StoreCase(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Case& entry) {
+    Input.fill(entry.value);
+    const auto initial = Initial();
+    std::copy(initial.begin(), initial.end(), texels);
+    Dispatch(device, texels, StoreCode, entry.format.format, IdentitySwizzle, BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)));
+}
+
+void DrawCase(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Case& entry) {
+    static const std::vector<std::array<float, 4>> triangles{
+        {-1.0f, -1.0f, 0.5f, 1.0f}, {1.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 1.0f, 0.5f, 1.0f},
+        {1.0f, -1.0f, 0.5f, 1.0f}, {1.0f, 1.0f, 0.5f, 1.0f}, {-1.0f, 1.0f, 0.5f, 1.0f},
+    };
+    const auto& target = device.Target();
+    Pixels.fill(std::byte{0});
+    const auto initial = Initial();
+    std::copy(initial.begin(), initial.end(), texels);
+    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    const auto vertexBuffer = VertexBufferDescriptor(triangles.data(), 16u, static_cast<std::uint32_t>(triangles.size()));
+    std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
+    const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
+    ShaderRecompiler::RecompileRequest vertex{
+        {ShaderStage::Vertex, reinterpret_cast<std::uintptr_t>(VertexCode.data()), VertexCode, 0, {}},
+        {64, 0, vertexUserData, std::nullopt, std::nullopt, ShaderRecompiler::ShaderVertexStageInfo{}, vertexMemory},
+        target,
+        {0, 0, 0, 64}
+    };
+    vertex.useCache = false;
+    const auto vertexResult = ShaderRecompiler::Recompile(vertex);
+    const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
+
+    ShaderRecompiler::ShaderPixelStageInfo pixel{};
+    pixel.wave32 = false;
+    pixel.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
+    pixel.posX = true;
+    pixel.posY = true;
+    pixel.targetOutputMode[0] = 9;
+    pixel.targetExportMapping.fill(0xe4u);
+    std::vector<std::uint32_t> pixelUserData(16, 0u);
+    const auto texture = TextureDescriptor(texels, entry.format.format, IdentitySwizzle);
+    std::copy(texture.begin(), texture.end(), pixelUserData.begin() + 4);
+    const auto code = CasePixelCode(entry.value);
+    const std::span<const std::uint32_t> words(code);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(words)}}};
+    ShaderRecompiler::RecompileRequest fragment{
+        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(code.data()), words, 0, {}},
+        {64, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
+        target,
+        PixelPushLayout(vertexPush, target)
+    };
+    fragment.useCache = false;
+    const auto pixelResult = ShaderRecompiler::Recompile(fragment);
+    Require(pixelResult.registrationModule == target.registrationModules, std::string("image store unorm rounding: the pixel shader was ") + (target.registrationModules ? "not " : "") + "emitted in registration form");
+    const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
+        {ShaderStage::Vertex, &vertexResult, 0},
+        {ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)}
+    }};
+
+    AgcDriver::Graphics::State state{};
+    state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, 64u, 64u, std::nullopt, std::nullopt};
+    const AgcDriver::Graphics::ColorTargetLayout colorLayout(Width, Height, AgcDriver::Graphics::ColorTileMode::Linear, 4u);
+    Require(colorLayout.Bytes() <= Pixels.size(), "image store unorm rounding: the color target does not fit its buffer");
+    state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, colorLayout.Bytes(), 0xe4u};
+    state.colors = {state.color};
+    state.hasColorTarget = true;
+    state.renderExtent = {Width, Height};
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.viewport = {0, static_cast<float>(Height), static_cast<float>(Width), -static_cast<float>(Height), 0, 1};
+    state.negativeOneToOne = false;
+    state.scissor = {{0, 0}, {Width, Height}};
+    state.cullMode = VK_CULL_MODE_NONE;
+    state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    state.blend.colorWriteMask = 15;
+    state.blends = {state.blend};
+    state.blendConstants = {};
+    const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(triangles.size()), 0, 1, 0, false};
+    device.Draw(state, draw, shaders);
+    device.WaitIdle();
+    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(texels), TexelBytes, nullptr, "test");
+    device.WaitIdle();
+}
+
+std::string CaseMismatch(const std::uint8_t* texels, const Case& entry, std::uint32_t rows, const std::string& shader) {
+    const auto initial = Initial();
+    const auto bytes = entry.format.bits / 8u;
+    for (std::uint32_t y = 0; y < Height; ++y) {
+        for (std::uint32_t x = 0; x < Width; ++x) {
+            const auto offset = TexelOffset(entry.format, x, y);
+            std::uint32_t actual = 0;
+            std::uint32_t wanted = entry.expected;
+            std::memcpy(&actual, texels + offset, bytes);
+            if (y >= rows) std::memcpy(&wanted, initial.data() + offset, bytes);
+            if (actual != wanted) return std::string("image_store of ") + entry.format.name + " value " + Hex(entry.value) + " (" + shader + "): texel (" + std::to_string(x) + ", " + std::to_string(y) + ") is " + Hex(actual) + ", expected " + Hex(wanted);
+        }
+    }
+    return {};
 }
 
 void CheckTexels(const std::uint8_t* texels, const Format& format) {
@@ -255,7 +393,19 @@ int main() {
             Store(*device, texels, format);
             CheckTexels(texels, format);
         }
-        std::puts("image store unorm rounding tests passed");
+        const std::string pixelShader = device->Target().registrationModules ? "pixel shader, registration module" : "pixel shader, specialized module";
+        std::string failures;
+        for (const auto& entry : Cases) {
+            StoreCase(*device, texels, entry);
+            const auto compute = CaseMismatch(texels, entry, 2u, "compute shader, specialized module");
+            DrawCase(*device, texels, entry);
+            const auto pixel = CaseMismatch(texels, entry, Height, pixelShader);
+            for (const auto& failure : {compute, pixel}) {
+                if (!failure.empty()) failures += (failures.empty() ? "" : "\n") + failure;
+            }
+        }
+        Require(failures.empty(), failures);
+        std::printf("image store unorm rounding tests passed (compute shader, specialized module; %s)\n", pixelShader.c_str());
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
