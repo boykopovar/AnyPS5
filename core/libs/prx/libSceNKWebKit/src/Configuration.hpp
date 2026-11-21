@@ -83,7 +83,6 @@ public:
     bool clientWouldBenefitFromAutomaticProcessPrewarming = false;
     bool usesWebProcessCache = false;
     bool shouldConfigureJSCForTesting = false;
-    std::vector<std::u16string> overrideLanguages;
 
     Retained<ProcessPoolConfiguration> Duplicate() const {
         auto copy = Make<ProcessPoolConfiguration>();
@@ -102,7 +101,6 @@ public:
         copy->clientWouldBenefitFromAutomaticProcessPrewarming = clientWouldBenefitFromAutomaticProcessPrewarming;
         copy->usesWebProcessCache = usesWebProcessCache;
         copy->shouldConfigureJSCForTesting = shouldConfigureJSCForTesting;
-        copy->overrideLanguages = overrideLanguages;
         return copy;
     }
 };
