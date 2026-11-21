@@ -9,11 +9,21 @@
 #include <source_location>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
     std::fprintf(stderr, "curl form test failed at line %u\n", location.line());
     std::abort();
+}
+
+static size_t APS5_VABI AppendForm(void* arg, const char* buffer, size_t length) {
+    static_cast<std::string*>(arg)->append(buffer, length);
+    return length;
+}
+
+static size_t APS5_VABI RefuseForm(void*, const char*, size_t length) {
+    return length - 1;
 }
 
 static guest_curl_slist* GuestNode(const char* text, guest_curl_slist* next) {
@@ -116,6 +126,21 @@ int main() {
         guest_curl_httppost* emptyLast = nullptr;
         Require(Throws([&] { curl_formadd_nid_postfix(unmappedSlot, &emptyLast, CURLFORM_COPYNAME, "x", CURLFORM_COPYCONTENTS, "y", CURLFORM_END); }));
         Require(emptyLast == nullptr);
+        std::string serialized;
+        Require(curl_formget_nid_postfix(form, &serialized, AppendForm) == CURLE_OK);
+        Require(serialized.find("Content-Disposition: form-data; name=\"first\"\r\n\r\none\r\n") != std::string::npos);
+        Require(serialized.find("name=\"array\"\r\n\r\nthree\r\n") != std::string::npos);
+        Require(serialized.find(std::string("name=\"bin\"\r\n\r\na\0b\r\n", 19)) != std::string::npos);
+        Require(serialized.find("name=\"second\"") < serialized.find("name=\"array\""));
+        Require(serialized.ends_with("--\r\n"));
+        Require(curl_formget_nid_postfix(form, nullptr, RefuseForm) == CURLE_READ_ERROR);
+        Require(curl_formget_nid_postfix(form, nullptr, nullptr) == CURLE_BAD_FUNCTION_ARGUMENT);
+        tail->next = form;
+        Require(curl_formget_nid_postfix(form, &serialized, AppendForm) == CURLE_BAD_FUNCTION_ARGUMENT);
+        tail->next = nullptr;
+        tail->more = tail;
+        Require(curl_formget_nid_postfix(form, &serialized, AppendForm) == CURLE_BAD_FUNCTION_ARGUMENT);
+        tail->more = nullptr;
         FreeGuestForms(form);
     }
     {
