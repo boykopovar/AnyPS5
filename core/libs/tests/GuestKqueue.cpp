@@ -31,6 +31,7 @@
 
 static constexpr int GuestEperm = 1;
 static constexpr int GuestEnoent = 2;
+static constexpr int GuestEnodev = 19;
 static constexpr int GuestEinval = 22;
 static constexpr int GuestEspipe = 29;
 static constexpr int GuestEopnotsupp = 45;
@@ -89,6 +90,7 @@ static constexpr int SceOk = 0;
 static constexpr int SceEnoent = static_cast<int>(0x80020002);
 static constexpr int SceEbadf = static_cast<int>(0x80020009);
 static constexpr int SceEinval = static_cast<int>(0x80020016);
+static constexpr int SceEnodev = static_cast<int>(0x80020013);
 
 static void Require(bool value, std::source_location location = std::source_location::current()) {
     if (!value) {
@@ -1427,6 +1429,47 @@ static std::string TemporaryName(const char* stem) {
     return std::string("anyps5-kqueue-") + stem + "-" + std::to_string(getpid_nid_postfix()) + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
 }
 
+static void RandomDeviceReadWrite() {
+    const int kq = kqueue_nid_postfix();
+    Require(kq >= 0);
+    for (const char* path : {"/dev/random", "/dev/urandom"}) {
+        const int random = open_nid_postfix(path, 0, 0);
+        Require(random >= 0);
+        const auto ident = static_cast<std::uintptr_t>(random);
+        for (const std::int16_t filter : {EvfiltRead, EvfiltWrite}) {
+            RequireFailure(Apply(kq, Change(ident, filter, EvAdd)), GuestEnodev);
+            const KernelEvent attach = Change(ident, filter, EvAdd, 7, 9);
+            KernelEvent failed[1]{};
+            Require(kevent_nid_postfix(kq, &attach, 1, failed, 1, nullptr) == 1);
+            Require(failed[0].ident == ident && failed[0].filter == filter && failed[0].flags == EvError);
+            Require(failed[0].data == GuestEnodev && failed[0].fflags == 0);
+            RequireFailure(Apply(kq, Change(ident, filter, EvDelete)), GuestEnoent);
+        }
+        KernelEqueue eq = 0;
+        Require(sceKernelCreateEqueue(&eq, "random device") == SceOk);
+        Require(sceKernelAddReadEvent(eq, random, 1, nullptr) == SceEnodev);
+        Require(sceKernelAddWriteEvent(eq, random, 1, nullptr) == SceEnodev);
+        Require(sceKernelAddReadEvent(0, random, 1, nullptr) == SceEbadf);
+        Require(sceKernelDeleteEqueue(eq) == SceOk);
+        Require(close_nid_postfix(random) == 0);
+    }
+    const int random = open_nid_postfix("/dev/urandom", 0, 0);
+    Require(random > 0 && dup2_nid_postfix(random, 0) == 0);
+    RequireFailure(Apply(kq, Change(0, EvfiltRead, EvAdd)), GuestEnodev);
+    const KernelEvent attach = Change(0, EvfiltRead, EvAdd, 7, 9);
+    KernelEvent failed[1]{};
+    Require(kevent_nid_postfix(kq, &attach, 1, failed, 1, nullptr) == 1);
+    Require(failed[0].ident == 0 && failed[0].flags == EvError && failed[0].data == GuestEnodev && failed[0].fflags == 0);
+#ifdef _WIN32
+    const int null = _open("NUL", _O_RDONLY);
+#else
+    const int null = ::open("/dev/null", O_RDONLY);
+#endif
+    Require(null > 0 && dup2_nid_postfix(null, 0) == 0 && close_nid_postfix(null) == 0);
+    Require(close_nid_postfix(random) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
 static void ProcdescOnFiles() {
     const int kq = kqueue_nid_postfix();
     const int other = kqueue_nid_postfix();
@@ -1967,6 +2010,7 @@ int main(int argc, char** argv) {
     TimerReadd();
     UnsupportedFilters();
     ProcdescOnFiles();
+    RandomDeviceReadWrite();
     SignalEvents();
     PipeRead();
 #ifndef __APPLE__

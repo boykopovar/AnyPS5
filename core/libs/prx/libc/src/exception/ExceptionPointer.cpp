@@ -144,3 +144,21 @@ GuestExceptionPointer APS5_VABI _ZSt17current_exceptionv_nid_postfix() noexcept 
 }
 
 #endif
+
+extern "C" {
+
+void APS5_VABI _ZNSt13exception_ptrC1ERKS__nid_postfix(GuestLibcxxExceptionPointer* self, const GuestLibcxxExceptionPointer* source) noexcept {
+    self->object = source->object;
+    __cxa_increment_exception_refcount_nid_postfix(self->object);
+}
+
+void APS5_VABI _ZNSt13exception_ptrD1Ev_nid_postfix(GuestLibcxxExceptionPointer* self) noexcept {
+    __cxa_decrement_exception_refcount_nid_postfix(self->object);
+}
+
+[[noreturn]] void APS5_VABI _ZSt17rethrow_exceptionSt13exception_ptr_nid_postfix(const GuestLibcxxExceptionPointer* exception) {
+    __cxa_rethrow_primary_exception_nid_postfix(exception->object);
+    LibcException::Terminate();
+}
+
+}

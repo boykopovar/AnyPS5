@@ -688,6 +688,44 @@ static void TestUserContentURLPattern() {
     WKRelease(patStr);
 }
 
+static void TestSecurityOriginStringCopies() {
+    auto nullString = NKWebKit::Make<NKWebKit::String>();
+    Require(nullString->null);
+    const void* unset = WKSecurityOriginCreate(nullString.Get(), nullString.Get(), 0);
+    for (const void* copy : {WKSecurityOriginCopyProtocol(unset), WKSecurityOriginCopyHost(unset), WKSecurityOriginCopyToString(unset)}) {
+        Require(copy != nullptr);
+        Require(WKStringIsEmpty(copy));
+        Require(!static_cast<const NKWebKit::String*>(copy)->null);
+        WKRelease(copy);
+    }
+    WKRelease(unset);
+
+    auto emptyString = NKWebKit::String::FromUtf8("");
+    Require(!emptyString->null);
+    const void* empty = WKSecurityOriginCreate(emptyString.Get(), emptyString.Get(), 0);
+    for (const void* copy : {WKSecurityOriginCopyProtocol(empty), WKSecurityOriginCopyHost(empty), WKSecurityOriginCopyToString(empty)}) {
+        Require(WKStringIsEmpty(copy));
+        Require(!static_cast<const NKWebKit::String*>(copy)->null);
+        WKRelease(copy);
+    }
+    WKRelease(empty);
+
+    auto protocol = NKWebKit::String::FromUtf8("https");
+    auto host = NKWebKit::String::FromUtf8("example.org");
+    const void* origin = WKSecurityOriginCreate(protocol.Get(), host.Get(), 8443);
+    const void* copiedProtocol = WKSecurityOriginCopyProtocol(origin);
+    const void* copiedHost = WKSecurityOriginCopyHost(origin);
+    const void* copiedText = WKSecurityOriginCopyToString(origin);
+    Require(WKStringIsEqualToUTF8CString(copiedProtocol, "https"));
+    Require(WKStringIsEqualToUTF8CString(copiedHost, "example.org"));
+    Require(WKStringIsEqualToUTF8CString(copiedText, "https://example.org:8443"));
+    for (const void* copy : {copiedProtocol, copiedHost, copiedText}) {
+        Require(!static_cast<const NKWebKit::String*>(copy)->null);
+        WKRelease(copy);
+    }
+    WKRelease(origin);
+}
+
 static void TestURLRequestResponse() {
     Require(WKURLRequestGetTypeID() == 23);
     Require(WKURLResponseGetTypeID() == 24);
@@ -817,17 +855,36 @@ static void TestURLRequestResponse() {
 
     auto* emptyMime = WKURLResponseCopyMIMEType(defaultRef);
     Require(WKStringIsEmpty(emptyMime));
+    Require(!static_cast<const NKWebKit::String*>(emptyMime)->null);
     WKRelease(emptyMime);
 
     Require(WKURLResponseHTTPStatusCode(defaultRef) == 0);
 
     auto* emptyFilename = WKURLResponseCopySuggestedFilename(defaultRef);
     Require(WKStringIsEmpty(emptyFilename));
+    Require(!static_cast<const NKWebKit::String*>(emptyFilename)->null);
     WKRelease(emptyFilename);
 
     Require(!WKURLResponseIsAttachment(defaultRef));
     Require(WKURLResponseGetExpectedContentLength(defaultRef) == 0);
     WKRelease(defaultRef);
+
+    auto nullStringsObj = NKWebKit::Make<NKWebKit::URLResponse>(
+        NKWebKit::Make<NKWebKit::URL>("https://example.com/"),
+        NKWebKit::Make<NKWebKit::String>(),
+        200,
+        NKWebKit::Make<NKWebKit::String>(),
+        false,
+        0LL
+    );
+    const void* nullStringsRef = NKWebKit::ToRef(nullStringsObj);
+    for (const void* copy : {WKURLResponseCopyMIMEType(nullStringsRef), WKURLResponseCopySuggestedFilename(nullStringsRef)}) {
+        Require(copy != nullptr);
+        Require(WKStringIsEmpty(copy));
+        Require(!static_cast<const NKWebKit::String*>(copy)->null);
+        WKRelease(copy);
+    }
+    WKRelease(nullStringsRef);
 
     bool threw = false;
     try {
@@ -3257,6 +3314,7 @@ int main() {
     TestImage();
     TestAuthentication();
     TestCertificateInfo();
+    TestSecurityOriginStringCopies();
     try {
         TestEmptyFrameLoaderClient();
         TestEmptyFrameLoaderResourceCallbacks();
