@@ -1,11 +1,14 @@
 #include "prx/libSceVideoDecoderArbitration/libSceVideoDecoderArbitration.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libSceVideoArbitration/include/Api.hpp"
 
 #include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <string>
+#include <string_view>
 
 namespace {
 
@@ -25,15 +28,40 @@ struct ArbitrationParam {
     std::uint64_t count;
 };
 
+int RunSelf(const char* program, std::string_view mode) {
+    const std::string arguments = "\"" + std::string(program) + "\" " + std::string(mode);
+#ifdef _WIN32
+    const std::string command = "\"" + arguments + "\"";
+#else
+    const std::string command = arguments;
+#endif
+    return std::system(command.c_str());
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     constexpr int invalidArgument = static_cast<int>(0x81570001u);
     constexpr int alreadyInitialized = static_cast<int>(0x81570002u);
     constexpr int noEvent = static_cast<int>(0x81570003u);
     constexpr int outOfRange = static_cast<int>(0x81570004u);
+    if (argc > 1 && std::string_view(argv[1]) == "--external-callee-init") {
+        ArbitrationParam calleeParam{0x18, 0x200, 1};
+        Require(sceVideoArbitrationInitialize(&calleeParam) == 0);
+        Require(sceVideoDecoderArbitrationInitialize(&calleeParam) == alreadyInitialized);
+        ArbitrationParam badValueParam{0x18, 0x50, 1};
+        Require(sceVideoDecoderArbitrationInitialize(&badValueParam) == alreadyInitialized);
+        int callback = 0;
+        Require(sceVideoDecoderArbitrationEnable(0, &callback) == 0);
+        Require(sceVideoDecoderArbitrationEnable(0, &callback) == alreadyInitialized);
+        Require(sceVideoDecoderArbitrationAcceptEvent(0) == noEvent);
+        Require(sceVideoDecoderArbitrationAcceptEvent(1) == noEvent);
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+        return 0;
+    }
     int callbackTarget = 0;
     int otherCallbackTarget = 0;
     for (int call = 0; call < 2; ++call) {
@@ -97,5 +125,6 @@ int main() {
     Require(sceVideoDecoderArbitrationAcceptEvent(1) == noEvent);
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    Require(RunSelf(argv[0], "--external-callee-init") == 0);
     return 0;
 }

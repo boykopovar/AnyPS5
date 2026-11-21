@@ -118,6 +118,7 @@ int APS5_VABI sceVideoDecoderArbitrationInitialize(const void* param) {
         return 0;
     }
     if (result == SCE_VIDEO_ARBITRATION_ERROR_ALREADY_INITIALIZED) {
+        g_initialized = true;
         return SCE_VIDEO_DECODER_ARBITRATION_ERROR_ALREADY_INITIALIZED;
     }
     return SCE_VIDEO_DECODER_ARBITRATION_ERROR_INVALID_ARGUMENT;
