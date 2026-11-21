@@ -329,6 +329,8 @@ bool APS5_VABI WKPageAreScrollbarAnimationsSuppressed(const void* pageRef);
 bool APS5_VABI WKPageCanGoBack(const void* page);
 bool APS5_VABI WKPageCanGoForward(const void* page);
 std::uint32_t APS5_VABI WKPageConfigurationGetTypeID();
+void APS5_VABI WKPageDidAllowPointerLock(const void* pageRef);
+void APS5_VABI WKPageDidDenyPointerLock(const void* pageRef);
 NKWebKit::SizeValue APS5_VABI WKPageFixedLayoutSize(const void* pageRef);
 bool APS5_VABI WKPageGetAddsVisitedLinks(const void* pageRef);
 double APS5_VABI WKPageGetGapBetweenPages(const void* pageRef);
