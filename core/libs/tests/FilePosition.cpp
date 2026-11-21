@@ -137,6 +137,15 @@ static void CheckFailedSeekKeepsPosition() {
     Require(fseeko_nid_postfix(&file, -9, SEEK_END) == -1 && errno == EINVAL);
     Require(fgetpos_nid_postfix(&file, &position) == 0 && position == 6);
     Require(fgetc_nid_postfix(&file) == '6');
+    Require(ungetc_nid_postfix('X', &file) == 'X');
+    errno = 0;
+    Require(fseeko_nid_postfix(&file, -9, SEEK_END) == -1 && errno == EINVAL);
+    Require(fgetpos_nid_postfix(&file, &position) == 0 && position == 6);
+    errno = 0;
+    Require(fseeko_nid_postfix(&file, std::numeric_limits<std::int64_t>::max(), SEEK_END) == -1 && errno == 84);
+    Require(fgetpos_nid_postfix(&file, &position) == 0 && position == 6);
+    Require(fgetc_nid_postfix(&file) == 'X');
+    Require(fgetc_nid_postfix(&file) == '7');
     file.Close();
 }
 
