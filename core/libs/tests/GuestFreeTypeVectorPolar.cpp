@@ -6,12 +6,25 @@
 #include FT_FREETYPE_H
 #include FT_TRIGONOMETRY_H
 
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
+#include <stdexcept>
 #include <utility>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using namespace FreeType;
 
@@ -123,6 +136,77 @@ static void TestAccumulatedAngles() {
     FT_Vector_From_Polar_nid_postfix(nullptr, 64, std::numeric_limits<std::int64_t>::min());
 }
 
+template<class TCall>
+static void RequireRuntimeErrorKeepingErrno(TCall call, int line) {
+    errno = 71;
+    bool threw = false;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Check(threw && errno == 71, line);
+}
+#define RequireThrows(call) RequireRuntimeErrorKeepingErrno([&] { call; }, __LINE__)
+
+static void TestGuestPointers() {
+#ifdef _WIN32
+    const std::size_t pageSize = 4096;
+    auto* page = static_cast<char*>(VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Require(page != nullptr);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE) > 0 ? sysconf(_SC_PAGESIZE) : 4096);
+    void* mapping = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED);
+    auto* page = static_cast<char*>(mapping);
+#endif
+    const GuestVector input{12345, -54321};
+    const GuestVector zero{0, 0};
+    const std::int64_t marker = 0x5a5a;
+    std::memcpy(page, &input, sizeof(input));
+    std::memcpy(page + 64, &zero, sizeof(zero));
+    std::memcpy(page + 128, &marker, sizeof(marker));
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    auto* readOnlyVector = reinterpret_cast<GuestVector*>(page);
+    auto* readOnlyZero = reinterpret_cast<GuestVector*>(page + 64);
+    auto* readOnlyValue = reinterpret_cast<std::int64_t*>(page + 128);
+    auto* unmappedVector = reinterpret_cast<GuestVector*>(std::uintptr_t{0x10});
+    auto* unmappedValue = reinterpret_cast<std::int64_t*>(std::uintptr_t{0x10});
+
+    FT_Vector native{static_cast<FT_Pos>(input.x), static_cast<FT_Pos>(input.y)};
+    Require(FT_Vector_Length_nid_postfix(readOnlyVector) == FT_Vector_Length(&native));
+    RequireThrows(FT_Vector_Length_nid_postfix(unmappedVector));
+
+    RequireThrows(FT_Vector_Rotate_nid_postfix(unmappedVector, 90 << 16));
+    RequireThrows(FT_Vector_Rotate_nid_postfix(readOnlyVector, 90 << 16));
+    RequireThrows(FT_Vector_From_Polar_nid_postfix(unmappedVector, 64, 0));
+    RequireThrows(FT_Vector_From_Polar_nid_postfix(readOnlyVector, 64, 0));
+    Require(std::memcmp(readOnlyVector, &input, sizeof(input)) == 0);
+
+    std::int64_t length = 3;
+    std::int64_t angle = 5;
+    RequireThrows(FT_Vector_Polarize_nid_postfix(unmappedVector, &length, &angle));
+    RequireThrows(FT_Vector_Polarize_nid_postfix(readOnlyVector, readOnlyValue, &angle));
+    RequireThrows(FT_Vector_Polarize_nid_postfix(readOnlyVector, &length, unmappedValue));
+    Require(length == 3 && angle == 5 && *readOnlyValue == marker);
+    FT_Vector_Polarize_nid_postfix(readOnlyZero, readOnlyValue, unmappedValue);
+    FT_Vector_Polarize_nid_postfix(readOnlyVector, &length, &angle);
+    FT_Fixed nativeLength = 0;
+    FT_Angle nativeAngle = 0;
+    FT_Vector_Polarize(&native, &nativeLength, &nativeAngle);
+    Require(length == nativeLength && angle == nativeAngle);
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(page, pageSize) == 0);
+#endif
+}
+
 int main() {
     TestAtan2();
     TestLength();
@@ -130,4 +214,5 @@ int main() {
     TestPolarize();
     TestFromPolar();
     TestAccumulatedAngles();
+    TestGuestPointers();
 }
