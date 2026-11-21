@@ -730,7 +730,11 @@ int APS5_VABI sceAudioOutSysGetHdmiMonitorInfo(int type, void* info, std::uint32
     if (size != HDMI_MONITOR_INFO_SIZE) return static_cast<int>(0x80260006);
     if (type != MONITOR_TYPE_HDMI && type != 0x10) return static_cast<int>(0x8026000C);
     if (type == 0x10) throw std::runtime_error("sceAudioOutSysGetHdmiMonitorInfo: monitor type 16 not supported");
-    std::memset(info, 0, HDMI_MONITOR_INFO_SIZE);
+    const std::array<std::uint8_t, HDMI_MONITOR_INFO_SIZE> empty{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, empty.data(), empty.size());
+    errno = savedErrno;
+    if (!copied) return static_cast<int>(0x80260004);
     return 0;
 }
 
