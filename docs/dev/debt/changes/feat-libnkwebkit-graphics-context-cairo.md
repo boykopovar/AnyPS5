@@ -11,5 +11,3 @@
 ## remove `_ZN7WebCore15GraphicsContext4saveEv`
 
 ## remove `_ZN7WebCore15GraphicsContext7restoreEv`
-
-

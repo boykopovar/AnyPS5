@@ -26,10 +26,8 @@
  */
 
 #include "prx/libc/include/general/VabiMacros.hpp"
-#include "prx/libSceNKWebKit/src/GraphicsContextAbi.hpp"
-#include "prx/libcairo/include/Context.hpp"
-#include "prx/libcairo/include/Matrix.hpp"
-#include "prx/libcairo/include/Path.hpp"
+#include "prx/libSceNKWebKit/include/GraphicsContextExports.hpp"
+#include "prx/libcairo/include/Bridge.hpp"
 
 #include <cstdint>
 #include <stdexcept>
@@ -110,36 +108,44 @@ void SetSource(CairoContext* context, const WebCore::Color& color) {
     const double green = static_cast<double>((packed >> 16) & 0xFF) / 255.0;
     const double blue = static_cast<double>((packed >> 8) & 0xFF) / 255.0;
     const double alpha = static_cast<double>(packed & 0xFF) / 255.0;
-    cairo_set_source_rgba(context, red, green, blue, alpha);
+    CairoSetSourceRgba_nid_no_patch(context, red, green, blue, alpha);
 }
 
 void Rectangle(CairoContext* context, const WebCore::FloatRect& rect) {
-    cairo_rectangle(context, rect.x(), rect.y(), rect.width(), rect.height());
+    CairoRectangle_nid_no_patch(context, rect.x(), rect.y(), rect.width(), rect.height());
 }
 
 void AppendPath(CairoContext* context, const void* path) {
     if (!path) throw std::invalid_argument("WebCore::GraphicsContext path is null");
     auto* pathContext = *static_cast<CairoContext* const*>(path);
-    cairo_new_path(context);
+    CairoNewPath_nid_no_patch(context);
     if (!pathContext) return;
-    CairoPath* copy = cairo_copy_path(pathContext);
+    CairoPath* copy = CairoCopyPath_nid_no_patch(pathContext);
     if (!copy) return;
-    cairo_append_path(context, copy);
-    cairo_path_destroy(copy);
+    CairoAppendPath_nid_no_patch(context, copy);
+    CairoPathDestroy_nid_no_patch(copy);
 }
 
 void ApplyAntialias(Context& context) {
     CairoContext* cr = Cairo(context);
     if (!cr) return;
-    cairo_set_antialias(cr, (context.state.flags & AntialiasFlag) ? 0 : 1);
+    CairoSetAntialias_nid_no_patch(cr, (context.state.flags & AntialiasFlag) ? 0 : 1);
 }
 
 int CairoOperator(const std::uint8_t compositeOperator) {
-    if (compositeOperator <= 10) return compositeOperator;
-    throw std::invalid_argument("unsupported CompositeOperator");
+    if (compositeOperator <= 5) return compositeOperator;
+    if (compositeOperator <= 10) return compositeOperator + 1;
+    switch (compositeOperator) {
+    case 11:
+        return 17;
+    case 12:
+        return 12;
+    case 13:
+        return 23;
+    default:
+        throw std::invalid_argument("unsupported CompositeOperator");
+    }
 }
-
-
 
 }  // namespace
 
@@ -178,7 +184,7 @@ void APS5_VABI _ZN7WebCore15GraphicsContextC1EPNS_20PlatformContextCairoE(Contex
     CairoContext* cr = static_cast<CairoContext*>(platform->cr);
     if (!cr) return;
     context.data = new ContextPrivate{cr, platform, {}};
-    cairo_save(cr);
+    CairoSave_nid_no_patch(cr);
     ApplyAntialias(context);
 }
 
@@ -190,7 +196,7 @@ void APS5_VABI _ZN7WebCore15GraphicsContextD1Ev(Context* self) {
     auto& context = Checked(self, "WebCore::GraphicsContext::~GraphicsContext");
     auto* data = Private(context);
     if (data) {
-        if (data->cr) cairo_restore(data->cr);
+        if (data->cr) CairoRestore_nid_no_patch(data->cr);
         delete data;
     }
     context.data = nullptr;
@@ -205,7 +211,7 @@ void APS5_VABI _ZN7WebCore15GraphicsContext4saveEv(Context* self) {
     auto& context = Checked(self, "WebCore::GraphicsContext::save");
     auto* data = Private(context);
     if (!data || !data->cr) return;
-    cairo_save(data->cr);
+    CairoSave_nid_no_patch(data->cr);
     data->stack.push_back(context.state);
 }
 
@@ -215,24 +221,24 @@ void APS5_VABI _ZN7WebCore15GraphicsContext7restoreEv(Context* self) {
     if (!data || !data->cr || data->stack.empty()) return;
     context.state = data->stack.back();
     data->stack.pop_back();
-    cairo_restore(data->cr);
+    CairoRestore_nid_no_patch(data->cr);
     ApplyAntialias(context);
 }
 
 void APS5_VABI _ZN7WebCore15GraphicsContext9translateEff(Context* self, float x, float y) {
     auto& context = Checked(self, "WebCore::GraphicsContext::translate");
-    if (CairoContext* cr = Cairo(context)) cairo_translate(cr, x, y);
+    if (CairoContext* cr = Cairo(context)) CairoTranslate_nid_no_patch(cr, x, y);
 }
 
 void APS5_VABI _ZN7WebCore15GraphicsContext5scaleERKNS_9FloatSizeE(Context* self, const WebCore::FloatSize* scale) {
     auto& context = Checked(self, "WebCore::GraphicsContext::scale");
     if (!scale) throw std::invalid_argument("WebCore::GraphicsContext::scale requires a scale");
-    if (CairoContext* cr = Cairo(context)) cairo_scale(cr, scale->m_width, scale->m_height);
+    if (CairoContext* cr = Cairo(context)) CairoScale_nid_no_patch(cr, scale->m_width, scale->m_height);
 }
 
 void APS5_VABI _ZN7WebCore15GraphicsContext22applyDeviceScaleFactorEf(Context* self, float scale) {
     auto& context = Checked(self, "WebCore::GraphicsContext::applyDeviceScaleFactor");
-    if (CairoContext* cr = Cairo(context)) cairo_scale(cr, scale, scale);
+    if (CairoContext* cr = Cairo(context)) CairoScale_nid_no_patch(cr, scale, scale);
 }
 
 void APS5_VABI _ZN7WebCore15GraphicsContext4clipERKNS_9FloatRectE(Context* self, const WebCore::FloatRect* rect) {
@@ -240,9 +246,9 @@ void APS5_VABI _ZN7WebCore15GraphicsContext4clipERKNS_9FloatRectE(Context* self,
     if (!rect) throw std::invalid_argument("WebCore::GraphicsContext::clip requires a rectangle");
     CairoContext* cr = Cairo(context);
     if (!cr) return;
-    cairo_new_path(cr);
+    CairoNewPath_nid_no_patch(cr);
     Rectangle(cr, *rect);
-    cairo_clip(cr);
+    CairoClip_nid_no_patch(cr);
 }
 
 void APS5_VABI _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectE(Context* self, const WebCore::FloatRect* rect) {
@@ -251,9 +257,9 @@ void APS5_VABI _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectE(Context* s
     CairoContext* cr = Cairo(context);
     if (!cr) return;
     SetSource(cr, context.state.fillColor);
-    cairo_new_path(cr);
+    CairoNewPath_nid_no_patch(cr);
     Rectangle(cr, *rect);
-    cairo_fill(cr);
+    CairoFill_nid_no_patch(cr);
 }
 
 void APS5_VABI _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(Context* self, const WebCore::FloatRect* rect, const WebCore::Color* color) {
@@ -262,9 +268,9 @@ void APS5_VABI _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5Color
     CairoContext* cr = Cairo(context);
     if (!cr) return;
     SetSource(cr, *color);
-    cairo_new_path(cr);
+    CairoNewPath_nid_no_patch(cr);
     Rectangle(cr, *rect);
-    cairo_fill(cr);
+    CairoFill_nid_no_patch(cr);
 }
 
 void APS5_VABI _ZN7WebCore15GraphicsContext9clearRectERKNS_9FloatRectE(Context* self, const WebCore::FloatRect* rect) {
@@ -272,12 +278,12 @@ void APS5_VABI _ZN7WebCore15GraphicsContext9clearRectERKNS_9FloatRectE(Context* 
     if (!rect) throw std::invalid_argument("WebCore::GraphicsContext::clearRect requires a rectangle");
     CairoContext* cr = Cairo(context);
     if (!cr) return;
-    cairo_save(cr);
-    cairo_set_operator(cr, 0);
-    cairo_new_path(cr);
+    CairoSave_nid_no_patch(cr);
+    CairoSetOperator_nid_no_patch(cr, 0);
+    CairoNewPath_nid_no_patch(cr);
     Rectangle(cr, *rect);
-    cairo_fill(cr);
-    cairo_restore(cr);
+    CairoFill_nid_no_patch(cr);
+    CairoRestore_nid_no_patch(cr);
 }
 
 void APS5_VABI _ZN7WebCore15GraphicsContext8fillPathERKNS_4PathE(Context* self, const void* path) {
@@ -287,7 +293,7 @@ void APS5_VABI _ZN7WebCore15GraphicsContext8fillPathERKNS_4PathE(Context* self, 
     if (!cr) return;
     SetSource(cr, context.state.fillColor);
     AppendPath(cr, path);
-    cairo_fill(cr);
+    CairoFill_nid_no_patch(cr);
 }
 
 void APS5_VABI _ZN7WebCore15GraphicsContext10strokePathERKNS_4PathE(Context* self, const void* path) {
@@ -296,9 +302,9 @@ void APS5_VABI _ZN7WebCore15GraphicsContext10strokePathERKNS_4PathE(Context* sel
     CairoContext* cr = Cairo(context);
     if (!cr) return;
     SetSource(cr, context.state.strokeColor);
-    cairo_set_line_width(cr, context.state.strokeThickness);
+    CairoSetLineWidth_nid_no_patch(cr, context.state.strokeThickness);
     AppendPath(cr, path);
-    cairo_stroke(cr);
+    CairoStroke_nid_no_patch(cr);
 }
 
 void APS5_VABI _ZN7WebCore15GraphicsContext10strokeRectERKNS_9FloatRectEf(Context* self, const WebCore::FloatRect* rect, float thickness) {
@@ -307,10 +313,10 @@ void APS5_VABI _ZN7WebCore15GraphicsContext10strokeRectERKNS_9FloatRectEf(Contex
     CairoContext* cr = Cairo(context);
     if (!cr) return;
     SetSource(cr, context.state.strokeColor);
-    cairo_set_line_width(cr, thickness);
-    cairo_new_path(cr);
+    CairoSetLineWidth_nid_no_patch(cr, thickness);
+    CairoNewPath_nid_no_patch(cr);
     Rectangle(cr, *rect);
-    cairo_stroke(cr);
+    CairoStroke_nid_no_patch(cr);
 }
 
 void APS5_VABI _ZN7WebCore15GraphicsContext15drawNativeImageERKN3WTF6RefPtrI14_cairo_surfaceNS1_13DumbPtrTraitsIS3_EEEERKNS_9FloatSizeERKNS_9FloatRectESE_RKNS_20ImagePaintingOptionsE(Context* self, const void* image, const WebCore::FloatSize*, const WebCore::FloatRect* destination, const WebCore::FloatRect* source, const ImagePaintingOptions* options) {
@@ -325,15 +331,15 @@ void APS5_VABI _ZN7WebCore15GraphicsContext15drawNativeImageERKN3WTF6RefPtrI14_c
     if (options->interpolationQuality != 0) throw std::invalid_argument("only the default interpolation quality is supported");
     const double scaleX = destination->width() / source->width();
     const double scaleY = destination->height() / source->height();
-    cairo_save(cr);
-    cairo_set_operator(cr, CairoOperator(options->compositeOperator));
-    cairo_translate(cr, destination->x() - source->x() * scaleX, destination->y() - source->y() * scaleY);
-    cairo_scale(cr, scaleX, scaleY);
-    cairo_set_source_surface(cr, surface, 0.0, 0.0);
-    cairo_new_path(cr);
+    CairoSave_nid_no_patch(cr);
+    CairoSetOperator_nid_no_patch(cr, CairoOperator(options->compositeOperator));
+    CairoTranslate_nid_no_patch(cr, destination->x() - source->x() * scaleX, destination->y() - source->y() * scaleY);
+    CairoScale_nid_no_patch(cr, scaleX, scaleY);
+    CairoSetSourceSurface_nid_no_patch(cr, surface, 0.0, 0.0);
+    CairoNewPath_nid_no_patch(cr);
     Rectangle(cr, *source);
-    cairo_fill(cr);
-    cairo_restore(cr);
+    CairoFill_nid_no_patch(cr);
+    CairoRestore_nid_no_patch(cr);
 }
 
 void APS5_VABI _ZN7WebCore15GraphicsContext12setFillColorERKNS_5ColorE(Context* self, const WebCore::Color* color) {
@@ -403,10 +409,9 @@ WebCore::AffineTransform APS5_VABI _ZNK7WebCore15GraphicsContext6getCTMENS0_18In
     CairoContext* cr = Cairo(context);
     if (!cr) return transform;
     CairoMatrix matrix{};
-    cairo_get_matrix(cr, &matrix);
+    CairoGetMatrix_nid_no_patch(cr, &matrix);
     transform.m_transform = {matrix.xx, matrix.yx, matrix.xy, matrix.yy, matrix.x0, matrix.y0};
     return transform;
 }
 
 }
-

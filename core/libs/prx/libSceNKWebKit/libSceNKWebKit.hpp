@@ -20,6 +20,7 @@
 #include "prx/libSceNKWebKit/include/CustomHeaderFieldsExports.hpp"
 #include "prx/libSceNKWebKit/include/DisplayListNativeImageExports.hpp"
 #include "prx/libSceNKWebKit/include/DragImageExports.hpp"
+#include "prx/libSceNKWebKit/include/GraphicsContextExports.hpp"
 #include "prx/libSceNKWebKit/include/GLContextExtensionsExports.hpp"
 #include "prx/libSceNKWebKit/include/FormDataExports.hpp"
 #include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"

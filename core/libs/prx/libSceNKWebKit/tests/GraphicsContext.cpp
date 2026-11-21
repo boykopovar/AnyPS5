@@ -1,4 +1,4 @@
-﻿#include "prx/libSceNKWebKit/src/GraphicsContextAbi.hpp"
+#include "prx/libSceNKWebKit/include/GraphicsContextExports.hpp"
 #include "prx/libcairo/include/Context.hpp"
 #include "prx/libcairo/include/Path.hpp"
 #include "prx/libcairo/include/Surface.hpp"
@@ -250,6 +250,21 @@ void TestStrokeRectAndImage() {
         threw = true;
     }
     Require(threw);
+    const WebCore::Color green = Green;
+    const WebCore::FloatRect leftRegion{{0, 0}, {4, 4}};
+    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &leftRegion, &green);
+    const NKWebKit::GraphicsContextAbi::ImagePaintingOptions destinationOver{6, 1, 0, 0, 1, 0, {0, 0, 0}};
+    const WebCore::FloatRect leftDestination{{0, 0}, {4, 4}};
+    _ZN7WebCore15GraphicsContext15drawNativeImageERKN3WTF6RefPtrI14_cairo_surfaceNS1_13DumbPtrTraitsIS3_EEEERKNS_9FloatSizeERKNS_9FloatRectESE_RKNS_20ImagePaintingOptionsE(&context, &imageSurface, &imageSize, &leftDestination, &source, &destinationOver);
+    Require(surface.Pixel(1, 1) == 0xFF00FF00U);
+
+    const WebCore::FloatRect rightRegion{{4, 0}, {4, 4}};
+    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &rightRegion, &green);
+    Require(surface.Pixel(5, 1) == 0xFF00FF00U);
+    const NKWebKit::GraphicsContextAbi::ImagePaintingOptions xorOptions{10, 1, 0, 0, 1, 0, {0, 0, 0}};
+    const WebCore::FloatRect rightDestination{{4, 0}, {4, 4}};
+    _ZN7WebCore15GraphicsContext15drawNativeImageERKN3WTF6RefPtrI14_cairo_surfaceNS1_13DumbPtrTraitsIS3_EEEERKNS_9FloatSizeERKNS_9FloatRectESE_RKNS_20ImagePaintingOptionsE(&context, &imageSurface, &imageSize, &rightDestination, &source, &xorOptions);
+    Require(surface.Pixel(5, 1) == 0);
     cairo_surface_destroy(imageSurface);
 }
 
@@ -288,6 +303,3 @@ int main() {
     std::puts("GraphicsContext tests passed.");
     return 0;
 }
-
-
-
