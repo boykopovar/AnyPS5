@@ -13,8 +13,38 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 namespace Pad {
+namespace Detail {
+
+inline std::FILE* OpenInputCommandFile(const std::filesystem::path& path) {
+#ifdef _WIN32
+    const auto handle = ::CreateFileW(path.c_str(), GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return nullptr;
+    const int descriptor = ::_open_osfhandle(reinterpret_cast<std::intptr_t>(handle), _O_RDONLY | _O_BINARY);
+    if (descriptor == -1) {
+        ::CloseHandle(handle);
+        return nullptr;
+    }
+    std::FILE* file = ::_fdopen(descriptor, "rb");
+    if (file == nullptr) ::_close(descriptor);
+    return file;
+#else
+    return std::fopen(path.c_str(), "rb");
+#endif
+}
+
+}
+
 class InputCommandFile {
 public:
     struct Input {
@@ -28,6 +58,7 @@ public:
         std::uint16_t touchY = 0;
         std::uint8_t touchId = 0;
         bool touchActive = false;
+        std::uint8_t stickMask = 3;
 
         bool operator==(const Input&) const = default;
     };
@@ -90,11 +121,7 @@ private:
     };
 
     Command read() const {
-#ifdef _WIN32
-        std::FILE* file = _wfopen(path.c_str(), L"rb");
-#else
-        std::FILE* file = std::fopen(path.c_str(), "rb");
-#endif
+        std::FILE* file = Detail::OpenInputCommandFile(path);
         if (file == nullptr) return {};
         std::string contents;
         char chunk[2048];
@@ -196,7 +223,7 @@ private:
                 if (!parseUnsigned(touch.substr(0, comma), coordinates[i])) return {};
                 if (i < 3) touch.remove_prefix(comma + 1);
             }
-            if (coordinates[0] >= 1920 || coordinates[1] >= 943 || coordinates[2] > 127 || coordinates[3] > 1) return {};
+            if (coordinates[0] >= 1920 || coordinates[1] >= 1080 || coordinates[2] > 127 || coordinates[3] > 1) return {};
             input.hasTouch = true;
             input.touchX = static_cast<std::uint16_t>(coordinates[0]);
             input.touchY = static_cast<std::uint16_t>(coordinates[1]);

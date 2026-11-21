@@ -917,8 +917,10 @@ void verifyKeySensitivity() {
     changes("wave LDS memory barriers", [](SampleRequest& sample) { sample.request.target.waveLdsMemoryBarriers = true; });
     changes("device-scope LDS memory barriers", [](SampleRequest& sample) { sample.request.target.deviceScopeLdsMemoryBarriers = true; });
     changes("LDS lock fences", [](SampleRequest& sample) { sample.request.target.ldsLockFences = true; });
+    changes("device-atomic workgroup memory barriers", [](SampleRequest& sample) { sample.request.target.deviceAtomicWorkgroupMemoryBarriers = true; });
     changes("mesh window buffers", [](SampleRequest& sample) { sample.request.target.meshWindowBuffer = true; });
     changes("mesh function inlining", [](SampleRequest& sample) { sample.request.target.meshInlineFunctions = true; });
+    changes("spanned shuffles through workgroup memory", [](SampleRequest& sample) { sample.request.target.spannedShuffleThroughMemory = true; });
     changes("the workgroup size limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSize[2] = 128; });
     changes("the invocation limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupInvocations = 512; });
     changes("the shared memory limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSharedMemoryBytes = 32768; });
@@ -1963,6 +1965,7 @@ std::vector<PlanFixture> planFixtures() {
     place(palette, 0x18u, imageWords(PlanTextureAddress + 0x100u));
     add("pointer image table", 64, {0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0x7e200500u, 0x8f108210u, 0xf4200444u, 0x20000000u, 0x8711ff11u, 0x000000ffu, 0x8f128511u, 0xf40c0900u, 0x24000040u, 0xf09c0f08u, 0x01090000u, 0xe0700000u, 0x80070000u, 0xbf810000u}, srtPointer, {{PlanSrtAddress, palette}, {PlanMaterialAddress, {0u, 1u, 0u, 1u, 0u, 0u, 0u, 0u}}});
 
+    add("descriptor phi deferred sampler", 32, {0xf40c0200u, 0xfa000000u, 0xf4000400u, 0xfa000050u, 0xbf8cc07fu, 0xbf068010u, 0xbf850003u, 0xf4080500u, 0xfa000020u, 0xbf820002u, 0xf4080500u, 0x20000000u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u}, srtPointer, {{PlanSrtAddress, guarded}});
     std::vector<std::uint32_t> nestedSrt(16u, 0u);
     place(nestedSrt, 0u, bufferWords(PlanTableAddress, 16u, 4u));
     place(nestedSrt, 4u, bufferWords(PlanMaterialAddress, 0u, 32u));
@@ -1986,6 +1989,35 @@ std::vector<PlanFixture> planFixtures() {
     nestedCode.insert(nestedCode.begin() + 13u, 0x87118311u);
     nestedCode.insert(nestedCode.begin() + 15u, 0x87148114u);
     add("nested pointer image table", 64u, std::move(nestedCode), srtPointer, {{PlanSrtAddress, nestedSrt}, {PlanTableAddress, parents}, {PlanPointerAddress, nestedBuffers}, {PlanPayloadAddress, nestedImages}, {PlanMaterialAddress, {0u, 0u, 0u, 1u, 1u, 0u, 1u, 1u}}});
+    fixtures.back().groupId = true;
+    std::vector<std::uint32_t> samplerSrt(20u, 0u);
+    std::copy(nestedSrt.begin(), nestedSrt.end(), samplerSrt.begin());
+    place(samplerSrt, 12u, imageWords(PlanTextureAddress));
+    const std::vector<std::uint32_t> pointClamp{0x92u, 0x400000u, 0u, 0u};
+    const std::vector<std::uint32_t> pointWrap{0u, 0x400000u, 1u << 24u, 0u};
+    std::vector<std::uint32_t> nestedSamplers(32u, 0u);
+    place(nestedSamplers, 0u, pointWrap);
+    place(nestedSamplers, 4u, pointClamp);
+    place(nestedSamplers, 16u, pointClamp);
+    place(nestedSamplers, 20u, pointWrap);
+    std::vector<std::uint32_t> samplerCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf40c0900u, 0xfa000030u,
+    0x8f108302u, 0xf4200444u, 0x20000000u, 0xf4200504u, 0x20000004u, 0x8f128411u, 0x8f148414u,
+    0xf4240b02u, 0x24000008u, 0xf4080616u, 0xfa0000a0u, 0xf428080cu, 0x28000000u,
+    0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u, 0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xf09c0f08u,
+    0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,};
+    samplerCode.insert(samplerCode.begin() + 13u, 0x87118311u);
+    samplerCode.insert(samplerCode.begin() + 15u, 0x87148114u);
+    add("nested pointer sampler table", 64u, std::move(samplerCode), srtPointer, {{PlanSrtAddress, samplerSrt}, {PlanTableAddress, parents}, {PlanPointerAddress, nestedBuffers}, {PlanPayloadAddress, nestedSamplers}, {PlanMaterialAddress, {0u, 0u, 0u, 1u, 1u, 0u, 1u, 1u}}});
+    fixtures.back().groupId = true;
+    std::vector<std::uint32_t> pointees(128u, 0u);
+    place(pointees, 8u, pointWrap);
+    place(pointees, 72u, pointClamp);
+    std::vector<std::uint32_t> pointerCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf40c0900u, 0xfa000030u,
+    0x8f108302u, 0xf4200444u, 0x20000000u, 0x8f128411u, 0xf4240b02u, 0x24000008u, 0xf4080816u, 0xfa000020u,
+    0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u, 0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xf09c0f08u,
+    0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,};
+    pointerCode.insert(pointerCode.begin() + 14u, {0xbf068011u, 0xbf840002u, 0xbeac03ffu, 0x000000eau});
+    add("pointer phi sampler table", 64u, std::move(pointerCode), srtPointer, {{PlanSrtAddress, samplerSrt}, {PlanTableAddress, parents}, {PlanPointerAddress, pointees}, {PlanMaterialAddress, {1u, 0u, 0u, 0u, 1u, 0u, 0u, 0u}}});
     fixtures.back().groupId = true;
 
     PlanFixture fragment;
@@ -2414,6 +2446,7 @@ void verifyMalformedPlans() {
     rejects("an image table cycle", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->heapSource = 1u; });
     rejects("an image table parent that is not a buffer", [](IrResourcePlan& plan) { plan.descriptorSources[2].tableColumn = *plan.descriptorSources[1].tableColumn; });
     rejects("an image table selection past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->selection = 4u; });
+    rejects("a pointer-keyed table that is not indirect", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->pointerKeyed = true; });
     auto foreign = handBuiltPlan();
     IrValue stray(IrOpcode::Void, IrType::U32, 99u);
     foreign.srtReads[0].value = &stray;
@@ -2474,6 +2507,12 @@ void verifyPlanRoundTrip() {
     const auto bufferBytes = encodedPlan(bufferTable);
     IrResourcePlan bufferDecoded;
     require(bufferBytes != handBytes && ShaderDiskCache::DecodePlan(bufferBytes, bufferDecoded) && samePlan(bufferTable, bufferDecoded), "the nested buffer column changed in a disk-cache round trip");
+    auto pointerTable = handBuiltPlan();
+    pointerTable.descriptorSources[1].tableColumn->indirect = true;
+    pointerTable.descriptorSources[1].tableColumn->pointerKeyed = true;
+    const auto pointerBytes = encodedPlan(pointerTable);
+    IrResourcePlan pointerDecoded;
+    require(pointerBytes != handBytes && ShaderDiskCache::DecodePlan(pointerBytes, pointerDecoded) && samePlan(pointerTable, pointerDecoded) && pointerDecoded.descriptorSources[1].tableColumn->pointerKeyed, "the pointer-keyed column changed in a disk-cache round trip");
     PlanFixture handFixture;
     handFixture.userData = {static_cast<std::uint32_t>(PlanSrtAddress), static_cast<std::uint32_t>(PlanSrtAddress >> 32u), 0u, 0u};
     std::vector<std::uint32_t> handSrt(16, 0u);
@@ -2922,7 +2961,7 @@ void verifyPlanAcrossProcesses(const char* self) {
     for (std::size_t index = 0; index < outputs.size(); ++index) require(WriteFileAtomically(planOutputPath(index), outputs[index]), "cannot write the first process's output");
     auto refused = fixtures[1];
     refused.codeAddress = 0x200000u;
-    refused.code = {0xf40c0200u, 0xfa000000u, 0xf4000400u, 0xfa000050u, 0xbf8cc07fu, 0xbf068010u, 0xbf850003u, 0xf4080500u, 0xfa000020u, 0xbf820002u, 0xf4080500u, 0x20000000u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
+    refused.code = {0xf40c0200u};
     bool threw = false;
     try {
         static_cast<void>(PrepareShader(refused.Request(true)));

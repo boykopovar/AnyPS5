@@ -1,4 +1,5 @@
 #include "prx/libSceImeDialog/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 
@@ -7,6 +8,7 @@
 #endif
 
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -14,6 +16,8 @@
 #include <cstring>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 
 constexpr int StatusNone = 0;
 constexpr int StatusRunning = 1;
@@ -33,22 +37,30 @@ void Require(bool value, const char* message) {
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     for (const std::uintptr_t address : {std::uintptr_t{1}, ~std::uintptr_t{0xfff}}) {
         const auto* badParam = reinterpret_cast<const Param*>(address);
+        errno = 71;
         Require(sceImeDialogInit(badParam, nullptr) == ErrorInvalidAddress, "an unmapped param returns ErrorInvalidAddress");
+        Require(errno == 71, "unmapped param check preserves errno");
         Require(sceImeDialogGetStatus() == StatusNone, "a rejected param leaves no dialog open");
     }
     const Param valid{};
     for (const std::uintptr_t address : {std::uintptr_t{1}, ~std::uintptr_t{0xfff}}) {
         const auto* badExtended = reinterpret_cast<const ExtendedParam*>(address);
+        errno = 71;
         Require(sceImeDialogInit(&valid, badExtended) == ErrorInvalidAddress, "an unmapped extended param returns ErrorInvalidAddress");
+        Require(errno == 71, "unmapped extended param check preserves errno");
         Require(sceImeDialogGetStatus() == StatusNone, "a rejected extended param leaves no dialog open");
     }
     for (const std::uintptr_t address : {std::uintptr_t{1}, ~std::uintptr_t{0xfff}}) {
         Param unmappedText{};
         unmappedText.max_text_length = 8;
         unmappedText.input_text_buffer = reinterpret_cast<char16_t*>(address);
+        errno = 71;
         Require(sceImeDialogInit(&unmappedText, nullptr) == ErrorInvalidInputTextBuffer, "an unmapped input text buffer returns ErrorInvalidInputTextBuffer");
+        Require(errno == 71, "unmapped input text buffer check preserves errno");
         Require(sceImeDialogGetStatus() == StatusNone, "an unreadable input text buffer leaves no dialog open");
     }
 #ifdef __linux__
@@ -61,7 +73,9 @@ int main() {
         Param param{};
         param.max_text_length = 8;
         param.input_text_buffer = readOnly;
+        errno = 71;
         Require(sceImeDialogInit(&param, nullptr) == 0, "a readable buffer opens the dialog");
+        Require(errno == 71, "opening the dialog preserves errno");
         Require(sceImeDialogGetStatus() == StatusRunning, "the opened dialog reports Running");
         PositionAndForm form{};
         errno = 71;
@@ -89,13 +103,17 @@ int main() {
         Require(readOnlyWidth == 0xdeadbeef, "the failed height write leaves the width untouched");
         ImeHostInput enter{};
         enter.kind = ImeHostInputKind::Enter;
+        errno = 71;
         ImePublishInput_nid_postfix(enter);
+        Require(errno == 71, "Enter preserves errno");
         Require(sceImeDialogGetStatus() == StatusFinished, "Enter finishes the dialog");
         PositionAndForm finishedForm{};
         Require(sceImeDialogGetPanelPositionAndForm(&finishedForm) == 0, "a finished dialog reports its panel position and form");
         Require(finishedForm.width == 1920 && finishedForm.height == 1080, "the finished dialog dimensions match defaults");
         Result result{};
+        errno = 71;
         Require(sceImeDialogGetResult(&result) == 0 && result.endstatus == EndStatusAborted, "an unwritable buffer ends the dialog as aborted");
+        Require(errno == 71, "getting the result preserves errno");
         Require(readOnly[0] == u'\0', "nothing is written to a read-only buffer");
         Require(sceImeDialogTerm() == 0, "the finished dialog closes");
         Require(munmap(page, 4096) == 0, "unmap the buffer page");
@@ -128,5 +146,7 @@ int main() {
     Require(width == 0xdeadbeef && height == 0xdeadbeef, "a failed size query leaves both outputs untouched");
     Require(sceImeDialogGetPanelSize(nullptr, &width, &height) == 0, "valid panel size pointers succeed");
     Require(width == 1920 && height == 1080, "panel size dimensions match defaults");
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

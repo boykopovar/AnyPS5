@@ -114,6 +114,15 @@ class PullRequestTemplateTests(unittest.TestCase):
                 self.assert_findings(body(f"- [x] Depends on: {answer}\n- [x] AI-assisted: yes\n"),
                                      ["fill Depends on with #N or none"])
 
+    def test_depends_on_answer_is_on_its_own_line_or_a_list(self):
+        for answer in ("\t#12", " - #12", "\n- #12", "\n  - #3\n  - #4", "\r\n  * none", "\n\n+ none"):
+            with self.subTest(answer=answer):
+                self.assert_passes(body(f"- [x] Depends on:{answer}\n- [x] AI-assisted: yes\n"))
+        for following in ("\nNone of the tests ran on Windows.\n", "\n#12 is unrelated.\n", "\n\nnone\n", "\n- [x] None of the above\n"):
+            with self.subTest(following=following):
+                self.assert_findings(body(f"- [x] AI-assisted: yes\n- [x] Depends on:{following}"),
+                                     ["fill Depends on with #N or none"])
+
     def test_sections_must_have_content(self):
         checklist = "- [x] Depends on: none\n- [x] AI-assisted: yes\n"
         self.assert_findings(body(checklist, what="<!-- nothing -->"), ["fill the '### What' section"])

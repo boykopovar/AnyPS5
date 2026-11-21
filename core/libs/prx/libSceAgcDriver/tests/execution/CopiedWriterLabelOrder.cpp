@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
@@ -46,11 +47,14 @@ alignas(256) constexpr std::array<std::uint32_t, 6> StoreCode{
 
 class GuestBlock {
 public:
-    GuestBlock() {
+    explicit GuestBlock(bool isolated = false) {
+        const std::size_t blocks = isolated ? 3 : 1;
 #ifdef _WIN32
-        block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, BlockBytes * blocks, MEM_RESERVE, PAGE_NOACCESS));
+        block = base == nullptr ? nullptr : static_cast<std::uint8_t*>(VirtualAlloc(base + BlockBytes * (blocks / 2), BlockBytes, MEM_COMMIT, PAGE_READWRITE));
 #else
-        block = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, BlockBytes));
+        base = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, BlockBytes * blocks));
+        block = base == nullptr ? nullptr : base + BlockBytes * (blocks / 2);
 #endif
         Require(block != nullptr, "copied writer label order: cannot allocate a guest block");
         std::memset(block, 0, BlockBytes);
@@ -60,9 +64,9 @@ public:
     ~GuestBlock() {
         GuestAllocations::Mutation().Remove(block);
 #ifdef _WIN32
-        VirtualFree(block, 0, MEM_RELEASE);
+        VirtualFree(base, 0, MEM_RELEASE);
 #else
-        std::free(block);
+        std::free(base);
 #endif
     }
 
@@ -73,6 +77,7 @@ public:
     std::uint64_t Address() const { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block)); }
 
 private:
+    std::uint8_t* base = nullptr;
     std::uint8_t* block = nullptr;
 };
 
@@ -124,7 +129,7 @@ std::uint64_t SubmitLocked(AgcDriver::VulkanDevice& device) {
     return device.SubmitAndEpoch();
 }
 
-int LabelPass(AgcDriver::VulkanDevice& device, const GuestBlock& records, std::size_t recordOffset, const GuestBlock& labels, std::size_t labelOffset, std::uint64_t stamp, std::uint64_t writeBacks, int expectedReason, const std::string& what) {
+int LabelPass(AgcDriver::VulkanDevice& device, const GuestBlock& records, std::size_t recordOffset, const GuestBlock& labels, std::size_t labelOffset, std::uint64_t stamp, std::uint64_t writeBacks, int expectedReason, const std::string& what, bool wideStore = true) {
     volatile std::uint32_t* stored = records.Word(recordOffset + StoredOffset);
     volatile std::uint32_t* label = labels.Word(labelOffset);
     *stored = CpuValue;
@@ -154,7 +159,7 @@ int LabelPass(AgcDriver::VulkanDevice& device, const GuestBlock& records, std::s
         } else if (reason == 5) {
             Require(Recorder::PendingWriteBackCompletions() == 1 && Recorder::PendingCompletionStores() == 1, what + ": the label behind the write-back drained the device or is not a pending completion store");
             const std::array<std::byte, 16> wide{};
-            Require(device.WriteLabelOnGpu(labels.Address() + labelOffset + 0x100, wide, stamp, 0, false) == 0, what + ": a 16-byte store away from the copied writer and the pending completion store was not recorded on the GPU");
+            Require(!wideStore || device.WriteLabelOnGpu(labels.Address() + labelOffset + 0x100, wide, stamp, 0, false) == 0, what + ": a 16-byte store away from the copied writer and the pending completion store was not recorded on the GPU");
             epoch = device.SubmitAndEpoch();
         } else {
             device.SubmitRecorded(true);
@@ -248,8 +253,13 @@ int main() {
         const GuestBlock copied;
         const GuestBlock direct;
         const GuestBlock labels;
+        const GuestBlock unimportedLabels(true);
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (AgcDriver::Graphics::HostImportFor(device->graphicsContext(), labels.Address(), BlockBytes) == nullptr) {
+            std::puts("skipped, the device imports no host memory");
+            return VulkanTestSkipped;
+        }
         const int copiedPass = LabelPass(*device, copied, CopiedRecordOffset, labels, 0x2000, 1, 1, Drains() ? 2 : 5, "copied writer");
         if (copiedPass == VulkanTestSkipped) {
             std::printf("skipped, the device reports a minStorageBufferOffsetAlignment of %llu, so the dispatch binds its record at +0x%zx in place and nothing is written back; the test needs an alignment above 4\n",
@@ -260,7 +270,9 @@ int main() {
             std::puts("skipped, the device imports no host memory");
             return VulkanTestSkipped;
         }
-        if (!Drains()) StreamOrderPass(*device, copied, direct, labels, 3);
+        Require(!AgcDriver::Graphics::HostImportCovers(device->graphicsContext(), unimportedLabels.Address(), BlockBytes), "copied writer, unimported label: the label block is imported");
+        Require(LabelPass(*device, copied, CopiedRecordOffset, unimportedLabels, 0x2000, 3, 1, Drains() ? 2 : 5, "copied writer, unimported label", false) == 0, "copied writer, unimported label: the pass did not run");
+        if (!Drains()) StreamOrderPass(*device, copied, direct, labels, 4);
         std::puts("copied writer label order tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -196,10 +196,10 @@ struct Cursor {
     NotImplemented_nid_no_patch((std::string(function) + ": BER " + what).c_str());
 }
 
-bool ReadHeader(const unsigned char* start, long available, Element& element) {
+bool ReadHeader(const unsigned char* start, std::int64_t available, Element& element) {
     if (available <= 0) return false;
     const unsigned char* data = start;
-    long remaining = available;
+    std::int64_t remaining = available;
     const bool constructed = *data & 0x20;
     const int tagClass = *data & 0xC0;
     int tag = *data & 0x1F;
@@ -248,7 +248,7 @@ bool ReadHeader(const unsigned char* start, long available, Element& element) {
     return true;
 }
 
-bool ReadTop(const unsigned char* data, long length, int tag, Element& element) {
+bool ReadTop(const unsigned char* data, std::int64_t length, int tag, Element& element) {
     return ReadHeader(data, length, element) && element.tag == tag && element.tagClass == 0;
 }
 
@@ -474,6 +474,24 @@ int AddPkcs1Type2(unsigned char* to, int size, const unsigned char* from, int le
     return 1;
 }
 
+int AddSslv23(unsigned char* to, int size, const unsigned char* from, int length, const char* function) {
+    if (length > size - 11) return 0;
+    if (length < 0) throw std::invalid_argument(std::string(function) + ": negative input length");
+    RequireBuffer(from, length, function, "input");
+    to[0] = 0;
+    to[1] = 2;
+    unsigned char* padding = to + 2;
+    const int random = size - 3 - 8 - length;
+    HostEntropy_nid_no_patch(padding, static_cast<std::size_t>(random));
+    for (int index = 0; index < random; ++index, ++padding)
+        while (!*padding) HostEntropy_nid_no_patch(padding, 1);
+    std::memset(padding, 3, 8);
+    padding += 8;
+    *padding++ = 0;
+    if (length) std::memcpy(padding, from, static_cast<std::size_t>(length));
+    return 1;
+}
+
 int AddOaep(unsigned char* to, int size, const unsigned char* from, int length, const char* function) {
     const int encoded = size - 1;
     if (length > encoded - 2 * Sha1Bytes - 1) return 0;
@@ -620,7 +638,8 @@ int APS5_VABI DefaultPublicEncrypt(int length, const unsigned char* from, unsign
         padded = AddOaep(block.data(), size, from, length, function);
         break;
     case PaddingSslv23:
-        NotImplemented_nid_no_patch("RSA_padding_add_SSLv23");
+        padded = AddSslv23(block.data(), size, from, length, function);
+        break;
     case PaddingNone:
         padded = AddNone(block.data(), size, from, length, function);
         break;
@@ -748,7 +767,10 @@ int VerifyDigestInfo(int type, const unsigned char* digest, unsigned int digestL
     Algorithm algorithm;
     Element hash;
     if (!ReadAlgorithm(fields, algorithm, function) || !ReadPrimitive(fields, 4, hash, function) || fields.length) return 0;
-    if (sequence.end != data + length) return 0;
+    if (sequence.end != data + length) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 104, __FILE__, __LINE__);
+        return 0;
+    }
     if (algorithm.parameter && !algorithm.nullParameter) {
         LibreSslPutError_nid_no_patch(4, 0xfff, 104, __FILE__, __LINE__);
         return 0;
@@ -1224,10 +1246,10 @@ LibreSslRsa* APS5_VABI RSA_new_nid_postfix(void) {
     return rsa;
 }
 
-void APS5_VABI RSA_free_nid_postfix(LibreSslRsa* rsa) {
+void LibreSslRsaFree_nid_no_patch(LibreSslRsa* rsa) {
     if (!rsa) return;
     if (std::atomic_ref<int>(rsa->references).fetch_sub(1) - 1 > 0) return;
-    if (!rsa->meth) throw std::invalid_argument(std::string(__func__) + ": null method");
+    if (!rsa->meth) throw std::invalid_argument("RSA_free_nid_postfix: null method");
     if (rsa->engine) NotImplemented_nid_no_patch("RSA_free: releasing an ENGINE");
     if (rsa->exData) NotImplemented_nid_no_patch("RSA_free: freeing ex_data");
     if (rsa->blinding || rsa->mtBlinding) NotImplemented_nid_no_patch("RSA_free: freeing blinding");
@@ -1235,6 +1257,10 @@ void APS5_VABI RSA_free_nid_postfix(LibreSslRsa* rsa) {
     for (void* number : {rsa->n, rsa->e, rsa->d, rsa->p, rsa->q, rsa->dmp1, rsa->dmq1, rsa->iqmp})
         ClearFreeBignum(static_cast<LibreSslBignum*>(number));
     free_nid_postfix(rsa);
+}
+
+void APS5_VABI RSA_free_nid_postfix(LibreSslRsa* rsa) {
+    LibreSslRsaFree_nid_no_patch(rsa);
 }
 
 int APS5_VABI RSA_public_encrypt_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSslRsa* rsa, int padding) {
@@ -1347,7 +1373,7 @@ int APS5_VABI RSA_verify_nid_postfix(int type, const unsigned char* digest, unsi
     return 0;
 }
 
-LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsigned char** input, long length) {
+LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsigned char** input, std::int64_t length) {
     if (!input) throw std::invalid_argument(std::string(__func__) + ": null input pointer");
     const unsigned char* data = *input;
     if (length <= 0) return nullptr;

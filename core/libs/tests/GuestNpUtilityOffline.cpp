@@ -355,6 +355,28 @@ void CheckServiceChecker2() {
     Require(sceNpServiceChecker2IntCreateRequest(&request) == NotInitialized, "sceNpServiceChecker2IntCreateRequest", "a request was created after finalization");
 }
 
+void CheckTitleMetadataRequests() {
+    constexpr int TitleMetadataNotFound = static_cast<int>(0x8055AA09u);
+    Require(sceNpTitleMetadataIntAbortRequest(1) == TitleMetadataNotFound, "sceNpTitleMetadataIntAbortRequest", "an abort was accepted before initialization");
+    Require(sceNpTitleMetadataIntDeleteRequest(1) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "a delete was accepted before initialization");
+    const std::int32_t req1 = sceNpTitleMetadataIntCreateRequest();
+    Require(req1 == 1, "sceNpTitleMetadataIntCreateRequest", "the first request is not id 1");
+    const std::int32_t req2 = sceNpTitleMetadataIntCreateRequest();
+    Require(req2 == 2, "sceNpTitleMetadataIntCreateRequest", "the second request is not id 2");
+    Require(sceNpTitleMetadataIntAbortRequest(req2 + 100) == TitleMetadataNotFound, "sceNpTitleMetadataIntAbortRequest", "an unknown request was accepted");
+    Require(sceNpTitleMetadataIntAbortRequest(0) == TitleMetadataNotFound, "sceNpTitleMetadataIntAbortRequest", "request id 0 was accepted");
+    Require(sceNpTitleMetadataIntAbortRequest(-1) == TitleMetadataNotFound, "sceNpTitleMetadataIntAbortRequest", "request id -1 was accepted");
+    Require(sceNpTitleMetadataIntDeleteRequest(req2 + 100) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "an unknown request was deleted");
+    Require(sceNpTitleMetadataIntDeleteRequest(0) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "request id 0 was deleted");
+    Require(sceNpTitleMetadataIntDeleteRequest(-1) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "request id -1 was deleted");
+    Require(sceNpTitleMetadataIntAbortRequest(req1) == 0, "sceNpTitleMetadataIntAbortRequest", "aborting request 1 failed");
+    Require(sceNpTitleMetadataIntDeleteRequest(req1) == 0, "sceNpTitleMetadataIntDeleteRequest", "deleting aborted request 1 failed");
+    Require(sceNpTitleMetadataIntDeleteRequest(req1) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "duplicate delete of request 1 was accepted");
+    Require(sceNpTitleMetadataIntDeleteRequest(req2) == 0, "sceNpTitleMetadataIntDeleteRequest", "deleting request 2 failed");
+    Require(sceNpTitleMetadataIntAbortRequest(req2) == TitleMetadataNotFound, "sceNpTitleMetadataIntAbortRequest", "request 2 was found after state reset");
+    Require(sceNpTitleMetadataIntDeleteRequest(req2) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "duplicate delete of request 2 was accepted");
+}
+
 void CheckLookupNet() {
     constexpr int NotInitialized = static_cast<int>(0x80550702u);
     constexpr int InsufficientArgumentNet = static_cast<int>(0x8055070Cu);
@@ -455,6 +477,37 @@ void CheckLookupNetInitVariants() {
     Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 1, "sceNpLookupNetTerm", "the reference count did not keep the service initialized after one variant init");
     Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "the second termination failed");
     Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 0, "sceNpLookupNetTerm", "the service stayed initialized after both terminations");
+}
+
+void CheckLookupNetConcurrency() {
+    std::atomic<int> errors{0};
+    constexpr int ThreadCount = 4;
+    constexpr int Iterations = 2000;
+    std::thread threads[ThreadCount];
+    for (int t = 0; t < ThreadCount; ++t) {
+        threads[t] = std::thread([&] {
+            for (int i = 0; i < Iterations; ++i) {
+                if (sceNpLookupNetInit() != 0) {
+                    errors.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
+                const int ctx = sceNpLookupNetCreateTitleCtx(nullptr, selfNpId);
+                if (ctx <= 0) {
+                    errors.fetch_add(1, std::memory_order_relaxed);
+                } else if (sceNpLookupNetDeleteTitleCtx(ctx) != 0) {
+                    errors.fetch_add(1, std::memory_order_relaxed);
+                }
+                if (sceNpLookupNetTerm() != 0) {
+                    errors.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
+            }
+        });
+    }
+    for (auto& worker : threads) worker.join();
+    Require(errors.load(std::memory_order_relaxed) == 0, "sceNpLookupNetTerm", "concurrent init/term reset a live title context");
+    int initialized = -1;
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 0, "sceNpLookupNetIsInit", "concurrent init/term left the service initialized");
 }
 
 void CheckBandwidthTestInitStart() {
@@ -604,11 +657,13 @@ int main() {
     std::strcpy(reinterpret_cast<char*>(selfNpId), "player_1");
     CheckLookupNet();
     CheckLookupNetInitVariants();
+    CheckLookupNetConcurrency();
     CheckBandwidthTestInitStart();
     CheckBandwidthTestShutdownWithDetailedInfo();
     CheckNpUtilityLifecycles();
     CheckNpUtilityPayloads();
     CheckServiceChecker2();
+    CheckTitleMetadataRequests();
     CheckLookup();
     CheckWordFilter();
     CheckLookupAsync();

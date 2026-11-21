@@ -51,6 +51,7 @@ class Decoder {
 public:
     virtual ~Decoder() = default;
     virtual DecodeResult Decode(const std::uint8_t* data, std::size_t size, std::vector<std::uint8_t>& pcm, std::size_t pcmSize) = 0;
+    virtual std::size_t InputBytes(const std::uint8_t* data, std::size_t size, std::size_t declared) const = 0;
     virtual void Reset() = 0;
 };
 

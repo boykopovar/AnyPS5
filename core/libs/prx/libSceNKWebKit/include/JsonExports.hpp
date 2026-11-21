@@ -7,6 +7,7 @@
 extern "C" {
 
 NKWebKit::JsonAbi::Ref<NKWebKit::JsonAbi::Array> APS5_VABI _ZN3WTF8JSONImpl5Array6createEv();
+NKWebKit::JsonAbi::Ref<NKWebKit::JsonAbi::Object> APS5_VABI _ZN3WTF8JSONImpl6Object6createEv();
 NKWebKit::JsonAbi::Ref<NKWebKit::JsonAbi::Value> APS5_VABI _ZN3WTF8JSONImpl5Value4nullEv();
 NKWebKit::JsonAbi::Ref<NKWebKit::JsonAbi::Value> APS5_VABI _ZN3WTF8JSONImpl5Value6createERKNS_6StringE(const NKWebKit::WtfAbi::String& value);
 NKWebKit::JsonAbi::Ref<NKWebKit::JsonAbi::Value> APS5_VABI _ZN3WTF8JSONImpl5Value6createEb(bool value);
@@ -27,6 +28,7 @@ void APS5_VABI _ZN3WTF8JSONImpl5ValueC2Ev(NKWebKit::JsonAbi::Value* self);
 void APS5_VABI _ZN3WTF8JSONImpl5ValueD0Ev(NKWebKit::JsonAbi::Value* self);
 void APS5_VABI _ZN3WTF8JSONImpl5ValueD1Ev(NKWebKit::JsonAbi::Value* self);
 void APS5_VABI _ZN3WTF8JSONImpl5ValueD2Ev(NKWebKit::JsonAbi::Value* self);
+void APS5_VABI _ZN3WTF8JSONImpl10ObjectBase6removeERKNS_6StringE(NKWebKit::JsonAbi::ObjectBase* self, const NKWebKit::WtfAbi::String& name);
 void APS5_VABI _ZN3WTF8JSONImpl9ArrayBase10pushDoubleEd(NKWebKit::JsonAbi::ArrayBase* self, double value);
 void APS5_VABI _ZN3WTF8JSONImpl9ArrayBase10pushStringERKNS_6StringE(NKWebKit::JsonAbi::ArrayBase* self, const NKWebKit::WtfAbi::String& value);
 void APS5_VABI _ZN3WTF8JSONImpl9ArrayBase11pushBooleanEb(NKWebKit::JsonAbi::ArrayBase* self, bool value);
@@ -37,6 +39,8 @@ void APS5_VABI _ZN3WTF8JSONImpl9ArrayBaseC1Ev(NKWebKit::JsonAbi::ArrayBase* self
 void APS5_VABI _ZN3WTF8JSONImpl9ArrayBaseC2Ev(NKWebKit::JsonAbi::ArrayBase* self);
 void APS5_VABI _ZN3WTF8JSONImpl9ArrayBaseD0Ev(NKWebKit::JsonAbi::ArrayBase* self);
 void APS5_VABI _ZN3WTF8JSONImpl9ArrayBaseD1Ev(NKWebKit::JsonAbi::ArrayBase* self);
+std::size_t APS5_VABI _ZNK3WTF8JSONImpl10ObjectBase10memoryCostEv(const NKWebKit::JsonAbi::ObjectBase* self);
+bool APS5_VABI _ZNK3WTF8JSONImpl10ObjectBase9getStringERKNS_6StringERS2_(const NKWebKit::JsonAbi::ObjectBase* self, const NKWebKit::WtfAbi::String& name, NKWebKit::WtfAbi::String& output);
 std::size_t APS5_VABI _ZNK3WTF8JSONImpl5Value10memoryCostEv(const NKWebKit::JsonAbi::Value* self);
 NKWebKit::JsonAbi::ValueType APS5_VABI _ZNK3WTF8JSONImpl5Value4typeEv(const NKWebKit::JsonAbi::Value* self);
 bool APS5_VABI _ZNK3WTF8JSONImpl5Value6isNullEv(const NKWebKit::JsonAbi::Value* self);

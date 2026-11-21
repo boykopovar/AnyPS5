@@ -75,12 +75,14 @@ struct Shared {
     long counter = 0;
     int trylock = -1;
     int unlock = -1;
+    int destroy = -1;
 };
 
 static void* APS5_VABI Contender(void* arg) {
     auto& shared = *static_cast<Shared*>(arg);
     shared.trylock = pthread_spin_trylock_nid_postfix(&shared.lock);
     shared.unlock = pthread_spin_unlock_nid_postfix(&shared.lock);
+    shared.destroy = pthread_spin_destroy_nid_postfix(&shared.lock);
     return nullptr;
 }
 
@@ -144,6 +146,9 @@ static void SingleThread(int pshared) {
     Require(lock != nullptr);
     Require(pthread_spin_unlock_nid_postfix(&lock) == GUEST_EPERM);
     Require(pthread_spin_lock_nid_postfix(&lock) == 0);
+    errno = 71;
+    Require(pthread_spin_destroy_nid_postfix(&lock) == GUEST_EBUSY);
+    Require(errno == 71 && lock != nullptr);
     Require(pthread_spin_trylock_nid_postfix(&lock) == GUEST_EBUSY);
     bool threw = false;
     try {
@@ -153,9 +158,13 @@ static void SingleThread(int pshared) {
         threw = true;
     }
     Require(threw);
+    Require(pthread_spin_destroy_nid_postfix(&lock) == GUEST_EBUSY);
+    Require(lock != nullptr);
     Require(pthread_spin_unlock_nid_postfix(&lock) == 0);
     Require(pthread_spin_unlock_nid_postfix(&lock) == GUEST_EPERM);
     Require(pthread_spin_trylock_nid_postfix(&lock) == 0);
+    Require(pthread_spin_destroy_nid_postfix(&lock) == GUEST_EBUSY);
+    Require(lock != nullptr);
     Require(pthread_spin_unlock_nid_postfix(&lock) == 0);
     Require(pthread_spin_destroy_nid_postfix(&lock) == 0);
     Require(lock == nullptr);
@@ -171,8 +180,11 @@ static void HeldByAnotherThread() {
     Require(scePthreadJoin(thread, nullptr) == 0);
     Require(shared.trylock == GUEST_EBUSY);
     Require(shared.unlock == GUEST_EPERM);
+    Require(shared.destroy == GUEST_EBUSY);
+    Require(shared.lock != nullptr);
     Require(pthread_spin_unlock_nid_postfix(&shared.lock) == 0);
     Require(pthread_spin_destroy_nid_postfix(&shared.lock) == 0);
+    Require(shared.lock == nullptr);
 }
 
 static void MutualExclusion() {

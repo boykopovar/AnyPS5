@@ -83,6 +83,7 @@ bool APS5_VABI WKPreferencesGetAnimatedImageAsyncDecodingEnabled(const void* pre
 bool APS5_VABI WKPreferencesGetAntialiasedFontDilationEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetApplePayCapabilityDisclosureAllowed(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetApplePayEnabled(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetApplicationChromeModeEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetArtificialPluginInitializationDelayEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetAsynchronousPluginInitializationEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetAsynchronousPluginInitializationEnabledForAllPlugins(const void* preferencesRef);

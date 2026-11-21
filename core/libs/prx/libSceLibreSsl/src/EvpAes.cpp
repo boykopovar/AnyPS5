@@ -1,9 +1,12 @@
 #include "prx/libc/include/Api.hpp"
+#include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <vector>
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
 #include "prx/libSceLibreSsl/include/Evp.hpp"
@@ -32,6 +35,8 @@ constexpr int AesGcmContextBytes = 680;
 constexpr std::size_t AesBlockBytes = 16;
 constexpr std::uint64_t GcmAadLimit = std::uint64_t {1} << 61;
 constexpr std::uint64_t GcmMessageLimit = (std::uint64_t {1} << 36) - 32;
+constexpr std::size_t ChunkBytes = 16384;
+constexpr int MaximumKeyBytes = 32;
 
 struct GcmState {
     AesKey key;
@@ -69,10 +74,52 @@ int TimingSafeCompare(const void* first, const void* second, std::size_t size) {
     return static_cast<int>(difference);
 }
 
-void Copy(void* destination, const void* source, std::size_t size, const char* function) {
+void CopyIn(void* destination, const void* source, std::size_t size, const char* function) {
     if (!size) return;
     if (!destination || !source) throw std::invalid_argument(std::string(function) + ": null buffer");
-    std::memcpy(destination, source, size);
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void CopyOut(void* destination, const void* source, std::size_t size, const char* function) {
+    if (!size) return;
+    if (!destination || !source) throw std::invalid_argument(std::string(function) + ": null buffer");
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+template<typename TVisit> void ReadGuestChunks(const unsigned char* source, std::size_t length, const char* function, TVisit visit) {
+    std::vector<unsigned char> chunk(std::min(length, ChunkBytes));
+    std::size_t offset = 0;
+    do {
+        const std::size_t size = std::min(length - offset, ChunkBytes);
+        CopyIn(chunk.data(), source + offset, size, function);
+        visit(chunk.data(), size, offset);
+        offset += size;
+    } while (offset < length);
+    Wipe(chunk.data(), chunk.size());
+}
+
+template<typename TTransform>
+void TransformGuest(const unsigned char* in, unsigned char* out, std::size_t length, const char* function, TTransform transform) {
+    ReadGuestChunks(in, length, function, [&](unsigned char* chunk, std::size_t size, std::size_t offset) {
+        transform(chunk, size);
+        CopyOut(out + offset, chunk, size, function);
+    });
+}
+
+int SetKey(const unsigned char* key, int keyLength, AesKey& schedule, bool encrypt, const char* function) {
+    unsigned char copy[MaximumKeyBytes];
+    const bool supported = key && (keyLength == 16 || keyLength == 24 || keyLength == MaximumKeyBytes);
+    if (supported) CopyIn(copy, key, static_cast<std::size_t>(keyLength), function);
+    const unsigned char* const source = supported ? copy : key;
+    const int status = encrypt ? AES_set_encrypt_key_nid_postfix(source, keyLength * 8, &schedule) : AES_set_decrypt_key_nid_postfix(source, keyLength * 8, &schedule);
+    Wipe(copy, sizeof(copy));
+    return status;
 }
 
 std::uint64_t LoadBig64(const unsigned char* bytes) {
@@ -165,13 +212,15 @@ int GcmAad(GcmState& state, const unsigned char* aad, std::size_t length) {
     const std::uint64_t total = state.aadLength + length;
     if (total > GcmAadLimit || total < length) return -1;
     if (length && !aad) throw std::invalid_argument("CRYPTO_gcm128_aad: null AAD");
-    state.aadLength = total;
     unsigned position = state.aadRemainder;
-    for (std::size_t index = 0; index < length; ++index) {
-        state.hash[position] ^= aad[index];
-        position = (position + 1) % AesBlockBytes;
-        if (!position) Multiply(state.hash, state.subkey);
-    }
+    ReadGuestChunks(aad, length, "CRYPTO_gcm128_aad", [&](const unsigned char* chunk, std::size_t size, std::size_t) {
+        for (std::size_t index = 0; index < size; ++index) {
+            state.hash[position] ^= chunk[index];
+            position = (position + 1) % AesBlockBytes;
+            if (!position) Multiply(state.hash, state.subkey);
+        }
+    });
+    state.aadLength = total;
     state.aadRemainder = position;
     return 0;
 }
@@ -179,26 +228,29 @@ int GcmAad(GcmState& state, const unsigned char* aad, std::size_t length) {
 int GcmCrypt(GcmState& state, const unsigned char* in, unsigned char* out, std::size_t length, bool encrypt) {
     const std::uint64_t total = state.messageLength + length;
     if (total > GcmMessageLimit || total < length) return -1;
-    if (length && (!in || !out)) throw std::invalid_argument(std::string(encrypt ? "CRYPTO_gcm128_encrypt" : "CRYPTO_gcm128_decrypt") + ": null input or output");
-    state.messageLength = total;
+    const char* const function = encrypt ? "CRYPTO_gcm128_encrypt" : "CRYPTO_gcm128_decrypt";
+    if (length && (!in || !out)) throw std::invalid_argument(std::string(function) + ": null input or output");
     if (state.aadRemainder) {
         Multiply(state.hash, state.subkey);
         state.aadRemainder = 0;
     }
     std::uint32_t counter = LoadBig32(state.counter + 12);
     unsigned position = state.messageRemainder;
-    for (std::size_t index = 0; index < length; ++index) {
-        if (!position) {
-            AES_encrypt_nid_postfix(state.counter, state.keystream, &state.key);
-            StoreBig32(state.counter + 12, ++counter);
+    TransformGuest(in, out, length, function, [&](unsigned char* chunk, std::size_t size) {
+        for (std::size_t index = 0; index < size; ++index) {
+            if (!position) {
+                AES_encrypt_nid_postfix(state.counter, state.keystream, &state.key);
+                StoreBig32(state.counter + 12, ++counter);
+            }
+            const unsigned char input = chunk[index];
+            const unsigned char output = input ^ state.keystream[position];
+            chunk[index] = output;
+            state.hash[position] ^= encrypt ? output : input;
+            position = (position + 1) % AesBlockBytes;
+            if (!position) Multiply(state.hash, state.subkey);
         }
-        const unsigned char input = in[index];
-        const unsigned char output = input ^ state.keystream[position];
-        out[index] = output;
-        state.hash[position] ^= encrypt ? output : input;
-        position = (position + 1) % AesBlockBytes;
-        if (!position) Multiply(state.hash, state.subkey);
-    }
+    });
+    state.messageLength = total;
     state.messageRemainder = position;
     return 0;
 }
@@ -217,7 +269,7 @@ int GcmFinish(GcmState& state, const unsigned char* tag, std::size_t length) {
 
 void GcmTag(GcmState& state, unsigned char* tag, std::size_t length) {
     GcmFinish(state, nullptr, 0);
-    Copy(tag, state.hash, length < AesBlockBytes ? length : AesBlockBytes, "CRYPTO_gcm128_tag");
+    CopyOut(tag, state.hash, length < AesBlockBytes ? length : AesBlockBytes, "CRYPTO_gcm128_tag");
 }
 
 void IncrementInvocation(unsigned char* counter) {
@@ -239,28 +291,35 @@ AesKey& KeyOf(LibreSslEvpCipherCtx* ctx, const char* function) {
 
 int APS5_VABI AesInitKey(LibreSslEvpCipherCtx* ctx, const unsigned char* key, const unsigned char*, int) {
     auto& schedule = KeyOf(ctx, "aes_init_key");
-    return AES_set_encrypt_key_nid_postfix(key, ctx->keyLen * 8, &schedule) < 0 ? 0 : 1;
+    return SetKey(key, ctx->keyLen, schedule, true, "aes_init_key") < 0 ? 0 : 1;
 }
 
 int APS5_VABI AesCfb8Cipher(LibreSslEvpCipherCtx* ctx, unsigned char* out, const unsigned char* in, std::size_t length) {
     const auto& key = KeyOf(ctx, "aes_cfb8_cipher");
     if (length && (!in || !out)) throw std::invalid_argument("aes_cfb8_cipher: null input or output");
-    for (std::size_t index = 0; index < length; ++index) {
-        unsigned char stream[AesBlockBytes];
-        AES_encrypt_nid_postfix(ctx->iv, stream, &key);
-        const unsigned char input = in[index];
-        const unsigned char output = input ^ stream[0];
-        out[index] = output;
-        std::memmove(ctx->iv, ctx->iv + 1, AesBlockBytes - 1);
-        ctx->iv[AesBlockBytes - 1] = ctx->encrypt ? output : input;
-    }
+    TransformGuest(in, out, length, "aes_cfb8_cipher", [&](unsigned char* chunk, std::size_t size) {
+        for (std::size_t index = 0; index < size; ++index) {
+            unsigned char stream[AesBlockBytes];
+            AES_encrypt_nid_postfix(ctx->iv, stream, &key);
+            const unsigned char input = chunk[index];
+            const unsigned char output = input ^ stream[0];
+            chunk[index] = output;
+            std::memmove(ctx->iv, ctx->iv + 1, AesBlockBytes - 1);
+            ctx->iv[AesBlockBytes - 1] = ctx->encrypt ? output : input;
+        }
+    });
     return 1;
 }
 
 int APS5_VABI AesCtrCipher(LibreSslEvpCipherCtx* ctx, unsigned char* out, const unsigned char* in, std::size_t length) {
     const auto& key = KeyOf(ctx, "aes_ctr_cipher");
     auto position = static_cast<unsigned>(ctx->num);
-    AES_ctr128_encrypt_nid_postfix(in, out, length, &key, ctx->iv, ctx->buf, &position);
+    if (length && in && out)
+        TransformGuest(in, out, length, "aes_ctr_cipher", [&](unsigned char* chunk, std::size_t size) {
+            AES_ctr128_encrypt_nid_postfix(chunk, chunk, size, &key, ctx->iv, ctx->buf, &position);
+        });
+    else
+        AES_ctr128_encrypt_nid_postfix(in, out, length, &key, ctx->iv, ctx->buf, &position);
     ctx->num = static_cast<int>(position);
     return 1;
 }
@@ -289,29 +348,30 @@ int APS5_VABI AesGcmControl(LibreSslEvpCipherCtx* ctx, int type, int arg, void* 
     case ControlGcmSetIvLength:
         if (arg <= 0) return 0;
         if (arg > static_cast<int>(sizeof(ctx->iv)) && arg > state.ivLength) {
+            auto* const nextIv = static_cast<unsigned char*>(malloc_nid_postfix(static_cast<std::size_t>(arg)));
+            if (!nextIv) return 0;
             if (state.iv != ctx->iv) free_nid_postfix(state.iv);
-            state.iv = static_cast<unsigned char*>(malloc_nid_postfix(static_cast<std::size_t>(arg)));
-            if (!state.iv) return 0;
+            state.iv = nextIv;
         }
         state.ivLength = arg;
         return 1;
     case ControlGcmSetTag:
         if (arg <= 0 || arg > 16 || ctx->encrypt) return 0;
-        Copy(ctx->buf, bytes, static_cast<std::size_t>(arg), "aes_gcm_ctrl");
+        CopyIn(ctx->buf, bytes, static_cast<std::size_t>(arg), "aes_gcm_ctrl");
         state.tagLength = arg;
         return 1;
     case ControlGcmGetTag:
         if (arg <= 0 || arg > 16 || !ctx->encrypt || state.tagLength < 0) return 0;
-        Copy(bytes, ctx->buf, static_cast<std::size_t>(arg), "aes_gcm_ctrl");
+        CopyOut(bytes, ctx->buf, static_cast<std::size_t>(arg), "aes_gcm_ctrl");
         return 1;
     case ControlGcmSetIvFixed:
         if (arg == -1) {
-            Copy(state.iv, bytes, static_cast<std::size_t>(state.ivLength), "aes_gcm_ctrl");
+            CopyIn(state.iv, bytes, static_cast<std::size_t>(state.ivLength), "aes_gcm_ctrl");
             state.ivGenerate = 1;
             return 1;
         }
         if (arg < 4 || state.ivLength - arg < 8) return 0;
-        Copy(state.iv, bytes, static_cast<std::size_t>(arg), "aes_gcm_ctrl");
+        CopyIn(state.iv, bytes, static_cast<std::size_t>(arg), "aes_gcm_ctrl");
         if (ctx->encrypt) HostEntropy_nid_no_patch(state.iv + arg, static_cast<std::size_t>(state.ivLength - arg));
         state.ivGenerate = 1;
         return 1;
@@ -320,20 +380,20 @@ int APS5_VABI AesGcmControl(LibreSslEvpCipherCtx* ctx, int type, int arg, void* 
         if (state.ivLength < 8) throw std::invalid_argument("aes_gcm_ctrl: generating an IV shorter than 8 bytes");
         GcmSetIv(state, state.iv, static_cast<std::size_t>(state.ivLength));
         if (arg <= 0 || arg > state.ivLength) arg = state.ivLength;
-        Copy(bytes, state.iv + state.ivLength - arg, static_cast<std::size_t>(arg), "aes_gcm_ctrl");
+        CopyOut(bytes, state.iv + state.ivLength - arg, static_cast<std::size_t>(arg), "aes_gcm_ctrl");
         IncrementInvocation(state.iv + state.ivLength - 8);
         state.ivSet = 1;
         return 1;
     case ControlGcmSetIvInvocation:
         if (!state.ivGenerate || !state.keySet || ctx->encrypt) return 0;
         if (arg < 0 || arg > state.ivLength) throw std::invalid_argument("aes_gcm_ctrl: invocation field of " + std::to_string(arg) + " bytes is outside the IV");
-        Copy(state.iv + state.ivLength - arg, bytes, static_cast<std::size_t>(arg), "aes_gcm_ctrl");
+        CopyIn(state.iv + state.ivLength - arg, bytes, static_cast<std::size_t>(arg), "aes_gcm_ctrl");
         GcmSetIv(state, state.iv, static_cast<std::size_t>(state.ivLength));
         state.ivSet = 1;
         return 1;
     case ControlTlsAad: {
         if (arg != TlsAadBytes) return 0;
-        Copy(ctx->buf, bytes, TlsAadBytes, "aes_gcm_ctrl");
+        CopyIn(ctx->buf, bytes, TlsAadBytes, "aes_gcm_ctrl");
         state.tlsAadLength = arg;
         unsigned length = static_cast<unsigned>(ctx->buf[arg - 2]) << 8 | ctx->buf[arg - 1];
         if (length < TlsExplicitIvBytes) return 0;
@@ -367,8 +427,14 @@ int APS5_VABI AesGcmInitKey(LibreSslEvpCipherCtx* ctx, const unsigned char* key,
     auto& state = GcmStateOf(ctx, "aes_gcm_init_key");
     if (!iv && !key) return 1;
     const auto ivLength = static_cast<std::size_t>(state.ivLength);
+    std::vector<unsigned char> ivCopy;
+    if (iv && ivLength) {
+        ivCopy.resize(ivLength);
+        CopyIn(ivCopy.data(), iv, ivLength, "aes_gcm_init_key");
+        iv = ivCopy.data();
+    }
     if (key) {
-        if (AES_set_encrypt_key_nid_postfix(key, ctx->keyLen * 8, &state.key) < 0)
+        if (SetKey(key, ctx->keyLen, state.key, true, "aes_gcm_init_key") < 0)
             throw std::invalid_argument("aes_gcm_init_key: key length of " + std::to_string(ctx->keyLen) + " bytes");
         GcmInit(state);
         if (!iv && state.ivSet) iv = state.iv;
@@ -380,7 +446,7 @@ int APS5_VABI AesGcmInitKey(LibreSslEvpCipherCtx* ctx, const unsigned char* key,
         return 1;
     }
     if (state.keySet) GcmSetIv(state, iv, ivLength);
-    else Copy(state.iv, iv, ivLength, "aes_gcm_init_key");
+    else CopyIn(state.iv, iv, ivLength, "aes_gcm_init_key");
     state.ivSet = 1;
     state.ivGenerate = 0;
     return 1;
@@ -388,26 +454,30 @@ int APS5_VABI AesGcmInitKey(LibreSslEvpCipherCtx* ctx, const unsigned char* key,
 
 int AesGcmTlsCipher(LibreSslEvpCipherCtx* ctx, GcmState& state, unsigned char* out, const unsigned char* in, std::size_t length) {
     if (out != in || length < TlsExplicitIvBytes + TlsTagBytes) return -1;
+    std::vector<unsigned char> record(length);
+    CopyIn(record.data(), in, length, "aes_gcm_cipher");
+    unsigned char* payload = record.data();
     int result = -1;
     const int control = ctx->encrypt ? ControlGcmIvGenerate : ControlGcmSetIvInvocation;
-    if (EVP_CIPHER_CTX_ctrl_nid_postfix(ctx, control, static_cast<int>(TlsExplicitIvBytes), out) > 0 &&
+    if (EVP_CIPHER_CTX_ctrl_nid_postfix(ctx, control, static_cast<int>(TlsExplicitIvBytes), payload) > 0 &&
         !GcmAad(state, ctx->buf, static_cast<std::size_t>(state.tlsAadLength))) {
-        in += TlsExplicitIvBytes;
-        out += TlsExplicitIvBytes;
+        payload += TlsExplicitIvBytes;
         length -= TlsExplicitIvBytes + TlsTagBytes;
         if (ctx->encrypt) {
-            if (!GcmCrypt(state, in, out, length, true)) {
-                GcmTag(state, out + length, TlsTagBytes);
+            if (!GcmCrypt(state, payload, payload, length, true)) {
+                GcmTag(state, payload + length, TlsTagBytes);
                 result = static_cast<int>(length + TlsExplicitIvBytes + TlsTagBytes);
             }
-        } else if (!GcmCrypt(state, in, out, length, false)) {
+        } else if (!GcmCrypt(state, payload, payload, length, false)) {
             GcmTag(state, ctx->buf, TlsTagBytes);
-            if (TimingSafeCompare(ctx->buf, in + length, TlsTagBytes)) Wipe(out, length);
+            if (TimingSafeCompare(ctx->buf, payload + length, TlsTagBytes)) Wipe(payload, length);
             else result = static_cast<int>(length);
         }
     }
     state.ivSet = 0;
     state.tlsAadLength = -1;
+    CopyOut(out, record.data(), record.size(), "aes_gcm_cipher");
+    Wipe(record.data(), record.size());
     return result;
 }
 
@@ -456,11 +526,10 @@ int APS5_VABI AesWrapInitKey(LibreSslEvpCipherCtx* ctx, const unsigned char* key
     if (!key && !iv) return 1;
     auto& schedule = KeyOf(ctx, "aes_wrap_init_key");
     if (key) {
-        const int status = ctx->encrypt ? AES_set_encrypt_key_nid_postfix(key, ctx->keyLen * 8, &schedule) : AES_set_decrypt_key_nid_postfix(key, ctx->keyLen * 8, &schedule);
-        if (status < 0) return 0;
+        if (SetKey(key, ctx->keyLen, schedule, ctx->encrypt != 0, "aes_wrap_init_key") < 0) return 0;
         if (!iv) std::memcpy(ctx->iv, WrapDefaultIv, WrapSemiblockBytes);
     }
-    if (iv) std::memcpy(ctx->iv, iv, WrapSemiblockBytes);
+    if (iv) CopyIn(ctx->iv, iv, WrapSemiblockBytes, "aes_wrap_init_key");
     return 1;
 }
 
@@ -471,42 +540,53 @@ int APS5_VABI AesWrapCipher(LibreSslEvpCipherCtx* ctx, unsigned char* out, const
     if (length % WrapSemiblockBytes || length > static_cast<std::size_t>(INT32_MAX)) return -1;
     if (encrypt ? length < WrapSemiblockBytes : length < 2 * WrapSemiblockBytes) return -1;
     const std::size_t outputLength = encrypt ? length + WrapSemiblockBytes : length - WrapSemiblockBytes;
+    if (outputLength > static_cast<std::size_t>(INT32_MAX)) return -1;
     if (!out) return static_cast<int>(outputLength);
+    const std::size_t plainLength = encrypt ? length : length - WrapSemiblockBytes;
+    if (plainLength < 2 * WrapSemiblockBytes || plainLength > 0x7ffffff0u) return -1;
     const std::size_t semiblocks = length / WrapSemiblockBytes - (encrypt ? 0 : 1);
+    std::vector<unsigned char> input(length);
+    CopyIn(input.data(), in, length, "aes_wrap_cipher");
+    std::vector<unsigned char> output(outputLength);
+    unsigned char* const result = output.data();
     unsigned char a[WrapSemiblockBytes];
     unsigned char block[AesBlockBytes];
+    int status = static_cast<int>(outputLength);
     if (encrypt) {
         std::memcpy(a, ctx->iv, WrapSemiblockBytes);
-        std::memmove(out + WrapSemiblockBytes, in, length);
+        std::memcpy(result + WrapSemiblockBytes, input.data(), length);
         for (int round = 0; round < WrapRounds; ++round) {
             for (std::size_t index = 1; index <= semiblocks; ++index) {
                 std::memcpy(block, a, WrapSemiblockBytes);
-                std::memcpy(block + WrapSemiblockBytes, out + index * WrapSemiblockBytes, WrapSemiblockBytes);
+                std::memcpy(block + WrapSemiblockBytes, result + index * WrapSemiblockBytes, WrapSemiblockBytes);
                 AES_encrypt_nid_postfix(block, block, &schedule);
                 StoreBig64(a, LoadBig64(block) ^ (static_cast<std::uint64_t>(semiblocks) * round + index));
-                std::memcpy(out + index * WrapSemiblockBytes, block + WrapSemiblockBytes, WrapSemiblockBytes);
+                std::memcpy(result + index * WrapSemiblockBytes, block + WrapSemiblockBytes, WrapSemiblockBytes);
             }
         }
-        std::memcpy(out, a, WrapSemiblockBytes);
-        return static_cast<int>(outputLength);
-    }
-    std::memcpy(a, in, WrapSemiblockBytes);
-    std::memmove(out, in + WrapSemiblockBytes, outputLength);
-    for (int round = WrapRounds - 1; round >= 0; --round) {
-        for (std::size_t index = semiblocks; index >= 1; --index) {
-            StoreBig64(a, LoadBig64(a) ^ (static_cast<std::uint64_t>(semiblocks) * round + index));
-            std::memcpy(block, a, WrapSemiblockBytes);
-            std::memcpy(block + WrapSemiblockBytes, out + (index - 1) * WrapSemiblockBytes, WrapSemiblockBytes);
-            AES_decrypt_nid_postfix(block, block, &schedule);
-            std::memcpy(a, block, WrapSemiblockBytes);
-            std::memcpy(out + (index - 1) * WrapSemiblockBytes, block + WrapSemiblockBytes, WrapSemiblockBytes);
+        std::memcpy(result, a, WrapSemiblockBytes);
+    } else {
+        std::memcpy(a, input.data(), WrapSemiblockBytes);
+        std::memcpy(result, input.data() + WrapSemiblockBytes, outputLength);
+        for (int round = WrapRounds - 1; round >= 0; --round) {
+            for (std::size_t index = semiblocks; index >= 1; --index) {
+                StoreBig64(a, LoadBig64(a) ^ (static_cast<std::uint64_t>(semiblocks) * round + index));
+                std::memcpy(block, a, WrapSemiblockBytes);
+                std::memcpy(block + WrapSemiblockBytes, result + (index - 1) * WrapSemiblockBytes, WrapSemiblockBytes);
+                AES_decrypt_nid_postfix(block, block, &schedule);
+                std::memcpy(a, block, WrapSemiblockBytes);
+                std::memcpy(result + (index - 1) * WrapSemiblockBytes, block + WrapSemiblockBytes, WrapSemiblockBytes);
+            }
+        }
+        if (TimingSafeCompare(a, ctx->iv, WrapSemiblockBytes)) {
+            Wipe(result, outputLength);
+            status = -1;
         }
     }
-    if (TimingSafeCompare(a, ctx->iv, WrapSemiblockBytes)) {
-        Wipe(out, outputLength);
-        return -1;
-    }
-    return static_cast<int>(outputLength);
+    CopyOut(out, result, outputLength, "aes_wrap_cipher");
+    Wipe(input.data(), input.size());
+    Wipe(result, outputLength);
+    return status;
 }
 
 constexpr LibreSslEvpCipher AesWrap(int nid, int keyLength) {
@@ -596,5 +676,4 @@ const LibreSslEvpCipher* APS5_VABI EVP_aes_192_wrap_nid_postfix(void) {
 const LibreSslEvpCipher* APS5_VABI EVP_aes_256_wrap_nid_postfix(void) {
     return &Aes256Wrap;
 }
-
 }
