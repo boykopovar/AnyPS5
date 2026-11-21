@@ -12,7 +12,7 @@ Yalnızca relinker'dan oluşan derleme macOS'ta da çalışır, Apple silicon da
 
 Projede, çalıştırılabilir dosyayı hedef sistemin kendi formatına dönüştüren bir [relinker](../../core/relinker) ve [sistem prx kütüphanelerinin](../../core/libs/prx) dinamik bağlamaya uygun implementasyonları bulunur. Emülasyon ya da ayrı bir çalışma zamanı süreci kullanılmaz.
 
-[**Discord**](https://discord.gg/x9naWVzC6A), [Kullanım](USAGE.md), [Derleme talimatları](../dev/BUILD.md), [Mimari](../dev/ARCHITECTURE.md), [Projenin teknik borcu](../dev/TechnicalDebt.md), [kod stili kuralları](../dev/CONVENTIONS.md), [katkıda bulunma](../../CONTRIBUTING.md)
+[**Discord**](https://discord.gg/x9naWVzC6A), [Kullanım](USAGE.tr.md), [Derleme talimatları](../dev/BUILD.md), [Mimari](../dev/ARCHITECTURE.md), [Projenin teknik borcu](../dev/TechnicalDebt.md), [kod stili kuralları](../dev/CONVENTIONS.md), [katkıda bulunma](../../CONTRIBUTING.tr.md)
 
 ## Durum
 
@@ -34,7 +34,7 @@ Oyunların tek tek durumu ve test raporları [Game bring-up](https://github.com/
 
 ## Kontrol eşleme
 
-SDL eşlemesi bulunan oyun kontrolcüleri, analog çubuklar ve tetik tuşları dahil, desteklenir. Klavye ve fare kontrolleri `anyps5-input.ini` dosyasıyla yapılandırılabilir. Desteklenen cihazlar ve yapılandırma formatı için [kontrol eşleme](INPUT_MAPPING.md) sayfasına bakın.
+SDL eşlemesi bulunan oyun kontrolcüleri, analog çubuklar ve tetik tuşları dahil, desteklenir. Klavye ve fare kontrolleri `anyps5-input.ini` dosyasıyla yapılandırılabilir. Desteklenen cihazlar ve yapılandırma formatı için [kontrol eşleme](INPUT_MAPPING.tr.md) sayfasına bakın.
 
 ## Yasal Uyarı
 
