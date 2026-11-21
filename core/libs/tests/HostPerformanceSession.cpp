@@ -15,13 +15,14 @@ void Require(bool condition, const std::string& message) {
 
 class FakeBackend final : public IBackend {
 public:
+    const char* BackendName = "fake";
     BeginResult Next{Outcome::Started, {}};
     bool ThrowOnBegin = false;
     bool ThrowOnEnd = false;
     int Begins = 0;
     int Ends = 0;
 
-    const char* Name() const override { return "fake"; }
+    const char* Name() const override { return BackendName; }
 
     BeginResult Begin() override {
         ++Begins;
@@ -144,6 +145,97 @@ void ConcurrentStartsReachTheBackendOnce() {
     Require(harness.Backend.Begins == 1 && harness.Backend.Ends == 1, "concurrent start and stop must reach the backend once each");
 }
 
+void ThrowingLoggerCommitsStateBeforeThrowing() {
+    struct Case {
+        Mode SessionMode;
+        BeginResult Result;
+        State Expected;
+        int ExpectedEnds;
+        const char* Label;
+    };
+    const Case cases[] = {
+        {Mode::Auto, {Outcome::Started, {}}, State::Active, 1, "started"},
+        {Mode::On, {Outcome::Unavailable, "missing"}, State::Unavailable, 0, "unavailable"},
+        {Mode::Auto, {Outcome::Refused, "denied"}, State::Refused, 0, "refused"},
+    };
+    for (const auto& entry : cases) {
+        FakeBackend backend;
+        backend.Next = entry.Result;
+        Session session(
+            entry.SessionMode,
+            backend,
+            [](const std::string&) { throw std::runtime_error("logger failed"); });
+        bool threw = false;
+        try {
+            static_cast<void>(session.Start());
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw, std::string(entry.Label) + " throwing logger must propagate out of start");
+        Require(session.Current() == entry.Expected, std::string(entry.Label) + " state must be committed before logging");
+        Require(backend.Begins == 1, std::string(entry.Label) + " must call begin once");
+        Require(session.Start() == entry.Expected, std::string(entry.Label) + " repeat start must observe committed state");
+        Require(backend.Begins == 1, std::string(entry.Label) + " repeat start must not re-invoke begin");
+        session.Stop();
+        Require(backend.Ends == entry.ExpectedEnds, std::string(entry.Label) + " stop must match committed state");
+        if (entry.Expected == State::Active) {
+            Require(session.Current() == State::Ended, "active session must end after stop");
+        }
+    }
+}
+
+void EmptyLoggerSucceedsInStartAndStop() {
+    FakeBackend startedBackend;
+    startedBackend.ThrowOnEnd = true;
+    Session startedSession(Mode::On, startedBackend, Session::Log{});
+    Require(startedSession.Start() == State::Active, "empty logger must allow active start");
+    Require(startedSession.Current() == State::Active, "empty logger must keep active state");
+    startedSession.Stop();
+    Require(startedBackend.Ends == 1, "empty logger stop must release backend");
+    Require(startedSession.Current() == State::Ended, "empty logger stop must end active session");
+
+    FakeBackend unavailableBackend;
+    unavailableBackend.Next = {Outcome::Unavailable, "missing"};
+    Session unavailableSession(Mode::On, unavailableBackend, Session::Log{});
+    Require(unavailableSession.Start() == State::Unavailable, "empty logger must allow unavailable start");
+
+    FakeBackend refusedBackend;
+    refusedBackend.Next = {Outcome::Refused, "denied"};
+    Session refusedSession(Mode::Auto, refusedBackend, Session::Log{});
+    Require(refusedSession.Start() == State::Refused, "empty logger must allow refused start");
+}
+
+void NullBackendNameDoesNotCrash() {
+    Harness harness;
+    harness.Backend.BackendName = nullptr;
+    harness.Backend.ThrowOnEnd = true;
+    auto session = harness.Make(Mode::Auto);
+    Require(session.Start() == State::Active, "null backend name must still start");
+    session.Stop();
+    Require(session.Current() == State::Ended, "null backend name must still end");
+    Require(harness.Lines.size() == 2, "null backend name must log start and release failure");
+    Require(harness.Lines[0] == "host-performance: requested", "null backend name must fall back on start");
+    Require(harness.Lines[1] == "host-performance: release failed (end exploded)", "null backend name must fall back on stop");
+}
+
+void ThrowingLoggerDoesNotEscapeStop() {
+    FakeBackend backend;
+    backend.ThrowOnEnd = true;
+    int logCalls = 0;
+    Session session(
+        Mode::Auto,
+        backend,
+        [&logCalls](const std::string&) {
+            ++logCalls;
+            if (logCalls >= 2) throw std::runtime_error("stop logger failed");
+        });
+    Require(session.Start() == State::Active, "session must start before stop logger test");
+    session.Stop();
+    Require(backend.Ends == 1, "stop must release backend once");
+    Require(logCalls == 2, "stop must attempt failure log");
+    Require(session.Current() == State::Ended, "stop must leave session ended when logger throws");
+}
+
 }
 
 int main() {
@@ -155,6 +247,10 @@ int main() {
         RefusalIsLoggedOnceInBothModes();
         ThrowingBackendsAreContained();
         ConcurrentStartsReachTheBackendOnce();
+        ThrowingLoggerCommitsStateBeforeThrowing();
+        EmptyLoggerSucceedsInStartAndStop();
+        NullBackendNameDoesNotCrash();
+        ThrowingLoggerDoesNotEscapeStop();
     } catch (const std::exception& error) {
         std::cerr << "host performance session: " << error.what() << "\n";
         return 1;

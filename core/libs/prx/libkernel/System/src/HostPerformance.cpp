@@ -2,9 +2,29 @@
 #include <cstring>
 #include <exception>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace HostPerformance {
+
+namespace {
+
+std::string SafeName(const IBackend& backend) {
+    const char* rawName = backend.Name();
+    return rawName != nullptr ? std::string(rawName) : std::string("host-performance");
+}
+
+void EmitLogQuietly(const Log& log, const IBackend& backend, const char* detail) {
+    if (!log) return;
+    try {
+        std::string message = SafeName(backend) + ": release failed";
+        if (detail != nullptr) message += std::string(" (") + detail + ")";
+        log(message);
+    } catch (...) {
+    }
+}
+
+}
 
 Mode ParseMode(const char* text) {
     if (text == nullptr || *text == '\0' || std::strcmp(text, "off") == 0) return Mode::Off;
@@ -27,17 +47,20 @@ State Session::Start() {
     } catch (...) {
         begun = {Outcome::Refused, "unknown failure"};
     }
-    const std::string name = backend.Name();
+    const std::string name = SafeName(backend);
     switch (begun.Result) {
     case Outcome::Started:
-        log(name + ": requested");
-        return state = State::Active;
+        state = State::Active;
+        if (log) log(name + ": requested");
+        return state;
     case Outcome::Unavailable:
-        if (mode == Mode::On) log(name + ": unavailable, continuing without it (" + begun.Detail + ")");
-        return state = State::Unavailable;
+        state = State::Unavailable;
+        if (mode == Mode::On && log) log(name + ": unavailable, continuing without it (" + begun.Detail + ")");
+        return state;
     case Outcome::Refused:
-        log(name + ": request refused, continuing without it (" + begun.Detail + ")");
-        return state = State::Refused;
+        state = State::Refused;
+        if (log) log(name + ": request refused, continuing without it (" + begun.Detail + ")");
+        return state;
     }
     return state;
 }
@@ -49,9 +72,9 @@ void Session::Stop() {
     try {
         backend.End();
     } catch (const std::exception& error) {
-        log(std::string(backend.Name()) + ": release failed (" + error.what() + ")");
+        EmitLogQuietly(log, backend, error.what());
     } catch (...) {
-        log(std::string(backend.Name()) + ": release failed");
+        EmitLogQuietly(log, backend, nullptr);
     }
 }
 
