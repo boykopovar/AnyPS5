@@ -44,6 +44,7 @@ struct ShaderStages {
     std::uint32_t hullWaveSize = 64;
     std::optional<ShaderRecompiler::MeshConfiguration> tessellationGeometry;
     bool legacyVertex = false;
+    std::uint32_t instanceStepRate = 1;
 };
 
 inline constexpr std::uint16_t UnclampedBlendMask = 0xffffu;
@@ -245,6 +246,7 @@ VkLogicOp LogicOpFromRop(std::uint8_t rop);
 
 ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup = false);
 void ApplyPointSize(const State& state, ShaderRecompiler::ShaderVertexStageInfo& vertex);
+void ApplyInstanceStepRate(const State& state, ShaderRecompiler::ShaderVertexStageInfo& vertex);
 State DecodeState(const QueueState& queue, bool vertexWorkgroup = false);
 void ApplyDepthRemap(const Context& context, State& state);
 void ApplyViewportIndex(const Context& context, State& state);
