@@ -46,7 +46,7 @@ public:
             since = now;
             return std::nullopt;
         }
-        if (now - since < kHold) return std::nullopt;
+        if (now < since || since > Clock::time_point::max() - kHold || now < since + kHold) return std::nullopt;
         committed = bound;
         waiting = false;
         return committed;
