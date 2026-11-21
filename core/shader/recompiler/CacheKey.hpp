@@ -110,6 +110,8 @@ private:
     static void appendFallbacks(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
         append(key, request.context.linkedCallFallbacks.size());
         for (const auto programCounter : request.context.linkedCallFallbacks) append(key, programCounter);
+        append(key, request.context.splitState.size());
+        for (const auto word : request.context.splitState) append(key, word);
     }
 
     static void appendMesh(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
@@ -235,6 +237,7 @@ private:
         append(key, value.stencilOperationValueExport);
         append(key, value.ditheredAlphaToCoverage);
         append(key, value.ditheredAlphaSamples);
+        append(key, static_cast<std::uint8_t>(value.singleSampleDither));
         append(key, value.quadPixelMask);
         append(key, value.quadSampleMask);
         append(key, value.iteratesSamples);
@@ -393,6 +396,7 @@ private:
         append(key, value.float16NarrowNans);
         append(key, value.float16HostNans);
         append(key, value.meshInlineFunctions);
+        append(key, value.spannedShuffleThroughMemory);
     }
 };
 
