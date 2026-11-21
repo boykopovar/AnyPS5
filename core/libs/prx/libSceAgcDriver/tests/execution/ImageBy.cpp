@@ -21,10 +21,10 @@ using AgcDriver::Graphics::Require;
 
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Width = 61;
-constexpr std::uint32_t Height = 3;
+constexpr std::uint32_t Height = 33;
 constexpr std::uint32_t Levels = 2;
 constexpr std::size_t Bytes = 16384;
-constexpr std::uint32_t Sentinel = 0xcafe0000u;
+std::uint32_t FillValue(std::uint32_t index) { return (index & 1u) != 0u ? 0x20u + index : 0x60u + index; }
 constexpr std::uint32_t R8UInt = 5;
 constexpr std::uint32_t R16UInt = 11;
 constexpr std::uint32_t Rg8UInt = 18;
@@ -43,7 +43,7 @@ std::vector<std::uint32_t> Code(std::uint32_t opcode, std::uint32_t dmask) {
     std::vector<std::uint32_t> code{0x34060084u, 0xe0381000u, 0x80031e03u, 0xbf8c3f70u};
     for (std::uint32_t index = 0; index < 4u; ++index) {
         code.push_back(0x7e0002ffu | ((10u + index) << 17u));
-        code.push_back(Sentinel + index);
+        code.push_back(FillValue(index));
     }
     code.push_back(0xf0000008u | (opcode << 18u) | (dmask << 8u));
     code.push_back(0x00010a1eu);
@@ -70,6 +70,10 @@ std::uint32_t TexelValue(std::uint32_t level, std::uint32_t x, std::uint32_t y, 
     return bytes == 1u ? value & 0xffu : value & 0xffffu;
 }
 
+std::uint64_t TexelOffset(const AgcDriver::Graphics::TileMipLayout& mip, const Format& format, std::uint32_t x, std::uint32_t y, std::uint32_t component) {
+    return mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes + (x * format.components + component) * format.bytes;
+}
+
 void FillTexels(const Format& format) {
     Texels.fill(0xeeu);
     const auto descriptor = Descriptor(format.id, 0xfacu);
@@ -83,7 +87,7 @@ void FillTexels(const Format& format) {
             for (std::uint32_t x = 0; x < width; ++x) {
                 for (std::uint32_t component = 0; component < format.components; ++component) {
                     const auto value = TexelValue(level, x, y, component, format.bytes);
-                    const auto offset = mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes + (x * format.components + component) * format.bytes;
+                    const auto offset = TexelOffset(mip, format, x, y, component);
                     Require(offset + format.bytes <= Texels.size(), "image BY texture size");
                     std::memcpy(Texels.data() + offset, &value, format.bytes);
                 }
@@ -92,14 +96,24 @@ void FillTexels(const Format& format) {
     }
 }
 
+constexpr std::array<std::uint32_t, 16> Xs{0u, 1u, 2u, 3u, 5u, 6u, 7u, Width - 4u, Width - 3u, Width - 2u, Width - 1u, Width, 29u, 30u, 0xffffffffu, 0x80000000u};
+constexpr std::array<std::uint32_t, 3> Mips{0u, 1u, Levels};
+
 void FillInput() {
-    constexpr std::array<std::uint32_t, 16> xs{0u, 1u, 2u, 3u, 5u, 6u, 7u, Width - 4u, Width - 3u, Width - 2u, Width - 1u, Width, 29u, 30u, 0xffffffffu, 0x80000000u};
     constexpr std::array<std::uint32_t, 5> ys{0u, 1u, 2u, Height, 0xffffffffu};
-    constexpr std::array<std::uint32_t, 3> mips{0u, 1u, Levels};
     for (std::uint32_t thread = 0; thread < Threads; ++thread) {
-        Input[thread * 4u + 0u] = xs[thread % xs.size()];
+        Input[thread * 4u + 0u] = Xs[thread % Xs.size()];
         Input[thread * 4u + 1u] = ys[(thread * 3u) % ys.size()];
-        Input[thread * 4u + 2u] = mips[(thread / 2u) % mips.size()];
+        Input[thread * 4u + 2u] = Mips[(thread / 2u) % Mips.size()];
+        Input[thread * 4u + 3u] = 0u;
+    }
+}
+
+void FillStoreInput() {
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        Input[thread * 4u + 0u] = Xs[thread % Xs.size()];
+        Input[thread * 4u + 1u] = thread;
+        Input[thread * 4u + 2u] = Mips[(thread / 2u) % Mips.size()];
         Input[thread * 4u + 3u] = 0u;
     }
 }
@@ -144,13 +158,69 @@ void Check(AgcDriver::VulkanDevice& device, std::uint32_t opcode, const Format& 
         const bool inside = level < Levels && x < width && width - x >= elements && y < height;
         const auto first = x & ~(elements - 1u);
         for (std::uint32_t index = 0; index < 4u; ++index) {
-            auto expected = Sentinel + index;
+            auto expected = FillValue(index);
             if (index < dwords) expected = inside ? TexelValue(level, first + index / format.components, y, index % format.components, format.bytes) : 0u;
             const auto actual = Output[thread * 4u + index];
             Require(actual == expected, name + ": thread " + std::to_string(thread) + " (x " + std::to_string(x) + ", y " + std::to_string(y) + ", mip " + std::to_string(level) + ") v" + std::to_string(10u + index) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected));
         }
     }
     Require(Texels == initial, name + ": the load changed the texture");
+}
+
+void CheckStore(AgcDriver::VulkanDevice& device, std::uint32_t opcode, const Format& format, std::uint32_t dmask) {
+    const auto elements = (opcode & 1u) != 0u ? 4u : 2u;
+    const bool mip = (opcode & 8u) != 0u;
+    const auto name = "image BY store opcode " + std::to_string(opcode) + " format " + std::to_string(format.id) + " dmask " + std::to_string(dmask);
+    FillTexels(format);
+    FillStoreInput();
+    auto expected = Texels;
+    const auto surface = AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(Descriptor(format.id, 0xfacu)));
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        const auto x = Input[thread * 4u + 0u];
+        const auto y = Input[thread * 4u + 1u];
+        const auto level = mip ? Input[thread * 4u + 2u] : 0u;
+        const auto width = level < Levels ? std::max(Width >> level, 1u) : 0u;
+        const auto height = level < Levels ? std::max(Height >> level, 1u) : 0u;
+        if (!(level < Levels && x < width && width - x >= elements && y < height)) continue;
+        const auto first = x & ~(elements - 1u);
+        for (std::uint32_t element = x - first; element < elements; ++element) {
+            for (std::uint32_t component = 0; component < format.components; ++component) {
+                const auto lane = element * format.components + component;
+                const auto value = std::min(FillValue(lane), format.bytes == 1u ? 0xffu : 0xffffu);
+                std::memcpy(expected.data() + TexelOffset(surface.mips[level], format, first + element, y, component), &value, format.bytes);
+            }
+        }
+    }
+    Output.fill(0xdeadbeefu);
+    Run(device, opcode, format.id, dmask);
+    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(Texels.data()), Texels.size(), nullptr, "test");
+    device.WaitIdle();
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        for (std::uint32_t index = 0; index < 4u; ++index) {
+            Require(Output[thread * 4u + index] == FillValue(index), name + ": the store changed the source registers");
+        }
+    }
+    std::uint32_t differences = 0;
+    for (std::uint32_t level = 0; level < Levels; ++level) {
+        const auto& mip = surface.mips[level];
+        const auto width = std::max(Width >> level, 1u);
+        const auto height = std::max(Height >> level, 1u);
+        for (std::uint32_t y = 0; y < height; ++y) {
+            for (std::uint32_t x = 0; x < width; ++x) {
+                for (std::uint32_t component = 0; component < format.components; ++component) {
+                    const auto offset = TexelOffset(mip, format, x, y, component);
+                    for (std::uint32_t byte = 0; byte < format.bytes; ++byte) {
+                        if (Texels[offset + byte] != expected[offset + byte]) {
+                            ++differences;
+                            if (differences <= 40u) std::cerr << name << ": level " << level << " x " << x << " y " << y << " component " << component << " byte " << byte << " got " << static_cast<std::uint32_t>(Texels[offset + byte]) << ", expected " << static_cast<std::uint32_t>(expected[offset + byte]) << "\n";
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Require(differences == 0u, name + ": stored texels mismatch (" + std::to_string(differences) + " differences)");
+    Require(Texels == expected, name + ": the store changed memory outside the texel surface");
 }
 
 void Refused(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_t format, std::uint32_t dmask, std::uint32_t swizzle, const char* reason) {
@@ -182,7 +252,17 @@ int main() {
         Refused(*device, 0x43u, R16UInt, 0xfu, 0xfacu, layout);
         Refused(*device, 0x43u, Rg8UInt, 0xfu, 0xfacu, layout);
         Refused(*device, 0x42u, R16UInt, 0x3u, 0xf2eu, layout);
-        for (const auto opcode : {0x52u, 0x53u, 0x5au, 0x5bu}) Refused(*device, opcode, R8UInt, 0xfu, 0xfacu, "stores are not implemented");
+        for (const auto opcode : {0x52u, 0x5au}) {
+            CheckStore(*device, opcode, r8, 0x3u);
+            CheckStore(*device, opcode, r16, 0x3u);
+            CheckStore(*device, opcode, rg8, 0xfu);
+        }
+        for (const auto opcode : {0x53u, 0x5bu}) CheckStore(*device, opcode, r8, 0xfu);
+        Refused(*device, 0x52u, R32UInt, 0x3u, 0xfacu, layout);
+        Refused(*device, 0x52u, R8UInt, 0xfu, 0xfacu, layout);
+        Refused(*device, 0x53u, R16UInt, 0xfu, 0xfacu, layout);
+        Refused(*device, 0x53u, Rg8UInt, 0xfu, 0xfacu, layout);
+        Refused(*device, 0x52u, R16UInt, 0x3u, 0xf2eu, layout);
         GuestAllocations::Mutation().Remove(Texels.data());
         std::cout << "image BY2/BY4 execution tests passed\n";
         return 0;

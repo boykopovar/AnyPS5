@@ -141,8 +141,9 @@ bool TranslationContext::imageGetLod(const RdnaInstruction& inst) {
 bool TranslationContext::imageBy(const RdnaInstruction& inst) {
     const auto id = inst.imageOpcodeId;
     const bool packed = id >= 0x70u;
-    if (packed ? id >= 0x76u : (id & 0x10u) != 0u) {
-        throw std::runtime_error(packed ? "MIMG PCK2/PCK4 stores are not implemented" : "MIMG BY2/BY4 stores are not implemented");
+    const bool store = packed ? id >= 0x76u : (id & 0x10u) != 0u;
+    if (packed && store) {
+        throw std::runtime_error("MIMG PCK2/PCK4 stores are not implemented");
     }
     MemoryInfo memory = imageMemoryInfoFromInstruction(inst);
     memory.imageHasMip = packed ? id == 0x73u || id == 0x74u : (id & 8u) != 0u;
@@ -151,6 +152,11 @@ bool TranslationContext::imageBy(const RdnaInstruction& inst) {
     IrValue* resource = getImageResource(memory);
     IrValue* address = makeImageAddress(inst, inst.source0);
     IrValue& exec = ir.GetExec();
+    if (store) {
+        IrValue* data = constructU32x4(inst.destination, memory.dataDwords);
+        (void)ir.Emit(IrOpcode::ImageWrite, IrOpcodeType(IrOpcode::ImageWrite), {resource, address, data, &exec}, addMemoryInfo(memory, inst.programCounter));
+        return true;
+    }
     IrValue& result = ir.Emit(IrOpcode::ImageRead, IrOpcodeType(IrOpcode::ImageRead), {resource, address, &exec}, addMemoryInfo(memory, inst.programCounter));
     writeImageComponents(inst.destination, &result, memory, 4u);
     return true;
