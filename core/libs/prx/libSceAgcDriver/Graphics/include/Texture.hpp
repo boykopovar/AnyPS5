@@ -539,6 +539,7 @@ public:
     // The cached, live image whose surface is exactly [address, address + bytes), if any (the newest
     // of several: see ClassifyFill).
     static std::shared_ptr<StorageTexture> FindLive(std::uint64_t address, std::uint64_t bytes);
+    static std::shared_ptr<StorageTexture> FindLiveNewest(const StorageTexture& shape);
     // Whether the two surfaces differ in nothing but their address (and DCC metadata).
     bool SameSurfaceShape(const StorageTexture& other) const;
     bool ImageCoversGuestBytes() const;
