@@ -39,12 +39,12 @@ public:
         if (!serial.empty()) {
             for (std::size_t slot = 0; slot < configured.size(); ++slot) {
                 if (configured[slot] != serial) continue;
-                return occupied[slot] || AlreadyConnected(serial) ? -1 : static_cast<int>(slot);
+                return occupied[slot] || !connected[slot].empty() || AlreadyConnected(serial) ? -1 : static_cast<int>(slot);
             }
             if (AlreadyConnected(serial)) return -1;
         }
         for (std::size_t slot = 0; slot < configured.size(); ++slot) {
-            if (!occupied[slot] && configured[slot].empty()) return static_cast<int>(slot);
+            if (!occupied[slot] && connected[slot].empty() && configured[slot].empty()) return static_cast<int>(slot);
         }
         return -1;
     }

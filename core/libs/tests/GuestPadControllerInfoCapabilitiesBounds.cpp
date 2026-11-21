@@ -1,4 +1,5 @@
 #include "SceTypes.hpp"
+#include "prx/libScePad/include/ControllerAssignment.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include <array>
@@ -308,6 +309,27 @@ int main() {
     Require(scePadIsLightBarBaseBrightnessControllable(standard) == 1);
     Require(scePadGetExtControllerInformation(standard, extBuf.data()) == errorNotPermitted);
     Require(scePadGetBluetoothAddress(standard, &baddr) == errorInvalidHandle);
+
+    Pad::ControllerAssignment assignment;
+    const std::array<bool, Pad::ControllerAssignmentSlots> noneOccupied{};
+    Require(assignment.SelectSlot("SN-A", noneOccupied) == 0);
+    assignment.Connect(0, "SN-A");
+    Require(assignment.SelectSlot("SN-B", noneOccupied) == 1);
+    assignment.Connect(1, "SN-B");
+    Require(assignment.SelectSlot("SN-C", noneOccupied) == 2);
+    assignment.Connect(2, "SN-C");
+    Require(assignment.SelectSlot("SN-D", noneOccupied) == 3);
+    assignment.Connect(3, "SN-D");
+    Require(assignment.SelectSlot("SN-E", noneOccupied) == -1);
+    assignment.Disconnect(0);
+    Require(assignment.SelectSlot("SN-E", noneOccupied) == 0);
+
+    Pad::ControllerAssignment configuredAssignment(Pad::ControllerSerials{"SN-CFG", "", "", ""});
+    configuredAssignment.Connect(0, "SN-OTHER");
+    Require(configuredAssignment.SelectSlot("SN-CFG", noneOccupied) == -1);
+    Require(configuredAssignment.SelectSlot("SN-NEW", noneOccupied) == 1);
+    configuredAssignment.Disconnect(0);
+    Require(configuredAssignment.SelectSlot("SN-CFG", noneOccupied) == 0);
 
     return 0;
 }
