@@ -636,7 +636,7 @@ class IntegerFloat64 {
 public:
     explicit IntegerFloat64(SpirvEmitterState& state) : state(state), u64(TypeScalarU64(state)), u32(TypeU32(state)), boolean(TypeBool(state)) {}
 
-    std::uint32_t Add(std::uint32_t lhsBits, std::uint32_t rhsBits) const {
+    std::uint32_t Add(std::uint32_t lhsBits, std::uint32_t rhsBits, std::uint32_t rounding = 0u) const {
         const auto lhs = scalar(lhsBits);
         const auto rhs = scalar(rhsBits);
         const auto lhsMagnitude = withConstant(spv::OpBitwiseAnd, lhs, MagnitudeMask);
@@ -662,13 +662,13 @@ public:
         const auto significandBits = pick(subtract, op(spv::OpShiftLeftLogical, difference, shift), sumSignificand);
         const auto exponent = pick(subtract, op(spv::OpISub, largeExponent, shift), sumExponent);
         const auto cancelled = logical(spv::OpLogicalAnd, subtract, testConstant(spv::OpIEqual, difference, 0u));
-        const auto finite = pick(cancelled, constant(0u), roundPack(withConstant(spv::OpBitwiseAnd, large, SignBit), exponent, significandBits));
+        const auto finite = pick(cancelled, constant(rounding == 2u ? SignBit : 0u), roundPack(withConstant(spv::OpBitwiseAnd, large, SignBit), exponent, significandBits, rounding));
         const auto largeSpecial = testConstant(spv::OpIEqual, largeField, 0x7ffu);
         const auto invalid = logical(spv::OpLogicalAnd, logical(spv::OpLogicalAnd, largeSpecial, testConstant(spv::OpIEqual, smallField, 0x7ffu)), subtract);
         return pair(pick(largeSpecial, pick(invalid, constant(DefaultNan), large), finite));
     }
 
-    std::uint32_t Mul(std::uint32_t lhsBits, std::uint32_t rhsBits) const {
+    std::uint32_t Mul(std::uint32_t lhsBits, std::uint32_t rhsBits, std::uint32_t rounding = 0u) const {
         const auto lhs = scalar(lhsBits);
         const auto rhs = scalar(rhsBits);
         const auto sign = withConstant(spv::OpBitwiseAnd, op(spv::OpBitwiseXor, lhs, rhs), SignBit);
@@ -691,7 +691,7 @@ public:
         const auto zero = logical(spv::OpLogicalOr, testConstant(spv::OpIEqual, lhsMagnitude, 0u), testConstant(spv::OpIEqual, rhsMagnitude, 0u));
         const auto special = logical(spv::OpLogicalOr, testConstant(spv::OpIEqual, lhsField, 0x7ffu), testConstant(spv::OpIEqual, rhsField, 0x7ffu));
         const auto infinity = withConstant(spv::OpBitwiseOr, sign, Infinity);
-        return pair(pick(special, pick(zero, constant(DefaultNan), infinity), pick(zero, sign, roundPack(sign, exponent, wide))));
+        return pair(pick(special, pick(zero, constant(DefaultNan), infinity), pick(zero, sign, roundPack(sign, exponent, wide, rounding))));
     }
 
     std::uint32_t FromF32(std::uint32_t value) const {
@@ -836,13 +836,16 @@ private:
         return {op(spv::OpIAdd, op(spv::OpIAdd, highHigh, high(lowHigh)), op(spv::OpIAdd, high(highLow), high(middle))), op(spv::OpBitwiseOr, withConstant(spv::OpShiftLeftLogical, middle, 32u), low(lowLow))};
     }
 
-    std::uint32_t roundPack(std::uint32_t sign, std::uint32_t exponent, std::uint32_t significandBits) const {
+    std::uint32_t roundPack(std::uint32_t sign, std::uint32_t exponent, std::uint32_t significandBits, std::uint32_t rounding) const {
         const auto roundBits = withConstant(spv::OpBitwiseAnd, significandBits, 0x3ffu);
         const auto kept = withConstant(spv::OpShiftRightLogical, significandBits, 10u);
         const auto odd = testConstant(spv::OpINotEqual, withConstant(spv::OpBitwiseAnd, kept, 1u), 0u);
-        const auto up = logical(spv::OpLogicalOr, testConstant(spv::OpUGreaterThan, roundBits, 0x200u), logical(spv::OpLogicalAnd, testConstant(spv::OpIEqual, roundBits, 0x200u), odd));
+        const auto nearest = logical(spv::OpLogicalOr, testConstant(spv::OpUGreaterThan, roundBits, 0x200u), logical(spv::OpLogicalAnd, testConstant(spv::OpIEqual, roundBits, 0x200u), odd));
+        const auto away = rounding == 3u ? test(spv::OpINotEqual, sign, sign) : testConstant(rounding == 2u ? spv::OpINotEqual : spv::OpIEqual, sign, 0u);
+        const auto up = rounding == 0u ? nearest : logical(spv::OpLogicalAnd, away, testConstant(spv::OpINotEqual, roundBits, 0u));
         const auto magnitude = op(spv::OpIAdd, withConstant(spv::OpShiftLeftLogical, withConstant(spv::OpISub, exponent, 1u), 52u), op(spv::OpIAdd, kept, pick(up, constant(1u), constant(0u))));
-        return op(spv::OpBitwiseOr, sign, pick(testConstant(spv::OpUGreaterThanEqual, magnitude, Infinity), constant(Infinity), magnitude));
+        const auto overflow = rounding == 0u ? constant(Infinity) : pick(away, constant(Infinity), constant(Infinity - 1u));
+        return op(spv::OpBitwiseOr, sign, pick(testConstant(spv::OpUGreaterThanEqual, magnitude, Infinity), overflow, magnitude));
     }
 
     SpirvEmitterState& state;
@@ -883,6 +886,14 @@ std::uint32_t EmitFPAdd64(SpirvEmitterState& state, std::uint32_t arg0, std::uin
 std::uint32_t EmitFPMul64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
     if (state.integerFloat64) return NanResultBits(state, CallIntegerFunction(state, state.integerMulF64Function, TypeU64(state), arg0, arg1), {arg0, arg1});
     return NanResult(state, Exact(state, spv::OpFMul, ToF64(state, arg0), ToF64(state, arg1)), {arg0, arg1});
+}
+
+std::uint32_t EmitFPAddRound64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, const IrValue* rounding) {
+    return NanResultBits(state, CallIntegerFunction(state, state.roundedAddF64Functions.at(rounding->ImmediateU32()), TypeU64(state), arg0, arg1), {arg0, arg1});
+}
+
+std::uint32_t EmitFPMulRound64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, const IrValue* rounding) {
+    return NanResultBits(state, CallIntegerFunction(state, state.roundedMulF64Functions.at(rounding->ImmediateU32()), TypeU64(state), arg0, arg1), {arg0, arg1});
 }
 
 std::uint32_t EmitFPFma64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2) {
@@ -1241,6 +1252,21 @@ std::uint32_t Dot2F32F16Fast(SpirvEmitterState& state, std::uint32_t arg0, std::
 }
 
 void DefineIntegerFloat64Functions(SpirvEmitterState& state) {
+    if (state.requirements.float64Rounded) {
+        const IntegerFloat64 rounded(state);
+        const auto roundedType = TypeU64(state);
+        for (const IrBlock* block : state.program.BlockOrder()) {
+            for (const IrValue* inst : block->Instructions()) {
+                const bool add = inst->Opcode() == IrOpcode::FPAddRound64;
+                if (!add && inst->Opcode() != IrOpcode::FPMulRound64) continue;
+                const std::uint32_t rounding = inst->Argument(2u)->ImmediateU32();
+                std::uint32_t& function = (add ? state.roundedAddF64Functions : state.roundedMulF64Functions).at(rounding);
+                if (function != 0u) continue;
+                const std::string name = std::string(add ? "f64_add_round_" : "f64_mul_round_") + std::to_string(rounding);
+                function = DefineIntegerFunction(state, name.c_str(), roundedType, [&](std::uint32_t lhs, std::uint32_t rhs) { return add ? rounded.Add(lhs, rhs, rounding) : rounded.Mul(lhs, rhs, rounding); }, roundedType, roundedType);
+            }
+        }
+    }
     if (!state.integerFloat64) return;
     const auto uses = [&](IrOpcode opcode) {
         for (const IrBlock* block : state.program.BlockOrder()) {
