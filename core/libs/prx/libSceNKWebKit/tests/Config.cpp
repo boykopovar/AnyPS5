@@ -271,6 +271,31 @@ static void TestWebsitePolicies() {
     WKWebsitePoliciesSetPopUpPolicy(policies, 1);
     Require(WKWebsitePoliciesGetPopUpPolicy(policies) == 1);
 
+    WKWebsitePoliciesSetAllowedAutoplayQuirks(policies, 0xFFFFFFF5u);
+    Require(WKWebsitePoliciesGetAllowedAutoplayQuirks(policies) == 5);
+    WKWebsitePoliciesSetAllowedAutoplayQuirks(policies, 0x10u);
+    Require(WKWebsitePoliciesGetAllowedAutoplayQuirks(policies) == 0);
+    WKWebsitePoliciesSetAllowedAutoplayQuirks(policies, 0xFu);
+    Require(WKWebsitePoliciesGetAllowedAutoplayQuirks(policies) == 0xF);
+
+    for (const std::uint32_t outOfRange : {4u, 5u, 0x100u, 0xFFFFFFFFu}) {
+        WKWebsitePoliciesSetAutoplayPolicy(policies, outOfRange);
+        Require(WKWebsitePoliciesGetAutoplayPolicy(policies) == 2);
+    }
+    for (const std::uint32_t inRange : {3u, 1u, 0u, 2u}) {
+        WKWebsitePoliciesSetAutoplayPolicy(policies, inRange);
+        Require(WKWebsitePoliciesGetAutoplayPolicy(policies) == inRange);
+    }
+
+    for (const std::uint32_t outOfRange : {3u, 4u, 0x100u, 0xFFFFFFFFu}) {
+        WKWebsitePoliciesSetPopUpPolicy(policies, outOfRange);
+        Require(WKWebsitePoliciesGetPopUpPolicy(policies) == 1);
+    }
+    for (const std::uint32_t inRange : {2u, 0u, 1u}) {
+        WKWebsitePoliciesSetPopUpPolicy(policies, inRange);
+        Require(WKWebsitePoliciesGetPopUpPolicy(policies) == inRange);
+    }
+
     Require(WKWebsitePoliciesGetDataStore(policies) == nullptr);
     Require(WKWebsitePoliciesCopyCustomHeaderFields(policies) == nullptr);
     WKWebsitePoliciesSetCustomHeaderFields(policies, nullptr);

@@ -18,7 +18,7 @@ namespace Font {
 constexpr float ONE_OVER_64 = 1.0f / 64.0f;
 
 inline std::int32_t TruncateFloatToInt(float value) {
-    if (!std::isfinite(value) || value > 2147483647.0f || value < -2147483648.0f) return std::numeric_limits<std::int32_t>::min();
+    if (!std::isfinite(value) || value >= 2147483648.0f || value < -2147483648.0f) return std::numeric_limits<std::int32_t>::min();
     return static_cast<std::int32_t>(value);
 }
 

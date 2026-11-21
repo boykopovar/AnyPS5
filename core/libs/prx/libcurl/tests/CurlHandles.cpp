@@ -27,6 +27,13 @@ static int APS5_VABI DenyPush(CURL*, CURL*, size_t, struct curl_pushheaders*, vo
     return CURL_PUSH_DENY;
 }
 
+static int convertCount;
+
+static CURLcode APS5_VABI Convert(char*, size_t) {
+    ++convertCount;
+    return CURLE_CONV_FAILED;
+}
+
 extern "C" int Push_nid_no_patch(CURL*, CURL*, size_t, struct curl_pushheaders*, void*);
 
 struct ShareCookieState {
@@ -142,8 +149,14 @@ int main() {
     Require(curl_easy_recv_nid_postfix(easy, buffer, sizeof(buffer), &count) == CURLE_UNSUPPORTED_PROTOCOL);
     Require(curl_easy_send_nid_postfix(easy, buffer, sizeof(buffer), &count) == CURLE_UNSUPPORTED_PROTOCOL);
     Require(curl_easy_pause_nid_postfix(easy, CURLPAUSE_CONT) == CURLE_BAD_FUNCTION_ARGUMENT);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_CONV_FROM_NETWORK_FUNCTION, Convert) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_CONV_TO_NETWORK_FUNCTION, Convert) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_CONV_FROM_UTF8_FUNCTION, Convert) == CURLE_OK);
     auto* duplicate = curl_easy_duphandle_nid_postfix(easy);
     Require(duplicate != nullptr && duplicate != easy);
+    Require(curl_easy_perform_nid_postfix(duplicate) == CURLE_URL_MALFORMAT);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_CONV_FROM_NETWORK_FUNCTION, nullptr) == CURLE_OK);
+    Require(convertCount == 0);
     curl_easy_reset_nid_postfix(duplicate);
     curl_easy_cleanup_nid_postfix(duplicate);
     auto* share = curl_share_init_nid_postfix();

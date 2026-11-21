@@ -288,8 +288,8 @@ void APS5_VABI _ZNSt6_WinitD2Ev_nid_postfix(void*) {
 }
 APS5_EXPORT("-Bl9-SZ2noc", libSceLibcInternalInventory_071_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_072_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_072_nid_no_patch(void* self) {
+    libSceLibcInternalInventory_071_nid_no_patch(self);
 }
 APS5_EXPORT("57mMrw0l-40", libSceLibcInternalInventory_072_nid_no_patch);
 

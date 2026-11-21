@@ -1,5 +1,6 @@
 add_library(libSceNpSessionSignalingCrossplay SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceNpSessionSignalingCrossplay PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceNpSessionSignalingCrossplay PRIVATE libSceNpCommon)
 configure_windows_unwind(libSceNpSessionSignalingCrossplay)
 
 if(BUILD_TESTING)
@@ -10,6 +11,6 @@ if(BUILD_TESTING)
     add_test(NAME guest_np_session_signaling_crossplay COMMAND guest_np_session_signaling_crossplay_tests)
     if(WIN32)
         set_tests_properties(guest_np_session_signaling_crossplay PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpSessionSignalingCrossplay>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpSessionSignalingCrossplay>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCommon>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

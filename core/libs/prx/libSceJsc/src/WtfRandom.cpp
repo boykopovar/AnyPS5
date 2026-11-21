@@ -112,13 +112,14 @@
  */
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
-#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceJsc/include/WtfRandomExports.hpp"
+#include "prx/libSceJsc/include/WtfSha1Exports.hpp"
 
 #include <atomic>
 #include <array>
 #include <cerrno>
+#include <cstddef>
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
@@ -208,7 +209,10 @@ Jsc::WtfAbi::StringImpl** APS5_VABI _ZN3WTF25createCanonicalUUIDStringEv(Jsc::Wt
     if (length != 36) throw std::runtime_error("WTF::createCanonicalUUIDString: invalid UUID length");
     using Jsc::WtfAbi::StringImpl;
     constexpr auto charactersOffset = offsetof(StringImpl, hashAndFlags) + sizeof(StringImpl::hashAndFlags);
-    std::unique_ptr<void, decltype(&free_nid_postfix)> storage(malloc_nid_postfix(charactersOffset + 36u), free_nid_postfix);
+    const auto* allocator = RegisteredPersistenceAllocator_nid_no_patch();
+    if (!allocator || !allocator->allocate || !allocator->deallocate)
+        throw std::runtime_error("WTF::createCanonicalUUIDString: the string requires libSceNKWebKit fastMalloc");
+    std::unique_ptr<void, void (*)(void*)> storage(allocator->allocate(charactersOffset + 36u), allocator->deallocate);
     if (!storage) throw std::bad_alloc();
     auto* characters = static_cast<unsigned char*>(storage.get()) + charactersOffset;
     auto* string = new (storage.get()) StringImpl{2u, 36u, characters, Jsc::WtfAbi::StringImplFlag8Bit};
