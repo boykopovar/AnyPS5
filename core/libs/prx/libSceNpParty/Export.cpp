@@ -98,18 +98,15 @@ bool ValidateCreateParam(const void* param, bool variantA) {
         if (!GuestRangeIsZero(param, 0xCA, 6)) return false;
         if (!GuestRangeIsZero(param, tailOffset, 0x36)) return false;
     } else {
-        if (version >= NP_PARTY_VERSION_RESERVED) {
-            if (!GuestRangeIsZero(param, 0xC0, 0x200)) return false;
-            if (count != 0) {
-                std::uint64_t data = 0;
-                if (!ReadGuest(param, dataOffset, data) || data == 0) return false;
-                if (dataSize != 0 && !GuestBlobIsReadable(data, dataSize)) return false;
-            }
-        }
+        if (version >= NP_PARTY_VERSION_RESERVED && !GuestRangeIsZero(param, 0xC0, 0x200)) return false;
+        std::uint64_t data = 0;
+        if (!ReadGuest(param, dataOffset, data)) return false;
+        if (version >= NP_PARTY_VERSION_RESERVED && count != 0 && data == 0) return false;
+        if (data != 0 && dataSize != 0 && !GuestBlobIsReadable(data, dataSize)) return false;
         if (count == 0) {
             if (!GuestRangeIsZero(param, 0x00, 0x80)) return false;
             if (!GuestRangeIsZero(param, 0x82, 0x3E)) return false;
-            if (!GuestRangeIsZero(param, 0xCA, 6)) return false;
+            if (!GuestRangeIsZero(param, flagOffset + 1, 6)) return false;
             if (!GuestRangeIsZero(param, tailOffset, 0x36)) return false;
         }
     }
@@ -152,7 +149,7 @@ bool ValidateInvitationListParam(const void* param, bool variantA) {
 }
 
 int notInParty(const void* out) {
-    if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
+    if (!g_initialized.load(std::memory_order_acquire)) return NP_PARTY_ERROR_NOT_INITIALIZED;
     if (!out) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     return NP_PARTY_ERROR_NOT_IN_PARTY;
 }
@@ -174,7 +171,7 @@ int RecordHandler(const void* handlers, bool rejectRegistered) {
 extern "C" {
 
 int APS5_VABI sceNpPartyGetState(std::uint16_t* state) {
-    if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
+    if (!g_initialized.load(std::memory_order_acquire)) return NP_PARTY_ERROR_NOT_INITIALIZED;
     if (!state) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     const std::uint16_t value = NP_PARTY_STATE_NOT_IN_PARTY;
     const int savedErrno = errno;
@@ -185,19 +182,19 @@ int APS5_VABI sceNpPartyGetState(std::uint16_t* state) {
 }
 
 int APS5_VABI sceNpPartyCheckCallback(void) {
-    if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
+    if (!g_initialized.load(std::memory_order_acquire)) return NP_PARTY_ERROR_NOT_INITIALIZED;
     return 0;
 }
 
 int APS5_VABI sceNpPartyCreate(std::int32_t userId, const NpPartyCreateParam* param) {
-    if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
+    if (!g_initialized.load(std::memory_order_acquire)) return NP_PARTY_ERROR_NOT_INITIALIZED;
     if (userId == -1) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     if (!ValidateCreateParam(param, false)) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     return NP_PARTY_ERROR_NOT_IN_PARTY;
 }
 
 int APS5_VABI sceNpPartyCreateA(std::int32_t userId, const NpPartyCreateAParam* param) {
-    if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
+    if (!g_initialized.load(std::memory_order_acquire)) return NP_PARTY_ERROR_NOT_INITIALIZED;
     if (userId == -1) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     if (!ValidateCreateParam(param, true)) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     return NP_PARTY_ERROR_NOT_IN_PARTY;
@@ -232,19 +229,19 @@ int APS5_VABI sceNpPartyGetMembersA(void* memberList) {
 }
 
 int APS5_VABI sceNpPartyGetStateAsUser(std::int32_t userId, std::uint16_t* state) {
-    if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
+    if (!g_initialized.load(std::memory_order_acquire)) return NP_PARTY_ERROR_NOT_INITIALIZED;
     if (userId == 0) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     return sceNpPartyGetState(state);
 }
 
 int APS5_VABI sceNpPartyGetStateAsUserA(std::int32_t userId, std::uint16_t* state) {
-    if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
+    if (!g_initialized.load(std::memory_order_acquire)) return NP_PARTY_ERROR_NOT_INITIALIZED;
     if (userId == -1) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     return sceNpPartyGetState(state);
 }
 
 int APS5_VABI sceNpPartyGetVoiceChatPriority(std::uint32_t* priority) {
-    if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
+    if (!g_initialized.load(std::memory_order_acquire)) return NP_PARTY_ERROR_NOT_INITIALIZED;
     if (!priority) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     return NP_PARTY_ERROR_NOT_IN_PARTY;
 }
@@ -257,24 +254,24 @@ int APS5_VABI sceNpPartyInitialize(const void* param) {
         return NP_PARTY_ERROR_INVALID_ARGUMENT;
     }
     if (version == 0) return NP_PARTY_ERROR_INVALID_ARGUMENT;
-    bool expected = false;
-    if (!g_initialized.compare_exchange_strong(expected, true)) return NP_PARTY_ERROR_ALREADY_INITIALIZED;
-    g_version.store(version);
-    g_handlerCallback.store(nullptr);
-    g_privateHandler.store(nullptr);
-    g_handlerRegistered.store(false);
+    if (g_initialized.load(std::memory_order_acquire)) return NP_PARTY_ERROR_ALREADY_INITIALIZED;
+    g_version.store(version, std::memory_order_relaxed);
+    g_handlerCallback.store(nullptr, std::memory_order_relaxed);
+    g_privateHandler.store(nullptr, std::memory_order_relaxed);
+    g_handlerRegistered.store(false, std::memory_order_relaxed);
+    g_initialized.store(true, std::memory_order_release);
     return 0;
 }
 
 int APS5_VABI sceNpPartyJoin(std::int32_t userId, NpPartyJoinParam param) {
-    if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
+    if (!g_initialized.load(std::memory_order_acquire)) return NP_PARTY_ERROR_NOT_INITIALIZED;
     if (userId == -1) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     if (param.data[0] == 0) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     return NP_PARTY_ERROR_NOT_IN_PARTY;
 }
 
 int APS5_VABI sceNpPartyLeave(std::uint16_t userId, const NpPartyLeaveParam* param) {
-    if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
+    if (!g_initialized.load(std::memory_order_acquire)) return NP_PARTY_ERROR_NOT_INITIALIZED;
     if (userId == 0) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     if (param != nullptr) {
         NpPartyLeaveParam local = {};
@@ -313,20 +310,20 @@ int APS5_VABI sceNpPartySendBinaryMessage(const void* sendParams) {
 }
 
 int APS5_VABI sceNpPartySetVoiceChatPriority(std::int32_t priority) {
-    if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
+    if (!g_initialized.load(std::memory_order_acquire)) return NP_PARTY_ERROR_NOT_INITIALIZED;
     if (static_cast<std::uint32_t>(priority) - 1u > 1u) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     return NP_PARTY_ERROR_NOT_IN_PARTY;
 }
 
 int APS5_VABI sceNpPartyShowInvitationList(std::uint16_t userId, const NpPartyShowInvitationListParam* param) {
-    if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
+    if (!g_initialized.load(std::memory_order_acquire)) return NP_PARTY_ERROR_NOT_INITIALIZED;
     if (userId == 0) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     if (!ValidateInvitationListParam(param, false)) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     return NP_PARTY_ERROR_NOT_IN_PARTY;
 }
 
 int APS5_VABI sceNpPartyShowInvitationListA(std::uint16_t userId, const NpPartyShowInvitationListAParam* param) {
-    if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
+    if (!g_initialized.load(std::memory_order_acquire)) return NP_PARTY_ERROR_NOT_INITIALIZED;
     if (userId == 0) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     if (!ValidateInvitationListParam(param, true)) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     return NP_PARTY_ERROR_NOT_IN_PARTY;
@@ -335,6 +332,7 @@ int APS5_VABI sceNpPartyShowInvitationListA(std::uint16_t userId, const NpPartyS
 int APS5_VABI sceNpPartyTerminate(void) {
     std::lock_guard lock(g_handlerMutex);
     if (!g_initialized.exchange(false)) return NP_PARTY_ERROR_NOT_INITIALIZED;
+    g_version.store(0, std::memory_order_relaxed);
     g_handlerCallback.store(nullptr);
     g_privateHandler.store(nullptr);
     g_handlerRegistered.store(false);
