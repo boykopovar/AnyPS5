@@ -222,10 +222,6 @@ void PutPemError(int reason) {
     LibreSslPutError_nid_no_patch(PemLibrary, AnyFunction, reason);
 }
 
-[[noreturn]] void OldPrivateKeyDecodeUnsupported() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 void ClearBytes(void* data, std::size_t length) {
     auto* const bytes = static_cast<volatile unsigned char*>(data);
     for (std::size_t index = 0; index < length; ++index) bytes[index] = 0;
@@ -878,10 +874,8 @@ LibreSsl3EvpPkey* APS5_VABI PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(Li
         }
     } else if ((suffixLength = PemCheckSuffix(name.c_str(), PrivateKeySuffix)) > 0) {
         const PkeyAmeth* ameth = FindAmethByString(name.c_str(), suffixLength);
-        if (ameth != nullptr && ameth->oldPrivDecode) {
-            if (ameth->type != RsaType && ameth->type != EcType) OldPrivateKeyDecodeUnsupported();
+        if (ameth != nullptr && ameth->oldPrivDecode)
             ret = DecodeTraditionalPrivateKey_nid_no_patch(ameth->type, key, &cursor, length);
-        }
     }
     if (ret == nullptr) PutPemError(ErrRAsn1Lib);
     return ret;

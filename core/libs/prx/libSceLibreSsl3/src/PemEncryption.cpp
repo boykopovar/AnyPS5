@@ -582,6 +582,7 @@
  */
 
 #include "prx/libSceLibreSsl3/include/PemEncryption.hpp"
+#include "prx/libSceLibreSsl3/src/Asn1Reader.hpp"
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -602,15 +603,15 @@
 #include <utility>
 #include <vector>
 
+using namespace LibreSsl3Asn1;
+
 namespace {
 
 using namespace std::string_view_literals;
 
 constexpr int EvpLibrary = 6;
 constexpr int PemLibrary = 9;
-constexpr int Asn1Library = 13;
 constexpr int Pkcs12Library = 35;
-constexpr int AnyFunction = 0xfff;
 
 constexpr int ErrREvpLib = 6;
 constexpr int ErrRMallocFailure = 65;
@@ -637,28 +638,6 @@ constexpr int EvpUnsupportedNumberOfRounds = 135;
 constexpr int EvpBadKeyLength = 137;
 constexpr int EvpUnknownDigest = 161;
 
-constexpr int Asn1NestedError = 58;
-constexpr int Asn1LengthMismatch = 62;
-constexpr int Asn1BadObjectHeader = 102;
-constexpr int Asn1BooleanIsWrongLength = 106;
-constexpr int Asn1DataIsWrong = 109;
-constexpr int Asn1FieldMissing = 121;
-constexpr int Asn1NullIsWrongLength = 144;
-constexpr int Asn1SequenceLengthMismatch = 148;
-constexpr int Asn1SequenceNotConstructed = 149;
-constexpr int Asn1StringTooShort = 152;
-constexpr int Asn1TooLong = 155;
-constexpr int Asn1TypeNotConstructed = 156;
-constexpr int Asn1UnexpectedEoc = 159;
-constexpr int Asn1WrongTag = 168;
-constexpr int Asn1BmpStringIsWrongLength = 214;
-constexpr int Asn1UniversalStringIsWrongLength = 215;
-constexpr int Asn1InvalidObjectEncoding = 216;
-constexpr int Asn1InvalidBitStringBitsLeft = 220;
-constexpr int Asn1TooLarge = 223;
-constexpr int Asn1TooSmall = 224;
-constexpr int Asn1TypeNotPrimitive = 231;
-
 constexpr int Pkcs12DecodeError = 101;
 constexpr int Pkcs12EncodeError = 102;
 constexpr int Pkcs12EncryptError = 103;
@@ -678,26 +657,6 @@ constexpr std::size_t MaxDesKeyLength = 24;
 constexpr std::size_t Pkcs5IvEnd = 16;
 constexpr int Pkcs12KeyId = 1;
 constexpr int Pkcs12IvId = 2;
-
-constexpr int TypeBoolean = 1;
-constexpr int TypeInteger = 2;
-constexpr int TypeBitString = 3;
-constexpr int TypeOctetString = 4;
-constexpr int TypeNull = 5;
-constexpr int TypeObject = 6;
-constexpr int TypeReal = 9;
-constexpr int TypeEnumerated = 10;
-constexpr int TypeRelativeOid = 13;
-constexpr int TypeTime = 14;
-constexpr int TypeSequence = 16;
-constexpr int TypeSet = 17;
-constexpr int TypeUtcTime = 23;
-constexpr int TypeGeneralizedTime = 24;
-constexpr int TypeUniversalString = 28;
-constexpr int TypeBmpString = 30;
-constexpr int TypeOther = -3;
-constexpr int TypeAny = -1;
-constexpr int TypeNegativeFlag = 0x100;
 
 constexpr unsigned char TagInteger = 0x02;
 constexpr unsigned char TagOctetString = 0x04;
@@ -826,10 +785,6 @@ constexpr std::array<DesPbeScheme, 4> DesPbeSchemes{{
     {PbeSha1TripleDesOid, LibreSsl3PemDes::ThreeKey, true, true},
     {PbeSha1TwoKeyDesOid, LibreSsl3PemDes::TwoKey, true, true},
 }};
-
-void PutError(int library, int reason) {
-    LibreSslPutError_nid_no_patch(library, AnyFunction, reason);
-}
 
 void ClearBytes(void* data, std::size_t length) {
     auto* const bytes = static_cast<volatile unsigned char*>(data);
@@ -1110,316 +1065,6 @@ bool DigestParts(EvpMdContext* context, const EvpMd* digest, std::initializer_li
     return true;
 }
 
-struct Reader {
-    const unsigned char* cursor;
-    std::size_t remaining;
-};
-
-struct Header {
-    unsigned tagClass = 0;
-    bool constructed = false;
-    std::uint32_t tagNumber = 0;
-    bool indefinite = false;
-    std::size_t length = 0;
-};
-
-struct Element {
-    int type = 0;
-    const unsigned char* encoded = nullptr;
-    std::size_t encodedLength = 0;
-    const unsigned char* content = nullptr;
-    std::size_t length = 0;
-};
-
-struct Integer {
-    std::vector<unsigned char> magnitude;
-    bool negative = false;
-};
-
-bool TakeByte(Reader& reader, unsigned char& value) {
-    if (reader.remaining == 0) return false;
-    value = *reader.cursor;
-    ++reader.cursor;
-    --reader.remaining;
-    return true;
-}
-
-bool ReadIdentifier(Reader& reader, Header& header) {
-    unsigned char value = 0;
-    if (!TakeByte(reader, value)) return false;
-    header.tagClass = (value >> 6) & 0x3u;
-    header.constructed = ((value >> 5) & 0x1u) != 0;
-    std::uint32_t number = value & 0x1fu;
-    if (number == 0x1f) {
-        number = 0;
-        do {
-            if (!TakeByte(reader, value)) return false;
-            if (number > (std::numeric_limits<std::uint32_t>::max() >> 7)) return false;
-            number = (number << 7) | (value & 0x7fu);
-        } while ((value & 0x80u) != 0);
-    }
-    header.tagNumber = number;
-    return true;
-}
-
-bool ReadLength(Reader& reader, Header& header) {
-    unsigned char value = 0;
-    header.indefinite = false;
-    header.length = 0;
-    if (!TakeByte(reader, value)) return false;
-    if (value < 0x80) {
-        header.length = value;
-        return true;
-    }
-    if (value == 0x80) {
-        header.indefinite = true;
-        return true;
-    }
-    unsigned count = value & 0x7fu;
-    if (count == 0x7f) return false;
-    std::size_t length = 0;
-    while (count-- > 0) {
-        if (!TakeByte(reader, value)) return false;
-        if (length > (std::numeric_limits<std::size_t>::max() >> 8)) return false;
-        length = (length << 8) | value;
-    }
-    header.length = length;
-    return true;
-}
-
-int CheckTag(Reader& reader, Header& header, int expectedType, bool optional) {
-    if (!ReadIdentifier(reader, header)) {
-        PutError(Asn1Library, Asn1BadObjectHeader);
-        return 0;
-    }
-    if (expectedType >= 0 && (header.tagNumber != static_cast<std::uint32_t>(expectedType) || header.tagClass != 0)) {
-        if (optional) return -1;
-        PutError(Asn1Library, Asn1WrongTag);
-        return 0;
-    }
-    if (!ReadLength(reader, header) || (header.indefinite && !header.constructed)) {
-        PutError(Asn1Library, Asn1BadObjectHeader);
-        return 0;
-    }
-    if ((!header.indefinite && reader.remaining < header.length)
-        || header.tagNumber > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
-        PutError(Asn1Library, Asn1TooLong);
-        return 0;
-    }
-    return 1;
-}
-
-bool MustBePrimitive(int type) {
-    if (type == (TypeInteger | TypeNegativeFlag) || type == (TypeEnumerated | TypeNegativeFlag))
-        type &= ~TypeNegativeFlag;
-    return type == TypeBoolean || type == TypeInteger || type == TypeNull || type == TypeObject || type == TypeReal
-        || type == TypeEnumerated || type == TypeRelativeOid || type == TypeTime;
-}
-
-bool MustBeConstructed(int type) {
-    return type == TypeSequence || type == TypeSet;
-}
-
-bool ValidObjectIdentifier(const unsigned char* data, std::size_t length) {
-    if (length == 0) return false;
-    std::size_t index = 0;
-    while (index < length) {
-        std::uint64_t arc = 0;
-        unsigned char value = 0;
-        do {
-            if (index == length) return false;
-            value = data[index];
-            ++index;
-            if (arc == 0 && value == 0x80) return false;
-            arc = (arc << 7) | (value & 0x7fu);
-        } while ((value & 0x80u) != 0);
-    }
-    return true;
-}
-
-bool KeepTwosPadding(const unsigned char* data, std::size_t length) {
-    if (length <= 1 || data[0] != 0xff) return false;
-    for (std::size_t index = 1; index < length; ++index) {
-        if (data[index] != 0) return false;
-    }
-    return true;
-}
-
-bool DecodeInteger(const unsigned char* data, std::size_t length, Integer* integer) {
-    if (length == 0) return false;
-    const unsigned char first = data[0];
-    const bool negative = (first >> 7) != 0;
-    const unsigned char padding = negative ? 0xff : 0x00;
-    if (length > 1 && first == padding && !KeepTwosPadding(data, length)) {
-        ++data;
-        --length;
-        if ((data[0] >> 7) == (padding >> 7)) return false;
-    }
-    if (integer == nullptr) return true;
-    integer->negative = negative;
-    integer->magnitude.assign(data, data + length);
-    if (negative) {
-        unsigned char carry = 1;
-        for (std::size_t index = integer->magnitude.size(); index-- > 0;) {
-            integer->magnitude[index] = static_cast<unsigned char>((integer->magnitude[index] ^ 0xffu) + carry);
-            if (integer->magnitude[index] != 0) carry = 0;
-        }
-    }
-    return true;
-}
-
-std::int64_t IntegerValue(const Integer& integer) {
-    std::uint64_t value = 0;
-    for (const unsigned char byte : integer.magnitude) {
-        if (value > (std::numeric_limits<std::uint64_t>::max() >> 8)) {
-            PutError(Asn1Library, Asn1TooLarge);
-            return -1;
-        }
-        value = (value << 8) | byte;
-    }
-    if (integer.negative) {
-        if (value > (std::uint64_t{1} << 63)) {
-            PutError(Asn1Library, Asn1TooSmall);
-            return -1;
-        }
-        if (value == (std::uint64_t{1} << 63)) return std::numeric_limits<std::int64_t>::min();
-        return -static_cast<std::int64_t>(value);
-    }
-    if (value > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
-        PutError(Asn1Library, Asn1TooLarge);
-        return -1;
-    }
-    return static_cast<std::int64_t>(value);
-}
-
-bool ValidContent(int type, const unsigned char* content, std::size_t length) {
-    if (length > static_cast<std::size_t>(std::numeric_limits<int>::max())) return false;
-    int reason = 0;
-    switch (type) {
-    case TypeObject:
-        if (!ValidObjectIdentifier(content, length)) reason = Asn1InvalidObjectEncoding;
-        break;
-    case TypeNull:
-        if (length != 0) reason = Asn1NullIsWrongLength;
-        break;
-    case TypeBoolean:
-        if (length != 1) reason = Asn1BooleanIsWrongLength;
-        break;
-    case TypeBitString:
-        if (length == 0) {
-            reason = Asn1StringTooShort;
-        } else if (content[0] > 7) {
-            reason = Asn1InvalidBitStringBitsLeft;
-        }
-        break;
-    case TypeEnumerated:
-    case TypeInteger:
-        if (!DecodeInteger(content, length, nullptr)) reason = Asn1LengthMismatch;
-        break;
-    case TypeUtcTime:
-    case TypeGeneralizedTime:
-        NotImplemented_nid_no_patch("ASN1_item_d2i: UTCTime or GeneralizedTime inside an AlgorithmIdentifier");
-    case TypeBmpString:
-        if ((length & 1u) != 0) reason = Asn1BmpStringIsWrongLength;
-        break;
-    case TypeUniversalString:
-        if ((length & 3u) != 0) reason = Asn1UniversalStringIsWrongLength;
-        break;
-    default:
-        break;
-    }
-    if (reason == 0) return true;
-    PutError(Asn1Library, reason);
-    return false;
-}
-
-int ReadField(Reader& reader, int expectedType, bool optional, Element& element) {
-    Reader probe = reader;
-    Header header;
-    const int checked = CheckTag(probe, header, expectedType, optional);
-    if (checked == -1) return -1;
-    if (checked != 1) {
-        PutError(Asn1Library, Asn1NestedError);
-        PutError(Asn1Library, Asn1NestedError);
-        return 0;
-    }
-    int type = expectedType;
-    if (expectedType < 0) type = header.tagClass == 0 ? static_cast<int>(header.tagNumber) : TypeOther;
-    if (MustBeConstructed(type) && !header.constructed) {
-        PutError(Asn1Library, Asn1TypeNotConstructed);
-        PutError(Asn1Library, Asn1NestedError);
-        return 0;
-    }
-    if (MustBePrimitive(type) && header.constructed) {
-        PutError(Asn1Library, Asn1TypeNotPrimitive);
-        PutError(Asn1Library, Asn1NestedError);
-        return 0;
-    }
-    if (header.indefinite) NotImplemented_nid_no_patch("ASN1_item_d2i: indefinite length");
-    const std::size_t headerLength = static_cast<std::size_t>(probe.cursor - reader.cursor);
-    element.type = type;
-    element.encoded = reader.cursor;
-    element.encodedLength = headerLength + header.length;
-    element.content = probe.cursor;
-    element.length = header.length;
-    bool valid = true;
-    if (type == TypeSequence || type == TypeSet || type == TypeOther) {
-        valid = element.encodedLength <= static_cast<std::size_t>(std::numeric_limits<int>::max());
-    } else {
-        if (header.constructed) NotImplemented_nid_no_patch("ASN1_item_d2i: constructed string");
-        valid = ValidContent(type, element.content, element.length);
-    }
-    if (!valid) {
-        PutError(Asn1Library, Asn1NestedError);
-        return 0;
-    }
-    reader.cursor += element.encodedLength;
-    reader.remaining -= element.encodedLength;
-    return 1;
-}
-
-bool StartsWithEndOfContents(const Reader& reader) {
-    return reader.remaining >= 2 && reader.cursor[0] == 0 && reader.cursor[1] == 0;
-}
-
-bool EnterSequence(Reader& reader, Reader& content) {
-    Reader probe = reader;
-    Header header;
-    if (CheckTag(probe, header, TypeSequence, false) != 1) {
-        PutError(Asn1Library, Asn1NestedError);
-        return false;
-    }
-    if (!header.constructed) {
-        PutError(Asn1Library, Asn1SequenceNotConstructed);
-        return false;
-    }
-    if (header.indefinite) NotImplemented_nid_no_patch("ASN1_item_d2i: indefinite length");
-    content = Reader{probe.cursor, header.length};
-    reader.cursor = probe.cursor + header.length;
-    reader.remaining = probe.remaining - header.length;
-    return true;
-}
-
-bool AtField(const Reader& inner, bool& present) {
-    if (StartsWithEndOfContents(inner)) {
-        PutError(Asn1Library, Asn1UnexpectedEoc);
-        return false;
-    }
-    present = inner.remaining != 0;
-    return true;
-}
-
-bool MissingField() {
-    PutError(Asn1Library, Asn1FieldMissing);
-    return false;
-}
-
-bool SequenceComplete(const Reader& inner) {
-    if (inner.remaining == 0) return true;
-    PutError(Asn1Library, Asn1SequenceLengthMismatch);
-    return false;
-}
-
 struct Algorithm {
     std::string_view oid;
     bool hasParameter = false;
@@ -1482,11 +1127,6 @@ struct Pbkdf2Parameters {
     bool hasPrf = false;
     Algorithm prf;
 };
-
-void StoreInteger(const Element& element, Integer& integer) {
-    if (!DecodeInteger(element.content, element.length, &integer))
-        throw std::logic_error("ASN1_item_d2i: INTEGER accepted then rejected");
-}
 
 bool ReadPbkdf2Parameters(const Element& parameter, Pbkdf2Parameters& parameters) {
     Reader reader{parameter.encoded, parameter.encodedLength};

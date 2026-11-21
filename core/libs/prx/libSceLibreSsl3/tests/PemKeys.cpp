@@ -647,6 +647,157 @@ constexpr char DsaPrivateKeyLabelPem[] =
     "QUJDREVG\n"
     "-----END DSA PRIVATE KEY-----\n";
 
+constexpr int DsaType = 116;
+constexpr int DsaLibrary = 10;
+constexpr int ErrorReasonDsaLibrary = 10;
+constexpr int DsaBadQValue = 102;
+constexpr int DsaModulusTooLarge = 103;
+constexpr int DsaDecodeError = 104;
+constexpr int DsaParameterEncodingError = 105;
+constexpr int DsaInvalidParameters = 112;
+constexpr int EvpExpectingAnRsaKey = 127;
+constexpr int EvpPrivateKeyDecodeError = 145;
+
+constexpr char Dsa1024TraditionalPem[] =
+    "-----BEGIN DSA PRIVATE KEY-----\n"
+    "MIIBuwIBAAKBgQDnLP8Yu1+Rebf/2ZRWwL7uFl+7kRfD5uxRBgW+Wu1CMcZm1KwT\n"
+    "DJpx4C3+sltT55b0zoWQV53wdTaSPQ58Azk+R3qI/oxD+YL90KIPXgNnX3ZH3BK1\n"
+    "cSH7Mh1Tcf3m/Z/1jpbN1pSzeaRPldRubhJv+zGPtPDXAXR+hXjzVwRbeQIVAP97\n"
+    "oO7+/pk0fU0b4VGWQ44HPoexAoGBAJphVuqJe1flkwXJX4vSY8AH+iXku1h2kByu\n"
+    "64I26QmiaEvbQ6ETcKqJj8KJlQwqGMeKIe7PKHXQA6k4p4ve/Gx0H6+u4vYbzTgr\n"
+    "MCv4d62vZkGKWwBu56jAbaO071Uecl4JkF6eyf6pi5NZoLOTzpdURnbaSTYRHWlV\n"
+    "Dl+8x/aaAoGADzHe1puObV00zBbFAUbqCXmBmLT+5EAgKsLtgpbfrfyKVt2+fnN7\n"
+    "hoM8wwmrOJ4o0JsCktSkArh6vQCXkIuZq945K79/IXW930MsJvYAYqcADXks3vFG\n"
+    "iEaCsjBrgAIWO4rZ4dFGXXf+dcGOpuYXA42AOSEYNjxfCaSDpCkXG6MCFBHaY0az\n"
+    "IIcK7CBMBLMgSeTxGd/2\n"
+    "-----END DSA PRIVATE KEY-----\n";
+
+constexpr char Dsa1024Pkcs8Pem[] =
+    "-----BEGIN PRIVATE KEY-----\n"
+    "MIIBSwIBADCCASwGByqGSM44BAEwggEfAoGBAOcs/xi7X5F5t//ZlFbAvu4WX7uR\n"
+    "F8Pm7FEGBb5a7UIxxmbUrBMMmnHgLf6yW1PnlvTOhZBXnfB1NpI9DnwDOT5Heoj+\n"
+    "jEP5gv3Qog9eA2dfdkfcErVxIfsyHVNx/eb9n/WOls3WlLN5pE+V1G5uEm/7MY+0\n"
+    "8NcBdH6FePNXBFt5AhUA/3ug7v7+mTR9TRvhUZZDjgc+h7ECgYEAmmFW6ol7V+WT\n"
+    "Bclfi9JjwAf6JeS7WHaQHK7rgjbpCaJoS9tDoRNwqomPwomVDCoYx4oh7s8oddAD\n"
+    "qTini978bHQfr67i9hvNOCswK/h3ra9mQYpbAG7nqMBto7TvVR5yXgmQXp7J/qmL\n"
+    "k1mgs5POl1RGdtpJNhEdaVUOX7zH9poEFgIUEdpjRrMghwrsIEwEsyBJ5PEZ3/Y=\n"
+    "-----END PRIVATE KEY-----\n";
+
+constexpr char Dsa2048TraditionalPem[] =
+    "-----BEGIN DSA PRIVATE KEY-----\n"
+    "MIIDVQIBAAKCAQEAx/4oM9wIPOUoxx0VwoGtR5Dr6SokUUfrlWzWFGa8bwO5CJLM\n"
+    "Lq2aaNThCkIjdaR1BOJLyJ68GSRrheqM9bkZYTKiJLiq1njjhmMD/T2WQAs22Uck\n"
+    "PRwpKeOpaHk+BfPPPdI9qW5jhQD+4Sa0mVqzjidovilNEDYDzJJ1QvG0LzK2hLIj\n"
+    "h2aRNHdB0tCGNmjLIH+zn9/EgqMo5Bmkqn5vFWfCeZQaYlqqJvLXyNcV4r4fSJwh\n"
+    "IPDmokd4FD1xsg26Gt+Ikv0eOzuHxZ4YxvIsU50TcR5Q/wR5TZ07zfrfgMWCVn3Z\n"
+    "rvtc6vi/3gfFwcm7Tuyu4ei0/pocjXtIMVKrtQIhANl20GM0MxjqbK0n+5ZnzsmF\n"
+    "6f2AdKGVGNjg59AjmHwhAoIBAFsijJi2YpALVhPl//y+yDc71k/IldryBazeJn/0\n"
+    "XTpNndFNuINiiHsHaLHsw5Epl1/AQGbWUDDpvrz+FE+5hQyfRePBXe3HFcg09H1f\n"
+    "KTDR1K9XWJhyJrTUim09oheLaFANNpWevftQ6ZbXoKbH+VWFSLQjzXg5ZSJfVidB\n"
+    "huS6mmDcX1qNNW1vvSVQrKz5fcwv1ZDRE1rswnrN/QNc5B1lhTGZWg5kEWrSIWKC\n"
+    "qN+cdzlbMmEuC1173JriIMQdVhWWX+CXlUE797YiDCViePf20syIU25rgINe5L4c\n"
+    "E7FBfbbe5ycf9b+WvUa3eq7FPtbvLgz+cwOCP2HBZl7fvHwCggEAdGaa4o0zOR74\n"
+    "3sdhG7WOe/odD8GECZpT+WibrN4aLAGdvmqCW759uHxgXJjNnsNa0lmdIgaNPOy4\n"
+    "++5UO7jI5fHE+Eahrd6vCLYu05prrG43pHkZJ9VIhfI62FcDn0moVvKm5VqZ0izl\n"
+    "1/ZB3Xl3XK7VetShwJltmZ1xmGj3yK+BYw0BGKDe48a/diZ5tZ99x6jWFT47NdV6\n"
+    "OlUVkZe0ZjCcE301dZPPeilU9dv4eeQ9uxd+zzM9CgwIwreX57I6ShDebLRc6bZw\n"
+    "Doy/hVxavvX2qhlAcnlrxI/Q2uzChHMiUFk8LRNXUTfVEFn/g/l2ogjGF7utWgTO\n"
+    "lpRjY3r82gIgPgORWYgb6BlUFuQvZaRcOm1L23p0VAov0LmRRdWnnlg=\n"
+    "-----END DSA PRIVATE KEY-----\n";
+
+constexpr char Dsa2048Pkcs8Pem[] =
+    "-----BEGIN PRIVATE KEY-----\n"
+    "MIICZAIBADCCAjkGByqGSM44BAEwggIsAoIBAQDH/igz3Ag85SjHHRXCga1HkOvp\n"
+    "KiRRR+uVbNYUZrxvA7kIkswurZpo1OEKQiN1pHUE4kvInrwZJGuF6oz1uRlhMqIk\n"
+    "uKrWeOOGYwP9PZZACzbZRyQ9HCkp46loeT4F88890j2pbmOFAP7hJrSZWrOOJ2i+\n"
+    "KU0QNgPMknVC8bQvMraEsiOHZpE0d0HS0IY2aMsgf7Of38SCoyjkGaSqfm8VZ8J5\n"
+    "lBpiWqom8tfI1xXivh9InCEg8OaiR3gUPXGyDboa34iS/R47O4fFnhjG8ixTnRNx\n"
+    "HlD/BHlNnTvN+t+AxYJWfdmu+1zq+L/eB8XBybtO7K7h6LT+mhyNe0gxUqu1AiEA\n"
+    "2XbQYzQzGOpsrSf7lmfOyYXp/YB0oZUY2ODn0COYfCECggEAWyKMmLZikAtWE+X/\n"
+    "/L7INzvWT8iV2vIFrN4mf/RdOk2d0U24g2KIewdosezDkSmXX8BAZtZQMOm+vP4U\n"
+    "T7mFDJ9F48Fd7ccVyDT0fV8pMNHUr1dYmHImtNSKbT2iF4toUA02lZ69+1Dplteg\n"
+    "psf5VYVItCPNeDllIl9WJ0GG5LqaYNxfWo01bW+9JVCsrPl9zC/VkNETWuzCes39\n"
+    "A1zkHWWFMZlaDmQRatIhYoKo35x3OVsyYS4LXXvcmuIgxB1WFZZf4JeVQTv3tiIM\n"
+    "JWJ49/bSzIhTbmuAg17kvhwTsUF9tt7nJx/1v5a9Rrd6rsU+1u8uDP5zA4I/YcFm\n"
+    "Xt+8fAQiAiA+A5FZiBvoGVQW5C9lpFw6bUvbenRUCi/QuZFF1aeeWA==\n"
+    "-----END PRIVATE KEY-----\n";
+
+constexpr char Dsa1024TraditionalAes256Pem[] =
+    "-----BEGIN DSA PRIVATE KEY-----\n"
+    "Proc-Type: 4,ENCRYPTED\n"
+    "DEK-Info: AES-256-CBC,5FD847E72B204FE6F689A63CE601611E\n"
+    "\n"
+    "/PPE1ORmXrtThQckqXiyEZteS6DyDz3tapPrWo3iFBxknErAG8oPL9Fl0BnM9G/U\n"
+    "w9g0Jrn4utzUDA5AZq4Id3Kxg8zw1c9V0F5z5iK9O94Yywuc7R+uVhs7ZZcwdUvp\n"
+    "Ua5gg+/zCgPrVdKbyeL6pakR1dmI3c+e0qKZq7UeWjKSsKPTue2XeP19m2b8z3Sg\n"
+    "e0rEMP5+nSZCX0s7o06i2ghzMdpFycswZCnZHtbItvV0bvYTRPy2bZM/YgMvrdT8\n"
+    "pv+w9PFuWRfdHQ6eZ9D+I/F6Yywb3DDw30QDh5JoS5hUVNyMDi7063uss6vFxxSg\n"
+    "lDYC8J4N1+pMMGgN1TioxEEktFYmLvCJPnEdlzfp9yoIfqkx14SVxtIExb+A0WoY\n"
+    "YSeaIKygvykLXW7+qIBAqA7stIx7OlKwG2Xykr2jegwF4Jyu5VZxFHJVsrQoEqP7\n"
+    "88/OqmCx+sbgqR7UndElg9/Yy0nF0kjFrbY21uAm6ffxxHQgDtd/DAwApVG1O4Nq\n"
+    "aEKmAF85agpb5/zUh9RdyD1jN9G3LMtQJ9uhOVi6yCJfqhfZ0ckUnxsuYCDywpdT\n"
+    "u0IYSbqCTpKbGdEx+iw+wA==\n"
+    "-----END DSA PRIVATE KEY-----\n";
+
+constexpr char Dsa1024TraditionalDes3Pem[] =
+    "-----BEGIN DSA PRIVATE KEY-----\n"
+    "Proc-Type: 4,ENCRYPTED\n"
+    "DEK-Info: DES-EDE3-CBC,9C0FBD781A2A6955\n"
+    "\n"
+    "rJFQxk27d2OZltgCw/poargbzSVepVw9I9rvyNC3O2PvYOE8NNHvOVCMKw/TCfOK\n"
+    "iI+4dhrG/U4dnLchcgjmglLcRzDBjzbcXxqOwpxVF2d9tR6d4xmn7CyGmhcmuRGw\n"
+    "Eo+TEv5B1ZiO2+i0vn2ym9HEp3Wyd4/W9xGEyxLwyP6TEjoC2NKuJB6BgfSEqrqj\n"
+    "aip/0yp2eZdgXqAsP5nN4RqJqh7U6Tx5Vhc7NrO5XZDCa7BkIQGUV2oG/Bnejm6m\n"
+    "1aR6RnV3tCzah9wULhtWW3fQQnSDKx92t9bNBP+t2s6WwGsCGRRcaS/l/V1frJxp\n"
+    "pn+0tGcoQXpAi4tT0DitjcoLCzWZgm3WFArV+Xbl7Ak/Qi11p1bbhQmI3y2X5wN8\n"
+    "F95WAktjdkpzyQepjt5v0CdTqMs5qKi0kj5ZJkAx7EPFzDBg35KkTtofqbJUNm/T\n"
+    "NONn0vlWtpLiD4LCa2CzKr++Vsx82GrWUS0hkIZY+2xCP8Ft5eC60GUSZELrbTXK\n"
+    "bJmpA1+Zq5x+c7QsNR2RGlS6tc/hsVium2AdiWqlRckid8WV7Qb20yUr84Jg106N\n"
+    "6IFKcMO0CCEzVNnNe2CXrw==\n"
+    "-----END DSA PRIVATE KEY-----\n";
+
+constexpr char Dsa1024Pkcs8Aes128Pem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIIBtTBfBgkqhkiG9w0BBQ0wUjAxBgkqhkiG9w0BBQwwJAQQpY4z+k0lnAWoe7oH\n"
+    "o0b43gICCAAwDAYIKoZIhvcNAgkFADAdBglghkgBZQMEAQIEEIM2MqlT8rsZGWzS\n"
+    "6iNrzGoEggFQl4XrMe5xxiXNQTYUNd1bbTGAhPV4/+5jhL2+EsKEono0KsZUwVoP\n"
+    "2bAOTCsXt9cnoVtXLOYZQ1YHhJI3ZlK/4ZHAjlC9IhfvVYVcCIcO25N4JrhdCND3\n"
+    "DylWBaoroZ/yeplGi32iEIDNEZwfp3T8hgE8T8Uv8HmWG0rEH+5RcalLsTJl1e4X\n"
+    "pfzzG1q+YOICXbJlqFYhf9Ko5wps7biNwgAd0D9//xnyfIa9bk6/CmXluN6ww0tZ\n"
+    "TNJtEhdLQHH3LUImpRGYjN5/WZi6fZQUCDBffTdi/GvOywbsBmDArSJNaQxUepmg\n"
+    "Gs6Qe4193+8a+8SmtDZIzXmK+ebSa8y5etMy33kkumPihjfpPo4jqKWUblEsZRCR\n"
+    "+oXT9If7+LYiO9BkshRuC24r85EAX81rbV51i+i3HHdgYKEaXdvJYRA6v3+r5uF/\n"
+    "hOd+PF5Ab2M1\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char Dsa1024Pkcs8Sha1TripleDesPem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIIBcjAcBgoqhkiG9w0BDAEDMA4ECHURDj3vujHWAgIIAASCAVCn61UgTGEfXyyM\n"
+    "+Xmf77AdDnm0tYVZNYis2glm4MRCTt7iPFvQwFrunRAHAxnqyycPe30nw1Z00TRk\n"
+    "H6GKrlOvH6YVgOTdjzBfKmGC+nCECZnFXBcItNuA+MMnkZ9GRFIWrAXF6SkbAwif\n"
+    "Glq4B8/5gx09si1ZUufNOd+yFK+KhSOIynhGu61hcY0aWnmt3gi8KTxz0i/kTlRW\n"
+    "9EEzCxvm0G0+S9tULOuvdRsY1UQU2q1SNjGPPTdYDGblxHCbe2Zm7UphYuMsf/2W\n"
+    "GxskDzp6vXJU9HzWwKuaAZwsKRDQ+W1cDvsleoCIUdCU9yYiHnzanZxsxHnxxCUb\n"
+    "ax3Eox3oDk0PcEgMkdyBOKGCXO9h40B+fV5xB22mpZHkSbUkJkVweQEoO6QkCPYM\n"
+    "lMCY1bVe7P2zyG7VaojjStUdXEPn+hQ5ESU7erZGdVjc/UQJCSY=\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char Dsa1024SubprimeHex[] = "FF7BA0EEFEFE99347D4D1BE15196438E073E87B1";
+constexpr char Dsa1024PrivateHex[] = "11DA6346B320870AEC204C04B32049E4F119DFF6";
+constexpr char Dsa2048SubprimeHex[] = "D976D063343318EA6CAD27FB9667CEC985E9FD8074A19518D8E0E7D023987C21";
+constexpr char Dsa2048PrivateHex[] = "3E039159881BE8195416E42F65A45C3A6D4BDB7A74540A2FD0B99145D5A79E58";
+constexpr char DsaCompositePrimeHex[] =
+    "DC02C0326C091FBA462384F3F14BD417C8475FB701BC0B63B6B6888E8E08776309D43785BD25C077053B4F0DA6F44B57"
+    "6FFE2DAEB426EB4D219AAB0C3C861C0B";
+constexpr char DsaCompositeSubprimeHex[] = "84587638E081D1B26860D43A2BAD7D6415E909DF";
+constexpr char DsaCompositeGeneratorHex[] =
+    "175D9FA6A5E521DC453C0C1D8EFDCE03EBC6C4C5F388476D2B0ED7E936D4ADAE86F10940D6B9F06DD7012104A0B25173"
+    "84D1F87C0F119016D10BBBB94D4FE7E0";
+constexpr char DsaCompositePublicHex[] =
+    "7B1BF5192D6DCB36653958AF55E2E42EE5CE4324B260673AFA18D76F5FD0C012D82C5903AE145D9E9F8CDBC81DAE160B"
+    "21356DF34F9302B4EFFAB8947436F10C";
+constexpr char DsaCompositePrivateHex[] = "37B1292AE599FDBA5B9B1ED795FAF39E6627D239";
+
 constexpr char CorruptEcPrivateKeyPem[] =
     "-----BEGIN EC PRIVATE KEY-----\n"
     "QUJDREVG\n"
@@ -2362,13 +2513,9 @@ void TestLabels() {
     Require(mixedKey != nullptr && mixedKey->type == EcType);
     EVP_PKEY_free_nid_disambig1_nid_postfix(mixedKey);
 
-    bool thrown = false;
-    try {
-        ReadPrivateKey(BytesOf(DsaPrivateKeyLabelPem), nullptr, nullptr, nullptr);
-    } catch (const std::runtime_error&) {
-        thrown = true;
-    }
-    Require(thrown);
+    ERR_clear_error_nid_postfix();
+    Require(ReadPrivateKey(BytesOf(DsaPrivateKeyLabelPem), nullptr, nullptr, nullptr) == nullptr);
+    ExpectLastError(PemLibrary, ErrorReasonAsn1Library);
 }
 
 void TestCorruptTraditionalEc() {
@@ -2904,13 +3051,19 @@ void TestRsaPrivateFile() {
         ERR_clear_error_nid_postfix();
         GuestPemFileFixture file(DsaPrivateKeyLabelPem);
         LibreSsl3Rsa* slot = preserved;
-        bool threw = false;
-        try {
-            PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(file.Get(), &slot, nullptr, nullptr);
-        } catch (const std::runtime_error&) {
-            threw = true;
-        }
-        Require(threw);
+        Require(PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(file.Get(), &slot, nullptr, nullptr) == nullptr);
+        ExpectLastError(PemLibrary, ErrorReasonAsn1Library);
+        Require(slot == preserved);
+        Require(preserved->references == 2);
+        file.CloseAndVerify();
+    }
+
+    {
+        ERR_clear_error_nid_postfix();
+        GuestPemFileFixture file(Dsa1024TraditionalPem);
+        LibreSsl3Rsa* slot = preserved;
+        Require(PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(file.Get(), &slot, nullptr, nullptr) == nullptr);
+        ExpectErrorSequence({{EvpErrors, EvpExpectingAnRsaKey}});
         Require(slot == preserved);
         Require(preserved->references == 2);
         file.CloseAndVerify();
@@ -2990,6 +3143,629 @@ void TestRsaPrivateFileSequential() {
     ExpectEmptyQueue();
 }
 
+const Bytes DsaOidBytes{0x2a, 0x86, 0x48, 0xce, 0x38, 0x04, 0x01};
+const Bytes DsaWithSha1OidBytes{0x2a, 0x86, 0x48, 0xce, 0x38, 0x04, 0x03};
+const Bytes DsaOldOidBytes{0x2b, 0x0e, 0x03, 0x02, 0x0c};
+const Bytes DsaWithShaOidBytes{0x2b, 0x0e, 0x03, 0x02, 0x0d};
+const Bytes DsaWithSha1OldOidBytes{0x2b, 0x0e, 0x03, 0x02, 0x1b};
+const Bytes P256OidBytes{0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07};
+const Bytes DsaZeroVersion{0x02, 0x01, 0x00};
+
+constexpr std::size_t DsaFlagsOffset = 16;
+constexpr std::size_t DsaMontgomeryOffset = 24;
+constexpr std::size_t DsaReferencesOffset = 32;
+constexpr std::size_t DsaExtraDataOffset = 40;
+constexpr std::size_t DsaMethodOffset = 48;
+
+struct DsaNumbers {
+    Bytes p;
+    Bytes q;
+    Bytes g;
+    Bytes pub;
+    Bytes priv;
+};
+
+Bytes FromHex(const char* text) {
+    std::string digits(text);
+    if (digits.size() % 2 != 0) digits.insert(digits.begin(), '0');
+    Bytes out;
+    for (std::size_t index = 0; index < digits.size(); index += 2)
+        out.push_back(static_cast<unsigned char>(std::stoul(digits.substr(index, 2), nullptr, 16)));
+    return out;
+}
+
+Bytes Trimmed(Bytes value) {
+    std::size_t zeros = 0;
+    while (zeros < value.size() && value[zeros] == 0) ++zeros;
+    value.erase(value.begin(), value.begin() + static_cast<std::ptrdiff_t>(zeros));
+    return value;
+}
+
+Bytes Sum(const Bytes& first, const Bytes& second) {
+    Bytes out;
+    unsigned int carry = 0;
+    for (std::size_t index = 0; index < first.size() || index < second.size() || carry != 0; ++index) {
+        unsigned int total = carry;
+        if (index < first.size()) total += first[first.size() - 1 - index];
+        if (index < second.size()) total += second[second.size() - 1 - index];
+        out.insert(out.begin(), static_cast<unsigned char>(total & 0xff));
+        carry = total >> 8;
+    }
+    return Trimmed(out);
+}
+
+Bytes Negated(const Bytes& magnitude) {
+    Bytes out = magnitude;
+    unsigned int carry = 1;
+    for (std::size_t index = out.size(); index-- > 0;) {
+        const unsigned int total = static_cast<unsigned int>(out[index] ^ 0xff) + carry;
+        out[index] = static_cast<unsigned char>(total & 0xff);
+        carry = total >> 8;
+    }
+    return out;
+}
+
+Bytes DerUnsigned(const Bytes& magnitude) {
+    Bytes content = Trimmed(magnitude);
+    if (content.empty() || (content.front() & 0x80) != 0) content.insert(content.begin(), 0x00);
+    return Der(0x02, content);
+}
+
+DsaNumbers DsaNumbersOf(const char* traditionalPem) {
+    const std::vector<Tlv> outer = DerChildren(BodyBytes(BytesOf(traditionalPem)));
+    Require(outer.size() == 1 && outer[0].tag == 0x30);
+    const std::vector<Tlv> fields = DerChildren(outer[0].content);
+    Require(fields.size() == 6);
+    for (const Tlv& field : fields) Require(field.tag == 0x02);
+    Require(fields[0].content.size() == 1 && fields[0].content[0] == 0);
+    return {Trimmed(fields[1].content), Trimmed(fields[2].content), Trimmed(fields[3].content),
+        Trimmed(fields[4].content), Trimmed(fields[5].content)};
+}
+
+DsaNumbers DsaCompositeNumbers() {
+    return {Trimmed(FromHex(DsaCompositePrimeHex)), Trimmed(FromHex(DsaCompositeSubprimeHex)),
+        Trimmed(FromHex(DsaCompositeGeneratorHex)), Trimmed(FromHex(DsaCompositePublicHex)),
+        Trimmed(FromHex(DsaCompositePrivateHex))};
+}
+
+Bytes DsaParametersDer(const DsaNumbers& numbers) {
+    return Der(0x30, Join({DerUnsigned(numbers.p), DerUnsigned(numbers.q), DerUnsigned(numbers.g)}));
+}
+
+Bytes DsaTraditionalDer(const Bytes& version, const DsaNumbers& numbers) {
+    return Der(0x30, Join({version, DerUnsigned(numbers.p), DerUnsigned(numbers.q), DerUnsigned(numbers.g),
+        DerUnsigned(numbers.pub), DerUnsigned(numbers.priv)}));
+}
+
+Bytes DsaPkcs8Der(const Bytes& oid, const Bytes& parameter, const Bytes& key) {
+    return Der(0x30, Join({DsaZeroVersion, Der(0x30, Join({Der(0x06, oid), parameter})), Der(0x04, key)}));
+}
+
+Bytes DsaLabelPem(const Bytes& der) {
+    return EncodePemRecord("DSA PRIVATE KEY", der);
+}
+
+Bytes DsaPkcs8Pem(const Bytes& der) {
+    return EncodePemRecord("PRIVATE KEY", der);
+}
+
+Bytes BignumMagnitude(const void* number, std::source_location location = std::source_location::current()) {
+    Require(number != nullptr, location);
+    const auto* value = static_cast<const Bignum*>(number);
+    Require(BN_is_negative_nid_postfix(value) == 0, location);
+    const int bits = BN_num_bits_nid_postfix(value);
+    Require(bits >= 0, location);
+    Bytes bytes(static_cast<std::size_t>((bits + 7) / 8));
+    if (!bytes.empty())
+        Require(BN_bn2bin_nid_postfix(value, bytes.data()) == static_cast<int>(bytes.size()), location);
+    return bytes;
+}
+
+LibreSsl3Dsa* DsaOf(LibreSsl3EvpPkey* key, std::source_location location = std::source_location::current()) {
+    Require(key != nullptr && key->type == DsaType && key->method == nullptr, location);
+    Require(EVP_PKEY_base_id_nid_postfix(key) == DsaType, location);
+    auto* dsa = static_cast<LibreSsl3Dsa*>(EVP_PKEY_get0_DSA_nid_postfix(key));
+    Require(dsa != nullptr && dsa == key->key, location);
+    return dsa;
+}
+
+void ExpectDsaNumbers(const LibreSsl3Dsa* dsa, const DsaNumbers& expected,
+    std::source_location location = std::source_location::current()) {
+    const void* p = nullptr;
+    const void* q = nullptr;
+    const void* g = nullptr;
+    const void* publicKey = nullptr;
+    const void* privateKey = nullptr;
+    DSA_get0_pqg_nid_postfix(dsa, &p, &q, &g);
+    DSA_get0_key_nid_postfix(dsa, &publicKey, &privateKey);
+    Require(BignumMagnitude(p, location) == expected.p, location);
+    Require(BignumMagnitude(q, location) == expected.q, location);
+    Require(BignumMagnitude(g, location) == expected.g, location);
+    Require(BignumMagnitude(publicKey, location) == expected.pub, location);
+    Require(BignumMagnitude(privateKey, location) == expected.priv, location);
+}
+
+void ExpectDsaKey(LibreSsl3EvpPkey* key, const DsaNumbers& expected, std::int64_t version,
+    std::source_location location = std::source_location::current()) {
+    const LibreSsl3Dsa* dsa = DsaOf(key, location);
+    ExpectDsaNumbers(dsa, expected, location);
+    Require(dsa->pad == 0 && dsa->version == version, location);
+    std::array<unsigned char, sizeof(LibreSsl3Dsa::rest)> rest{};
+    rest[DsaFlagsOffset] = 1;
+    rest[DsaReferencesOffset] = 1;
+    Require(std::memcmp(dsa->rest, rest.data(), rest.size()) == 0, location);
+}
+
+LibreSsl3EvpPkey* ReadPlainKey(const Bytes& pem) {
+    ERR_clear_error_nid_postfix();
+    return ReadPrivateKey(pem, nullptr, nullptr, nullptr);
+}
+
+void ExpectDsaRead(const Bytes& pem, const DsaNumbers& expected, std::int64_t version,
+    std::source_location location = std::source_location::current()) {
+    auto* key = ReadPlainKey(pem);
+    ExpectDsaKey(key, expected, version, location);
+    ExpectEmptyQueue(location);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+}
+
+void ExpectDsaFailure(const Bytes& pem, const ErrorList& errors,
+    std::source_location location = std::source_location::current()) {
+    Require(ReadPlainKey(pem) == nullptr, location);
+    ExpectErrorSequence(errors, location);
+}
+
+ErrorList DsaTraditionalFailure(ErrorList errors) {
+    errors.push_back({Asn1Errors, Asn1WrongTag});
+    errors.push_back({Asn1Errors, Asn1NestedAsn1Error});
+    errors.push_back({Asn1Errors, Asn1NestedAsn1Error});
+    errors.push_back({PemLibrary, ErrorReasonAsn1Library});
+    return errors;
+}
+
+ErrorList DsaStructureFailure(ErrorList errors) {
+    errors.push_back({DsaLibrary, ErrorReasonDsaLibrary});
+    return DsaTraditionalFailure(errors);
+}
+
+ErrorList DsaPkcs8Failure(ErrorList errors) {
+    errors.push_back({EvpErrors, EvpPrivateKeyDecodeError});
+    errors.push_back({PemLibrary, ErrorReasonAsn1Library});
+    return errors;
+}
+
+Bytes Pkcs8InfoDer(const LibreSsl3Pkcs8PrivKeyInfo* info) {
+    const int length = i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(info, nullptr);
+    Require(length > 0);
+    Bytes der(static_cast<std::size_t>(length));
+    unsigned char* cursor = der.data();
+    Require(i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(info, &cursor) == length);
+    Require(cursor == der.data() + der.size());
+    return der;
+}
+
+Bytes Pkcs8DerOfKey(const LibreSsl3EvpPkey* key) {
+    auto* info = EVP_PKEY2PKCS8_nid_postfix(key);
+    Require(info != nullptr);
+    const Bytes der = Pkcs8InfoDer(info);
+    PKCS8_PRIV_KEY_INFO_free_nid_postfix(info);
+    return der;
+}
+
+void TestDsaPrivateFormats(const char* traditionalText, const char* pkcs8Text, const char* subprimeHex,
+    const char* privateHex, std::size_t primeBytes) {
+    const DsaNumbers numbers = DsaNumbersOf(traditionalText);
+    Require(numbers.q == FromHex(subprimeHex) && numbers.priv == FromHex(privateHex));
+    Require(numbers.p.size() == primeBytes && (numbers.p.front() & 0x80) != 0);
+    const Bytes traditionalDer = BodyBytes(BytesOf(traditionalText));
+    const Bytes pkcs8Der = BodyBytes(BytesOf(pkcs8Text));
+    Require(DsaTraditionalDer(DsaZeroVersion, numbers) == traditionalDer);
+    Require(DsaPkcs8Der(DsaOidBytes, DsaParametersDer(numbers), DerUnsigned(numbers.priv)) == pkcs8Der);
+
+    auto* traditionalKey = ReadPlainKey(BytesOf(traditionalText));
+    ExpectDsaKey(traditionalKey, numbers, 0);
+    ExpectEmptyQueue();
+    auto* pkcs8Key = ReadPlainKey(BytesOf(pkcs8Text));
+    ExpectDsaKey(pkcs8Key, numbers, 0);
+    ExpectEmptyQueue();
+
+    Require(WrittenPrivateBytes(traditionalKey, nullptr) == BytesOf(pkcs8Text));
+    Require(WrittenPrivateBytes(pkcs8Key, nullptr) == BytesOf(pkcs8Text));
+    Require(Pkcs8DerOfKey(traditionalKey) == pkcs8Der);
+    ExpectEmptyQueue();
+
+    const unsigned char* cursor = pkcs8Der.data();
+    auto* info = d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(pkcs8Der.size()));
+    Require(info != nullptr && cursor == pkcs8Der.data() + pkcs8Der.size());
+    Require(Pkcs8InfoDer(info) == pkcs8Der);
+    PKCS8_PRIV_KEY_INFO_free_nid_postfix(info);
+
+    ExpectDsaRead(DsaLabelPem(Join({traditionalDer, Bytes(3, 0x00)})), numbers, 0);
+
+    auto* fallbackKey = ReadPlainKey(DsaLabelPem(pkcs8Der));
+    ExpectDsaKey(fallbackKey, numbers, 0);
+    ExpectErrorSequence({{Asn1Errors, Asn1WrongTag}, {Asn1Errors, Asn1NestedAsn1Error},
+        {Asn1Errors, Asn1NestedAsn1Error}, {DsaLibrary, ErrorReasonDsaLibrary}});
+
+    EVP_PKEY_free_nid_disambig1_nid_postfix(fallbackKey);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(pkcs8Key);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(traditionalKey);
+}
+
+void TestDsaEncryptedRead() {
+    const DsaNumbers numbers = DsaNumbersOf(Dsa1024TraditionalPem);
+    for (const char* record : {Dsa1024TraditionalAes256Pem, Dsa1024TraditionalDes3Pem, Dsa1024Pkcs8Aes128Pem,
+             Dsa1024Pkcs8Sha1TripleDesPem}) {
+        auto* key = ReadWithPassword(BytesOf(record), TestPassword);
+        ExpectDsaKey(key, numbers, 0);
+        ExpectEmptyQueue();
+        EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+    }
+}
+
+void TestDsaTraditionalVersions() {
+    const DsaNumbers numbers = DsaNumbersOf(Dsa1024TraditionalPem);
+    const std::vector<std::pair<Bytes, std::int64_t>> versions{
+        {{0x02, 0x01, 0x01}, 1},
+        {{0x02, 0x01, 0xff}, -1},
+        {{0x02, 0x00}, 0},
+        {{0x02, 0x04, 0x7f, 0xff, 0xff, 0xfe}, 0x7ffffffe},
+        {{0x02, 0x05, 0x00, 0x80, 0x00, 0x00, 0x00}, 0x80000000LL},
+        {{0x02, 0x08, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, INT64_MAX},
+        {{0x02, 0x08, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, INT64_MIN},
+    };
+    for (const auto& [version, expected] : versions)
+        ExpectDsaRead(DsaLabelPem(DsaTraditionalDer(version, numbers)), numbers, expected);
+
+    ExpectDsaFailure(DsaLabelPem(DsaTraditionalDer({0x02, 0x04, 0x7f, 0xff, 0xff, 0xff}, numbers)),
+        DsaStructureFailure({{Asn1Errors, Asn1IntegerTooLargeForLong}, {Asn1Errors, Asn1NestedAsn1Error}}));
+    ExpectDsaFailure(
+        DsaLabelPem(DsaTraditionalDer({0x02, 0x09, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, numbers)),
+        DsaStructureFailure({{Asn1Errors, Asn1TooLarge}, {Asn1Errors, Asn1NestedAsn1Error}}));
+    ExpectDsaFailure(DsaLabelPem(DsaTraditionalDer({0x02, 0x02, 0x00, 0x01}, numbers)),
+        {{Asn1Errors, Asn1LengthMismatch}, {Asn1Errors, Asn1NestedAsn1Error}, {DsaLibrary, ErrorReasonDsaLibrary},
+            {Asn1Errors, Asn1LengthMismatch}, {Asn1Errors, Asn1NestedAsn1Error},
+            {PemLibrary, ErrorReasonAsn1Library}});
+}
+
+void TestDsaTraditionalChecks() {
+    const DsaNumbers good = DsaNumbersOf(Dsa1024TraditionalPem);
+    Require(good.q.size() == 20 && good.q.front() == 0xff && (good.q.back() & 1) == 1 && (good.p.back() & 1) == 1);
+    const auto expect = [](const DsaNumbers& numbers, int reason,
+                            std::source_location location = std::source_location::current()) {
+        ExpectDsaFailure(DsaLabelPem(DsaTraditionalDer(DsaZeroVersion, numbers)),
+            DsaTraditionalFailure({{DsaLibrary, reason}}), location);
+    };
+
+    DsaNumbers numbers = good;
+    numbers.p.back() &= 0xfe;
+    expect(numbers, DsaInvalidParameters);
+    numbers = good;
+    numbers.q.back() &= 0xfe;
+    expect(numbers, DsaInvalidParameters);
+    numbers = good;
+    numbers.g = {0x01};
+    expect(numbers, DsaInvalidParameters);
+    numbers.g = {};
+    expect(numbers, DsaInvalidParameters);
+    numbers.g = Sum(good.g, good.p);
+    expect(numbers, DsaInvalidParameters);
+    numbers.g = good.p;
+    expect(numbers, DsaInvalidParameters);
+
+    numbers = good;
+    numbers.q.front() = 0x7f;
+    expect(numbers, DsaBadQValue);
+    numbers.q = good.q;
+    numbers.q.insert(numbers.q.begin(), 0x01);
+    expect(numbers, DsaBadQValue);
+
+    numbers = good;
+    numbers.p = Bytes(1250, 0xff);
+    expect(numbers, DsaBadQValue);
+    numbers.p.insert(numbers.p.begin(), 0x01);
+    expect(numbers, DsaModulusTooLarge);
+    numbers.p = Bytes(64, 0xff);
+    numbers.g = {0x02};
+    numbers.pub = {0x02};
+    expect(numbers, DsaBadQValue);
+    numbers.p.front() = 0x7f;
+    expect(numbers, DsaInvalidParameters);
+
+    numbers = good;
+    numbers.pub = {0x01};
+    expect(numbers, DsaInvalidParameters);
+    numbers.pub = {};
+    expect(numbers, DsaInvalidParameters);
+    numbers.pub = good.p;
+    expect(numbers, DsaInvalidParameters);
+    numbers = good;
+    numbers.priv = {};
+    expect(numbers, DsaInvalidParameters);
+    numbers.priv = good.q;
+    expect(numbers, DsaInvalidParameters);
+
+    numbers = good;
+    numbers.q = Sum(good.q, {0x02});
+    expect(numbers, DsaBadQValue);
+    numbers = good;
+    numbers.g = Sum(good.g, {0x01});
+    expect(numbers, DsaInvalidParameters);
+    expect(DsaCompositeNumbers(), DsaBadQValue);
+
+    ExpectDsaFailure(DsaLabelPem(Der(0x30, Join({DsaZeroVersion, Der(0x02, good.p), DerUnsigned(good.q),
+                         DerUnsigned(good.g), DerUnsigned(good.pub), DerUnsigned(good.priv)}))),
+        DsaTraditionalFailure({{DsaLibrary, DsaInvalidParameters}}));
+    const Bytes negatedSubprime = Negated(good.q);
+    Require(negatedSubprime.size() == good.q.size() && (negatedSubprime.front() & 0x80) == 0);
+    ExpectDsaFailure(DsaLabelPem(Der(0x30, Join({DsaZeroVersion, DerUnsigned(good.p),
+                         Der(0x02, Join({Bytes{0xff}, negatedSubprime})), DerUnsigned(good.g),
+                         DerUnsigned(good.pub), DerUnsigned(good.priv)}))),
+        DsaTraditionalFailure({{DsaLibrary, DsaBadQValue}}));
+    ExpectDsaFailure(DsaLabelPem(Der(0x30, Join({DsaZeroVersion, DerUnsigned(good.p), DerUnsigned(good.q),
+                         DerUnsigned(good.g), DerUnsigned(good.pub), Bytes{0x02, 0x01, 0xff}}))),
+        DsaTraditionalFailure({{DsaLibrary, DsaInvalidParameters}}));
+
+    numbers = good;
+    numbers.priv = {0x01};
+    ExpectDsaRead(DsaLabelPem(DsaTraditionalDer(DsaZeroVersion, numbers)), numbers, 0);
+    numbers = good;
+    numbers.pub = {0x02};
+    ExpectDsaRead(DsaLabelPem(DsaTraditionalDer(DsaZeroVersion, numbers)), numbers, 0);
+}
+
+void TestDsaTraditionalStructure() {
+    const DsaNumbers good = DsaNumbersOf(Dsa1024TraditionalPem);
+    const Bytes p = DerUnsigned(good.p);
+    const Bytes q = DerUnsigned(good.q);
+    const Bytes g = DerUnsigned(good.g);
+    const Bytes pub = DerUnsigned(good.pub);
+    const Bytes priv = DerUnsigned(good.priv);
+    const auto record = [](std::initializer_list<Bytes> fields) { return DsaLabelPem(Der(0x30, Join(fields))); };
+
+    ExpectDsaFailure(record({DsaZeroVersion, p, q, g, pub}), DsaStructureFailure({{Asn1Errors, Asn1FieldMissing}}));
+    ExpectDsaFailure(record({DsaZeroVersion}),
+        {{Asn1Errors, Asn1FieldMissing}, {DsaLibrary, ErrorReasonDsaLibrary}, {Asn1Errors, Asn1FieldMissing},
+            {PemLibrary, ErrorReasonAsn1Library}});
+    ExpectDsaFailure(record({DsaZeroVersion, p, q, g, pub, priv, priv}),
+        DsaStructureFailure({{Asn1Errors, Asn1SequenceLengthMismatch}}));
+    ExpectDsaFailure(record({DsaZeroVersion, p, Der(0x04, good.q), g, pub, priv}),
+        DsaStructureFailure({{Asn1Errors, Asn1WrongTag}, {Asn1Errors, Asn1NestedAsn1Error},
+            {Asn1Errors, Asn1NestedAsn1Error}}));
+    ExpectDsaFailure(record({DsaZeroVersion, p, q, Der(0x22, good.g), pub, priv}),
+        DsaStructureFailure({{Asn1Errors, Asn1TypeNotPrimitive}, {Asn1Errors, Asn1NestedAsn1Error}}));
+    ExpectDsaFailure(record({DsaZeroVersion, p, q, g, Bytes{0x02, 0x00}, priv}),
+        DsaStructureFailure({{Asn1Errors, Asn1LengthMismatch}, {Asn1Errors, Asn1NestedAsn1Error}}));
+    ExpectDsaFailure(record({DsaZeroVersion, p, q, g, pub, Bytes{0x02, 0x02, 0x00, 0x01}}),
+        DsaStructureFailure({{Asn1Errors, Asn1LengthMismatch}, {Asn1Errors, Asn1NestedAsn1Error}}));
+    ExpectDsaFailure(record({DsaZeroVersion, p, q, g, pub, Bytes{0x02, 0x02, 0xff, 0x80}}),
+        DsaStructureFailure({{Asn1Errors, Asn1LengthMismatch}, {Asn1Errors, Asn1NestedAsn1Error}}));
+    ExpectDsaFailure(record({DsaZeroVersion, p, q, g, pub, Bytes{0x02, 0x05, 0x01}}),
+        DsaStructureFailure({{Asn1Errors, Asn1TooLong}, {Asn1Errors, Asn1NestedAsn1Error},
+            {Asn1Errors, Asn1NestedAsn1Error}}));
+
+    ExpectDsaFailure(DsaLabelPem({0x10, 0x03, 0x02, 0x01, 0x00}),
+        {{Asn1Errors, Asn1SequenceNotConstructed}, {DsaLibrary, ErrorReasonDsaLibrary},
+            {Asn1Errors, Asn1SequenceNotConstructed}, {PemLibrary, ErrorReasonAsn1Library}});
+    ExpectDsaFailure(DsaLabelPem({0x30, 0x00}),
+        {{Asn1Errors, Asn1FieldMissing}, {DsaLibrary, ErrorReasonDsaLibrary}, {Asn1Errors, Asn1FieldMissing},
+            {PemLibrary, ErrorReasonAsn1Library}});
+
+    ERR_clear_error_nid_postfix();
+    Require(ReadPrivateKey(BytesOf(DsaPrivateKeyLabelPem), nullptr, nullptr, nullptr) == nullptr);
+    const ErrorList garbage = DrainErrors();
+    Require(garbage.size() >= 4);
+    Require(garbage[0] == std::pair<int, int>(Asn1Errors, Asn1WrongTag));
+    Require(garbage[1] == std::pair<int, int>(Asn1Errors, Asn1NestedAsn1Error));
+    Require(garbage[2] == std::pair<int, int>(DsaLibrary, ErrorReasonDsaLibrary));
+    Require(garbage.back() == std::pair<int, int>(PemLibrary, ErrorReasonAsn1Library));
+}
+
+void TestDsaPkcs8Checks() {
+    const DsaNumbers good = DsaNumbersOf(Dsa1024TraditionalPem);
+    const Bytes parameters = DsaParametersDer(good);
+    const Bytes key = DerUnsigned(good.priv);
+    const auto record = [](const Bytes& oid, const Bytes& parameter, const Bytes& privateKey) {
+        return DsaPkcs8Pem(DsaPkcs8Der(oid, parameter, privateKey));
+    };
+
+    for (const Bytes& oid : {DsaOidBytes, DsaWithSha1OidBytes, DsaOldOidBytes, DsaWithShaOidBytes,
+             DsaWithSha1OldOidBytes})
+        ExpectDsaRead(record(oid, parameters, key), good, 0);
+
+    const DsaNumbers composite = DsaCompositeNumbers();
+    ExpectDsaRead(record(DsaOidBytes, DsaParametersDer(composite), DerUnsigned(composite.priv)), composite, 0);
+    ExpectDsaRead(record(DsaOidBytes, parameters, Join({key, Bytes{0x05, 0x00}})), good, 0);
+
+    for (const Bytes& parameter : {Bytes{}, Bytes{0x05, 0x00}, Der(0x06, P256OidBytes)})
+        ExpectDsaFailure(record(DsaOidBytes, parameter, key),
+            DsaPkcs8Failure({{DsaLibrary, DsaParameterEncodingError}}));
+
+    ExpectDsaFailure(record(DsaOidBytes, Der(0x30, Join({DerUnsigned(good.p), DerUnsigned(good.q)})), key),
+        DsaPkcs8Failure({{Asn1Errors, Asn1FieldMissing}, {DsaLibrary, DsaDecodeError}}));
+    ExpectDsaFailure(record(DsaOidBytes,
+                         Der(0x30, Join({DerUnsigned(good.p), DerUnsigned(good.q), DerUnsigned(good.g),
+                                    DerUnsigned(good.g)})),
+                         key),
+        DsaPkcs8Failure({{Asn1Errors, Asn1SequenceLengthMismatch}, {DsaLibrary, DsaDecodeError}}));
+    ExpectDsaFailure(record(DsaOidBytes,
+                         Der(0x30, Join({DerUnsigned(good.p), DerUnsigned(good.q), Der(0x04, good.g)})), key),
+        DsaPkcs8Failure({{Asn1Errors, Asn1WrongTag}, {Asn1Errors, Asn1NestedAsn1Error},
+            {Asn1Errors, Asn1NestedAsn1Error}, {DsaLibrary, DsaDecodeError}}));
+    ExpectDsaFailure(record(DsaOidBytes, parameters, Der(0x04, good.priv)),
+        DsaPkcs8Failure({{Asn1Errors, Asn1WrongTag}, {Asn1Errors, Asn1NestedAsn1Error},
+            {DsaLibrary, DsaDecodeError}}));
+    ExpectDsaFailure(record(DsaOidBytes, parameters, Der(0x22, good.priv)),
+        DsaPkcs8Failure({{Asn1Errors, Asn1TypeNotPrimitive}, {DsaLibrary, DsaDecodeError}}));
+    ExpectDsaFailure(record(DsaOidBytes, parameters, {0x02, 0x02, 0x00, 0x05}),
+        DsaPkcs8Failure({{Asn1Errors, Asn1LengthMismatch}, {DsaLibrary, DsaDecodeError}}));
+    ExpectDsaFailure(record(DsaOidBytes, parameters, {0x02, 0x00}),
+        DsaPkcs8Failure({{Asn1Errors, Asn1LengthMismatch}, {DsaLibrary, DsaDecodeError}}));
+
+    for (const Bytes& privateKey : {Bytes{0x02, 0x01, 0x00}, Bytes{0x02, 0x01, 0xff}, DerUnsigned(good.q)})
+        ExpectDsaFailure(record(DsaOidBytes, parameters, privateKey),
+            DsaPkcs8Failure({{DsaLibrary, DsaInvalidParameters}}));
+
+    DsaNumbers numbers = good;
+    numbers.q.front() = 0x7f;
+    ExpectDsaFailure(record(DsaOidBytes, DsaParametersDer(numbers), key),
+        DsaPkcs8Failure({{DsaLibrary, DsaBadQValue}}));
+    numbers = good;
+    numbers.p.back() &= 0xfe;
+    ExpectDsaFailure(record(DsaOidBytes, DsaParametersDer(numbers), key),
+        DsaPkcs8Failure({{DsaLibrary, DsaInvalidParameters}}));
+    numbers = good;
+    numbers.p = Bytes(1251, 0xff);
+    ExpectDsaFailure(record(DsaOidBytes, DsaParametersDer(numbers), key),
+        DsaPkcs8Failure({{DsaLibrary, DsaModulusTooLarge}}));
+    numbers = good;
+    numbers.g = good.p;
+    ExpectDsaFailure(record(DsaOidBytes, DsaParametersDer(numbers), key),
+        DsaPkcs8Failure({{DsaLibrary, DsaInvalidParameters}}));
+    for (const std::size_t subprimeBytes : {std::size_t{28}, std::size_t{32}}) {
+        numbers = good;
+        numbers.q = Bytes(subprimeBytes, 0xff);
+        ExpectDsaRead(record(DsaOidBytes, DsaParametersDer(numbers), key), numbers, 0);
+        numbers.q.front() = 0x7f;
+        ExpectDsaFailure(record(DsaOidBytes, DsaParametersDer(numbers), key),
+            DsaPkcs8Failure({{DsaLibrary, DsaBadQValue}}));
+        numbers.q = Bytes(subprimeBytes, 0xff);
+        numbers.q.insert(numbers.q.begin(), 0x01);
+        ExpectDsaFailure(record(DsaOidBytes, DsaParametersDer(numbers), key),
+            DsaPkcs8Failure({{DsaLibrary, DsaBadQValue}}));
+    }
+}
+
+void TestDsaSlots() {
+    const DsaNumbers small = DsaNumbersOf(Dsa1024TraditionalPem);
+    const DsaNumbers large = DsaNumbersOf(Dsa2048TraditionalPem);
+
+    LibreSsl3EvpPkey* slot = ReadPlainKey(BytesOf(Dsa1024Pkcs8Pem));
+    LibreSsl3EvpPkey* previous = slot;
+    ERR_clear_error_nid_postfix();
+    auto* traditional = ReadPrivateKey(BytesOf(Dsa2048TraditionalPem), &slot, nullptr, nullptr);
+    Require(traditional != nullptr && slot == traditional && traditional != previous);
+    ExpectDsaKey(slot, large, 0);
+    ExpectEmptyQueue();
+
+    previous = slot;
+    auto* pkcs8 = ReadPrivateKey(BytesOf(Dsa1024Pkcs8Pem), &slot, nullptr, nullptr);
+    Require(pkcs8 != nullptr && slot == pkcs8 && pkcs8 != previous);
+    ExpectDsaKey(slot, small, 0);
+    ExpectEmptyQueue();
+
+    DsaNumbers broken = small;
+    broken.q = Sum(small.q, {0x02});
+    Require(ReadPrivateKey(DsaLabelPem(DsaTraditionalDer(DsaZeroVersion, broken)), &slot, nullptr, nullptr)
+        == nullptr);
+    ExpectErrorSequence(DsaTraditionalFailure({{DsaLibrary, DsaBadQValue}}));
+    Require(slot == pkcs8);
+    ExpectDsaKey(slot, small, 0);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(slot);
+}
+
+void WriteGuestInt(unsigned char* target, std::int32_t value) {
+    std::memcpy(target, &value, sizeof(value));
+}
+
+void TestDsaObject() {
+    const DsaNumbers numbers = DsaNumbersOf(Dsa1024TraditionalPem);
+
+    auto* first = ReadPlainKey(BytesOf(Dsa1024TraditionalPem));
+    LibreSsl3Dsa* dsa = DsaOf(first);
+    WriteGuestInt(dsa->rest + DsaReferencesOffset, 2);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(first);
+    ExpectDsaNumbers(dsa, numbers);
+    auto* second = EVP_PKEY_new_nid_disambig1_nid_postfix();
+    Require(second != nullptr && EVP_PKEY_assign_nid_postfix(second, DsaType, dsa) == 1);
+    ExpectDsaKey(second, numbers, 0);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(second);
+
+    for (const std::size_t offset : {DsaMontgomeryOffset, DsaExtraDataOffset, DsaMethodOffset}) {
+        auto* key = ReadPlainKey(BytesOf(Dsa1024TraditionalPem));
+        LibreSsl3Dsa* object = DsaOf(key);
+        object->rest[offset] = 1;
+        ExpectUnimplemented([key] { EVP_PKEY_free_nid_disambig1_nid_postfix(key); });
+        Require(key->key == object);
+        ExpectDsaNumbers(object, numbers);
+        object->rest[offset] = 0;
+        WriteGuestInt(object->rest + DsaReferencesOffset, 1);
+        key->references = 1;
+        ExpectDsaKey(key, numbers, 0);
+        EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+    }
+
+    auto* rsaKey = KeyFromPkcs8Der(BodyBytes(BytesOf(RsaPkcs8Pem)));
+    LibreSsl3Rsa* rsa = EVP_PKEY_get1_RSA_nid_disambig1_nid_postfix(rsaKey);
+    Require(rsa != nullptr);
+    auto* replaced = ReadPlainKey(BytesOf(Dsa1024TraditionalPem));
+    LibreSsl3Dsa* shared = DsaOf(replaced);
+    WriteGuestInt(shared->rest + DsaReferencesOffset, 2);
+    Require(EVP_PKEY_set1_RSA_nid_disambig1_nid_postfix(replaced, rsa) == 1);
+    Require(replaced->type == RsaType && replaced->key == rsa);
+    std::int32_t references = 0;
+    std::memcpy(&references, shared->rest + DsaReferencesOffset, sizeof(references));
+    Require(references == 1);
+    ExpectDsaNumbers(shared, numbers);
+    auto* holder = EVP_PKEY_new_nid_disambig1_nid_postfix();
+    Require(holder != nullptr && EVP_PKEY_assign_nid_postfix(holder, DsaType, shared) == 1);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(holder);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(replaced);
+    RSA_free_nid_disambig1_nid_postfix(rsa);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(rsaKey);
+    ExpectEmptyQueue();
+}
+
+void TestDsaEncoding() {
+    const DsaNumbers numbers = DsaNumbersOf(Dsa1024TraditionalPem);
+    auto* key = ReadPlainKey(BytesOf(Dsa1024TraditionalPem));
+    LibreSsl3Dsa* dsa = DsaOf(key);
+    const void* const generator = dsa->g;
+    const void* const privateKey = dsa->privKey;
+    const Bytes p = DerUnsigned(numbers.p);
+    const Bytes q = DerUnsigned(numbers.q);
+    const Bytes priv = DerUnsigned(numbers.priv);
+
+    struct Encoding {
+        std::uint64_t limb;
+        std::int32_t top;
+        std::int32_t negative;
+        Bytes integer;
+    };
+    const std::vector<Encoding> encodings{
+        {0x81, 1, 1, {0x02, 0x02, 0xff, 0x7f}},
+        {0x80, 1, 1, {0x02, 0x01, 0x80}},
+        {0x80, 1, 0, {0x02, 0x02, 0x00, 0x80}},
+        {0x7f, 1, 0, {0x02, 0x01, 0x7f}},
+        {0x01, 1, 1, {0x02, 0x01, 0xff}},
+        {0x100, 1, 1, {0x02, 0x02, 0xff, 0x00}},
+        {0x8000000000000000ULL, 1, 0, {0x02, 0x09, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
+        {0x8000000000000000ULL, 1, 1, {0x02, 0x08, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
+        {0x55, 0, 0, {0x02, 0x01, 0x00}},
+        {0x55, 0, 1, {0x02, 0x01, 0x00}},
+    };
+    for (const Encoding& encoding : encodings) {
+        std::uint64_t limb = encoding.limb;
+        LibreSsl3Bignum crafted{&limb, encoding.top, 1, encoding.negative, 0};
+        dsa->g = &crafted;
+        Require(Pkcs8DerOfKey(key) == DsaPkcs8Der(DsaOidBytes, Der(0x30, Join({p, q, encoding.integer})), priv));
+        dsa->privKey = &crafted;
+        dsa->g = generator;
+        Require(Pkcs8DerOfKey(key) == DsaPkcs8Der(DsaOidBytes, DsaParametersDer(numbers), encoding.integer));
+        dsa->privKey = privateKey;
+    }
+
+    dsa->g = nullptr;
+    Require(Pkcs8DerOfKey(key) == DsaPkcs8Der(DsaOidBytes, Der(0x30, Join({p, q})), priv));
+    dsa->g = generator;
+    dsa->privKey = nullptr;
+    ExpectInvalidArgument([key] { EVP_PKEY2PKCS8_nid_postfix(key); });
+    dsa->privKey = privateKey;
+    Require(Pkcs8DerOfKey(key) == BodyBytes(BytesOf(Dsa1024Pkcs8Pem)));
+    ExpectEmptyQueue();
+    EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+}
+
 void* APS5_VABI HeapAllocate(std::size_t size) { return std::malloc(size == 0 ? 1 : size); }
 void APS5_VABI HeapFree(void* pointer) { std::free(pointer); }
 void* APS5_VABI HeapCallocate(std::size_t count, std::size_t size) {
@@ -3044,5 +3820,15 @@ int main() {
     TestTraditionalDerValidationAndContext();
     TestRsaPrivateFile();
     TestRsaPrivateFileSequential();
+    TestDsaPrivateFormats(Dsa1024TraditionalPem, Dsa1024Pkcs8Pem, Dsa1024SubprimeHex, Dsa1024PrivateHex, 128);
+    TestDsaPrivateFormats(Dsa2048TraditionalPem, Dsa2048Pkcs8Pem, Dsa2048SubprimeHex, Dsa2048PrivateHex, 256);
+    TestDsaEncryptedRead();
+    TestDsaTraditionalVersions();
+    TestDsaTraditionalChecks();
+    TestDsaTraditionalStructure();
+    TestDsaPkcs8Checks();
+    TestDsaSlots();
+    TestDsaObject();
+    TestDsaEncoding();
     return 0;
 }
