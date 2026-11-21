@@ -359,11 +359,15 @@ void testIndexedDraw() {
     const auto address = reinterpret_cast<std::uintptr_t>(indices.data());
     const auto explicitDraw = AgcDriver::Pm4::ResolveDraw(makePacket(0x27, {4, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 4, 0}), state);
     check(explicitDraw.indexed && explicitDraw.firstVertex == 0xd4d4 && explicitDraw.indexAddress == address, "DRAW_INDEX_2 ignored GE_INDX_OFFSET");
+    const auto clippedOffsetDraw = AgcDriver::Pm4::ResolveDraw(makePacket(0x35, {3, 2, 6, 0}), state);
+    check(clippedOffsetDraw.indexAddress == state.indexBase + 4 && clippedOffsetDraw.indexCount == 3, "DRAW_INDEX_OFFSET_2 read past MAX_SIZE");
+    const auto clippedExplicitDraw = AgcDriver::Pm4::ResolveDraw(makePacket(0x27, {2, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 5, 0}), state);
+    check(clippedExplicitDraw.indexAddress == address && clippedExplicitDraw.indexCount == 2, "DRAW_INDEX_2 read past MAX_SIZE");
+    check(AgcDriver::Pm4::ResolveDraw(makePacket(0x35, {0, 0, 4, 0}), state).indexCount == 0, "DRAW_INDEX_OFFSET_2 with MAX_SIZE 0 read indices");
     state.userConfig.erase(0x24a);
     expectFailure([&] { AgcDriver::Pm4::ResolveDraw(packet, state); }, "GE_INDX_OFFSET");
     state.userConfig[0x24a] = 0;
     expectFailure([&] { AgcDriver::Pm4::Validate(packet, 0x20); }, "compute queue");
-    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x35, {3, 0, 4, 0}), 0); }, "maximum index size");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x35, {4, 0, 4, 1}), 0); }, "draw flags");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x35, {4, 0, 4}), 0); }, "packet size");
     state.indexType = 3;
