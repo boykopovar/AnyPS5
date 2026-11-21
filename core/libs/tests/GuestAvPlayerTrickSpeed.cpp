@@ -16,6 +16,8 @@ int main() {
     try {
         WriteMovie();
         WriteWebmMovie();
+        std::filesystem::create_directories("app0/archive.mp4");
+        std::filesystem::copy_file(MoviePath, "app0/archive.mp4/movie", std::filesystem::copy_options::overwrite_existing);
         std::filesystem::copy_file(MoviePath, "app0/avplayer.unknown", std::filesystem::copy_options::overwrite_existing);
         std::filesystem::copy_file(MoviePath, "app0/avplayer.m3d", std::filesystem::copy_options::overwrite_existing);
         auto init = InitData(nullptr);
@@ -47,14 +49,15 @@ int main() {
               "negative trick speed was not clamped to -3200");
         Check(sceAvPlayerClose(player) == 0, "MP4 player close failed");
 
-        init = InitData(nullptr);
-        player = sceAvPlayerInit(&init);
-        Check(player != nullptr, "unknown-source player initialization failed");
-        Check(sceAvPlayerAddSource(player, "/app0/avplayer.unknown") == 0,
-              "unknown-extension media source could not be opened");
-        Check(sceAvPlayerSetTrickSpeed(player, 400) == AvPlayer::SCE_AVPLAYER_ERROR_NOT_SUPPORTED,
-              "trick speed was accepted for an unknown source type");
-        Check(sceAvPlayerClose(player) == 0, "unknown-source player close failed");
+        for (const auto* path : {"/app0/avplayer.unknown", "/app0/archive.mp4/movie"}) {
+            init = InitData(nullptr);
+            player = sceAvPlayerInit(&init);
+            Check(player != nullptr, "unknown-source player initialization failed");
+            Check(sceAvPlayerAddSource(player, path) == 0, std::string("could not open movie: ") + path);
+            Check(sceAvPlayerSetTrickSpeed(player, 400) == AvPlayer::SCE_AVPLAYER_ERROR_NOT_SUPPORTED,
+                  std::string("trick speed was accepted for an unknown source type: ") + path);
+            Check(sceAvPlayerClose(player) == 0, "unknown-source player close failed");
+        }
 
         init = InitData(nullptr);
         player = sceAvPlayerInit(&init);
