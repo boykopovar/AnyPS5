@@ -894,8 +894,8 @@ int APS5_VABI SSL_CTX_load_verify_locations_nid_postfix(LibreSslCtx* ctx, const 
 int APS5_VABI SSL_CTX_load_verify_mem_nid_postfix(void);
 LibreSslCtx* APS5_VABI SSL_CTX_new_nid_postfix(const LibreSslMethod* method);
 void APS5_VABI SSL_CTX_sess_set_new_cb_nid_postfix(LibreSslCtx* ctx, void* callback);
-int APS5_VABI SSL_CTX_set1_groups_list_nid_postfix(void);
-int APS5_VABI SSL_CTX_set_alpn_protos_nid_postfix(void);
+int APS5_VABI SSL_CTX_set1_groups_list_nid_postfix(LibreSslCtx* ctx, const char* list);
+int APS5_VABI SSL_CTX_set_alpn_protos_nid_postfix(LibreSslCtx* ctx, const unsigned char* protos, unsigned int length);
 void APS5_VABI SSL_CTX_set_alpn_select_cb_nid_postfix(LibreSslCtx* ctx, void* callback, void* arg);
 void APS5_VABI SSL_CTX_set_cert_store_nid_postfix(LibreSslCtx* ctx, LibreSslX509Store* store);
 void APS5_VABI SSL_CTX_set_cert_verify_callback_nid_postfix(LibreSslCtx* ctx, void* callback, void* arg);
