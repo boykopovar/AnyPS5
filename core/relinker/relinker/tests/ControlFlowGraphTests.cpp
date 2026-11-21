@@ -592,6 +592,144 @@ void CheckGapWalkBranchTargets() {
     Require(GapStubTables(chained).empty(), "A jump from a gap stub reached only through another gap stub was missed");
 }
 
+void CheckTrailingJumpTableReachability() {
+    Bytes selfBranchingEntries(48, 0x90);
+    selfBranchingEntries[0] = 0x48;
+    selfBranchingEntries[1] = 0x8d;
+    selfBranchingEntries[2] = 0x05;
+    SetDisplacement(selfBranchingEntries, 3, 7, TextAddress + 32);
+    selfBranchingEntries[7] = 0xff;
+    selfBranchingEntries[8] = 0xe0;
+    const std::int32_t selfBranchingTargets[]{-21, -32};
+    std::memcpy(selfBranchingEntries.data() + 32, selfBranchingTargets, sizeof(selfBranchingTargets));
+    Require(Relinker::FindTrailingRelativeJumpTable(selfBranchingEntries) == 32, "Table whose entries decode as a jump into the table was rejected");
+    Require(Relinker::FindRelativeJumpTables(selfBranchingEntries, TextAddress, {{TextAddress, TextAddress + 9}, {TextAddress + 48, TextAddress + 56}}).size() == 1, "Branches decoded from table entries hid the table");
+
+    constexpr std::size_t tableOffset = 0x10000;
+    auto buildSwitch = [&](std::size_t tablePadEnd, std::size_t totalSize) {
+        Bytes text(totalSize, 0x90);
+        text[0] = 0x48;
+        text[1] = 0x8d;
+        text[2] = 0x05;
+        SetDisplacement(text, 3, 7, TextAddress + tableOffset);
+        text[7] = 0x0f;
+        text[8] = 0x84;
+        SetDisplacement(text, 9, 13, TextAddress + 13);
+        text[13] = 0xff;
+        text[14] = 0xe0;
+        const std::int32_t targets[]{-64241, -static_cast<std::int32_t>(tableOffset)};
+        std::memcpy(text.data() + tableOffset, targets, sizeof(targets));
+        for (std::size_t i = tableOffset + 8; i < tablePadEnd; ++i) text[i] = 0x90;
+        return text;
+    };
+
+    const auto control = buildSwitch(tableOffset + 0x10, tableOffset + 0x10);
+    Require(Relinker::FindTrailingRelativeJumpTable(control) == tableOffset, "Control trailing jump table was not found");
+    Require(Relinker::FindRelativeJumpTables(control, TextAddress, {{TextAddress, TextAddress + control.size()}}).size() == 1, "Control trailing jump table was rejected");
+
+    for (const auto targetOffset : {tableOffset, tableOffset + 4, tableOffset + 8, tableOffset - 4}) {
+        Bytes branchCase = buildSwitch(tableOffset + 0x10, tableOffset + 0x10);
+        SetDisplacement(branchCase, 9, 13, TextAddress + targetOffset);
+        Require(Relinker::FindTrailingRelativeJumpTable(branchCase) == branchCase.size(), "Reachable trailing jump table was accepted by standalone scan");
+        Require(Relinker::FindRelativeJumpTables(branchCase, TextAddress, {{TextAddress, TextAddress + branchCase.size()}}).empty(), "Reachable trailing jump table was accepted");
+    }
+
+    Bytes midInsn = buildSwitch(tableOffset + 0x10, tableOffset + 0x10);
+    midInsn[tableOffset - 5] = 0xe9;
+    midInsn[tableOffset - 4] = 0x90;
+    midInsn[tableOffset - 3] = 0x90;
+    midInsn[tableOffset - 2] = 0x90;
+    midInsn[tableOffset - 1] = 0x90;
+    SetDisplacement(midInsn, 9, 13, TextAddress + tableOffset - 4);
+    Require(Relinker::FindTrailingRelativeJumpTable(midInsn) == midInsn.size(), "Mid-instruction jump into trailing table was accepted by standalone scan");
+    Require(Relinker::FindRelativeJumpTables(midInsn, TextAddress, {{TextAddress, TextAddress + midInsn.size()}}).empty(), "Mid-instruction jump into trailing table was accepted");
+
+    auto buildCallTail = [&](std::initializer_list<std::uint8_t> helperBytes) {
+        constexpr std::size_t helperOffset = tableOffset + 0x20;
+        Bytes text = buildSwitch(tableOffset + 0x10, helperOffset + 0x20);
+        text[tableOffset + 0x10] = 0xc3;
+        text[tableOffset - 5] = 0xe8;
+        SetDisplacement(text, tableOffset - 4, tableOffset, TextAddress + helperOffset);
+        std::copy(helperBytes.begin(), helperBytes.end(), text.begin() + helperOffset);
+        return text;
+    };
+
+    const auto callRet = buildCallTail({0x31, 0xc0, 0xc3});
+    Require(Relinker::FindTrailingRelativeJumpTable(callRet) == callRet.size(), "Returning call before trailing table was accepted by standalone scan");
+    Require(Relinker::FindRelativeJumpTables(callRet, TextAddress, {{TextAddress, TextAddress + tableOffset + 0x10}, {TextAddress + tableOffset + 0x20, TextAddress + callRet.size()}}).empty(), "Returning call before trailing table was accepted");
+
+    Bytes callTwoHop = buildCallTail({0xe8, 0, 0, 0, 0, 0xf4});
+    SetDisplacement(callTwoHop, tableOffset + 0x21, tableOffset + 0x25, TextAddress + tableOffset + 0x30);
+    callTwoHop[tableOffset + 0x30] = 0xc3;
+    Require(Relinker::FindRelativeJumpTables(callTwoHop, TextAddress, {{TextAddress, TextAddress + tableOffset + 0x10}, {TextAddress + tableOffset + 0x20, TextAddress + callTwoHop.size()}}).empty(), "Two-hop returning call before trailing table was accepted");
+
+    const auto callPltStub = buildCallTail({0xff, 0x25, 0x00, 0x00, 0x00, 0x00});
+    const auto pltTables = Relinker::FindRelativeJumpTables(callPltStub, TextAddress, {{TextAddress, TextAddress + tableOffset + 0x10}, {TextAddress + tableOffset + 0x20, TextAddress + callPltStub.size()}});
+    Require(pltTables.size() == 1 && pltTables[0].Begin == TextAddress + tableOffset, "Noreturn PLT stub before trailing table was rejected");
+
+    const auto callTrapStub = buildCallTail({0x0f, 0x0b});
+    const auto trapTables = Relinker::FindRelativeJumpTables(callTrapStub, TextAddress, {{TextAddress, TextAddress + tableOffset + 0x10}, {TextAddress + tableOffset + 0x20, TextAddress + callTrapStub.size()}});
+    Require(trapTables.size() == 1 && trapTables[0].Begin == TextAddress + tableOffset, "Noreturn trap stub before trailing table was rejected");
+
+    Bytes crossFunc = buildSwitch(tableOffset + 0x10, tableOffset + 0x30);
+    crossFunc[tableOffset + 0x10] = 0xc3;
+    crossFunc[tableOffset + 0x20] = 0x0f;
+    crossFunc[tableOffset + 0x21] = 0x84;
+    SetDisplacement(crossFunc, tableOffset + 0x22, tableOffset + 0x26, TextAddress + tableOffset);
+    crossFunc[tableOffset + 0x26] = 0xc3;
+    Require(Relinker::FindRelativeJumpTables(crossFunc, TextAddress, {{TextAddress, TextAddress + tableOffset + 0x10}, {TextAddress + tableOffset + 0x20, TextAddress + crossFunc.size()}}).empty(), "Cross-function branch into trailing jump table was accepted");
+
+    Bytes crossFuncNopSled = crossFunc;
+    SetDisplacement(crossFuncNopSled, tableOffset + 0x22, tableOffset + 0x26, TextAddress + tableOffset - 4);
+    Require(Relinker::FindRelativeJumpTables(crossFuncNopSled, TextAddress, {{TextAddress, TextAddress + tableOffset + 0x10}, {TextAddress + tableOffset + 0x20, TextAddress + crossFuncNopSled.size()}}).empty(), "Cross-function branch onto NOP sled before trailing jump table was accepted");
+
+    Bytes twoSwitchTables(tableOffset + 0x20, 0x90);
+    twoSwitchTables[0] = 0x48;
+    twoSwitchTables[1] = 0x8d;
+    twoSwitchTables[2] = 0x05;
+    SetDisplacement(twoSwitchTables, 3, 7, TextAddress + tableOffset);
+    twoSwitchTables[7] = 0xff;
+    twoSwitchTables[8] = 0xe0;
+    const std::int32_t fakeJmpTableTargets[]{-61205, -static_cast<std::int32_t>(tableOffset)};
+    std::memcpy(twoSwitchTables.data() + tableOffset, fakeJmpTableTargets, sizeof(fakeJmpTableTargets));
+    const std::size_t secondFunc = tableOffset + 0x08;
+    const std::size_t secondTable = tableOffset + 0x12;
+    twoSwitchTables[secondFunc] = 0x48;
+    twoSwitchTables[secondFunc + 1] = 0x8d;
+    twoSwitchTables[secondFunc + 2] = 0x05;
+    SetDisplacement(twoSwitchTables, secondFunc + 3, secondFunc + 7, TextAddress + secondTable);
+    twoSwitchTables[secondFunc + 7] = 0xff;
+    twoSwitchTables[secondFunc + 8] = 0xe0;
+    const std::int32_t secondTargets[]{-10, -3};
+    std::memcpy(twoSwitchTables.data() + secondTable, secondTargets, sizeof(secondTargets));
+    const auto adjacentSwitchTables = Relinker::FindRelativeJumpTables(twoSwitchTables, TextAddress,
+        {{TextAddress, TextAddress + secondFunc}, {TextAddress + secondFunc, TextAddress + twoSwitchTables.size()}});
+    Require(adjacentSwitchTables.size() == 2, "Raw table bytes from one function hid the next function's table");
+
+    Bytes gapStubCross = buildSwitch(tableOffset + 0x10, tableOffset + 0x40);
+    gapStubCross[tableOffset + 0x10] = 0xc3;
+    gapStubCross[tableOffset + 0x20] = 0xe9;
+    SetDisplacement(gapStubCross, tableOffset + 0x21, tableOffset + 0x25, TextAddress + tableOffset);
+    gapStubCross[tableOffset + 0x30] = 0xe8;
+    SetDisplacement(gapStubCross, tableOffset + 0x31, tableOffset + 0x35, TextAddress + tableOffset + 0x20);
+    gapStubCross[tableOffset + 0x35] = 0xc3;
+    Require(Relinker::FindRelativeJumpTables(gapStubCross, TextAddress, {{TextAddress, TextAddress + tableOffset + 0x10}, {TextAddress + tableOffset + 0x30, TextAddress + gapStubCross.size()}}).empty(), "Transitive gap stub jump into trailing jump table was accepted");
+
+    Bytes embeddedNopSled(48, 0x90);
+    embeddedNopSled[0] = 0x48;
+    embeddedNopSled[1] = 0x8d;
+    embeddedNopSled[2] = 0x05;
+    SetDisplacement(embeddedNopSled, 3, 7, TextAddress + 24);
+    embeddedNopSled[7] = 0x74;
+    embeddedNopSled[8] = 11;
+    embeddedNopSled[9] = 0xc3;
+    embeddedNopSled[24] = 0x0f;
+    embeddedNopSled[25] = 0x78;
+    embeddedNopSled[26] = 0x33;
+    embeddedNopSled[27] = 0x1e;
+    Require(Relinker::FindRelativeJumpTables(embeddedNopSled, TextAddress, {{TextAddress, TextAddress + 10}, {TextAddress + 48, TextAddress + 56}}).empty(), "NOP sled into embedded data table was accepted");
+}
+
 void CheckEmbeddedDataTables() {
     constexpr std::size_t tableOffset = 24;
     Bytes text(48, 0x90);
@@ -931,6 +1069,7 @@ int main() {
         CheckLargeZeroGaps();
         CheckGapWalkBranchTargets();
         CheckRelativeJumpTableDisplacementBounds();
+        CheckTrailingJumpTableReachability();
         std::cout << "Control-flow graph tests passed\n";
         return 0;
     } catch (const std::exception& error) {

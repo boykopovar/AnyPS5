@@ -1,4 +1,5 @@
 #include <unordered_map>
+#include <unordered_set>
 #include <relinker/analysis/RelativeJumpTables.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/CodegenException.hpp>
@@ -256,16 +257,161 @@ std::size_t FindEmbeddedDataTableEnd(std::span<const std::uint8_t> code, Virtual
     return tableEnd;
 }
 
+constexpr std::size_t MaxCalleeSteps = 4096;
+constexpr std::size_t MaxCalleeDepth = 8;
+
+struct BranchEdge {
+    VirtualAddress Target;
+    VirtualAddress Source;
+};
+
+using CalleeReturnCache = std::unordered_map<VirtualAddress, bool>;
+
+std::optional<VirtualAddress> DirectBranchTarget(VirtualAddress address, const Codegen::DecodedInstructionInfo& info, VirtualAddress rangeBegin, std::size_t rangeSize) {
+    if (!info.HasBranchTarget || info.HasRipRelativeDisp || info.TruncatesBranchTarget || address < rangeBegin) return std::nullopt;
+    const auto next = static_cast<std::uint64_t>(address - rangeBegin) + info.Length;
+    if (next > rangeSize) return std::nullopt;
+    if (info.BranchDisp < 0) {
+        const auto back = static_cast<std::uint64_t>(-(info.BranchDisp + 1)) + 1;
+        if (back > next) return std::nullopt;
+        return rangeBegin + (next - back);
+    }
+    const auto forward = static_cast<std::uint64_t>(info.BranchDisp);
+    if (forward >= rangeSize - next) return std::nullopt;
+    return rangeBegin + next + forward;
 }
 
-std::size_t FindTrailingRelativeJumpTable(std::span<const std::uint8_t> code, VirtualAddress codeAddress, std::size_t* tableEnd, std::size_t unwindEnd) {
-    if (code.size() > std::numeric_limits<VirtualAddress>::max() - codeAddress) {
-        throw RelinkerException("Text section range exceeds the address space");
+bool CalleeMayReturn(std::span<const std::uint8_t> segment, VirtualAddress segmentVAddr, VirtualAddress callee, const Codegen::X64InstructionDecoder& decoder, CalleeReturnCache& cache, std::unordered_set<VirtualAddress>& active, std::size_t depth) {
+    if (callee < segmentVAddr || callee - segmentVAddr >= segment.size()) return false;
+    if (const auto found = cache.find(callee); found != cache.end()) return found->second;
+    if (depth >= MaxCalleeDepth) return true;
+    if (!active.insert(callee).second) return false;
+    bool mayReturn = false;
+    bool exhausted = false;
+    std::size_t steps = 0;
+    std::unordered_set<std::size_t> visited;
+    std::vector<std::size_t> pending{static_cast<std::size_t>(callee - segmentVAddr)};
+    while (!pending.empty() && !mayReturn && !exhausted) {
+        auto pos = pending.back();
+        pending.pop_back();
+        while (pos < segment.size() && visited.insert(pos).second) {
+            if (++steps > MaxCalleeSteps) {
+                exhausted = true;
+                break;
+            }
+            Codegen::DecodedInstructionInfo info;
+            try {
+                info = decoder.DecodeInstruction(segment.data() + pos, segment.size() - pos);
+            } catch (const Codegen::CodegenException&) {
+                break;
+            }
+            if (info.Length == 0 || info.Length > segment.size() - pos) break;
+            if (info.FlowKind == Codegen::ControlFlowKind::Return) {
+                mayReturn = true;
+                break;
+            }
+            if (info.FlowKind == Codegen::ControlFlowKind::Trap || info.FlowKind == Codegen::ControlFlowKind::IndirectJump) break;
+            const auto target = DirectBranchTarget(segmentVAddr + pos, info, segmentVAddr, segment.size());
+            if (info.FlowKind == Codegen::ControlFlowKind::UnconditionalJump) {
+                if (target) pending.push_back(static_cast<std::size_t>(*target - segmentVAddr));
+                break;
+            }
+            if (info.FlowKind == Codegen::ControlFlowKind::ConditionalBranch && target) pending.push_back(static_cast<std::size_t>(*target - segmentVAddr));
+            if (info.FlowKind == Codegen::ControlFlowKind::Call && target && !CalleeMayReturn(segment, segmentVAddr, *target, decoder, cache, active, depth + 1)) break;
+            pos += info.Length;
+        }
     }
-    const Codegen::X64InstructionDecoder decoder;
+    active.erase(callee);
+    const bool result = mayReturn || exhausted;
+    if (result || active.empty()) cache.emplace(callee, result);
+    return result;
+}
+
+bool DirectCallEndsFlow(VirtualAddress address, const Codegen::DecodedInstructionInfo& info, std::span<const std::uint8_t> segment, VirtualAddress segmentVAddr, const Codegen::X64InstructionDecoder& decoder, CalleeReturnCache& cache) {
+    const auto callee = DirectBranchTarget(address, info, segmentVAddr, segment.size());
+    std::unordered_set<VirtualAddress> active;
+    return !callee || !CalleeMayReturn(segment, segmentVAddr, *callee, decoder, cache, active, 0);
+}
+
+bool ReachesRange(std::span<const std::uint8_t> code, VirtualAddress codeAddress, std::size_t from, std::size_t to, const std::vector<std::size_t>& intraTargets, std::span<const BranchEdge> edges, const std::vector<bool>* decoded, std::span<const std::uint8_t> segment, VirtualAddress segmentVAddr, const Codegen::X64InstructionDecoder& decoder, CalleeReturnCache& cache) {
+    const auto rangeBegin = codeAddress + from;
+    const auto rangeEnd = codeAddress + to;
+    if (decoded != nullptr && std::any_of(decoded->begin() + static_cast<std::ptrdiff_t>(rangeBegin - segmentVAddr), decoded->begin() + static_cast<std::ptrdiff_t>(rangeEnd - segmentVAddr), [](bool value) { return value; }))
+        return true;
+    std::vector<std::size_t> pending(intraTargets);
+    pending.push_back(0);
+    for (const auto& edge : edges)
+        if (edge.Source < rangeBegin || edge.Source >= rangeEnd) pending.push_back(static_cast<std::size_t>(edge.Target - codeAddress));
+    std::vector<bool> visited(code.size(), false);
+    while (!pending.empty()) {
+        auto pos = pending.back();
+        pending.pop_back();
+        while (pos < code.size() && !visited[pos]) {
+            if (pos >= from && pos < to) return true;
+            visited[pos] = true;
+            Codegen::DecodedInstructionInfo info;
+            try {
+                info = decoder.DecodeInstruction(code.data() + pos, code.size() - pos);
+            } catch (const Codegen::CodegenException&) {
+                break;
+            }
+            if (info.Length == 0 || info.Length > code.size() - pos) break;
+            if (pos + info.Length > from && pos < to) return true;
+            if (info.FlowKind == Codegen::ControlFlowKind::Return || info.FlowKind == Codegen::ControlFlowKind::IndirectJump || info.FlowKind == Codegen::ControlFlowKind::Trap) break;
+            if (const auto target = DirectBranchTarget(codeAddress + pos, info, codeAddress, code.size())) pending.push_back(static_cast<std::size_t>(*target - codeAddress));
+            if (info.FlowKind == Codegen::ControlFlowKind::UnconditionalJump) break;
+            if (info.FlowKind == Codegen::ControlFlowKind::Call && info.HasBranchTarget && !info.HasRipRelativeDisp && !info.TruncatesBranchTarget
+                && DirectCallEndsFlow(codeAddress + pos, info, segment, segmentVAddr, decoder, cache)) break;
+            pos += info.Length;
+        }
+    }
+    return false;
+}
+
+std::vector<BranchEdge> CollectBranchEdges(std::span<const std::uint8_t> segment, VirtualAddress segmentVAddr, const std::vector<std::pair<VirtualAddress, VirtualAddress>>& functions, const std::vector<VirtualAddress>& scanLimits, const std::vector<bool>& decoded, const Codegen::X64InstructionDecoder& decoder) {
+    std::vector<BranchEdge> edges;
+    const auto addEdge = [&](std::size_t pos, std::size_t limit) {
+        Codegen::DecodedInstructionInfo info;
+        try {
+            info = decoder.DecodeInstruction(segment.data() + pos, limit - pos);
+        } catch (const Codegen::CodegenException&) {
+            return std::size_t{0};
+        }
+        if (info.Length == 0 || info.Length > limit - pos) return std::size_t{0};
+        if (const auto target = DirectBranchTarget(segmentVAddr + pos, info, segmentVAddr, segment.size())) edges.push_back({*target, segmentVAddr + pos});
+        return info.Length;
+    };
+    const auto segmentEnd = segmentVAddr + segment.size();
+    for (std::size_t index = 0; index < functions.size(); ++index) {
+        const auto [begin, end] = functions[index];
+        if (begin < segmentVAddr || begin >= segmentEnd || end <= begin) continue;
+        const auto scanEnd = std::min(std::min(end, segmentEnd), scanLimits[index]);
+        if (scanEnd <= begin) continue;
+        const auto limit = static_cast<std::size_t>(scanEnd - segmentVAddr);
+        for (auto pos = static_cast<std::size_t>(begin - segmentVAddr); pos < limit;) {
+            const auto length = addEdge(pos, limit);
+            if (length == 0) break;
+            pos += length;
+        }
+    }
+    for (std::size_t pos = 0; pos < decoded.size(); ++pos)
+        if (decoded[pos]) addEdge(pos, segment.size());
+    std::sort(edges.begin(), edges.end(), [](const BranchEdge& left, const BranchEdge& right) { return left.Target < right.Target; });
+    return edges;
+}
+
+VirtualAddress FunctionInspectEnd(VirtualAddress segmentEnd, const std::vector<std::pair<VirtualAddress, VirtualAddress>>& functions, std::size_t index, VirtualAddress end) {
+    auto inspectEnd = std::min(end, segmentEnd);
+    if (index + 1 < functions.size() && functions[index + 1].first > inspectEnd && functions[index + 1].first - inspectEnd <= MaxTableGapAfterFunction)
+        inspectEnd = std::min(functions[index + 1].first, segmentEnd);
+    return inspectEnd;
+}
+
+std::size_t FindTrailingRelativeJumpTableImpl(std::span<const std::uint8_t> code, VirtualAddress codeAddress, std::size_t* tableEnd, std::size_t unwindEnd, const Codegen::X64InstructionDecoder& decoder, std::span<const BranchEdge> edges, const std::vector<bool>* decoded, std::span<const std::uint8_t> segment, VirtualAddress segmentVAddr, CalleeReturnCache& calleeCache) {
     std::vector<TableLoad> loads;
     std::unordered_map<std::size_t, std::vector<std::size_t>> loadsAt;
     std::vector<bool> instructionStarts(code.size() + 1, false);
+    std::vector<std::size_t> intraTargets;
     bool flowEnded = false;
     bool sawIndirectJump = false;
     std::size_t lastIndirectJump = 0;
@@ -281,7 +427,9 @@ std::size_t FindTrailingRelativeJumpTable(std::span<const std::uint8_t> code, Vi
                     const auto checkedTo = std::max(aligned, std::min(code.size(), unwindEnd));
                     const bool toRangeEnd = OnlyPadding(code, end, code.size(), decoder);
                     if (!toRangeEnd && !OnlyPadding(code, end, checkedTo, decoder)) continue;
-                    if (tableEnd) *tableEnd = toRangeEnd ? code.size() : checkedTo;
+                    const auto maskEnd = toRangeEnd ? code.size() : checkedTo;
+                    if (ReachesRange(code, codeAddress, position, maskEnd, intraTargets, edges, decoded, segment, segmentVAddr, decoder, calleeCache)) continue;
+                    if (tableEnd) *tableEnd = maskEnd;
                     return position;
                 }
             }
@@ -309,13 +457,27 @@ std::size_t FindTrailingRelativeJumpTable(std::span<const std::uint8_t> code, Vi
             sawIndirectJump = true;
             lastIndirectJump = position;
         }
+        if (const auto target = DirectBranchTarget(codeAddress + position, info, codeAddress, code.size()))
+            intraTargets.push_back(static_cast<std::size_t>(*target - codeAddress));
         if (!IsNop(code, position, info.Length)) {
-            const bool directJumpOrCall = (info.Length == 5 && (code[position] == 0xe8 || code[position] == 0xe9)) || (info.Length == 2 && code[position] == 0xeb);
-            flowEnded = directJumpOrCall || info.FlowKind == Codegen::ControlFlowKind::Return || info.FlowKind == Codegen::ControlFlowKind::IndirectJump || info.FlowKind == Codegen::ControlFlowKind::Trap;
+            const bool directJump = (info.Length == 5 && code[position] == 0xe9) || (info.Length == 2 && code[position] == 0xeb);
+            const bool endingCall = info.Length == 5 && code[position] == 0xe8 && DirectCallEndsFlow(codeAddress + position, info, segment, segmentVAddr, decoder, calleeCache);
+            flowEnded = directJump || endingCall || info.FlowKind == Codegen::ControlFlowKind::Return || info.FlowKind == Codegen::ControlFlowKind::IndirectJump || info.FlowKind == Codegen::ControlFlowKind::Trap;
         }
         position = next;
     }
     return code.size();
+}
+
+}
+
+std::size_t FindTrailingRelativeJumpTable(std::span<const std::uint8_t> code, VirtualAddress codeAddress, std::size_t* tableEnd, std::size_t unwindEnd) {
+    if (code.size() > std::numeric_limits<VirtualAddress>::max() - codeAddress) {
+        throw RelinkerException("Text section range exceeds the address space");
+    }
+    const Codegen::X64InstructionDecoder decoder;
+    CalleeReturnCache calleeCache;
+    return FindTrailingRelativeJumpTableImpl(code, codeAddress, tableEnd, unwindEnd, decoder, {}, nullptr, code, codeAddress, calleeCache);
 }
 
 std::vector<RelativeJumpTable> FindRelativeJumpTables(std::span<const std::uint8_t> segment, VirtualAddress segmentVAddr, const std::vector<std::pair<VirtualAddress, VirtualAddress>>& functions) {
@@ -395,18 +557,60 @@ std::vector<RelativeJumpTable> FindRelativeJumpTables(std::span<const std::uint8
             pos += info.Length;
         }
     }
+    CalleeReturnCache calleeCache;
+    std::vector<VirtualAddress> scanLimits(functions.size(), segmentEnd);
+    std::vector<std::optional<RelativeJumpTable>> trailingTables(functions.size());
     for (std::size_t index = 0; index < functions.size(); ++index) {
         const auto [begin, end] = functions[index];
         if (begin < segmentVAddr || begin >= segmentEnd || end <= begin) continue;
-        auto inspectEnd = std::min(end, segmentEnd);
-        if (index + 1 < functions.size() && functions[index + 1].first > inspectEnd && functions[index + 1].first - inspectEnd <= MaxTableGapAfterFunction)
-            inspectEnd = std::min(functions[index + 1].first, segmentEnd);
+        const auto inspectEnd = FunctionInspectEnd(segmentEnd, functions, index, end);
         const auto code = segment.subspan(begin - segmentVAddr, inspectEnd - begin);
         std::size_t tableEnd = code.size();
-        if (const auto tail = FindTrailingRelativeJumpTable(code, begin, &tableEnd, std::min(end, segmentEnd) - begin); tail != 0 && tail < code.size()) {
-            tables.push_back({begin, begin + tail, begin + tableEnd});
+        if (const auto tail = FindTrailingRelativeJumpTableImpl(code, begin, &tableEnd, std::min(end, segmentEnd) - begin, decoder, {}, &decoded, segment, segmentVAddr, calleeCache); tail != 0 && tail < code.size()) {
+            trailingTables[index] = RelativeJumpTable{begin, begin + tail, begin + tableEnd};
+            scanLimits[index] = begin + tail;
+        }
+    }
+    for (;;) {
+        const auto edges = CollectBranchEdges(segment, segmentVAddr, functions, scanLimits, decoded, decoder);
+        bool changed = false;
+        for (std::size_t index = 0; index < functions.size(); ++index) {
+            if (!trailingTables[index]) continue;
+            const auto [begin, end] = functions[index];
+            const auto inspectEnd = FunctionInspectEnd(segmentEnd, functions, index, end);
+            const auto byTarget = [](const BranchEdge& edge, VirtualAddress address) { return edge.Target < address; };
+            const auto edgesBegin = std::lower_bound(edges.begin(), edges.end(), begin, byTarget);
+            const std::span<const BranchEdge> codeEdges(edgesBegin, std::lower_bound(edgesBegin, edges.end(), inspectEnd, byTarget));
+            const bool hasExternalEdge = std::any_of(codeEdges.begin(), codeEdges.end(), [&](const BranchEdge& edge) {
+                return edge.Source < begin || edge.Source >= scanLimits[index];
+            });
+            if (!hasExternalEdge) continue;
+            const auto code = segment.subspan(begin - segmentVAddr, inspectEnd - begin);
+            std::size_t tableEnd = code.size();
+            const auto tail = FindTrailingRelativeJumpTableImpl(code, begin, &tableEnd, std::min(end, segmentEnd) - begin, decoder, codeEdges, &decoded, segment, segmentVAddr, calleeCache);
+            if (tail != 0 && tail < code.size()) {
+                const RelativeJumpTable updated{begin, begin + tail, begin + tableEnd};
+                if (updated.Begin != trailingTables[index]->Begin || updated.End != trailingTables[index]->End) {
+                    trailingTables[index] = updated;
+                    scanLimits[index] = updated.Begin;
+                    changed = true;
+                }
+            } else {
+                trailingTables[index].reset();
+                scanLimits[index] = segmentEnd;
+                changed = true;
+            }
+        }
+        if (!changed) break;
+    }
+    for (std::size_t index = 0; index < functions.size(); ++index) {
+        const auto [begin, end] = functions[index];
+        if (begin < segmentVAddr || begin >= segmentEnd || end <= begin) continue;
+        if (trailingTables[index]) {
+            tables.push_back(*trailingTables[index]);
             continue;
         }
+        const auto inspectEnd = FunctionInspectEnd(segmentEnd, functions, index, end);
         if (inspectEnd <= end) continue;
         const auto funcCode = segment.subspan(begin - segmentVAddr, end - begin);
         std::optional<VirtualAddress> candidateTable;
@@ -444,6 +648,8 @@ std::vector<RelativeJumpTable> FindRelativeJumpTables(std::span<const std::uint8
         const auto tableCode = segment.subspan(tableVAddr - segmentVAddr, inspectEnd - tableVAddr);
         const auto tableSize = FindEmbeddedDataTableEnd(tableCode, tableVAddr, segmentVAddr, segmentEnd, decoder);
         if (tableSize == 0) continue;
+        const auto tableOffset = static_cast<std::ptrdiff_t>(tableVAddr - segmentVAddr);
+        if (std::any_of(decoded.begin() + tableOffset, decoded.begin() + tableOffset + static_cast<std::ptrdiff_t>(tableSize), [](bool value) { return value; })) continue;
         tables.push_back({begin, tableVAddr, tableVAddr + tableSize});
     }
     return tables;
