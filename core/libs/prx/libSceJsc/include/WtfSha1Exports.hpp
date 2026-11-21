@@ -90,5 +90,6 @@ Jsc::WtfAbi::OwnedCString APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE(co
 Jsc::WtfAbi::OptionalSHA1Digest APS5_VABI _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(Jsc::WtfAbi::PersistenceDecoder* decoder);
 void APS5_VABI _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(Jsc::WtfAbi::PersistenceEncoder* encoder, const Jsc::WtfAbi::SHA1Digest* digest);
 void RegisterPersistenceAllocator_nid_no_patch(const Jsc::WtfAbi::PersistenceAllocator* allocator);
+const Jsc::WtfAbi::PersistenceAllocator* RegisteredPersistenceAllocator_nid_no_patch();
 
 }
