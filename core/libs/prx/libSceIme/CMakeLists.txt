@@ -1,8 +1,14 @@
-add_library(libSceIme SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ModalDialog.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PsnDialogNotice.cpp)
-target_include_directories(libSceIme PRIVATE ${LIBS_INCLUDE_DIR})
+add_library(libSceIme SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ModalDialog.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PsnDialogNotice.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ImeClipboard.cpp)
+target_include_directories(libSceIme PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+target_link_libraries(libSceIme PRIVATE SDL2-static)
 configure_windows_unwind(libSceIme)
 
 if(BUILD_TESTING)
+    add_test_executable(ime_clipboard_tests tests/ImeClipboard.cpp)
+    target_include_directories(ime_clipboard_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(ime_clipboard_tests)
+    add_test(NAME ime_clipboard COMMAND ime_clipboard_tests)
+
     add_test_executable(guest_ime_parameters_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeParameters.cpp)
     target_include_directories(guest_ime_parameters_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_ime_parameters_tests PRIVATE libSceIme libc)
