@@ -9,7 +9,7 @@ import tempfile
 from test_linux_fixed_base import ENTRY, SLOT, fixture
 from test_macos_output import IMAGE_BASE, MachO
 
-BASE = 0x400000
+BASE = 0x140010000
 LOAD_RVA = 0x10000
 
 
@@ -26,19 +26,25 @@ def first_load(macho):
     return next(segment for segment in macho.segments if segment["name"].startswith("__ELF"))
 
 
+def image_segments(macho):
+    return [segment for segment in macho.segments[1:] if segment["name"] not in ("__APS5LOW", "__LINKEDIT")]
+
+
 def check_layout(plain, fixed):
     shift = BASE - LOAD_RVA - IMAGE_BASE
-    assert [s["name"] for s in plain.segments] == [s["name"] for s in fixed.segments], "segment list changed"
+    assert [s["name"] for s in image_segments(plain)] == [s["name"] for s in image_segments(fixed)], "segment list changed"
+    assert "__APS5LOW" in [s["name"] for s in plain.segments], "the default base reserves no low address range"
+    assert "__APS5LOW" not in [s["name"] for s in fixed.segments], "an image above 0x140000000 reserves a low address range"
     zero = fixed.segment("__PAGEZERO")
     assert zero["vmaddr"] == 0 and zero["vmsize"] == BASE - LOAD_RVA, f"__PAGEZERO {zero}"
-    for before, after in zip(plain.segments[1:], fixed.segments[1:]):
+    for before, after in zip(image_segments(plain), image_segments(fixed)):
         expected = dict(before, vmaddr=before["vmaddr"] + shift)
         assert after == expected, (before, after)
     for key, (address, size, offset) in plain.sections.items():
         assert fixed.sections[key] == (address + shift, size, offset), (key, fixed.sections[key])
     assert fixed.segment("__TEXT")["vmaddr"] == BASE - LOAD_RVA, "the Mach-O header is not 64 KiB below the base"
     assert first_load(fixed)["vmaddr"] == BASE, "the lowest load page is not at the base"
-    assert fixed.entryoff == plain.entryoff, "the entry point moved within the file"
+    assert fixed.entryoff < LOAD_RVA and plain.entryoff < LOAD_RVA, "the entry point left the Mach-O header page"
 
 
 def check_addresses(name, macho, data, base):
@@ -72,7 +78,7 @@ def main():
         assert first_load(MachO(lowest_path.read_bytes()))["vmaddr"] == 0x20000, "the lowest base was not applied"
 
         for name, options, error in (
-            ("unaligned", ["--macos-fixed-base", "0x408000"], "--macos-fixed-base requires a 64 KiB-aligned address from 0x20000 through 0x7fffffff0000"),
+            ("unaligned", ["--macos-fixed-base", "0x140018000"], "--macos-fixed-base requires a 64 KiB-aligned address from 0x20000 through 0x7fffffff0000"),
             ("below", ["--macos-fixed-base", "0x10000"], "--macos-fixed-base requires a 64 KiB-aligned address from 0x20000 through 0x7fffffff0000"),
             ("missing", ["--macos-fixed-base", "--registry"], "--macos-fixed-base requires an address"),
             ("repeated", ["--macos-fixed-base", hex(BASE), "--macos-fixed-base", hex(BASE)], "--macos-fixed-base cannot be repeated"),

@@ -176,7 +176,7 @@ def main():
         result, output = relink(relinker, directory, "macos", image(local), "--macos")
         assert result.returncode == 0, (result.stdout, result.stderr)
         macho = output.read_bytes()
-        values = [struct.unpack("<q", macho_bytes_at(macho, 0x140010000 + address, 8))[0] for address in (0x1000, 0x1008, 0x1010)]
+        values = [struct.unpack("<q", macho_bytes_at(macho, 0x400000 + address, 8))[0] for address in (0x1000, 0x1008, 0x1010)]
         assert values == [4 - TLS_BLOCK, 8, 0x12 - TLS_BLOCK], values
 
         for kind in (DTPMOD64, DTPOFF64, TPOFF64):

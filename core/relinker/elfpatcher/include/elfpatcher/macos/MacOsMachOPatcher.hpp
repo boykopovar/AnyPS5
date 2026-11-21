@@ -10,6 +10,8 @@
 
 namespace Elfpatcher::MacOs {
 
+inline constexpr std::uint64_t DefaultFixedBase = 0x400000;
+
 class MacOsMachOPatcher final : public IElfPatcher {
 public:
     explicit MacOsMachOPatcher(std::optional<std::uint64_t> fixedBase = std::nullopt, std::function<void(std::string_view)> message = {}, bool traceImports = false, bool functionSymbolRoots = false, std::string identifier = {});

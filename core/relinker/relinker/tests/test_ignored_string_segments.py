@@ -27,8 +27,8 @@ def main():
                         if target == "windows":
                             actual = pe_bytes_at(data, 0x11240, len(body))
                         else:
-                            segment_info = next(s for s in MachO(data).segments if s["vmaddr"] <= 0x140011240 < s["vmaddr"] + s["filesize"])
-                            offset = segment_info["fileoff"] + 0x140011240 - segment_info["vmaddr"]
+                            segment_info = next(s for s in MachO(data).segments if s["vmaddr"] <= 0x401240 < s["vmaddr"] + s["filesize"])
+                            offset = segment_info["fileoff"] + 0x401240 - segment_info["vmaddr"]
                             actual = data[offset:offset + len(body)]
                         assert actual == body, (name, actual.hex(), body.hex())
     print("Ignored string segment prefixes preserved on Windows and macOS")

@@ -916,6 +916,10 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     if (!stubs.empty()) segments.push_back({"__APS5TEXT", codeRva, stubs.size(), VmProtRead | VmProtExecute, std::move(stubs), {}});
 
     std::sort(segments.begin() + static_cast<std::ptrdiff_t>(guestSegments), segments.end(), [](const Segment& left, const Segment& right) { return left.Rva < right.Rva; });
+    if (input.Executable) {
+        const auto end = segments.back().Rva + AlignUp(segments.back().MemorySize, PageSize);
+        if (imageBase + end < Windows::ImageBase) segments.push_back({"__APS5LOW", end, Windows::ImageBase - imageBase - end, 0, {}, {}});
+    }
     for (std::size_t index = guestSegments; index < segments.size(); ++index) {
         auto& data = segments[index].Data;
         if (segments[index].Sections.empty()) {

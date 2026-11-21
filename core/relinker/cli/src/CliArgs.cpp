@@ -39,7 +39,7 @@ const char* Usage() {
            "  --executable <path>            Also convert another executable of the title. Repeatable.\n"
            "  --windows-fixed-base <address> Map the lowest load page at a fixed Windows address instead of 0x400000.\n"
            "  --linux-fixed-base <address>   Load the Linux executable at a fixed address instead of 0x400000.\n"
-           "  --macos-fixed-base <address>   Map the lowest load page of the macOS executable at a fixed address.\n"
+           "  --macos-fixed-base <address>   Map the lowest load page of the macOS executable at a fixed address instead of 0x400000.\n"
            "\n"
            "Patches:\n"
            "  --patches <file>               Apply the byte patches of this file.\n"

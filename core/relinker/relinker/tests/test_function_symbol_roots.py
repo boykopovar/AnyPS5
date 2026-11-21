@@ -154,7 +154,7 @@ def executable_cases(relinker, work, baseline):
         run, artifact = convert(relinker, work, "export", "macos", image)
         data = succeeded(run, artifact, "macos")
         base = MachO(data).segment("__ELF0")["vmaddr"]
-        assert exports(data)["_FixtureExport"] == (0, base + 0x210 - 0x140000000)
+        assert exports(data)["_FixtureExport"] == (0, base + 0x210 - 0x3F0000)
     image = windows_exported_executable((("FixtureExport#A#B", 0x12, 0, 1, 0x4000, 0x10000),))
     strict, artifact = convert(relinker, work, "export", "windows", image, roots=False)
     assert strict.returncode == 2, (strict.returncode, strict.stderr)
