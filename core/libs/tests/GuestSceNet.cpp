@@ -1260,15 +1260,8 @@ static void CheckConnectTimeout() {
     for (const int descriptor : {client, refused, closed}) Require(sceNetSocketClose(descriptor) == 0);
 }
 
-static void CheckConnectTimeoutExpiry() {
-    const int listener = sceNetSocket("connect-expiry", 2, 1, 6);
-    Require(listener >= 0);
-    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
-    Require(sceNetBind_nid_postfix(listener, address.data(), address.size()) == 0 && sceNetListen(listener, 0) == 0);
-    std::uint32_t size = address.size();
-    Require(sceNetGetsockname(listener, address.data(), &size) == 0);
+static int ExpireConnect(const std::array<std::uint8_t, 16>& address, std::vector<int>& queued) {
     const int timeout = 100000;
-    std::vector<int> queued;
     int pending = -1;
     int result = 0;
     bool threw = false;
@@ -1307,8 +1300,37 @@ static void CheckConnectTimeoutExpiry() {
     Require(waited >= std::chrono::milliseconds(80));
     if (threw || result != static_cast<int>(0x80410123)) report("the expired connect did not return EAGAIN");
     Require(!threw && result == static_cast<int>(0x80410123));
+    return pending;
+}
+
+static int RetryExpiredConnect(int pending, const std::array<std::uint8_t, 16>& address) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+    int result = sceNetConnect(pending, address.data(), address.size());
+    while (Failed(result, 48) && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        result = sceNetConnect(pending, address.data(), address.size());
+    }
+    return result;
+}
+
+static int ExpiryListener(std::array<std::uint8_t, 16>& address) {
+    const int listener = sceNetSocket("connect-expiry", 2, 1, 6);
+    Require(listener >= 0);
+    address = {16, 2, 0, 0, 127, 0, 0, 1};
+    Require(sceNetBind_nid_postfix(listener, address.data(), address.size()) == 0 && sceNetListen(listener, 0) == 0);
+    std::uint32_t size = address.size();
+    Require(sceNetGetsockname(listener, address.data(), &size) == 0);
+    return listener;
+}
+
+static void CheckConnectTimeoutExpiry() {
+    std::array<std::uint8_t, 16> address{};
+    const int listener = ExpiryListener(address);
+    std::vector<int> queued;
+    const int pending = ExpireConnect(address, queued);
     Require(Failed(sceNetConnect(pending, address.data(), address.size()), 48));
-    Require(Throws([&] { sceNetConnect(pending, address.data(), address.size()); }));
+    Require(Failed(sceNetConnect(pending, address.data(), address.size()), 48));
+    Require(Failed(sceNetConnect(pending, address.data(), address.size()), 48));
     int value = -1;
     std::uint32_t length = sizeof(value);
     Require(sceNetGetsockopt(pending, 0xffff, 0x1200, &value, &length) == 0 && value == 0);
@@ -1324,6 +1346,43 @@ static void CheckConnectTimeoutExpiry() {
     Require(sceNetSocketClose(pending) == 0);
     for (const int descriptor : queued) Require(sceNetSocketClose(descriptor) == 0);
     Require(sceNetSocketClose(listener) == 0);
+}
+
+static void CheckConnectRetryAfterExpiry() {
+    std::array<std::uint8_t, 16> address{};
+    int listener = ExpiryListener(address);
+    std::vector<int> queued;
+    int pending = ExpireConnect(address, queued);
+    std::vector<int> accepted;
+    for (std::size_t index = 0; index < queued.size(); ++index) {
+        accepted.push_back(sceNetAccept(listener, nullptr, nullptr));
+        Require(accepted.back() >= 0);
+    }
+    const int established = RetryExpiredConnect(pending, address);
+    if (!Failed(established, 56)) std::fprintf(stderr, "connect retry after expiry: established attempt returned 0x%x\n", static_cast<unsigned>(established));
+    Require(Failed(established, 56));
+    Require(Failed(sceNetConnect(pending, address.data(), address.size()), 56));
+    accepted.push_back(sceNetAccept(listener, nullptr, nullptr));
+    Require(accepted.back() >= 0);
+    const char payload[] = "late";
+    Require(sceNetSend(pending, payload, sizeof(payload), 0) == sizeof(payload));
+    char buffer[sizeof(payload)]{};
+    Require(sceNetRecv(accepted.back(), buffer, sizeof(buffer), 0) == sizeof(payload) && std::strcmp(buffer, payload) == 0);
+    for (const int descriptor : accepted) Require(sceNetSocketClose(descriptor) == 0);
+    Require(sceNetSocketClose(pending) == 0);
+    for (const int descriptor : queued) Require(sceNetSocketClose(descriptor) == 0);
+    Require(sceNetSocketClose(listener) == 0);
+    queued.clear();
+    listener = ExpiryListener(address);
+    pending = ExpireConnect(address, queued);
+    Require(Failed(sceNetConnect(pending, address.data(), address.size()), 48));
+    for (const int descriptor : queued) Require(sceNetSocketClose(descriptor) == 0);
+    Require(sceNetSocketClose(listener) == 0);
+    const int refused = RetryExpiredConnect(pending, address);
+    if (!Failed(refused, 61)) std::fprintf(stderr, "connect retry after expiry: refused attempt returned 0x%x\n", static_cast<unsigned>(refused));
+    Require(Failed(refused, 61));
+    Require(Failed(sceNetConnect(pending, address.data(), address.size()), 61));
+    Require(sceNetSocketClose(pending) == 0);
 }
 
 static void CheckMicrosecondTimeouts(int receiver) {
@@ -2864,9 +2923,32 @@ static void CheckSockInfo6() {
     Require(RequireSockInfo6List(0) == earlier);
     Require(RequireSockInfo6List(0x1000) == WithSockets(earlierAll, {datagram}));
 
+    const int kernel = socket_nid_postfix(2, 2, 0);
+    std::array<std::uint8_t, 16> kernelAddress{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(kernel >= 0 && bind_nid_postfix(kernel, kernelAddress.data(), kernelAddress.size()) == 0);
+    size = kernelAddress.size();
+    Require(getsockname_nid_postfix(kernel, kernelAddress.data(), &size) == 0 && size == 16);
+    Require(RequireSockInfo6List(0) == earlier);
+    Require(RequireSockInfo6List(0x1000) == WithSockets(earlierAll, {datagram, kernel}));
+    Require(RequireSockInfo6List(0x1040) == WithSockets(earlierAll, {datagram, kernel}));
+    Require(Failed(sceNetGetSockInfo6(kernel, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0), 47));
+    Require(sceNetGetSockInfo6(kernel, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0x1000) == 1);
+    std::array<std::uint8_t, 0xa0> kernelExpected{};
+    std::memcpy(kernelExpected.data() + 0x24, &kernel, sizeof(kernel));
+    kernelExpected[0x28] = 2;
+    std::memcpy(kernelExpected.data() + 0x34, kernelAddress.data() + 4, 4);
+    std::memcpy(kernelExpected.data() + 0x3c, kernelAddress.data() + 2, 2);
+    kernelExpected[0x48] = 1;
+    std::int32_t kernelBuffers[2] = {};
+    std::memcpy(kernelBuffers, record.data() + 0x64, sizeof(kernelBuffers));
+    Require(kernelBuffers[0] > 0 && kernelBuffers[1] > 0);
+    std::memcpy(kernelExpected.data() + 0x64, record.data() + 0x64, 8);
+    Require(std::equal(kernelExpected.begin(), kernelExpected.end(), record.begin()));
+
     if (ipv6Unavailable) {
         Require(sceNetSocketClose(datagram) == 0);
         Require(Failed(sceNetGetSockInfo6(datagram, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0x1000), 9));
+        Require(close_nid_postfix(kernel) == 0);
         Require(RequireSockInfo6List(0x1000) == earlierAll);
         return;
     }
@@ -2922,13 +3004,15 @@ static void CheckSockInfo6() {
 
     Require(RequireSockInfo6List(0) == WithSockets(earlier, {udp, listener, client, accepted, peer}));
     Require(RequireSockInfo6List(0x40) == WithSockets(earlier, {udp, listener, client, accepted, peer}));
-    Require(RequireSockInfo6List(0x1000) == WithSockets(earlierAll, {datagram, udp, listener, client, accepted, peer}));
+    Require(RequireSockInfo6List(0x1000) == WithSockets(earlierAll, {datagram, kernel, udp, listener, client, accepted, peer}));
     Require(Failed(sceNetGetSockInfo6(datagram, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0), 47));
 
     for (const int descriptor : {peer, accepted, client, listener, udp}) Require(sceNetSocketClose(descriptor) == 0);
     Require(Failed(sceNetGetSockInfo6(udp, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0), 9));
     Require(RequireSockInfo6List(0) == earlier);
     Require(sceNetSocketClose(datagram) == 0);
+    Require(close_nid_postfix(kernel) == 0);
+    Require(Failed(sceNetGetSockInfo6(kernel, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0x1000), 9));
     Require(RequireSockInfo6List(0x1000) == earlierAll);
 }
 
@@ -3355,6 +3439,7 @@ int main(int argc, char** argv) {
     CheckStreamReceiveTimeout();
     CheckConnectTimeout();
     CheckConnectTimeoutExpiry();
+    CheckConnectRetryAfterExpiry();
     CheckMicrosecondTimeouts(udp_receiver);
     CheckMessages(udp_receiver, udp_sender, address);
     CheckOverlappingReceiveVectors(udp_receiver, udp_sender, address);

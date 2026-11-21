@@ -383,6 +383,81 @@ int ValidateOpen(const Param* param, const ExtendedParam* extended, Param* outPa
     return 0;
 }
 
+constexpr std::uint32_t ImeCheckTextLengthLimit = 0x800;
+
+bool ReadImeTextLength(const char16_t* text, std::uint32_t& length) {
+    if (text == nullptr) {
+        length = 0;
+        return true;
+    }
+    const auto base = reinterpret_cast<std::uintptr_t>(text);
+    for (std::uint32_t index = 0; index < ImeCheckTextLengthLimit; ++index) {
+        const auto offset = static_cast<std::uintptr_t>(index) * sizeof(char16_t);
+        if (base > UINTPTR_MAX - offset) return false;
+        char16_t unit = u'\0';
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&unit, reinterpret_cast<const void*>(base + offset), sizeof(unit));
+        errno = savedErrno;
+        if (!copied) return false;
+        if (unit == u'\0') {
+            length = index;
+            return true;
+        }
+    }
+    length = ImeCheckTextLengthLimit;
+    return true;
+}
+
+int CheckEditTextInfo(const ImeEditText* info, std::uint8_t repair, const char* function) {
+    if (info == nullptr) NotImplemented_nid_no_patch(function);
+    ImeEditText localInfo{};
+    const int savedErrno = errno;
+    const bool copiedInfo = GuestCopyIn_nid_no_patch(&localInfo, info, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copiedInfo) NotImplemented_nid_no_patch(function);
+
+    std::uint32_t textLength = 0;
+    if (!ReadImeTextLength(localInfo.str, textLength)) NotImplemented_nid_no_patch(function);
+
+    const std::uint32_t areaCount = std::min(localInfo.area_num, 4u);
+    localInfo.area_num = areaCount;
+    bool changed = false;
+    for (std::uint32_t index = 0; index < areaCount; ++index) {
+        ImeTextAreaProperty& area = localInfo.text_area[index];
+        const auto mode = static_cast<std::uint32_t>(area.mode);
+        if (mode < 2 || mode > 4) continue;
+        bool invalid = area.index > textLength;
+        if (!invalid) {
+            invalid = area.length < 0 || static_cast<std::uint32_t>(area.length) > textLength ||
+                      area.index + static_cast<std::uint32_t>(area.length) > textLength;
+        }
+        if (!invalid) continue;
+        if (repair == 0) return -3;
+        area.index = 0;
+        changed = true;
+    }
+
+    if (localInfo.caret_index > textLength) {
+        if (repair == 0) return -3;
+        localInfo.caret_index = textLength;
+        changed = true;
+    }
+
+    if (changed && (repair & 1u) != 0) {
+        const auto destination = reinterpret_cast<std::uintptr_t>(info);
+        if (destination > UINTPTR_MAX - 32u) NotImplemented_nid_no_patch(function);
+        const auto* source = reinterpret_cast<const unsigned char*>(&localInfo);
+        const int copyErrno = errno;
+        const bool copiedTail = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(destination + 32u), source + 32u, 32u);
+        errno = copyErrno;
+        if (!copiedTail) NotImplemented_nid_no_patch(function);
+        const bool copiedHead = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(destination), source, 32u);
+        errno = copyErrno;
+        if (!copiedHead) NotImplemented_nid_no_patch(function);
+    }
+    return 0;
+}
+
 }
 
 extern "C" {
@@ -575,9 +650,24 @@ int APS5_VABI sceImeFilterText(char16_t* dst, int32_t* out_length, uint32_t capa
     return static_cast<int>(ime_filter::FilterText(dst, out_length, capacity, param, src, src_length));
 }
 
-int APS5_VABI sceImeCheckFilterText(const void* param) {
-    (void)param;
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceImeCheckFilterText(char16_t* text, std::uint8_t repair) {
+    if (!text) return -3;
+    constexpr std::size_t maxLength = 0x98;
+    for (std::size_t index = 0; index < maxLength; ++index) {
+        char16_t character = 0;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&character, text + index, sizeof(character));
+        errno = savedErrno;
+        if (!copied) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        if (character == 0) return 0;
+    }
+    if (!repair) return -2;
+    constexpr char16_t terminator = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(text + maxLength, &terminator, sizeof(terminator));
+    errno = savedErrno;
+    if (!copied) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return 0;
 }
 
 void APS5_VABI sceImeParamInit(Param* param) {
@@ -804,13 +894,20 @@ int APS5_VABI sceImeVshSetSelectionText(ImeVshContext* context, const char16_t* 
 }
 
 int APS5_VABI sceImeCheckUpdateTextInfo(ImeEditText* info, std::uint8_t repair) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return CheckEditTextInfo(info, repair, __func__);
 }
 
 int APS5_VABI sceImeCheckRemoteEventParam(ImeEvent* event, std::uint8_t repair) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (event == nullptr) NotImplemented_nid_no_patch(__func__);
+    std::uint32_t eventId = 0;
+    const int savedErrno = errno;
+    const bool copiedId = GuestCopyIn_nid_no_patch(&eventId, event, sizeof(eventId));
+    errno = savedErrno;
+    if (!copiedId) NotImplemented_nid_no_patch(__func__);
+    if (eventId != EventUpdateText) return 0;
+    const auto address = reinterpret_cast<std::uintptr_t>(event);
+    if (address > UINTPTR_MAX - offsetof(ImeEvent, param)) NotImplemented_nid_no_patch(__func__);
+    return CheckEditTextInfo(reinterpret_cast<const ImeEditText*>(address + offsetof(ImeEvent, param)), repair, __func__);
 }
 
 int APS5_VABI sceImeKeyboardOpenInternal(std::int32_t userId, EventHandler handler, const KeyboardParam* param) {
