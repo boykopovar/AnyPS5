@@ -213,6 +213,7 @@ std::string driverVersion(HostDriverVersionScheme scheme, std::uint32_t version)
         case HostDriverVersionScheme::Vulkan: return field(22, 0x3FFu) + "." + field(12, 0x3FFu) + "." + field(0, 0xFFFu);
         case HostDriverVersionScheme::Nvidia: return field(22, 0x3FFu) + "." + field(14, 0xFFu) + "." + field(6, 0xFFu) + "." + field(0, 0x3Fu);
         case HostDriverVersionScheme::IntelWindows: return field(14, 0x3FFFFu) + "." + field(0, 0x3FFFu);
+        case HostDriverVersionScheme::MoltenVk: return std::to_string(version / 10000u) + "." + std::to_string(version / 100u % 100u) + "." + std::to_string(version % 100u);
         case HostDriverVersionScheme::Unknown: break;
     }
     return "unknown";
