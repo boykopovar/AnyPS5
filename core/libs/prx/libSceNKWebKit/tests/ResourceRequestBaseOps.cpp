@@ -16,6 +16,7 @@ using NKWebKit::HttpAbi::HTTPHeaderMap;
 using NKWebKit::HttpAbi::HTTPHeaderName;
 using NKWebKit::WebCoreAbi::FormData;
 using NKWebKit::WebCoreAbi::FormDataElement;
+using NKWebKit::WebCoreAbi::LegacyResourceRequestBase;
 using NKWebKit::WebCoreAbi::ResourceRequestBase;
 using NKWebKit::WtfAbi::EmptyStringImpl;
 using NKWebKit::WtfAbi::String;
@@ -110,6 +111,44 @@ static void Clear(ResourceRequestBase& request) {
     map = HTTPHeaderMap{};
 }
 
+static HTTPHeaderMap& Headers(LegacyResourceRequestBase& request) {
+    return *reinterpret_cast<HTTPHeaderMap*>(&request.httpHeaderFields);
+}
+
+static LegacyResourceRequestBase MakeLegacyRequest() {
+    LegacyResourceRequestBase request{};
+    request.priority = 1;
+    request.allowCookies = true;
+    request.resourceRequestUpdated = true;
+    request.platformRequestUpdated = true;
+    request.resourceRequestBodyUpdated = true;
+    return request;
+}
+
+static void Clear(LegacyResourceRequestBase& request) {
+    auto& map = Headers(request);
+    while (map.common.size) _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(&map, map.common.buffer[0].key);
+    while (map.uncommon.size) {
+        String key(map.uncommon.buffer[0].key);
+        _ZN7WebCore13HTTPHeaderMap6removeERKN3WTF6StringE(&map, key);
+    }
+    _ZN3WTF8fastFreeEPv(map.common.buffer);
+    _ZN3WTF8fastFreeEPv(map.uncommon.buffer);
+    map = HTTPHeaderMap{};
+}
+
+static unsigned char ByteAt(const LegacyResourceRequestBase& request, std::size_t offset) {
+    unsigned char value = 0;
+    std::memcpy(&value, reinterpret_cast<const unsigned char*>(&request) + offset, 1);
+    return value;
+}
+
+static const void* PointerAt(const LegacyResourceRequestBase& request, std::size_t offset) {
+    const void* value = nullptr;
+    std::memcpy(&value, reinterpret_cast<const unsigned char*>(&request) + offset, sizeof(value));
+    return value;
+}
+
 static FormData* CreateForm(const void* data, std::size_t size) {
     auto ref = _ZN7WebCore8FormData6createEPKvm(data, size);
     return std::exchange(ref.m_ptr, nullptr);
@@ -188,8 +227,36 @@ static void SetURLField(NKWebKit::WtfAbi::URL& field, StringImpl& impl, unsigned
     field.queryEnd = pathEnd;
 }
 
+static void TestLegacyLayout() {
+    LegacyResourceRequestBase request{};
+    Require(sizeof(request) == 184);
+    request.allowCookies = true;
+    Require(ByteAt(request, 180) == 0x01);
+    request.resourceRequestUpdated = true;
+    Require(ByteAt(request, 180) == 0x03);
+    request.platformRequestUpdated = true;
+    Require(ByteAt(request, 180) == 0x07);
+    request.resourceRequestBodyUpdated = true;
+    Require(ByteAt(request, 180) == 0x0F);
+    request.platformRequestBodyUpdated = true;
+    Require(ByteAt(request, 180) == 0x1F);
+    request.hiddenFromInspector = true;
+    Require(ByteAt(request, 180) == 0x3F);
+    request.isTopSite = true;
+    Require(ByteAt(request, 180) == 0x7F);
+    request.inspectorInitiatorNodeIdentifier = {true, 0x11223344};
+    Require(ByteAt(request, 172) == 1 && ByteAt(request, 176) == 0x44 && ByteAt(request, 179) == 0x11);
+}
+
 static void TestSetHTTPBody() {
-    auto request = MakeRequest();
+    auto request = MakeLegacyRequest();
+    request.cachePolicy = 0xA1;
+    request.sameSiteDisposition = 0xA2;
+    request.priority = 0xA3;
+    request.requester = 0xA4;
+    request.inspectorInitiatorNodeIdentifier = {true, 0x11223344};
+    request.platformRequestBodyUpdated = true;
+    Require(ByteAt(request, 180) == 0x1F);
     auto witness = Make("witness");
     String witnessText(&witness);
     witness.refCount += 2;
@@ -209,7 +276,13 @@ static void TestSetHTTPBody() {
     Require(!request.platformRequestBodyUpdated);
     Require(request.resourceRequestBodyUpdated);
     Require(request.platformRequestUpdated);
+    Require(PointerAt(request, 160) == firstForm);
+    Require(ByteAt(request, 180) == 0x0F);
+    Require(request.cachePolicy == 0xA1 && request.sameSiteDisposition == 0xA2 && request.priority == 0xA3 && request.requester == 0xA4);
+    Require(request.inspectorInitiatorNodeIdentifier.engaged && request.inspectorInitiatorNodeIdentifier.value == 0x11223344);
+    Require(request.initiatorIdentifier.impl == nullptr && request.cachePartition.impl == nullptr);
 
+    request.resourceRequestBodyUpdated = false;
     body = secondForm;
     _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(&request, &body);
     Require(request.httpBody == secondForm);
@@ -223,6 +296,7 @@ static void TestSetHTTPBody() {
     Require(request.httpBody == secondForm);
     Require(secondForm->refCount == 1);
     Require(body == nullptr);
+    Require(ByteAt(request, 180) == 0x0F);
 
     request.resourceRequestUpdated = false;
     secondForm->ref();
@@ -644,7 +718,8 @@ static void TestEqual() {
 }
 
 static void TestHTTPHeaderFieldString() {
-    auto request = MakeRequest();
+    auto request = MakeLegacyRequest();
+    auto& map = Headers(request);
     auto known = Make("content-TYPE");
     auto custom = Make("X-Custom");
     auto value = Make("v");
@@ -654,16 +729,24 @@ static void TestHTTPHeaderFieldString() {
     known.refCount += 2;
     custom.refCount += 2;
     value.refCount += 2;
-    _ZN7WebCore19ResourceRequestBase18setHTTPHeaderFieldERKN3WTF6StringES4_(&request, &knownText, &valueText);
-    _ZN7WebCore19ResourceRequestBase18setHTTPHeaderFieldERKN3WTF6StringES4_(&request, &customText, &valueText);
+
+    _ZN7WebCore13HTTPHeaderMap3setERKN3WTF6StringES4_(&map, customText, valueText);
+    Require(map.common.size == 0 && map.uncommon.size == 1);
+    {
+        String other = _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(&request, &customText);
+        Require(other.impl == &value && value.refCount == 8);
+    }
+    _ZN7WebCore13HTTPHeaderMap3setERKN3WTF6StringES4_(&map, knownText, valueText);
+    Require(map.common.size == 1 && map.uncommon.size == 1);
+    Require(PointerAt(request, 112) == map.common.buffer && PointerAt(request, 128) == map.uncommon.buffer);
 
     {
         String got = _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(&request, &knownText);
         Require(got.impl == &value && value.refCount == 10);
         String other = _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(&request, &customText);
         Require(other.impl == &value && value.refCount == 12);
-        String missing = _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(&request, &knownText);
-        Require(missing.impl == &value && value.refCount == 14);
+        String again = _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(&request, &knownText);
+        Require(again.impl == &value && value.refCount == 14);
     }
     Require(value.refCount == 8);
 
@@ -1072,6 +1155,7 @@ int main() {
         reinterpret_cast<void*>(&Calloc_nid_no_patch), reinterpret_cast<void*>(&Reallocate_nid_no_patch),
         reinterpret_cast<void*>(&Align_nid_no_patch), reinterpret_cast<void*>(&Realign_nid_no_patch), reinterpret_cast<void*>(&PosixAlign_nid_no_patch)};
     ApplicationHeapRegister_nid_no_patch(api);
+    TestLegacyLayout();
     TestSetHTTPBody();
     TestClearPurposeAndReferrer();
     TestPartitionName();
