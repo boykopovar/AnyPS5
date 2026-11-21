@@ -36,6 +36,11 @@ void Require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
 
+void Idle(std::chrono::microseconds length) {
+    const auto until = std::chrono::steady_clock::now() + length;
+    while (std::chrono::steady_clock::now() < until) std::this_thread::yield();
+}
+
 alignas(256) std::array<std::uint32_t, 15> SpinCode{0xf4080200u, 0xfa000000u, 0xbe840381u, 0x9304ff04u, 0x0019660du, 0x8004ff04u, 0x3c6ef35fu, 0x80828102u, 0xbf078002u, 0xbf85fff9u, 0xbf8cc07fu, 0x7e000204u, 0xe0700000u, 0x80020000u, 0xbf810000u};
 
 constexpr std::uint32_t SpinIterations = 1u << 20u;
@@ -247,7 +252,7 @@ void CpuLabelWake(Slot& slot) {
         int result = -1;
         std::jthread worker([&] {
             while (!ready.load(std::memory_order_acquire)) std::this_thread::yield();
-            std::this_thread::sleep_for(std::chrono::microseconds(100));
+            Idle(std::chrono::microseconds(100));
             result = submit(value);
         });
         KernelNoteGpuSubmit_nid_no_patch();
