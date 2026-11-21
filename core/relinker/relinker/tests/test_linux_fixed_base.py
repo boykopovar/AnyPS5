@@ -198,7 +198,7 @@ def main():
             ("unaligned", fixture(alignment=0x20000), 0x410000, "is not a multiple of the PT_LOAD alignment 0x20000"),
             ("beyond-user-space", fixture(memory_size=0x100000), 0x7FFFFFFF0000, "outside the Linux user address space"),
             ("unsupported-type", fixture(relocation_type=11), BASE, "Unsupported relocation type 0xb"),
-            ("negative-target", fixture(addend=-16), BASE, "Relocation target -16 lies below the image at a fixed Linux base"),
+            ("negative-target", fixture(addend=-16), BASE, "Relative relocation addend is outside the ELF image"),
         ):
             result, output = relink(relinker, work, name, image, "--linux-fixed-base", hex(base))
             assert result.returncode == 2 and error in result.stderr and not output.exists(), (name, result.returncode, result.stdout, result.stderr)

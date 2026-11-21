@@ -121,6 +121,23 @@ void RequireZeroImportSlotAddends(const std::vector<std::uint8_t>& table) {
     }
 }
 
+void RequireRelativeAddendsInImage(const std::vector<Domain::ProgramHeader>& headers, const std::vector<std::uint8_t>& table) {
+    auto first = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t end = 0;
+    for (const auto& header : headers) {
+        if (header.Type != PT_LOAD || header.MemorySize == 0) continue;
+        first = std::min(first, header.MappedAddress);
+        end = std::max(end, header.MemorySize > std::numeric_limits<std::uint64_t>::max() - header.MappedAddress
+            ? std::numeric_limits<std::uint64_t>::max() : header.MappedAddress + header.MemorySize);
+    }
+    for (std::size_t entry = 0; entry < table.size(); entry += kRelaEntrySize) {
+        if (static_cast<std::uint32_t>(Io::ReadU64(table, entry + 8)) != R_X86_64_RELATIVE) continue;
+        const auto addend = Io::ReadU64(table, entry + 16);
+        if (addend < first || addend > end)
+            throw Domain::RelinkerException("Relative relocation addend is outside the ELF image", addend);
+    }
+}
+
 void RequireFileRange(const std::vector<std::uint8_t>& buf, const Domain::ProgramHeader& load) {
     if (load.Offset > buf.size() || load.FileSize > buf.size() - load.Offset)
         throw Domain::RelinkerException("PT_LOAD at " + Hex(load.MappedAddress) + " has file bytes outside the input");
@@ -447,6 +464,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         throw Domain::RelinkerException("--trace-imports requires libc.prx among the libraries");
     RequireZeroImportSlotAddends(dynSection.RelaData);
     RequireZeroImportSlotAddends(dynSection.RelaPltData);
+    RequireRelativeAddendsInImage(originalHeaders, dynSection.RelaData);
     if (_fixedBase)
         RequireOnlyDependencies(dynSection.DynamicSegmentData);
     RequireLoaded(originalHeaders, Io::ReadU64(sourceElf, kEhdrEntryOffset), 1, PF_X, "e_entry");
