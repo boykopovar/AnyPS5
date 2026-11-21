@@ -521,11 +521,11 @@ double APS5_VABI __floatsidf_nid_postfix(std::int32_t a) { return static_cast<do
 double APS5_VABI __floatunsidf_nid_postfix(std::uint32_t a) { return static_cast<double>(a); }
 float APS5_VABI __floatsisf_nid_postfix(std::int32_t a) { return RoundToFloat<float>(a < 0, Magnitude(a)); }
 float APS5_VABI __floatunsisf_nid_postfix(std::uint32_t a) { return RoundToFloat<float>(false, a); }
-double APS5_VABI __floatdidf_nid_postfix(std::int64_t a) { return static_cast<double>(a); }
-float APS5_VABI __floatdisf_nid_postfix(std::int64_t a) { return static_cast<float>(a); }
+double APS5_VABI __floatdidf_nid_postfix(std::int64_t a) { return RoundToFloat<double>(a < 0, Magnitude(a)); }
+float APS5_VABI __floatdisf_nid_postfix(std::int64_t a) { return RoundToFloat<float>(a < 0, Magnitude(a)); }
 long double APS5_VABI __floatdixf_nid_postfix(std::int64_t a) { return static_cast<long double>(a); }
-double APS5_VABI __floatundidf_nid_postfix(std::uint64_t a) { return static_cast<double>(a); }
-float APS5_VABI __floatundisf_nid_postfix(std::uint64_t a) { return static_cast<float>(a); }
+double APS5_VABI __floatundidf_nid_postfix(std::uint64_t a) { return RoundToFloat<double>(false, a); }
+float APS5_VABI __floatundisf_nid_postfix(std::uint64_t a) { return RoundToFloat<float>(false, a); }
 long double APS5_VABI __floatundixf_nid_postfix(std::uint64_t a) { return static_cast<long double>(a); }
 double APS5_VABI __floattidf_nid_postfix(Int128 a) { return RoundToFloat<double>(a < 0, Magnitude(a)); }
 float APS5_VABI __floattisf_nid_postfix(Int128 a) { return RoundToFloat<float>(a < 0, Magnitude(a)); }
