@@ -120,6 +120,9 @@ def identities():
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Bundle the run report, log and input mapping of an AnyPS5 run, with personal details redacted.")
     parser.add_argument("--report", default="anyps5-report.json", help="run report to include (default: anyps5-report.json)")
     parser.add_argument("--log", default=os.environ.get("ANYPS5_LOG_FILE") or None, help="log file to include (default: ANYPS5_LOG_FILE)")
