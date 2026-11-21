@@ -238,7 +238,9 @@ For an emulator action such as `ToggleFullscreen`, add a binding, choose `PAD` a
 
 On the Configuration page, enter the game's exact title ID to download a [per-game profile](#per-game-profiles), such as `anyps5-input.PPSA00001.ini`. Leave the field blank to download the shared `anyps5-input.ini`.
 
-Add settings, such as `MouseSensitivity` or `ToggleActions`, and `SDLButton:` lines by hand. The configurator validates them on import and preserves them in the INI preview, in copied text and in the downloaded file. Invalid or duplicate settings and controller entries are reported with their line number.
+On the Configuration page, open **Controller buttons** to assign an SDL button to a PlayStation button. Choose `None` to disable it or **No override** to omit its `SDLButton:` line and keep the inherited mapping. These assignments apply to all connected controllers.
+
+Add settings such as `MouseSensitivity` or `ToggleActions` by hand. The configurator validates settings and controller assignments on import and preserves them in the preview, clipboard and downloaded file. Invalid or duplicate entries are reported with their line number.
 
 From the repository root, with Node.js 22 or later:
 
