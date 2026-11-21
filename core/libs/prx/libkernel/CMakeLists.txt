@@ -32,6 +32,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/MemoryPool.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/MemoryPoolExport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Mutex.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/LibcxxMutexForwards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Cond.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Attr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/Thread.cpp
@@ -44,6 +45,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Attr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Barrier.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Cond.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/LibcxxConditionForwards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Mutex.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Rwlock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Thread.cpp
@@ -51,6 +53,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Tsd.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Sem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/Posix/Spinlock.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/LibcxxPlainMutexForwards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Pselect.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Socket.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Udp.cpp
@@ -1135,6 +1138,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_pthread_cond_np_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_kernel_pthread_rwlock_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelPthreadRwlockBounds.cpp)
+    target_include_directories(guest_kernel_pthread_rwlock_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_pthread_rwlock_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_pthread_rwlock_bounds_tests)
+    add_test(NAME guest_kernel_pthread_rwlock_bounds COMMAND guest_kernel_pthread_rwlock_bounds_tests)
+    set_tests_properties(guest_kernel_pthread_rwlock_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_pthread_rwlock_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_cond_recursive_mutex_tests ${LIBS_INCLUDE_DIR}/tests/GuestCondRecursiveMutex.cpp)
     target_include_directories(guest_cond_recursive_mutex_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_cond_recursive_mutex_tests PRIVATE libkernel libc)
@@ -2074,6 +2087,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_sysctl_name_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_kernel_pthread_attr_stack_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelPthreadAttrStackBounds.cpp)
+    target_include_directories(guest_kernel_pthread_attr_stack_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_pthread_attr_stack_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_pthread_attr_stack_bounds_tests)
+    add_test(NAME guest_kernel_pthread_attr_stack_bounds COMMAND guest_kernel_pthread_attr_stack_bounds_tests)
+    set_tests_properties(guest_kernel_pthread_attr_stack_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_pthread_attr_stack_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_kernel_sigpending_mask_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelSigpendingMask.cpp)
     target_include_directories(guest_kernel_sigpending_mask_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_kernel_sigpending_mask_tests PRIVATE libkernel libc)
@@ -2382,6 +2405,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_poll PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_kernel_poll_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelPoll.cpp)
+    target_include_directories(guest_kernel_poll_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_poll_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_poll_tests)
+    add_test(NAME guest_kernel_poll COMMAND guest_kernel_poll_tests)
+    set_tests_properties(guest_kernel_poll PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        target_link_libraries(guest_kernel_poll_tests PRIVATE ws2_32)
+        set_tests_properties(guest_kernel_poll PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_select_wait_tests ${LIBS_INCLUDE_DIR}/tests/GuestSelectWait.cpp)
     target_include_directories(guest_select_wait_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_select_wait_tests PRIVATE libkernel libc)
@@ -2477,7 +2511,7 @@ if(BUILD_TESTING)
     target_include_directories(guest_kernel_app_archive_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_kernel_app_archive_tests PRIVATE libSceLibcInternal libkernel libc zarchive)
     configure_windows_unwind(guest_kernel_app_archive_tests)
-    foreach(mode archive plain mmap)
+    foreach(mode archive plain mmap mmap-failure mmap-damaged)
         add_test(NAME guest_kernel_app_archive_${mode} COMMAND guest_kernel_app_archive_tests ${mode})
         set_tests_properties(guest_kernel_app_archive_${mode} PROPERTIES TIMEOUT 20)
         if(WIN32)
@@ -3419,6 +3453,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_kernel_mutex_contention_robust_bounds PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_kernel_mutex_contention_robust_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_kernel_semaphore_trywait_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelSemaphoreTrywaitBounds.cpp)
+    target_include_directories(guest_kernel_semaphore_trywait_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_semaphore_trywait_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_semaphore_trywait_bounds_tests)
+    add_test(NAME guest_kernel_semaphore_trywait_bounds COMMAND guest_kernel_semaphore_trywait_bounds_tests)
+    set_tests_properties(guest_kernel_semaphore_trywait_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_semaphore_trywait_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
 
