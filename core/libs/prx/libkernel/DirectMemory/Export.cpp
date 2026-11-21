@@ -484,7 +484,7 @@ static int QueryVirtualRange(const void* addr, int flags, VirtualQueryInfo* info
    info->end = std::min(info->end, directEnd);
    info->memory_type = memoryType;
   }
-  info->is_committed = 1;
+  info->is_committed = direct ? 1u : 0u;
   ApplyRangeName(std::max<uintptr_t>(address, info->start), info);
   if (direct) info->offset = physicalOffset + info->start - directStart;
   return 0;
@@ -543,7 +543,6 @@ static int QueryVirtualRange(const void* addr, int flags, VirtualQueryInfo* info
  #endif
  info->protection = 1 | (writable ? 2 : 0) | (executable ? 4 : 0);
  info->is_flexible = 1;
- info->is_committed = 1;
  ApplyRangeName(std::max<uintptr_t>(address, info->start), info);
  return 0;
 }
