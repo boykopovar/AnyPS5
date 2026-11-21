@@ -15,9 +15,6 @@
 #include <stdlib.h>
 #include <string>
 #include <vector>
-#else
-#include <sys/wait.h>
-#include <unistd.h>
 #endif
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -53,9 +50,18 @@ static bool Open(int fd) {
     return true;
 }
 
-static void RunClosedStdinChild(char* exePath) {
 #ifdef _WIN32
-    (void)exePath;
+static HANDLE DuplicateInheritable(DWORD stdHandleId) {
+    HANDLE source = GetStdHandle(stdHandleId);
+    if (source == nullptr || source == INVALID_HANDLE_VALUE) return nullptr;
+    HANDLE copy = nullptr;
+    if (!DuplicateHandle(GetCurrentProcess(), source, GetCurrentProcess(), &copy, 0, TRUE, DUPLICATE_SAME_ACCESS)) {
+        return nullptr;
+    }
+    return copy;
+}
+
+static void RunUnattachedStdinChild() {
     std::wstring modulePath(260, L'\0');
     for (;;) {
         const DWORD len = GetModuleFileNameW(nullptr, modulePath.data(), static_cast<DWORD>(modulePath.size()));
@@ -66,14 +72,19 @@ static void RunClosedStdinChild(char* exePath) {
         }
         modulePath.resize(modulePath.size() * 2);
     }
-    const std::wstring cmdLine = L"\"" + modulePath + L"\" --closed-stdin";
+    const std::wstring cmdLine = L"\"" + modulePath + L"\" --unattached-stdin";
     std::vector<wchar_t> cmdBuf(cmdLine.begin(), cmdLine.end());
     cmdBuf.push_back(L'\0');
+    HANDLE inheritedOut = DuplicateInheritable(STD_OUTPUT_HANDLE);
+    HANDLE inheritedErr = DuplicateInheritable(STD_ERROR_HANDLE);
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = nullptr;
+    si.hStdOutput = inheritedOut;
+    si.hStdError = inheritedErr;
     PROCESS_INFORMATION pi{};
-    Require(CreateProcessW(
+    const BOOL created = CreateProcessW(
         modulePath.c_str(),
         cmdBuf.data(),
         nullptr,
@@ -83,37 +94,22 @@ static void RunClosedStdinChild(char* exePath) {
         nullptr,
         nullptr,
         &si,
-        &pi) != FALSE);
+        &pi);
+    if (inheritedOut != nullptr) CloseHandle(inheritedOut);
+    if (inheritedErr != nullptr) CloseHandle(inheritedErr);
+    Require(created != FALSE);
     Require(WaitForSingleObject(pi.hProcess, INFINITE) == WAIT_OBJECT_0);
     DWORD exitCode = 1;
     Require(GetExitCodeProcess(pi.hProcess, &exitCode) != FALSE);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     Require(exitCode == 0);
-#else
-    const pid_t pid = ::fork();
-    Require(pid >= 0);
-    if (pid == 0) {
-        ::close(0);
-        char flag[] = "--closed-stdin";
-        char* childArgv[] = {exePath, flag, nullptr};
-        ::execvp(exePath, childArgv);
-        ::_exit(127);
-    }
-    int status = 0;
-    pid_t waited = -1;
-    do {
-        waited = ::waitpid(pid, &status, 0);
-    } while (waited == -1 && errno == EINTR);
-    Require(waited == pid);
-    Require(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-#endif
 }
+#endif
 
 int main(int argc, char** argv) {
-    const int entryErrno = errno;
-    if (argc > 1 && std::strcmp(argv[1], "--closed-stdin") == 0) {
-        Require(entryErrno != EBADF);
+#ifdef _WIN32
+    if (argc > 1 && std::strcmp(argv[1], "--unattached-stdin") == 0) {
         *__error_nid_postfix() = 0;
         const int firstClose = close_nid_postfix(0);
         Require(firstClose == 0 || (firstClose == -1 && *__error_nid_postfix() == GuestEbadf));
@@ -123,6 +119,10 @@ int main(int argc, char** argv) {
         Require(sceKernelClose(0) == SceKernelErrorEbadf);
         return 0;
     }
+#else
+    (void)argc;
+    (void)argv;
+#endif
 
     bool open[3];
     bool guarded[3];
@@ -154,7 +154,8 @@ int main(int argc, char** argv) {
     Require(sceKernelClose(-1) == SceKernelErrorEbadf);
     Require(sceKernelClose(-2) == SceKernelErrorEbadf);
 
-    Require(argc >= 1 && argv[0] != nullptr);
-    RunClosedStdinChild(argv[0]);
+#ifdef _WIN32
+    RunUnattachedStdinChild();
+#endif
     return 0;
 }
