@@ -177,7 +177,6 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -206,7 +205,7 @@ bool Opens(const char* file) {
         fclose_nid_postfix(stream);
         return true;
     }
-    const int openError = errno;
+    const int openError = *__error_nid_postfix();
     LibreSslPutError_nid_no_patch(SystemLibrary, UnnamedFunction, openError, __FILE__, __LINE__);
     LibreSslPutError_nid_no_patch(BioLibrary, UnnamedFunction, openError == GuestNoSuchFile ? BioNoSuchFile : SystemLibraryFailure,
                                   __FILE__, __LINE__);
