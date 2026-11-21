@@ -266,7 +266,12 @@ int APS5_VABI _ZNK6icu_6815Normalizer2Impl30copyLowPrefixFromNulTerminatedEPKDsi
 int APS5_VABI sceIcuLegacyUnknown_5bcZomziXao_nid_no_patch();
 int APS5_VABI _ZN6icu_6813UnicodeString19getTerminatedBufferEv_nid_postfix();
 int APS5_VABI _ZN6icu_6813SimpleFactoryC1EPNS_7UObjectERKNS_13UnicodeStringEa_nid_postfix();
-int APS5_VABI uloc_getDisplayScript_nid_postfix();
+std::int32_t APS5_VABI uloc_getDisplayScript_nid_postfix(
+    const char* locale,
+    const char* displayLocale,
+    char16_t* script,
+    std::int32_t scriptCapacity,
+    std::int32_t* status);
 int APS5_VABI _ZN6icu_6817CanonicalIterator4nextEv_nid_postfix();
 int APS5_VABI _ZN6icu_6813ICUServiceKeyD0Ev_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_5jXnzyO60HQ_nid_no_patch();
