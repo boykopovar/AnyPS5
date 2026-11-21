@@ -5,8 +5,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
+#include <type_traits>
 
 namespace {
+
+static_assert(std::is_same_v<decltype(&ucnv_setFromUCallBack),
+                             void (APS5_VABI*)(UConverter*, Icu::ConverterFromUCallback, const void*,
+                                               Icu::ConverterFromUCallback*, const void**, std::int32_t*)>);
+static_assert(std::is_same_v<decltype(&ucnv_setToUCallBack),
+                             void (APS5_VABI*)(UConverter*, Icu::ConverterToUCallback, const void*,
+                                               Icu::ConverterToUCallback*, const void**, std::int32_t*)>);
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -191,6 +199,23 @@ void ReplacementCallbacks() {
     Require(status == 10, "invalid replacement reasons preserve the error");
 }
 
+void SetterArguments() {
+    std::int32_t error = 0;
+    const void* context = reinterpret_cast<const void*>(std::uintptr_t{0x1234});
+    auto fromAction = UCNV_FROM_U_CALLBACK_SKIP_nid_postfix;
+    auto toAction = UCNV_TO_U_CALLBACK_SKIP_nid_postfix;
+    ucnv_setFromUCallBack(nullptr, UCNV_FROM_U_CALLBACK_STOP_nid_postfix, context, &fromAction, &context, &error);
+    Require(error == 1, "FROM setter rejects a null converter");
+    Require(fromAction == UCNV_FROM_U_CALLBACK_SKIP_nid_postfix, "FROM setter leaves old action untouched on error");
+    Require(context == reinterpret_cast<const void*>(std::uintptr_t{0x1234}), "FROM setter leaves old context untouched on error");
+
+    error = 4;
+    ucnv_setToUCallBack(nullptr, UCNV_TO_U_CALLBACK_STOP_nid_postfix, context, &toAction, &context, &error);
+    Require(error == 4, "TO setter honors a pre-failed status");
+    Require(toAction == UCNV_TO_U_CALLBACK_SKIP_nid_postfix, "TO setter leaves old action untouched on pre-failed status");
+    Require(context == reinterpret_cast<const void*>(std::uintptr_t{0x1234}), "TO setter leaves old context untouched on pre-failed status");
+}
+
 }
 
 int main() {
@@ -198,4 +223,5 @@ int main() {
     IgnoredPointers();
     InvalidReasons();
     ReplacementCallbacks();
+    SetterArguments();
 }
