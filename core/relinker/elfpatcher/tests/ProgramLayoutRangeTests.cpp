@@ -92,7 +92,7 @@ int main() {
         Elfpatcher::ProgramHeaderLayoutRequest valid{64, 56, 7, {load}, 0x1000, 0x2000, 0x100, 0x1000, 16, 0x1010, 8};
         std::vector<std::uint8_t> output(0x1100, 0xA5);
         Require(builder.WriteLayout(output, valid) == 7, "header count for a valid request");
-        for (int kind = 0; kind < 11; ++kind) {
+        for (int kind = 0; kind < 13; ++kind) {
             auto request = valid;
             switch (kind) {
                 case 0: request.PhEntSize = 55; break;
@@ -106,6 +106,8 @@ int main() {
                 case 8: request.ExtraBlockOffset = maximum; break;
                 case 9: request.ExtraBlockSize = 0x1000; break;
                 case 10: request.PhOff = 0xF00; break;
+                case 11: request.PhOff = 0; break;
+                case 12: request.PhOff = 63; break;
             }
             std::vector<std::uint8_t> bytes(0x1100, 0xA5);
             const auto before = bytes;

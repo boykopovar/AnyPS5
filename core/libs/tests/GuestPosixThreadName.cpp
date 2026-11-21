@@ -7,6 +7,7 @@
 #include <string>
 
 static constexpr int GUEST_EINVAL = 22;
+static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_ENAMETOOLONG = 63;
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -42,5 +43,11 @@ int main() {
     const std::string tooLong(32, 'c');
     Require(pthread_setname_np_nid_postfix(self, tooLong.c_str()) == GUEST_ENAMETOOLONG);
     RequireStored(self, longest);
+    const auto* unreadable = reinterpret_cast<const char*>(0x10);
+    Require(pthread_setname_np_nid_postfix(self, unreadable) == GUEST_EFAULT);
+    RequireStored(self, longest);
+    Require(pthread_setname_np_nid_postfix(nullptr, unreadable) == GUEST_EINVAL);
+    Require(pthread_setname_np_nid_postfix(self, "recovered") == 0);
+    RequireStored(self, "recovered");
     return 0;
 }

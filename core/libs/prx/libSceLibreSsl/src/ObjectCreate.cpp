@@ -207,6 +207,18 @@ int LibreSslAddedObjectNid_nid_no_patch(const LibreSslAsn1Object* object) {
     return found == byData.end() ? 0 : found->second->object.nid;
 }
 
+bool LibreSslAddedObjectsExist_nid_no_patch() {
+    std::lock_guard lock(mutex);
+    return tableExists;
+}
+
+const LibreSslAsn1Object* LibreSslAddedObjectByNid_nid_no_patch(int nid) {
+    std::lock_guard lock(mutex);
+    if (!tableExists) return nullptr;
+    const auto found = byNid.find(nid);
+    return found == byNid.end() ? nullptr : &found->second->object;
+}
+
 const char* LibreSslAddedObjectName_nid_no_patch(int nid, bool longName) {
     std::lock_guard lock(mutex);
     if (!tableExists) return nullptr;

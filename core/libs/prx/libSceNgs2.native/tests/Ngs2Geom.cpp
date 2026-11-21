@@ -26,10 +26,10 @@ static void TestResetListenerParam() {
     Require(sceNgs2GeomResetListenerParam(&param) == SCE_NGS2_OK);
     Require(param.position.x == 0.0f && param.position.y == 0.0f && param.position.z == 0.0f);
     Require(param.velocity.x == 0.0f && param.velocity.y == 0.0f && param.velocity.z == 0.0f);
-    Require(param.orient_front.x == 0.0f && param.orient_front.y == 0.0f && param.orient_front.z == 1.0f);
+    Require(param.orient_front.x == 0.0f && param.orient_front.y == 0.0f && param.orient_front.z == -1.0f);
     Require(param.orient_up.x == 0.0f && param.orient_up.y == 1.0f && param.orient_up.z == 0.0f);
-    Require(param.sound_speed == SoundSpeed);
-    Require(param.reserved[0] == 0u && param.reserved[1] == 0u);
+    Require(param.sound_speed == 340.29f);
+    Require(param.reserved[0] == 0x5a5a5a5au && param.reserved[1] == 0x5a5a5a5au);
     Require(sceNgs2GeomResetListenerParam(nullptr) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
 }
 
@@ -39,23 +39,25 @@ static void TestResetSourceParam() {
     Require(sceNgs2GeomResetSourceParam(&param) == SCE_NGS2_OK);
     Require(param.position.x == 0.0f && param.position.y == 0.0f && param.position.z == 0.0f);
     Require(param.velocity.x == 0.0f && param.velocity.y == 0.0f && param.velocity.z == 0.0f);
-    Require(param.direction.x == 0.0f && param.direction.y == 0.0f && param.direction.z == 1.0f);
-    Require(param.cone.inner_level == 1.0f && param.cone.inner_angle == 360.0f);
-    Require(param.cone.outer_level == 1.0f && param.cone.outer_angle == 360.0f);
-    Require(param.rolloff.model == 0u);
-    Require(param.rolloff.max_distance == 1000000.0f);
+    Require(param.direction.x == 0.0f && param.direction.y == 0.0f && param.direction.z == 0.0f);
+    Require(param.cone.inner_level == 1.0f && param.cone.inner_angle == 30.0f);
+    Require(param.cone.outer_level == 0.2f && param.cone.outer_angle == 60.0f);
+    Require(param.rolloff.model == 5u);
+    Require(param.rolloff.max_distance == 100.0f);
     Require(param.rolloff.rolloff_factor == 1.0f);
     Require(param.rolloff.reference_distance == 1.0f);
-    Require(param.doppler_factor == 1.0f && param.fbw_level == 1.0f && param.lfe_level == 1.0f);
-    Require(param.max_level == 1.0f && param.min_level == 0.0f && param.radius == 0.0f);
-    Require(param.num_speakers == 2u && param.matrix_format == 2u);
-    Require(param.reserved[0] == 0u && param.reserved[1] == 0u);
+    Require(param.doppler_factor == 1.0f && param.fbw_level == 1.0f && param.lfe_level == 0.0f);
+    Require(param.max_level == 1.0f && param.min_level == 0.0f && param.radius == 1.0f);
+    Require(param.num_speakers == 7u && param.matrix_format == 8u);
+    Require(param.reserved[0] == 0x5a5a5a5au && param.reserved[1] == 0x5a5a5a5au);
     Require(sceNgs2GeomResetSourceParam(nullptr) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
 }
 
 static Ngs2GeomListenerParam Listener() {
     Ngs2GeomListenerParam param{};
     Require(sceNgs2GeomResetListenerParam(&param) == SCE_NGS2_OK);
+    param.orient_front.z = 1.0f;
+    param.sound_speed = SoundSpeed;
     return param;
 }
 

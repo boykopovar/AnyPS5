@@ -94,18 +94,26 @@ void CheckEucFamilies() {
     Require(sceCesEucJpUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileJisX0201()) == invalidProfile);
     Require(sceCesSJisUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileAscii()) == invalidProfile);
     Require(sceCesUcsProfileInitEucKr(sheet.bytes) == sheet.bytes);
+    Require(sceCesEucKrUcsProfileSetSbcs(nullptr, sceCesRefersUcsProfileKsX1003()) == invalidProfile);
+    Require(sceCesEucKrUcsProfileSetSbcs(sheet.bytes, nullptr) == invalidProfile);
     Require(sceCesEucKrUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileKsX1003()) == 0);
     RequireConverts(context, "\x5C\xB0\xA1", "\xE2\x82\xA9\xEA\xB0\x80");
     Require(sceCesUcsProfileInitUhc(sheet.bytes) == sheet.bytes);
+    Require(sceCesUhcUcsProfileSetSbcs(nullptr, sceCesRefersUcsProfileKsX1003()) == invalidProfile);
+    Require(sceCesUhcUcsProfileSetSbcs(sheet.bytes, nullptr) == invalidProfile);
     Require(sceCesUhcUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileKsX1003()) == 0);
     RequireConverts(context, "\x5C\xB0\xA1", "\xE2\x82\xA9\xEA\xB0\x80");
     Require(sceCesEucKrUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileKsX1003()) == invalidProfile);
     Require(sceCesUhcUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileJisX0201Roman()) == invalidProfile);
     Require(sceCesUcsProfileInitEucCnGb2312(sheet.bytes) == sheet.bytes);
+    Require(sceCesEucCnUcsProfileSetSbcs(nullptr, sceCesRefersUcsProfileGbT1988()) == invalidProfile);
+    Require(sceCesEucCnUcsProfileSetSbcs(sheet.bytes, nullptr) == invalidProfile);
     Require(sceCesEucCnUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileGbT1988()) == 0);
     RequireConverts(context, "\x24\xB0\xA1", "\xC2\xA5\xE5\x95\x8A");
     Require(sceCesGbUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileGbT1988()) == invalidProfile);
     Require(sceCesUcsProfileInitGbkCp936(sheet.bytes) == sheet.bytes);
+    Require(sceCesGbUcsProfileSetSbcs(nullptr, sceCesRefersUcsProfileGbT1988()) == invalidProfile);
+    Require(sceCesGbUcsProfileSetSbcs(sheet.bytes, nullptr) == invalidProfile);
     Require(sceCesGbUcsProfileSetSbcs(sheet.bytes, sceCesRefersUcsProfileGbT1988()) == 0);
     RequireConverts(context, "\x24\xB0\xA1", "\xC2\xA5\xE5\x95\x8A");
     Require(sceCesUcsProfileInitGb18030_2000(sheet.bytes) == sheet.bytes);
@@ -137,6 +145,9 @@ void CheckReplacement() {
     Require(sceCesMbcsUcsSetMbcsReplacementCharUCode(context, 0x110000) == invalidEncode);
     Require(sceCesMbcsUcsSetMbcsReplacementCharUCode(context, 0xD800) == outOfCodeSpace);
     alignas(8) std::uint8_t copy[64] = {};
+    Require(sceCesMbcsUcsContextInit(nullptr, sheet.bytes) == invalidParameter);
+    Require(sceCesMbcsUcsContextInitCopy(nullptr, context) == invalidParameter);
+    Require(sceCesMbcsUcsContextInitCopy(copy, nullptr) == invalidParameter);
     Require(sceCesMbcsUcsContextInitCopy(copy, context) == 0);
     Require(Encode(copy, "\xE0\xB8\x81", out, sizeof(out), produced) == unassignedCode);
     Require(sceCesMbcsUcsSetMbcsReplacementCharUCode(nullptr, 0x3F) == invalidParameter);
@@ -145,6 +156,7 @@ void CheckReplacement() {
     alignas(8) std::uint8_t broken[64] = {};
     std::memcpy(broken, &bad, sizeof(bad));
     Require(sceCesMbcsUcsSetMbcsReplacementCharCode(broken, 0x3F) == invalidParameter);
+    Require(sceCesMbcsUcsSetMbcsReplacementCharUCode(broken, 0x3F) == invalidParameter);
     Require(Convert(context, "\x82\xA0", out, sizeof(out), produced) == 0 && produced == 3);
 }
 

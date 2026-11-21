@@ -21,14 +21,10 @@ constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Results = 16;
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 
-alignas(256) constexpr std::array<std::uint32_t, 14> Code{
-    0x34060086, 0xbe9403ff, 0x55555555, 0xbe9503ff, 0x55555555, 0xb9141801, 0xb9150881, 0x7e140214,
-    0x7e160215, 0xe0701000, 0x80010a03, 0xe0701004, 0x80010b03, 0xbf810000,
-};
-
-alignas(256) constexpr std::array<std::uint32_t, 14> DenormalCode{
-    0x34060086, 0xbe9403ff, 0x55555555, 0xbe9503ff, 0x55555555, 0xb9141901, 0xb9153801, 0x7e140214,
-    0x7e160215, 0xe0701000, 0x80010a03, 0xe0701004, 0x80010b03, 0xbf810000,
+alignas(256) constexpr std::array<std::uint32_t, 18> Code{
+    0x34060086, 0xbe9403ff, 0x55555555, 0xbe9503ff, 0x55555555, 0xb9141801, 0xb9150881, 0xb9161901,
+    0x7e140214, 0x7e160215, 0x7e180216, 0xe0701000, 0x80010a03, 0xe0701004, 0x80010b03, 0xe0701008,
+    0x80010c03, 0xbf810000,
 };
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
@@ -64,7 +60,7 @@ void ExpectRefused(AgcDriver::VulkanDevice& device, std::uint32_t word, const ch
     } catch (const std::exception& error) {
         refusal = error.what();
     }
-    Require(refusal.find("only the MODE round and denormal mode fields are modeled") != std::string::npos, std::string("s_getreg_b32 reading ") + what + " was not refused");
+    Require(refusal.find("only the MODE round and denormal fields are modeled") != std::string::npos, std::string("s_getreg_b32 reading ") + what + " was not refused");
 }
 
 void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::optional<ShaderRecompiler::ShaderFloatMode> floatMode) {
@@ -78,7 +74,9 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
     device.WaitIdle();
 }
 
-void Check(const std::array<const char*, 2>& names, const std::array<std::uint32_t, 2>& expected) {
+void Check() {
+    constexpr std::array<const char*, 3> names{"hwreg(MODE, 0, 4)", "hwreg(MODE, 2, 2)", "hwreg(MODE, 4, 4)"};
+    constexpr std::array<std::uint32_t, 3> expected{0x00000000u, 0x00000000u, 0x0000000cu};
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         for (std::uint32_t index = 0; index < names.size(); ++index) {
             const std::uint32_t actual = Output[tid * Results + index];
@@ -94,9 +92,7 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Run(*device, Code, std::nullopt);
-        Check({"hwreg(MODE, 0, 4)", "hwreg(MODE, 2, 2)"}, {0u, 0u});
-        Run(*device, DenormalCode, ShaderRecompiler::ShaderFloatMode{0xc0u});
-        Check({"hwreg(MODE, 4, 4)", "hwreg(MODE, 0, 8)"}, {0xcu, 0xc0u});
+        Check();
         ExpectRefused(*device, 0xb914f804u, "hardware register 4");
         std::puts("s_getreg_b32 tests passed");
         return 0;

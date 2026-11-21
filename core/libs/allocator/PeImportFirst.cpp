@@ -54,7 +54,8 @@ void MoveImportFirst(std::vector<unsigned char>& bytes, const std::string& dll) 
             const auto virtualAddress = read32(bytes, header + 12);
             const auto rawSize = read32(bytes, header + 16);
             const auto rawOffset = read32(bytes, header + 20);
-            if (rva >= virtualAddress && rva < virtualAddress + std::max(virtualSize, rawSize)) {
+            const auto sectionEnd = std::uint64_t{virtualAddress} + std::max(virtualSize, rawSize);
+            if (rva >= virtualAddress && rva < sectionEnd) {
                 if (rva - virtualAddress >= rawSize) throw std::runtime_error("RVA outside the section's file data");
                 return rawOffset + (rva - virtualAddress);
             }

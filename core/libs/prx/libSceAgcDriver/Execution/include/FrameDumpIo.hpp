@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <span>
 
 namespace AgcDriver {
@@ -15,7 +16,11 @@ struct FrameDumpIoFailure {
 };
 
 inline FrameDumpIoFailure WriteBmpStream_nid_no_patch(std::FILE* file, std::uint32_t width, std::uint32_t height, std::span<const std::byte> pixels) noexcept {
-    const std::uint32_t imageBytes = width * height * 4;
+    if (width == 0 || height == 0 || width > std::numeric_limits<std::int32_t>::max() || height > std::numeric_limits<std::int32_t>::max()) return {"dimensions", EINVAL};
+    const auto pixelBytes = static_cast<std::uint64_t>(width) * height * 4;
+    if (pixelBytes > std::numeric_limits<std::uint32_t>::max() - 54) return {"dimensions", EOVERFLOW};
+    if (pixels.size() != pixelBytes) return {"pixels", EINVAL};
+    const auto imageBytes = static_cast<std::uint32_t>(pixelBytes);
     const std::uint32_t header[13] = {0, 0, 54, 40, width, static_cast<std::uint32_t>(-static_cast<std::int32_t>(height)), 1u | (32u << 16u), 0, imageBytes, 2835, 2835, 0, 0};
     const std::uint16_t magic = 0x4d42;
     const std::uint32_t fileBytes = 54 + imageBytes;

@@ -27,9 +27,12 @@ int main() {
     for (std::size_t i = 0; i < sizeof(bytes); ++i) {
         Require(_ZNK3sce4Json6String2atEm(&text, i) == bytes[i], "String at must return the indexed byte or zero at the boundary");
     }
-    Require(_ZNK3sce4Json6String2atEm(&text, none) == 0 && _ZNK3sce4Json6String2atEm(&missing, 0) == 0, "Out-of-range and missing-storage access must return zero");
+    Require(_ZNK3sce4Json6String2atEm(&text, none) == 0 && _ZNK3sce4Json6String2atEm(&missing, 0) == 0 && _ZNK3sce4Json6String2atEm(&missing, none) == 0,
+            "Out-of-range and missing-storage access must return zero");
     Require(_ZNK3sce4Json6String4findEPKcm(&text, "X", 0) == 2 && _ZNK3sce4Json6String4findEPKcm(&text, "X", 3) == none && _ZNK3sce4Json6String4findEPKcm(&text, "X", 4) == 4, "Forward searches must stop at an embedded zero and honor the starting position");
-    Require(_ZNK3sce4Json6String5rfindEPKcm(&text, "X", none) == 4 && _ZNK3sce4Json6String5rfindEPKcm(&text, "X", 3) == 2, "Reverse searches must scan bytes across embedded zeros");
+    Require(_ZNK3sce4Json6String4findEPKcm(&text, "X", 6) == none && _ZNK3sce4Json6String4findEPKcm(&text, "X", none) == none, "Out-of-range forward non-empty needle search must return none");
+    Require(_ZNK3sce4Json6String5rfindEPKcm(&text, "X", none) == 4 && _ZNK3sce4Json6String5rfindEPKcm(&text, "X", 3) == 2 && _ZNK3sce4Json6String5rfindEPKcm(&text, "a", 0) == 0,
+            "Reverse searches must scan bytes across embedded zeros and match position 0");
     Require(_ZNK3sce4Json6String4findERKS1_m(&text, &needle, 0) == 2 && _ZNK3sce4Json6String5rfindERKS1_m(&text, &needle, none) == 4, "String needles must use their C-string prefix rather than their stored length");
     Require(_ZNK3sce4Json6String4findEPKcmm(&text, needleBytes, 0, 3) == 2 && _ZNK3sce4Json6String5rfindEPKcmm(&text, needleBytes, none, 3) == 2, "Counted matching must stop comparing at a shared zero");
     for (std::size_t position : {std::size_t{0}, std::size_t{6}, std::size_t{7}, none}) {
@@ -38,7 +41,9 @@ int main() {
         Require(_ZNK3sce4Json6String4findEPKcm(&text, nullptr, position) == forward && _ZNK3sce4Json6String4findEPKcmm(&text, nullptr, position, 0) == forward && _ZNK3sce4Json6String4findERKS1_m(&text, &missing, position) == forward, "Empty forward needles must validate the starting position");
         Require(_ZNK3sce4Json6String5rfindEPKcm(&text, nullptr, position) == reverse && _ZNK3sce4Json6String5rfindEPKcmm(&text, nullptr, position, 0) == reverse && _ZNK3sce4Json6String5rfindERKS1_m(&text, &missing, position) == reverse, "Empty reverse needles must clamp the starting position");
     }
-    Require(_ZNK3sce4Json6String4findEPKcm(&missing, "", 0) == none && _ZNK3sce4Json6String5rfindEPKcm(&missing, "", 0) == none, "Missing haystack storage must reject even empty needles");
+    Require(_ZNK3sce4Json6String4findEPKcm(&missing, "", 0) == none && _ZNK3sce4Json6String5rfindEPKcm(&missing, "", none) == none &&
+                _ZNK3sce4Json6String4findERKS1_m(&missing, &needle, 0) == none && _ZNK3sce4Json6String5rfindERKS1_m(&missing, &needle, none) == none,
+            "Missing haystack storage must reject empty and non-empty needles");
     Require(_ZNK3sce4Json6String4findEPKcmm(&text, nullptr, 0, none) == none && _ZNK3sce4Json6String5rfindEPKcmm(&text, nullptr, none, none) == none, "Oversized counts must be rejected before touching the needle");
     Require(_ZNK3sce4Json6String4findEcm(&text, '\0', 0) == 3 && _ZNK3sce4Json6String4findEcm(&text, 'X', 3) == none && _ZNK3sce4Json6String5rfindEcm(&text, '\0', none) == 3, "Character search must preserve forward C-string and reverse byte semantics");
     Require(_ZNK3sce4Json6String4findEcm(&text, static_cast<char>(0xff), 4) == 5 && _ZNK3sce4Json6String5rfindEcm(&text, static_cast<char>(0xff), none) == 5, "Character search must preserve high-bit byte values");

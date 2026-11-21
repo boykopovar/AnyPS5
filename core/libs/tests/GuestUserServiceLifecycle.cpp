@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <atomic>
@@ -10,6 +11,8 @@
 #include <thread>
 #include <barrier>
 #include <source_location>
+#include <cerrno>
+#include <stdexcept>
 #include "prx/libSceUserService/Export.cpp"
 
 namespace {
@@ -225,18 +228,57 @@ void RequireNotInitialized() {
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     Require(event.user_id == static_cast<int>(0xAAAAAAAAu));
     Require(sceUserServiceGetEvent(nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceIsLoggedIn(USER_SERVICE_INITIAL_USER_ID) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceIsLoggedInWithoutLock(USER_SERVICE_INITIAL_USER_ID) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 }
 
 void RequireLoginOnce() {
+    const auto calls = NotImplementedCalls_nid_no_patch();
+    bool threw = false;
+    try {
+        sceUserServiceGetEvent(reinterpret_cast<SceUserServiceEvent*>(0x10));
+    } catch (const std::runtime_error& error) {
+        threw = std::strcmp(error.what(), "sceUserServiceGetEvent not implemented") == 0;
+    }
+    Require(threw);
+    Require(NotImplementedCalls_nid_no_patch() == calls + 1);
     SceUserServiceEvent event{};
+    errno = EDOM;
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
+    Require(errno == EDOM);
     Require(event.event_type == 0 && event.user_id == USER_SERVICE_INITIAL_USER_ID);
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
+    Require(sceUserServiceGetEvent(reinterpret_cast<SceUserServiceEvent*>(0x10)) == USER_SERVICE_ERROR_NO_EVENT);
 }
 
 int InitializeWithPriority(int priority) {
     const UserServiceInitParam param{priority};
     return sceUserServiceInitialize(&param);
+}
+
+void TestEventVshForwarder() {
+    SceUserServiceEvent event{};
+    std::memset(&event, 0xAA, sizeof(event));
+    Require(sceUserServiceGetEventVsh(&event) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(event.user_id == static_cast<int>(0xAAAAAAAAu));
+    Require(InitializeWithPriority(0x100) == USER_SERVICE_OK);
+    Require(sceUserServiceGetEventVsh(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 0 && event.user_id == USER_SERVICE_INITIAL_USER_ID);
+    UserServiceSetUserConnected_nid_postfix(3, true);
+    const auto calls = NotImplementedCalls_nid_no_patch();
+    bool threw = false;
+    try {
+        sceUserServiceGetEventVsh(reinterpret_cast<SceUserServiceEvent*>(0x10));
+    } catch (const std::runtime_error& error) {
+        threw = std::strcmp(error.what(), "sceUserServiceGetEvent not implemented") == 0;
+    }
+    Require(threw);
+    Require(NotImplementedCalls_nid_no_patch() == calls + 1);
+    Require(sceUserServiceGetEventVsh(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 0 && event.user_id == USER_SERVICE_INITIAL_USER_ID + 3);
+    Require(sceUserServiceGetEventVsh(&event) == USER_SERVICE_ERROR_NO_EVENT);
+    UserServiceSetUserConnected_nid_postfix(3, false);
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
 }
 
 void TestInitialUserLogout() {
@@ -255,6 +297,9 @@ void TestInitialUserLogout() {
     UserServiceSetUserConnected_nid_postfix(0, true);
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
     Require(event.event_type == 0 && event.user_id == USER_SERVICE_INITIAL_USER_ID);
+    errno = 71;
+    Require(sceUserServiceGetLoginUserIdList(reinterpret_cast<UserServiceLoginUserIdList*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
     Require(list.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
@@ -275,6 +320,9 @@ void TestInitialUserLogout() {
 }
 
 void TestThreadPriority() {
+    errno = 71;
+    Require(sceUserServiceInitialize(reinterpret_cast<const UserServiceInitParam*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     for (int priority : {0, 0xFF, 0x300, -1}) {
         Require(InitializeWithPriority(priority) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
         Require(sceUserServiceInitialize2(priority, 1) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
@@ -299,6 +347,31 @@ void TestThreadPriority() {
     Require(sceUserServiceTerminate() == USER_SERVICE_OK);
 }
 
+void TestUnwritablePointers() {
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
+    UserServiceSetUserConnected_nid_postfix(0, true);
+    errno = 71;
+    Require(sceUserServiceGetInitialUser(reinterpret_cast<int*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetForegroundUser(reinterpret_cast<int*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetUserNumber(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<int*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<uint32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetRegisteredUserIdList(reinterpret_cast<UserServiceRegisteredUserIdList*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetAccessibilityZoomFollowFocus(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
+}
+
 }
 
 int main() {
@@ -311,6 +384,10 @@ int main() {
     Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
     Require(list.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
     RequireLoginOnce();
+    Require(sceUserServiceIsLoggedIn(USER_SERVICE_INITIAL_USER_ID) == 1);
+    Require(sceUserServiceIsLoggedInWithoutLock(USER_SERVICE_INITIAL_USER_ID) == 1);
+    Require(sceUserServiceIsLoggedIn(USER_SERVICE_INITIAL_USER_ID + 1) == 0);
+    Require(sceUserServiceIsLoggedIn(USER_SERVICE_USER_ID_INVALID) == 0);
 
     Require(sceUserServiceTerminate() == USER_SERVICE_OK);
     Require(sceUserServiceTerminate() == USER_SERVICE_ERROR_NOT_INITIALIZED);
@@ -326,6 +403,8 @@ int main() {
     Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
     Require(list.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
     Require(list.user_id[1] == USER_SERVICE_INITIAL_USER_ID + 1);
+    Require(sceUserServiceIsLoggedIn(USER_SERVICE_INITIAL_USER_ID + 1) == 1);
+    Require(sceUserServiceIsLoggedInWithoutLock(USER_SERVICE_INITIAL_USER_ID + 1) == 1);
 
     UserServiceSetUserConnected_nid_postfix(1, false);
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
@@ -333,6 +412,8 @@ int main() {
     Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
     Require(list.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
     Require(list.user_id[1] == USER_SERVICE_USER_ID_INVALID);
+    Require(sceUserServiceIsLoggedIn(USER_SERVICE_INITIAL_USER_ID + 1) == 0);
+    Require(sceUserServiceIsLoggedInWithoutLock(USER_SERVICE_INITIAL_USER_ID + 1) == 0);
 
     for (int i = 0; i < 50; ++i) {
         UserServiceSetUserConnected_nid_postfix(1, true);
@@ -363,4 +444,6 @@ int main() {
     Require(sceUserServiceTerminate() == USER_SERVICE_OK);
 
     TestThreadPriority();
+    TestUnwritablePointers();
+    TestEventVshForwarder();
 }

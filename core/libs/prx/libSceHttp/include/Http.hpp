@@ -2,7 +2,9 @@
 
 #include "SceTypes.hpp"
 
-struct HttpConnectionStat;
+struct HttpConnectionStat {
+    std::uint32_t words[4];
+};
 struct HttpRequestStat;
 
 struct HttpCookieStats {

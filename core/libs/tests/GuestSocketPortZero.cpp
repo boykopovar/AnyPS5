@@ -190,11 +190,39 @@ static void CheckUnspecifiedInet(int type) {
     Require(close_nid_postfix(client) == 0 && close_nid_postfix(server) == 0, "close");
 }
 
+static void CheckUnboundListen(int family) {
+    const std::uint32_t size = family == 2 ? 16 : 28;
+    const int listener = socket_nid_postfix(family, 1, 0);
+    if (listener < 0 && family == 28 && *__error_nid_postfix() == 47) return;
+    Require(listener >= 0, "unbound listener");
+    Require(listen_nid_postfix(listener, 1) == 0, "listen on an unbound stream socket binds it to an ephemeral port");
+    Address name{};
+    std::uint32_t length = name.size();
+    Require(getsockname_nid_postfix(listener, name.data(), &length) == 0 && length == size, "unbound listener name");
+    Require(name[1] == family && (name[2] != 0 || name[3] != 0), "the implicit bind chooses a nonzero port");
+    auto target = Loopback(family, size);
+    target[2] = name[2];
+    target[3] = name[3];
+    const int client = socket_nid_postfix(family, 1, 0);
+    Require(client >= 0, "client");
+    const int connected = connect_nid_postfix(client, target.data(), size);
+    if (connected < 0 && family == 28 && *__error_nid_postfix() == 49) {
+        Require(close_nid_postfix(client) == 0 && close_nid_postfix(listener) == 0, "close");
+        return;
+    }
+    Require(connected == 0, "connect to the implicitly bound listener");
+    const int accepted = accept_nid_postfix(listener, nullptr, nullptr);
+    Require(accepted >= 0, "accept on the implicitly bound listener");
+    Require(close_nid_postfix(accepted) == 0 && close_nid_postfix(client) == 0 && close_nid_postfix(listener) == 0, "close");
+}
+
 int main() {
     CheckDatagram(2);
     CheckDatagram(28);
     CheckStream(2);
     CheckStream(28);
+    CheckUnboundListen(2);
+    CheckUnboundListen(28);
     CheckUnspecified(1);
     CheckUnspecified(2);
     CheckUnspecifiedInet(1);

@@ -2,6 +2,7 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 #include "prx/libSceFontFt/include/Api.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -76,6 +77,9 @@ int main() {
     std::uint32_t total = 0;
     FontTextCharacter* characters = sceFontStringRefersTextCharacters(string, &total);
     Require(characters != nullptr && total == 4);
+    errno = 71;
+    Require(sceFontStringRefersTextCharacters(string, reinterpret_cast<std::uint32_t*>(0x10)) == nullptr);
+    Require(errno == 71);
 
     Require(sceFontStringRefersRenderCharacters(string, nullptr, nullptr, nullptr) == nullptr);
     count = 77;
@@ -94,6 +98,10 @@ int main() {
 
     count = 77;
     Require(sceFontStringRefersRenderCharacters(string, &characters[2], &characters[0], &count) == nullptr && count == 0);
+    auto* const unmappedCount = reinterpret_cast<std::uint32_t*>(0x10);
+    Require(sceFontStringRefersRenderCharacters(string, nullptr, nullptr, unmappedCount) == nullptr);
+    Require(sceFontStringRefersRenderCharacters(string, &characters[2], &characters[0], unmappedCount) == nullptr);
+    Require(sceFontStringRefersRenderCharacters(nullptr, nullptr, nullptr, unmappedCount) == nullptr);
 
     const auto at = [&](std::ptrdiff_t index) {
         return reinterpret_cast<FontTextCharacter*>(reinterpret_cast<std::uintptr_t>(characters) + static_cast<std::uintptr_t>(index * static_cast<std::ptrdiff_t>(sizeof(FontTextCharacter))));

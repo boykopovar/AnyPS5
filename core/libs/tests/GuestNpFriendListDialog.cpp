@@ -58,6 +58,7 @@ int main() {
 
     Require(sceNpFriendListDialogTerminate() == kErrNotInitialized);
     Require(sceNpFriendListDialogOpenA(nullptr) == kErrNotInitialized);
+    Require(sceNpFriendListDialogOpenA(reinterpret_cast<const void*>(0x10)) == kErrNotInitialized);
     Require(sceNpFriendListDialogOpenA(&param) == kErrNotInitialized);
     Require(sceNpFriendListDialogClose() == kErrNotInitialized);
     Require(sceNpFriendListDialogGetResultA(nullptr) == kErrNotInitialized);
@@ -71,6 +72,9 @@ int main() {
     Require(sceNpFriendListDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceNpFriendListDialogOpenA(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceNpFriendListDialogOpenA(reinterpret_cast<const void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceNpFriendListDialogGetResultA(nullptr) == kErrArgNull);
     Require(sceNpFriendListDialogGetResultA(result) == kErrNotFinished);
     Require(result[0] == 0x5a5a5a5a);

@@ -108,6 +108,50 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertEqual(found["APS5_POOL_CONSTANT_MIB"], [(source.as_posix(), 4, "integer", "")])
         self.assertNotIn("APS5_NOT_A_MEBIBYTE_READ", found)
 
+    def test_captured_environment_key_comparison_is_a_read(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        source.write_text(
+            'const bool allPhases = std::any_of(summary.environment.begin(), summary.environment.end(),'
+            ' [](const auto& entry) { return entry.first == "APS5_TRACE_ALL_PHASES" && entry.second == "1"; });\n'
+            'auto key = summary.environment[index].first == "ANYPS5_CAPTURED_KEY";\n'
+            'auto other = pair.first == "NOT_AN_ENV";\n',
+            encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        self.assertEqual(found["APS5_TRACE_ALL_PHASES"], [(source.as_posix(), 1, "string", "")])
+        self.assertEqual(found["ANYPS5_CAPTURED_KEY"], [(source.as_posix(), 2, "string", "")])
+        self.assertNotIn("NOT_AN_ENV", found)
+
+    def test_environment_path_reads_use_the_wide_literal_name(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        source.write_text('static const auto path = EnvironmentPath(L"APS5_PAD_REPLAY", "APS5_PAD_REPLAY");\n'
+                          'static const auto other = EnvironmentPath(L"APS5_PAD_RECORD", "APS5_OTHER_NAME");\n',
+                          encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        self.assertEqual(found["APS5_PAD_REPLAY"], [(source.as_posix(), 1, "string", "")])
+        self.assertNotIn("APS5_PAD_RECORD", found)
+
+    def test_hexadecimal_and_digit_separated_defaults_are_read_whole(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        lines = (('kibSetting("ANYPS5_A_KIB", 0x400)', "integer", "0x400"),
+                 ('EnvInt("ANYPS5_B", 1\'000)', "integer", "1'000"),
+                 ('kibSetting("ANYPS5_C_KIB", 0X20)', "integer", "0X20"),
+                 ('kibSetting("ANYPS5_D_KIB", 1024)', "integer", "1024"),
+                 ('EnvInt("ANYPS5_E", -0x10)', "integer", "-0x10"),
+                 ('configured("ANYPS5_F", 0xFF\'FFu)', "integer", "0xFF'FF"),
+                 ('environmentCount("ANYPS5_G", 0x10, Maximum, "message")', "integer", "0x10"),
+                 ('MebibytesFromEnvironment("ANYPS5_H_MIB", 1\'024)', "integer", "1'024"),
+                 ('std::getenv("ANYPS5_I") ? 1 : 0x2A', "string", "0x2A"),
+                 ('std::getenv("ANYPS5_J") ? 1 : 4\'096', "string", "4'096"))
+        source.write_text("".join(f"static auto value{index} = {line[0]};\n" for index, line in enumerate(lines)), encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        for index, (line, kind, default) in enumerate(lines):
+            with self.subTest(line=line):
+                name = line[line.index('"') + 1:line.index('"', line.index('"') + 1)]
+                self.assertEqual(found[name], [(source.as_posix(), index + 1, kind, default)])
+
     def test_long_multiline_reads_are_checked_and_keep_their_locations(self):
         root = self.fixture()
         source = root / "core" / "Sample.cpp"
@@ -603,6 +647,51 @@ class EnvReferenceTests(unittest.TestCase):
         python = root / "core" / "settings.py"
         python.write_text('getenv("APS5_PYTHON")\n', encoding="utf-8")
         self.assertIn("APS5_PYTHON", env_reference.reads([root / "core"]))
+
+
+class KindOfTests(unittest.TestCase):
+    def test_reader_name_decides_when_known(self):
+        self.assertEqual(env_reference.kind_of("IsEnvironmentSet", "atoi("), "presence")
+        self.assertEqual(env_reference.kind_of("EnvInt", ""), "integer")
+        self.assertEqual(env_reference.kind_of("GetEnvironmentVariableW", "!= nullptr"), "string")
+
+    def test_unknown_readers_use_the_surrounding_window(self):
+        self.assertEqual(env_reference.kind_of("getenv", 'getenv("X") != nullptr'), "presence")
+        self.assertEqual(env_reference.kind_of("getenv", "!getenv(x)"), "presence")
+        self.assertEqual(env_reference.kind_of("getenv", "int v = atoi(p)"), "integer")
+        self.assertEqual(env_reference.kind_of("getenv", "std::string s = p"), "string")
+
+
+class LibraryOfTests(unittest.TestCase):
+    def test_prx_sources_map_to_the_library_directory(self):
+        self.assertEqual(env_reference.library_of("core/libs/prx/libSceFoo/src/a.cpp"), "libSceFoo")
+
+    def test_other_core_sources_map_to_the_component(self):
+        self.assertEqual(env_reference.library_of("core/loader/a.cpp"), "core/loader")
+        self.assertEqual(env_reference.library_of("core/libs/x.cpp"), "core/libs")
+
+    def test_non_core_sources_map_to_the_top_directory_or_themselves(self):
+        self.assertEqual(env_reference.library_of("tools/x.py"), "tools")
+        self.assertEqual(env_reference.library_of("README.md"), "README.md")
+
+
+class LiteralStartTests(unittest.TestCase):
+    def test_matches_assignments_of_prefixed_string_literals(self):
+        pattern = env_reference.literal_start()
+        for text in ('x = "APS5_FOO"', 'x="ANYPS5_BAR"', 'x = L"APS5_W"', 'x = u8"APS5_U"'):
+            with self.subTest(text=text):
+                self.assertIsNotNone(pattern.search(text))
+
+    def test_ignores_other_literals_and_non_assignments(self):
+        pattern = env_reference.literal_start()
+        for text in ('x = "OTHER_FOO"', 'f("APS5_FOO")', 'x = APS5_FOO'):
+            with self.subTest(text=text):
+                self.assertIsNone(pattern.search(text))
+
+    def test_custom_prefixes_are_escaped(self):
+        pattern = env_reference.literal_start(("A.B_",))
+        self.assertIsNotNone(pattern.search('x = "A.B_Z"'))
+        self.assertIsNone(pattern.search('x = "AxB_Z"'))
 
 
 if __name__ == "__main__":

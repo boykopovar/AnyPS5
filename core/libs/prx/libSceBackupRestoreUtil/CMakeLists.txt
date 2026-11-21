@@ -1,0 +1,15 @@
+add_library(libSceBackupRestoreUtil SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceBackupRestoreUtil PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceBackupRestoreUtil)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_backup_restore_util_tests ${LIBS_INCLUDE_DIR}/tests/GuestBackupRestoreUtil.cpp)
+    target_include_directories(guest_backup_restore_util_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_backup_restore_util_tests PRIVATE libSceBackupRestoreUtil libc)
+    configure_windows_unwind(guest_backup_restore_util_tests)
+    add_test(NAME guest_backup_restore_util COMMAND guest_backup_restore_util_tests)
+    if(WIN32)
+        set_tests_properties(guest_backup_restore_util PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceBackupRestoreUtil>")
+    endif()
+endif()

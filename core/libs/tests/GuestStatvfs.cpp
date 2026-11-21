@@ -103,6 +103,14 @@ int main() {
     Require(*__error_nid_postfix() == 14);
     Require(statvfs_nid_postfix("/anyps5-statvfs-test/missing", nullptr) == -1);
     Require(*__error_nid_postfix() == 14);
+    std::array<std::uint64_t, 11> unreadablePathOutput{};
+    *__error_nid_postfix() = 0;
+    Require(statvfs_nid_postfix(reinterpret_cast<const char*>(0x10), reinterpret_cast<LibcStatvfs*>(unreadablePathOutput.data())) == -1);
+    const std::array<std::uint64_t, 11> untouched{};
+    Require(*__error_nid_postfix() == 14 && unreadablePathOutput == untouched);
+    *__error_nid_postfix() = 0;
+    Require(statvfs_nid_postfix("/anyps5-statvfs-test/file.txt", reinterpret_cast<LibcStatvfs*>(0x10)) == -1);
+    Require(*__error_nid_postfix() == 14);
 
     const auto unicodeFile = root / std::filesystem::path(u8"\u65e5.txt");
     {

@@ -1,0 +1,5 @@
+# libwebrtc
+
+## add Public source implementations
+
+- [webrtc::FrameCombiner constructor, destructor and Combine](../../../core/libs/prx/libwebrtc/src/FrameCombiner.cpp) (libwebrtc) - unverified on the console. The 17504-byte object has the AGC2 `Limiter` and the mixing buffer inline, as since [ff2bf4b](https://webrtc.googlesource.com/src/+/ff2bf4b195c96f708325ead8db5dad9e246f6c19), before the exported `InterleavedView` `RemixAndResample` ([32c3398](https://webrtc.googlesource.com/src/+/32c3398e1a78856d206780139406c877804f8c85)). The `ApmDataDumper` uses the guest `operator new`; gain curve histograms stay null, as no export enables metrics. Remixing beyond two channels (`ChannelMixer`), merging `RtpPacketInfos` and mixing into a listed frame throw. `RTC_CHECK` failures throw: negative rates, too small output frames, empty frames, limited frames not a multiple of 20 samples. Adapted from M134's [frame_combiner.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/audio_mixer/frame_combiner.cc).

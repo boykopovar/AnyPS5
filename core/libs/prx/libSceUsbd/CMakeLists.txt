@@ -1,4 +1,4 @@
-add_library(libSceUsbd SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceUsbd SHARED EXCLUDE_FROM_ALL Export.cpp ../libkernel/Time/TimedWait.cpp)
 target_include_directories(libSceUsbd PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceUsbd PRIVATE usb-1.0)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

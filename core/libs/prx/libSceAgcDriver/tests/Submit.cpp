@@ -141,6 +141,35 @@ void testThreadDimensionGroups() {
     check(ThreadDimensionGroups(0xffffffffu, 64) == 0x4000000u, "a thread count near 2^32 wrapped before the division");
 }
 
+void testSelfReferencingIndirectBuffer() {
+    std::vector<std::uint32_t> commands(4);
+    const auto self = reinterpret_cast<std::uintptr_t>(commands.data());
+    commands = {0xc0023f00u, static_cast<std::uint32_t>(self), static_cast<std::uint32_t>(static_cast<std::uint64_t>(self) >> 32u), 4u};
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    const auto message = expectFailure([&] { sceAgcDriverSubmitDcb(&packet); });
+    check(message.find("nest too deeply") != std::string::npos, "an indirect buffer that jumps to itself was not rejected as nesting too deeply");
+}
+
+void testChainedIndirectBuffers() {
+    const auto link = [](const std::uint32_t* target, std::uint32_t words) {
+        const auto address = reinterpret_cast<std::uintptr_t>(target);
+        return std::vector<std::uint32_t>{0xc0023f00u, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(static_cast<std::uint64_t>(address) >> 32u), words | (1u << 20u)};
+    };
+    std::vector<std::uint32_t> loop(4);
+    const auto self = link(loop.data(), 4);
+    std::copy(self.begin(), self.end(), loop.begin());
+    Packet loopPacket{loop.data(), static_cast<std::uint32_t>(loop.size()), 0, {}};
+    const auto message = expectFailure([&] { sceAgcDriverSubmitDcb(&loopPacket); });
+    check(message.find("copy limit") != std::string::npos, "a chained indirect buffer that links to itself was not stopped by the copy limit");
+
+    std::vector<std::vector<std::uint32_t>> chain(2000);
+    chain.back() = {0xffff1000u};
+    for (std::size_t index = chain.size() - 1; index-- > 0;) chain[index] = link(chain[index + 1].data(), static_cast<std::uint32_t>(chain[index + 1].size()));
+    Packet chainPacket{chain.front().data(), static_cast<std::uint32_t>(chain.front().size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&chainPacket) == 0, "a chain of 2000 indirect buffers was rejected as nesting");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
 void testReadOnlyResummarize() {
     std::vector<std::uint32_t> commands;
     for (const auto [offset, value] : {std::pair{0x000u, 0x10u}, {0x200u, 0x007007f3u}, {0x010u, 0xa0000183u}, {0x011u, 0x20000180u}, {0x8eu, 0xffffffffu}, {0x8fu, 0u}, {0x1c4u, 0u}, {0x203u, 0u}}) {
@@ -691,6 +720,33 @@ void testLargeDataFill() {
     check(AgcDriver::DriverDetail::dmaFills.load() == fillsBefore + 1, "a DMA_DATA fill larger than 64 KiB was not stored as a buffer fill");
     GuestHeap::GuestHeapFree_nid_postfix(destination);
     GuestHeap::GuestHeapFree_nid_postfix(produced);
+}
+
+std::array<std::uint32_t, 6> gpuClockCopy(void* destination) {
+    const auto to = reinterpret_cast<std::uintptr_t>(destination);
+    return {0xc0044000, 0x00010509, 0, 0, static_cast<std::uint32_t>(to), static_cast<std::uint32_t>(static_cast<std::uint64_t>(to) >> 32u)};
+}
+
+void testGpuClockCopyBehindGpuWork() {
+    alignas(64) static volatile std::uint32_t done = 0;
+    constexpr std::uint32_t bytes = 131072;
+    auto* source = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, bytes));
+    auto* destination = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, bytes));
+    std::fill_n(source, bytes / 4, 0x3c3c3c3cu);
+    std::fill_n(destination, bytes / 4, 0u);
+    std::vector<std::uint64_t> clocks(2, 0);
+    const auto drainsBefore = AgcDriver::DriverDetail::storesDrained.load();
+    const auto storesWithoutDrain = [] { return AgcDriver::DriverDetail::storesOnCpu.load() + AgcDriver::DriverDetail::storesOnGpu.load() + AgcDriver::DriverDetail::storesBehindCompletions.load(); };
+    const auto storesBefore = storesWithoutDrain();
+    submit(0, commands(memoryCopy(destination, source, bytes), gpuClockCopy(&clocks[0]), gpuClockCopy(&clocks[1]), writeData(&done, 1)));
+    waitFor(&done, 1, "the label after a GPU-clock COPY_DATA never landed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(destination[0] == 0x3c3c3c3cu && destination[bytes / 4 - 1] == 0x3c3c3c3cu, "the GPU copy before the GPU-clock COPY_DATA did not land");
+    check(clocks[0] != 0 && clocks[1] >= clocks[0], "a GPU-clock COPY_DATA did not store an increasing clock");
+    check(AgcDriver::DriverDetail::storesDrained.load() == drainsBefore, "a GPU-clock COPY_DATA into host memory behind GPU work drained the device");
+    check(storesWithoutDrain() == storesBefore + 2, "a GPU-clock COPY_DATA into host memory behind GPU work was not stored without a drain");
+    GuestHeap::GuestHeapFree_nid_postfix(destination);
+    GuestHeap::GuestHeapFree_nid_postfix(source);
 }
 
 void labelResetByItsQueueBeforeItLanded(bool wide, std::size_t resetWord) {
@@ -1282,6 +1338,8 @@ int main(int argc, char** argv) {
         testEvents();
         testValidation();
         testThreadDimensionGroups();
+        testSelfReferencingIndirectBuffer();
+        testChainedIndirectBuffers();
         testClearState();
         testSubmissions();
         testEndOfPipeInterrupts();
@@ -1308,6 +1366,7 @@ int main(int argc, char** argv) {
         testLabelResetByItsQueueBeforeItLanded();
         testWideLabelPartlyResetByItsQueueBeforeItLanded();
         testSmallCopyBehindPendingSource();
+        testGpuClockCopyBehindGpuWork();
         testRegisterList();
         testRegisteredFloatMode();
         testDispatchFloatMode();

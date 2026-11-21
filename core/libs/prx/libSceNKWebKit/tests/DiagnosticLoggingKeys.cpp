@@ -95,6 +95,7 @@ void TestKeyConstants() {
     RequireString(_ZN7WebCore21DiagnosticLoggingKeys49successfulSpeculativeWarmupWithoutRevalidationKeyEv(), "successfulSpeculativeWarmupWithoutRevalidation");
     RequireString(_ZN7WebCore21DiagnosticLoggingKeys8otherKeyEv(), "other");
     RequireString(_ZN7WebCore21DiagnosticLoggingKeys9unusedKeyEv(), "unused");
+    RequireString(_ZN7WebCore21DiagnosticLoggingKeys34resourceLoadStatisticsTelemetryKeyEv(), "resourceLoadStatisticsTelemetry");
 }
 
 void TestMemoryUsageBuckets() {

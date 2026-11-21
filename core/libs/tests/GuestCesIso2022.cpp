@@ -171,6 +171,12 @@ const Case CASES[] = {
     {2, false, "\x41\x1B\x24\x42\x24\x22\x1B\x28\x42", 9, static_cast<int>(0x805C0011), 6, 4, "\x41\xE3\x81\x82"},
     {2, false, "\x41\x1B\x24\x42\x24\x22\x24\x24", 8, static_cast<int>(0x00000000), 8, 7, "\x41\xE3\x81\x82\xE3\x81\x84"},
     {2, false, "\x1B\x24\x42\x24\x22\x41", 6, static_cast<int>(0x805C0011), 5, 3, "\xE3\x81\x82"},
+    {0, false, "\x1B\x26\x40\x1B\x24\x42\x24\x22\x1B\x28\x42", 11, static_cast<int>(0x805C0011), 8, 3, "\xE3\x81\x82"},
+    {0, false, "\x1B\x78", 2, static_cast<int>(0x805C0011), 0, 0, ""},
+    {1, false, "\x1B\x26\x40\x1B\x24\x42\x24\x22\x1B\x28\x42", 11, static_cast<int>(0x805C0011), 8, 3, "\xE3\x81\x82"},
+    {1, false, "\x1B\x78", 2, static_cast<int>(0x805C0011), 0, 0, ""},
+    {2, false, "\x1B\x26\x40\x1B\x24\x42\x24\x22\x1B\x28\x42", 11, static_cast<int>(0x805C0011), 8, 3, "\xE3\x81\x82"},
+    {2, false, "\x1B\x78", 2, static_cast<int>(0x805C0011), 0, 0, ""},
 };
 
 void* InitProfile(int profile, std::uint8_t* sheet) {
@@ -308,6 +314,12 @@ void CheckWideUnits() {
     Require(sceCesIso2022StrToUcs2Str(context, iso, 10, &used, units, 1, &produced) == dstBufferEnd);
     Require(sceCesIso2022StrToUcs2Str(context, iso, 10, &used, nullptr, 0, &produced) == invalidDstBuffer);
     Require(sceCesUcs2StrToIso2022Str(context, ucs2, 2, &used, nullptr, 0, &produced) == invalidDstBuffer);
+    Require(sceCesIso2022StrToUtf16Str(context, iso, 10, &used, units, 1, &produced) == dstBufferEnd);
+    Require(sceCesIso2022StrToUtf16Str(context, iso, 10, &used, nullptr, 0, &produced) == invalidDstBuffer);
+    Require(sceCesUtf16StrToIso2022Str(context, ucs2, 2, &used, nullptr, 0, &produced) == invalidDstBuffer);
+    Require(sceCesIso2022StrToUtf32Str(context, iso, 10, &used, wide, 1, &produced) == dstBufferEnd);
+    Require(sceCesIso2022StrToUtf32Str(context, iso, 10, &used, nullptr, 0, &produced) == invalidDstBuffer);
+    Require(sceCesUtf32StrToIso2022Str(context, utf32, 2, &used, nullptr, 0, &produced) == invalidDstBuffer);
 }
 
 }

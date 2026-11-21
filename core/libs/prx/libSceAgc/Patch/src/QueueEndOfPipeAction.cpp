@@ -32,7 +32,14 @@ int APS5_VABI sceAgcQueueEndOfPipeActionPatchAddress(std::uint32_t* cmd, const v
 
 int APS5_VABI sceAgcQueueEndOfPipeActionPatchData(uint32_t* cmd, uint64_t data) {
     Agc::Command::ValidatePacket(cmd, 0x49u, 8, __func__);
-    if ((cmd[2] >> 29u) == 1u) Agc::Command::CheckBits(data, 0xffffffffu, __func__);
+    const auto dataSelect = cmd[2] >> 29u;
+    if (((cmd[2] >> 24u) & 7u) == 4u) {
+        Agc::Command::Require(data == 0 && (cmd[3] | cmd[4]) == 0, __func__, "interrupt-only release cannot write data");
+    } else if (dataSelect == 5u) {
+        Agc::Command::Require(data == 0, __func__, "GDS release cannot use immediate data");
+        return 0;
+    }
+    if (dataSelect == 1u) Agc::Command::CheckBits(data, 0xffffffffu, __func__);
     cmd[5] = static_cast<std::uint32_t>(data);
     cmd[6] = static_cast<std::uint32_t>(data >> 32u);
     return 0;

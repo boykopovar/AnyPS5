@@ -11,7 +11,7 @@ int APS5_VABI sceAudioOut2LoContextQueryMemoryEx(const AudioOut2ContextParam* pa
 int APS5_VABI sceAudioOut2LoPortCreateEx(AudioOut2ContextHandle ctx, const AudioOut2PortParam* params, AudioOut2PortHandle* port);
 int APS5_VABI sceAudioOut2LoPortGetAttributes(AudioOut2PortHandle port, AudioOut2Attribute* attributes, uint32_t num);
 int APS5_VABI sceAudioOut2LoPortSetAttributesEx(AudioOut2PortHandle port, const AudioOut2Attribute* attributes, uint32_t num);
-int APS5_VABI sceAudioOut2PortSetAttributesEx();
+int APS5_VABI sceAudioOut2PortSetAttributesEx(AudioOut2PortHandle port, const AudioOut2Attribute* attributes, uint32_t num);
 int APS5_VABI sceAudioOut2SetHrtfIdForCronos();
 int APS5_VABI sceAudioOut2SetSpeakerInfo();
 int APS5_VABI sceAudioOut2SetTvCorrectionInfo();
