@@ -4691,7 +4691,6 @@ int APS5_VABI _ZNK3WTF15AutomaticThread19hasUnderlyingThreadERKNS_14AbstractLock
 int APS5_VABI _ZNK3WTF15AutomaticThread4nameEv();
 int APS5_VABI _ZNK3WTF19MetaAllocatorHandle4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF3URL4dumpERNS_11PrintStreamE();
-int APS5_VABI _ZNK3WTF6Thread4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF7RunLoop9TimerBase16secondsUntilFireEv();
 int APS5_VABI _ZNK3WTF7RunLoop9TimerBase8isActiveEv();
 int APS5_VABI _ZNK3WTF8Collator11collateUTF8EPKcS2_();
@@ -4699,7 +4698,6 @@ int APS5_VABI _ZNK3WTF8Collator7collateENS_10StringViewES1_();
 int APS5_VABI _ZNK3WTF8JSONImpl5Value12toJSONStringEv();
 int APS5_VABI _ZNK3WTF8JSONImpl5Value9writeJSONERNS_13StringBuilderE();
 int APS5_VABI _ZNK3WTF8JSONImpl9ArrayBase9writeJSONERNS_13StringBuilderE();
-int APS5_VABI _ZNK3WTF9BitVector4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF9MediaTime12toJSONObjectEv();
 int APS5_VABI _ZNK3WTF9MediaTime12toJSONStringEv();
 int APS5_VABI _ZNK3WTF9MediaTime8toStringEv();
