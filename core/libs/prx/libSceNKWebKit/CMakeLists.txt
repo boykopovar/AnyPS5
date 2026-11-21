@@ -92,6 +92,18 @@ if(BUILD_TESTING)
 
     target_compile_definitions(nkwebkit_graphemeclusters_tests PRIVATE ANYPS5_GRAPHEME_BREAK_TEST="${ICU_SOURCE_DIR}/test/testdata/GraphemeBreakTest.txt")
 
+    add_test_executable(nkwebkit_jsc_clear_array_memset_full_range_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/allocation/JscClearArrayMemsetFullRange.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PureJsc.cpp)
+    target_include_directories(nkwebkit_jsc_clear_array_memset_full_range_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(nkwebkit_jsc_clear_array_memset_full_range_tests PRIVATE libc)
+    configure_windows_unwind(nkwebkit_jsc_clear_array_memset_full_range_tests)
+    add_test(NAME nkwebkit_jsc_clear_array_memset_full_range COMMAND nkwebkit_jsc_clear_array_memset_full_range_tests)
+    set_tests_properties(nkwebkit_jsc_clear_array_memset_full_range PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(nkwebkit_jsc_clear_array_memset_full_range PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(nkwebkit_wtftext_allocation_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/allocation/WtfTextAllocation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StringBuilder.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfString.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfNumberFormat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/CharactersToNumber.cpp)
