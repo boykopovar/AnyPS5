@@ -492,11 +492,16 @@ def macho_uleb(data, offset, end, path):
 
 def macho_exports(path, data):
     tries = []
-    for kind, offset, _ in macho_commands(path, data):
-        if kind == 0x80000022:
-            tries.append(unpack("<II", data, offset + 40, path, "Mach-O dyld info command"))
+    for kind, offset, length in macho_commands(path, data):
+        if kind in (0x22, 0x80000022):
+            fields = 40
         elif kind == 0x80000033:
-            tries.append(unpack("<II", data, offset + 8, path, "Mach-O exports trie command"))
+            fields = 8
+        else:
+            continue
+        if length < fields + 8:
+            raise AuditError(f"{path}: Mach-O load command 0x{kind:x} is too short for its export range")
+        tries.append(unpack("<II", data, offset + fields, path, "Mach-O export offset and size"))
     tries = [trie for trie in tries if trie[1]]
     if len(tries) > 1:
         raise AuditError(f"{path}: Mach-O image has more than one export trie")

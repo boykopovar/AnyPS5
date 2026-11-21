@@ -29,6 +29,7 @@
 #endif
 #include <windows.h>
 #include <io.h>
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #else
 #include <ctime>
 #include <fcntl.h>
@@ -529,13 +530,79 @@ int DirectoryFailure(const std::error_code& error) {
     if (error == std::errc::too_many_symbolic_link_levels) return 62;
     return 5;
 }
+bool IsDirectory(const std::filesystem::path& path, std::error_code& error) {
+#ifdef _WIN32
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, error);
+    if (error) return false;
+    return std::filesystem::is_directory(verbatim, error);
+#else
+    return std::filesystem::is_directory(path, error);
+#endif
+}
+
+#ifdef _WIN32
+std::optional<std::filesystem::path> FinalDirectoryPath(const std::filesystem::path& path, bool& notDirectory) {
+    std::error_code error;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, error);
+    if (error) return std::nullopt;
+    const HANDLE handle = ::CreateFileW(verbatim.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return std::nullopt;
+    FILE_BASIC_INFO basic{};
+    std::wstring final(MAX_PATH, L'\0');
+    DWORD length = 0;
+    if (::GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic))) {
+        notDirectory = (basic.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+        if (!notDirectory) {
+            length = ::GetFinalPathNameByHandleW(handle, final.data(), static_cast<DWORD>(final.size()), FILE_NAME_NORMALIZED);
+            if (length >= final.size()) {
+                final.resize(length);
+                length = ::GetFinalPathNameByHandleW(handle, final.data(), length, FILE_NAME_NORMALIZED);
+            }
+        }
+    }
+    ::CloseHandle(handle);
+    if (length == 0 || length >= final.size()) return std::nullopt;
+    final.resize(length);
+    if (final.starts_with(LR"(\\?\UNC\)")) final.replace(0, 8, LR"(\\)");
+    else if (final.starts_with(LR"(\\?\)")) final.erase(0, 4);
+    return std::filesystem::path(std::move(final));
+}
+
+int SetLongWorkingDirectory(WorkingDirectory& state, const std::filesystem::path& resolved, const std::error_code& failure) {
+    std::error_code error;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(resolved, error);
+    if (error || !verbatim.native().starts_with(LR"(\\?\)")) return DirectoryFailure(failure);
+    bool notDirectory = false;
+    const auto target = FinalDirectoryPath(resolved, notDirectory);
+    if (notDirectory) return 20;
+    if (!target) return DirectoryFailure(failure);
+    const auto root = FinalDirectoryPath(state.root, notDirectory);
+    if (!root) return DirectoryFailure(failure);
+    const auto relative = target->lexically_relative(*root);
+    if (relative.empty() || *relative.begin() == "..") return 45;
+    state.current = relative == "." ? state.root : state.root / relative;
+    return 0;
+}
+#endif
+
 int SetWorkingDirectory(WorkingDirectory& state, const std::filesystem::path& resolved) {
     std::error_code error;
     const auto canonical = std::filesystem::canonical(resolved, error);
+#ifdef _WIN32
+    if (error) return SetLongWorkingDirectory(state, resolved, error);
+#else
     if (error) return DirectoryFailure(error);
+#endif
     if (!std::filesystem::is_directory(canonical, error)) return error ? DirectoryFailure(error) : 20;
     auto relative = canonical.lexically_relative(state.root);
 #ifdef _WIN32
+    if (relative.empty() || *relative.begin() == "..") {
+        bool notDirectory = false;
+        const auto target = FinalDirectoryPath(canonical, notDirectory);
+        const auto root = FinalDirectoryPath(state.root, notDirectory);
+        if (target && root) relative = target->lexically_relative(*root);
+    }
     if (relative.empty() || *relative.begin() == "..") {
         auto ancestor = canonical;
         while (!std::filesystem::equivalent(ancestor, state.root, error)) {
@@ -1075,7 +1142,7 @@ extern "C" char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size) {
         auto& state = Directories();
         std::lock_guard lock(state.mutex);
         std::error_code error;
-        if (!std::filesystem::is_directory(state.current, error)) {
+        if (!IsDirectory(state.current, error)) {
             errno = error ? DirectoryFailure(error) : 2; return nullptr;
         }
         const auto relative = state.current.lexically_relative(state.root);

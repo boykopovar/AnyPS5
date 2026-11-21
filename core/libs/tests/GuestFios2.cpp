@@ -201,6 +201,14 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     std::memset(overlayResult, 0, sizeof(overlayResult));
     REQUIRE(sceFiosOverlayResolveSync(2, file.c_str(), overlayResult, sizeof(overlayResult)) == SCE_FIOS_ERROR_BAD_RESOLVE_FLAG && file == overlayResult);
     REQUIRE(sceFiosOverlayResolveSync(-1, file.c_str(), overlayResult, sizeof(overlayResult)) == SCE_FIOS_ERROR_BAD_RESOLVE_FLAG);
+    REQUIRE(sceFiosOverlayResolveSync(0, nullptr, nullptr, 0x401) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosOverlayResolveSync(0, nullptr, overlayResult, 0x401) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosOverlayResolveSync(0, file.c_str(), nullptr, 0x401) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosOverlayResolveSync(2, nullptr, overlayResult, sizeof(overlayResult)) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosOverlayResolveSync(-1, file.c_str(), nullptr, sizeof(overlayResult)) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosOverlayResolveSync(0, file.c_str(), overlayResult, 0) == SCE_FIOS_ERROR_PATH_TOO_LONG);
+    REQUIRE(sceFiosOverlayResolveSync(0, file.c_str(), overlayResult, file.size() + 1) == SCE_FIOS_OK && file == overlayResult);
+    REQUIRE(sceFiosOverlayResolveSync(0, "", overlayResult, sizeof(overlayResult)) == SCE_FIOS_OK && std::strlen(overlayResult) == 0);
     OverlayRecordTest overlay{};
     overlay.type = 0;
     overlay.order = 1;
@@ -256,6 +264,9 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     REQUIRE(!sceFiosFileExistsSync(nullptr, directory.c_str()));
     REQUIRE(sceFiosDirectoryExistsSync(nullptr, directory.c_str()));
     REQUIRE(!sceFiosDirectoryExistsSync(nullptr, file.c_str()));
+    REQUIRE(!sceFiosDirectoryExistsSync(nullptr, (directory + "/missing").c_str()));
+    REQUIRE(!sceFiosDirectoryExistsSync(nullptr, nullptr));
+    REQUIRE(!sceFiosDirectoryExistsSync(nullptr, ""));
     REQUIRE(!sceFiosExistsSync(nullptr, nullptr));
     REQUIRE(!sceFiosExistsSync(nullptr, ""));
 
@@ -266,6 +277,7 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     REQUIRE(sceFiosFileGetSizeSync(nullptr, "") == SCE_FIOS_ERROR_BAD_PATH);
     const std::string tooLong(2000, 'a');
     REQUIRE(sceFiosFileGetSizeSync(nullptr, tooLong.c_str()) == SCE_FIOS_ERROR_PATH_TOO_LONG);
+    REQUIRE(!sceFiosDirectoryExistsSync(nullptr, tooLong.c_str()));
 
     SceFiosStat stat{};
     std::memset(&stat, 0xaa, sizeof(stat));
@@ -363,6 +375,8 @@ static void CheckOperationLifecycle(const std::string& file) {
     REQUIRE(sceFiosOpSyncWait(directoryOp) == 1);
     const SceFiosOp fileAsDirectoryOp = sceFiosDirectoryExists(nullptr, file.c_str(), &exists);
     REQUIRE(!exists && sceFiosOpSyncWait(fileAsDirectoryOp) == 0);
+    const SceFiosOp missingDirOp = sceFiosDirectoryExists(nullptr, "fios2_probe/none", &exists);
+    REQUIRE(!exists && sceFiosOpSyncWait(missingDirOp) == 0);
 
     const SceFiosOp failed = sceFiosFileGetSize(nullptr, "fios2_probe/none");
     REQUIRE(sceFiosOpGetError(failed) == SCE_FIOS_ERROR_BAD_PATH);
