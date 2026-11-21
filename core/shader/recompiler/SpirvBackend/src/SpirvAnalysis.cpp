@@ -529,6 +529,9 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                 if (inst->Opcode() == IrOpcode::DppMoveU32) {
                     requirements.subgroupLocalInvocationId = true;
                 }
+                if (inst->Opcode() == IrOpcode::ReadFirstLane) {
+                    requirements.subgroupLocalInvocationId = requirements.subgroupLocalInvocationId || program.Resources().stage != IrShaderStage::TessellationControl;
+                }
                 break;
             }
             case IrOpcode::DppUpdateU32:

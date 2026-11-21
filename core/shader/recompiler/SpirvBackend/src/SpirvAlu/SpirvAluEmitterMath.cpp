@@ -1794,7 +1794,13 @@ std::uint32_t EmitReadFirstLane(SpirvValueEmitContext& ctx, const IrValue& inst)
     state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), low, ballot, 0u);
     state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), high, ballot, 1u);
     const auto any = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseOr, TypeU32(state), low, high), ConstantU32(state, 0u));
-    return ctx.Shuffle(inst, 0, Select(state, TypeU32(state), any, ctx.FirstLane(ballot), ConstantU32(state, 0u)));
+    const auto lane = Select(state, TypeU32(state), any, ctx.FirstLane(ballot), ConstantU32(state, 0u));
+    if (ctx.otherHalf == nullptr && state.requirements.subgroupLocalInvocationId && WaveSumUsable(state)) {
+        const auto own = Binary(state, spv::OpIEqual, TypeBool(state), EmitSubgroupLocalInvocationId(state), lane);
+        const auto result = state.module.AllocateId();
+        if (EmitWaveSum(state, result, Select(state, TypeU32(state), own, ctx.Arg(inst, 0), ConstantU32(state, 0u)))) return result;
+    }
+    return ctx.Shuffle(inst, 0, lane);
 }
 
 std::uint32_t EmitReadLane(SpirvValueEmitContext& ctx, const IrValue& inst) {
