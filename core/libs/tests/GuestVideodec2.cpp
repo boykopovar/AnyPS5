@@ -211,6 +211,13 @@ void testFailures() {
     OutputInfo output{sizeof(OutputInfo)};
     const std::array<std::uint8_t, 5> malformed{0, 0, 0, 8, 0x65};
     InputData input{sizeof(InputData), malformed.data(), malformed.size(), 0, 0, 0};
+    errno = 71;
+    checkThrows([&] { sceVideodec2Decode_nid_postfix(handle, reinterpret_cast<const InputData*>(0x10), &frame, &output); });
+    check(errno == 71, "preserves errno");
+    checkThrows([&] { sceVideodec2Decode_nid_postfix(handle, &input, reinterpret_cast<FrameBuffer*>(0x10), &output); });
+    check(errno == 71, "preserves errno");
+    checkThrows([&] { sceVideodec2Decode_nid_postfix(handle, &input, &frame, reinterpret_cast<OutputInfo*>(0x10)); });
+    check(errno == 71, "preserves errno");
     checkThrows([&] { sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output); });
     input.auSize = 2;
     checkThrows([&] { sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output); });
