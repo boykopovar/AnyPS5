@@ -531,9 +531,11 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
         Require(zFormat == 0 || !depthMips.at(viewMip).tail, "rendering the " + where + " into the packed mip tail is unsupported");
         Require(!stencil || !stencilMips.at(viewMip).tail, "rendering the stencil of the " + where + " into the packed mip tail is unsupported");
         Require((read(cx, 0x010) & (1u << 29u)) == 0, "HTILE for the " + where + " is unsupported");
+        depth.depthSlicePitch = static_cast<std::uint32_t>(ComputeSurfaceSize(depthMips, 1u));
+        depth.stencilSlicePitch = static_cast<std::uint32_t>(ComputeSurfaceSize(stencilMips, 1u));
         if (const auto slice = view & 0x1fffu; slice != 0) {
-            if (depth.address != 0) depth.address += static_cast<std::uint64_t>(slice) * ComputeSurfaceSize(depthMips, 1u);
-            if (depth.stencilAddress != 0) depth.stencilAddress += static_cast<std::uint64_t>(slice) * ComputeSurfaceSize(stencilMips, 1u);
+            if (depth.address != 0) depth.address += static_cast<std::uint64_t>(slice) * depth.depthSlicePitch;
+            if (depth.stencilAddress != 0) depth.stencilAddress += static_cast<std::uint64_t>(slice) * depth.stencilSlicePitch;
         }
         if (depth.address != 0) depth.address += depthMips.at(viewMip).tiledOffset;
         if (depth.stencilAddress != 0) depth.stencilAddress += stencilMips.at(viewMip).tiledOffset;
@@ -1932,12 +1934,20 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         result.renderLayers = result.color.layers;
         for (const auto& color : result.colors) Require(color.layers == result.renderLayers, "color targets with different layer counts are unsupported");
         if (result.renderLayers > 1) {
-            Require(!result.depth, "layered rendering with a depth target is unsupported");
             result.layerExports = read(cx, 0x207) & (1u << 18u);
+            if (result.depth) {
+                Require(result.depth->lastSlice >= result.depth->firstSlice && result.depth->lastSlice - result.depth->firstSlice + 1u == result.renderLayers, "layered rendering with a depth view of another slice count than its color views is unsupported");
+                result.depth->layers = result.renderLayers;
+            }
         }
         if (result.depth) result.renderExtent = {std::min(result.renderExtent.width, result.depth->extent.width), std::min(result.renderExtent.height, result.depth->extent.height)};
     } else if (result.depth) {
         result.renderExtent = result.depth->extent;
+        if ((read(cx, 0x207) & (1u << 18u)) != 0 && result.depth->lastSlice > result.depth->firstSlice) {
+            result.renderLayers = result.depth->lastSlice - result.depth->firstSlice + 1u;
+            result.layerExports = 1u << 18u;
+            result.depth->layers = result.renderLayers;
+        }
     } else {
         const auto screenBottomRight = read(cx, 0xd);
         APS5_LOG_OUT_DEBUG("No color target, screen BR register=0x%x", screenBottomRight);
