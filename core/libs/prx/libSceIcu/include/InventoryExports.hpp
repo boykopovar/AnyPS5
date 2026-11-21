@@ -64,8 +64,5 @@ double APS5_VABI uprv_getUTCtime_nid_postfix();
 int APS5_VABI ures_getByKey();
 int APS5_VABI ures_getStringByKey();
 int APS5_VABI ures_open();
-int APS5_VABI utext_openConstUnicodeString();
-int APS5_VABI utext_openUChars();
-int APS5_VABI utext_setup();
 
 }

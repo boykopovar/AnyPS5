@@ -54,7 +54,7 @@ int main() {
     Require(uloc_getName_nid_postfix("en_us", small, 4, &status) == 5, "uloc_getName did not report the required length");
     Require(status != ZeroError, "uloc_getName did not report the overflow");
 
-    const std::uint16_t wide[] = {0x61, 0x62, 0x63};
+    const char16_t wide[] = {0x61, 0x62, 0x63};
     Require(ustr_hashUCharsN_nid_postfix(wide, 3) == 136518, "ustr_hashUCharsN hashed abc wrongly");
     Require(ustr_hashUCharsN_nid_postfix(wide, 0) == 0, "ustr_hashUCharsN hashed the empty string wrongly");
     Require(ustr_hashCharsN_nid_postfix("abc", 3) == 136518, "ustr_hashCharsN hashed abc wrongly");
