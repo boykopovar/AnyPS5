@@ -126,6 +126,21 @@ void TestURL() {
     URL invUrl{nullptr, 0, 0, 0, 0, 0, 0, 0, 0};
     auto invPhp = _ZNK3WTF3URL19protocolHostAndPortEv(&invUrl);
     Require(ToString(invPhp).empty());
+    Require(!invPhp.impl);
+    Require(!_ZNK3WTF3URL4userEv(&invUrl).impl);
+    Require(!_ZNK3WTF3URL8passwordEv(&invUrl).impl);
+
+    auto notAUrl = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>("not a url"), 9);
+    URL unparsedUrl{notAUrl.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    auto unparsedPhp = _ZNK3WTF3URL19protocolHostAndPortEv(&unparsedUrl);
+    Require(unparsedPhp.impl && unparsedPhp.impl->length == 0);
+    auto unparsedUser = _ZNK3WTF3URL4userEv(&unparsedUrl);
+    Require(unparsedUser.impl && unparsedUser.impl->length == 0);
+    Require(!_ZNK3WTF3URL8passwordEv(&unparsedUrl).impl);
+
+    Require(ToString(_ZNK3WTF3URL19protocolHostAndPortEv(&invalidUrl)) == "https://api.example.com");
+    Require(ToString(_ZNK3WTF3URL4userEv(&invalidUrl)) == "alice");
+    Require(ToString(_ZNK3WTF3URL8passwordEv(&invalidUrl)) == "secret");
 
     URL noCredUrl{uStr.impl, 1U | 2U | (5U << 3) | (5U << 6), 8, 8, 8, 24, 33, 37, 45};
     auto noUser = _ZNK3WTF3URL4userEv(&noCredUrl);
