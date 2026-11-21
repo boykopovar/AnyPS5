@@ -34,11 +34,63 @@ static bool Zeroed(const Stat& stat) {
     return true;
 }
 
+static bool EventCallsNotInitialized() {
+    constexpr int notInitialized = static_cast<int>(0x80553117u);
+    NpUniversalDataSystemEvent* event = nullptr;
+    NpUniversalDataSystemEventPropertyObject* object = nullptr;
+    NpUniversalDataSystemEventPropertyArray* array = nullptr;
+    std::size_t size = 0;
+    const int results[] = {
+        sceNpUniversalDataSystemCreateEvent("Event", nullptr, &event, nullptr),
+        sceNpUniversalDataSystemCreateEvent(nullptr, nullptr, nullptr, nullptr),
+        sceNpUniversalDataSystemDestroyEvent(nullptr),
+        sceNpUniversalDataSystemEventEstimateSize(nullptr, &size),
+        sceNpUniversalDataSystemEventToString(nullptr, nullptr, 0, nullptr),
+        sceNpUniversalDataSystemCreateEventPropertyObject(&object),
+        sceNpUniversalDataSystemCreateEventPropertyObject(nullptr),
+        sceNpUniversalDataSystemDestroyEventPropertyObject(nullptr),
+        sceNpUniversalDataSystemEventPropertyObjectSetString(nullptr, nullptr, nullptr),
+        sceNpUniversalDataSystemEventPropertyObjectSetInt32(nullptr, nullptr, 1),
+        sceNpUniversalDataSystemEventPropertyObjectSetUInt32(nullptr, nullptr, 1),
+        sceNpUniversalDataSystemEventPropertyObjectSetInt64(nullptr, nullptr, 1),
+        sceNpUniversalDataSystemEventPropertyObjectSetUInt64(nullptr, nullptr, 1),
+        sceNpUniversalDataSystemEventPropertyObjectSetFloat32(nullptr, nullptr, 1.0f),
+        sceNpUniversalDataSystemEventPropertyObjectSetFloat64(nullptr, nullptr, 1.0),
+        sceNpUniversalDataSystemEventPropertyObjectSetBool(nullptr, nullptr, true),
+        sceNpUniversalDataSystemEventPropertyObjectSetBinary(nullptr, nullptr, nullptr, 0),
+        sceNpUniversalDataSystemEventPropertyObjectSetObject(nullptr, nullptr, nullptr, nullptr),
+        sceNpUniversalDataSystemEventPropertyObjectSetArray(nullptr, nullptr, nullptr, nullptr),
+        sceNpUniversalDataSystemCreateEventPropertyArray(&array),
+        sceNpUniversalDataSystemCreateEventPropertyArray(nullptr),
+        sceNpUniversalDataSystemDestroyEventPropertyArray(nullptr),
+        sceNpUniversalDataSystemEventPropertyArraySetString(nullptr, nullptr),
+        sceNpUniversalDataSystemEventPropertyArraySetInt32(nullptr, 1),
+        sceNpUniversalDataSystemEventPropertyArraySetUInt32(nullptr, 1),
+        sceNpUniversalDataSystemEventPropertyArraySetInt64(nullptr, 1),
+        sceNpUniversalDataSystemEventPropertyArraySetUInt64(nullptr, 1),
+        sceNpUniversalDataSystemEventPropertyArraySetFloat32(nullptr, 1.0f),
+        sceNpUniversalDataSystemEventPropertyArraySetFloat64(nullptr, 1.0),
+        sceNpUniversalDataSystemEventPropertyArraySetBool(nullptr, true),
+        sceNpUniversalDataSystemEventPropertyArraySetBinary(nullptr, nullptr, 0),
+        sceNpUniversalDataSystemEventPropertyArraySetObject(nullptr, nullptr, nullptr),
+        sceNpUniversalDataSystemEventPropertyArraySetArray(nullptr, nullptr, nullptr),
+    };
+    bool rejected = true;
+    for (std::size_t index = 0; index < sizeof(results) / sizeof(results[0]); ++index) {
+        if (results[index] == notInitialized) continue;
+        std::fprintf(stderr, "UDS call %zu returned 0x%08X before Initialize\n", index, static_cast<unsigned>(results[index]));
+        rejected = false;
+    }
+    if (!rejected) return false;
+    return event == nullptr && object == nullptr && array == nullptr && size == 0;
+}
+
 int main() {
     constexpr int invalidArgument = static_cast<int>(0x80553102u);
     constexpr int invalidParamSize = static_cast<int>(0x80553112u);
     constexpr int nullEvent = static_cast<int>(0x80553116u);
     constexpr int alreadyInitialized = static_cast<int>(0x80553118u);
+    CHECK(EventCallsNotInitialized());
     CHECK(sceNpUniversalDataSystemInitialize(nullptr) == invalidArgument);
     errno = EBUSY;
     CHECK(sceNpUniversalDataSystemInitialize(reinterpret_cast<const NpUniversalDataSystemInitParam*>(std::uintptr_t{0x10})) == invalidArgument);
@@ -162,6 +214,7 @@ int main() {
     CHECK(errno == EBUSY && object->properties.size() == 1);
     CHECK(sceNpUniversalDataSystemDestroyEventPropertyObject(object) == 0);
     CHECK(sceNpUniversalDataSystemTerminate() == 0);
+    CHECK(EventCallsNotInitialized());
     CHECK(sceNpUniversalDataSystemInitialize(&init) == 0);
     CHECK(sceNpUniversalDataSystemInitialize(&init) == alreadyInitialized);
 

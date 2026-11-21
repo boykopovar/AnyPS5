@@ -14,6 +14,10 @@ std::atomic<bool> g_systemInitialized{false};
 
 }
 
+bool Uds::SystemInitialized() {
+    return g_systemInitialized.load();
+}
+
 extern "C" {
 
 int APS5_VABI sceNpUniversalDataSystemInitialize(const NpUniversalDataSystemInitParam* param) {

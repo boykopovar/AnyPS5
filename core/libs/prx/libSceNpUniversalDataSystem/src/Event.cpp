@@ -55,6 +55,7 @@ int APS5_VABI sceNpUniversalDataSystemCreateEvent(
     NpUniversalDataSystemEvent** new_event,
     NpUniversalDataSystemEventPropertyObject** prop_ptr)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     std::string name;
     if (event_name == nullptr || CopyGuestString_nid_no_patch(event_name, 0x1000, name) != 0 || name.empty()) {
         return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_EVENT_NAME;
@@ -85,6 +86,7 @@ int APS5_VABI sceNpUniversalDataSystemCreateEvent(
 }
 
 int APS5_VABI sceNpUniversalDataSystemDestroyEvent(NpUniversalDataSystemEvent* event) {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     events().Release(event);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
@@ -102,6 +104,7 @@ int APS5_VABI sceNpUniversalDataSystemPostEvent(int context, int handle, const v
 }
 
 int APS5_VABI sceNpUniversalDataSystemEventEstimateSize(const NpUniversalDataSystemEvent* event, size_t* size) {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (event == nullptr || !events().Contains(event)) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_EVENT;
     if (size == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     const size_t value = Uds::MessagePackSize(*event);
@@ -118,6 +121,7 @@ int APS5_VABI sceNpUniversalDataSystemEventToString(
     size_t buf_size,
     size_t* string_size)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (event == nullptr || !events().Contains(event)) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_EVENT;
     if (buf == nullptr) {
         if (string_size == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
