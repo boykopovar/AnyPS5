@@ -915,8 +915,8 @@ void APS5_VABI _ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED2E
     (void)self;
 }
 
-int APS5_VABI libSceLibcInternalInventory_232_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_232_nid_no_patch(void* self) {
+    _ZdlPv_nid_postfix(self);
 }
 APS5_EXPORT("N5nZ3wQw+Vc", libSceLibcInternalInventory_232_nid_no_patch);
 
@@ -1080,8 +1080,9 @@ int APS5_VABI _rtld_get_stack_prot(void) {
     return 7;
 }
 
-int APS5_VABI libSceLibcInternalInventory_280_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_280_nid_no_patch(void* lockInfo) {
+    (void)lockInfo;
+    _rtld_error("Service unavailable");
 }
 APS5_EXPORT("gRw4XrztJ4Q", libSceLibcInternalInventory_280_nid_no_patch);
 

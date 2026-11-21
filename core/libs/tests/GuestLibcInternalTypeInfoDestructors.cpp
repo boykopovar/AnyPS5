@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -86,7 +87,10 @@ int main() {
         reinterpret_cast<void*>(&TestPosixAlign), nullptr, nullptr, nullptr};
     ApplicationHeapRegister_nid_no_patch(api.data());
 
-    const std::array<Kind, 10> kinds{{
+    const std::array<Kind, 11> kinds{{
+        {"std::type_info", 16, &_ZNSt9type_infoD2Ev,
+         &_ZNSt9type_infoD1Ev,
+         &libSceLibcInternalInventory_232_nid_no_patch},
         {"__fundamental_type_info", 16, &_ZN10__cxxabiv123__fundamental_type_infoD2Ev,
          &_ZN10__cxxabiv123__fundamental_type_infoD1Ev,
          &_ZN10__cxxabiv123__fundamental_type_infoD0Ev},
