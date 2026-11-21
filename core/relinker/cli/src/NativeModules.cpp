@@ -38,12 +38,6 @@ std::optional<CandidateHeader> TryReadCandidateHeader(const std::filesystem::pat
     return result;
 }
 
-CandidateHeader ReadCandidateHeader(const std::filesystem::path& path) {
-    const auto header = TryReadCandidateHeader(path);
-    if (!header) throw Domain::RelinkerException("Cannot read guest candidate: " + Io::Utf8Path(path));
-    return *header;
-}
-
 std::string FoldedName(std::string name, const bool foldCase) {
     if (foldCase) for (auto& character : name) if (character >= 'A' && character <= 'Z') character = static_cast<char>(character + ('a' - 'A'));
     return name;
@@ -111,9 +105,13 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
                 continue;
             }
             if (Io::SameFile(entry.path(), inputPath)) continue;
-            const auto header = ReadCandidateHeader(entry.path());
-            if (header.Elf) paths.push_back(entry.path());
-            else if (header.Self)
+            const auto header = TryReadCandidateHeader(entry.path());
+            if (!header) {
+                std::cout << "Skipping unreadable file: " << entry.path().lexically_relative(root).generic_string() << '\n';
+                continue;
+            }
+            if (header->Elf) paths.push_back(entry.path());
+            else if (header->Self)
                 std::cout << "Skipping SELF container: " << entry.path().lexically_relative(root).generic_string()
                           << " (unwrap it before relinking)\n";
         }
