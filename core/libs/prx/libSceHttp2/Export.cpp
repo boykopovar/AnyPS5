@@ -10,6 +10,7 @@
 #include "GuestAccess.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceHttp/include/Http.hpp"
+#include "prx/libSceSsl/include/Ssl.hpp"
 #include <atomic>
 #include <mutex>
 #include <memory>
@@ -25,7 +26,8 @@ static constexpr int ERROR_NULL_POINTER = static_cast<int>(0x817B1225);
 static constexpr int ERROR_NOT_FOUND = static_cast<int>(0x817B1025);
 static constexpr int ERROR_INVALID_VALUE = static_cast<int>(0x817B11FE);
 static constexpr int ERROR_HTTP_INVALID_VALUE = static_cast<int>(0x804311FE);
-static constexpr int SSL_ERROR_INVALID_ID = static_cast<int>(0x8095F006);
+static constexpr int ERROR_SSL_POOL_TOO_SMALL = static_cast<int>(0x817B121C);
+static constexpr int ERROR_POOL_TOO_SMALL = static_cast<int>(0x817B121D);
 static constexpr int ERROR_NOT_CONNECTED = static_cast<int>(0x817B1065);
 static constexpr int ERROR_UNSUPPORTED_SCHEME = static_cast<int>(0x817B1061);
 static constexpr std::uint32_t WEBSOCKET_MIN_PERIOD = 1000000;
@@ -40,7 +42,7 @@ struct Http2Handle {
     Http2Kind kind;
     int owner;
     std::size_t poolSize;
-    std::shared_ptr<void> cookieMemory;
+    std::shared_ptr<void> poolMemory;
     int sslContext = 0;
     int version = 0;
     Http2::Settings settings;
@@ -182,6 +184,17 @@ static std::shared_ptr<Http2::Request> Transport(int id, bool create) {
 }
 
 
+static int MapPool(const char* name, std::size_t size, std::shared_ptr<void>& memory) {
+    void* address = nullptr;
+    if (const int result = sceKernelMapNamedFlexibleMemory(&address, size, 3, 0, name); result != 0) return result;
+    memory.reset(address, [size](void* mapped) { sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), size); });
+    return 0;
+}
+
+static std::int32_t PoolRequestCapacity(std::size_t size) {
+    return static_cast<std::int32_t>((size / 0x40000) * 3);
+}
+
 extern "C" {
 
 int APS5_VABI sceHttp2AddRequestHeader(int id, const char* name, const char* value, uint32_t mode) {
@@ -272,15 +285,26 @@ int APS5_VABI sceHttp2GetStatusCode(int req_id, int* status_code) {
     return request ? request->Status(status_code) : ERROR_INVALID_ID;
 }
 
-int APS5_VABI sceHttp2Init(int libnet_mem_id, int libssl_ctx_id, size_t pool_size, int max_concurrent_request) {
-    if (max_concurrent_request == 0) return ERROR_INVALID_VALUE;
-    if (max_concurrent_request < 0) NotImplemented_nid_no_patch(__func__);
-    if (libssl_ctx_id == 0) return SSL_ERROR_INVALID_ID;
+int APS5_VABI sceHttp2Init(int libnetMemId, int libsslCtxId, size_t poolSize, int maxConcurrentRequest) {
+    if (maxConcurrentRequest == 0) return ERROR_INVALID_VALUE;
+    SceSsl::MemoryPoolStats ssl{};
+    if (const int result = sceSslGetMemoryPoolStats(libsslCtxId, &ssl); result < 0) return result;
+    if (PoolRequestCapacity(ssl.poolSize - ssl.currentInuseSize + 0x1da0) < maxConcurrentRequest) return ERROR_SSL_POOL_TOO_SMALL;
+    constexpr auto pageMask = std::size_t{0x3fff};
+    constexpr auto largestPool = std::numeric_limits<std::size_t>::max() - 0x7fff;
+    const auto mappedSize = poolSize >= largestPool ? largestPool : (poolSize + pageMask) & ~pageMask;
+    if (PoolRequestCapacity(mappedSize) < maxConcurrentRequest) return ERROR_POOL_TOO_SMALL;
+    std::shared_ptr<void> mapping;
+    if (const int result = MapPool("SceLibHttp2", mappedSize, mapping); result != 0) return result;
+    void* arena = sceLibcMspaceCreate_nid_postfix("SceLibHttp2", mapping.get(), mappedSize, 0);
+    if (!arena) return 0;
+    std::shared_ptr<void> pool(arena, [mapping = std::move(mapping)](void* heap) { sceLibcMspaceDestroy_nid_postfix(heap); });
+    if (!sceLibcMspaceCalloc_nid_postfix(arena, 1, 0x1078)) return static_cast<int>(0x817B1022);
+    Http2Handle handle{Http2Kind::Context, 0, mappedSize, std::move(pool)};
+    handle.sslContext = libsslCtxId;
+    handle.capacity = Http2::CreateCapacity_nid_no_patch(maxConcurrentRequest);
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(g_handlesMutex);
-    Http2Handle handle{Http2Kind::Context, 0, pool_size};
-    handle.sslContext = libssl_ctx_id;
-    handle.capacity = Http2::CreateCapacity_nid_no_patch(max_concurrent_request);
     g_handles.emplace(id, std::move(handle));
     return id;
 }
@@ -464,9 +488,8 @@ int APS5_VABI sceHttp2CookieFlush(int id) {
 int APS5_VABI sceHttp2CreateCookieBox(std::size_t poolSize) {
     if (poolSize < 0x10000) return static_cast<int>(0x817b121du);
     const auto mappedSize = (poolSize + 0x3fff) & ~std::size_t{0x3fff};
-    void* address = nullptr;
-    if (const int result = sceKernelMapNamedFlexibleMemory(&address, mappedSize, 3, 0, "SceHttp2CookieBox"); result != 0) return result;
-    std::shared_ptr<void> memory(address, [mappedSize](void* mapped) { sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), mappedSize); });
+    std::shared_ptr<void> memory;
+    if (const int result = MapPool("SceHttp2CookieBox", mappedSize, memory); result != 0) return result;
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
     Http2AddCookieBox(id);
     try {
