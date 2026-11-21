@@ -1,0 +1,6 @@
+if(BUILD_TESTING)
+    add_test_executable(libc_atomic_shared_ptr_tests tests/AtomicSharedPtr.cpp)
+    target_include_directories(libc_atomic_shared_ptr_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    add_test(NAME libc_atomic_shared_ptr COMMAND libc_atomic_shared_ptr_tests)
+    set_tests_properties(libc_atomic_shared_ptr PROPERTIES TIMEOUT 10)
+endif()
