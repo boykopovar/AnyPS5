@@ -1,0 +1,5 @@
+# libkernel_sys
+
+## change [sceKernelGetAppCategoryType]
+
+- [sceKernelGetAppCategoryType](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) (libkernel_sys) - `(int pid, uint32_t* category)` returns `EINVAL` (0x80020016) for a null `category` before it looks at the pid. Pid 0 and self return the `applicationCategoryType` field of the title's `param.json`; a PS5 Pro payload process (13.60) answered `0xffffffff` where a 13.590.001 session reported 0, so the answer for a process without category data is not firmware-stable. Pids other than 0 and self, negative or not, return `ESRCH` (0x80020003) with `errno` 3 without writing the output, as measured on the PS5 Pro; the console answered for its other live processes, which AnyPS5 does not have. The console's value for a real title is unmeasured, and the offset-0x50 field of `sceKernelGetAppInfo` is a fixed `0xffffffff` marker here, not category data. GoY and Wolverine's `libSceAgc` skip a RegMgr check (key `0x34ae6c7a451600db`) only when it equals `0x10000`, read from Ghidra.
