@@ -95,13 +95,15 @@ void AudioOut2FinishPadMix(float* out, std::uint32_t frames) {
 std::array<std::uint8_t, 2> AudioOut2RumbleFromPadFrames(const float* pad, std::uint32_t frames) {
     std::array<std::uint8_t, 2> result{};
     if (pad == nullptr || frames == 0) return result;
-    for (std::uint32_t channel = 0; channel < 2; ++channel) {
-        double energy = 0.0;
-        for (std::uint32_t frame = 0; frame < frames; ++frame) {
+    std::array<double, 2> energy{};
+    for (std::uint32_t frame = 0; frame < frames; ++frame) {
+        for (std::uint32_t channel = 0; channel < energy.size(); ++channel) {
             const auto sample = pad[static_cast<std::size_t>(frame) * AUDIO_OUT2_PAD_CHANNELS + AUDIO_OUT2_PAD_VIBRATION_LEFT + channel];
-            if (std::isfinite(sample)) energy += static_cast<double>(sample) * sample;
+            energy[channel] += std::isfinite(sample) ? static_cast<double>(sample) * sample : 0.0;
         }
-        const auto rms = std::sqrt(energy / frames);
+    }
+    for (std::uint32_t channel = 0; channel < 2; ++channel) {
+        const auto rms = std::sqrt(energy[channel] / frames);
         if (rms >= 0.01) result[channel] = static_cast<std::uint8_t>(std::lround(std::min(1.0, rms * 2.0) * 255));
     }
     return result;
