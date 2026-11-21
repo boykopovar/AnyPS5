@@ -107,6 +107,11 @@ bool Greater(__m128d first, __m128d second) { return _mm_ucomigt_sd(first, secon
 bool GreaterEqual(__m128 first, __m128 second) { return _mm_ucomige_ss(first, second); }
 bool GreaterEqual(__m128d first, __m128d second) { return _mm_ucomige_sd(first, second); }
 
+template<typename TVector>
+void ForceEvaluation(TVector value) {
+    asm volatile("" : : "x"(value));
+}
+
 __m128 LastMaximum(__m128 value, __m128 current) {
     const auto keep = _mm_cmpnle_ss(current, value);
     return _mm_or_ps(_mm_and_ps(keep, current), _mm_andnot_ps(keep, value));
@@ -243,6 +248,8 @@ MinMaxPointers ElementExtremum(const void* first, const void* last, const char* 
             else maximum = ScalarExtremum<false>(next, maximum);
         }
     }
+    if constexpr (TMinimum) ForceEvaluation(minimum);
+    if constexpr (TMaximum) ForceEvaluation(maximum);
     return result;
 }
 

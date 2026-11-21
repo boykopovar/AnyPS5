@@ -86,9 +86,15 @@ int APS5_VABI scePthreadSemInit(PthreadSem* sem, int flag, unsigned int value, c
 
 int APS5_VABI scePthreadSemDestroy(PthreadSem* sem) {
     if (!sem)
-        throw std::invalid_argument("Semaphore pointer is null");
+        return SCE_KERNEL_ERROR_EINVAL;
+    const int savedErrno = errno;
     std::unique_lock registryLock(semRegistryMutex);
-    const auto current = std::atomic_ref<PthreadSem>(*sem).load(std::memory_order_acquire);
+    PthreadSem current = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&current, sem, sizeof(current)) || !GuestWritable_nid_no_patch(sem, sizeof(*sem))) {
+        errno = savedErrno;
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
+    errno = savedErrno;
     if (current == destroyedSem())
         return SCE_KERNEL_ERROR_EINVAL;
     if (!current)
@@ -97,10 +103,15 @@ int APS5_VABI scePthreadSemDestroy(PthreadSem* sem) {
     if (it == semRegistry.end())
         return SCE_KERNEL_ERROR_EINVAL;
     const auto owner = it->second;
+    const PthreadSem tombstone = destroyedSem();
+    if (!GuestCopyOut_nid_no_patch(sem, &tombstone, sizeof(tombstone))) {
+        errno = savedErrno;
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
+    errno = savedErrno;
     std::lock_guard semLock(owner->_mutex);
     owner->_destroyed = true;
     owner->_cv.NotifyAll();
-    std::atomic_ref<PthreadSem>(*sem).store(destroyedSem(), std::memory_order_release);
     semRegistry.erase(it);
     return 0;
 }

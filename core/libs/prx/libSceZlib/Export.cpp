@@ -100,19 +100,55 @@ std::int32_t APS5_VABI sceZlibInflate(const void* source, std::uint32_t sourceLe
         }
         const auto previousInput = stream.total_in;
         const auto previousOutput = stream.total_out;
-        decoded = inflate(&stream, Z_FINISH);
-        if (decoded == Z_STREAM_END || (decoded != Z_OK && decoded != Z_BUF_ERROR) || stream.avail_out == 0 ||
-            (stream.avail_in == 0 && supplied == sourceLength)) break;
-        if (stream.total_in == previousInput && stream.total_out == previousOutput && stream.avail_in != 0) break;
+        const int flush = (supplied == sourceLength) ? Z_FINISH : Z_NO_FLUSH;
+        decoded = inflate(&stream, flush);
+        if (decoded == Z_STREAM_END) break;
+        if (decoded != Z_OK && decoded != Z_BUF_ERROR) break;
+        if (stream.avail_out == 0) break;
+        if (stream.total_in == previousInput && stream.total_out == previousOutput) break;
     }
     const auto produced = static_cast<std::uint32_t>(stream.total_out);
-    const std::int32_t status = decoded == Z_STREAM_END ? 0 :
-        ((decoded == Z_OK || decoded == Z_BUF_ERROR) && stream.avail_out == 0 &&
-         (stream.avail_in != 0 || supplied < sourceLength) ? NO_SPACE : FATAL);
+    std::int32_t status;
+    if (decoded == Z_STREAM_END) {
+        status = 0;
+    } else if ((decoded == Z_OK || decoded == Z_BUF_ERROR) && stream.avail_out == 0) {
+        Bytef scratch = 0;
+        stream.next_out = &scratch;
+        stream.avail_out = 1;
+        status = FATAL;
+        for (;;) {
+            const auto previousProbeIn = stream.total_in;
+            const int probeDecoded = inflate(&stream, supplied == sourceLength ? Z_FINISH : Z_NO_FLUSH);
+            if (stream.avail_out == 0) { status = NO_SPACE; break; }
+            if (probeDecoded == Z_STREAM_END) { status = 0; break; }
+            if (probeDecoded != Z_OK && probeDecoded != Z_BUF_ERROR) break;
+            if (stream.avail_in == 0 && supplied < sourceLength) {
+                const auto chunk = std::min<std::uint32_t>(sourceLength - supplied, inputBuffer.size());
+                const int savedErrno = errno;
+                const bool copied = GuestCopyIn_nid_no_patch(inputBuffer.data(),
+                    reinterpret_cast<const void*>(sourceAddress + supplied), chunk);
+                errno = savedErrno;
+                if (!copied) { invalidInput = true; break; }
+                stream.next_in = inputBuffer.data();
+                stream.avail_in = chunk;
+                supplied += chunk;
+            } else if (stream.total_in == previousProbeIn) {
+                break;
+            }
+        }
+    } else {
+        status = FATAL;
+    }
     const int ended = inflateEnd(&stream);
     if (ended != Z_OK) throw std::runtime_error("sceZlibInflate: decoder cleanup failed");
     if (invalidInput) return INVALID_ARGUMENT;
+    const auto idAddress = reinterpret_cast<std::uintptr_t>(requestId);
+    if (sizeof(*requestId) > std::numeric_limits<std::uintptr_t>::max() - idAddress) return INVALID_ARGUMENT;
     const int savedErrno = errno;
+    const GuestArena::HostWrite guardId(requestId, sizeof(*requestId));
+    const bool writableId = guardId.Open() && GuestWritable_nid_no_patch(requestId, sizeof(*requestId));
+    errno = savedErrno;
+    if (!writableId) return INVALID_ARGUMENT;
     const bool copiedOutput = GuestCopyOut_nid_no_patch(destination, outputBuffer.data(), produced);
     errno = savedErrno;
     if (!copiedOutput) return INVALID_ARGUMENT;

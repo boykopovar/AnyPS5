@@ -41,10 +41,17 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
 #include <stdexcept>
 
 namespace {
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
 
 thread_local WebRtcTaskQueueBase* currentTaskQueue = nullptr;
 
@@ -59,14 +66,25 @@ WebRtcTaskQueueBase* APS5_VABI _ZN6webrtc13TaskQueueBase7CurrentEv_nid_postfix(v
 void APS5_VABI _ZN6webrtc13TaskQueueBase22CurrentTaskQueueSetterC1EPS0__nid_postfix(WebRtcCurrentTaskQueueSetter* setter, WebRtcTaskQueueBase* taskQueue) {
     if (!setter)
         throw std::invalid_argument("CurrentTaskQueueSetter requires a setter");
-    setter->previous = currentTaskQueue;
+    const WebRtcCurrentTaskQueueSetter hostSetter{currentTaskQueue};
+    {
+        ErrnoGuard guard;
+        if (!GuestPtr<WebRtcCurrentTaskQueueSetter>(setter).CopyOut(hostSetter))
+            throw std::invalid_argument("CurrentTaskQueueSetter requires a setter");
+    }
     currentTaskQueue = taskQueue;
 }
 
 void APS5_VABI _ZN6webrtc13TaskQueueBase22CurrentTaskQueueSetterD1Ev_nid_postfix(WebRtcCurrentTaskQueueSetter* setter) {
     if (!setter)
         throw std::invalid_argument("~CurrentTaskQueueSetter requires a setter");
-    currentTaskQueue = setter->previous;
+    WebRtcCurrentTaskQueueSetter hostSetter{};
+    {
+        ErrnoGuard guard;
+        if (!GuestPtr<const WebRtcCurrentTaskQueueSetter>(setter).CopyIn(hostSetter))
+            throw std::invalid_argument("~CurrentTaskQueueSetter requires a setter");
+    }
+    currentTaskQueue = hostSetter.previous;
 }
 
 }

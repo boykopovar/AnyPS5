@@ -215,7 +215,10 @@ int NativeSignal(int guest) {
 void ResetToDefault(int guest) {
     handlerReset[guest].store(true);
     handlers[guest].store(nullptr);
-    if (const int native = NativeSignal(guest)) std::signal(native, SIG_DFL);
+    if (const int native = NativeSignal(guest)) {
+        std::signal(native, SIG_DFL);
+        if (native == SIGSEGV) GuestFaultCopyReinstall_nid_no_patch();
+    }
 }
 void RunHandler(int guest, GuestHandler handler) {
     auto& self = CurrentSignals();
@@ -279,6 +282,7 @@ bool Install(int guest, const GuestSigaction& action) {
         handlers[guest].store(previous);
         return false;
     }
+    if (native == SIGSEGV) GuestFaultCopyReinstall_nid_no_patch();
     return true;
 }
 }
@@ -796,7 +800,7 @@ int APS5_VABI sigtimedwait_nid_postfix(const GuestSignalSet* set, void* info, co
     if (set == nullptr) { *__error_nid_postfix() = 22; return -1; }
     GuestSignalSet requestedSet{};
     if (!GuestCopyIn_nid_no_patch(&requestedSet, set, sizeof(requestedSet))) { *__error_nid_postfix() = 14; return -1; }
-    if (!SetHasSignal(requestedSet)) { *__error_nid_postfix() = 22; return -1; }
+    if (timeout == nullptr && !SetHasSignal(requestedSet)) { *__error_nid_postfix() = 22; return -1; }
     KernelTimespec requestedTimeout{};
     if (timeout != nullptr) {
         if (!GuestCopyIn_nid_no_patch(&requestedTimeout, timeout, sizeof(requestedTimeout))) { *__error_nid_postfix() = 14; return -1; }

@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include "prx/libc/include/General.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -16,7 +17,10 @@ extern "C" {
 long long APS5_VABI strtonum_nid_postfix(const char* text, long long minimum, long long maximum, const char** error) {
     const int savedError = errno;
     const auto fail = [error](const char* message, int number) -> long long {
-        if (error) *error = message;
+        if (error != nullptr && !GuestCopyOut_nid_no_patch(error, &message, sizeof(message))) {
+            errno = 14;
+            return 0;
+        }
         errno = number;
         return 0;
     };
@@ -27,7 +31,13 @@ long long APS5_VABI strtonum_nid_postfix(const char* text, long long minimum, lo
     if (errno == EINVAL || end == text || *end != '\0') return fail("invalid", 22);
     if ((value == LLONG_MIN && errno == ERANGE) || value < minimum) return fail("too small", 34);
     if ((value == LLONG_MAX && errno == ERANGE) || value > maximum) return fail("too large", 34);
-    if (error) *error = nullptr;
+    if (error != nullptr) {
+        const char* nullPtr = nullptr;
+        if (!GuestCopyOut_nid_no_patch(error, &nullPtr, sizeof(nullPtr))) {
+            errno = 14;
+            return 0;
+        }
+    }
     errno = savedError;
     return value;
 }
@@ -100,9 +110,10 @@ char* APS5_VABI dirname_nid_postfix(const char* path) {
 }
 
 std::size_t APS5_VABI strnlen_nid_postfix(const char* text, std::size_t limit) {
-    std::size_t length = 0;
-    while (length < limit && text[length] != '\0') ++length;
-    return length;
+    if (limit == 0) return 0;
+    limit = (std::min)(limit, static_cast<std::size_t>(UINTPTR_MAX - reinterpret_cast<std::uintptr_t>(text)));
+    const void* end = std::memchr(text, '\0', limit);
+    return end == nullptr ? limit : static_cast<std::size_t>(static_cast<const char*>(end) - text);
 }
 
 std::size_t APS5_VABI strnlen_s_nid_postfix(const char* text, std::size_t limit) {
@@ -195,14 +206,11 @@ char* APS5_VABI stpcpy_nid_postfix(char* destination, const char* source) {
 }
 
 char* APS5_VABI stpncpy_nid_postfix(char* destination, const char* source, std::size_t count) {
-    for (; count != 0; --count, ++destination, ++source) {
-        if ((*destination = *source) == '\0') {
-            char* result = destination;
-            while (--count != 0) *++destination = '\0';
-            return result;
-        }
-    }
-    return destination;
+    if (count == 0) return destination;
+    const std::size_t length = strnlen_nid_postfix(source, count);
+    std::memmove(destination, source, length);
+    std::memset(destination + length, 0, count - length);
+    return destination + length;
 }
 
 char* APS5_VABI strtok_r_nid_postfix(char* text, const char* delimiters, char** state) {

@@ -91,4 +91,13 @@ void APS5_VABI cairo_scaled_font_text_extents(CairoScaledFont* font, const char*
     CopyResult(extents, &native, sizeof(native), "cairo_scaled_font_text_extents: invalid output");
 }
 
+FreeType::GuestFaceRec* APS5_VABI cairo_ft_scaled_font_lock_face(CairoScaledFont* font) {
+    if (aps5_cairo_scaled_font_get_type(Backend(font)) == CAIRO_FONT_TYPE_FT) NotImplemented_nid_no_patch(__func__);
+    return nullptr;
+}
+
+void APS5_VABI cairo_ft_scaled_font_unlock_face(CairoScaledFont* font) {
+    if (aps5_cairo_scaled_font_get_type(Backend(font)) == CAIRO_FONT_TYPE_FT) NotImplemented_nid_no_patch(__func__);
+}
+
 }

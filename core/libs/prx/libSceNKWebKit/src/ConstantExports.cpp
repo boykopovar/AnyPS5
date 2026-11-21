@@ -274,10 +274,6 @@ int APS5_VABI WKPageGetFrameSetLargestFrame() {
     return 0;
 }
 
-int APS5_VABI WKPageGetPaginationLineGridEnabled() {
-    return 0;
-}
-
 int APS5_VABI WKPageIsMockRealtimeMediaSourceCenterEnabled() {
     return 0;
 }
@@ -342,23 +338,7 @@ int APS5_VABI WKPreferencesGetAccelerated2DCanvasEnabled() {
     return 0;
 }
 
-int APS5_VABI WKPreferencesGetApplicationChromeModeEnabled() {
-    return 0;
-}
-
 int APS5_VABI WKPreferencesGetQTKitEnabled() {
-    return 0;
-}
-
-int APS5_VABI WKPreferencesGetTypeID() {
-    return static_cast<int>(0x00000058u);
-}
-
-int APS5_VABI WKProtectionSpaceCopyCertificateInfo() {
-    return 0;
-}
-
-int APS5_VABI WKUserContentExtensionStoreCreate() {
     return 0;
 }
 

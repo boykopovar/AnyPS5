@@ -1,4 +1,8 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#ifdef __linux__
+#include <sys/resource.h>
+#endif
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -8,6 +12,16 @@
 #include <vector>
 
 namespace {
+
+long PeakKilobytes() {
+#ifdef __linux__
+    rusage usage{};
+    getrusage(RUSAGE_SELF, &usage);
+    return usage.ru_maxrss;
+#else
+    return 0;
+#endif
+}
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
@@ -118,6 +132,24 @@ int main() {
         threw = true;
     }
     Require(threw);
+    const auto* const unreadable = reinterpret_cast<const unsigned char*>(0x10);
+    const auto wrapThrows = [](auto call) {
+        try {
+            call();
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+        return false;
+    };
+    errno = 71;
+    Require(wrapThrows([&] { AES_wrap_key_nid_postfix(reinterpret_cast<AesKey*>(0x10), nullptr, wrapped, plain, sizeof(plain)); }));
+    Require(wrapThrows([&] { AES_wrap_key_nid_postfix(&key, unreadable, wrapped, plain, sizeof(plain)); }));
+    Require(wrapThrows([&] { AES_wrap_key_nid_postfix(&key, nullptr, wrapped, unreadable, sizeof(plain)); }));
+    Require(wrapThrows([&] { AES_wrap_key_nid_postfix(&key, nullptr, reinterpret_cast<unsigned char*>(0x10), plain, sizeof(plain)); }));
+    Require(errno == 71);
+    const long peakBefore = PeakKilobytes();
+    Require(wrapThrows([&] { AES_wrap_key_nid_postfix(&key, nullptr, wrapped, unreadable, 0x7ffffff0u); }));
+    Require(errno == 71 && PeakKilobytes() - peakBefore < 64 * 1024);
     CheckRfc3394();
     CheckIv();
     CheckLong(336, "d293d9a1178a1c56", "9c7c803cf8f7ec53");

@@ -1,11 +1,13 @@
 #include "prx/libScePad/include/InputCommandFile.hpp"
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 
 void Check(bool condition) {
@@ -18,6 +20,21 @@ int main() {
     const auto write = [&](const std::string& text) { std::ofstream(path) << text; };
     try {
         write("1 16384 300\n");
+#ifdef _WIN32
+        {
+            std::FILE* reader = Pad::Detail::OpenInputCommandFile(path);
+            Check(reader != nullptr);
+            auto replacement = path;
+            replacement += L".next";
+            std::ofstream(replacement) << "2 8 300\n";
+            Check(::ReplaceFileW(path.c_str(), replacement.c_str(), nullptr, 0, nullptr, nullptr) != 0);
+            char old[16]{};
+            Check(std::fgets(old, sizeof(old), reader) != nullptr);
+            Check(std::string_view(old).starts_with("1 16384 300"));
+            Check(std::fclose(reader) == 0);
+            write("1 16384 300\n");
+        }
+#endif
         Pad::InputCommandFile input(path);
         Check(input.Buttons(0) == 0);
         write("APS5_PAD_TIMELINE 1 2 3\n200 100 18432\n500 200 16\n800 100 0\n");
@@ -174,6 +191,18 @@ int main() {
         Pad::InputCommandFile overlongFirst(path);
         write(std::string(113, ' ') + "2001 16384 300\n");
         Check(overlongFirst.Buttons(100000) == 0);
+        for (unsigned y : {942u, 943u, 1079u}) {
+            write("1 0 300\n");
+            Pad::InputCommandFile touch(path);
+            write("2 0 300 touch(1919," + std::to_string(y) + ",127,1)\n");
+            const auto contact = touch.Poll(0);
+            Check(contact.hasTouch && contact.touchX == 1919 && contact.touchY == y && contact.touchId == 127 && contact.touchActive);
+            write("3 0 300 touch(1919,1080,127,1)\n");
+            Check(touch.Poll(100000) == contact);
+            write("3 0 300 touch(1919," + std::to_string(y) + ",127,0)\n");
+            const auto lifted = touch.Poll(200000);
+            Check(lifted.hasTouch && lifted.touchY == y && lifted.touchId == 127 && !lifted.touchActive);
+        }
         std::filesystem::remove(path);
         std::cout << "Controller timeline runtime cases passed\n";
         return 0;

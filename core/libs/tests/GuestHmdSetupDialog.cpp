@@ -62,6 +62,9 @@ int main() {
     Require(sceHmdSetupDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceHmdSetupDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceHmdSetupDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceHmdSetupDialogGetResult(result) == kErrNotFinished);
 
     Require(sceHmdSetupDialogOpen(&param) == 0);

@@ -546,10 +546,52 @@ void Run() {
 
 }
 
+namespace UdatCountSymbols {
+
+using IcuRecoveredTest::Filler;
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+using IcuRecoveredTest::Unchanged;
+
+static_assert(std::is_same_v<decltype(&udat_countSymbols_nid_postfix), std::int32_t (APS5_VABI*)(const UDateFormat*, std::int32_t)>);
+
+void Run() {
+    const auto storage = Filler();
+    const auto format = reinterpret_cast<const UDateFormat*>(storage.data());
+    for (const std::int32_t type : {-1, 0, 1, 7, 27, 28, std::numeric_limits<std::int32_t>::max()}) {
+        Require(udat_countSymbols_nid_postfix(nullptr, type) == 0);
+        RequireThrows([&] { udat_countSymbols_nid_postfix(format, type); });
+    }
+    Require(Unchanged(storage));
+}
+
+} // namespace UdatCountSymbols
+
+namespace UdatGetCalendar {
+
+using IcuRecoveredTest::Filler;
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+using IcuRecoveredTest::Unchanged;
+
+static_assert(std::is_same_v<decltype(&udat_getCalendar_nid_postfix), const UCalendar* (APS5_VABI*)(const UDateFormat*)>);
+
+void Run() {
+    const auto storage = Filler();
+    const auto format = reinterpret_cast<const UDateFormat*>(storage.data());
+    RequireThrows([&] { udat_getCalendar_nid_postfix(format); });
+    RequireThrows([] { udat_getCalendar_nid_postfix(nullptr); });
+    Require(Unchanged(storage));
+}
+
+} // namespace UdatGetCalendar
+
 void CheckIcuDateFormat() {
     UdatClose::Run();
+    UdatCountSymbols::Run();
     UdatFormat::Run();
     UdatFormatForFields::Run();
+    UdatGetCalendar::Run();
     UdatGetSymbols::Run();
     UdatOpen::Run();
     UdatToPattern::Run();

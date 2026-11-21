@@ -70,6 +70,8 @@ RdnaOperand TranslationContext::destinationOperand(const RdnaInstruction& inst) 
 RdnaOperand TranslationContext::accumulatorOperand(const RdnaInstruction& inst) {
     RdnaOperand accumulator = inst.destination;
     accumulator.dpp = false;
+    accumulator.absolute = inst.source2.absolute;
+    accumulator.negate = inst.source2.negate;
     return accumulator;
 }
 
@@ -377,6 +379,15 @@ IrValue* TranslationContext::nanResultF32(std::initializer_list<IrValue*> source
         const std::uint32_t exponent = (constant->ImmediateU32() >> 23u) & 0xffu;
         return exponent != 0u && exponent != 0xffu;
     });
+    if (!normalFactor) {
+        std::array<IrValue*, 3> operands{};
+        std::uint32_t count = 0u;
+        for (IrValue* source : sources) operands.at(count++) = source;
+        for (auto index = count; index < operands.size(); ++index) operands[index] = operands[0];
+        const std::uint32_t flags = (ieeeMode ? 1u : 0u) | (count << 1u);
+        IrValue& invalid = invalidProduct != nullptr && count == 3u ? *invalidProduct : ir.ConstantBool(false);
+        return &ir.Emit(IrOpcode::NanPropagateF32, IrType::F32, {result, &ir.Constant(flags), &invalid, operands[0], operands[1], operands[2]});
+    }
     for (auto source = sources.end(); source != sources.begin();) {
         --source;
         IrValue& sourceBits = ir.BitCastU32(**source);
@@ -406,7 +417,8 @@ IrValue* TranslationContext::propagatedNanResultF32(std::initializer_list<IrValu
 IrValue& TranslationContext::invalidProductF32(IrValue* lhs, IrValue* rhs) {
     IrValue& lhsMagnitude = ir.BitwiseAnd(ir.BitCastU32(*lhs), ir.Constant(0x7fffffffu));
     IrValue& rhsMagnitude = ir.BitwiseAnd(ir.BitCastU32(*rhs), ir.Constant(0x7fffffffu));
-    const auto infZero = [&](IrValue& inf, IrValue& zero) -> IrValue& { return ir.LogicalAnd(ir.IEqual(inf, ir.Constant(0x7f800000u)), ir.IEqual(zero, ir.Constant(0u))); };
+    const auto zero = [&](IrValue& magnitude) -> IrValue& { return (f32DenormalFlush & 4u) != 0u ? ir.ULessThan(magnitude, ir.Constant(0x00800000u)) : ir.IEqual(magnitude, ir.Constant(0u)); };
+    const auto infZero = [&](IrValue& inf, IrValue& factor) -> IrValue& { return ir.LogicalAnd(ir.IEqual(inf, ir.Constant(0x7f800000u)), zero(factor)); };
     return ir.LogicalOr(infZero(lhsMagnitude, rhsMagnitude), infZero(rhsMagnitude, lhsMagnitude));
 }
 
@@ -465,7 +477,7 @@ IrF32 TranslationContext::scaleF16Result(std::uint32_t omod, IrF32 value) {
         const std::uint32_t exponentStep = omod == 1u ? 0x00800000u : 0x01000000u;
         result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x47800000u - exponentStep)), ir.IAdd(bits, ir.Constant(exponentStep)), ir.BitwiseOr(sign, ir.Constant(0x47800000u)));
     }
-    result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x38800000u)), sign, *result);
+    result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x38800000u)), ir.Constant(0u), *result);
     result = &ir.Select(ir.UGreaterThan(magnitude, ir.Constant(0x7f7fffffu)), bits, *result);
     return IrF32(ir.BitCastF32(*result));
 }
@@ -481,7 +493,7 @@ IrU32 TranslationContext::scaleF16Bits(std::uint32_t omod, IrU32 bits) {
         const std::uint32_t exponentStep = omod == 1u ? 0x0400u : 0x0800u;
         result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x7c00u - exponentStep)), ir.IAdd(raw, ir.Constant(exponentStep)), ir.BitwiseOr(sign, ir.Constant(0x7c00u)));
     }
-    result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x0400u)), sign, *result);
+    result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x0400u)), ir.Constant(0u), *result);
     result = &ir.Select(ir.UGreaterThan(magnitude, ir.Constant(0x7bffu)), raw, *result);
     return IrU32(*result);
 }
