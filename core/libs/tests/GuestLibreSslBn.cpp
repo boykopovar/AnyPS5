@@ -316,6 +316,49 @@ static void CleanupFailures() {
     }
 }
 
+static void NegativeZero() {
+    const unsigned char bytes[] = {0x00, 0x2a};
+    for (const char* start : {"-5", "-0", "-", "-FFFFFFFFFFFFFFFFFF"}) {
+        Bn* value = FromHex(start);
+        Require(value->neg == 1);
+        const auto* storage = value->d;
+        const int capacity = value->dmax;
+        Require(BN_bin2bn_nid_postfix(bytes, 0, value) == value);
+        Require(value->d == storage && value->dmax == capacity);
+        Require(value->neg == 1 && value->top == 0 && BN_num_bits_nid_postfix(value) == 0 && Printed(value) == "-0");
+        Require(BN_bin2bn_nid_postfix(nullptr, 0, value) == value && value->neg == 1 && value->top == 0);
+        Require(BN_bin2bn_nid_postfix(bytes, 2, value) == value && value->neg == 0 && Printed(value) == "2A");
+        BN_free_nid_postfix(value);
+    }
+    Bn* allocated = BN_bin2bn_nid_postfix(bytes, 0, nullptr);
+    Require(allocated && allocated->neg == 0 && allocated->top == 0 && Printed(allocated) == "0");
+    BN_free_nid_postfix(allocated);
+
+    for (const char* start : {"-0", "-", "-00"}) {
+        Bn* added = FromHex(start);
+        Require(BN_add_word_nid_postfix(added, 0) == 1 && added->neg == 1 && added->top == 0 && Printed(added) == "-0");
+        Require(BN_add_word_nid_postfix(added, 3) == 1 && added->neg == 0 && Printed(added) == "3");
+        Bn* subtracted = FromHex(start);
+        Require(BN_sub_word_nid_postfix(subtracted, 0) == 1 && subtracted->neg == 1 && subtracted->top == 0 && Printed(subtracted) == "-0");
+        Require(BN_sub_word_nid_postfix(subtracted, 3) == 1 && subtracted->neg == 1 && Printed(subtracted) == "-3");
+        Bn* set = FromHex(start);
+        Require(BN_set_word_nid_postfix(set, 0) == 1 && set->neg == 0 && Printed(set) == "0");
+        BN_free_nid_postfix(added);
+        BN_free_nid_postfix(subtracted);
+        BN_free_nid_postfix(set);
+    }
+
+    std::uint64_t limbs[] = {0x2a, 0};
+    Bn padded{limbs, 2, 2, 1, 2};
+    Require(BN_add_word_nid_postfix(&padded, 0) == 1 && padded.top == 2 && padded.neg == 1);
+    Require(BN_sub_word_nid_postfix(&padded, 0) == 1 && padded.top == 2 && padded.neg == 1);
+    Require(limbs[0] == 0x2a && limbs[1] == 0);
+    padded.neg = 0;
+    Require(BN_add_word_nid_postfix(&padded, 0) == 1 && padded.top == 2 && padded.neg == 0);
+    Require(BN_sub_word_nid_postfix(&padded, 0) == 1 && padded.top == 2 && padded.neg == 0);
+    Require(limbs[0] == 0x2a && limbs[1] == 0);
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "--allocator") == 0) {
         CleanupFailures();
@@ -538,5 +581,6 @@ int main(int argc, char** argv) {
     }
     BN_CTX_free_nid_postfix(ctx);
     Print();
+    NegativeZero();
     return 0;
 }
