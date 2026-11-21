@@ -4,13 +4,25 @@
 #include <array>
 #include <climits>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 #include <new>
+#include <stdexcept>
 #include <string>
 #include <vector>
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 thread_local bool armed = false, fired = false;
@@ -25,6 +37,109 @@ void Check(bool value, const char* label) {
 }
 std::size_t Live() {
     return std::count_if(tracked.begin(), tracked.end(), [](void* p) { return p != nullptr; });
+}
+
+struct TestCipher {
+    std::int32_t valid;
+    const char* name;
+    std::uint64_t id;
+    std::uint64_t keyExchange;
+    std::uint64_t authentication;
+    std::uint64_t encryption;
+    std::uint64_t mac;
+    std::uint64_t protocol;
+    std::uint64_t strengthFlags;
+    std::uint64_t extraFlags;
+    std::int32_t strengthBits;
+    std::int32_t algorithmBits;
+};
+
+static_assert(sizeof(TestCipher) == 88);
+static_assert(offsetof(TestCipher, strengthBits) == 80);
+static_assert(offsetof(TestCipher, algorithmBits) == 84);
+
+struct StraddlingCipherPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 0;
+
+    StraddlingCipherPages() {
+#if defined(_WIN32)
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Check(base != nullptr, "VirtualAlloc succeeds for SSL_CIPHER_get_bits page test");
+        if (!base) return;
+        DWORD previous = 0;
+        const BOOL protectedOk = VirtualProtect(base, pageSize, PAGE_NOACCESS, &previous);
+        Check(protectedOk != 0, "VirtualProtect makes first page inaccessible");
+        if (!protectedOk) {
+            VirtualFree(base, 0, MEM_RELEASE);
+            base = nullptr;
+        }
+#else
+        const long systemPageSize = sysconf(_SC_PAGESIZE);
+        Check(systemPageSize > 0, "sysconf returns positive page size");
+        if (systemPageSize <= 0) return;
+        pageSize = static_cast<std::size_t>(systemPageSize);
+        void* mapped = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Check(mapped != MAP_FAILED, "mmap succeeds for SSL_CIPHER_get_bits page test");
+        if (mapped == MAP_FAILED) return;
+        base = static_cast<unsigned char*>(mapped);
+        const int protectedOk = mprotect(base, pageSize, PROT_NONE);
+        Check(protectedOk == 0, "mprotect makes first page inaccessible");
+        if (protectedOk != 0) {
+            munmap(base, pageSize * 2);
+            base = nullptr;
+        }
+#endif
+    }
+
+    ~StraddlingCipherPages() {
+        if (!base) return;
+#if defined(_WIN32)
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 2);
+#endif
+    }
+
+    unsigned char* ReadablePage() const {
+        return base ? base + pageSize : nullptr;
+    }
+};
+
+void CipherGetBitsFault() {
+    std::int32_t algorithmBits = 0x12345678;
+    Check(SSL_CIPHER_get_bits_nid_postfix(nullptr, &algorithmBits) == 0 && algorithmBits == 0x12345678,
+          "null cipher returns zero without modifying algorithmBits");
+
+    TestCipher validCipher{};
+    validCipher.strengthBits = 128;
+    validCipher.algorithmBits = 256;
+    algorithmBits = 0;
+    Check(SSL_CIPHER_get_bits_nid_postfix(&validCipher, &algorithmBits) == 128 && algorithmBits == 256,
+          "valid cipher returns strengthBits and writes algorithmBits");
+    Check(SSL_CIPHER_get_bits_nid_postfix(&validCipher, nullptr) == 128,
+          "valid cipher with null algorithmBits returns strengthBits");
+
+    StraddlingCipherPages pages;
+    unsigned char* readablePage = pages.ReadablePage();
+    if (!readablePage) return;
+
+    constexpr std::int32_t expectedAlgorithmBits = 256;
+    std::memcpy(readablePage, &expectedAlgorithmBits, sizeof(expectedAlgorithmBits));
+    const void* partialCipher = readablePage - offsetof(TestCipher, algorithmBits);
+
+    algorithmBits = 0x12345678;
+    bool threw = false;
+    try {
+        SSL_CIPHER_get_bits_nid_postfix(partialCipher, &algorithmBits);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Check(threw, "partial cipher across page boundary throws");
+    Check(algorithmBits == 0x12345678, "partial cipher fault leaves algorithmBits unchanged");
 }
 }
 
@@ -164,6 +279,7 @@ int main() {
           "allocation error appends to existing queue entries");
     Check(ERR_get_error_nid_postfix() == 0 && seeded.live == 0, "seeded failure adds exactly one error and leaks nothing");
     CreateFailures();
+    CipherGetBitsFault();
     std::printf("{\"fast_cases\":%zu,\"allocation_fault_cases\":%zu,\"checks\":%zu,\"failures\":%zu,\"escaped\":%zu,\"final_live\":%zu}\n",
                 fastCases, faultCases, checks, failures, escaped, Live());
     return failures ? 1 : 0;
