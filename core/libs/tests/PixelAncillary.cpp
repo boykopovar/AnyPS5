@@ -73,6 +73,14 @@ static IrValue& Build(IrProgram& program, IrOpcode opcode, std::uint32_t offset,
     End(builder, user);
     return user;
 }
+static const IrValue* Referenced(const IrProgram& program) {
+    for (const IrBlock* block : program.BlockOrder()) {
+        for (const IrValue* inst : block->Instructions()) {
+            if (inst->Opcode() == IrOpcode::ReferenceU32) return inst->Argument(0)->Resolve();
+        }
+    }
+    return nullptr;
+}
 static void Lower(IrProgram& program) {
     ConstantFolder().Fold(program);
     DeadCodeEliminator().RemoveIdentities(program);
@@ -185,11 +193,12 @@ static std::uint32_t PackedWord(const Row& row) {
 }
 static void Values(IrOpcode opcode, std::uint32_t offset, std::uint32_t count, bool throughSelect) {
     IrProgram program;
-    auto& user = Build(program, opcode, offset, count, throughSelect);
+    static_cast<void>(Build(program, opcode, offset, count, throughSelect));
     Lower(program);
+    const IrValue* used = Referenced(program);
     for (const Row& row : Rows) {
         const std::uint32_t word = throughSelect && !row.frontFacing ? SelectOther : PackedWord(row);
-        Require(Evaluate(&user, row) == BitField(word, offset, count, opcode == IrOpcode::BitFieldSExtract));
+        Require(Evaluate(used, row) == BitField(word, offset, count, opcode == IrOpcode::BitFieldSExtract));
     }
 }
 static void LateFold() {
@@ -245,11 +254,12 @@ static IrValue& Merged(IrProgram& program, IrOpcode opcode, std::uint32_t offset
 }
 static void MergedValues(IrOpcode opcode, std::uint32_t offset, std::uint32_t count, bool loop) {
     IrProgram program;
-    auto& user = Merged(program, opcode, offset, count, loop);
+    static_cast<void>(Merged(program, opcode, offset, count, loop));
     Lower(program);
+    const IrValue* used = Referenced(program);
     for (const Row& row : Rows) {
         const std::uint32_t word = row.frontFacing ? PackedWord(row) : SelectOther;
-        Require(Evaluate(&user, row) == BitField(word, offset, count, opcode == IrOpcode::BitFieldSExtract));
+        Require(Evaluate(used, row) == BitField(word, offset, count, opcode == IrOpcode::BitFieldSExtract));
     }
 }
 static void MergedRefused(IrOpcode opcode, std::uint32_t offset, std::uint32_t count, bool loop) {
@@ -449,12 +459,14 @@ static bool AncillaryRemains(const IrProgram& program) {
 }
 static void PerPixelSampleNumber(bool throughSelect) {
     IrProgram program;
-    auto& user = Build(program, IrOpcode::BitFieldUExtract, 8u, 4u, throughSelect);
+    static_cast<void>(Build(program, IrOpcode::BitFieldUExtract, 8u, 4u, throughSelect));
     Lower(program);
     Require(!BuiltinRemains(program, StageInputKind::SampleId));
+    const IrValue* used = Referenced(program);
+    Require(throughSelect || (used->HasImmediate() && used->ImmediateU32() == 0u));
     for (const Row& row : Rows) {
         const std::uint32_t word = throughSelect && !row.frontFacing ? SelectOther : PackedWord(row);
-        Require(Evaluate(&user, row) == BitField(word, 8u, 4u, false));
+        Require(Evaluate(used, row) == BitField(word, 8u, 4u, false));
     }
 }
 static void ExportedWholeWord() {
@@ -547,12 +559,7 @@ static const IrValue* StartingQuadExported(IrProgram& program, StartingQuad shap
     } else {
         Lower(program);
     }
-    for (const IrBlock* block : program.BlockOrder()) {
-        for (const IrValue* inst : block->Instructions()) {
-            if (inst->Opcode() == IrOpcode::ReferenceU32) return inst->Argument(0)->Resolve();
-        }
-    }
-    return nullptr;
+    return Referenced(program);
 }
 static void StartingQuadOnly() {
     IrProgram program;

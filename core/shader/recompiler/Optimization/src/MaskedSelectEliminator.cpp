@@ -1027,7 +1027,7 @@ public:
         return implied.Follows(value) || (value.Id() < readers.size() && readers[value.Id()] != Reader::Unknown);
     }
 
-    std::uint32_t Remove() {
+    std::uint32_t Remove(std::uint32_t& immediateSelects) {
         std::vector<IrValue*> order;
         for (auto blockIt = program.BlockOrder().rbegin(); blockIt != program.BlockOrder().rend(); ++blockIt) {
             const bool single = regionOf(regions, *blockIt) == Region::Once;
@@ -1052,6 +1052,7 @@ public:
         if (removed != 0u) {
             for (IrBlock* block : program.BlockOrder()) std::erase_if(block->Instructions(), [](const IrValue* inst) { return inst->Parent() == nullptr; });
         }
+        immediateSelects += immediate;
         return removed;
     }
 
@@ -1165,6 +1166,7 @@ private:
         const IrValue* mask = node < writes.size() ? writes[node] : nullptr;
         if (mask == nullptr || !select->HasUses() || select->Argument(0)->Resolve() != mask || !sets.Contains(unread[node], mask->Id())) return;
         halted = implied.Follows(*select) || std::any_of(owned.begin(), owned.end(), [&](const auto& reads) { return reads && reads->Follows(*select); });
+        if (select->Argument(1)->Resolve()->HasImmediate()) ++immediate;
         select->ReplaceAllUsesWith(select->Argument(1));
         select->Invalidate();
         select->SetParent(nullptr);
@@ -1192,12 +1194,13 @@ private:
     std::vector<std::uint32_t> queue;
     std::uint32_t group = 0;
     std::uint32_t removed = 0;
+    std::uint32_t immediate = 0;
     bool found = false;
     bool halted = false;
     bool solving = false;
 };
 
-std::uint32_t removeFullWaveSelects(IrProgram& program, const std::vector<Region>& regions, std::vector<IrValue*>& selects) {
+std::uint32_t removeFullWaveSelects(IrProgram& program, const std::vector<Region>& regions, std::vector<IrValue*>& selects, std::uint32_t& immediate) {
     std::uint32_t removed = 0;
     selects.clear();
     for (auto blockIt = program.BlockOrder().rbegin(); blockIt != program.BlockOrder().rend(); ++blockIt) {
@@ -1212,6 +1215,7 @@ std::uint32_t removeFullWaveSelects(IrProgram& program, const std::vector<Region
                 if (single) selects.push_back(inst);
                 continue;
             }
+            if (inst->Argument(1)->Resolve()->HasImmediate()) ++immediate;
             inst->ReplaceAllUsesWith(inst->Argument(1));
             inst->Invalidate();
             inst->SetParent(nullptr);
@@ -1233,9 +1237,9 @@ MaskedSelectEliminationStats MaskedSelectEliminator::Eliminate(IrProgram& progra
     const auto regions = blockRegions(program);
     const BlockSet uniform = uniformEntryBlocks(program);
     std::vector<IrValue*> selects;
-    std::uint32_t removed = removeFullWaveSelects(program, regions, selects);
+    std::uint32_t removed = removeFullWaveSelects(program, regions, selects, stats.immediateSelects);
     for (const MaskFamily family : {MaskFamily{true, false}, MaskFamily{true, true}, MaskFamily{false, false}, MaskFamily{false, true}}) {
-        if (hasUnreadCandidate(selects, regions, family, program.WaveSize())) removed += UnreadLanes(program, regions, uniform, family, stats.steps).Remove();
+        if (hasUnreadCandidate(selects, regions, family, program.WaveSize())) removed += UnreadLanes(program, regions, uniform, family, stats.steps).Remove(stats.immediateSelects);
     }
     stats.removedSelects = removed;
     if (removed != 0u) DeadCodeEliminator{}.Eliminate(program);
