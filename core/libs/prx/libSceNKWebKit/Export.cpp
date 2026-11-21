@@ -1384,10 +1384,6 @@ int APS5_VABI _ZNK7WebCore20HTMLFrameElementBase8locationEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore6LengthC2EON3WTF3RefINS_16CalculationValueENS1_13DumbPtrTraitsIS3_EEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList16DrawLinesForTextD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -3443,10 +3439,6 @@ int APS5_VABI _ZN7WebCore27TranslateTransformOperationD0Ev() {
 }
 
 int APS5_VABI _ZNK7WebCore18AdClickAttribution13urlForTestingERKN3WTF3URLE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore6LengthC1EON3WTF3RefINS_16CalculationValueENS1_13DumbPtrTraitsIS3_EEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -7348,10 +7340,6 @@ int APS5_VABI _ZN7WebCore11DisplayList8FillPathC1ERKNS_4PathE() {
 }
 
 int APS5_VABI _ZNK7WebCore11MediaSample13videoRotationEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore6Length21nonNanCalculatedValueEi() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -28233,15 +28221,6 @@ int APS5_VABI _ZNK7WebCore6JSNode21pushEventHandlerScopeEPN3JSC14JSGlobalObjectE
 int APS5_VABI _ZNK7WebCore6JSNode8nodeTypeERN3JSC14JSGlobalObjectE() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI _ZNK7WebCore6Length3refEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore6Length5derefEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 int APS5_VABI _ZNK7WebCore6Quirks44shouldAvoidResizingWhenInputViewBoundsChangeEv() {
     NotImplemented_nid_no_patch(__func__);
