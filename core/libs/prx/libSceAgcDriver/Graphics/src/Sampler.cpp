@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "PipelineSpecialization.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <bit>
 #include <cstdlib>
@@ -223,22 +224,39 @@ namespace AgcDriver::Graphics {
     std::optional<BorderComponentMapping> OpaqueBlackBorderMapping(const Context& context, std::span<const OpaqueBlackPairing> pairings) {
         if (context.borderColorSwizzleFromImage || pairings.empty()) return std::nullopt;
         if (std::all_of(pairings.begin(), pairings.end(), [](const OpaqueBlackPairing& pairing) { return Compatible(std::nullopt, pairing); })) return std::nullopt;
-        Require(context.borderColorSwizzle, "a texture whose swizzle moves the opaque black border of its sampler needs VK_EXT_border_color_swizzle");
+        if (!context.borderColorSwizzle) {
+            static std::once_flag once;
+            std::call_once(once, [] { APS5_LOG_CHARS_OUT("Sampler: the device lacks VK_EXT_border_color_swizzle, so an opaque black border that a texture's swizzle moves keeps the host's unswizzled border"); });
+            return std::nullopt;
+        }
         const BorderComponentMapping mapping = std::find_if(pairings.begin(), pairings.end(), [](const OpaqueBlackPairing& pairing) { return !Compatible(std::nullopt, pairing); })->view;
         for (const auto& pairing : pairings) {
-            Require(SameMapping(mapping, pairing.view), "a sampler with an opaque black border is paired with textures of different swizzles, one of which moves the border, which needs a sampler per texture and is not implemented");
-            Require(SwizzlesLikeGuest(pairing), "a texture whose host channel order changes the swizzled opaque black border of its sampler is not implemented");
+            if (!SameMapping(mapping, pairing.view)) {
+                static std::once_flag once;
+                std::call_once(once, [] { APS5_LOG_CHARS_OUT("Sampler: a sampler with an opaque black border is paired with textures of different swizzles, one of which moves the border, so it keeps the host's unswizzled border"); });
+                return std::nullopt;
+            }
+            if (!SwizzlesLikeGuest(pairing)) {
+                static std::once_flag once;
+                std::call_once(once, [] { APS5_LOG_CHARS_OUT("Sampler: a texture whose host channel order changes the swizzled opaque black border of its sampler keeps the host's unswizzled border"); });
+                return std::nullopt;
+            }
         }
         return mapping;
     }
 
-    void RequireOpaqueBlackPairing(const Context& context, const OpaqueBlackPairing& pairing, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {
-        if (context.borderColorSwizzleFromImage) return;
+    bool CheckOpaqueBlackPairing(const Context& context, const OpaqueBlackPairing& pairing, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {
+        if (context.borderColorSwizzleFromImage) return true;
         for (auto mask = samplerMask; mask != 0u; mask &= mask - 1u) {
             const auto element = static_cast<std::uint32_t>(std::countr_zero(mask));
             if (element >= samplers.size()) Require(false, "a sampled texture is paired with sampler element " + std::to_string(element) + ", which its shader does not bind");
-            if (samplers[element]->ReadsOpaqueBlackBorder() && !Compatible(samplers[element]->BorderMapping(), pairing)) Require(false, "a texture whose swizzle disagrees with the opaque black border mapping of its sampler needs dynamic texture/sampler pairing, which is not implemented");
+            if (samplers[element]->ReadsOpaqueBlackBorder() && !Compatible(samplers[element]->BorderMapping(), pairing)) {
+                static std::once_flag once;
+                std::call_once(once, [] { APS5_LOG_CHARS_OUT("Sampler: an image table texture whose swizzle disagrees with the opaque black border mapping of its sampler gets its sampler's border"); });
+                return false;
+            }
         }
+        return true;
     }
 
     void RequireNonSeamlessCube(bool cube, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {

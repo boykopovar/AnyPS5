@@ -4862,6 +4862,10 @@ bool VulkanDevice::SamplerMirrorClampToEdge() const {
     return state->samplerMirrorClampToEdge;
 }
 
+bool VulkanDevice::BorderColorSwizzle() const {
+    return state->borderColorSwizzle;
+}
+
 bool VulkanDevice::ConservativeRasterization() const {
     return state->conservativeRasterization;
 }

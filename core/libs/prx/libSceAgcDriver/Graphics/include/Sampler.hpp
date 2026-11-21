@@ -89,7 +89,7 @@ bool ForcesDegammaOn(std::uint32_t guestFormat, std::uint64_t samplerMask, std::
 void RequireBorderSwizzle(std::uint32_t bcSwizzle, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
 std::uint32_t BorderMappingKey(const std::optional<BorderComponentMapping>& mapping);
 std::optional<BorderComponentMapping> OpaqueBlackBorderMapping(const Context& context, std::span<const OpaqueBlackPairing> pairings);
-void RequireOpaqueBlackPairing(const Context& context, const OpaqueBlackPairing& pairing, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
+bool CheckOpaqueBlackPairing(const Context& context, const OpaqueBlackPairing& pairing, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
 void RequireNonSeamlessCube(bool cube, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
 void RequireDisablesDegammaOn(std::uint32_t guestFormat, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
 

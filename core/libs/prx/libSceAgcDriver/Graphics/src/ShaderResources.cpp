@@ -6451,7 +6451,7 @@ void ShaderResources::resolveImageTables() {
             try {
                 RequireFilterMinmax(context, texture->ViewFormat(), binding.imageSamplers.at(element), stageSamplers);
                 RequireBorderSwizzle(resource.bcSwizzle, binding.imageSamplers.at(element), stageSamplers);
-                RequireOpaqueBlackPairing(context, {{texture->ViewComponents(), IsSrgbViewFormat(texture->ViewFormat())}, {resource.dstSelX, resource.dstSelY, resource.dstSelZ, resource.dstSelW}}, binding.imageSamplers.at(element), stageSamplers);
+                static_cast<void>(CheckOpaqueBlackPairing(context, {{texture->ViewComponents(), IsSrgbViewFormat(texture->ViewFormat())}, {resource.dstSelX, resource.dstSelY, resource.dstSelZ, resource.dstSelW}}, binding.imageSamplers.at(element), stageSamplers));
                 RequireNonSeamlessCube(resource.dimension == TextureDimension::kCube, binding.imageSamplers.at(element), stageSamplers);
                 RequireDisablesDegammaOn(resource.format, binding.imageSamplers.at(element), stageSamplers);
                 const auto numeric = ShaderRecompiler::DepthBitsTextureWidth(words[1], words[3]) != 0u ? ShaderRecompiler::IrTextureNumericClass::Float : ShaderRecompiler::SampledTextureNumericClass(static_cast<ShaderRecompiler::IrBufferFormat>(resource.format));

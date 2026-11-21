@@ -365,14 +365,14 @@ void RunBorderComponentMappingTests(const Fields& base) {
     Require(splatMapping.has_value() && SameSwizzles(splatMapping->components, splat.view.components), "an X,X,X,X texture did not give its sampler the view's border component mapping");
     const auto srgbMapping = OpaqueBlackBorderMapping(context, std::array{reversedSrgb});
     Require(srgbMapping.has_value() && srgbMapping->srgb, "an sRGB view's border component mapping was not marked sRGB");
-    reject([&] { OpaqueBlackBorderMapping(context, std::array{reversed, plain}); }, "paired with textures of different swizzles, one of which moves the border");
-    reject([&] { OpaqueBlackBorderMapping(context, std::array{bgra, reversed}); }, "paired with textures of different swizzles, one of which moves the border");
-    reject([&] { OpaqueBlackBorderMapping(context, std::array{reversed, reversedSrgb}); }, "paired with textures of different swizzles, one of which moves the border");
-    reject([&] { OpaqueBlackBorderMapping(context, std::array{splat, unswizzled}); }, "paired with textures of different swizzles, one of which moves the border");
-    reject([&] { OpaqueBlackBorderMapping(context, std::array{reorderedHostMoving}); }, "host channel order changes the swizzled opaque black border");
+    Require(!OpaqueBlackBorderMapping(context, std::array{reversed, plain}).has_value(), "a sampler paired with textures of different swizzles, one of which moves the border, did not keep the host's border");
+    Require(!OpaqueBlackBorderMapping(context, std::array{bgra, reversed}).has_value(), "a sampler paired with textures of different swizzles, one of which moves the border, did not keep the host's border");
+    Require(!OpaqueBlackBorderMapping(context, std::array{reversed, reversedSrgb}).has_value(), "a sampler paired with textures of different swizzles, one of which moves the border, did not keep the host's border");
+    Require(!OpaqueBlackBorderMapping(context, std::array{splat, unswizzled}).has_value(), "a sampler paired with textures of different swizzles, one of which moves the border, did not keep the host's border");
+    Require(!OpaqueBlackBorderMapping(context, std::array{reorderedHostMoving}).has_value(), "a texture whose host channel order changes the swizzled opaque black border did not keep the host's border");
     context.borderColorSwizzle = false;
     Require(!OpaqueBlackBorderMapping(context, std::array{plain, bgra}).has_value(), "textures that keep the opaque black border needed VK_EXT_border_color_swizzle");
-    reject([&] { OpaqueBlackBorderMapping(context, std::array{reversed}); }, "moves the opaque black border of its sampler needs VK_EXT_border_color_swizzle");
+    Require(!OpaqueBlackBorderMapping(context, std::array{reversed}).has_value(), "a texture that moves the opaque black border did not keep the host's border without VK_EXT_border_color_swizzle");
 
     Fields black = base;
     black.clampX = 6u;
@@ -397,15 +397,12 @@ void RunBorderComponentMappingTests(const Fields& base) {
     Fields white = black;
     white.borderColorType = 2u;
     const std::array samplers{std::make_shared<Sampler>(context, blackResource), std::make_shared<Sampler>(context, blackResource, mapping), std::make_shared<Sampler>(context, DecodeSamplerResource(pack(white)))};
-    RequireOpaqueBlackPairing(context, plain, 0b001u, samplers);
-    RequireOpaqueBlackPairing(context, bgra, 0b101u, samplers);
-    RequireOpaqueBlackPairing(context, reversed, 0b110u, samplers);
-    reject([&] { RequireOpaqueBlackPairing(context, reversed, 0b001u, samplers); }, "disagrees with the opaque black border mapping of its sampler");
-    reject([&] { RequireOpaqueBlackPairing(context, plain, 0b010u, samplers); }, "disagrees with the opaque black border mapping of its sampler");
-    reject([&] { RequireOpaqueBlackPairing(context, reversedSrgb, 0b010u, samplers); }, "disagrees with the opaque black border mapping of its sampler");
-    reject([&] { RequireOpaqueBlackPairing(context, plain, 0b1000u, samplers); }, "sampler element 3, which its shader does not bind");
+    Require(CheckOpaqueBlackPairing(context, plain, 0b001u, samplers) && CheckOpaqueBlackPairing(context, bgra, 0b101u, samplers) && CheckOpaqueBlackPairing(context, reversed, 0b110u, samplers), "an image table texture whose swizzle agrees with its samplers' borders was reported as disagreeing");
+    Require(!CheckOpaqueBlackPairing(context, reversed, 0b001u, samplers), "an image table texture whose swizzle moves the border of an unmapped sampler was reported as agreeing");
+    Require(!CheckOpaqueBlackPairing(context, plain, 0b010u, samplers) && !CheckOpaqueBlackPairing(context, reversedSrgb, 0b010u, samplers), "an image table texture whose swizzle disagrees with its sampler's border mapping was reported as agreeing");
+    reject([&] { CheckOpaqueBlackPairing(context, plain, 0b1000u, samplers); }, "sampler element 3, which its shader does not bind");
     context.borderColorSwizzleFromImage = true;
-    RequireOpaqueBlackPairing(context, reversed, 0b011u, samplers);
+    Require(CheckOpaqueBlackPairing(context, reversed, 0b011u, samplers), "a device that swizzles borders from the image view reported an image table texture as disagreeing");
 }
 
 void RunSamplerCacheDegammaTests(const Fields& base) {

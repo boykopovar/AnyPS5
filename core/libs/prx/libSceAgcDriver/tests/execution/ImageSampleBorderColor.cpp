@@ -108,13 +108,21 @@ int main() {
         Check(*device, Uint8_8_8_8, 2u, {1u, 1u, 1u, 1u}, "8_8_8_8_UINT opaque white border");
         Check(*device, Unorm8_8_8_8, 2u, {One, One, One, One}, "8_8_8_8_UNORM opaque white border under ANISO_OVERRIDE", AnisoOverride);
         Check(*device, Uint8_8_8_8, 2u, {1u, 1u, 1u, 1u}, "8_8_8_8_UINT opaque white border under ANISO_OVERRIDE", AnisoOverride);
+        Check(*device, Unorm8_8_8_8, 1u, {0u, 0u, 0u, One}, "8_8_8_8_UNORM opaque black border under DST_SEL Z,Y,X,W", 0u, SwizzleZYXW);
+        Check(*device, Unorm8_8_8_8, 0u, {0u, 0u, 0u, 0u}, "8_8_8_8_UNORM transparent black border under DST_SEL W,Z,Y,X", 0u, SwizzleWZYX);
+        Check(*device, Unorm8_8_8_8, 2u, {One, One, One, One}, "8_8_8_8_UNORM opaque white border under DST_SEL X,X,X,X", 0u, SwizzleXXXX);
+        if (!device->BorderColorSwizzle()) {
+            Run(*device, Unorm8_8_8_8, 1u, 0u, SwizzleWZYX);
+            Run(*device, Uint8_8_8_8, 1u, 0u, SwizzleWZYX);
+            Run(*device, Unorm8_8_8_8, 1u, 0u, SwizzleXXXX);
+            Run(*device, Uint8_8_8_8, 1u, 0u, SwizzleXXXX);
+            std::puts("skipped, the device lacks VK_EXT_border_color_swizzle, so an opaque black border that the texture's swizzle moves keeps the host's border, which Vulkan leaves undefined");
+            return VulkanTestSkipped;
+        }
         Check(*device, Unorm8_8_8_8, 1u, {One, 0u, 0u, 0u}, "8_8_8_8_UNORM opaque black border under DST_SEL W,Z,Y,X", 0u, SwizzleWZYX);
         Check(*device, Uint8_8_8_8, 1u, {1u, 0u, 0u, 0u}, "8_8_8_8_UINT opaque black border under DST_SEL W,Z,Y,X", 0u, SwizzleWZYX);
         Check(*device, Unorm8_8_8_8, 1u, {0u, 0u, 0u, 0u}, "8_8_8_8_UNORM opaque black border under DST_SEL X,X,X,X", 0u, SwizzleXXXX);
         Check(*device, Uint8_8_8_8, 1u, {0u, 0u, 0u, 0u}, "8_8_8_8_UINT opaque black border under DST_SEL X,X,X,X", 0u, SwizzleXXXX);
-        Check(*device, Unorm8_8_8_8, 1u, {0u, 0u, 0u, One}, "8_8_8_8_UNORM opaque black border under DST_SEL Z,Y,X,W", 0u, SwizzleZYXW);
-        Check(*device, Unorm8_8_8_8, 0u, {0u, 0u, 0u, 0u}, "8_8_8_8_UNORM transparent black border under DST_SEL W,Z,Y,X", 0u, SwizzleWZYX);
-        Check(*device, Unorm8_8_8_8, 2u, {One, One, One, One}, "8_8_8_8_UNORM opaque white border under DST_SEL X,X,X,X", 0u, SwizzleXXXX);
         std::puts("image sample border color tests passed");
         return 0;
     } catch (const std::exception& error) {
