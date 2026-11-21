@@ -1565,8 +1565,12 @@ static void TestDownload() {
     auto download = NKWebKit::Make<NKWebKit::Download>();
     const void* ref = download.Get();
 
-    Require(!WKDownloadGetWasUserInitiated(ref));
-    Require(WKDownloadCopyRequest(ref) == nullptr);
+    Require(WKDownloadGetWasUserInitiated(ref));
+    auto* initialRequest = WKDownloadCopyRequest(ref);
+    Require(initialRequest != nullptr);
+    Require(WKGetTypeID(initialRequest) == WKURLRequestGetTypeID());
+    Require(WKURLRequestCopyURL(initialRequest) == nullptr);
+    WKRelease(initialRequest);
     Require(WKDownloadGetOriginatingPage(ref) == nullptr);
     Require(WKDownloadGetID(ref) == 0);
     Require(WKDownloadGetResumeData(ref) == nullptr);
@@ -1596,6 +1600,8 @@ static void TestDownload() {
     Require(WKArrayGetSize(chain) == 1);
     WKRelease(chain);
 
+    download->wasUserInitiated = false;
+    Require(!WKDownloadGetWasUserInitiated(ref));
     download->wasUserInitiated = true;
     Require(WKDownloadGetWasUserInitiated(ref));
 
