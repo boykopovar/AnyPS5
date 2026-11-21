@@ -798,6 +798,25 @@ class ChunkTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("ctest"), "needs ctest")
 class CTestIndexFileTests(unittest.TestCase):
+    def test_full_ctest_fails_without_registered_tests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "CTestTestfile.cmake").touch()
+            result = subprocess.run([sys.executable, str(TOOL), "ctest", directory],
+                                    capture_output=True, text=True)
+            self.assertIn("No tests were found", result.stderr)
+            self.assertNotEqual(result.returncode, 0)
+
+    def test_empty_selection_can_succeed_with_registered_tests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CTestTestfile.cmake").write_text(
+                f'add_test(should_not_run "{Path(sys.executable).as_posix()}" -c "raise SystemExit(1)")\n',
+                encoding="utf-8")
+            (root / "select.tests").write_text("0,0,0,\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), "ctest", directory],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_large_selection_is_passed_to_ctest_without_an_oversized_argument(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
