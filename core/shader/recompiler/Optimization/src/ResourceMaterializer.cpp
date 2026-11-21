@@ -1153,6 +1153,55 @@ private:
         if (column.buffer) parentKeysRemaining -= records.keys;
     }
 
+    std::optional<std::uint64_t> Chase(std::uint64_t pointer, const PointerChase& chase) {
+        DescriptorValue descriptor;
+        descriptor.dwordCount = 4u;
+        for (std::uint32_t dword = 0; dword < 4u; dword++) {
+            const auto address = ImageTableAbi::ScalarAddressDword(pointer, chase.offset, chase.immediate + dword * 4u);
+            if (!address.has_value() || (*address & 3u) != 0u || !AddressAccessible(*address)) return std::nullopt;
+            descriptor.dwords[dword] = chase.edits[dword].Apply(Read(*address));
+            descriptor.availableDwordMask |= static_cast<std::uint8_t>(1u << dword);
+            tables.ranges.emplace_back(*address, sizeof(std::uint32_t));
+        }
+        const auto buffer = decodeBufferDescriptor(descriptor);
+        if (buffer.Type() != 0u) return std::nullopt;
+        const auto low = ImageTableAbi::ScalarBufferDword(chase.readOffset, chase.readImmediate, buffer.GetSize());
+        const auto high = ImageTableAbi::ScalarBufferDword(chase.readOffset, chase.readImmediate + 4u, buffer.GetSize());
+        if (!low.has_value() || !high.has_value() || !AddressAccessible(buffer.Base48() + *low) || !AddressAccessible(buffer.Base48() + *high)) return std::nullopt;
+        tables.ranges.emplace_back(buffer.Base48() + *low, sizeof(std::uint32_t));
+        tables.ranges.emplace_back(buffer.Base48() + *high, sizeof(std::uint32_t));
+        return (static_cast<std::uint64_t>(Read(buffer.Base48() + *high)) << 32u) | Read(buffer.Base48() + *low);
+    }
+
+    template <typename ReadEntry>
+    void ChaseClosure(const TableColumn& column, ColumnRecords& records, std::uint32_t limit, const ReadEntry& readEntry) {
+        std::unordered_set<std::uint64_t> known;
+        std::vector<std::uint64_t> frontier;
+        for (std::uint32_t record = 0; record < records.keys; record++) {
+            const auto pointer = records.pointers[record];
+            if (pointer != ImageTableAbi::UncapturedPointer && known.insert(pointer).second) frontier.push_back(pointer);
+        }
+        for (std::uint32_t depth = 0; depth < column.pointerChaseDepth && !frontier.empty(); depth++) {
+            std::vector<std::uint64_t> reached;
+            for (const auto pointer : frontier) {
+                for (const auto& chase : column.pointerChases) {
+                    const auto next = Chase(pointer, chase);
+                    if (!next.has_value() || *next == 0u || !known.insert(*next).second) continue;
+                    if (records.keys >= limit) {
+                        records.outside = true;
+                        continue;
+                    }
+                    records.states.push_back(RecordState::Read);
+                    records.words.push_back(0u);
+                    records.pointers.push_back(*next);
+                    readEntry(records.keys++, *next);
+                    reached.push_back(*next);
+                }
+            }
+            frontier = std::move(reached);
+        }
+    }
+
     void ReadColumn(const TableColumn& column, ColumnRecords& records, std::uint32_t limit) {
         stamp = {};
         comparedRuns.clear();
@@ -1172,6 +1221,38 @@ private:
         if (column.indirect) {
             unread();
             if (column.buffer || column.pointerKeyed) records.pointers.assign(records.keys, ImageTableAbi::UncapturedPointer);
+            const auto readEntry = [&](std::uint32_t entry, std::uint64_t pointer) {
+                for (const auto& hop : column.pointerHops) {
+                    const auto low = ImageTableAbi::ScalarAddressDword(pointer, hop.offset, hop.immediate);
+                    const auto high = ImageTableAbi::ScalarAddressDword(pointer, hop.offset, hop.immediate + 4u);
+                    if (!low.has_value() || !high.has_value() || (*low & 3u) != 0u || *high != *low + sizeof(std::uint32_t) || !AddressAccessible(*low) || !AddressAccessible(*high)) {
+                        records.states[entry] = RecordState::Unmapped;
+                        return;
+                    }
+                    pointer = (static_cast<std::uint64_t>(Read(*high)) << 32u) | Read(*low);
+                    tables.ranges.emplace_back(*low, 2u * sizeof(std::uint32_t));
+                }
+                if (column.buffer) records.pointers[entry] = pointer;
+                DescriptorValue value;
+                value.dwordCount = column.sampler || column.buffer ? 4u : 8u;
+                std::uint64_t first = std::numeric_limits<std::uint64_t>::max();
+                std::uint64_t past = 0;
+                for (std::uint32_t dword = 0; dword < column.dwordCount; dword++) {
+                    auto address = ImageTableAbi::ScalarAddressDword(pointer, column.indirectOffset, column.indirectImmediate + dword * 4u);
+                    if (address.has_value() && (*address & 3u) != 0u) address.reset();
+                    if (!address.has_value() || !AddressAccessible(*address)) {
+                        records.states[entry] = RecordState::Unmapped;
+                        return;
+                    }
+                    value.dwords[dword] = Read(*address);
+                    value.availableDwordMask |= static_cast<std::uint8_t>(1u << dword);
+                    first = std::min(first, *address);
+                    past = std::max(past, *address + sizeof(std::uint32_t));
+                }
+                records.words[entry] = WordsIndex(records, value);
+                tables.ranges.emplace_back(first, past - first);
+                if (column.buffer) records.readRanges.emplace_back(first, past - first);
+            };
             for (std::uint32_t record = 0; record < records.keys; record++) {
                 if (records.states[record] != RecordState::Read) continue;
                 const auto offset = column.addend + record * column.stride;
@@ -1181,41 +1262,11 @@ private:
                     records.states[record] = RecordState::Unmapped;
                     continue;
                 }
-                std::uint64_t pointer = (static_cast<std::uint64_t>(Read(records.base + *highWord)) << 32u) | Read(records.base + *lowWord);
+                const std::uint64_t pointer = (static_cast<std::uint64_t>(Read(records.base + *highWord)) << 32u) | Read(records.base + *lowWord);
                 if (column.pointerKeyed) records.pointers[record] = pointer;
-                for (const auto& hop : column.pointerHops) {
-                    const auto low = ImageTableAbi::ScalarAddressDword(pointer, hop.offset, hop.immediate);
-                    const auto high = ImageTableAbi::ScalarAddressDword(pointer, hop.offset, hop.immediate + 4u);
-                    if (!low.has_value() || !high.has_value() || (*low & 3u) != 0u || *high != *low + sizeof(std::uint32_t) || !AddressAccessible(*low) || !AddressAccessible(*high)) {
-                        records.states[record] = RecordState::Unmapped;
-                        break;
-                    }
-                    pointer = (static_cast<std::uint64_t>(Read(*high)) << 32u) | Read(*low);
-                    tables.ranges.emplace_back(*low, 2u * sizeof(std::uint32_t));
-                }
-                if (records.states[record] != RecordState::Read) continue;
-                if (column.buffer) records.pointers[record] = pointer;
-                DescriptorValue value;
-                value.dwordCount = column.sampler || column.buffer ? 4u : 8u;
-                std::uint64_t first = std::numeric_limits<std::uint64_t>::max();
-                std::uint64_t past = 0;
-                for (std::uint32_t dword = 0; dword < column.dwordCount; dword++) {
-                    auto address = ImageTableAbi::ScalarAddressDword(pointer, column.indirectOffset, column.indirectImmediate + dword * 4u);
-                    if (address.has_value() && (*address & 3u) != 0u) address.reset();
-                    if (!address.has_value() || !AddressAccessible(*address)) {
-                        records.states[record] = RecordState::Unmapped;
-                        break;
-                    }
-                    value.dwords[dword] = Read(*address);
-                    value.availableDwordMask |= static_cast<std::uint8_t>(1u << dword);
-                    first = std::min(first, *address);
-                    past = std::max(past, *address + sizeof(std::uint32_t));
-                }
-                if (records.states[record] != RecordState::Read) continue;
-                records.words[record] = WordsIndex(records, value);
-                tables.ranges.emplace_back(first, past - first);
-                if (column.buffer) records.readRanges.emplace_back(first, past - first);
+                readEntry(record, pointer);
             }
+            if (column.pointerKeyed && column.pointerChaseDepth != 0u) ChaseClosure(column, records, limit, readEntry);
             return;
         }
         const bool memoized = TableSnapshotReuse() && !records.narrowed && records.keys != 0u;
