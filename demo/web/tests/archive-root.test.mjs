@@ -19,6 +19,8 @@ const { packageArchive } = await import(pathToFileURL(path.join(webRoot, "archiv
 const libraryBundle = await zipped([["libs/provider.prx", false]]);
 for (const moduleDirectories of [["sce_modules"], ["prx"], ["sce_module", "prx"], ["sce_modules", "prx"]]) {
   const entries = [["title/main.elf", false], ...moduleDirectories.map((name, index) => [`title/${name}/module${index}.prx`, false])];
+  const nested = `${moduleDirectories[0]}/assets/model.bin`;
+  entries.push([`title/${nested}`, false, header]);
   const folder = entries.map(([name, , bytes = header]) => ({path: name, file: new Blob([bytes])}));
   for (const selection of [await zipped(entries), folder]) {
     const archive = new Archive(selection);
@@ -30,12 +32,17 @@ for (const moduleDirectories of [["sce_modules"], ["prx"], ["sce_module", "prx"]
       const input = await archive.conversionInput("linux", false, () => {});
       assert.deepEqual(input.modules.map(module => module.name).sort(), moduleDirectories.map((name, index) => `${name}/module${index}.prx`).sort());
       const written = [];
+      const asset = [];
       const modules = input.modules.map(module => ({name: `app0/${module.name}.guest.prx`, bytes: header}));
       await packageArchive(archive, {executable: header, modules}, "main", libraryBundle, {
         async directory(name) { written.push(name); },
-        async file(name) { written.push(name); return new WritableStream(); }
+        async file(name) {
+          written.push(name);
+          return new WritableStream({ write(chunk) { if (name === `app0/${nested}`) asset.push(...chunk); } });
+        }
       }, () => {}, true);
       for (const module of modules) assert(written.includes(module.name));
+      assert.deepEqual(asset, [...header]);
     } finally { await archive.close(); }
   }
 }
@@ -46,9 +53,11 @@ for (const directory of ["Media/Modules", "Media/Plugins"]) {
     for (const selection of [await zipped(entries), entries.map(([path, , bytes = header]) => ({ path, file: new Blob([bytes]) }))]) {
       const archive = new Archive(selection);
       try {
-        await assert.rejects(archive.inspect(() => {}), {
-          message: `${directory}/provider.${suffix} is a Unity ELF module the web converter cannot relink. Use the native relinker with --module-dir ${directory}.`
-        });
+        const summary = await archive.inspect(() => {});
+        assert.equal(summary.modules, 1);
+        assert(!summary.warnings.some(warning => warning.includes("module folder")));
+        const input = await archive.conversionInput("linux", false, () => {});
+        assert.deepEqual(input.modules, [{ name: `${directory}/provider.${suffix}`, bytes: header }]);
       } finally { await archive.close(); }
     }
   }
@@ -57,6 +66,7 @@ for (const directory of ["Media/Modules", "Media/Plugins"]) {
   const archive = new Archive(await zipped([
     ["title/main.elf", false],
     [`title/${directory}/readme.txt`, false, new TextEncoder().encode("Unity asset")],
+    [`title/${directory}/assets/unrelated.elf`, false],
     [`title/${directory}/provider.guest.prx`, false],
     [`title/${directory}/encrypted.prx`, false, new Uint8Array([0x4f, 0x15, 0x3d, 0x1d])]
   ]));
