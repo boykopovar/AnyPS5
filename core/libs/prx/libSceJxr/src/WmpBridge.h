@@ -31,6 +31,10 @@ typedef struct JxrWmpDecodeSlots {
 
 void* JxrWmpRetainProxy_nid_no_patch(void* record, size_t size);
 void JxrWmpMissingCallback_nid_no_patch(const char* name);
+typedef void (*JxrWmpTailConversion)(void* record);
+typedef int64_t (*JxrWmpTailCall)(void* context);
+int64_t JxrWmpCallWithHostTail_nid_no_patch(void* record, JxrWmpTailConversion toHost, JxrWmpTailConversion toGuest,
+                                            JxrWmpTailCall call, void* context);
 
 size_t JxrWmpEncodeParameterSize_nid_no_patch(void);
 int64_t JxrWmpEncodeInitialize_nid_no_patch(void* encoder, void* stream, void* parameters, size_t size);

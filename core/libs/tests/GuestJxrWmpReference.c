@@ -107,6 +107,42 @@ Cleanup:
     return err;
 }
 
+size_t JxrWmpReferenceEncoderTailOffset(void) {
+    return offsetof(PKImageEncode, WMP.bHasAlpha);
+}
+
+size_t JxrWmpReferenceDecoderTailOffset(void) {
+    return offsetof(PKImageDecode, WMP.bHasAlpha);
+}
+
+int64_t JxrWmpReferenceEncodeOriented(const void* parameters, uint32_t width, uint32_t height, const uint8_t* pixels,
+                                      uint32_t stride, int32_t banded, int32_t orientation, uint8_t* output,
+                                      size_t capacity, size_t* written) {
+    ERR err = WMP_errSuccess;
+    struct WMPStream* stream = NULL;
+    PKImageEncode* encoder = NULL;
+    *written = 0;
+    Call(CreateWS_Memory(&stream, output, capacity));
+    Call(PKImageEncode_Create_WMP(&encoder));
+    Call(encoder->Initialize(encoder, stream, (void*)parameters, sizeof(CWMIStrCodecParam)));
+    Call(encoder->SetPixelFormat(encoder, *Format(0)));
+    Call(encoder->SetSize(encoder, (I32)width, (I32)height));
+    encoder->WMP.oOrientation = (ORIENTATION)orientation;
+    if (banded) {
+        Call(encoder->WritePixelsBandedBegin(encoder, NULL));
+        Call(encoder->WritePixelsBanded(encoder, 16, (U8*)pixels, stride, FALSE));
+        Call(encoder->WritePixelsBanded(encoder, height - 16, (U8*)pixels + 16 * stride, stride, TRUE));
+        Call(encoder->WritePixelsBandedEnd(encoder));
+    } else {
+        Call(encoder->WritePixels(encoder, height, (U8*)pixels, stride));
+    }
+    Call(stream->GetPos(stream, written));
+Cleanup:
+    if (encoder != NULL) encoder->Release(&encoder);
+    else if (stream != NULL) stream->Close(&stream);
+    return err;
+}
+
 void JxrWmpReferenceConfigureDecoder(void* value) {
     PKImageDecode* decoder = (PKImageDecode*)value;
     PKPixelInfo info;
@@ -148,6 +184,32 @@ Cleanup:
     if (decoder != NULL) decoder->Release(&decoder);
     if (stream != NULL) stream->Close(&stream);
     return err;
+}
+
+void JxrWmpReferenceDecodeRewind(const uint8_t* data, size_t size, uint8_t* pixels, uint32_t stride,
+                                 int64_t* results) {
+    struct WMPStream* stream = NULL;
+    PKImageDecode* decoder = NULL;
+    I32 width = 0;
+    I32 height = 0;
+    PKRect rect = {0, 0, 0, 16};
+    results[0] = WMP_errFail;
+    results[1] = WMP_errFail;
+    results[2] = WMP_errFail;
+    if (Failed(CreateWS_Memory(&stream, (void*)data, size))) return;
+    if (!Failed(PKImageDecode_Create_WMP(&decoder)) && !Failed(decoder->Initialize(decoder, stream))) {
+        JxrWmpReferenceConfigureDecoder(decoder);
+        decoder->GetSize(decoder, &width, &height);
+        rect.Width = width;
+        decoder->WMP.bIgnoreOverlap = TRUE;
+        results[0] = decoder->Copy(decoder, &rect, pixels, stride);
+        decoder->WMP.bIgnoreOverlap = FALSE;
+        results[1] = decoder->Copy(decoder, &rect, pixels, stride);
+        rect.Y = 16;
+        results[2] = decoder->Copy(decoder, &rect, pixels + 16 * stride, stride);
+    }
+    if (decoder != NULL) decoder->Release(&decoder);
+    stream->Close(&stream);
 }
 
 int64_t JxrWmpReferenceTranscode(const uint8_t* data, size_t size, const void* encodeParameters,
