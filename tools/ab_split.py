@@ -106,8 +106,8 @@ def read_log(lines):
                     raise ValueError("phase index restarts in one log (multiple A/B runs); split the captures before comparing phases")
 
                 if current is not None:
-                    if current["settled"] is None and unmatched_settlement is not None:
-                        raise ValueError(f"phase {unmatched_settlement[0]} {unmatched_settlement[1]} settled does not match active phase {current['kind']} {current['index']}")
+                    if unmatched_settlement is not None:
+                        raise ValueError(unmatched_settlement)
                     previous_point = current["settled"] or current["begin"]
                     if point[0] < previous_point[0] or point[1] < previous_point[1]:
                         raise ValueError("phase began before the previous phase boundary")
@@ -120,7 +120,9 @@ def read_log(lines):
 
             elif current is not None:
                 if current["index"] != index or current["kind"] != kind:
-                    unmatched_settlement = (kind, index)
+                    if current["settled"] is None:
+                        unmatched_settlement = (f"phase {kind} {index} settled does not match active phase "
+                                                f"{current['kind']} {current['index']}")
                 else:
                     if current["settled"] is not None:
                         raise ValueError("phase settled more than once")
@@ -140,6 +142,8 @@ def read_log(lines):
                         current["reports"][name].append(report)
                 previous[name] = state
                 break
+    if unmatched_settlement is not None:
+        raise ValueError(unmatched_settlement)
     return config, phases
 
 
