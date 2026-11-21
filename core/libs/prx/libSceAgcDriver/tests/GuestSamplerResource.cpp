@@ -362,6 +362,18 @@ void RunGuestSamplerResourceTests() {
     Require(result.addressModeV == VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT, "clamp mode 1 must decode to mirrored repeat");
     Require(result.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, "clamp mode 4 must decode to clamp-to-border");
 
+    Fields pointHalfBorder = nearest;
+    pointHalfBorder.clampX = 4;
+    pointHalfBorder.clampY = 4;
+    pointHalfBorder.clampZ = 4;
+    result = DecodeSamplerResource(pack(pointHalfBorder));
+    Require(result.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && result.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "clamp mode 4 with point XY filters must decode to clamp-to-edge");
+    Require(result.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, "clamp mode 4 on Z keeps clamp-to-border");
+    Fields linearMagHalfBorder = pointHalfBorder;
+    linearMagHalfBorder.xyMagFilter = 1;
+    result = DecodeSamplerResource(pack(linearMagHalfBorder));
+    Require(result.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER && result.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, "clamp mode 4 with a bilinear filter keeps clamp-to-border");
+
     Fields aniso = base;
     aniso.xyMagFilter = 2;
     aniso.xyMinFilter = 2;
