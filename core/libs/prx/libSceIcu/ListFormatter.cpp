@@ -48,4 +48,13 @@ UFormattedList* APS5_VABI ulistfmt_openResult_nid_postfix(std::int32_t* status) 
     NotImplemented_nid_no_patch(__func__);
 }
 
+const UFormattedValue* APS5_VABI ulistfmt_resultAsValue_nid_postfix(const UFormattedList* result, std::int32_t* status) {
+    if (Icu::Failure(status)) return nullptr;
+    if (!result) {
+        *status = Icu::IllegalArgument;
+        return nullptr;
+    }
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

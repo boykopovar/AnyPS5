@@ -20,6 +20,7 @@ constexpr int LengthMismatch = 62;
 constexpr int MallocFailure = 65;
 constexpr int BadObjectHeader = 102;
 constexpr int FieldMissing = 121;
+constexpr int InvalidTimeFormat = 132;
 constexpr int SequenceLengthMismatch = 148;
 constexpr int SequenceNotConstructed = 149;
 constexpr int StringTooShort = 152;
@@ -474,13 +475,55 @@ LibreSsl3X509Algor* DecodeAlgor(std::span<const unsigned char>& input) {
     return algor;
 }
 
+bool TwoDigits(std::span<const unsigned char>& text, int& value) {
+    if (text.size() < 2 || text[0] < '0' || text[0] > '9' || text[1] < '0' || text[1] > '9') return false;
+    value = (text[0] - '0') * 10 + (text[1] - '0');
+    text = text.subspan(2);
+    return true;
+}
+
+bool ValidDay(int year, int month, int day) {
+    if (day < 1) return false;
+    if (month == 2) return day <= ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0 ? 29 : 28);
+    return day <= (month == 4 || month == 6 || month == 9 || month == 11 ? 30 : 31);
+}
+
+bool ValidTime(std::span<const unsigned char> text, bool generalized) {
+    int year = 1900;
+    int value = 0;
+    if (generalized) {
+        if (!TwoDigits(text, value)) return false;
+        year = value * 100;
+    }
+    if (!TwoDigits(text, value)) return false;
+    year += value;
+    if (!generalized && year < 1950) year += 100;
+    int month = 0;
+    int day = 0;
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+    if (!TwoDigits(text, month) || month < 1 || month > 12) return false;
+    if (!TwoDigits(text, day) || !ValidDay(year, month, day)) return false;
+    if (!TwoDigits(text, hour) || hour > 23) return false;
+    if (!TwoDigits(text, minute) || minute > 59) return false;
+    if (!TwoDigits(text, second) || second > 59) return false;
+    return text.size() == 1 && text[0] == 'Z';
+}
+
 Asn1String* DecodeTime(std::span<const unsigned char>& input) {
     Tlv value;
     if (!ReadTlv(input, value)) return nullptr;
-    if (value.tag == UtcTimeTag) return NewString(UtcTimeType, value.content);
-    if (value.tag == GeneralizedTimeTag) return NewString(GeneralizedTimeType, value.content);
-    PutError(WrongTag);
-    return nullptr;
+    if (value.tag != UtcTimeTag && value.tag != GeneralizedTimeTag) {
+        PutError(WrongTag);
+        return nullptr;
+    }
+    const bool generalized = value.tag == GeneralizedTimeTag;
+    if (!ValidTime(value.content, generalized)) {
+        PutError(InvalidTimeFormat);
+        return nullptr;
+    }
+    return NewString(generalized ? GeneralizedTimeType : UtcTimeType, value.content);
 }
 
 LibreSsl3X509Extension* DecodeExtension(std::span<const unsigned char>& input);
