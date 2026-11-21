@@ -1073,6 +1073,58 @@ static void CheckOverlayResolve(const std::string& directory) {
     }
 }
 
+static void CheckOverlayUpdates(const std::string& directory) {
+    REQUIRE(Resolve(0, "/overlay-cache/file") == "/overlay-cache/file");
+    const auto first = AddOverlay(0, 5, "/overlay-cache", "/first//./");
+    REQUIRE(Resolve(0, "/overlay-cache/file") == "/first/file");
+    const auto second = AddOverlay(0, 5, "/overlay-cache", "/second");
+    REQUIRE(Resolve(0, "/overlay-cache/file") == "/first/file");
+    OverlayRecordTest changed{};
+    changed.order = 6;
+    std::strcpy(changed.destination, "/overlay-cache");
+    std::strcpy(changed.source, "/third");
+    REQUIRE(sceFiosOverlayModify(first, &changed) == SCE_FIOS_OK);
+    REQUIRE(Resolve(0, "/overlay-cache/file") == "/second/file");
+    changed.order = 5;
+    REQUIRE(sceFiosOverlayModify(first, &changed) == SCE_FIOS_OK);
+    REQUIRE(Resolve(0, "/overlay-cache/file") == "/third/file");
+    changed.type = 4;
+    REQUIRE(sceFiosOverlayModify(first, &changed) == SCE_FIOS_ERROR_BAD_FLAGS);
+    REQUIRE(Resolve(0, "/overlay-cache/file") == "/third/file");
+    changed.type = 0;
+    std::strcpy(changed.destination, "/renamed-cache");
+    REQUIRE(sceFiosOverlayModify(first, &changed) == SCE_FIOS_OK);
+    REQUIRE(Resolve(0, "/overlay-cache/file") == "/second/file");
+    REQUIRE(Resolve(0, "/renamed-cache/file") == "/third/file");
+    changed.order = 0x80;
+    REQUIRE(sceFiosOverlayModify(first, &changed) == SCE_FIOS_OK);
+    REQUIRE(Resolve(0, "/renamed-cache/file") == "/renamed-cache/file");
+    changed.order = 0x7f;
+    REQUIRE(sceFiosOverlayModify(first, &changed) == SCE_FIOS_OK);
+    REQUIRE(Resolve(0, "/renamed-cache/file") == "/third/file");
+    REQUIRE(sceFiosOverlayRemove(first) == SCE_FIOS_OK);
+    REQUIRE(Resolve(0, "/renamed-cache/file") == "/renamed-cache/file");
+    REQUIRE(sceFiosOverlayRemove(second) == SCE_FIOS_OK);
+    REQUIRE(Resolve(0, "/overlay-cache/file") == "/overlay-cache/file");
+
+    const std::string base = directory + "/snapshot-base";
+    const std::string source = directory + "/snapshot-source";
+    std::filesystem::create_directories(base);
+    std::filesystem::create_directories(source);
+    std::ofstream(base + "/file") << "base";
+    for (const std::uint8_t type : {1, 2, 3}) {
+        const auto id = AddOverlay(type, 0, base, source);
+        REQUIRE(Resolve(0, base + "/file") == base + "/file");
+        std::ofstream(source + "/file") << "source";
+        const auto originalTime = std::filesystem::last_write_time(base + "/file");
+        std::filesystem::last_write_time(source + "/file", originalTime + std::chrono::hours(1));
+        REQUIRE(Resolve(0, base + "/file") == source + "/file");
+        std::filesystem::remove(source + "/file");
+        REQUIRE(Resolve(0, base + "/file") == base + "/file");
+        REQUIRE(sceFiosOverlayRemove(id) == SCE_FIOS_OK);
+    }
+}
+
 static void CheckDirectories(const std::string& directory) {
     const std::string root = directory + "/listing";
     REQUIRE(sceFiosDirectoryCreateSync(nullptr, root.c_str()) == SCE_FIOS_OK);
@@ -1247,6 +1299,7 @@ int main() {
     CheckFileHandles(directory.generic_string());
     CheckDirectories(directory.generic_string());
     CheckOverlayResolve(directory.generic_string());
+    CheckOverlayUpdates(directory.generic_string());
     REQUIRE(sceFiosIOFilterGetInfo(0, nullptr, nullptr) == SCE_FIOS_ERROR_BAD_INDEX);
     CheckDates();
     CheckBadPointers(file);
