@@ -24,6 +24,8 @@ UEnumeration* APS5_VABI uloc_openKeywordList_nid_postfix(const char* keywordList
                 const bool copied = GuestCopyIn_nid_no_patch(keywords.data(), keywordList, keywords.size());
                 errno = savedErrno;
                 if (!copied) throw std::invalid_argument("uloc_openKeywordList: unreadable keyword list");
+                if (keywords.back() != '\0')
+                    throw std::invalid_argument("uloc_openKeywordList: keyword list does not end with a NUL");
             }
             return uloc_openKeywordList(keywords.data(), keywordListSize, local);
         },

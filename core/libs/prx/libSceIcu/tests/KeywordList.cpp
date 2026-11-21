@@ -103,9 +103,11 @@ void CheckKeywordList() {
     uenum_close_nid_postfix(keywords);
 
     static constexpr char unterminated[] = {'a', 'b', 'c'};
-    keywords = uloc_openKeywordList_nid_postfix(unterminated, sizeof(unterminated), &status);
-    Require(keywords && Drain(keywords, status) == std::vector<std::string>{"abc"}, "size bounds an unterminated list");
-    uenum_close_nid_postfix(keywords);
+    RejectsInvalid([&] { uloc_openKeywordList_nid_postfix(unterminated, sizeof(unterminated), &status); },
+                   "list without a final NUL is rejected");
+    RejectsInvalid([&] { uloc_openKeywordList_nid_postfix(list, sizeof(list) - 2, &status); },
+                   "size cutting the final NUL is rejected");
+    Require(status == 0, "rejected list keeps status");
 
     static constexpr char stopped[] = "a\0\0b\0";
     keywords = uloc_openKeywordList_nid_postfix(stopped, sizeof(stopped) - 1, &status);
