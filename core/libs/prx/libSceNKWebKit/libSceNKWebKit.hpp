@@ -22,6 +22,7 @@
 #include "prx/libSceNKWebKit/include/ContentTypeExports.hpp"
 #include "prx/libSceNKWebKit/include/CursorExports.hpp"
 #include "prx/libSceNKWebKit/include/ProcessWarmingExports.hpp"
+#include "prx/libSceNKWebKit/include/JscDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/FieldGettersExports.hpp"
 #include "prx/libSceNKWebKit/include/FieldSettersExports.hpp"
 #include "prx/libSceNKWebKit/include/InspectorCallStackExports.hpp"
