@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
@@ -7,6 +8,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -18,6 +20,7 @@
 #include <windows.h>
 #include <io.h>
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #elif defined(__APPLE__)
 #include <fcntl.h>
 #include <sys/event.h>
@@ -355,7 +358,10 @@ void RunHostWatch(std::shared_ptr<VnodeWatch> watch, HostWatch host) {
 int OpenHostWatch(int descriptor, std::uint32_t notes, HostWatch& host) {
     if (const auto directory = File::DirectoryDescriptorPath(descriptor)) {
         host.directory = true;
-        host.target = ::CreateFileW(directory->wstring().c_str(), FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
+        std::error_code pathError;
+        const auto verbatim = NativeVerbatimPath_nid_no_patch(*directory, pathError);
+        const auto& openPath = pathError ? *directory : verbatim;
+        host.target = ::CreateFileW(openPath.c_str(), FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
     } else {
         const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
@@ -770,7 +776,14 @@ int AddVnodeEvent(const KernelEqueueRef& queue, int descriptor, std::uint32_t ff
         CloseHostWatch(host);
         return result == EQUEUE_OK ? 0 : result & 0xffff;
     }
-    std::thread(RunHostWatch, watch, std::move(host)).detach();
+    Libc::StartHostThread([watch, host = std::move(host)]() mutable {
+        try {
+            RunHostWatch(watch, std::move(host));
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "%s\n", error.what());
+            std::fflush(stderr);
+        }
+    }).detach();
     return 0;
 }
 

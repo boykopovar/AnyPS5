@@ -52,6 +52,7 @@ int main() {
     Require(Succeeds(mapped, Page, 0x4));
 
     Require(Fails(mapped, Page, Async | Invalidate, Invalid));
+    Require(Fails(mapped + 1, Page, Async | Invalidate, Invalid));
     const auto top = std::numeric_limits<std::uintptr_t>::max() & ~(Page - 1);
     Require(Fails(reinterpret_cast<void*>(top), 2 * Page, Sync, Invalid));
     Require(Fails(mapped, std::numeric_limits<std::size_t>::max() - (Page - 1) + 1, Sync, Invalid));
@@ -62,7 +63,14 @@ int main() {
     Require(Fails(mapped, 0, Invalidate, Busy));
     Require(Succeeds(mapped, Page, 0x8));
 
-    Require(munmap_nid_postfix(mapped, 3 * Page) == 0);
+    Require(munmap_nid_postfix(mapped + Page, Page) == 0);
+    Require(Succeeds(mapped, Page, Sync));
+    Require(Fails(mapped + Page, Page, Sync, NoMemory));
+    Require(Fails(mapped, 3 * Page, Sync, NoMemory));
+    Require(Succeeds(mapped + 2 * Page, Page, Async));
+    Require(munmap_nid_postfix(mapped, Page) == 0);
+    Require(munmap_nid_postfix(mapped + 2 * Page, Page) == 0);
+
     Require(Fails(mapped, Page, Sync, NoMemory));
     Require(Fails(mapped + Page, 3 * Page, Async, NoMemory));
     Require(Fails(mapped + Page, 0, Sync, NoMemory));

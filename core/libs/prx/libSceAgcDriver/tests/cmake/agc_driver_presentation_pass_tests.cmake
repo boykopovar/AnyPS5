@@ -16,6 +16,7 @@ target_link_libraries(agc_driver_presentation_pass_tests PRIVATE
 
 set_target_properties(agc_driver_presentation_pass_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_driver_presentation_pass_tests)
+set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/tests/PresentationPass.cpp APPEND PROPERTY COMPILE_DEFINITIONS VK_ENABLE_BETA_EXTENSIONS)
 
 if(BUILD_TESTING)
     set_target_properties(agc_driver_presentation_pass_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
@@ -23,6 +24,15 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_presentation_pass PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
         set_tests_properties(agc_driver_presentation_pass PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_driver_presentation_fsr COMMAND agc_driver_presentation_pass_tests --fsr)
+    set_tests_properties(agc_driver_presentation_fsr PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(ANYPS5_ENABLE_ASAN)
+        set_tests_properties(agc_driver_presentation_fsr PROPERTIES TIMEOUT 180)
+    endif()
+    if(WIN32)
+        set_tests_properties(agc_driver_presentation_fsr PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

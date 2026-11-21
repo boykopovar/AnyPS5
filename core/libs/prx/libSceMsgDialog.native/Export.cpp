@@ -1,4 +1,5 @@
 #include "prx/libSceMsgDialog.native/libSceMsgDialog.native.hpp"
+#include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceMsgDialog/include/MsgDialogRequest.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include <atomic>
@@ -11,14 +12,6 @@ namespace {
 std::atomic<int> g_status{0};
 std::atomic<bool> g_presented{false};
 
-constexpr int COMMON_DIALOG_STATUS_RUNNING = 2;
-constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
-constexpr int COMMON_DIALOG_RESULT_OK = 0;
-constexpr int COMMON_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80B80004u);
-constexpr int COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003u);
-constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
-constexpr int COMMON_DIALOG_ERROR_NOT_RUNNING = static_cast<int>(0x80B8000Bu);
-constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
 constexpr int BUTTON_ID_OK = 1;
 
 std::atomic<int> g_buttonId{BUTTON_ID_OK};
@@ -36,6 +29,12 @@ int Status() {
     }
     return status;
 }
+
+int MsgDialogResultStatus(int& buttonId) {
+    const int status = Status();
+    buttonId = g_buttonId.load();
+    return status;
+}
 }
 
 extern "C" {
@@ -50,18 +49,6 @@ int APS5_VABI sceMsgDialogClose(void) {
     return 0;
 }
 
-int APS5_VABI sceMsgDialogGetResult(MsgDialogResult* result) {
-    const int status = Status();
-    if (status == 0) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
-    if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    if (status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
-    MsgDialogResult value{};
-    value.result = COMMON_DIALOG_RESULT_OK;
-    value.button_id = g_buttonId.load();
-    if (!GuestCopyOut_nid_no_patch(result, &value, sizeof(value))) return COMMON_DIALOG_ERROR_ARG_NULL;
-    return 0;
-}
-
 int APS5_VABI sceMsgDialogInitialize(void) {
     int expected = 0;
     if (!g_status.compare_exchange_strong(expected, 1)) return COMMON_DIALOG_ERROR_ALREADY_INITIALIZED;
@@ -69,7 +56,7 @@ int APS5_VABI sceMsgDialogInitialize(void) {
 }
 
 int APS5_VABI sceMsgDialogOpen(const void* param) {
-    const int status = g_status.load();
+    int status = g_status.load();
     if (status == 0) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     if (g_presented.load()) ModalDialogClose_nid_postfix(ModalDialogOwnerMsgDialog);
@@ -79,7 +66,13 @@ int APS5_VABI sceMsgDialogOpen(const void* param) {
     presented = presented && ModalDialogOpen_nid_postfix(request);
     g_buttonId = BUTTON_ID_OK;
     g_presented = presented;
-    g_status = presented ? COMMON_DIALOG_STATUS_RUNNING : COMMON_DIALOG_STATUS_FINISHED;
+    const int target = presented ? COMMON_DIALOG_STATUS_RUNNING : COMMON_DIALOG_STATUS_FINISHED;
+    while (!g_status.compare_exchange_weak(status, target)) {
+        if (status != 0) continue;
+        g_presented = false;
+        if (presented) ModalDialogReset_nid_postfix(ModalDialogOwnerMsgDialog);
+        return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    }
     return 0;
 }
 
@@ -117,3 +110,5 @@ int APS5_VABI sceMsgDialogGetStatus(void) {
 }
 
 }
+
+#include "Result.cpp"

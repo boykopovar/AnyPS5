@@ -1,6 +1,8 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstddef>
@@ -77,6 +79,36 @@ void CheckFutureError() {
 
 }
 
+GuestLocale::String* APS5_VABI TestCategoryMessage(GuestLocale::String* result, const LibcException::CategoryObject*, int) {
+    result->reserved = 0;
+    result->size = 16;
+    result->capacity = 31;
+    result->pointer = static_cast<char*>(GuestLocale::AllocateStringStorage(17));
+    std::memcpy(result->pointer, "Invalid argument", 17);
+    return result;
+}
+const void* const TestCategoryVtable[] = {nullptr, nullptr, nullptr, reinterpret_cast<const void*>(TestCategoryMessage)};
+const LibcException::CategoryObject TestCategory {TestCategoryVtable};
+
+void CheckSystemErrorConstructor() {
+    LibcException::SystemErrorObject object{};
+    const LibcException::ErrorCode code {0, 22, &TestCategory};
+    libSceLibcInternalInventory_019_nid_no_patch(&object, code, "invalid argument");
+    Require(object.base.vtable != nullptr && object.code.value == 22 && object.code.category == &TestCategory, "the system_error constructor keeps its code");
+    Require(std::strcmp(_ZNKSt12system_error4whatEv_nid_postfix(&object.base), "invalid argument: Invalid argument") == 0, "the system_error constructor keeps its message");
+    _ZNSt12system_errorD1Ev_nid_postfix(&object.base);
+    Require(object.base.message == nullptr, "the system_error constructor's message is released");
+
+    bool threw = false;
+    try {
+        LibcException::SystemErrorObject invalid{};
+        libSceLibcInternalInventory_019_nid_no_patch(&invalid, {0, 22, nullptr}, "invalid argument");
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "the system_error constructor rejects a null category");
+}
+
 int main() {
     const std::array<void*, 10> api{
         reinterpret_cast<void*>(&TestAllocate), reinterpret_cast<void*>(&TestFree),
@@ -85,6 +117,7 @@ int main() {
         reinterpret_cast<void*>(&TestPosixAlign), nullptr, nullptr, nullptr};
     ApplicationHeapRegister_nid_no_patch(api.data());
 
+    CheckSystemErrorConstructor();
     CheckMessageDestructor(&sceLibcInternalOverflowErrorBaseDestructor_nid_no_patch, "value too large");
     CheckMessageDestructor(&sceLibcInternalUnderflowErrorBaseDestructor_nid_no_patch, "value too small");
     CheckFutureError();

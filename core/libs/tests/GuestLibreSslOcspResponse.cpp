@@ -1,10 +1,29 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <stdexcept>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
@@ -16,6 +35,52 @@ template<typename TAction> static void RequireThrows(TAction action, std::source
     try { action(); } catch (const std::exception&) { return; }
     Require(false, location);
 }
+
+template<typename TAction> static void RequireNotImplemented(TAction action, std::source_location location = std::source_location::current()) {
+    try { action(); } catch (const std::runtime_error&) { return; }
+    Require(false, location);
+}
+
+class ReadOnlyPage {
+public:
+    explicit ReadOnlyPage(const void* initial = nullptr, std::size_t size = 0) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        _size = info.dwPageSize != 0 ? info.dwPageSize : 4096u;
+        _page = VirtualAlloc(nullptr, _size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(_page != nullptr);
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(_page, _size, PAGE_READONLY, &oldProtect) != 0);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        _size = pageSize > 0 ? static_cast<std::size_t>(pageSize) : 4096u;
+        _page = mmap(nullptr, _size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(_page != MAP_FAILED);
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        Require(mprotect(_page, _size, PROT_READ) == 0);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+        if (!_page) return;
+#ifdef _WIN32
+        VirtualFree(_page, 0, MEM_RELEASE);
+#else
+        munmap(_page, _size);
+#endif
+    }
+
+    ReadOnlyPage(const ReadOnlyPage&) = delete;
+    ReadOnlyPage& operator=(const ReadOnlyPage&) = delete;
+
+    template<typename T> T* As() const { return static_cast<T*>(_page); }
+
+private:
+    void* _page = nullptr;
+    std::size_t _size = 0;
+};
 
 constexpr int Enumerated = 10;
 constexpr int NegativeEnumerated = 0x10A;
@@ -57,6 +122,34 @@ static void TestResponseStatus() {
     Require(Status(&value) == -1);
     Require(Status(nullptr) == 0);
     RequireThrows([] { OCSP_response_status_nid_postfix(nullptr); });
+}
+
+static void TestBasicResponseFree() {
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(1, 2, 3);
+    const auto error = ERR_peek_error_nid_postfix();
+    OCSP_BASICRESP_free_nid_postfix(nullptr);
+    Require(ERR_peek_error_nid_postfix() == error);
+}
+
+static void TestGet1Basic() {
+    ERR_clear_error_nid_postfix();
+    RequireThrows([] { OCSP_response_get1_basic_nid_postfix(nullptr); });
+    Require(ERR_peek_error_nid_postfix() == 0);
+
+    LibreSslOcspResponse response {};
+    std::array<unsigned char, sizeof(response)> before {};
+    std::memcpy(before.data(), &response, sizeof(response));
+    LibreSslPutError_nid_no_patch(5, 6, 7);
+    constexpr std::uint64_t sentinelBeforeError = (std::uint64_t{5} << 24) | (std::uint64_t{6} << 12) | 7;
+    Require(OCSP_response_get1_basic_nid_postfix(&response) == nullptr);
+    Require(std::memcmp(before.data(), &response, sizeof(response)) == 0);
+    constexpr std::uint64_t noResponseData = (std::uint64_t{39} << 24) | (std::uint64_t{0xfff} << 12) | 108;
+    Require(ERR_peek_error_nid_postfix() == sentinelBeforeError);
+    Require(LibreSslPeekLastError_nid_no_patch() == noResponseData);
+    Require(ERR_get_error_nid_postfix() == sentinelBeforeError);
+    Require(ERR_get_error_nid_postfix() == noResponseData);
+    Require(ERR_get_error_nid_postfix() == 0);
 }
 
 static void TestSingleStatus() {
@@ -112,8 +205,79 @@ static void TestSingleStatus() {
     RequireThrows([&] { OCSP_single_get0_status_nid_postfix(&single, nullptr, nullptr, nullptr, nullptr); });
 }
 
+static void TestGuestPointers() {
+    errno = 73;
+    RequireNotImplemented([] { OCSP_response_status_nid_postfix(reinterpret_cast<const LibreSslOcspResponse*>(0x10)); });
+    Require(errno == 73);
+    LibreSslOcspResponse badStatusResponse {reinterpret_cast<Asn1String*>(0x10), nullptr};
+    errno = 73;
+    RequireNotImplemented([&] { OCSP_response_status_nid_postfix(&badStatusResponse); });
+    Require(errno == 73);
+    Asn1String badDataValue {1, Enumerated, reinterpret_cast<unsigned char*>(0x10), 0};
+    LibreSslOcspResponse badDataResponse {&badDataValue, nullptr};
+    errno = 73;
+    RequireNotImplemented([&] { OCSP_response_status_nid_postfix(&badDataResponse); });
+    Require(errno == 73);
+
+    Asn1String revoked {}, thisUpdate {}, nextUpdate {}, other {};
+    unsigned char keyCompromise[] {1};
+    Asn1String reasonValue {1, Enumerated, keyCompromise, 0};
+    LibreSslOcspRevokedInfo revokedInfo {&revoked, &reasonValue};
+    LibreSslOcspCertStatus certStatus {1, &revokedInfo};
+    LibreSslOcspSingleResponse single {nullptr, &certStatus, &thisUpdate, &nextUpdate, nullptr};
+
+    int reason = 77;
+    Asn1String* revocationTime = &other;
+    Asn1String* thisResult = &other;
+    Asn1String* nextResult = &other;
+    ReadOnlyPage roPtr(&thisResult, sizeof(thisResult));
+    ReadOnlyPage roInt(&reason, sizeof(reason));
+
+    errno = 73;
+    RequireNotImplemented([&] { OCSP_single_get0_status_nid_postfix(reinterpret_cast<const LibreSslOcspSingleResponse*>(0x10),
+        &reason, &revocationTime, &thisResult, &nextResult); });
+    Require(errno == 73 && reason == 77 && revocationTime == &other && thisResult == &other && nextResult == &other);
+
+    LibreSslOcspSingleResponse badStatusSingle {nullptr, reinterpret_cast<LibreSslOcspCertStatus*>(0x10), &thisUpdate, &nextUpdate, nullptr};
+    errno = 73;
+    RequireNotImplemented([&] { OCSP_single_get0_status_nid_postfix(&badStatusSingle, &reason, &revocationTime, &thisResult, &nextResult); });
+    Require(errno == 73 && reason == 77 && revocationTime == &other && thisResult == &other && nextResult == &other);
+
+    LibreSslOcspCertStatus badRevokedStatus {1, reinterpret_cast<void*>(0x10)};
+    LibreSslOcspSingleResponse badRevokedSingle {nullptr, &badRevokedStatus, &thisUpdate, &nextUpdate, nullptr};
+    errno = 73;
+    RequireNotImplemented([&] { OCSP_single_get0_status_nid_postfix(&badRevokedSingle, &reason, &revocationTime, &thisResult, &nextResult); });
+    Require(errno == 73 && reason == 77 && revocationTime == &other && thisResult == &other && nextResult == &other);
+
+    LibreSslOcspRevokedInfo badReasonRevoked {&revoked, reinterpret_cast<Asn1String*>(0x10)};
+    LibreSslOcspCertStatus badReasonStatus {1, &badReasonRevoked};
+    LibreSslOcspSingleResponse badReasonSingle {nullptr, &badReasonStatus, &thisUpdate, &nextUpdate, nullptr};
+    errno = 73;
+    RequireNotImplemented([&] { OCSP_single_get0_status_nid_postfix(&badReasonSingle, &reason, &revocationTime, &thisResult, &nextResult); });
+    Require(errno == 73 && reason == 77 && revocationTime == &other && thisResult == &other && nextResult == &other);
+
+    errno = 73;
+    RequireNotImplemented([&] { OCSP_single_get0_status_nid_postfix(&single, &reason, roPtr.As<Asn1String*>(), &thisResult, &nextResult); });
+    Require(errno == 73 && reason == 77 && thisResult == &other && nextResult == &other);
+
+    errno = 73;
+    RequireNotImplemented([&] { OCSP_single_get0_status_nid_postfix(&single, roInt.As<int>(), &revocationTime, &thisResult, &nextResult); });
+    Require(errno == 73 && revocationTime == &other && thisResult == &other && nextResult == &other);
+
+    errno = 73;
+    RequireNotImplemented([&] { OCSP_single_get0_status_nid_postfix(&single, &reason, &revocationTime, roPtr.As<Asn1String*>(), &nextResult); });
+    Require(errno == 73 && reason == 77 && revocationTime == &other && nextResult == &other);
+
+    errno = 73;
+    RequireNotImplemented([&] { OCSP_single_get0_status_nid_postfix(&single, &reason, &revocationTime, &thisResult, roPtr.As<Asn1String*>()); });
+    Require(errno == 73 && reason == 77 && revocationTime == &other && thisResult == &other);
+}
+
 int main() {
+    TestGet1Basic();
     TestResponseStatus();
+    TestBasicResponseFree();
     TestSingleStatus();
+    TestGuestPointers();
     std::puts("libSceLibreSsl OCSP response tests passed");
 }

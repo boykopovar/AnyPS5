@@ -11,8 +11,8 @@ int APS5_VABI sceAgcDriverCwsrSuspendAcq(void);
 int APS5_VABI sceAgcDriverDebugHardwareStatus(void);
 int APS5_VABI sceAgcDriverDestroyQueue(void);
 int APS5_VABI sceAgcDriverGetPaDebugInterfaceVersion(void);
-int APS5_VABI sceAgcDriverGetRegShadowInfo(void);
-int APS5_VABI sceAgcDriverGetRegShadowInfoAgr(void);
+int APS5_VABI sceAgcDriverGetRegShadowInfo(void* info);
+int APS5_VABI sceAgcDriverGetRegShadowInfoAgr(void* info);
 int APS5_VABI sceAgcDriverGetReservedDmemForAgc(void);
 int APS5_VABI sceAgcDriverGetWorkloadStreamInfo(void);
 int APS5_VABI sceAgcDriverIDHSSubmit(void);
@@ -56,7 +56,7 @@ int APS5_VABI sceAgcDriverSetSubmitValidationMode(uint32_t mode);
 int APS5_VABI sceAgcDriverGetSubmitValidationConfig(void* config);
 int APS5_VABI sceAgcDriverGetSubmitValidationMode(uint32_t* mode);
 int APS5_VABI sceAgcDriverSetSubmitValidationConfig(const void* config);
-int APS5_VABI sceAgcDriverGetHsOffchipParam(uint16_t* first, uint16_t* second);
+int APS5_VABI sceAgcDriverGetHsOffchipParam(uint16_t* granularity, uint16_t* buffering);
 int APS5_VABI sceAgcDriverNopDataWritePacket(void* destination, uint32_t address, const void* data, uint32_t bytes);
 int APS5_VABI sceAgcDriverSetValidationDisabled();
 int APS5_VABI sceAgcDriverGetCaptureConfig();
@@ -101,5 +101,6 @@ int APS5_VABI sceAgcDriverSetWorkloadStreamInactive();
 int APS5_VABI sceAgcDriverSubmitReprojectionAcb();
 int APS5_VABI sceAgcDriverSuspendPointSubmitCdbg();
 int APS5_VABI sceAgcDriverSysGetGfxAppGpuResetStatus();
+int APS5_VABI sceAgcDriverUnknown_yuO_plus_lNrj_plus_Do(std::int32_t kind, std::int64_t arg);
 
 }

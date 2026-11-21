@@ -1,9 +1,12 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_CPUTOPOLOGY_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_CPUTOPOLOGY_HPP
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -71,6 +74,136 @@ inline Layout LayoutFromClasses(const std::uint64_t* byClass, const bool* seen, 
     result.hybrid = result.efficient != 0 && result.performant != 0;
     return result;
 }
+
+struct CpuSet {
+    std::uint32_t id = 0;
+    std::uint16_t group = 0;
+    std::uint8_t logical = 0;
+    std::uint8_t core = 0;
+    std::uint8_t efficiencyClass = 0;
+    std::uint8_t lastLevelCache = 0;
+    bool parked = false;
+};
+
+struct CoreReservation {
+    CpuSet chosen;
+    std::vector<std::uint32_t> others;
+};
+
+inline std::optional<CoreReservation> ChooseReservedCore(const std::vector<CpuSet>& sets, const std::vector<CpuSet>& reserved, std::optional<unsigned> logical) {
+    constexpr std::size_t minimumCores = 6;
+    const auto sameCore = [](const CpuSet& left, const CpuSet& right) { return left.group == right.group && left.core == right.core; };
+    const auto held = [&](const CpuSet& set) {
+        for (const auto& other : reserved) {
+            if (sameCore(other, set)) return true;
+        }
+        return false;
+    };
+    const auto parked = [&](const CpuSet& set) {
+        for (const auto& other : sets) {
+            if (sameCore(other, set) && other.parked) return true;
+        }
+        return false;
+    };
+    const CpuSet* chosen = nullptr;
+    if (logical.has_value()) {
+        for (const auto& set : sets) {
+            if (set.group == 0 && set.logical == *logical) chosen = &set;
+        }
+    } else {
+        std::uint8_t highest = 0;
+        for (const auto& set : sets) {
+            if (set.efficiencyClass > highest) highest = set.efficiencyClass;
+        }
+        const CpuSet* home = nullptr;
+        for (const auto& set : sets) {
+            if (set.efficiencyClass != highest || set.parked) continue;
+            if (home == nullptr || set.group < home->group || (set.group == home->group && set.logical < home->logical)) home = &set;
+        }
+        if (home == nullptr) return std::nullopt;
+        const auto candidate = [&](const CpuSet& set) {
+            return set.efficiencyClass == highest && set.group == home->group && set.lastLevelCache == home->lastLevelCache;
+        };
+        std::vector<std::uint8_t> cores;
+        for (const auto& set : sets) {
+            if (!candidate(set)) continue;
+            bool counted = false;
+            for (const auto core : cores) counted = counted || core == set.core;
+            if (!counted) cores.push_back(set.core);
+        }
+        if (cores.size() < minimumCores) return std::nullopt;
+        for (const auto& set : sets) {
+            if (!candidate(set) || held(set) || parked(set)) continue;
+            if (chosen == nullptr || set.core > chosen->core || (set.core == chosen->core && set.logical < chosen->logical)) chosen = &set;
+        }
+    }
+    if (chosen == nullptr || held(*chosen)) return std::nullopt;
+    CoreReservation result{*chosen, {}};
+    for (const auto& set : sets) {
+        if (!sameCore(set, *chosen) && !held(set)) result.others.push_back(set.id);
+    }
+    if (result.others.empty()) return std::nullopt;
+    return result;
+}
+
+inline std::vector<std::uint32_t> PipelineCacheSet(const std::vector<CpuSet>& sets, const std::vector<CpuSet>& reserved) {
+    if (reserved.empty()) return {};
+    const auto& home = reserved.front();
+    bool split = false;
+    for (const auto& set : sets) split = split || set.group != home.group || set.lastLevelCache != home.lastLevelCache;
+    if (!split) return {};
+    std::vector<std::uint32_t> ids;
+    for (const auto& set : sets) {
+        bool held = false;
+        for (const auto& other : reserved) held = held || (other.group == set.group && other.core == set.core);
+        if (!held && set.group == home.group && set.lastLevelCache == home.lastLevelCache) ids.push_back(set.id);
+    }
+    return ids;
+}
+
+#ifdef __linux__
+inline std::optional<unsigned long> ReadSysfsNumber(const std::string& path) {
+    std::ifstream file(path);
+    unsigned long value = 0;
+    if (file >> value) return value;
+    return std::nullopt;
+}
+
+inline std::vector<CpuSet> SysfsCpuSets(const std::string& root, std::uint64_t process, std::uint64_t efficient) {
+    std::vector<CpuSet> sets;
+    std::vector<std::pair<unsigned long, unsigned long>> cores;
+    std::vector<std::pair<unsigned long, unsigned long>> caches;
+    const auto indexOf = [](auto& seen, const auto& key) {
+        std::size_t index = 0;
+        while (index < seen.size() && seen[index] != key) ++index;
+        if (index == seen.size()) seen.push_back(key);
+        return index;
+    };
+    for (unsigned cpu = 0; cpu < 64; ++cpu) {
+        if (((process >> cpu) & 1u) == 0) continue;
+        const auto base = root + "/cpu" + std::to_string(cpu);
+        const auto core = ReadSysfsNumber(base + "/topology/core_id");
+        const auto package = ReadSysfsNumber(base + "/topology/physical_package_id");
+        if (!core.has_value() || !package.has_value()) return {};
+        const auto coreIndex = indexOf(cores, std::pair{*package, *core});
+        unsigned long level = 0;
+        unsigned long cacheId = 0;
+        for (unsigned index = 0; index < 8; ++index) {
+            const auto cacheBase = base + "/cache/index" + std::to_string(index);
+            const auto cacheLevel = ReadSysfsNumber(cacheBase + "/level");
+            const auto id = ReadSysfsNumber(cacheBase + "/id");
+            if (!cacheLevel.has_value() || !id.has_value() || *cacheLevel < level) continue;
+            level = *cacheLevel;
+            cacheId = *id;
+        }
+        const auto cacheIndex = indexOf(caches, std::pair{*package, cacheId});
+        if (coreIndex > 0xffu || cacheIndex > 0xffu) return {};
+        const bool efficientCore = ((efficient >> cpu) & 1u) != 0;
+        sets.push_back({cpu, 0, static_cast<std::uint8_t>(cpu), static_cast<std::uint8_t>(coreIndex), static_cast<std::uint8_t>(efficientCore ? 0u : 1u), static_cast<std::uint8_t>(cacheIndex), false});
+    }
+    return sets;
+}
+#endif
 
 inline const Layout& Get() {
     static const Layout layout = [] {
@@ -173,7 +306,15 @@ inline std::uint64_t PinTraced(const char* role, void* handle, std::uint64_t mas
 
 // Helper threads (deferred release, mirror refresh) are pinned only when APS5_HELPER_AFFINITY_MASK
 // names their cores.
+inline std::atomic<std::uint64_t>& UnreservedMask() {
+    static std::atomic<std::uint64_t> mask{0};
+    return mask;
+}
+
 inline void PinHelperThread(const char* role) {
+#ifdef __linux__
+    if (const auto unreserved = UnreservedMask().load(std::memory_order_acquire); unreserved != 0) Pin(nullptr, unreserved);
+#endif
     static const std::uint64_t mask = MaskFromEnvironment("APS5_HELPER_AFFINITY_MASK");
     if (mask != 0) PinTraced(role, nullptr, mask);
 }

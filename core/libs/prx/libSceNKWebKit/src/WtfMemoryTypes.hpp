@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 
 struct FastMallocStatistics {
     std::size_t reservedVMBytes;
@@ -10,6 +11,25 @@ struct FastMallocStatistics {
 };
 
 namespace WTF {
+struct MappedFileData {
+    void* data;
+    unsigned size;
+};
+
+static_assert(sizeof(MappedFileData) == 16);
+static_assert(offsetof(MappedFileData, data) == 0);
+static_assert(offsetof(MappedFileData, size) == 8);
+
+struct StackBounds {
+    void* m_origin;
+    void* m_bound;
+};
+
+static_assert(sizeof(StackBounds) == 16);
+static_assert(offsetof(StackBounds, m_origin) == 0);
+static_assert(offsetof(StackBounds, m_bound) == 8);
+static_assert(std::is_trivially_copyable_v<StackBounds>);
+
 struct TryMallocReturnValue {
     void* data;
 };

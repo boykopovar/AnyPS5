@@ -54,19 +54,19 @@
 
 ### Additional unidentified exports
 
-- Twelve [callable exports](../../../core/libs/prx/libReactNative.Modules.Vsh.WebAppLauncher/Export.cpp) are throwing placeholders. Names, signatures and behavior are unverified. Matching module and library identities occur in two version-labelled images; those labels are not authenticated.
+- Twelve [callable exports](../../../core/libs/prx/libReactNative.Modules.Vsh.WebAppLauncher/Export.cpp) are throwing placeholders. 11 are named after the symbols the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for their NIDs, and the NID of each name matches; the other is unidentified. Signatures and behavior are unverified. Matching module and library identities occur in two version-labelled images; those labels are not authenticated.
 
 | Name | NID |
 | --- | --- |
-| `Unknown` | `+ucrAt9fI7c` |
-| `Unknown` | `06N-dAyE+HY` |
+| `EnableSystemMusic` | `+ucrAt9fI7c` |
+| `SpeechSystemSettings` | `06N-dAyE+HY` |
 | `Unknown` | `41blU2JCqLQ` |
-| `Unknown` | `BGgSEXB1Now` |
-| `Unknown` | `CAK-S2JVdsk` |
-| `Unknown` | `QxCdpkEsOgo` |
-| `Unknown` | `Tjj++S2qvOU` |
-| `Unknown` | `f5NHqUziG+4` |
-| `Unknown` | `mI-ltMuVN+Q` |
-| `Unknown` | `vDup+0mWZf8` |
-| `Unknown` | `wR1ucKGDM9Q` |
-| `Unknown` | `xPA-tXzPGpc` |
+| `GetAccountPsPlusStatus` | `BGgSEXB1Now` |
+| `RegisterSystemEventCallback` | `CAK-S2JVdsk` |
+| `GetNetworkConnectionType` | `QxCdpkEsOgo` |
+| `NpWebSendRequest` | `Tjj++S2qvOU` |
+| `DisableSystemMusic` | `f5NHqUziG+4` |
+| `EnableSystemMedia` | `mI-ltMuVN+Q` |
+| `CommerceDialogCheckout` | `vDup+0mWZf8` |
+| `CommerceDialogBrowsePsPlus` | `wR1ucKGDM9Q` |
+| `NpWebCreateRequest` | `xPA-tXzPGpc` |

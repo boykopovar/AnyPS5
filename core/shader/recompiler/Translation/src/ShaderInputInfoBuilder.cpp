@@ -165,6 +165,10 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         pixelStorage.psAlphaToCoverage = pixel.alphaToCoverage;
         pixelStorage.psDitheredAlphaToCoverage = pixel.ditheredAlphaToCoverage;
         pixelStorage.psDitheredAlphaSamples = pixel.ditheredAlphaSamples;
+        pixelStorage.psSingleSampleDither = pixel.singleSampleDither;
+        if (pixel.singleSampleDither != SingleSampleDither::None && (!pixel.alphaToCoverage || !pixel.ditheredAlphaToCoverage || pixel.ditheredAlphaSamples != 1u)) throw std::runtime_error("single-sample dither requires enabled single-sample alpha-to-coverage");
+        if (pixel.singleSampleDither != SingleSampleDither::None && pixel.singleSampleDither != SingleSampleDither::E701 && pixel.singleSampleDither != SingleSampleDither::Rounded18701) throw std::runtime_error("unsupported single-sample alpha-to-coverage dither");
+        if (pixel.ditheredAlphaToCoverage && pixel.singleSampleDither == SingleSampleDither::None && pixel.ditheredAlphaSamples != 2u && pixel.ditheredAlphaSamples != 8u) throw std::runtime_error("unsupported dithered alpha-to-coverage sample count");
         pixelStorage.quadPixelMask = pixel.quadPixelMask;
         pixelStorage.quadSampleMask = pixel.quadSampleMask;
         pixelStorage.psIteratesSamples = pixel.iteratesSamples;
@@ -173,6 +177,9 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         for (const auto& merge : pixel.targetMerges) {
             const auto& first = pixel.targetMerges.front();
             if (merge.mask == 0u || merge.target >= 8u || std::ranges::count(pixel.targetMerges, merge.target, &TargetMerge::target) != 1 || (merge.samples != 1u && merge.samples != 2u && merge.samples != 4u && merge.samples != 8u) || merge.samples != first.samples || merge.depthStencilWrites != first.depthStencilWrites || merge.depthStencilTests != first.depthStencilTests) throw std::runtime_error("ShaderInputInfoBuilder: invalid color target merge");
+            if (merge.blend.enabled ? merge.packing != ColorExportPacking::None : merge.packing != ColorExportPacking::Unorm4_4_4_4 && merge.packing != ColorExportPacking::Float11_11_10) throw std::runtime_error("ShaderInputInfoBuilder: a color target merge into an unsupported packing");
+            if (merge.blendControl != 0u && merge.packing != ColorExportPacking::Float11_11_10) throw std::runtime_error("ShaderInputInfoBuilder: a blending color target merge into a target other than 11_11_10 float");
+            if ((merge.layered && (merge.samples != 1u || merge.lastSlice < merge.firstSlice)) || (!merge.layered && (merge.firstSlice != 0u || merge.lastSlice != 0u))) throw std::runtime_error("ShaderInputInfoBuilder: a color target merge into a multisampled array, a slice range that ends before it starts, or slices of an unlayered target");
             const auto& blend = merge.blend;
             if (blend.enabled && (merge.samples != 1u || blend.colorSource > 14u || blend.colorDestination > 14u || blend.alphaSource > 14u || blend.alphaDestination > 14u || blend.colorOperation > 4u || blend.alphaOperation > 4u || blend.writeMask > 0xfu)) throw std::runtime_error("ShaderInputInfoBuilder: invalid color target blend");
             pixelStorage.merges.push_back(merge);

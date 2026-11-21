@@ -1,38 +1,11 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceAudioOut/include/InventoryExports.hpp"
+#include "prx/libSceAudioOut/include/LaterExports.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
 
 int APS5_VABI sceAudioOut2GetSystemDebugState() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceAudioOut2LoContextCreateEx() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceAudioOut2LoContextGetAttributes() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceAudioOut2LoContextQueryMemoryEx() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceAudioOut2LoPortCreateEx() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceAudioOut2LoPortGetAttributes() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceAudioOut2LoPortSetAttributesEx() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceAudioOut2PortSetAttributesEx() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -216,5 +189,140 @@ int APS5_VABI libSceAudioOutUnknown_yt9g5kdJy1o_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("yt9g5kdJy1o", libSceAudioOutUnknown_yt9g5kdJy1o_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI sceAudioOut2CustomHrtfIsExist() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAudioOut2Enable3DAudioForUserForCronos() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAudioOut2EnableCinematicVrRotation() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAudioOut2EnableMonoHpOutput() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAudioOut2EnableTVCorrection() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAudioOut2SetHearingAssist() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAudioOut2SetSparkEQ() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAudioOut2SetSpeakerInfoForCronos() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceAudioOutUnknown_0E_minus_UkHm_plus_hZI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("0E-UkHm+hZI", libSceAudioOutUnknown_0E_minus_UkHm_plus_hZI_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_0rE3t9ZgyXE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("0rE3t9ZgyXE", libSceAudioOutUnknown_0rE3t9ZgyXE_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_7uryG3ZsXQU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("7uryG3ZsXQU", libSceAudioOutUnknown_7uryG3ZsXQU_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_9rWEssK8GMk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("9rWEssK8GMk", libSceAudioOutUnknown_9rWEssK8GMk_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_BDnwsIqujuQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("BDnwsIqujuQ", libSceAudioOutUnknown_BDnwsIqujuQ_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_EeEaULhU2_minus_g_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("EeEaULhU2-g", libSceAudioOutUnknown_EeEaULhU2_minus_g_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_ElgxuhkuY_minus_k_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ElgxuhkuY-k", libSceAudioOutUnknown_ElgxuhkuY_minus_k_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_GKzVK6pYgTk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("GKzVK6pYgTk", libSceAudioOutUnknown_GKzVK6pYgTk_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_NuGwMXbT8RU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("NuGwMXbT8RU", libSceAudioOutUnknown_NuGwMXbT8RU_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_QEcXEGqvnb4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("QEcXEGqvnb4", libSceAudioOutUnknown_QEcXEGqvnb4_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_aFxSMCVm5mQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("aFxSMCVm5mQ", libSceAudioOutUnknown_aFxSMCVm5mQ_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_cRISiyyeyps_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("cRISiyyeyps", libSceAudioOutUnknown_cRISiyyeyps_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_cYDvFPDrl6g_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("cYDvFPDrl6g", libSceAudioOutUnknown_cYDvFPDrl6g_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_dDyfkQG1MPc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("dDyfkQG1MPc", libSceAudioOutUnknown_dDyfkQG1MPc_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_fcv6kkqIs1Y_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("fcv6kkqIs1Y", libSceAudioOutUnknown_fcv6kkqIs1Y_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_g_minus_JTbmmuf7M_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("g-JTbmmuf7M", libSceAudioOutUnknown_g_minus_JTbmmuf7M_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_mWypJWwaLcc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mWypJWwaLcc", libSceAudioOutUnknown_mWypJWwaLcc_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_tylNHKM16GA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tylNHKM16GA", libSceAudioOutUnknown_tylNHKM16GA_nid_no_patch);
+
+int APS5_VABI libSceAudioOutUnknown_yd_minus_81WQGSTw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("yd-81WQGSTw", libSceAudioOutUnknown_yd_minus_81WQGSTw_nid_no_patch);
 
 }

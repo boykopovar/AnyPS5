@@ -35,7 +35,7 @@ inline bool RangesOrdered(const Range* ranges, std::size_t count) {
 }
 
 enum class FaultState : std::uint32_t { Empty, Writing, Ready };
-enum class FaultReason : std::uint32_t { Unmapped = 1, Permission, Overflow, InvalidTable, InvalidRectangle, LoopLimit, Unaligned, InvalidDescriptor, ImageTable, UnlinkedCall, WindowLaneSpill };
+enum class FaultReason : std::uint32_t { Unmapped = 1, Permission, Overflow, InvalidTable, InvalidRectangle, LoopLimit, Unaligned, InvalidDescriptor, ImageTable, UnlinkedCall, WindowLaneSpill, SplitState };
 
 struct Fault {
     FaultState state;
@@ -44,14 +44,23 @@ struct Fault {
     std::uint32_t bytes;
     std::uint32_t stage;
     std::uint32_t instruction;
-    std::uint32_t otherFaults;
+    std::uint32_t claim;
+    std::uint32_t discard;
+    std::uint32_t reserved;
 };
+
+inline constexpr std::uint32_t FaultClaimed = 1u;
+inline constexpr std::uint32_t FaultClaimOtherFaults = 2u;
+
+inline constexpr std::uint32_t OtherFaults(const Fault& fault) {
+    return (fault.claim & FaultClaimOtherFaults) != 0u ? 1u : 0u;
+}
 
 static_assert(std::is_standard_layout_v<Header> && std::is_trivially_copyable_v<Header> && sizeof(Header) == 16);
 static_assert(std::is_standard_layout_v<Range> && std::is_trivially_copyable_v<Range> && sizeof(Range) == 32);
 static_assert(offsetof(Range, deviceAddress) == 16 && offsetof(Range, permissions) == 24);
-static_assert(std::is_standard_layout_v<Fault> && std::is_trivially_copyable_v<Fault> && sizeof(Fault) == 32);
-static_assert(offsetof(Fault, address) == 8 && offsetof(Fault, instruction) == 24 && offsetof(Fault, otherFaults) == 28);
+static_assert(std::is_standard_layout_v<Fault> && std::is_trivially_copyable_v<Fault> && sizeof(Fault) == 40);
+static_assert(offsetof(Fault, address) == 8 && offsetof(Fault, instruction) == 24 && offsetof(Fault, claim) == 28 && offsetof(Fault, discard) == 32);
 
 inline constexpr std::uint32_t WrittenPageShift = 12;
 inline constexpr std::uint32_t WrittenChunkShift = 17;

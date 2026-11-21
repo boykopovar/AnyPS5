@@ -10,7 +10,6 @@
 #include <io/NativePath.hpp>
 #include <algorithm>
 #include <map>
-#include <iterator>
 
 namespace Elfpatcher {
 
@@ -19,7 +18,6 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
     WindowsLoadImage image(guest.Bytes, guest.Headers, false);
     std::vector<std::uint32_t> relocations;
     std::vector<std::pair<std::uint64_t, std::uint32_t>> tlsModules;
-    std::map<std::uint64_t, std::uint64_t> targets;
     const auto apply = [&](const std::vector<std::uint8_t>& table) {
         for (std::size_t offset = 0; offset < table.size(); offset += 24) {
             const auto target = Io::ReadU64(table, offset);
@@ -37,22 +35,16 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
                 if (rva < templateRva || templateEnd - rva < 8) throw Domain::RelinkerException("Guest relocation crosses the TLS template boundary", target);
                 if (type == 16 || (symbolIndex != 0 && symbol.Section == 0)) throw Domain::RelinkerException("Runtime-bound guest TLS template relocation is not supported", target);
             }
-            const auto next = targets.lower_bound(target);
-            if ((next != targets.end() && next->first < target + 8) || (next != targets.begin() && std::prev(next)->second > target)) throw Domain::RelinkerException("Overlapping guest relocations", target);
-            targets.emplace(target, target + 8);
             image.RequireWritable(target, 8);
             if (type == 8) {
-                if (symbolIndex != 0) throw Domain::RelinkerException("RELATIVE guest relocation has a symbol", target);
                 image.WritePointer(target, image.GetRelocatedAddress(addend));
                 relocations.push_back(rva);
             } else if (type == 16) {
-                if (addend != 0 || (symbolIndex != 0 && (symbol.Info & 15) != 6)) throw Domain::RelinkerException("Invalid guest TLS module relocation", target);
                 if (symbolIndex != 0 && symbol.Section == 0) {
                     image.WritePointer(target, 0);
                     runtime.Imports.push_back({symbol.Name, rva, 0, 16, symbol.Library});
                 } else tlsModules.emplace_back(target, rva);
             } else if (type == 17) {
-                if (symbolIndex != 0 && (symbol.Info & 15) != 6) throw Domain::RelinkerException("Invalid guest TLS offset relocation", target);
                 if (symbolIndex != 0 && symbol.Section == 0) {
                     image.WritePointer(target, 0);
                     runtime.Imports.push_back({symbol.Name, rva, addend, 17, symbol.Library});
@@ -63,14 +55,11 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
                 const auto threadPointerOffset = Io::AlignUp64(tls->MemorySize, std::max<std::uint64_t>(tls->Alignment, 1));
                 image.WritePointer(target, symbol.Value + addend - threadPointerOffset);
             } else if (type == 1 || type == 6 || type == 7) {
-                if (symbolIndex == 0 || (type != 1 && addend != 0) || (symbol.Info & 15) == 6) throw Domain::RelinkerException("Invalid guest symbol relocation", target);
                 if (symbol.Section == Relinker::AbsoluteSection) image.WritePointer(target, symbol.Value + addend);
                 else if (symbol.Section != 0) {
-                    if (symbol.Section >= 0xff00) throw Domain::RelinkerException("Unsupported special guest symbol section", target);
                     image.WritePointer(target, image.GetRelocatedAddress(symbol.Value) + addend);
                     relocations.push_back(rva);
                 } else {
-                    if (symbol.Name.empty()) throw Domain::RelinkerException("Empty guest import", target);
                     image.WritePointer(target, 0);
                     runtime.Imports.push_back({symbol.Name, rva, addend, 1, symbol.Library, type == 7 || (type == 6 && (symbol.Info & 15) == 2), (symbol.Info >> 4) == 2});
                 }
@@ -84,7 +73,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
     std::array<PeDirectory, 16> directories{};
     std::uint32_t tlsIndex = 0;
     try {
-        directories[9] = WindowsTlsBuilder().Build(guest.Bytes, guest.Headers, image, sections, relocations, nextRva, &tlsIndex, {}, message);
+        directories[9] = WindowsTlsBuilder().Build(guest.Bytes, guest.Headers, image, sections, relocations, nextRva, &tlsIndex, {}, message, guest.FunctionSymbolRoots);
     } catch (Domain::RelinkerException& error) {
         if (error.InputPath.empty()) error.InputPath = Io::Utf8Path(guest.SourcePath);
         throw;
@@ -132,7 +121,6 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
             continue;
         }
         if (symbol.Section == Relinker::AbsoluteSection) continue;
-        if (symbol.Section >= 0xff00) throw Domain::RelinkerException("Unsupported guest export section: " + symbol.Name);
         std::uint32_t rva = 0;
         if ((symbol.Info & 15) == 6) {
             if (tlsIndex == 0) throw Domain::RelinkerException("Guest TLS export has no TLS block: " + symbol.Name);
@@ -140,7 +128,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
             Io::AppendU64(tlsExports.Data, ImageBase + tlsIndex);
             Io::AppendU64(tlsExports.Data, symbol.Value);
             relocations.push_back(rva);
-        } else rva = image.GetRva(symbol.Value, std::max<std::uint64_t>(symbol.Size, 1));
+        } else rva = image.GetRva(symbol.Value, guest.FunctionSymbolRoots && (symbol.Info & 15) == 2 ? 1 : std::max<std::uint64_t>(symbol.Size, 1));
         if (!exports.emplace(symbol.Name, rva).second) throw Domain::RelinkerException("Duplicate guest export: " + symbol.Name);
         if ((symbol.Info & 15) == 2 && returnsZero(symbol.Value)) runtime.ZeroReturnExports.insert(symbol.Name);
     }

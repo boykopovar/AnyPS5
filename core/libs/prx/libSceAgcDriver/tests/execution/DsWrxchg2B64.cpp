@@ -35,8 +35,19 @@ alignas(256) constexpr auto Code = std::to_array<std::uint32_t>({
     0xbf810000,
 });
 
-alignas(256) constexpr auto CoincidingOffsets = std::to_array<std::uint32_t>({0xd9b80101, 0x1208062e, 0xbf810000});
-alignas(256) constexpr auto CoincidingOffsetsSt64 = std::to_array<std::uint32_t>({0xd9bc0000, 0x1a08062f, 0xbf810000});
+alignas(256) constexpr auto CoincidingRun = std::to_array<std::uint32_t>({
+    0x34020085,
+    0xe0381000, 0x80000201, 0xe0381010, 0x80000601,
+    0x345c0085, 0x4a5c5cff, 0x00000480, 0x345e0083, 0x4a5e5eff, 0x00000880,
+    0xbf8c3f70,
+    0xd9340008, 0x0004022e, 0xd9340200, 0x0004022f,
+    0xd9b80101, 0x1208062e, 0xd9bc0101, 0x1a08062f,
+    0xd9dc0101, 0x1600002e, 0xd9e00101, 0x1e00002f,
+    0x34020086,
+    0xbf8cc07f,
+    0xe0781000, 0x80011201, 0xe0781010, 0x80011601, 0xe0781020, 0x80011a01, 0xe0781030, 0x80011e01,
+    0xbf810000,
+});
 alignas(256) constexpr auto DestinationOverflow = std::to_array<std::uint32_t>({0xd9b80301, 0xfd08062e, 0xbf810000});
 
 void Fill(std::uint32_t tid, std::uint32_t* words) {
@@ -86,6 +97,15 @@ void Run(AgcDriver::VulkanDevice& device) {
     });
 }
 
+void RunCoinciding(AgcDriver::VulkanDevice& device) {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
+    Output.fill(0xdeadbeefu);
+    Translate(device, CoincidingRun, [&](const auto& result) {
+        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(CoincidingRun.data()));
+        device.WaitIdle();
+    });
+}
+
 void Reject(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::string& reason) {
     std::string error;
     try {
@@ -97,8 +117,6 @@ void Reject(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code
 }
 
 void CheckRejections(AgcDriver::VulkanDevice& device) {
-    Reject(device, CoincidingOffsets, "DS write exchange of one location through both offsets is not supported");
-    Reject(device, CoincidingOffsetsSt64, "DS write exchange of one location through both offsets is not supported");
     Reject(device, DestinationOverflow, "DS write exchange destination register range overflow");
 }
 
@@ -118,6 +136,21 @@ void Check() {
     }
 }
 
+void CheckCoinciding() {
+    constexpr std::array<const char*, 2> names{"ds_wrxchg2_rtn_b64", "ds_wrxchg2st64_rtn_b64"};
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const std::uint32_t* in = &Input[tid * Inputs];
+        const std::uint32_t* out = &Output[tid * Results];
+        for (std::uint32_t op = 0; op < 2u; ++op) {
+            const std::array<std::uint32_t, 8> expected{in[0], in[1], in[4], in[5], in[6], in[7], in[6], in[7]};
+            for (std::uint32_t i = 0; i < 8u; ++i) {
+                const auto actual = out[op * 8u + i];
+                Require(actual == expected[i], std::string("ds wrxchg2 b64: lane ") + std::to_string(tid) + " coinciding " + names[op] + " dword " + std::to_string(i) + " is " + Hex(actual) + ", expected " + Hex(expected[i]));
+            }
+        }
+    }
+}
+
 }
 
 int main() {
@@ -126,6 +159,8 @@ int main() {
         if (!device) return VulkanTestSkipped;
         Run(*device);
         Check();
+        RunCoinciding(*device);
+        CheckCoinciding();
         CheckRejections(*device);
         std::puts("ds wrxchg2 b64 tests passed");
         return 0;

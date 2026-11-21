@@ -198,8 +198,10 @@ void RunTests(const AgcDriver::VulkanDevice& device) {
 int main() {
 #ifdef _WIN32
     if (std::getenv("APS5_TEMPLATE_AUDIT_MS") == nullptr) _putenv_s("APS5_TEMPLATE_AUDIT_MS", "0");
+    _putenv_s("APS5_TABLE_INDEX", "0");
 #else
     setenv("APS5_TEMPLATE_AUDIT_MS", "0", 0);
+    setenv("APS5_TABLE_INDEX", "0", 1);
 #endif
     try {
         const auto device = OpenVulkanTestDevice();

@@ -4,6 +4,17 @@ target_link_libraries(libSceAudio3d PRIVATE libSceAudioOut libkernel_sys)
 configure_windows_unwind(libSceAudio3d)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_audio3d_report_guest_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudio3dReportGuest.cpp)
+    target_include_directories(guest_audio3d_report_guest_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_audio3d_report_guest_tests PRIVATE libSceAudio3d libc)
+    configure_windows_unwind(guest_audio3d_report_guest_tests)
+    add_test(NAME guest_audio3d_report_guest COMMAND guest_audio3d_report_guest_tests)
+    set_tests_properties(guest_audio3d_report_guest PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_audio3d_report_guest PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudio3d>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_audio3d_parameters_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudio3dParameters.cpp)
     target_include_directories(guest_audio3d_parameters_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_audio3d_parameters_tests PRIVATE libSceAudio3d libc)

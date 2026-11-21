@@ -68,6 +68,7 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore21DiagnosticLoggingKeys29succeeded
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore21DiagnosticLoggingKeys29succeededMoreThan20SecondsKeyEv();
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore21DiagnosticLoggingKeys30exceededInactiveMemoryLimitKeyEv();
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore21DiagnosticLoggingKeys33memoryUsageToDiagnosticLoggingKeyEm(std::uint64_t memoryUsage);
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore21DiagnosticLoggingKeys34resourceLoadStatisticsTelemetryKeyEv();
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore21DiagnosticLoggingKeys40backgroundCPUUsageToDiagnosticLoggingKeyEd(double cpuUsage);
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore21DiagnosticLoggingKeys40foregroundCPUUsageToDiagnosticLoggingKeyEd(double cpuUsage);
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore21DiagnosticLoggingKeys42wastedSpeculativeWarmupWithRevalidationKeyEv();

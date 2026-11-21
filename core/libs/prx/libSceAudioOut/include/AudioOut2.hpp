@@ -50,7 +50,7 @@ int APS5_VABI sceAudioOut2DisableChat(void);
 int APS5_VABI sceAudioOut2UserCreate(uint32_t userId, AudioOut2UserHandle* handle);
 int APS5_VABI sceAudioOut2UserDestroy(AudioOut2UserHandle handle);
 int APS5_VABI sceAudioOut2UserGetSupportedAttributes(AudioOut2UserHandle handle, uint32_t* contextAttributes, uint32_t* portAttributes);
-int APS5_VABI sceAudioOut2UserCreateEx(void);
+int APS5_VABI sceAudioOut2UserCreateEx(uint32_t userId, const void* attributes, AudioOut2UserHandle* handle);
 int APS5_VABI sceAudioOut2ArbitrationInitialize(void);
 int APS5_VABI sceAudioOut2MbusInit(void);
 int APS5_VABI sceAudioOut2MbusSetPortConnections(void);
@@ -68,15 +68,15 @@ int APS5_VABI sceAudioOut2ReportRegisterHandler(void);
 int APS5_VABI sceAudioOut2ReportUnregisterHandler(void);
 int APS5_VABI sceAudioOut2GetTvCorrectionInfo(void);
 int APS5_VABI sceAudioOut2GetIpcHandle(void);
-int APS5_VABI sceAudioOut2GetSystemStateEx(void);
+int APS5_VABI sceAudioOut2GetSystemStateEx(void* state);
 int APS5_VABI sceAudioOut2SetDebugHeadphoneMode(void);
 int APS5_VABI sceAudioOut2DebugStateCtrl(void);
-int APS5_VABI sceAudioOut2ContextBedWrite(void);
-int APS5_VABI sceAudioOut2PortCreateEx(void);
+int APS5_VABI sceAudioOut2ContextBedWrite(AudioOut2ContextHandle ctx, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5, uint32_t layout, uint8_t flag);
+int APS5_VABI sceAudioOut2PortCreateEx(AudioOut2ContextHandle ctx, const AudioOut2PortParam* params, AudioOut2PortHandle* port);
 int APS5_VABI sceAudioOut2Terminate(void);
 int APS5_VABI sceAudioOut2PortRegister(void);
 int APS5_VABI sceAudioOut2PortUnregister(void);
-int APS5_VABI sceAudioOut2GetAmbisonicsEncodeCoefficients(void);
+int APS5_VABI sceAudioOut2GetAmbisonicsEncodeCoefficients(const void* params, float* coefficients, AudioOut2Position direction);
 int APS5_VABI sceAudioOut2GetHrtfIdForCronos(void);
 
 }

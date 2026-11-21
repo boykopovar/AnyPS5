@@ -17,8 +17,8 @@ static_assert(std::endian::native == std::endian::little, "frame captures are st
 
 constexpr std::size_t ChunkHeaderBytes = 64;
 
-void requireCapture(bool condition, const std::string& reason) {
-    if (!condition) throw std::runtime_error("frame capture: " + reason);
+void requireCapture(bool condition, std::string_view reason) {
+    if (!condition) throw std::runtime_error("frame capture: " + std::string(reason));
 }
 
 class Encoder {
@@ -135,8 +135,12 @@ std::vector<std::byte> readFile(const std::filesystem::path& path) {
     return bytes;
 }
 
+bool hasMagic(std::span<const std::byte> bytes, std::string_view magic) {
+    return bytes.size() >= magic.size() && std::memcmp(bytes.data(), magic.data(), magic.size()) == 0;
+}
+
 void requireMagic(std::span<const std::byte> bytes, std::string_view magic, const std::filesystem::path& path) {
-    requireCapture(bytes.size() >= magic.size() && std::memcmp(bytes.data(), magic.data(), magic.size()) == 0, path.string() + " is not a frame capture file");
+    requireCapture(hasMagic(bytes, magic), path.string() + " is not a frame capture file");
 }
 
 struct Run {
@@ -357,11 +361,22 @@ std::vector<std::byte> FrameCaptureWriter::compress(std::span<const std::byte> b
     return output;
 }
 
-FrameCaptureReader::FrameCaptureReader(const std::filesystem::path& directory) : directory(directory) {
+struct FrameCaptureReader::Stream {
+    std::ifstream file;
+    ZSTD_DCtx* context = nullptr;
+    std::vector<std::byte> compressed;
+
+    ~Stream() {
+        ZSTD_freeDCtx(context);
+    }
+};
+
+FrameCaptureReader::FrameCaptureReader(const std::filesystem::path& directory) : memoryPath(directory / FrameCaptureWriter::MemoryName) {
     const auto callsPath = directory / FrameCaptureWriter::CallsName;
     const auto callBytes = readFile(callsPath);
-    requireMagic(callBytes, FrameCaptureWriter::CallsMagic, callsPath);
-    std::size_t at = FrameCaptureWriter::CallsMagic.size();
+    if (hasMagic(callBytes, FrameCaptureWriter::CallsMagicV1)) version = 1;
+    else requireMagic(callBytes, FrameCaptureWriter::CallsMagic, callsPath);
+    std::size_t at = (version == 1 ? FrameCaptureWriter::CallsMagicV1 : FrameCaptureWriter::CallsMagic).size();
     while (at < callBytes.size()) {
         if (callBytes.size() - at < 8) {
             truncated = true;
@@ -380,7 +395,6 @@ FrameCaptureReader::FrameCaptureReader(const std::filesystem::path& directory) :
         at += 8 + static_cast<std::size_t>(bytes);
     }
 
-    const auto memoryPath = directory / FrameCaptureWriter::MemoryName;
     std::ifstream memory(memoryPath, std::ios::binary);
     requireCapture(memory.is_open(), "cannot open " + memoryPath.string());
     memory.seekg(0, std::ios::end);
@@ -444,6 +458,10 @@ const std::string& FrameCaptureReader::Header() const {
     return header;
 }
 
+std::uint32_t FrameCaptureReader::Version() const {
+    return version;
+}
+
 bool FrameCaptureReader::Truncated() const {
     return truncated;
 }
@@ -451,22 +469,47 @@ bool FrameCaptureReader::Truncated() const {
 void FrameCaptureReader::Read(const FrameMemoryChunk& chunk, std::span<std::byte> destination) const {
     requireCapture(chunk.kind != FrameMemoryKind::Range, "a range chunk has no bytes");
     requireCapture(destination.size() == chunk.bytes, "destination size does not match the chunk");
-    const auto path = directory / FrameCaptureWriter::MemoryName;
-    std::ifstream memory(path, std::ios::binary);
-    requireCapture(memory.is_open(), "cannot open " + path.string());
-    std::vector<std::byte> compressed(chunk.compressedBytes);
-    memory.seekg(static_cast<std::streamoff>(chunk.offset));
-    memory.read(reinterpret_cast<char*>(compressed.data()), static_cast<std::streamsize>(compressed.size()));
-    requireCapture(memory.good(), "cannot read " + path.string());
-    const auto written = ZSTD_decompress(destination.data(), destination.size(), compressed.data(), compressed.size());
-    requireCapture(ZSTD_isError(written) == 0, std::string("zstd: ") + ZSTD_getErrorName(written));
-    requireCapture(written == chunk.bytes, "chunk at " + std::to_string(chunk.address) + " decompressed to the wrong size");
+    auto stream = takeStream();
+    const auto compressedBytes = static_cast<std::size_t>(chunk.compressedBytes);
+    if (stream->compressed.size() < compressedBytes) stream->compressed.resize(compressedBytes);
+    stream->file.clear();
+    stream->file.seekg(static_cast<std::streamoff>(chunk.offset));
+    stream->file.read(reinterpret_cast<char*>(stream->compressed.data()), static_cast<std::streamsize>(compressedBytes));
+    if (!stream->file.good()) throw std::runtime_error("frame capture: cannot read " + memoryPath.string());
+    const auto written = ZSTD_decompressDCtx(stream->context, destination.data(), destination.size(), stream->compressed.data(), compressedBytes);
+    if (ZSTD_isError(written) != 0) throw std::runtime_error(std::string("frame capture: zstd: ") + ZSTD_getErrorName(written));
+    if (written != chunk.bytes) throw std::runtime_error("frame capture: chunk at " + std::to_string(chunk.address) + " decompressed to the wrong size");
+    returnStream(std::move(stream));
 }
 
 std::vector<std::byte> FrameCaptureReader::Read(const FrameMemoryChunk& chunk) const {
     std::vector<std::byte> bytes(chunk.bytes);
     Read(chunk, bytes);
     return bytes;
+}
+
+FrameCaptureReader::~FrameCaptureReader() = default;
+
+std::unique_ptr<FrameCaptureReader::Stream> FrameCaptureReader::takeStream() const {
+    {
+        const std::lock_guard lock(streamMutex);
+        if (!streams.empty()) {
+            auto stream = std::move(streams.back());
+            streams.pop_back();
+            return stream;
+        }
+    }
+    auto stream = std::make_unique<Stream>();
+    stream->file.open(memoryPath, std::ios::binary);
+    if (!stream->file.is_open()) throw std::runtime_error("frame capture: cannot open " + memoryPath.string());
+    stream->context = ZSTD_createDCtx();
+    if (stream->context == nullptr) throw std::runtime_error("frame capture: zstd: cannot create a decompression context");
+    return stream;
+}
+
+void FrameCaptureReader::returnStream(std::unique_ptr<Stream> stream) const {
+    const std::lock_guard lock(streamMutex);
+    streams.push_back(std::move(stream));
 }
 
 }

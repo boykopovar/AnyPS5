@@ -10,6 +10,7 @@ permissions: {}
 jobs:
   warn:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       issues: write
       pull-requests: write

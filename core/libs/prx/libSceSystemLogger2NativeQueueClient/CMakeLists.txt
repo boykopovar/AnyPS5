@@ -1,0 +1,15 @@
+add_library(libSceSystemLogger2NativeQueueClient SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceSystemLogger2NativeQueueClient PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceSystemLogger2NativeQueueClient)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_system_logger2_nqc_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemLogger2NativeQueueClient.cpp)
+    target_include_directories(guest_system_logger2_nqc_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_logger2_nqc_tests PRIVATE libSceSystemLogger2NativeQueueClient libc)
+    configure_windows_unwind(guest_system_logger2_nqc_tests)
+    add_test(NAME guest_system_logger2_nqc COMMAND guest_system_logger2_nqc_tests)
+    if(WIN32)
+        set_tests_properties(guest_system_logger2_nqc PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemLogger2NativeQueueClient>")
+    endif()
+endif()

@@ -1,0 +1,15 @@
+add_library(libSceVcodec SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceVcodec PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceVcodec)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_vcodec_tests ${LIBS_INCLUDE_DIR}/tests/GuestVcodec.cpp)
+    target_include_directories(guest_vcodec_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_vcodec_tests PRIVATE libSceVcodec libc)
+    configure_windows_unwind(guest_vcodec_tests)
+    add_test(NAME guest_vcodec COMMAND guest_vcodec_tests)
+    if(WIN32)
+        set_tests_properties(guest_vcodec PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVcodec>")
+    endif()
+endif()

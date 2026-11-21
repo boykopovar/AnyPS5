@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
+#include "prx/libc/include/HostThread.hpp"
 #include <optional>
 #include <deque>
 #include <condition_variable>
@@ -11,6 +12,7 @@
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include "prx/libkernel/Apr/include/AmmPool.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
@@ -28,9 +30,11 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <new>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -42,7 +46,9 @@ namespace {
 
 constexpr int GUEST_ENOENT = 2;
 constexpr int GUEST_EFAULT = 14;
+constexpr int GUEST_ENOTSUP = 45;
 constexpr int GUEST_EINVAL = 22;
+constexpr int GUEST_ENAMETOOLONG = 63;
 
 struct AprFile {
     std::filesystem::path path;
@@ -56,8 +62,14 @@ std::unordered_map<std::string, std::uint32_t>& g_idsByPath = *new std::unordere
 // File sizes by directory, listed on first use. Titles resolve thousands of package paths at startup,
 // and one size query per path took over 20 s; a listing costs one directory read. Names are compared
 // case-insensitively, like the host file system.
+struct ListedFile {
+    std::uint64_t size;
+    std::filesystem::path name;
+    bool ambiguous = false;
+};
+
 std::mutex& g_directoriesLock = *new std::mutex();
-std::unordered_map<std::string, std::unordered_map<std::string, std::uint64_t>>& g_directories = *new std::unordered_map<std::string, std::unordered_map<std::string, std::uint64_t>>();
+std::unordered_map<std::string, std::unordered_map<std::string, ListedFile>>& g_directories = *new std::unordered_map<std::string, std::unordered_map<std::string, ListedFile>>();
 
 std::string _foldCase(std::string text) {
     for (auto& character : text) {
@@ -66,22 +78,40 @@ std::string _foldCase(std::string text) {
     return text;
 }
 
-bool _fileSize(const std::filesystem::path& path, std::uint64_t& bytes) {
+std::filesystem::path _hostPath(const std::filesystem::path& path) {
+    std::error_code error;
+    auto verbatim = NativeVerbatimPath_nid_no_patch(path, error);
+    return error ? path : verbatim;
+}
+
+void _addListed(std::unordered_map<std::string, ListedFile>& files, std::filesystem::path name, std::uint64_t size) {
+    auto [file, added] = files.try_emplace(_foldCase(name.string()), ListedFile{size, name});
+    if (!added) file->second.ambiguous = true;
+}
+
+std::mutex& g_hostDirectoriesLock = *new std::mutex();
+std::unordered_map<std::string, std::filesystem::path>& g_hostDirectories = *new std::unordered_map<std::string, std::filesystem::path>();
+std::uint64_t g_hostDirectoriesGeneration = 0;
+
+bool _listedSize(const std::filesystem::path& path, std::uint64_t& bytes, std::filesystem::path* listedName = nullptr) {
     {
         std::lock_guard lock(g_directoriesLock);
         const auto directory = _foldCase(path.parent_path().string());
         auto listed = g_directories.find(directory);
         if (listed == g_directories.end()) {
-            std::unordered_map<std::string, std::uint64_t> sizes;
+            std::unordered_map<std::string, ListedFile> sizes;
 #ifdef _WIN32
             // The find data carries each size; std::filesystem would query every entry again.
             WIN32_FIND_DATAW entry{};
-            const HANDLE find = FindFirstFileExW((path.parent_path() / L"*").c_str(), FindExInfoBasic, &entry, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+            const HANDLE find = FindFirstFileExW((_hostPath(path.parent_path()) / L"*").c_str(), FindExInfoBasic, &entry, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
             if (find != INVALID_HANDLE_VALUE) {
                 do {
                     if ((entry.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0) continue;
                     const auto size = (static_cast<std::uint64_t>(entry.nFileSizeHigh) << 32u) | entry.nFileSizeLow;
-                    sizes.emplace(_foldCase(std::filesystem::path(entry.cFileName).string()), size);
+                    try {
+                        _addListed(sizes, std::filesystem::path(entry.cFileName), size);
+                    } catch (const std::exception&) {
+                    }
                 } while (FindNextFileW(find, &entry));
                 FindClose(find);
             }
@@ -91,19 +121,25 @@ bool _fileSize(const std::filesystem::path& path, std::uint64_t& bytes) {
                 std::error_code entryError;
                 if (!it->is_regular_file(entryError)) continue;
                 const auto size = it->file_size(entryError);
-                if (!entryError) sizes.emplace(_foldCase(it->path().filename().string()), size);
+                if (!entryError) _addListed(sizes, it->path().filename(), size);
             }
 #endif
             listed = g_directories.emplace(directory, std::move(sizes)).first;
         }
-        if (const auto file = listed->second.find(_foldCase(path.filename().string())); file != listed->second.end()) {
-            bytes = file->second;
+        if (const auto file = listed->second.find(_foldCase(path.filename().string())); file != listed->second.end() && !file->second.ambiguous) {
+            bytes = file->second.size;
+            if (listedName) *listedName = file->second.name;
             return true;
         }
     }
+    return false;
+}
+
+bool _fileSize(const std::filesystem::path& path, std::uint64_t& bytes) {
+    if (_listedSize(path, bytes)) return true;
     // Not in the listing (created since, or an unusual name): ask the file system directly.
     std::error_code error;
-    if (!std::filesystem::is_regular_file(path, error)) return false;
+    if (!std::filesystem::is_regular_file(_hostPath(path), error)) return false;
     FileStat stat{};
     File::FillFileStat(path, &stat);
     bytes = static_cast<std::uint64_t>(stat.st_size);
@@ -115,12 +151,58 @@ int _fail(int guestErrno) {
     return -1;
 }
 
+constexpr std::size_t MAX_PATH_LENGTH = 1024;
+constexpr std::size_t MAX_NAME_LENGTH = 255;
+
+bool _listedPathIn(const std::string& directory, const std::string& name, std::filesystem::path& hostPath, std::uint64_t& bytes);
+
+bool _listedPath(const char* guestPath, std::filesystem::path& hostPath, std::uint64_t& bytes) {
+    const std::string_view text(guestPath);
+    const auto separator = text.find_last_of('/');
+    if (text.empty() || text.front() != '/' || separator == 0 || text.size() >= MAX_PATH_LENGTH) return false;
+    const std::string name(text.substr(separator + 1));
+    if (name.empty() || name == "." || name == ".." || name.size() > MAX_NAME_LENGTH || name.find_first_of("\\:") != std::string::npos) return false;
+    const std::string directory(text.substr(0, separator));
+    try {
+        return _listedPathIn(directory, name, hostPath, bytes);
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+bool _listedPathIn(const std::string& directory, const std::string& name, std::filesystem::path& hostPath, std::uint64_t& bytes) {
+    std::filesystem::path hostDirectory;
+    std::uint64_t generation = 0;
+    {
+        std::lock_guard lock(g_hostDirectoriesLock);
+        generation = PathAliasGeneration_nid_no_patch();
+        if (generation != g_hostDirectoriesGeneration) {
+            g_hostDirectories.clear();
+            g_hostDirectoriesGeneration = generation;
+        }
+        if (const auto found = g_hostDirectories.find(directory); found != g_hostDirectories.end()) hostDirectory = found->second;
+    }
+    if (hostDirectory.empty()) {
+        if (ResolvePathError_nid_no_patch(directory.c_str(), hostDirectory) != 0) return false;
+        std::error_code error;
+        if (!std::filesystem::is_directory(hostDirectory, error)) return false;
+        std::lock_guard lock(g_hostDirectoriesLock);
+        if (PathAliasGeneration_nid_no_patch() == generation && g_hostDirectoriesGeneration == generation) g_hostDirectories.emplace(directory, hostDirectory);
+    }
+    const std::filesystem::path guestName(name);
+    std::filesystem::path listedName;
+    hostPath = hostDirectory / guestName;
+    return _listedSize(hostPath, bytes, &listedName) && listedName == guestName;
+}
+
 bool _resolve(const char* guestPath, std::uint32_t* id, std::uint64_t* size) {
     if (!guestPath) return false;
     std::filesystem::path hostPath;
-    if (ResolvePathError_nid_no_patch(guestPath, hostPath) != 0) return false;
     std::uint64_t bytes = 0;
-    if (!_fileSize(hostPath, bytes)) return false;
+    if (!_listedPath(guestPath, hostPath, bytes)) {
+        if (ResolvePathError_nid_no_patch(guestPath, hostPath) != 0) return false;
+        if (!_fileSize(hostPath, bytes)) return false;
+    }
     std::lock_guard lock(g_filesLock);
     const auto key = hostPath.string();
     auto found = g_idsByPath.find(key);
@@ -139,35 +221,113 @@ AprFile _file(std::uint32_t id) {
     return g_files[id];
 }
 
+bool _known(std::uint32_t id) {
+    std::lock_guard lock(g_filesLock);
+    return id < g_files.size();
+}
+
 constexpr std::uint32_t INVALID_FILE_ID = 0xFFFFFFFFu;
 constexpr int SCE_KERNEL_ERROR_ENOENT = static_cast<int>(0x80020002);
 
+struct PathPrefix {
+    bool fits = true;
+    std::string text;
+};
+
+int _copyPrefix(const char* prefix, PathPrefix& copy) {
+    if (!prefix) return 0;
+    const int error = CopyGuestPath_nid_no_patch(prefix, copy.text);
+    if (error != 0 && error != GUEST_ENAMETOOLONG) return error;
+    copy.fits = error == 0;
+    return 0;
+}
+
+int _entryPath(const PathPrefix& prefix, const char** paths, uint32_t index, std::string& path) {
+    path.clear();
+    const char* entry = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&entry, paths + index, sizeof(entry))) return GUEST_EFAULT;
+    if (!entry || !prefix.fits) return 0;
+    std::string tail;
+    const int error = CopyGuestPath_nid_no_patch(entry, tail);
+    if (error != 0 && error != GUEST_ENAMETOOLONG) return error;
+    if (error == 0) path = prefix.text + tail;
+    return 0;
+}
+
+template <typename T>
+bool _store(T* destination, T value) {
+    return GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+}
+
 int _resolveForEach(const char* prefix, const char** paths, uint32_t count, uint32_t* ids, uint64_t* sizes, int* results) {
     if (!paths || !ids) return _fail(GUEST_EINVAL);
+    PathPrefix copiedPrefix;
+    if (const int error = count != 0 ? _copyPrefix(prefix, copiedPrefix) : 0) return _fail(error);
     std::uint32_t resolvedCount = 0;
     for (uint32_t index = 0; index < count; ++index) {
-        const std::string path = prefix ? (paths[index] ? std::string(prefix) + paths[index] : std::string()) : (paths[index] ? std::string(paths[index]) : std::string());
-        const bool resolved = !path.empty() && _resolve(path.c_str(), &ids[index], sizes ? &sizes[index] : nullptr);
+        std::string path;
+        if (const int error = _entryPath(copiedPrefix, paths, index, path)) return _fail(error);
+        std::uint32_t id = INVALID_FILE_ID;
+        std::uint64_t size = 0;
+        const bool resolved = !path.empty() && _resolve(path.c_str(), &id, sizes ? &size : nullptr);
         if (!resolved) {
-            ids[index] = INVALID_FILE_ID;
-            if (sizes) sizes[index] = 0;
+            id = INVALID_FILE_ID;
+            size = 0;
         }
+        if (!_store(&ids[index], id) || (sizes && !_store(&sizes[index], size))) return _fail(GUEST_EFAULT);
         if (resolved) ++resolvedCount;
-        if (results) results[index] = resolved ? 0 : SCE_KERNEL_ERROR_ENOENT;
+        if (results && !_store(&results[index], resolved ? 0 : SCE_KERNEL_ERROR_ENOENT)) return _fail(GUEST_EFAULT);
     }
     return static_cast<int>(resolvedCount);
 }
 
-void _readFile(const Apr::ReadFileCommand& command) {
-    const auto file = _file(command.fileId);
+int _resolveAll(const char* prefix, const char** paths, uint32_t count, uint32_t* ids, uint64_t* sizes, uint32_t* error_index) {
+    PathPrefix copiedPrefix;
+    if (const int error = count != 0 ? _copyPrefix(prefix, copiedPrefix) : 0) return _fail(error);
+    for (uint32_t index = 0; index < count; ++index) {
+        std::string path;
+        if (const int error = _entryPath(copiedPrefix, paths, index, path)) return _fail(error);
+        std::uint32_t id = INVALID_FILE_ID;
+        std::uint64_t size = 0;
+        const bool resolved = !path.empty() && _resolve(path.c_str(), &id, sizes ? &size : nullptr);
+        if (!resolved) {
+            id = INVALID_FILE_ID;
+            size = 0;
+        }
+        if (!_store(&ids[index], id) || (sizes && !_store(&sizes[index], size))) return _fail(GUEST_EFAULT);
+        if (!resolved) {
+            if (error_index && !_store(error_index, index)) return _fail(GUEST_EFAULT);
+            return _fail(GUEST_ENOENT);
+        }
+    }
+    return 0;
+}
+
+std::optional<AprFile> _findFile(std::uint32_t id) {
+    std::lock_guard lock(g_filesLock);
+    if (id >= g_files.size()) return std::nullopt;
+    return g_files[id];
+}
+
+int _readFile(const Apr::ReadFileCommand& command) {
     static const bool trace = std::getenv("APS5_TRACE_APR") != nullptr;
+    const auto found = _findFile(command.fileId);
+    const auto failed = [&](int status, const char* why) {
+        if (trace) std::fprintf(stderr, "[apr] read of file %u failed: %s (0x%x)\n", command.fileId, why, static_cast<unsigned>(status));
+        return status;
+    };
+    if (!found) return failed(SCE_KERNEL_ERROR_ENOENT, "unknown file id");
+    const auto& file = *found;
     if (trace) std::fprintf(stderr, "[apr] read %s offset=0x%llx size=0x%llx -> 0x%llx\n", file.path.string().c_str(), static_cast<unsigned long long>(command.offset), static_cast<unsigned long long>(command.size), static_cast<unsigned long long>(command.destination));
-    std::ifstream stream(file.path, std::ios::binary);
-    if (!stream) throw std::runtime_error("APR: cannot open " + file.path.string());
+    const auto hostPath = _hostPath(file.path);
+    std::ifstream stream(hostPath, std::ios::binary);
+    if (!stream) {
+        std::error_code missing;
+        return failed(std::filesystem::exists(hostPath, missing) ? SCE_KERNEL_ERROR_EIO : SCE_KERNEL_ERROR_ENOENT, "cannot open the file");
+    }
     stream.seekg(static_cast<std::streamoff>(command.offset));
     const GuestArena::HostWrite destination(reinterpret_cast<void*>(command.destination), command.size);
-    if (!destination.Open()) throw std::runtime_error("APR: the read destination of " + file.path.string() + " is not writable guest memory");
-#ifdef _WIN32
+    if (!destination.Open()) return failed(SCE_KERNEL_ERROR_EFAULT, "the destination is not writable guest memory");
     std::vector<char> staging(static_cast<std::size_t>(std::min<std::uint64_t>(command.size, 64u * 1024u)));
     std::uint64_t read = 0;
     while (read < command.size) {
@@ -176,21 +336,40 @@ void _readFile(const Apr::ReadFileCommand& command) {
         const auto obtained = static_cast<std::uint64_t>(stream.gcount());
         if (obtained != 0) std::memcpy(reinterpret_cast<char*>(command.destination) + read, staging.data(), static_cast<std::size_t>(obtained));
         read += obtained;
-        if (stream.bad()) throw std::runtime_error("APR: read failed for " + file.path.string());
+        if (stream.bad()) return failed(SCE_KERNEL_ERROR_EIO, "the host read failed");
         if (obtained != static_cast<std::uint64_t>(wanted)) break;
     }
-#else
-    stream.read(reinterpret_cast<char*>(command.destination), static_cast<std::streamsize>(command.size));
-    if (stream.bad()) throw std::runtime_error("APR: read failed for " + file.path.string());
-    const auto read = static_cast<std::uint64_t>(stream.gcount());
-#endif
-    if (read != command.size && (!stream.eof() || command.offset + read < std::filesystem::file_size(file.path))) throw std::runtime_error("APR: read of " + file.path.string() + " at offset " + std::to_string(command.offset) + " returned " + std::to_string(read) + " of " + std::to_string(command.size) + " bytes");
-    if (read != command.size) std::memset(reinterpret_cast<char*>(command.destination) + read, 0, static_cast<std::size_t>(command.size - read));
+    if (read != command.size) {
+        std::error_code sizeError;
+        const auto fileSize = std::filesystem::file_size(hostPath, sizeError);
+        if (!stream.eof() || sizeError || command.offset + read < fileSize) return failed(SCE_KERNEL_ERROR_EIO, "the read came back short before the end of the file");
+        std::memset(reinterpret_cast<char*>(command.destination) + read, 0, static_cast<std::size_t>(command.size - read));
+    }
+    return 0;
+}
+
+std::string _addressText(std::uint64_t address) {
+    char text[24];
+    std::snprintf(text, sizeof(text), "0x%llx", static_cast<unsigned long long>(address));
+    return text;
+}
+
+void _storeGuestAddress(std::uint64_t address, std::uint64_t value) {
+    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address), &value, sizeof(value)))
+        throw std::runtime_error("APR: the write address " + _addressText(address) + " is not writable guest memory");
+    std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address)).store(value, std::memory_order_release);
+}
+
+std::uint64_t _loadGuestAddress(std::uint64_t address) {
+    std::uint64_t value = 0;
+    if (!GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(address), sizeof(value)))
+        throw std::runtime_error("APR: the wait address " + _addressText(address) + " is not readable guest memory");
+    return value;
 }
 
 void _writeAddress(const Apr::WriteAddressCommand& command) {
     if (command.flags != 0) throw std::runtime_error("APR: WriteAddress flags " + std::to_string(command.flags) + " not implemented");
-    std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(command.address)).store(command.value, std::memory_order_release);
+    _storeGuestAddress(command.address, command.value);
 }
 
 std::array<std::atomic<std::uint32_t>, 256> g_counters{};
@@ -552,23 +731,24 @@ struct ReadCursor {
     std::uint64_t nextOffset = 0;
 };
 
-void _readResolved(Apr::Opcode opcode, Apr::ReadFileCommand command, ReadCursor& read) {
+void _readResolved(Apr::Opcode opcode, Apr::ReadFileCommand command, ReadCursor& read, int& status) {
     if (opcode != Apr::Opcode::ReadFile) {
         if (!read.valid) throw std::runtime_error("APR: gather or scatter read without a preceding read");
         command.fileId = read.fileId;
         if (opcode == Apr::Opcode::ReadFileGather) command.destination = read.nextDestination;
         if (opcode == Apr::Opcode::ReadFileScatter) command.offset = read.nextOffset;
     }
-    _readFile(command);
+    if (const int failure = _readFile(command); failure != 0 && status == 0) status = failure;
     read = {true, command.fileId, command.destination + command.size, command.offset + command.size};
 }
 
 struct Deferred {
     std::uint32_t cursor = 0;
     ReadCursor read;
+    int status = 0;
 };
 
-std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::uint32_t start = 0, ReadCursor read = {}, bool defer = false) {
+std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, int& status, std::uint32_t start = 0, ReadCursor read = {}, bool defer = false) {
     std::uint32_t cursor = start;
     while (cursor < buffer.offset) {
         if (buffer.offset - cursor < Apr::NopHeaderBytes) throw std::runtime_error("APR: truncated command buffer");
@@ -589,7 +769,7 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
             std::memcpy(&command, buffer.base + cursor, sizeof(command));
             const auto offset = static_cast<std::uint64_t>(command.opcodeAndOffsetHigh >> 8u) << 32u | command.offsetLow;
             if (offset >= 0x10000000000ull) throw std::runtime_error("APR: malformed compact gather offset");
-            _readResolved(Apr::Opcode::ReadFileGather, Apr::ReadFileCommand{{}, 0, 0, 0, static_cast<std::uint64_t>(command.sizeMinusOne) + 1u, offset}, read);
+            _readResolved(Apr::Opcode::ReadFileGather, Apr::ReadFileCommand{{}, 0, 0, 0, static_cast<std::uint64_t>(command.sizeMinusOne) + 1u, offset}, read, status);
             cursor += sizeof(command);
             continue;
         }
@@ -603,7 +783,7 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
         case Apr::Opcode::ReadFileGather:
         case Apr::Opcode::ReadFileScatter:
         case Apr::Opcode::ReadFileGatherScatter:
-            _readResolved(header.opcode, _read<Apr::ReadFileCommand>(buffer, cursor), read);
+            _readResolved(header.opcode, _read<Apr::ReadFileCommand>(buffer, cursor), read, status);
             break;
         case Apr::Opcode::ResetGatherScatterState:
             read = {};
@@ -651,12 +831,13 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
             const auto command = _read<Apr::WaitCommand>(buffer, cursor);
             const bool counter = header.opcode == Apr::Opcode::WaitOnCounter;
             const std::uint32_t unused = counter ? 64u - _counterField(command.access).bits : 0u;
+            if (!counter) static_cast<void>(_loadGuestAddress(command.address));
             const auto current = [&]() -> std::uint64_t {
                 if (counter) return _readCounter(command.counter, command.access);
                 return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(command.address)).load(std::memory_order_acquire);
             };
             const std::uint64_t reference = (command.reference & command.mask) << unused;
-            if (defer && !_waitSatisfied(command.compare, (current() & command.mask) << unused, reference)) return Deferred{cursor, read};
+            if (defer && !_waitSatisfied(command.compare, (current() & command.mask) << unused, reference)) return Deferred{cursor, read, status};
             while (!_waitSatisfied(command.compare, (current() & command.mask) << unused, reference)) PreciseSleepUs(50);
             break;
         }
@@ -668,7 +849,7 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
         }
         case Apr::Opcode::WriteAddressFromTimeCounter: {
             const auto command = _read<Apr::WriteAddressFromCounterCommand>(buffer, cursor);
-            std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(command.address)).store(sceKernelGetProcessTimeCounter(), std::memory_order_release);
+            _storeGuestAddress(command.address, sceKernelGetProcessTimeCounter());
             break;
         }
         case Apr::Opcode::WriteAddressFromCounter:
@@ -676,7 +857,7 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
             const auto command = _read<Apr::WriteAddressFromCounterCommand>(buffer, cursor);
             std::uint64_t value = _counter(command.counter0);
             if (header.opcode == Apr::Opcode::WriteAddressFromCounterPair) value |= static_cast<std::uint64_t>(_counter(command.counter1)) << 32u;
-            std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(command.address)).store(value, std::memory_order_release);
+            _storeGuestAddress(command.address, value);
             break;
         }
         default:
@@ -728,26 +909,33 @@ struct AprCompletion {
     std::mutex mutex;
     std::condition_variable done;
     std::set<std::uint32_t> outstanding;
+    std::map<std::uint32_t, int> failures;
     std::uint32_t issued = 0;
 };
+
+constexpr std::size_t MaxRecordedFailures = 4096;
 
 AprCompletion& _completion(bool amm) {
     static AprCompletion* const completions[2] = {new AprCompletion(), new AprCompletion()};
     return *completions[amm ? 1 : 0];
 }
 
-void _complete(bool amm, std::uint32_t id) {
+void _complete(bool amm, std::uint32_t id, int status) {
     auto& completion = _completion(amm);
     {
         std::lock_guard lock(completion.mutex);
         completion.outstanding.erase(id);
+        if (status != 0) {
+            completion.failures[id] = status;
+            while (completion.failures.size() > MaxRecordedFailures) completion.failures.erase(completion.failures.begin());
+        }
     }
     completion.done.notify_all();
 }
 
 AprQueue* _startQueue(bool amm) {
     auto* created = new AprQueue();
-    std::thread([created, amm] {
+    Libc::StartHostThread([created, amm] {
         for (;;) {
             AprQueue::Work work;
             {
@@ -757,9 +945,10 @@ AprQueue* _startQueue(bool amm) {
                 created->pending.pop_front();
                 created->running = true;
             }
+            int status = work.resume.status;
             try {
                 const auto bytes = static_cast<std::uint32_t>(work.commands.size());
-                _execute(Apr::CommandBufferObject{Apr::BufferType::Generic, 0, bytes, 0, bytes, work.commands.data()}, work.resume.cursor, work.resume.read);
+                _execute(Apr::CommandBufferObject{Apr::BufferType::Generic, 0, bytes, 0, bytes, work.commands.data()}, status, work.resume.cursor, work.resume.read);
             } catch (const std::exception& error) {
                 std::fprintf(stderr, "APR: %s\n", error.what());
                 std::fflush(stderr);
@@ -769,7 +958,7 @@ AprQueue* _startQueue(bool amm) {
                 std::lock_guard lock(created->mutex);
                 created->running = false;
             }
-            _complete(amm, work.id);
+            _complete(amm, work.id, status);
         }
     }).detach();
     return created;
@@ -788,7 +977,7 @@ AprQueue& _queue(bool amm, std::uint32_t priority) {
     return *queue;
 }
 
-std::uint32_t _submit(const std::uint8_t* base, std::uint32_t bytes, bool amm, std::uint32_t priority = 0) {
+std::optional<std::uint32_t> _submit(const std::uint8_t* base, std::uint32_t bytes, bool amm, std::uint32_t priority = 0, std::uint32_t* guestId = nullptr, std::uint32_t* guestResult = nullptr) {
     auto& queue = _queue(amm, priority);
     auto& completion = _completion(amm);
     std::lock_guard submitLock(queue.submit);
@@ -797,6 +986,11 @@ std::uint32_t _submit(const std::uint8_t* base, std::uint32_t bytes, bool amm, s
         std::lock_guard lock(completion.mutex);
         id = ++completion.issued;
         completion.outstanding.insert(id);
+    }
+    const std::uint32_t succeeded = 0;
+    if ((guestId && !GuestCopyOut_nid_no_patch(guestId, &id, sizeof(id))) || (guestResult && !GuestCopyOut_nid_no_patch(guestResult, &succeeded, sizeof(succeeded)))) {
+        _complete(amm, id, 0);
+        return std::nullopt;
     }
     bool queued;
     {
@@ -814,22 +1008,29 @@ std::uint32_t _submit(const std::uint8_t* base, std::uint32_t bytes, bool amm, s
         enqueue({});
         return id;
     }
-    if (const auto deferred = _execute(Apr::CommandBufferObject{Apr::BufferType::Generic, 0, bytes, 0, bytes, const_cast<std::uint8_t*>(base)}, 0, {}, true)) {
+    int status = 0;
+    if (const auto deferred = _execute(Apr::CommandBufferObject{Apr::BufferType::Generic, 0, bytes, 0, bytes, const_cast<std::uint8_t*>(base)}, status, 0, {}, true)) {
         enqueue(*deferred);
         return id;
     }
-    _complete(amm, id);
+    _complete(amm, id, status);
     return id;
 }
 
-void _waitSubmitted(std::uint32_t id, bool amm) {
+int _submissionStatus(std::uint32_t id, bool amm, bool wait) {
     auto& completion = _completion(amm);
     std::unique_lock lock(completion.mutex);
-    completion.done.wait(lock, [&] { return id > completion.issued || !completion.outstanding.contains(id); });
+    if (wait) completion.done.wait(lock, [&] { return id > completion.issued || !completion.outstanding.contains(id); });
+    const auto failure = completion.failures.find(id);
+    return failure == completion.failures.end() ? 0 : failure->second;
+}
+
+void _waitSubmitted(std::uint32_t id, bool amm) {
+    _submissionStatus(id, amm, true);
 }
 
 std::uint32_t AmmSubmit_nid_no_patch(void* base, std::uint32_t bytes) {
-    return _submit(static_cast<const std::uint8_t*>(base), bytes, true);
+    return *_submit(static_cast<const std::uint8_t*>(base), bytes, true);
 }
 
 bool AmmSubmitted_nid_no_patch(std::uint32_t id) {
@@ -845,41 +1046,17 @@ bool AmmSubmitted_nid_no_patch(std::uint32_t id) {
 
 int APS5_VABI sceKernelAprResolveFilepathsToIds(const char** paths, uint32_t count, uint32_t* ids, uint32_t* error_index) {
     if (!paths || !ids) return _fail(GUEST_EINVAL);
-    for (uint32_t index = 0; index < count; ++index) {
-        if (!_resolve(paths[index], &ids[index], nullptr)) {
-            ids[index] = INVALID_FILE_ID;
-            if (error_index) *error_index = index;
-            return _fail(GUEST_ENOENT);
-        }
-    }
-    return 0;
+    return _resolveAll(nullptr, paths, count, ids, nullptr, error_index);
 }
 
 int APS5_VABI sceKernelAprResolveFilepathsToIdsAndFileSizes(const char** paths, uint32_t count, uint32_t* ids, uint64_t* sizes, uint32_t* error_index) {
     if (!paths || !ids || !sizes) return _fail(GUEST_EINVAL);
-    for (uint32_t index = 0; index < count; ++index) {
-        if (!_resolve(paths[index], &ids[index], &sizes[index])) {
-            ids[index] = INVALID_FILE_ID;
-            if (sizes) sizes[index] = 0;
-            if (error_index) *error_index = index;
-            return _fail(GUEST_ENOENT);
-        }
-    }
-    return 0;
+    return _resolveAll(nullptr, paths, count, ids, sizes, error_index);
 }
 
 int APS5_VABI sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes(const char* prefix, const char** paths, uint32_t count, uint32_t* ids, uint64_t* sizes, uint32_t* error_index) {
     if (!prefix || !paths || !ids) return _fail(GUEST_EINVAL);
-    for (uint32_t index = 0; index < count; ++index) {
-        const std::string path = paths[index] ? std::string(prefix) + paths[index] : std::string();
-        if (path.empty() || !_resolve(path.c_str(), &ids[index], sizes ? &sizes[index] : nullptr)) {
-            ids[index] = INVALID_FILE_ID;
-            if (sizes) sizes[index] = 0;
-            if (error_index) *error_index = index;
-            return _fail(GUEST_ENOENT);
-        }
-    }
-    return 0;
+    return _resolveAll(prefix, paths, count, ids, sizes, error_index);
 }
 
 int APS5_VABI sceKernelAprResolveFilepathsWithPrefixToIds(const char* prefix, const char** paths, uint32_t count, uint32_t* ids, uint32_t* error_index) {
@@ -887,6 +1064,7 @@ int APS5_VABI sceKernelAprResolveFilepathsWithPrefixToIds(const char* prefix, co
 }
 
 int APS5_VABI sceKernelAprGetFileSize(uint32_t id, uint64_t* size) {
+    if (!_known(id)) return _fail(GUEST_ENOTSUP);
     if (!size) return _fail(GUEST_EINVAL);
     const std::uint64_t bytes = _file(id).size;
     if (!GuestCopyOut_nid_no_patch(size, &bytes, sizeof(bytes))) return _fail(GUEST_EFAULT);
@@ -894,6 +1072,7 @@ int APS5_VABI sceKernelAprGetFileSize(uint32_t id, uint64_t* size) {
 }
 
 int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
+    if (!_known(id)) return _fail(GUEST_ENOTSUP);
     if (!stat) return _fail(GUEST_EINVAL);
     FileStat result{};
     File::FillFileStat(_file(id).path, &result);
@@ -901,30 +1080,45 @@ int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
     return 0;
 }
 
-int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject* buffer, uint32_t priority) {
+std::optional<std::vector<std::uint8_t>> _guestCommands(const Apr::CommandBufferObject& object) {
+    if (object.offset > object.size) return std::nullopt;
+    std::vector<std::uint8_t> commands;
+    try {
+        commands.resize(object.offset);
+    } catch (const std::bad_alloc&) {
+        return std::nullopt;
+    }
+    if (object.offset != 0 && !GuestCopyIn_nid_no_patch(commands.data(), object.base, object.offset)) return std::nullopt;
+    return commands;
+}
+
+int _submitGuest(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* id, uint32_t* result) {
     if (!buffer) return _fail(GUEST_EINVAL);
-    _submit(buffer->base, buffer->offset, false, priority);
+    Apr::CommandBufferObject object{};
+    if (!GuestCopyIn_nid_no_patch(&object, buffer, sizeof(object))) return _fail(GUEST_EFAULT);
+    const auto commands = _guestCommands(object);
+    if (!commands) return _fail(GUEST_EFAULT);
+    if (!_submit(commands->data(), static_cast<std::uint32_t>(commands->size()), false, priority, id, result)) return _fail(GUEST_EFAULT);
     return 0;
+}
+
+int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject* buffer, uint32_t priority) {
+    return _submitGuest(buffer, priority, nullptr, nullptr);
 }
 
 int APS5_VABI sceKernelAprSubmitCommandBufferAndGetId(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* id) {
     if (!id) return _fail(GUEST_EINVAL);
-    if (!buffer) return _fail(GUEST_EINVAL);
-    *id = _submit(buffer->base, buffer->offset, false, priority);
-    return 0;
+    return _submitGuest(buffer, priority, id, nullptr);
 }
 
 int APS5_VABI sceKernelAprSubmitCommandBufferAndGetResult(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* result, uint32_t* id) {
     if (!result) return _fail(GUEST_EINVAL);
-    const int submitted = sceKernelAprSubmitCommandBufferAndGetId(buffer, priority, id);
-    if (submitted != 0) return submitted;
-    *result = 0;
-    return 0;
+    if (!id) return _fail(GUEST_EINVAL);
+    return _submitGuest(buffer, priority, id, result);
 }
 
 int APS5_VABI sceKernelAprWaitCommandBuffer(uint32_t id) {
-    _waitSubmitted(id, false);
-    return 0;
+    return _submissionStatus(id, false, true);
 }
 
 int APS5_VABI sceKernelAprResolveFilepathsToIdsForEach(const char** paths, uint32_t count, uint32_t* ids, int* results) {
@@ -958,16 +1152,18 @@ bool _validWriteProtection(std::uint64_t protection) {
 int APS5_VABI sceKernelWriteModifyMtypeProtectCommand(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t mask, std::uint64_t* outSize) {
     if (!_validWriteRange(address, size) || !_validWriteProtection(protection) || !_validWriteProtection(mask)) return SCE_KERNEL_ERROR_EINVAL;
     const Apr::AmmProtectCommand command{{Apr::Opcode::AmmModifyMtypeProtect, sizeof(command)}, address, size, static_cast<std::int32_t>(type), static_cast<std::int32_t>(protection), static_cast<std::int32_t>(mask), 0};
-    if (dst) std::memcpy(dst, &command, sizeof(command));
-    if (outSize) *outSize = sizeof(command);
+    if (dst && !GuestCopyOut_nid_no_patch(dst, &command, sizeof(command))) return SCE_KERNEL_ERROR_EFAULT;
+    const std::uint64_t commandSize = sizeof(command);
+    if (outSize && !GuestCopyOut_nid_no_patch(outSize, &commandSize, sizeof(commandSize))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
 int APS5_VABI sceKernelWriteRemapIntoPrtCommand(std::uint32_t* dst, std::uint64_t address, std::uint64_t source, std::uint64_t size, int protection, int opcode, std::uint64_t* outSize) {
     if (!_validWriteRange(address, size) || !_validWriteRange(source, size) || !_validWriteProtection(static_cast<std::uint32_t>(protection))) return SCE_KERNEL_ERROR_EINVAL;
     const Apr::AmmRemapCommand command{{Apr::Opcode::AmmRemapIntoPrt, sizeof(command)}, address, source, size, protection, opcode ? opcode : 1011};
-    if (dst) std::memcpy(dst, &command, sizeof(command));
-    if (outSize) *outSize = sizeof(command);
+    if (dst && !GuestCopyOut_nid_no_patch(dst, &command, sizeof(command))) return SCE_KERNEL_ERROR_EFAULT;
+    const std::uint64_t commandSize = sizeof(command);
+    if (outSize && !GuestCopyOut_nid_no_patch(outSize, &commandSize, sizeof(commandSize))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 

@@ -1,5 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -15,6 +17,34 @@ static void Require(bool condition, const char* message) {
     }
 }
 
+static void CheckRdtscElapsed(std::uint64_t sleptMicros, double scale, bool delayed) {
+    const std::uint64_t frequency = sceKernelGetTscFrequency();
+    Require(frequency != 0, "reported TSC frequency is zero");
+    const auto earliestStart = std::chrono::steady_clock::now();
+    const std::uint64_t nativeStart = __rdtsc();
+    const std::uint64_t readStart = sceKernelReadTsc();
+    const auto latestStart = std::chrono::steady_clock::now();
+    const auto until = latestStart + std::chrono::microseconds(sleptMicros);
+    if (delayed) {
+        const auto resume = until + std::chrono::microseconds(sleptMicros);
+        while (std::chrono::steady_clock::now() < resume) std::this_thread::sleep_until(resume);
+    }
+    while (std::chrono::steady_clock::now() < until) std::this_thread::sleep_until(until);
+    const auto earliestEnd = std::chrono::steady_clock::now();
+    const std::uint64_t nativeEnd = __rdtsc();
+    const std::uint64_t readEnd = sceKernelReadTsc();
+    const auto latestEnd = std::chrono::steady_clock::now();
+    Require(nativeEnd >= nativeStart && readEnd >= readStart, "TSC went backwards during the elapsed-time check");
+    const auto micros = [frequency](std::uint64_t ticks) { return ticks / frequency * 1000000 + ticks % frequency * 1000000 / frequency; };
+    const double factor = scale > 0.0 ? scale : 1.0;
+    const double minimumMicros = std::chrono::duration<double, std::micro>(earliestEnd - latestStart).count() * factor * 19 / 20;
+    const double maximumMicros = std::chrono::duration<double, std::micro>(latestEnd - earliestStart).count() * factor * 3 / 2;
+    const auto nativeMicros = micros(nativeEnd - nativeStart);
+    const auto readMicros = micros(readEnd - readStart);
+    Require(nativeMicros >= minimumMicros && nativeMicros < maximumMicros, "native rdtsc ticks over the reported TSC frequency do not follow the time scale");
+    Require(readMicros >= minimumMicros && readMicros < maximumMicros, "sceKernelReadTsc ticks over the reported TSC frequency do not follow the time scale");
+}
+
 int main(int argc, char** argv) {
     constexpr std::uint64_t minuteMicros = 60ULL * 1000 * 1000;
     constexpr std::uint64_t sleptMicros = 50ULL * 1000;
@@ -23,15 +53,7 @@ int main(int argc, char** argv) {
     const auto elapsedMicros = static_cast<std::uint64_t>(static_cast<double>(sleptMicros) * (scale > 0.0 ? scale : 1.0));
     const auto minimumElapsedMicros = elapsedMicros * 19 / 20;
     if (argc > 1 && std::strcmp(argv[1], "rdtsc") == 0) {
-        const std::uint64_t frequency = sceKernelGetTscFrequency();
-        const std::uint64_t nativeStart = __rdtsc();
-        const std::uint64_t readStart = sceKernelReadTsc();
-        const auto until = std::chrono::steady_clock::now() + std::chrono::microseconds(sleptMicros);
-        while (std::chrono::steady_clock::now() < until) std::this_thread::sleep_until(until);
-        const std::uint64_t nativeMicros = (__rdtsc() - nativeStart) * 1000000 / frequency;
-        const std::uint64_t readMicros = (sceKernelReadTsc() - readStart) * 1000000 / frequency;
-        Require(nativeMicros >= minimumElapsedMicros && nativeMicros < elapsedMicros * 3 / 2, "native rdtsc ticks over the reported TSC frequency do not follow the time scale");
-        Require(readMicros >= minimumElapsedMicros && readMicros < elapsedMicros * 3 / 2, "sceKernelReadTsc ticks over the reported TSC frequency do not follow the time scale");
+        CheckRdtscElapsed(sleptMicros, scale, argc > 2 && std::strcmp(argv[2], "delayed") == 0);
         return 0;
     }
     const auto slept = std::chrono::steady_clock::now() + std::chrono::microseconds(sleptMicros);
@@ -64,5 +86,9 @@ int main(int argc, char** argv) {
     Require(first < minuteMicros, "first process time wrapped");
     Require(first >= minimumElapsedMicros, "first process time does not include the time before the first call");
     Require(sceKernelGetProcessTime() >= first, "process time went backwards");
+    const std::uint64_t beforeClock = sceKernelGetProcessTime();
+    const std::int64_t clocked = clock_nid_postfix();
+    const std::uint64_t afterClock = sceKernelGetProcessTime();
+    Require(clocked >= static_cast<std::int64_t>(beforeClock) && clocked <= static_cast<std::int64_t>(afterClock), "clock() is not the process time");
     return 0;
 }

@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <bit>
 #include <cstddef>
@@ -237,6 +238,18 @@ void FreeBignum(Bignum* bn) {
     }
 }
 
+template <typename TAction>
+bool FillBignum(Bignum* target, bool owned, TAction action) {
+    try {
+        return action();
+    } catch (...) {
+        if (owned) {
+            try { FreeBignum(target); } catch (...) {}
+        }
+        throw;
+    }
+}
+
 int HexValue(char c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -285,13 +298,16 @@ Bignum* APS5_VABI BN_bin2bn_nid_postfix(const unsigned char* s, int len, Bignum*
     if (len > 0 && !s) throw std::invalid_argument(std::string(__func__) + ": null input");
     Bignum* target = ret ? ret : NewBignum();
     if (!target) return nullptr;
-    Mag m((static_cast<std::size_t>(len) + 7) / 8, 0);
-    for (int i = 0; i < len; i++) {
-        const std::size_t bit = static_cast<std::size_t>(len - 1 - i);
-        m[bit / 8] |= static_cast<std::uint64_t>(s[i]) << (bit % 8 * 8);
-    }
-    Trim(m);
-    if (!Store(target, m, false)) {
+    const bool stored = FillBignum(target, ret == nullptr, [&] {
+        Mag m((static_cast<std::size_t>(len) + 7) / 8, 0);
+        for (int i = 0; i < len; i++) {
+            const std::size_t bit = static_cast<std::size_t>(len - 1 - i);
+            m[bit / 8] |= static_cast<std::uint64_t>(s[i]) << (bit % 8 * 8);
+        }
+        Trim(m);
+        return Store(target, m, false);
+    });
+    if (!stored) {
         if (!ret) FreeBignum(target);
         return nullptr;
     }
@@ -319,7 +335,7 @@ int APS5_VABI BN_hex2bn_nid_postfix(Bignum** a, const char* str) {
     const char* digits = str + negative;
     std::size_t count = 0;
     while (HexValue(digits[count]) >= 0) count++;
-    if (count == 0 || count > 0x7FFFFFFF / 4) return 0;
+    if (count > 0x7FFFFFFF / 4) return 0;
     const int consumed = static_cast<int>(count + negative);
     if (!a) return consumed;
     Mag m((count + 15) / 16, 0);
@@ -328,12 +344,14 @@ int APS5_VABI BN_hex2bn_nid_postfix(Bignum** a, const char* str) {
         m[nibble / 16] |= static_cast<std::uint64_t>(HexValue(digits[i])) << (nibble % 16 * 4);
     }
     Trim(m);
-    Bignum* target = *a ? *a : NewBignum();
+    const bool owned = *a == nullptr;
+    Bignum* target = owned ? NewBignum() : *a;
     if (!target) return 0;
-    if (!Store(target, m, negative)) {
-        if (!*a) FreeBignum(target);
+    if (!FillBignum(target, owned, [&] { return Store(target, m, negative); })) {
+        if (owned) FreeBignum(target);
         return 0;
     }
+    target->neg = negative ? 1 : 0;
     *a = target;
     return consumed;
 }
@@ -361,15 +379,35 @@ int APS5_VABI BN_mul_nid_postfix(Bignum* r, const Bignum* a, const Bignum* b, Bi
     return Store(r, product, x.neg != y.neg);
 }
 
+int APS5_VABI BN_print_nid_postfix(LibreSsl::Bio* bio, const Bignum* a) {
+    static constexpr char digits[] = "0123456789ABCDEF";
+    Checked(a, __func__);
+    if (a->neg && LibreSslBioWrite_nid_no_patch(bio, "-", 1) != 1) return 0;
+    if (a->top == 0 && LibreSslBioWrite_nid_no_patch(bio, "0", 1) != 1) return 0;
+    bool started = false;
+    for (int i = a->top - 1; i >= 0; i--) {
+        for (int shift = 60; shift >= 0; shift -= 4) {
+            const int digit = static_cast<int>(a->d[i] >> shift) & 15;
+            if (!started && digit == 0) continue;
+            if (LibreSslBioWrite_nid_no_patch(bio, &digits[digit], 1) != 1) return 0;
+            started = true;
+        }
+    }
+    return 1;
+}
+
 Bignum* APS5_VABI BN_mod_inverse_nid_postfix(Bignum* r, const Bignum* a, const Bignum* n, BignumContext*) {
     const Int value = Load(Checked(a, __func__));
     const Int modulus = Load(Checked(n, __func__));
     if (modulus.mag.empty()) return nullptr;
     Mag inverse;
-    if (!InverseMod(value, modulus.mag, inverse)) return nullptr;
+    if (!InverseMod(value, modulus.mag, inverse)) {
+        LibreSslPutError_nid_no_patch(3, 0xfff, 108);
+        return nullptr;
+    }
     Bignum* target = r ? r : NewBignum();
     if (!target) return nullptr;
-    if (!Store(target, inverse, false)) {
+    if (!FillBignum(target, r == nullptr, [&] { return Store(target, inverse, false); })) {
         if (!r) FreeBignum(target);
         return nullptr;
     }

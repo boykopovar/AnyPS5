@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(ds_condxchg_gds_translation_tests ${LIBS_INCLUDE_DIR}/tests/DsCondxchgGdsTranslation.cpp)
+    target_link_libraries(ds_condxchg_gds_translation_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(ds_condxchg_gds_translation_tests)
+    add_test(NAME ds_condxchg_gds_translation COMMAND ds_condxchg_gds_translation_tests)
+    if(WIN32)
+        set_tests_properties(ds_condxchg_gds_translation PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

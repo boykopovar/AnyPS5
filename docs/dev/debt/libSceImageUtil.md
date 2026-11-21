@@ -12,4 +12,17 @@
 | `Unknown` | `rSoaNeazErw` |
 | `Unknown` | `yjU-5r3TDtc` |
 
+- [Later callable exports](../../../core/libs/prx/libSceImageUtil/Export.cpp) - the function exports of `libSceImageUtil` listed below throw through `NotImplemented_nid_no_patch` on every call; their names, parameter lists, return types and behavior are unknown, and the parameterless `int` declarations only resolve imports. The [PS5 13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/ba1933f305f1934ed2a12c94479a977844bdbe5a/data/firmware-13.60/libsceimageutil-196f49c23b.jsonl) lists them as function exports of the 13.60-labelled image only, not of its 3.20 reference; the label does not authenticate retail firmware. `tools/nid_names.py` resolves none of them, so each uses a literal NID alias.
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `J805kfu8t4w` |
+| `Unknown` | `PaJr2GfStvA` |
+| `Unknown` | `TBLqZYmwmnU` |
+| `Unknown` | `WePG8ETDGLg` |
+| `Unknown` | `dBpqY1nOvJQ` |
+| `Unknown` | `eMlkZeoHuxM` |
+| `Unknown` | `oOjUpbj5GyI` |
+| `Unknown` | `q-Jp4vQAAXM` |
+
 - [Older callable NIDs](../../../core/libs/prx/libSceImageUtil/Export.cpp): 5 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory.

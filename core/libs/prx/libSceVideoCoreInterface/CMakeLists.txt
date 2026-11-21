@@ -1,0 +1,15 @@
+add_library(libSceVideoCoreInterface SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceVideoCoreInterface PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceVideoCoreInterface)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_video_core_interface_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoCoreInterface.cpp)
+    target_include_directories(guest_video_core_interface_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_core_interface_tests PRIVATE libSceVideoCoreInterface libc)
+    configure_windows_unwind(guest_video_core_interface_tests)
+    add_test(NAME guest_video_core_interface COMMAND guest_video_core_interface_tests)
+    if(WIN32)
+        set_tests_properties(guest_video_core_interface PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoCoreInterface>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

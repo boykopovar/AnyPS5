@@ -6,10 +6,17 @@
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
 constexpr int Einval = 22;
+constexpr int Efault = 14;
 
 void Require(bool value, const char* message) {
     if (!value) {
@@ -24,9 +31,65 @@ void WaitFor(const std::atomic<bool>& flag, const char* message) {
     Require(flag, message);
 }
 
+class UnwritablePage {
+public:
+    UnwritablePage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY));
+        Require(memory != nullptr, "map a read-only page");
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        Require(pageSize > 0, "page size");
+        size = static_cast<std::size_t>(pageSize);
+        memory = static_cast<char*>(mmap(nullptr, size, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED, "map a read-only page");
+#endif
+    }
+
+    ~UnwritablePage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, size);
+#endif
+    }
+
+    UnwritablePage(const UnwritablePage&) = delete;
+    UnwritablePage& operator=(const UnwritablePage&) = delete;
+
+    PthreadKey* Address() const { return reinterpret_cast<PthreadKey*>(memory); }
+
+private:
+    char* memory = nullptr;
+    std::size_t size = 0;
+};
+
+void CheckKeyCreateFaults() {
+    PthreadKey probe = 0;
+    Require(pthread_key_create_nid_postfix(&probe, nullptr) == 0 && probe != 0, "key create for the fault checks");
+    Require(pthread_key_delete_nid_postfix(probe) == 0, "key delete for the fault checks");
+
+    UnwritablePage page;
+    PthreadKey* const bad[] = {reinterpret_cast<PthreadKey*>(0x10), page.Address()};
+    for (PthreadKey* pointer : bad) {
+        Require(pthread_key_create_nid_postfix(pointer, nullptr) == Efault, "key create into an unusable pointer returns EFAULT");
+        PthreadKey after = 0;
+        Require(pthread_key_create_nid_postfix(&after, nullptr) == 0 && after == probe, "a failed key create does not keep the key");
+        Require(pthread_key_delete_nid_postfix(after) == 0, "key delete after a failed create");
+    }
+    Require(pthread_key_create_nid_postfix(nullptr, nullptr) == Einval, "key create into NULL returns EINVAL");
+    Require(pthread_key_delete_nid_postfix(probe) == Einval, "key delete of a key that is already deleted returns EINVAL");
+    Require(pthread_key_delete_nid_postfix(0) == Einval, "key delete of key 0 returns EINVAL");
+    Require(pthread_key_delete_nid_postfix(0x7fffffff) == Einval, "key delete of a key past the table returns EINVAL");
+}
+
 }
 
 int main() {
+    CheckKeyCreateFaults();
     int first = 0;
     int second = 0;
     for (const PthreadKey invalid : {static_cast<PthreadKey>(0), static_cast<PthreadKey>(0xFFFFFFFFu)}) {

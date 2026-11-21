@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <span>
 #include <string>
@@ -39,6 +40,17 @@ alignas(256) constexpr std::array<std::uint32_t, 16> Code{
     0x34060085u, 0x7e2802ffu, 0x3ef00000u, 0x7e2a02ffu, 0x3f300000u, 0xf09c0f08u, 0x00610a14u, 0xf09c0f08u,
     0x00640e14u, 0xbf8c3f70u, 0xe0781000u, 0x80000a03u, 0xe0781010u, 0x80000e03u, 0xbf810000u, 0xbf810000u,
 };
+
+alignas(256) constexpr auto ProductCode = [] {
+    std::array<std::uint32_t, Code.size() + 4u> code{};
+    std::copy_n(Code.begin(), 10u, code.begin());
+    for (std::uint32_t component = 0u; component < 4u; ++component) {
+        const auto reg = 14u + component;
+        code[10u + component] = 0x10000000u | (reg << 17u) | (reg << 9u) | 0x100u | reg;
+    }
+    std::copy(Code.begin() + 10u, Code.end(), code.begin() + 14u);
+    return code;
+}();
 
 std::string Hex(std::uint32_t value) {
     char text[16];
@@ -94,17 +106,16 @@ std::array<std::uint32_t, 8> TextureDescriptor(const void* texels, std::uint32_t
     };
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
+ShaderRecompiler::RecompileResult Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t format, bool useCache) {
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(24, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     const auto integers = TextureDescriptor(Integers.data(), Format32SInt, SwizzleX111);
-    const auto colors = TextureDescriptor(Colors.data(), Format8888UNorm, IdentitySwizzle);
+    const auto colors = TextureDescriptor(Colors.data(), format, IdentitySwizzle);
     std::copy(output.begin(), output.end(), userData.begin());
     std::copy(integers.begin(), integers.end(), userData.begin() + 4);
     std::copy(LinearSampler.begin(), LinearSampler.end(), userData.begin() + 12);
     std::copy(colors.begin(), colors.end(), userData.begin() + 16);
-    const std::span<const std::uint32_t> code(Code);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {true, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -113,15 +124,16 @@ void Run(AgcDriver::VulkanDevice& device) {
         device.Target(),
         {0, 0, 0, 128}
     };
-    request.useCache = false;
+    request.useCache = useCache;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
+    return result;
 }
 
 void Check(AgcDriver::VulkanDevice& device) {
     Fill();
-    Run(device);
+    Run(device, Code, Format8888UNorm, false);
     const std::array<std::uint32_t, 4> integer{static_cast<std::uint32_t>(Integer(SampleX, SampleY)), 1u, 1u, 1u};
     const std::array<float, 4> color{0.25f, 0.0f, 0.0f, 1.0f};
     for (std::uint32_t lane = 0; lane < Threads; ++lane) {
@@ -137,6 +149,42 @@ void Check(AgcDriver::VulkanDevice& device) {
     }
 }
 
+void CheckNormalizedProducts(AgcDriver::VulkanDevice& device) {
+    constexpr auto FloatFormat = static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format32_32_32_32Float);
+    constexpr auto SignedFormat = static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format8_8_8_8SNorm);
+    const std::array<std::uint32_t, 4> floating{0x7f812345u, 0xffc54321u, 0x80000000u, 0x7f800000u};
+    ShaderRecompiler::RecompileResult first;
+    ShaderRecompiler::RecompileResult sampledFirst;
+    for (const auto format : {Format8888UNorm, SignedFormat, FloatFormat, Format8888UNorm}) {
+        const auto pitch = PitchBytes(format, Colors.size());
+        for (std::uint32_t y = 0u; y < Size; ++y) {
+            for (std::uint32_t x = 0u; x < Size; ++x) {
+                if (format == FloatFormat) std::memcpy(Colors.data() + y * pitch + x * 16u, floating.data(), sizeof(floating));
+                else {
+                    const std::array<std::uint8_t, 4> texel = format == SignedFormat ? std::array<std::uint8_t, 4>{128u, 255u, 0u, 127u} : std::array<std::uint8_t, 4>{0u, 255u, 128u, 64u};
+                    std::memcpy(Colors.data() + y * pitch + x * 4u, texel.data(), texel.size());
+                }
+            }
+        }
+        const auto sample = Run(device, Code, format, true);
+        if (sampledFirst.spirv.empty()) sampledFirst = sample;
+        else Require(sampledFirst.spirv.ContentHash() == sample.spirv.ContentHash() && sampledFirst.Identity() == sample.Identity(), "format transition split a sampled shader with no bounded NaN query");
+        std::array<std::uint32_t, 4> sampled{};
+        std::copy_n(Output.begin() + 4u, 4u, sampled.begin());
+        const auto result = Run(device, ProductCode, format, true);
+        for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
+            for (std::uint32_t component = 0u; component < 4u; ++component) {
+                const auto bits = sampled[component];
+                const auto value = std::bit_cast<float>(bits);
+                const auto expected = (bits & 0x7fffffffu) > 0x7f800000u ? bits : std::bit_cast<std::uint32_t>(value * value);
+                Require(Output[lane * 8u + 4u + component] == expected, "sampled product changed value or NaN payload across a format transition");
+            }
+        }
+        if (first.spirv.empty()) first = result;
+        else if (format == Format8888UNorm) Require(first.spirv.ContentHash() == result.spirv.ContentHash() && result.cacheHit, "sampled format transition missed the original cached normalized variant");
+    }
+}
+
 }
 
 int main() {
@@ -144,6 +192,7 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Check(*device);
+        CheckNormalizedProducts(*device);
         std::puts("image sample shared sampler tests passed");
         return 0;
     } catch (const std::exception& error) {
