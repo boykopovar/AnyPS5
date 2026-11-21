@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include "SceTypes.hpp"
@@ -16,6 +17,7 @@
 static std::atomic<uint64_t> g_coredumpHandler{0};
 static std::atomic<uint64_t> g_coredumpContext{0};
 static std::atomic<std::uint32_t> coredumpSdkVersion{0};
+static std::mutex g_coredumpHandlerMutex;
 
 static constexpr int SCE_COREDUMP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x81180000u);
 static constexpr int SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER = static_cast<int>(0x81180003u);
@@ -28,14 +30,55 @@ static int userFileResult() {
     return g_coredumpHandler.load(std::memory_order_relaxed) ? SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER : 0;
 }
 
+static const char* copyGuestExceptionString(const char* guestStr, const char* nullFallback, std::string& storage) {
+    if (guestStr == nullptr) {
+        return nullFallback;
+    }
+    storage.clear();
+    constexpr std::size_t MaxLen = 512;
+    const auto address = reinterpret_cast<std::uintptr_t>(guestStr);
+    std::array<char, 128> chunk{};
+    for (std::size_t offset = 0; offset < MaxLen;) {
+        if (address > std::numeric_limits<std::uintptr_t>::max() - offset) {
+            return storage.empty() ? "(unreadable)" : storage.c_str();
+        }
+        const std::size_t remaining = MaxLen - offset;
+        const std::size_t count = remaining < chunk.size() ? remaining : chunk.size();
+        const std::size_t maxAvail = std::numeric_limits<std::uintptr_t>::max() - (address + offset);
+        const auto* source = reinterpret_cast<const void*>(address + offset);
+        if (count - 1 <= maxAvail && GuestCopyIn_nid_no_patch(chunk.data(), source, count)) {
+            const auto* end = static_cast<const char*>(std::memchr(chunk.data(), 0, count));
+            storage.append(chunk.data(), end ? static_cast<std::size_t>(end - chunk.data()) : count);
+            if (end) {
+                return storage.c_str();
+            }
+            offset += count;
+            continue;
+        }
+        char byte{};
+        if (!GuestCopyIn_nid_no_patch(&byte, source, 1)) {
+            return storage.empty() ? "(unreadable)" : storage.c_str();
+        }
+        if (byte == 0) {
+            return storage.c_str();
+        }
+        storage.push_back(byte);
+        ++offset;
+    }
+    return storage.c_str();
+}
+
 extern "C" {
 
 int APS5_VABI sceCoredumpRegisterCoredumpHandler(uint64_t handler, size_t stack_size, uint64_t context) {
+    std::lock_guard<std::mutex> lock(g_coredumpHandlerMutex);
     if (g_coredumpHandler.load(std::memory_order_relaxed)) return static_cast<int>(0x81180002u);
     if (!handler || stack_size < 0x4000 || stack_size >= 0x20000000) return SCE_COREDUMP_ERROR_INVALID_ARGUMENT;
     const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t sdkVersion;
-    std::memcpy(&sdkVersion, parameters + 16, sizeof(sdkVersion));
+    std::uint32_t sdkVersion = 0;
+    if (parameters != nullptr) {
+        std::memcpy(&sdkVersion, parameters + 16, sizeof(sdkVersion));
+    }
     coredumpSdkVersion.store(sdkVersion, std::memory_order_relaxed);
     g_coredumpHandler.store(handler, std::memory_order_relaxed);
     g_coredumpContext.store(context, std::memory_order_relaxed);
@@ -43,6 +86,7 @@ int APS5_VABI sceCoredumpRegisterCoredumpHandler(uint64_t handler, size_t stack_
 }
 
 int APS5_VABI sceCoredumpUnregisterCoredumpHandler(void) {
+    std::lock_guard<std::mutex> lock(g_coredumpHandlerMutex);
     if (!g_coredumpHandler.load(std::memory_order_relaxed)) return static_cast<int>(0x81180001u);
     g_coredumpHandler.store(0, std::memory_order_relaxed);
     g_coredumpContext.store(0, std::memory_order_relaxed);
@@ -51,7 +95,11 @@ int APS5_VABI sceCoredumpUnregisterCoredumpHandler(void) {
 
 int APS5_VABI sceKernelDebugWriteCppExceptionInfo(const void* exception, uint64_t unknown, const char* typeName, const char* what) {
     (void)unknown;
-    std::fprintf(stderr, "[coredump] uncaught C++ exception %p of type %s%s%s\n", exception, typeName ? typeName : "(unknown)", what ? ", what(): " : "", what ? what : "");
+    std::string typeStorage;
+    std::string whatStorage;
+    const char* safeTypeName = copyGuestExceptionString(typeName, "(unknown)", typeStorage);
+    const char* safeWhat = copyGuestExceptionString(what, "", whatStorage);
+    std::fprintf(stderr, "[coredump] uncaught C++ exception %p of type %s%s%s\n", exception, safeTypeName, what ? ", what(): " : "", safeWhat);
     return 0;
 }
 

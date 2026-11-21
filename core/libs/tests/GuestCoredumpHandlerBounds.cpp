@@ -122,5 +122,87 @@ int main() {
         Require(errorCount.load() == 0);
     }
 
+    {
+        const char* validType = "TestException";
+        const char* validWhat = "test failure";
+        const auto* unreadable = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+        const void* dummyException = reinterpret_cast<const void*>(std::uintptr_t{0x1234});
+
+        Require(sceKernelDebugWriteCppExceptionInfo(dummyException, 0, validType, validWhat) == 0);
+        Require(sceKernelDebugWriteCppExceptionInfo(dummyException, 0, validType, nullptr) == 0);
+        Require(sceKernelDebugWriteCppExceptionInfo(nullptr, 0, nullptr, nullptr) == 0);
+        Require(sceKernelDebugWriteCppExceptionInfo(dummyException, 0, nullptr, validWhat) == 0);
+        Require(sceKernelDebugWriteCppExceptionInfo(dummyException, 0, unreadable, validWhat) == 0);
+        Require(sceKernelDebugWriteCppExceptionInfo(dummyException, 0, validType, unreadable) == 0);
+        Require(sceKernelDebugWriteCppExceptionInfo(dummyException, 0, unreadable, unreadable) == 0);
+        Require(sceKernelDebugWriteCppExceptionInfo(dummyException, 0, unreadable, nullptr) == 0);
+        Require(sceKernelDebugWriteCppExceptionInfo(dummyException, 0, nullptr, unreadable) == 0);
+    }
+
+    for (int round = 0; round < 16; ++round) {
+        std::atomic<int> readyReg{0};
+        std::atomic<bool> startReg{false};
+        std::atomic<int> regOkCount{0};
+        std::atomic<int> regAlreadyCount{0};
+        std::atomic<int> regUnexpectedCount{0};
+        std::vector<std::thread> regWorkers;
+        regWorkers.reserve(8);
+        for (int i = 0; i < 8; ++i) {
+            regWorkers.emplace_back([&, i] {
+                readyReg.fetch_add(1, std::memory_order_release);
+                while (!startReg.load(std::memory_order_acquire)) {}
+                const int rc = sceCoredumpRegisterCoredumpHandler(
+                    reinterpret_cast<std::uint64_t>(&DummyHandler),
+                    0x4000,
+                    static_cast<std::uint64_t>(i));
+                if (rc == 0) {
+                    regOkCount.fetch_add(1, std::memory_order_relaxed);
+                } else if (rc == CoredumpAlreadyRegistered) {
+                    regAlreadyCount.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    regUnexpectedCount.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
+        }
+        while (readyReg.load(std::memory_order_acquire) < 8) {}
+        startReg.store(true, std::memory_order_release);
+        for (auto& w : regWorkers) {
+            w.join();
+        }
+        Require(regOkCount.load() == 1);
+        Require(regAlreadyCount.load() == 7);
+        Require(regUnexpectedCount.load() == 0);
+
+        std::atomic<int> readyUnreg{0};
+        std::atomic<bool> startUnreg{false};
+        std::atomic<int> unregOkCount{0};
+        std::atomic<int> unregNotRegCount{0};
+        std::atomic<int> unregUnexpectedCount{0};
+        std::vector<std::thread> unregWorkers;
+        unregWorkers.reserve(8);
+        for (int i = 0; i < 8; ++i) {
+            unregWorkers.emplace_back([&] {
+                readyUnreg.fetch_add(1, std::memory_order_release);
+                while (!startUnreg.load(std::memory_order_acquire)) {}
+                const int rc = sceCoredumpUnregisterCoredumpHandler();
+                if (rc == 0) {
+                    unregOkCount.fetch_add(1, std::memory_order_relaxed);
+                } else if (rc == CoredumpNotRegistered) {
+                    unregNotRegCount.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    unregUnexpectedCount.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
+        }
+        while (readyUnreg.load(std::memory_order_acquire) < 8) {}
+        startUnreg.store(true, std::memory_order_release);
+        for (auto& w : unregWorkers) {
+            w.join();
+        }
+        Require(unregOkCount.load() == 1);
+        Require(unregNotRegCount.load() == 7);
+        Require(unregUnexpectedCount.load() == 0);
+    }
+
     return 0;
 }
