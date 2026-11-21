@@ -97,8 +97,15 @@ int main() {
     Require(sceFontSupportGlyphs(reinterpret_cast<const FontGlyphSupport*>(thirdTable)) == SCE_FONT_OK);
     Require(sceFontSupportGlyphs(reinterpret_cast<const FontGlyphSupport*>(selection)) == SCE_FONT_OK);
 
-    Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
+    errno = 71;
+    Require(sceFontDestroyLibrary(reinterpret_cast<FontLibrary*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontDestroyRenderer(reinterpret_cast<FontRenderer*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontMemoryInit(reinterpret_cast<FontMemory*>(0x10), nullptr, 0, &iface, nullptr, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontMemoryInit(reinterpret_cast<FontMemory*>(0x10), nullptr, 0, nullptr, nullptr, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontMemoryTerm(reinterpret_cast<FontMemory*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK && library == nullptr);
     Require(allocations == 0);
-    Require(sceFontMemoryTerm(&memory) == SCE_FONT_OK);
+    Require(sceFontMemoryTerm(&memory) == SCE_FONT_OK && memory.mem_kind == 0);
     std::puts("Font support registration tests passed");
 }

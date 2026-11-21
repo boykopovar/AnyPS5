@@ -89,6 +89,9 @@ int main() {
     std::uint32_t count = 0;
     FontTextCharacter* characters = sceFontStringRefersTextCharacters(string, &count);
     Require(characters != nullptr && count == 2);
+    errno = 71;
+    Require(sceFontWritingInit(reinterpret_cast<FontWriting*>(0x10), string, characters) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
 
     FontWriting writing{};
     Require(sceFontWritingInit(&writing, string, characters) == SCE_FONT_OK);
