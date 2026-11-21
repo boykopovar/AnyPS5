@@ -148,17 +148,38 @@ void SharedResultsAreChargedOnce() {
     Require(three.variantBytes == two.variantBytes, "evicting one shared result reference changed the shader metadata charge");
 }
 
+void DecodeChargedAndReleased() {
+    RegisterShaders();
+    Sources.front() = {1.0f, 0.0f, 0.0f, 1.0f};
+    const auto input = std::span<const ShaderInput>{Sources}.first(1);
+    auto& driver = AgcDriver::DriverDetail::Driver::Get();
+    const auto populate = [&](std::uint32_t scissorRight) {
+        auto commands = EveryDraw(input, scissorRight);
+        Pass(commands);
+        Pass(commands);
+        return driver.DrawCacheSize();
+    };
+    const auto one = populate(64);
+    const auto two = populate(48);
+    const auto three = populate(32);
+    Require(one.entries == 1 && two.entries == 2 && three.entries == 2, "expected two cached draws and one eviction");
+    std::cout << "Draw-cache decode bytes with one, two and two entries after eviction: " << one.variantBytes << ", " << two.variantBytes << ", " << three.variantBytes << '\n';
+    Require(two.variantBytes == 2 * one.variantBytes, "each distinct DrawDecode must be charged once (two entries should cost twice one)");
+    Require(three.variantBytes == two.variantBytes, "evicting one entry must release its DrawDecode charge, leaving two distinct decodes charged");
+}
+
 }
 
 int main(int argc, char** argv) {
     try {
         const auto test = argc == 2 ? std::string_view(argv[1]) : std::string_view{};
-        Require(argc == 1 || test == "--metadata-budget" || test == "--shared-result", "unknown draw cache capacity test argument");
+        Require(argc == 1 || test == "--metadata-budget" || test == "--shared-result" || test == "--decode-budget", "unknown draw cache capacity test argument");
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
         }
         if (test == "--shared-result") SharedResultsAreChargedOnce();
+        else if (test == "--decode-budget") DecodeChargedAndReleased();
         else CacheDistinctDraws(test == "--metadata-budget");
         AgcDriverShutdown_nid_postfix();
         if (test.empty()) std::cout << Draws << " distinct draws stayed in the draw cache under the default entry cap\n";
