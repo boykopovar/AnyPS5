@@ -1,0 +1,31 @@
+name: Experimental guest CPU
+on:
+  push:
+    branches:
+      - experiment/ios-arm64-cpu-interpreter
+  workflow_dispatch:
+jobs:
+  desktop:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Stage 3 compiler (Linux only)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang-17 binutils python3
+      - name: Configure
+        run: cmake -S experimental/arm64-cpu -B guest-cpu-build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build guest-cpu-build --config Release
+      - name: Test
+        run: ctest --test-dir guest-cpu-build -C Release --output-on-failure
+  ios-compile:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure iOS arm64 static library
+        run: cmake -S experimental/arm64-cpu -B guest-cpu-ios -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 -DANYPS5_GUEST_CPU_TESTS=OFF
+      - name: Compile
+        run: cmake --build guest-cpu-ios --config Release --target anyps5_guest_cpu

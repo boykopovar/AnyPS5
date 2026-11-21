@@ -1,0 +1,36 @@
+name: Dev signed division
+
+on:
+  push:
+    branches:
+      - dev/wide-division
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Stage 3 tools
+        run: sudo apt-get update && sudo apt-get install -y clang-17 binutils
+      - name: Configure
+        run: cmake -S experimental/arm64-cpu -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j 4
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --timeout 300
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S experimental/arm64-cpu -B build
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure --timeout 300
