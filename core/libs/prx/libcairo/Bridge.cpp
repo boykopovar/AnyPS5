@@ -122,16 +122,4 @@ void CairoClip_nid_no_patch(CairoContext* context) {
     cairo_clip(context);
 }
 
-void CairoPushGroup_nid_no_patch(CairoContext* context) {
-    cairo_push_group(context);
-}
-
-void CairoPopGroupToSource_nid_no_patch(CairoContext* context) {
-    cairo_pop_group_to_source(context);
-}
-
-void CairoPaintWithAlpha_nid_no_patch(CairoContext* context, double alpha) {
-    cairo_paint_with_alpha(context, alpha);
-}
-
 }

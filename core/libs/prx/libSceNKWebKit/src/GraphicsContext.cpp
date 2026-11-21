@@ -498,35 +498,6 @@ void APS5_VABI _ZN7WebCore15GraphicsContext11clearShadowEv(Context* self) {
     context.state.shadowColor = WebCore::Color{0};
 }
 
-void APS5_VABI _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(Context* self, std::uint8_t compositeOperator, std::uint8_t blendMode) {
-    auto& context = Checked(self, "WebCore::GraphicsContext::setCompositeOperation");
-    CairoOperator(compositeOperator, blendMode);
-    context.state.compositeOperator = compositeOperator;
-    context.state.blendMode = blendMode;
-    if (CairoContext* cr = Cairo(context)) CairoSetOperator_nid_no_patch(cr, CairoOperator(compositeOperator, blendMode));
-}
-
-void APS5_VABI _ZN7WebCore15GraphicsContext22beginTransparencyLayerEf(Context* self, float opacity) {
-    auto& context = Checked(self, "WebCore::GraphicsContext::beginTransparencyLayer");
-    auto* data = Private(context);
-    if (!data || !data->cr) return;
-    _ZN7WebCore15GraphicsContext4saveEv(self);
-    context.state.alpha = opacity;
-    ++context.transparencyCount;
-    CairoPushGroup_nid_no_patch(data->cr);
-}
-
-void APS5_VABI _ZN7WebCore15GraphicsContext20endTransparencyLayerEv(Context* self) {
-    auto& context = Checked(self, "WebCore::GraphicsContext::endTransparencyLayer");
-    auto* data = Private(context);
-    if (!data || !data->cr || context.transparencyCount == 0 || data->stack.empty()) return;
-    CairoPopGroupToSource_nid_no_patch(data->cr);
-    ApplyOperator(context);
-    CairoPaintWithAlpha_nid_no_patch(data->cr, context.state.alpha);
-    --context.transparencyCount;
-    _ZN7WebCore15GraphicsContext7restoreEv(self);
-}
-
 void APS5_VABI _ZN7WebCore15GraphicsContext15drawLineForTextERKNS_9FloatRectEbbNS_11StrokeStyleE(Context* self, const WebCore::FloatRect* rect, bool printing, bool doubleUnderlines, std::uint8_t) {
     auto& context = Checked(self, "WebCore::GraphicsContext::drawLineForText");
     if (!rect) throw std::invalid_argument("WebCore::GraphicsContext::drawLineForText requires a rectangle");

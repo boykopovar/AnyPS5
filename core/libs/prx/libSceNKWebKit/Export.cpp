@@ -28342,4 +28342,16 @@ int APS5_VABI _ZN7WebCore24StorageNamespaceProviderD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+
+int APS5_VABI _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZN7WebCore15GraphicsContext22beginTransparencyLayerEf() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZN7WebCore15GraphicsContext20endTransparencyLayerEv() {
+    NotImplemented_nid_no_patch(__func__);
+}
 }

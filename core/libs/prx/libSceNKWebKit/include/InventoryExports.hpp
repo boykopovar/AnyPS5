@@ -5602,4 +5602,6 @@ int APS5_VABI libSceNKWebKitUnknown_zpeJoENXwDY_nid_no_patch();
 void APS5_VABI WKBundlePageCopyRenderTree();
 void APS5_VABI WKBundlePageCopyRenderLayerTree();
 
+int APS5_VABI _ZN7WebCore15GraphicsContext22beginTransparencyLayerEf();
+int APS5_VABI _ZN7WebCore15GraphicsContext20endTransparencyLayerEv();
 }

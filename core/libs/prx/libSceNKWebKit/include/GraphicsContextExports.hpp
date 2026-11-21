@@ -36,9 +36,6 @@ void APS5_VABI _ZN7WebCore15GraphicsContext20setShouldSmoothFontsEb(NKWebKit::Gr
 void APS5_VABI _ZN7WebCore15GraphicsContext28setImageInterpolationQualityENS_20InterpolationQualityE(NKWebKit::GraphicsContextAbi::Context* self, std::uint8_t quality);
 void APS5_VABI _ZN7WebCore15GraphicsContext9setShadowERKNS_9FloatSizeEfRKNS_5ColorE(NKWebKit::GraphicsContextAbi::Context* self, const WebCore::FloatSize* offset, float blur, const WebCore::Color* color);
 void APS5_VABI _ZN7WebCore15GraphicsContext11clearShadowEv(NKWebKit::GraphicsContextAbi::Context* self);
-void APS5_VABI _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(NKWebKit::GraphicsContextAbi::Context* self, std::uint8_t compositeOperator, std::uint8_t blendMode);
-void APS5_VABI _ZN7WebCore15GraphicsContext22beginTransparencyLayerEf(NKWebKit::GraphicsContextAbi::Context* self, float opacity);
-void APS5_VABI _ZN7WebCore15GraphicsContext20endTransparencyLayerEv(NKWebKit::GraphicsContextAbi::Context* self);
 void APS5_VABI _ZN7WebCore15GraphicsContext15drawLineForTextERKNS_9FloatRectEbbNS_11StrokeStyleE(NKWebKit::GraphicsContextAbi::Context* self, const WebCore::FloatRect* rect, bool printing, bool doubleUnderlines, std::uint8_t strokeStyle);
 bool APS5_VABI _ZNK7WebCore15GraphicsContext18hasPlatformContextEv(const NKWebKit::GraphicsContextAbi::Context* self);
 NKWebKit::GraphicsContextAbi::PlatformContext* APS5_VABI _ZNK7WebCore15GraphicsContext15platformContextEv(const NKWebKit::GraphicsContextAbi::Context* self);

@@ -274,57 +274,6 @@ void TestStrokeRectAndImage() {
     cairo_surface_destroy(imageSurface);
 }
 
-void TestCompositeAndTransparency() {
-    Surface surface;
-    OwnedContext owned(&surface.platform);
-    auto& context = *owned.context;
-    const WebCore::Color green = Green;
-    const WebCore::Color red = Red;
-    const WebCore::FloatRect full{{0, 0}, {8, 8}};
-    const WebCore::FloatRect quarter{{0, 0}, {4, 4}};
-    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &full, &green);
-    _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(&context, 6, 1);
-    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &full, &red);
-    Require(surface.Pixel(1, 1) == 0xFF00FF00U);
-    _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(&context, 2, 1);
-    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &full, &red);
-    Require(surface.Pixel(1, 1) == 0xFFFF0000U);
-
-    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &full, &green);
-    _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(&context, 10, 1);
-    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &full, &red);
-    Require(surface.Pixel(1, 1) == 0);
-
-    _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(&context, 2, 1);
-    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &full, &green);
-    _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(&context, 2, 2);
-    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &full, &red);
-    Require(surface.Pixel(1, 1) == 0xFF000000U);
-    _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(&context, 2, 1);
-    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &full, &green);
-    _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(&context, 2, 3);
-    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &full, &red);
-    Require(surface.Pixel(1, 1) == 0xFFFFFF00U);
-
-    bool threw = false;
-    try {
-        _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(&context, 2, 255);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
-
-    _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(&context, 2, 1);
-    _ZN7WebCore15GraphicsContext9clearRectERKNS_9FloatRectE(&context, &full);
-    _ZN7WebCore15GraphicsContext22beginTransparencyLayerEf(&context, 0.5f);
-    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &quarter, &red);
-    _ZN7WebCore15GraphicsContext20endTransparencyLayerEv(&context);
-    const std::uint32_t pixel = surface.Pixel(1, 1);
-    Require((pixel >> 24) == 0x80);
-    Require(((pixel >> 16) & 0xFF) >= 127 && ((pixel >> 16) & 0xFF) <= 129);
-    Require(surface.Pixel(6, 6) == 0);
-}
-
 void TestDrawLineForText() {
     Surface surface;
     OwnedContext owned(&surface.platform);
@@ -374,7 +323,6 @@ int main() {
         TestPaths();
         TestPlatformContext();
         TestStrokeRectAndImage();
-        TestCompositeAndTransparency();
         TestDrawLineForText();
         TestShadowState();
     } catch (const std::exception& error) {
