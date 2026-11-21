@@ -270,6 +270,24 @@ void CheckConstructorsAndLifetime() {
     CheckConstructedOperations(FacetPtr(s4));
     CheckConstructedLayout(s4, 2);
 
+    FacetStorage s5 = FilledStorage();
+    _ZNSt7collateIcEC2Em_nid_postfix(FacetPtr(s5), 3);
+    CheckConstructedOperations(FacetPtr(s5));
+    CheckConstructedLayout(s5, 3);
+
+    FacetStorage s6 = FilledStorage();
+    _ZNSt7collateIcEC2ERKSt8_Locinfom_nid_postfix(FacetPtr(s6), &locinfo, wideRefs);
+    CheckConstructedOperations(FacetPtr(s6));
+    CheckConstructedLayout(s6, wideRefs);
+    Require(std::memcmp(&locinfo, &locinfoSnapshot, sizeof(locinfo)) == 0, "the base _Locinfo constructor does not mutate borrowed _Locinfo");
+
+    auto* deleting = static_cast<GuestLocale::CollateFacet*>(_Znwm_nid_postfix(sizeof(GuestLocale::CollateFacet)));
+    _ZNSt7collateIcEC2Em_nid_postfix(deleting, 0);
+    const long freesBeforeDeleting = totalFrees;
+    _ZNSt7collateIcED0Ev_nid_postfix(deleting);
+    Require(totalFrees == freesBeforeDeleting + 1 && liveAllocations == beforeAll, "the deleting destructor frees the facet");
+    Reject([] { _ZNSt7collateIcED0Ev_nid_postfix(nullptr); }, "the deleting destructor rejects a null facet");
+
     const long freesBeforeDestroy = totalFrees;
     FacetPtr(s3)->base.vtable->destroy(&FacetPtr(s3)->base);
     Require(totalFrees == freesBeforeDestroy && liveAllocations == beforeAll, "destroy on stack facet frees nothing");
@@ -305,6 +323,8 @@ void CheckErrorBranches() {
     Reject([] { _ZNSt7collateIcEC1EPKcm_nid_postfix(nullptr, "C", 0); }, "C1(const char*, size_t) rejects null this");
     Reject([&] { _ZNSt7collateIcEC1ERKSt8_Locinfom_nid_postfix(nullptr, &locinfo, 0); }, "C1(const _Locinfo&, size_t) rejects null this");
     Reject([] { _ZNSt7collateIcEC2EPKcm_nid_postfix(nullptr, "C", 0); }, "C2(const char*, size_t) rejects null this");
+    Reject([] { _ZNSt7collateIcEC2Em_nid_postfix(nullptr, 0); }, "C2(size_t) rejects null this");
+    Reject([&] { _ZNSt7collateIcEC2ERKSt8_Locinfom_nid_postfix(nullptr, &locinfo, 0); }, "C2(const _Locinfo&, size_t) rejects null this");
 
     FacetStorage sentinel = FilledStorage();
     Reject([&] { _ZNSt7collateIcEC1ERKSt8_Locinfom_nid_postfix(FacetPtr(sentinel), nullptr, 1); }, "C1(const _Locinfo&, size_t) rejects null _Locinfo");
