@@ -55,17 +55,6 @@ int main() {
     Require(WKContextDownloadURLRequest() == 0);
     Require(WKContextGetIconDatabase() == 0);
     Require(WKContextGetMaximumNumberOfProcesses() == static_cast<int>(0xffffffffu));
-    Require(WKContextMenuCopySubmenuItems() == 0);
-    Require(WKContextMenuItemCopyTitle() == 0);
-    Require(WKContextMenuItemCreateAsAction() == 0);
-    Require(WKContextMenuItemCreateAsCheckableAction() == 0);
-    Require(WKContextMenuItemCreateAsSubmenu() == 0);
-    Require(WKContextMenuItemGetChecked() == 0);
-    Require(WKContextMenuItemGetEnabled() == 0);
-    Require(WKContextMenuItemGetTag() == 0);
-    Require(WKContextMenuItemGetType() == 0);
-    Require(WKContextMenuItemGetUserData() == 0);
-    Require(WKContextMenuItemSeparatorItem() == 0);
     Require(WKContextResumeDownload() == 0);
     Require(WKFrameCanShowMIMEType() == 0);
     Require(WKFrameCreateFrameInfo() == 0);
@@ -79,8 +68,6 @@ int main() {
     Require(WKKeyValueStorageManagerGetModificationTimeKey() == 0);
     Require(WKKeyValueStorageManagerGetOriginKey() == 0);
     Require(WKKeyValueStorageManagerGetStorageDetailsByOrigin() == 0);
-    Require(WKOpenPanelParametersCopyCapture() == 0);
-    Require(WKOpenPanelParametersGetMediaCaptureType() == 0);
     Require(WKPageGetFrameSetLargestFrame() == 0);
     Require(WKPageIsMockRealtimeMediaSourceCenterEnabled() == 0);
     Require(WKPlugInInformationReplacementObscuredKey() == 0);

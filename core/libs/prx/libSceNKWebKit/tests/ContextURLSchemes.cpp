@@ -35,6 +35,7 @@ int main() {
     const void* schemeC = WKStringCreateWithUTF8CString("custom-display");
     const void* schemeD = WKStringCreateWithUTF8CString("custom-empty");
     const void* schemeE = WKStringCreateWithUTF8CString("custom-secure");
+    const void* schemeF = WKStringCreateWithUTF8CString("custom-forbidden");
 
     WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy(contextRef, schemeA);
     WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy(contextRef, schemeA);
@@ -57,12 +58,24 @@ int main() {
     Require(pool->secureSchemes.size() == 1);
     Require(pool->secureSchemes[0] == "custom-secure");
 
+    WKContextSetDomainRelaxationForbiddenForURLScheme(contextRef, schemeF);
+    WKContextSetDomainRelaxationForbiddenForURLScheme(contextRef, schemeF);
+    Require(pool->domainRelaxationForbiddenSchemes.size() == 1);
+    Require(pool->domainRelaxationForbiddenSchemes[0] == "custom-forbidden");
+
+    const void* nullScheme = WKStringCreateWithUTF8CString(nullptr);
+    WKContextSetDomainRelaxationForbiddenForURLScheme(contextRef, nullScheme);
+    WKRelease(nullScheme);
+
     RequireThrows([&] { WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy(nullptr, schemeA); });
     RequireThrows([&] { WKContextRegisterURLSchemeAsCachePartitioned(contextRef, nullptr); });
     RequireThrows([&] { WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest(schemeA, schemeC); });
     RequireThrows([&] { WKContextRegisterURLSchemeAsEmptyDocument(contextRef, contextRef); });
     RequireThrows([&] { WKContextRegisterURLSchemeAsSecure(nullptr, nullptr); });
+    RequireThrows([&] { WKContextSetDomainRelaxationForbiddenForURLScheme(nullptr, schemeF); });
+    RequireThrows([&] { WKContextSetDomainRelaxationForbiddenForURLScheme(contextRef, nullptr); });
 
+    WKRelease(schemeF);
     WKRelease(schemeE);
     WKRelease(schemeD);
     WKRelease(schemeC);

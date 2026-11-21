@@ -79,4 +79,15 @@ const void* APS5_VABI WKOpenPanelParametersCopySelectedFileNames(const void* par
     return CopyStrings(NKWebKit::Cast<NKWebKit::OpenPanelParameters>(parametersRef, __func__)->selectedFiles);
 }
 
+const void* APS5_VABI WKOpenPanelParametersCopyCapture(const void* parametersRef) {
+    const auto* parameters = NKWebKit::Cast<NKWebKit::OpenPanelParameters>(parametersRef, __func__);
+    if (!parameters->capture || parameters->capture->null) return nullptr;
+    return NKWebKit::ToRef(NKWebKit::Retained<NKWebKit::String>::Share(parameters->capture.Get()));
+}
+
+bool APS5_VABI WKOpenPanelParametersGetMediaCaptureType(const void* parametersRef) {
+    const auto* parameters = NKWebKit::Cast<NKWebKit::OpenPanelParameters>(parametersRef, __func__);
+    return parameters->mediaCaptureType != NKWebKit::MediaCaptureType::None;
+}
+
 }
