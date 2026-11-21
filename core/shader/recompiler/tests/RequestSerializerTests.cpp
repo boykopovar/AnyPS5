@@ -1264,7 +1264,7 @@ void VerifySingleSampleVersion63() {
         request.context.pixel->ditheredAlphaSamples = 1u;
         request.context.pixel->singleSampleDither = mode;
         const auto bytes = DecodeBase64(serializer.Serialize(request));
-        Require(bytes[4] == 63u);
+        Require(bytes[4] == 64u);
         const auto replay = serializer.Deserialize(EncodeBase64(bytes));
         Require(replay.request.context.pixel->singleSampleDither == mode && replay.request.context.pixel->ditheredAlphaSamples == 1u);
         Require(replay.request.target.maxImageArrayLayers == 4097u && replay.request.target.fixedPushSlots && replay.request.target.spannedAnySubgroup);
@@ -1296,7 +1296,7 @@ void VerifySingleSampleVersion63() {
         for (const auto samples : {2u, 8u}) {
             request.context.pixel->ditheredAlphaSamples = samples;
             request.context.pixel->singleSampleDither = ShaderRecompiler::SingleSampleDither::None;
-            auto legacy = DecodeBase64(serializer.Serialize(request));
+            auto legacy = SerializeVersion62Bytes(request);
             legacy[4] = version;
             if (version < 57u) legacy.resize(legacy.size() - 6u);
             else if (version < 62u) legacy.pop_back();
@@ -1305,7 +1305,7 @@ void VerifySingleSampleVersion63() {
             Require(replay.request.target.maxImageArrayLayers == (version >= 57u ? 4097u : 0u) && replay.request.target.fixedPushSlots == (version >= 57u) && replay.request.target.spannedAnySubgroup == (version >= 62u));
         }
     }
-    for (const auto [version, dither] : {std::pair{63u, 5u}, std::pair{64u, 3u}}) {
+    for (const auto [version, dither] : {std::pair{64u, 5u}, std::pair{65u, 3u}}) {
         auto invalid = first;
         invalid[4] = version;
         invalid[ditherByte] = dither;
