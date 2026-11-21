@@ -240,6 +240,9 @@ long long APS5_VABI _ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE(int
 bool APS5_VABI _ZN3WTF14FileSystemImpl12truncateFileEix(int handle, long long offset);
 int APS5_VABI _ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE(const NKWebKit::WtfAbi::String& path, int mode, unsigned lockMode);
 void APS5_VABI _ZN3WTF14FileSystemImpl18unlockAndCloseFileEi(int handle);
+bool APS5_VABI _ZN3WTF14FileSystemImpl8hardLinkERKNS_6StringES3_(const NKWebKit::WtfAbi::String& targetPath, const NKWebKit::WtfAbi::String& linkPath);
+bool APS5_VABI _ZN3WTF14FileSystemImpl18createSymbolicLinkERKNS_6StringES3_(const NKWebKit::WtfAbi::String& targetPath, const NKWebKit::WtfAbi::String& symbolicLinkPath);
+bool APS5_VABI _ZN3WTF14FileSystemImpl30appendFileContentsToFileHandleERKNS_6StringERi(const NKWebKit::WtfAbi::String& path, int& target);
 bool APS5_VABI _ZN3WTF14FileSystemImpl10fileExistsERKNS_6StringE(const NKWebKit::WtfAbi::String& path);
 bool APS5_VABI _ZN3WTF14FileSystemImpl10deleteFileERKNS_6StringE(const NKWebKit::WtfAbi::String& path);
 bool APS5_VABI _ZN3WTF14FileSystemImpl20deleteEmptyDirectoryERKNS_6StringE(const NKWebKit::WtfAbi::String& path);
