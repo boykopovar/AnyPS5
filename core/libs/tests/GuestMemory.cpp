@@ -5034,6 +5034,12 @@ int main(int argc, char** argv) {
         Require(range.bytes == page * 3 && range.readable && range.writable);
     }
     Require(mprotect_nid_postfix(memory, 0, 1) == 0);
+    Require(sceKernelMprotect(nullptr, 0, 3) == 0);
+    Require(sceKernelMprotect(memory, 0, 1) == 0);
+    *__error_nid_postfix() = 0;
+    Require(mprotect_nid_postfix(memory, std::numeric_limits<std::size_t>::max(), 1) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(mprotect_nid_postfix(reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - page + 1), page * 2, 1) == -1 && *__error_nid_postfix() == 22);
     Require(mprotect_nid_postfix(nullptr, page, 1) == -1 && *__error_nid_postfix() == 22);
     Require(mprotect_nid_postfix(memory + 1, 1, 1) == 0);
     {
@@ -5043,6 +5049,8 @@ int main(int argc, char** argv) {
     }
     Require(memory[0] == 42);
     Require(mprotect_nid_postfix(memory, page, 3) == 0);
+    Require(sceKernelMprotect(memory, page, 0x8000 | 3) == 0);
+    Require(mprotect_nid_postfix(memory, page, 0x10000 | 3) == 0);
     {
         GuestAllocations::Mutation mutation;
         Require(mutation.Find(memory).writable);
@@ -5057,6 +5065,8 @@ int main(int argc, char** argv) {
     Require(madvise_nid_postfix(memory, page, -1) == -1 && *__error_nid_postfix() == 22);
     *__error_nid_postfix() = 0;
     Require(madvise_nid_postfix(memory, 0, 11) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(madvise_nid_postfix(memory, page, 100) == -1 && *__error_nid_postfix() == 22);
     *__error_nid_postfix() = 0;
     Require(madvise_nid_postfix(memory, std::numeric_limits<std::size_t>::max(), 0) == -1 && *__error_nid_postfix() == 22);
     *__error_nid_postfix() = 0;
