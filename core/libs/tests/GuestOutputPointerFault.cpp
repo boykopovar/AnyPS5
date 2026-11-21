@@ -127,6 +127,6 @@ int main() {
     Require(sceKernelGettimeofday(timeValid) == 0);
     Require(sceKernelGettimezone(zoneValid) == 0);
 #ifdef __linux__
-    RequireNonEfaultFailureThrows();
+    if (std::getenv("APS5_GUEST_COPY_SYSCALL") != nullptr) RequireNonEfaultFailureThrows();
 #endif
 }

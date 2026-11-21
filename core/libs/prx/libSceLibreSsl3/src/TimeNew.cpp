@@ -13,6 +13,7 @@ constexpr int Asn1Library = 13;
 constexpr int AnyFunction = 0xfff;
 constexpr int MallocFailure = 65;
 constexpr int UndefinedType = -1;
+constexpr std::int64_t BorrowedDataFlag = 0x010;
 constexpr std::int64_t MultiStringFlag = 0x040;
 constexpr int UtcTimeType = 23;
 constexpr int GeneralizedTimeType = 24;
@@ -63,7 +64,8 @@ Asn1String* APS5_VABI X509_gmtime_adj_nid_postfix(Asn1String* time, std::int64_t
         return nullptr;
     }
     std::memcpy(data, text, length + 1);
-    free_nid_postfix(target->data);
+    if (!(target->flags & BorrowedDataFlag)) free_nid_postfix(target->data);
+    target->flags &= ~BorrowedDataFlag;
     target->data = data;
     target->length = length;
     target->type = utcTime ? UtcTimeType : GeneralizedTimeType;

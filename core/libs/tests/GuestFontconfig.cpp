@@ -1,10 +1,20 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libfontconfig/libfontconfig.hpp"
 #include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <initializer_list>
+#include <stdexcept>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool condition, int line) {
     if (!condition) {
@@ -175,6 +185,50 @@ static void CheckConfigurationQueries() {
     Check(Throws([] { FcFontSet* none[] = {nullptr}; FcFontSetMatch(nullptr, none, 1, queryPattern, nullptr); }));
     Check(Throws([] { FcResult unused; FcFontSetMatch(nullptr, nullptr, 0, queryPattern, &unused); }));
     Check(Throws([] { FcFontSet* none[] = {nullptr}; FcResult unused; FcFontSetMatch(nullptr, none, 1, nullptr, &unused); }));
+    {
+        FcResult initial = FcResultMatch;
+        void* page = nullptr;
+        std::size_t pageSize = 0;
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Check(page != nullptr);
+        std::memcpy(page, &initial, sizeof(initial));
+        DWORD previous = 0;
+        Check(VirtualProtect(page, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Check(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Check(page != MAP_FAILED);
+        std::memcpy(page, &initial, sizeof(initial));
+        Check(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+        auto* roResult = static_cast<FcResult*>(page);
+        auto* badResult = reinterpret_cast<FcResult*>(std::uintptr_t{0x10});
+        for (FcResult* target : {badResult, roResult}) {
+            errno = 71;
+            bool threw = false;
+            try { FcFontSetMatch(nullptr, sets, 1, queryPattern, target); } catch (const std::runtime_error&) { threw = true; }
+            Check(threw && errno == 71);
+            errno = 71;
+            threw = false;
+            try { FcFontMatch(nullptr, queryPattern, target); } catch (const std::runtime_error&) { threw = true; }
+            Check(threw && errno == 71);
+            errno = 71;
+            threw = false;
+            try { FcFontSort(nullptr, queryPattern, 1, nullptr, target); } catch (const std::runtime_error&) { threw = true; }
+            Check(threw && errno == 71);
+        }
+#ifdef _WIN32
+        VirtualFree(page, 0, MEM_RELEASE);
+#else
+        munmap(page, pageSize);
+#endif
+    }
     for (FcConfig* config : {static_cast<FcConfig*>(nullptr), FcConfigCreate()}) {
         FcResult matched = FcResultMatch;
         Check(FcFontMatch(config, pattern, &matched) == nullptr && matched == FcResultNoMatch);
@@ -197,7 +251,7 @@ static void CheckConfigurationQueries() {
     }
     FcFontSetDestroy(set);
     FcObjectSetDestroy(objects);
-    FcPatternDestroy(pattern);
+    FcPatternDestroy_nid_postfix(pattern);
 }
 
 int main() {

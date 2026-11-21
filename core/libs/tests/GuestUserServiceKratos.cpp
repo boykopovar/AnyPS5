@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <stdexcept>
 
 namespace {
@@ -23,14 +24,9 @@ void TestKratosUnsupportedState() {
     }
     Require(threw);
 
-    threw = false;
-    try {
-        int userId = -1;
-        sceUserServiceGetKratosPrimaryUser(&userId);
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
+    int primaryUser = 0x5A5A5A5A;
+    Require(sceUserServiceGetKratosPrimaryUser(&primaryUser) == USER_SERVICE_ERROR_NOT_SUPPORTED);
+    Require(primaryUser == 0x5A5A5A5A);
 
     threw = false;
     try {
@@ -52,13 +48,7 @@ void TestKratosUnsupportedState() {
         0x30000000
     };
     for (int id : userIds) {
-        threw = false;
-        try {
-            sceUserServiceIsKratosPrimaryUser(id);
-        } catch (const std::runtime_error&) {
-            threw = true;
-        }
-        Require(threw);
+        Require(!sceUserServiceIsKratosPrimaryUser(id));
     }
 }
 

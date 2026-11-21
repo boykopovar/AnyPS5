@@ -60,25 +60,21 @@ int APS5_VABI sceSaveDataDialogGetResult(void* result) {
  if (result == nullptr) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
- void* dir_name = nullptr;
- if (!CopyInPreservingErrno(&dir_name, static_cast<const char*>(result) + offsetof(SaveDataDialogResult, dir_name), sizeof(dir_name))) {
+ SaveDataDialogResult local{};
+ constexpr std::size_t writeLen = offsetof(SaveDataDialogResult, user_data) + sizeof(local.user_data);
+ if (!CopyInPreservingErrno(&local, result, writeLen)) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
- struct ResultHeader {
-  std::int32_t mode;
-  std::int32_t result;
-  std::int32_t button_id;
- } header{g_mode, SAVE_DATA_DIALOG_RESULT_OK, SAVE_DATA_DIALOG_BUTTON_ID_OK};
- if (!CopyOutPreservingErrno(result, &header, sizeof(header))) {
+ local.mode = g_mode;
+ local.result = SAVE_DATA_DIALOG_RESULT_OK;
+ local.button_id = SAVE_DATA_DIALOG_BUTTON_ID_OK;
+ local.user_data = g_user_data;
+ if (!CopyOutPreservingErrno(result, &local, writeLen)) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
- void* user_data = g_user_data;
- if (!CopyOutPreservingErrno(static_cast<char*>(result) + offsetof(SaveDataDialogResult, user_data), &user_data, sizeof(user_data))) {
-  return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
- }
- if (dir_name != nullptr) {
+ if (local.dir_name != nullptr) {
   const std::size_t len = std::strlen(g_dir_name) + 1;
-  if (!CopyOutPreservingErrno(dir_name, g_dir_name, len)) {
+  if (!CopyOutPreservingErrno(local.dir_name, g_dir_name, len)) {
    return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
   }
  }

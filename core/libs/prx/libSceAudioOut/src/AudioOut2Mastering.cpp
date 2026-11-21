@@ -132,30 +132,37 @@ int APS5_VABI sceAudioOut2MasteringGetState(AudioOut2MasteringStatesHeader* stat
     if (!AudioOut2IsInitialized_nid_no_patch()) return SCE_AUDIO_OUT2_ERROR_NOT_INITIALIZED;
     if (!g_masteringInitialized.load()) return SCE_AUDIO_OUT2_ERROR_MASTERING_NOT_INITIALIZED;
     if (state == nullptr) return SCE_AUDIO_OUT2_ERROR_INVALID_POINTER;
-    switch (state->states_id) {
+    std::uint32_t id = 0;
+    if (!ReadMasteringId(state, id)) return SCE_AUDIO_OUT2_ERROR_INVALID_POINTER;
+    const int savedErrno = errno;
+    bool copied = false;
+    switch (id) {
         case AUDIO_OUT2_MASTERING_STATES_ID_DEFAULT: {
-            auto* full = static_cast<AudioOut2MasteringStates*>(static_cast<void*>(state));
-            std::memset(full, 0, sizeof(*full));
-            full->states_header.states_id = AUDIO_OUT2_MASTERING_STATES_ID_DEFAULT;
-            full->compressor_states.descriptor.id = AUDIO_OUT2_MASTERING_STRUCT_ID_COMPRESSOR_DEFAULT;
-            full->compressor_states.descriptor.size = sizeof(AudioOut2MasteringCompressorStates);
-            full->limiter_states.descriptor.id = AUDIO_OUT2_MASTERING_STRUCT_ID_LIMITER_DEFAULT;
-            full->limiter_states.descriptor.size = sizeof(AudioOut2MasteringLimiterStates);
-            return 0;
+            AudioOut2MasteringStates full{};
+            full.states_header.states_id = AUDIO_OUT2_MASTERING_STATES_ID_DEFAULT;
+            full.compressor_states.descriptor.id = AUDIO_OUT2_MASTERING_STRUCT_ID_COMPRESSOR_DEFAULT;
+            full.compressor_states.descriptor.size = sizeof(AudioOut2MasteringCompressorStates);
+            full.limiter_states.descriptor.id = AUDIO_OUT2_MASTERING_STRUCT_ID_LIMITER_DEFAULT;
+            full.limiter_states.descriptor.size = sizeof(AudioOut2MasteringLimiterStates);
+            copied = GuestCopyOut_nid_no_patch(state, &full, sizeof(full));
+            break;
         }
         case AUDIO_OUT2_MASTERING_STATES_ID_V2: {
-            auto* full = static_cast<AudioOut2MasteringStatesV2*>(static_cast<void*>(state));
-            std::memset(full, 0, sizeof(*full));
-            full->states_header.states_id = AUDIO_OUT2_MASTERING_STATES_ID_V2;
-            full->compressor_states.descriptor.id = AUDIO_OUT2_MASTERING_STRUCT_ID_COMPRESSOR_V2;
-            full->compressor_states.descriptor.size = sizeof(AudioOut2MasteringCompressorStatesV2);
-            full->limiter_states.descriptor.id = AUDIO_OUT2_MASTERING_STRUCT_ID_LIMITER_DEFAULT;
-            full->limiter_states.descriptor.size = sizeof(AudioOut2MasteringLimiterStates);
-            return 0;
+            AudioOut2MasteringStatesV2 full{};
+            full.states_header.states_id = AUDIO_OUT2_MASTERING_STATES_ID_V2;
+            full.compressor_states.descriptor.id = AUDIO_OUT2_MASTERING_STRUCT_ID_COMPRESSOR_V2;
+            full.compressor_states.descriptor.size = sizeof(AudioOut2MasteringCompressorStatesV2);
+            full.limiter_states.descriptor.id = AUDIO_OUT2_MASTERING_STRUCT_ID_LIMITER_DEFAULT;
+            full.limiter_states.descriptor.size = sizeof(AudioOut2MasteringLimiterStates);
+            copied = GuestCopyOut_nid_no_patch(state, &full, sizeof(full));
+            break;
         }
         default:
+            errno = savedErrno;
             return SCE_AUDIO_OUT2_ERROR_MASTERING_INVALID_STATES_ID;
     }
+    errno = savedErrno;
+    return copied ? 0 : SCE_AUDIO_OUT2_ERROR_INVALID_POINTER;
 }
 
 int APS5_VABI sceAudioOut2MasteringSetParam(const AudioOut2MasteringParamsHeader* param, uint32_t output, uint32_t flags) {

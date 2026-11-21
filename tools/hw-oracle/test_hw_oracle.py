@@ -505,6 +505,44 @@ class TargetOverrideTests(unittest.TestCase):
             self.assertEqual(probe.call_count, 2)
 
 
+class HsaIdentityTests(unittest.TestCase):
+    def test_hsa_identity_parses_selected_agent(self):
+        hw_oracle.hsa_identity.cache_clear()
+        output = ("name\tgfx1013\nvendor\tAMD\nproduct\tPlayStation 5 GPU\n"
+                  "chip_id\t5116\nasic_revision\t1\ncompute_units\t36\n")
+        reply = subprocess.CompletedProcess([], 0, output, "")
+        with patch.object(hw_oracle.subprocess, "run", return_value=reply) as run, \
+                patch.dict(os.environ, {"ROCR_VISIBLE_DEVICES": "0"}):
+            identity = hw_oracle.hsa_identity(Path("oracle"), "1")
+        self.assertEqual(identity, {
+            "name": "gfx1013",
+            "vendor": "AMD",
+            "product": "PlayStation 5 GPU",
+            "chip_id": 0x13fc,
+            "asic_revision": 1,
+            "compute_units": 36,
+        })
+        self.assertEqual(run.call_args.args[0], [Path("oracle"), "--identity"])
+        self.assertEqual(run.call_args.kwargs["env"]["ROCR_VISIBLE_DEVICES"], "1")
+        hw_oracle.hsa_identity.cache_clear()
+
+    def test_hsa_identity_rejects_malformed_output(self):
+        valid = ("name\tgfx1013\nvendor\tAMD\nproduct\tPlayStation 5 GPU\n"
+                 "chip_id\t5116\nasic_revision\t1\ncompute_units\t36\n")
+        malformed = (
+            valid.replace("compute_units\t36\n", ""),
+            valid + "name\tgfx1013\n",
+            valid.replace("vendor\tAMD", "maker\tAMD"),
+            valid.replace("chip_id\t5116", "chip_id\tnot-a-number"),
+            valid.replace("compute_units\t36", "compute_units\t-1"),
+        )
+        for index, output in enumerate(malformed):
+            reply = subprocess.CompletedProcess([], 0, output, "")
+            with self.subTest(index=index), patch.object(hw_oracle.subprocess, "run", return_value=reply), \
+                    self.assertRaisesRegex(ValueError, "HSA identity"):
+                hw_oracle.hsa_identity(Path(f"oracle-{index}"), None)
+
+
 class OracleConfigurationTests(unittest.TestCase):
     @unittest.skipIf(os.name == "nt", "POSIX executable compiler fixture")
     def test_path_selecting_another_compiler_invalidates_the_cache(self):

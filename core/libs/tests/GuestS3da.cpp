@@ -56,6 +56,15 @@ int main() {
     Require(sceS3daClose(1) == 0);
     Require(sceS3daClose(1) == ERROR_INVALID_ARGUMENT);
 
+    Require(sceS3daOpen(0) == 0);
+    Require(sceS3daOpen(1) == 1);
+    Require(sceS3daClose(0) == 0);
+    Require(sceS3daOpen(1) == ERROR_ALREADY_OPEN);
+    Require(sceS3daOpen(0) == 0);
+    Require(sceS3daClose(1) == 0);
+    Require(sceS3daOpen(0) == ERROR_ALREADY_OPEN);
+    Require(sceS3daClose(0) == 0);
+
     for (const std::uint32_t port : {0u, 1u}) {
         Require(sceS3daSendData(port, nullptr, sizeof(dataBuffer)) == ERROR_INVALID_ARGUMENT);
         Require(sceS3daSendData(port, dataBuffer, 0) == ERROR_INVALID_ARGUMENT);

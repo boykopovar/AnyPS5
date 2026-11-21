@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -19,6 +20,24 @@ constexpr int NP_ERROR_ONLINE_ID_TOO_LONG = static_cast<int>(0x80559E11);
 constexpr int NP_ERROR_USER_INVALID = static_cast<int>(0x80559E2A);
 constexpr int NP_ERROR_ACCOUNT_ID_MISSING = static_cast<int>(0x80559E2B);
 constexpr std::size_t NP_ONLINE_ID_SIZE = 16;
+
+template <typename T>
+bool ReadGuest(const T* source, T& destination) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&destination, source, sizeof(destination));
+    errno = savedErrno;
+    return copied;
+}
+
+template <typename T>
+bool ProbeGuestWritable(T* destination) {
+    T value{};
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&value, destination, sizeof(value)) &&
+        GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    return ok;
+}
 
 bool SameOnlineId(const char* lhs, const char* rhs) {
     return std::strncmp(lhs, rhs, NP_ONLINE_ID_SIZE) == 0;
@@ -111,13 +130,19 @@ bool APS5_VABI _ZNK3sce2np10NpOnlineId7IsEmptyEv(const NpOnlineIdObject* self) {
 
 int APS5_VABI _ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(const UserObject* user, SceNpOnlineId* out) {
     if (user == nullptr || out == nullptr) return NP_ERROR_INVALID_ARGUMENT;
-    if (user->userId == USER_SERVICE_USER_ID_INVALID) return NP_ERROR_USER_NOT_FOUND;
+    UserObject localUser{};
+    if (!ReadGuest(user, localUser)) return NP_ERROR_INVALID_ARGUMENT;
+    if (!ProbeGuestWritable(out)) return NP_ERROR_INVALID_ARGUMENT;
+    if (localUser.userId == USER_SERVICE_USER_ID_INVALID) return NP_ERROR_USER_NOT_FOUND;
     return NP_ERROR_SIGNED_OUT;
 }
 
 int APS5_VABI _ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(const UserObject* user, NpOnlineIdObject* out) {
     if (user == nullptr || out == nullptr) return NP_ERROR_INVALID_ARGUMENT;
-    if (user->userId == USER_SERVICE_USER_ID_INVALID) return NP_ERROR_USER_NOT_FOUND;
+    UserObject localUser{};
+    if (!ReadGuest(user, localUser)) return NP_ERROR_INVALID_ARGUMENT;
+    if (!ProbeGuestWritable(out)) return NP_ERROR_INVALID_ARGUMENT;
+    if (localUser.userId == USER_SERVICE_USER_ID_INVALID) return NP_ERROR_USER_NOT_FOUND;
     return NP_ERROR_SIGNED_OUT;
 }
 

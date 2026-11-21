@@ -117,6 +117,7 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("UnlinkedCall", Void, U32, U32, U32),
     makeMeta("WindowLaneGuard", Void, U32, U32, U32, U32, U32),
     makeMeta("DescriptorFault", Void, U1, U32, U32, U32),
+    makeMeta("SplitStateGuard", Void, U1, U32, U32, U32),
     makeMeta("GetUserData", U32, ScalarReg),
     makeMeta("GetShaderBase", U64),
     makeMeta("ShaderClock", U64),
@@ -140,6 +141,8 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("SetVectorRegister", Void, VectorReg, U32),
     makeMeta("LoadVectorWindow", U32, U32),
     makeMeta("StoreVectorWindow", Void, U32, U32),
+    makeMeta("LoadSplitState", U32, U32),
+    makeMeta("StoreSplitState", Void, U32, U32, U1),
     makeMeta("GetGotoVariable", U1, U32),
     makeMeta("SetGotoVariable", Void, U32, U1),
     makeMeta("GetScc", U1),
@@ -538,6 +541,7 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("InstPrefetch", Void),
     makeMeta("SelectU32", U32, U1, U32, U32),
     makeMeta("ImageBvhIntersectRay", U32x4, U32x4, ImageAddress, U1),
+    makeMeta("NanPropagateF32", F32, F32, U32, U1, F32, F32, F32),
 }};
 
 const OpcodeMeta& metaOf(IrOpcode opcode) {
@@ -912,6 +916,7 @@ static constexpr bool computeHasSideEffects(IrOpcode opcode) {
         case IrOpcode::UnlinkedCall:
         case IrOpcode::WindowLaneGuard:
         case IrOpcode::DescriptorFault:
+        case IrOpcode::SplitStateGuard:
         case IrOpcode::SetTessellationAttribute:
         case IrOpcode::InterpolateHostP2:
         case IrOpcode::SetThreadBitScalarRegister:
@@ -919,6 +924,7 @@ static constexpr bool computeHasSideEffects(IrOpcode opcode) {
         case IrOpcode::SetScalarRegister:
         case IrOpcode::SetVectorRegister:
         case IrOpcode::StoreVectorWindow:
+        case IrOpcode::StoreSplitState:
         case IrOpcode::SetGotoVariable:
         case IrOpcode::SetScc:
         case IrOpcode::SetExec:

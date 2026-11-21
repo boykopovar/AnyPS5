@@ -1,3 +1,4 @@
+#include "prx/libSceVideoOut/include/Buffer.hpp"
 #include "prx/libSceVideoOut/include/Output.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -5,13 +6,18 @@
 #include <array>
 #include <cstddef>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <vector>
 
 static constexpr int SYSTEM_USER = 255;
 static constexpr int MAIN_BUS = 0;
 static constexpr int NEVER_OPENED_HANDLE = 2;
+static constexpr int NO_BUFFERS_REGISTERED = static_cast<int>(0x8029001Cu);
+static constexpr std::uint64_t TILING_MODE_LINEAR = 0;
+static constexpr std::uint64_t PIXEL_FORMAT = 0x8000000022000000ull;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -44,6 +50,20 @@ int main() {
         return 77;
     }
     Require(handle > 0);
+
+    std::array<std::byte, 96> fresh;
+    fresh.fill(std::byte{0xff});
+    Require(sceVideoOutGetOutputStatusWithVrr(handle, fresh.data()) == NO_BUFFERS_REGISTERED);
+    for (const auto byte : fresh) Require(byte == std::byte{0xff});
+    std::vector<std::byte> allocation(16u * 1024u * 1024u);
+    const auto aligned = (reinterpret_cast<std::uintptr_t>(allocation.data()) + 65535u) & ~static_cast<std::uintptr_t>(65535u);
+    VideoOutBuffers buffers{reinterpret_cast<void*>(aligned), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    attribute.width = 1920;
+    attribute.height = 1080;
+    attribute.pixel_format = PIXEL_FORMAT;
+    attribute.tiling_mode = TILING_MODE_LINEAR;
+    Require(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffers, 1, &attribute, 0, nullptr) == 0);
 
     VideoOutResolutionStatus status;
     std::memset(&status, 0xff, sizeof(status));

@@ -14,6 +14,8 @@
 #include <cstring>
 #include <cerrno>
 #include <string>
+#include <vector>
+#include <initializer_list>
 #include <stdexcept>
 #include <cstdint>
 #include <cstdio>
@@ -168,6 +170,25 @@ static void CheckIgnoredLengths() {
     Require(snprintf_nid_postfix(output, sizeof(output), "%hp|%Lp", reinterpret_cast<void*>(0x1234), reinterpret_cast<void*>(0x1234)) == 9 && std::strcmp(output, "1234|1234") == 0);
     struct { int count; int guard; } written = {-1, -1};
     Require(snprintf_nid_postfix(output, sizeof(output), "a%Ln", &written.count) == 1 && written.count == 1 && written.guard == -1);
+}
+
+static void CheckCountInWritableFormat() {
+    using Formatter = int (APS5_VABI*)(char*, size_t, const char*, ...);
+    for (const Formatter format : {&snprintf_nid_postfix, &FormatList}) {
+        char counting[] = "%s%hhn|%d%n|%lln";
+        char output[8];
+        struct { signed char count; char guard; } first = {-1, '!'};
+        int second = -1;
+        long long third = -1;
+        Require(format(output, 4, counting, "abc", &first.count, 42, &second, &third) == 7 && std::strcmp(output, "abc") == 0);
+        Require(first.count == 3 && first.guard == '!' && second == 6 && third == 7);
+    }
+    char line[] = "count: %d%n\n";
+    char output[16];
+    int count = -1;
+    Require(sprintf_nid_postfix(output, line, 7, &count) == 9 && count == 8 && std::strcmp(output, "count: 7\n") == 0);
+    count = -1;
+    Require(printf_nid_postfix(line, 7, &count) == 9 && count == 8);
 }
 
 static void CheckSizeLimits() {
@@ -361,6 +382,72 @@ static void CheckIntegerScanWidths() {
     Require(sscanf_nid_postfix("1 x", "%d %d", &first, &value) == 1 && first == 1 && value == 7);
 }
 
+static int APS5_VABI PrintListS(char* buffer, size_t size, const char* format, ...) {
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+    VaList list;
+    std::memcpy(&list, args, sizeof(list));
+    const int result = vsprintf_s_nid_postfix(buffer, size, format, &list);
+    __builtin_sysv_va_end(args);
+    return result;
+}
+
+static std::vector<std::pair<std::string, int>> terminatedCalls;
+
+static void APS5_VABI RecordTerminated(const char* message, void* pointer, int error) {
+    Require(pointer == nullptr);
+    terminatedCalls.emplace_back(message, error);
+}
+
+static bool Reported(std::initializer_list<std::pair<const char*, int>> expected) {
+    bool matches = terminatedCalls.size() == expected.size();
+    size_t index = 0;
+    for (const auto& [message, error] : expected) {
+        if (!matches) break;
+        matches = terminatedCalls[index].first == message && terminatedCalls[index].second == error;
+        ++index;
+    }
+    terminatedCalls.clear();
+    return matches;
+}
+
+static void CheckTerminatedFormat() {
+    constexpr size_t rsizeMax = (size_t{1} << 61) - 1;
+    void* previous = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(RecordTerminated));
+    char buffer[16];
+    const auto holds = [&](const char* expected, size_t size) { return std::memcmp(buffer, expected, size) == 0; };
+    for (const bool listed : {false, true}) {
+        const std::string name = listed ? "vsprintf_s" : "sprintf_s";
+        const auto bad = name + ": bad argument";
+        const auto badFormat = name + ": bad format argument";
+        const auto overflow = name + ": buffer overflow";
+        const auto print = [&](char* destination, size_t size, const char* format, auto... args) {
+            if (destination == buffer) std::memset(buffer, '~', sizeof(buffer));
+            return listed ? PrintListS(destination, size, format, args...) : sprintf_s_nid_postfix(destination, size, format, args...);
+        };
+        Require(print(buffer, 16, "ab%d", 7) == 3 && holds("ab7\0~", 5) && Reported({}));
+        Require(print(buffer, 4, "ab%d", 7) == 3 && holds("ab7\0~", 5) && Reported({}));
+        Require(print(buffer, 1, "") == 0 && holds("\0~", 2) && Reported({}));
+        Require(print(buffer, rsizeMax, "a") == 1 && holds("a\0~", 3) && Reported({}));
+        Require(print(buffer, 3, "ab%d", 7) == 0 && holds("\0b~", 3) && Reported({{overflow.c_str(), 34}}));
+        Require(print(buffer, 1, "ab%d", 7) == 0 && holds("\0~", 2) && Reported({{overflow.c_str(), 34}}));
+        for (const size_t size : {size_t{0}, rsizeMax + 1, SIZE_MAX}) {
+            Require(print(buffer, size, "ab%d", 7) == 0 && holds("~", 1) && Reported({{bad.c_str(), 22}}));
+        }
+        Require(print(nullptr, 16, "ab%d", 7) == 0 && Reported({{bad.c_str(), 22}}));
+        Require(print(buffer, 16, nullptr) == 0 && holds("\0~", 2) && Reported({{badFormat.c_str(), 22}}));
+        int written = -7;
+        Require(print(buffer, 16, "ab%n", &written) == 0 && holds("\0b~", 3) && written == -7 && Reported({{"printf_s: %n disallowed", 22}}));
+        Require(print(buffer, 16, "a%s", static_cast<const char*>(nullptr)) == 0 && holds("\0~", 2) && Reported({{"printf_s: bad %s argument", 22}}));
+        Require(print(buffer, 2, "abc%n", &written) == 0 && holds("\0~", 2) && terminatedCalls.size() == 2 && terminatedCalls.back().first == overflow &&
+            terminatedCalls.back().second == 34);
+        terminatedCalls.clear();
+    }
+    set_constraint_handler_s_nid_postfix(previous);
+}
+
+
+
 static void CheckSecureFormat() {
     constexpr size_t rsizeMax = SIZE_MAX >> 1;
     char buffer[16];
@@ -392,6 +479,10 @@ static void CheckSecureFormat() {
     Require(FormatListS(buffer, sizeof(buffer), "%2$s%1$S", static_cast<const char16_t*>(nullptr), "a") < 0 && buffer[0] == 0);
     Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%.0s|%c", "", 'z') == 2 && std::strcmp(buffer, "|z") == 0);
     Require(FormatListS(buffer, sizeof(buffer), "[%y][%-4k]", 1) == 10 && std::strcmp(buffer, "[%y][%k  ]") == 0);
+    Require(printf_s_nid_postfix(nullptr) == -1);
+    Require(printf_s_nid_postfix("ab%n", &written) == -1 && written == -7);
+    Require(printf_s_nid_postfix("a%s", static_cast<const char*>(nullptr)) == -1);
+    Require(printf_s_nid_postfix("printf_s: %d %.1f\n", 7, 2.5) == 16);
 }
 
 static void CheckScanInputFailureErrno() {
@@ -550,11 +641,15 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(snprintf_nid_postfix(nullptr, 0, "%s:%d", "abcdef", 123) == 10);
     Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%s]", static_cast<const char*>(nullptr)) == 8 && std::strcmp(buffer, "[(null)]") == 0);
     const char* none = nullptr;
-    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%.3s][%.0s][%8.2s][%-6.1s]", none, none, none, none) == 25 &&
-        std::strcmp(buffer, "[(nu][][      (n][(     ]") == 0);
-    Require(FormatList(buffer, sizeof(buffer), "[%.*s]", 4, none) == 6 && std::strcmp(buffer, "[(nul]") == 0);
-    Require(FormatList(buffer, sizeof(buffer), "%2$.3s:%1$d", 7, none) == 5 && std::strcmp(buffer, "(nu:7") == 0);
-    Require(sprintf_nid_postfix(buffer, "%.2s", none) == 2 && std::strcmp(buffer, "(n") == 0);
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%.3s][%.0s][%8.2s][%-8.2s]", none, none, none, none) == 36 &&
+        std::strcmp(buffer, "[(null)][(null)][  (null)][(null)  ]") == 0);
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%.*s][%.*s][%.10s]", 0, none, 2, none, none) == 24 &&
+        std::strcmp(buffer, "[(null)][(null)][(null)]") == 0);
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%.3s][%.*s][%8.2s]", "abcdef", 0, "abcdef", "abcdef") == 17 &&
+        std::strcmp(buffer, "[abc][][      ab]") == 0);
+    Require(FormatList(buffer, sizeof(buffer), "[%.*s]", 4, none) == 8 && std::strcmp(buffer, "[(null)]") == 0);
+    Require(FormatList(buffer, sizeof(buffer), "%2$.3s:%1$d", 7, none) == 8 && std::strcmp(buffer, "(null):7") == 0);
+    Require(sprintf_nid_postfix(buffer, "%.2s", none) == 6 && std::strcmp(buffer, "(null)") == 0);
     buffer[0] = 'x';
     Require(snprintf_nid_postfix(buffer, 1, "%d", 123) == 3 && buffer[0] == 0);
     Require(sprintf_nid_postfix(buffer, "%hhd %hhu %hd %hu %%", 255, 257, 65535, 65537) == 11);
@@ -821,6 +916,7 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(PrintList("vprintf: %d\n", 42) == 12);
     Require(FormatListS(buffer, sizeof(buffer), "%d-%s", 42, "x") == 4 && std::strcmp(buffer, "42-x") == 0);
     CheckSecureFormat();
+    CheckTerminatedFormat();
     int scanNum = 0;
     char scanWord[8] = {};
     Require(ScanListS("123 test", "%d %s", &scanNum, scanWord, std::size_t{8}) == 2 && scanNum == 123 && std::strcmp(scanWord, "test") == 0);
@@ -840,6 +936,10 @@ static void CheckAllocatingFormat() {
     ApplicationHeapRegister_nid_no_patch(api.data());
     char* allocated = nullptr;
     Require(asprintf_nid_postfix(&allocated, "%ls:%S:%lc:%d", u"\u00e9", u"ab", 0x20ac, 7) == 11 && std::strcmp(allocated, "\xc3\xa9:ab:\xe2\x82\xac:7") == 0);
+    free_nid_postfix(allocated);
+    char counting[] = "%s%n";
+    int count = -1;
+    Require(asprintf_nid_postfix(&allocated, counting, "hey", &count) == 3 && count == 3 && std::strcmp(allocated, "hey") == 0);
     free_nid_postfix(allocated);
 
 }
@@ -905,6 +1005,11 @@ static void CheckDecimalFloat() {
     RequireFloat("[%.17g]", 0x1.e5dec6655f463p+50, "[2136879802973464.7]");
     RequireFloat("[%.0f]", 67108865.5, "[67108865]");
     RequireFloat("[%.0f]", 33554433.5, "[33554434]");
+    RequireFloat("[%f]", 1e23, "[99999999999999991611391.000000]");
+    RequireFloat("[%.33e]", 1e23, "[9.999999999999999161139100000000000e+22]");
+    RequireFloat("[%.17F]", 0x1.18dc8cc0c0e6p+67, "[161905644679952596991.00000000000000000]");
+    RequireFloat("[%#f]", -0x1.c00a1facf75a4p+56, "[-126111920728529471.999900]");
+    RequireFloat("[%.15f]", 0x1.9b722742acdbp+37, "[220893341781.606933593749000]");
     RequireFloat("[%+08.1f]", 2.25, "[+00002.3]");
     RequireFloat("[%#.0e]", 2.5, "[3.e+00]");
     RequireFloat("[%g]", 0.0001, "[0.0001]");
@@ -953,4 +1058,21 @@ static void CheckLongDoubleHexFloat() {
     }
 }
 
-int main() { CheckPositionalUnknownConversion(); CheckSecureCountBeforeInputFailure(); CheckFloatingScanRange(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--terminated-only") == 0) {
+        CheckTerminatedFormat();
+        return 0;
+    }
+    CheckPositionalUnknownConversion();
+    CheckSecureCountBeforeInputFailure();
+    CheckFloatingScanRange();
+    CheckSizeLimits();
+    CheckIgnoredLengths();
+    CheckCountInWritableFormat();
+    RunChecks();
+    CheckHexFloat();
+    CheckDecimalFloat();
+    CheckLongDoubleHexFloat();
+    CheckAllocatingFormat();
+    return CheckWidePrecision() ? 0 : 1;
+}

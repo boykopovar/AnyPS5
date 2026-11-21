@@ -4,6 +4,7 @@
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
+#include <relinker/analysis/ReplacedPltStubs.hpp>
 #include <algorithm>
 #include <iterator>
 #include <sstream>
@@ -490,6 +491,16 @@ RelinkResult RelinkerPipeline::Relink() {
             }
     }
 
+    std::vector<std::vector<ReplacedPltStub>> replacedStubs;
+    for (const auto& [segment, segmentVAddr, segmentFileOffset] : executableSegments) {
+        static_cast<void>(segmentFileOffset);
+        for (const auto& stub : replacedStubs.emplace_back(FindReplacedPltStubs(segment, segmentVAddr, gotVAddr, dynJmpRelSize))) {
+            const auto import = std::find_if(nidRefs.begin(), nidRefs.end(), [&](const NidReference& reference) { return reference.RelocationTypeValue == R_X86_64_JUMP_SLOT && reference.RelocationAddress == stub.GotEntry; });
+            const std::string_view name = import == nidRefs.end() ? std::string_view{} : std::string_view{import->Nid};
+            progress.Message(DescribeReplacedPltStub(stub, {}, name.substr(0, name.find('#'))));
+        }
+    }
+
     std::vector<std::vector<std::uint8_t>> scanSegments;
     for (const auto& [segment, segmentVAddr, segmentFileOffset] : executableSegments) {
         static_cast<void>(segmentFileOffset);
@@ -502,7 +513,17 @@ RelinkResult RelinkerPipeline::Relink() {
     for (std::size_t index = 0; index < executableSegments.size(); ++index) {
         auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
         auto& scanSegment = scanSegments[index];
-        for (const auto offset : syscallScanner->ScanCodeSectionForSyscalls(scanSegment, segmentVAddr, scanSegment.size(), {}, segmentUnwindRanges[index])) {
+        std::vector<std::size_t> syscallTraps;
+        try {
+            syscallTraps = syscallScanner->ScanCodeSectionForSyscalls(scanSegment, segmentVAddr, scanSegment.size(), {}, segmentUnwindRanges[index]);
+        } catch (const RelinkerException& error) {
+            const auto cause = DescribeReplacedPltStubReaching(replacedStubs[index], segment, segmentVAddr, error.FailureOffset);
+            if (cause.empty()) throw;
+            RelinkerException explained(error.what() + cause, error.FailureOffset);
+            explained.InputPath = error.InputPath;
+            throw explained;
+        }
+        for (const auto offset : syscallTraps) {
             if (offset > segment.size() || segment.size() - offset < 2u)
                 throw RelinkerException("Syscall trap patch exceeds executable segment", segmentVAddr + offset);
             segment[offset] = scanSegment[offset] = 0x0F;
@@ -679,7 +700,14 @@ RelinkResult RelinkerPipeline::Relink() {
                 throw RelinkerException("TLS relocation in an executable without a non-empty PT_TLS segment", pos);
             if (relType == R_X86_64_DTPMOD64 && rAddend != 0)
                 throw RelinkerException("DTPMOD64 relocation has a nonzero addend", pos);
-            const auto addend = relType == R_X86_64_DTPMOD64 ? 0 : static_cast<std::int64_t>(offset + static_cast<std::uint64_t>(rAddend));
+            std::int64_t addend = 0;
+            if (relType != R_X86_64_DTPMOD64) {
+                if (offset > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+                    throw RelinkerException("TLS addend overflow", pos);
+                if (rAddend > 0 && offset > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max() - rAddend))
+                    throw RelinkerException("TLS addend overflow", pos);
+                addend = static_cast<std::int64_t>(offset) + rAddend;
+            }
             appendRela(dynSection.RelaData, rOffset, static_cast<std::uint64_t>(relType), addend);
         }
     };

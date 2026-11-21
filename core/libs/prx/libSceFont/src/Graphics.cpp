@@ -1,5 +1,7 @@
 #include <atomic>
 #include <bit>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 
@@ -382,26 +384,37 @@ int GraphicsFillMethodInit(FontGraphicsFillMethod* method, std::int32_t mode, st
 
 int GraphicsFillPlotInit(FontGraphicsFillPlot* plot, const FontGraphicsRegion* region) {
     if (!IsObject(plot)) return Fail(FONT_GRAPHICS_ERROR_INVALID_FILL_PLOT);
-    if (IsObject(region) && !IsUsableRegion(*region)) {
-        plot->tag = 0;
-        return Fail(FONT_GRAPHICS_ERROR_INVALID_REGION);
+    FontGraphicsRegion guestRegion{};
+    if (IsObject(region)) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&guestRegion, region, sizeof(guestRegion));
+        errno = savedErrno;
+        if (!copied || !IsUsableRegion(guestRegion)) {
+            constexpr std::size_t tagOffset = offsetof(FontGraphicsFillPlot, tag);
+            const auto address = reinterpret_cast<std::uintptr_t>(plot);
+            if (address > UINTPTR_MAX - tagOffset ||
+                !CopyOutGuest(reinterpret_cast<std::uint16_t*>(address + tagOffset), std::uint16_t{}))
+                return Fail(FONT_GRAPHICS_ERROR_INVALID_FILL_PLOT);
+            return Fail(FONT_GRAPHICS_ERROR_INVALID_REGION);
+        }
     }
-    *plot = {};
+    FontGraphicsFillPlot value{};
     if (!region) {
-        plot->flags = 2;
+        value.flags = 2;
     } else if (!IsObject(region)) {
-        plot->flags = 6;
-        plot->layout = DefaultLayout;
+        value.flags = 6;
+        value.layout = DefaultLayout;
     } else {
-        plot->mapping[0] = region->x;
-        plot->mapping[1] = region->y;
-        plot->mapping[2] = region->x + region->width;
-        plot->mapping[3] = region->y + region->height;
-        plot->flags = 1;
-        plot->layout = DefaultLayout;
+        value.mapping[0] = guestRegion.x;
+        value.mapping[1] = guestRegion.y;
+        value.mapping[2] = guestRegion.x + guestRegion.width;
+        value.mapping[3] = guestRegion.y + guestRegion.height;
+        value.flags = 1;
+        value.layout = DefaultLayout;
     }
-    plot->region = region;
-    plot->tag = FillPlotTag;
+    value.region = region;
+    value.tag = FillPlotTag;
+    if (!CopyOutGuest(plot, value)) return Fail(FONT_GRAPHICS_ERROR_INVALID_FILL_PLOT);
     return SCE_FONT_OK;
 }
 
@@ -1225,7 +1238,7 @@ bool IsUsableMemory(const FontMemory* memory) {
 namespace Font {
 
 int CreateGraphicsService(const FontMemory* memory, const FontGraphicsServiceParam* param, FontGraphicsService** service) {
-    if (service != nullptr) *service = nullptr;
+    if (service != nullptr && !CopyOutGuest(service, static_cast<FontGraphicsService*>(nullptr))) return Fail(FONT_GRAPHICS_ERROR_INVALID_PARAMETER);
     if (!IsUsableMemory(memory) || param == nullptr || param->tag != BackendTag || service == nullptr)
         return Fail(FONT_GRAPHICS_ERROR_INVALID_PARAMETER);
     if (param->level < BackendLevel) return Fail(FONT_GRAPHICS_ERROR_UNINITIALIZED);
@@ -1242,7 +1255,11 @@ int CreateGraphicsService(const FontMemory* memory, const FontGraphicsServicePar
     data->iface = *memory->iface;
     data->memory.iface = &data->iface;
     data->instanceSlot = param->instanceSlot;
-    *service = reinterpret_cast<FontGraphicsService*>(data);
+    if (!CopyOutGuest(service, reinterpret_cast<FontGraphicsService*>(data))) {
+        if (data->instanceSlot != nullptr) DetachInstance(data->instanceSlot);
+        memory->iface->dealloc(memory->mspace_handle, data);
+        return Fail(FONT_GRAPHICS_ERROR_INVALID_PARAMETER);
+    }
     return SCE_FONT_OK;
 }
 
