@@ -113,6 +113,15 @@ void testWithoutProgramAddress() {
     check(binary.registers[0].offset == registers[0].offset && binary.registers[0].value == registers[0].value && binary.registers[1].value == registers[1].value && binary.registers[2].value == registers[2].value, "a fetch shader's registers changed");
 }
 
+void testInvalidDst() {
+    Binary binary;
+    fill(binary, ShaderRegs::ShaderBinaryType::Cs, ShaderRegs::COMPUTE_PGM_LO);
+    try {
+        sceAgcCreateShader(reinterpret_cast<Shader**>(std::uintptr_t{1}), &binary.shader, code.data());
+        check(false, "unmapped dst pointer accepted");
+    } catch (const std::runtime_error&) {}
+}
+
 }
 
 extern "C" void AgcDriverRegisterShader_nid_postfix(const Shader* shader) {
@@ -126,6 +135,7 @@ int main() {
         testPixelWithUserData();
         testCreatedAgain();
         testWithoutProgramAddress();
+        testInvalidDst();
         std::puts("AGC create shader tests passed");
         return 0;
     } catch (const std::exception& error) {
