@@ -25,6 +25,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteMacOs(const Relinker::GuestIma
     input.Executable = false;
     input.FunctionSymbolRoots = guest.FunctionSymbolRoots;
     input.InstallName = "@rpath/" + guest.OutputName;
+    input.Identifier = guest.OutputName;
     input.Source = &guest.Bytes;
     input.Headers = &guest.Headers;
     input.Image = &image;

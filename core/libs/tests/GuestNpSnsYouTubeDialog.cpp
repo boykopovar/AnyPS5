@@ -62,6 +62,9 @@ void RequireNotices() {
     PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
     ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
     Require(sceNpSnsYouTubeDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceNpSnsYouTubeDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(!PsnNoticeShown());
     Require(sceNpSnsYouTubeDialogOpen(&param) == 0);
     Require(PsnNoticeShown());
@@ -93,6 +96,9 @@ int main() {
     Require(sceNpSnsYouTubeDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceNpSnsYouTubeDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceNpSnsYouTubeDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceNpSnsYouTubeDialogGetResult(result) == kErrNotFinished);
 
     Require(sceNpSnsYouTubeDialogOpen(&param) == 0);

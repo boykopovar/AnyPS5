@@ -46,13 +46,13 @@ static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint
     if (nativeFlags & _O_CREAT) disposition = (nativeFlags & _O_EXCL) ? CREATE_NEW : (nativeFlags & _O_TRUNC) ? CREATE_ALWAYS : OPEN_ALWAYS;
     else if (nativeFlags & _O_TRUNC) disposition = TRUNCATE_EXISTING;
     const DWORD attributes = (nativeFlags & _O_CREAT) && !(mode & _S_IWRITE) ? FILE_ATTRIBUTE_READONLY : FILE_ATTRIBUTE_NORMAL;
-    SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+    SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, (nativeFlags & _O_NOINHERIT) == 0};
     const auto handle = CreateFileW(p.c_str(), desired, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, &security, disposition, attributes, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         errno = WindowsOpenError_nid_no_patch(GetLastError());
         return -1;
     }
-    const int descriptor = ::_open_osfhandle(reinterpret_cast<std::intptr_t>(handle), nativeFlags & (_O_APPEND | _O_RDONLY | _O_BINARY));
+    const int descriptor = ::_open_osfhandle(reinterpret_cast<std::intptr_t>(handle), nativeFlags & (_O_APPEND | _O_RDONLY | _O_BINARY | _O_NOINHERIT));
     if (descriptor < 0) CloseHandle(handle);
     return descriptor;
 }
@@ -151,6 +151,7 @@ static int MapFlags(int sceFlags) {
     if (sceFlags & SCE_KERNEL_O_CREAT) f |= _O_CREAT;
     if (sceFlags & SCE_KERNEL_O_TRUNC) f |= _O_TRUNC;
     if (sceFlags & SCE_KERNEL_O_EXCL) f |= _O_EXCL;
+    if (sceFlags & SCE_KERNEL_O_CLOEXEC) f |= _O_NOINHERIT;
     f |= _O_BINARY;
     return f;
 }
@@ -168,11 +169,16 @@ static std::int64_t NativeLseek(int fd, std::int64_t offset, int whence) {
     return result == -2 ? ::lseek(fd, static_cast<off_t>(offset), whence) : result;
 }
 static std::int64_t NativeRead(int fd, void* buf, std::size_t n) {
-    return ::read(fd, buf, n);
+    const iovec whole{buf, n};
+    const auto parts = File::TransferInParts(fd, &whole, 1, nullptr, false);
+    return parts == -2 ? ::read(fd, buf, n) : parts;
 }
 static std::int64_t NativeWrite(int fd, const void* buf, std::size_t n) {
     const auto result = File::WriteSharedMemory_nid_no_patch(fd, buf, n);
-    return result == -2 ? ::write(fd, buf, n) : result;
+    if (result != -2) return result;
+    const iovec whole{const_cast<void*>(buf), n};
+    const auto parts = File::TransferInParts(fd, &whole, 1, nullptr, true);
+    return parts == -2 ? ::write(fd, buf, n) : parts;
 }
 static int NativeClose(int fd) { return ::close(fd); }
 static int NativeUnlink(const std::filesystem::path& p) {
@@ -191,6 +197,7 @@ static int MapFlags(int sceFlags) {
     if (sceFlags & SCE_KERNEL_O_EXCL) f |= O_EXCL;
     if (sceFlags & SCE_KERNEL_O_SYNC) f |= O_SYNC;
     if (sceFlags & SCE_KERNEL_O_DIRECTORY) f |= O_DIRECTORY;
+    if (sceFlags & SCE_KERNEL_O_CLOEXEC) f |= O_CLOEXEC;
     return f;
 }
 #endif
@@ -458,7 +465,7 @@ std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
     const GuestArena::HostWrite destination(buf, nbytes);
     if (!destination.Open()) errno = EFAULT;
     else if (File::ReadRandomDevice(d, buf, nbytes)) return static_cast<std::int64_t>(nbytes);
-    else if (const auto archived = File::ReadArchivedFile(d, buf, nbytes, nullptr)) return *archived;
+    else if (const auto archived = File::ReadArchivedFile(d, buf, nbytes, nullptr)) return *archived < 0 ? SceIoErrorFromErrno(static_cast<int>(-*archived)) : *archived;
     auto n = destination.Open() ? NativeRead(d, buf, nbytes) : -1;
     if (n < 0) return SceIoErrorFromErrno(errno);
     return static_cast<std::int64_t>(n);

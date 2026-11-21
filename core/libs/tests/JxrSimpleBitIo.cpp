@@ -1,8 +1,10 @@
 #include "prx/libSceJxr/libSceJxr.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -125,11 +127,36 @@ void Rejected() {
     RequireInvalidArgument([] { detach_SB_nid_postfix(nullptr); }, "detach accepted a null reader");
 }
 
+void GuestPointers() {
+    auto* const unmapped = reinterpret_cast<Jxr::SimpleBitIo*>(0x10);
+    errno = 71;
+    RequireInvalidArgument([&] { attach_SB_nid_postfix(unmapped, nullptr); }, "attach accepted an unmapped reader");
+    RequireInvalidArgument([&] { getBit32_SB_nid_postfix(unmapped, 1); }, "read accepted an unmapped reader");
+    RequireInvalidArgument([&] { getByteRead_SB_nid_postfix(unmapped); }, "byte count accepted an unmapped reader");
+    RequireInvalidArgument([&] { flushToByte_SB_nid_postfix(unmapped); }, "flush accepted an unmapped reader");
+    RequireInvalidArgument([&] { detach_SB_nid_postfix(unmapped); }, "detach accepted an unmapped reader");
+    Jxr::SimpleBitIo io{reinterpret_cast<Jxr::Stream*>(0x10), 3, 0x80, 0};
+    RequireInvalidArgument([&] { getBit32_SB_nid_postfix(&io, 1); }, "read accepted an unmapped stream");
+    Require(io.bytesRead == 3 && io.accumulator == 0x80 && io.bitsLeft == 0, "rejected unmapped stream changed the reader");
+    Require(errno == 71, "unmapped pointers changed errno");
+
+    source = {0xc3};
+    auto stream = SourceStream();
+    alignas(Jxr::SimpleBitIo) std::uint8_t raw[sizeof(Jxr::SimpleBitIo)];
+    std::memset(raw, 0xa5, sizeof(raw));
+    auto* padded = reinterpret_cast<Jxr::SimpleBitIo*>(raw);
+    Require(attach_SB_nid_postfix(padded, &stream) == 0 && getBit32_SB_nid_postfix(padded, 4) == 0xc, "padded reader differs");
+    flushToByte_SB_nid_postfix(padded);
+    Require(detach_SB_nid_postfix(padded) == 0, "padded detach failed");
+    Require(raw[13] == 0xa5 && raw[14] == 0xa5 && raw[15] == 0xa5 && raw[20] == 0xa5 && raw[23] == 0xa5, "padding bytes were overwritten");
+}
+
 }
 
 int main() {
     KnownPattern();
     Reference();
     Rejected();
+    GuestPointers();
     return 0;
 }

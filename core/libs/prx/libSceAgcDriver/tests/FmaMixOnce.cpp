@@ -46,7 +46,7 @@ Counts Count(std::span<const std::uint32_t> words) {
     return counts;
 }
 
-Counts Compile(std::uint32_t uses) {
+Counts Compile(std::uint32_t uses, std::optional<ShaderFloatMode> floatMode = std::nullopt, bool float32DenormPreserve = false, bool float32FlushToZero = false, std::uint32_t waveSize = 32u) {
     std::vector<std::uint32_t> code;
     for (std::uint32_t load = 0; load < 3u; ++load) code.insert(code.end(), {0xe0300000u | (load * 4u), 0x80010000u | ((1u + load) << 8u)});
     code.push_back(0xbf8c3f70u);
@@ -64,11 +64,14 @@ Counts Compile(std::uint32_t uses) {
     RecompileRequest request{};
     request.shader = {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), words, 0, {}};
     request.target = Target();
+    request.target.float32DenormPreserve = float32DenormPreserve;
+    request.target.float32FlushToZero = float32FlushToZero;
     request.layout = {0, 0, 0, 128};
-    request.context.waveSize = 32;
+    request.context.waveSize = waveSize;
     request.context.userDataBaseRegister = 0;
     request.context.userData = userData;
-    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.context.compute = ShaderComputeStageInfo{{waveSize, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.context.floatMode = floatMode;
     request.context.memory = memory;
     request.useCache = false;
     return Count(Recompile(request).spirv.Words());
@@ -84,7 +87,22 @@ int main() {
         Check(three.words - one.words < one.words - none.words, "fma mix once: 2 more v_fma_mixlo/mixhi_f16 added " + std::to_string(three.words - one.words) + " SPIR-V words, as many as the first one with its shared emulation (" + std::to_string(one.words - none.words) + ")");
         Check(one.functions == none.functions + 2u, "fma mix once: one v_fma_mixlo_f16 emitted " + std::to_string(one.functions - none.functions) + " functions more than none, expected one shared f32 path and its shared exact emulation");
         Check(three.functions == one.functions, "fma mix once: two more v_fma_mixlo/mixhi_f16 in the same float mode emitted " + std::to_string(three.functions - one.functions) + " more functions, expected calls to the shared one");
-        std::printf("fma mix once tests passed (%zu words without v_fma_mix, %zu for 1, %zu for 3)\n", none.words, one.words, three.words);
+        const auto mode1Preserve = Compile(1, ShaderFloatMode{0xd0u, true, true, false}, true, false, 32u);
+        Check(mode1Preserve.words > 0, "fma mix once: mode 1 with DenormPreserve 32 should compile");
+        const auto mode1PreserveWave64 = Compile(1, ShaderFloatMode{0xd0u, true, true, false}, true, false, 64u);
+        Check(mode1PreserveWave64.words > 0, "fma mix once: mode 1 with DenormPreserve 32 Wave64 should compile");
+        const auto mode2 = Compile(1, ShaderFloatMode{0xe0u, true, true, false}, false, false, 32u);
+        Check(mode2.words > 0, "fma mix once: mode 2 should compile");
+        const auto mode2Wave64 = Compile(1, ShaderFloatMode{0xe0u, true, true, false}, false, false, 64u);
+        Check(mode2Wave64.words > 0, "fma mix once: mode 2 Wave64 should compile");
+        bool threwRefusal = false;
+        try {
+            Compile(1, ShaderFloatMode{0xd0u, true, true, false}, false, true, 32u);
+        } catch (const std::runtime_error& error) {
+            threwRefusal = std::string_view(error.what()).find("needs DenormPreserve 32") != std::string_view::npos;
+        }
+        Check(threwRefusal, "fma mix once: mode 1 without DenormPreserve 32 must throw refusal");
+        std::printf("fma mix once tests passed (%zu words without v_fma_mix, %zu for 1, %zu for 3, %zu for mode1, %zu for mode2)\n", none.words, one.words, three.words, mode1Preserve.words, mode2.words);
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

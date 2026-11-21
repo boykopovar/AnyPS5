@@ -17,6 +17,7 @@
 #include "prx/libSceSsl/include/Ssl.hpp"
 #include "prx/libSceSsl/SslTypes.hpp"
 #include "SslCertificateFixture.hpp"
+#include "ProcessParametersFixture.hpp"
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
 #include <mbedtls/net_sockets.h>
@@ -27,6 +28,8 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
+#include <charconv>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -52,13 +55,17 @@ void Require(bool condition, const char* message) {
     if (!condition) { std::fprintf(stderr, "HTTP2: %s\n", message); std::abort(); }
 }
 
+std::array<std::byte, 64> g_process{};
+
+void SetCompiledSdk(std::uint32_t version) { std::memcpy(g_process.data() + 16, &version, sizeof(version)); }
+
 template<class TCall>
 bool Throws(TCall call) {
     try { call(); } catch (const std::exception&) { return true; }
     return false;
 }
 
-enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, GzipEmpty, GzipEmptyMembers, GzipLargeMembers, GzipHeaders, GzipHeaderChecksum, GzipSecondHeaderChecksum, GzipSecondChecksum, GzipSecondSize, GzipTrailingJunk, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, Trailers, StallUpload, Cookie, CookieFlood, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11TruncatedSplit, Http11BadChunk, Http11Gzip, Http11HeadersClose, Http11ResponseClose, Http11ResponseReset, Http11StallRequest, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
+enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, GzipEmpty, GzipEmptyMembers, GzipLargeMembers, GzipHeaders, GzipHeaderChecksum, GzipSecondHeaderChecksum, GzipSecondChecksum, GzipSecondSize, GzipTrailingJunk, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, Trailers, StallUpload, Cookie, CookieFlood, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11TruncatedSplit, Http11BadChunk, Http11Gzip, Http11GzipChunked, Http11GzipClose, Http11GzipSplit, Http11GzipLarge, Http11GzipEmpty, Http11GzipMembers, Http11GzipHeaders, Http11GzipHeaderChecksum, Http11GzipSecondChecksum, Http11GzipTruncated, Http11GzipChecksum, Http11GzipStall, Http1GzipPlain, Http11HeadersClose, Http11ResponseClose, Http11ResponseReset, Http11StallRequest, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
 const char* Protocols[] = {"h2", nullptr};
 const char* Http1Protocols[] = {"http/1.1", nullptr};
 
@@ -118,6 +125,7 @@ struct ResponseSpec {
     std::vector<std::pair<std::string, std::string>> headers;
     std::vector<std::pair<std::string, std::string>> informationalHeaders;
     std::array<std::string, 3> chunkWhitespace{};
+    std::string encoding;
 };
 
 class Server {
@@ -125,7 +133,7 @@ public:
     explicit Server(Mode mode, std::string location = "/another", int redirectStatus = 302,
         std::vector<std::string> responseCookies = {}, bool clientMayClose = false, bool plain = false)
         : mode(mode), location(std::move(location)), redirectStatus(redirectStatus), responseCookies(std::move(responseCookies)), clientMayClose(clientMayClose),
-          plain(plain || mode == Mode::Http1Plain) {
+          plain(plain || mode == Mode::Http1Plain || mode == Mode::Http1GzipPlain) {
         mbedtls_net_init(&listener);
         mbedtls_entropy_init(&entropy);
         mbedtls_ctr_drbg_init(&random);
@@ -347,7 +355,7 @@ private:
         std::vector<std::pair<std::string, std::string>> fields{{":status", status}, {"x-loopback", "yes"}};
         if (mode != Mode::NoLength) fields.emplace_back("content-length", length);
         if (redirect) fields.emplace_back("location", location);
-        if (mode == Mode::GzipRedirectEmpty || mode == Mode::GzipRedirectBody || mode == Mode::Gzip || mode == Mode::GzipSplit || mode == Mode::GzipTruncated || mode == Mode::GzipChecksum || mode == Mode::GzipConcat || mode == Mode::GzipLarge || (mode >= Mode::GzipEmpty && mode <= Mode::GzipTrailingJunk)) fields.emplace_back("content-encoding", "gzip");
+        if (mode == Mode::GzipRedirectEmpty || mode == Mode::GzipRedirectBody || mode == Mode::Gzip || mode == Mode::GzipSplit || mode == Mode::GzipTruncated || mode == Mode::GzipChecksum || mode == Mode::GzipConcat || mode == Mode::GzipLarge || (mode >= Mode::GzipEmpty && mode <= Mode::GzipTrailingJunk)) fields.emplace_back("content-encoding", configured.encoding.empty() ? "gzip" : configured.encoding);
         if (mode == Mode::Cookie) fields.emplace_back("set-cookie", "session=fresh; Path=/");
         if (mode == Mode::CookieFlood) {
             for (int i = 0; i < 1500; ++i) fields.emplace_back("set-cookie", "f" + std::to_string(i) + "=v; Path=/");
@@ -502,9 +510,17 @@ private:
         const int code = configured.status ? configured.status : mode == Mode::Http11Early ? 413 : mode == Mode::Http11Redirect ? redirectStatus : 200;
         std::string response = mode == Mode::Http10 ? "HTTP/1.0 " : "HTTP/1.1 ";
         response += std::to_string(code) + " Fixture\r\n";
-        if (mode == Mode::Http11Chunked || mode == Mode::Http11BadChunk) response += "Transfer-Encoding: chunked\r\n";
-        else if (mode != Mode::Http11Close) response += "Content-Length: " + std::to_string(mode == Mode::Http11Gzip ? StoredGzip("response body").size() : 13) + "\r\n";
-        if (mode == Mode::Http11Gzip) response += "Content-Encoding: gzip\r\n";
+        const bool gzip = mode >= Mode::Http11Gzip && mode <= Mode::Http1GzipPlain;
+        const std::string payload = mode == Mode::Http11GzipLarge ? GzipPayload() : mode == Mode::Http11GzipEmpty ? std::string{} :
+            (mode == Mode::Http11GzipMembers || mode == Mode::Http11GzipHeaders) ? "firstlast" : "response body";
+        std::string encoded = gzip ? StoredGzip(payload) : std::string{};
+        if (mode == Mode::Http11GzipMembers || mode == Mode::Http11GzipSecondChecksum) encoded = StoredGzip("first") + StoredGzip("last");
+        if (mode == Mode::Http11GzipHeaders) encoded = HeaderGzip("first") + HeaderGzip("last");
+        if (mode == Mode::Http11GzipHeaderChecksum) encoded = HeaderGzip("first", true);
+        if (mode == Mode::Http11GzipChecksum || mode == Mode::Http11GzipSecondChecksum) encoded[encoded.size() - 8] ^= 1;
+        if (mode == Mode::Http11Chunked || mode == Mode::Http11BadChunk || mode == Mode::Http11GzipChunked) response += "Transfer-Encoding: chunked\r\n";
+        else if (mode != Mode::Http11Close && mode != Mode::Http11GzipClose) response += "Content-Length: " + std::to_string(gzip ? encoded.size() : 13) + "\r\n";
+        if (gzip) response += "Content-Encoding: " + (configured.encoding.empty() ? std::string("gzip") : configured.encoding) + "\r\n";
         if (mode == Mode::Http11BadLength) response += "Content-Length: 14\r\n";
         if (mode == Mode::Http11Ambiguous) response += "Transfer-Encoding: chunked\r\n";
         if (mode == Mode::Http11Redirect) response += "Location: " + location + "\r\n";
@@ -518,7 +534,20 @@ private:
                 configured.chunkWhitespace[1] + (configured.chunkWhitespace[1].empty() ? "" : ";part=two") + "\r\n body\r\n0" +
                 configured.chunkWhitespace[2] + (configured.chunkWhitespace[2].empty() ? "" : ";last=yes") + "\r\nX-Trailer: done\r\n\r\n";
             else if (mode == Mode::Http11BadChunk) response += "z\r\n";
-            else if (mode == Mode::Http11Gzip) response += StoredGzip("response body");
+            else if (mode == Mode::Http11GzipChunked) {
+                response += "7\r\n" + encoded.substr(0, 7) + "\r\n";
+                std::array<char, 32> digits;
+                const auto result = std::to_chars(digits.data(), digits.data() + digits.size(), encoded.size() - 7, 16);
+                Require(result.ec == std::errc{}, "HTTP1 gzip chunk size");
+                response += std::string(digits.data(), result.ptr) + "\r\n" + encoded.substr(7) + "\r\n0\r\nX-Trailer: done\r\n\r\n";
+            } else if (gzip) {
+                if (mode == Mode::Http11GzipSplit || mode == Mode::Http11GzipStall) {
+                    write(response + encoded.substr(0, 11));
+                    if (mode == Mode::Http11GzipStall) { Stage(2); Stall(); return; }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                    response = encoded.substr(11);
+                } else response += mode == Mode::Http11GzipTruncated ? encoded.substr(0, encoded.size() - 3) : encoded;
+            }
             else response += mode == Mode::Http11Truncated ? "short" : "response body";
         }
         write(response);
@@ -1017,6 +1046,12 @@ void Http1Transport(int ssl) {
         Require(std::string_view(raw, size).starts_with(version == 1 ? "HTTP/1.0 200" : "HTTP/1.1 200"), "HTTP1 status line retained");
         Response(client, 200);
         server.Join();
+        if (mode == Mode::Http11Chunked) {
+            char* trailers = nullptr;
+            std::size_t trailerSize = 0;
+            Require(sceHttp2GetAllTrailingHeaders(client.request, &trailers, &trailerSize) == 0 && trailers &&
+                std::string_view(trailers, trailerSize) == "X-Trailer: done\r\n\r\n", "HTTP1 trailing header block retained");
+        }
         Require(server.Upload() == upload, "HTTP1 complete upload");
         Require(server.Headers().find(":method")->second == "POST" && server.Headers().find(":path")->second == "/path?query=yes", "HTTP1 method and target");
         Require(server.Headers().find(":version")->second == (version == 1 ? "HTTP/1.0" : "HTTP/1.1"), "HTTP1 requested version");
@@ -1024,6 +1059,50 @@ void Http1Transport(int ssl) {
         Require(server.Headers().count("host") == 1 && server.Headers().find("host")->second == "request.example", "HTTP1 exactly one overridden host header");
         Require(observed.calls == (mode == Mode::Http1Plain ? 0 : 1), "HTTP1 TLS callback only for secure connections");
     }
+}
+
+void Http1ContentLengthLists(int ssl) {
+    constexpr std::array<std::string_view, 8> valid{
+        "13,13", "13, 13", "13,\t13", " 13\t, \t13 ", "013,00013", "13, 13, 13", "00013, 13", "13,013,00013"
+    };
+    constexpr std::array<std::string_view, 13> invalid{
+        "13,14", "14,13", "13,14,13", "13,", ",13", "13,,13", "13, +13", "13, -13", "13, 13x",
+        "13,18446744073709551616", "0xD,13", "13.0,13", "13, \t"
+    };
+    unsigned accepted = 0;
+    unsigned refused = 0;
+    for (const int version : {1, 2}) {
+        for (const auto value : valid) {
+            try {
+                Server server(version == 1 ? Mode::Http10 : Mode::Http11);
+                server.SetResponse({0, {{"Content-Length", std::string(value)}}});
+                Client client(ssl, 4, 0, version);
+                client.Create(server.Url("127.0.0.1"));
+                Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 equivalent length send");
+                int kind = -1;
+                std::uint64_t length = 0;
+                Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0 && kind == 0 && length == 13,
+                    "HTTP1 equivalent length reported");
+                Response(client, 200);
+                server.Join();
+                ++accepted;
+            } catch (const std::exception& error) {
+                std::fprintf(stderr, "HTTP1 equivalent length refused: version %d value %.*s: %s\n", version,
+                    static_cast<int>(value.size()), value.data(), error.what());
+            }
+        }
+        for (const auto value : invalid) {
+            Server server(version == 1 ? Mode::Http10 : Mode::Http11);
+            server.SetResponse({0, {{"Content-Length", std::string(value)}}});
+            Client client(ssl, 4, 0, version);
+            client.Create(server.Url("127.0.0.1"));
+            if (Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); })) ++refused;
+            else std::fprintf(stderr, "HTTP1 malformed length accepted: version %d value %.*s\n", version,
+                static_cast<int>(value.size()), value.data());
+        }
+    }
+    std::fprintf(stderr, "HTTP1 equivalent length lists accepted %u/16; malformed lists refused %u/26\n", accepted, refused);
+    Require(accepted == 16 && refused == 26, "HTTP1 Content-Length list normalization failed");
 }
 
 void Http1Policies(int ssl) {
@@ -1105,16 +1184,17 @@ void Http1BufferedDeadline(int ssl) {
 }
 
 void Http1Cancellation(int ssl) {
-    for (const auto mode : {Mode::Http11StallHeaders, Mode::Http11StallBody}) {
+    for (const auto mode : {Mode::Http11StallHeaders, Mode::Http11StallBody, Mode::Http11GzipStall}) {
         for (int teardown = 0; teardown < 4; ++teardown) {
             Server server(mode);
             Client client(ssl, 1, 0, 2);
+            Require(sceHttp2SetInflateGZIPEnabled(client.tmpl, 1) == 0, "HTTP1 cancellation gzip option");
             client.Create(server.Url());
-            if (mode == Mode::Http11StallBody) Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 cancellation header send");
+            if (mode != Mode::Http11StallHeaders) Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 cancellation header send");
             auto pending = std::async(std::launch::async, [&] {
                 try {
                     char byte = 'z';
-                    const int result = mode == Mode::Http11StallBody ? sceHttp2ReadData(client.request, &byte, 1) : sceHttp2SendRequest(client.request, nullptr, 0);
+                    const int result = mode != Mode::Http11StallHeaders ? sceHttp2ReadData(client.request, &byte, 1) : sceHttp2SendRequest(client.request, nullptr, 0);
                     if (result == static_cast<int>(0x817b1100)) {
                         Require(byte == 'z', "HTTP1 deleted-handle read leaves buffer untouched");
                         return teardown != 0;
@@ -1133,10 +1213,11 @@ void Http1Cancellation(int ssl) {
         Server server(mode);
         Client client(ssl, 1, 0, 2);
         Require(sceHttp2SetRecvTimeOut(client.tmpl, 80000) == 0, "HTTP1 receive timeout");
+        Require(sceHttp2SetInflateGZIPEnabled(client.tmpl, 1) == 0, "HTTP1 timeout gzip option");
         client.Create(server.Url());
-        if (mode == Mode::Http11StallBody) Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 timeout header send");
+        if (mode != Mode::Http11StallHeaders) Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 timeout header send");
         char byte = 'z';
-        const int result = mode == Mode::Http11StallBody ? sceHttp2ReadData(client.request, &byte, 1) : sceHttp2SendRequest(client.request, nullptr, 0);
+        const int result = mode != Mode::Http11StallHeaders ? sceHttp2ReadData(client.request, &byte, 1) : sceHttp2SendRequest(client.request, nullptr, 0);
         Require(result == static_cast<int>(0x817b1222) && byte == 'z', "HTTP1 blocked IO deadline");
         server.Join();
     }
@@ -1194,6 +1275,155 @@ void Http1GzipPolicy(int ssl) {
         char byte;
         Require(sceHttp2ReadData(noBody.request, &byte, 1) == 0, "HTTP1 HEAD has no encoded body");
         head.Join();
+    }
+}
+
+void Http1Gzip(int ssl) {
+    for (const int version : {1, 2}) {
+        for (const auto mode : {Mode::Http11Gzip, Mode::Http11GzipChunked, Mode::Http11GzipClose,
+                Mode::Http11GzipSplit, Mode::Http11GzipLarge, Mode::Http11GzipEmpty, Mode::Http11GzipMembers, Mode::Http11GzipHeaders, Mode::Http1GzipPlain}) {
+            for (const int enabled : {0, 1}) {
+                for (const bool lengthFirst : {false, true}) {
+                    Server server(mode);
+                    Client client(ssl, 1, 0, version);
+                    Require(sceHttp2SetInflateGZIPEnabled(client.tmpl, enabled) == 0, "HTTP1 gzip option");
+                    auto url = server.Url();
+                    client.Create(url);
+                    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 gzip send");
+                    const auto payload = mode == Mode::Http11GzipLarge ? GzipPayload() : mode == Mode::Http11GzipEmpty ? std::string{} :
+                        (mode == Mode::Http11GzipMembers || mode == Mode::Http11GzipHeaders) ? "firstlast" : "response body";
+                    const auto encoded = mode == Mode::Http11GzipMembers ? StoredGzip("first") + StoredGzip("last") :
+                        mode == Mode::Http11GzipHeaders ? HeaderGzip("first") + HeaderGzip("last") : StoredGzip(payload);
+                    const auto expected = enabled ? payload : encoded;
+                    const auto checkLength = [&] {
+                        int kind = -1;
+                        std::uint64_t length = 0;
+                        Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0, "HTTP1 gzip length");
+                        const int expectedKind = mode == Mode::Http11GzipChunked ? 2 : enabled || mode == Mode::Http11GzipClose ? 1 : 0;
+                        Require(kind == expectedKind && length == (expectedKind == 0 ? encoded.size() : 0), "HTTP1 gzip length as a PS5 reports it");
+                    };
+                    if (lengthFirst) checkLength();
+                    std::array<char, 317> buffer;
+                    Require(sceHttp2ReadData(client.request, nullptr, 0) == 0, "HTTP1 gzip zero read");
+                    std::string body;
+                    for (;;) {
+                        const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
+                        Require(count >= 0 && count <= static_cast<int>(buffer.size()), "HTTP1 gzip read count");
+                        if (!count) break;
+                        body.append(buffer.data(), static_cast<std::size_t>(count));
+                    }
+                    Require(body == expected, "HTTP1 gzip body bytes");
+                    checkLength();
+                    Require(sceHttp2ReadData(client.request, buffer.data(), 1) == 0, "HTTP1 gzip repeated EOF");
+                    server.Join();
+                }
+            }
+        }
+        for (const auto mode : {Mode::Http11GzipTruncated, Mode::Http11GzipChecksum, Mode::Http11GzipHeaderChecksum, Mode::Http11GzipSecondChecksum}) {
+            Server server(mode);
+            Client client(ssl, 1, 0, version);
+            Require(sceHttp2SetInflateGZIPEnabled(client.tmpl, 1) == 0, "HTTP1 malformed gzip option");
+            client.Create(server.Url());
+            Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 malformed gzip headers");
+            char byte;
+            Require(Throws([&] { sceHttp2ReadData(client.request, &byte, 1); }), "HTTP1 malformed gzip throws");
+            server.Join();
+        }
+    }
+}
+
+std::string WithoutEncodingFields(const std::string& block) {
+    std::string result;
+    for (std::size_t start = 0; start < block.size();) {
+        const auto end = block.find('\n', start) + 1;
+        const std::string line = block.substr(start, end - start);
+        start = end;
+        const std::string lower = [&] {
+            std::string text = line;
+            for (auto& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return text;
+        }();
+        if (!lower.starts_with("content-encoding:") && !lower.starts_with("content-length:")) result += line;
+    }
+    return result;
+}
+
+std::string StripScenario(int ssl, int version, Mode mode, int inflate, int strip) {
+    Server server(mode);
+    Client client(ssl, version == 3 ? 4 : 1, 0, version);
+    Require(sceHttp2SetInflateGZIPEnabled(client.tmpl, inflate) == 0, "strip scenario inflate option");
+    Require(sceHttp2SetStripGZIPHeadersEnabled(client.tmpl, strip) == 0, "strip scenario strip option");
+    client.Create(server.Url());
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "strip scenario send");
+    char* raw = nullptr;
+    std::size_t size = 0;
+    Require(sceHttp2GetAllResponseHeaders(client.request, &raw, &size) == 0 && raw && size > 0, "strip scenario headers");
+    char* again = nullptr;
+    std::size_t againSize = 0;
+    Require(sceHttp2GetAllResponseHeaders(client.request, &again, &againSize) == 0 && again == raw && againSize == size,
+        "strip scenario headers are returned from the same block");
+    const std::string block(raw, size);
+    std::string body;
+    std::array<char, 64> buffer;
+    for (;;) {
+        const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
+        Require(count >= 0, "strip scenario read");
+        if (!count) break;
+        body.append(buffer.data(), static_cast<std::size_t>(count));
+    }
+    const bool gzip = mode == Mode::Gzip || mode == Mode::Http11Gzip || mode == Mode::Http11GzipChunked;
+    Require(gzip && !inflate ? body != "response body" && !body.empty() : body == "response body", "strip scenario body");
+    server.Join();
+    return block;
+}
+
+void GzipByDefault(int ssl) {
+    std::fprintf(stderr, "HTTP2 gzip inflated by default scenario\n");
+    for (const int version : {1, 2, 3}) {
+        for (const auto mode : version == 3 ? std::vector<Mode>{Mode::Gzip} : std::vector<Mode>{Mode::Http11Gzip, Mode::Http11GzipChunked}) {
+            Server server(mode);
+            Client client(ssl, version == 3 ? 4 : 1, 0, version);
+            client.Create(server.Url());
+            Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "default gzip send");
+            std::string body;
+            std::array<char, 64> buffer;
+            for (;;) {
+                const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
+                Require(count >= 0, "default gzip read");
+                if (!count) break;
+                body.append(buffer.data(), static_cast<std::size_t>(count));
+            }
+            Require(body == "response body", "a new template inflates gzip responses");
+            server.Join();
+        }
+    }
+}
+
+void StripGzipHeaders(int ssl) {
+    std::fprintf(stderr, "HTTP2 strip gzip headers scenario\n");
+    Require(sceHttp2SetStripGZIPHeadersEnabled(0x7fffffff, 1) == static_cast<int>(0x817b1100), "strip option on an unknown id");
+    {
+        Client client(ssl);
+        Require(sceHttp2SetStripGZIPHeadersEnabled(client.context, 1) == static_cast<int>(0x817b1100), "strip option on a context");
+        Require(sceHttp2SetStripGZIPHeadersEnabled(client.tmpl, 2) == 0 && sceHttp2SetStripGZIPHeadersEnabled(client.tmpl, -1) == 0,
+            "strip option takes any value");
+        Require(sceHttp2DeleteTemplate(client.tmpl) == 0, "strip option template delete");
+        Require(sceHttp2SetStripGZIPHeadersEnabled(client.tmpl, 1) == static_cast<int>(0x817b1100), "strip option on a deleted template");
+    }
+    for (const int version : {1, 2, 3}) {
+        const auto modes = version == 3 ? std::vector<Mode>{Mode::Gzip, Mode::Normal} : std::vector<Mode>{Mode::Http11Gzip, Mode::Http11GzipChunked, Mode::Http11};
+        for (const auto mode : modes) {
+            const bool gzip = mode == Mode::Gzip || mode == Mode::Http11Gzip || mode == Mode::Http11GzipChunked;
+            for (const int inflate : {0, 1}) {
+                const auto kept = StripScenario(ssl, version, mode, inflate, 0);
+                const auto stripped = StripScenario(ssl, version, mode, inflate, 1);
+                Require(kept.starts_with("HTTP/") && kept.ends_with("\r\n\r\n"), "strip scenario header block shape");
+                Require(stripped == (gzip && inflate ? WithoutEncodingFields(kept) : kept), "gzip fields removed only from inflated gzip responses");
+                if (gzip && inflate) {
+                    Require(stripped.size() < kept.size() && stripped.starts_with("HTTP/") && stripped.ends_with("\r\n\r\n"), "stripped header block shape");
+                }
+            }
+        }
     }
 }
 
@@ -1308,12 +1538,18 @@ void Gzip(int ssl) {
         int kind = -1;
         std::uint64_t length = 0;
         Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0, "gzip length");
-        if (enabled) Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x817b1066),
-            "another send with the complete body still buffered");
         std::array<char, 64> buffer{};
-        const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
+        int count = 0;
         if (enabled) {
-            Require(kind == 0 && length == 13 && count == 13 && std::string(buffer.data(), 13) == "response body", "gzip inflated body");
+            Require(sceHttp2ReadData(client.request, buffer.data(), 1) == 1, "gzip first inflated byte");
+            Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x817b1066),
+                "another send with the complete body still buffered");
+            count = 1 + sceHttp2ReadData(client.request, buffer.data() + 1, buffer.size() - 1);
+        } else {
+            count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
+        }
+        if (enabled) {
+            Require(kind == 1 && length == 0 && count == 13 && std::string(buffer.data(), 13) == "response body", "gzip inflated body");
         } else {
             Require(kind == 0 && length == 33 && count == 33 && static_cast<unsigned char>(buffer[0]) == 0x1f &&
                 static_cast<unsigned char>(buffer[1]) == 0x8b, "gzip passthrough body");
@@ -1339,7 +1575,7 @@ void GzipSplit(int ssl) {
     int kind = -1;
     std::uint64_t length = 0;
     Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0, "gzip split length");
-    Require(kind == 0 && length == 13, "gzip split inflated length");
+    Require(kind == 1 && length == 0, "gzip split length is unknown while inflating");
     for (;;) {
         const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
         Require(count >= 0 && count <= static_cast<int>(buffer.size()), "gzip split read count");
@@ -1350,6 +1586,84 @@ void GzipSplit(int ssl) {
     server.Join();
 }
 
+std::string ReadBody(int request) {
+    std::string body;
+    std::array<char, 64> buffer;
+    for (;;) {
+        const int count = sceHttp2ReadData(request, buffer.data(), buffer.size());
+        Require(count >= 0, "content length scenario read");
+        if (!count) break;
+        body.append(buffer.data(), static_cast<std::size_t>(count));
+    }
+    return body;
+}
+
+void RequireLength(int request, int expectedKind, std::uint64_t expectedLength, const char* message) {
+    int kind = -1;
+    std::uint64_t length = 999;
+    Require(sceHttp2GetResponseContentLength(request, &kind, &length) == 0 && kind == expectedKind && length == expectedLength, message);
+}
+
+void GzipContentLength(int ssl) {
+    std::fprintf(stderr, "HTTP2 gzip content length scenario\n");
+    {
+        Client client(ssl);
+        client.Create("https://127.0.0.1:1/unsent");
+        int kind = -5;
+        std::uint64_t length = 999;
+        Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == static_cast<int>(0x817b1065) && kind == -5 && length == 999,
+            "content length before a send");
+    }
+    for (const int version : {1, 2, 3}) {
+        const std::size_t wire = version == 3 ? 33 : StoredGzip("response body").size();
+        for (const std::string encoding : {"gzip", "GZIP", "gzip, identity", "x-gzip"}) {
+            for (const int inflate : {0, 1}) {
+                Server server(version == 3 ? Mode::Gzip : Mode::Http11Gzip);
+                ResponseSpec response;
+                response.encoding = encoding;
+                server.SetResponse(response);
+                Client client(ssl, version == 3 ? 4 : 1, 0, version);
+                Require(sceHttp2SetInflateGZIPEnabled(client.tmpl, inflate) == 0, "content length scenario inflate option");
+                client.Create(server.Url());
+                Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "content length scenario send");
+                const bool unknown = inflate && encoding != "x-gzip";
+                RequireLength(client.request, unknown ? 1 : 0, unknown ? 0 : wire, "content length by content encoding");
+                const auto body = ReadBody(client.request);
+                Require(unknown ? body == "response body" : body.size() == wire && static_cast<unsigned char>(body[0]) == 0x1f,
+                    "a value starting with gzip is inflated");
+                RequireLength(client.request, unknown ? 1 : 0, unknown ? 0 : wire, "content length after the body was read");
+                server.Join();
+            }
+        }
+        if (version != 3) {
+            Server server(Mode::Http11GzipChunked);
+            Client client(ssl, 1, 0, version);
+            Require(sceHttp2SetInflateGZIPEnabled(client.tmpl, 1) == 0, "chunked content length inflate option");
+            client.Create(server.Url());
+            Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "chunked content length send");
+            RequireLength(client.request, 2, 0, "chunked gzip content length");
+            Require(ReadBody(client.request) == "response body", "chunked gzip body");
+            RequireLength(client.request, 2, 0, "chunked gzip content length after the body was read");
+            server.Join();
+        }
+    }
+    SetCompiledSdk(0x12000000);
+    for (const int version : {2, 3}) {
+        for (const bool gzip : {true, false}) {
+            Server server(version == 3 ? (gzip ? Mode::Gzip : Mode::Normal) : (gzip ? Mode::Http11Gzip : Mode::Http11));
+            Client client(ssl, version == 3 ? 4 : 1, 0, version);
+            Require(sceHttp2SetInflateGZIPEnabled(client.tmpl, 0) == 0, "older SDK inflate option");
+            client.Create(server.Url());
+            Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "older SDK send");
+            RequireLength(client.request, gzip ? 1 : 0, gzip ? 0 : 13, "an older SDK reports no length for gzip even without inflation");
+            Require(gzip ? ReadBody(client.request).size() == (version == 3 ? 33 : StoredGzip("response body").size()) : ReadBody(client.request) == "response body",
+                "older SDK body");
+            server.Join();
+        }
+    }
+    SetCompiledSdk(0x13590001);
+}
+
 void GzipLengthDeadline(int ssl) {
     std::fprintf(stderr, "HTTP2 gzip length deadline scenario\n");
     Server server(Mode::GzipSplit);
@@ -1358,10 +1672,13 @@ void GzipLengthDeadline(int ssl) {
     client.Create(server.Url());
     Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "gzip length deadline send");
     int kind = -1;
-    std::uint64_t length = 0;
-    Require(Throws([&] { sceHttp2GetResponseContentLength(client.request, &kind, &length); }), "unmeasured deadline while inflating for a length throws");
+    std::uint64_t length = 999;
+    Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0 && kind == 1 && length == 0,
+        "the length does not wait for a stalled gzip body");
     char byte = 'z';
-    Require(Throws([&] { sceHttp2ReadData(client.request, &byte, 1); }) && byte == 'z', "request stays failed after the length deadline");
+    const int failure = sceHttp2ReadData(client.request, &byte, 1);
+    Require(failure == static_cast<int>(0x817b1222) && byte == 'z', "a stalled gzip body read times out");
+    Require(sceHttp2ReadData(client.request, &byte, 1) == failure && byte == 'z', "the request stays failed after the read deadline");
     server.Join();
 }
 
@@ -1375,7 +1692,7 @@ void GzipLarge(int ssl) {
     int kind = -1;
     std::uint64_t length = 0;
     Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0, "gzip large length");
-    Require(kind == 0 && length == 70000, "gzip large inflated length");
+    Require(kind == 1 && length == 0, "gzip large length is unknown while inflating");
     std::string body;
     std::array<char, 317> buffer;
     for (;;) {
@@ -1407,7 +1724,8 @@ void GzipMembers(int ssl) {
                 const auto checkLength = [&] (std::size_t bytes) {
                     int kind = -1;
                     std::uint64_t length = 0;
-                    Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0 && kind == 0 && length == bytes, "gzip member length");
+                    Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0 &&
+                        (enabled ? kind == 1 && length == 0 : kind == 0 && length == bytes), "gzip member length");
                 };
                 if (lengthFirst) checkLength(enabled ? expected.size() : mode == Mode::GzipConcat ? 66 : encoded.size());
                 std::array<char, 317> buffer;
@@ -1521,6 +1839,35 @@ void Cancellation(int ssl, Mode mode, int teardown) {
     if (teardown) Require(sceHttp2DeleteRequest(client.request) == static_cast<int>(0x817b1100), "deleted request stays invalid");
 }
 
+std::atomic<bool> stopBetweenLoadsArmed{false};
+
+void StopBetweenLoads(std::atomic<bool>& stopped, std::atomic<bool>& cancelled) {
+    if (!stopBetweenLoadsArmed.exchange(false)) return;
+    stopped.store(true);
+    cancelled.store(true);
+}
+
+void DeleteBetweenCheckLoads(int ssl) {
+    std::fprintf(stderr, "HTTP2 delete between the cancelled and stopped loads\n");
+    Server server(Mode::StallHeaders);
+    Client client(ssl);
+    client.Create(server.Url());
+    auto pending = std::async(std::launch::async, [&] {
+        try {
+            return sceHttp2SendRequest(client.request, nullptr, 0);
+        } catch (const std::exception&) { return static_cast<int>(0x817b1100); }
+    });
+    server.WaitStage(2);
+    Require(pending.wait_for(std::chrono::milliseconds(0)) == std::future_status::timeout, "operation is pending");
+    Http2SetCheckHook_nid_no_patch(StopBetweenLoads);
+    stopBetweenLoadsArmed.store(true);
+    Require(pending.wait_for(std::chrono::seconds(5)) == std::future_status::ready, "the pending call returns after the delete");
+    Http2SetCheckHook_nid_no_patch(nullptr);
+    const int result = pending.get();
+    Require(result != static_cast<int>(0x817b1080), "a delete between the two loads is reported as an abort");
+    Require(sceHttp2DeleteRequest(client.request) == 0, "delete the request");
+}
+
 void EarlyResponse(int ssl, Mode mode) {
     std::fprintf(stderr, "HTTP2 early response scenario %d\n", static_cast<int>(mode));
     Server server(mode);
@@ -1575,6 +1922,14 @@ void FirstNetworkRequest(int ssl) {
 }
 #endif
 
+void HostNotFound(int ssl) {
+    Client client(ssl);
+    client.Create("https://nonexistent.invalid/");
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x804101E6),
+            "lookup failure maps to console DNS error");
+    AfterFailedSend(client, static_cast<int>(0x804101E6));
+}
+
 void Refused(int ssl) {
     mbedtls_net_context listener;
     mbedtls_net_init(&listener);
@@ -1625,7 +1980,7 @@ void Retries(int ssl) {
         client.Create("https://127.0.0.1:1/");
         lookups = 0;
         failedLookups = 100;
-        Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "every lookup failing fails the request");
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x804101e6), "every lookup failing returns the DNS error");
         Require(lookups == retry + 1, "a request makes its retry count plus one lookups before failing");
     }
     Http2SetLookupHook_nid_no_patch(nullptr);
@@ -1910,6 +2265,8 @@ int main(int argc, char** argv) {
 #ifndef _WIN32
     std::signal(SIGPIPE, SIG_IGN);
 #endif
+    Require(ProcessParametersFixture::Install(g_process.data(), g_process.size()), "process parameters");
+    SetCompiledSdk(0x13590001);
     Require(sceNetInit_nid_postfix() == 0, "net init");
     const int ssl = sceSslInit_nid_postfix(8 * 1024 * 1024);
     Require(ssl > 0, "SSL context");
@@ -1928,6 +2285,8 @@ int main(int argc, char** argv) {
         AuthenticationStatuses(ssl);
     } else if (argc == 2 && std::string_view(argv[1]) == "--gzip-members") {
         GzipMembers(ssl);
+    } else if (argc == 2 && std::string_view(argv[1]) == "--gzip-content-length") {
+        GzipContentLength(ssl);
     } else if (argc == 2 && std::string_view(argv[1]) == "--gzip-headers") {
         GzipFailure(ssl, Mode::GzipHeaderChecksum, "gzip header checksum mismatch throws");
         GzipFailure(ssl, Mode::GzipSecondHeaderChecksum, "later gzip header checksum mismatch throws");
@@ -1941,11 +2300,18 @@ int main(int argc, char** argv) {
     } else if (argc == 2 && std::string_view(argv[1]) == "--dns-first") {
         FirstNetworkRequest(ssl);
 #endif
+    } else if (argc == 2 && std::string_view(argv[1]) == "--http1-gzip") {
+        Http1Gzip(ssl);
+    } else if (argc == 2 && std::string_view(argv[1]) == "--strip-gzip-headers") {
+        StripGzipHeaders(ssl);
+    } else if (argc == 2 && std::string_view(argv[1]) == "--gzip-default") {
+        GzipByDefault(ssl);
     } else if (argc == 2 && std::string_view(argv[1]) == "--http1") {
         Http1GzipPolicy(ssl);
         Http1Transport(ssl);
         Http1ChunkWhitespace(ssl);
         Http1Policies(ssl);
+        Http1ContentLengthLists(ssl);
         Http1Cancellation(ssl);
         Http1BufferedDeadline(ssl);
         Http1Cleartext(ssl);
@@ -1989,6 +2355,8 @@ int main(int argc, char** argv) {
             Deadline(ssl, mode, true);
             for (int teardown = 0; teardown < 4; ++teardown) Cancellation(ssl, mode, teardown);
         }
+        DeleteBetweenCheckLoads(ssl);
+        HostNotFound(ssl);
         Refused(ssl);
         Capacity(ssl);
         Retries(ssl);

@@ -307,7 +307,12 @@ private:
                 rest = {};
             }
         }
-        if (node->Entry) throw std::runtime_error("duplicate patched export name: " + entry.Name);
+        if (node->Entry) {
+            const bool existingReexport = (node->Entry->Flags & kExportReexport) != 0;
+            const bool incomingReexport = (entry.Flags & kExportReexport) != 0;
+            if (existingReexport == incomingReexport) throw std::runtime_error("duplicate patched export name: " + entry.Name);
+            if (incomingReexport) return;
+        }
         node->Entry = entry;
     }
 

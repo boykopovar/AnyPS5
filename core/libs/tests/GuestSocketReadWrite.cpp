@@ -24,6 +24,7 @@ constexpr short In = 0x1;
 constexpr short Hup = 0x10;
 constexpr int KernelAgain = static_cast<int>(0x80020023u);
 constexpr int KernelBadDescriptor = static_cast<int>(0x80020009u);
+constexpr int KernelFault = static_cast<int>(0x8002000eu);
 constexpr int KernelIllegalSeek = static_cast<int>(0x8002001du);
 
 static bool Readable(int descriptor, short accepted = In) {
@@ -86,6 +87,20 @@ int main() {
     KernelIovec sceVectorRead[] = {{sceVectorReadFirst, sizeof(sceVectorReadFirst)}, {sceVectorReadSecond, sizeof(sceVectorReadSecond)}};
     Require(Readable(server) && sceKernelReadv(server, sceVectorRead, 2) == sizeof(sceVectorFirst) + sizeof(sceVectorSecond) - 1);
     Require(std::memcmp(sceVectorReadFirst, "sceKernel", sizeof(sceVectorReadFirst)) == 0 && std::strcmp(sceVectorReadSecond, "Writev") == 0);
+
+    KernelIovec unusableWrite[] = {{reinterpret_cast<void*>(0x10), 8}};
+    *__error_nid_postfix() = 0;
+    Require(sceKernelWritev(client, unusableWrite, 1) == KernelFault);
+    Require(writev_nid_postfix(client, unusableWrite, 1) == -1 && *__error_nid_postfix() == 14);
+    KernelIovec partlyUnusableWrite[] = {{const_cast<char*>(vectorFirst), sizeof(vectorFirst) - 1}, {reinterpret_cast<void*>(0x10), 8}};
+    *__error_nid_postfix() = 0;
+    Require(writev_nid_postfix(client, partlyUnusableWrite, 2) == -1 && *__error_nid_postfix() == 14);
+    Require(!Readable(server));
+    Require(write_nid_postfix(client, "12345678", 8) == 8 && Readable(server));
+    KernelIovec unusableRead[] = {{reinterpret_cast<void*>(0x10), 8}};
+    *__error_nid_postfix() = 0;
+    Require(readv_nid_postfix(server, unusableRead, 1) == -1 && *__error_nid_postfix() == 14);
+    Require(!Readable(server));
 
     const char positionedWrite[] = "positioned";
     KernelIovec positionedIov[] = {{const_cast<char*>(positionedWrite), sizeof(positionedWrite)}};

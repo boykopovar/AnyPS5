@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <thread>
 #include <type_traits>
 
 static_assert(std::is_same_v<decltype(cairo_create(nullptr)), CairoContext*>);
@@ -188,7 +189,7 @@ void CheckMatrixAliasingAndErrorState() {
     cairo_identity_matrix(context);
     cairo_translate(context, std::numeric_limits<double>::infinity(), 0);
     cairo_get_matrix(context, &failedMatrix);
-    Near(failedMatrix.x0, 0);
+    assert(std::isinf(failedMatrix.x0) && std::isnan(failedMatrix.y0));
     cairo_destroy(context);
 
     surface = cairo_image_surface_create(0, 1, 1);
@@ -196,9 +197,27 @@ void CheckMatrixAliasingAndErrorState() {
     cairo_surface_destroy(surface);
     cairo_scale(context, 1e200, 1e200);
     cairo_get_matrix(context, &failedMatrix);
-    Near(failedMatrix.xx, 1);
-    Near(failedMatrix.yy, 1);
+    assert(failedMatrix.xx == 1e200 && failedMatrix.yy == 1e200);
     cairo_destroy(context);
+}
+
+void CheckConcurrentContexts() {
+    const auto work = [] {
+        for (int i = 0; i < 2048; ++i) {
+            CairoSurface* surface = cairo_image_surface_create(0, 8, 8);
+            CairoContext* context = cairo_create(surface);
+            cairo_surface_destroy(surface);
+            cairo_save(context);
+            cairo_translate(context, i, 1);
+            cairo_restore(context);
+            assert(cairo_surface_status(cairo_get_target(context)) == 0);
+            cairo_destroy(context);
+        }
+    };
+    std::thread first(work);
+    std::thread second(work);
+    first.join();
+    second.join();
 }
 
 } // namespace
@@ -207,5 +226,6 @@ int main() {
     CheckContextLifetime();
     CheckMatrixTransformAndSaveRestore();
     CheckMatrixAliasingAndErrorState();
+    CheckConcurrentContexts();
     std::puts("guest cairo context and CTM tests passed");
 }

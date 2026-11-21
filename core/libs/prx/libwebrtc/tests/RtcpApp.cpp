@@ -1,6 +1,8 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -147,6 +149,94 @@ void TestNullArgumentsThrow() {
     RequireInvalidArgument([] { _ZN6webrtc4rtcp3AppD1Ev_nid_postfix(nullptr); });
 }
 
+
+using PacketReady = void (APS5_VABI*)(void* function, const std::uint8_t* data, std::size_t size);
+using BlockLength = std::size_t (APS5_VABI*)(const WebRtcRtcpApp*);
+using Create = bool (APS5_VABI*)(const WebRtcRtcpApp*, std::uint8_t*, std::size_t*, std::size_t, void*, PacketReady);
+using Destroy = void (APS5_VABI*)(WebRtcRtcpApp*);
+
+template<typename TFunction> TFunction Slot(const WebRtcRtcpApp& app, int slot) {
+    return reinterpret_cast<TFunction>(const_cast<void*>(static_cast<const void* const*>(app.vtable)[slot]));
+}
+
+struct Sent {
+    std::vector<std::uint8_t> bytes;
+    int calls = 0;
+};
+
+void APS5_VABI Send(void* function, const std::uint8_t* data, std::size_t size) {
+    auto* sent = static_cast<Sent*>(function);
+    sent->bytes.assign(data, data + size);
+    ++sent->calls;
+}
+
+WebRtcRtcpApp Default() {
+    WebRtcRtcpApp app;
+    std::memset(&app, 0xA5, sizeof(app));
+    _ZN6webrtc4rtcp3AppC1Ev_nid_postfix(&app);
+    return app;
+}
+
+void TestConstructor() {
+    WebRtcRtcpApp app = Default();
+    Require(app.vtable != nullptr && app.senderSsrc == 0 && app.subType == 0 && app.name == 0);
+    Require(app.data.data == nullptr && app.data.size == 0 && app.data.capacity == 0);
+    Require(Slot<BlockLength>(app, 2)(&app) == 12);
+    const int before = frees;
+    _ZN6webrtc4rtcp3AppD1Ev_nid_postfix(&app);
+    Require(frees == before);
+}
+
+void TestCreateWritesTheParsedPacket() {
+    const std::vector<std::uint8_t> packet = Packet(30, 0x54455354u, 8);
+    WebRtcRtcpApp app = Default();
+    Require(ParsePacket(app, packet));
+    Require(Slot<BlockLength>(app, 2)(&app) == packet.size());
+    std::vector<std::uint8_t> buffer(64, 0xee);
+    std::size_t index = 0;
+    Require(Slot<Create>(app, 3)(&app, buffer.data(), &index, buffer.size(), nullptr, nullptr));
+    Require(index == packet.size() && std::equal(packet.begin(), packet.end(), buffer.begin()) && buffer[packet.size()] == 0xee);
+    _ZN6webrtc4rtcp3AppD1Ev_nid_postfix(&app);
+}
+
+void TestCreateWithoutData() {
+    const std::vector<std::uint8_t> packet = Packet(0, 0x41424344u, 0);
+    WebRtcRtcpApp app = Default();
+    Require(ParsePacket(app, packet));
+    std::vector<std::uint8_t> buffer(12, 0xee);
+    std::size_t index = 0;
+    Require(Slot<Create>(app, 3)(&app, buffer.data(), &index, buffer.size(), nullptr, nullptr));
+    Require(index == 12 && std::equal(packet.begin(), packet.end(), buffer.begin()));
+}
+
+void TestCreateSendsAFullBuffer() {
+    WebRtcRtcpApp app = Default();
+    std::vector<std::uint8_t> buffer(16, 0);
+    std::size_t index = 5;
+    Sent sent;
+    Require(Slot<Create>(app, 3)(&app, buffer.data(), &index, buffer.size(), &sent, &Send));
+    Require(sent.calls == 1 && sent.bytes.size() == 5 && index == 12);
+    Require(buffer[0] == 0x80 && buffer[1] == 204 && buffer[2] == 0 && buffer[3] == 2);
+    index = 0;
+    Require(!Slot<Create>(app, 3)(&app, buffer.data(), &index, 11, &sent, &Send));
+    Require(index == 0 && sent.calls == 1);
+    index = 4;
+    RequireInvalidArgument([&] { Slot<Create>(app, 3)(&app, buffer.data(), &index, 12, nullptr, nullptr); });
+}
+
+void TestDeletingDestructor() {
+    auto* app = static_cast<WebRtcRtcpApp*>(_Znwm_nid_postfix(sizeof(WebRtcRtcpApp)));
+    _ZN6webrtc4rtcp3AppC1Ev_nid_postfix(app);
+    Require(ParsePacket(*app, Packet(1, 2, 4)));
+    const int before = frees;
+    Slot<Destroy>(*app, 1)(app);
+    Require(frees == before + 2 && lastFreed == app);
+}
+
+void TestNullConstructorThrows() {
+    RequireInvalidArgument([] { _ZN6webrtc4rtcp3AppC1Ev_nid_postfix(nullptr); });
+}
+
 }
 
 int main() {
@@ -162,5 +252,11 @@ int main() {
     TestInvalidPayloadLeavesThePacketUntouched();
     TestDestructorWithoutDataFreesNothing();
     TestNullArgumentsThrow();
+    TestConstructor();
+    TestCreateWritesTheParsedPacket();
+    TestCreateWithoutData();
+    TestCreateSendsAFullBuffer();
+    TestDeletingDestructor();
+    TestNullConstructorThrows();
     return 0;
 }

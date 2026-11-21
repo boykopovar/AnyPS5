@@ -11,6 +11,8 @@ export const actions = groups.flatMap(group => group.actions);
 export const padButtons = new Set(['Cross', 'Circle', 'Triangle', 'Square', 'L1', 'R1', 'L2', 'R2', 'L3', 'R3', 'Options', 'Up', 'Right', 'Down', 'Left']);
 export const mouseValues = ['Left', 'Middle', 'Right', 'X1', 'X2'];
 export const wheelValues = ['Up', 'Down', 'Left', 'Right'];
+export const emulatorActions = ['ToggleFullscreen', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus', 'VolumeUp', 'VolumeDown', 'ToggleMute', 'ReloadInputMapping'];
+export const chordButtons = ['Cross', 'Circle', 'Triangle', 'Square', 'L1', 'R1', 'L2', 'R2', 'L3', 'R3', 'Options', 'Up', 'Right', 'Down', 'Left', 'TouchPad'];
 
 export const defaults = {
     Cross: ['KEY:Return', 'KEY:Space'], Circle: ['KEY:C'], Triangle: ['KEY:I'], Square: ['MOUSE:Left'],
@@ -23,13 +25,51 @@ export const defaults = {
     ToggleMouse: ['KEY:F7', 'MOUSE:Middle'], ToggleFullscreen: ['KEY:F11'], TogglePerformanceOverlay: ['KEY:F10'], Screenshot: ['KEY:F12'], ShowPadStatus: ['KEY:F9'], VolumeUp: ['KEY:F6'], VolumeDown: ['KEY:F5'], ToggleMute: ['KEY:F8'], ReloadInputMapping: ['KEY:F1']
 };
 
+export function actionsForInput(search, bindings) {
+    let query = search.trim().toLowerCase();
+    if (!query) return new Set();
+    if (query.startsWith('pad:')) {
+        const chord = canonicalChord(query.slice(4));
+        if (chord === undefined) return new Set();
+        query = `pad:${chord.toLowerCase()}`;
+    }
+    const keyboardQuery = `key:${query}`;
+    return new Set(actions.filter(action => {
+        const custom = bindings.filter(binding => binding.action === action);
+        const sources = custom.length
+            ? custom.filter(binding => binding.value).map(({type, value}) => `${type}:${value}`)
+            : defaults[action];
+        return sources.some(source => {
+            const input = source.toLowerCase();
+            return input === query || input === keyboardQuery;
+        });
+    }));
+}
+
+export function inputFilename(titleId) {
+    if (titleId === '') return 'anyps5-input.ini';
+    if (typeof titleId !== 'string' || titleId.length > 32 || /[^A-Za-z0-9_-]/u.test(titleId)) return undefined;
+    return `anyps5-input.${titleId}.ini`;
+}
+
 export function typesForAction(action) {
     if (!actions.includes(action)) return [];
-    if (['ToggleFullscreen', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus', 'VolumeUp', 'VolumeDown', 'ToggleMute', 'ReloadInputMapping'].includes(action)) return ['KEY'];
+    if (emulatorActions.includes(action)) return ['KEY', 'PAD'];
     return padButtons.has(action) ? ['KEY', 'MOUSE', 'WHEEL'] : ['KEY', 'MOUSE'];
 }
 
 export function canonicalValue(value, choices) {
     if (typeof value !== 'string') return undefined;
     return choices.find(choice => choice.toUpperCase() === value.trim().toUpperCase());
+}
+
+export function canonicalChord(value) {
+    if (typeof value !== 'string') return undefined;
+    const buttons = new Set();
+    for (const part of value.split('+')) {
+        const button = canonicalValue(part, chordButtons);
+        if (button === undefined) return undefined;
+        buttons.add(button);
+    }
+    return chordButtons.filter(button => buttons.has(button)).join('+');
 }

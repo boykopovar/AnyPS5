@@ -318,15 +318,18 @@ int APS5_VABI sceSdmaKickQueue(void* handle) {
 }
 
 int APS5_VABI sceSdmaOpen(void** handle, void* buffer, std::uint32_t size, const SdmaOpenParam* param) {
-    if (!param || size < MinimumWorkingBuffer || !buffer || param->engine - 12 >= 8) return SdmaErrorInvalidArgument;
+    SdmaOpenParam local{};
+    if (!param || !GuestCopyIn_nid_no_patch(&local, param, sizeof(local))) return SdmaErrorInvalidArgument;
+    if (size < MinimumWorkingBuffer || !buffer || !handle || local.engine - 12 >= 8) return SdmaErrorInvalidArgument;
     std::lock_guard lock(g_mutex);
-    SdmaSlot& slot = g_slots[param->engine];
+    SdmaSlot& slot = g_slots[local.engine];
     if (slot.open) return SdmaErrorBusy;
+    void* created = &slot;
+    if (!GuestCopyOut_nid_no_patch(handle, &created, sizeof(created))) return SdmaErrorInvalidArgument;
     slot = SdmaSlot{};
     slot.open = true;
     slot.ringDwords = size / 4 - FenceSlots;
-    if (param->flags & 0x10) slot.writeBack = reinterpret_cast<std::uint64_t*>(param->writeBackAddress);
-    *handle = &slot;
+    if (local.flags & 0x10) slot.writeBack = reinterpret_cast<std::uint64_t*>(local.writeBackAddress);
     return 0;
 }
 

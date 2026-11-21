@@ -1,5 +1,8 @@
 #include "prx/libSceNpUtility/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -8,6 +11,8 @@
 #include <thread>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 
 constexpr int SignedOut = static_cast<int>(0x80550006u);
 constexpr int InvalidArgument = static_cast<int>(0x80550704u);
@@ -74,6 +79,9 @@ void CheckWordFilter() {
     const int context = sceNpWordFilterCreateTitleCtx(selfNpId);
     Require(context == WordFilterTitleCtxBase + 1, "sceNpWordFilterCreateTitleCtx", "the first word filter context is not 0x01000001");
     Require(sceNpWordFilterCreateAsyncRequest(context, nullptr) == InvalidArgument, "sceNpWordFilterCreateAsyncRequest", "a null parameter was taken");
+    errno = 71;
+    Require(sceNpWordFilterCreateAsyncRequest(context, reinterpret_cast<const std::uint64_t*>(0x10)) == InvalidArgument, "sceNpWordFilterCreateAsyncRequest", "an unmapped parameter was taken");
+    Require(errno == 71, "sceNpWordFilterCreateAsyncRequest", "errno was not preserved");
     Require(sceNpWordFilterCreateAsyncRequest(context, wrongAsyncParam) == InvalidArgument, "sceNpWordFilterCreateAsyncRequest", "a parameter size other than 0x18 was taken");
     Require(sceNpWordFilterCreateAsyncRequest(context + 100, asyncParam) == InvalidId, "sceNpWordFilterCreateAsyncRequest", "an unknown context was taken");
     const int sync = sceNpWordFilterCreateRequest(context);
@@ -84,9 +92,14 @@ void CheckWordFilter() {
     Require(sceNpWordFilterCensorComment(sync, "word", &sanitized) == InvalidArgument, "sceNpWordFilterCensorComment", "an option was taken");
     longComment[0x400] = 'a';
     Require(sceNpWordFilterCensorComment(sync, longComment, nullptr) == InvalidArgument, "sceNpWordFilterCensorComment", "a 0x401-byte comment was taken");
+    errno = 71;
+    Require(sceNpWordFilterCensorComment(sync, reinterpret_cast<const char*>(0x10), nullptr) == InvalidArgument && errno == 71,
+            "sceNpWordFilterCensorComment", "an unreadable comment was taken or modified errno");
     Require(sceNpWordFilterCensorComment(sync + 100, "word", nullptr) == InvalidId, "sceNpWordFilterCensorComment", "an unknown request was taken");
     longComment[0x400] = 0;
-    Require(sceNpWordFilterCensorComment(sync, longComment, nullptr) == SignedOut, "sceNpWordFilterCensorComment", "a 0x400-byte comment did not return SIGNED_OUT");
+    errno = 71;
+    Require(sceNpWordFilterCensorComment(sync, longComment, nullptr) == SignedOut && errno == 71,
+            "sceNpWordFilterCensorComment", "a 0x400-byte comment did not return SIGNED_OUT or modified errno");
     Require(sceNpWordFilterCensorComment(sync, "word", nullptr) == InvalidType, "sceNpWordFilterCensorComment", "a used request did not return INVALID_TYPE");
     int result = 7;
     Require(sceNpWordFilterPollAsync(sync, &result) == InvalidId && result == 7, "sceNpWordFilterPollAsync", "a synchronous request was polled");
@@ -101,8 +114,17 @@ void CheckWordFilter() {
     Require(sceNpWordFilterSanitizeComment(async, "word", nullptr, nullptr) == InsufficientArgument, "sceNpWordFilterSanitizeComment", "a null output was taken");
     Require(sceNpWordFilterSanitizeComment(async, nullptr, sanitized, &result) == InsufficientArgument, "sceNpWordFilterSanitizeComment", "a null comment was not refused before the option");
     Require(sceNpWordFilterSanitizeComment(async, "word", sanitized, &result) == InvalidArgument, "sceNpWordFilterSanitizeComment", "an option was taken");
+    errno = 71;
+    Require(sceNpWordFilterSanitizeComment(async, reinterpret_cast<const char*>(0x10), sanitized, nullptr) == InvalidArgument && errno == 71,
+            "sceNpWordFilterSanitizeComment", "an unreadable comment was taken or modified errno");
     Require(sceNpWordFilterSanitizeComment(async, "word", sanitized, nullptr) == 0, "sceNpWordFilterSanitizeComment", "the asynchronous request did not start");
     Require(sceNpWordFilterPollAsync(async, &result) == PollFinished && result == SignedOut, "sceNpWordFilterPollAsync", "the request did not finish with SIGNED_OUT");
+    errno = 71;
+    Require(sceNpWordFilterPollAsync(async, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpWordFilterPollAsync", "unwritable result was taken");
+    Require(errno == 71, "sceNpWordFilterPollAsync", "errno was modified");
+    errno = 71;
+    Require(sceNpWordFilterWaitAsync(async, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpWordFilterWaitAsync", "unwritable result was taken");
+    Require(errno == 71, "sceNpWordFilterWaitAsync", "errno was modified");
     Require(sanitized[0] == 'z' && sanitized[4] == 'z', "sceNpWordFilterSanitizeComment", "a sanitized comment was written");
     Require(sceNpWordFilterAbortRequest(async) == 0, "sceNpWordFilterAbortRequest", "aborting a finished request failed");
     Require(sceNpWordFilterPollAsync(async, &result) == PollFinished && result == SignedOut, "sceNpWordFilterAbortRequest", "aborting a finished request changed its result");
@@ -128,13 +150,26 @@ void CheckAppLaunchLink(const char* name, Init init, Finalize finalize, Create c
     Require(create(-1, param, &request) == invalidArgument, name, "user -1 was taken");
     Require(create(1, nullptr, &request) == invalidArgument, name, "a null parameter was taken");
     Require(create(1, param, nullptr) == invalidArgument, name, "a null output was taken");
+    errno = 71;
+    Require(create(1, param, reinterpret_cast<std::int32_t*>(0x10)) == invalidArgument, name, "an unwritable request id output was taken");
+    Require(errno == 71, name, "an unwritable request id changed errno");
     Require(create(1, param, &request) == 0 && request == 1, name, "the first request is not id 1");
     std::int32_t num = -1;
+    errno = 71;
     Require(getNum(request, &num) == 0 && num == 0, name, "the compatible title count was not zero");
+    Require(errno == 71, name, "reading the compatible title count changed errno");
     Require(getNum(request, nullptr) == invalidArgument, name, "a null count was taken");
+    errno = 71;
+    Require(getNum(request, reinterpret_cast<std::int32_t*>(0x10)) == invalidArgument, name, "an unwritable compatible title count was taken");
+    Require(errno == 71, name, "an unwritable compatible title count changed errno");
     Require(getNum(request + 100, &num) == requestNotFound, name, "an unknown request was taken");
     std::int32_t list[4] = {};
+    errno = 71;
     Require(getList(request, list, &num) == 0 && num == 0, name, "the compatible title list was not empty");
+    Require(errno == 71, name, "reading the compatible title list changed errno");
+    errno = 71;
+    Require(getList(request, list, reinterpret_cast<std::int32_t*>(0x10)) == invalidArgument, name, "an unwritable compatible title list count was taken");
+    Require(errno == 71, name, "an unwritable compatible title list count changed errno");
     Require(getList(request, nullptr, &num) == invalidArgument, name, "a null list with a count was taken");
     Require(abort(request) == 0, name, "aborting the request failed");
     Require(abort(request) == requestNotFound, name, "an aborted request was found");
@@ -161,6 +196,9 @@ void CheckNpUtilityPayloads() {
     Require(sceNpAppInfoIntCreateRequest(&request) == AppInfoNotInitialized, "sceNpAppInfoIntCreateRequest", "a request was created before initialization");
     Require(sceNpAppInfoIntInitialize(0) == 0, "sceNpAppInfoIntInitialize", "initialization failed");
     Require(sceNpAppInfoIntCreateRequest(nullptr) == AppInfoInvalid, "sceNpAppInfoIntCreateRequest", "a null output was taken");
+    errno = 71;
+    Require(sceNpAppInfoIntCreateRequest(reinterpret_cast<std::int32_t*>(0x10)) == AppInfoInvalid, "sceNpAppInfoIntCreateRequest", "an unwritable request output was taken");
+    Require(errno == 71, "sceNpAppInfoIntCreateRequest", "an unwritable output changed errno");
     Require(sceNpAppInfoIntCreateRequest(&request) == 0 && request == 1, "sceNpAppInfoIntCreateRequest", "the first request is not id 1");
     Require(sceNpAppInfoIntAbortRequest() == 0, "sceNpAppInfoIntAbortRequest", "aborting the request failed");
     Require(sceNpAppInfoIntAbortRequest() == AppInfoInvalid, "sceNpAppInfoIntAbortRequest", "an aborted request was found");
@@ -175,10 +213,21 @@ void CheckNpUtilityPayloads() {
     Require(sceNpTitleMetadataIntGetNpTitleId("PPSA000000", 10, npTitleId) == static_cast<int>(0x8055AA04u), "sceNpTitleMetadataIntGetNpTitleId", "a title id above 9 bytes was taken");
     Require(sceNpTitleMetadataIntGetNpTitleId("PPSA00000", 9, npTitleId) == 0 && std::strcmp(npTitleId, "PPSA00000_00") == 0, "sceNpTitleMetadataIntGetNpTitleId", "the np title id was not built");
     const char embeddedTitle[] = {'A', 'B', 0, 'C'};
+    errno = 71;
     Require(sceNpTitleMetadataIntGetNpTitleId(embeddedTitle, 4, npTitleId) == 0 && std::strcmp(npTitleId, "AB_00") == 0, "sceNpTitleMetadataIntGetNpTitleId", "an embedded terminator was not honoured");
+    Require(errno == 71, "sceNpTitleMetadataIntGetNpTitleId", "errno was modified");
+    errno = 71;
+    Require(sceNpTitleMetadataIntGetNpTitleId(reinterpret_cast<const char*>(0x10), 4, npTitleId) == static_cast<int>(0x8055AA03u), "sceNpTitleMetadataIntGetNpTitleId", "an unreadable title id was taken");
+    Require(errno == 71, "sceNpTitleMetadataIntGetNpTitleId", "an unreadable title id changed errno");
+    errno = 71;
+    Require(sceNpTitleMetadataIntGetNpTitleId(embeddedTitle, 4, reinterpret_cast<char*>(0x10)) == static_cast<int>(0x8055AA03u), "sceNpTitleMetadataIntGetNpTitleId", "an unwritable output was taken");
+    Require(errno == 71, "sceNpTitleMetadataIntGetNpTitleId", "an unwritable output changed errno");
     CheckAppLaunchLink("sceNpAppLaunchLink", sceNpAppLaunchLinkIntInitialize, sceNpAppLaunchLinkIntFinalize, sceNpAppLaunchLinkIntCreateRequest, sceNpAppLaunchLinkIntAbortRequest, sceNpAppLaunchLinkIntDestroyRequest, sceNpAppLaunchLinkIntGetCompatibleTitleIdNum, sceNpAppLaunchLinkIntGetCompatibleTitleIdList, LaunchNotInitialized, LaunchNotFound, LaunchInvalid);
     CheckAppLaunchLink("sceNpAppLaunchLink2", sceNpAppLaunchLink2IntInitialize, sceNpAppLaunchLink2IntFinalize, sceNpAppLaunchLink2IntCreateRequest, sceNpAppLaunchLink2IntAbortRequest, sceNpAppLaunchLink2IntDestroyRequest, sceNpAppLaunchLink2IntGetCompatibleTitleIdNum, sceNpAppLaunchLink2IntGetCompatibleTitleIdList, Launch2NotInitialized, Launch2NotFound, Launch2Invalid);
     Require(sceNpServiceCheckerIntInitialize(0) == 0, "sceNpServiceCheckerIntInitialize", "initialization failed");
+    errno = 71;
+    Require(sceNpServiceCheckerIntCreateRequest(selfNpId, reinterpret_cast<std::int32_t*>(0x10)) == ServiceInvalid, "sceNpServiceCheckerIntCreateRequest", "an unwritable request output was taken");
+    Require(errno == 71, "sceNpServiceCheckerIntCreateRequest", "an unwritable output changed errno");
     Require(sceNpServiceCheckerIntCreateRequest(selfNpId, &request) == 0 && request == 1, "sceNpServiceCheckerIntCreateRequest", "the first request is not id 1");
     std::uint32_t availability = 0xA5A5A5A5;
     Require(sceNpServiceCheckerIntGetAvailability(request, nullptr, &availability) == ServiceInvalid, "sceNpServiceCheckerIntGetAvailability", "a null NpId was taken");
@@ -191,8 +240,13 @@ void CheckNpUtilityPayloads() {
     Require(sceNpServiceCheckerIntGetAvailabilityList(request, nullptr, 0, nullptr) == 0, "sceNpServiceCheckerIntGetAvailabilityList", "an empty list was refused");
     Require(sceNpServiceCheckerIntGetAvailabilityList(request, nullptr, 1, results) == ServiceInvalid, "sceNpServiceCheckerIntGetAvailabilityList", "a null list with a count was taken");
     std::uint8_t cached = 0xA5;
+    errno = 71;
     Require(sceNpServiceCheckerIntIsCached(request, &cached) == 0 && cached == 0, "sceNpServiceCheckerIntIsCached", "the request was reported cached");
+    Require(errno == 71, "sceNpServiceCheckerIntIsCached", "errno was modified");
     Require(sceNpServiceCheckerIntIsCached(request, nullptr) == ServiceInvalid, "sceNpServiceCheckerIntIsCached", "a null output was taken");
+    errno = 71;
+    Require(sceNpServiceCheckerIntIsCached(request, reinterpret_cast<std::uint8_t*>(0x10)) == ServiceInvalid, "sceNpServiceCheckerIntIsCached", "an unwritable output was taken");
+    Require(errno == 71, "sceNpServiceCheckerIntIsCached", "an unwritable output changed errno");
     Require(sceNpServiceCheckerIntIsCached(request + 100, &cached) == ServiceNotFound, "sceNpServiceCheckerIntIsCached", "an unknown request was taken");
     sceNpServiceCheckerIntFinalize();
     Require(sceNpServiceCheckerIntGetAvailability(request, selfNpId, &availability) == ServiceNotInitialized, "sceNpServiceCheckerIntGetAvailability", "availability was checked after finalization");
@@ -248,9 +302,13 @@ void CheckServiceChecker2() {
     Require(sceNpServiceChecker2IntInitialize() == 0, "sceNpServiceChecker2IntInitialize", "initialization failed");
     Require(sceNpServiceChecker2IntInitialize() == AlreadyInitialized, "sceNpServiceChecker2IntInitialize", "a second initialization was taken");
     Require(sceNpServiceChecker2IntCreateRequest(nullptr) == CheckerInvalidArgument, "sceNpServiceChecker2IntCreateRequest", "a null output was taken");
+    errno = 71;
     Require(sceNpServiceChecker2IntCreateRequest(reinterpret_cast<int*>(1)) == CheckerInvalidArgument, "sceNpServiceChecker2IntCreateRequest", "an unmapped low output was taken");
+    Require(errno == 71, "sceNpServiceChecker2IntCreateRequest", "an unmapped low output changed errno");
     Require(sceNpServiceChecker2IntCreateRequest(reinterpret_cast<int*>(~0xFu)) == CheckerInvalidArgument, "sceNpServiceChecker2IntCreateRequest", "an unmapped high output was taken");
+    errno = 71;
     Require(sceNpServiceChecker2IntCreateRequest(&request) == 0 && request == 1, "sceNpServiceChecker2IntCreateRequest", "the first request is not id 1");
+    Require(errno == 71, "sceNpServiceChecker2IntCreateRequest", "creating a request changed errno");
     std::uint32_t availability = 0xA5A5A5A5;
     Require(sceNpServiceChecker2IntGetServiceAvailability(request, nullptr, &availability) == CheckerInvalidArgument, "sceNpServiceChecker2IntGetServiceAvailability", "a null NpId was taken");
     Require(sceNpServiceChecker2IntGetServiceAvailability(request, selfNpId, nullptr) == CheckerInvalidArgument, "sceNpServiceChecker2IntGetServiceAvailability", "a null output was taken");
@@ -275,6 +333,9 @@ void CheckServiceChecker2() {
     Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 2) == 1, "sceNpServiceChecker2IntIsSetServiceType", "bit 2 was not set");
     Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 10) == 0, "sceNpServiceChecker2IntIsSetServiceType", "type 10 was taken");
     Require(sceNpServiceChecker2IntIsSetServiceType(nullptr, 0) == 0, "sceNpServiceChecker2IntIsSetServiceType", "a null mask was taken");
+    errno = 71;
+    Require(sceNpServiceChecker2IntIsSetServiceType(reinterpret_cast<const std::uint32_t*>(0x10), 0) == 0, "sceNpServiceChecker2IntIsSetServiceType", "an unmapped mask was taken");
+    Require(errno == 71, "sceNpServiceChecker2IntIsSetServiceType", "errno was not preserved");
     Require(sceNpServiceChecker2IntFinalize() == 0, "sceNpServiceChecker2IntFinalize", "finalization failed");
     Require(sceNpServiceChecker2IntInitialize() == 0, "sceNpServiceChecker2IntInitialize", "reinitialization failed");
     int boundaryId = 0;
@@ -294,14 +355,41 @@ void CheckServiceChecker2() {
     Require(sceNpServiceChecker2IntCreateRequest(&request) == NotInitialized, "sceNpServiceChecker2IntCreateRequest", "a request was created after finalization");
 }
 
+void CheckTitleMetadataRequests() {
+    constexpr int TitleMetadataNotFound = static_cast<int>(0x8055AA09u);
+    Require(sceNpTitleMetadataIntAbortRequest(1) == TitleMetadataNotFound, "sceNpTitleMetadataIntAbortRequest", "an abort was accepted before initialization");
+    Require(sceNpTitleMetadataIntDeleteRequest(1) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "a delete was accepted before initialization");
+    const std::int32_t req1 = sceNpTitleMetadataIntCreateRequest();
+    Require(req1 == 1, "sceNpTitleMetadataIntCreateRequest", "the first request is not id 1");
+    const std::int32_t req2 = sceNpTitleMetadataIntCreateRequest();
+    Require(req2 == 2, "sceNpTitleMetadataIntCreateRequest", "the second request is not id 2");
+    Require(sceNpTitleMetadataIntAbortRequest(req2 + 100) == TitleMetadataNotFound, "sceNpTitleMetadataIntAbortRequest", "an unknown request was accepted");
+    Require(sceNpTitleMetadataIntAbortRequest(0) == TitleMetadataNotFound, "sceNpTitleMetadataIntAbortRequest", "request id 0 was accepted");
+    Require(sceNpTitleMetadataIntAbortRequest(-1) == TitleMetadataNotFound, "sceNpTitleMetadataIntAbortRequest", "request id -1 was accepted");
+    Require(sceNpTitleMetadataIntDeleteRequest(req2 + 100) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "an unknown request was deleted");
+    Require(sceNpTitleMetadataIntDeleteRequest(0) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "request id 0 was deleted");
+    Require(sceNpTitleMetadataIntDeleteRequest(-1) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "request id -1 was deleted");
+    Require(sceNpTitleMetadataIntAbortRequest(req1) == 0, "sceNpTitleMetadataIntAbortRequest", "aborting request 1 failed");
+    Require(sceNpTitleMetadataIntDeleteRequest(req1) == 0, "sceNpTitleMetadataIntDeleteRequest", "deleting aborted request 1 failed");
+    Require(sceNpTitleMetadataIntDeleteRequest(req1) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "duplicate delete of request 1 was accepted");
+    Require(sceNpTitleMetadataIntDeleteRequest(req2) == 0, "sceNpTitleMetadataIntDeleteRequest", "deleting request 2 failed");
+    Require(sceNpTitleMetadataIntAbortRequest(req2) == TitleMetadataNotFound, "sceNpTitleMetadataIntAbortRequest", "request 2 was found after state reset");
+    Require(sceNpTitleMetadataIntDeleteRequest(req2) == TitleMetadataNotFound, "sceNpTitleMetadataIntDeleteRequest", "duplicate delete of request 2 was accepted");
+}
+
 void CheckLookupNet() {
     constexpr int NotInitialized = static_cast<int>(0x80550702u);
     constexpr int InsufficientArgumentNet = static_cast<int>(0x8055070Cu);
     constexpr int InvalidIdNet = static_cast<int>(0x8055070Eu);
     constexpr int InvalidTypeNet = static_cast<int>(0x80550711u);
     int initialized = -1;
+    errno = 71;
     Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 0, "sceNpLookupNetIsInit", "an uninitialized service reported itself initialized");
+    Require(errno == 71, "sceNpLookupNetIsInit", "errno was modified");
     Require(sceNpLookupNetIsInit(nullptr) == 0, "sceNpLookupNetIsInit", "a null output was taken");
+    errno = 71;
+    Require(sceNpLookupNetIsInit(reinterpret_cast<int*>(0x10)) != 0, "sceNpLookupNetIsInit", "an unwritable output was taken");
+    Require(errno == 71, "sceNpLookupNetIsInit", "an unwritable output changed errno");
     Require(sceNpLookupNetTerm() == NotInitialized, "sceNpLookupNetTerm", "terminating an uninitialized service was taken");
     Require(sceNpLookupNetCreateTitleCtx(nullptr, selfNpId) == NotInitialized, "sceNpLookupNetCreateTitleCtx", "a context was created before initialization");
     Require(sceNpLookupNetInit() == 0, "sceNpLookupNetInit", "initialization failed");
@@ -345,9 +433,14 @@ void CheckLookupNet() {
     Require(sceNpLookupNetCensorComment(censorRequest, selfNpId, "word", selfNpId) == InvalidArgument, "sceNpLookupNetCensorComment", "an option was taken");
     const std::string longComment(0x401, 'a');
     Require(sceNpLookupNetCensorComment(censorRequest, selfNpId, longComment.c_str(), nullptr) == InvalidArgument, "sceNpLookupNetCensorComment", "a 0x401-byte comment was taken");
+    errno = 71;
+    Require(sceNpLookupNetCensorComment(censorRequest, selfNpId, reinterpret_cast<const char*>(0x10), nullptr) == InvalidArgument && errno == 71,
+            "sceNpLookupNetCensorComment", "an unreadable comment was taken or modified errno");
     Require(sceNpLookupNetCensorComment(censorRequest, nullptr, "word", nullptr) == InsufficientArgumentNet, "sceNpLookupNetCensorComment", "a null NpId was taken");
     Require(sceNpLookupNetCensorComment(censorRequest + 100, selfNpId, "word", nullptr) == InvalidIdNet, "sceNpLookupNetCensorComment", "an unknown request was taken");
-    Require(sceNpLookupNetCensorComment(censorRequest, selfNpId, "word", nullptr) == SignedOut, "sceNpLookupNetCensorComment", "the censor did not return SIGNED_OUT");
+    errno = 71;
+    Require(sceNpLookupNetCensorComment(censorRequest, selfNpId, "word", nullptr) == SignedOut && errno == 71,
+            "sceNpLookupNetCensorComment", "the censor did not return SIGNED_OUT or modified errno");
     Require(sceNpLookupNetCensorComment(censorRequest, selfNpId, "word", nullptr) == InvalidTypeNet, "sceNpLookupNetCensorComment", "a used request did not return INVALID_TYPE");
     const int sanitizeRequest = sceNpLookupNetCreateRequest(secondContext);
     Require(sanitizeRequest == 4, "sceNpLookupNetCreateRequest", "the sanitize request is not id 4");
@@ -356,9 +449,14 @@ void CheckLookupNet() {
     Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, nullptr, sanitized, nullptr) == InsufficientArgumentNet, "sceNpLookupNetSanitizeComment", "a null comment was taken");
     Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, "word", sanitized, selfNpId) == InvalidArgument, "sceNpLookupNetSanitizeComment", "an option was taken");
     Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, longComment.c_str(), sanitized, nullptr) == InvalidArgument, "sceNpLookupNetSanitizeComment", "a 0x401-byte comment was taken");
+    errno = 71;
+    Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, reinterpret_cast<const char*>(0x10), sanitized, nullptr) == InvalidArgument && errno == 71,
+            "sceNpLookupNetSanitizeComment", "an unreadable comment was taken or modified errno");
     Require(sceNpLookupNetSanitizeComment(sanitizeRequest, nullptr, "word", sanitized, nullptr) == InsufficientArgumentNet, "sceNpLookupNetSanitizeComment", "a null NpId was taken");
     Require(sceNpLookupNetSanitizeComment(sanitizeRequest + 100, selfNpId, "word", sanitized, nullptr) == InvalidIdNet, "sceNpLookupNetSanitizeComment", "an unknown request was taken");
-    Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, "word", sanitized, nullptr) == SignedOut, "sceNpLookupNetSanitizeComment", "the sanitize did not return SIGNED_OUT");
+    errno = 71;
+    Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, "word", sanitized, nullptr) == SignedOut && errno == 71,
+            "sceNpLookupNetSanitizeComment", "the sanitize did not return SIGNED_OUT or modified errno");
     Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, "word", sanitized, nullptr) == InvalidTypeNet, "sceNpLookupNetSanitizeComment", "a used request did not return INVALID_TYPE");
     Require(sceNpLookupNetDeleteTitleCtx(secondContext) == 0, "sceNpLookupNetDeleteTitleCtx", "deleting the second context failed");
     Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "the second termination failed");
@@ -381,6 +479,37 @@ void CheckLookupNetInitVariants() {
     Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 0, "sceNpLookupNetTerm", "the service stayed initialized after both terminations");
 }
 
+void CheckLookupNetConcurrency() {
+    std::atomic<int> errors{0};
+    constexpr int ThreadCount = 4;
+    constexpr int Iterations = 2000;
+    std::thread threads[ThreadCount];
+    for (int t = 0; t < ThreadCount; ++t) {
+        threads[t] = std::thread([&] {
+            for (int i = 0; i < Iterations; ++i) {
+                if (sceNpLookupNetInit() != 0) {
+                    errors.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
+                const int ctx = sceNpLookupNetCreateTitleCtx(nullptr, selfNpId);
+                if (ctx <= 0) {
+                    errors.fetch_add(1, std::memory_order_relaxed);
+                } else if (sceNpLookupNetDeleteTitleCtx(ctx) != 0) {
+                    errors.fetch_add(1, std::memory_order_relaxed);
+                }
+                if (sceNpLookupNetTerm() != 0) {
+                    errors.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
+            }
+        });
+    }
+    for (auto& worker : threads) worker.join();
+    Require(errors.load(std::memory_order_relaxed) == 0, "sceNpLookupNetTerm", "concurrent init/term reset a live title context");
+    int initialized = -1;
+    Require(sceNpLookupNetIsInit(&initialized) == 0 && initialized == 0, "sceNpLookupNetIsInit", "concurrent init/term left the service initialized");
+}
+
 void CheckBandwidthTestInitStart() {
     Require(sceNpBandwidthTestInitStart() == SignedOut, "sceNpBandwidthTestInitStart", "starting a test while signed out did not return SIGNED_OUT");
     Require(sceNpBandwidthTestInitStart() == sceNpBandwidthTestInitStartDownload(nullptr), "sceNpBandwidthTestInitStart", "the answer differs from sceNpBandwidthTestInitStartDownload");
@@ -396,6 +525,9 @@ void CheckBandwidthTestShutdownWithDetailedInfo() {
     Require(sceNpBandwidthTestGetStatus(0, &status) == npInvalidArgument, "sceNpBandwidthTestGetStatus", "the status of a test that never started did not return INVALID_ARGUMENT");
     Require(status == 0, "sceNpBandwidthTestGetStatus", "the status of a test that never started was not cleared to 0");
     Require(sceNpBandwidthTestGetStatus(0, nullptr) == npInvalidArgument, "sceNpBandwidthTestGetStatus", "a null status did not return INVALID_ARGUMENT");
+    errno = 0;
+    Require(sceNpBandwidthTestGetStatus(0, reinterpret_cast<int*>(0x10)) == npInvalidArgument, "sceNpBandwidthTestGetStatus", "unwritable status was taken");
+    Require(errno == 0, "sceNpBandwidthTestGetStatus", "errno was modified");
 }
 
 }
@@ -434,6 +566,9 @@ void DeleteLookup(int reqId) {
 void CheckLookupAsync() {
     const int context = sceNpLookupCreateTitleCtx(selfNpId);
     Require(sceNpLookupCreateAsyncRequest(context, nullptr) == InvalidArgument, "sceNpLookupCreateAsyncRequest", "a null parameter was taken");
+    errno = 71;
+    Require(sceNpLookupCreateAsyncRequest(context, reinterpret_cast<const std::uint64_t*>(0x10)) == InvalidArgument, "sceNpLookupCreateAsyncRequest", "an unmapped parameter was taken");
+    Require(errno == 71, "sceNpLookupCreateAsyncRequest", "errno was not preserved");
     Require(sceNpLookupCreateAsyncRequest(context, wrongAsyncParam) == InvalidArgument, "sceNpLookupCreateAsyncRequest", "a parameter size other than 0x18 was taken");
     Require(sceNpLookupCreateAsyncRequest(context + 100, asyncParam) == InvalidId, "sceNpLookupCreateAsyncRequest", "an unknown context was taken");
 
@@ -516,20 +651,26 @@ void CheckTitleContextsA() {
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     std::memset(selfNpId, 0, sizeof(selfNpId));
     std::strcpy(reinterpret_cast<char*>(selfNpId), "player_1");
     CheckLookupNet();
     CheckLookupNetInitVariants();
+    CheckLookupNetConcurrency();
     CheckBandwidthTestInitStart();
     CheckBandwidthTestShutdownWithDetailedInfo();
     CheckNpUtilityLifecycles();
     CheckNpUtilityPayloads();
     CheckServiceChecker2();
+    CheckTitleMetadataRequests();
     CheckLookup();
     CheckWordFilter();
     CheckLookupAsync();
     CheckWordFilterAsync();
     CheckTitleContextsA();
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     if (failures != 0) return 1;
     std::puts("NpUtility offline tests passed");
     return 0;

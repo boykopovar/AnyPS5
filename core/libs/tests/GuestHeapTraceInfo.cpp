@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <stdexcept>
 
 namespace {
@@ -29,7 +30,8 @@ int main() {
 
     std::uint64_t dummyMask = 123;
     std::uint64_t dummyTable = 456;
-    for (const std::uint64_t badSize : {std::uint64_t{0}, sizeof(LibcHeapInfo) - 1, sizeof(LibcHeapInfo) + 8}) {
+    const std::uint64_t infoSize = sizeof(LibcHeapInfo);
+    for (const std::uint64_t badSize : {std::uint64_t{0}, infoSize - 1, infoSize + 8}) {
         LibcHeapInfo bad{badSize, 7, 9, &dummyMask, &dummyTable};
         RequireInvalidArgument([&] { LibcHeapTraceInfo_nid_no_patch(&bad); }, "unsupported LibcHeapInfo size was not rejected");
         Require(bad.size == badSize && bad.unknown1 == 7 && bad.unknown2 == 9, "rejected call modified metadata fields");

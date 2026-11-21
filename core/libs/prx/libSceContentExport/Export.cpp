@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -91,6 +92,7 @@ int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportPa
         std::lock_guard lock(g_sessionMutex);
         if (!g_sessions.contains(expId)) return ErrorInvalidArgument;
     }
+    if (std::memchr(localParam.content_type, '\0', sizeof(localParam.content_type)) == nullptr) return ErrorInvalidArgument;
     if (!SupportedContentType(localParam.content_type, sdkVersion)) return ErrorInvalidContentType;
     const char* subtype = std::strrchr(localParam.content_type, '/');
     if (subtype == nullptr || std::strlen(subtype + 1) < 2) return ErrorInvalidArgument;
@@ -107,14 +109,25 @@ int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportPa
         const void* data = nullptr;
         std::size_t size = 0;
         std::size_t written = 0;
+        std::array<char, 4096> staging{};
         const bool modernCallback = sdkVersion >= static_cast<std::int32_t>(MemoryPoolSdkVersion);
         for (;;) {
             const std::int32_t result = callback(&data, &size, userData);
             if (modernCallback && result != 0 && result != 1) return ErrorDataCallback;
             if (size != 0) {
                 if (data == nullptr) return ErrorStorage;
-                file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
-                if (!file) return ErrorStorage;
+                const auto address = reinterpret_cast<std::uintptr_t>(data);
+                if (size > std::numeric_limits<std::uintptr_t>::max() - address) return ErrorStorage;
+                for (std::size_t offset = 0; offset < size;) {
+                    const std::size_t count = std::min(staging.size(), size - offset);
+                    const int savedErrno = errno;
+                    const bool copied = GuestCopyIn_nid_no_patch(staging.data(), reinterpret_cast<const void*>(address + offset), count);
+                    errno = savedErrno;
+                    if (!copied) return ErrorStorage;
+                    file.write(staging.data(), static_cast<std::streamsize>(count));
+                    if (!file) return ErrorStorage;
+                    offset += count;
+                }
                 written += size;
             }
             if (result == 1 || (!modernCallback && result < 0)) break;
@@ -129,7 +142,10 @@ int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportPa
     }
     if (path != nullptr) {
         const std::size_t length = std::min(pathBufferLength, MaximumPathLength);
-        std::memcpy(path, guestPath.data(), length);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(path, guestPath.data(), length);
+        errno = savedErrno;
+        if (!copied) return ErrorInvalidArgument;
     }
     return 0;
 }
@@ -191,7 +207,12 @@ int APS5_VABI sceContentExportFromFileWithTitleIdList(std::int32_t expId, const 
 
 int APS5_VABI sceContentExportInit(const ContentExportInitParam* param) {
     if (param == nullptr) APS5_INVALID_ARG_EX;
-    if (param->mallocFunc == nullptr || param->freeFunc == nullptr) throw std::invalid_argument(std::string(__func__) + ": missing allocator functions");
+    ContentExportInitParam localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied) APS5_INVALID_ARG_EX;
+    if (localParam.mallocFunc == nullptr || localParam.freeFunc == nullptr) throw std::invalid_argument(std::string(__func__) + ": missing allocator functions");
     bool expected = false;
     if (!g_initialized.compare_exchange_strong(expected, true)) throw std::logic_error(std::string(__func__) + ": already initialized");
     return 0;

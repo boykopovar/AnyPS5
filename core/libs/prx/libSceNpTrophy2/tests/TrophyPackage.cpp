@@ -469,6 +469,31 @@ void testUnsupportedStatActions() {
           "a direct copy with repeated supported members stopped applying");
 }
 
+void testStatLabels() {
+    const char definitions[] = R"({"statDefinitionArray":[
+        {"statId":10,"statName":"Counter","sourceId":"counter","dataType":"uint64","aggregation":"latest"},
+        {"statId":40,"statName":"Other","dataType":"uint32","aggregation":"max"}]})";
+    const char extraction[] = R"({"statsExtractionRuleArray":[
+        {"condition":{"eventName":"LABELLED"},"action":{"input":"$.counter","output":{"statId":10,"statName":"Counter","sourceId":"counter"}}},
+        {"condition":{"eventName":"LABELLED"},"action":{"input":"$.other","output":{"statId":40,"statName":"Other"}}},
+        {"condition":{"eventName":"WRONG"},"action":{"input":"$.counter","output":{"statId":10,"statName":"Other"}}},
+        {"condition":{"eventName":"WRONG"},"action":{"input":"$.other","output":{"statId":40,"sourceId":"counter"}}},
+        {"condition":{"eventName":"WRONG"},"action":{"input":"$.counter","output":{"statId":10,"sourceId":null}}}]})";
+    const auto rules = NpTrophy2::ParseStatRules(ucp({{"stats_definition.json", definitions}, {"stats_extraction.json", extraction}}));
+    check(rules.events.size() == 1 && rules.events.at("LABELLED").size() == 2 && rules.events.at("LABELLED")[0].statId == 10 && rules.events.at("LABELLED")[1].statId == 40,
+          "a rule labelled with its stat's statName and sourceId was not kept");
+    check(rules.skipped.size() == 3 && contains(rules.skipped[0], "statsExtractionRuleArray[2]") && contains(rules.skipped[0], "statName") &&
+              contains(rules.skipped[1], "statsExtractionRuleArray[3]") && contains(rules.skipped[1], "sourceId") && contains(rules.skipped[2], "statsExtractionRuleArray[4]"),
+          "a rule labelled with another stat's name or source was not reported");
+    NpTrophy2::StatStore stats("labelled-action");
+    const auto changes = NpTrophy2::ApplyStatRules(rules, event("LABELLED", {{"counter", 9, "9"}, {"other", 3, "3"}}), stats, InitialUser, 0);
+    check(changes.problems.empty() && changes.updates.size() == 2 && stats.Value(InitialUser, 0, 10) == std::optional<std::uint64_t>(9) &&
+              stats.Value(InitialUser, 0, 40) == std::optional<std::uint64_t>(3),
+          "a labelled rule did not copy its input");
+    const auto wrong = NpTrophy2::ApplyStatRules(rules, event("WRONG", {{"counter", 5, "5"}, {"other", 7, "7"}}), stats, InitialUser, 0);
+    check(wrong.updates.empty() && stats.Value(InitialUser, 0, 10) == std::optional<std::uint64_t>(9), "a mislabelled rule changed a statistic");
+}
+
 void testApplyStatRules() {
     const auto rules = NpTrophy2::ParseStatRules(statPackage());
     NpTrophy2::StatStore stats("applied");
@@ -569,6 +594,7 @@ int main() {
     testConditions();
     testStatStore();
     testUnsupportedStatActions();
+    testStatLabels();
     testApplyStatRules();
     testProgressRules();
     testGreaterFilters();

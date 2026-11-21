@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 from collections import defaultdict
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import nid_names
 import progress
@@ -25,6 +25,17 @@ FLOW_TOKEN = re.compile(r"\w+|[()[\]{}]")
 PREPROCESSOR_LINE = re.compile(r"^[ \t]*#[ \t]*(ifdef|ifndef|if|elifdef|elifndef|elif|else|endif)\b[^\n]*$", re.M)
 BRANCH_VARIANT_LIMIT = 256
 PE_DIRECTORY_OFFSET = {0x20b: 112, 0x10b: 96}
+ELF_SYMBOL_TAGS = {
+    2: "DT_PLTRELSZ", 7: "DT_RELA", 8: "DT_RELASZ", 9: "DT_RELAENT",
+    17: "DT_REL", 18: "DT_RELSZ", 20: "DT_PLTREL", 23: "DT_JMPREL",
+    4: "DT_HASH", 5: "DT_STRTAB", 6: "DT_SYMTAB",
+    10: "DT_STRSZ", 11: "DT_SYMENT", 0x6ffffef5: "DT_GNU_HASH",
+    0x61000035: "DT_SCE_STRTAB", 0x61000037: "DT_SCE_STRSZ", 0x61000039: "DT_SCE_SYMTAB",
+    0x6100003b: "DT_SCE_SYMENT",
+}
+SCE_DYNLIBDATA = 0x61000000
+SCE_SYMTABSZ = 0x6100003f
+SCE_TABLE_TAGS = (0x61000035, 0x61000037, 0x61000039, 0x6100003b)
 
 
 class AuditError(Exception):
@@ -66,7 +77,7 @@ def elf_sections(path, data):
     return [unpack("<IIQQQQIIQQ", data, section_offset + index * 64, path, f"section header {index}") for index in range(section_count)]
 
 
-def elf_program_dynamic_symbols(path, data):
+def elf_program_dynamic_symbols(path, data, section_symbol_count=None):
     header = unpack("<16sHHIQQQIHHHHHH", data, 0, path, "ELF header")
     ident, program_offset, program_size, program_count = header[0], header[5], header[9], header[10]
     if ident[6] != 1 or header[3] != 1:
@@ -107,22 +118,39 @@ def elf_program_dynamic_symbols(path, data):
     take(data, dynamic_offset, dynamic_size, path, "dynamic segment")
     dynamic = {}
     needed_offsets = []
+    symbol_table_sizes = set()
     terminated = False
     for position in range(0, dynamic_size - 15, 16):
         tag, value = unpack("<qQ", data, dynamic_offset + position, path, "dynamic entry")
         if tag == 0:
             terminated = True
             break
+        if tag == SCE_SYMTABSZ:
+            symbol_table_sizes.add(value)
         if tag == 1:
             needed_offsets.append(value)
+        elif tag in ELF_SYMBOL_TAGS and dynamic.get(tag, value) != value:
+            raise AuditError(f"{path}: conflicting duplicate {ELF_SYMBOL_TAGS[tag]} at 0x{dynamic_offset + position:x}")
         else:
             dynamic[tag] = value
     if not terminated:
         raise AuditError(f"{path}: dynamic segment is not terminated by DT_NULL")
+    if any(tag in dynamic for tag in SCE_TABLE_TAGS):
+        if len(symbol_table_sizes) > 1:
+            raise AuditError(f"{path}: conflicting duplicate DT_SCE_SYMTABSZ")
+        return sce_dynamic_symbols(path, data, segments, dynamic, needed_offsets)
     string_address = dynamic.get(5)
     string_size = dynamic.get(10)
     symbol_address = dynamic.get(6)
     symbol_size = dynamic.get(11)
+    if section_symbol_count == 0 and symbol_address is None:
+        if not needed_offsets:
+            return {}, set(), set()
+        if string_address is None or not string_size:
+            raise AuditError(f"{path}: incomplete dynamic string table")
+        string_offset = file_offset(string_address, string_size, "dynamic string table")
+        needed = {cstring(data, string_offset + value, string_offset + string_size, path, "needed library name") for value in needed_offsets}
+        return {}, set(), needed
     if None in (string_address, string_size, symbol_address, symbol_size) or symbol_size != 24 or string_size == 0:
         raise AuditError(f"{path}: incomplete dynamic string or symbol table")
     string_offset = file_offset(string_address, string_size, "dynamic string table")
@@ -158,13 +186,40 @@ def elf_program_dynamic_symbols(path, data):
                     break
                 symbol_index += 1
         symbol_count = maximum + 1
+        if not visited_chain_entries:
+            if section_symbol_count is not None:
+                symbol_count = max(symbol_count, section_symbol_count)
+            else:
+                if 17 in dynamic or dynamic.get(18, 0):
+                    raise AuditError(f"{path}: DT_REL cannot bound an empty GNU hash symbol table")
+                for address_tag, size_tag, name in ((7, 8, "DT_RELA"), (23, 2, "DT_JMPREL")):
+                    if address_tag not in dynamic and not dynamic.get(size_tag, 0):
+                        continue
+                    relocation_address, relocation_size = dynamic.get(address_tag), dynamic.get(size_tag)
+                    if relocation_address is None or relocation_size is None or relocation_size % 24:
+                        raise AuditError(f"{path}: incomplete or invalid {name} relocation table")
+                    if dynamic.get(9, 24) != 24 or (address_tag == 23 and dynamic.get(20) != 7):
+                        raise AuditError(f"{path}: {name} needs ELF64 RELA entries")
+                    if not relocation_size:
+                        continue
+                    relocation_offset = file_offset(relocation_address, relocation_size, f"{name} relocation table")
+                    for position in range(relocation_offset, relocation_offset + relocation_size, 24):
+                        _, info, _ = unpack("<QQq", data, position, path, f"{name} relocation")
+                        if info & 0xffffffff:
+                            symbol_count = max(symbol_count, (info >> 32) + 1)
     if symbol_count is None:
-        raise AuditError(f"{path}: dynamic symbol table has no supported hash table")
+        if section_symbol_count is None:
+            raise AuditError(f"{path}: dynamic symbol table has no supported hash table")
+        symbol_count = section_symbol_count
     symbol_offset = file_offset(symbol_address, symbol_count * symbol_size, "dynamic symbol table")
+    return dynamic_symbol_entries(path, data, string_offset, string_size, symbol_offset, symbol_count, needed_offsets)
+
+
+def dynamic_symbol_entries(path, data, string_offset, string_size, symbol_offset, symbol_count, needed_offsets):
     imports = {}
     exports = set()
     for index in range(symbol_count):
-        name, info, other, section_index, _, _ = unpack("<IBBHQQ", data, symbol_offset + index * symbol_size, path, "dynamic symbol")
+        name, info, other, section_index, _, _ = unpack("<IBBHQQ", data, symbol_offset + index * 24, path, "dynamic symbol")
         if name == 0:
             continue
         symbol = cstring(data, string_offset + name, string_offset + string_size, path, "dynamic symbol name").split(MODULE_SUFFIX, 1)[0]
@@ -174,6 +229,40 @@ def elf_program_dynamic_symbols(path, data):
             exports.add(symbol)
     needed = {cstring(data, string_offset + value, string_offset + string_size, path, "needed library name") for value in needed_offsets}
     return imports, exports, needed
+
+
+def sce_dynamic_symbols(path, data, segments, dynamic, needed_offsets):
+    if any(tag in dynamic for tag in (5, 6, 10, 11)):
+        raise AuditError(f"{path}: dynamic segment names both standard and SCE string or symbol tables")
+    blocks = [segment for segment in segments if segment[0] == SCE_DYNLIBDATA]
+    if len(blocks) != 1:
+        raise AuditError(f"{path}: SCE string and symbol tables need one SCE dynamic library data segment, found {len(blocks)}")
+    _, _, block_offset, _, _, block_size, _, _ = blocks[0]
+    take(data, block_offset, block_size, path, "SCE dynamic library data segment")
+    string_value, string_size = dynamic.get(0x61000035), dynamic.get(0x61000037)
+    symbol_value, symbol_entry, symbol_bytes = dynamic.get(0x61000039), dynamic.get(0x6100003b), dynamic.get(SCE_SYMTABSZ)
+    if None in (string_value, string_size, symbol_value, symbol_entry, symbol_bytes) or symbol_entry != 24 or symbol_bytes % 24 or string_size == 0:
+        raise AuditError(f"{path}: incomplete SCE dynamic string or symbol table")
+
+    def inside(value, size, what):
+        if value > block_size or size > block_size - value:
+            raise AuditError(f"{path}: {what} at 0x{value:x} with size {size} lies outside the SCE dynamic library data segment")
+        return block_offset + value
+
+    string_offset = inside(string_value, string_size, "SCE dynamic string table")
+    symbol_offset = inside(symbol_value, symbol_bytes, "SCE dynamic symbol table")
+    return dynamic_symbol_entries(path, data, string_offset, string_size, symbol_offset, symbol_bytes // 24, needed_offsets)
+
+
+def elf_has_dynamic_segment(path, data, header):
+    program_offset, program_size, program_count = header[5], header[9], header[10]
+    if not program_count:
+        return False
+    if not program_offset or program_size != 56:
+        raise AuditError(f"{path}: ELF needs 56-byte program headers")
+    take(data, program_offset, program_count * program_size, path, "program header table")
+    return any(unpack("<I", data, program_offset + index * program_size, path, "program header type")[0] == 2
+               for index in range(program_count))
 
 
 def elf_exports(path, data):
@@ -208,6 +297,9 @@ def elf_exports(path, data):
             if name == 0 or index == 0 or binding not in (1, 2, 10) or visibility not in (0, 3):
                 continue
             names.add(cstring(data, strings_offset + name, strings_offset + strings_size, path, "export name").split(MODULE_SUFFIX, 1)[0])
+    section_symbol_count = max((section[5] // 24 for section in sections if section[1] == 11), default=0)
+    if elf_has_dynamic_segment(path, data, header) and names != elf_program_dynamic_symbols(path, data, section_symbol_count)[1]:
+        raise AuditError(f"{path}: ELF section exports disagree with PT_DYNAMIC")
     return names
 
 
@@ -249,6 +341,11 @@ def elf_imports(path, data):
                     needed.add(cstring(data, strings_offset + value, strings_offset + strings_size, path, "needed library name"))
             if not terminated:
                 raise AuditError(f"{path}: dynamic section is not terminated by DT_NULL")
+    if elf_has_dynamic_segment(path, data, header):
+        section_symbol_count = max((section[5] // 24 for section in sections if section[1] == 11), default=0)
+        runtime_imports, _, runtime_needed = elf_program_dynamic_symbols(path, data, section_symbol_count)
+        if symbols != runtime_imports or needed != runtime_needed:
+            raise AuditError(f"{path}: ELF section imports or dependencies disagree with PT_DYNAMIC")
     return symbols, needed
 
 
@@ -271,20 +368,27 @@ def pe_headers(path, data):
     headers_size = unpack("<I", data, optional + 60, path, "header size")[0]
     sections = [unpack("<8sIIIIIIHHI", data, optional + optional_size + index * 40, path, f"PE section {index}") for index in range(section_count)]
 
+    mappings = [(section[2], max(section[1], section[3]), section[3], section[4]) for section in sections if max(section[1], section[3]) > 0]
+    if headers_size:
+        mappings.append((0, headers_size, headers_size, 0))
+
     def to_offset(address, length):
-        if address < headers_size and length <= headers_size - address:
-            take(data, address, length, path, f"header data at RVA 0x{address:x}")
-            return address, min(headers_size, len(data))
-        for section in sections:
-            virtual, raw_size, raw_offset = section[2], section[3], section[4]
-            if address < virtual:
-                continue
-            relative = address - virtual
-            if relative >= raw_size or length > raw_size - relative:
-                continue
-            take(data, raw_offset + relative, length, path, f"data at RVA 0x{address:x}")
-            return raw_offset + relative, min(raw_offset + raw_size, len(data))
-        raise AuditError(f"{path}: RVA 0x{address:x} is not inside any section")
+        matches = [mapping for mapping in mappings if mapping[0] <= address < mapping[0] + mapping[1]]
+        if len(matches) > 1:
+            raise AuditError(f"{path}: overlapping PE mappings at RVA 0x{address:x}")
+        if not matches:
+            raise AuditError(f"{path}: RVA 0x{address:x} is not inside any section")
+        virtual, _, raw_size, raw_offset = matches[0]
+        relative = address - virtual
+        if relative >= raw_size or length > raw_size - relative:
+            raise AuditError(f"{path}: RVA 0x{address:x} is not inside any section")
+        following = [mapping[0] for mapping in mappings if address < mapping[0] < virtual + raw_size]
+        boundary = min(following, default=virtual + raw_size)
+        if length > boundary - address:
+            raise AuditError(f"{path}: read at RVA 0x{address:x} crosses overlapping PE mappings")
+        offset = raw_offset + relative
+        take(data, offset, length, path, f"data at RVA 0x{address:x}")
+        return offset, min(raw_offset + boundary - virtual, len(data))
 
     return to_offset, optional + directory, count
 
@@ -325,7 +429,10 @@ def pe_exports(path, data):
             continue
         if rva <= function_rva < rva + size:
             offset, limit = to_offset(function_rva, 1)
-            cstring(data, offset, min(limit, offset + rva + size - function_rva), path, "export forwarder", "ASCII", "strict")
+            forwarder = cstring(data, offset, min(limit, offset + rva + size - function_rva), path, "export forwarder", "ASCII", "strict")
+            module, separator, target = forwarder.partition(".")
+            if not module or not separator or not target or target.startswith("#") and re.fullmatch(r"#[0-9]+", target) is None:
+                raise AuditError(f"{path}: invalid export forwarder {forwarder!r}")
         names.add(name)
     return names
 
@@ -351,6 +458,95 @@ def pe_imports(path, data):
     raise AuditError(f"{path}: PE import table is not NUL-terminated")
 
 
+MACHO_LOAD_DYLIB = (0xc, 0x20, 0x80000018, 0x8000001f, 0x80000023)
+
+
+def macho_commands(path, data):
+    magic, _, _, _, count, size, _, _ = unpack("<IiiIIIII", data, 0, path, "Mach-O header")
+    if magic != 0xfeedfacf:
+        raise AuditError(f"{path}: only little-endian 64-bit Mach-O is supported (magic 0x{magic:x})")
+    take(data, 32, size, path, "Mach-O load commands")
+    offset, end = 32, 32 + size
+    for index in range(count):
+        kind, length = unpack("<II", data, offset, path, f"Mach-O load command {index}")
+        if length < 8 or offset + length > end:
+            raise AuditError(f"{path}: Mach-O load command {index} of {length} bytes overruns the load commands")
+        yield kind, offset, length
+        offset += length
+
+
+def macho_uleb(data, offset, end, path):
+    value, shift = 0, 0
+    while True:
+        if offset >= end:
+            raise AuditError(f"{path}: truncated uleb128 in Mach-O export trie")
+        byte = data[offset]
+        offset += 1
+        value |= (byte & 0x7f) << shift
+        if not byte & 0x80:
+            return value, offset
+        shift += 7
+        if shift > 63:
+            raise AuditError(f"{path}: uleb128 overflow in Mach-O export trie")
+
+
+def macho_exports(path, data):
+    tries = []
+    for kind, offset, length in macho_commands(path, data):
+        if kind in (0x22, 0x80000022):
+            fields = 40
+        elif kind == 0x80000033:
+            fields = 8
+        else:
+            continue
+        if length < fields + 8:
+            raise AuditError(f"{path}: Mach-O load command 0x{kind:x} is too short for its export range")
+        tries.append(unpack("<II", data, offset + fields, path, "Mach-O export offset and size"))
+    tries = [trie for trie in tries if trie[1]]
+    if len(tries) > 1:
+        raise AuditError(f"{path}: Mach-O image has more than one export trie")
+    names = set()
+    if not tries:
+        return names
+    start, size = tries[0]
+    take(data, start, size, path, "Mach-O export trie")
+    end = start + size
+    stack, visited = [(0, b"")], set()
+    while stack:
+        node, prefix = stack.pop()
+        if node >= size or node in visited:
+            raise AuditError(f"{path}: Mach-O export trie node 0x{node:x} is out of bounds or revisited")
+        visited.add(node)
+        terminal, cursor = macho_uleb(data, start + node, end, path)
+        if terminal:
+            names.add(prefix.decode("utf-8", "surrogateescape").removeprefix("_").split(MODULE_SUFFIX, 1)[0])
+        cursor += terminal
+        if cursor >= end:
+            raise AuditError(f"{path}: Mach-O export trie node 0x{node:x} overruns the trie")
+        children = data[cursor]
+        cursor += 1
+        for _ in range(children):
+            label = data.find(b"\0", cursor, end)
+            if label < 0:
+                raise AuditError(f"{path}: unterminated label in Mach-O export trie")
+            child, next_cursor = macho_uleb(data, label + 1, end, path)
+            stack.append((child, prefix + data[cursor:label]))
+            cursor = next_cursor
+    return names
+
+
+def macho_imports(path, data):
+    needed = set()
+    for kind, offset, length in macho_commands(path, data):
+        if kind not in MACHO_LOAD_DYLIB:
+            continue
+        name = unpack("<I", data, offset + 8, path, "Mach-O dylib command")[0]
+        if name < 24 or name >= length:
+            raise AuditError(f"{path}: Mach-O dylib name offset {name} lies outside its {length}-byte command")
+        needed.add(cstring(data, offset + name, offset + length, path, "needed library name").rsplit("/", 1)[-1])
+    return needed
+
+
 def read_host_imports(path, data=None):
     if data is None:
         data = path.read_bytes()
@@ -358,7 +554,9 @@ def read_host_imports(path, data=None):
         return pe_imports(path, data)
     if data[:4] == b"\x7fELF":
         return elf_imports(path, data)[1]
-    raise AuditError(f"{path}: neither ELF nor PE (first bytes {data[:4]!r})")
+    if data[:4] == b"\xcf\xfa\xed\xfe":
+        return macho_imports(path, data)
+    raise AuditError(f"{path}: neither ELF, PE nor Mach-O (first bytes {data[:4]!r})")
 
 
 def read_exports(path, data=None):
@@ -368,7 +566,9 @@ def read_exports(path, data=None):
         return elf_exports(path, data)
     if data[:2] == b"MZ":
         return pe_exports(path, data)
-    raise AuditError(f"{path}: neither ELF nor PE (first bytes {data[:4]!r})")
+    if data[:4] == b"\xcf\xfa\xed\xfe":
+        return macho_exports(path, data)
+    raise AuditError(f"{path}: neither ELF, PE nor Mach-O (first bytes {data[:4]!r})")
 
 
 def directory_files(directory, pattern):
@@ -494,10 +694,26 @@ def read_modules(directories):
     return imports, {name: sorted(files) for name, files in exports.items()}
 
 
+def module_registry_name(module):
+    return module if module.endswith(".guest.prx") else module + ".guest.prx"
+
+
+def modules_with_registries(registries, modules):
+    stems = {path.name.removesuffix(".registry.json") for path in registries}
+    return {module for module in modules if any(stem + "." + module_registry_name(module) in stems for stem in stems)}
+
+
 def nids_of(name, aliases):
     if name in aliases:
         return aliases[name]
     return {nid_names.compute_nid(nid_names.strip_nid_postfix(name))}
+
+
+def hashed_nid(symbol):
+    try:
+        return nid_names.compute_nid(symbol)
+    except UnicodeEncodeError:
+        return symbol
 
 
 def top_level_statements(body):
@@ -653,8 +869,10 @@ def always_stub_calls(text):
 
 def conditional_stubs(library):
     conditional = set()
+    flavor = PureWindowsPath if os.name == "nt" else Path
+    library_flavored = flavor(str(library))
     for source in library.rglob("*.cpp"):
-        if "tests" in source.relative_to(library).parts:
+        if "tests" in flavor(str(source)).relative_to(library_flavored).parts:
             continue
         text = progress.code(source.read_text(encoding="utf-8", errors="ignore"))
         calls = always_stub_calls(text)
@@ -719,10 +937,19 @@ def source_stub_classes(source):
     return stubs, partial
 
 
+def unique_json_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
 def read_registry(path):
     try:
-        entries = json.loads(Path(path).read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
+        entries = json.loads(Path(path).read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_keys)
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError) as error:
         raise AuditError(f"{path}: cannot read registry: {error}") from error
     if not isinstance(entries, list):
         raise AuditError(f"{path}: a registry is a JSON list, got {type(entries).__name__}")
@@ -731,7 +958,7 @@ def read_registry(path):
         if not isinstance(entry, dict) or not isinstance(entry.get("nid"), str) or not isinstance(entry.get("library"), str):
             raise AuditError(f"{path}: entry {index} needs string fields 'nid' and 'library': {entry!r}")
         nid = entry["nid"].split("#", 1)[0]
-        if not nid or any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in nid):
+        if not nid or any(character.isspace() or ord(character) < 32 or ord(character) == 127 or 0xD800 <= ord(character) <= 0xDFFF for character in nid):
             raise AuditError(f"{path}: entry {index} has an invalid import symbol {entry['nid']!r}")
         weak = entry.get("weak", False)
         if not isinstance(weak, bool):
@@ -814,6 +1041,8 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
 
     def system_library(name):
         if name:
+            if name in tuple("libSceGnmDriver_padebug" + suffix for suffix in (".prx", ".sprx", ".suprx", ".debug_prx")):
+                name = "libSceGnmDriver.prx"
             for suffix in (".sprx", ".suprx", ".debug_prx"):
                 if name.endswith(suffix):
                     normalized = name[:-len(suffix)] + ".prx"
@@ -901,7 +1130,7 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         resolved_nid = nid
         record["symbol_mismatch"] = False
         if not providers:
-            resolved_nid = nid_names.compute_nid(nid)
+            resolved_nid = hashed_nid(nid)
             providers, guest_providers = resolve(resolved_nid, record)
             record["symbol_mismatch"] = bool(library) and library not in modules and bool(providers) and resolved_nid != nid
         kind = classify(resolved_nid, library, providers, stubs, guest_providers, partial)
@@ -945,7 +1174,10 @@ def current_stop(imports, records):
 def load_names(path):
     if not Path(path).is_file():
         raise AuditError(f"{path}: names file not found; the audit never downloads one (see tools/nid_names.py for the source)")
-    return nid_names.load_db(Path(path))
+    try:
+        return nid_names.load_db(Path(path))
+    except ValueError as error:
+        raise AuditError(str(error)) from error
 
 
 def attach_names(records, names):
@@ -956,19 +1188,29 @@ def attach_names(records, names):
             record["name_verified"] = nid_names.compute_nid(name) == record["nid"]
 
 
+def windows_extended_path(path):
+    absolute = os.path.abspath(path).replace("/", "\\")
+    if absolute.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + absolute[2:]
+    return "\\\\?\\" + absolute
+
+
 def write_json(path, result):
     if path.is_dir():
         raise AuditError(f"{path}: JSON output is a directory")
     destination = Path(os.path.realpath(path))
     if destination.is_symlink():
         raise AuditError(f"{path}: JSON output is a symbolic link loop")
-    with tempfile.TemporaryDirectory(dir=destination.parent, prefix=destination.name + ".", suffix=".tmp") as directory:
-        temporary = Path(directory) / destination.name
+    with tempfile.TemporaryDirectory(dir=destination.parent, prefix=".import-audit-") as directory:
+        temporary = Path(directory) / "report.json"
         try:
             temporary.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
             if destination.exists():
                 temporary.chmod(destination.stat().st_mode & 0o7777)
-            temporary.replace(destination)
+            if os.name == "nt":
+                os.replace(windows_extended_path(temporary), windows_extended_path(destination))
+            else:
+                temporary.replace(destination)
         finally:
             if temporary.exists():
                 temporary.chmod(0o600)
@@ -1109,7 +1351,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="classify the imports of a converted game against the built system libraries")
     parser.add_argument("registries", nargs="+", type=Path, help="JSON written by 'relinker --registry'")
     parser.add_argument("--libs", action="append", required=True, help="directory of built .prx files; repeat for several")
-    parser.add_argument("--modules", action="append", default=[], help="directory of the title's own modules; each module's own imports are audited")
+    parser.add_argument("--modules", action="append", default=[], help="directory of the title's own modules; each module's own imports are audited, from its registry when that is passed")
     parser.add_argument("--source", default=str(PRX), help="core/libs/prx tree used to find throwing stubs (default: this repository's)")
     parser.add_argument("--names", help="aerolib.csv style file (NID, name per line) used to name absent imports")
     parser.add_argument("--json", type=Path, help="write the full result to this file")
@@ -1136,6 +1378,8 @@ def main(argv=None):
         exports, libraries = built_libraries(args.libs)
         host_dependencies, windows = built_host_dependencies(args.libs)
         module_imports, module_exports = read_modules(args.modules)
+        for module in modules_with_registries(args.registries, module_imports):
+            module_imports[module] = ([], module_imports[module][1])
         modules = set(module_imports)
         modules |= {name.removesuffix(".guest.prx") for name in modules if name.endswith(".guest.prx")}
         modules = ModuleNames(modules, fold=bool(windows))

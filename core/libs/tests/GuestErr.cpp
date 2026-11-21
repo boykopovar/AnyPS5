@@ -196,5 +196,7 @@ int main() {
     Require(DescriptorTwoOutput([] { psignal_nid_postfix(2, "tag"); }) == std::string("tag: ") + sys_siglist_nid_postfix[2] + "\n", "psignal with prefix");
     Require(DescriptorTwoOutput([] { psignal_nid_postfix(11, ""); }) == std::string(sys_siglist_nid_postfix[11]) + "\n", "psignal empty prefix");
     Require(DescriptorTwoOutput([] { psignal_nid_postfix(32, nullptr); }) == "Unknown signal\n", "psignal unknown signal");
+    Require(DescriptorTwoOutput([] { psignal_nid_postfix(2, reinterpret_cast<const char*>(0x10)); }) == std::string(sys_siglist_nid_postfix[2]) + "\n",
+        "psignal unreadable prefix");
     return 0;
 }

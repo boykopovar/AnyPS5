@@ -109,7 +109,82 @@ def with_relocation(module, table_offset, index, slot, symbol_index, kind):
     return bytes(image)
 
 
+def append_dynamic_tags(image, entries):
+    image = bytearray(image)
+    header = 64 + 2 * 56
+    offset = struct.unpack_from("<Q", image, header + 8)[0]
+    size = struct.unpack_from("<Q", image, header + 32)[0]
+    data = b"".join(struct.pack("<qQ", *entry) for entry in entries) + struct.pack("<qQ", 0, 0)
+    image[offset + size - 16:offset + size - 16 + len(data)] = data
+    struct.pack_into("<QQ", image, header + 32, size + len(entries) * 16, size + len(entries) * 16)
+    return bytes(image)
+
+
 class ImportRelocationTests(unittest.TestCase):
+    def test_conflicting_load_mappings_cannot_supply_symbol_tables(self):
+        for address in (DATA_ADDRESS + 4, DATA_ADDRESS + 0x58, DATA_ADDRESS + 0x110, DATA_ADDRESS + 0x288):
+            for reverse in (False, True):
+                with self.subTest(address=address, reverse=reverse):
+                    image = bytearray(build_module())
+                    struct.pack_into("<H", image, 0x38, 4)
+                    struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, 1, 6, 0x2900, address, 0, 8, 8, 1)
+                    if reverse:
+                        first, last = 64 + 56, 64 + 3 * 56
+                        image[first:first + 56], image[last:last + 56] = image[last:last + 56], image[first:first + 56]
+                    with self.assertRaisesRegex(annotate_module.ModuleError, "ambiguous PT_LOAD"):
+                        annotate_module.Module(image).imports()
+
+    def test_same_file_load_overlaps_preserve_symbol_tables(self):
+        original = annotate_module.Module(build_module())
+        for address, offset, size in ((DATA_ADDRESS, 0x2000, 0x810), (DATA_ADDRESS + 0x110, 0x2110, 8),
+                                      (DATA_ADDRESS + 0x110, 0x2900, 0), (DATA_ADDRESS + 0x700, 0x2900, 8)):
+            with self.subTest(address=address, offset=offset, size=size):
+                image = bytearray(build_module())
+                struct.pack_into("<H", image, 0x38, 4)
+                struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, 1, 6, offset, address, 0, size, size, 1)
+                module = annotate_module.Module(image)
+                self.assertEqual(module.imports(), original.imports())
+                self.assertEqual(module.exports(), original.exports())
+
+    def test_ambiguous_loads_do_not_emit_offline_symbol_maps(self):
+        image = bytearray(build_module())
+        struct.pack_into("<H", image, 0x38, 4)
+        struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, 1, 6, 0x2900, DATA_ADDRESS + 0x110, 0, 8, 8, 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "module.prx"
+            path.write_bytes(image)
+            for mode in ("--symbols-json", "--symbols-ghidra"):
+                with self.subTest(mode=mode):
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output), self.assertRaisesRegex(SystemExit, "ambiguous PT_LOAD"):
+                        annotate_module.main([str(path), "--no-names", mode])
+                    self.assertEqual(output.getvalue(), "")
+
+    def test_conflicting_dynamic_metadata_cannot_produce_symbol_maps(self):
+        cases = [(10, [(10, 1)]), (5, [(5, DATA_ADDRESS + 0x150)]), (11, [(11, 16)]),
+                 (2, [(2, 0)]), (9, [(9, 24), (9, 16)])]
+        for tag, entries in cases:
+            with self.subTest(tag=tag), self.assertRaisesRegex(annotate_module.ModuleError, "conflicting duplicate"):
+                annotate_module.Module(append_dynamic_tags(build_module(), entries))
+
+    def test_equal_and_repeatable_dynamic_tags_preserve_symbol_maps(self):
+        data = build_module()
+        original = annotate_module.Module(data)
+        for entries in ([(10, original.strsz)], [(1, 1), (1, 17)], [(0x60001000, 1), (0x60001000, 2)]):
+            with self.subTest(entries=entries):
+                repeated = annotate_module.Module(append_dynamic_tags(data, entries))
+                self.assertEqual(repeated.imports(), original.imports())
+                self.assertEqual(repeated.exports(), original.exports())
+
+    def test_symbols_json_does_not_emit_labels_for_conflicting_tags(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "module.prx"
+            path.write_bytes(append_dynamic_tags(build_module(), [(10, 1)]))
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output), self.assertRaisesRegex(SystemExit, "conflicting duplicate DT_STRSZ"):
+                annotate_module.main([str(path), "--no-names", "--symbols-json"])
+            self.assertEqual(output.getvalue(), "")
+
     def test_dynamic_segment_must_contain_complete_terminated_tags(self):
         for size in (113, 128, 0x10000):
             with self.subTest(size=size):
@@ -190,6 +265,18 @@ class ImportRelocationTests(unittest.TestCase):
                 else:
                     self.assertEqual(annotate_module.Module(bytes(data)).imports(), {SLOT: symbol_name(IMPORT_NAME)})
 
+    def test_defined_symbols_bound_to_this_module_are_not_imports(self):
+        for binding, visibility, section, kind, expected in (
+                (1, 3, 1, 16, False), (1, 3, 1, 17, False), (1, 2, 1, 6, False),
+                (1, 1, 1, 1, False), (0, 0, 1, 1, False), (1, 0, 1, 6, True),
+                (2, 0, 0, 6, True), (1, 3, 1, 5, True)):
+            with self.subTest(binding=binding, visibility=visibility, section=section, kind=kind):
+                symbol_type = 6 if kind in (16, 17) else 1
+                image = bytearray(build_module(symbols=[(IMPORT_NAME, section, binding << 4 | symbol_type, 0)]))
+                image[0x2040 + 24 + 5] = visibility
+                image = with_relocation(image, 0x2280, 0, SLOT, 1, kind)
+                self.assertEqual(annotate_module.Module(image).imports(), {SLOT: symbol_name(IMPORT_NAME)} if expected else {})
+
     def test_none_relocations_do_not_read_the_symbol_or_add_a_slot(self):
         for table in (0x2200, 0x2280):
             for symbol_index in (0, 1, 0xFFFFFFFF):
@@ -236,6 +323,45 @@ class ImportRelocationTests(unittest.TestCase):
     def test_gnu_hash_accepts_empty_symbol_table(self):
         module = annotate_module.Module(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), symbols=[], relocations=(), kind="gnu", bloom_count=1))
         self.assertEqual(module.symbol_count, 1)
+
+    def test_empty_gnu_hash_keeps_imports_from_both_relocation_tables(self):
+        symbols = [(IMPORT_NAME, 0, 0x12, 0), (SECOND_IMPORT_NAME, 0, 0x12, 0)]
+        image = bytearray(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 7, 8, 23, 2, 20), symbols=symbols,
+                                      glob_dats=((SLOT + 8, 2),), kind="gnu"))
+        struct.pack_into("<I", image, 0x2018, 0)
+        module = annotate_module.Module(image)
+        self.assertEqual(module.symbol_count, 3)
+        self.assertEqual(module.imports(), {SLOT: symbol_name(IMPORT_NAME), SLOT + 8: symbol_name(SECOND_IMPORT_NAME)})
+        self.assertEqual(module.exports(), ({}, {}))
+        names = annotate_module.Namer({nid(IMPORT_NAME): IMPORT_NAME, nid(SECOND_IMPORT_NAME): SECOND_IMPORT_NAME})
+        self.assertEqual(annotate_module.ghidra_symbols(module, names),
+                         ["imp_%s %#x l" % (IMPORT_NAME, SLOT), "imp_%s %#x l" % (SECOND_IMPORT_NAME, SLOT + 8)])
+
+    def test_empty_gnu_hash_ignores_unused_relocation_symbol_indices(self):
+        image = build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), symbols=[], kind="gnu")
+        image = with_relocation(image, 0x2280, 0, SLOT, 0xFFFFFFFF, 0)
+        module = annotate_module.Module(image)
+        self.assertEqual(module.symbol_count, 1)
+        self.assertEqual(module.imports(), {})
+
+    def test_empty_gnu_hash_still_validates_relocations_and_symbol_ranges(self):
+        for values, index, message in (({2: 25}, 1, "multiple"), ({23: DATA_ADDRESS + 0x800}, 1, "PT_LOAD"),
+                                       ({}, 0xFFFFFFFF, "PT_LOAD|symbol index .* is outside")):
+            with self.subTest(values=values, index=index):
+                image = bytearray(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), values=values,
+                                              symbols=[(IMPORT_NAME, 0, 0x12, 0)], kind="gnu"))
+                struct.pack_into("<I", image, 0x2018, 0)
+                image = with_relocation(image, 0x2280, 0, SLOT, index, 7)
+                with self.assertRaisesRegex(annotate_module.ModuleError, message):
+                    annotate_module.Module(image).imports()
+
+    def test_nonempty_gnu_hash_keeps_its_symbol_count_limit(self):
+        image = build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20),
+                             symbols=[(IMPORT_NAME, 0, 0x12, 0)], relocations=((SLOT, 3),), kind="gnu")
+        module = annotate_module.Module(image)
+        self.assertEqual(module.symbol_count, 2)
+        with self.assertRaisesRegex(annotate_module.ModuleError, "symbol index 3 is outside"):
+            module.imports()
 
     def test_dt_hash_precedence_preserves_unused_invalid_gnu_hash(self):
         tags = (4, GNU_HASH, 5, 6, 10, 11, 23, 2, 20)
@@ -310,6 +436,70 @@ class AnnotateModuleTests(unittest.TestCase):
         self.assertEqual(instruction(listing, "ret"), listing[header + 1])
         self.assertEqual([], [path.name for path in self.root.iterdir() if path.suffix == ".bin"])
 
+    def test_direct_calls_and_tail_jumps_name_exported_functions(self):
+        code = b"\xe8\x06\x00\x00\x00\xe9\x01\x00\x00\x00\x90\xc3"
+        symbols = [(EXPORT_NAME, 1, 0x12, EXPORT_ADDRESS), (SECOND_IMPORT_NAME, 1, 0x12, EXPORT_ADDRESS)]
+        self.annotate(build_module(code=code, symbols=symbols, relocations=()))
+        listing = self.read(".asm").splitlines()
+        names = ", ".join(sorted((EXPORT_NAME, SECOND_IMPORT_NAME)))
+        for mnemonic in ("call", "jmp"):
+            self.assertTrue(instruction(listing, mnemonic).endswith("; -> " + names), listing)
+
+    def test_direct_branch_target_requires_a_defined_function_in_executable_code(self):
+        for section, kind, target in ((1, 0x11, EXPORT_ADDRESS), (1, 0x16, EXPORT_ADDRESS),
+                                      (0, 0x12, EXPORT_ADDRESS), (0xfff2, 0x12, EXPORT_ADDRESS),
+                                      (1, 0x12, DATA_ADDRESS)):
+            with self.subTest(section=section, kind=kind, target=target):
+                code = b"\xe8" + struct.pack("<i", target - CODE_ADDRESS - 5) + bytes(6) + b"\xc3"
+                self.annotate(build_module(code=code, symbols=[(EXPORT_NAME, section, kind, target)], relocations=()))
+                self.assertNotIn("; ->", instruction(self.read(".asm").splitlines(), "call"))
+
+    def test_endbr64_stubs_name_branches_to_both_entry_addresses(self):
+        for address in (0, CODE_ADDRESS, 0x100001000):
+            for prefix in (b"", b"\xf2", b"\x67", b"\xf2\x67"):
+                if address > 0xFFFFFFFF and b"\x67" not in prefix:
+                    continue
+                with self.subTest(address=address, prefix=prefix):
+                    code = b"\xf3\x0f\x1e\xfa" + prefix + b"\xff\x25"
+                    code += struct.pack("<I", (SLOT - address - len(code) - 4) & 0xFFFFFFFF)
+                    branches = []
+                    for opcode in (b"\xe8", b"\xe9"):
+                        for target in (address, address + 4):
+                            location = address + len(code)
+                            branches.append(location)
+                            code += opcode + struct.pack("<i", target - location - 5)
+                    image = bytearray(build_module(code=code + b"\xc3", symbols=[(IMPORT_NAME, 0, 0x12, 0)]))
+                    struct.pack_into("<Q", image, 64 + 16, address)
+                    self.annotate(image)
+                    listing = self.read(".asm").splitlines()
+                    lines = {int(match.group(1), 16): line for line in listing
+                             if (match := annotate_module.LINE_ADDRESS.match(line))}
+                    for location in branches:
+                        self.assertTrue(lines[location].endswith("; -> " + IMPORT_NAME), lines[location])
+                    self.assertTrue(lines[address + 4].endswith("; GOT " + IMPORT_NAME))
+
+    def test_endbr64_followed_by_other_instructions_is_not_a_stub_alias(self):
+        namer = annotate_module.Namer({nid(IMPORT_NAME): IMPORT_NAME})
+        for middle in (b"\x90", b"\x50", b"\xcc"):
+            with self.subTest(middle=middle):
+                code = b"\xf3\x0f\x1e\xfa" + middle + b"\xff\x25"
+                code += struct.pack("<i", SLOT - CODE_ADDRESS - len(code) - 4)
+                listing = annotate_module.disassemble(code, CODE_ADDRESS)
+                self.assertEqual(annotate_module.find_stubs(listing, {SLOT: symbol_name(IMPORT_NAME)}, namer),
+                                 {CODE_ADDRESS + 4 + len(middle): IMPORT_NAME})
+
+    def test_endbr64_stub_alias_requires_a_contiguous_listing(self):
+        namer = annotate_module.Namer({nid(IMPORT_NAME): IMPORT_NAME})
+        for preceding, address in ((["1000: endbr64"], 0x1008), (["1000: endbr64", ""], 0x1004),
+                                   (["1000: endbr64", "; ===== segment 0x1004"], 0x1004),
+                                   (["1000: data16 endbr64"], 0x1004), (["1000: endbr32"], 0x1004)):
+            with self.subTest(preceding=preceding, address=address):
+                listing = preceding + ["%x: jmp *0x17f6(%%rip) # 0x2800" % address]
+                self.assertEqual(annotate_module.find_stubs(listing, {SLOT: symbol_name(IMPORT_NAME)}, namer),
+                                 {address: IMPORT_NAME})
+        listing = ["1000: endbr64", "1004: jmp *%rax"]
+        self.assertEqual(annotate_module.find_stubs(listing, {SLOT: symbol_name(IMPORT_NAME)}, namer), {})
+
     def test_unknown_nid_prints_the_nid(self):
         db = self.root / "db.csv"
         db.write_text("AAAAAAAAAAA some_other_name\n", encoding="utf-8")
@@ -340,6 +530,17 @@ class AnnotateModuleTests(unittest.TestCase):
             self.assertFalse(Path(annotate_module.gnu_objdump()).is_absolute())
             summary = self.annotate(build_module())
         self.assertIn("1 imports, 1 exports, 0 tls, 1 stubs", summary)
+
+    def test_listing_marks_the_elf_entry_instruction(self):
+        image = bytearray(build_module(code=b"\xe8\x90\x90\x90\x90\xc3"))
+        entry = CODE_ADDRESS + 1
+        struct.pack_into("<Q", image, 24, entry)
+        self.annotate(image)
+        lines = self.read(".asm").splitlines()
+        self.assertEqual(lines.count("; ===== ELF entry point"), 1)
+        line = lines[lines.index("; ===== ELF entry point") + 1]
+        self.assertEqual(int(line.split(":")[0], 16), entry)
+        self.assertIn("nop", line)
 
     def test_mismatching_database_name_is_not_used(self):
         wrong = self.root / "wrong.csv"
@@ -933,6 +1134,84 @@ class PathResolutionTests(unittest.TestCase):
             self.assertEqual(report.read_bytes(), b"previous report")
             self.assertFalse((root / "report.exports.txt").exists())
             self.assertTrue(loop.is_symlink())
+
+
+class ReferencedAddressTests(unittest.TestCase):
+    def test_referenced_address_is_none_without_a_reference(self):
+        import annotate_module
+        self.assertIsNone(annotate_module.referenced_address("    nop"))
+        self.assertIsNone(annotate_module.referenced_address("    mov %fs:0x28, %rax"))
+
+
+class LineNoteTests(unittest.TestCase):
+    def test_line_note_is_empty_for_plain_instructions(self):
+        import annotate_module
+        class Namer:
+            def resolve(self, value):
+                raise AssertionError("not expected for a plain instruction")
+        self.assertEqual(annotate_module.line_note("    nop", {}, {}, Namer()), "")
+
+    def test_line_note_names_a_branch_to_a_stub_and_a_got_reference(self):
+        import annotate_module
+        class Namer:
+            def resolve(self, value):
+                return value.upper()
+        self.assertEqual(annotate_module.line_note("  10:\tcallq  0x30", {}, {0x30: "TBL"}, Namer()), "   ; -> TBL")
+        self.assertEqual(annotate_module.line_note("  10:\tcallq  0x31", {}, {0x30: "TBL"}, Namer()), "")
+        self.assertEqual(annotate_module.line_note("  10:\tmov    0x2(%rip),%rax        # 0x20", {0x20: "tbl"}, {}, Namer()),
+                         "   ; GOT TBL")
+class FakeNamer:
+    def resolve(self, name):
+        return name.upper()
+
+
+class ListingHelperTests(unittest.TestCase):
+    def test_export_lines_lists_exports_then_thread_local_offsets(self):
+        self.assertEqual(annotate_module.export_lines({0x10: ["a"]}, {0x4: ["tl"]}, FakeNamer()),
+                         ["0x10 a A", "tls+0x4 tl TL"])
+
+    def test_write_lines_terminates_each_line_with_lf(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "out.txt"
+            annotate_module.write_lines(path, ["a", "b"])
+            self.assertEqual(path.read_bytes(), b"a\nb\n")
+
+    def test_annotate_listing_adds_a_header_before_each_export(self):
+        listing = ["  10:\tnop", "  14:\tnop"]
+        self.assertEqual(annotate_module.annotate_listing(listing, {}, {0x10: ["a"]}, {}, FakeNamer()),
+                         ["", "; ===== export A", "  10:\tnop", "  14:\tnop"])
+
+    def test_find_stubs_maps_a_jump_through_a_known_slot_to_its_name(self):
+        listing = ["  30:\tjmpq   *0x2(%rip)        # 0x20", "  34:\tnop"]
+        self.assertEqual(annotate_module.find_stubs(listing, {0x20: "tbl"}, FakeNamer()), {0x30: "TBL"})
+        self.assertEqual(annotate_module.find_stubs(listing, {}, FakeNamer()), {})
+class ArgumentAndPathTests(unittest.TestCase):
+    def test_parse_arguments_defaults_to_the_disassembly_outputs(self):
+        args = annotate_module.parse_arguments(["lib.prx"])
+        self.assertEqual(args.module, "lib.prx")
+        self.assertIsNone(args.out)
+        self.assertIsNone(args.db)
+        self.assertFalse(args.no_names)
+        self.assertFalse(args.symbols_json)
+
+    def test_parse_arguments_refuses_an_offline_mode_with_out(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            annotate_module.parse_arguments(["lib.prx", "--symbols-json", "--out", "x"])
+
+    def test_resolved_path_follows_a_link_and_accepts_a_missing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "real.prx"
+            target.write_bytes(b"x")
+            self.assertEqual(annotate_module.resolved_path(target), target.resolve())
+            link = root / "link.prx"
+            try:
+                os.symlink(target, link)
+            except OSError:
+                self.skipTest("symbolic links are not available")
+            self.assertEqual(annotate_module.resolved_path(link), target.resolve())
+            missing = root / "missing.prx"
+            self.assertEqual(annotate_module.resolved_path(missing), missing.resolve())
 
 
 if __name__ == "__main__":

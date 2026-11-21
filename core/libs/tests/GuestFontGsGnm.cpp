@@ -1,14 +1,26 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libSceFont/libSceFont.hpp"
 #include "prx/libSceFontGs/libSceFontGs.hpp"
+#include <cerrno>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 namespace {
 
@@ -58,6 +70,7 @@ struct TestDrawupPool {
     std::uint32_t entryCount;
     std::uint32_t used;
     std::uint32_t maximum;
+    std::uint8_t* limit;
     TestDrawupEntry entries[1];
 };
 
@@ -170,9 +183,75 @@ struct DrawupFixture {
     ~DrawupFixture() { scePthreadMutexDestroy(&mutex); }
 };
 
+constexpr std::uint32_t GnmBackendOpcodes[21] = {
+    0x47000001, 0x47000002, 0x4700002d, 0x4700002e, 0x470000c0, 0x470000cb, 0x470000ce, 0x470000d1, 0x470000d2, 0x470000d4, 0x470000e0,
+    0x470000e1, 0x470000ec, 0x470000d0, 0x470000e2, 0x470000e3, 0x470000f0, 0x47000003, 0x47000004, 0x4700000b, 0x47000005};
+
+const FontGraphicsBackendList* g_enumeratedList = nullptr;
+void* g_enumeratedDispatch = nullptr;
+
+int APS5_VABI RecordBackendList(void* dispatch, const FontGraphicsBackendList* list) {
+    g_enumeratedDispatch = dispatch;
+    g_enumeratedList = list;
+    return 0x1234;
+}
+
+const FontGraphicsServiceParam* GnmBackend() {
+    return static_cast<const FontGraphicsServiceParam*>(sceFontSelectGraphicsGnm(0));
+}
+
 void GnmSelect() {
     Require(sceFontSelectGraphicsGnm(1) == nullptr);
     Require(sceFontSelectGraphicsGnm(0xffffffff) == nullptr);
+    const FontGraphicsServiceParam* const backend = GnmBackend();
+    Require(backend != nullptr && sceFontSelectGraphicsGnm(0) == backend);
+    Require(backend->tag == 0x0e08 && backend->revision == 4 && backend->level == 0x200);
+    Require(backend->instanceSlot != nullptr && *backend->instanceSlot == nullptr);
+    Require(backend->instanceSize == 0x20000 && backend->reserved14 == 0 && backend->enumerate != nullptr);
+    Require(backend->enumerate(nullptr, RecordBackendList) == 0 && g_enumeratedList == nullptr);
+    std::uint64_t dispatch[0x1c] = {};
+    Require(backend->enumerate(dispatch, RecordBackendList) == 0x400 && g_enumeratedDispatch == dispatch);
+    const auto* const base = reinterpret_cast<const std::uint8_t*>(backend);
+    const FontGraphicsBackendList* const list = g_enumeratedList;
+    Require(reinterpret_cast<const std::uint8_t*>(list) == base + 0x170);
+    Require(list->reserved == 0 && list->count == 21 && reinterpret_cast<const std::uint8_t*>(list->entries) == base + 0x20);
+    for (std::size_t i = 0; i < 21; ++i) {
+        const FontGraphicsBackendEntry& entry = list->entries[i];
+        Require(entry.opcode == GnmBackendOpcodes[i] && entry.reserved == 0 && entry.value != 0);
+        if (entry.opcode == 0x47000003) Require(entry.value == 0x1000000040);
+        else if (entry.opcode == 0x47000004) Require(entry.value == 0x4000000020);
+        else if (entry.opcode == 0x47000002) reinterpret_cast<void(APS5_VABI*)(void*)>(entry.value)(dispatch);
+        else if (entry.opcode == 0x47000005) Require(reinterpret_cast<int(APS5_VABI*)(void*, void*, std::uint64_t)>(entry.value)(nullptr, nullptr, 0) == 0);
+    }
+}
+
+struct GnmAllocations {
+    bool fail = true;
+    int live = 0;
+};
+
+void* APS5_VABI GnmAllocate(void* object, std::uint32_t size) {
+    auto& state = *static_cast<GnmAllocations*>(object);
+    if (state.fail) return nullptr;
+    ++state.live;
+    return std::malloc(size);
+}
+
+void APS5_VABI GnmDeallocate(void* object, void* p) {
+    --static_cast<GnmAllocations*>(object)->live;
+    std::free(p);
+}
+
+void GnmService() {
+    const FontGraphicsServiceParam* const backend = GnmBackend();
+    GnmAllocations allocations;
+    const FontMemoryInterface iface{GnmAllocate, GnmDeallocate, nullptr, nullptr, nullptr, nullptr};
+    FontMemory memory{};
+    Require(sceFontMemoryInit(&memory, nullptr, 0, &iface, &allocations, nullptr, nullptr) == 0);
+    FontGraphicsService* service = nullptr;
+    const int before = g_errorCount;
+    Require(sceFontCreateGraphicsService(&memory, backend, &service) == static_cast<int>(0x80460010));
+    Require(g_errorCount == before + 1 && g_lastError == static_cast<int>(0x80460010) && *backend->instanceSlot == nullptr);
 }
 
 void GnmDrawupImage() {
@@ -182,6 +261,43 @@ void GnmDrawupImage() {
         Require(sceFontGraphicsGnmDrawupFillTextureImage(nullptr, nullptr, &out, 0.0f, 0.0f, 8.0f, 8.0f) == InvalidParameter);
         Require(out == nullptr);
         Require(g_errorCount == before);
+        errno = 71;
+        Require(sceFontGraphicsGnmDrawupFillTextureImage(nullptr, nullptr, reinterpret_cast<void**>(0x10), 0.0f, 0.0f, 8.0f, 8.0f) == InvalidParameter);
+        Require(errno == 71);
+    }
+    {
+        DrawupFixture f;
+        auto* frame = reinterpret_cast<FontGraphicsFrame*>(&f.frame);
+        errno = 71;
+        Require(sceFontGraphicsGnmDrawupFillTextureImage(frame, &f.surface, reinterpret_cast<void**>(0x10), 0.0f, 0.0f, 8.0f, 8.0f) == InvalidParameter);
+        Require(errno == 71);
+#if defined(__unix__) || defined(__linux__) || defined(__APPLE__)
+        void* none = mmap(nullptr, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (none != MAP_FAILED) {
+            errno = 71;
+            Require(sceFontGraphicsGnmDrawupFillTextureImage(frame, &f.surface, static_cast<void**>(none), 0.0f, 0.0f, 8.0f, 8.0f) == InvalidParameter);
+            Require(errno == 71);
+            munmap(none, 4096);
+        }
+#endif
+    }
+    {
+        DrawupFixture f;
+        auto* frame = reinterpret_cast<FontGraphicsFrame*>(&f.frame);
+        alignas(void*) std::uint8_t buffer[16];
+        std::memset(buffer, 0xaa, sizeof(buffer));
+        auto** outPtr = reinterpret_cast<void**>(buffer);
+        Require(sceFontGraphicsGnmDrawupFillTextureImage(frame, &f.surface, outPtr, 0.0f, 0.0f, 8.0f, 8.0f) == 0);
+        Require(*outPtr != nullptr);
+        for (std::size_t i = sizeof(void*); i < sizeof(buffer); ++i) {
+            Require(buffer[i] == 0xaa);
+        }
+        std::memset(buffer, 0x55, sizeof(buffer));
+        Require(sceFontGraphicsGnmDrawupFillTextureImage(nullptr, nullptr, outPtr, 0.0f, 0.0f, 8.0f, 8.0f) == InvalidParameter);
+        Require(*outPtr == nullptr);
+        for (std::size_t i = sizeof(void*); i < sizeof(buffer); ++i) {
+            Require(buffer[i] == 0x55);
+        }
     }
     {
         DrawupFixture f;
@@ -256,12 +372,75 @@ void GnmDrawupPattern() {
         Require(sceFontGraphicsGnmDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, &out) == InvalidParameter);
         Require(out == nullptr);
         Require(g_errorCount == before);
+        errno = 71;
+        Require(sceFontGraphicsGnmDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, reinterpret_cast<void**>(0x10)) == InvalidParameter);
+        Require(errno == 71);
         f.surface.initialized = 1;
         Require(sceFontGraphicsGnmDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, &out) == 0);
         Require(out != nullptr);
         const auto* record = static_cast<const TestDrawupRecord*>(out);
         Require(record->state == 1);
         Require(record->mode == 0x22);
+    }
+    {
+        DrawupFixture f;
+        auto* frame = reinterpret_cast<FontGraphicsFrame*>(&f.frame);
+        alignas(void*) std::uint8_t buffer[16];
+        std::memset(buffer, 0xaa, sizeof(buffer));
+        auto** outPtr = reinterpret_cast<void**>(buffer);
+        Require(sceFontGraphicsGnmDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, outPtr) == 0);
+        Require(*outPtr != nullptr);
+        for (std::size_t i = sizeof(void*); i < sizeof(buffer); ++i) {
+            Require(buffer[i] == 0xaa);
+        }
+        std::memset(buffer, 0x55, sizeof(buffer));
+        Require(sceFontGraphicsGnmDrawupFillTexturePattern(nullptr, nullptr, 1, 2, 3, 4, 5, 6, outPtr) == InvalidParameter);
+        Require(*outPtr == nullptr);
+        for (std::size_t i = sizeof(void*); i < sizeof(buffer); ++i) {
+            Require(buffer[i] == 0x55);
+        }
+    }
+    {
+        DrawupFixture f;
+        auto* frame = reinterpret_cast<FontGraphicsFrame*>(&f.frame);
+#ifdef _WIN32
+        void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(page != nullptr);
+#else
+        void* page = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(page != MAP_FAILED);
+#endif
+        static void* targetPage = nullptr;
+        static int writeCount = 0;
+        targetPage = page;
+        writeCount = 0;
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch([](std::uintptr_t addr, std::size_t) {
+            if (addr == reinterpret_cast<std::uintptr_t>(targetPage)) {
+                ++writeCount;
+                if (writeCount == 2) {
+#ifdef _WIN32
+                    DWORD oldProtect;
+                    VirtualProtect(targetPage, 4096, PAGE_READONLY, &oldProtect);
+#else
+                    mprotect(targetPage, 4096, PROT_READ);
+#endif
+                }
+            }
+        });
+        errno = 71;
+        const int error = sceFontGraphicsGnmDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, static_cast<void**>(page));
+        Require(error == InvalidParameter);
+        Require(errno == 71);
+        Require(writeCount == 2);
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+#ifdef _WIN32
+        DWORD oldProtect;
+        VirtualProtect(page, 4096, PAGE_READWRITE, &oldProtect);
+        VirtualFree(page, 0, MEM_RELEASE);
+#else
+        mprotect(page, 4096, PROT_READ | PROT_WRITE);
+        munmap(page, 4096);
+#endif
     }
 }
 
@@ -302,6 +481,16 @@ void GnmSequences() {
         Require(sceFontGraphicsSequenceGetGnmCommandsForChain(seq, &out, &count, &out2, &count2) == 0);
         Require(out == firstData && count == 8 && out2 == secondData && count2 == 3);
         Require(g_errorCount == before + 6 && g_lastError == Fatal);
+        count = 0xcccc;
+        out2 = reinterpret_cast<void*>(0xbeef);
+        count2 = 0xdddd;
+        errno = 71;
+        Require(sceFontGraphicsSequenceGetGnmCommandsForChain(seq, reinterpret_cast<void**>(0x10), &count, &out2, &count2) ==
+                InvalidParameter);
+        Require(errno == 71);
+        Require(g_errorCount == before + 6);
+        Require(count == 0 && out2 == nullptr && count2 == 0);
+        errno = 0;
     }
     {
         void* out = reinterpret_cast<void*>(0xdead);
@@ -320,6 +509,13 @@ void GnmSequences() {
         Require(sceFontGraphicsSequenceGetGnmCommandsForSubmit(seq, &out, &count) == 0);
         Require(out == firstData && count == 0x20);
         Require(g_errorCount == before + 4 && g_lastError == SequenceLocked);
+        out = reinterpret_cast<void*>(0xdead);
+        errno = 71;
+        Require(sceFontGraphicsSequenceGetGnmCommandsForSubmit(seq, &out, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidParameter);
+        Require(errno == 71);
+        Require(g_errorCount == before + 4);
+        Require(out == nullptr);
+        errno = 0;
     }
 }
 
@@ -444,6 +640,55 @@ void GnmSurfaceInitCases(bool neo) {
     }
 }
 
+struct StructureTextureCase {
+    std::uint32_t resource[8];
+    std::uint32_t base;
+};
+
+const StructureTextureCase StructureTextureCases[5][2] = {
+    {{{0x00001000, 0x00100000, 0x7007c03f, 0x94800849, 0x0007e000, 0, 0, 0}, 0x00001000},
+     {{0x00001000, 0x00100000, 0x7007c03f, 0x94800849, 0x0007e000, 0, 0x01000000, 0}, 0x00001000}},
+    {{{0x00023456, 0x00a00000, 0x700c4063, 0x94d00fac, 0x000ce000, 0, 0, 0}, 0x00023456},
+     {{0x00023456, 0x00a00000, 0x700c4063, 0x94d00fac, 0x000ce000, 0, 0x01000000, 0}, 0x00023456}},
+    {{{0x7fffabc5, 0x1ce00000, 0x710dc77f, 0x94a00fac, 0x00efe000, 0, 0, 0}, 0x7fffabc5},
+     {{0x7fffab8d, 0x1ce00000, 0x710dc77f, 0x94a00fac, 0x00efe000, 0, 0x01000000, 0}, 0x7fffab8d}},
+    {{{0x40000f87, 0x00300000, 0x7031c12b, 0x94200b24, 0x002fe000, 0, 0, 0}, 0x40000f87},
+     {{0x40000f8f, 0x00300000, 0x7031c12b, 0x94200b24, 0x003fe000, 0, 0x01000000, 0}, 0x40000f8f}},
+    {{{0x12345600, 0x00c00000, 0x707fc1ff, 0x95000f2e, 0x003fe000, 0, 0, 0}, 0x12345600},
+     {{0x12345608, 0x00c00000, 0x707fc1ff, 0x95000f2e, 0x003fe000, 0, 0x01000000, 0}, 0x12345608}}};
+
+using GnmStructureTextureHandler = int(APS5_VABI*)(void*, void*, std::uint64_t);
+
+GnmStructureTextureHandler GnmStructureTexture() {
+    const auto* const list = reinterpret_cast<const FontGraphicsBackendList*>(reinterpret_cast<const std::uint8_t*>(GnmBackend()) + 0x170);
+    for (std::int32_t i = 0; i < list->count; ++i)
+        if (list->entries[i].opcode == 0x47000005) return reinterpret_cast<GnmStructureTextureHandler>(list->entries[i].value);
+    return nullptr;
+}
+
+void GnmStructureTextureCases() {
+    const GnmStructureTextureHandler structure = GnmStructureTexture();
+    Require(structure != nullptr);
+    std::uint32_t texture[16];
+    std::memcpy(texture, SurfaceCases[0].texture[0], sizeof(texture));
+    Require(structure(nullptr, texture, 0x100) == 0 && std::memcmp(texture, SurfaceCases[0].texture[0], sizeof(texture)) == 0);
+    for (std::size_t i = 0; i < 5; ++i) {
+        for (std::size_t neo = 0; neo < 2; ++neo) {
+            const StructureTextureCase& expected = StructureTextureCases[i][neo];
+            std::memcpy(texture, SurfaceCases[i].texture[neo], sizeof(texture));
+            std::uint32_t object[24];
+            std::memset(object, 0xcc, sizeof(object));
+            Require(structure(object, texture, SurfaceCases[i].base) == 0x20);
+            for (std::size_t w = 0; w < 16; ++w) Require(object[w] == 0xcccccccc);
+            for (std::size_t w = 0; w < 8; ++w) Require(object[16 + w] == expected.resource[w]);
+            for (std::size_t w = 0; w < 16; ++w) {
+                const std::uint32_t value = w == 0 ? expected.base : w == 7 || w == 9 ? 0 : SurfaceCases[i].texture[neo][w];
+                Require(texture[w] == value);
+            }
+        }
+    }
+}
+
 void WriteParamSfo(const std::filesystem::path& directory, std::uint32_t attribute) {
     const auto metadata = directory / "app0" / "sce_sys";
     std::filesystem::create_directories(metadata);
@@ -506,6 +751,8 @@ int main(int argc, char** argv) {
     GnmDrawupPattern();
     GnmSequences();
     GnmSurfaceValidation();
+    GnmStructureTextureCases();
     GnmSurfaceModes(argv[0]);
+    GnmService();
     sceFontSetGraphicsErrorCallback(nullptr);
 }

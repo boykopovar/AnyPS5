@@ -12,6 +12,12 @@ TValue ReadAt(const void* object, std::size_t offset, const char* function) {
 
 }
 
+namespace {
+
+constexpr int AsmClientExtNotInitialized = static_cast<int>(0x8055CE07u);
+
+} // namespace
+
 extern "C" {
 
 int APS5_VABI libSceNpManagerUnknown_095ladq7hQ8_nid_no_patch() {
@@ -701,19 +707,19 @@ int APS5_VABI libSceNpManagerUnknown_zLktx8v2g_plus_Y_nid_no_patch() {
 APS5_EXPORT("zLktx8v2g+Y", libSceNpManagerUnknown_zLktx8v2g_plus_Y_nid_no_patch);
 
 int APS5_VABI sceNpAsmClientExtAbortRequest() {
-    NotImplemented_nid_no_patch(__func__);
+    return AsmClientExtNotInitialized;
 }
 
 int APS5_VABI sceNpAsmClientExtCreateRequest() {
-    NotImplemented_nid_no_patch(__func__);
+    return AsmClientExtNotInitialized;
 }
 
 int APS5_VABI sceNpAsmClientExtDeleteRequest() {
-    NotImplemented_nid_no_patch(__func__);
+    return AsmClientExtNotInitialized;
 }
 
 int APS5_VABI sceNpAsmClientExtGetPlayingTitleNpTitleToken() {
-    NotImplemented_nid_no_patch(__func__);
+    return AsmClientExtNotInitialized;
 }
 
 int APS5_VABI sceNpAsmClientExtInitialize() {
@@ -721,7 +727,7 @@ int APS5_VABI sceNpAsmClientExtInitialize() {
 }
 
 int APS5_VABI sceNpAsmClientExtTerminate() {
-    NotImplemented_nid_no_patch(__func__);
+    return AsmClientExtNotInitialized;
 }
 
 int APS5_VABI sceNpAsmClientGetNpComInfo2WithHmac() {

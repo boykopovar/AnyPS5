@@ -26,17 +26,65 @@
  */
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceNKWebKit/include/RegionExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 #include <cmath>
+#include <cstddef>
+#include <limits>
+#include <stdexcept>
 
 namespace WebCore {
 
 namespace {
 
+constexpr double kPiDouble = 3.14159265358979323846;
+
+struct DecomposedType {
+    double scaleX;
+    double scaleY;
+    double angle;
+    double remainderA;
+    double remainderB;
+    double remainderC;
+    double remainderD;
+    double translateX;
+    double translateY;
+};
+
 bool IsIdentityOrTranslation(const AffineTransform& t) {
     return t.m_transform[0] == 1.0 && t.m_transform[1] == 0.0
         && t.m_transform[2] == 0.0 && t.m_transform[3] == 1.0;
+}
+
+double Rad2Deg(double r) {
+    return r * 180.0 / kPiDouble;
+}
+
+DecomposedType Decompose(const AffineTransform& t) {
+    AffineTransform m = t;
+    double sx = _ZNK7WebCore15AffineTransform6xScaleEv(&m);
+    double sy = _ZNK7WebCore15AffineTransform6yScaleEv(&m);
+    if (m.m_transform[0] * m.m_transform[3] - m.m_transform[2] * m.m_transform[1] < 0) {
+        if (m.m_transform[0] < m.m_transform[3]) {
+            sx = -sx;
+        } else {
+            sy = -sy;
+        }
+    }
+    _ZN7WebCore15AffineTransform15scaleNonUniformEdd(&m, 1 / sx, 1 / sy);
+    const double angle = std::atan2(m.m_transform[1], m.m_transform[0]);
+    _ZN7WebCore15AffineTransform6rotateEd(&m, Rad2Deg(-angle));
+    return DecomposedType{sx, sy, angle,
+        m.m_transform[0], m.m_transform[1], m.m_transform[2], m.m_transform[3],
+        m.m_transform[4], m.m_transform[5]};
+}
+
+void Recompose(AffineTransform& t, const DecomposedType& decomp) {
+    t.m_transform = {decomp.remainderA, decomp.remainderB, decomp.remainderC, decomp.remainderD,
+        decomp.translateX, decomp.translateY};
+    _ZN7WebCore15AffineTransform6rotateEd(&t, Rad2Deg(decomp.angle));
+    _ZN7WebCore15AffineTransform15scaleNonUniformEdd(&t, decomp.scaleX, decomp.scaleY);
 }
 
 }  // namespace
@@ -45,7 +93,8 @@ bool IsIdentityOrTranslation(const AffineTransform& t) {
 extern "C" {
 
 void APS5_VABI _ZN7WebCore15AffineTransformC1Ev(WebCore::AffineTransform* self) {
-    self->m_transform = {1.0, 0.0, 0.0, 1.0, 0.0, 0.0};
+    const WebCore::AffineTransform identity{{1.0, 0.0, 0.0, 1.0, 0.0, 0.0}};
+    if (!GuestCopyOut_nid_no_patch(self, &identity, sizeof(identity))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore15AffineTransformC2Ev(WebCore::AffineTransform* self) {
@@ -54,7 +103,8 @@ void APS5_VABI _ZN7WebCore15AffineTransformC2Ev(WebCore::AffineTransform* self) 
 
 void APS5_VABI _ZN7WebCore15AffineTransformC1Edddddd(
     WebCore::AffineTransform* self, double a, double b, double c, double d, double e, double f) {
-    self->m_transform = {a, b, c, d, e, f};
+    const WebCore::AffineTransform transform{{a, b, c, d, e, f}};
+    if (!GuestCopyOut_nid_no_patch(self, &transform, sizeof(transform))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN7WebCore15AffineTransformC2Edddddd(
@@ -63,7 +113,9 @@ void APS5_VABI _ZN7WebCore15AffineTransformC2Edddddd(
 }
 
 WebCore::OptionalAffineTransform APS5_VABI _ZNK7WebCore15AffineTransform7inverseEv(const WebCore::AffineTransform* self) {
-    const auto& m = self->m_transform;
+    WebCore::AffineTransform transform{};
+    if (!GuestCopyIn_nid_no_patch(&transform, self, sizeof(transform))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const auto& m = transform.m_transform;
     WebCore::OptionalAffineTransform result{};
     const double determinant = m[0] * m[3] - m[1] * m[2];
     if (!std::isfinite(determinant) || determinant == 0.0) {
@@ -71,7 +123,7 @@ WebCore::OptionalAffineTransform APS5_VABI _ZNK7WebCore15AffineTransform7inverse
     }
     result.m_engaged = true;
     auto& r = result.m_value.m_transform;
-    if (WebCore::IsIdentityOrTranslation(*self)) {
+    if (WebCore::IsIdentityOrTranslation(transform)) {
         r[4] = -m[4];
         r[5] = -m[5];
         return result;
@@ -83,6 +135,82 @@ WebCore::OptionalAffineTransform APS5_VABI _ZNK7WebCore15AffineTransform7inverse
     r[4] = (m[2] * m[5] - m[3] * m[4]) / determinant;
     r[5] = (m[1] * m[4] - m[0] * m[5]) / determinant;
     return result;
+}
+
+void APS5_VABI _ZN7WebCore15AffineTransform5blendERKS0_d(
+    WebCore::AffineTransform* self, const WebCore::AffineTransform& from, double progress) {
+    WebCore::AffineTransform source{};
+    if (!GuestCopyIn_nid_no_patch(&source, &from, sizeof(source))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    WebCore::AffineTransform target{};
+    if (!GuestCopyIn_nid_no_patch(&target, self, sizeof(target))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    WebCore::DecomposedType srA = WebCore::Decompose(source);
+    WebCore::DecomposedType srB = WebCore::Decompose(target);
+
+    if ((srA.scaleX < 0 && srB.scaleY < 0) || (srA.scaleY < 0 && srB.scaleX < 0)) {
+        srA.scaleX = -srA.scaleX;
+        srA.scaleY = -srA.scaleY;
+        srA.angle += srA.angle < 0 ? WebCore::kPiDouble : -WebCore::kPiDouble;
+    }
+
+    srA.angle = std::fmod(srA.angle, 2 * WebCore::kPiDouble);
+    srB.angle = std::fmod(srB.angle, 2 * WebCore::kPiDouble);
+
+    if (std::fabs(srA.angle - srB.angle) > WebCore::kPiDouble) {
+        if (srA.angle > srB.angle) {
+            srA.angle -= WebCore::kPiDouble * 2;
+        } else {
+            srB.angle -= WebCore::kPiDouble * 2;
+        }
+    }
+
+    srA.scaleX += progress * (srB.scaleX - srA.scaleX);
+    srA.scaleY += progress * (srB.scaleY - srA.scaleY);
+    srA.angle += progress * (srB.angle - srA.angle);
+    srA.remainderA += progress * (srB.remainderA - srA.remainderA);
+    srA.remainderB += progress * (srB.remainderB - srA.remainderB);
+    srA.remainderC += progress * (srB.remainderC - srA.remainderC);
+    srA.remainderD += progress * (srB.remainderD - srA.remainderD);
+    srA.translateX += progress * (srB.translateX - srA.translateX);
+    srA.translateY += progress * (srB.translateY - srA.translateY);
+
+    WebCore::Recompose(target, srA);
+    if (!GuestCopyOut_nid_no_patch(self, &target, sizeof(target))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+}
+
+WebCore::Region APS5_VABI _ZNK7WebCore15AffineTransform9mapRegionERKNS_6RegionE(
+    const WebCore::AffineTransform* self, const WebCore::Region& region) {
+    if (!self)
+        throw std::invalid_argument("WebCore::AffineTransform::mapRegion: null transform");
+    WebCore::AffineTransform transform{};
+    if (!GuestCopyIn_nid_no_patch(&transform, self, sizeof(transform))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (transform.m_transform[0] == 1.0 && transform.m_transform[1] == 0.0 &&
+        transform.m_transform[2] == 0.0 && transform.m_transform[3] == 1.0) {
+        WebCore::Region mappedRegion;
+        _ZN7WebCore6RegionaSERKS0_(&mappedRegion, region);
+        auto clampToInt = [](float value) -> int {
+            if (value >= static_cast<float>(std::numeric_limits<int>::max()))
+                return std::numeric_limits<int>::max();
+            if (!(value > static_cast<float>(std::numeric_limits<int>::min())))
+                return std::numeric_limits<int>::min();
+            return static_cast<int>(value);
+        };
+        WebCore::IntSize offset{
+            clampToInt(std::roundf(static_cast<float>(transform.m_transform[4]))),
+            clampToInt(std::roundf(static_cast<float>(transform.m_transform[5])))
+        };
+        _ZN7WebCore6Region9translateERKNS_7IntSizeE(&mappedRegion, offset);
+        return mappedRegion;
+    }
+
+    WebCore::Region mappedRegion;
+    auto rectList = _ZNK7WebCore6Region5rectsEv(&region);
+    for (std::size_t i = 0; i < rectList.size(); ++i) {
+        WebCore::IntRect mappedRect = _ZNK7WebCore15AffineTransform7mapRectERKNS_7IntRectE(&transform, rectList[i]);
+        WebCore::Region rectRegion;
+        rectRegion.m_bounds = mappedRect;
+        _ZN7WebCore6Region5uniteERKS0_(&mappedRegion, rectRegion);
+    }
+    return mappedRegion;
 }
 
 }

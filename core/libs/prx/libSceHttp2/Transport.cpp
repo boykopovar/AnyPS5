@@ -15,6 +15,7 @@
 #include "prx/libSceNet/include/Net.hpp"
 #include "prx/libSceSsl/include/Ssl.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include <nghttp2/nghttp2.h>
 #include <algorithm>
@@ -22,6 +23,7 @@
 #include <charconv>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <exception>
@@ -49,6 +51,7 @@ constexpr int ConnectTimedOut = static_cast<int>(0x817b1221);
 constexpr int ReceiveTimedOut = static_cast<int>(0x817b1222);
 constexpr int SendTimedOut = static_cast<int>(0x817b1223);
 constexpr int ConnectionReset = static_cast<int>(0x80410136);
+constexpr int NetworkError = static_cast<int>(0x80431063);
 constexpr std::array<int, 7> HandshakeFailures{
     static_cast<int>(0x8095f00b), static_cast<int>(0x8095f00c), static_cast<int>(0x8095f00d), static_cast<int>(0x8095f010),
     static_cast<int>(0x8095170d), static_cast<int>(0x80951d78), static_cast<int>(0x80410136)};
@@ -81,12 +84,60 @@ std::string Lower(std::string text) {
     return text;
 }
 
+std::uint32_t CompiledSdkVersion() {
+    std::int32_t version = 0;
+    return sceKernelGetCompiledSdkVersion(&version) < 0 ? 0x99900000u : static_cast<std::uint32_t>(version);
+}
+
+bool NamesField(std::string_view line, std::string_view name) {
+    return line.size() > name.size() && line[name.size()] == ':' && Lower(std::string(line.substr(0, name.size()))) == name;
+}
+
+bool GzipEncoded(const std::string& block) {
+    const char* value = nullptr;
+    std::size_t size = 0;
+    if (sceHttpParseResponseHeader(block.data(), block.size(), "Content-Encoding", &value, &size) < 0 || !value || size < 4) return false;
+    return Lower(std::string(value, 4)) == "gzip";
+}
+
+std::string WithoutGzipFields(std::string_view block) {
+    std::string result;
+    bool removing = false;
+    for (std::size_t start = 0; start < block.size();) {
+        const auto newline = block.find('\n', start);
+        const std::size_t end = newline == std::string_view::npos ? block.size() : newline + 1;
+        const auto line = block.substr(start, end - start);
+        start = end;
+        if (removing && line.starts_with(' ')) continue;
+        removing = NamesField(line, "content-encoding") || NamesField(line, "content-length");
+        if (!removing) result.append(line);
+    }
+    return result;
+}
+
 std::uint64_t Number(std::string_view text, int base = 10) {
     std::uint64_t value = 0;
     const auto result = std::from_chars(text.data(), text.data() + text.size(), value, base);
     Require(!text.empty() && result.ec == std::errc{} && result.ptr == text.data() + text.size(),
         "sceHttp2: invalid number; console error mapping is unknown");
     return value;
+}
+
+std::uint64_t Http1ContentLength(std::string_view text) {
+    std::uint64_t length = 0;
+    bool first = true;
+    for (;;) {
+        const auto comma = text.find(',');
+        auto digits = text.substr(0, comma);
+        while (!digits.empty() && (digits.front() == ' ' || digits.front() == '\t')) digits.remove_prefix(1);
+        while (!digits.empty() && (digits.back() == ' ' || digits.back() == '\t')) digits.remove_suffix(1);
+        const auto value = Number(digits);
+        Require(first || value == length, "sceHttp2: inconsistent HTTP1 content lengths");
+        length = value;
+        first = false;
+        if (comma == std::string_view::npos) return length;
+        text.remove_prefix(comma + 1);
+    }
 }
 
 struct Url {
@@ -193,6 +244,7 @@ struct Lookup {
     std::mutex mutex;
     std::condition_variable changed;
     bool complete = false;
+    int error = 0;
     std::vector<Address> addresses;
     std::exception_ptr failure;
 };
@@ -242,10 +294,11 @@ private:
                 hints.ai_family = AF_UNSPEC;
                 addrinfo* raw = nullptr;
                 const auto service = std::to_string(job->port);
-                if (const auto hook = LookupHookSlot().load(std::memory_order_acquire)) Require(hook(job->host.c_str()) == 0, "sceHttp2: DNS failed; console error mapping is unknown");
-                const int result = getaddrinfo(job->host.c_str(), service.c_str(), &hints, &raw);
+                const auto hook = LookupHookSlot().load(std::memory_order_acquire);
+                const int result = hook && hook(job->host.c_str()) != 0 ? EAI_NONAME :
+                    getaddrinfo(job->host.c_str(), service.c_str(), &hints, &raw);
                 std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> addresses(raw, freeaddrinfo);
-                Require(result == 0, "sceHttp2: DNS failed; console error mapping is unknown");
+                if (result != 0) job->error = static_cast<int>(0x804101e6);
                 for (auto* entry = raw; entry; entry = entry->ai_next) {
                     Address address;
                     if (entry->ai_family == AF_INET) {
@@ -266,7 +319,7 @@ private:
                     address.bytes[0] = static_cast<std::uint8_t>(address.size);
                     job->addresses.push_back(address);
                 }
-                Require(!job->addresses.empty(), "sceHttp2: DNS returned no supported address");
+                if (!job->error) Require(!job->addresses.empty(), "sceHttp2: DNS returned no supported address");
             } catch (...) {
                 job->failure = std::current_exception();
             }
@@ -341,6 +394,7 @@ struct Request::State {
     bool ended = false;
     int status = 0;
     std::string contentEncoding;
+    bool hasEncoding = false;
     bool inflatedGzip = false;
     std::vector<std::pair<std::string, std::string>> blockHeaders;
     std::string allHeaders;
@@ -367,6 +421,8 @@ struct Request::State {
     std::vector<std::uint8_t> pending;
     std::size_t pendingOffset = 0;
     std::string rawHeaders;
+    std::string strippedSource;
+    std::string strippedHeaders;
     unsigned http1HeaderBlocks = 0;
     std::size_t headerBytes = 0;
     std::vector<std::uint8_t> body;
@@ -442,9 +498,11 @@ struct Request::State {
         return decision == 0 ? 0 : -1;
     }
 
-    void Check(Limit deadline) const {
+    void Check(Limit deadline) {
+        const bool wasCancelled = cancelled.load();
+        if (const auto hook = CheckHookSlot().load(std::memory_order_acquire)) hook(stopped, cancelled);
         Require(!stopped.load(), "sceHttp2: request deleted during an operation; console error mapping is unknown");
-        if (cancelled.load()) Raise(Aborted, "sceHttp2: request cancelled; console error mapping is unknown");
+        if (wasCancelled) Raise(Aborted, "sceHttp2: request cancelled; console error mapping is unknown");
         if (Clock::now() >= deadline.at) Raise(deadline.code, "sceHttp2: request timed out; console error mapping is unknown");
     }
 
@@ -467,7 +525,9 @@ struct Request::State {
         }
     }
 
-    bool Inflating() const { return settings.inflateGzip && contentEncoding == "gzip"; }
+    bool GzipResponse() const { return contentEncoding.starts_with("gzip"); }
+
+    bool Inflating() const { return settings.inflateGzip && GzipResponse(); }
 
     void InflateGzip() {
         if (inflatedGzip || !Inflating() || body.empty()) return;
@@ -538,9 +598,6 @@ struct Request::State {
         }
         body = std::move(output);
         bodyOffset = 0;
-        contentLength = body.size();
-        hasLength = true;
-        contentEncoding.clear();
     }
 
     int Connect() {
@@ -559,8 +616,11 @@ struct Request::State {
                 job->changed.wait_for(lock, std::chrono::milliseconds(5));
             }
             Check(deadline);
-            if (!job->failure) break;
-            if (attempt >= settings.resolveRetry) std::rethrow_exception(job->failure);
+            if (!job->failure && !job->error) break;
+            if (attempt >= settings.resolveRetry) {
+                if (job->failure) std::rethrow_exception(job->failure);
+                return job->error;
+            }
         }
         const auto connectDeadline = Deadline(settings.connectTimeout, ConnectTimedOut);
         int result = 0;
@@ -581,7 +641,7 @@ struct Request::State {
                 std::uint32_t size = sizeof(error);
                 result = sceNetGetsockopt(socket, 0xffff, 0x1007, &error, &size);
                 Require(result == 0, "sceHttp2: connect status unavailable; console error mapping is unknown");
-                if (result == 0 && error != 0) result = static_cast<int>(0x80410100u | static_cast<unsigned>(error));
+                if (error != 0) result = static_cast<int>(0x80410100u | static_cast<unsigned>(error));
             }
             if (result == 0) break;
             sceNetSocketClose(std::exchange(socket, -1));
@@ -706,6 +766,7 @@ struct Request::State {
             status = code;
             hasLength = chunked = hasLocation = hasAuthChallenge = hasProxyAuthChallenge = false;
             contentEncoding.clear();
+            hasEncoding = false;
             contentLength = 0;
             location.clear();
             for (;;) {
@@ -715,7 +776,7 @@ struct Request::State {
                 if (line.empty()) break;
                 const auto [name, value] = Field(line);
                 if (name == "content-length") {
-                    const auto length = Number(value);
+                    const auto length = Http1ContentLength(value);
                     Require(!hasLength || length == contentLength, "sceHttp2: inconsistent HTTP1 content lengths");
                     hasLength = true;
                     contentLength = length;
@@ -723,7 +784,8 @@ struct Request::State {
                     Require(!chunked && Lower(std::string(value)) == "chunked" && minor == 1, "sceHttp2: unsupported HTTP1 transfer coding");
                     chunked = true;
                 } else if (name == "content-encoding") {
-                    contentEncoding = Lower(std::string(value));
+                    if (!hasEncoding) contentEncoding = Lower(std::string(value));
+                    hasEncoding = true;
                 } else if (name == "location") {
                     Require(!hasLocation, "sceHttp2: duplicate HTTP1 Location");
                     hasLocation = true;
@@ -746,7 +808,6 @@ struct Request::State {
             remaining = contentLength;
             ready = true;
             ended = method == "HEAD" || status == 204 || status == 304 || (hasLength && remaining == 0);
-            Require(!Inflating() || ended, "sceHttp2: HTTP1 gzip inflation is not implemented");
             return;
         }
     }
@@ -818,8 +879,7 @@ struct Request::State {
 
     }
 
-    int ReadHttp1(void* output, std::size_t size) {
-        const auto deadline = Deadline(settings.recvTimeout, ReceiveTimedOut);
+    int ReadHttp1(void* output, std::size_t size, Limit deadline) {
         size = std::min(size, static_cast<std::size_t>(std::numeric_limits<int>::max()));
         if (chunked) {
             if (chunkTerminator) { Require(Line(deadline).empty(), "sceHttp2: invalid chunk terminator"); chunkTerminator = false; }
@@ -833,13 +893,17 @@ struct Request::State {
                 chunkRemaining = Number(digits, 16);
                 if (!chunkRemaining) {
                     std::size_t bytes = 0;
+                    std::string trailers;
                     for (;;) {
                         const auto trailer = Line(deadline);
                         bytes += trailer.size() + 2;
                         Require(bytes <= 65536, "sceHttp2: trailers exceed host limit");
                         if (trailer.empty()) break;
                         Field(trailer);
+                        trailers += trailer + "\r\n";
                     }
+                    if (!trailers.empty()) trailers += "\r\n";
+                    trailerHeaders = std::move(trailers);
                     ended = true;
                     return 0;
                 }
@@ -856,6 +920,17 @@ struct Request::State {
         else if (hasLength) { remaining -= count; ended = remaining == 0; }
         else if (!count) ended = true;
         return count;
+    }
+
+    void FinishHttp1Gzip(Limit deadline) {
+        std::array<std::uint8_t, 16384> buffer;
+        while (!ended) {
+            const int count = ReadHttp1(buffer.data(), buffer.size(), deadline);
+            Require(body.size() + static_cast<std::size_t>(count) <= MaxGzipBytes,
+                "sceHttp2: encoded gzip response exceeds the host limit");
+            body.insert(body.end(), buffer.begin(), buffer.begin() + count);
+        }
+        InflateGzip();
     }
 
     template<class TCallback>
@@ -878,6 +953,8 @@ struct Request::State {
                 state.hasAuthChallenge = state.hasProxyAuthChallenge = false;
                 state.hasLength = false;
                 state.contentLength = 0;
+                state.contentEncoding.clear();
+                state.hasEncoding = false;
                 state.location.clear();
                 state.hasLocation = false;
             }
@@ -911,7 +988,10 @@ struct Request::State {
                 state.hasLength = true;
             }
             if (key == "set-cookie" && state.settings.cookieBox != 0) Http2StoreResponseCookie(state.settings.cookieBox, state.Address(), text);
-            if (key == "content-encoding") state.contentEncoding = Lower(std::string(text));
+            if (key == "content-encoding" && !state.hasEncoding) {
+                state.contentEncoding = Lower(std::string(text));
+                state.hasEncoding = true;
+            }
             if (key != ":status") state.blockHeaders.emplace_back(std::string(key), std::string(text));
         });
     }
@@ -1071,11 +1151,16 @@ int Request::Send(const void* data, std::size_t size) {
     if (state->started && state->ended) return AlreadySent;
     Require(!state->started, "sceHttp2SendRequest: request reuse is not implemented");
     Require(data || size == 0, "sceHttp2SendRequest: null body");
-    Require(state->settings.noContentLength || size == state->settings.contentLength, "sceHttp2SendRequest: body length mismatch");
-    Require(state->version != 1 || !state->settings.noContentLength || size == 0, "sceHttp2: HTTP1.0 upload without a length is unsupported");
+    const bool disconnected = std::getenv("APS5_NET_DISCONNECTED") != nullptr;
+    Require(disconnected || state->settings.noContentLength || size == state->settings.contentLength, "sceHttp2SendRequest: body length mismatch");
+    Require(disconnected || state->version != 1 || !state->settings.noContentLength || size == 0, "sceHttp2: HTTP1.0 upload without a length is unsupported");
     state->started = true;
     state->totalDeadline = Clock::now() + std::chrono::microseconds(state->settings.timeout);
     try {
+        if (disconnected) {
+            state->Check(state->Total());
+            state->Raise(NetworkError, "sceHttp2: network disconnected");
+        }
         const void* payload = data;
         std::size_t payloadSize = size;
         for (unsigned redirects = 0;; ++redirects) {
@@ -1143,6 +1228,7 @@ int Request::Send(const void* data, std::size_t size) {
             state->body.clear();
             state->bodyOffset = 0;
             state->contentEncoding.clear();
+            state->hasEncoding = false;
             state->inflatedGzip = false;
             state->upload = nullptr;
             state->uploadSize = state->uploadOffset = 0;
@@ -1175,14 +1261,15 @@ int Request::Read(void* data, std::size_t size) {
     if (!size) return 0;
     if (state->ended && state->body.empty()) return 0;
     try {
-        if (state->version < 3) {
-            const int count = state->ReadHttp1(data, size);
+        if (state->version < 3 && !state->Inflating() && !state->inflatedGzip) {
+            const int count = state->ReadHttp1(data, size, state->Deadline(state->settings.recvTimeout, ReceiveTimedOut));
             if (state->ended) state->Close();
             return count;
         }
         const auto deadline = state->Deadline(state->settings.recvTimeout, ReceiveTimedOut);
         state->Check(deadline);
-        while (!state->ended && (state->bodyOffset == state->body.size() || state->Inflating())) state->Pump(deadline);
+        if (state->version < 3) state->FinishHttp1Gzip(deadline);
+        else while (!state->ended && (state->bodyOffset == state->body.size() || state->Inflating())) state->Pump(deadline);
         const auto count = std::min({size, state->body.size() - state->bodyOffset, static_cast<std::size_t>(std::numeric_limits<int>::max())});
         state->Check(deadline);
         if (count) std::memcpy(data, state->body.data() + state->bodyOffset, count);
@@ -1213,19 +1300,11 @@ int Request::Status(int* status) {
 int Request::ContentLength(int* kind, std::uint64_t* length) {
     auto lock = state->Lock();
     if (state->networkResult) return ResponseUnavailable;
-    Require(kind && length && state->ready, "sceHttp2GetResponseContentLength: null output or response unavailable");
-    if (state->Inflating()) {
-        Require(!state->readResult || state->ended, "sceHttp2GetResponseContentLength: inflated length after a failed read");
-        try {
-            const auto deadline = state->Deadline(state->settings.recvTimeout, ReceiveTimedOut);
-            while (!state->ended) state->Pump(deadline);
-        } catch (const RequestFailure&) {
-            try { Unknown("sceHttp2GetResponseContentLength: failure while inflating; console error mapping is unknown"); }
-            catch (...) { state->Fail(); throw; }
-        } catch (...) { state->Fail(); throw; }
-    }
-    *kind = state->chunked ? 2 : state->hasLength ? 0 : 1;
-    *length = state->hasLength ? state->contentLength : 0;
+    Require(kind && length, "sceHttp2GetResponseContentLength: null output");
+    if (!state->ready) return ResponseUnavailable;
+    const bool known = state->hasLength && (!state->GzipResponse() || (!state->settings.inflateGzip && CompiledSdkVersion() >= 0x12500000));
+    *kind = known ? 0 : state->chunked ? 2 : 1;
+    *length = known ? state->contentLength : 0;
     return 0;
 }
 
@@ -1233,13 +1312,18 @@ int Request::Headers(char** header, std::size_t* size) {
     auto lock = state->Lock();
     if (state->networkResult) return state->networkResult;
     Require(header && size && state->ready, "sceHttp2GetAllResponseHeaders: null output or response unavailable");
-    if (state->version < 3) {
-        *header = state->rawHeaders.data();
-        *size = state->rawHeaders.size();
-    } else {
-        *header = state->allHeaders.data();
-        *size = state->allHeaders.size();
+    auto& block = state->version < 3 ? state->rawHeaders : state->allHeaders;
+    if (state->settings.inflateGzip && state->settings.stripGzipHeaders && GzipEncoded(block)) {
+        if (state->strippedSource != block) {
+            state->strippedHeaders = WithoutGzipFields(block);
+            state->strippedSource = block;
+        }
+        *header = state->strippedHeaders.data();
+        *size = state->strippedHeaders.size();
+        return 0;
     }
+    *header = block.data();
+    *size = block.size();
     return 0;
 }
 

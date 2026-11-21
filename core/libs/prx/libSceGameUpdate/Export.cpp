@@ -98,17 +98,18 @@ int APS5_VABI sceGameUpdateCheck(int requestId, const GameUpdateCheckParam* para
     if (param == nullptr || result == nullptr) {
         return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
     }
+    GameUpdateCheckParam localParam{};
     GameUpdateCheckResult localResult{};
-    const bool copiedIn = GuestCopyIn_nid_no_patch(&localResult, result, sizeof(localResult));
-    if (!copiedIn) {
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam)) ||
+        !GuestCopyIn_nid_no_patch(&localResult, result, sizeof(localResult))) {
         errno = savedErrno;
         return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
     }
-    if (param->size != sizeof(GameUpdateCheckParam) || localResult.size != sizeof(GameUpdateCheckResult)) {
+    if (localParam.size != sizeof(GameUpdateCheckParam) || localResult.size != sizeof(GameUpdateCheckResult)) {
         errno = savedErrno;
         return SCE_GAME_UPDATE_ERROR_INVALID_SIZE;
     }
-    if (param->option != 0 || hasNonZeroReserved(param)) {
+    if (localParam.option != 0 || hasNonZeroReserved(&localParam)) {
         errno = savedErrno;
         return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
     }
@@ -170,8 +171,13 @@ int APS5_VABI sceGameUpdateGetAddcontLatestVersion(uint32_t serviceLabel, const 
             return SCE_GAME_UPDATE_ERROR_NOT_INITIALIZED;
         }
     }
-    constexpr bool found = false;
+    NpUnifiedEntitlementLabel localLabel{};
     const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localLabel, entitlementLabel, sizeof(localLabel))) {
+        errno = savedErrno;
+        return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
+    }
+    constexpr bool found = false;
     const bool copied = GuestCopyOut_nid_no_patch(&info->found, &found, sizeof(found));
     errno = savedErrno;
     return copied ? 0 : SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;

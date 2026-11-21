@@ -1,11 +1,22 @@
 #include "prx/libSceAudioIn/AudioInCapture.hpp"
 #include "prx/libScePad/include/HostAudioInControl.hpp"
 #include "prx/libScePad/include/HostVolumeControl.hpp"
+#include "prx/libScePad/include/Pad.hpp"
 
 #include <array>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
+extern "C" int APS5_VABI libScePadUnknown_oARLr0ca9N8_nid_no_patch(int handle, std::uint8_t* out);
 
 static void Require(bool value) {
     if (!value) std::abort();
@@ -163,6 +174,67 @@ static void TestCaptureMuteGenerations() {
     Require(!generations.Observe(5, 10));
 }
 
+static void TestPadUnknownOarlr0ca9n8() {
+    std::uint8_t out = 0xAA;
+    Require(libScePadUnknown_oARLr0ca9N8_nid_no_patch(0, nullptr) == PAD_ERROR_NOT_INITIALIZED);
+    Require(libScePadUnknown_oARLr0ca9N8_nid_no_patch(1, &out) == PAD_ERROR_NOT_INITIALIZED && out == 0xAA);
+
+    Require(scePadInit_nid_postfix() == PAD_OK);
+
+    Require(libScePadUnknown_oARLr0ca9N8_nid_no_patch(0, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(libScePadUnknown_oARLr0ca9N8_nid_no_patch(1, nullptr) == PAD_ERROR_INVALID_ARG);
+
+    out = 0xAA;
+    Require(libScePadUnknown_oARLr0ca9N8_nid_no_patch(0, &out) == PAD_ERROR_INVALID_HANDLE && out == 0xAA);
+    Require(libScePadUnknown_oARLr0ca9N8_nid_no_patch(-1, &out) == PAD_ERROR_INVALID_HANDLE && out == 0xAA);
+    Require(libScePadUnknown_oARLr0ca9N8_nid_no_patch(12345, &out) == PAD_ERROR_INVALID_HANDLE && out == 0xAA);
+
+    const int standardHandle = scePadOpen_nid_postfix(0x10000000, PAD_PORT_TYPE_STANDARD, 0, nullptr);
+    Require(standardHandle > 0);
+    const int specialHandle = scePadOpen_nid_postfix(200, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
+    Require(specialHandle > 0);
+
+    errno = 71;
+    Require(libScePadUnknown_oARLr0ca9N8_nid_no_patch(standardHandle, reinterpret_cast<std::uint8_t*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
+
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY);
+    Require(page != nullptr);
+#else
+    const long size = sysconf(_SC_PAGESIZE);
+    Require(size > 0);
+    const std::size_t pageSize = static_cast<std::size_t>(size);
+    void* page = mmap(nullptr, pageSize, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+
+    Require(libScePadUnknown_oARLr0ca9N8_nid_no_patch(standardHandle, static_cast<std::uint8_t*>(page)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
+
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(page, pageSize) == 0);
+#endif
+
+    out = 0xAA;
+    Require(libScePadUnknown_oARLr0ca9N8_nid_no_patch(standardHandle, &out) == PAD_OK && out == 0);
+    out = 0xAA;
+    Require(libScePadUnknown_oARLr0ca9N8_nid_no_patch(specialHandle, &out) == PAD_OK && out == 0);
+
+    Require(scePadClose_nid_postfix(standardHandle) == PAD_OK);
+    out = 0xAA;
+    Require(libScePadUnknown_oARLr0ca9N8_nid_no_patch(standardHandle, &out) == PAD_ERROR_INVALID_HANDLE && out == 0xAA);
+
+    Require(scePadClose_nid_postfix(specialHandle) == PAD_OK);
+    out = 0xAA;
+    Require(libScePadUnknown_oARLr0ca9N8_nid_no_patch(specialHandle, &out) == PAD_ERROR_INVALID_HANDLE && out == 0xAA);
+}
+
 int main() {
     TestFocusMuteState();
     TestCapturedSampleFilter();
@@ -172,5 +244,6 @@ int main() {
     TestDiscardQueuedAudioInChunks();
     TestDiscardQueuedAudioContinuesAfterPartialRead();
     TestDiscardQueuedAudioStopsOnNoProgress();
+    TestPadUnknownOarlr0ca9n8();
     return 0;
 }

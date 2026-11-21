@@ -7,6 +7,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <algorithm>
+#include <array>
+#include <latch>
+#include <thread>
 #include <stdexcept>
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -74,6 +78,35 @@ static void TestRequestArguments(int notInitialized, int invalidArgument, int in
     Require(sceGameUpdateTerminate() == 0);
 }
 
+static void TestConcurrentRequestCapacity() {
+    constexpr int tooManyRequests = static_cast<int>(0x80412806);
+    std::array<int, 9> results{};
+    std::latch ready(static_cast<std::ptrdiff_t>(results.size()));
+    std::latch start(1);
+    {
+        std::array<std::jthread, results.size()> callers;
+        for (std::size_t index = 0; index < callers.size(); ++index) {
+            callers[index] = std::jthread([&, index](std::stop_token stop) {
+                ready.count_down();
+                while (!start.try_wait()) {
+                    if (stop.stop_requested()) return;
+                    std::this_thread::yield();
+                }
+                results[index] = sceGameUpdateCreateRequest();
+            });
+        }
+        ready.wait();
+        start.count_down();
+        for (auto& caller : callers) caller.join();
+    }
+    std::ranges::sort(results);
+    Require(results.front() == tooManyRequests);
+    for (std::size_t index = 1; index < results.size(); ++index) {
+        Require(results[index] >= 0x20000000 && results[index] <= 0x2FFFFFFF);
+        Require(sceGameUpdateDeleteRequest(results[index]) == 0);
+    }
+}
+
 static void TestRequestLifecycle(int notFound) {
     constexpr int invalidArgument = static_cast<int>(0x80412803);
     constexpr int tooManyRequests = static_cast<int>(0x80412806);
@@ -92,6 +125,10 @@ static void TestRequestLifecycle(int notFound) {
     }
     Require(ids[0] != ids[1]);
     Require(sceGameUpdateCreateRequest() == tooManyRequests);
+
+    errno = 71;
+    Require(sceGameUpdateCheck(ids[0], reinterpret_cast<const GameUpdateCheckParam*>(std::uintptr_t{0x10}), &result) == invalidArgument);
+    Require(errno == 71);
 
     errno = 71;
     Require(sceGameUpdateCheck(ids[0], &param, reinterpret_cast<GameUpdateCheckResult*>(0x10)) == invalidArgument);
@@ -138,6 +175,7 @@ int main() {
 
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, &info) == notInitialized);
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, reinterpret_cast<GameUpdateAddcontVersionInfo*>(std::uintptr_t{0x10})) == notInitialized);
+    Require(sceGameUpdateGetAddcontLatestVersion(0, reinterpret_cast<const NpUnifiedEntitlementLabel*>(std::uintptr_t{0x10}), &info) == notInitialized);
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, nullptr) == invalidArgument);
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, &info) == invalidArgument);
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, nullptr) == invalidArgument);
@@ -146,6 +184,10 @@ int main() {
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, nullptr) == invalidArgument);
 
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, &info) == invalidArgument);
+
+    errno = 71;
+    Require(sceGameUpdateGetAddcontLatestVersion(0, reinterpret_cast<const NpUnifiedEntitlementLabel*>(std::uintptr_t{0x10}), &info) == invalidArgument);
+    Require(errno == 71);
 
     errno = 71;
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, reinterpret_cast<GameUpdateAddcontVersionInfo*>(std::uintptr_t{0x10})) == invalidArgument);
@@ -158,6 +200,7 @@ int main() {
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, &info) == 0);
     Require(!info.found);
     Require(info.content_version[0] == 'X' && info.reserved[0] == 0x12345678);
+    TestConcurrentRequestCapacity();
     TestRequestLifecycle(notFound);
 
     Require(sceGameUpdateTerminate() == 0);

@@ -307,17 +307,7 @@ const void* APS5_VABI WKURLCreateWithBaseURL(const void* baseURLRef, const char*
 
 namespace {
 
-class SecurityOrigin final : public NKWebKit::ObjectOf<NKWebKit::ObjectType::SecurityOrigin> {
-public:
-    SecurityOrigin(const NKWebKit::String& protocol, const NKWebKit::String& host, std::optional<std::uint16_t> port)
-        : protocol(protocol.characters), host(host.characters), port(port), protocolNull(protocol.null), hostNull(host.null) {}
-
-    std::u16string protocol;
-    std::u16string host;
-    std::optional<std::uint16_t> port;
-    bool protocolNull;
-    bool hostNull;
-};
+using NKWebKit::SecurityOrigin;
 
 const void* CopyOriginString(std::u16string text) {
     return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(std::move(text)));
@@ -341,12 +331,12 @@ const void* APS5_VABI WKSecurityOriginCreate(const void* protocol, const void* h
 
 const void* APS5_VABI WKSecurityOriginCopyProtocol(const void* origin) {
     const auto* value = NKWebKit::Cast<SecurityOrigin>(origin, __func__);
-    return value->protocolNull ? NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>()) : CopyOriginString(value->protocol);
+    return CopyOriginString(value->protocolNull ? std::u16string() : value->protocol);
 }
 
 const void* APS5_VABI WKSecurityOriginCopyHost(const void* origin) {
     const auto* value = NKWebKit::Cast<SecurityOrigin>(origin, __func__);
-    return value->hostNull ? NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>()) : CopyOriginString(value->host);
+    return CopyOriginString(value->hostNull ? std::u16string() : value->host);
 }
 
 std::uint16_t APS5_VABI WKSecurityOriginGetPort(const void* origin) {
@@ -356,7 +346,7 @@ std::uint16_t APS5_VABI WKSecurityOriginGetPort(const void* origin) {
 const void* APS5_VABI WKSecurityOriginCopyToString(const void* origin) {
     const auto* value = NKWebKit::Cast<SecurityOrigin>(origin, __func__);
     if (value->protocol == u"file") return CopyOriginString(u"file://");
-    if (value->protocol.empty() && value->host.empty()) return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>());
+    if (value->protocol.empty() && value->host.empty()) return CopyOriginString(std::u16string());
     auto text = value->protocol + u"://" + value->host;
     if (value->port) text += u":" + PortString(*value->port);
     return CopyOriginString(std::move(text));

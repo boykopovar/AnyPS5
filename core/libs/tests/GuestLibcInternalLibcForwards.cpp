@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 
 struct TypeRecord { const void* vtable; const char* name; const TypeRecord* base; };
 
@@ -116,6 +117,15 @@ void CheckBadVariantAccess() {
     Require(releases == 1 && lastReleased == allocated, "bad_variant_access D0 releases the object through operator delete");
 }
 
+void CheckBadException() {
+    auto* allocated = static_cast<LibcException::ExceptionObject*>(_Znwm_nid_postfix(sizeof(void*)));
+    allocated->vtable = &_ZTVSt18bad_variant_access_nid_postfix[2];
+    releases = 0;
+    lastReleased = nullptr;
+    _ZNSt13bad_exceptionD0Ev_nid_postfix(allocated);
+    Require(releases == 1 && lastReleased == allocated, "bad_exception D0 releases the object through operator delete");
+}
+
 TypeRecord Named(const char* name) {
     return {_ZTISt9exception_nid_postfix.vtable, name, nullptr};
 }
@@ -152,6 +162,29 @@ constexpr int recursive = 0x100;
 
 int InitWithOverride(PthreadMutex* mutex, int type, const char* name) {
     return _ZNSt8__sce_v236_Mtx_init_with_default_name_overrideEPP13pthread_mutexiPKc_nid_postfix(reinterpret_cast<void**>(mutex), type, name);
+}
+
+void CheckErrno() {
+    int* const slot = _Geterrno_nid_postfix();
+    Require(slot != nullptr && slot == __error_nid_postfix(), "_Geterrno returns the libc errno slot");
+    Require(_Geterrno_nid_postfix() == slot, "_Geterrno returns the same slot on one thread");
+    *__error_nid_postfix() = 34;
+    Require(*_Geterrno_nid_postfix() == 34, "_Geterrno reads what libc stored");
+    *_Geterrno_nid_postfix() = 22;
+    Require(*__error_nid_postfix() == 22, "libc reads what was stored through _Geterrno");
+    int* other = nullptr;
+    int otherValue = -1;
+    bool otherMatches = false;
+    std::thread worker([&] {
+        other = _Geterrno_nid_postfix();
+        otherMatches = other == __error_nid_postfix();
+        *other = 5;
+        otherValue = *__error_nid_postfix();
+    });
+    worker.join();
+    Require(other != nullptr && other != slot && otherMatches && otherValue == 5, "_Geterrno gives each thread its own slot");
+    Require(*_Geterrno_nid_postfix() == 22, "another thread's store leaves this thread's errno alone");
+    *slot = 0;
 }
 
 void CheckMutex() {
@@ -196,8 +229,10 @@ int main() {
 
     CheckCategories();
     CheckBadVariantAccess();
+    CheckBadException();
     CheckOverflow();
     CheckMutex();
+    CheckErrno();
 
     if (failures != 0) return 1;
     std::puts("libc internal libc forward checks passed");

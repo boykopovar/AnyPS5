@@ -128,7 +128,28 @@ int main(int, char* argv[]) {
                     std::to_string(code) + " for " + alias.string());
             }
         }
-#ifndef _WIN32
+#ifdef _WIN32
+        const auto expectLaunchFailure = [&](unsigned long expectedError) {
+            try {
+                Cli::Autorun(child.string(), true);
+            } catch (const Domain::RelinkerException& error) {
+                const std::string expected = "Cannot run the output executable: " + child.string() +
+                    " (error " + std::to_string(expectedError) + ")";
+                if (error.what() != expected)
+                    throw std::runtime_error("Autorun lost the Windows launch error: " + std::string(error.what()));
+                return;
+            }
+            throw std::runtime_error("Autorun accepted an unusable executable");
+        };
+        std::filesystem::remove(child);
+        expectLaunchFailure(ERROR_FILE_NOT_FOUND);
+        {
+            std::ofstream invalid(child, std::ios::binary);
+            invalid.exceptions(std::ios::failbit | std::ios::badbit);
+            invalid.close();
+        }
+        expectLaunchFailure(ERROR_BAD_EXE_FORMAT);
+#else
         const auto savedHandler = std::signal(SIGCHLD, SIG_IGN);
         if (savedHandler == SIG_ERR) throw std::runtime_error("Cannot ignore SIGCHLD for the autorun failure test");
         try {

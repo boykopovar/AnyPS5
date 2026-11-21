@@ -29,15 +29,11 @@ std::uint32_t APS5_VABI sceAgcCbBranchGetSize() {
 }
 
 std::uint32_t* APS5_VABI sceAgcCbCondWrite(CommandBuffer* buf, std::uint32_t compareFunction, std::uint32_t writeSpace, const volatile void* writeAddress, std::uint32_t writeData, const volatile void* pollAddress, std::uint32_t reference, std::uint32_t mask) {
-    Agc::Command::Require(compareFunction <= 6, __func__, "invalid write comparison");
-    Agc::Command::Require(writeSpace == 1, __func__, "only memory writes are supported");
     const auto destination = reinterpret_cast<std::uintptr_t>(writeAddress);
     const auto source = reinterpret_cast<std::uintptr_t>(pollAddress);
-    Agc::Command::CheckAddress(destination, 4, __func__);
-    Agc::Command::CheckAddress(source, 4, __func__);
     Agc::Command::CheckBits(destination, 0xffffffffffffull, __func__);
     Agc::Command::CheckBits(source, 0xffffffffffffull, __func__);
-    return Agc::Command::Emit(buf, 0x45u, {0x10u | compareFunction | (writeSpace << 8u), static_cast<std::uint32_t>(source), static_cast<std::uint32_t>(source >> 32u), reference, mask, static_cast<std::uint32_t>(destination), static_cast<std::uint32_t>(destination >> 32u), writeData}, __func__);
+    return Agc::Command::Emit(buf, 0x45u, {0x10u | (compareFunction & 7u) | ((writeSpace & 3u) << 8u), static_cast<std::uint32_t>(source), static_cast<std::uint32_t>(source >> 32u), reference, mask, static_cast<std::uint32_t>(destination), static_cast<std::uint32_t>(destination >> 32u), writeData}, __func__);
 }
 
 std::uint32_t APS5_VABI sceAgcCbCondWriteGetSize() {
