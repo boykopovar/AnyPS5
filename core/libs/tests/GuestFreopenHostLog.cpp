@@ -10,13 +10,14 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <mutex>
+#include <vector>
 #ifdef _WIN32
 #include <io.h>
 #else
 #include <fcntl.h>
 #include <sys/resource.h>
 #include <unistd.h>
-#include <vector>
 #endif
 
 extern "C" {
@@ -104,13 +105,206 @@ static int KeepFailure(const std::string& stamp) {
 }
 #endif
 
+#ifdef _WIN32
+static std::FILE* releaseForOpen = nullptr;
+static int openEntryError = 0;
+static int openCalls = 0;
+
+static std::FILE* OpenMissingAfterRelease(const std::filesystem::path& filename, const std::string& mode) {
+    openEntryError = errno;
+    ++openCalls;
+    if (releaseForOpen) {
+        Require(std::fclose(releaseForOpen) == 0, "cannot release the callback's stream slot");
+        releaseForOpen = nullptr;
+    }
+    const std::wstring wideMode(mode.begin(), mode.end());
+    return ::_wfopen(filename.c_str(), wideMode.c_str());
+}
+
+static int KeepReturnFailure(int descriptor, const std::string& stamp) {
+    const auto missing = std::filesystem::path("anyps5-freopen-host-log-missing-" + stamp) / "output.txt";
+    const auto native = __acrt_iob_func(descriptor);
+    Require((descriptor == 1 ? stdout : stderr) == native, "the host stream was already kept");
+    Require(!std::filesystem::exists(missing.parent_path()), "the missing parent unexpectedly exists");
+    if (!failures.empty()) { HostWrite(2, failures); return 2; }
+    bool reopened = false;
+    bool threw = false;
+    int openError = 0;
+    {
+        struct Cleanup {
+            int descriptor;
+            int saved;
+            int limit;
+            std::vector<std::FILE*> fillers;
+            ~Cleanup() {
+                if (releaseForOpen) {
+                    std::fclose(releaseForOpen);
+                    releaseForOpen = nullptr;
+                }
+                for (auto* stream : fillers) std::fclose(stream);
+                Require(::_setmaxstdio(limit) == limit, "cannot restore the child stream limit");
+                if (saved >= 0) {
+                    Require(HostDup2(saved, descriptor) == 0, "cannot restore the child descriptor");
+                    Require(HostClose(saved) == 0, "cannot close the saved child descriptor");
+                }
+            }
+        } cleanup{descriptor, HostDup(descriptor), ::_getmaxstdio(), {}};
+        if (cleanup.saved < 0 || ::_setmaxstdio(64) != 64) return 3;
+        for (int i = 0; i < 64; ++i) {
+            auto* stream = std::fopen("NUL", "r");
+            if (!stream) break;
+            cleanup.fillers.push_back(stream);
+        }
+        Require(errno == EMFILE && !cleanup.fillers.empty(), "the child stream table was not filled");
+        const int duplicate = HostDup(descriptor);
+        Require(duplicate >= 0, "low-level descriptors were exhausted instead of stream slots");
+        if (duplicate >= 0) HostClose(duplicate);
+        errno = 0;
+        const int kept = descriptor == 1 ? KeepHostStandardOutput_nid_no_patch() : KeepHostStandardError_nid_no_patch();
+        const int keepError = errno;
+        Require(kept < 0 && keepError == EMFILE, "the real keep did not return the stream-slot failure");
+        Require((descriptor == 1 ? stdout : stderr) == native, "a failed keep replaced the host stream");
+        if (!failures.empty()) { HostWrite(2, failures); return 4; }
+        releaseForOpen = cleanup.fillers.back();
+        cleanup.fillers.pop_back();
+        errno = E2BIG;
+        try {
+            auto* stream = descriptor == 1 ? __stdoutp_nid_postfix : __stderrp_nid_postfix;
+            auto lease = AcquireFileStreamLease_nid_no_patch(stream, true);
+            Require(lease.Valid(), "cannot lease the standard stream");
+            if (lease.Valid()) {
+                const std::lock_guard<std::recursive_mutex> gate(*lease.Gate());
+                reopened = stream->Reopen(missing, "w", OpenMissingAfterRelease);
+            }
+        } catch (...) {
+            threw = true;
+        }
+        openError = errno;
+    }
+    Require(!threw, "a return failure escaped from Reopen");
+    Require(openCalls == 1, "the real native-open callback did not run exactly once");
+    Require(openEntryError == E2BIG, "a keep failure leaked errno into the native open");
+    Require(!reopened && openError == ENOENT, "the actual native-open failure was replaced");
+    HostWrite(2, failures);
+    return failures.empty() ? 0 : 1;
+}
+#else
+static int NativeClosedStdout(const std::string& stamp, const std::filesystem::path& record) {
+    const auto temporary = record.string() + ".tmp";
+    std::error_code ignored;
+    std::filesystem::remove(record, ignored);
+    std::filesystem::remove(temporary, ignored);
+    const auto missing = std::filesystem::absolute(std::filesystem::path("anyps5-freopen-host-log-missing-" + stamp) / "output.txt");
+    Require(!std::filesystem::exists(missing.parent_path()), "the native baseline parent unexpectedly exists");
+    Require(HostFileno(stdout) == 1, "the native baseline stdout descriptor is not 1");
+    if (!failures.empty()) { HostWrite(2, failures); return 2; }
+    const int saved = HostDup(1);
+    if (saved < 0) return 2;
+    if (HostClose(1) != 0) { HostClose(saved); return 2; }
+    errno = E2BIG;
+    const bool reopened = std::freopen(missing.c_str(), "w", stdout) != nullptr;
+    const int openError = errno;
+    Require(HostDup2(saved, 1) == 0, "cannot restore native baseline stdout");
+    Require(HostClose(saved) == 0, "cannot close the native baseline saved descriptor");
+    Require(!reopened && openError != 0, "the native baseline did not produce a real open failure");
+    if (!failures.empty()) { HostWrite(2, failures); return 2; }
+    {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        output << "native-closed-stdout-v1\n" << missing.string() << '\n' << reopened << ' ' << openError << '\n';
+        output.close();
+        Require(!output.fail(), "cannot write native baseline outcome");
+    }
+    if (failures.empty()) {
+        std::filesystem::rename(temporary, record, ignored);
+        Require(!ignored, "cannot publish native baseline outcome");
+    }
+    HostWrite(2, failures);
+    return failures.empty() ? 0 : 1;
+}
+
+static int KeepReturnFailure(const std::filesystem::path& record) {
+    std::string version;
+    std::string nativePath;
+    bool nativeReopened = true;
+    int nativeError = 0;
+    {
+        std::ifstream input(record, std::ios::binary);
+        std::getline(input, version);
+        std::getline(input, nativePath);
+        input >> nativeReopened >> nativeError;
+        Require(!input.fail() && version == "native-closed-stdout-v1" && !nativePath.empty() && !nativeReopened && nativeError != 0,
+                "the independent native baseline is missing or invalid");
+    }
+    std::error_code ignored;
+    Require(std::filesystem::remove(record, ignored) && !ignored, "cannot consume the native baseline outcome");
+    const std::filesystem::path missing(nativePath);
+    Require(!std::filesystem::exists(missing.parent_path()), "the missing parent unexpectedly exists");
+    Require(HostFileno(stdout) == 1, "the Reopen stdout descriptor is not 1");
+    if (!failures.empty()) { HostWrite(2, failures); return 2; }
+    const int saved = HostDup(1);
+    if (saved < 0) return 2;
+    auto* const original = stdout;
+    Require(HostClose(1) == 0, "cannot close the child's stdout descriptor");
+    errno = 0;
+    int kept = 0;
+    int keepError = 0;
+    bool keepThrew = false;
+    try {
+        kept = KeepHostStandardOutput_nid_no_patch();
+        keepError = errno;
+    } catch (...) {
+        keepThrew = true;
+    }
+    if (keepThrew || kept >= 0 || keepError != EBADF) {
+        HostDup2(saved, 1);
+        HostClose(saved);
+        Require(false, "the real keep did not return EBADF");
+        HostWrite(2, failures);
+        return 3;
+    }
+    bool threw = false;
+    bool reopened = true;
+    try {
+        auto lease = AcquireFileStreamLease_nid_no_patch(__stdoutp_nid_postfix, true);
+        Require(lease.Valid(), "cannot lease stdout for the real Reopen branch");
+        if (lease.Valid()) {
+            const std::lock_guard<std::recursive_mutex> gate(*lease.Gate());
+            Require(__stdoutp_nid_postfix->IsOpen(), "the standard FILE was detached before Reopen");
+            if (__stdoutp_nid_postfix->IsOpen()) {
+                errno = E2BIG;
+                reopened = __stdoutp_nid_postfix->Reopen(missing, "w");
+            }
+        }
+    } catch (...) {
+        threw = true;
+    }
+    const int openError = errno;
+    Require(HostDup2(saved, 1) == 0, "cannot restore the child's stdout descriptor");
+    Require(HostClose(saved) == 0, "cannot close the saved child descriptor");
+    Require(kept < 0 && keepError == EBADF, "the real keep did not return EBADF");
+    Require(stdout == original, "a failed keep replaced host stdout");
+    if (threw || reopened != nativeReopened || openError != nativeError) {
+        const int savedError = errno;
+        std::fprintf(stderr, "Reopen outcome: reopened=%d threw=%d errno=%d; native reopened=%d errno=%d\n",
+                     reopened, threw, openError, nativeReopened, nativeError);
+        errno = savedError;
+    }
+    Require(!threw && reopened == nativeReopened && openError == nativeError, "the real Reopen outcome differs from native freopen");
+    HostWrite(2, failures);
+    return failures.empty() ? 0 : 1;
+}
+#endif
+
 int main(int argc, char** argv) {
     const auto stamp = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
 #ifndef _WIN32
     if (argc > 1 && std::string(argv[1]) == "keep-failure") return KeepFailure(stamp);
+    if (argc > 2 && std::string(argv[1]) == "native-closed-stdout") return NativeClosedStdout(stamp, argv[2]);
+    if (argc > 2 && std::string(argv[1]) == "keep-return-failure") return KeepReturnFailure(argv[2]);
+    if (argc > 1 && (std::string(argv[1]) == "native-closed-stdout" || std::string(argv[1]) == "keep-return-failure")) return 2;
 #else
-    static_cast<void>(argc);
-    static_cast<void>(argv);
+    if (argc > 1 && std::string(argv[1]) == "keep-return-stdout") return KeepReturnFailure(1, stamp);
+    if (argc > 1 && std::string(argv[1]) == "keep-return-stderr") return KeepReturnFailure(2, stamp);
 #endif
     const auto consoleName = "anyps5-freopen-host-log-console-" + stamp + ".txt";
     const auto outName = "anyps5-freopen-host-log-out-" + stamp + ".txt";

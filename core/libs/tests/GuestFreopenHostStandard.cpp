@@ -68,6 +68,17 @@ int main() {
 
 #ifdef _WIN32
     Check(std::filesystem::create_directory(directoryName));
+    const auto ordinaryName = directoryName + ".file";
+    FileStream* ordinary = fopen_nid_postfix(ordinaryName.c_str(), "wb");
+    Check(ordinary != nullptr);
+    Check(freopen_nid_postfix(directoryName.c_str(), "r", ordinary) == ordinary);
+    FileStat ordinaryStatus{};
+    Check(sceKernelFstat(fileno_nid_postfix(ordinary), &ordinaryStatus) == 0 && (ordinaryStatus.st_mode & 0170000) == 0040000);
+    char ordinaryBlock[16];
+    errno = 0;
+    Check(fread_nid_postfix(ordinaryBlock, 1, sizeof(ordinaryBlock), ordinary) == 0 && errno == EISDIR);
+    Check(ferror_nid_postfix(ordinary) != 0 && fclose_nid_postfix(ordinary) == 0);
+    Check(std::filesystem::remove(ordinaryName));
     errno = 0;
     Check(freopen_nid_postfix(directoryName.c_str(), "r", __stdoutp_nid_postfix) == __stdoutp_nid_postfix);
     FileStat status{};
