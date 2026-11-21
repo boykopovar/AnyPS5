@@ -640,6 +640,124 @@ bool FillResponse(Request& request, const Entry& entry, HttpCacheResponse* respo
     return CopyOut(response, &localResponse, sizeof(localResponse));
 }
 
+bool PoolHeadersSize(const Headers& headers, std::size_t& size) {
+    if (headers.size() > std::numeric_limits<std::size_t>::max() / sizeof(HttpCacheHeader)) return false;
+    size = headers.size() * sizeof(HttpCacheHeader);
+    for (const auto& header : headers) {
+        if (header.name.size() >= std::numeric_limits<std::size_t>::max() - size) return false;
+        size += header.name.size() + 1;
+        if (header.value.size() >= std::numeric_limits<std::size_t>::max() - size) return false;
+        size += header.value.size() + 1;
+    }
+    return true;
+}
+
+bool PoolResponseSize(const Entry& entry, std::size_t& size) {
+    return PoolHeadersSize(entry.headers, size);
+}
+
+bool PoolAddress(void* pool, std::size_t offset, void*& address) {
+    const auto base = reinterpret_cast<std::uintptr_t>(pool);
+    if (offset > std::numeric_limits<std::uintptr_t>::max() - base) return false;
+    address = reinterpret_cast<void*>(base + offset);
+    return true;
+}
+
+bool ClearPoolRegion(void* pool, std::size_t offset, std::size_t size) {
+    constexpr std::array<std::uint8_t, 4096> zeroes{};
+    while (size != 0) {
+        void* destination = nullptr;
+        const std::size_t count = std::min(zeroes.size(), size);
+        if (!PoolAddress(pool, offset, destination) || !CopyOut(destination, zeroes.data(), count)) return false;
+        offset += count;
+        size -= count;
+    }
+    return true;
+}
+
+bool FillPoolResponse(const Entry& entry, HttpCacheResponse* response, void* pool, std::size_t poolSize, std::size_t poolOffset = 0, bool clearRemainder = true) {
+    std::size_t requiredSize = 0;
+    if (!PoolResponseSize(entry, requiredSize) || poolOffset > poolSize || requiredSize > poolSize - poolOffset) return false;
+    const std::size_t clearSize = clearRemainder ? poolSize - poolOffset : requiredSize;
+    if (!ClearPoolRegion(pool, poolOffset, clearSize)) return false;
+
+    std::vector<HttpCacheHeader> headers;
+    headers.reserve(entry.headers.size());
+    std::size_t stringOffset = poolOffset + entry.headers.size() * sizeof(HttpCacheHeader);
+    for (const auto& header : entry.headers) {
+        void* nameAddress = nullptr;
+        if (!PoolAddress(pool, stringOffset, nameAddress)) return false;
+        const char* name = static_cast<const char*>(nameAddress);
+        stringOffset += header.name.size() + 1;
+        void* valueAddress = nullptr;
+        if (!PoolAddress(pool, stringOffset, valueAddress)) return false;
+        const char* value = static_cast<const char*>(valueAddress);
+        stringOffset += header.value.size() + 1;
+        headers.push_back(HttpCacheHeader{name, value});
+    }
+    void* headerAddress = nullptr;
+    if (!headers.empty() && (!PoolAddress(pool, poolOffset, headerAddress) || !CopyOut(headerAddress, headers.data(), headers.size() * sizeof(HttpCacheHeader)))) return false;
+
+    stringOffset = poolOffset + entry.headers.size() * sizeof(HttpCacheHeader);
+    for (const auto& header : entry.headers) {
+        void* destination = nullptr;
+        if (!PoolAddress(pool, stringOffset, destination) || !CopyOut(destination, header.name.c_str(), header.name.size() + 1)) return false;
+        stringOffset += header.name.size() + 1;
+        if (!PoolAddress(pool, stringOffset, destination) || !CopyOut(destination, header.value.c_str(), header.value.size() + 1)) return false;
+        stringOffset += header.value.size() + 1;
+    }
+
+    HttpCacheResponse localResponse{};
+    localResponse.statusCode = entry.status;
+    localResponse.headerCount = entry.headers.size();
+    void* responseHeaders = nullptr;
+    if (!PoolAddress(pool, poolOffset, responseHeaders)) return false;
+    localResponse.headers = static_cast<const HttpCacheHeader*>(responseHeaders);
+    localResponse.contentLength = entry.pending ? 0 : entry.body.size();
+    return CopyOut(response, &localResponse, sizeof(localResponse));
+}
+
+bool PoolRequestSize(const RequestData& request, std::size_t& size) {
+    if (!PoolHeadersSize(request.headers, size) || request.url.size() >= std::numeric_limits<std::size_t>::max() - size) return false;
+    size += request.url.size() + 1;
+    return true;
+}
+
+bool FillPoolNextRequest(const RequestData& next, HttpCacheRequest* nextRequest, void* pool, std::size_t poolSize, std::size_t size) {
+    if (size > poolSize || !ClearPoolRegion(pool, 0, size)) return false;
+    std::vector<HttpCacheHeader> headers;
+    headers.reserve(next.headers.size());
+    std::size_t stringOffset = next.headers.size() * sizeof(HttpCacheHeader);
+    for (const auto& header : next.headers) {
+        void* nameAddress = nullptr;
+        if (!PoolAddress(pool, stringOffset, nameAddress)) return false;
+        const char* name = static_cast<const char*>(nameAddress);
+        stringOffset += header.name.size() + 1;
+        void* valueAddress = nullptr;
+        if (!PoolAddress(pool, stringOffset, valueAddress)) return false;
+        const char* value = static_cast<const char*>(valueAddress);
+        stringOffset += header.value.size() + 1;
+        headers.push_back(HttpCacheHeader{name, value});
+    }
+    if (!headers.empty() && !CopyOut(pool, headers.data(), headers.size() * sizeof(HttpCacheHeader))) return false;
+    stringOffset = next.headers.size() * sizeof(HttpCacheHeader);
+    for (const auto& header : next.headers) {
+        void* destination = nullptr;
+        if (!PoolAddress(pool, stringOffset, destination) || !CopyOut(destination, header.name.c_str(), header.name.size() + 1)) return false;
+        stringOffset += header.name.size() + 1;
+        if (!PoolAddress(pool, stringOffset, destination) || !CopyOut(destination, header.value.c_str(), header.value.size() + 1)) return false;
+        stringOffset += header.value.size() + 1;
+    }
+    void* urlAddress = nullptr;
+    if (!PoolAddress(pool, stringOffset, urlAddress) || !CopyOut(urlAddress, next.url.c_str(), next.url.size() + 1)) return false;
+    HttpCacheRequest localNext{};
+    localNext.method = next.method;
+    localNext.url = static_cast<const char*>(urlAddress);
+    localNext.headerCount = next.headers.size();
+    localNext.headers = static_cast<const HttpCacheHeader*>(pool);
+    return CopyOut(nextRequest, &localNext, sizeof(localNext));
+}
+
 bool FillNextRequest(Request& request, const RequestData& next, HttpCacheRequest* nextRequest) {
     HttpCacheRequest localNext{};
     localNext.method = next.method;
@@ -982,8 +1100,36 @@ int APS5_VABI sceHttpCacheRetrieveWithMemoryPool(std::int32_t requestId, const H
     const std::int32_t retrieveResult = RetrieveFor(*state, std::move(data), found, next);
     if (!CopyOut(result, &retrieveResult, sizeof(retrieveResult))) return snapshot.Rollback();
     if (retrieveResult != ResultHit && retrieveResult != ResultRevalidate) return 0;
-    if (pool != nullptr && response == nullptr) return ErrorInvalidValue;
-    NotImplemented_nid_no_patch("sceHttpCacheRetrieveWithMemoryPool sizing or filling a pool");
+    if (retrieveResult == ResultHit) {
+        if (!found) return ErrorInvalidValue;
+        std::size_t size = 0;
+        if (!PoolResponseSize(*found, size)) return ErrorInvalidValue;
+        if (pool == nullptr) return CopyOut(requiredSize, &size, sizeof(size)) ? 0 : ErrorInvalidValue;
+        if (response == nullptr || poolSize < size) return ErrorInvalidValue;
+        return FillPoolResponse(*found, response, pool, poolSize) ? 0 : ErrorInvalidValue;
+    }
+
+    if (next == nullptr || nextRequest == nullptr) return ErrorInvalidValue;
+    std::size_t requestSize = 0;
+    if (!PoolRequestSize(*next, requestSize)) return ErrorInvalidValue;
+    const bool includeResponse = found && StaleUsable(found.get());
+    if (pool == nullptr) {
+        std::size_t size = requestSize;
+        if (includeResponse) {
+            std::size_t responseSize = 0;
+            if (!PoolResponseSize(*found, responseSize) || responseSize > std::numeric_limits<std::size_t>::max() - size) return ErrorInvalidValue;
+            size += responseSize;
+        }
+        return CopyOut(requiredSize, &size, sizeof(size)) ? 0 : ErrorInvalidValue;
+    }
+    if (poolSize < requestSize || !FillPoolNextRequest(*next, nextRequest, pool, poolSize, requestSize)) return ErrorInvalidValue;
+    if (!includeResponse) return 0;
+    if (response == nullptr) return ErrorInvalidValue;
+    std::size_t responseSize = 0;
+    if (!PoolResponseSize(*found, responseSize) || responseSize > std::numeric_limits<std::size_t>::max() - requestSize) return ErrorInvalidValue;
+    const std::size_t totalSize = requestSize + responseSize;
+    if (poolSize < totalSize) return ErrorInvalidValue;
+    return FillPoolResponse(*found, response, pool, poolSize, requestSize, false) ? 0 : ErrorInvalidValue;
 }
 
 int APS5_VABI sceHttpCacheRevalidate(std::int32_t requestId, const HttpCacheResponseHeader* header, HttpCacheResponse* response, std::int32_t* result) {
@@ -1013,10 +1159,11 @@ int APS5_VABI sceHttpCacheRevalidateWithMemoryPool(std::int32_t requestId, const
     if (pool == nullptr && requiredSize == nullptr) return ErrorInvalidValue;
     if (header == nullptr) {
         if (result == nullptr) return ErrorInvalidValue;
-        NotImplemented_nid_no_patch("sceHttpCacheRevalidateWithMemoryPool without a response header");
     }
     ResponseData received;
-    if (const int status = MakeResponse(header, received); status != 0) return status;
+    if (header != nullptr) {
+        if (const int status = MakeResponse(header, received); status != 0) return status;
+    }
     if (result == nullptr) return ErrorInvalidValue;
     std::optional<StoreKey> storeKey;
     if (state->hasStore && state->current) storeKey = KeyFor(*state);
@@ -1025,8 +1172,11 @@ int APS5_VABI sceHttpCacheRevalidateWithMemoryPool(std::int32_t requestId, const
     const std::int32_t revalidateResult = Revalidate(*state, received, found);
     if (!CopyOut(result, &revalidateResult, sizeof(revalidateResult))) return snapshot.Rollback();
     if (!found) return 0;
-    if (pool != nullptr && response == nullptr) return ErrorInvalidValue;
-    NotImplemented_nid_no_patch("sceHttpCacheRevalidateWithMemoryPool sizing or filling a pool");
+    std::size_t size = 0;
+    if (!PoolResponseSize(*found, size)) return ErrorInvalidValue;
+    if (pool == nullptr) return CopyOut(requiredSize, &size, sizeof(size)) ? 0 : snapshot.Rollback();
+    if (response == nullptr || poolSize < size) return ErrorInvalidValue;
+    return FillPoolResponse(*found, response, pool, poolSize) ? 0 : ErrorInvalidValue;
 }
 
 int APS5_VABI sceHttpCacheSetCacheSharing(std::uint8_t enabled) {
