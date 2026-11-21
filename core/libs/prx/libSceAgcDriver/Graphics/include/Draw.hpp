@@ -36,8 +36,34 @@ struct DrawTraceContext {
 // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, non-indirect draw
 // built for its draw-cache entry (design_cpu_final M8; null otherwise, and always under
 // APS5_NO_DRAW_RECIPE=1).
-void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0, const std::vector<std::uint32_t>* contentKey = nullptr);
-std::vector<std::uint32_t> DrawResourceContentKey(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders);
+struct PreparedDraw;
+struct PreparedDrawRelease {
+    void operator()(PreparedDraw* prepared) const noexcept;
+};
+using PreparedDrawPtr = std::unique_ptr<PreparedDraw, PreparedDrawRelease>;
+PreparedDrawPtr PrepareDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, bool plan);
+struct PreparedDrawCounts {
+    std::uint64_t prepared = 0;
+    std::uint64_t planned = 0;
+    std::uint64_t failed = 0;
+    std::uint64_t planNs = 0;
+    std::uint64_t used = 0;
+    std::uint64_t otherDevice = 0;
+    std::uint64_t inlinePlans = 0;
+    std::uint64_t inlinePlanNs = 0;
+};
+PreparedDrawCounts TakePreparedDrawCounts();
+struct DrawPlanVerifyCounts {
+    std::uint64_t selectedPrepared = 0;
+    std::uint64_t selectedInline = 0;
+    std::uint64_t takenPrepared = 0;
+    std::uint64_t takenInline = 0;
+    std::uint64_t afterRecordWorkPrepared = 0;
+    std::uint64_t afterRecordWorkInline = 0;
+};
+DrawPlanVerifyCounts ReadDrawPlanVerifyCounts();
+
+void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0, const PreparedDraw* prepared = nullptr);
 
 struct PixelFunctionLdsLayouts {
     VkDescriptorSetLayout empty = VK_NULL_HANDLE;
@@ -206,6 +232,7 @@ VertexPlanScratchState ThreadVertexPlanScratch();
 enum class DrawStopForTest { None = 0, ReturnAfterResolve = 1, ThrowAfterResolve = 2 };
 void SetSpaceKeepFailuresForTest(std::uint32_t count);
 void SetDrawStopAfterResolveForTest(DrawStopForTest stop);
+void SetPreparedDrawDeviceForTest(PreparedDraw& prepared, VkDevice device);
 enum class TargetMemoEvent : std::uint8_t {
     Lookup, Hit, OverlapCached, OverlapComputed, Accept, AcceptWithDepthMiss, DepthHit, AvoidedRefreshLookups,
     Invalid, ThreadChanged, Descriptor, ResidentGone, ResidentEvicted, DepthOverlap, Metadata,
