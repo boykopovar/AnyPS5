@@ -58,13 +58,6 @@ std::string Format(const DoubleToStringConverter* converter, double value, int d
 
 void TestFormatting() {
     const auto* ecma = _ZN3WTF17double_conversion23DoubleToStringConverter19EcmaScriptConverterEv();
-    const auto* css = _ZN3WTF17double_conversion23DoubleToStringConverter12CSSConverterEv();
-    Require(css == _ZN3WTF17double_conversion23DoubleToStringConverter12CSSConverterEv());
-    Require(css->flags == 9 && css->exponentCharacter == 'e');
-    Require(css->decimalInShortestLow == -6 && css->decimalInShortestHigh == 21);
-    Require(css->maxLeadingPaddingZeroesInPrecisionMode == 6 && css->maxTrailingPaddingZeroesInPrecisionMode == 0);
-    Require(std::string_view(css->infinitySymbol) == "infinity" && std::string_view(css->nanSymbol) == "NaN");
-
     Require(Format(ecma, 3.1415, 3) == "3.142");
     Require(Format(ecma, 1234.56789, 4) == "1234.5679");
     Require(Format(ecma, 0.1, 30) == "0.100000000000000005551115123126");
@@ -105,9 +98,7 @@ void TestFormatting() {
     const double nan = std::numeric_limits<double>::quiet_NaN();
     Require(Format(ecma, infinity, 101) == "Infinity");
     Require(Format(ecma, -infinity, -1) == "-Infinity");
-    Require(Format(css, infinity, 0) == "infinity");
-    Require(Format(css, -infinity, 100) == "-infinity");
-    Require(Format(css, -nan, -1) == "NaN");
+    Require(Format(ecma, -nan, -1) == "NaN");
     Require(Format(ecma, 1e21, 0, false).empty());
     Require(Format(ecma, -1e21, 0, false).empty());
     Require(Format(ecma, std::numeric_limits<double>::max(), 0, false).empty());

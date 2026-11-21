@@ -47,8 +47,6 @@ extern "C" {
 
 const NKWebKit::WtfAbi::DoubleToStringConverter* APS5_VABI
 _ZN3WTF17double_conversion23DoubleToStringConverter19EcmaScriptConverterEv();
-const NKWebKit::WtfAbi::DoubleToStringConverter* APS5_VABI
-_ZN3WTF17double_conversion23DoubleToStringConverter12CSSConverterEv();
 bool APS5_VABI
 _ZNK3WTF17double_conversion23DoubleToStringConverter7ToFixedEdiPNS0_13StringBuilderE(
     const NKWebKit::WtfAbi::DoubleToStringConverter* self,

@@ -67,12 +67,6 @@ std::string ReadSymbol(const char* symbol, std::size_t capacity) {
 
 extern "C" {
 
-const DoubleToStringConverter* APS5_VABI
-_ZN3WTF17double_conversion23DoubleToStringConverter12CSSConverterEv() {
-    static constexpr DoubleToStringConverter converter{9, "infinity", "NaN", 'e', -6, 21, 6, 0};
-    return &converter;
-}
-
 bool APS5_VABI
 _ZNK3WTF17double_conversion23DoubleToStringConverter7ToFixedEdiPNS0_13StringBuilderE(
     const DoubleToStringConverter* self,
