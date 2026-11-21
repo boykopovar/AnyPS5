@@ -469,7 +469,7 @@ struct HostImports {
 };
 
 HostImports& Imports() {
-    static HostImports imports;
+    static auto& imports = *new HostImports;
     return imports;
 }
 
