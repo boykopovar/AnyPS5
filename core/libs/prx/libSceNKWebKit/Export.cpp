@@ -9688,10 +9688,6 @@ int APS5_VABI WKFrameGetWebArchive() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKFrameInfoCreateFrameHandleRef() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKFramePolicyListenerDownload() {
     NotImplemented_nid_no_patch(__func__);
 }

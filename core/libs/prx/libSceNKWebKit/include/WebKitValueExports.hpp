@@ -175,6 +175,7 @@ bool APS5_VABI WKFrameIsDisplayingStandaloneImageDocument(const void* frameRef);
 bool APS5_VABI WKFrameIsMainFrame(const void* frameRef);
 std::uint32_t APS5_VABI WKFrameHandleGetTypeID();
 std::uint32_t APS5_VABI WKFrameInfoGetTypeID();
+const void* APS5_VABI WKFrameInfoCreateFrameHandleRef(const void* frameInfoRef);
 std::uint32_t APS5_VABI WKFramePolicyListenerGetTypeID();
 std::uint32_t APS5_VABI WKGeolocationManagerGetTypeID();
 void APS5_VABI WKGeolocationPermissionRequestAllow(const void* permissionRequestRef);
