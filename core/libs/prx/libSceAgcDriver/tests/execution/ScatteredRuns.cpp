@@ -190,10 +190,7 @@ int main() {
                 "a range of two scattered runs larger than udmabuf's size limit was not imported");
         // A device that imports a MAP_SHARED mapping through a host pointer (i915) never builds the run
         // list this case drives, so, as in the sparse dma-buf case, that reads as a skip.
-        if (!DmaBufImport(*device, address, static_cast<std::size_t>(mappingBytes))) {
-            std::printf("skipped, the device imports shared memory through host pointers, so no run list was bound\n");
-            return 77;
-        }
+        const bool runList = DmaBufImport(*device, address, static_cast<std::size_t>(mappingBytes));
 
         // Write through the GPU into the second run; it must land in the second file region.
         constexpr std::uint32_t Pattern = 0x5CA77E12u;
@@ -211,6 +208,15 @@ int main() {
         Require(pread(backing, &first, sizeof(first), 0) == static_cast<ssize_t>(sizeof(first)),
                 "scattered import: cannot read the first run's file region");
         Require(first != Pattern, "scattered import: the second run's write landed in the first run's file region");
+        if (!runList) {
+            const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+            if (context.dmaBufImport && context.sparseBinding && !AgcDriver::Graphics::SparseDmaBufImportSelected(context)) {
+                std::printf("skipped, the device does not keep GPU copies through a sparse buffer in the dma-buf memory bound to it, so no run list was bound\n");
+            } else {
+                std::printf("skipped, the device imports shared memory through host pointers, so no run list was bound\n");
+            }
+            return 77;
+        }
 
         std::printf("limit %llu MiB, imported %llu MiB as two scattered runs\n",
                     static_cast<unsigned long long>(limit >> 20u), static_cast<unsigned long long>(mappingBytes >> 20u));
