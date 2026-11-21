@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <initializer_list>
 #include <source_location>
 #include <vector>
 
@@ -35,11 +36,13 @@ constexpr int P256 = 415;
 constexpr int Sha256WithRsaEncryption = 668;
 constexpr int EcdsaWithSha256 = 794;
 constexpr int Sha1WithRsaEncryption = 65;
+constexpr int Sha512WithRsaEncryption = 670;
 constexpr int BitStringType = 3;
 constexpr int NullType = 5;
 
 const Bytes Sha256WithRsa {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b};
 const Bytes Sha1WithRsa {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x05};
+const Bytes Sha512WithRsa {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0d};
 const Bytes EcdsaWithSha256Oid {0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02};
 
 constexpr char RsaPrivateKey[] =
@@ -235,11 +238,11 @@ LibreSsl3EvpPkey* ReadPrivateKey() {
     return key;
 }
 
-bool Verify(const Bytes& data, const Bytes& signature, LibreSsl3EvpPkey* key) {
+bool Verify(const Bytes& data, const Bytes& signature, LibreSsl3EvpPkey* key,
+    const EvpMd* digest = EVP_sha256_nid_postfix()) {
     auto* context = EVP_MD_CTX_new_nid_postfix();
     Require(context != nullptr);
-    Require(EVP_DigestInit_nid_postfix(context,
-        reinterpret_cast<const LibreSsl3::DigestMethod*>(EVP_sha256_nid_postfix())) == 1);
+    Require(EVP_DigestInit_nid_postfix(context, reinterpret_cast<const LibreSsl3::DigestMethod*>(digest)) == 1);
     Require(context->update(context, data.data(), data.size()) == 1);
     const int result = EVP_VerifyFinal_nid_postfix(context, signature.data(),
         static_cast<unsigned int>(signature.size()), key);
@@ -398,6 +401,265 @@ void CheckCertificateInfoGaps() {
     EVP_PKEY_free_nid_disambig1_nid_postfix(key);
 }
 
+Bytes Tlv(unsigned char tag, const Bytes& content) {
+    Bytes encoded {tag};
+    if (content.size() < 0x80) {
+        encoded.push_back(static_cast<unsigned char>(content.size()));
+    } else if (content.size() < 0x100) {
+        encoded.insert(encoded.end(), {0x81, static_cast<unsigned char>(content.size())});
+    } else if (content.size() < 0x10000) {
+        encoded.insert(encoded.end(),
+            {0x82, static_cast<unsigned char>(content.size() >> 8), static_cast<unsigned char>(content.size())});
+    } else {
+        Require(content.size() < 0x1000000);
+        encoded.insert(encoded.end(), {0x83, static_cast<unsigned char>(content.size() >> 16),
+            static_cast<unsigned char>(content.size() >> 8), static_cast<unsigned char>(content.size())});
+    }
+    encoded.insert(encoded.end(), content.begin(), content.end());
+    return encoded;
+}
+
+Bytes Join(std::initializer_list<Bytes> parts) {
+    Bytes joined;
+    for (const Bytes& part : parts) joined.insert(joined.end(), part.begin(), part.end());
+    return joined;
+}
+
+struct TbsParts {
+    Bytes head;
+    Bytes tail;
+};
+
+TbsParts SplitTbs(const Bytes& tbs) {
+    const unsigned char* cursor = tbs.data();
+    const Span body = Element(cursor, tbs.data() + tbs.size(), 0x30);
+    const unsigned char* inner = body.data;
+    const unsigned char* const end = body.data + body.size;
+    Element(inner, end, 0xa0);
+    Element(inner, end, 0x02);
+    const unsigned char* const algorithm = inner;
+    Element(inner, end, 0x30);
+    return {Bytes(body.data, algorithm), Bytes(inner, end)};
+}
+
+Bytes Rebuild(const TbsParts& parts, const Bytes& algorithm) {
+    return Tlv(0x30, Join({parts.head, algorithm, parts.tail}));
+}
+
+Bytes CertificateOf(const Bytes& tbs, const Bytes& algorithm, const Bytes& signature) {
+    return Tlv(0x30, Join({tbs, algorithm, Tlv(0x03, Join({Bytes {0x00}, signature}))}));
+}
+
+Span HeapCopy(const Bytes& bytes) {
+    auto* const copy = static_cast<unsigned char*>(malloc_nid_postfix(bytes.size()));
+    Require(copy != nullptr);
+    std::memcpy(copy, bytes.data(), bytes.size());
+    return {copy, bytes.size()};
+}
+
+LibreSsl3Asn1Type* HeapParameter(int type, const Bytes& content) {
+    auto* const parameter = static_cast<LibreSsl3Asn1Type*>(calloc_nid_postfix(1, sizeof(LibreSsl3Asn1Type)));
+    Require(parameter != nullptr);
+    parameter->type = type;
+    if (type == NullType) return parameter;
+    auto* const string = static_cast<LibreSsl3Asn1String*>(calloc_nid_postfix(1, sizeof(LibreSsl3Asn1String)));
+    Require(string != nullptr);
+    string->type = type;
+    string->length = static_cast<int>(content.size());
+    if (!content.empty()) string->data = const_cast<unsigned char*>(HeapCopy(content).data);
+    parameter->value = string;
+    return parameter;
+}
+
+Encoding CachedEncoding(const Fixture& fixture) {
+    Encoding encoding {};
+    std::memcpy(&encoding, fixture.info.encoding, sizeof(encoding));
+    return encoding;
+}
+
+Bytes CachedBytes(const Fixture& fixture) {
+    const Encoding encoding = CachedEncoding(fixture);
+    return Bytes(encoding.bytes, encoding.bytes + encoding.length);
+}
+
+bool HasNullParameter(const LibreSsl3X509Algor& algorithm) {
+    return algorithm.parameter != nullptr && algorithm.parameter->type == NullType && algorithm.parameter->value == nullptr;
+}
+
+bool Refuses(Fixture& fixture, LibreSsl3EvpPkey* key, const EvpMd* digest) {
+    try {
+        X509_sign_nid_postfix(&fixture.certificate, key, digest);
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
+}
+
+void RequireRefused(Fixture& fixture, const Bytes& cache, LibreSsl3EvpPkey* key, const EvpMd* digest) {
+    Require(Refuses(fixture, key, digest));
+    Require(fixture.signature.length == 0 && fixture.inner.parameter == nullptr && fixture.outer.parameter == nullptr);
+    Require(CachedEncoding(fixture).bytes == cache.data() && CachedBytes(fixture) == cache);
+}
+
+void SignStaleCertificateInfo(const Bytes& stale, LibreSsl3Asn1Type* parameter, int nid, const Bytes& oid,
+    const EvpMd* digest, const Bytes& expectedTbs, const Bytes& expectedAlgorithm, LibreSsl3EvpPkey* key) {
+    Fixture fixture;
+    const Span cache = HeapCopy(stale);
+    fixture.SetEncoding(cache, 0);
+    fixture.SetAlgorithm(nid, oid);
+    fixture.inner.parameter = parameter;
+
+    Require(X509_sign_nid_postfix(&fixture.certificate, key, digest) == 256);
+    const Encoding after = CachedEncoding(fixture);
+    Require(after.modified == 0);
+    Require(CachedBytes(fixture) == expectedTbs);
+    Require((after.bytes == cache.data) == (stale == expectedTbs));
+    Require(HasNullParameter(fixture.inner) && HasNullParameter(fixture.outer));
+    const Bytes signature = Signed(fixture);
+    Require(Verify(expectedTbs, signature, key, digest));
+    Require(Verify(stale, signature, key, digest) == (stale == expectedTbs));
+    Require(Encode(&fixture.certificate) == CertificateOf(expectedTbs, expectedAlgorithm, signature));
+
+    Require(X509_sign_nid_postfix(&fixture.certificate, key, digest) == 256);
+    Require(CachedEncoding(fixture).bytes == after.bytes);
+    Require(Signed(fixture) == signature);
+    Require(Encode(&fixture.certificate) == CertificateOf(expectedTbs, expectedAlgorithm, signature));
+}
+
+void CheckReencodedSignatureAlgorithm() {
+    auto* key = ReadPrivateKey();
+    const CertificateParts parts = Parse(Certificate);
+    const Bytes tbs(parts.tbs.data, parts.tbs.data + parts.tbs.size);
+    const Bytes algorithm(parts.algorithm.data - 2, parts.algorithm.data + parts.algorithm.size);
+    const Bytes original(parts.signature.data, parts.signature.data + parts.signature.size);
+    const TbsParts split = SplitTbs(tbs);
+    const Bytes sha256Oid = Tlv(0x06, Sha256WithRsa);
+    Require(Rebuild(split, algorithm) == tbs);
+
+    const Bytes withoutParameter = Rebuild(split, Tlv(0x30, sha256Oid));
+    Require(withoutParameter.size() == tbs.size() - 2);
+    SignStaleCertificateInfo(withoutParameter, nullptr, Sha256WithRsaEncryption, Sha256WithRsa,
+        EVP_sha256_nid_postfix(), tbs, algorithm, key);
+    SignStaleCertificateInfo(Rebuild(split, Tlv(0x30, Join({sha256Oid, Bytes {0x04, 0x00}}))), HeapParameter(4, {}),
+        Sha256WithRsaEncryption, Sha256WithRsa, EVP_sha256_nid_postfix(), tbs, algorithm, key);
+    SignStaleCertificateInfo(Rebuild(split, Tlv(0x30, Join({sha256Oid, Bytes {0x02, 0x01, 0x01}}))),
+        HeapParameter(2, {0x01}), Sha256WithRsaEncryption, Sha256WithRsa, EVP_sha256_nid_postfix(), tbs, algorithm,
+        key);
+    SignStaleCertificateInfo(tbs, nullptr, Sha256WithRsaEncryption, Sha256WithRsa, EVP_sha256_nid_postfix(), tbs,
+        algorithm, key);
+
+    const Bytes sha512Algorithm = Tlv(0x30, Join({Tlv(0x06, Sha512WithRsa), Bytes {0x05, 0x00}}));
+    SignStaleCertificateInfo(Rebuild(split, Tlv(0x30, Tlv(0x06, Sha512WithRsa))), nullptr, Sha512WithRsaEncryption,
+        Sha512WithRsa, EVP_sha512_nid_postfix(), Rebuild(split, sha512Algorithm), sha512Algorithm, key);
+
+    const Bytes sha1Cache = Rebuild(split, Tlv(0x30, Join({Tlv(0x06, Sha1WithRsa), Bytes {0x05, 0x00}})));
+    Fixture otherAlgorithm;
+    otherAlgorithm.SetEncoding(Span {sha1Cache.data(), sha1Cache.size()}, 0);
+    otherAlgorithm.SetAlgorithm(Sha1WithRsaEncryption, Sha1WithRsa);
+    RequireRefused(otherAlgorithm, sha1Cache, key, EVP_sha256_nid_postfix());
+    Require(otherAlgorithm.inner.algorithm == &otherAlgorithm.object && otherAlgorithm.object.nid == Sha1WithRsaEncryption);
+
+    const Bytes serial = Tlv(0x02, {0x01});
+    const Bytes noParameter = Tlv(0x30, sha256Oid);
+    const Bytes integerParameter = Tlv(0x30, Join({sha256Oid, Bytes {0x02, 0x01, 0x01}}));
+    const auto resized = [&](const Bytes& staleAlgorithm, LibreSsl3Asn1Type* parameter, std::size_t fillerSize,
+                             const Bytes& staleHeader, const Bytes& expectedHeader) {
+        const Bytes filler = Tlv(0x04, Bytes(fillerSize, 0x5a));
+        const Bytes stale = Tlv(0x30, Join({serial, staleAlgorithm, filler}));
+        const Bytes expected = Tlv(0x30, Join({serial, algorithm, filler}));
+        Require(Bytes(stale.begin(), stale.begin() + static_cast<std::ptrdiff_t>(staleHeader.size())) == staleHeader);
+        Require(Bytes(expected.begin(), expected.begin() + static_cast<std::ptrdiff_t>(expectedHeader.size()))
+            == expectedHeader);
+        SignStaleCertificateInfo(stale, parameter, Sha256WithRsaEncryption, Sha256WithRsa, EVP_sha256_nid_postfix(),
+            expected, algorithm, key);
+    };
+    resized(noParameter, nullptr, 109, {0x30, 0x7f}, {0x30, 0x81, 0x81});
+    resized(noParameter, nullptr, 108, {0x30, 0x7e}, {0x30, 0x81, 0x80});
+    resized(noParameter, nullptr, 65514, {0x30, 0x82, 0xff, 0xfe}, {0x30, 0x83, 0x01, 0x00, 0x00});
+    resized(integerParameter, HeapParameter(2, {0x01}), 65513, {0x30, 0x83, 0x01, 0x00, 0x00},
+        {0x30, 0x82, 0xff, 0xff});
+
+    Fixture unchanged;
+    unchanged.SetEncoding(parts.tbs, 0);
+    unchanged.SetAlgorithm(Sha256WithRsaEncryption, Sha256WithRsa);
+    Require(X509_sign_nid_postfix(&unchanged.certificate, key, EVP_sha256_nid_postfix()) == 256);
+    Require(CachedEncoding(unchanged).bytes == parts.tbs.data && Signed(unchanged) == original);
+
+    EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+}
+
+void CheckMalformedCertificateInfo() {
+    auto* key = ReadPrivateKey();
+    const CertificateParts parts = Parse(Certificate);
+    const Bytes tbs(parts.tbs.data, parts.tbs.data + parts.tbs.size);
+    const Bytes serial = Tlv(0x02, {0x01});
+    const Bytes algorithm = Tlv(0x30, Tlv(0x06, Sha256WithRsa));
+    const Bytes malformed[] {
+        Tlv(0x30, serial),
+        Tlv(0x30, algorithm),
+        Tlv(0x30, Join({Tlv(0xa0, Tlv(0x02, {0x02})), algorithm})),
+        Tlv(0x31, Join({serial, algorithm})),
+        Join({Tlv(0x30, Join({serial, algorithm})), Bytes {0x00}}),
+        Join({tbs, Bytes {0x00}}),
+        Bytes(tbs.begin(), tbs.end() - 1),
+        Bytes {0x30, 0x84, 0x00},
+        Bytes {0x30, 0x80, 0x02, 0x01, 0x01, 0x00, 0x00},
+        Bytes {0x30, 0x05, 0x02, 0x01, 0x01, 0x30, 0x7f},
+        Bytes {0x30},
+    };
+    for (const Bytes& stale : malformed) {
+        Fixture fixture;
+        fixture.SetEncoding(Span {stale.data(), stale.size()}, 0);
+        fixture.SetAlgorithm(Sha256WithRsaEncryption, Sha256WithRsa);
+        RequireRefused(fixture, stale, key, EVP_sha256_nid_postfix());
+    }
+    EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+}
+
+void CheckExtensionAddedBeforeAnotherDigest() {
+    auto* key = ReadPrivateKey();
+    const CertificateParts parts = Parse(Certificate);
+    const Bytes tbs(parts.tbs.data, parts.tbs.data + parts.tbs.size);
+    const Bytes original(parts.signature.data, parts.signature.data + parts.signature.size);
+    Bytes oid {0x55, 0x1d, 0x0e};
+    Bytes value {0x04, 0x02, 0x01, 0x02};
+    LibreSslAsn1Object extensionObject {nullptr, nullptr, 82, static_cast<std::int32_t>(oid.size()), oid.data(), 0};
+    LibreSsl3Asn1String extensionValue {static_cast<int>(value.size()), 4, value.data(), 0};
+    const LibreSsl3X509Extension extension {&extensionObject, 0, &extensionValue};
+    const auto extensionCount = [](const Fixture& fixture) {
+        return fixture.info.extensions ? fixture.info.extensions->num : 0;
+    };
+    const auto releaseExtensions = [](Fixture& fixture) {
+        auto* stack = reinterpret_cast<LibreSslStack*>(const_cast<LibreSsl3Stack*>(fixture.info.extensions));
+        for (int index = 0; index < stack->num; ++index) X509_EXTENSION_free_nid_postfix(stack->data[index]);
+        sk_free_nid_postfix(stack);
+        fixture.info.extensions = nullptr;
+    };
+
+    Fixture added;
+    added.SetEncoding(Span {tbs.data(), tbs.size()}, 0);
+    added.SetAlgorithm(Sha256WithRsaEncryption, Sha256WithRsa);
+    Require(X509_add_ext_nid_postfix(&added.certificate, &extension, -1) == 1 && extensionCount(added) == 1);
+    RequireRefused(added, tbs, key, reinterpret_cast<const EvpMd*>(EVP_sha1_nid_postfix()));
+    Require(added.inner.algorithm == &added.object && added.object.nid == Sha256WithRsaEncryption);
+    Require(extensionCount(added) == 1);
+    releaseExtensions(added);
+
+    Fixture resigned;
+    resigned.SetEncoding(Span {tbs.data(), tbs.size()}, 0);
+    resigned.SetAlgorithm(Sha256WithRsaEncryption, Sha256WithRsa);
+    Require(X509_sign_nid_postfix(&resigned.certificate, key, EVP_sha256_nid_postfix()) == 256);
+    Require(Signed(resigned) == original);
+    const auto* const signedAlgorithm = resigned.inner.algorithm;
+    Require(X509_add_ext_nid_postfix(&resigned.certificate, &extension, -1) == 1);
+    Require(Refuses(resigned, key, reinterpret_cast<const EvpMd*>(EVP_sha1_nid_postfix())));
+    Require(Signed(resigned) == original && resigned.inner.algorithm == signedAlgorithm);
+    Require(CachedEncoding(resigned).bytes == tbs.data() && CachedBytes(resigned) == tbs);
+    releaseExtensions(resigned);
+
+    EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+}
+
 }
 
 int main() {
@@ -406,6 +668,9 @@ int main() {
     CheckNullArguments();
     CheckUnsupportedKeys();
     CheckCertificateInfoGaps();
+    CheckReencodedSignatureAlgorithm();
+    CheckMalformedCertificateInfo();
+    CheckExtensionAddedBeforeAnotherDigest();
     std::puts("libSceLibreSsl3 X509_sign tests passed");
     return 0;
 }
