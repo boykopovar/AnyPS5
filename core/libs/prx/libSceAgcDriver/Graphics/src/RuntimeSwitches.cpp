@@ -34,6 +34,7 @@ constexpr std::array<const char*, SwitchCount> SwitchNames{
     "APS5_NO_TARGET_MEMO_OVERLAP_CACHE",
     "APS5_INDEX_IN_PLACE_BEHIND_WRITER",
     "APS5_WIDE_LIBRARY_KEYS",
+    "APS5_NO_SAMPLED_LOOKUP_MEMO",
 };
 
 struct SwitchValues {
@@ -57,6 +58,7 @@ struct SwitchValues {
             std::getenv("APS5_NO_TARGET_MEMO_OVERLAP_CACHE") != nullptr,
             std::getenv("APS5_INDEX_IN_PLACE_BEHIND_WRITER") != nullptr,
             std::getenv("APS5_WIDE_LIBRARY_KEYS") != nullptr,
+            std::getenv("APS5_NO_SAMPLED_LOOKUP_MEMO") != nullptr,
         };
         for (std::size_t index = 0; index < SwitchCount; ++index) set[index].store(environment[index], std::memory_order_relaxed);
     }
