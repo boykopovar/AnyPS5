@@ -52,6 +52,17 @@ public:
     std::optional<std::u16string> customUserAgent;
     std::optional<std::u16string> customTextEncodingName;
     bool backgroundExtendsBeyondPage = false;
+    struct FindStringState {
+        std::u16string target;
+        std::uint32_t options = 0;
+        unsigned maxMatchCount = 0;
+    };
+    std::optional<FindStringState> activeFindString;
+    std::optional<FindStringState> activeFindMatches;
+    std::optional<FindStringState> activeCountMatches;
+    std::optional<std::uint32_t> selectedFindMatch;
+    std::optional<std::uint32_t> lastImageFindMatch;
+    bool findUIHidden = false;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
