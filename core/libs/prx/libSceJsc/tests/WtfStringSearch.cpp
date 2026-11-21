@@ -2,6 +2,7 @@
 #include "prx/libSceJsc/libSceJsc.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -323,6 +324,9 @@ void TestDefaultWritingDirection() {
     strong = false;
     Check(_ZN3WTF10StringImpl23defaultWritingDirectionEPb(&surrogate, &strong) == 0 && strong, __LINE__);
     Check(ThrowsInvalidArgument([] { _ZN3WTF10StringImpl23defaultWritingDirectionEPb(nullptr, nullptr); }), __LINE__);
+    auto* const unwritable = reinterpret_cast<bool*>(std::uintptr_t{0x10});
+    Check(ThrowsInvalidArgument([&] { _ZN3WTF10StringImpl23defaultWritingDirectionEPb(&hebrew, unwritable); }), __LINE__);
+    Check(ThrowsInvalidArgument([&] { _ZN3WTF10StringImpl23defaultWritingDirectionEPb(&neutral, unwritable); }), __LINE__);
 }
 
 } // namespace
