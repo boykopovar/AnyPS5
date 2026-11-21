@@ -143,4 +143,51 @@ int APS5_VABI _ZSt13_Execute_onceRSt9once_flagPFiPvS1_PS1_ES1__nid_postfix(
     return initialized ? 1 : 0;
 }
 
+void APS5_VABI _ZNSt3__111__call_onceERVmPvPFvS2_E_nid_postfix(
+    std::uint64_t* flag, void* argument, void (APS5_VABI *callback)(void*)
+) {
+    if (flag == nullptr) throw std::invalid_argument("call_once flag is null");
+    static std::mutex mutex;
+    static std::condition_variable changed;
+    std::unique_lock lock(mutex);
+    for (;;) {
+        std::uint64_t state = 0;
+        const int savedErrno = errno;
+        const bool readable = GuestCopyIn_nid_no_patch(&state, flag, sizeof(state));
+        errno = savedErrno;
+        if (!readable) throw std::invalid_argument("call_once flag is unreadable");
+        if (state == 1) {
+            changed.wait(lock);
+            continue;
+        }
+        if (state != 0) return;
+        if (callback == nullptr) throw std::invalid_argument("call_once callback is null");
+        const std::uint64_t pending = 1;
+        if (!GuestCopyOut_nid_no_patch(flag, &pending, sizeof(pending)))
+            throw std::invalid_argument("call_once flag is unwritable");
+        lock.unlock();
+        try {
+            callback(argument);
+        } catch (...) {
+            lock.lock();
+            const std::uint64_t unset = 0;
+            GuestCopyOut_nid_no_patch(flag, &unset, sizeof(unset));
+            lock.unlock();
+            changed.notify_all();
+            throw;
+        }
+        lock.lock();
+        const std::uint64_t complete = UINT64_MAX;
+        const bool written = GuestCopyOut_nid_no_patch(flag, &complete, sizeof(complete));
+        if (!written) {
+            const std::uint64_t unset = 0;
+            GuestCopyOut_nid_no_patch(flag, &unset, sizeof(unset));
+        }
+        lock.unlock();
+        changed.notify_all();
+        if (!written) throw std::invalid_argument("call_once flag is unwritable");
+        return;
+    }
+}
+
 }
