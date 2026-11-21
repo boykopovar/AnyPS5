@@ -1,9 +1,10 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
+#include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
-#include <string>
 
 namespace {
 
@@ -14,6 +15,7 @@ constexpr std::int32_t Replacement = 0xfffd;
 constexpr std::int32_t IllegalArgumentError = 1;
 constexpr std::int32_t IndexOutOfBoundsError = 8;
 constexpr std::int32_t UnsupportedError = 16;
+constexpr std::size_t PageBytes = 4096;
 
 constexpr std::uint8_t Lead3Trail1[16] = {0x20, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x10, 0x30, 0x30};
 constexpr std::uint8_t Lead4Trail1[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0x1e, 0x0f, 0x0f, 0x0f, 0, 0, 0, 0};
@@ -125,6 +127,55 @@ std::int32_t PreviousCodePoint(const std::uint8_t* text, std::int32_t start, std
     return ((lead & 7) << 18) | ((second & 0x3f) << 12) | ((first & 0x3f) << 6) | (last & 0x3f);
 }
 
+void CopyIn(void* destination, const void* source, std::size_t bytes, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+}
+
+void CopyOut(void* destination, const void* source, std::size_t bytes, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+}
+
+UCharIterator Load(const UCharIterator* iterator, const char* caller) {
+    UCharIterator value;
+    CopyIn(&value, iterator, sizeof(value), caller);
+    return value;
+}
+
+void Store(UCharIterator* iterator, const UCharIterator& value, const char* caller) {
+    CopyOut(iterator, &value, sizeof(value), caller);
+}
+
+bool Failed(std::int32_t* error, const char* caller) {
+    std::int32_t previous;
+    CopyIn(&previous, error, sizeof(previous), caller);
+    return previous > 0;
+}
+
+void Fail(std::int32_t* error, std::int32_t value, const char* caller) {
+    CopyOut(error, &value, sizeof(value), caller);
+}
+
+template <typename T>
+std::size_t TerminatedLength(const T* text, const char* caller) {
+    auto address = reinterpret_cast<std::uintptr_t>(text);
+    std::array<T, PageBytes / sizeof(T)> chunk;
+    std::size_t length = 0;
+    for (;;) {
+        const auto count = std::max<std::size_t>(1, (PageBytes - address % PageBytes) / sizeof(T));
+        CopyIn(chunk.data(), reinterpret_cast<const void*>(address), count * sizeof(T), caller);
+        const T* end = std::find(chunk.data(), chunk.data() + count, T{});
+        length += static_cast<std::size_t>(end - chunk.data());
+        if (end != chunk.data() + count) return length;
+        address += count * sizeof(T);
+    }
+}
+
 UCharIterator& Check(UCharIterator* iterator) {
     if (!iterator) APS5_INVALID_ARG_EX;
     return *iterator;
@@ -160,7 +211,7 @@ std::uint32_t APS5_VABI NoopGetState_nid_no_patch(const UCharIterator*) {
 
 void APS5_VABI NoopSetState_nid_no_patch(UCharIterator*, std::uint32_t, std::int32_t* error) {
     if (!error) APS5_INVALID_ARG_EX;
-    *error = UnsupportedError;
+    Fail(error, UnsupportedError, __func__);
 }
 
 std::int32_t APS5_VABI StringGetIndex_nid_no_patch(UCharIterator* handle, UCharIteratorOrigin origin) {
@@ -218,18 +269,23 @@ std::int32_t APS5_VABI StringPrevious_nid_no_patch(UCharIterator* handle) {
 
 std::uint32_t APS5_VABI StringGetState_nid_no_patch(const UCharIterator* handle) {
     if (!handle) APS5_INVALID_ARG_EX;
-    return static_cast<std::uint32_t>(handle->index);
+    return static_cast<std::uint32_t>(Load(handle, __func__).index);
 }
 
 void APS5_VABI StringSetState_nid_no_patch(UCharIterator* iterator, std::uint32_t state, std::int32_t* error) {
-    if (!error || *error > 0) return;
+    if (!error || Failed(error, __func__)) return;
     if (!iterator) {
-        *error = IllegalArgumentError;
+        Fail(error, IllegalArgumentError, __func__);
         return;
     }
+    auto local = Load(iterator, __func__);
     const auto position = static_cast<std::int32_t>(state);
-    if (position < iterator->start || iterator->limit < position) *error = IndexOutOfBoundsError;
-    else iterator->index = position;
+    if (position < local.start || local.limit < position) {
+        Fail(error, IndexOutOfBoundsError, __func__);
+        return;
+    }
+    local.index = position;
+    Store(iterator, local, __func__);
 }
 
 std::int32_t Utf16Units(const std::uint8_t* text, std::int32_t& byte, std::int32_t limit) {
@@ -459,36 +515,45 @@ std::int32_t APS5_VABI Utf8Previous_nid_no_patch(UCharIterator* handle) {
     return TrailSurrogate(codePoint);
 }
 
-std::uint32_t APS5_VABI Utf8GetState_nid_no_patch(const UCharIterator* handle) {
-    if (!handle) APS5_INVALID_ARG_EX;
-    std::uint32_t state = static_cast<std::uint32_t>(handle->start) << 1;
-    if (handle->reservedField != 0) state |= 1;
+std::uint32_t Utf8State(const UCharIterator& iterator) {
+    std::uint32_t state = static_cast<std::uint32_t>(iterator.start) << 1;
+    if (iterator.reservedField != 0) state |= 1;
     return state;
 }
 
+std::uint32_t APS5_VABI Utf8GetState_nid_no_patch(const UCharIterator* handle) {
+    if (!handle) APS5_INVALID_ARG_EX;
+    return Utf8State(Load(handle, __func__));
+}
+
 void APS5_VABI Utf8SetState_nid_no_patch(UCharIterator* iterator, std::uint32_t state, std::int32_t* error) {
-    if (!error || *error > 0) return;
+    if (!error || Failed(error, __func__)) return;
     if (!iterator) {
-        *error = IllegalArgumentError;
+        Fail(error, IllegalArgumentError, __func__);
         return;
     }
-    if (state == Utf8GetState_nid_no_patch(iterator)) return;
+    auto local = Load(iterator, __func__);
+    if (state == Utf8State(local)) return;
     const auto index = static_cast<std::int32_t>(state >> 1);
     const bool inside = (state & 1) != 0;
-    if ((inside ? index < 4 : index < 0) || iterator->limit < index) {
-        *error = IndexOutOfBoundsError;
+    if ((inside ? index < 4 : index < 0) || local.limit < index) {
+        Fail(error, IndexOutOfBoundsError, __func__);
         return;
     }
-    iterator->start = index;
-    iterator->index = index <= 1 ? index : -1;
+    local.start = index;
+    local.index = index <= 1 ? index : -1;
     if (!inside) {
-        iterator->reservedField = 0;
+        local.reservedField = 0;
+        Store(iterator, local, __func__);
         return;
     }
-    std::int32_t byte = index;
-    const std::int32_t codePoint = PreviousCodePoint(Bytes(*iterator), 0, byte);
-    if (codePoint <= 0xffff) *error = IndexOutOfBoundsError;
-    else iterator->reservedField = codePoint;
+    std::array<std::uint8_t, 4> bytes;
+    CopyIn(bytes.data(), Bytes(local) + index - static_cast<std::int32_t>(bytes.size()), bytes.size(), __func__);
+    std::int32_t byte = static_cast<std::int32_t>(bytes.size());
+    const std::int32_t codePoint = PreviousCodePoint(bytes.data(), 0, byte);
+    if (codePoint > 0xffff) local.reservedField = codePoint;
+    Store(iterator, local, __func__);
+    if (codePoint <= 0xffff) Fail(error, IndexOutOfBoundsError, __func__);
 }
 
 constexpr UCharIterator NoopIterator{nullptr, 0, 0, 0, 0, 0, NoopGetIndex_nid_no_patch, NoopMove_nid_no_patch, NoopHasNext_nid_no_patch, NoopHasNext_nid_no_patch,
@@ -505,25 +570,27 @@ extern "C" {
 void APS5_VABI uiter_setString_nid_postfix(UCharIterator* iterator, const char16_t* text, std::int32_t length) {
     if (!iterator) return;
     if (!text || length < -1) {
-        *iterator = NoopIterator;
+        Store(iterator, NoopIterator, __func__);
         return;
     }
-    *iterator = StringIterator;
-    iterator->context = text;
-    iterator->length = length >= 0 ? length : static_cast<std::int32_t>(std::char_traits<char16_t>::length(text));
-    iterator->limit = iterator->length;
+    auto local = StringIterator;
+    local.context = text;
+    local.length = length >= 0 ? length : static_cast<std::int32_t>(TerminatedLength(text, __func__));
+    local.limit = local.length;
+    Store(iterator, local, __func__);
 }
 
 void APS5_VABI uiter_setUTF8_nid_postfix(UCharIterator* iterator, const char* text, std::int32_t length) {
     if (!iterator) return;
     if (!text || length < -1) {
-        *iterator = NoopIterator;
+        Store(iterator, NoopIterator, __func__);
         return;
     }
-    *iterator = Utf8Iterator;
-    iterator->context = text;
-    iterator->limit = length >= 0 ? length : static_cast<std::int32_t>(std::strlen(text));
-    iterator->length = iterator->limit <= 1 ? iterator->limit : -1;
+    auto local = Utf8Iterator;
+    local.context = text;
+    local.limit = length >= 0 ? length : static_cast<std::int32_t>(TerminatedLength(text, __func__));
+    local.length = local.limit <= 1 ? local.limit : -1;
+    Store(iterator, local, __func__);
 }
 
 }
