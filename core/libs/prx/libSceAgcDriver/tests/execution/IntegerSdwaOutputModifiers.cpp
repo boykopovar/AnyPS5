@@ -26,12 +26,15 @@ constexpr std::uint32_t Preset = 0xa5a5a5a5u;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 
-alignas(256) constexpr std::array<std::uint32_t, 53> Code{
+constexpr std::uint32_t SelectLaneMask = 0x96a596a5u;
+constexpr std::uint32_t CompareV6NotZero = 0x7d8a0c80u;
+
+alignas(256) constexpr std::array<std::uint32_t, 50> Code{
     0x34020084u, 0x34060086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x7e1402f9u, 0x00066604u, 0x7e160307u, 0x7e1602f9u,
     0x0006d504u, 0x7e186ef9u, 0x00062604u, 0x7e1a70f9u, 0x00068604u, 0x7e1c72f9u, 0x00066604u, 0x7e1e74f9u, 0x0006c604u,
-    0x7e2076f9u, 0x0006a604u, 0xbeea03ffu, 0x96a596a5u, 0x02220af9u, 0x06062604u, 0xbeea03ffu, 0x96a596a5u, 0x02240af9u,
+    0x7e2076f9u, 0x0006a604u, CompareV6NotZero, 0x02220af9u, 0x06062604u, CompareV6NotZero, 0x02240af9u,
     0x05054604u, 0x4a260af9u, 0x06066604u, 0x4c280af9u, 0x0d0de604u, 0x162a0af9u, 0x0606a604u, 0x122c0af9u, 0x06066604u,
-    0x3a2e0af9u, 0x06064604u, 0x24300af9u, 0x0606e404u, 0xbeea03ffu, 0x96a596a5u, 0x50320af9u, 0x0606a604u, 0xe0781000u,
+    0x3a2e0af9u, 0x06064604u, 0x24300af9u, 0x0606e404u, CompareV6NotZero, 0x50320af9u, 0x0606a604u, 0xe0781000u,
     0x80010a03u, 0xe0781010u, 0x80010e03u, 0xe0781020u, 0x80011203u, 0xe0781030u, 0x80011603u, 0xbf810000u,
 };
 
@@ -134,7 +137,7 @@ void Check(AgcDriver::VulkanDevice& device) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         Input[tid * Inputs] = Sources[tid % Rows][0];
         Input[tid * Inputs + 1u] = Sources[tid % Rows][1];
-        Input[tid * Inputs + 2u] = 0u;
+        Input[tid * Inputs + 2u] = (SelectLaneMask >> tid) & 1u;
         Input[tid * Inputs + 3u] = Preset;
     }
     Run(device);
