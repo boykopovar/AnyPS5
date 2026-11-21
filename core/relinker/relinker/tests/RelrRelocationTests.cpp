@@ -128,6 +128,61 @@ int main() try {
             Require(std::string_view(error.what()).find("Relative relocation target address is negative") != std::string_view::npos);
         }
     }
+    Reject([](auto& input) {
+        input.Headers[0].MemorySize = 0x2000;
+        input.Headers.push_back({1, 7, 0x2000, 0x2100, 0x2100, 0x1000, 0x1000, 0x1000});
+        input.Bytes.resize(0x3000);
+        input.Tags[0].Value = 0x1ffc;
+    }, "table exceeds file-backed");
+    Reject([](auto& input) {
+        input.Headers[0].MemorySize = 0x2000;
+        input.Headers.push_back({1, 7, 0x2000, 0x2000, 0x2000, 0, 0x1000, 0x1000});
+        input.Tags[0].Value = 0x1ffc;
+    }, "table exceeds file-backed");
+    {
+        Fixture crossTable;
+        crossTable.Headers[0].MemorySize = 0x2000;
+        crossTable.Headers.push_back({1, 7, 0x2000, 0x2000, 0x2000, 0x1000, 0x1000, 0x1000});
+        crossTable.Bytes.resize(0x3000);
+        crossTable.SetWords({0x2000});
+        crossTable.Tags[0].Value = 0x1ffc;
+        Io::WriteU64(crossTable.Bytes, 0x1ffc, 0x2000);
+        Require(crossTable.Read() == std::map<Domain::VirtualAddress, std::uint64_t>{{0x2000, 0}});
+    }
+    {
+        Fixture crossTarget;
+        crossTarget.Headers[0].MemorySize = 0x2000;
+        crossTarget.Headers.push_back({1, 7, 0x2000, 0x2000, 0x2000, 0x1000, 0x1000, 0x1000});
+        crossTarget.Bytes.resize(0x3000);
+        crossTarget.SetWords({0x1ffc});
+        Io::WriteU64(crossTarget.Bytes, 0x1ffc, 0xaabbccdd11223344ull);
+        Require(crossTarget.Read() == std::map<Domain::VirtualAddress, std::uint64_t>{{0x1ffc, 0xaabbccdd11223344ull}});
+    }
+    {
+        Fixture crossBss;
+        crossBss.Headers[0].MemorySize = 0x2000;
+        crossBss.Headers.push_back({1, 7, 0x2000, 0x2000, 0x2000, 0, 0x1000, 0x1000});
+        crossBss.SetWords({0x1ffc});
+        Io::WriteU32(crossBss.Bytes, 0x1ffc, 0x11223344);
+        Require(crossBss.Read() == std::map<Domain::VirtualAddress, std::uint64_t>{{0x1ffc, 0x11223344}});
+    }
+    {
+        Fixture wrappingTarget;
+        wrappingTarget.Headers[0].MemorySize = std::numeric_limits<std::uint64_t>::max();
+        wrappingTarget.SetWords({std::numeric_limits<std::uint64_t>::max() - 3});
+        try {
+            wrappingTarget.Read();
+            throw std::runtime_error("A RELR target range that wraps the address space was accepted");
+        } catch (const Domain::RelinkerException& error) {
+            Require(std::string_view(error.what()).find("RELR target exceeds load segment") != std::string_view::npos);
+        }
+    }
+    {
+        Fixture lastBoundary;
+        lastBoundary.Headers[0].MemorySize = std::numeric_limits<std::uint64_t>::max();
+        lastBoundary.SetWords({std::numeric_limits<std::uint64_t>::max() - 9});
+        Require(lastBoundary.Read() == std::map<Domain::VirtualAddress, std::uint64_t>{{std::numeric_limits<std::uint64_t>::max() - 9, 0}});
+    }
     std::cout << "RELR address, bitmap, bounds, addend and reachability tests passed\n";
 } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';
