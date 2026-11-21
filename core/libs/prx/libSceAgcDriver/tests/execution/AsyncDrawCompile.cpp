@@ -96,7 +96,7 @@ int main() {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         } while (std::chrono::steady_clock::now() < deadline);
         Require(Done(), "the dispatch never stored after its shader was prepared and specialized in the background");
-        Require(async || attempts == 1, "a dispatch without APS5_ASYNC_DRAW_COMPILE needed more than one attempt");
+        Require(attempts == 1, "a compute dispatch was skipped while its shader was prepared");
         const auto after = AgcDriver::VulkanDevice::ComputePipelineCounts();
         Require(after.created > before.created, "the dispatch stored without creating a compute pipeline");
         const bool ahead = async && AgcDriver::DriverDetail::AsyncComputePipelineWords() == 0;

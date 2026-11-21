@@ -630,7 +630,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
 
         static const bool dumpShaders = std::getenv("APS5_DUMP_SHADERS") != nullptr;
         try {
-            auto invocation = InvocationFor(snapshot, codeOffset, request, AsyncDrawCompile(), &linking);
+            auto invocation = InvocationFor(snapshot, codeOffset, request, false, &linking);
             timing.Mark("prepared_invocation");
 
             const auto waitedBefore = traceCapSync() ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
@@ -649,7 +649,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
 
 
             timing.Mark("capture_resources");
-            compiledResult = MaterializeInBackground(invocation, capture, request.context.memory, address);
+            compiledResult = MaterializeInBackground(invocation, capture, request.context.memory, address, true);
             timing.Mark("materialize");
             if (profile && compiledResult->cacheHit) cacheHits.fetch_add(1, std::memory_order_relaxed);
             const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
@@ -736,10 +736,11 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             }
         }
         if (ahead == VulkanDevice::PipelineAhead::Start || ahead == VulkanDevice::PipelineAhead::Building) {
-            if (profile) NotePipelineSkip(address, compiledResult->spirv.size());
-            return;
+            AwaitLibraryPrebuilds();
+            if (profile && localDevice->HasComputePipeline(*compiledResult)) NotePipelineReady(address);
+        } else if (profile) {
+            NotePipelineReady(address);
         }
-        if (profile) NotePipelineReady(address);
     }
 
     if (recordQueuedLabelsAfterCapture(submission.queue, captured)) {

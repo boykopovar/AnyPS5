@@ -8,6 +8,7 @@
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -63,6 +64,7 @@ void TraceShaderRequestFailure(std::uint64_t token, const Submission& submission
 
 struct PendingMaterialize {
     std::mutex mutex;
+    std::condition_variable finishedCv;
     bool finished = false;
     std::shared_ptr<const ShaderRecompiler::RecompileResult> result;
     std::exception_ptr failure;
@@ -87,7 +89,7 @@ PendingMaterializes& pendingMaterializes() {
 
 }
 
-std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeInBackground(const ShaderRecompiler::PreparedShaderInvocation& invocation, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, ShaderRecompiler::MemoryRegionView memory, std::uint64_t address) {
+std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeInBackground(const ShaderRecompiler::PreparedShaderInvocation& invocation, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, ShaderRecompiler::MemoryRegionView memory, std::uint64_t address, bool wait) {
     if (!AsyncDrawCompile()) return invocation.Materialize(*capture);
     bool contended = false;
     if (auto memoized = invocation.MaterializeIfMemoized(*capture, &contended)) return memoized;
@@ -148,11 +150,15 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeInBackground
                 job->failure = failure;
                 job->finished = true;
             }
+            job->finishedCv.notify_all();
         });
     }
     {
-        std::lock_guard lock(job->mutex);
-        if (!job->finished) throw DrawCompilePending("the draw's shader is still being specialized in the background");
+        std::unique_lock lock(job->mutex);
+        if (!job->finished) {
+            if (!wait) throw DrawCompilePending("the draw's shader is still being specialized in the background");
+            job->finishedCv.wait(lock, [&] { return job->finished; });
+        }
     }
     {
         std::lock_guard lock(pending.mutex);
