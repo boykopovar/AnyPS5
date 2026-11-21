@@ -27,7 +27,7 @@ const void* APS5_VABI WKArrayCreate(const void** values, std::size_t numberOfVal
     std::vector<NKWebKit::Retained<NKWebKit::Object>> elements;
     elements.reserve(numberOfValues);
     for (std::size_t i = 0; i < numberOfValues; ++i) {
-        elements.push_back(NKWebKit::Retained<NKWebKit::Object>::Share(const_cast<NKWebKit::Object*>(NKWebKit::ToObject(refs[i], __func__))));
+        elements.push_back(NKWebKit::Retained<NKWebKit::Object>::Share(const_cast<NKWebKit::Object*>(static_cast<const NKWebKit::Object*>(refs[i]))));
     }
     return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::Array>(std::move(elements)));
 }
@@ -38,7 +38,7 @@ const void* APS5_VABI WKArrayCreateAdoptingValues(const void** values, std::size
     std::vector<NKWebKit::Retained<NKWebKit::Object>> elements;
     elements.reserve(numberOfValues);
     for (std::size_t i = 0; i < numberOfValues; ++i) {
-        elements.push_back(NKWebKit::Retained<NKWebKit::Object>::Adopt(const_cast<NKWebKit::Object*>(NKWebKit::ToObject(refs[i], __func__))));
+        elements.push_back(NKWebKit::Retained<NKWebKit::Object>::Adopt(const_cast<NKWebKit::Object*>(static_cast<const NKWebKit::Object*>(refs[i]))));
     }
     return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::Array>(std::move(elements)));
 }
@@ -62,7 +62,7 @@ std::size_t APS5_VABI WKArrayGetSize(const void* arrayRef) {
 
 void APS5_VABI WKArrayAppendItem(void* arrayRef, const void* itemRef) {
     auto* array = NKWebKit::Cast<NKWebKit::Array>(arrayRef, __func__);
-    array->elements.push_back(NKWebKit::Retained<NKWebKit::Object>::Share(const_cast<NKWebKit::Object*>(NKWebKit::ToObject(itemRef, __func__))));
+    array->elements.push_back(NKWebKit::Retained<NKWebKit::Object>::Share(const_cast<NKWebKit::Object*>(static_cast<const NKWebKit::Object*>(itemRef))));
 }
 
 void APS5_VABI WKArrayRemoveItemAtIndex(void* arrayRef, std::size_t index) {

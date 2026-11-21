@@ -46,7 +46,7 @@ const void* APS5_VABI WKDictionaryCopyKeys(const void* dictionaryRef) {
 bool APS5_VABI WKDictionarySetItem(void* dictionaryRef, const void* keyRef, const void* itemRef) {
     auto* dictionary = NKWebKit::Cast<NKWebKit::Dictionary>(dictionaryRef, __func__);
     const auto* key = NKWebKit::Cast<NKWebKit::String>(keyRef, __func__);
-    auto [it, inserted] = dictionary->entries.insert_or_assign(key->characters, NKWebKit::Retained<NKWebKit::Object>::Share(const_cast<NKWebKit::Object*>(NKWebKit::ToObject(itemRef, __func__))));
+    auto [it, inserted] = dictionary->entries.insert_or_assign(key->characters, NKWebKit::Retained<NKWebKit::Object>::Share(const_cast<NKWebKit::Object*>(static_cast<const NKWebKit::Object*>(itemRef))));
     return inserted;
 }
 
