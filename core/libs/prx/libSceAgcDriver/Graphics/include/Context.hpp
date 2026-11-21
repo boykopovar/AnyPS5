@@ -248,6 +248,7 @@ struct Context {
     std::mutex* settleQueueMutex = nullptr;
     PFN_vkGetPhysicalDeviceMemoryProperties2 memoryProperties2 = nullptr;
     VkDeviceSize (*cacheReclaim)(VkDeviceSize bytes, bool newImage) = nullptr;
+    VkDeviceSize (*retainedImageReclaim)(const Context& context, VkDeviceSize bytes) = nullptr;
     RenderCache* renderCache = nullptr;
     DrawQueue* drawQueue = nullptr;
     GraphicsPipelineCache* graphicsPipelines = nullptr;
@@ -444,14 +445,22 @@ struct Context {
         if (report.Fits(bytes)) return type;
         const auto host = HostMemoryType(mask);
         if (!host) return type;
+        auto wanted = bytes + (report.usage > report.budget ? report.usage - report.budget : 0u);
+        if (retainedImageReclaim != nullptr) {
+            const auto released = retainedImageReclaim(*this, wanted);
+            if (released != 0) {
+                static std::atomic<std::uint64_t> releases{0}, releasedBytes{0};
+                const auto count = releases.fetch_add(1) + 1;
+                const auto total = releasedBytes.fetch_add(released) + released;
+                if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] %s: released %llu bytes of retained image memory for an allocation over the budget; %llu releases, %llu MiB in total\n", what, static_cast<unsigned long long>(released), static_cast<unsigned long long>(count), static_cast<unsigned long long>(total >> 20u));
+                if (released >= wanted || ReportedHeap(heap).Fits(bytes)) return type;
+                wanted -= released;
+            }
+        }
         if (cacheReclaim != nullptr) {
-            const auto wanted = bytes + (report.usage > report.budget ? report.usage - report.budget : 0u);
             const auto released = cacheReclaim(wanted, true);
             if (released >= wanted) return type;
-            if (released != 0) {
-                const auto after = ReportedHeap(heap);
-                if (after.Fits(bytes)) return type;
-            }
+            if (released != 0 && ReportedHeap(heap).Fits(bytes)) return type;
         }
         static std::atomic<std::uint64_t> placements{0}, placedBytes{0};
         const auto count = placements.fetch_add(1) + 1;
