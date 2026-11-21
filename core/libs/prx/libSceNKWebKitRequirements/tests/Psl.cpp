@@ -4,6 +4,7 @@
 
 #include <libpsl.h>
 
+#include <cerrno>
 #include <cstdint>
 #include <chrono>
 #include <cstdio>
@@ -96,6 +97,10 @@ void TestSuffixAndRegistrableDomain() {
             "psl_is_cookie_domain_acceptable should answer as libpsl for host names");
     }
     AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, "WWW.Example.COM", "example.com") == 0, "libpsl compares names case-sensitively, as it expects lowercase input");
+    errno = 37;
+    AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, reinterpret_cast<const char*>(0x10), "example.com") == 0, "an unreadable host should be rejected");
+    AssertTrue(psl_is_cookie_domain_acceptable_nid_postfix(psl, "www.example.com", reinterpret_cast<const char*>(0x10)) == 0, "an unreadable cookie domain should be rejected");
+    AssertTrue(errno == 37, "cookie domain checks should preserve errno");
 }
 
 void TestStringConversionAndFileLoading() {
