@@ -59,6 +59,19 @@ std::array<std::uint32_t, 8> TextureDescriptor(const void* texels) {
     };
 }
 
+std::array<std::uint32_t, 8> MultisampledDescriptor(std::uintptr_t surface) {
+    constexpr std::uint32_t Side = 8;
+    constexpr std::uint32_t Type2DMsaa = 14;
+    constexpr std::uint32_t FourSamples = 2;
+    return {
+        static_cast<std::uint32_t>(surface >> 8u),
+        static_cast<std::uint32_t>((surface >> 40u) & 0xffu) | (FormatRgba16Float << 20u) | (((Side - 1u) & 3u) << 30u),
+        ((Side - 1u) >> 2u) | ((Side - 1u) << 14u),
+        0xfacu | (FourSamples << 16u) | (Standard64KB << 20u) | (Type2DMsaa << 28u),
+        0u, FourSamples << 4u, 0u, 0u,
+    };
+}
+
 void AppendRegisters(std::vector<std::uint32_t>& words, std::uint32_t first, std::span<const std::uint32_t> values) {
     words.push_back(0xc0007600u | (static_cast<std::uint32_t>(values.size()) << 16u));
     words.push_back(first);
@@ -203,8 +216,9 @@ void TestMultisampledSingleClearDrainsDrawPipeline() {
     constexpr std::uintptr_t FixedBase = 0x20f7f0000ull;
     constexpr std::size_t FixedBytes = 65536;
 #ifdef _WIN32
-    auto* mapped = static_cast<std::uint8_t*>(VirtualAlloc(reinterpret_cast<void*>(FixedBase), FixedBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-    if (mapped == nullptr) return;
+    auto* mapped = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocateFromHint_nid_postfix(FixedBase, FixedBytes, FixedBytes));
+    Require(mapped == reinterpret_cast<std::uint8_t*>(FixedBase), "pipelined flush read order: the guest arena did not place the multisampled clear's descriptor block at its fixed address");
+    GuestArena::GuestArenaCommit_nid_postfix(mapped, FixedBytes, PAGE_READWRITE, FixedBytes);
 #else
 #ifdef MAP_FIXED_NOREPLACE
     auto* mapped = static_cast<std::uint8_t*>(mmap(reinterpret_cast<void*>(FixedBase), FixedBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0));
@@ -222,7 +236,8 @@ void TestMultisampledSingleClearDrainsDrawPipeline() {
                 mutation.Remove(base);
             }
 #ifdef _WIN32
-            VirtualFree(base, 0, MEM_RELEASE);
+            GuestArena::GuestArenaReset_nid_postfix(base, bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(base, bytes);
 #else
             munmap(base, bytes);
 #endif
@@ -230,6 +245,8 @@ void TestMultisampledSingleClearDrainsDrawPipeline() {
     };
     {
         std::memset(mapped, 0, FixedBytes);
+        const auto descriptor = MultisampledDescriptor(FixedBase);
+        std::memcpy(mapped + 8, descriptor.data(), sizeof(descriptor));
         GuestAllocations::Mutation mutation;
         mutation.Add(mapped, FixedBytes, true, true, true);
     }
