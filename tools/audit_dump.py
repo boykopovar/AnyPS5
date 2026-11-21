@@ -119,10 +119,12 @@ def audit_directories(directories, source):
     return audited
 
 
-def convert(relinker, source, output, extra, windows):
+def convert(relinker, source, output, extra, windows, to_intel=False):
     command = [str(relinker), "--registry"]
     if windows:
         command.append("--windows")
+    if to_intel:
+        command.append("--to-intel")
     for relative in extra:
         command += ["--module-dir", relative]
     command += [str(source / "eboot.elf"), str(output)]
@@ -170,6 +172,7 @@ def main(argv=None):
     parser.add_argument("--libs", action="append", required=True, help="built .prx directory, as for import_audit.py (repeatable)")
     parser.add_argument("--work", help="directory for the unwrapped files and registries (default: a temporary one, removed afterwards)")
     parser.add_argument("--windows", action="store_true", help="convert for Windows, as the title would be run there")
+    parser.add_argument("--to-intel", action="store_true", help="convert AMD-only instructions for an Intel host, as relinker --to-intel does")
     parser.add_argument("--json", help="also write import_audit.py's JSON report to this file outside the input dump")
     args = parser.parse_args(argv)
     dump = Path(args.dump)
@@ -247,7 +250,7 @@ def main(argv=None):
             print(f"FAIL: unwrapping {dump}: {error}", file=sys.stderr)
             return 2
         try:
-            result = convert(relinker, source, output / ("app.exe" if args.windows else "app.elf"), extra, args.windows)
+            result = convert(relinker, source, output / ("app.exe" if args.windows else "app.elf"), extra, args.windows, args.to_intel)
         except OSError as error:
             print(f"FAIL: cannot run relinker {relinker}: {error}", file=sys.stderr)
             return 2
