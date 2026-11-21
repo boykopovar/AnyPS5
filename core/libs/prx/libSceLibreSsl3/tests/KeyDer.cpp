@@ -419,9 +419,11 @@ std::vector<unsigned char> Pkcs8WithKeySuffix(const std::vector<unsigned char>& 
     Require(der[0] == 0x30 && offset + length == der.size());
     const std::size_t bodyStart = offset;
     Require(der[offset] == 0x02);
-    offset += DerHeaderLength(der, offset, length) + length;
+    offset += DerHeaderLength(der, offset, length);
+    offset += length;
     Require(der[offset] == 0x30);
-    offset += DerHeaderLength(der, offset, length) + length;
+    offset += DerHeaderLength(der, offset, length);
+    offset += length;
     Require(der[offset] == 0x04);
     const std::size_t keyHeader = DerHeaderLength(der, offset, length);
     Require(offset + keyHeader + length == der.size());
