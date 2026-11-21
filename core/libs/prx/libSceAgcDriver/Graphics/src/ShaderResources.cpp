@@ -2030,6 +2030,23 @@ void ShaderResources::KeepStorageImageBytes(Recorder& recorder) const {
     }
 }
 
+std::size_t ShaderResources::RefreshStorageChangedOutsideWatch() {
+    std::size_t refreshed = 0;
+    const auto refresh = [&](const std::shared_ptr<StorageTexture>& image) {
+        if (image == nullptr || !image->ChangedOutsideWatch()) return;
+        image->Refresh();
+        ++refreshed;
+    };
+    for (std::size_t index = 0; index < storageTextures.size(); ++index) {
+        if (index != 0 && storageTextures[index] == storageTextures[index - 1]) continue;
+        refresh(storageTextures[index]);
+    }
+    for (const auto& texture : textures) {
+        if (texture != nullptr) refresh(texture->SharedStorageSource());
+    }
+    return refreshed;
+}
+
 ShaderResources::ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots, bool deviceStaging) : context(context), guestMemory(context) {
     drawBuild = true;
     const bool addressTables = std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && std::ranges::any_of(shader.program->bindings, [](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; }); });
@@ -5279,8 +5296,8 @@ std::size_t ResourceCache::Capacity() const {
 std::uint64_t ResourceCache::TableElementBudget() {
     static const std::uint64_t elements = [] {
         const char* value = std::getenv("APS5_RESOURCE_CACHE_TABLE_ELEMENTS");
-        const auto parsed = value ? std::strtoull(value, nullptr, 10) : 262144ull;
-        return static_cast<std::uint64_t>(parsed != 0 ? parsed : 262144ull);
+        const auto parsed = value ? std::strtoull(value, nullptr, 10) : 1048576ull;
+        return static_cast<std::uint64_t>(parsed != 0 ? parsed : 1048576ull);
     }();
     return elements;
 }

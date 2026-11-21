@@ -123,7 +123,7 @@ bool normalizeImageView(void*, std::uint32_t maxArrayLayers, std::array<std::uin
         const auto* equation = Graphics::FindTextureSwizzleEquation(xorMode, Graphics::BytesPerElement(resource.format));
         if (equation == nullptr || std::any_of(equation->bits.begin(), equation->bits.end(), [](std::uint32_t bit) { return (bit & 0xff000000u) != 0u; })) return false;
     }
-    if (!range->readable || !range->gpu || range->bytes == 0u || range->address > std::numeric_limits<std::uint64_t>::max() - range->bytes || range->allocationAddress > std::numeric_limits<std::uint64_t>::max() - range->allocationBytes) return false;
+    if (!range->HostReadable() || !range->gpu || range->bytes == 0u || range->address > std::numeric_limits<std::uint64_t>::max() - range->bytes || range->allocationAddress > std::numeric_limits<std::uint64_t>::max() - range->allocationBytes) return false;
     const auto rangeEnd = range->address + range->bytes;
     const auto allocationEnd = range->allocationAddress + range->allocationBytes;
     if (resource.baseAddress < range->address || resource.baseAddress > rangeEnd || range->address < range->allocationAddress || rangeEnd > allocationEnd) return false;

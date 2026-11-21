@@ -8941,7 +8941,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQT4AAAA=", "new requests did not use serialization version 62");
+    require(requestPrefix(encoded, 8u) == "NVNQQT8AAAA=", "new requests did not use serialization version 63");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -9062,7 +9062,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQToAAAA=", "NVNQQT0AAAA=", "NVNQQT8AAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQToAAAA=", "NVNQQT0AAAA=", "NVNQQUAAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -9120,7 +9120,7 @@ std::vector<std::uint8_t> decodeBase64(std::string_view text) {
 }
 
 std::vector<std::uint8_t> version56Bytes(std::vector<std::uint8_t> bytes) {
-    require(bytes.size() > 14u && bytes[4] == 62u, "a legacy fixture did not start from serialization version 62");
+    require(bytes.size() > 14u && bytes[4] == 63u, "a legacy fixture did not start from serialization version 63");
     bytes.resize(bytes.size() - 6u);
     bytes[4] = 56u;
     return bytes;
@@ -9139,6 +9139,65 @@ std::string encodeBase64(const std::vector<std::uint8_t>& bytes) {
         }
     }
     return text;
+}
+
+void verifyEmulatedBarycentricRequests() {
+    using namespace ShaderRecompiler;
+    const std::array<std::uint32_t, 1> code{0xbf810000u};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Fragment, 0x30000u, code, 0, {}};
+    request.context.waveSize = 64;
+    request.context.pixel = ShaderPixelStageInfo{};
+    request.graphics = GraphicsCompileContext{0u, {}, std::nullopt, std::nullopt, {}};
+    const RequestSerializer serializer;
+    std::vector<std::uint64_t> native;
+    RecompileCacheKey::Build(request, native);
+    auto unset = request;
+    unset.graphics.reset();
+    std::vector<std::uint64_t> withoutGraphics;
+    RecompileCacheKey::Build(unset, withoutGraphics);
+    require(native == withoutGraphics && RecompileCacheKey::ContextHash(request) == RecompileCacheKey::ContextHash(unset), "a pixel request that does not emulate barycentrics changed its cache key");
+    auto emulated = request;
+    emulated.graphics->emulateBarycentrics = true;
+    std::vector<std::uint64_t> forced;
+    RecompileCacheKey::Build(emulated, forced);
+    require(forced.size() == native.size() + 1u && RecompileCacheKey::ContextHash(emulated) != RecompileCacheKey::ContextHash(request), "emulated barycentrics are not one extra cache key element");
+    const auto added = std::ranges::mismatch(native, forced).in2;
+    auto removed = forced;
+    removed.erase(removed.begin() + (added - forced.begin()));
+    require(removed == native, "emulated barycentrics changed cache key elements other than their own");
+    for (const auto stage : {ShaderStage::Vertex, ShaderStage::Mesh, ShaderStage::TessellationEvaluation}) {
+        auto other = request;
+        other.shader.stage = stage;
+        other.context.pixel.reset();
+        std::vector<std::uint64_t> plain;
+        RecompileCacheKey::Build(other, plain);
+        other.graphics->emulateBarycentrics = true;
+        std::vector<std::uint64_t> flagged;
+        RecompileCacheKey::Build(other, flagged);
+        require(plain == flagged, "emulated barycentrics changed the cache key of a stage other than the pixel shader");
+    }
+    const auto encoded = serializer.Serialize(emulated);
+    const auto replay = serializer.Deserialize(encoded);
+    require(replay.request.graphics.has_value() && replay.request.graphics->emulateBarycentrics && serializer.Serialize(replay.request) == encoded, "emulated barycentrics were lost in serialization");
+    auto bytes = decodeBase64(serializer.Serialize(request));
+    auto flagged = decodeBase64(encoded);
+    require(bytes[4] == 63u && flagged.size() == bytes.size() + 1u && flagged.back() == 1u && std::equal(bytes.begin(), bytes.end(), flagged.begin()), "emulated barycentrics are not one trailing byte after an otherwise identical request");
+    auto legacyBytes = bytes;
+    legacyBytes[4] = 62u;
+    const auto legacy = serializer.Deserialize(encodeBase64(legacyBytes));
+    require(legacy.request.graphics.has_value() && !legacy.request.graphics->emulateBarycentrics, "a version 62 request emulated barycentrics");
+    std::vector<std::uint64_t> legacyKey;
+    RecompileCacheKey::Build(legacy.request, legacyKey);
+    require(legacyKey == native && serializer.Serialize(legacy.request) == serializer.Serialize(request), "a version 62 request changed its cache key or its upgraded bytes");
+    flagged[4] = 62u;
+    expectFailure([&] { static_cast<void>(serializer.Deserialize(encodeBase64(flagged))); }, "unexpected trailing data", "a version 62 request accepted an emulated barycentrics flag");
+    flagged[4] = 63u;
+    flagged.back() = 0u;
+    expectFailure([&] { static_cast<void>(serializer.Deserialize(encodeBase64(flagged))); }, "flag is clear", "a written but clear emulated barycentrics flag was accepted");
+    auto orphanBytes = decodeBase64(serializer.Serialize(unset));
+    orphanBytes.push_back(1u);
+    expectFailure([&] { static_cast<void>(serializer.Deserialize(encodeBase64(orphanBytes))); }, "emulated barycentrics without a graphics context", "emulated barycentrics without a graphics context were accepted");
 }
 
 void verifyDepthExportClamp() {
@@ -13446,6 +13505,7 @@ int main(int argc, char** argv) {
         verifyPixelInputs();
         verifyCanonicalVersion20And21Requests();
         verifyPixelRequestSerialization();
+        verifyEmulatedBarycentricRequests();
         verifyVertexInfoVersion19();
         verifyDepthRemapRequests();
         verifyMergedHullConfiguration();

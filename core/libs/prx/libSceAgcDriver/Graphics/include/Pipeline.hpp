@@ -62,6 +62,7 @@ public:
     const SampleOrder& HostSampleOrder() const { return sampleOrder; }
     bool ReordersSamples() const { return Graphics::ReordersSamples(sampleOrder); }
     bool SampleLocationsEnabled() const { return sampleLocationsEnabled; }
+    bool NarrowLibraryKeys() const { return narrowLibraryKeys; }
     VkExtent2D HostSampleLocationGrid() const { return sampleLocationGrid; }
     void PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages, std::span<const std::byte, PipelinePushConstantBytes> bytes) const;
     // Forgets the Vulkan objects without destroying them: for entries of a device that is already gone.
@@ -95,6 +96,8 @@ private:
     bool depthBounds = false;
     bool depthBias = false;
     bool libraries = false;
+    bool narrowLibraryKeys = false;
+    bool dynamicDepthBiasEnable = false;
     bool dynamicColorWriteMask = false;
     std::uint32_t dynamicSlots = 0;
     std::shared_ptr<OptimizedPipeline> optimized;
@@ -159,6 +162,7 @@ void ValidateMeshLimits(const Context& context, const ShaderRecompiler::MeshConf
 void ValidateLineWidth(const Context& context, float width);
 void ValidateProvokingVertex(const Context& context, const State& state, std::span<const CompiledShader> shaders = {});
 bool BarycentricPatches(const State& state, std::span<const CompiledShader> shaders);
+bool LastVertexPatches(const State& state, std::span<const CompiledShader> shaders, bool provokingVertexLast, bool tessellation, bool primitiveListRestart, bool indexed);
 bool ValidateSampleLocations(const Context& context, const State& state);
 
 void ValidateShaderPair(const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment);
