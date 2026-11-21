@@ -128,6 +128,71 @@ inline std::optional<Mapping> Find(std::uint64_t address, const char* caller) {
     return FromQuery(query, name);
 }
 
+struct Protection {
+    std::uint64_t end;
+    bool writable;
+};
+
+inline int HexDigit(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+inline std::optional<Protection> ScanProtection(std::uint64_t address, const char* caller) {
+    const int fd = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) throw std::runtime_error(std::string(caller) + ": failed to open /proc/self/maps");
+    char buffer[4096];
+    std::uint64_t bounds[2] = {};
+    int field = 0;
+    int column = 0;
+    std::optional<Protection> found;
+    while (!found) {
+        const ssize_t count = read(fd, buffer, sizeof(buffer));
+        if (count == 0) break;
+        if (count < 0) {
+            if (errno == EINTR) continue;
+            close(fd);
+            throw std::runtime_error(std::string(caller) + ": failed to read /proc/self/maps");
+        }
+        for (ssize_t index = 0; index < count && !found; ++index) {
+            const char c = buffer[index];
+            const int digit = HexDigit(c);
+            if (c == '\n') {
+                bounds[0] = 0;
+                bounds[1] = 0;
+                field = 0;
+                column = 0;
+            } else if (field < 2 && digit >= 0) {
+                bounds[field] = (bounds[field] << 4) | static_cast<std::uint64_t>(digit);
+            } else if ((field == 0 && c == '-') || (field == 1 && c == ' ')) {
+                ++field;
+            } else if (field < 2) {
+                field = 3;
+            } else if (field == 2 && ++column == 2) {
+                if (bounds[0] <= address && address < bounds[1]) found = Protection{bounds[1], c == 'w'};
+                field = 3;
+            }
+        }
+    }
+    close(fd);
+    return found;
+}
+
+inline std::optional<Protection> FindProtection(std::uint64_t address, const char* caller) {
+    const int fd = QueryFd();
+    if (fd < 0) return ScanProtection(address, caller);
+    procmap_query query{};
+    query.size = sizeof(query);
+    query.query_addr = address;
+    if (ioctl(fd, PROCMAP_QUERY, &query) != 0) {
+        if (errno == ENOENT) return std::nullopt;
+        throw std::runtime_error(std::string(caller) + ": PROCMAP_QUERY failed");
+    }
+    return Protection{query.vma_end, (query.vma_flags & PROCMAP_QUERY_VMA_WRITABLE) != 0};
+}
+
 template <typename Visit>
 void Walk(std::uint64_t begin, std::uint64_t end, const char* caller, Visit&& visit) {
     if (begin >= end) return;

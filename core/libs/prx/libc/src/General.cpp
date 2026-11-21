@@ -857,7 +857,7 @@ extern "C" bool GuestWritable_nid_no_patch(void* destination, std::size_t bytes)
             (memory.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) == 0) return false;
         address = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
 #elif defined(__linux__)
-        const auto mapping = HostMapping::Find(address, "GuestWritable");
+        const auto mapping = HostMapping::FindProtection(address, "GuestWritable");
         if (!mapping || !mapping->writable) return false;
         address = mapping->end;
 #elif defined(__APPLE__)
