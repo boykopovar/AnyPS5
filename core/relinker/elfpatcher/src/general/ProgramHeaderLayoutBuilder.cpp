@@ -201,13 +201,14 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     auto kept = _outputHeaders(request.OriginalHeaders);
     const auto frameCount = std::count_if(kept.begin(), kept.end(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_EH_FRAME; });
 
-    const bool keepFrames = kept.size() + kSyntheticProgramHeaderCount <= request.PhNum;
+    const bool keepFrames = kept.size() + kSyntheticProgramHeaderCount + (request.NoteSize == 0 ? 0 : 1) <= request.PhNum;
     if (!keepFrames && frameCount > 0) {
         throw Domain::RelinkerException("No free program header slot for PT_GNU_EH_FRAME");
     }
     _sortLoadHeaders(kept);
 
-    const std::size_t neededPh = kept.size() + kSyntheticProgramHeaderCount;
+    const std::size_t noteSlots = request.NoteSize == 0 ? 0 : 1;
+    const std::size_t neededPh = kept.size() + kSyntheticProgramHeaderCount + noteSlots;
     if (neededPh > request.PhNum)
         throw Domain::RelinkerException(
             "Not enough program header slots: need " + std::to_string(neededPh) +
@@ -279,6 +280,18 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     layout.push_back(_makeLoadHeader(request.ExtraBlockOffset, extraBlockVaddr, request.ExtraBlockSize, kDefaultLoadAlignment, extraBlockPageEnd - extraBlockVaddr, PF_R | PF_W | PF_X));
     layout.push_back(_makeLoadHeader(0, headerBlockVaddr, headerBlockSize, headerBlockAlign, headerBlockSize, PF_R));
     layout.push_back(_makeDynamicHeader(request.DynamicSegmentOffset, dynamicSegmentVaddr, request.DynamicSegmentSize));
+    if (request.NoteSize != 0) {
+        Domain::ProgramHeader note{};
+        note.Type = PT_NOTE;
+        note.Flags = PF_R;
+        note.Offset = request.NoteOffset;
+        note.MappedAddress = extraBlockVaddr + (request.NoteOffset - request.ExtraBlockOffset);
+        note.PhysicalAddress = note.MappedAddress;
+        note.FileSize = request.NoteSize;
+        note.MemorySize = request.NoteSize;
+        note.Alignment = 4;
+        layout.push_back(note);
+    }
 
     for (std::size_t index = 0; index < layout.size(); ++index)
         _writeProgramHeader(buf, static_cast<std::size_t>(request.PhOff) + index * request.PhEntSize, layout[index]);

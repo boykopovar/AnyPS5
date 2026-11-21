@@ -40,6 +40,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionRewriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/DecodedInstruction.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Amd64OnlyInstructionMatcher.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/RequiredExtensions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Sse4aOperands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Sse4aLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/StubBodyBuilder.cpp
@@ -156,6 +157,11 @@ if(BUILD_TESTING)
     target_link_libraries(avx2_twin_lowering_tests PRIVATE relinker_core)
     add_test(NAME avx2_twin_lowering COMMAND avx2_twin_lowering_tests)
     set_tests_properties(avx2_twin_lowering PROPERTIES TIMEOUT 60)
+
+    add_test_executable(required_extensions_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/RequiredExtensionsTests.cpp)
+    target_link_libraries(required_extensions_tests PRIVATE relinker_core)
+    add_test(NAME required_extensions COMMAND required_extensions_tests)
+    set_tests_properties(required_extensions PROPERTIES TIMEOUT 20)
 
     add_test_executable(lane_split_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/LaneSplitLoweringTests.cpp)
     target_link_libraries(lane_split_lowering_tests PRIVATE relinker_core)
@@ -315,6 +321,7 @@ if(WIN32)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionRewriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/DecodedInstruction.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Amd64OnlyInstructionMatcher.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/RequiredExtensions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Sse4aOperands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Sse4aLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/StubBodyBuilder.cpp
@@ -639,6 +646,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionRewriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/DecodedInstruction.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Amd64OnlyInstructionMatcher.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/RequiredExtensions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Sse4aOperands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Sse4aLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/StubBodyBuilder.cpp
@@ -965,6 +973,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_module_identity.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_symbolic_modules COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_symbolic_modules.py $<TARGET_FILE:relinker>)
+        add_test(NAME required_extensions_record COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_required_extensions_record.py $<TARGET_FILE:relinker>)
+        set_tests_properties(required_extensions_record PROPERTIES TIMEOUT 60)
         add_test(NAME linux_guest_qualified_imports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_qualified_imports.py $<TARGET_FILE:relinker>)
         set_property(TEST linux_guest_qualified_imports APPEND PROPERTY LABELS relinker)

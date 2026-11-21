@@ -3,10 +3,21 @@
 #if defined(__x86_64__) || defined(__i386__)
 #include <cpuid.h>
 #endif
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#elif defined(__linux__)
+#include <dlfcn.h>
+#include <link.h>
+#endif
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <optional>
+#include <string_view>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -29,6 +40,15 @@ struct FeatureBit {
     unsigned Bit;
     bool Required;
 };
+
+constexpr std::uint32_t kLzcnt = 1u << 0;
+constexpr std::uint32_t kBmi1 = 1u << 1;
+constexpr std::uint32_t kBmi2 = 1u << 2;
+constexpr std::uint32_t kMovbe = 1u << 3;
+constexpr std::uint32_t kAvx2 = 1u << 4;
+constexpr std::uint32_t kFma = 1u << 5;
+constexpr std::uint32_t kF16c = 1u << 6;
+constexpr char kRecordName[] = "AnyPS5";
 
 constexpr FeatureBit kFeatures[] = {
     {"SSE", Register::Leaf1Edx, 25, true},
@@ -96,6 +116,58 @@ std::string DisplayModel(const std::string& model) {
     return end == std::string::npos ? std::string("unknown model") : model.substr(0, end + 1);
 }
 
+std::optional<std::uint32_t> FeatureMask(const char* name) {
+    const std::string_view feature(name);
+    if (feature == "LZCNT") return kLzcnt;
+    if (feature == "BMI1") return kBmi1;
+    if (feature == "BMI2") return kBmi2;
+    if (feature == "MOVBE") return kMovbe;
+    if (feature == "AVX2") return kAvx2;
+    if (feature == "FMA") return kFma;
+    if (feature == "F16C") return kF16c;
+    return std::nullopt;
+}
+
+
+std::optional<std::uint32_t> RecordedExtensions() {
+#ifdef _WIN32
+    const auto* image = reinterpret_cast<const std::uint8_t*>(GetModuleHandleW(nullptr));
+    if (image == nullptr) return std::nullopt;
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew < 0) return std::nullopt;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(image + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE || nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) return std::nullopt;
+    return ParseCpuExtensionImage(image, nt->OptionalHeader.SizeOfImage);
+#elif defined(__linux__)
+    struct State {
+        std::optional<std::uint32_t> Extensions;
+    } state;
+    dl_iterate_phdr([](dl_phdr_info* image, std::size_t, void* data) {
+        auto& result = *static_cast<State*>(data);
+        if (image->dlpi_name != nullptr && image->dlpi_name[0] != '\0') return 0;
+        for (std::uint16_t index = 0; index < image->dlpi_phnum; ++index) {
+            const auto& header = image->dlpi_phdr[index];
+            if (header.p_type != PT_NOTE || header.p_filesz == 0) continue;
+            bool mapped = false;
+            for (std::uint16_t loadIndex = 0; loadIndex < image->dlpi_phnum; ++loadIndex) {
+                const auto& load = image->dlpi_phdr[loadIndex];
+                if (load.p_type == PT_LOAD && header.p_vaddr >= load.p_vaddr &&
+                    header.p_vaddr - load.p_vaddr <= load.p_memsz &&
+                    header.p_filesz <= load.p_memsz - (header.p_vaddr - load.p_vaddr))
+                    mapped = true;
+            }
+            if (!mapped) continue;
+            result.Extensions = ParseCpuExtensionNote(reinterpret_cast<const std::uint8_t*>(image->dlpi_addr + header.p_vaddr), header.p_filesz);
+            if (result.Extensions) return 1;
+        }
+        return 0;
+    }, &state);
+    return state.Extensions;
+#else
+    return std::nullopt;
+#endif
+}
+
 std::string Join(const std::vector<std::string>& names) {
     std::string text;
     for (const auto& name : names) {
@@ -105,6 +177,102 @@ std::string Join(const std::vector<std::string>& names) {
     return text;
 }
 
+}
+
+std::optional<std::uint32_t> ParseCpuExtensionNote(const std::uint8_t* note, const std::size_t size) {
+    constexpr std::uint32_t known = kLzcnt | kBmi1 | kBmi2 | kMovbe | kAvx2 | kFma | kF16c;
+    if (note == nullptr) return std::nullopt;
+    std::size_t offset = 0;
+    while (offset + 12 <= size) {
+        std::uint32_t namesz = 0;
+        std::uint32_t descsz = 0;
+        std::uint32_t type = 0;
+        std::memcpy(&namesz, note + offset, 4);
+        std::memcpy(&descsz, note + offset + 4, 4);
+        std::memcpy(&type, note + offset + 8, 4);
+        offset += 12;
+        const std::size_t nameStart = offset;
+        if (namesz > size - offset) return std::nullopt;
+        offset += (namesz + 3u) & ~std::size_t{3};
+        if (offset > size || descsz > size - offset) return std::nullopt;
+        const std::size_t descStart = offset;
+        offset += (descsz + 3u) & ~std::size_t{3};
+        if (type != 1 || namesz != sizeof(kRecordName) || descsz < 8) continue;
+        if (std::memcmp(note + nameStart, kRecordName, sizeof(kRecordName)) != 0) continue;
+        std::uint32_t version = 0;
+        std::uint32_t mask = 0;
+        std::memcpy(&version, note + descStart, 4);
+        std::memcpy(&mask, note + descStart + 4, 4);
+        if (version != 1 || (mask & ~known) != 0) return std::nullopt;
+        return mask;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::uint32_t> ParseCpuExtensionRecord(const std::uint8_t* record, const std::size_t size) {
+    constexpr std::uint32_t known = kLzcnt | kBmi1 | kBmi2 | kMovbe | kAvx2 | kFma | kF16c;
+    constexpr char magic[8] = {'A', '5', 'C', 'P', 'U', 0, 0, 0};
+    if (record == nullptr || size < 16 || std::memcmp(record, magic, sizeof(magic)) != 0) return std::nullopt;
+    std::uint32_t version = 0;
+    std::uint32_t mask = 0;
+    std::memcpy(&version, record + 8, 4);
+    std::memcpy(&mask, record + 12, 4);
+    if (version != 1 || (mask & ~known) != 0) return std::nullopt;
+    return mask;
+}
+
+std::optional<std::uint32_t> ParseCpuExtensionImage(const std::uint8_t* image, const std::size_t size) {
+    constexpr std::size_t kDosHeaderSize = 64;
+    constexpr std::size_t kLfanewOffset = 0x3C;
+    constexpr std::size_t kNtSignatureSize = 4;
+    constexpr std::size_t kFileHeaderSize = 20;
+    constexpr std::size_t kSectionCountOffset = 2;
+    constexpr std::size_t kOptionalSizeOffset = 16;
+    constexpr std::size_t kSectionHeaderSize = 40;
+    constexpr std::size_t kSizeOfImageOffset = 56;
+    constexpr std::uint16_t kDosMagic = 0x5A4D;
+    constexpr std::uint32_t kPeSignature = 0x00004550;
+    constexpr std::uint16_t kPe32PlusMagic = 0x20B;
+    const auto read = [&](const std::size_t offset, auto& value) {
+        if (offset > size || sizeof(value) > size - offset) return false;
+        std::memcpy(&value, image + offset, sizeof(value));
+        return true;
+    };
+    if (image == nullptr || size < kDosHeaderSize) return std::nullopt;
+    std::uint16_t dosMagic = 0;
+    if (!read(0, dosMagic) || dosMagic != kDosMagic) return std::nullopt;
+    std::uint32_t ntOffset = 0;
+    if (!read(kLfanewOffset, ntOffset)) return std::nullopt;
+    if (ntOffset > size || size - ntOffset < kNtSignatureSize + kFileHeaderSize) return std::nullopt;
+    std::uint32_t signature = 0;
+    if (!read(ntOffset, signature) || signature != kPeSignature) return std::nullopt;
+    const std::size_t fileHeader = ntOffset + kNtSignatureSize;
+    std::uint16_t sectionCount = 0;
+    std::uint16_t optionalSize = 0;
+    if (!read(fileHeader + kSectionCountOffset, sectionCount)) return std::nullopt;
+    if (!read(fileHeader + kOptionalSizeOffset, optionalSize)) return std::nullopt;
+    const std::size_t optional = fileHeader + kFileHeaderSize;
+    std::uint16_t optionalMagic = 0;
+    if (!read(optional, optionalMagic) || optionalMagic != kPe32PlusMagic) return std::nullopt;
+    if (optionalSize < kSizeOfImageOffset + sizeof(std::uint32_t)) return std::nullopt;
+    std::uint32_t sizeOfImage = 0;
+    if (!read(optional + kSizeOfImageOffset, sizeOfImage)) return std::nullopt;
+    if (sizeOfImage == 0 || sizeOfImage > size) return std::nullopt;
+    const std::size_t sectionTable = optional + optionalSize;
+    if (sectionTable > sizeOfImage) return std::nullopt;
+    const std::size_t sectionBytes = static_cast<std::size_t>(sectionCount) * kSectionHeaderSize;
+    if (sectionBytes > sizeOfImage - sectionTable) return std::nullopt;
+    for (std::size_t index = 0; index < sectionCount; ++index) {
+        const std::size_t header = sectionTable + index * kSectionHeaderSize;
+        if (std::memcmp(image + header, ".aps5cpu", 8) != 0) continue;
+        std::uint32_t virtualSize = 0;
+        std::uint32_t virtualAddress = 0;
+        if (!read(header + 8, virtualSize)) return std::nullopt;
+        if (!read(header + 12, virtualAddress)) return std::nullopt;
+        if (virtualSize < 16 || virtualAddress > sizeOfImage || 16 > sizeOfImage - virtualAddress) return std::nullopt;
+        return ParseCpuExtensionRecord(image + virtualAddress, 16);
+    }
+    return std::nullopt;
 }
 
 HostCpuRegisters ReadHostCpuRegisters() {
@@ -168,9 +336,18 @@ std::vector<HostCpuFeature> HostCpuFeatures(const HostCpuRegisters& registers) {
 }
 
 std::vector<std::string> MissingHostCpuFeatures(const HostCpuRegisters& registers) {
+    return MissingHostCpuFeatures(registers, std::nullopt);
+}
+
+std::vector<std::string> MissingHostCpuFeatures(const HostCpuRegisters& registers, const std::optional<std::uint32_t> recordedExtensions) {
     std::vector<std::string> missing;
-    for (const auto& feature : HostCpuFeatures(registers))
-        if (feature.Required && !feature.Present) missing.emplace_back(feature.Name);
+    for (const auto& feature : HostCpuFeatures(registers)) {
+        bool required = feature.Required;
+        if (recordedExtensions) {
+            if (const auto mask = FeatureMask(feature.Name)) required = (*recordedExtensions & *mask) != 0;
+        }
+        if (required && !feature.Present) missing.emplace_back(feature.Name);
+    }
     return missing;
 }
 
@@ -195,13 +372,17 @@ HostCpuText HostCpuModel_nid_no_patch() {
 }
 
 HostCpuText MissingHostCpuFeatures_nid_no_patch(const HostCpuRegisters* registers) {
-    return PackText(Join(MissingHostCpuFeatures(*registers)));
+    return PackText(Join(MissingHostCpuFeatures(*registers, RecordedExtensions())));
 }
 
 }
 
 void CheckHostCpu(const HostCpuRegisters& registers, const std::string& model) {
-    const auto missing = MissingHostCpuFeatures(registers);
+    CheckHostCpu(registers, model, RecordedExtensions());
+}
+
+void CheckHostCpu(const HostCpuRegisters& registers, const std::string& model, const std::optional<std::uint32_t> recordedExtensions) {
+    const auto missing = MissingHostCpuFeatures(registers, recordedExtensions);
     if (missing.empty()) return;
     throw std::runtime_error("The host CPU (" + DisplayModel(model) + ") lacks " + Join(missing) +
         ". The PS5's Zen 2 CPU has these extensions and titles run their instructions natively, so this CPU cannot run them.");

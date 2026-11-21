@@ -1,5 +1,7 @@
 #include "prx/libkernel/System/include/HostCpu.hpp"
 #include <cstdint>
+#include <cstring>
+#include <optional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -123,6 +125,82 @@ static void CheckError() {
     }
 }
 
+static std::vector<std::uint8_t> ExtensionNote(const std::uint32_t version, const std::uint32_t mask) {
+    return {7, 0, 0, 0, 8, 0, 0, 0, 1, 0, 0, 0, 'A', 'n', 'y', 'P', 'S', '5', 0, 0,
+            static_cast<std::uint8_t>(version), 0, 0, 0, static_cast<std::uint8_t>(mask), 0, 0, 0};
+}
+
+static std::vector<std::uint8_t> ExtensionRecord(const std::uint32_t version, const std::uint32_t mask) {
+    return {'A', '5', 'C', 'P', 'U', 0, 0, 0, static_cast<std::uint8_t>(version), 0, 0, 0,
+            static_cast<std::uint8_t>(mask), 0, 0, 0};
+}
+
+static void CheckRecordParsers() {
+    const auto note = ExtensionNote(1, 0x5);
+    Require(ParseCpuExtensionNote(note.data(), note.size()) == 0x5u, "a well-formed note was rejected");
+    Require(!ParseCpuExtensionNote(note.data(), note.size() - 4).has_value(), "a truncated note was accepted");
+    auto wrongName = note;
+    wrongName[12] = 'B';
+    Require(!ParseCpuExtensionNote(wrongName.data(), wrongName.size()).has_value(), "a note with another owner was accepted");
+    const auto wrongVersion = ExtensionNote(2, 0x5);
+    Require(!ParseCpuExtensionNote(wrongVersion.data(), wrongVersion.size()).has_value(), "a note of another version was accepted");
+    const auto unknownBit = ExtensionNote(1, 0x80);
+    Require(!ParseCpuExtensionNote(unknownBit.data(), unknownBit.size()).has_value(), "a note with an unknown extension bit was accepted");
+    const auto record = ExtensionRecord(1, 0x21);
+    Require(ParseCpuExtensionRecord(record.data(), record.size()) == 0x21u, "a well-formed record was rejected");
+    Require(!ParseCpuExtensionRecord(record.data(), record.size() - 1).has_value(), "a truncated record was accepted");
+    auto wrongMagic = record;
+    wrongMagic[0] = 'B';
+    Require(!ParseCpuExtensionRecord(wrongMagic.data(), wrongMagic.size()).has_value(), "a record with another magic was accepted");
+    const auto recordVersion = ExtensionRecord(2, 0x21);
+    Require(!ParseCpuExtensionRecord(recordVersion.data(), recordVersion.size()).has_value(), "a record of another version was accepted");
+    const auto recordUnknown = ExtensionRecord(1, 0x80);
+    Require(!ParseCpuExtensionRecord(recordUnknown.data(), recordUnknown.size()).has_value(), "a record with an unknown extension bit was accepted");
+}
+
+static std::vector<std::uint8_t> ExtensionImage(const std::uint32_t sizeOfImage) {
+    constexpr std::size_t nt = 0x40;
+    constexpr std::size_t optional = nt + 4 + 20;
+    constexpr std::uint16_t optionalSize = 0xF0;
+    constexpr std::size_t sectionTable = optional + optionalSize;
+    std::vector<std::uint8_t> image(static_cast<std::size_t>(sizeOfImage) + 0x200, 0);
+    const auto put = [&](const std::size_t offset, const auto value) { std::memcpy(image.data() + offset, &value, sizeof(value)); };
+    put(0, std::uint16_t{0x5A4D});
+    put(0x3C, std::uint32_t{static_cast<std::uint32_t>(nt)});
+    put(nt, std::uint32_t{0x00004550});
+    put(nt + 4 + 2, std::uint16_t{1});
+    put(nt + 4 + 16, optionalSize);
+    put(optional, std::uint16_t{0x20B});
+    put(optional + 56, sizeOfImage);
+    std::memcpy(image.data() + sectionTable, ".aps5cpu", 8);
+    put(sectionTable + 8, std::uint32_t{16});
+    put(sectionTable + 12, std::uint32_t{sizeOfImage - 16});
+    const auto record = ExtensionRecord(1, 0x21);
+    std::memcpy(image.data() + sizeOfImage - 16, record.data(), record.size());
+    return image;
+}
+
+static void CheckRecordImage() {
+    const auto image = ExtensionImage(0x400);
+    Require(ParseCpuExtensionImage(image.data(), image.size()) == 0x21u, "a well-formed image was rejected");
+    Require(!ParseCpuExtensionImage(image.data(), 0x30).has_value(), "a truncated DOS header was accepted");
+    Require(!ParseCpuExtensionImage(image.data(), 0x400 - 1).has_value(), "an image whose SizeOfImage exceeds the buffer was accepted");
+    auto outside = image;
+    const std::uint32_t pastImage = 0x400 - 8;
+    std::memcpy(outside.data() + 0x40 + 24 + 0xF0 + 12, &pastImage, 4);
+    Require(!ParseCpuExtensionImage(outside.data(), outside.size()).has_value(), "a section past SizeOfImage was accepted");
+    auto shortSection = image;
+    const std::uint32_t tiny = 8;
+    std::memcpy(shortSection.data() + 0x40 + 24 + 0xF0 + 8, &tiny, 4);
+    Require(!ParseCpuExtensionImage(shortSection.data(), shortSection.size()).has_value(), "a section shorter than the record was accepted");
+    auto slack = image;
+    const auto record = ExtensionRecord(1, 0x21);
+    std::memcpy(slack.data() + 0x400, record.data(), record.size());
+    const std::uint32_t atImageEnd = 0x400;
+    std::memcpy(slack.data() + 0x40 + 24 + 0xF0 + 12, &atImageEnd, 4);
+    Require(!ParseCpuExtensionImage(slack.data(), slack.size()).has_value(), "a record past SizeOfImage was accepted");
+}
+
 static void CheckExportedHelpers() {
     const auto registers = ReadHostCpuRegisters_nid_no_patch();
     const auto direct = ReadHostCpuRegisters();
@@ -137,6 +215,32 @@ static void CheckExportedHelpers() {
     Require(std::string(MissingHostCpuFeatures_nid_no_patch(&lacking).value) == "BMI1, BMI2", "exported missing list is not joined with a comma and a space");
 }
 
+static void CheckRecordedExtensions() {
+    constexpr std::uint32_t fma = 1u << 5;
+    constexpr std::uint32_t avx2 = 1u << 4;
+    constexpr std::uint32_t f16c = 1u << 6;
+    auto registers = Zen2();
+    registers.Leaf1Ecx &= ~(Bit(12) | Bit(22) | Bit(29));
+    registers.Leaf7Ebx = 0;
+    registers.Leaf80000001Ecx &= ~Bit(5);
+    Require(MissingHostCpuFeatures(registers, 0u) == std::vector<std::string>{}, "a record without extensions kept a requirement");
+    Require(MissingHostCpuFeatures(registers, fma) == std::vector<std::string>{"FMA"}, "a record for FMA did not require FMA alone");
+    Require(MissingHostCpuFeatures(registers, avx2 | f16c) == std::vector<std::string>{"AVX2", "F16C"}, "a record for AVX2 and F16C did not require both");
+    {
+        auto baseline = registers;
+        baseline.Leaf1Ecx &= ~Bit(23);
+        Require(MissingHostCpuFeatures(baseline, 0u) == std::vector<std::string>{"POPCNT"}, "a record relaxed the baseline check");
+    }
+    bool threw = false;
+    try {
+        CheckHostCpu(registers, "Example CPU", fma);
+    } catch (const std::runtime_error& error) {
+        threw = true;
+        Require(std::string(error.what()).find("lacks FMA") != std::string::npos, "recorded-extension message does not name FMA");
+    }
+    Require(threw, "a recorded FMA requirement did not throw on a host without FMA");
+}
+
 int main() {
     try {
         CheckExportedHelpers();
@@ -145,6 +249,9 @@ int main() {
         CheckSingleMissingExtension();
         CheckAvxWithoutOsState();
         CheckPreHaswell();
+        CheckRecordParsers();
+        CheckRecordImage();
+        CheckRecordedExtensions();
         CheckError();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

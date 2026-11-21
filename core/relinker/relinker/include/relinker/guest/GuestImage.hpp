@@ -74,6 +74,7 @@ public:
 
 struct GuestArtifact {
     std::filesystem::path Path;
+    std::uint32_t RequiredExtensions = 0;
     std::vector<std::uint8_t> Bytes;
     std::vector<Domain::CallRegistryEntry> Imports;
     std::filesystem::path SourcePath;

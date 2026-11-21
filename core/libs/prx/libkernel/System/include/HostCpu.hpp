@@ -1,7 +1,9 @@
 #ifndef CORE_LIBS_PRX_LIBKERNEL_SYSTEM_HOSTCPU_HPP
 #define CORE_LIBS_PRX_LIBKERNEL_SYSTEM_HOSTCPU_HPP
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -36,8 +38,14 @@ HostCpuText MissingHostCpuFeatures_nid_no_patch(const HostCpuRegisters* register
 
 HostCpuRegisters ReadHostCpuRegisters();
 std::string HostCpuModel();
+std::optional<std::uint32_t> ParseCpuExtensionNote(const std::uint8_t* note, std::size_t size);
+std::optional<std::uint32_t> ParseCpuExtensionRecord(const std::uint8_t* record, std::size_t size);
+std::optional<std::uint32_t> ParseCpuExtensionImage(const std::uint8_t* image, std::size_t size);
+
 std::vector<HostCpuFeature> HostCpuFeatures(const HostCpuRegisters& registers);
 std::vector<std::string> MissingHostCpuFeatures(const HostCpuRegisters& registers);
+std::vector<std::string> MissingHostCpuFeatures(const HostCpuRegisters& registers, std::optional<std::uint32_t> recordedExtensions);
 void CheckHostCpu(const HostCpuRegisters& registers, const std::string& model);
+void CheckHostCpu(const HostCpuRegisters& registers, const std::string& model, std::optional<std::uint32_t> recordedExtensions);
 
 #endif
