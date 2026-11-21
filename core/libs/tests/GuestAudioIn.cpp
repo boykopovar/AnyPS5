@@ -16,7 +16,14 @@
 #include <string>
 #include <vector>
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, const char* message = nullptr) {
+    if (!value) {
+        if (message) {
+            std::fprintf(stderr, "%s\n", message);
+        }
+        std::abort();
+    }
+}
 
 static void SetEnvironment(const char* name, const std::string& value) {
 #ifdef _WIN32
@@ -175,10 +182,17 @@ void TestFirmwareSignatures() {
     Require(sceAudioInSetMicLevel(9, 0, 101, 0, 0) == invalidParam);
     Require(sceAudioInSetMicLevel(5, 0, 0, 0, 0) == invalidDevice);
     Require(sceAudioInSetMicLevel(0, 0, 0, 0, 0) == invalidDevice);
-    Require(sceAudioInSetDeviceMuteStatus(5, 0, 1) == invalidDevice);
-    Require(sceAudioInSetDeviceMuteStatus(8, 0, 1) == invalidDevice);
-    Require(sceAudioInSetDeviceMuteStatus(-1, 0, 1) == invalidDevice);
-    Require(sceAudioInSetUserMute(5, 0, 0) == invalidDevice);
+    for (int invalidType : {0, 5, 8, 9, 10, 100, -1}) {
+        Require(sceAudioInSetDeviceMuteStatus(invalidType, 0, 1) == invalidDevice, "invalid type must return invalidDevice for set device mute");
+        Require(sceAudioInSetUserMute(invalidType, 0, 1) == invalidDevice, "invalid type must return invalidDevice for set user mute 1");
+        Require(sceAudioInSetUserMute(invalidType, 0, 0) == invalidDevice, "invalid type must return invalidDevice for set user mute 0");
+    }
+    const int maskedFive = static_cast<int>(0x80000000u | 5u);
+    Require(sceAudioInSetDeviceMuteStatus(maskedFive, 0, 1) == invalidDevice, "masked type must return invalidDevice for set device mute");
+    Require(sceAudioInSetUserMute(maskedFive, 0, 1) == invalidDevice, "masked type must return invalidDevice for set user mute");
+    const int maskedZero = static_cast<int>(0x80000000u);
+    Require(sceAudioInSetDeviceMuteStatus(maskedZero, 0, 1) == invalidDevice, "masked zero must return invalidDevice for set device mute");
+    Require(sceAudioInSetUserMute(maskedZero, 0, 1) == invalidDevice, "masked zero must return invalidDevice for set user mute");
 
     Require(sceAudioInVmicCreate(user, 512, 44100, 0) == invalidSize);
     Require(sceAudioInVmicCreate(user, 256, 44100, 0) == invalidFreq);
