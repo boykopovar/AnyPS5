@@ -6,6 +6,7 @@
 #include "prx/libc/include/CodecvtUtf.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
+#include "prx/libSceLibcInternal/include/TimeGetFields.hpp"
 #include <mutex>
 
 namespace {
@@ -761,13 +762,14 @@ int APS5_VABI libSceLibcInternalInventory_182_nid_no_patch() {
 }
 APS5_EXPORT("dU8Q2yzFNQg", libSceLibcInternalInventory_182_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_183_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_183_nid_no_patch(void* self) {
+    _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEED2Ev_nid_postfix(static_cast<GuestLocale::Facet*>(self));
+    _ZdlPv_nid_postfix(self);
 }
 APS5_EXPORT("mmq9OwwYx74", libSceLibcInternalInventory_183_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_184_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_184_nid_no_patch(void* self) {
+    _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEED2Ev_nid_postfix(static_cast<GuestLocale::Facet*>(self));
 }
 APS5_EXPORT("Cp9ksNOeun8", libSceLibcInternalInventory_184_nid_no_patch);
 
@@ -776,8 +778,8 @@ void APS5_VABI libSceLibcInternalInventory_185_nid_no_patch(void* self) {
 }
 APS5_EXPORT("ImblNB7fVVU", libSceLibcInternalInventory_185_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_192_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_192_nid_no_patch(void* self) {
+    _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEED2Ev_nid_postfix(static_cast<GuestLocale::Facet*>(self));
 }
 APS5_EXPORT("QTgRx1NTp6o", libSceLibcInternalInventory_192_nid_no_patch);
 
