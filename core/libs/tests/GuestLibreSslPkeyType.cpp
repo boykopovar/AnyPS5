@@ -22,6 +22,11 @@ template<typename TAction> static void RequireThrows(TAction action, std::source
     Require(false, location);
 }
 
+template<typename TAction> static void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
+    try { action(); } catch (const std::invalid_argument&) { return; }
+    Require(false, location);
+}
+
 static std::uint64_t ErrorCode(int library, int function, int reason) {
     return (static_cast<std::uint64_t>(library) << 24) |
            (static_cast<std::uint64_t>(function) << 12) |
@@ -53,6 +58,7 @@ static void TestGet1EcKey() {
 
 int main() {
     TestGet1EcKey();
+    RequireInvalidArgument([] { EVP_PKEY_id_nid_postfix(nullptr); });
     Require(EVP_PKEY_type_nid_postfix(6) == 6);
     Require(EVP_PKEY_type_nid_postfix(19) == 6);
     Require(EVP_PKEY_type_nid_postfix(408) == 408);

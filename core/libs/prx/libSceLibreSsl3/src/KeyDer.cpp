@@ -355,11 +355,13 @@
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -1352,6 +1354,30 @@ template<typename T> void ReplaceOutput(T** output, T* decoded, void (APS5_VABI*
     *output = decoded;
 }
 
+bool CopyGuestIn(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyGuestOut(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+void FreePreservingErrno(void* pointer) {
+    const int savedErrno = errno;
+    free_nid_postfix(pointer);
+    errno = savedErrno;
+}
+
+}
+
+bool ReadDerObjectFromBio_nid_no_patch(LibreSsl::Bio* bio, std::vector<unsigned char>& result) {
+    return ReadSingleDerObjectFromBio(bio, result);
 }
 
 LibreSsl3EvpPkey* DecodeTraditionalPrivateKey_nid_no_patch(int type, LibreSsl3EvpPkey** output,
@@ -1406,6 +1432,21 @@ LibreSsl3EvpPkey* APS5_VABI d2i_PUBKEY_nid_postfix(
     ReplaceOutput(output, key, EVP_PKEY_free_nid_disambig1_nid_postfix);
     *input += static_cast<std::size_t>(length) - remaining.size();
     return key;
+}
+
+LibreSsl3Rsa* APS5_VABI d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(
+    LibreSsl3Rsa** output, const unsigned char** input, std::int64_t length) {
+    if (!input) APS5_INVALID_ARG_EX;
+    if (length < 0) return nullptr;
+    const unsigned char* cursor = *input;
+    auto* key = d2i_PUBKEY_nid_postfix(nullptr, &cursor, length);
+    if (!key) return nullptr;
+    auto* rsa = EVP_PKEY_get1_RSA_nid_disambig1_nid_postfix(key);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+    if (!rsa) return nullptr;
+    ReplaceOutput(output, rsa, RSA_free_nid_disambig1_nid_postfix);
+    *input = cursor;
+    return rsa;
 }
 
 LibreSsl3Pkcs8PrivKeyInfo* APS5_VABI d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
@@ -1503,16 +1544,28 @@ int APS5_VABI i2d_PKCS8_PRIV_KEY_INFO_nid_postfix(
         return -1;
     }
     if (!output) return static_cast<int>(encoded.size());
-    const bool advanceOutput = (*output != nullptr);
-    if (!*output) {
-        *output = static_cast<unsigned char*>(malloc_nid_postfix(encoded.size()));
-        if (!*output) {
+    unsigned char* target = nullptr;
+    if (!CopyGuestIn(&target, output, sizeof(target)))
+        throw std::invalid_argument("i2d_PKCS8_PRIV_KEY_INFO: unreadable output pointer");
+    unsigned char* next = nullptr;
+    unsigned char* allocated = nullptr;
+    if (target) {
+        if (!CopyGuestOut(target, encoded.data(), encoded.size()))
+            throw std::invalid_argument("i2d_PKCS8_PRIV_KEY_INFO: unwritable output buffer");
+        next = target + encoded.size();
+    } else {
+        allocated = static_cast<unsigned char*>(malloc_nid_postfix(encoded.size()));
+        if (!allocated) {
             PutError(ErrLibAsn1, ErrRMallocFailure);
             return -1;
         }
+        std::memcpy(allocated, encoded.data(), encoded.size());
+        next = allocated;
     }
-    std::memcpy(*output, encoded.data(), encoded.size());
-    if (advanceOutput) *output += encoded.size();
+    if (!CopyGuestOut(output, &next, sizeof(next))) {
+        if (allocated) FreePreservingErrno(allocated);
+        throw std::invalid_argument("i2d_PKCS8_PRIV_KEY_INFO: unwritable output pointer");
+    }
     return static_cast<int>(encoded.size());
 }
 
@@ -1537,17 +1590,8 @@ LibreSsl3EvpPkey* APS5_VABI EVP_PKCS82PKEY_nid_postfix(const LibreSsl3Pkcs8PrivK
         info->privateKey->data, static_cast<std::size_t>(info->privateKey->length));
 
     if (IsOid(oidSpan, RsaOid)) {
-        if (info->algorithm->parameter && info->algorithm->parameter->type != Asn1TypeNull) {
-            PutError(ErrLibRsa, ErrRRsaLib);
-            PutError(ErrLibEvp, EvpRPrivateKeyDecodeError);
-            return nullptr;
-        }
-        auto* key = DecodeRsaPkey(keyBytes, true, false);
-        if (!key) {
-            PutError(ErrLibRsa, ErrRRsaLib);
-            PutError(ErrLibEvp, EvpRPrivateKeyDecodeError);
-            return nullptr;
-        }
+        auto* key = DecodeRsaPkey(keyBytes, true, true);
+        if (!key) PutError(ErrLibEvp, EvpRPrivateKeyDecodeError);
         return key;
     }
     if (IsOid(oidSpan, EcPublicKeyOid)) {
@@ -1565,7 +1609,7 @@ LibreSsl3EvpPkey* APS5_VABI EVP_PKCS82PKEY_nid_postfix(const LibreSsl3Pkcs8PrivK
             PutError(ErrLibEvp, EvpRPrivateKeyDecodeError);
             return nullptr;
         }
-        auto* ec = DecodeEcPrivateKey(keyBytes, curve, false);
+        auto* ec = DecodeEcPrivateKey(keyBytes, curve, true);
         if (!ec) {
             PutError(ErrLibEc, EcRDecodeError);
             PutError(ErrLibEvp, EvpRPrivateKeyDecodeError);

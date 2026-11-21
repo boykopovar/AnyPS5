@@ -15,7 +15,21 @@ import annotate_module
 import nid_names
 from test_annotate_module import (DEFAULT_SYMBOLS, DEFAULT_TAGS, GNU_HASH, IMPORT_NAME, EXPORT_NAME, SECOND_IMPORT_NAME,
                                   TLS_NAME, CODE_ADDRESS, DATA_ADDRESS, CALL_ADDRESS, EXPORT_ADDRESS, build_module,
-                                  code_bytes, nid, symbol_name)
+                                  append_dynamic_tags, code_bytes, nid, symbol_name)
+
+
+def lifecycle_array_image(tag=25, values=(CODE_ADDRESS, EXPORT_ADDRESS), fixups=(), symbols=(), **options):
+    size_tag = {25: 27, 26: 28, 32: 33}[tag]
+    image = bytearray(append_dynamic_tags(build_module(symbols=symbols, relocations=(), tags=DEFAULT_TAGS + (7, 8),
+                                                      values={8: 24 * len(fixups)}, **options),
+                                         [(tag, DATA_ADDRESS + 0x600), (size_tag, 8 * len(values))]))
+    for index, address in enumerate(values):
+        struct.pack_into("<Q", image, 0x2600 + index * 8, address)
+    for index, (offset, info, addend) in enumerate(fixups):
+        struct.pack_into("<QQq", image, 0x2200 + index * 24, DATA_ADDRESS + 0x600 + offset, info, addend)
+    if tag == 32:
+        struct.pack_into("<H", image, 16, 2)
+    return image
 
 
 class GhidraSymbolsTests(unittest.TestCase):
@@ -50,6 +64,155 @@ class GhidraSymbolsTests(unittest.TestCase):
         self.assertEqual(set(self.root.iterdir()), set(before))
         self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}, before)
 
+    def test_tlsdesc_plt_marks_only_file_backed_code_and_preserves_export_names(self):
+        source = self.root / "tlsdesc.prx"
+        database = self.root / "names.csv"
+        database.write_text(f"{nid(EXPORT_NAME)} {EXPORT_NAME}\n", encoding="utf-8")
+        for address, flags, expected in ((CODE_ADDRESS, 5, ["elf_tlsdesc_plt 0x1000 f"]),
+                                         (EXPORT_ADDRESS, 5, []), (DATA_ADDRESS, 5, []),
+                                         (CODE_ADDRESS + len(code_bytes()), 5, []), (CODE_ADDRESS, 4, [])):
+            with self.subTest(address=address, flags=flags):
+                source.write_bytes(append_dynamic_tags(build_module(code_flags=flags), [(0x6ffffef6, address),
+                                                                                         (0x6ffffef7, DATA_ADDRESS)]))
+                result = self.cli(source, "--db", database)
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                rows = result.stdout.splitlines()
+                self.assertEqual([row for row in rows if "tlsdesc" in row], expected)
+                if address == EXPORT_ADDRESS:
+                    self.assertIn(f"{EXPORT_NAME} {EXPORT_ADDRESS:#x} f", rows)
+
+    def test_header_entry_point_without_symbols(self):
+        source = self.root / "stripped.elf"
+        for address, flags, file_size, expected in ((CODE_ADDRESS, 5, 12, ["elf_entry 0x1000 f"]),
+                                                   (0, 5, 12, []), (DATA_ADDRESS, 5, 12, []),
+                                                   (CODE_ADDRESS, 4, 12, []), (EXPORT_ADDRESS, 5, 11, [])):
+            with self.subTest(address=address, flags=flags, file_size=file_size):
+                image = bytearray(build_module(symbols=[], relocations=(), code_flags=flags))
+                struct.pack_into("<Q", image, 24, address)
+                struct.pack_into("<Q", image, 64 + 32, file_size)
+                source.write_bytes(image)
+                result = self.cli(source, "--no-names")
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                self.assertEqual(result.stdout.splitlines(), expected)
+
+    def test_header_entry_point_keeps_named_functions(self):
+        image = bytearray(append_dynamic_tags(build_module(), [(12, CODE_ADDRESS)]))
+        for address in (CODE_ADDRESS, EXPORT_ADDRESS):
+            struct.pack_into("<Q", image, 24, address)
+            rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({nid(EXPORT_NAME): EXPORT_NAME}))
+            self.assertEqual([row for row in rows if row.endswith(" f")], ["elf_init 0x1000 f", "sceKernelUsleep 0x100b f"])
+
+    def test_lifecycle_functions_without_exports_are_named_offline(self):
+        source = self.root / "lifecycle.prx"
+        for kind in ("sysv", "gnu"):
+            tags = tuple(GNU_HASH if tag == 4 and kind == "gnu" else tag for tag in DEFAULT_TAGS)
+            source.write_bytes(append_dynamic_tags(build_module(symbols=[], relocations=(), kind=kind, tags=tags),
+                                                   [(12, CODE_ADDRESS), (13, EXPORT_ADDRESS)]))
+            with self.subTest(kind=kind):
+                result = self.cli(source, "--no-names")
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                self.assertEqual(result.stdout.splitlines(), ["elf_init 0x1000 f", "elf_fini 0x100b f"])
+        self.assertEqual(set(self.root.iterdir()), {source})
+
+    def test_lifecycle_metadata_preserves_export_names_and_aliases(self):
+        image = append_dynamic_tags(build_module(), [(12, EXPORT_ADDRESS), (13, EXPORT_ADDRESS)])
+        rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({nid(EXPORT_NAME): EXPORT_NAME}))
+        self.assertEqual([row for row in rows if row.endswith(" f")], ["sceKernelUsleep 0x100b f"])
+        image = append_dynamic_tags(build_module(symbols=[], relocations=()), [(12, CODE_ADDRESS), (13, CODE_ADDRESS)])
+        rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({}))
+        self.assertEqual(rows, ["elf_fini 0x1000 f", "elf_init 0x1000 l"])
+
+    def test_lifecycle_functions_need_executable_file_bytes(self):
+        for address, flags, size in ((DATA_ADDRESS, 5, 12), (0x9000, 5, 12), (CODE_ADDRESS + 12, 5, 12),
+                                     (CODE_ADDRESS, 4, 12), (EXPORT_ADDRESS, 5, 11)):
+            with self.subTest(address=address, flags=flags, size=size):
+                image = bytearray(append_dynamic_tags(build_module(symbols=[], relocations=(), code_flags=flags), [(12, address), (13, address)]))
+                struct.pack_into("<Q", image, 64 + 32, size)
+                self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({})), [])
+
+    def test_conflicting_lifecycle_tags_do_not_print_a_map(self):
+        source = self.root / "conflicting.prx"
+        for tag in (12, 13):
+            with self.subTest(tag=tag):
+                source.write_bytes(append_dynamic_tags(build_module(), [(tag, CODE_ADDRESS), (tag, EXPORT_ADDRESS)]))
+                result = self.cli(source, "--no-names")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("conflicting duplicate DT_", result.stderr)
+
+    def test_lifecycle_arrays_name_raw_and_relocated_functions_offline(self):
+        source = self.root / "arrays.prx"
+        for tag, name in ((25, "init"), (26, "fini"), (32, "preinit")):
+            for relocated in (False, True):
+                with self.subTest(tag=tag, relocated=relocated):
+                    image = lifecycle_array_image(tag, (0, 0) if relocated else (CODE_ADDRESS, EXPORT_ADDRESS),
+                                                  ((0, 8, CODE_ADDRESS), (8, 8, EXPORT_ADDRESS)) if relocated else ())
+                    source.write_bytes(image)
+                    result = self.cli(source, "--no-names")
+                    self.assertEqual((result.returncode, result.stderr), (0, ""))
+                    self.assertEqual(result.stdout.splitlines(), [f"elf_{name}_array_0 0x1000 f", f"elf_{name}_array_1 0x100b f"])
+        self.assertEqual(set(self.root.iterdir()), {source})
+
+    def test_lifecycle_arrays_resolve_defined_symbols_and_keep_export_names(self):
+        image = lifecycle_array_image(values=(0,), fixups=((0, (1 << 32) | 1, 0),),
+                                      symbols=[(EXPORT_NAME, 1, 0x12, EXPORT_ADDRESS)])
+        rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({nid(EXPORT_NAME): EXPORT_NAME}))
+        self.assertIn("sceKernelUsleep 0x100b f", rows)
+        self.assertFalse(any(row.startswith("elf_init_array") for row in rows))
+        image = lifecycle_array_image(values=(0,), fixups=((0, (1 << 32) | 1, 11),),
+                                      symbols=[("local", 1, 0x02, CODE_ADDRESS)])
+        rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({}))
+        self.assertIn("elf_init_array_0 0x100b f", rows)
+
+    def test_lifecycle_arrays_do_not_guess_unresolved_targets(self):
+        for kind, section, symbol_type in ((1, 0, 0x12), (1, 1, 0x1a), (1, 1, 0x16), (37, 1, 0x12), (6, 1, 0x12)):
+            with self.subTest(kind=kind, section=section, symbol_type=symbol_type):
+                image = lifecycle_array_image(values=(CODE_ADDRESS,), fixups=((0, (1 << 32) | kind, EXPORT_ADDRESS),),
+                                              symbols=[("target", section, symbol_type, CODE_ADDRESS)])
+                rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({}))
+                self.assertFalse(any(row.startswith("elf_init_array") for row in rows))
+        for fixups in (((0, 8, CODE_ADDRESS), (0, 8, EXPORT_ADDRESS)), ((1, 8, EXPORT_ADDRESS),), ((-8, 36, 0),)):
+            image = lifecycle_array_image(values=(CODE_ADDRESS,), fixups=fixups)
+            self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({})), [])
+
+    def test_lifecycle_arrays_need_valid_code_and_preserve_aliases(self):
+        image = lifecycle_array_image(values=(0, 0xffffffffffffffff, DATA_ADDRESS, CODE_ADDRESS + 12, CODE_ADDRESS, CODE_ADDRESS))
+        rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({}))
+        self.assertEqual(rows, ["elf_init_array_4 0x1000 f", "elf_init_array_5 0x1000 l"])
+        image = lifecycle_array_image(code_flags=4)
+        self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({})), [])
+        image = lifecycle_array_image(tag=32)
+        struct.pack_into("<H", image, 16, 3)
+        self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({})), [])
+
+    def test_preinit_arrays_are_recognized_in_pie_executables(self):
+        for flags in (False, True):
+            image = lifecycle_array_image(tag=32, values=(CODE_ADDRESS,))
+            struct.pack_into("<H", image, 16, 3)
+            if flags:
+                image = append_dynamic_tags(image, [(0x6ffffffb, 0x8000000)])
+            else:
+                struct.pack_into("<H", image, 56, 4)
+                struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, 3, 4, 0x2900, 0x2900, 0, 8, 8, 1)
+            self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({})),
+                             ["elf_preinit_array_0 0x1000 f"])
+
+    def test_lifecycle_array_metadata_errors_do_not_print_partial_maps(self):
+        source = self.root / "invalid-arrays.prx"
+        for entries, message in (([(25, 0x2600)], "DT_INIT_ARRAYSZ"), ([(27, 8)], "DT_INIT_ARRAY"),
+                                 ([(25, 0x2600), (27, 7)], "multiple of 8"),
+                                 ([(25, 0x9000), (27, 8)], "outside file-backed"),
+                                 ([(25, 0x2600), (27, 8), (27, 16)], "conflicting duplicate")):
+            with self.subTest(entries=entries):
+                source.write_bytes(append_dynamic_tags(build_module(symbols=[], relocations=()), entries))
+                result = self.cli(source, "--no-names")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(message, result.stderr)
+        source.write_bytes(append_dynamic_tags(build_module(symbols=[], relocations=()), [(25, 0xffffffffffffffff), (27, 0)]))
+        result = self.cli(source, "--no-names")
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+
     def test_symbol_types_and_executable_ranges_control_function_creation(self):
         symbols = [*DEFAULT_SYMBOLS, ("object", 1, 0x11, 0x2700), (TLS_NAME, 1, 0x16, 8),
                    ("untyped", 1, 0x10, CODE_ADDRESS), ("outside", 1, 0x12, CODE_ADDRESS + len(code_bytes()))]
@@ -83,6 +246,50 @@ class GhidraSymbolsTests(unittest.TestCase):
                 self.assertEqual(len(rows), 1)
                 self.assertEqual(rows[0].split()[1:], ["0x100b", "f"])
                 self.assertEqual(set(self.root.iterdir()), {source})
+
+    def test_irelative_resolvers_without_symbols_are_function_entries(self):
+        source = self.root / "local-ifunc.prx"
+        for table in (0x2200, 0x2280):
+            image = bytearray(build_module(symbols=[], relocations=(), tags=DEFAULT_TAGS + (7, 8),
+                                          values={8 if table == 0x2200 else 2: 24}))
+            struct.pack_into("<QQq", image, table, DATA_ADDRESS + 0x800, 37, EXPORT_ADDRESS)
+            source.write_bytes(image)
+            with self.subTest(table=table):
+                result = self.cli(source, "--no-names")
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                self.assertEqual(result.stdout.splitlines(), ["irelative_resolver_100b 0x100b f"])
+        self.assertEqual(set(self.root.iterdir()), {source})
+
+    def test_irelative_resolvers_keep_exported_names_and_deduplicate_targets(self):
+        for symbols, expected in (([], "irelative_resolver_100b 0x100b f"),
+                                  ([(EXPORT_NAME, 1, 0x1a, EXPORT_ADDRESS)], "sceKernelUsleep 0x100b f")):
+            image = bytearray(build_module(symbols=symbols, relocations=(), values={2: 48}))
+            for index in range(2):
+                struct.pack_into("<QQq", image, 0x2280 + index * 24, DATA_ADDRESS + 0x800 + index * 8, 37, EXPORT_ADDRESS)
+            rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({nid(EXPORT_NAME): EXPORT_NAME}))
+            self.assertEqual(rows, [expected])
+
+    def test_irelative_resolver_entries_require_executable_file_bytes(self):
+        for address, flags, size in ((DATA_ADDRESS, 5, 12), (0x9000, 5, 12), (CODE_ADDRESS + 12, 5, 12),
+                                     (CODE_ADDRESS, 4, 12), (EXPORT_ADDRESS, 5, 11)):
+            with self.subTest(address=address, flags=flags, size=size):
+                image = bytearray(build_module(symbols=[], relocations=(), values={2: 24}, code_flags=flags))
+                struct.pack_into("<QQq", image, 0x2280, DATA_ADDRESS + 0x800, 37, address)
+                struct.pack_into("<Q", image, 64 + 32, size)
+                self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({})), [])
+
+    def test_relative_data_and_none_relocations_are_not_resolvers(self):
+        for kind in (0, 8):
+            image = bytearray(build_module(symbols=[], relocations=(), values={2: 24}))
+            struct.pack_into("<QQq", image, 0x2280, DATA_ADDRESS + 0x800, kind, EXPORT_ADDRESS)
+            self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({})), [])
+
+    def test_irelative_addends_are_elf64_virtual_addresses(self):
+        image = bytearray(build_module(symbols=[], relocations=(), values={2: 24}))
+        struct.pack_into("<Q", image, 64 + 16, 0xfffffffffffff000)
+        struct.pack_into("<QQq", image, 0x2280, DATA_ADDRESS + 0x800, 37, -4096)
+        self.assertEqual(annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({})),
+                         ["irelative_resolver_fffffffffffff000 0xfffffffffffff000 f"])
 
     def test_ifunc_function_entries_require_executable_file_bytes(self):
         for address, flags, distance, marker in (

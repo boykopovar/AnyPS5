@@ -6,7 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.run_report_summary import render
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import run_report_summary
+from run_report_summary import render
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,6 +32,24 @@ class RunReportSummaryTests(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Café Game", result.stdout.decode("utf-8"))
+
+    def test_cli_accepts_a_utf8_bom(self):
+        report = self.report("stop-none.json")
+        report["game"]["name"] = "Café Game"
+        text = json.dumps(report, ensure_ascii=False)
+        outputs = []
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            for encoding in ("utf-8", "utf-8-sig"):
+                path.write_text(text, encoding=encoding)
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "tools/run_report_summary.py"), str(path)],
+                    capture_output=True, timeout=15,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                outputs.append(result.stdout.decode("utf-8"))
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertIn("Game: Café Game", outputs[0])
 
     def test_summary_includes_run_context_and_missing_import(self):
         summary = render(self.report("stop-missing-function.json"))
@@ -97,6 +117,15 @@ class RunReportSummaryTests(unittest.TestCase):
         self.assertIn("Missing functions: unknown calls across 2 functions", summary)
         self.assertIn("Unsupported shader instructions: unknown occurrences across 2 instructions", summary)
         self.assertNotIn("\x1b", summary)
+
+    def test_rejects_non_boolean_coverage_flags(self):
+        for flag in ("milestones", "missing", "shaders", "unsupported"):
+            for value in ("false", "true", 0, 1, None, []):
+                with self.subTest(flag=flag, value=value):
+                    report = self.report("stop-none.json")
+                    report["coverage"][flag] = value
+                    with self.assertRaisesRegex(ValueError, f"coverage\\.{flag}"):
+                        render(report)
 
     def test_rejects_other_report_formats(self):
         with self.assertRaisesRegex(ValueError, "AnyPS5 run report"):
@@ -244,6 +273,81 @@ class RunReportSummaryTests(unittest.TestCase):
                 summary = render(report)
                 self.assertIn("Missing functions: unknown calls across 2 functions", summary)
                 self.assertIn("Unsupported shader instructions: unknown occurrences across 2 instructions", summary)
+
+    def test_rejects_report_missing_a_required_section(self):
+        for key in ("game", "stop"):
+            with self.subTest(key=key):
+                report = self.report("stop-none.json")
+                report[key] = []
+                with self.assertRaisesRegex(ValueError, f"report field '{key}' must be an object"):
+                    render(report)
+
+    def test_lists_are_limited_to_five_entries(self):
+        report = self.report("stop-none.json")
+        report["coverage"].update(missing=True, unsupported=True)
+        report["missing"]["functions"] = [{"library": "libX", "name": f"fn{i}", "calls": 1} for i in range(7)]
+        report["shaders"]["unsupported"] = [{"encoding": "SOPP", "opcode": f"op{i}", "count": 1} for i in range(7)]
+        summary = render(report)
+        self.assertIn("Missing functions: 7 calls across 7 functions", summary)
+        self.assertIn("libX::fn4", summary)
+        self.assertNotIn("libX::fn5", summary)
+        self.assertIn("SOPP: op4", summary)
+        self.assertNotIn("SOPP: op5", summary)
+
+    def test_stop_summary_includes_reason_and_message(self):
+        report = self.report("stop-none.json")
+        report["stop"].update(kind="crash", reason="SIGSEGV", message="bad access")
+        self.assertIn("Stop: crash (SIGSEGV): bad access", render(report))
+
+    def test_average_fps_is_formatted_with_two_decimals(self):
+        report = self.report("stop-none.json")
+        report["run"]["averageFps"] = 59.9
+        self.assertIn("average FPS", render(report))
+        self.assertIn(", 59.90 average FPS", render(report))
+
+    def test_cli_reports_unreadable_and_invalid_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "missing.json"
+            invalid = Path(directory) / "invalid.json"
+            invalid.write_text("{not json", encoding="utf-8")
+            wrong = Path(directory) / "wrong.json"
+            wrong.write_text("[]", encoding="utf-8")
+            for path in (missing, invalid, wrong):
+                with self.subTest(path=path.name):
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools/run_report_summary.py"), str(path)],
+                        capture_output=True, text=True, timeout=15,
+                    )
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn("run_report_summary:", result.stderr)
+
+
+class TextHelperTests(unittest.TestCase):
+    def test_text_replaces_control_characters_and_names_missing_values(self):
+        self.assertEqual(run_report_summary.text("a\tb\x01"), "a b ")
+        self.assertEqual(run_report_summary.text(""), "unknown")
+        self.assertEqual(run_report_summary.text(None), "unknown")
+
+    def test_number_text_prints_finite_numbers_and_names_the_rest(self):
+        self.assertEqual(run_report_summary.number_text(3), "3")
+        self.assertEqual(run_report_summary.number_text(2.5), "2.5")
+        self.assertEqual(run_report_summary.number_text(float("nan")), "unknown")
+        self.assertEqual(run_report_summary.number_text(True), "unknown")
+
+    def test_count_text_pluralises_by_value(self):
+        self.assertEqual(run_report_summary.count_text(1, "file"), "1 file")
+        self.assertEqual(run_report_summary.count_text(2, "file"), "2 files")
+        self.assertEqual(run_report_summary.count_text(0, "file"), "0 files")
+        self.assertEqual(run_report_summary.count_text("x", "file"), "unknown files")
+
+    def test_total_count_sums_dict_items_and_skips_others(self):
+        self.assertEqual(run_report_summary.total_count([{"a": 1}, {"a": 2}, {}, 5], "a"), 3)
+
+    def test_total_count_refuses_non_finite_totals_and_counts(self):
+        self.assertIsNone(run_report_summary.total_count([{"a": float("inf")}], "a"))
+        self.assertIsNone(run_report_summary.total_count([{"a": 1e308}, {"a": 1e308}], "a"))
+        self.assertIsNone(run_report_summary.total_count([{"a": "2"}], "a"))
 
 
 if __name__ == "__main__":

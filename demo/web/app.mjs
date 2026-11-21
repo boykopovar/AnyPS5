@@ -6,6 +6,8 @@ import { apply, current, locales, set as setLocale, translate } from "./i18n.mjs
 const $ = id => document.getElementById(id);
 let locale = current();
 apply(locale);
+let releaseRequest;
+let releaseVersion = 0;
 let worker;
 let selectedInputs = [];
 let summaries = [];
@@ -154,6 +156,8 @@ async function fail(value) {
       log: logs
     }
   };
+  releaseVersion++;
+  releaseRequest = null;
   worker?.terminate();
   worker = null;
   working = true;
@@ -348,6 +352,7 @@ async function selectInputs(inputs) {
       if (currentWorker === worker) return fail(event.message || (() => translate(locale, "workerStopped")));
     };
     currentWorker.postMessage({ type: "inspect", inputs, locale });
+    loadReleaseInfo();
   } catch (error) {
     await fail(error.message);
   }
@@ -356,6 +361,7 @@ async function selectInputs(inputs) {
 $("choose").onclick = () => { $("file").value = ""; $("file").click(); };
 $("change").onclick = () => {
   if (working) return;
+  const restoreFocus = document.activeElement === $("change");
   worker?.terminate();
   worker = null;
   if (downloadUrl) { URL.revokeObjectURL(downloadUrl); downloadUrl = null; }
@@ -369,6 +375,7 @@ $("change").onclick = () => {
   $("acknowledge").checked = false;
   $("drop").hidden = false;
   update();
+  if (restoreFocus) $("choose").focus();
 };
 $("choose-folder").onclick = () => { $("folder").value = ""; $("folder").click(); };
 $("folder").onchange = () => {
@@ -416,8 +423,9 @@ $("convert").onclick = async () => {
     const target = document.querySelector('input[name="target"]:checked').value;
     if ($("save").value === "zip") {
       const name = selectedInputs.length > 1 ? `anyps5-${target}-apps.zip` : `${selectedInputs[0].name.replace(/\.zip$/iu, "")}-${target}.zip`;
-      sink = await createZipSink(name, () => currentWorker === worker);
-      if (sink === null) return;
+      const writable = await createZipSink(name, () => currentWorker === worker);
+      if (writable === null) return;
+      sink = writable;
     } else if ($("save").value === "disk") {
       const name = selectedInputs[0].name.replace(/\.zip$/iu, "") + "-" + target;
       const parent = await window.showDirectoryPicker({ mode: "readwrite" });
@@ -454,11 +462,20 @@ $("locale").onclick = () => {
 updateLocaleButton();
 update();
 lock(false);
-if (supported) fetch("./release.json", { cache: "no-cache" }).then(response => { if (!response.ok) throw localizedError(() => translate(locale, "cannotLoadReleaseInfo", { status: response.status, hint: response.status === 404 ? translate(locale, "cannotLoadReleaseInfoHint") : "" })); return response.json(); }).then(value => {
-  if (!value.tag || !["windows", "linux"].every(target => Number.isSafeInteger(value.platforms?.[target]?.expandedBytes))) throw localizedError(() => translate(locale, "invalidReleaseInfo"));
-  release = value;
-  update();
-}).catch(error => fail(error instanceof TypeError ? () => translate(locale, "cannotReachReleaseInfo") : error));
+function loadReleaseInfo() {
+  if (release || releaseRequest) return;
+  const version = ++releaseVersion;
+  releaseRequest = fetch("./release.json", { cache: "no-cache" }).then(response => { if (!response.ok) throw localizedError(() => translate(locale, "cannotLoadReleaseInfo", { status: response.status, hint: response.status === 404 ? translate(locale, "cannotLoadReleaseInfoHint") : "" })); return response.json(); }).then(value => {
+    if (version !== releaseVersion) return;
+    if (!value || typeof value !== "object" || typeof value.tag !== "string" || !/^v[0-9A-Za-z][0-9A-Za-z._-]*$/u.test(value.tag) || value.tag.endsWith(".") || !["windows", "linux"].every(target => Number.isSafeInteger(value.platforms?.[target]?.expandedBytes))) throw localizedError(() => translate(locale, "invalidReleaseInfo"));
+    release = value;
+    update();
+  }).catch(error => {
+    if (version === releaseVersion) return fail(error instanceof TypeError ? () => translate(locale, "cannotReachReleaseInfo") : error);
+  }).finally(() => { if (version === releaseVersion) releaseRequest = null; });
+}
+
+if (supported) loadReleaseInfo();
 
 if (!("webkitdirectory" in $("folder"))) {
   $("choose-folder").disabled = true;

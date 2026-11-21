@@ -73,6 +73,23 @@ Linger NativeLinger(int socket) {
     return {value.l_onoff != 0 ? 1 : 0, static_cast<std::int32_t>(value.l_linger)};
 }
 
+#ifdef _WIN32
+void Datagram(int family) {
+    const int socket = sceNetSocket("udp-linger", family, 2, 17);
+    Require(socket >= 0);
+    Require(KernelLinger(socket).enabled == 0);
+    const Linger on{1, 5};
+    Require(sceNetSetsockopt(socket, SolSocket, SoLinger, &on, sizeof(on)) == 0);
+    const auto enabled = KernelLinger(socket);
+    Require(enabled.enabled == SoLinger && enabled.seconds == 5);
+    const Linger off{0, 9};
+    Require(setsockopt_nid_postfix(socket, SolSocket, SoLinger, &off, sizeof(off)) == 0);
+    const auto disabled = NetLinger(socket);
+    Require(disabled.enabled == 0 && disabled.seconds == 9);
+    Require(sceNetSocketClose(socket) == 0);
+}
+#endif
+
 void Stream(int family) {
     const int socket = sceNetSocket("linger", family, 1, 6);
     Require(socket >= 0);
@@ -127,4 +144,8 @@ void Stream(int family) {
 int main() {
     Require(sceNetInit_nid_postfix() == 0);
     Stream(2);
+#ifdef _WIN32
+    Datagram(2);
+    Datagram(28);
+#endif
 }
