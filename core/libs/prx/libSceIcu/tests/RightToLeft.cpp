@@ -1,7 +1,6 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <cstdio>
 #include <cstdlib>
-#include <exception>
 #include <initializer_list>
 
 namespace {
@@ -31,16 +30,6 @@ void Expect(const Case& item) {
     const auto result = uloc_isRightToLeft_nid_postfix(item.locale);
     if (result == (item.rightToLeft ? 1 : 0)) return;
     std::fprintf(stderr, "uloc_isRightToLeft(\"%s\") returned %d, expected %d\n", item.locale, result, item.rightToLeft ? 1 : 0);
-    std::abort();
-}
-
-void ExpectThrows(const char* locale) {
-    try {
-        uloc_isRightToLeft_nid_postfix(locale);
-    } catch (const std::exception&) {
-        return;
-    }
-    std::fprintf(stderr, "uloc_isRightToLeft(\"%s\") did not throw\n", locale ? locale : "null");
     std::abort();
 }
 
@@ -82,19 +71,17 @@ void CommonLanguages() {
 }
 
 void LikelySubtags() {
-    for (const char* locale : {"", "ur", "ps_AF", "yi", "dv", "und", "und_", "und@x", "und.x", "root", "ROOT",
-                               "r", "e", "oo", "iw", "per", "x-foo", "i_klingon", "abcdefgh", "abcdefghijk_",
-                               "abcdefghijkl_Arab", "ur_Arabx", "@x", ".x", "_US"}) {
-        ExpectThrows(locale);
+    for (const Case& item : std::initializer_list<Case>{
+             {"", false}, {"ur", true}, {"ps_AF", true}, {"yi", true}, {"dv", true}, {"und", false}, {"und_", false},
+             {"und@x", false}, {"und.x", false}, {"root", false}, {"ROOT", false}, {"r", false}, {"e", false},
+             {"oo", false}, {"iw", true}, {"per", true}, {"x-foo", false}, {"i_klingon", false}, {"abcdefgh", false},
+             {"abcdefghijk_", false}, {"abcdefghijkl_Arab", false}, {"ur_Arabx", true}, {"@x", false}, {".x", false},
+             {"_US", false}}) {
+        Expect(item);
     }
-    try {
-        const auto expected = uloc_isRightToLeft_nid_postfix(uloc_getDefault());
-        if (uloc_isRightToLeft_nid_postfix(nullptr) != expected) {
-            std::fprintf(stderr, "uloc_isRightToLeft(null) differs from the default locale\n");
-            std::abort();
-        }
-    } catch (const std::exception&) {
-        ExpectThrows(nullptr);
+    if (uloc_isRightToLeft_nid_postfix(nullptr) != uloc_isRightToLeft_nid_postfix(uloc_getDefault())) {
+        std::fprintf(stderr, "uloc_isRightToLeft(null) differs from the default locale\n");
+        std::abort();
     }
 }
 
