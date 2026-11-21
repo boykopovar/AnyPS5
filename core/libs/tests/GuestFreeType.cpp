@@ -212,6 +212,10 @@ static void CheckOutlineOrientation() {
         Require(throwsOrientation({1, 4, square, tags, nullptr, 0}));
         std::uint16_t contourPastEnd[]{4};
         Require(throwsOrientation({1, 4, square, tags, contourPastEnd, 0}));
+        Require(throwsOrientation({1, 4, reinterpret_cast<GuestVector*>(std::uintptr_t{0x10}), tags, contour, 0}));
+        Require(throwsOrientation({1, 4, square, tags, reinterpret_cast<std::uint16_t*>(std::uintptr_t{0x10}), 0}));
+        Require(ThrowsWith([] { FT_Outline_Get_Orientation_nid_postfix(reinterpret_cast<GuestOutline*>(std::uintptr_t{0x10})); },
+                           "FT_Outline_Get_Orientation_nid_postfix"));
     }
     std::vector<GuestVector> repeated{{0, 0}, {32767, 0}, {32767, 32767}, {0, 32767},
                                       {0, 0}, {32767, 0}, {32767, 32767}, {0, 32767}};
@@ -1196,6 +1200,29 @@ static void InvalidAndSelfCopies() {
         FT_Outline nativeTarget{target.n_contours, target.n_points, nullptr, nullptr, nullptr, target.flags};
         Require(FT_Outline_Copy_nid_postfix(&source, &target) == FT_Outline_Copy(&nativeSource, &nativeTarget));
         Require(Equal(target, before));
+    }
+    auto* unmapped = reinterpret_cast<GuestOutline*>(std::uintptr_t{0x10});
+    Require(FT_Outline_Copy_nid_postfix(unmapped, &target) == FT_Err_Invalid_Outline);
+    Require(FT_Outline_Copy_nid_postfix(&source, unmapped) == FT_Err_Invalid_Outline);
+    GuestVector points[]{{1, 2}, {3, 4}, {5, 6}, {7, 8}};
+    unsigned char tags[]{1, 1, 0, 1};
+    std::uint16_t contour = 3;
+    for (int field = 0; field < 6; ++field) {
+        GuestVector copied[4]{};
+        unsigned char copiedTags[4]{};
+        std::uint16_t copiedContour = 0;
+        GuestOutline from{1, 4, points, tags, &contour, 0};
+        GuestOutline to{1, 4, copied, copiedTags, &copiedContour, 0x1234};
+        if (field == 0) from.points = reinterpret_cast<GuestVector*>(std::uintptr_t{0x10});
+        if (field == 1) from.tags = reinterpret_cast<unsigned char*>(std::uintptr_t{0x10});
+        if (field == 2) from.contours = reinterpret_cast<std::uint16_t*>(std::uintptr_t{0x10});
+        if (field == 3) to.points = reinterpret_cast<GuestVector*>(std::uintptr_t{0x10});
+        if (field == 4) to.tags = reinterpret_cast<unsigned char*>(std::uintptr_t{0x10});
+        if (field == 5) to.contours = reinterpret_cast<std::uint16_t*>(std::uintptr_t{0x10});
+        const auto before = to;
+        Require(FT_Outline_Copy_nid_postfix(&from, &to) == FT_Err_Invalid_Outline);
+        Require(Equal(to, before) && copiedContour == 0);
+        for (int index = 0; index < 4; ++index) Require(copied[index].x == 0 && copied[index].y == 0 && copiedTags[index] == 0);
     }
 }
 

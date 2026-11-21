@@ -157,10 +157,41 @@ static void TestWideTransformSums() {
     Require(tags[0] == 1 && tags[1] == 1 && tags[2] == 1 && contours[0] == 2);
 }
 
+static void TestUnreadable() {
+    auto* unmapped = reinterpret_cast<GuestOutline*>(std::uintptr_t{0x10});
+    const GuestMatrix scale{0x20000, 0, 0, 0x20000};
+    Require(FT_Outline_Embolden_nid_postfix(unmapped, 64) == FT_Outline_Embolden(nullptr, 64));
+    Require(FT_Outline_EmboldenXY_nid_postfix(unmapped, 64, 32) == FT_Outline_EmboldenXY(nullptr, 64, 32));
+    FT_Outline_Transform_nid_postfix(unmapped, &scale);
+    for (int field = 0; field < 3; ++field) {
+        Pair pair(Frame());
+        GuestOutline bad = pair.guest;
+        if (field == 0) bad.points = reinterpret_cast<GuestVector*>(std::uintptr_t{0x10});
+        if (field == 1) bad.tags = reinterpret_cast<unsigned char*>(std::uintptr_t{0x10});
+        if (field == 2) bad.contours = reinterpret_cast<std::uint16_t*>(std::uintptr_t{0x10});
+        Require(FT_Outline_Embolden_nid_postfix(&bad, 64) == FT_Outline_Embolden(nullptr, 64));
+        Require(FT_Outline_EmboldenXY_nid_postfix(&bad, 64, 32) == FT_Outline_EmboldenXY(nullptr, 64, 32));
+        FT_Outline_Transform_nid_postfix(&bad, &scale);
+        pair.Matches();
+    }
+    Pair pair(Square(false));
+    FT_Outline_Transform_nid_postfix(&pair.guest, reinterpret_cast<const GuestMatrix*>(std::uintptr_t{0x10}));
+    pair.Matches();
+    static const GuestVector readOnly[] = {{0, 0}, {640, 0}, {640, 640}, {0, 640}};
+    unsigned char tags[] = {1, 1, 1, 1};
+    unsigned short end = 3;
+    GuestOutline outline{1, 4, const_cast<GuestVector*>(readOnly), tags, &end, 0};
+    Require(FT_Outline_Embolden_nid_postfix(&outline, 64) == FT_Outline_Embolden(nullptr, 64));
+    Require(FT_Outline_EmboldenXY_nid_postfix(&outline, 64, 32) == FT_Outline_EmboldenXY(nullptr, 64, 32));
+    FT_Outline_Transform_nid_postfix(&outline, &scale);
+    Require(readOnly[1].x == 640 && readOnly[2].y == 640);
+}
+
 int main() {
     TestEmbolden();
     TestEmboldenXY();
     TestTransform();
     TestNoopEmbolden();
     TestWideTransformSums();
+    TestUnreadable();
 }
