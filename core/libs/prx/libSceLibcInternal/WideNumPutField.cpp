@@ -108,6 +108,7 @@ extern "C" {
 GuestLocale::OutputIterator APS5_VABI _ZNKSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_IputES3_RSt8ios_basewPcm_nid_postfix(
     const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, char* digits, std::size_t count) {
     if (stream == nullptr || stream->locale == nullptr || *stream->locale == nullptr) throw std::invalid_argument("num_put<wchar_t>::_Iput: a stream without a locale");
+    if (count != 0 && digits == nullptr) throw std::invalid_argument("num_put<wchar_t>::_Iput: a null digit buffer");
     std::string raw(count, '\0');
     if (count != 0 && !GuestCopyIn_nid_no_patch(raw.data(), digits, count)) throw std::invalid_argument("num_put<wchar_t>::_Iput: an unreadable digit buffer");
     std::size_t prefix = count > 0 && (raw[0] == '+' || raw[0] == '-') ? 1 : 0;
