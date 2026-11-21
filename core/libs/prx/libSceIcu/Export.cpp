@@ -203,14 +203,6 @@ int APS5_VABI uloc_getCharacterOrientation() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ures_getByKey() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ures_getStringByKey() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ures_open() {
     NotImplemented_nid_no_patch(__func__);
 }
