@@ -1,0 +1,45 @@
+"""Guest images for the macOS module-qualified import tests: two providers of one NID and a consumer that names one."""
+import os
+import struct
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from guest_import_fixtures import dynamic
+from test_guest_intel_trampolines import PLAIN_SITE, guest_fixture
+
+SYMBOL = "shared#A#B"
+
+
+def provider(value):
+    image = guest_fixture(PLAIN_SITE)
+    strings = b"\0" + SYMBOL.encode() + b"\0"
+    image[0x800:0x800 + len(strings)] = strings
+    struct.pack_into("<II", image, 0x840, 1, 2)
+    struct.pack_into("<IBBHQQ", image, 0x898, 1, 0x12, 0, 1, 0x1000, 6)
+    image[0x400:0x406] = b"\xb8" + struct.pack("<I", value) + b"\xc3"
+    dynamic(image, 0x600, 176, [(5, 0x2200), (10, len(strings)), (6, 0x2280), (11, 24),
+                                (4, 0x2240), (7, 0x2300), (8, 0), (9, 24)])
+    return image
+
+
+def consumer(owner):
+    image = guest_fixture(PLAIN_SITE)
+    strings = b"\0" + SYMBOL.encode() + b"\0read\0" + owner.encode() + b"\0"
+    image[0x800:0x800 + len(strings)] = strings
+    owner_offset = 1 + len(SYMBOL) + 1 + len("read") + 1
+    struct.pack_into("<II", image, 0x840, 1, 3)
+    struct.pack_into("<IBBHQQ", image, 0x898, 1, 0x12, 0, 0, 0, 0)
+    code = b"\xff\x25" + struct.pack("<i", 0x2380 - 0x1016)
+    image[0x410:0x410 + len(code)] = code
+    struct.pack_into("<IBBHQQ", image, 0x8b0, 1 + len(SYMBOL) + 1, 0x12, 0, 1, 0x1010, len(code))
+    struct.pack_into("<QQq", image, 0x900, 0x2380, (1 << 32) | 6, 0)
+    dynamic(image, 0x600, 176, [(5, 0x2200), (10, len(strings)), (6, 0x2280), (11, 24),
+                                (4, 0x2240), (7, 0x2300), (8, 24), (9, 24),
+                                (1, owner_offset), (0x61000045, (1 << 48) | owner_offset)])
+    return image
+
+
+if __name__ == "__main__":
+    open(sys.argv[1], "wb").write(provider(11))
