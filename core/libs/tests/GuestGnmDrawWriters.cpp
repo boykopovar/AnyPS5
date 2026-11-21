@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -19,6 +20,7 @@
 #include <process.h>
 #else
 #include <dlfcn.h>
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
 
@@ -203,6 +205,77 @@ void CheckUnknown(const Writers& writer, const std::string& mode) {
     }
 }
 
+void CheckUnwritable(const Writers& writer) {
+    auto* const unmapped = reinterpret_cast<std::uint32_t*>(0x10);
+    Require(writer.index(unmapped, 10u, 3u, 0x1234567800000042ull, 0u, 0u) == -1, "an unwritable index draw packet was accepted");
+    Require(writer.automatic(unmapped, 7u, 3u, 0u) == -1, "an unwritable auto draw packet was accepted");
+    Require(writer.offset(unmapped, 9u, 5u, 3u, 0u) == -1, "an unwritable offset draw packet was accepted");
+    for (std::size_t i = 0u; i < 2u; ++i) {
+        Require(writer.indirect[i](unmapped, 9u, 4u, 2u, 1u, 2u, 0u) == -1, "an unwritable indirect draw packet was accepted");
+        Require(writer.multi[i](unmapped, 11u, 4u, 3u, 2u, 1u, 2u, 0u) == -1, "an unwritable multi draw packet was accepted");
+        Require(writer.count[i](unmapped, 16u, 4u, 3u, 0x1234567800000042ull, 2u, 1u, 2u, 0u) == -1, "an unwritable counted draw packet was accepted");
+    }
+    checked += 9u;
+}
+
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, size * 2u, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        DWORD previous = 0;
+        Require(base != nullptr && VirtualProtect(base + size, size, PAGE_NOACCESS, &previous) != 0, "cannot map a guarded draw page");
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* const mapped = mmap(nullptr, size * 2u, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED, "cannot map a guarded draw page");
+        base = static_cast<std::uint8_t*>(mapped);
+        Require(mprotect(base + size, size, PROT_NONE) == 0, "cannot guard a draw page");
+#endif
+    }
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, size * 2u);
+#endif
+    }
+    GuardedPage(const GuardedPage&) = delete;
+    GuardedPage& operator=(const GuardedPage&) = delete;
+    std::uint32_t* Before(std::size_t words) const { return reinterpret_cast<std::uint32_t*>(base + size) - words; }
+
+private:
+    std::uint8_t* base = nullptr;
+    std::size_t size = 0u;
+};
+
+template <typename TCall>
+void WritesOnlyPacket(const GuardedPage& page, std::size_t written, TCall call) {
+    std::array<std::uint32_t, 16> expected{};
+    expected.fill(Sentinel);
+    Require(call(expected.data()) == 0, "valid draw writer refused input");
+    auto* const at = page.Before(written);
+    std::fill(at, at + written, Sentinel);
+    Require(call(at) == 0, "a draw writer touched padding words past the ones it writes");
+    Require(std::equal(expected.begin(), expected.begin() + static_cast<std::ptrdiff_t>(written), at), "draw packet mismatch before a guarded page");
+    ++checked;
+}
+
+void CheckPaddingUntouched(const Writers& writer) {
+    const GuardedPage page;
+    WritesOnlyPacket(page, 8u, [&](auto* p) { return writer.index(p, 10u, 3u, 0x1234567800000042ull, 0u, 0u); });
+    WritesOnlyPacket(page, 5u, [&](auto* p) { return writer.automatic(p, 7u, 3u, 0u); });
+    WritesOnlyPacket(page, 7u, [&](auto* p) { return writer.offset(p, 9u, 5u, 3u, 0u); });
+    for (std::size_t i = 0u; i < 2u; ++i) {
+        WritesOnlyPacket(page, 7u, [&](auto* p) { return writer.indirect[i](p, 9u, 4u, 2u, 1u, 2u, 0u); });
+        WritesOnlyPacket(page, 9u, [&](auto* p) { return writer.multi[i](p, 11u, 4u, 3u, 2u, 1u, 2u, 0u); });
+        WritesOnlyPacket(page, 15u, [&](auto* p) { return writer.count[i](p, 16u, 4u, 3u, 0x1234567800000042ull, 2u, 1u, 2u, 0u); });
+    }
+}
+
 void CheckRejected(const Writers& writer, bool unknown, const std::string& mode) {
     for (const auto size : {0u, 1u, 6u, 8u, 12u, 17u, UINT32_MAX}) {
         Refuses([&](auto* p) { return writer.index(p, size, 3u, 2u, 0u, 0u); });
@@ -319,6 +392,8 @@ int main(int argc, char** argv) {
         if (unknown) CheckUnknown(writer, mode);
         else {
             const bool neo = !normal || mode == "neo";
+            CheckUnwritable(writer);
+            if (normal) CheckPaddingUntouched(writer);
             CheckDirect(writer, neo);
             CheckIndirect(writer, neo);
         }
