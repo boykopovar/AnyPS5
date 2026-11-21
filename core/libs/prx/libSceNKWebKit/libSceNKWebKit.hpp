@@ -85,6 +85,7 @@
 
 #include "prx/libSceNKWebKit/include/AccessibilityObjectExports.hpp"
 #include "prx/libSceNKWebKit/include/CacheControlExports.hpp"
+#include "prx/libSceNKWebKit/include/CacheValidationExports.hpp"
 #include "prx/libSceNKWebKit/include/FloatSizeExports.hpp"
 #include "prx/libSceNKWebKit/include/EnclosingRectExports.hpp"
 #include "prx/libSceNKWebKit/include/DoubleConversionExports.hpp"
