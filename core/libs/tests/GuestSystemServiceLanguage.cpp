@@ -1,12 +1,15 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "prx/libSceSystemService/LanguageLocale.hpp"
 #include <cerrno>
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -47,6 +50,20 @@ bool Answers(int paramId) {
 bool Rejected(const char* value) {
     SetLanguage(value);
     return ParameterRejected(SYSTEM_SERVICE_PARAM_ID_LANG) && ParameterRejected(SYSTEM_SERVICE_PARAM_ID_400);
+}
+
+std::vector<std::string> HostLocalesFor(const char* lang, const char* language) {
+    return SystemServiceLocale::PosixHostLocales([lang, language](const char* name) -> const char* {
+        if (std::string_view(name) == "LANG") return lang;
+        if (std::string_view(name) == "LANGUAGE") return language;
+        return nullptr;
+    });
+}
+
+int ResolvePosixLanguage(const char* lang, const char* language) {
+    return SystemServiceLocale::ResolveHostLanguage(
+        [lang, language]() { return HostLocalesFor(lang, language); },
+        [](const std::string&) {});
 }
 
 }
@@ -103,4 +120,13 @@ int main() {
         Require(sceSystemServiceParamGetInt(paramId, reinterpret_cast<int*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
         Require(errno == 71);
     }
+
+    for (const char* sentinel : {"POSIX.UTF-8:de_DE", "C@euro:de_DE", "POSIX@euro:de_DE", "posix.UTF-8:de_DE", "c@euro:de_DE"}) {
+        const std::vector<std::string> locales = HostLocalesFor("fr_FR.UTF-8", sentinel);
+        Require(locales.size() == 1);
+        Require(ResolvePosixLanguage("fr_FR.UTF-8", sentinel) == SystemServiceLocale::ConsoleLanguage::EnglishUs);
+    }
+    const std::vector<std::string> fallback = HostLocalesFor("fr_FR.UTF-8", "xx_YY:de_DE");
+    Require(fallback.size() == 3);
+    Require(ResolvePosixLanguage("fr_FR.UTF-8", "xx_YY:de_DE") == SystemServiceLocale::ConsoleLanguage::German);
 }

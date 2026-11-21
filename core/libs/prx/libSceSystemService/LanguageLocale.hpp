@@ -99,6 +99,12 @@ constexpr bool EqualsIgnoringCase(std::string_view left, std::string_view right)
     return true;
 }
 
+constexpr bool IsPosixCLocale(std::string_view text) {
+    text = text.substr(0, text.find('@'));
+    text = text.substr(0, text.find('.'));
+    return EqualsIgnoringCase(text, "C") || EqualsIgnoringCase(text, "POSIX");
+}
+
 inline constexpr Row LatinEuropeanRows[] = {
     {"en", "", "", EnglishUs},
     {"en", "", "GB", EnglishUk},
@@ -326,7 +332,7 @@ inline std::vector<std::string> PosixHostLocales(const Environment& environment)
             const std::string_view entry = preferred.substr(0, colon);
             if (!entry.empty()) {
                 locales.emplace_back(entry);
-                if (entry == "C" || entry == "POSIX" || entry.starts_with("C.")) return locales;
+                if (Detail::IsPosixCLocale(entry)) return locales;
             }
             preferred = colon == std::string_view::npos ? std::string_view{} : preferred.substr(colon + 1);
         }
