@@ -3,7 +3,6 @@
 #include "prx/libc/include/General.hpp"
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <limits>
 #include <string>
 
@@ -81,10 +80,7 @@ char16_t* APS5_VABI u_strncat_nid_postfix(char16_t* destination, const char16_t*
 char16_t* APS5_VABI u_memcpy_nid_postfix(char16_t* destination, const char16_t* source, std::int32_t count) {
     if (count > 0) {
         if (!destination || !source) NotImplemented_nid_no_patch(__func__);
-        const auto bytes = static_cast<std::size_t>(count) * sizeof(char16_t);
-        GuestArena::HostWrite access(destination, bytes);
-        if (!access.Open()) NotImplemented_nid_no_patch(__func__);
-        std::memcpy(destination, source, bytes);
+        Icu::MoveGuestUnits(destination, source, static_cast<std::size_t>(count), __func__);
     }
     return destination;
 }

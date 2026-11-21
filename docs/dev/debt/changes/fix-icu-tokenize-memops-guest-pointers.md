@@ -1,0 +1,9 @@
+# libSceIcu
+
+## change [UTF-16 set searches and tokenization]
+
+- [UTF-16 set searches and tokenization](../../../core/libs/prx/libSceIcu/Tokenize.cpp) have no console verification. Behavior follows ICU 78.1's [ustring.h](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/unicode/ustring.h) and [ustring.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ustring.cpp), including the one-unit delimiter overwrite of `u_strtok_r` after a supplementary delimiter. Strings are read in page-bounded chunks only as far as the search goes; `u_memrchr32` reads 4 KiB chunks from the end and stops at the last match, so an unreadable range before it is not rejected. Null inputs and unreadable or unwritable strings, continuations or delimiters throw, because the console's behavior on unmapped memory is unmeasured; the continuation is written first, so it is kept if the delimiter write is rejected. Set-search offsets beyond `INT32_MAX` throw.
+
+## change [Bulk UTF-16 writes]
+
+- [Bulk UTF-16 writes](../../../core/libs/prx/libSceIcu/Utf16Search.cpp) and [`u_memcpy`](../../../core/libs/prx/libSceIcu/Copy.cpp) move the range through a 4 KiB host buffer, reading each chunk with `GuestCopyIn_nid_no_patch` and writing it with `GuestCopyOut_nid_no_patch`, from the end when the destination overlaps above the source; an unreadable source or an unwritable destination, including a read-only view on every host, throws, because the console's invalid-pointer behavior is unverified. Windows logical read-only guest-view rejection has a runtime regression but has not been executed locally on Windows. A source range that becomes unreadable partway or a destination range that becomes unwritable partway may be partly written before the throw.

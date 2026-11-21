@@ -192,6 +192,30 @@ void ReadOnly(Mapping& mapping, Watch& watch) {
     Require(sceKernelMprotect(mapping.data, MappingBytes, 3) == 0);
 }
 
+void InaccessibleRanges(Mapping& mapping) {
+    mapping.Fill();
+    auto* destination = mapping.At(32);
+    const std::vector<char16_t> before(mapping.data, mapping.data + MappingBytes / sizeof(char16_t));
+    const auto rejected = [](auto call) {
+        try { call(); }
+        catch (const std::exception&) { return true; }
+        return false;
+    };
+    Require(sceKernelMprotect(mapping.At(Page), Page, 0) == 0);
+    Require(rejected([&] { u_memcpy_nid_postfix(destination, mapping.At(Page), 4); }));
+    Require(rejected([&] { u_memcpy_nid_postfix(destination, mapping.At(Page - 4), 4); }));
+    Require(rejected([&] { u_memcpy_nid_postfix(mapping.At(Page), u"ABC", 4); }));
+    Require(sceKernelMprotect(mapping.At(Page), Page, 1) == 0);
+    Require(rejected([&] { u_memcpy_nid_postfix(mapping.At(Page + 32), u"ABC", 4); }));
+    Require(std::equal(before.begin(), before.end(), mapping.data));
+    Require(sceKernelMprotect(mapping.At(Page), Page, 3) == 0);
+    auto* source = mapping.At(Page - 4);
+    source[0] = u'X';
+    source[1] = u'Y';
+    Require(u_memcpy_nid_postfix(destination, source, 2) == destination);
+    Require(destination[0] == u'X' && destination[1] == u'Y' && destination[2] == 0xa55a);
+}
+
 } // namespace
 
 int main() {
@@ -200,5 +224,6 @@ int main() {
     WritableOutputs(mapping, watch);
     PreciseRanges(mapping, watch);
     ReadOnly(mapping, watch);
+    InaccessibleRanges(mapping);
     std::printf("guest-mapped copy and readonly no-op checks passed; write-watch %s\n", watch.enabled ? "verified" : "unavailable on this host");
 }
