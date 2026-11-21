@@ -477,6 +477,11 @@ std::optional<TrampolineSite> relocateLeaf(
             const bool push = pushOpcode(insn);
             const bool pop = !info.IsTwoByteOpcode ? ((info.Opcode >= 0x58 && info.Opcode <= 0x5f) || info.Opcode == 0x9d || (info.Opcode == 0x8f && info.HasModRm && reg == 0)) : (info.Opcode == 0xa1 || info.Opcode == 0xa9);
             const auto move = quadRegisterMove(code, insn);
+            const bool popIntoRsp = !info.IsTwoByteOpcode && (info.RexPrefix & 1) == 0 && ((info.Opcode == 0x5c && !info.HasModRm) || (info.Opcode == 0x8f && info.HasModRm && info.ModRmByte == 0xc4));
+            if (popIntoRsp) {
+                refusal = "pops into rsp";
+                return std::nullopt;
+            }
             if (pushesOrPops(code, insn) && (push || pop)) {
                 if (pop && depth < 8) {
                     refusal = "pops a value its caller pushed";

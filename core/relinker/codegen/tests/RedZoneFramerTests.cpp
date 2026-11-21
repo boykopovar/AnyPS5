@@ -394,6 +394,20 @@ void skipsFragmentsThatPopWithoutPushing() {
     require(relocatedSites.empty() && relocated.Relocated == 0 && relocated.NotRelocated.at("pops a value its caller pushed") == 1, "a fragment that pops a register its caller pushed was relocated");
 }
 
+void refusesRelocatingPopsIntoRsp() {
+    for (const auto& popRsp : {std::vector<std::uint8_t>{0x5c}, std::vector<std::uint8_t>{0x8f, 0xc4}}) {
+        std::vector<std::uint8_t> body = StoreBelowRsp;
+        append(body, {0x53});
+        append(body, popRsp);
+        append(body, LoadBelowRsp);
+        const auto input = image({framelessLeaf({}, body, Ret)});
+        Codegen::RedZoneFrameReport report;
+        std::vector<Codegen::RedZoneDisplacement> displacements;
+        const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+        require(sites.empty() && report.Relocated == 0 && report.NotRelocated.at("pops into rsp") == 1, "a leaf that pops into rsp was relocated as an ordinary pop");
+    }
+}
+
 void refusesRelocatingSegmentOperands() {
     std::vector<std::uint8_t> body = StoreBelowRsp;
     append(body, {0x64, 0x48, 0x8b, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00});
@@ -1165,6 +1179,7 @@ int main() {
         widensAShortFramePointerPrologue();
         framesLeavesWithoutPushes();
         skipsFragmentsThatPopWithoutPushing();
+        refusesRelocatingPopsIntoRsp();
         refusesRelocatingSegmentOperands();
         refusesRelocatingRipRelativeBranches();
         relocatesLeavesEndingInTheSdkAssertTrap();
