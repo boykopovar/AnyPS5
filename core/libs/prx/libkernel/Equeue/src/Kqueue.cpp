@@ -731,13 +731,7 @@ int KqueueAddAio_nid_no_patch(int descriptor, std::uintptr_t ident, std::uint16_
     if (!queue) {
         return GUEST_EBADF;
     }
-    if (queue->HasEvent(ident, EVFILT_AIO)) {
-        return GuestErrno(queue->EditEvent(ident, EVFILT_AIO, [udata](KernelEqueueEvent& event) {
-            event.event.udata = udata;
-            event.enabled = true;
-            RetriggerAioKnote(event);
-        }));
-    }
+    queue->DeleteEvent(ident, EVFILT_AIO);
     KernelEqueueEvent event{};
     event.event.ident = ident;
     event.event.filter = EVFILT_AIO;

@@ -502,6 +502,23 @@ void KeventCompletion(int file) {
     KernelEvent gone{reinterpret_cast<std::uintptr_t>(&request), EvfiltAio, EvDelete, 0, 0, nullptr};
     Require(kevent_nid_postfix(queue, &gone, 1, nullptr, 0, nullptr) == -1 && Error() == Enoent);
 
+    auto reused = KeventRequest(file, buffer, sizeof(buffer), queue, 0x21);
+    Require(aio_read_nid_postfix(&reused) == 0);
+    Require(KeventWait(queue, events, 2, 5000000000) == 1 && reinterpret_cast<std::uintptr_t>(events[0].udata) == 0x21);
+    AioHoldWorkerForTest_nid_no_patch(true);
+    reused = KeventRequest(file, buffer, sizeof(buffer), queue, 0x22);
+    Require(aio_read_nid_postfix(&reused) == 0);
+    Require(KeventWait(queue, events, 2, 0) == 0);
+    Require(aio_return_nid_postfix(&reused) == static_cast<std::int64_t>(sizeof(buffer)));
+    Require(KeventWait(queue, events, 2, 0) == 0);
+    AioHoldWorkerForTest_nid_no_patch(false);
+    Require(KeventWait(queue, events, 2, 5000000000) == 1 && events[0].ident == reinterpret_cast<std::uintptr_t>(&reused));
+    Require(reinterpret_cast<std::uintptr_t>(events[0].udata) == 0x22 && events[0].flags == EvEof && events[0].data == 0);
+    Require(aio_return_nid_postfix(&reused) == static_cast<std::int64_t>(sizeof(buffer)));
+    Require(KeventWait(queue, events, 2, 0) == 0);
+    KernelEvent reusedGone{reinterpret_cast<std::uintptr_t>(&reused), EvfiltAio, EvDelete, 0, 0, nullptr};
+    Require(kevent_nid_postfix(queue, &reusedGone, 1, nullptr, 0, nullptr) == -1 && Error() == Enoent);
+
     auto oneshot = KeventRequest(file, buffer, sizeof(buffer), queue, 7, EvOneshot);
     Require(aio_read_nid_postfix(&oneshot) == 0);
     Require(KeventWait(queue, events, 2, 5000000000) == 1 && events[0].flags == (EvOneshot | EvEof));
