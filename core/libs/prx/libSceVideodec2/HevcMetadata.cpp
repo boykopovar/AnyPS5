@@ -307,7 +307,7 @@ std::pair<unsigned, Videodec2Hevc::Sps> ParseSps(Bits& bits) {
     return {id, std::move(sps)};
 }
 
-std::vector<std::uint8_t> PictureTiming(std::span<const std::uint8_t> bytes, Videodec2Hevc::PictureInfo& flags, bool& transferAmbiguous) {
+std::vector<std::uint8_t> PictureTiming(std::span<const std::uint8_t> bytes, Videodec2Hevc::PictureInfo& flags, bool& transferAmbiguous, bool suffix, bool afterSlices) {
     std::vector<std::uint8_t> timing;
     std::size_t position = 0;
     while (position < bytes.size() && !(bytes[position] == 0x80 && position + 1 == bytes.size())) {
@@ -326,22 +326,32 @@ std::vector<std::uint8_t> PictureTiming(std::span<const std::uint8_t> bytes, Vid
         if (size > bytes.size() - position) throw std::runtime_error("truncated HEVC SEI payload");
         if (type == 1) {
             if (flags.pictureTimingPresent) throw std::runtime_error("multiple HEVC picture-timing messages");
+            if (suffix || afterSlices) throw std::runtime_error("unsupported HEVC picture-timing association");
             flags.pictureTimingPresent = 1;
             timing.assign(bytes.begin() + position, bytes.begin() + position + size);
-        } else if (type == 0) flags.bufferingPeriodPresent = 1;
-        else if (type == 45) flags.framePackingPresent = 1;
-        else if (type == 147) {
+        } else if (type == 0 || type == 6 || type == 45 || type == 129 || type == 136 || type == 137 || type == 144) {
+            if (suffix || afterSlices) throw std::runtime_error("unsupported HEVC prefix SEI placement");
+            if (type == 0) flags.bufferingPeriodPresent = 1;
+            else if (type == 45) flags.framePackingPresent = 1;
+        } else if (type == 132) {
+            if (!suffix || !afterSlices) throw std::runtime_error("unsupported HEVC suffix SEI placement");
+        } else if (type == 147) {
+            if (suffix || afterSlices) {
+                transferAmbiguous = true;
+                throw std::runtime_error("unsupported HEVC alternative-transfer SEI placement");
+            }
             if (size != 1 || (flags.alternativeTransferPresent && flags.preferredTransfer != bytes[position])) {
                 transferAmbiguous = true;
                 throw std::runtime_error("invalid or conflicting HEVC alternative-transfer metadata");
             }
             flags.alternativeTransferPresent = 1;
             flags.preferredTransfer = bytes[position];
-        } else if (type != 4 && type != 5 && type != 6 && type != 129 && type != 132 && type != 136 && type != 137 && type != 144) {
+        } else if (type != 4 && type != 5) {
             throw std::runtime_error("HEVC SEI metadata payload type " + std::to_string(type) + " is unsupported");
         }
         position += size;
     }
+    if (suffix != afterSlices) throw std::runtime_error("unsupported HEVC SEI placement");
     return timing;
 }
 
@@ -361,6 +371,7 @@ Metadata Parse_nid_no_patch(State& state, std::span<const std::uint8_t> annexB) 
         }
     }
     std::optional<unsigned> pictureSps;
+    std::optional<unsigned> picturePps;
     std::optional<unsigned> pictureType;
     std::optional<Sps> selectedSps;
     std::optional<Vps> selectedVps;
@@ -410,19 +421,18 @@ Metadata Parse_nid_no_patch(State& state, std::span<const std::uint8_t> annexB) 
             else if (type == 36) flags.endSequencePresent = 1;
             else if (type == 37) flags.endStreamPresent = 1;
             else if (type == 39 || type == 40) {
-                const bool hadPictureTiming = flags.pictureTimingPresent;
-                auto message = PictureTiming(bytes, flags, transferAmbiguous);
-                if (!hadPictureTiming && flags.pictureTimingPresent && (type != 39 || pictureSps))
-                    throw std::runtime_error("unsupported HEVC picture-timing association");
+                auto message = PictureTiming(bytes, flags, transferAmbiguous, type == 40, pictureSps.has_value());
                 if (!message.empty()) timing = std::move(message);
-            } else if (type < 32) {
+            } else if (type <= 9 || (type >= 16 && type <= 21)) {
                 const bool first = bits.Read(1) != 0;
-                if (type >= 16 && type <= 23) bits.Skip(1);
+                if (!pictureSps && !first) throw std::runtime_error("missing first HEVC slice in access unit");
+                if (type >= 16 && type <= 21) bits.Skip(1);
                 const auto pps = bits.Unsigned(63);
                 if (!state.pps[pps]) throw std::runtime_error("HEVC picture parameter set is unavailable");
                 if (!state.pps[pps]->unsupported.empty() && metadata.unsupported.empty()) metadata.unsupported = state.pps[pps]->unsupported;
                 const auto sps = state.pps[pps]->sps;
                 if (pictureSps && (first || *pictureSps != sps)) throw std::runtime_error("multiple HEVC pictures in one access unit");
+                if (picturePps && *picturePps != pps) throw std::runtime_error("HEVC slices in one picture reference different parameter sets");
                 if (pictureType && *pictureType != type) throw std::runtime_error("mixed HEVC slice NAL types in one access unit");
                 if (!pictureSps) {
                     if (!state.sps[sps]) throw std::runtime_error("HEVC sequence parameter set is unavailable");
@@ -430,9 +440,10 @@ Metadata Parse_nid_no_patch(State& state, std::span<const std::uint8_t> annexB) 
                     selectedVps = state.vps[selectedSps->vps];
                     pictureType = type;
                     flags.idr = type == 19 || type == 20;
-                    flags.irap = type >= 16 && type <= 23;
+                    flags.irap = type >= 16 && type <= 21;
                 }
                 pictureSps = sps;
+                picturePps = pps;
             } else if (type == 38) flags.fillerPresent = 1;
             else throw std::runtime_error("reserved HEVC NAL metadata is unsupported");
         } catch (const std::runtime_error& error) {
