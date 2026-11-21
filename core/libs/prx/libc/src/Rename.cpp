@@ -162,12 +162,14 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
         const auto relative = canonicalDestination.lexically_relative(canonicalSource);
         if (!relative.empty() && *relative.begin() != "..") return GuestEinval;
     }
+#ifdef _WIN32
     if (destinationExists && !sameFile && destinationIsDirectory) {
         error.clear();
         if (!fs::is_empty(checkedDest, error)) {
             return error ? FilesystemError(error) : GuestEnotempty;
         }
     }
+#endif
     error = RenameNative_nid_no_patch(actualSource, checkedDest, destinationExists && (!sourceIsDirectory || !sameFile));
     return error ? FilesystemError(error) : 0;
 }

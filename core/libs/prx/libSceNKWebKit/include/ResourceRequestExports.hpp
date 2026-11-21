@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceNKWebKit/src/FormDataAbi.hpp"
 #include "prx/libSceNKWebKit/src/HttpHeaderMapAbi.hpp"
+#include "prx/libSceNKWebKit/src/LegacyResourceRequestAbi.hpp"
 #include "prx/libSceNKWebKit/src/ResourceRequestAbi.hpp"
 #include <cstdint>
 
@@ -43,8 +44,8 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase12setIsTopSiteEb(NKWebKit::WebCor
 double APS5_VABI _ZN7WebCore19ResourceRequestBase22defaultTimeoutIntervalEv();
 void APS5_VABI _ZN7WebCore19ResourceRequestBase25setDefaultTimeoutIntervalEd(double timeoutInterval);
 void APS5_VABI _ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv(NKWebKit::WebCoreAbi::ResourceRequestBase* self);
-void APS5_VABI _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(NKWebKit::WebCoreAbi::ResourceRequestBase* self, NKWebKit::WebCoreAbi::FormData** httpBody);
-NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(const NKWebKit::WebCoreAbi::ResourceRequestBase* self, const NKWebKit::WtfAbi::String* name);
+void APS5_VABI _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(NKWebKit::WebCoreAbi::LegacyResourceRequestBase* self, NKWebKit::WebCoreAbi::FormData** httpBody);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(const NKWebKit::WebCoreAbi::LegacyResourceRequestBase* self, const NKWebKit::WtfAbi::String* name);
 void APS5_VABI _ZN7WebCore19ResourceRequestBase12clearPurposeEv(NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(const NKWebKit::WtfAbi::String* domain);
 void APS5_VABI _ZN7WebCore19ResourceRequestBase17clearHTTPReferrerEv(NKWebKit::WebCoreAbi::ResourceRequestBase* self);
@@ -59,5 +60,6 @@ NKWebKit::WebCoreAbi::ResourceRequestBase APS5_VABI _ZNK7WebCore19ResourceReques
 const NKWebKit::WebCoreAbi::HTTPHeaderMap& APS5_VABI _ZNK7WebCore19ResourceRequestBase16httpHeaderFieldsEv(const NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 NKWebKit::WebCoreAbi::FormDataRefPtr APS5_VABI _ZNK7WebCore19ResourceRequestBase8httpBodyEv(const NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 bool APS5_VABI _ZNK7WebCore19ResourceRequestBase9hasUploadEv(const NKWebKit::WebCoreAbi::ResourceRequestBase* self);
+void APS5_VABI _ZN7WebCore19ResourceRequestBase22clearHTTPAuthorizationEv(NKWebKit::WebCoreAbi::ResourceRequestBase* self);
 
 }

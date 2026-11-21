@@ -99,6 +99,15 @@ bool nullImageDescriptor(const ImageResource& image, const DescriptorValue& desc
     return static_cast<std::uint32_t>(type) <= 1u && image.table == NoTable && (image.read || image.written) && !image.atomic;
 }
 
+bool gcnUnboundSampledImage(const ImageResource& image, const DescriptorValue& descriptor) {
+    if (image.resourceClass != ImageResourceClass::Sampled || !image.read || image.written || image.atomic) return false;
+    if (((descriptor.dwords[1] >> 20u) & 0x3fu) != 0u) return false;
+    for (std::uint32_t shift = 0u; shift < 12u; shift += 3u) {
+        if (((descriptor.dwords[3] >> shift) & 7u) == 1u) return false;
+    }
+    return true;
+}
+
 IrBufferFormat rawImageFormat(const DescriptorValue& descriptor) {
     return static_cast<IrBufferFormat>((descriptor.dwords[1] >> 20u) & 0x1ffu);
 }
@@ -343,9 +352,11 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     }
     const bool nativeRepacked = (format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format11_11_10Float) && !storage && !base.packed;
     const auto remappedFormat = storage ? RemapStorageTextureFormat(format) : RemapTextureFormat(format);
+    const bool alphaFloat = format == IrBufferFormat::Format6E4Float;
     decoded.conversionFormat = remappedFormat != format && !nativeRepacked ? format : IrBufferFormat::Invalid;
-    if (IsConvertedUnormTextureFormat(format) || ((format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format11_11_10Float) && !nativeRepacked)) {
-        const bool floating = format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format11_11_10Float;
+    if (IsConvertedUnormTextureFormat(format) || alphaFloat || ((format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format11_11_10Float) && !nativeRepacked)) {
+        const bool floating = alphaFloat || format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format11_11_10Float;
+        if (alphaFloat && (base.written || base.packed)) return rejectImage(PoisonReason::Conversion, "writes or packs a 10_10_10_2 float image, which is not implemented");
         if (!base.srgbDecodeCompatible) {
             if (floating) return rejectImage(PoisonReason::Conversion, "samples or gathers a converted float image, or queries its LOD, which is not implemented");
             if (storage || base.depthCompare || (base.emulatedCompare & EmulatedCompare::ConvertedSampleUnsupported) != 0u) return rejectImage(PoisonReason::Conversion, "sampling, gathering or querying LOD of a converted unorm image is not implemented");
@@ -355,7 +366,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
             if (!base.depthBitsCompatible) return rejectImage(PoisonReason::Conversion, "samples a converted unorm image with 16-bit data, which is not implemented");
         }
         for (std::uint32_t component = 0; component < 4u; ++component) {
-            if (format != IrBufferFormat::Format2_10_10_10UNorm && ((descriptorImageSwizzle(descriptor) >> (component * 3u)) & 7u) == 7u) return rejectImage(PoisonReason::Conversion, "selects a channel the converted image format does not have");
+            if (format != IrBufferFormat::Format2_10_10_10UNorm && !alphaFloat && ((descriptorImageSwizzle(descriptor) >> (component * 3u)) & 7u) == 7u) return rejectImage(PoisonReason::Conversion, "selects a channel the converted image format does not have");
         }
     }
     if (decoded.fmask && format != IrBufferFormat::Fmask32_S8_F8) decoded.conversionFormat = FmaskExpansion;
@@ -1619,7 +1630,10 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
         if (descriptor.dwordCount != 8u) {
             throw std::runtime_error("image descriptor has an invalid width");
         }
-        if (GcnGuestShaders()) {
+        if (GcnGuestShaders() && gcnUnboundSampledImage(image, descriptor)) {
+            descriptor = DescriptorValue{};
+            descriptor.dwordCount = 8u;
+        } else if (GcnGuestShaders()) {
             const auto words = GcnImageWords(std::span<const std::uint32_t, 8>(descriptor.dwords.data(), 8u));
             std::copy(words.begin(), words.end(), descriptor.dwords.begin());
         }
@@ -2436,6 +2450,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             if (image.srgbDecodeCompatible) {
                 append(IrTextureNumericClass::Uint, IrBufferFormat::Format11_11_10Float, IrBufferFormat::Invalid, false, false);
                 append(IrTextureNumericClass::Uint, IrBufferFormat::Format10_11_11Float, IrBufferFormat::Invalid, false, false);
+                if (!image.written) append(IrTextureNumericClass::Uint, IrBufferFormat::Format6E4Float, IrBufferFormat::Invalid, false, false);
             }
             if (storage) {
                 for (const auto format : {IrBufferFormat::Format5_6_5UNorm, IrBufferFormat::Format5_5_5_1UNorm, IrBufferFormat::Format1_5_5_5UNorm, IrBufferFormat::Format4_4_4_4UNorm}) {

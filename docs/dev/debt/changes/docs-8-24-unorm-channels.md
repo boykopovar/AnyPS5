@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [8_24_UNORM textures]
+
+- [8_24_UNORM textures](../../../core/libs/prx/libSceAgcDriver/Graphics/src/TextureFormat.cpp) (libSceAgcDriver) - guest format 141 (`8_24_UNORM` in the [AMD GFX10 IMG_FMT table](https://github.com/GPUOpen-Drivers/pal/blob/c5e800072a32f68b6ccc4422936d96167c6e0728/src/core/hw/gfxip/gfx9/chip/gfx9_plus_merged_enum.h)) is viewed as `VK_FORMAT_D24_UNORM_S8_UINT` through the depth aspect alone (compare samplers read it natively) and the stencil byte is never copied, so only x is read. RDNA2 (gfx1036, [hardware oracle](../HW_ORACLE.md)) returns the low 24 bits and the high 8 bits as unorm in x and y and repeats them in z and w for `image_load` and `image_sample_lz`, so 0x12345678 gives 0.20444, 0.07059, 0.20444, 0.07059 where AnyPS5 gives 0.20444, 0, 0, 1. Devices without sampled+transfer support for it (AMD) repack depth to `R32_SFLOAT`; compare samplers still convert to `D32_SFLOAT`. 142 and 145 have no `D24_UINT`/`D32_UINT`, 143/144 pack stencil first and 146 needs a repack into `D32_SFLOAT_S8_UINT`, so they throw, as do storage images of 141. The PS5's gfx1013 is not measured.
