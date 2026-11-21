@@ -49,5 +49,8 @@ bool APS5_VABI _ZNK3WTF8JSONImpl5Value9asIntegerERi(const NKWebKit::JsonAbi::Val
 std::size_t APS5_VABI _ZNK3WTF8JSONImpl9ArrayBase10memoryCostEv(const NKWebKit::JsonAbi::ArrayBase* self);
 NKWebKit::JsonAbi::Ref<NKWebKit::JsonAbi::Value> APS5_VABI _ZNK3WTF8JSONImpl9ArrayBase3getEm(const NKWebKit::JsonAbi::ArrayBase* self, std::size_t index);
 const NKWebKit::JsonAbi::Ref<NKWebKit::JsonAbi::Value>* APS5_VABI _ZNK3WTF8JSONImpl9ArrayBase5beginEv(const NKWebKit::JsonAbi::ArrayBase* self);
+void APS5_VABI _ZNK3WTF8JSONImpl5Value9writeJSONERNS_13StringBuilderE(const NKWebKit::JsonAbi::Value* self, NKWebKit::WtfAbi::StringBuilder* output);
+void APS5_VABI _ZNK3WTF8JSONImpl9ArrayBase9writeJSONERNS_13StringBuilderE(const NKWebKit::JsonAbi::ArrayBase* self, NKWebKit::WtfAbi::StringBuilder* output);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF8JSONImpl5Value12toJSONStringEv(const NKWebKit::JsonAbi::Value* self);
 
 }
