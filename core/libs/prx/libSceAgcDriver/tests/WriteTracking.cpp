@@ -1954,32 +1954,23 @@ void CheckImportOverReadTraps() {
 }
 
 #if defined(__linux__)
-void CheckHostPointerImportOverReadTraps() {
+void CheckImportKeepsReadTraps() {
     ::alarm(20);
     constexpr std::size_t bytes = 4 * Block;
     void* memory = AllocateWatched(bytes);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
     std::memset(memory, 0x11, bytes);
-    Require(CollectWritesUncached(base, bytes) != 0, "the read-trapped host pointer import range is not collected");
+    Require(CollectWritesUncached(base, bytes) != 0, "the read-trapped import range is not collected");
     Require(GuestWriteWatch::GuestWriteWatchSetReadTrapResolver_nid_postfix(&ResolveUnderGpuMutex), "cannot set the read trap resolver");
-    Require(GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(base, bytes), "cannot set a read trap on the host pointer import range");
-    Require(TrappedBytes(base, bytes) == bytes, "the read trap does not cover the host pointer import range");
-    std::FILE* sink = std::tmpfile();
-    Require(sink != nullptr, "cannot open a file for the kernel read");
-    bool trappedInside = true;
-    bool retrapped = true;
-    ssize_t written = -1;
+    Require(GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(base, bytes), "cannot set a read trap on the import range");
+    std::size_t trappedInside = 0;
     Require(ImportWatched(base, bytes, [&] {
-        trappedInside = TrappedBytes(base, bytes) != 0;
-        retrapped = GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(base, bytes);
-        written = ::write(::fileno(sink), memory, bytes);
+        trappedInside = TrappedBytes(base, bytes);
         return true;
-    }, false), "the host pointer import over a read-trapped range failed");
-    std::fclose(sink);
-    Require(!trappedInside, "a host pointer import ran with read traps on its pages");
-    Require(!retrapped, "a read trap was set over a host pointer import while it ran");
-    Require(written == static_cast<ssize_t>(bytes), "the kernel could not read the pages of a host pointer import");
-    Require(static_cast<const volatile std::uint8_t*>(memory)[0] == 0x33, "the trapped bytes were not stored before the host pointer import");
+    }, false), "the import over a read-trapped range failed");
+    Require(trappedInside == bytes, "an import took the read traps off its range");
+    GuestWriteWatch::GuestWriteWatchReleaseReads_nid_postfix(base, bytes);
+    Require(static_cast<const volatile std::uint8_t*>(memory)[0] == 0x11, "an import ran the read trap resolver on the importing thread, which holds the write tracker lock the resolver's store takes");
 }
 #endif
 #endif
@@ -2703,9 +2694,9 @@ int main(int argc, char** argv) {
             return 0;
         }
 #if defined(__linux__)
-        if (argc == 2 && std::string_view(argv[1]) == "--host-pointer-import-over-read-traps") {
-            CheckHostPointerImportOverReadTraps();
-            std::cout << "host pointer import over read traps test passed\n";
+        if (argc == 2 && std::string_view(argv[1]) == "--import-keeps-read-traps") {
+            CheckImportKeepsReadTraps();
+            std::cout << "import keeps read traps test passed\n";
             return 0;
         }
 #endif

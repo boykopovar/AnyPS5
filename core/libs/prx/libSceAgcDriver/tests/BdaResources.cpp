@@ -253,6 +253,47 @@ void readTrappableImportTests(const Context& context) {
     ::operator delete(block, std::align_val_t{half});
 }
 
+#if defined(__linux__)
+void trappedImportTests(const Context& context) {
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix() || !GuestWriteWatch::GuestWriteWatchSetReadTrapResolver_nid_postfix(+[](std::uintptr_t, std::uintptr_t) {})) {
+        std::cout << "trapped import tests skipped, the device lacks the userfaultfd write watch read traps need\n";
+        return;
+    }
+    constexpr std::size_t half = 65536;
+    const auto page = static_cast<std::size_t>(::getpagesize());
+    void* mapped = ::mmap(nullptr, 3 * half, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapped != MAP_FAILED, "cannot map the trapped import range");
+    auto* block = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(mapped) + half - 1) & ~static_cast<std::uintptr_t>(half - 1));
+    std::memset(block, 0x44, 2 * half);
+    const auto first = reinterpret_cast<std::uintptr_t>(block);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, 2 * half);
+    auto importing = context;
+    importing.hostImportAlignment = half;
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, 2 * half, true, false, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    Require(GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(first + page, page), "a page of the import range was not trapped");
+    registry(true);
+    {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        Require(HostImportFor(importing, first, 2 * half) == nullptr && !HostImportCovers(importing, first, 2 * half), "an import pinned a range with a read-trapped page");
+    }
+    GuestWriteWatch::GuestWriteWatchReleaseReads_nid_postfix(first + page, page);
+    {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        Require(HostImportFor(importing, first, 2 * half) != nullptr, "a range was not imported once its read trap was gone");
+    }
+    registry(false);
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, 2 * half);
+    ::munmap(mapped, 3 * half);
+}
+#endif
+
 constexpr auto FixedImageConstants = [] {
     std::array<std::uint8_t, 64> bytes{};
     for (auto& value : bytes) value = 0x5c;
@@ -5683,6 +5724,9 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     }
     importCrossingTests(context, access);
     readTrappableImportTests(context);
+#if defined(__linux__)
+    trappedImportTests(context);
+#endif
     fixedReadOnlyRangeMirrorTests(context, access);
     addressTableKeyTests();
     snapshotTableTests(context, access);

@@ -659,6 +659,16 @@ public:
         if (found != _hostWrites.end()) _hostWrites.erase(found);
     }
 
+    bool BeginUntrapped(std::uintptr_t begin, std::uintptr_t end) {
+        if (end <= begin) return true;
+        const auto first = pageStart(begin);
+        const auto last = pageEnd(end);
+        const std::lock_guard lock(_lock);
+        if (std::any_of(_traps.begin(), _traps.end(), [&](const Trap& trap) { return trap.first < last && first < trap.last; })) return false;
+        _hostWrites.emplace_back(first, last);
+        return true;
+    }
+
 private:
     static constexpr std::size_t ResolveSlots = 32;
     static constexpr unsigned UntrappedRetries = 16;
@@ -1980,6 +1990,27 @@ std::uint64_t GuestWriteWatchReadTrapGeneration_nid_postfix() {
 #else
     static std::atomic<std::uint64_t> asked{1};
     return asked.fetch_add(1, std::memory_order_relaxed);
+#endif
+}
+
+bool GuestWriteWatchBeginUntrappedAccess_nid_postfix(const void* pointer, std::size_t bytes) {
+#if defined(APS5_LINUX_READ_TRAPS)
+    const auto begin = reinterpret_cast<std::uintptr_t>(pointer);
+    return bytes == 0 || begin + bytes < begin || ReadTraps::Get().BeginUntrapped(begin, begin + bytes);
+#else
+    static_cast<void>(pointer);
+    static_cast<void>(bytes);
+    return true;
+#endif
+}
+
+void GuestWriteWatchEndUntrappedAccess_nid_postfix(const void* pointer, std::size_t bytes) {
+#if defined(APS5_LINUX_READ_TRAPS)
+    const auto begin = reinterpret_cast<std::uintptr_t>(pointer);
+    if (bytes != 0 && begin + bytes > begin) ReadTraps::Get().EndHostWrite(begin, begin + bytes);
+#else
+    static_cast<void>(pointer);
+    static_cast<void>(bytes);
 #endif
 }
 

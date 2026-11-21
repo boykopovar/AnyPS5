@@ -183,6 +183,22 @@ void CheckGeneration() {
     Require(GuestWriteWatchReadTrapGeneration_nid_postfix() != released, "resolving a trap kept the generation");
 }
 
+void CheckUntrapped() {
+    Region region(4);
+    Require(GuestWriteWatchTrapReads_nid_postfix(region.Address(1), region.page), "a read-write page was not trapped");
+    Require(!GuestWriteWatchBeginUntrappedAccess_nid_postfix(region.base, 2 * region.page), "an untrapped access was granted over a trapped page");
+    Require(resolved.load() == 0 && Protection(region.base + region.page) == PROT_NONE, "a refused untrapped access resolved the trap");
+    Require(GuestWriteWatchBeginUntrappedAccess_nid_postfix(region.base + 2 * region.page, 2 * region.page), "an untrapped access was refused over pages no trap covers");
+    Require(!GuestWriteWatchTrapReads_nid_postfix(region.Address(3), region.page), "a page under an untrapped access was trapped");
+    GuestWriteWatchEndUntrappedAccess_nid_postfix(region.base + 2 * region.page, 2 * region.page);
+    Require(GuestWriteWatchTrapReads_nid_postfix(region.Address(3), region.page), "a page was not trapped after its untrapped access ended");
+    GuestWriteWatchReleaseReads_nid_postfix(region.Address(3), region.page);
+    GuestWriteWatchReleaseReads_nid_postfix(region.Address(1), region.page);
+    Require(GuestWriteWatchBeginUntrappedAccess_nid_postfix(region.base, 2 * region.page), "an untrapped access was refused after the trap was released");
+    GuestWriteWatchEndUntrappedAccess_nid_postfix(region.base, 2 * region.page);
+    Require(resolved.load() == 0, "untrapped accesses ran the resolver");
+}
+
 void CheckUnknown() {
     Region region(2, PROT_READ);
     Require(!GuestWriteWatchTrapReads_nid_postfix(region.Address(), region.page), "a read-only mapping was trapped");
@@ -244,7 +260,7 @@ void CheckThreads() {
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2, "expected trap, release, protect, host, unknown, unregister, threads, holder, trapped or generation");
+        Require(argc == 2, "expected trap, release, protect, host, unknown, unregister, threads, holder, trapped, generation or untrapped");
         if (!GuestWriteWatchAvailable_nid_postfix()) {
             std::puts("the userfaultfd write watch is not available");
             return Skipped;
@@ -264,6 +280,7 @@ int main(int argc, char** argv) {
         else if (mode == "threads") CheckThreads();
         else if (mode == "trapped") CheckTrapped();
         else if (mode == "generation") CheckGeneration();
+        else if (mode == "untrapped") CheckUntrapped();
         else throw std::runtime_error("unknown mode");
         return 0;
     } catch (const std::exception& error) {

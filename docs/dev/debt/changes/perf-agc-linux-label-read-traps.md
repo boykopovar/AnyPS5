@@ -6,7 +6,7 @@
 
 ## add Functional
 
-- [Read traps over host pointer imports](../../../core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp) (libSceAgcDriver, Linux): a label read trap is set only where every import over the image's pages is a dma-buf, or where the driver is NVIDIA's proprietary one (`ReadTrapsOverHostPointerImportsUsable`). On RADV a submission fails with `VK_ERROR_DEVICE_LOST` while a host pointer import has a `PROT_NONE` page; NVIDIA pins the pages at import and no device was lost in runs there, but neither driver documents it. Other drivers are not measured and keep host pointer imports untrapped, so their images there are stored at the label. A retired host pointer import that recorded work still holds is not checked.
+- [Read traps over host pointer imports](../../../core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp) (libSceAgcDriver, Linux): a label read trap is set only where every import over the image's pages is a dma-buf, or where the driver is NVIDIA's proprietary one (`ReadTrapsOverHostPointerImportsUsable`). On RADV a submission fails with `VK_ERROR_DEVICE_LOST` while a host pointer import has a `PROT_NONE` page; NVIDIA pins the pages at import and no device was lost in runs there, but neither driver documents it. Other drivers are not measured and keep host pointer imports untrapped, so their images there are stored at the label. No import is made over a trapped page, so an access that needs one copies until the trap is gone; the import is not resolved first because it runs under the write tracker lock the store takes. A retired host pointer import that recorded work still holds is not checked.
 
 # libc
 

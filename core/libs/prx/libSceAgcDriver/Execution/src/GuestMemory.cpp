@@ -2545,7 +2545,7 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
     const auto stop = (address + bytes + page - 1) & ~(page - 1);
     const bool covered = tracker.covers(first, static_cast<std::size_t>(stop - first));
     const auto runImport = [&] {
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__)
         const OwnHostWrite own;
         std::optional<GuestArena::HostWrite> open;
         if (importMayWriteGuest) open.emplace(reinterpret_cast<void*>(first), static_cast<std::size_t>(stop - first));

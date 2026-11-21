@@ -573,6 +573,22 @@ std::uint64_t pinnedTotal(const HostImports& state) {
     return state.liveBytes + retiredPinnedBytes.load(std::memory_order_acquire);
 }
 
+class UntrappedImport {
+public:
+    UntrappedImport(std::uint64_t base, std::uint64_t bytes) : pointer(reinterpret_cast<const void*>(base)), size(static_cast<std::size_t>(bytes)), held(GuestWriteWatch::GuestWriteWatchBeginUntrappedAccess_nid_postfix(pointer, size)) {}
+    ~UntrappedImport() {
+        if (held) GuestWriteWatch::GuestWriteWatchEndUntrappedAccess_nid_postfix(pointer, size);
+    }
+    UntrappedImport(const UntrappedImport&) = delete;
+    UntrappedImport& operator=(const UntrappedImport&) = delete;
+    bool Held() const { return held; }
+
+private:
+    const void* pointer;
+    std::size_t size;
+    bool held;
+};
+
 bool holdsRangeOver(const HostImport& entry, std::uint64_t begin, std::uint64_t end) {
     const auto over = [&](const std::shared_ptr<const GuestAllocations::Range>& range) { return range != nullptr && range->address < end && begin < range->address + range->bytes; };
     return (entry.base < end && begin < entry.base + entry.bytes) || over(entry.range) || std::any_of(entry.ranges.begin(), entry.ranges.end(), over);
@@ -2463,6 +2479,8 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         ++state.budgetRefusals;
         return nullptr;
     }
+    const UntrappedImport untrapped(base, bytes);
+    if (!untrapped.Held()) return nullptr;
     if (live + bytes > budget) retireLeastRecent(context, state, lease, live + bytes - budget, base, base + bytes);
     ImportConstruction owner(context, base, bytes);
     auto& entry = owner.entry;
