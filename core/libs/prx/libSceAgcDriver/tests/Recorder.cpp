@@ -28,6 +28,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GpuIndex.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
@@ -187,7 +188,7 @@ bool partialWatchRestorationTests() {
 #endif
 }
 
-std::optional<std::size_t> selectDevice(std::span<const VkPhysicalDeviceProperties> devices, std::string_view request) {
+std::optional<std::size_t> selectDevice(std::span<const VkPhysicalDeviceProperties> devices, std::string_view request, std::optional<std::size_t> requestedIndex = std::nullopt) {
     const auto rankDeviceType = [](VkPhysicalDeviceType type) {
         switch (type) {
             case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return 3;
@@ -201,11 +202,12 @@ std::optional<std::size_t> selectDevice(std::span<const VkPhysicalDeviceProperti
     for (std::size_t index = 0; index < devices.size(); ++index) {
         const auto& candidate = devices[index];
         if (candidate.apiVersion < VK_API_VERSION_1_1) continue;
+        if (requestedIndex.has_value() && index != *requestedIndex) continue;
         const std::string_view name(candidate.deviceName);
         if (!request.empty() && std::search(name.begin(), name.end(), request.begin(), request.end(), [](char left, char right) {
             return std::tolower(static_cast<unsigned char>(left)) == std::tolower(static_cast<unsigned char>(right));
         }) == name.end()) continue;
-        const int rank = request.empty() ? rankDeviceType(candidate.deviceType) : 4;
+        const int rank = request.empty() && !requestedIndex.has_value() ? rankDeviceType(candidate.deviceType) : 4;
         if (rank <= selectedRank) continue;
         selected = index;
         selectedRank = rank;
@@ -382,6 +384,10 @@ void deviceSelectionTests() {
         properties("CPU", VK_PHYSICAL_DEVICE_TYPE_CPU),
     };
     Require(!selectDevice({}, {}).has_value(), "an empty device list selected a device");
+    Require(selectDevice(devices, {}, 0u) == 0u, "ANYPS5_GPU_INDEX=0 did not select the first device over the discrete GPU");
+    Require(selectDevice(devices, "rtx 5080", 1u) == 1u, "ANYPS5_GPU_INDEX with a matching name did not select the device");
+    Require(!selectDevice(devices, "rtx 5080", 0u).has_value(), "ANYPS5_GPU_INDEX selected a device whose name does not match ANYPS5_GPU");
+    Require(!selectDevice(devices, {}, devices.size()).has_value(), "an out-of-range ANYPS5_GPU_INDEX selected a device");
     Require(selectDevice(devices, {}) == 1u, "default selection did not prefer the discrete GPU");
     Require(selectDevice(devices, "aMd rAdEoN") == 0u, "a requested integrated GPU lost to an unrelated discrete GPU");
     Require(selectDevice(devices, "rtx 5080") == 1u, "a partial GPU name did not match without regard to case");
@@ -435,7 +441,9 @@ public:
             std::vector<VkPhysicalDeviceProperties> deviceProperties(devices.size());
             for (std::size_t index = 0; index < devices.size(); ++index) physicalProperties(devices[index], &deviceProperties[index]);
             const char* requestedName = std::getenv("ANYPS5_GPU");
-            const auto selectedIndex = selectDevice(deviceProperties, requestedName != nullptr ? requestedName : "");
+            const auto requestedIndex = AgcDriver::RequestedGpuIndex();
+            const auto selectedIndex = selectDevice(deviceProperties, requestedName != nullptr ? requestedName : "", requestedIndex);
+            Require(selectedIndex.has_value() || !requestedIndex.has_value(), "no Vulkan 1.1 device at ANYPS5_GPU_INDEX=" + std::to_string(requestedIndex.value_or(0)) + (requestedName != nullptr && *requestedName != '\0' ? std::string(" matching ANYPS5_GPU=\"") + requestedName + "\"" : std::string()));
             Require(selectedIndex.has_value(), requestedName != nullptr && *requestedName != '\0' ? std::string("no Vulkan 1.1 device matching ANYPS5_GPU=\"") + requestedName + "\"" : "no Vulkan 1.1 device");
             context.physical = devices[*selectedIndex];
             const auto& selected = deviceProperties[*selectedIndex];

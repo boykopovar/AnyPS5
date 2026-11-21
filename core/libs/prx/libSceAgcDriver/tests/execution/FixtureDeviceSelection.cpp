@@ -15,6 +15,14 @@ void Require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
 
+void SetIndex(const char* value) {
+#ifdef _WIN32
+    if (_putenv_s("ANYPS5_GPU_INDEX", value) != 0) throw std::runtime_error("cannot set ANYPS5_GPU_INDEX");
+#else
+    if (setenv("ANYPS5_GPU_INDEX", value, 1) != 0) throw std::runtime_error("cannot set ANYPS5_GPU_INDEX");
+#endif
+}
+
 void SetRequest(const char* value) {
 #ifdef _WIN32
     if (_putenv_s("ANYPS5_GPU", value) != 0) throw std::runtime_error("cannot set ANYPS5_GPU");
@@ -77,10 +85,37 @@ void SelectionTests() {
     devices[1].apiVersion = VK_API_VERSION_1_0;
     devices[2].apiVersion = VK_API_VERSION_1_0;
     Require(!SelectFixtureDevice(devices, "NVIDIA").has_value(), "a requested device without Vulkan 1.1 was selected");
+    std::array twins{
+        Properties("NVIDIA GeForce RTX 5090", VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU),
+        Properties("AMD Radeon(TM) Graphics", VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU),
+        Properties("NVIDIA GeForce RTX 5090", VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU),
+    };
+    Require(SelectFixtureDevice(twins, "RTX 5090") == 0u, "a name shared by two GPUs did not take the first");
+    Require(SelectFixtureDevice(twins, "RTX 5090", 2u) == 2u, "ANYPS5_GPU_INDEX=2 did not select the second of two identical GPUs");
+    Require(SelectFixtureDevice(twins, {}, 1u) == 1u, "ANYPS5_GPU_INDEX=1 did not select the integrated GPU over the discrete GPUs");
+    Require(!SelectFixtureDevice(twins, "RTX 5090", 1u).has_value(), "ANYPS5_GPU_INDEX selected a device whose name does not match ANYPS5_GPU");
+    Require(!SelectFixtureDevice(twins, {}, 3u).has_value(), "an out-of-range ANYPS5_GPU_INDEX selected a device");
+    twins[2].apiVersion = VK_API_VERSION_1_0;
+    Require(!SelectFixtureDevice(twins, {}, 2u).has_value(), "ANYPS5_GPU_INDEX selected a device without Vulkan 1.1");
+}
+
+void IndexParseTests() {
+    Require(!AgcDriver::ParseGpuIndex(nullptr).has_value() && !AgcDriver::ParseGpuIndex("").has_value(), "an unset ANYPS5_GPU_INDEX requested a device");
+    Require(AgcDriver::ParseGpuIndex("0") == 0u && AgcDriver::ParseGpuIndex("2") == 2u && AgcDriver::ParseGpuIndex("0012") == 12u, "a decimal ANYPS5_GPU_INDEX was misread");
+    for (const char* invalid : {"-1", "1a", " 1", "0x1", "12345", "+2"}) {
+        bool thrown = false;
+        try {
+            static_cast<void>(AgcDriver::ParseGpuIndex(invalid));
+        } catch (const std::runtime_error&) {
+            thrown = true;
+        }
+        Require(thrown, std::string("ANYPS5_GPU_INDEX=\"") + invalid + "\" was accepted");
+    }
 }
 
 void EnvironmentTests() {
     const std::array handles{Handle(0), Handle(1), Handle(2)};
+    SetIndex("");
     SetRequest("");
     Require(SelectFixturePhysicalDevice(handles, Describe) == Handle(2), "an empty ANYPS5_GPU did not select the discrete GPU");
     SetRequest("radeon");
@@ -89,6 +124,18 @@ void EnvironmentTests() {
     Require(SelectFixturePhysicalDevice(handles, Describe) == Handle(0), "ANYPS5_GPU=LLVMPIPE did not select the CPU device");
     const std::string error = SelectionError("no such device 1d3d154f");
     Require(error == "no Vulkan 1.1 device whose name contains ANYPS5_GPU=\"no such device 1d3d154f\"; devices: llvmpipe (LLVM 20.1.2, 256 bits), AMD Radeon(TM) Graphics, NVIDIA GeForce RTX 5080", "unexpected error: " + error);
+    SetRequest("");
+    SetIndex("1");
+    Require(SelectFixturePhysicalDevice(handles, Describe) == Handle(1), "ANYPS5_GPU_INDEX=1 did not select the second device");
+    SetRequest("radeon");
+    Require(SelectFixturePhysicalDevice(handles, Describe) == Handle(1), "ANYPS5_GPU_INDEX=1 with ANYPS5_GPU=radeon did not select the integrated GPU");
+    SetIndex("2");
+    const std::string mismatch = SelectionError("radeon");
+    Require(mismatch == "no Vulkan 1.1 device at ANYPS5_GPU_INDEX=2 whose name contains ANYPS5_GPU=\"radeon\"; devices: llvmpipe (LLVM 20.1.2, 256 bits), AMD Radeon(TM) Graphics, NVIDIA GeForce RTX 5080", "unexpected error: " + mismatch);
+    SetIndex("3");
+    const std::string outOfRange = SelectionError("");
+    Require(outOfRange == "no Vulkan 1.1 device at ANYPS5_GPU_INDEX=3; devices: llvmpipe (LLVM 20.1.2, 256 bits), AMD Radeon(TM) Graphics, NVIDIA GeForce RTX 5080", "unexpected error: " + outOfRange);
+    SetIndex("");
 }
 
 }
@@ -96,6 +143,7 @@ void EnvironmentTests() {
 int main() {
     try {
         SelectionTests();
+        IndexParseTests();
         EnvironmentTests();
         std::puts("fixture device selection tests passed");
         return 0;
