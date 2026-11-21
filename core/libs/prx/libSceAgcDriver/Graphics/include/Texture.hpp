@@ -214,7 +214,14 @@ public:
     };
 
     void assign(std::size_t size, bool flag) {
-        words.assign((size + WordBits - 1u) / WordBits, flag ? ~std::uint64_t{0} : 0u);
+        const auto wordCount = (size + WordBits - 1u) / WordBits;
+        const auto fill = flag ? ~std::uint64_t{0} : 0u;
+        if (wordCount > words.capacity()) {
+            std::vector<std::uint64_t> grown(wordCount, fill);
+            words.swap(grown);
+        } else {
+            words.assign(wordCount, fill);
+        }
         if (flag && size % WordBits != 0u) words.back() &= (std::uint64_t{1} << (size % WordBits)) - 1u;
         count = size;
     }
