@@ -150,7 +150,7 @@ void padStatusBinding() {
     }
     require(padStatus == 1, "the pad status has more than one default input");
     require(onF9 == 1, "another default binding uses F9");
-    require(Pad::InputMapping.size() == 44, "the default bindings changed besides the pad status, host volume and reload keys");
+    require(Pad::InputMapping.size() == 45, "the default bindings changed besides the pad status, host volume and reload keys");
     useConfig("ShowPadStatus = KEY:F4\n");
     const auto moved = Pad::LoadInputMapping();
     require(padStatusBindingsOn(moved, SDL_SCANCODE_F4) == 1 && padStatusBindingsOn(moved, SDL_SCANCODE_F9) == 0, "the pad status key moves to another key");
@@ -228,6 +228,31 @@ void toggleMuteAction() {
     require(rejects("ToggleMute = KEY:NoSuchKey\n"), "ToggleMute refuses an unknown key name");
     require(rejects("ToggleMute =\n"), "ToggleMute refuses an empty source");
     require(rejects("ToggleMute = F2\n"), "ToggleMute refuses a source without a type");
+}
+
+void toggleBorderlessAction() {
+    useConfig("toggleborderless = KEY:F2\nToggleBorderless = KEY:F3\n");
+    const auto keys = keysFor(Pad::InputControl::ToggleBorderless);
+    require(keys.size() == 2 && hasKey(keys, SDL_SCANCODE_F2) && hasKey(keys, SDL_SCANCODE_F3), "ToggleBorderless takes a first key and an alternate, case-insensitively");
+    useConfig("ToggleBorderless = KEY:F4\nToggleBorderless = KEY:F4\n");
+    const auto duplicated = keysFor(Pad::InputControl::ToggleBorderless);
+    require(duplicated.size() == 1 && duplicated[0] == SDL_SCANCODE_F4, "a duplicate ToggleBorderless line is ignored");
+    require(rejects("ToggleBorderless = MOUSE:Left\n"), "ToggleBorderless refuses a mouse button");
+    require(rejects("ToggleBorderless = MOUSE:X1\n"), "ToggleBorderless refuses another mouse button");
+    require(rejects("ToggleBorderless = WHEEL:Up\n"), "ToggleBorderless refuses the mouse wheel");
+    require(rejects("ToggleBorderless = PAD:Options+R1\n"), "ToggleBorderless refuses a controller chord");
+    require(rejects("ToggleBorderless = KEY:NoSuchKey\n"), "ToggleBorderless refuses an unknown key name");
+    require(rejects("ToggleBorderless =\n"), "ToggleBorderless refuses an empty source");
+    require(rejects("ToggleBorderless = F2\n"), "ToggleBorderless refuses a source without a type");
+}
+
+void toggleBorderlessDefault() {
+    useConfig("Cross = KEY:F\n");
+    const auto keys = keysFor(Pad::InputControl::ToggleBorderless);
+    require(keys.size() == 1 && keys[0] == SDL_SCANCODE_F2, "F2 is the only default ToggleBorderless key");
+    useConfig("ToggleBorderless = KEY:F4\n");
+    const auto moved = keysFor(Pad::InputControl::ToggleBorderless);
+    require(moved.size() == 1 && moved[0] == SDL_SCANCODE_F4, "a ToggleBorderless line replaces the built-in key");
 }
 
 void volumeDownDefault() {
@@ -741,6 +766,8 @@ int main() try {
     hostVolumeActionNamesAreExact();
     volumeDownAction();
     volumeDownDefault();
+    toggleBorderlessAction();
+    toggleBorderlessDefault();
     volumeUpAction();
     volumeUpDefault();
     mouseLookDefault();
