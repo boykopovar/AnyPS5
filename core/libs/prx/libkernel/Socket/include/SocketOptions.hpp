@@ -28,6 +28,7 @@ struct SocketOptionState {
 #endif
     int reportedError = 0;
     bool nonblocking = false;
+    bool transportNonblocking = false;
     bool noSignal = false;
     std::int64_t sendTimeout = 0;
     std::int64_t receiveTimeout = 0;
