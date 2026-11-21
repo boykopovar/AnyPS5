@@ -24,6 +24,7 @@
 #include "prx/libc/include/WindowsFormatting.hpp"
 #include "prx/libc/include/ScanWideField.hpp"
 #include "prx/libc/include/ScanQuadLength.hpp"
+#include "prx/libc/include/ScanDanglingExponent.hpp"
 
 #ifdef _WIN32
 #include "prx/libc/include/WindowsScanning.hpp"
@@ -547,7 +548,18 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
         }
         const int savedError = errno;
         int consumed = -1;
-        const int matched = source.Scan(directive.c_str(), suppress, narrowInteger ? &wideInteger : target, &consumed);
+        int matched = 0;
+        bool scanned = false;
+        if constexpr (TSource::Contiguous) if (floating) {
+            std::size_t span = 0;
+            if (const std::size_t mantissa = LibcDetail::DanglingExponentMantissa(source.Remaining(), width, span); mantissa != 0) {
+                const std::string field(source.Remaining(), mantissa);
+                matched = suppress ? HostSscanf(field.c_str(), directive.c_str(), &consumed) : HostSscanf(field.c_str(), directive.c_str(), target, &consumed);
+                if (consumed >= 0) consumed = static_cast<int>(span);
+                scanned = true;
+            }
+        }
+        if (!scanned) matched = source.Scan(directive.c_str(), suppress, narrowInteger ? &wideInteger : target, &consumed);
         if constexpr (TSource::Contiguous) if (floating) {
             const bool outOfRange = consumed > 0 && DecimalOutOfRange(std::string(source.Remaining(), static_cast<std::size_t>(consumed)));
             errno = outOfRange ? ERANGE : savedError;
