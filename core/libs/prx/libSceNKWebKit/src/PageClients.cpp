@@ -21,6 +21,36 @@ void SetClient(std::optional<NKWebKit::PageClientRegistration>& slot, const void
 
 extern "C" {
 
+void APS5_VABI WKPageSetPageContextMenuClient(const void* pageRef, const void* client) {
+    auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    SetClient(page->contextMenuClient, client);
+}
+
+void APS5_VABI WKPageSetPageDiagnosticLoggingClient(const void* pageRef, const void* client) {
+    auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    SetClient(page->diagnosticLoggingClient, client);
+}
+
+void APS5_VABI WKPageSetPageFindClient(const void* pageRef, const void* client) {
+    auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    SetClient(page->findClient, client);
+}
+
+void APS5_VABI WKPageSetPageFindMatchesClient(const void* pageRef, const void* client) {
+    auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    SetClient(page->findMatchesClient, client);
+}
+
+void APS5_VABI WKPageSetPageFormClient(const void* pageRef, const void* client) {
+    auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    SetClient(page->formClient, client);
+}
+
+void APS5_VABI WKPageSetPageInjectedBundleClient(const void* pageRef, const void* client) {
+    auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    SetClient(page->injectedBundleClient, client);
+}
+
 void APS5_VABI WKPageSetPageLoaderClient(const void* pageRef, const void* client) {
     auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
     SetClient(page->loaderClient, client);
@@ -34,6 +64,11 @@ void APS5_VABI WKPageSetPageNavigationClient(const void* pageRef, const void* cl
 void APS5_VABI WKPageSetPagePolicyClient(const void* pageRef, const void* client) {
     auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
     SetClient(page->policyClient, client);
+}
+
+void APS5_VABI WKPageSetPageStateClient(const void* pageRef, const void* client) {
+    auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    SetClient(page->stateClient, client);
 }
 
 void APS5_VABI WKPageSetPageUIClient(const void* pageRef, const void* client) {
