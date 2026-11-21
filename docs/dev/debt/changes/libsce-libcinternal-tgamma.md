@@ -6,4 +6,4 @@
 
 ## remove `_Tgamma` (NID `z-OrNOmb6kk`)
 
-## remove `_LTgamma`
+## remove (libSceLibcInternal) - `_LTgamma`
