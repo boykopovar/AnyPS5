@@ -9,7 +9,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pr_overlap
@@ -49,8 +49,38 @@ class OpenPullRequestsTests(unittest.TestCase):
             self.assertEqual(pr_overlap.open_prs("topic/one&two"), {})
         gh.assert_called_once_with(
             "api", "--include",
-            "repos/owner/project/pulls?state=open&base=topic%2Fone%26two&per_page=100&page=1",
+            "repos/owner/project/pulls?state=open&base=topic%2Fone%26two&sort=created&direction=asc&per_page=100&page=1",
         )
+
+    def test_new_pull_request_does_not_shift_requests_between_parallel_pages(self):
+        def page(url):
+            parameters = parse_qs(urlsplit(url).query)
+            number = int(parameters["page"][0])
+            visible_count = 251 if number == 2 else 250
+            numbers = list(range(1, visible_count + 1))
+            if parameters.get("direction") != ["asc"]:
+                numbers.reverse()
+            first = (number - 1) * 100
+            rows = [{"number": item, "user": {"login": "author"},
+                     "head": {"sha": f"sha{item}", "ref": f"branch{item}"}, "body": None}
+                    for item in numbers[first:first + 100]]
+            return ('Link: <https://api.github.com/pulls?page=3>; rel="last"' if number == 1 else "",
+                    json.dumps(rows))
+
+        with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
+                patch.object(pr_overlap, "page", side_effect=page):
+            found = pr_overlap.open_prs("main")
+        self.assertEqual(set(found), set(range(1, 251)))
+
+    def test_duplicate_pull_requests_fail_the_check(self):
+        row = {"number": 7, "user": {"login": "author"},
+               "head": {"sha": "sha7", "ref": "branch7"}, "body": None}
+        first = ('Link: <https://api.github.com/pulls?page=2>; rel="last"', json.dumps([row]))
+        second = ("", json.dumps([row]))
+        with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
+                patch.object(pr_overlap, "page", side_effect=[first, second]):
+            with self.assertRaisesRegex(ValueError, "duplicate pull request #7"):
+                pr_overlap.open_prs("main")
 
     def test_single_page_preserves_author_head_and_dependencies(self):
         pull_requests = [{"number": 7, "user": {"login": "contributor"}, "head": {"sha": "head-sha", "ref": "contrib/topic"},
