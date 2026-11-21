@@ -818,7 +818,6 @@ int APS5_VABI _ZN6icu_6812ByteSinkUtil15appendCodePointEiiRNS_8ByteSinkEPNS_5Edi
 int APS5_VABI sceIcuLegacyUnknown_Kos3ziZAkOs_nid_no_patch();
 int APS5_VABI _ZN6icu_6834SimpleFilteredBreakIteratorBuilderC2ER10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_686Locale14setFromPOSIXIDEPKc_nid_postfix();
-int APS5_VABI ures_getUTF8String_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_Kr8Q8xo3B8M_nid_no_patch();
 int APS5_VABI _ZN6icu_6813LocaleUtility23getAvailableLocaleNamesERKNS_13UnicodeStringE_nid_postfix();
 std::int32_t APS5_VABI uprv_uint32Comparator_nid_postfix(const void* context, const void* left, const void* right);
@@ -1352,9 +1351,7 @@ int APS5_VABI sceIcuLegacyUnknown_aiiMugfIM7o_nid_no_patch();
 int APS5_VABI _ZN6icu_6810ICUServiceD2Ev_nid_postfix();
 int APS5_VABI _ZN6icu_6817UCharsTrieBuilderC2ER10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_687UVector15removeElementAtEi_nid_postfix();
-int APS5_VABI ures_getUTF8StringByIndex_nid_postfix();
 int APS5_VABI _ZNK6icu_6822RuleBasedBreakIterator7currentEv_nid_postfix();
-int APS5_VABI ures_getUTF8StringByKey_nid_postfix();
 int APS5_VABI _ZN6icu_6816ReorderingBuffer6resizeEiR10UErrorCode_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_azmprWFOXT4_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown_b_minus_Ve4dnYu2Y_nid_no_patch();
