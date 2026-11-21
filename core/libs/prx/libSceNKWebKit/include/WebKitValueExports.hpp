@@ -406,6 +406,7 @@ bool APS5_VABI WKPopupMenuItemIsEnabled(const void* itemRef);
 bool APS5_VABI WKPopupMenuItemIsItem(const void* itemRef);
 bool APS5_VABI WKPopupMenuItemIsSeparator(const void* itemRef);
 std::uint32_t APS5_VABI WKPreferencesGetTypeID();
+const void* APS5_VABI WKProtectionSpaceCopyCertificateInfo(const void* protectionSpaceRef);
 const void* APS5_VABI WKProtectionSpaceCopyHost(const void* protectionSpaceRef);
 const void* APS5_VABI WKProtectionSpaceCopyRealm(const void* protectionSpaceRef);
 std::uint32_t APS5_VABI WKProtectionSpaceGetAuthenticationScheme(const void* protectionSpaceRef);
@@ -568,6 +569,9 @@ void APS5_VABI WKContextRegisterURLSchemeAsCachePartitioned(const void* contextR
 void APS5_VABI WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest(const void* contextRef, const void* urlSchemeRef);
 void APS5_VABI WKContextRegisterURLSchemeAsEmptyDocument(const void* contextRef, const void* urlSchemeRef);
 void APS5_VABI WKContextRegisterURLSchemeAsSecure(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextClearCurrentModifierStateForTesting(const void* contextRef);
+void APS5_VABI WKContextSetUseSeparateServiceWorkerProcess(const void* contextRef, bool useSeparateServiceWorkerProcess);
+void APS5_VABI WKContextWarmInitialProcess(const void* contextRef);
 void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* managerRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, void (*callback)(const void*, const void*, void*));

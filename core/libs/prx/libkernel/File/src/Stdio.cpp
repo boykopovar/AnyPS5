@@ -621,7 +621,7 @@ static int PositionedArgumentError(int descriptor, bool write, bool nullBuffer, 
 }
 
 static int TransferArgumentError(int descriptor, bool nullBuffer) {
-    if (!nullBuffer) return 0;
+    if (!nullBuffer || IsKqueueDescriptor_nid_no_patch(descriptor)) return 0;
     return (GuestSockets::IsOpen(descriptor) || DescriptorIsOpen_nid_no_patch(descriptor)) ? GUEST_EFAULT : GUEST_EBADF;
 }
 
@@ -1530,12 +1530,12 @@ int APS5_VABI sceKernelWriteThrottlingStatus(std::uint64_t* status) {
 
 int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep) {
     if (GuestSockets::IsOpen(fd) || File::IsArchivedFile(fd)) return SceErrorFromErrno(GUEST_EINVAL);
-    if (buf == nullptr) return SceErrorFromErrno(GUEST_EFAULT);
-    if (nbytes <= 0) return SceErrorFromErrno(GUEST_EINVAL);
     if (!File::DirectoryDescriptorPath(fd)) {
         if (WithoutParameterHandler([fd] { return ::_get_osfhandle(fd); }) == -1) return SceErrorFromErrno(GUEST_EBADF);
         return SceErrorFromErrno(GUEST_EINVAL);
     }
+    if (buf == nullptr) return SceErrorFromErrno(GUEST_EFAULT);
+    if (nbytes <= 0) return SceErrorFromErrno(GUEST_EINVAL);
     return File::ReadDirectoryDescriptor(fd, buf, nbytes, basep);
 }
 
@@ -1579,12 +1579,13 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
     if (GuestSockets::IsOpen(fd) || File::IsArchivedFile(fd)) return SceErrorFromErrno(GUEST_EINVAL);
     constexpr std::size_t GuestHeaderBytes = 8;
     constexpr std::size_t GuestMaxName = 255;
+    const bool tracked = File::IsDirectoryDescriptor(fd);
+    struct stat status{};
+    if (!tracked && ::fstat(fd, &status) != 0) return SceErrorFromErrno(errno);
+    if (!tracked && !S_ISDIR(status.st_mode)) return SceErrorFromErrno(GUEST_EINVAL);
     if (buf == nullptr) return SceErrorFromErrno(GUEST_EFAULT);
     if (nbytes <= 0) return SceErrorFromErrno(GUEST_EINVAL);
-    if (File::IsDirectoryDescriptor(fd)) return File::ReadDirectoryDescriptor(fd, buf, nbytes, basep);
-    struct stat status{};
-    if (::fstat(fd, &status) != 0) return SceErrorFromErrno(errno);
-    if (!S_ISDIR(status.st_mode)) return SceErrorFromErrno(GUEST_EINVAL);
+    if (tracked) return File::ReadDirectoryDescriptor(fd, buf, nbytes, basep);
     const off_t base = ::lseek(fd, 0, SEEK_CUR);
     if (base < 0) return SceErrorFromErrno(errno);
     if (::lseek(fd, 0, SEEK_SET) < 0) return SceErrorFromErrno(errno);
@@ -1661,14 +1662,13 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
     if (GuestSockets::IsOpen(fd) || File::IsArchivedFile(fd)) return SceErrorFromErrno(GUEST_EINVAL);
     constexpr std::size_t GuestHeaderBytes = 8;
     constexpr std::size_t GuestMaxName = 255;
+    const bool tracked = File::IsDirectoryDescriptor(fd);
+    struct stat status{};
+    if (!tracked && ::fstat(fd, &status) != 0) return SceErrorFromErrno(errno);
+    if (!tracked && !S_ISDIR(status.st_mode)) return SceErrorFromErrno(GUEST_EINVAL);
     if (buf == nullptr) return SceErrorFromErrno(GUEST_EFAULT);
     if (nbytes <= 0) return SceErrorFromErrno(GUEST_EINVAL);
-    if (File::IsDirectoryDescriptor(fd)) {
-        return File::ReadDirectoryDescriptor(fd, buf, nbytes, basep);
-    }
-    struct stat status{};
-    if (::fstat(fd, &status) != 0) return SceErrorFromErrno(errno);
-    if (!S_ISDIR(status.st_mode)) return SceErrorFromErrno(GUEST_EINVAL);
+    if (tracked) return File::ReadDirectoryDescriptor(fd, buf, nbytes, basep);
     const off_t base = ::lseek(fd, 0, SEEK_CUR);
     if (base < 0) return SceErrorFromErrno(errno);
     constexpr std::size_t MaxHostChunk = 64 * 1024;
@@ -2272,6 +2272,7 @@ int APS5_VABI sceKernelFutimes(int d, const KernelTimeval* times) {
             if (times[i].tv_usec < 0 || times[i].tv_usec >= 1000000) return SceErrorFromErrno(GUEST_EINVAL);
         }
     }
+    if (IsKqueueDescriptor_nid_no_patch(d)) return SceErrorFromErrno(GUEST_EINVAL);
     if (NativeFutimes(d, times) != 0) return SceErrorFromErrno(errno);
     return 0;
 }
