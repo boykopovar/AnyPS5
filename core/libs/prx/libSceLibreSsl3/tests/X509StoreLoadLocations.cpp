@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 struct EncodingView {
@@ -605,6 +606,203 @@ void TestLatin1LookupName() {
     std::filesystem::remove_all(directory, ignored);
 }
 
+Bytes NameWithValue(const Bytes& value) {
+    return Element(0x30, Element(0x31, Element(0x30, Concat({Element(0x06, {0x55, 0x04, 0x03}), value}))));
+}
+
+Bytes Nested(int depth, const Bytes& value) {
+    Bytes output = value;
+    for (int level = 0; level < depth; ++level) output = Element(0x2c, output);
+    return output;
+}
+
+void TestRejectedNameValueTags() {
+    static constexpr unsigned char WrongTags[] = {0, 1, 2, 4, 5, 6, 17, 21, 23, 24, 25, 26, 27};
+    static constexpr unsigned char EmptyWrongTags[] = {1, 21, 26, 27};
+    static constexpr unsigned char OtherClasses[] = {0x43, 0x8c, 0xd3, 0xac, 0x5a, 0x83};
+    std::vector<std::pair<Bytes, std::uint64_t>> cases;
+    for (const unsigned char tag : WrongTags) {
+        cases.push_back({Element(tag, {'A', 'b'}), 0x0dfff08c});
+        cases.push_back({Element(static_cast<unsigned char>(tag | 0x20), Element(0x04, {'A', 'b'})), 0x0dfff08c});
+    }
+    for (const unsigned char tag : EmptyWrongTags) cases.push_back({Element(tag, {}), 0x0dfff08c});
+    for (const unsigned char identifier : OtherClasses) cases.push_back({Element(identifier, {'A', 'b'}), 0x0dfff08b});
+    cases.push_back({Element(0x10, {'A', 'b'}), 0x0dfff09c});
+    cases.push_back({Element(0x10, {}), 0x0dfff09c});
+    cases.push_back({Element(0x00, {}), 0x0dfff09f});
+    const Bytes ab{'A', 'b'};
+    const std::pair<Bytes, std::uint64_t> headers[] = {
+        {{}, 0x0dfff079},
+        {{0x0c}, 0x0dfff07b},
+        {{0x1f}, 0x0dfff07b},
+        {{0x1f, 0x8c}, 0x0dfff07b},
+        {{0x1f, 0x0c}, 0x0dfff07b},
+        {Concat({{0x1f, 0x88, 0x80, 0x80, 0x80, 0x00, 0x02}, ab}), 0x0dfff07b},
+        {{0x0c, 0x82, 0x00}, 0x0dfff07b},
+        {Concat({{0x0c, 0x89, 0x01}, Bytes(8, 0x00)}), 0x0dfff07b},
+        {Concat({{0x0c, 0x80}, ab, {0x00, 0x00}}), 0x0dfff07b},
+        {Concat({{0x0c, 0x05}, ab}), 0x0dfff09b},
+        {Concat({{0x0c, 0x88, 0x80}, Bytes(7, 0x00), ab}), 0x0dfff07b},
+        {Concat({{0x0c, 0x88, 0x7f}, Bytes(7, 0xff), ab}), 0x0dfff09b},
+        {Concat({{0x9f, 0x0c, 0x02}, ab}), 0x0dfff08b},
+        {Concat({{0x5f, 0x81, 0x00, 0x02}, ab}), 0x0dfff08b},
+        {Concat({{0xff, 0x0c, 0x02}, ab}), 0x0dfff08b},
+        {Concat({{0xac, 0x80}, Element(0x04, ab), {0x00, 0x00}}), 0x0dfff08b},
+        {Concat({{0x1f, 0x15, 0x02}, ab}), 0x0dfff08c},
+        {Concat({{0x1f, 0x00, 0x02}, ab}), 0x0dfff08c},
+        {Concat({{0x1f, 0x1f, 0x02}, ab}), 0x0dfff08c},
+        {Concat({{0x1f, 0x20, 0x02}, ab}), 0x0dfff08c},
+        {Concat({{0x1f, 0x81, 0x00, 0x02}, ab}), 0x0dfff08c},
+        {Concat({{0x1f, 0x2c, 0x02}, ab}), 0x0dfff08c},
+        {Concat({{0x1f, 0x87, 0xff, 0xff, 0xff, 0x7f, 0x02}, ab}), 0x0dfff08c},
+        {Concat({{0x3f, 0x15, 0x04}, Element(0x04, ab)}), 0x0dfff08c},
+        {Concat({{0x35, 0x80}, Element(0x04, ab), {0x00, 0x00}}), 0x0dfff08c},
+        {Concat({{0x15, 0x81, 0x02}, ab}), 0x0dfff08c},
+        {Concat({{0x1f, 0x10, 0x02}, ab}), 0x0dfff09c},
+        {{0x1f, 0x1e, 0x03, 0x00, 'A', 0x00}, 0x0dfff0d6},
+        {{0x1f, 0x0c, 0x02, 0xc0, 0x80}, 0x0dfff086},
+    };
+    const std::pair<Bytes, std::uint64_t> contents[] = {
+        {Element(0x03, {}), 0x0dfff098},
+        {Element(0x03, {0x08, 'A'}), 0x0dfff0dc},
+        {{0x1f, 0x03, 0x00}, 0x0dfff098},
+        {Element(0x23, {}), 0x0dfff098},
+        {Element(0x23, Element(0x03, {})), 0x0dfff098},
+        {Element(0x23, Element(0x03, {0x09, 'A'})), 0x0dfff0dc},
+        {Element(0x2c, ab), 0x0dfff09b},
+        {Element(0x2c, {0x00, 0x00}), 0x0dfff09f},
+        {Element(0x2c, Concat({Element(0x04, {'A'}), {0x00, 0x00}})), 0x0dfff09f},
+        {Element(0x2c, Concat({{0x24, 0x80}, Element(0x04, ab)})), 0x0dfff089},
+        {Element(0x2c, Concat({{0x04, 0x80}, ab, {0x00, 0x00}})), 0x0dfff07b},
+        {Element(0x2c, Concat({{0x04, 0x05}, ab})), 0x0dfff09b},
+        {Element(0x2c, {0x04}), 0x0dfff07b},
+        {Nested(7, Element(0x04, ab)), 0x0dfff0c5},
+        {Nested(6, Element(0x24, Element(0x04, ab))), 0x0dfff0c5},
+        {Element(0x3e, Element(0x04, {0x00, 'A', 0x00})), 0x0dfff0d6},
+        {Element(0x3c, Element(0x04, {0x00, 0x00, 0x00})), 0x0dfff0d7},
+        {Element(0x2c, Element(0x04, {0xc0, 0x80})), 0x0dfff086},
+    };
+    const std::pair<Bytes, std::uint64_t> unsupportedLengths[] = {
+        {Concat({{0x0c, 0x81, 0x02}, ab}), 0x0dfff066},
+        {Concat({{0x0c, 0x82, 0x00, 0x02}, ab}), 0x0dfff066},
+        {Concat({{0x0c, 0x82, 0x00, 0x80}, Bytes(0x80, 'A')}), 0x0dfff066},
+        {Concat({{0x2c, 0x80}, Element(0x04, ab), {0x00, 0x00}}), 0x0dfff066},
+    };
+    cases.insert(cases.end(), std::begin(headers), std::end(headers));
+    cases.insert(cases.end(), std::begin(contents), std::end(contents));
+    cases.insert(cases.end(), std::begin(unsupportedLengths), std::end(unsupportedLengths));
+    for (const auto& [value, error] : cases) {
+        const std::string path = WriteFile("libressl3-load-locations-tags.pem", CertificatePem(NameWithValue(value)));
+        LibreSslX509Store* store = NewStore();
+        ERR_clear_error_nid_postfix();
+        Require(X509_STORE_load_locations_nid_postfix(store, path.c_str(), nullptr) == 0);
+        Require(ObjectCount(store) == 0);
+        Require(ERR_get_error_nid_postfix() == error);
+        ERR_clear_error_nid_postfix();
+        X509_STORE_free_nid_postfix(store);
+        Require(remove_nid_postfix(path.c_str()) == 0);
+    }
+}
+
+void TestRawNameValueTags() {
+    static constexpr unsigned char RawTags[] = {7, 8, 9, 11, 13, 14, 15, 29};
+    for (const unsigned char tag : RawTags) {
+        for (const Bytes& content : {Bytes{'A', 'b'}, Bytes{}}) {
+            const std::string path = WriteFile("libressl3-load-locations-raw.pem",
+                CertificatePem(NameWithValue(Element(tag, content))));
+            LibreSslX509Store* store = NewStore();
+            Require(X509_STORE_load_locations_nid_postfix(store, path.c_str(), nullptr) == 1);
+            Require(ObjectCount(store) == 1);
+            const Bytes canonical = Element(0x31, Attribute(0x03, tag, content));
+            for (const bool subject : {true, false}) {
+                const LibreSslX509Name* name = LoadedName(store, subject);
+                Require(name->canonEnclen == static_cast<int>(canonical.size()) && name->canonEnc != nullptr);
+                Require(std::memcmp(name->canonEnc, canonical.data(), canonical.size()) == 0);
+                const auto* entries = static_cast<const LibreSslStack*>(name->entries);
+                Require(entries != nullptr && entries->num == 1);
+                const auto* entry = reinterpret_cast<const LibreSslX509NameEntry*>(entries->data[0]);
+                const auto* value = static_cast<const LibreSsl3Asn1String*>(entry->value);
+                Require(value->type == tag && value->length == static_cast<int>(content.size()));
+                Require(content.empty() || std::memcmp(value->data, content.data(), content.size()) == 0);
+            }
+            Throws([store] { X509_STORE_free_nid_postfix(store); });
+            Require(remove_nid_postfix(path.c_str()) == 0);
+        }
+    }
+}
+
+void TestBuiltNameValueForms() {
+    const Bytes ab{'A', 'b'};
+    const struct {
+        Bytes value;
+        int type;
+        Bytes data;
+        unsigned char canonicalTag;
+        Bytes canonical;
+    } cases[] = {
+        {Concat({{0x1f, 0x0c, 0x02}, ab}), 12, ab, 12, {'a', 'b'}},
+        {Concat({{0x1f, 0x80, 0x0c, 0x02}, ab}), 12, ab, 12, {'a', 'b'}},
+        {{0x1f, 0x13, 0x03, 'A', 0xe9, 'b'}, 19, {'A', 0xe9, 'b'}, 12, {'a', 0xc3, 0xa9, 'b'}},
+        {Element(0x2c, Element(0x04, ab)), 12, ab, 12, {'a', 'b'}},
+        {Element(0x2c, {}), 12, {}, 12, {}},
+        {Element(0x2c, Concat({Element(0x04, {0xc3}), Element(0x04, {0x89})})), 12, {0xc3, 0x89}, 12, {0xc3, 0x89}},
+        {Element(0x2c, Element(0x81, ab)), 12, ab, 12, {'a', 'b'}},
+        {Element(0x2c, Concat({{0x1f, 0x81, 0x00, 0x02}, ab})), 12, ab, 12, {'a', 'b'}},
+        {Element(0x2c, Concat({{0x04, 0x81, 0x02}, ab})), 12, ab, 12, {'a', 'b'}},
+        {Element(0x2c, Concat({{0x24, 0x80}, Element(0x04, ab), {0x00, 0x00}})), 12, ab, 12, {'a', 'b'}},
+        {Element(0x2c, Concat({{0x24, 0x80}, Element(0x04, {'A'}), {0x00, 0x00}, Element(0x04, {'b'})})), 12, ab, 12,
+            {'a', 'b'}},
+        {Nested(6, Element(0x04, ab)), 12, ab, 12, {'a', 'b'}},
+        {Element(0x33, Element(0x04, {'A', 0xe9, 'b'})), 19, {'A', 0xe9, 'b'}, 12, {'a', 0xc3, 0xa9, 'b'}},
+        {Element(0x3e, Concat({Element(0x04, {0x00}), Element(0x04, {'A'})})), 30, {0x00, 'A'}, 12, {'a'}},
+        {Element(0x34, Concat({Element(0x04, ab), Element(0x04, {' ', 'C'})})), 20, {'A', 'b', ' ', 'C'}, 12,
+            {'a', 'b', ' ', 'c'}},
+        {Element(0x27, Element(0x04, ab)), 7, ab, 7, ab},
+        {Element(0x3d, Element(0x04, ab)), 29, ab, 29, ab},
+        {Element(0x12, {'1', '2', '3'}), 18, {'1', '2', '3'}, 18, {'1', '2', '3'}},
+    };
+    for (const auto& test : cases) {
+        const std::string path = WriteFile("libressl3-load-locations-built.pem", CertificatePem(NameWithValue(test.value)));
+        LibreSslX509Store* store = NewStore();
+        Require(X509_STORE_load_locations_nid_postfix(store, path.c_str(), nullptr) == 1);
+        Require(ObjectCount(store) == 1);
+        const Bytes canonical = Element(0x31, Attribute(0x03, test.canonicalTag, test.canonical));
+        for (const bool subject : {true, false}) {
+            const LibreSslX509Name* name = LoadedName(store, subject);
+            Require(name->canonEnclen == static_cast<int>(canonical.size()) && name->canonEnc != nullptr);
+            Require(std::memcmp(name->canonEnc, canonical.data(), canonical.size()) == 0);
+            const auto* entries = static_cast<const LibreSslStack*>(name->entries);
+            Require(entries != nullptr && entries->num == 1);
+            const auto* entry = reinterpret_cast<const LibreSslX509NameEntry*>(entries->data[0]);
+            const auto* value = static_cast<const LibreSsl3Asn1String*>(entry->value);
+            Require(value->type == test.type && value->length == static_cast<int>(test.data.size()));
+            Require(test.data.empty() || std::memcmp(value->data, test.data.data(), test.data.size()) == 0);
+        }
+        Throws([store] { X509_STORE_free_nid_postfix(store); });
+        Require(remove_nid_postfix(path.c_str()) == 0);
+    }
+}
+
+void TestUnsupportedNameValueForms() {
+    const Bytes values[] = {
+        Element(0x03, {0x00, 'A'}),
+        Element(0x03, {0x07}),
+        {0x1f, 0x03, 0x02, 0x00, 'A'},
+        Element(0x23, Concat({Element(0x03, {0x00}), Element(0x03, {0x00, 'A'})})),
+        Element(0x0a, {0x01}),
+        Element(0x2a, Element(0x02, {0x01})),
+        Element(0x30, Element(0x0c, {'A', 'b'})),
+    };
+    for (const Bytes& value : values) {
+        const std::string path = WriteFile("libressl3-load-locations-forms.pem", CertificatePem(NameWithValue(value)));
+        LibreSslX509Store* store = NewStore();
+        Require(Throws([&path, store] { X509_STORE_load_locations_nid_postfix(store, path.c_str(), nullptr); }));
+        ERR_clear_error_nid_postfix();
+        Throws([store] { X509_STORE_free_nid_postfix(store); });
+        Require(remove_nid_postfix(path.c_str()) == 0);
+    }
+}
+
 }
 
 int main() {
@@ -627,6 +825,10 @@ int main() {
     TestConvertedNameStrings();
     TestRejectedNameStrings();
     TestLatin1LookupName();
+    TestRejectedNameValueTags();
+    TestRawNameValueTags();
+    TestBuiltNameValueForms();
+    TestUnsupportedNameValueForms();
     std::puts("libSceLibreSsl3 X509_STORE_load_locations tests passed");
     return 0;
 }

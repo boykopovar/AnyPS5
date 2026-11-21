@@ -1,0 +1,5 @@
+# libSceLibreSsl3
+
+## add Functional
+
+- [X509_STORE_load_locations](../../../core/libs/prx/libSceLibreSsl3/src/X509StoreLoadLocations.cpp) (libSceLibreSsl3) - a name value that the pinned 078b3d1d LibreSSL decodes as a BIT STRING, ENUMERATED or SEQUENCE throws, even when a later part of the name or trailing bytes in the entry make LibreSSL reject the name. A value with an indefinite or non-minimal length fails with reason 102 once its class and tag pass; LibreSSL decodes it or rejects its content with another reason. Other values match `d2i_X509_NAME` of the submodule: header errors (121, 123, 155), other classes (139), tags outside `B_ASN1_PRINTABLE` (140), primitive SEQUENCE (156), end-of-contents (159), high tag numbers, constructed strings as in `asn1_collect` (123, 137, 155, 159, 197), BIT STRING contents (152, 220), raw tags 7 to 9, 11, 13 to 15 and 29. Closes when: BIT STRING, ENUMERATED and SEQUENCE values are built and indefinite or non-minimal value lengths are decoded. Not compared with the console.
