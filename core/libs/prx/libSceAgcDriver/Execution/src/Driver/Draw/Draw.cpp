@@ -35,6 +35,7 @@
 #include <string>
 #include <string_view>
 #include <typeinfo>
+#include <utility>
 
 namespace AgcDriver::DriverDetail {
 
@@ -111,6 +112,7 @@ const char* DrawVerdictName(DrawVerdict verdict) {
         case DrawVerdict::Drawn: return "Drawn";
         case DrawVerdict::Nothing: return "Nothing";
         case DrawVerdict::Rejected: return "Rejected";
+        case DrawVerdict::Split: return "Split";
     }
     return "Unknown";
 }
@@ -122,6 +124,31 @@ std::string_view TrimmedReason(std::string_view reason) {
 
 }
 
+DrawVerdict Driver::drawLateTestMergeSplit(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::size_t packetOffset, std::uint32_t targets, std::string& rejected) {
+    require(targets != 0 && queue.context.contains(0x8e) && queue.context.contains(0x200), "a late-test merge split needs its target bits, CB_TARGET_MASK and DB_DEPTH_CONTROL");
+    const auto mask = readRegister(queue.context, 0x8e);
+    const auto depthControl = readRegister(queue.context, 0x200);
+    struct Restore {
+        QueueState& queue;
+        std::uint32_t mask;
+        std::uint32_t depthControl;
+        ~Restore() {
+            queue.context[0x8e] = mask;
+            queue.context[0x200] = depthControl;
+        }
+    } restore{queue, mask, depthControl};
+    queue.context[0x8e] = mask & ~targets;
+    std::uint32_t splitAgain = 0;
+    const auto depthPass = draw(queue, packet, submission, packetOffset, rejected, splitAgain);
+    require(depthPass != DrawVerdict::Split, "the depth pass of a late-test merge split asked to split again");
+    if (depthPass == DrawVerdict::Rejected) return depthPass;
+    queue.context[0x8e] = mask & targets;
+    queue.context[0x200] = (depthControl & ~0x74u) | (static_cast<std::uint32_t>(VK_COMPARE_OP_EQUAL) << 4u);
+    const auto mergePass = draw(queue, packet, submission, packetOffset, rejected, splitAgain);
+    require(mergePass != DrawVerdict::Split, "the merge pass of a late-test merge split still writes depth or stencil");
+    if (mergePass == DrawVerdict::Rejected) return mergePass;
+    return depthPass == DrawVerdict::Drawn || mergePass == DrawVerdict::Drawn ? DrawVerdict::Drawn : DrawVerdict::Nothing;
+}
 
 struct DrawTail {
     using GpuLock = std::unique_lock<std::remove_reference_t<decltype(GuestMemory::GpuMutex())>>;
@@ -180,6 +207,7 @@ struct DrawTail {
     QueueState* queue = nullptr;
     std::span<const std::uint32_t> packet;
     std::string* rejected = nullptr;
+    std::uint32_t* splitTargets = nullptr;
     std::uint64_t traceToken = 0;
     VulkanDevice::DrawTraceContext trace{};
     std::string ownRejected;
@@ -331,7 +359,7 @@ std::unordered_map<std::uint64_t, bool>& CpuIndirectPrograms() {
 
 }
 
-DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::size_t packetOffset, std::string& rejected) {
+DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::size_t packetOffset, std::string& rejected, std::uint32_t& splitTargets) {
     PerformanceTimer timing("Driver.Draw");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto tailHolder = std::make_shared<DrawTail>();
@@ -547,6 +575,11 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         throw;
     }
     const auto& graphics = decode->state;
+    const auto writesMemory = [](const DrawProgram& program) { return ProgramWritesMemory(*program.snapshot, program.codeOffset) || (program.tailContinuation != nullptr && ProgramWritesMemory(*program.tailContinuation, 0)); };
+    if (const auto targets = Graphics::LateTestMergeSplitTargets(queue.context, graphics); targets != 0 && std::ranges::none_of(decode->programs, writesMemory)) {
+        splitTargets = targets;
+        return DrawVerdict::Split;
+    }
     auto& pixel = tail.pixel;
     pixel = decode->pixel;
     const bool writesPrograms = graphics.stages.mesh || drawParameters.indirect || !userPatches.empty();
@@ -803,6 +836,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     tail.queue = &queue;
     tail.packet = packet;
     tail.rejected = &rejected;
+    tail.splitTargets = &splitTargets;
     tail.gpuLock = &gpuLock;
     return finishDraw(tail, timing);
 }
@@ -1068,7 +1102,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     }
 
     if (tail.queue != nullptr && pipelined && !deferredLabels().labels.empty()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Labels);
-    if (recordQueuedLabelsAfterCapture(submission.queue, memory)) return draw(*tail.queue, packet, submission, packetOffset, rejected);
+    if (recordQueuedLabelsAfterCapture(submission.queue, memory)) return draw(*tail.queue, packet, submission, packetOffset, rejected, *tail.splitTargets);
 
     bool rectListBuilt = false;
 
@@ -1336,7 +1370,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 runCaptureCheckHook();
                 if (tail.queue != nullptr && capturedMemoryChanged(memory)) {
                     const RecaptureScope recapture;
-                    return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected);
+                    return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected, *tail.splitTargets);
                 }
                 phaseTiming.Phase(DrawRowVectors);
                 auto writes = drawWriteRanges(graphics, stages);
@@ -1362,7 +1396,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 if (tail.queue != nullptr && capturedMemoryChanged(memory, snapshots)) {
                     gpuLock.unlock();
                     const RecaptureScope recapture;
-                    return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected);
+                    return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected, *tail.splitTargets);
                 }
             }
             recordedOne = true;
@@ -1407,7 +1441,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         runCaptureCheckHook();
         if (capturedMemoryChanged(memory)) {
             const RecaptureScope recapture;
-            if (tail.queue != nullptr) return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected);
+            if (tail.queue != nullptr) return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected, *tail.splitTargets);
             restartFinishedDraw(tail);
             return finishDraw(tail, timing);
         }
@@ -1435,7 +1469,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     if (tail.queue != nullptr && capturedMemoryChanged(memory, snapshots)) {
         gpuLock.unlock();
         const RecaptureScope recapture;
-        return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected);
+        return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected, *tail.splitTargets);
     }
     noteDrawWriters(stages, submission.queue);
     phaseTiming.Phase(DrawRowVectors);
