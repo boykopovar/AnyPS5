@@ -111,6 +111,10 @@ public:
         EmitReg32(0x09, src, dst);
     }
 
+    void And32(const std::uint8_t dst, const std::uint8_t src) {
+        EmitReg32(0x21, src, dst);
+    }
+
     void Sub32(const std::uint8_t dst, const std::uint8_t src) {
         EmitReg32(0x29, src, dst);
     }
@@ -362,14 +366,13 @@ void _emitPs2PhLoop(StubBodyBuilder& body, const std::uint32_t count, const std:
     code.Mov32(kRegEax, kRegEsi);
     code.ShrCl32(kRegEax);
     code.Dec32(kRegEcx);
-    code.Mov32(kRegR9, kRegEsi);
-    code.ShrCl32(kRegR9);
-    code.AndImm32(kRegR9, 1u);
-    code.Neg32(kRegEcx);
-    code.AddImm32(kRegEcx, 32u);
-    code.ShlCl32(kRegEsi);
-    code.Mov32(kRegEcx, kRegEsi);
-    code.Mov32(kRegEsi, kRegR9);
+    code.MovImm32(kRegR9, 1u);
+    code.ShlCl32(kRegR9);
+    code.Dec32(kRegR9);
+    code.And32(kRegR9, kRegEsi);
+    code.ShrCl32(kRegEsi);
+    code.AndImm32(kRegEsi, 1u);
+    code.Mov32(kRegEcx, kRegR9);
     code.Jmp(doRound);
 
     code.Bind(isTiny);
