@@ -1,7 +1,9 @@
 #include "Translation/ShaderInputInfoBuilder.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "IntermediateRepresentation/IrMetadata.hpp"
+#include <algorithm>
 #include <array>
+#include <iterator>
 #include <cstdint>
 #include <stdexcept>
 
@@ -112,9 +114,8 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         struct PixelStorage {};
         auto& pixelStorage = HostThreadLocal<ShaderPixelInputInfo, PixelStorage>();
         pixelStorage = ShaderPixelInputInfo{};
-        for (std::uint32_t i = 0; i < 32; ++i) {
-            pixelStorage.interpolatorSettings[i] = pixel.interpolatorSettings[i];
-        }
+        const auto programmed = std::min<std::size_t>(pixel.interpolatorCount, pixel.interpolatorSettings.size());
+        std::copy_n(pixel.interpolatorSettings.begin(), programmed, std::begin(pixelStorage.interpolatorSettings));
         pixelStorage.inputNum = pixel.interpolatorCount;
         const auto place = [&](PixelInput input, bool loaded) {
             if (!loaded) return;
