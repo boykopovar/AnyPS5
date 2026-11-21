@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -22,17 +23,22 @@ constexpr int MallocFailure = 65;
 constexpr int BadObjectHeader = 102;
 constexpr int InvalidTimeFormat = 132;
 constexpr int StringTooShort = 152;
+constexpr int SequenceLengthMismatch = 148;
+constexpr int SequenceNotConstructed = 149;
 constexpr int TooLong = 155;
 constexpr int WrongTag = 168;
 constexpr int InvalidObjectEncoding = 216;
 constexpr int InvalidBitStringBitsLeft = 220;
 constexpr int TypeNotPrimitive = 231;
+constexpr int NullIsWrongLength = 144;
 
 constexpr std::uint32_t IntegerTag = 2;
 constexpr std::uint32_t BitStringTag = 3;
 constexpr std::uint32_t OctetStringTag = 4;
+constexpr std::uint32_t NullTag = 5;
 constexpr std::uint32_t ObjectTag = 6;
 constexpr std::uint32_t EnumeratedTag = 10;
+constexpr std::uint32_t SequenceTag = 16;
 constexpr std::uint32_t Ia5StringTag = 22;
 constexpr std::uint32_t GeneralizedTimeTag = 24;
 
@@ -45,6 +51,7 @@ constexpr std::int32_t NegativeType = 0x100;
 constexpr std::int64_t BitsLeftFlag = 0x08;
 constexpr int ObjectDynamic = 0x01;
 constexpr int ObjectDynamicData = 0x08;
+constexpr std::uint8_t ContextClass = 2;
 
 enum class Decoder {
     Unsupported,
@@ -56,6 +63,8 @@ enum class Decoder {
     GeneralizedTime,
     Object,
     OcspNonce,
+    AuthorityKeyId,
+    Null,
 };
 
 struct Method {
@@ -80,32 +89,32 @@ constexpr Method Methods[] = {
     {87, Decoder::Unsupported},
     {88, Decoder::Integer},
     {89, Decoder::Unsupported},
-    {90, Decoder::Unsupported},
+    {90, Decoder::AuthorityKeyId},
     {103, Decoder::Unsupported},
     {126, Decoder::Unsupported},
     {140, Decoder::Integer},
     {141, Decoder::Enumerated},
     {142, Decoder::GeneralizedTime},
-    {143, Decoder::Unsupported},
     {177, Decoder::Unsupported},
     {290, Decoder::Unsupported},
     {291, Decoder::Unsupported},
     {366, Decoder::OcspNonce},
     {367, Decoder::Unsupported},
     {368, Decoder::Unsupported},
-    {369, Decoder::Unsupported},
     {370, Decoder::GeneralizedTime},
     {371, Decoder::Unsupported},
     {398, Decoder::Unsupported},
     {401, Decoder::Unsupported},
     {430, Decoder::Object},
-    {663, Decoder::Unsupported},
     {666, Decoder::Unsupported},
     {747, Decoder::Unsupported},
     {748, Decoder::Integer},
     {770, Decoder::Unsupported},
     {771, Decoder::Unsupported},
     {857, Decoder::Unsupported},
+    {1018, Decoder::Unsupported},
+    {1019, Decoder::Null},
+    {1021, Decoder::Unsupported},
 };
 
 static_assert(sizeof(Methods) / sizeof(Methods[0]) == 42);
@@ -275,15 +284,19 @@ void AppendLength(std::vector<unsigned char>& encoded, std::size_t length) {
     while (count != 0) encoded.push_back(bytes[--count]);
 }
 
-void* NewEnumerated(std::span<const unsigned char> content) {
+Asn1String* NewImplicitInteger(std::span<const unsigned char> content) {
     std::vector<unsigned char> encoded;
     encoded.reserve(content.size() + 5);
     encoded.push_back(static_cast<unsigned char>(IntegerTag));
     AppendLength(encoded, content.size());
     encoded.insert(encoded.end(), content.begin(), content.end());
     const unsigned char* cursor = encoded.data();
-    auto* value = static_cast<Asn1String*>(
+    return static_cast<Asn1String*>(
         d2i_ASN1_INTEGER_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(encoded.size())));
+}
+
+void* NewEnumerated(std::span<const unsigned char> content) {
+    auto* value = NewImplicitInteger(content);
     if (!value) return nullptr;
     value->type = static_cast<std::int32_t>((value->type & NegativeType) | EnumeratedType);
     return value;
@@ -361,6 +374,114 @@ void* NewObject(std::span<const unsigned char> content) {
     return object;
 }
 
+void* NewNull(std::span<const unsigned char> value) {
+    Header header;
+    if (!ReadIdentifier(value, header)) {
+        PutHeaderError(BadObjectHeader);
+        return nullptr;
+    }
+    if (header.tagClass != 0 || header.tag != NullTag) {
+        PutHeaderError(WrongTag);
+        return nullptr;
+    }
+    if (!ReadLength(value, header) || (header.indefinite && !header.constructed)) {
+        PutHeaderError(BadObjectHeader);
+        return nullptr;
+    }
+    if (!header.indefinite && header.length > value.size()) {
+        PutHeaderError(TooLong);
+        return nullptr;
+    }
+    if (header.constructed) {
+        PutError(TypeNotPrimitive);
+        return nullptr;
+    }
+    if (header.length != 0) {
+        PutError(NullIsWrongLength);
+        return nullptr;
+    }
+    return reinterpret_cast<void*>(std::uintptr_t{1});
+}
+
+struct AuthorityKeyId {
+    Asn1String* keyId;
+    void* issuer;
+    Asn1String* serial;
+};
+
+static_assert(sizeof(AuthorityKeyId) == 24 && offsetof(AuthorityKeyId, serial) == 16);
+
+void FreeAuthorityKeyId(AuthorityKeyId* id) {
+    ASN1_OCTET_STRING_free_nid_postfix(id->keyId);
+    ASN1_INTEGER_free_nid_postfix(id->serial);
+    free_nid_postfix(id);
+}
+
+bool ReadElement(std::span<const unsigned char>& input, Header& header, std::span<const unsigned char>& content) {
+    if (!ReadIdentifier(input, header) || !ReadLength(input, header) || (header.indefinite && !header.constructed)) {
+        PutHeaderError(BadObjectHeader);
+        return false;
+    }
+    if (header.indefinite) NotImplemented_nid_no_patch("AUTHORITY_KEYID indefinite length");
+    if (header.length > input.size()) {
+        PutHeaderError(TooLong);
+        return false;
+    }
+    content = input.first(header.length);
+    input = input.subspan(header.length);
+    return true;
+}
+
+void* NewAuthorityKeyId(std::span<const unsigned char> value) {
+    Header header;
+    std::span<const unsigned char> body;
+    if (!ReadElement(value, header, body)) return nullptr;
+    if (header.tagClass != 0 || header.tag != SequenceTag) {
+        PutHeaderError(WrongTag);
+        return nullptr;
+    }
+    if (!header.constructed) {
+        PutError(SequenceNotConstructed);
+        return nullptr;
+    }
+    auto* allocated = static_cast<AuthorityKeyId*>(calloc_nid_postfix(1, sizeof(AuthorityKeyId)));
+    if (!allocated) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    std::unique_ptr<AuthorityKeyId, void (*)(AuthorityKeyId*)> id(allocated, FreeAuthorityKeyId);
+    std::uint32_t next = 0;
+    while (!body.empty()) {
+        if (next > 2) {
+            PutError(SequenceLengthMismatch);
+            return nullptr;
+        }
+        std::span<const unsigned char> content;
+        if (!ReadElement(body, header, content)) return nullptr;
+        const bool context = header.tagClass == ContextClass;
+        if (context && header.tag == 0 && next == 0) {
+            if (header.constructed) NotImplemented_nid_no_patch("AUTHORITY_KEYID constructed keyid");
+            id->keyId = NewString(OctetStringType, content);
+            if (!id->keyId) return nullptr;
+            next = 1;
+        } else if (context && header.tag == 1 && next <= 1) {
+            NotImplemented_nid_no_patch("AUTHORITY_KEYID issuer");
+        } else if (context && header.tag == 2) {
+            if (header.constructed) {
+                PutError(TypeNotPrimitive);
+                return nullptr;
+            }
+            id->serial = NewImplicitInteger(content);
+            if (!id->serial) return nullptr;
+            next = 3;
+        } else {
+            PutHeaderError(WrongTag);
+            return nullptr;
+        }
+    }
+    return id.release();
+}
+
 void* Decode(const LibreSsl3X509Extension& extension, Decoder decoder) {
     const auto* encoded = static_cast<const Asn1String*>(extension.value);
     if (!encoded) throw std::invalid_argument(std::string(__func__) + ": null extension value");
@@ -397,6 +518,10 @@ void* Decode(const LibreSsl3X509Extension& extension, Decoder decoder) {
         const auto content = PrimitiveContent(value, ObjectTag);
         return content ? NewObject(*content) : nullptr;
     }
+    case Decoder::AuthorityKeyId:
+        return NewAuthorityKeyId(value);
+    case Decoder::Null:
+        return NewNull(value);
     case Decoder::Unsupported:
         break;
     }

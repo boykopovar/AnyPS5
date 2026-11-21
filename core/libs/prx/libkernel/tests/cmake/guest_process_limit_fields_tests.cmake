@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_process_limit_fields_tests ${LIBS_INCLUDE_DIR}/tests/GuestProcessLimitFields.cpp)
+    target_include_directories(guest_process_limit_fields_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_process_limit_fields_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_process_limit_fields_tests)
+    add_test(NAME guest_process_limit_fields COMMAND guest_process_limit_fields_tests)
+    set_tests_properties(guest_process_limit_fields PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_process_limit_fields PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+endif()
