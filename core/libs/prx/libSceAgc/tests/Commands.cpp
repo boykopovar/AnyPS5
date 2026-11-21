@@ -35,6 +35,7 @@
 #include "prx/libSceAgc/DcbFlow/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/RegisterDefaults.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 
 #include <algorithm>
 #include <array>
@@ -42,6 +43,7 @@
 #include <cstdio>
 #include <stdexcept>
 #include <cstring>
+#include <memory>
 #include <string>
 
 namespace {
@@ -61,6 +63,20 @@ void expectFailure(TAction action) {
         return;
     }
     throw std::runtime_error("expected an exception");
+}
+
+class StubOutput final : public AgcDriver::IVideoOutput {
+public:
+    std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override { return nullptr; }
+    void Fail(std::exception_ptr) noexcept override {}
+};
+
+void registerOutputs(const std::shared_ptr<AgcDriver::IVideoOutput>& output) {
+    for (const std::uint32_t handle : {1u, 7u, 0xfedcba98u}) AgcDriverRegisterVideoOutput_nid_postfix(handle, output);
+}
+
+void unregisterOutputs(const std::shared_ptr<AgcDriver::IVideoOutput>& output) {
+    for (const std::uint32_t handle : {1u, 7u, 0xfedcba98u}) AgcDriverUnregisterVideoOutput_nid_postfix(handle, output);
 }
 
 struct Storage {
@@ -720,6 +736,24 @@ void testFlip() {
     check(sceAgcSuspendPoint() == 0, "empty suspend failed");
 }
 
+void testUnregisteredFlipHandle() {
+    struct Arguments { std::uint32_t handle; std::int32_t index; std::uint32_t mode; std::int64_t argument; };
+    const std::array<Arguments, 3> cases{{{0x11111111u, 0x22222222, 0x33333333u, 0x44444444}, {1, 2, 3, 4}, {0x22222222u, 0x44444444, 0, 0}}};
+    for (const auto& arguments : cases) {
+        const auto refused = [&](auto write) {
+            Storage storage;
+            storage.words.fill(0xdeadbeefu);
+            const bool isNull = write(storage.buffer) == nullptr;
+            const bool untouched = std::all_of(storage.words.begin(), storage.words.end(), [](std::uint32_t word) { return word == 0xdeadbeefu; });
+            return isNull && untouched && storage.buffer.cursor_up == storage.words.data();
+        };
+        check(refused([&](CommandBuffer& buffer) { return sceAgcDcbSetFlip(&buffer, arguments.handle, arguments.index, arguments.mode, arguments.argument); }), "graphics flip accepted an unregistered video output");
+        check(refused([&](CommandBuffer& buffer) { return sceAgcAcbSetFlip(&buffer, arguments.handle, arguments.index, arguments.mode, arguments.argument); }), "compute flip accepted an unregistered video output");
+        check(refused([&](CommandBuffer& buffer) { return sceAgcDcbWaitUntilSafeForRendering(&buffer, arguments.handle, static_cast<std::uint32_t>(arguments.index)); }), "graphics rendering wait accepted an unregistered video output");
+        check(refused([&](CommandBuffer& buffer) { return sceAgcAcbWaitUntilSafeForRendering(&buffer, arguments.handle, static_cast<std::uint32_t>(arguments.index)); }), "compute rendering wait accepted an unregistered video output");
+    }
+}
+
 void testRegisters() {
     Storage storage;
     const std::array<ShaderRegister, 3> registers{{{0x10, 7}, {0x11, 8}, {0x20, 9}}};
@@ -1356,6 +1390,8 @@ int main(int argc, char** argv) {
             std::puts("AGC initialization tests passed");
             return 0;
         }
+        const auto output = std::make_shared<StubOutput>();
+        registerOutputs(output);
         testPackets();
         testEventWrite();
         testAcquireMem();
@@ -1379,6 +1415,8 @@ int main(int argc, char** argv) {
         testContextState();
         testFlowPackets();
         testFlip();
+        unregisterOutputs(output);
+        testUnregisteredFlipHandle();
         testRegisters();
         testIndirectRegisterPatches();
         testRegisterRange();

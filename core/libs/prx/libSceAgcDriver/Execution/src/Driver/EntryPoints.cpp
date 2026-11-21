@@ -240,6 +240,10 @@ extern "C" void AgcDriverUnregisterVideoOutput_nid_postfix(std::uint32_t handle,
     AgcDriver::UnregisterVideoOutput(handle, output);
 }
 
+extern "C" bool AgcDriverVideoOutputRegistered_nid_postfix(std::uint32_t handle) {
+    return AgcDriver::DriverDetail::Driver::Get().VideoOutputRegistered(handle);
+}
+
 extern "C" void AgcDriverAttachWindow_nid_postfix(const AgcDriver::PresentationWindow& window) {
     AgcDriver::AttachWindow(window);
 }
