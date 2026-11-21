@@ -104,6 +104,8 @@ static void CheckCharacterRange() {
     Check(FcCharSetSubtractCount(set, empty) == 1);
     Check(FcCharSetAddChar(set, 0x41) == 1);
     Check(FcCharSetSubtractCount(set, empty) == 2);
+    Check(FcCharSetAddChar(set, 0x01000041) == 0);
+    Check(FcCharSetSubtractCount(set, empty) == 2);
     FcCharSetDestroy(empty);
     FcCharSetDestroy(set);
 }
