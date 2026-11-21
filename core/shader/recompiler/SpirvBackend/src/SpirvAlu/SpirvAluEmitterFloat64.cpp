@@ -1453,8 +1453,13 @@ std::uint32_t EmitConvertF64S32(SpirvEmitterState& state, std::uint32_t arg0) {
     return FromF64(state, Unary(state, spv::OpConvertSToF, TypeF64(state), Unary(state, spv::OpBitcast, TypeI32(state), arg0)));
 }
 
-std::uint32_t EmitConvertF64U32(SpirvEmitterState& state, std::uint32_t arg0) {
-    return FromF64(state, Unary(state, spv::OpConvertUToF, TypeF64(state), arg0));
+std::uint32_t EmitConvertF64U32(SpirvEmitterState& state, const IrValue& inst, std::uint32_t arg0) {
+    if (!SignExtendedU32(*inst.Argument(0))) return FromF64(state, Unary(state, spv::OpConvertUToF, TypeF64(state), arg0));
+    const auto signedValue = Unary(state, spv::OpBitcast, TypeI32(state), arg0);
+    const auto converted = Unary(state, spv::OpConvertSToF, TypeF64(state), signedValue);
+    const auto negative = Binary(state, spv::OpSLessThan, TypeBool(state), signedValue, ConstantI32(state, 0));
+    const auto adjusted = Exact(state, spv::OpFAdd, converted, ConstantF64(state, 0x41f0000000000000ull));
+    return FromF64(state, Select(state, TypeF64(state), negative, adjusted, converted));
 }
 
 std::uint32_t EmitConvertS32F64(SpirvEmitterState& state, std::uint32_t arg0) {
