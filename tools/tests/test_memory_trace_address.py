@@ -91,6 +91,7 @@ class RangeTests(FeatureRequired):
     def test_accepts_decimal_and_hex_ranges(self):
         self.assertEqual(trace.parse_range("4096", "32"), (4096, 32))
         self.assertEqual(trace.parse_range("0x1000", "0x20"), (0x1000, 0x20))
+        self.assertEqual(trace.parse_range("0004096", "0032"), (4096, 32))
 
     def test_rejects_invalid_or_overflowing_ranges(self):
         for address, size in (("bad", "1"), ("-1", "1"), ("0", "0"),
@@ -158,6 +159,16 @@ class CliTests(FeatureRequired):
             self.assertIn("line 1: map anon", result.stdout)
             self.assertNotIn("protect", result.stdout)
             self.assertNotIn("allocate physical", result.stdout)
+
+    def test_cli_accepts_zero_padded_decimal_range(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.log"
+            path.write_text("[memory] protect 0x1000+0x10 prot=0x1\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), str(path), "--address", "0004096",
+                                     "--length", "0016"], capture_output=True, text=True,
+                                    encoding="utf-8", timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("line 1: protect 0x1000+0x10", result.stdout)
 
     def test_cli_ignores_empty_ranges_when_limiting_matches(self):
         with tempfile.TemporaryDirectory() as directory:
