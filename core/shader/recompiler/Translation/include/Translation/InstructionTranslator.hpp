@@ -7,6 +7,7 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "Translation/EmbeddedVertexFetch.hpp"
+#include "SplitStateAbi.hpp"
 #include <cstdint>
 #include <optional>
 
@@ -48,6 +49,7 @@ struct TranslateOptions {
     std::optional<ShaderFloatMode> floatMode;
     ShaderStageInputInfo inputInfo;
     const EmbeddedFetchPlan* embeddedFetch = nullptr;
+    const SplitStateAbi::Plan* splitState = nullptr;
 };
 
 class InstructionTranslator {

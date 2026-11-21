@@ -79,6 +79,7 @@
 
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/UrlParserExports.hpp"
+#include "prx/libSceNKWebKit/include/UrlHelpers.hpp"
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
 
 #include <algorithm>
@@ -90,6 +91,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -298,6 +300,8 @@ public:
         return true;
     }
     String* impl() { return this; }
+    void remove(unsigned start, unsigned length);
+    std::string utf8() const;
     String left(unsigned length) const;
     String substring(unsigned start, unsigned length = 0xFFFFFFFFu) const;
     const WtfAbi::String& abi() const { return m_string; }
@@ -381,6 +385,43 @@ public:
     };
     UpconvertedCharacters upconvertedCharacters() const { return UpconvertedCharacters(*this); }
 
+    std::size_t find(UChar character, unsigned start = 0) const
+    {
+        for (unsigned i = start; i < m_length; ++i) {
+            if ((*this)[i] == character)
+                return i;
+        }
+        return notFound;
+    }
+    std::size_t find(bool (*matches)(UChar)) const
+    {
+        for (unsigned i = 0; i < m_length; ++i) {
+            if (matches((*this)[i]))
+                return i;
+        }
+        return notFound;
+    }
+    std::size_t reverseFind(UChar character) const
+    {
+        for (unsigned i = m_length; i; --i) {
+            if ((*this)[i - 1] == character)
+                return i - 1;
+        }
+        return notFound;
+    }
+    bool contains(UChar character) const { return find(character) != notFound; }
+    bool startsWith(UChar character) const { return m_length && (*this)[0] == character; }
+    StringView left(unsigned length) const { return substring(0, length); }
+    bool isAllASCII() const
+    {
+        for (unsigned i = 0; i < m_length; ++i) {
+            if (!isASCII((*this)[i]))
+                return false;
+        }
+        return true;
+    }
+    String toStringWithoutCopying() const { return toString(); }
+
     String toString() const
     {
         if (!m_characters)
@@ -432,18 +473,73 @@ template<std::size_t length> inline bool startsWithLettersIgnoringASCIICase(Stri
     return true;
 }
 
-inline String makeString(const String& a, const char* b, const String& c)
+class MakeStringPart {
+public:
+    MakeStringPart(StringView view) : m_is8Bit(view.is8Bit()) { for (unsigned i = 0; i < view.length(); ++i) m_characters.push_back(view[i]); }
+    MakeStringPart(const String& string) : MakeStringPart(StringView(string)) { }
+    MakeStringPart(const char* characters) { for (; *characters; ++characters) m_characters.push_back(static_cast<LChar>(*characters)); }
+    MakeStringPart(char character) { m_characters.push_back(static_cast<LChar>(character)); }
+    MakeStringPart(unsigned number) { for (char digit : std::to_string(number)) m_characters.push_back(static_cast<LChar>(digit)); }
+    bool is8Bit() const { return m_is8Bit; }
+    const std::u16string& characters() const { return m_characters; }
+
+private:
+    std::u16string m_characters;
+    bool m_is8Bit { true };
+};
+
+template<typename... Parts> String makeString(const Parts&... parts)
 {
+    const MakeStringPart converted[] = { MakeStringPart(parts)... };
     std::u16string characters;
-    for (unsigned i = 0; i < a.length(); ++i) characters.push_back(a[i]);
-    for (const char* p = b; *p; ++p) characters.push_back(static_cast<UChar>(*p));
-    for (unsigned i = 0; i < c.length(); ++i) characters.push_back(c[i]);
-    bool all8Bit = std::all_of(characters.begin(), characters.end(), [](UChar c) { return c <= 0xFF; });
-    if (all8Bit) {
+    bool is8Bit = true;
+    for (const auto& part : converted) {
+        characters += part.characters();
+        is8Bit &= part.is8Bit();
+    }
+    if (is8Bit) {
         std::string latin1(characters.begin(), characters.end());
         return String::fromLatin1(reinterpret_cast<const LChar*>(latin1.data()), latin1.size());
     }
     return String::fromUTF16(characters.data(), characters.size());
+}
+
+inline void String::remove(unsigned start, unsigned length)
+{
+    StringView view(*this);
+    *this = makeString(view.left(start), view.substring(start + length));
+}
+
+inline std::string String::utf8() const
+{
+    std::string output;
+    auto append = [&output](std::uint32_t c) {
+        if (c < 0x80)
+            output.push_back(static_cast<char>(c));
+        else if (c < 0x800) {
+            output.push_back(static_cast<char>(0xC0 | (c >> 6)));
+            output.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+        } else if (c < 0x10000) {
+            output.push_back(static_cast<char>(0xE0 | (c >> 12)));
+            output.push_back(static_cast<char>(0x80 | ((c >> 6) & 0x3F)));
+            output.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+        } else {
+            output.push_back(static_cast<char>(0xF0 | (c >> 18)));
+            output.push_back(static_cast<char>(0x80 | ((c >> 12) & 0x3F)));
+            output.push_back(static_cast<char>(0x80 | ((c >> 6) & 0x3F)));
+            output.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+        }
+    };
+    for (unsigned i = 0; i < length(); ++i) {
+        std::uint32_t c = (*this)[i];
+        if ((c & 0xFC00) == 0xD800 && i + 1 < length() && ((*this)[i + 1] & 0xFC00) == 0xDC00) {
+            c = (c << 10) + (*this)[i + 1] - ((0xD800u << 10) + 0xDC00u - 0x10000u);
+            ++i;
+        } else if ((c & 0xF800) == 0xD800 && !((c & 0xFC00) == 0xD800 && i + 1 == length()))
+            c = 0xFFFD;
+        append(c);
+    }
+    return output;
 }
 
 class URLTextEncoding {
@@ -532,6 +628,22 @@ public:
         m_pathAfterLastSlash = 0;
         m_queryEnd = 0;
     }
+    bool hasSpecialScheme() const;
+    Optional<std::uint16_t> port() const;
+    bool isLocalFile() const { return protocolIs("file"); }
+    unsigned credentialsEnd() const;
+    void parse(const String&);
+    void remove(unsigned start, unsigned length);
+    bool setProtocol(StringView);
+    void setHost(StringView);
+    void setHostAndPort(StringView);
+    void setUser(StringView);
+    void removeCredentials();
+    void setFragmentIdentifier(StringView);
+    void setQuery(StringView);
+    void setPath(StringView);
+    URL truncatedForUseAsBase() const;
+    static URL fileURLWithFileSystemPath(StringView);
     void removeFragmentIdentifier()
     {
         if (!m_isValid)
@@ -3352,6 +3464,336 @@ const UIDNA& URLParser::internationalDomainNameTranscoder()
     return *encoder;
 }
 
+// Derived from Source/WTF/wtf/text/StringToIntegerConversion.h@e12a212a531aeddc11259e8515671cf5188e038d
+/*
+ * Copyright (C) 2018-2021 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+inline bool isASCIISpace(UChar c) { return c <= ' ' && (c == ' ' || (c <= 0xD && c >= 0x9)); }
+
+template<typename IntegralType> Optional<IntegralType> parseInteger(StringView string)
+{
+    unsigned length = string.length();
+    unsigned position = 0;
+    if (string.isNull())
+        return std::nullopt;
+    while (position < length && isASCIISpace(string[position]))
+        ++position;
+    if (position < length && string[position] == '+')
+        ++position;
+    if (!(position < length && isASCIIDigit(string[position])))
+        return std::nullopt;
+    Checked<IntegralType, RecordOverflow> value = 0;
+    do {
+        value *= static_cast<IntegralType>(10);
+        value += static_cast<IntegralType>(string[position] - '0');
+    } while (++position < length && isASCIIDigit(string[position]));
+    if (UNLIKELY(value.hasOverflowed()))
+        return std::nullopt;
+    while (position < length && isASCIISpace(string[position]))
+        ++position;
+    if (position < length)
+        return std::nullopt;
+    return value.unsafeGet();
+}
+
+inline Optional<String> maybeCanonicalizeScheme(const String& scheme)
+{
+    auto result = _ZN3WTF9URLParser23maybeCanonicalizeSchemeERKNS_6StringE(scheme.abi());
+    if (!result.hasValue)
+        return std::nullopt;
+    return String(std::move(result.value));
+}
+
+bool URL::hasSpecialScheme() const
+{
+    return protocolIs("ftp")
+        || protocolIs("file")
+        || protocolIs("http")
+        || protocolIs("https")
+        || protocolIs("ws")
+        || protocolIs("wss");
+}
+
+Optional<std::uint16_t> URL::port() const
+{
+    return m_portLength ? parseInteger<std::uint16_t>(StringView(m_string).substring(m_hostEnd + 1, m_portLength - 1)) : std::nullopt;
+}
+
+bool URL::setProtocol(StringView newProtocol)
+{
+    auto newProtocolPrefix = newProtocol.substring(0, newProtocol.find(':'));
+    auto newProtocolCanonicalized = maybeCanonicalizeScheme(newProtocolPrefix.toStringWithoutCopying());
+    if (!newProtocolCanonicalized)
+        return false;
+
+    if (!m_isValid) {
+        parse(makeString(*newProtocolCanonicalized, ':', m_string));
+        return true;
+    }
+
+    if ((m_passwordEnd != m_userStart || port()) && StringView(*newProtocolCanonicalized) == StringView(reinterpret_cast<const LChar*>("file"), 4))
+        return true;
+
+    if (isLocalFile() && host().isEmpty())
+        return true;
+
+    parse(makeString(*newProtocolCanonicalized, StringView(m_string).substring(m_schemeEnd)));
+    return true;
+}
+
+static bool appendEncodedHostname(Vector<UChar, 512>& buffer, StringView string)
+{
+    const unsigned hostnameBufferLength = 2048;
+
+    if (string.length() > hostnameBufferLength || string.isAllASCII()) {
+        for (unsigned i = 0; i < string.length(); ++i)
+            buffer.append(string[i]);
+        return true;
+    }
+
+    UChar hostnameBuffer[hostnameBufferLength];
+    UErrorCode error = U_ZERO_ERROR;
+    UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
+    std::int32_t numCharactersConverted = uidna_nameToASCII(&URLParser::internationalDomainNameTranscoder(),
+        string.upconvertedCharacters(), string.length(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
+
+    if (U_SUCCESS(error) && !processingDetails.errors) {
+        buffer.append(hostnameBuffer, numCharactersConverted);
+        return true;
+    }
+    return false;
+}
+
+unsigned URL::credentialsEnd() const
+{
+    unsigned end = m_passwordEnd;
+    if (end != m_hostEnd && m_string[end] == '@')
+        end += 1;
+    return end;
+}
+
+static bool forwardSlashHashOrQuestionMark(UChar c)
+{
+    return c == '/'
+        || c == '#'
+        || c == '?';
+}
+
+static bool slashHashOrQuestionMark(UChar c)
+{
+    return forwardSlashHashOrQuestionMark(c) || c == '\\';
+}
+
+void URL::setHost(StringView newHost)
+{
+    if (!m_isValid)
+        return;
+
+    if (newHost.contains(':') && !newHost.startsWith('['))
+        return;
+
+    if (auto index = newHost.find(hasSpecialScheme() ? slashHashOrQuestionMark : forwardSlashHashOrQuestionMark); index != notFound)
+        newHost = newHost.substring(0, index);
+
+    Vector<UChar, 512> encodedHostName;
+    if (!appendEncodedHostname(encodedHostName, newHost))
+        return;
+
+    bool slashSlashNeeded = m_userStart == m_schemeEnd + 1U;
+    parse(makeString(
+        StringView(m_string).left(hostStart()),
+        slashSlashNeeded ? "//" : "",
+        StringView(encodedHostName.data(), encodedHostName.size()),
+        StringView(m_string).substring(m_hostEnd)
+    ));
+}
+
+void URL::setHostAndPort(StringView hostAndPort)
+{
+    if (!m_isValid)
+        return;
+
+    auto hostName = hostAndPort;
+    StringView portString;
+    auto colonIndex = hostName.reverseFind(':');
+    if (colonIndex != notFound) {
+        portString = hostName.substring(colonIndex + 1);
+        hostName = hostName.substring(0, colonIndex);
+        if (hostName.contains(':') && !hostName.startsWith('['))
+            return;
+        if (!parseInteger<std::uint16_t>(portString))
+            portString = { };
+    }
+    if (hostName.isEmpty()) {
+        remove(hostStart(), pathStart() - hostStart());
+        return;
+    }
+
+    Vector<UChar, 512> encodedHostName;
+    if (!appendEncodedHostname(encodedHostName, hostName))
+        return;
+
+    bool slashSlashNeeded = m_userStart == m_schemeEnd + 1U;
+    parse(makeString(
+        StringView(m_string).left(hostStart()),
+        slashSlashNeeded ? "//" : "",
+        StringView(encodedHostName.data(), encodedHostName.size()),
+        portString.isEmpty() ? "" : ":",
+        portString,
+        StringView(m_string).substring(pathStart())
+    ));
+}
+
+static String percentEncodeCharacters(const String& input, bool(*shouldEncode)(UChar))
+{
+    auto encode = [shouldEncode] (const String& input) {
+        std::string utf8 = input.utf8();
+        auto* data = utf8.data();
+        std::string builder;
+        auto length = utf8.length();
+        for (unsigned j = 0; j < length; j++) {
+            auto c = data[j];
+            if (shouldEncode(c)) {
+                builder.push_back('%');
+                builder.push_back(upperNibbleToASCIIHexDigit(c));
+                builder.push_back(lowerNibbleToASCIIHexDigit(c));
+            } else
+                builder.push_back(c);
+        }
+        return String::fromLatin1(reinterpret_cast<const LChar*>(builder.data()), builder.size());
+    };
+
+    for (std::size_t i = 0; i < input.length(); ++i) {
+        if (UNLIKELY(shouldEncode(input[i])))
+            return encode(input);
+    }
+    return input;
+}
+
+void URL::parse(const String& string)
+{
+    *this = URLParser(string).result();
+}
+
+void URL::remove(unsigned start, unsigned length)
+{
+    if (!length)
+        return;
+
+    auto stringAfterRemoval = WTFMove(m_string);
+    stringAfterRemoval.remove(start, length);
+    parse(stringAfterRemoval);
+}
+
+void URL::setUser(StringView newUser)
+{
+    if (!m_isValid)
+        return;
+
+    unsigned end = m_userEnd;
+    if (!newUser.isEmpty()) {
+        bool slashSlashNeeded = m_userStart == m_schemeEnd + 1U;
+        bool needSeparator = end == m_hostEnd || (end == m_passwordEnd && m_string[end] != '@');
+        parse(makeString(
+            StringView(m_string).left(m_userStart),
+            slashSlashNeeded ? "//" : "",
+            percentEncodeCharacters(newUser.toStringWithoutCopying(), URLParser::isInUserInfoEncodeSet),
+            needSeparator ? "@" : "",
+            StringView(m_string).substring(end)
+        ));
+    } else {
+        if (m_userEnd == m_passwordEnd && end != m_hostEnd && m_string[end] == '@')
+            end += 1;
+        remove(m_userStart, end - m_userStart);
+    }
+}
+
+void URL::removeCredentials()
+{
+    if (!m_isValid)
+        return;
+
+    remove(m_userStart, credentialsEnd() - m_userStart);
+}
+
+void URL::setFragmentIdentifier(StringView identifier)
+{
+    if (!m_isValid)
+        return;
+
+    parse(makeString(StringView(m_string).left(m_queryEnd), '#', identifier));
+}
+
+void URL::setQuery(StringView newQuery)
+{
+    if (!m_isValid)
+        return;
+
+    parse(makeString(
+        StringView(m_string).left(m_pathEnd),
+        (!newQuery.startsWith('?') && !newQuery.isNull()) ? "?" : "",
+        newQuery,
+        StringView(m_string).substring(m_queryEnd)
+    ));
+}
+
+static String escapePathWithoutCopying(StringView path)
+{
+    auto questionMarkOrNumberSign = [] (UChar character) {
+        return character == '?' || character == '#';
+    };
+    return percentEncodeCharacters(path.toStringWithoutCopying(), questionMarkOrNumberSign);
+}
+
+void URL::setPath(StringView path)
+{
+    if (!m_isValid)
+        return;
+
+    parse(makeString(
+        StringView(m_string).left(pathStart()),
+        path.startsWith('/') || (path.startsWith('\\') && (hasSpecialScheme() || protocolIs("file"))) ? "" : "/",
+        escapePathWithoutCopying(path),
+        StringView(m_string).substring(m_pathEnd)
+    ));
+}
+
+URL URL::truncatedForUseAsBase() const
+{
+    return URLParser(m_string.left(m_pathAfterLastSlash), URL()).result();
+}
+
+URL URL::fileURLWithFileSystemPath(StringView path)
+{
+    return URLParser(makeString(
+        "file://",
+        path.startsWith('/') ? "" : "/",
+        escapePathWithoutCopying(path)
+    ), URL()).result();
+}
+
 }
 
 namespace {
@@ -3391,6 +3833,104 @@ void ToAbi(const Port::URL& url, NKWebKit::WtfAbi::URL* result)
     result->pathAfterLastSlash = url.m_pathAfterLastSlash;
     result->pathEnd = url.m_pathEnd;
     result->queryEnd = url.m_queryEnd;
+}
+
+Port::StringView ViewFromAbi(NKWebKit::WtfAbi::StringView view, const char* caller)
+{
+    if (!view.data && view.length)
+        throw std::invalid_argument(std::string("URL::") + caller + " requires characters for a non-empty view");
+    if (!view.data)
+        return { };
+    if (view.is8Bit)
+        return Port::StringView(static_cast<const Port::LChar*>(view.data), view.length);
+    return Port::StringView(static_cast<const Port::UChar*>(view.data), view.length);
+}
+
+template<typename Function> auto Mutate(NKWebKit::WtfAbi::URL* self, const char* caller, Function function)
+{
+    if (!self)
+        throw std::invalid_argument(std::string("URL::") + caller + " requires an object");
+    Port::URL url = FromAbi(*self);
+    if constexpr (std::is_void_v<decltype(function(url))>) {
+        function(url);
+        NKWebKit::WtfAbi::Release(self->impl);
+        ToAbi(url, self);
+    } else {
+        auto result = function(url);
+        NKWebKit::WtfAbi::Release(self->impl);
+        ToAbi(url, self);
+        return result;
+    }
+}
+
+NKWebKit::WtfAbi::URL ToAbiResult(const Port::URL& url)
+{
+    NKWebKit::WtfAbi::URL result {};
+    ToAbi(url, &result);
+    return result;
+}
+
+}
+
+extern "C" {
+
+bool APS5_VABI _ZN3WTF3URL11setProtocolENS_10StringViewE(NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView protocol)
+{
+    auto view = ViewFromAbi(protocol, "setProtocol");
+    return Mutate(self, "setProtocol", [&](Port::URL& url) { return url.setProtocol(view); });
+}
+
+void APS5_VABI _ZN3WTF3URL7setHostENS_10StringViewE(NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView host)
+{
+    auto view = ViewFromAbi(host, "setHost");
+    Mutate(self, "setHost", [&](Port::URL& url) { url.setHost(view); });
+}
+
+void APS5_VABI _ZN3WTF3URL14setHostAndPortENS_10StringViewE(NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView hostAndPort)
+{
+    auto view = ViewFromAbi(hostAndPort, "setHostAndPort");
+    Mutate(self, "setHostAndPort", [&](Port::URL& url) { url.setHostAndPort(view); });
+}
+
+void APS5_VABI _ZN3WTF3URL7setUserENS_10StringViewE(NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView user)
+{
+    auto view = ViewFromAbi(user, "setUser");
+    Mutate(self, "setUser", [&](Port::URL& url) { url.setUser(view); });
+}
+
+void APS5_VABI _ZN3WTF3URL17removeCredentialsEv(NKWebKit::WtfAbi::URL* self)
+{
+    Mutate(self, "removeCredentials", [](Port::URL& url) { url.removeCredentials(); });
+}
+
+void APS5_VABI _ZN3WTF3URL21setFragmentIdentifierENS_10StringViewE(NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView identifier)
+{
+    auto view = ViewFromAbi(identifier, "setFragmentIdentifier");
+    Mutate(self, "setFragmentIdentifier", [&](Port::URL& url) { url.setFragmentIdentifier(view); });
+}
+
+void APS5_VABI _ZN3WTF3URL8setQueryENS_10StringViewE(NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView query)
+{
+    auto view = ViewFromAbi(query, "setQuery");
+    Mutate(self, "setQuery", [&](Port::URL& url) { url.setQuery(view); });
+}
+
+void APS5_VABI _ZN3WTF3URL7setPathENS_10StringViewE(NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView path)
+{
+    auto view = ViewFromAbi(path, "setPath");
+    Mutate(self, "setPath", [&](Port::URL& url) { url.setPath(view); });
+}
+
+NKWebKit::WtfAbi::URL APS5_VABI _ZNK3WTF3URL21truncatedForUseAsBaseEv(const NKWebKit::WtfAbi::URL* self)
+{
+    if (!self)
+        throw std::invalid_argument("URL::truncatedForUseAsBase requires an object");
+    return ToAbiResult(FromAbi(*self).truncatedForUseAsBase());
+}
+
+NKWebKit::WtfAbi::URL APS5_VABI _ZN3WTF3URL25fileURLWithFileSystemPathENS_10StringViewE(NKWebKit::WtfAbi::StringView path)
+{
+    return ToAbiResult(Port::URL::fileURLWithFileSystemPath(ViewFromAbi(path, "fileURLWithFileSystemPath")));
 }
 
 }

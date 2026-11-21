@@ -24,6 +24,19 @@ struct PersistenceDecoder {
     SHA1 sha1;
 };
 
+struct PersistenceEncoder {
+    std::uint8_t* buffer;
+    unsigned capacity;
+    unsigned size;
+    std::uint8_t inlineBuffer[4096];
+    SHA1 sha1;
+};
+
+struct PersistenceAllocator {
+    void* (*allocate)(std::size_t size);
+    void (*deallocate)(void* ptr);
+};
+
 struct OptionalSHA1Digest {
     bool hasValue;
     SHA1Digest value;
@@ -41,6 +54,12 @@ static_assert(offsetof(PersistenceDecoder, buffer) == 0);
 static_assert(offsetof(PersistenceDecoder, bufferPosition) == 8);
 static_assert(offsetof(PersistenceDecoder, bufferEnd) == 16);
 static_assert(offsetof(PersistenceDecoder, sha1) == 24);
+static_assert(sizeof(PersistenceEncoder) == 4216);
+static_assert(offsetof(PersistenceEncoder, buffer) == 0);
+static_assert(offsetof(PersistenceEncoder, capacity) == 8);
+static_assert(offsetof(PersistenceEncoder, size) == 12);
+static_assert(offsetof(PersistenceEncoder, inlineBuffer) == 16);
+static_assert(offsetof(PersistenceEncoder, sha1) == 4112);
 static_assert(sizeof(OptionalSHA1Digest) == 21);
 static_assert(offsetof(OptionalSHA1Digest, hasValue) == 0);
 static_assert(offsetof(OptionalSHA1Digest, value) == 1);
@@ -51,5 +70,8 @@ extern "C" {
 
 void APS5_VABI _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(Jsc::WtfAbi::SHA1* self, Jsc::WtfAbi::SHA1Digest* digest);
 Jsc::WtfAbi::OptionalSHA1Digest APS5_VABI _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6decodeERNS0_7DecoderE(Jsc::WtfAbi::PersistenceDecoder* decoder);
+void APS5_VABI _ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_(Jsc::WtfAbi::PersistenceEncoder* encoder, const Jsc::WtfAbi::SHA1Digest* digest);
+void RegisterPersistenceAllocator_nid_no_patch(const Jsc::WtfAbi::PersistenceAllocator* allocator);
+const Jsc::WtfAbi::PersistenceAllocator* RegisteredPersistenceAllocator_nid_no_patch();
 
 }
