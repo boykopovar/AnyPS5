@@ -1955,7 +1955,6 @@ int APS5_VABI _ZNK7WebCore7Element28renderOrDisplayContentsStyleEv();
 int APS5_VABI _ZN7WebCore13GraphicsLayer13addChildAboveEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEEPS0_();
 int APS5_VABI _ZN7WebCore8CSSValue7destroyEv();
 int APS5_VABI libSceNKWebKitLegacyUnknown_zX9Hg5va50Y_nid_no_patch();
-int APS5_VABI _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE();
 int APS5_VABI _ZN7WebCore12PrintContext13numberOfPagesERNS_5FrameERKNS_9FloatSizeE();
 int APS5_VABI _ZN7WebCore13TextureMapper6createEv();
 int APS5_VABI _ZN7WebCore15PasteboardImageD1Ev();

@@ -7647,10 +7647,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_zX9Hg5va50Y_nid_no_patch() {
 }
 APS5_EXPORT("zX9Hg5va50Y", libSceNKWebKitLegacyUnknown_zX9Hg5va50Y_nid_no_patch);
 
-int APS5_VABI _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore12PrintContext13numberOfPagesERNS_5FrameERKNS_9FloatSizeE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -14978,14 +14974,6 @@ int APS5_VABI _ZN7WebCore15GraphicsContext15drawImageBufferERNS_11ImageBufferERK
 }
 
 int APS5_VABI _ZN7WebCore15GraphicsContext15drawLineForTextERKNS_9FloatRectEbbNS_11StrokeStyleE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15GraphicsContext20endTransparencyLayerEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15GraphicsContext22beginTransparencyLayerEf() {
     NotImplemented_nid_no_patch(__func__);
 }
 

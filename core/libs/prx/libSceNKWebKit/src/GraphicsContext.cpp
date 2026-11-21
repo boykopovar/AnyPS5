@@ -147,6 +147,12 @@ int CairoOperator(const std::uint8_t compositeOperator) {
     }
 }
 
+void ApplyOperator(Context& context) {
+    CairoContext* cr = Cairo(context);
+    if (!cr) return;
+    CairoSetOperator_nid_no_patch(cr, CairoOperator(context.state.compositeOperator));
+}
+
 }  // namespace
 
 extern "C" {
@@ -256,6 +262,7 @@ void APS5_VABI _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectE(Context* s
     if (!rect) throw std::invalid_argument("WebCore::GraphicsContext::fillRect requires a rectangle");
     CairoContext* cr = Cairo(context);
     if (!cr) return;
+    ApplyOperator(context);
     SetSource(cr, context.state.fillColor);
     CairoNewPath_nid_no_patch(cr);
     Rectangle(cr, *rect);
@@ -267,6 +274,7 @@ void APS5_VABI _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5Color
     if (!rect || !color) throw std::invalid_argument("WebCore::GraphicsContext::fillRect requires a rectangle and a color");
     CairoContext* cr = Cairo(context);
     if (!cr) return;
+    ApplyOperator(context);
     SetSource(cr, *color);
     CairoNewPath_nid_no_patch(cr);
     Rectangle(cr, *rect);
@@ -291,6 +299,7 @@ void APS5_VABI _ZN7WebCore15GraphicsContext8fillPathERKNS_4PathE(Context* self, 
     if (!path) throw std::invalid_argument("WebCore::GraphicsContext::fillPath requires a path");
     CairoContext* cr = Cairo(context);
     if (!cr) return;
+    ApplyOperator(context);
     SetSource(cr, context.state.fillColor);
     AppendPath(cr, path);
     CairoFill_nid_no_patch(cr);
@@ -301,6 +310,7 @@ void APS5_VABI _ZN7WebCore15GraphicsContext10strokePathERKNS_4PathE(Context* sel
     if (!path) throw std::invalid_argument("WebCore::GraphicsContext::strokePath requires a path");
     CairoContext* cr = Cairo(context);
     if (!cr) return;
+    ApplyOperator(context);
     SetSource(cr, context.state.strokeColor);
     CairoSetLineWidth_nid_no_patch(cr, context.state.strokeThickness);
     AppendPath(cr, path);
@@ -312,6 +322,7 @@ void APS5_VABI _ZN7WebCore15GraphicsContext10strokeRectERKNS_9FloatRectEf(Contex
     if (!rect) throw std::invalid_argument("WebCore::GraphicsContext::strokeRect requires a rectangle");
     CairoContext* cr = Cairo(context);
     if (!cr) return;
+    ApplyOperator(context);
     SetSource(cr, context.state.strokeColor);
     CairoSetLineWidth_nid_no_patch(cr, thickness);
     CairoNewPath_nid_no_patch(cr);
@@ -391,6 +402,36 @@ void APS5_VABI _ZN7WebCore15GraphicsContext11clearShadowEv(Context* self) {
     context.state.shadowOffset = {0.0f, 0.0f};
     context.state.shadowBlur = 0.0f;
     context.state.shadowColor = WebCore::Color{0};
+}
+
+void APS5_VABI _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(Context* self, std::uint8_t compositeOperator, std::uint8_t blendMode) {
+    auto& context = Checked(self, "WebCore::GraphicsContext::setCompositeOperation");
+    if (blendMode != 1) throw std::invalid_argument("only BlendMode::Normal is supported");
+    CairoOperator(compositeOperator);
+    context.state.compositeOperator = compositeOperator;
+    context.state.blendMode = blendMode;
+    if (CairoContext* cr = Cairo(context)) CairoSetOperator_nid_no_patch(cr, CairoOperator(compositeOperator));
+}
+
+void APS5_VABI _ZN7WebCore15GraphicsContext22beginTransparencyLayerEf(Context* self, float opacity) {
+    auto& context = Checked(self, "WebCore::GraphicsContext::beginTransparencyLayer");
+    auto* data = Private(context);
+    if (!data || !data->cr) return;
+    _ZN7WebCore15GraphicsContext4saveEv(self);
+    context.state.alpha = opacity;
+    ++context.transparencyCount;
+    CairoPushGroup_nid_no_patch(data->cr);
+}
+
+void APS5_VABI _ZN7WebCore15GraphicsContext20endTransparencyLayerEv(Context* self) {
+    auto& context = Checked(self, "WebCore::GraphicsContext::endTransparencyLayer");
+    auto* data = Private(context);
+    if (!data || !data->cr || context.transparencyCount == 0 || data->stack.empty()) return;
+    CairoPopGroupToSource_nid_no_patch(data->cr);
+    ApplyOperator(context);
+    CairoPaintWithAlpha_nid_no_patch(data->cr, context.state.alpha);
+    --context.transparencyCount;
+    _ZN7WebCore15GraphicsContext7restoreEv(self);
 }
 
 bool APS5_VABI _ZNK7WebCore15GraphicsContext18hasPlatformContextEv(const Context* self) {

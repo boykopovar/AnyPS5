@@ -37,5 +37,8 @@ void CairoPathDestroy_nid_no_patch(CairoPath* path);
 void CairoFill_nid_no_patch(CairoContext* context);
 void CairoStroke_nid_no_patch(CairoContext* context);
 void CairoClip_nid_no_patch(CairoContext* context);
+void CairoPushGroup_nid_no_patch(CairoContext* context);
+void CairoPopGroupToSource_nid_no_patch(CairoContext* context);
+void CairoPaintWithAlpha_nid_no_patch(CairoContext* context, double alpha);
 
 }
