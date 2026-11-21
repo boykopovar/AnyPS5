@@ -338,10 +338,6 @@ int APS5_VABI _ZN3JSC7Options24ensureOptionsAreCoherentEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector22ContentSearchUtilities11lineEndingsERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector14InspectorAgentnaEm() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -359,10 +355,6 @@ int APS5_VABI _ZN3JSC14setNeverInlineENS_7JSValueE() {
 }
 
 int APS5_VABI _ZN3JSC16getFunctionRealmERNS_2VMEPNS_8JSObjectE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF10TextStreamlsERKNS0_30FormatNumberRespectingIntegersE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -574,15 +566,7 @@ int APS5_VABI _ZN3JSC2VM22boundFunctionSpaceSlowEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF3URL24removeFragmentIdentifierEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector15RemoteInspector9singletonEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF11writeIndentERNS_10TextStreamEi() {
     NotImplemented_nid_no_patch(__func__);
 }
 

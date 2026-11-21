@@ -100,6 +100,14 @@ void WriteIndent(TextStream& stream) {
 
 }  // namespace
 
+namespace NKWebKit::WtfAbi {
+
+void AppendRespectingIntegers(TextStream& stream, double value) {
+    AppendNumberRespectingIntegers(stream, value);
+}
+
+}  // namespace NKWebKit::WtfAbi
+
 extern "C" {
 
 TextStream& APS5_VABI _ZN3WTF10TextStreamlsEb(TextStream* self, bool value) {
