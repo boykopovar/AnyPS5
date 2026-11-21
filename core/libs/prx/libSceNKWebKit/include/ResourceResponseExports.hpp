@@ -34,5 +34,18 @@ NKWebKit::WebCoreAbi::ResponseOptionalTime APS5_VABI _ZNK7WebCore20ResourceRespo
 NKWebKit::WebCoreAbi::ResponseOptionalTime APS5_VABI _ZNK7WebCore20ResourceResponseBase7expiresEv(const NKWebKit::WebCoreAbi::ResourceResponseBase* self);
 NKWebKit::WebCoreAbi::ResponseOptionalTime APS5_VABI _ZNK7WebCore20ResourceResponseBase12lastModifiedEv(const NKWebKit::WebCoreAbi::ResourceResponseBase* self);
 NKWebKit::WebCoreAbi::ResponseOptionalTime APS5_VABI _ZNK7WebCore20ResourceResponseBase3ageEv(const NKWebKit::WebCoreAbi::ResourceResponseBase* self);
+void APS5_VABI _ZN7WebCore20ResourceResponseBaseC1Ev(NKWebKit::WebCoreAbi::ResourceResponseBase* self);
+void APS5_VABI _ZN7WebCore20ResourceResponseBaseC2Ev(NKWebKit::WebCoreAbi::ResourceResponseBase* self);
+int APS5_VABI _ZNK7WebCore20ResourceResponseBase14httpStatusCodeEv(const NKWebKit::WebCoreAbi::ResourceResponseBase* self);
+void APS5_VABI _ZN7WebCore20ResourceResponseBase17setHTTPStatusCodeEi(NKWebKit::WebCoreAbi::ResourceResponseBase* self, int statusCode);
+bool APS5_VABI _ZNK7WebCore20ResourceResponseBase12isSuccessfulEv(const NKWebKit::WebCoreAbi::ResourceResponseBase* self);
+bool APS5_VABI _ZNK7WebCore20ResourceResponseBase13isRedirectionEv(const NKWebKit::WebCoreAbi::ResourceResponseBase* self);
+void APS5_VABI _ZN7WebCore20ResourceResponseBase6setURLERKN3WTF3URLE(NKWebKit::WebCoreAbi::ResourceResponseBase* self, const NKWebKit::WtfAbi::URL& url);
+void APS5_VABI _ZN7WebCore20ResourceResponseBase24setExpectedContentLengthEx(NKWebKit::WebCoreAbi::ResourceResponseBase* self, long long expectedContentLength);
+void APS5_VABI _ZN7WebCore20ResourceResponseBase7setTypeENS0_4TypeE(NKWebKit::WebCoreAbi::ResourceResponseBase* self, NKWebKit::WebCoreAbi::ResponseType type);
+NKWebKit::WebCoreAbi::ResponseSource APS5_VABI _ZNK7WebCore20ResourceResponseBase6sourceEv(const NKWebKit::WebCoreAbi::ResourceResponseBase* self);
+void APS5_VABI _ZNK7WebCore20ResourceResponseBase22includeCertificateInfoEv(const NKWebKit::WebCoreAbi::ResourceResponseBase* self);
+void APS5_VABI _ZNK7WebCore20ResourceResponseBase8lazyInitENS0_9InitLevelE(const NKWebKit::WebCoreAbi::ResourceResponseBase* self, NKWebKit::WebCoreAbi::ResponseInitLevel level);
+void APS5_VABI _ZN7WebCore20ResourceResponseBase24sanitizeHTTPHeaderFieldsENS0_16SanitizationTypeE(NKWebKit::WebCoreAbi::ResourceResponseBase* self, NKWebKit::WebCoreAbi::ResponseSanitizationType type);
 
 }
