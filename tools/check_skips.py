@@ -18,6 +18,7 @@ NO_RAW_SOCKET = re.compile(r"skipped,.*cannot create a raw socket", re.IGNORECAS
 HIGH_REFRESH_LIMITATION = re.compile(r"current display does not provide 120 Hz", re.IGNORECASE)
 DEVICE_LOG_SOURCE = re.compile(r"\[[^\]]*:\d+ [^\]]*\] ")
 DEVICE_LOG_SUBSYSTEM = re.compile(r"\[(?:float-controls|gpu|pipeline-cache|shader-disk-cache|time|write-watch)\] ")
+VULKAN_LOADER_LOG = re.compile(r"\[Vulkan Loader\] (?:(?:DEBUG|INFO|WARNING) \| )?(?:LAYER|DRIVER):(?:\s|$)")
 HDR_OUTPUT_STATUS = re.compile(
     r"\[videoout\] HDR output (?:available: peak [0-9]+\.[0-9] nits, full frame [0-9]+\.[0-9] nits, black [0-9]+\.[0-9]{4} nits"
     r"|unavailable \(display in HDR: (?:yes|no), surface offers HDR10: (?:yes|no)\))")
@@ -48,7 +49,7 @@ def high_refresh_limitation(output):
             continue
         if HDR_OUTPUT_STATUS.fullmatch(reason):
             continue
-        if (DEVICE_LOG_SOURCE.match(reason) or DEVICE_LOG_SUBSYSTEM.match(reason)) and not re.search(r"skipped,", reason, re.IGNORECASE):
+        if (DEVICE_LOG_SOURCE.match(reason) or DEVICE_LOG_SUBSYSTEM.match(reason) or VULKAN_LOADER_LOG.match(reason)) and not re.search(r"skipped,", reason, re.IGNORECASE):
             continue
         if match := re.search(r"skipped,", reason, re.IGNORECASE):
             reason = reason[match.end():].strip()
