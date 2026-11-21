@@ -66,6 +66,14 @@ struct Fixture {
     }
 };
 
+static void Bounds() {
+    for (const int descriptor : {-1, 1000000}) {
+        Require(flock_nid_postfix(descriptor, 1) == -1 && *__error_nid_postfix() == 9);
+        Require(flock_nid_postfix(descriptor, 2) == -1 && *__error_nid_postfix() == 9);
+        Require(flock_nid_postfix(descriptor, 8) == -1 && *__error_nid_postfix() == 9);
+    }
+}
+
 static void Duplicates() {
     for (int kind = 0; kind != 3; ++kind) {
         for (bool before : {false, true}) {
@@ -406,7 +414,8 @@ int main(int argc, char** argv) {
     }
     Require(argc == 2);
     const std::string mode = argv[1];
-    if (mode == "duplicate") Duplicates();
+    if (mode == "bounds") Bounds();
+    else if (mode == "duplicate") Duplicates();
     else if (mode == "lifetime") Lifetime();
     else if (mode == "conversion") Conversions();
     else if (mode == "threads") Threads();

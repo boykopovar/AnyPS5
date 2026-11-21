@@ -3152,7 +3152,7 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
         target_include_directories(guest_file_lock_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_file_lock_tests PRIVATE libkernel libc)
         configure_windows_unwind(guest_file_lock_tests)
-        foreach(fileLockCase IN ITEMS duplicate lifetime conversion threads streams process directory)
+        foreach(fileLockCase IN ITEMS bounds duplicate lifetime conversion threads streams process directory)
             add_test(NAME guest_file_lock_${fileLockCase} COMMAND guest_file_lock_tests ${fileLockCase})
             set_tests_properties(guest_file_lock_${fileLockCase} PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
