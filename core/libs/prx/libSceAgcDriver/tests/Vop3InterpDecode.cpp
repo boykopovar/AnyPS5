@@ -34,6 +34,9 @@ struct Refused {
 int main() {
     constexpr std::uint32_t Destination = 5;
     const std::vector<Accepted> accepted{
+        {{0xd6000005u, 0x00020400u}, RdnaOpcode::VInterpP1F32, "gfx1013 v_interp_p1_f32_e64 v5, v2, attr0.x", RdnaOperandKind::VectorRegister, 2u, 0u, 0u, false, false, false, 0u},
+        {{0xd6010005u, 0x00020440u}, RdnaOpcode::VInterpP2F32, "gfx1013 v_interp_p2_f32_e64 v5, v2, attr0.y", RdnaOperandKind::VectorRegister, 2u, 0u, 1u, false, false, false, 0u},
+        {{0xd6020005u, 0x00000200u}, RdnaOpcode::VInterpMovF32, "gfx1013 v_interp_mov_f32_e64 v5, p20, attr0.x", RdnaOperandKind::IntegerInlineConstant, 1u, 0u, 0u, false, false, false, 0u},
         {{0xd6000005u, 0x02020400u}, RdnaOpcode::VInterpP1F32, "v_interp_p1_f32_e64 v5, v2, attr0.x", RdnaOperandKind::VectorRegister, 2u, 0u, 0u, false, false, false, 0u},
         {{0xd6010005u, 0x02020440u}, RdnaOpcode::VInterpP2F32, "v_interp_p2_f32_e64 v5, v2, attr0.y", RdnaOperandKind::VectorRegister, 2u, 0u, 1u, false, false, false, 0u},
         {{0xd6020005u, 0x02000200u}, RdnaOpcode::VInterpMovF32, "v_interp_mov_f32_e64 v5, p20, attr0.x", RdnaOperandKind::IntegerInlineConstant, 1u, 0u, 0u, false, false, false, 0u},
@@ -56,7 +59,8 @@ int main() {
     const std::vector<Refused> refused{
         {{0xd6000005u, 0x02000400u}, "not a vector register", "v_interp_p1_f32_e64 with a non-VGPR coordinate"},
         {{0xd6020005u, 0x02000600u}, "not an interpolation parameter", "v_interp_mov_f32_e64 with a reserved parameter"},
-        {{0xd6000005u, 0x02060400u}, "third source is not the inline constant 0", "v_interp_p1_f32_e64 with a third source other than the inline constant 0"},
+        {{0xd6000005u, 0x02060400u}, "unsupported VOP3 interpolation SRC2 encoding", "v_interp_p1_f32_e64 with an inline one in SRC2"},
+        {{0xd6000005u, 0x00060400u}, "unsupported VOP3 interpolation SRC2 encoding", "v_interp_p1_f32_e64 with s1 in SRC2"},
         {{0xd6000805u, 0x02020400u}, "modifiers are not implemented", "v_interp_p1_f32_e64 with op_sel"},
         {{0xd6000005u, 0x02020500u}, "modifiers are not implemented", "v_interp_p1_f32_e64 with the packed-half selector"},
         {{0xd6000105u, 0x02020400u}, "modifiers are not implemented", "v_interp_p1_f32_e64 with an absolute source 0"},
