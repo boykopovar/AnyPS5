@@ -101,12 +101,19 @@ std::map<std::string, PFN_vkVoidFunction>& Functions() {
 }
 
 bool splitBarrier = false;
+bool otherCheckpoint = false;
+const char* missing = nullptr;
 
 VKAPI_ATTR void VKAPI_CALL otherBarrier2(VkCommandBuffer commands, const VkDependencyInfo*) {
     Log("other barrier2", commands);
 }
 
+VKAPI_ATTR void VKAPI_CALL otherSetCheckpoint(VkCommandBuffer, const void*) {
+}
+
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
+    if (missing != nullptr && std::strcmp(name, missing) == 0) return nullptr;
+    if (otherCheckpoint && std::strcmp(name, "vkCmdSetCheckpointNV") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&otherSetCheckpoint);
     if (splitBarrier && std::strcmp(name, "vkCmdPipelineBarrier2KHR") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&otherBarrier2);
     if (std::strcmp(name, "vkCmdBeginRendering") == 0) name = "vkCmdBeginRenderingKHR";
     if (std::strcmp(name, "vkCmdEndRendering") == 0) name = "vkCmdEndRenderingKHR";
@@ -116,11 +123,6 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
 }
 
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL otherProc(VkDevice device, const char* name) {
-    return mockProc(device, name);
-}
-
-VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL noCheckpointProc(VkDevice device, const char* name) {
-    if (std::strcmp(name, "vkCmdSetCheckpointNV") == 0) return nullptr;
     return mockProc(device, name);
 }
 
@@ -241,6 +243,9 @@ void PassesStateThroughAndRejectsUnknownCommands(PFN_vkGetDeviceProcAddr proc) {
         Expect(proc(Device(), name) == Functions()[name], std::string(name) + " did not pass through");
     }
     Expect(proc(Device(), "vkCmdTraceRaysKHR") == nullptr, "a command the device lacks did not resolve to null");
+    missing = "vkCmdDraw";
+    Expect(proc(Device(), "vkCmdDraw") == nullptr, "a wrapped command the device lacks did not resolve to null");
+    missing = nullptr;
     bool threw = false;
     try {
         static_cast<void>(proc(Device(), "vkCmdNextSubpass"));
@@ -250,15 +255,23 @@ void PassesStateThroughAndRejectsUnknownCommands(PFN_vkGetDeviceProcAddr proc) {
     Expect(threw, "an unknown work command passed through without a checkpoint");
 }
 
-void RejectsMismatchedSetups() {
-    bool threw = false;
+bool ThrowsMentioning(PFN_vkGetDeviceProcAddr resolver, const char* text) {
     try {
-        static_cast<void>(AgcDriver::Graphics::CheckpointCommandKinds(Device(), &noCheckpointProc));
-    } catch (const std::runtime_error&) {
-        threw = true;
+        static_cast<void>(AgcDriver::Graphics::CheckpointCommandKinds(Device(), resolver));
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()).find(text) != std::string::npos;
     }
-    Expect(threw, "command checkpoints were set up without vkCmdSetCheckpointNV");
-    threw = false;
+    return false;
+}
+
+void RejectsMismatchedSetups() {
+    missing = "vkCmdSetCheckpointNV";
+    Expect(ThrowsMentioning(&mockProc, "missing Vulkan function: vkCmdSetCheckpointNV"), "command checkpoints were set up without vkCmdSetCheckpointNV");
+    missing = nullptr;
+    otherCheckpoint = true;
+    Expect(ThrowsMentioning(&mockProc, "two different vkCmdSetCheckpointNV"), "a second, different vkCmdSetCheckpointNV was accepted");
+    otherCheckpoint = false;
+    bool threw = false;
     try {
         static_cast<void>(AgcDriver::Graphics::CheckpointCommandKinds(Device(), &otherProc));
     } catch (const std::runtime_error&) {
