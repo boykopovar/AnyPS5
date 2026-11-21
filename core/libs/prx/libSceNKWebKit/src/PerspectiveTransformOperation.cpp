@@ -54,16 +54,33 @@
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
-#include "prx/libSceNKWebKit/include/WebCoreLayoutExports.hpp"
+
+#include <stdexcept>
 
 namespace {
 
-float PerspectiveValue(const WebCore::PerspectiveTransformOperation* self) {
-    return _ZN7WebCore19floatValueForLengthERKNS_6LengthEf(self->m_p, 1.0f);
+using WebCore::LegacyLength;
+using WebCore::LegacyLengthType;
+
+float LengthValue(const LegacyLength& length) {
+    return length.m_isFloat ? length.m_floatValue : static_cast<float>(length.m_intValue);
 }
 
-float LengthValue(const WebCore::Length& length) {
-    return length.m_isFloat ? length.m_floatValue : static_cast<float>(length.m_intValue);
+float PerspectiveValue(const WebCore::PerspectiveTransformOperation* self) {
+    const LegacyLength& length = self->m_p;
+    switch (length.m_type) {
+    case LegacyLengthType::Fixed:
+        return LengthValue(length);
+    case LegacyLengthType::Percent:
+        return static_cast<float>(1.0f * LengthValue(length) / 100.0f);
+    case LegacyLengthType::FillAvailable:
+    case LegacyLengthType::Auto:
+        return 1.0f;
+    case LegacyLengthType::Calculated:
+        throw std::invalid_argument("calculated WebCore length");
+    default:
+        return 0.0f;
+    }
 }
 
 }
@@ -82,8 +99,8 @@ bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation19isRepresentableIn2DE
     return false;
 }
 
-WebCore::Length* APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation11perspectiveEv(WebCore::Length* result, const WebCore::PerspectiveTransformOperation* self) {
-    if (self->m_p.isCalculated()) NotImplemented_nid_no_patch(__func__);
+LegacyLength* APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation11perspectiveEv(LegacyLength* result, const WebCore::PerspectiveTransformOperation* self) {
+    if (self->m_p.m_type == LegacyLengthType::Calculated) NotImplemented_nid_no_patch(__func__);
     *result = self->m_p;
     return result;
 }
@@ -95,11 +112,11 @@ bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation5applyERNS_20Transform
 
 bool APS5_VABI _ZNK7WebCore29PerspectiveTransformOperationeqERKNS_18TransformOperationE(const WebCore::PerspectiveTransformOperation* self, const WebCore::TransformOperation& other) {
     if (other.m_type != self->m_base.m_type) return false;
-    const WebCore::Length& left = self->m_p;
-    const WebCore::Length& right = reinterpret_cast<const WebCore::PerspectiveTransformOperation&>(other).m_p;
+    const LegacyLength& left = self->m_p;
+    const LegacyLength& right = reinterpret_cast<const WebCore::PerspectiveTransformOperation&>(other).m_p;
     if (left.m_type != right.m_type || left.m_hasQuirk != right.m_hasQuirk) return false;
-    if (left.m_type == WebCore::LengthType::Undefined) return true;
-    if (left.isCalculated()) NotImplemented_nid_no_patch(__func__);
+    if (left.m_type == LegacyLengthType::Undefined) return true;
+    if (left.m_type == LegacyLengthType::Calculated) NotImplemented_nid_no_patch(__func__);
     return LengthValue(left) == LengthValue(right);
 }
 
