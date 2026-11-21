@@ -13,6 +13,7 @@
 #endif
 #include <random>
 #include <windows.h>
+#include <shellapi.h>
 #else
 #include <fcntl.h>
 #include <spawn.h>
@@ -85,6 +86,19 @@ inline std::wstring QuoteArgument(const std::wstring& argument) {
     return quoted;
 }
 #endif
+
+inline std::string RelinkerArgument([[maybe_unused]] char** argv) {
+#ifdef _WIN32
+    int count = 0;
+    const auto arguments = CommandLineToArgvW(GetCommandLineW(), &count);
+    if (arguments == nullptr) throw std::runtime_error("Cannot read the command line");
+    const std::filesystem::path relinker = count > 1 ? arguments[1] : L"";
+    LocalFree(arguments);
+    return relinker.string();
+#else
+    return argv[1];
+#endif
+}
 
 inline RelinkerRun RunRelinker(const std::filesystem::path& relinker, const std::vector<std::string>& arguments, const std::filesystem::path& logPath) {
 #ifdef _WIN32

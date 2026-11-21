@@ -104,7 +104,7 @@ void RunAndRequireRejected(const std::string& binary, const Bytes& image, const 
 int main(const int argc, char** argv) {
     try {
         require(argc == 2, "usage: reloc_table_bounds_tests <relinker>");
-        const std::string binary = argv[1];
+        const std::string binary = RelinkerArgument(argv);
         const std::string tableError = "Relocation table is out of bounds";
         const std::string unmappedError = "Virtual address not mapped by any PT_LOAD segment";
 

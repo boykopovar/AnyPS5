@@ -49,7 +49,7 @@ int main(const int argc, char** argv) {
         WriteFile(input, MakeExecutable(kMainCode));
         WriteFile(modules / "sample.prx", MakeModule(kModuleCode));
 
-        const auto run = RunRelinker(argv[1], {"--to-intel", input.string(), output.string()}, directory.Path() / "relinker.log");
+        const auto run = RunRelinker(RelinkerArgument(argv), {"--to-intel", input.string(), output.string()}, directory.Path() / "relinker.log");
         require(run.ExitCode == 0, "Relinker failed:\n" + run.Output);
 
         const auto module = directory.Path() / "app0" / "sce_module" / "sample.prx.guest.prx";
