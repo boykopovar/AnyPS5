@@ -26133,10 +26133,6 @@ int APS5_VABI _ZNK7WebCore11XPathResult20invalidIteratorStateEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore12BlobDataItem6lengthEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore12CSSMediaRule5mediaEv() {
     NotImplemented_nid_no_patch(__func__);
 }
