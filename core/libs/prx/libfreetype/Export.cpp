@@ -11,6 +11,8 @@
 #include <freetype/internal/ftobjs.h>
 #endif
 
+#include <cerrno>
+#include <stdexcept>
 #include <string>
 
 extern "C" {
@@ -19,7 +21,14 @@ extern "C" {
 void APS5_VABI FT_Set_Default_Properties_nid_postfix(FreeType::GuestLibrary* library) {
     std::string environment;
     if (!CopyGuestEnvironment_nid_no_patch("FREETYPE_PROPERTIES", environment)) return;
-    FT_Library host = library ? library->host : nullptr;
+    FT_Library host = nullptr;
+    if (library) {
+        const int saved = errno;
+        const bool read = reinterpret_cast<std::uintptr_t>(library) % alignof(FreeType::GuestLibrary) == 0 &&
+            GuestCopyIn_nid_no_patch(&host, &library->host, sizeof(host));
+        errno = saved;
+        if (!read) throw std::invalid_argument("FT_Set_Default_Properties: unreadable library handle");
+    }
     std::size_t position = 0;
     while (position < environment.size()) {
         if (environment[position] == ' ' || environment[position] == '\t') {
