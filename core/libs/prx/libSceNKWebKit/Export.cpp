@@ -27528,10 +27528,6 @@ int APS5_VABI _ZNK7WebCore19MediaElementSession22allowsPictureInPictureEv() {
 }
 
 
-int APS5_VABI _ZNK7WebCore19ResourceRequestBase13isConditionalEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore19UIEventWithKeyState16getModifierStateERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }

@@ -50,6 +50,10 @@ using NKWebKit::WebCoreAbi::LegacyResourceRequestBase;
 using NKWebKit::WebCoreAbi::ResourceRequestBase;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::URL;
+using NKWebKit::HttpAbi::HTTPHeaderName;
+
+static_assert(sizeof(NKWebKit::WebCoreAbi::HTTPHeaderMap) == sizeof(NKWebKit::HttpAbi::HTTPHeaderMap));
+static_assert(alignof(NKWebKit::WebCoreAbi::HTTPHeaderMap) == alignof(NKWebKit::HttpAbi::HTTPHeaderMap));
 
 double defaultTimeoutInterval = 0;
 
@@ -419,6 +423,24 @@ bool APS5_VABI _ZNK7WebCore19ResourceRequestBase7isEmptyEv(const ResourceRequest
     const auto& request = Checked(self);
     UpdateResourceRequest(request);
     return !request.url.impl || !request.url.impl->length;
+}
+
+bool APS5_VABI _ZNK7WebCore19ResourceRequestBase13isConditionalEv(const ResourceRequestBase* self) {
+    const auto& request = Checked(self);
+    UpdateResourceRequest(request);
+    constexpr HTTPHeaderName conditionalHeaders[] = {
+        HTTPHeaderName::IfMatch,
+        HTTPHeaderName::IfModifiedSince,
+        HTTPHeaderName::IfNoneMatch,
+        HTTPHeaderName::IfRange,
+        HTTPHeaderName::IfUnmodifiedSince,
+    };
+    for (auto header : conditionalHeaders) {
+        auto* headers = reinterpret_cast<const NKWebKit::HttpAbi::HTTPHeaderMap*>(&request.httpHeaderFields);
+        if (_ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE(headers, header))
+            return true;
+    }
+    return false;
 }
 
 const URL& APS5_VABI _ZNK7WebCore19ResourceRequestBase20firstPartyForCookiesEv(const ResourceRequestBase* self) {
