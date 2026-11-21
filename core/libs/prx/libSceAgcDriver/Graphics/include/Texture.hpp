@@ -70,8 +70,8 @@ struct OwnedImage {
 
 class Texture {
 public:
-    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare = false, bool layerRows = false, const VkClearColorValue* clear = nullptr, std::optional<std::span<const std::uint32_t>> packedSlabs = std::nullopt, std::span<const HostImportCopy> sources = {});
-    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::shared_ptr<Buffer> staging, bool depthCompare = false, bool layerRows = false, std::optional<std::span<const std::uint32_t>> packedSlabs = std::nullopt);
+    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare = false, bool layerRows = false, const VkClearColorValue* clear = nullptr, std::optional<std::span<const std::uint32_t>> packedSlabs = std::nullopt, std::span<const HostImportCopy> sources = {}, bool unormView = false);
+    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::shared_ptr<Buffer> staging, bool depthCompare = false, bool layerRows = false, std::optional<std::span<const std::uint32_t>> packedSlabs = std::nullopt, bool unormView = false);
     Texture(const Context& context, const std::shared_ptr<ResidentColor>& source, const GuestTextureResource& descriptor, VkComponentMapping components);
     // A view of a storage image's own VkImage: the sampled texture follows the image's content, so a
     // compute pass writing it and the next pass sampling it share one image and copy nothing.
@@ -86,7 +86,7 @@ public:
     static VkFormat DepthCopyFormat(VkFormat colorFormat);
     static bool CanDepthCopyFrom(const StorageTexture& source, const GuestTextureResource& descriptor);
     struct BlockCopyTag {};
-    Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, BlockCopyTag);
+    Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, BlockCopyTag, bool unormView = false);
     static bool CanBlockCopyFrom(const StorageTexture& source, const GuestTextureResource& descriptor);
     struct RepackCopyTag {};
     Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, RepackCopyTag);
@@ -107,9 +107,11 @@ public:
     VkImageView FirstLayerView() const { return firstLayerView; }
     VkImageView BaseLevelView() const;
     bool HasSrgbView() const { return srgbInfo.has_value(); }
+    bool HasUnormView() const { return unormInfo.has_value(); }
     bool HasArrayView() const { return arrayInfo.has_value(); }
     VkImageView ArrayView() const;
     VkImageView SrgbView(bool firstLayer, bool baseLevel) const;
+    VkImageView SampledGammaView(bool firstLayer, bool baseLevel, bool srgb) const;
     struct ViewRange {
         VkImageViewType type;
         std::uint32_t levels;
@@ -144,13 +146,13 @@ public:
     void MarkReleased() { released.store(true, std::memory_order_release); }
 
 private:
-    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, std::shared_ptr<Buffer> staging, bool depthCompare, bool layerRows, const VkClearColorValue* clear, std::optional<std::span<const std::uint32_t>> packedSlabs, std::span<const HostImportCopy> sources);
+    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, std::shared_ptr<Buffer> staging, bool depthCompare, bool layerRows, const VkClearColorValue* clear, std::optional<std::span<const std::uint32_t>> packedSlabs, std::span<const HostImportCopy> sources, bool unormView);
     void release() noexcept;
     bool refreshBlockCopy();
     bool refreshSrgbExpand();
     void createFirstLayerView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo);
     void prepareBaseLevelView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo);
-    void prepareSrgbView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo);
+    void prepareSrgbView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo, bool unormView = false);
 
     // Held by value: cached textures outlive the Context of the draw that created them.
     Context context;
@@ -166,9 +168,11 @@ private:
     mutable std::mutex baseLevelMutex;
     mutable VkImageView baseLevelView = VK_NULL_HANDLE;
     std::optional<VkImageViewCreateInfo> srgbInfo;
+    std::optional<VkImageViewCreateInfo> unormInfo;
     float srgbMinLod = 0.0f;
     mutable std::mutex srgbMutex;
     mutable std::array<VkImageView, 3> srgbViews{};
+    mutable std::array<VkImageView, 3> unormViews{};
     std::optional<VkImageViewCreateInfo> arrayInfo;
     float arrayMinLod = 0.0f;
     mutable std::mutex arrayMutex;
@@ -195,7 +199,7 @@ private:
 };
 
 VkFormat AttachmentProxyFormat(const Context& context, VkFormat format);
-VkFormat SrgbTwinFormat(const Context& context, VkFormat format);
+VkFormat SrgbTwinFormat(const Context& context, VkFormat format, bool unormView = false);
 
 class UnitFlags {
 public:

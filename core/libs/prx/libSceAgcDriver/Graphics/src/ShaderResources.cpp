@@ -144,6 +144,7 @@ struct TextureKey {
     std::array<std::uint32_t, 8> words;
     std::array<std::uint32_t, 4> components;
     bool depthCompare = false;
+    bool unormView = false;
     AllocationIdentity allocation;
     bool operator==(const TextureKey&) const = default;
 };
@@ -156,15 +157,16 @@ std::uint64_t hashWords(std::uint64_t hash, const std::uint32_t* words, std::siz
 struct TextureKeyHash {
     std::size_t operator()(const TextureKey& key) const noexcept {
         auto hash = 14695981039346656037ull ^ reinterpret_cast<std::uintptr_t>(key.device);
-        hash = hashWords(hash, key.words.data(), key.words.size()) ^ static_cast<std::uint64_t>(key.depthCompare);
+        hash = hashWords(hash, key.words.data(), key.words.size()) ^ static_cast<std::uint64_t>(key.depthCompare) ^ (static_cast<std::uint64_t>(key.unormView) << 1u);
         for (const auto value : {key.allocation.rangeAddress, key.allocation.rangeBytes, key.allocation.allocationAddress, key.allocation.allocationBytes, key.allocation.backingSerial, static_cast<std::uint64_t>(key.allocation.flags)}) hash = (hash ^ value) * 1099511628211ull;
         return static_cast<std::size_t>(hashWords(hash, key.components.data(), key.components.size()));
     }
 };
 
-TextureKey MakeTextureKey(VkDevice device, std::span<const std::uint32_t> words, VkComponentMapping components, bool depthCompare = false) {
+TextureKey MakeTextureKey(VkDevice device, std::span<const std::uint32_t> words, VkComponentMapping components, bool depthCompare = false, bool unormView = false) {
     TextureKey key{device, {}, {static_cast<std::uint32_t>(components.r), static_cast<std::uint32_t>(components.g), static_cast<std::uint32_t>(components.b), static_cast<std::uint32_t>(components.a)}};
     key.depthCompare = depthCompare;
+    key.unormView = unormView;
     key.allocation = ImageAllocationIdentity(words);
     std::copy(words.begin(), words.end(), key.words.begin());
     key.words[5] &= ~((0xfffu << 8u) | (1u << 25u));
@@ -991,7 +993,7 @@ PendingLookup pendingLookupSource(const Context& context, const GuestTextureReso
 }
 
 // `guestBytes` is the surface size when the caller described the surface already (0: described here).
-std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& requested, VkComponentMapping components, std::uint64_t guestBytes = 0, bool depthCompare = false, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D, bool layerRows = false) {
+std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& requested, VkComponentMapping components, std::uint64_t guestBytes = 0, bool depthCompare = false, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D, bool layerRows = false, bool unormView = false) {
     Require(!layerRows || (requested.dimension == TextureDimension::k1DArray && !depthCompare), "only a sampled 1D array is laid out as rows of a 2D image");
     const auto resource = layerRows ? requested : ArrayLayerWindow(requested, context.limits.maxImageArrayLayers);
     if (resource.baseAddress != requested.baseAddress) guestBytes = 0;
@@ -1026,13 +1028,13 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     if (depthBitsWidth == 32u && resource.format != float32) {
         auto bits = resource;
         bits.format = float32;
-        return cachedTexture(context, words, bits, components, guestBytes, depthCompare, VK_IMAGE_VIEW_TYPE_2D, layerRows);
+        return cachedTexture(context, words, bits, components, guestBytes, depthCompare, VK_IMAGE_VIEW_TYPE_2D, layerRows, unormView);
     }
     constexpr auto unorm16 = static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format16UNorm);
     if (depthBitsWidth == 16u && resource.format != unorm16) {
         auto normalized = resource;
         normalized.format = unorm16;
-        return cachedTexture(context, words, normalized, components, guestBytes, depthCompare, VK_IMAGE_VIEW_TYPE_2D, layerRows);
+        return cachedTexture(context, words, normalized, components, guestBytes, depthCompare, VK_IMAGE_VIEW_TYPE_2D, layerRows, unormView);
     }
     const auto viewedWindow = [&] {
         const auto window = ViewedArrayWindow(resource, false);
@@ -1045,7 +1047,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         static std::atomic<std::uint64_t> windows{0};
         const auto count = windows.fetch_add(1) + 1;
         if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] sampled array view 0x%llx (%ux%u format %u, dimension %d, slices %u..%u) served from its viewed slices at 0x%llx; %llu such views\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, static_cast<int>(resource.dimension), resource.baseArray, resource.depthOrLastArray, static_cast<unsigned long long>(window.baseAddress), static_cast<unsigned long long>(count));
-        return cachedTexture(context, words, window, components, 0, depthCompare, VK_IMAGE_VIEW_TYPE_2D, layerRows);
+        return cachedTexture(context, words, window, components, 0, depthCompare, VK_IMAGE_VIEW_TYPE_2D, layerRows, unormView);
     }
     if (guestBytes == 0) guestBytes = SurfaceGuestBytes(resource);
     if (guestBytes >= (1ull << 30u)) {
@@ -1186,7 +1188,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             return texture;
         }
         if (source != nullptr && blockCopy) {
-            auto texture = std::make_shared<Texture>(context, source, resource, components, Texture::BlockCopyTag{});
+            auto texture = std::make_shared<Texture>(context, source, resource, components, Texture::BlockCopyTag{}, unormView);
             texture->RefreshDepthCopy();
             return texture;
         }
@@ -1201,12 +1203,12 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             return texture;
         }
         if (source != nullptr) return std::make_shared<Texture>(context, source, resource, components);
-        if (const auto clear = SampledClearColor(context, resource, *keys, depthCompare)) return std::make_shared<Texture>(context, *context.detiler, resource, components, std::span<const std::byte>{}, false, layerRows, &*clear);
+        if (const auto clear = SampledClearColor(context, resource, *keys, depthCompare)) return std::make_shared<Texture>(context, *context.detiler, resource, components, std::span<const std::byte>{}, false, layerRows, &*clear, std::nullopt, std::span<const HostImportCopy>{}, unormView);
         const auto slabs = slabbed ? committedSlabs(resource, guestBytes, std::nullopt) : std::nullopt;
         if (slabs.has_value()) reportCommittedSlabs(resource, *slabs, guestBytes);
         std::vector<std::byte> snapshot(snapshotBytes(slabs, bytes));
         readSnapshot(resource, *keys, slabs, snapshot);
-        return std::make_shared<Texture>(context, *context.detiler, resource, components, snapshot, depthCompare, layerRows, nullptr, packedSlabs(slabs));
+        return std::make_shared<Texture>(context, *context.detiler, resource, components, snapshot, depthCompare, layerRows, nullptr, packedSlabs(slabs), std::span<const HostImportCopy>{}, unormView);
     }
     auto snapshotGeneration = generation;
     std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> committed;
@@ -1221,7 +1223,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     auto slabs = slabbed ? committedSlabs(resource, guestBytes, committed) : std::nullopt;
     const auto snapshotSize = snapshotBytes(slabs, bytes);
     auto& cache = Textures();
-    const auto key = MakeTextureKey(context.device, words, components, depthCompare);
+    const auto key = MakeTextureKey(context.device, words, components, depthCompare, unormView);
     std::lock_guard lock(cache.mutex);
     const CacheHold held(sampledCacheHeld);
     dropUncachedViews(cache);
@@ -1304,7 +1306,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             entry.texture = createTexture(source, resource, components, Texture::DepthCopyTag{});
             entry.texture->RefreshDepthCopy();
         } else if (blockCopy) {
-            entry.texture = createTexture(source, resource, components, Texture::BlockCopyTag{});
+            entry.texture = createTexture(source, resource, components, Texture::BlockCopyTag{}, unormView);
             entry.texture->RefreshDepthCopy();
         } else if (IsRepackedTextureFormat(resource.format)) {
             entry.texture = createTexture(source, resource, components, Texture::RepackCopyTag{});
@@ -1318,11 +1320,11 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         entry.accounted = source->Cached() ? 0u : heldBytes(*source);
         counters.fromStorage.fetch_add(1, std::memory_order_relaxed);
     } else if (clear) {
-        entry.texture = createTexture(*context.detiler, resource, components, std::span<const std::byte>{}, false, layerRows, &*clear);
+        entry.texture = createTexture(*context.detiler, resource, components, std::span<const std::byte>{}, false, layerRows, &*clear, std::nullopt, std::span<const HostImportCopy>{}, unormView);
         entry.accounted = entry.texture->AllocationBytes();
         counters.cleared.fetch_add(1, std::memory_order_relaxed);
     } else if (!gpuSources.empty()) {
-        entry.texture = createTexture(*context.detiler, resource, components, std::span<const std::byte>{}, false, false, nullptr, std::nullopt, std::span<const HostImportCopy>(gpuSources));
+        entry.texture = createTexture(*context.detiler, resource, components, std::span<const std::byte>{}, false, false, nullptr, std::nullopt, std::span<const HostImportCopy>(gpuSources), unormView);
         entry.accounted = entry.texture->AllocationBytes();
         counters.imported.fetch_add(1, std::memory_order_relaxed);
     } else {
@@ -1350,8 +1352,8 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             for (std::size_t i = 0; i < read.size(); i += 64) nonzero += read[i] != std::byte{0};
             std::fprintf(stderr, "[texture] 0x%llx %ux%u format %u tile %d: %zu of %zu sampled bytes nonzero\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), nonzero, read.size() / 64);
         }
-        if (staging != nullptr) entry.texture = createTexture(*context.detiler, resource, components, std::move(staging), depthCompare, layerRows, packedSlabs(entry.slabs));
-        else entry.texture = createTexture(*context.detiler, resource, components, entry.bytes, depthCompare, layerRows, nullptr, packedSlabs(entry.slabs));
+        if (staging != nullptr) entry.texture = createTexture(*context.detiler, resource, components, std::move(staging), depthCompare, layerRows, packedSlabs(entry.slabs), unormView);
+        else entry.texture = createTexture(*context.detiler, resource, components, entry.bytes, depthCompare, layerRows, nullptr, packedSlabs(entry.slabs), std::span<const HostImportCopy>{}, unormView);
         entry.accounted = entry.texture->AllocationBytes();
         if (entry.bytes.size() > SnapshotCompareBytes && (entry.generation != 0 || entry.untracked[0] != 0)) parkSnapshot(cache, entry.bytes);
         counters.snapshots.fetch_add(1, std::memory_order_relaxed);
@@ -2988,7 +2990,7 @@ void ShaderResources::buildComplete() {
                         write.pImageInfo = images.data() + images.size();
                         for (const auto index : binding.imageAllocations) {
                             if (index == std::numeric_limits<std::size_t>::max()) images.push_back(absentImage(binding.layout.binding));
-                            else images.push_back({VK_NULL_HANDLE, textureSrgb[index] ? textures[index]->SrgbView(textureFirstLayer[index], textureBaseLevel[index]) : textureBaseLevel[index] ? textures[index]->BaseLevelView() : textureFirstLayer[index] ? textures[index]->FirstLayerView() : textures[index]->View(), textures[index]->Layout()});
+                            else images.push_back({VK_NULL_HANDLE, textureGamma[index] ? textures[index]->SampledGammaView(textureFirstLayer[index], textureBaseLevel[index], textureGamma[index] == 1u) : textureBaseLevel[index] ? textures[index]->BaseLevelView() : textureFirstLayer[index] ? textures[index]->FirstLayerView() : textures[index]->View(), textures[index]->Layout()});
                         }
                         Require(binding.imageAllocations.size() == binding.layout.descriptorCount, "descriptor allocations disagree with compact binding");
                         break;
@@ -4363,7 +4365,7 @@ bool ShaderResources::reresolveElements(const std::vector<std::size_t>& elements
         const auto first = std::lower_bound(indexImagePositions.begin(), indexImagePositions.end(), i, [](const ImagePosition& entry, std::size_t texture) { return entry.texture < texture; });
         for (auto entry = first; entry != indexImagePositions.end() && entry->texture == i; ++entry) {
             const auto& current = textures[i];
-            const auto view = entry->table ? (textureFirstLayer[i] ? current->FirstLayerView() : current->View()) : textureSrgb[i] ? current->SrgbView(textureFirstLayer[i], textureBaseLevel[i]) : textureBaseLevel[i] ? current->BaseLevelView() : textureFirstLayer[i] ? current->FirstLayerView() : current->View();
+            const auto view = entry->table ? (textureFirstLayer[i] ? current->FirstLayerView() : current->View()) : textureGamma[i] ? current->SampledGammaView(textureFirstLayer[i], textureBaseLevel[i], textureGamma[i] == 1u) : textureBaseLevel[i] ? current->BaseLevelView() : textureFirstLayer[i] ? current->FirstLayerView() : current->View();
             descriptorImages[entry->position] = {VK_NULL_HANDLE, view, current->Layout()};
         }
         rebound = true;
@@ -6011,7 +6013,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             }
             const bool forcedSrgb = ForcesDegammaOn(resource.format, binding.imageSamplers[element], shaderSamplers);
             RequireNonSeamlessCube(resource.dimension == TextureDimension::kCube, binding.imageSamplers[element], shaderSamplers);
-            RequireDisablesDegammaOn(resource.format, binding.imageSamplers[element], shaderSamplers);
+            const bool skippedSrgb = DisablesDegammaOn(resource.format, binding.imageSamplers[element], shaderSamplers);
             const bool depthCompare = !binding.imageDepthCompare.empty() && binding.imageDepthCompare.at(element);
             const bool firstLayer = binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2D && (resource.dimension == TextureDimension::k2DArray || (depthCompare && resource.dimension == TextureDimension::k1DArray));
             const bool depth1D = depthCompare && ((binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k1D) || (binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2DArray && resource.dimension == TextureDimension::k1DArray));
@@ -6025,8 +6027,8 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             if (resource.dccAddress != 0) CompletePendingCpuWrites(context, resource.dccAddress, DccKeyBytes(guestBytes));
             std::shared_ptr<Texture> texture;
             const VkImageViewType multisampleViewType = binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
-            if (previousSampled.texture != nullptr && previousSampled.depthCompare == depthCompare && previousSampled.multisampleViewType == multisampleViewType && previousSampled.firstSample == firstSample && previousSampled.layerRows == layerRows && words.size() == 8 && std::equal(words.begin(), words.end(), previousSampled.words.begin())) texture = previousSampled.texture;
-            if (texture == nullptr && !firstSample && record != nullptr && record->texture != nullptr) {
+            if (previousSampled.texture != nullptr && (!skippedSrgb || previousSampled.texture->HasUnormView()) && previousSampled.depthCompare == depthCompare && previousSampled.multisampleViewType == multisampleViewType && previousSampled.firstSample == firstSample && previousSampled.layerRows == layerRows && words.size() == 8 && std::equal(words.begin(), words.end(), previousSampled.words.begin())) texture = previousSampled.texture;
+            if (texture == nullptr && !firstSample && record != nullptr && record->texture != nullptr && (!skippedSrgb || record->texture->HasUnormView())) {
                 texture = fastTexture(*record);
                 if (TextureCountersReported()) (texture != nullptr ? counters.fastHits : counters.fastMisses).fetch_add(1, std::memory_order_relaxed);
             }
@@ -6034,7 +6036,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
                 Require(!depthCompare, "reading sample 0 of a multisampled texture with a depth comparison through a 2D image is not implemented");
                 texture = DepthSurfaceAt(resource.baseAddress) ? DepthSurfaceFirstSample(context, words, resource, components) : MultisampleTargetFirstSample(context, resource, components);
             }
-            if (texture == nullptr) texture = cachedTexture(context, words, resource, components, guestBytes, depthCompare, multisampleViewType, layerRows);
+            if (texture == nullptr) texture = cachedTexture(context, words, resource, components, guestBytes, depthCompare, multisampleViewType, layerRows, skippedSrgb);
             if (resource.dimension == TextureDimension::k2DMsaa) multisampleSources.push_back(resource.baseAddress);
             bool baseLevel = false;
             if (element < binding.imageUnnormalized.size() && binding.imageUnnormalized[element]) {
@@ -6069,7 +6071,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             textures.push_back(std::move(texture));
             textureFirstLayer.push_back(firstLayer);
             textureBaseLevel.push_back(baseLevel);
-            textureSrgb.push_back(forcedSrgb);
+            textureGamma.push_back(skippedSrgb ? 2u : forcedSrgb ? 1u : 0u);
             describedRanges.push_back({"texture", resource.baseAddress, guestBytes, resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), resource.dccAddress});
             item.imageAllocations.push_back(textures.size() - 1);
         }

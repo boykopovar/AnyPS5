@@ -525,11 +525,11 @@ static VkDeviceSize BindSparseLevels(const Context& context, OwnedImage& owned, 
     return bytes;
 }
 
-Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare, bool layerRows, const VkClearColorValue* clear, std::optional<std::span<const std::uint32_t>> packedSlabs, std::span<const HostImportCopy> sources) : Texture(context, detiler, descriptor, components, snapshot, nullptr, depthCompare, layerRows, clear, packedSlabs, sources) {}
+Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare, bool layerRows, const VkClearColorValue* clear, std::optional<std::span<const std::uint32_t>> packedSlabs, std::span<const HostImportCopy> sources, bool unormView) : Texture(context, detiler, descriptor, components, snapshot, nullptr, depthCompare, layerRows, clear, packedSlabs, sources, unormView) {}
 
-Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::shared_ptr<Buffer> staging, bool depthCompare, bool layerRows, std::optional<std::span<const std::uint32_t>> packedSlabs) : Texture(context, detiler, descriptor, components, {}, std::move(staging), depthCompare, layerRows, nullptr, packedSlabs, {}) {}
+Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::shared_ptr<Buffer> staging, bool depthCompare, bool layerRows, std::optional<std::span<const std::uint32_t>> packedSlabs, bool unormView) : Texture(context, detiler, descriptor, components, {}, std::move(staging), depthCompare, layerRows, nullptr, packedSlabs, {}, unormView) {}
 
-Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, std::shared_ptr<Buffer> staging, bool depthCompare, bool layerRows, const VkClearColorValue* clear, std::optional<std::span<const std::uint32_t>> packedSlabs, std::span<const HostImportCopy> sources) : context(context) {
+Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, std::shared_ptr<Buffer> staging, bool depthCompare, bool layerRows, const VkClearColorValue* clear, std::optional<std::span<const std::uint32_t>> packedSlabs, std::span<const HostImportCopy> sources, bool unormView) : context(context) {
 
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PhaseTimer timer;
@@ -608,7 +608,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         const auto rowLayers = layerRows ? geometry.imageLayers - descriptor.baseArray : 0u;
         Require(!layerRows || (descriptor.baseArray < geometry.imageLayers && rowLayers <= context.limits.maxImageDimension2D / 2u), "a 1D array past maxImageArrayLayers whose viewed slices need more than maxImageDimension2D rows is not implemented");
         VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-        imageInfo.flags = (descriptor.dimension == TextureDimension::kCube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u) | (SrgbTwinFormat(context, vkFormat) != VK_FORMAT_UNDEFINED ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0u);
+        imageInfo.flags = (descriptor.dimension == TextureDimension::kCube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u) | (SrgbTwinFormat(context, vkFormat, unormView) != VK_FORMAT_UNDEFINED ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0u);
         imageInfo.imageType = depth1D || layerRows ? VK_IMAGE_TYPE_2D : ImageTypeFor(descriptor.dimension);
         imageInfo.format = vkFormat;
         imageInfo.extent = {descriptor.width, layerRows ? rowLayers * 2u : depth1D ? 1u : descriptor.height, geometry.imageDepth};
@@ -921,7 +921,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
         createFirstLayerView(descriptor, viewInfo);
         prepareBaseLevelView(descriptor, viewInfo);
-        prepareSrgbView(descriptor, viewInfo);
+        prepareSrgbView(descriptor, viewInfo, unormView);
         if (profile) {
             auto& totals = Profile();
             totals.view += timer.lap();
@@ -1041,7 +1041,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
     }
 }
 
-Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, BlockCopyTag) : context(context), storageSource(source), perUseCopy(PerUseCopy::RefreshedOnReuse) {
+Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, BlockCopyTag, bool unormView) : context(context), storageSource(source), perUseCopy(PerUseCopy::RefreshedOnReuse) {
     try {
         Require(source != nullptr && CanBlockCopyFrom(*source, descriptor), "storage image cannot serve a block copy of the sampled texture");
         blockFormat = SampledTextureFormat(context, descriptor.format);
@@ -1064,7 +1064,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         imageInfo.arrayLayers = copyLayers;
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-        imageInfo.flags = SrgbTwinFormat(context, blockFormat) != VK_FORMAT_UNDEFINED ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0u;
+        imageInfo.flags = SrgbTwinFormat(context, blockFormat, unormView) != VK_FORMAT_UNDEFINED ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0u;
         imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1090,7 +1090,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
         createFirstLayerView(descriptor, viewInfo);
         prepareBaseLevelView(descriptor, viewInfo);
-        prepareSrgbView(descriptor, viewInfo);
+        prepareSrgbView(descriptor, viewInfo, unormView);
     } catch (...) {
         release();
         throw;
@@ -1196,6 +1196,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
         createFirstLayerView(descriptor, viewInfo);
         prepareBaseLevelView(descriptor, viewInfo);
+        prepareSrgbView(descriptor, viewInfo, true);
         sourceDescriptor = descriptor;
         countedBytes = allocationBytes;
         SampledMemoryCounter().fetch_add(countedBytes, std::memory_order_relaxed);
@@ -1432,7 +1433,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
         createFirstLayerView(descriptor, viewInfo);
         prepareBaseLevelView(descriptor, viewInfo);
-        prepareSrgbView(descriptor, viewInfo);
+        prepareSrgbView(descriptor, viewInfo, true);
         if (profile) {
             auto& totals = Profile();
             totals.view += timer.lap();
@@ -1499,21 +1500,28 @@ void Texture::prepareBaseLevelView(const GuestTextureResource& descriptor, VkIma
     baseLevelInfo = viewInfo;
 }
 
-void Texture::prepareSrgbView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo) {
-    const auto format = SrgbTwinFormat(context, viewInfo.format);
+void Texture::prepareSrgbView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo, bool unormView) {
+    const auto format = SrgbTwinFormat(context, viewInfo.format, unormView);
     if (format == VK_FORMAT_UNDEFINED) return;
     viewInfo.pNext = nullptr;
     viewInfo.format = format;
-    srgbInfo = viewInfo;
+    if (IsSrgbTextureFormat(descriptor.format)) unormInfo = viewInfo;
+    else srgbInfo = viewInfo;
     srgbMinLod = context.imageViewMinLod ? EffectiveMinLod(descriptor) : 0.0f;
 }
 
 VkImageView Texture::SrgbView(bool firstLayer, bool baseLevel) const {
-    Require(srgbInfo.has_value(), "AGC graphics: a texture of view format " + std::to_string(viewFormat) + " has no sRGB view for a sampler that forces sRGB decoding");
+    Require(HasSrgbView(), "a texture has no sRGB view for a sampler that forces sRGB decoding");
+    return SampledGammaView(firstLayer, baseLevel, true);
+}
+
+VkImageView Texture::SampledGammaView(bool firstLayer, bool baseLevel, bool srgb) const {
+    const auto& prepared = srgb ? srgbInfo : unormInfo;
+    Require(prepared.has_value(), "a texture of view format " + std::to_string(viewFormat) + " has no " + (srgb ? "sRGB" : "UNORM") + " view for the sampler decode mode");
     std::lock_guard lock(srgbMutex);
-    auto& slot = srgbViews[baseLevel ? 2u : firstLayer ? 1u : 0u];
+    auto& slot = (srgb ? srgbViews : unormViews)[baseLevel ? 2u : firstLayer ? 1u : 0u];
     if (slot != VK_NULL_HANDLE) return slot;
-    VkImageViewCreateInfo info = *srgbInfo;
+    VkImageViewCreateInfo info = *prepared;
     VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
     usage.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
     info.pNext = &usage;
@@ -1579,9 +1587,11 @@ void Texture::release() noexcept {
     baseLevelView = VK_NULL_HANDLE;
     if (arrayView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, arrayView, nullptr);
     arrayView = VK_NULL_HANDLE;
-    for (auto& srgbView : srgbViews) {
-        if (srgbView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, srgbView, nullptr);
-        srgbView = VK_NULL_HANDLE;
+    for (auto* views : {&srgbViews, &unormViews}) {
+        for (auto& gammaView : *views) {
+            if (gammaView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, gammaView, nullptr);
+            gammaView = VK_NULL_HANDLE;
+        }
     }
     // The image and its memory go with the last holder: this texture, or the batch still uploading it.
     owned.reset();
@@ -1741,9 +1751,19 @@ bool StorageClearAvailable(const Context& context, std::uint32_t guestFormat, Dc
     return IsDccClear(keys) && StorageFormatAvailable(context, guestFormat) && ClearColorFor(StorageFormatForGuest(context, guestFormat), keys, clear);
 }
 
-VkFormat SrgbTwinFormat(const Context& context, VkFormat format) {
+VkFormat SrgbTwinFormat(const Context& context, VkFormat format, bool unormView) {
     const auto decoded = [&](ShaderRecompiler::IrBufferFormat srgb) { return (context.srgbDecodeFormats & ShaderRecompiler::SrgbDecodeBit(srgb)) != 0u; };
     switch (format) {
+        case VK_FORMAT_R8_SRGB: return unormView ? VK_FORMAT_R8_UNORM : VK_FORMAT_UNDEFINED;
+        case VK_FORMAT_R8G8_SRGB: return unormView ? VK_FORMAT_R8G8_UNORM : VK_FORMAT_UNDEFINED;
+        case VK_FORMAT_R8G8B8A8_SRGB: return unormView ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_UNDEFINED;
+        case VK_FORMAT_B8G8R8A8_SRGB: return unormView ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_UNDEFINED;
+        case VK_FORMAT_A8B8G8R8_SRGB_PACK32: return unormView ? VK_FORMAT_A8B8G8R8_UNORM_PACK32 : VK_FORMAT_UNDEFINED;
+        case VK_FORMAT_BC1_RGB_SRGB_BLOCK: return unormView ? VK_FORMAT_BC1_RGB_UNORM_BLOCK : VK_FORMAT_UNDEFINED;
+        case VK_FORMAT_BC1_RGBA_SRGB_BLOCK: return unormView ? VK_FORMAT_BC1_RGBA_UNORM_BLOCK : VK_FORMAT_UNDEFINED;
+        case VK_FORMAT_BC2_SRGB_BLOCK: return unormView ? VK_FORMAT_BC2_UNORM_BLOCK : VK_FORMAT_UNDEFINED;
+        case VK_FORMAT_BC3_SRGB_BLOCK: return unormView ? VK_FORMAT_BC3_UNORM_BLOCK : VK_FORMAT_UNDEFINED;
+        case VK_FORMAT_BC7_SRGB_BLOCK: return unormView ? VK_FORMAT_BC7_UNORM_BLOCK : VK_FORMAT_UNDEFINED;
         case VK_FORMAT_R8_UNORM: return decoded(ShaderRecompiler::IrBufferFormat::Format8Srgb) ? VK_FORMAT_UNDEFINED : VK_FORMAT_R8_SRGB;
         case VK_FORMAT_R8G8_UNORM: return decoded(ShaderRecompiler::IrBufferFormat::Format8_8Srgb) ? VK_FORMAT_UNDEFINED : VK_FORMAT_R8G8_SRGB;
         case VK_FORMAT_R8_SNORM: return decoded(ShaderRecompiler::IrBufferFormat::Format8Srgb) ? VK_FORMAT_UNDEFINED : VK_FORMAT_R8_SRGB;
