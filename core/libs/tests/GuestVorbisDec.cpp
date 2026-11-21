@@ -56,20 +56,37 @@ struct Source {
     std::int64_t probed = -1;
     bool throwOnRead = false;
     bool throwOnClose = false;
+    std::size_t gapStart = 0;
+    std::size_t gapSize = 0;
 };
 
 std::size_t ReadBytes(Source& source, void* buffer, std::size_t size, std::size_t count) {
     if (source.throwOnRead) throw std::runtime_error("read callback");
     if (source.probe) source.probed = sceVorbisDecStreams(source.probe);
     if (size == 0) return 0;
-    const std::size_t items = std::min(count, (source.bytes->size() - source.position) / size);
-    if (items != 0) std::memcpy(buffer, source.bytes->data() + source.position, items * size);
-    source.position += items * size;
+    const std::size_t items = std::min(count, (source.bytes->size() + source.gapSize - source.position) / size);
+    auto* out = static_cast<unsigned char*>(buffer);
+    std::size_t remaining = items * size;
+    while (remaining != 0) {
+        std::size_t chunk = remaining;
+        if (source.position < source.gapStart) {
+            chunk = std::min(chunk, source.gapStart - source.position);
+            std::memcpy(out, source.bytes->data() + source.position, chunk);
+        } else if (source.position < source.gapStart + source.gapSize) {
+            chunk = std::min(chunk, source.gapStart + source.gapSize - source.position);
+            std::memset(out, 0, chunk);
+        } else {
+            std::memcpy(out, source.bytes->data() + (source.position - source.gapSize), chunk);
+        }
+        source.position += chunk;
+        out += chunk;
+        remaining -= chunk;
+    }
     return items;
 }
 
 int SeekBytes(Source& source, std::int64_t offset, int whence) {
-    const auto size = static_cast<std::int64_t>(source.bytes->size());
+    const auto size = static_cast<std::int64_t>(source.bytes->size() + source.gapSize);
     const std::int64_t base = whence == SEEK_SET ? 0 : whence == SEEK_CUR ? static_cast<std::int64_t>(source.position) : size;
     if (offset < -base || offset > size - base) return -1;
     source.position = static_cast<std::size_t>(base + offset);
@@ -339,6 +356,34 @@ void TestSeekable(const std::vector<unsigned char>& stream) {
     Require(sceVorbisDecClear(vf) == 0 && source.closes == 1);
     Require(ov_clear(&reference) == 0 && referenceSource.closes == 1);
     Require(source.probed == 0 && guest.Untouched() && probe.Untouched());
+}
+
+void TestWideStreamPositions(const std::vector<unsigned char>& stream, std::size_t gapSize) {
+    Source compact{&stream};
+    OggVorbis_File reference{};
+    Require(ov_open_callbacks(&compact, &reference, nullptr, 0, HostSeekableCallbacks) == 0);
+    const auto lastPage = ov_raw_total(&reference, 0);
+    Require(lastPage > 0 && static_cast<std::size_t>(lastPage) + 4 <= stream.size());
+    Require(std::memcmp(stream.data() + lastPage, "OggS", 4) == 0);
+
+    Source source{&stream};
+    source.gapStart = static_cast<std::size_t>(lastPage);
+    source.gapSize = gapSize;
+    const auto wideLastPage = lastPage + static_cast<std::int64_t>(source.gapSize);
+    GuestFile guest;
+    void* vf = guest.Get();
+    Require(sceVorbisDecOpenCallbacks(&source, vf, nullptr, 0, SeekableCallbacks) == 0);
+    Require(sceVorbisDecSeekable(vf) == 1 && sceVorbisDecRawTotal(vf, 0) == wideLastPage);
+    Require(sceVorbisDecPcmTotal(vf, 0) == FirstSamples);
+    Require(RequireSameRead(vf, reference) > 0);
+    Require(sceVorbisDecRawSeek(vf, wideLastPage) == 0 && ov_raw_seek(&reference, lastPage) == 0);
+    Require(sceVorbisDecRawTell(vf) == ov_raw_tell(&reference) + static_cast<std::int64_t>(gapSize));
+    Require(sceVorbisDecPcmTell(vf) == ov_pcm_tell(&reference));
+    Require(RequireSameRead(vf, reference) >= 0);
+    Require(sceVorbisDecRawSeek(vf, 0) == 0 && ov_raw_seek(&reference, 0) == 0);
+    Require(RequireSameRead(vf, reference) > 0);
+    Require(sceVorbisDecClear(vf) == 0 && source.closes == 1);
+    Require(ov_clear(&reference) == 0 && guest.Untouched());
 }
 
 void TestStreaming(const std::vector<unsigned char>& stream) {
@@ -638,6 +683,8 @@ void TestBitrateHalfTies() {
 int main() {
     std::vector<unsigned char> stream;
     EncodeLink(stream, FirstSerial, FirstChannels, FirstRate, FirstSamples, "first");
+    TestWideStreamPositions(stream, std::size_t{1} << 31);
+    TestWideStreamPositions(stream, std::size_t{1} << 32);
     EncodeLink(stream, SecondSerial, SecondChannels, SecondRate, SecondSamples, "second");
 
     TestSeekable(stream);

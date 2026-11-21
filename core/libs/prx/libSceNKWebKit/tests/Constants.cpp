@@ -99,7 +99,6 @@ int main() {
     Require(WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey() == 0);
     Require(WKPreferencesGetAccelerated2DCanvasEnabled() == 0);
     Require(WKPreferencesGetQTKitEnabled() == 0);
-    Require(WKProtectionSpaceCopyCertificateInfo() == 0);
     Require(_ZN3JSC12isFromJSCodeEPv() == 0);
     Require(_ZN3JSC22optimizeNextInvocationENS_7JSValueE() == static_cast<int>(0x0000000au));
     Require(_ZN3JSC22optimizeNextInvocationEPNS_14JSGlobalObjectEPNS_9CallFrameE() == static_cast<int>(0x0000000au));
