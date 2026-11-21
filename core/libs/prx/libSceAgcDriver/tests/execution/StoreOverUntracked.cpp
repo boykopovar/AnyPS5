@@ -390,7 +390,7 @@ Outcome Run(const Case& test) {
     const bool neighbour = test.kind == Kind::NeighbourLeftWatch;
     const bool leaves = test.kind == Kind::LeftWatch || test.kind == Kind::WrittenThenLeftWatch || test.kind == Kind::ImportLeftWatch || neighbour;
     surfaceTile = neighbour ? TileLinear : TileR64KBX;
-    Surface surface(leaves, neighbour ? Page : 0);
+    Surface surface(leaves, neighbour ? Page : 0, leaves ? 16 * Block : 0);
     struct WaitForWork {
         ~WaitForWork() { AgcDriverWaitIdle_nid_postfix(); }
     } waitForWork;
