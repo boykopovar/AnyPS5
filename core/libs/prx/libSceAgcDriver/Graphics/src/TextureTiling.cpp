@@ -785,6 +785,22 @@ std::uint64_t SurfaceGuestBytes(const GuestTextureResource& descriptor) {
     return RuntimeSwitches::Set(RuntimeSwitch::NoSizeOnlySurfaceBytes) ? DescribeSurface(descriptor).guestBytes : DescribeSurfaceGuestBytes(descriptor);
 }
 
+std::optional<MinLodResidency> MinLodResidentLevels(const GuestTextureResource& descriptor) {
+    if (descriptor.baseLevel != 0u || descriptor.dccAddress != 0u || descriptor.samples != 1u || descriptor.gcnPitch != 0u) return std::nullopt;
+    if (descriptor.dimension != TextureDimension::k2D && descriptor.dimension != TextureDimension::k2DArray) return std::nullopt;
+    const auto clamp = static_cast<std::uint32_t>(EffectiveMinLod(descriptor));
+    if (clamp == 0u) return std::nullopt;
+    const auto geometry = DescribeSurface(descriptor);
+    if (geometry.thick || geometry.levelMajor || geometry.layers != 1u || clamp >= geometry.mips.size()) return std::nullopt;
+    std::uint64_t resident = 0;
+    for (std::size_t level = clamp; level < geometry.mips.size(); ++level) resident = std::max(resident, geometry.mips[level].tiledOffset + geometry.mips[level].tiledSize);
+    for (std::uint32_t level = 0; level < clamp; ++level) {
+        if (geometry.mips[level].tail || geometry.mips[level].tiledOffset < resident) return std::nullopt;
+    }
+    if (resident == 0u || resident >= geometry.guestBytes) return std::nullopt;
+    return MinLodResidency{clamp, resident};
+}
+
 bool LevelsFitAllocation(const GuestTextureResource& surface, std::uint32_t levels) {
     Require(levels >= surface.mipCount && levels <= 16u, "a view's mip chain must cover the surface's levels and at most 16");
     auto view = surface;
