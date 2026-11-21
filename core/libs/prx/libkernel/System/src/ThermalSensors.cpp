@@ -38,6 +38,31 @@ extern "C" bool StorageDescriptorAllowsTemperatureQuery_nid_no_patch(const void*
     return busType != kBusTypeRaid;
 }
 
+extern "C" int ExtractStorageTemperature_nid_no_patch(const void* descriptor, std::size_t bytes) {
+    constexpr std::size_t kInfoCountOffset = 12;
+    constexpr std::size_t kInformationOffset = 24;
+    constexpr std::size_t kInformationSize = 16;
+    constexpr std::size_t kTemperatureOffset = 2;
+    constexpr std::size_t kMaxInfoCount = 16;
+    if (descriptor == nullptr || bytes < kInformationOffset + kTemperatureOffset + sizeof(std::int16_t)) {
+        return -1;
+    }
+    const auto* data = static_cast<const unsigned char*>(descriptor);
+    std::uint16_t infoCount = 0;
+    std::memcpy(&infoCount, data + kInfoCountOffset, sizeof(infoCount));
+    const std::size_t count = std::min<std::size_t>(infoCount, kMaxInfoCount);
+    for (std::size_t index = 0; index < count; ++index) {
+        const std::size_t temperatureOffset = kInformationOffset + index * kInformationSize + kTemperatureOffset;
+        if (temperatureOffset + sizeof(std::int16_t) > bytes) break;
+        std::int16_t raw = 0;
+        std::memcpy(&raw, data + temperatureOffset, sizeof(raw));
+        int reading = raw;
+        Plausible(reading);
+        if (reading >= 0) return reading;
+    }
+    return -1;
+}
+
 namespace {
 
 #ifdef _WIN32
@@ -56,7 +81,7 @@ void ReadAcpiThermalZones(int celsius[2]) {
             IEnumWbemClassObject* results = nullptr;
             BSTR language = SysAllocString(L"WQL");
             BSTR query = SysAllocString(L"SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature");
-            if (language != nullptr && query != nullptr && SUCCEEDED(services->ExecQuery(language, query, WBEM_FLAG_FORWARD_ONLY, nullptr, &results)) && results != nullptr) {
+            if (language != nullptr && query != nullptr && SUCCEEDED(services->ExecQuery(language, query, WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY, nullptr, &results)) && results != nullptr) {
                 int found = 0;
                 while (found < 2) {
                     IWbemClassObject* object = nullptr;
@@ -65,9 +90,27 @@ void ReadAcpiThermalZones(int celsius[2]) {
                     VARIANT value;
                     VariantInit(&value);
                     if (SUCCEEDED(object->Get(L"CurrentTemperature", 0, &value, nullptr, nullptr))) {
-                        if (value.vt == VT_I4 || value.vt == VT_INT) {
-                            const long tenthsKelvin = value.vt == VT_I4 ? value.lVal : value.intVal;
-                            int reading = static_cast<int>(tenthsKelvin / 10) - 273;
+                        long long tenthsKelvin = -1;
+                        bool hasValue = true;
+                        switch (value.vt) {
+                            case VT_I4:
+                                tenthsKelvin = value.lVal;
+                                break;
+                            case VT_INT:
+                                tenthsKelvin = value.intVal;
+                                break;
+                            case VT_UI4:
+                                tenthsKelvin = static_cast<long long>(value.ulVal);
+                                break;
+                            case VT_UINT:
+                                tenthsKelvin = static_cast<long long>(value.uintVal);
+                                break;
+                            default:
+                                hasValue = false;
+                                break;
+                        }
+                        if (hasValue) {
+                            int reading = static_cast<int>((tenthsKelvin / 10) - 273);
                             Plausible(reading);
                             if (reading >= 0) celsius[found++] = reading;
                         }
@@ -114,10 +157,8 @@ int ReadStorageTemperature() {
         ULONG reserved1[2];
         Information information[16];
     };
-    constexpr std::size_t kTemperatureBytes =
-        offsetof(Descriptor, information) + offsetof(Information, temperature) + sizeof(SHORT);
     static_assert(offsetof(Descriptor, infoCount) == 12 && offsetof(Descriptor, information) == 24 &&
-        offsetof(Information, temperature) == 2);
+        offsetof(Information, temperature) == 2 && sizeof(Information) == 16);
     struct Query {
         ULONG property;
         ULONG query;
@@ -146,9 +187,9 @@ int ReadStorageTemperature() {
             Descriptor descriptor{};
             DWORD returned = 0;
             const bool ok = DeviceIoControl(handle, kIoctlStorageQueryProperty, &query, sizeof(query), &descriptor, sizeof(descriptor), &returned, nullptr) != 0;
-            if (!ok || returned < kTemperatureBytes || descriptor.infoCount == 0) continue;
-            int reading = descriptor.information[0].temperature;
-            Plausible(reading);
+            if (!ok) continue;
+            const int reading = ExtractStorageTemperature_nid_no_patch(
+                &descriptor, std::min<std::size_t>(returned, sizeof(descriptor)));
             if (reading >= 0) {
                 CloseHandle(handle);
                 return reading;
