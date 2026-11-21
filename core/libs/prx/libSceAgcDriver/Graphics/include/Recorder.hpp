@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RECORDER_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/BarrierBatch.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/CommandEncoder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PassHazards.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
@@ -25,6 +26,7 @@
 #include <utility>
 #include <string>
 #include <vector>
+#include <type_traits>
 
 namespace AgcDriver::Graphics {
 
@@ -151,7 +153,7 @@ private:
 class Recorder {
 public:
     // `timelineSemaphores`: the device enabled VK_KHR_timeline_semaphore (WaitSerial is usable).
-    explicit Recorder(const Context& context, bool timelineSemaphores = false);
+    explicit Recorder(const Context& context, bool timelineSemaphores = false, DeviceFunctions* encodedFunctions = nullptr, std::uint32_t queueFamily = 0);
     ~Recorder();
     Recorder(const Recorder&) = delete;
     Recorder& operator=(const Recorder&) = delete;
@@ -163,7 +165,7 @@ public:
     // so a dispatch, fill or copy whose leading barrier asks for a subset of them may skip it
     // (the [barriers] line counts the merges). The call clears the mask (whatever the caller
     // records is assumed uncovered until it marks); a new batch starts uncovered.
-    VkCommandBuffer Commands(VkAccessFlags* coveredAccess = nullptr);
+    VkCommandBuffer Commands(VkAccessFlags* coveredAccess = nullptr, std::source_location where = std::source_location::current());
     // After a trailing barrier with ALL_COMMANDS as its destination stage: `access` is its
     // destination access mask.
     void MarkCovered(VkAccessFlags access);
@@ -174,9 +176,9 @@ public:
     static constexpr std::uint64_t RunAccessWritten = 1, RunAccessImage = 2;
     using RunAccess = std::array<std::uint64_t, 3>;
     static std::uint32_t PeekUnorderedDispatch();
-    VkCommandBuffer OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped);
+    VkCommandBuffer OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped, std::source_location where = std::source_location::current());
     void DeferDispatchBarrier(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses);
-    VkCommandBuffer RunCommands(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, bool& inRun, VkAccessFlags* coveredAccess);
+    VkCommandBuffer RunCommands(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, bool& inRun, VkAccessFlags* coveredAccess, std::source_location where = std::source_location::current());
     void OpenBatch() { ensureOpen(); }
     bool RunOpen() const { return open != nullptr && open->deferredDispatchQueue != 0; }
     void AfterRun(std::function<void(Recorder&)> work);
@@ -602,6 +604,26 @@ public:
     // there must not have a publish recorded for it (UnitShadow), see SyncThrough.
     static bool InCompletion();
     void Activate();
+    enum class Encoding : std::uint8_t { None, Encoded, Inline, Span };
+    Encoding BeginEncoding(std::source_location where = std::source_location::current());
+    void EndEncoding(Encoding encoding, std::source_location where = std::source_location::current());
+    bool Encodes() const { return encoder != nullptr; }
+    CommandEncoder::UnwindQuiesce UnwindGuard(std::source_location where = std::source_location::current()) const { return CommandEncoder::UnwindQuiesce(encoder.get(), where); }
+    class EncodingWindow {
+    public:
+        explicit EncodingWindow(Recorder& recorder, std::source_location where = std::source_location::current()) : recorder(recorder), where(where), encoding(recorder.BeginEncoding(where)) {}
+        ~EncodingWindow() { recorder.EndEncoding(encoding, where); }
+        bool Encoded() const { return encoding == Encoding::Encoded; }
+        EncodingWindow(const EncodingWindow&) = delete;
+        EncodingWindow& operator=(const EncodingWindow&) = delete;
+
+    private:
+        Recorder& recorder;
+        std::source_location where;
+        Encoding encoding;
+    };
+    CommandEncoder::Statistics EncoderCounts() const { return encoder != nullptr ? encoder->Counts() : CommandEncoder::Statistics{}; }
+    std::vector<CommandEncoder::SiteWaits> EncoderWaitsBySite() const { return encoder != nullptr ? encoder->WaitsBySite() : std::vector<CommandEncoder::SiteWaits>{}; }
     // APS5_PROFILE_DRAW: syncs by source (0 device idle, 1 CPU access to pending writes, 2 CPU read
     // after a recorded store, 3 address-based dispatch, 4 other). Contract: the call announces the
     // source for the Sync/SyncThrough this thread makes NEXT, which consumes it (a sync without a
@@ -742,9 +764,32 @@ private:
         bool overwritten = false;
         const Batch* batch = nullptr;
     };
+    class BatchCommands {
+    public:
+        enum class Use : std::uint8_t { Compare, Lifetime, Handoff, Interposed, Quiesced };
+        VkCommandBuffer Get(Use) const { return handle; }
+        VkCommandBuffer* Slot(Use) { return &handle; }
+        bool Same(VkCommandBuffer other) const { return handle == other; }
+        bool Empty() const { return handle == VK_NULL_HANDLE; }
+        void Clear() { handle = VK_NULL_HANDLE; }
+
+    private:
+        VkCommandBuffer handle = VK_NULL_HANDLE;
+    };
+    struct SampleSegment {
+        std::shared_ptr<void> pool;
+        VkQueryPool handle;
+        std::uint32_t slot = 0;
+        std::uint64_t batch = 0;
+    };
+    static_assert(std::is_nothrow_move_constructible_v<SampleSegment> && std::is_nothrow_move_assignable_v<SampleSegment>);
     struct Batch {
-        VkCommandBuffer commands = VK_NULL_HANDLE;
+        CommandEncoder::Recording recording;
+        std::uint64_t sampleBatch = 0;
+        std::vector<SampleSegment> foldedSamples;
+        BatchCommands commands;
         CommandState graphicsState;
+        VkCommandPool pool = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<void>> kept;
         std::size_t keptBytes = 0;
@@ -910,22 +955,20 @@ private:
     void endSamples(Batch& batch);
     void foldSamples(Batch& batch, VkDeviceAddress target, std::uint32_t blocks = 0xffffu);
     bool segmentMode() const;
+    bool encodesSegmentQueries() const;
     bool segmentSlotReady(const Batch& batch) const;
     void takeSegmentPool(Batch& batch);
     void beginSegment(Batch& batch);
-    void endSegment(Batch& batch);
+    void endSegment(Batch& batch, std::source_location where = std::source_location::current());
     void copySegments(VkCommandBuffer commands, std::uint32_t count);
+    void reserveSampleRestore(const Batch& batch);
     void retireSegments(std::uint32_t count);
     void recordQueuedDumps(VkCommandBuffer commands, std::span<const Batch::StoreRun::Queued> writes);
     void dispatchDumps(VkCommandBuffer commands, std::uint32_t firstDump, std::uint32_t dumps, std::uint32_t firstSegment, std::uint32_t lastSegment);
     void foldSegments();
     void foldQueuedDumps(VkCommandBuffer commands, std::span<const Batch::StoreRun::Queued> writes, std::size_t first, std::size_t end, std::uint32_t& dumpIndex, std::uint32_t& consumed);
-    struct SampleSegment {
-        std::shared_ptr<void> pool;
-        VkQueryPool handle;
-        std::uint32_t slot = 0;
-    };
     std::vector<SampleSegment> pendingSamples;
+    std::uint64_t sampleBatches = 0;
     bool countingSamples = false;
     int meshArgumentState = 0;
     VkPipelineLayout meshArgumentLayout = VK_NULL_HANDLE;
@@ -937,7 +980,6 @@ private:
     VkDescriptorSetLayout boundChangedCopySetLayout = VK_NULL_HANDLE;
     VkPipelineLayout boundChangedCopyLayout = VK_NULL_HANDLE;
     VkPipeline boundChangedCopyPipeline = VK_NULL_HANDLE;
-    PFN_vkCmdPushDescriptorSetKHR cmdPushChangedCopySet = nullptr;
     int sampleCounterState = 0;
     std::unique_ptr<Buffer> sampleCounter;
     VkPipelineLayout sampleLayout = VK_NULL_HANDLE;
@@ -972,8 +1014,12 @@ private:
     PFN_vkCmdPushConstants cmdPushConstants = nullptr;
     PFN_vkCmdDispatch cmdDispatch = nullptr;
     template<typename TFunction>
-    TFunction function(TFunction resolved, FunctionName name) const {
-        return resolved != nullptr ? resolved : context.Function<TFunction>(name);
+    TFunction encodedOr(TFunction direct, TFunction DeviceFunctions::*member) const {
+        return direct != nullptr && encoder != nullptr && !encoder->Quiet() && encodedQueries->*member != nullptr ? encodedQueries->*member : direct;
+    }
+    template<typename TFunction>
+    TFunction function(TFunction resolved, FunctionName name, std::source_location where = std::source_location::current()) const {
+        return resolved != nullptr ? resolved : context.Function<TFunction>(name, where);
     }
     VkResult fenceStatus(VkFence fence) const { return function(getFenceStatus, "vkGetFenceStatus")(context.device, fence); }
     bool gpuDone(const Batch& batch) const;
@@ -992,7 +1038,7 @@ private:
     // form, toward the host only); returns whether the batch's host-read barrier was included.
     bool closeStoreRun(bool atSubmit = false);
     // Ends the render pass a draw left open (vkCmdEndRenderPass, the pass's trailing barrier).
-    void endOpenRenderPass(PassBreak by, bool barrier = true);
+    void endOpenRenderPass(PassBreak by, bool barrier = true, std::source_location where = std::source_location::current());
     // Records the queued key stores as one run (`forWriter`: before a command writing, reading or
     // labelling over one, not at Submit).
     void recordKeyStores(bool forWriter);
@@ -1067,6 +1113,33 @@ private:
     // table is empty (most of the time between label groups).
     std::atomic<std::size_t> recordedLabels{0};
     std::unique_ptr<Batch> open;
+    class OwnedCommandPool {
+    public:
+        OwnedCommandPool() = default;
+        OwnedCommandPool(const OwnedCommandPool&) = delete;
+        OwnedCommandPool& operator=(const OwnedCommandPool&) = delete;
+        ~OwnedCommandPool() { Reset(); }
+        void Create(const Context& context, std::uint32_t queueFamily);
+        void Reset() noexcept;
+        VkCommandPool Get() const { return pool; }
+
+    private:
+        VkDevice device = VK_NULL_HANDLE;
+        PFN_vkDestroyCommandPool destroy = nullptr;
+        VkCommandPool pool = VK_NULL_HANDLE;
+    };
+    OwnedCommandPool encoderPool;
+    std::unique_ptr<CommandEncoder> encoder;
+    const DeviceFunctions* encodedQueries = nullptr;
+    void quiesce(std::source_location where = std::source_location::current()) {
+        if (encoder == nullptr || encoder->Quiet()) return;
+        encoder->Quiesce(where);
+        if (open != nullptr) open->recording.Report();
+    }
+    VkCommandBuffer live(std::source_location where = std::source_location::current()) {
+        quiesce(where);
+        return open->commands.Get(BatchCommands::Use::Quiesced);
+    }
     std::uint64_t passGeneration = 0;
     std::vector<std::shared_ptr<void>> holdKept;
     std::uint64_t holdKeptSerial = 0;

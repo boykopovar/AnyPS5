@@ -16,6 +16,7 @@
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
+#include <source_location>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -135,6 +136,7 @@ public:
 
 private:
     friend struct Context;
+    friend class CommandEncoder;
     TFunction function = nullptr;
 };
 
@@ -181,6 +183,8 @@ struct DeviceFunctions {
     PFN_vkCmdCopyBufferToImage cmdCopyBufferToImage = nullptr;
     PFN_vkCmdCopyImageToBuffer cmdCopyImageToBuffer = nullptr;
     PFN_vkCmdClearColorImage cmdClearColorImage = nullptr;
+    PFN_vkCmdBeginQuery cmdBeginQuery = nullptr;
+    PFN_vkCmdEndQuery cmdEndQuery = nullptr;
     PFN_vkUpdateDescriptorSets updateDescriptorSets = nullptr;
     PFN_vkAllocateDescriptorSets allocateDescriptorSets = nullptr;
     PFN_vkGetFenceStatus getFenceStatus = nullptr;
@@ -194,8 +198,20 @@ struct DeviceFunctions {
     PFN_vkUnmapMemory unmapMemory = nullptr;
 };
 
+struct DeviceDispatch {
+    explicit DeviceDispatch(const DeviceFunctions* patched) : patched(patched), active(patched) {}
+    DeviceDispatch(const DeviceDispatch&) = delete;
+    DeviceDispatch& operator=(const DeviceDispatch&) = delete;
+    const DeviceFunctions* const patched;
+    std::atomic<const DeviceFunctions*> active;
+    DeviceFunctions original;
+    std::mutex mutex;
+    unsigned encoders = 0;
+};
+
 // Per-thread count of vkGetDeviceProcAddr lookups made through Context::Function (the [vk] line).
 std::uint64_t& DeviceProcLookups();
+void BeforeCommandLookup(VkDevice device, std::source_location where = std::source_location::current());
 
 inline constexpr std::size_t EmptyBufferBytes = 16;
 
@@ -284,6 +300,7 @@ struct Context {
     const std::vector<std::shared_ptr<ShaderResources>>* copiedWriters = nullptr;
     // The device's resolved entry points (see DeviceFunctions); null until the device set up.
     const DeviceFunctions* functions = nullptr;
+    DeviceDispatch* dispatch = nullptr;
     // VK_EXT_descriptor_indexing with non-uniform sampled/storage image array indexing enabled
     // (bindless image tables in graphics stages).
     bool descriptorIndexing = false;
@@ -353,14 +370,16 @@ struct Context {
     VertexBufferFormats* vertexFormats = nullptr;
 
     template<typename TFunction>
-    TFunction Function(FunctionName name) const {
-        return lookup<TFunction>(name.Value());
+    TFunction Function(FunctionName name, std::source_location where = std::source_location::current()) const {
+        return lookup<TFunction>(name.Value(), where);
     }
 
     // The table's entry point, or a per-call lookup while the table is absent or lacks it.
+    const DeviceFunctions* Table() const { return dispatch != nullptr && functions == dispatch->patched ? dispatch->active.load(std::memory_order_acquire) : functions; }
+
     template<typename TFunction>
     TFunction Resolved(TFunction DeviceFunctions::*member, FunctionName name) const {
-        if (functions != nullptr && functions->*member != nullptr) return functions->*member;
+        if (const auto* table = Table(); table != nullptr && table->*member != nullptr) return table->*member;
         return lookup<TFunction>(name.Value());
     }
 
@@ -491,9 +510,10 @@ private:
     friend void FillDeviceFunctions(const Context& context, DeviceFunctions& functions);
 
     template<typename TFunction>
-    TFunction lookup(const char* name) const {
+    TFunction lookup(const char* name, std::source_location where = std::source_location::current()) const {
         Require(deviceProc != nullptr, "missing Vulkan device function resolver");
         ++DeviceProcLookups();
+        if (name[0] == 'v' && name[1] == 'k' && name[2] == 'C' && name[3] == 'm' && name[4] == 'd') BeforeCommandLookup(device, where);
         const auto function = reinterpret_cast<TFunction>(deviceProc(device, name));
         if (function == nullptr) throw std::runtime_error(std::string("AGC graphics: missing Vulkan function: ") + name);
         return function;
@@ -501,7 +521,7 @@ private:
 
     template<typename TFunction>
     TFunction tracked(TrackedFunction<TFunction> DeviceFunctions::*member, const char* name) const {
-        if (functions != nullptr && (functions->*member).function != nullptr) return (functions->*member).function;
+        if (const auto* table = Table(); table != nullptr && (table->*member).function != nullptr) return (table->*member).function;
         return lookup<TFunction>(name);
     }
 };
