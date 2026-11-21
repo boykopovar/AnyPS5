@@ -75,6 +75,31 @@ void TestWriters() {
     check(sceGnmInsertPopMarker(words.data(), 6) == 0 && words[0] == Header(0x10, 5) && words[1] == 0x68750002u && WholePackets(words.data(), 6), "the pop marker packet is wrong");
 
     words.fill(0xdeadbeefu);
+    auto unchanged = words;
+    check(sceGnmInsertSetMarker(words.data(), 6, nullptr) == -1 && sceGnmInsertSetMarker(nullptr, 6, "ab") == -1, "a set marker without a buffer or text was accepted");
+    check(sceGnmInsertSetMarker(words.data(), 5, "ab") == -1 && sceGnmInsertSetMarker(words.data(), 7, "ab") == -1 && words == unchanged, "a set marker was written into the wrong size");
+    check(sceGnmInsertSetMarker(words.data(), 6, "ab") == 0, "the set marker was not written");
+    check(words[0] == Header(0x10, 5) && words[1] == 0x68750003u && std::memcmp(&words[2], "ab\0\0", 4) == 0 && words[3] == 0 && words[4] == 0 && words[5] == 0
+        && words[6] == 0xdeadbeefu && WholePackets(words.data(), 6), "the set marker packet is wrong");
+
+    words.fill(0xdeadbeefu);
+    unchanged = words;
+    check(sceGnmInsertPushColorMarker(words.data(), 9, nullptr, 0x11223344u) == -1 && sceGnmInsertPushColorMarker(nullptr, 9, "ab", 0x11223344u) == -1, "a color marker without a buffer or text was accepted");
+    check(sceGnmInsertPushColorMarker(words.data(), 6, "ab", 0x11223344u) == -1 && sceGnmInsertPushColorMarker(words.data(), 8, "ab", 0x11223344u) == -1 && words == unchanged,
+        "a color marker was written into the wrong size");
+    check(sceGnmInsertPushColorMarker(words.data(), 9, "ab", 0x11223344u) == 0, "the color marker was not written");
+    std::array<std::uint8_t, 28> colorText{};
+    std::memcpy(colorText.data(), "ab", 3);
+    const std::uint32_t color = 0x11223344u;
+    std::memcpy(colorText.data() + 11, &color, sizeof(color));
+    check(words[0] == Header(0x10, 8) && words[1] == 0x6875000eu && std::memcmp(&words[2], colorText.data(), colorText.size()) == 0 && words[9] == 0xdeadbeefu
+        && WholePackets(words.data(), 9), "the color marker packet is wrong");
+
+    words.fill(0xdeadbeefu);
+    unchanged = words;
+    check(sceGnmInsertWaitFlipDone(words.data(), 6, 0, 0) == -1 && sceGnmInsertWaitFlipDone(words.data(), 8, 0, 0) == -1 && words == unchanged, "a flip wait was written into the wrong size");
+
+    words.fill(0xdeadbeefu);
     const auto untouched = words;
     check(sceGnmInsertDingDongMarker_nid_disambig1(nullptr, 4) == -1, "a null ding dong buffer was accepted");
     check(sceGnmInsertDingDongMarker_nid_disambig1(words.data(), 3) == -1 && words == untouched, "a ding dong marker was written into 3 dwords");

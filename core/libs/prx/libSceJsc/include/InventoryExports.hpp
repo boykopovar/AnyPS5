@@ -199,12 +199,10 @@ int APS5_VABI _ZN3WTF14FileSystemImpl24pathByAppendingComponentERKNS_6StringES3_
 int APS5_VABI _ZN3WTF17PrivateSymbolImpl16createNullSymbolEv();
 int APS5_VABI _ZN3WTF17TextBreakIteratorC1ENS_10StringViewENS0_4ModeERKNS_10AtomStringE();
 int APS5_VABI _ZN3WTF17TextBreakIteratorC2ENS_10StringViewENS0_4ModeERKNS_10AtomStringE();
-int APS5_VABI _ZN3WTF19initializeThreadingEv();
 int APS5_VABI _ZN3WTF21LineBreakIteratorPool10sharedPoolEv();
 int APS5_VABI _ZN3WTF23openLatin1UTextProviderEPNS_15UTextWithBufferEPKhjP10UErrorCode();
 int APS5_VABI _ZN3WTF24acquireLineBreakIteratorENS_10StringViewERKNS_10AtomStringEPKDsjNS_21LineBreakIteratorModeE();
 int APS5_VABI _ZN3WTF24releaseLineBreakIteratorEP14UBreakIterator();
-int APS5_VABI _ZN3WTF25createCanonicalUUIDStringEv();
 int APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE();
 int APS5_VABI _ZN3WTF6String23make16BitFrom8BitSourceEPKhm();
 int APS5_VABI _ZN3WTF6String23make8BitFrom16BitSourceEPKDsm();

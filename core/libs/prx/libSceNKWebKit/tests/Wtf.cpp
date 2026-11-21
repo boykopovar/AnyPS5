@@ -604,6 +604,25 @@ static void TestWebCorePure() {
     Require(std::abs(around.m_size.m_width - 200.0f) < 1e-3f);
     Require(std::abs(around.m_size.m_height - 200.0f) < 1e-3f);
 
+    const auto rectIs = [](const FloatRect& rect, float x, float y, float width, float height) {
+        return rect.m_location.m_x == x && rect.m_location.m_y == y && rect.m_size.m_width == width && rect.m_size.m_height == height;
+    };
+    const FloatRect flat{FloatPoint{0.0f, 0.0f}, FloatSize{10.0f, 0.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(2.0f, flat), 5.0f, 0.0f, 0.0f, 0.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(2.0f, flat), 0.0f, -2.5f, 10.0f, 5.0f));
+    const FloatRect offsetFlat{FloatPoint{4.0f, 6.0f}, FloatSize{8.0f, 0.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(0.5f, offsetFlat), 8.0f, 6.0f, 0.0f, 0.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(0.5f, offsetFlat), 4.0f, -2.0f, 8.0f, 16.0f));
+    const FloatRect empty{FloatPoint{3.0f, 7.0f}, FloatSize{0.0f, 0.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(2.0f, empty), 3.0f, 7.0f, 0.0f, 0.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(2.0f, empty), 3.0f, 7.0f, 0.0f, 0.0f));
+    const FloatRect thin{FloatPoint{1.0f, 2.0f}, FloatSize{0.0f, 10.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(2.0f, thin), 1.0f, 7.0f, 0.0f, 0.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(2.0f, thin), -9.0f, 2.0f, 20.0f, 10.0f));
+    const FloatRect mirrored{FloatPoint{0.0f, 0.0f}, FloatSize{-10.0f, 0.0f}};
+    Require(rectIs(_ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE(2.0f, mirrored), 0.0f, 2.5f, -10.0f, -5.0f));
+    Require(rectIs(_ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE(2.0f, mirrored), -5.0f, 0.0f, 0.0f, 0.0f));
+
     FloatRect fr{FloatPoint{10.2f, 20.8f}, FloatSize{100.4f, 50.6f}};
     IntRect ir = _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(fr);
     Require(ir.m_location.m_x == 10);
@@ -1268,6 +1287,15 @@ const unsigned char* U8(const char* data) { return reinterpret_cast<const unsign
 std::string Bytes(const CString& value) {
     return value.buffer ? std::string(reinterpret_cast<const char*>(value.buffer + 1), value.buffer->length) : std::string();
 }
+std::string Bytes(const NKWebKit::WtfAbi::ExpectedCString& result) {
+    Check(result.has);
+    return Bytes(result.value);
+}
+void Fails(const NKWebKit::WtfAbi::ExpectedCString& result, std::uint32_t error) {
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&result);
+    Check(!result.has && bytes[8] == 0);
+    Check(result.error == error && bytes[0] == error);
+}
 void Text(const String& value, const char* expected) {
     Check(value.impl != nullptr);
     Check(Bytes(UTF8(&value, 1)) == expected);
@@ -1419,25 +1447,37 @@ void TestUTFConversions() {
     Throws([&] { UTF8(&malformed, 1); });
     Check(Bytes(Utf8For16(bad, 4, 0)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
     Check(Bytes(Utf8For16(bad, 4, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
-    Throws([&] { Utf8For16(bad, 4, 1); });
+    Fails(Utf8For16(bad, 4, 1), 2);
     char16_t endsWithLead[] = {'a', 0xD800, 0xDBFF};
     Check(Bytes(Utf8For16(endsWithLead, 3, 0)) == "a\xef\xbf\xbd\xed\xaf\xbf");
     Check(Bytes(Utf8For16(endsWithLead, 3, 2)) == "a\xef\xbf\xbd\xef\xbf\xbd");
     Check(Bytes(Utf8For16(endsWithLead, 2, 0)) == "a\xed\xa0\x80");
-    Throws([&] { Utf8For16(endsWithLead, 2, 1); });
+    Fails(Utf8For16(endsWithLead, 2, 1), 3);
+    Fails(Utf8For16(endsWithLead, 3, 1), 2);
     auto leadAtEnd = Create16(endsWithLead, 2);
     Check(Bytes(UTF8(&leadAtEnd, 0)) == "a\xed\xa0\x80");
     Check(Bytes(UTF8(&leadAtEnd, 2)) == "a\xef\xbf\xbd");
     char16_t endsWithTrail[] = {'a', 0xDC00};
     Check(Bytes(Utf8For16(endsWithTrail, 2, 0)) == "a\xef\xbf\xbd");
+    Fails(Utf8For16(endsWithTrail, 2, 1), 2);
     char16_t paired[] = {'c', 'a', 'f', 0xE9, 0xD83D, 0xDE00};
     Check(Bytes(Utf8For16(paired, 6, 1)) == "caf\xc3\xa9\xf0\x9f\x98\x80");
     Check(Bytes(Utf8For16(paired, 0, 1)).empty() && Bytes(Utf8For16(nullptr, 0, 1)).empty());
     Throws([&] { Utf8For16(nullptr, 1, 1); });
+    {
+        const auto converted = Utf8For16(paired, 6, 1);
+        const auto* bytes = reinterpret_cast<const unsigned char*>(&converted);
+        Check(sizeof(converted) == 16 && converted.has && bytes[8] == 1);
+        Check(std::memcmp(bytes, &converted.value.buffer, 8) == 0 && converted.value.buffer != nullptr);
+    }
+    Fails(Utf8For16(paired, 715827883, 0), 1);
+    Fails(Utf8For16(paired, 0xFFFFFFFFu, 1), 1);
     Check(Bytes(Utf8For8(U8("caf\xe9\x80"), 5)) == "caf\xc3\xa9\xc2\x80");
     Check(Bytes(Utf8For8(U8("a\0b"), 3)) == std::string("a\0b", 3));
     Check(Bytes(Utf8For8(U8("x"), 0)).empty() && Bytes(Utf8For8(nullptr, 0)).empty());
     Throws([&] { Utf8For8(nullptr, 1); });
+    Fails(Utf8For8(U8("x"), 715827883), 1);
+    Check(Utf8For8(U8("x"), 1).has);
     Text(FromCodePoint(0x1F600), "\xf0\x9f\x98\x80");
     Check(!FromCodePoint(-1).impl && !FromCodePoint(0x110000).impl);
     auto surrogate = FromCodePoint(0xD800);

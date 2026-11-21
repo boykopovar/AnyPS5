@@ -359,6 +359,7 @@ public:
     std::uint64_t QueueSealed();
     std::size_t SealedBatches() const noexcept { return sealedBatches.size(); }
     void HoldNextSubmit(VkSemaphore semaphore, std::uint64_t value);
+    bool SubmitHeld() const;
     // Submits the open batch and returns the serial of the newest submitted batch (0 when nothing was
     // ever submitted); WaitSerial(serial) then covers all recorded work.
     std::uint64_t SubmitAndEpoch();
@@ -1100,6 +1101,7 @@ private:
     mutable std::uint64_t reachedSerial = 0;
     VkSemaphore submitHold = VK_NULL_HANDLE;
     std::uint64_t submitHoldValue = 0;
+    std::uint64_t heldSerial = 0;
     struct ProgressWatcher;
     std::unique_ptr<ProgressWatcher> progressWatcher;
     // Identity for a thread that released the mutex around a wait (syncThroughUnlocked): the
