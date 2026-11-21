@@ -46,6 +46,7 @@ struct InputConfiguration {
     std::vector<InputBinding> bindings;
     InputSettings settings;
     std::array<std::optional<PadButton>, SDL_CONTROLLER_BUTTON_MAX> controllerButtons{};
+    std::uint32_t toggleButtons = 0;
 };
 
 inline constexpr std::array InputMapping{

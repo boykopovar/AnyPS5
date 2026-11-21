@@ -71,7 +71,7 @@ GuestAllocations::Mapped Register(std::uint8_t* memory, std::uint64_t size) {
     for (const auto& range : GuestAllocations::GuestAllocationsAcquire_nid_postfix()) {
         if (range->address == reinterpret_cast<std::uint64_t>(memory)) ranges.push_back(range);
     }
-    Require(ranges.size() == 1, "straddling import: the allocation is not registered");
+    Require(ranges.size() == 1, "chunk window import: the allocation is not registered");
     return ranges;
 }
 
@@ -105,17 +105,13 @@ int main() {
         close(udmabuf);
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        if (!AgcDriver::VulkanDeviceTestAccess::ContextOf(*device).sparseBinding) {
-            std::printf("skipped, the device has no sparse binding\n");
-            return VulkanTestSkipped;
-        }
 
         mappingBytes = 2 * ChunkBytes;
-        backing = memfd_create("anyps5-straddle-import-test", MFD_CLOEXEC | MFD_ALLOW_SEALING);
-        Require(backing >= 0 && ftruncate(backing, static_cast<off_t>(mappingBytes)) == 0, "straddling import: cannot make the backing file");
-        Require(fcntl(backing, F_ADD_SEALS, F_SEAL_SHRINK) == 0, "straddling import: cannot seal the backing file");
+        backing = memfd_create("anyps5-chunk-window-import-test", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        Require(backing >= 0 && ftruncate(backing, static_cast<off_t>(mappingBytes)) == 0, "chunk window import: cannot make the backing file");
+        Require(fcntl(backing, F_ADD_SEALS, F_SEAL_SHRINK) == 0, "chunk window import: cannot seal the backing file");
         void* mapped = mmap(nullptr, mappingBytes, PROT_READ | PROT_WRITE, MAP_SHARED, backing, 0);
-        Require(mapped != MAP_FAILED, "straddling import: cannot map the backing file");
+        Require(mapped != MAP_FAILED, "chunk window import: cannot map the backing file");
         mapping = static_cast<std::uint8_t*>(mapped);
         GuestArena::GuestArenaSetSharedBacking_nid_postfix(Resolve);
 
@@ -126,19 +122,19 @@ int main() {
             std::printf("skipped, the device does not import shared memory through dma-buf\n");
             return VulkanTestSkipped;
         }
-        Require(insideShape.chunked && !insideShape.ownMemory, "straddling import: a range inside one chunk was not bound into the chunk import");
+        Require(insideShape.chunked && !insideShape.ownMemory, "chunk window import: a range inside one chunk was not bound into the chunk import");
         FillAndCheck(*device, inside, 0x1A51DE00u, "range inside one chunk");
         GuestAllocations::Mutation().Remove(inside);
 
         auto* straddling = mapping + ChunkBytes - RangeBytes / 2;
         device->ImportGuestMemory(Register(straddling, RangeBytes), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false);
         const auto straddlingShape = ShapeOf(*device, reinterpret_cast<std::uint64_t>(straddling), static_cast<std::size_t>(RangeBytes));
-        Require(straddlingShape.found && straddlingShape.dmaBuf, "straddling import: a 2 MiB range across a chunk boundary was not imported through dma-buf");
-        Require(straddlingShape.chunked && !straddlingShape.ownMemory, "straddling import: a 2 MiB range across a chunk boundary was imported as a buffer object of its own instead of being bound into the two chunk imports");
+        Require(straddlingShape.found && straddlingShape.dmaBuf, "chunk window import: a 2 MiB range across a chunk boundary was not imported through dma-buf");
+        Require(straddlingShape.chunked && !straddlingShape.ownMemory, "chunk window import: a 2 MiB range across a chunk boundary was imported as a buffer object of its own instead of being bound into the chunk window that holds it");
         FillAndCheck(*device, straddling, 0x5A9D1E00u, "range across a chunk boundary");
         GuestAllocations::Mutation().Remove(straddling);
 
-        std::cout << "AGC straddling dma-buf import tests passed\n";
+        std::cout << "AGC chunk window dma-buf import tests passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

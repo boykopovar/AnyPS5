@@ -29,6 +29,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 
+#include <cstdint>
+
 namespace NKWebKit::WebCoreAbi {
 
 enum class AccessibilityRole : int {
@@ -188,11 +190,19 @@ enum class AccessibilityRole : int {
     Window,
 };
 
+enum class LegacyAccessibilityRole : std::int32_t {
+    CheckBox = 20,
+    RadioButton = 96,
+    SearchField = 110,
+    Switch = 122,
+    TextField = 136,
+};
+
 }  // namespace NKWebKit::WebCoreAbi
 
 extern "C" {
 
-bool APS5_VABI _ZN7WebCore19AccessibilityObject11isARIAInputENS_17AccessibilityRoleE(NKWebKit::WebCoreAbi::AccessibilityRole ariaRole);
+bool APS5_VABI _ZN7WebCore19AccessibilityObject11isARIAInputENS_17AccessibilityRoleE(NKWebKit::WebCoreAbi::LegacyAccessibilityRole ariaRole);
 bool APS5_VABI _ZN7WebCore19AccessibilityObject13isARIAControlENS_17AccessibilityRoleE(NKWebKit::WebCoreAbi::AccessibilityRole ariaRole);
 NKWebKit::WebCoreAbi::AccessibilityRole APS5_VABI _ZN7WebCore19AccessibilityObject21ariaRoleToWebCoreRoleERKN3WTF6StringE(const NKWebKit::WtfAbi::String* value);
 
