@@ -21,7 +21,10 @@ int main() {
     Require(data.left_stick_x == 0x80 && data.left_stick_y == 0x80, "pre-init read must write neutral stick data");
 
     Require(scePadInit_nid_postfix() == PAD_OK, "scePadInit must succeed");
+    data = {};
+    data.left_stick_x = 0x5a;
     Require(scePadGetDataInternal(PAD_MAX_CONTROLLERS, &data) == PAD_ERROR_INVALID_ARG, "out-of-range port must return PAD_ERROR_INVALID_ARG");
+    Require(data.left_stick_x == 0x5a, "out-of-range port error must not write neutral stick data");
 
     data = {};
     Require(scePadGetDataInternal(0, &data) == PAD_OK, "valid port read must succeed");
