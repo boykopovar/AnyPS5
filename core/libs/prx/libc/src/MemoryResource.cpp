@@ -2,7 +2,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <cstddef>
-#include <cstdint>
 #include <new>
 
 namespace LibcException {
@@ -80,19 +79,14 @@ void* APS5_VABI AlignedAllocate(MemoryResource*, std::size_t bytes, std::size_t 
     if (!IsValidAlignment(alignment)) {
         _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
     }
-    if (alignment > DefaultNewAlignment) {
+    if (alignment > 1) {
         return TranslateBadAlloc([&] { return _ZnwmSt11align_val_t_nid_postfix(bytes, alignment); });
     }
-    void* pointer = TranslateBadAlloc([&] { return _Znwm_nid_postfix(bytes); });
-    if (alignment > 1 && (reinterpret_cast<std::uintptr_t>(pointer) & (alignment - 1)) != 0) {
-        _ZdlPvm_nid_postfix(pointer, bytes);
-        return TranslateBadAlloc([&] { return _ZnwmSt11align_val_t_nid_postfix(bytes, alignment); });
-    }
-    return pointer;
+    return TranslateBadAlloc([&] { return _Znwm_nid_postfix(bytes); });
 }
 
 void APS5_VABI AlignedDeallocate(MemoryResource*, void* pointer, std::size_t bytes, std::size_t alignment) {
-    if (alignment > DefaultNewAlignment)
+    if (alignment > 1)
         _ZdlPvmSt11align_val_t_nid_postfix(pointer, bytes, alignment);
     else
         _ZdlPvm_nid_postfix(pointer, bytes);
