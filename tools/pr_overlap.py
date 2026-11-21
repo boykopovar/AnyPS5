@@ -112,7 +112,10 @@ def push_head(name):
     try:
         rows = git("for-each-ref", "--format=%(refname)%09%(push:remotename)%09%(push:remoteref)", ref)
         for row in rows.splitlines():
-            local, remote, destination = row.split("\t")
+            fields = row.split("\t")
+            if len(fields) != 3:
+                return name, None
+            local, remote, destination = fields
             if local != ref or not remote or not destination.startswith("refs/heads/"):
                 continue
             urls = git("remote", "get-url", "--push", "--all", remote).splitlines()

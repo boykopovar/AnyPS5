@@ -137,6 +137,12 @@ class BranchResolutionTests(unittest.TestCase):
     def test_leaves_an_unconfigured_branch_without_a_push_identity(self):
         self.assertEqual(pr_overlap.push_head("main"), ("main", None))
 
+    def test_rejects_malformed_push_identity_rows(self):
+        for row in ("refs/heads/main\tfork", "refs/heads/main\tfork\trefs/heads/topic\textra"):
+            with self.subTest(row=row), patch.object(pr_overlap, "git", return_value=row) as git:
+                self.assertEqual(pr_overlap.push_head("main"), ("main", None))
+                self.assertEqual(git.call_count, 1)
+
     def test_refuses_a_name_that_matches_no_commit(self):
         with self.assertRaises(ValueError) as raised:
             pr_overlap.resolve_branch("contrib/absent")
