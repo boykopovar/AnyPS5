@@ -20,6 +20,7 @@
 #include <codegen/x86/BlsLowering.hpp>
 #include <codegen/x86/ShiftLowering.hpp>
 #include <codegen/x86/BitfieldLowering.hpp>
+#include <codegen/x86/ParallelBitsLowering.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/x86/X64OpcodeConstants.hpp>
 #include <codegen/x86/MulxLowering.hpp>
@@ -281,6 +282,8 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::_matchRosetta(const D
     }
     if (const auto bitfield = DecodeBitfield(instr.Data, instr.Length))
         return _trampoline(BitfieldName(bitfield->Operation), instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitBitfield(body, *bitfield); }));
+    if (const auto parallel = DecodeParallelBits(instr.Data, instr.Length))
+        return _trampoline(ParallelBitsName(parallel->Operation), instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitParallelBits(body, *parallel); }));
     if (const auto count = _target == Amd64OnlyTarget::Avx ? DecodeCount(instr.Data, instr.Length) : std::nullopt)
         return _trampoline(CountName(count->Operation), instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitCount(body, *count); }), false, true);
     if (const auto movbe = _target == Amd64OnlyTarget::Avx ? DecodeMovbe(instr.Data, instr.Length) : std::nullopt)
@@ -383,6 +386,10 @@ const char* Amd64OnlyInstructionMatcher::_emitOutOfLine(StubBodyBuilder& body, c
     if (const auto bitfield = _lowersBmi() ? DecodeBitfield(instr.Data, instr.Length) : std::nullopt) {
         EmitBitfield(body, *bitfield);
         return BitfieldName(bitfield->Operation);
+    }
+    if (const auto parallel = _lowersBmi() ? DecodeParallelBits(instr.Data, instr.Length) : std::nullopt) {
+        EmitParallelBits(body, *parallel);
+        return ParallelBitsName(parallel->Operation);
     }
     if (const auto count = _target == Amd64OnlyTarget::Avx ? DecodeCount(instr.Data, instr.Length) : std::nullopt) {
         EmitCount(body, *count);
