@@ -10040,14 +10040,6 @@ int APS5_VABI WKPageLoadURLWithUserData() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageLoadWebArchiveData() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageLoadWebArchiveDataWithUserData() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageLoadedSubresourceDomains() {
     NotImplemented_nid_no_patch(__func__);
 }
