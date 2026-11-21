@@ -8610,10 +8610,6 @@ int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal23stopProfilingJavaScript
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKWheelEventMake() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore11WindowProxy6windowEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9766,15 +9762,7 @@ int APS5_VABI WKInspectorShowMainResourceForFrame() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKKeyboardEventMake() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKMessageListenerSendReply() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKMouseEventMake() {
     NotImplemented_nid_no_patch(__func__);
 }
 
