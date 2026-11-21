@@ -62,7 +62,7 @@ const char* APS5_VABI ENGINE_get_id_nid_postfix(const void* engine) {
     const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&id, engine, sizeof(id));
     errno = savedErrno;
-    if (!copied) throw std::invalid_argument(std::string(__func__) + ": unreadable engine");
+    if (!copied) NotImplemented_nid_no_patch(__func__);
     return id;
 }
 
