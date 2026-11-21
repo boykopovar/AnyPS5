@@ -157,6 +157,57 @@ def bmp(path, width, height, color):
     return path
 
 
+class NativeProvenanceTests(unittest.TestCase):
+    def test_non_string_format_cannot_discard_a_conflicting_summary_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.jsonl"
+            clean = {"commit": "a" * 12, "dirty": False, "presents": 60, "window": {"ms": 1000}}
+            for declared_format in [None, 7, [], ""]:
+                conflicting = dict(clean, commit="b" * 12, format=declared_format)
+                path.write_text("\n".join(map(json.dumps, [clean, conflicting])), encoding="utf-8")
+                parsed = title_run.read_summary(path)
+                native = {"native": {"summary": parsed.get("native", [])}}
+                with self.subTest(format=declared_format):
+                    self.assertEqual(title_run.title_run_provenance.qualification(native,
+                        {"commit": "a" * 40, "dirty": False})["status"], "conflicting")
+
+    def test_capture_identity_is_kept_when_only_periodic_frames_are_counted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.jsonl"
+            periodic = {"commit": "a" * 12, "dirty": False, "interval_start_s": 0, "presents": 60, "window": {"ms": 1000}}
+            capture = {"commit": "b" * 12, "dirty": False, "presents": 1000, "window": {"ms": 1000}}
+            path.write_text("\n".join(map(json.dumps, [periodic, capture])), encoding="utf-8")
+            parsed = title_run.read_summary(path)
+            self.assertEqual(parsed["fps"], 60.0)
+            run = {"native": {"summary": parsed.get("native", [])}}
+            result = title_run.title_run_provenance.qualification(run, {"commit": "a" * 40, "dirty": False})
+            self.assertEqual(result["status"], "conflicting")
+
+    def test_integer_dirty_cannot_merge_with_false_during_summary_deduplication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.jsonl"
+            path.write_text("\n".join(json.dumps({"commit": "a" * 12, "dirty": value}) for value in [False, 0]), encoding="utf-8")
+            parsed = title_run.read_summary(path)
+            result = title_run.title_run_provenance.qualification({"native": {"summary": parsed.get("native", [])}},
+                                                                 {"commit": "a" * 40, "dirty": False})
+            self.assertEqual(result["status"], "unknown")
+
+    def test_legacy_summary_still_compares_metrics_with_unknown_native_provenance(self):
+        legacy = summary({"PPSA00001": {"name": "Fixture", "version": "1", "runs": [run("rendering", fps=60)]}})
+        compared = json.loads(title_run.compare_json(legacy, legacy))["titles"]["PPSA00001"]
+        self.assertEqual(compared["fps"], {"before": 60, "now": 60})
+        self.assertEqual(compared["provenance"]["now"]["status"], "unknown")
+        self.assertIn("unknown", title_run.render_markdown(legacy))
+
+    def test_report_only_clean_identity_and_unknown_or_modified_sources(self):
+        observed = {"native": {"report": {"commit": "a" * 40, "modified": False}}}
+        for source, expected in [({"commit": "a" * 12, "dirty": False}, "matched"),
+                                 ({"commit": "a" * 12, "dirty": True}, "source-modified"),
+                                 ({"commit": "a" * 12, "dirty": 0}, "unknown"), ({}, "unknown")]:
+            with self.subTest(source=source):
+                self.assertEqual(title_run.title_run_provenance.qualification(observed, source)["status"], expected)
+
+
 class AnalysisTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -296,6 +347,25 @@ class AnalysisTests(unittest.TestCase):
         for arguments, outcome in cases:
             self.assertEqual(title_run.classify(*arguments), outcome, arguments)
 
+    def test_stall_requires_a_full_observation_when_no_summary_exists(self):
+        for seconds, expected in ((1, "incomplete"), (3, "incomplete"), (9, "incomplete"),
+                                  (10, "incomplete"), (19.96, "incomplete"), (19.999, "incomplete"),
+                                  (20, "stalled"), (20.001, "stalled"), (21, "stalled")):
+            for framed in (False, True):
+                with self.subTest(seconds=seconds, framed=framed):
+                    self.assertEqual(title_run.classify(True, None, None, framed, False, seconds), expected)
+
+    def test_short_observation_preserves_exit_and_recorded_frame_outcomes(self):
+        for arguments, expected in (((False, None, None, False, None, 1), "relink-failed"),
+                                    ((True, 0, None, False, None, .1), "exited"),
+                                    ((True, 7, None, True, False, .1), "crashed"),
+                                    ((True, None, 1, True, False, 3), "rendering"),
+                                    ((True, None, 1, True, True, 3), "blank"),
+                                    ((True, None, 1, True, None, 3), "frame-unreadable"),
+                                    ((True, None, 25, True, False, 3), "stalled")):
+            with self.subTest(arguments=arguments):
+                self.assertEqual(title_run.classify(*arguments), expected)
+
 
 def run(outcome, cache="cold", fps=0.0, error=""):
     return {"outcome": outcome, "cache": cache, "fps": fps, "first_error": error}
@@ -307,7 +377,229 @@ def summary(titles):
             "runs": 2, "seconds": 60, "titles": titles}
 
 
+@unittest.skipUnless(os.name == "posix", "executable script fixture requires POSIX")
+class NativeProvenanceFlowTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="anyps5-native-provenance-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.source = self.root / "source"
+        self.source.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.source)], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.source), "-c", "user.name=Fixture", "-c", "user.email=fixture@invalid",
+                        "-c", "commit.gpgsign=false", "-c", f"core.hooksPath={os.devnull}",
+                        "commit", "-q", "--allow-empty", "-m", "test: source identity"], check=True, capture_output=True)
+        self.commit = subprocess.check_output(["git", "-C", str(self.source), "rev-parse", "HEAD"], text=True).strip()
+
+    def run_fixture(self, identities, report, summary_rows=(), report_text=None):
+        build = self.root / "build"
+        relinker = build / "core/relinker/relinker"
+        relinker.parent.mkdir(parents=True)
+        (build / "core/libs/libs").mkdir(parents=True)
+        for name in ("libmimalloc.so", "libmimalloc.dylib"):
+            (build / "core/libs/libs" / name).write_bytes(name.encode("utf-8"))
+        (build / "CMakeCache.txt").write_text(f"CMAKE_HOME_DIRECTORY:INTERNAL={self.source}\n", encoding="utf-8")
+        native = relinker.with_name("native.py")
+        native.write_text("#!" + sys.executable + "\n" + '''import json, os, struct, time
+from pathlib import Path
+evidence = json.loads(os.environ["FIXTURE_NATIVE_EVIDENCE"])
+rows = []
+for index, identity in enumerate(evidence["summary"]):
+    rows.append(dict(identity, interval_start_s=index, interval_end_s=index + 1,
+                     presents=60, window={"ms": 1000}, gpu="Fixture GPU", driver="Fixture driver", os="Fixture OS"))
+serialized = [json.dumps(row) for row in rows] + evidence["summary_rows"]
+Path(os.environ["APS5_TRACE_DIR"], "aps5-summary.jsonl").write_text("\\n".join(serialized), encoding="utf-8")
+document = {"format": "anyps5-report", "version": 1, "anyps5": evidence["report"], "run": {"averageFps": 60.0}}
+Path("anyps5-report.json").write_text(evidence["report_text"] if evidence["report_text"] is not None else json.dumps(document), encoding="utf-8")
+pixels = bytes([0, 0, 0, 255, 255, 255, 255, 255])
+Path("frame_1.bmp").write_bytes(struct.pack("<2sIHHI", b"BM", 62, 0, 0, 54) +
+    struct.pack("<IiiHHIIiiII", 40, 2, -1, 1, 32, 0, 8, 0, 0, 0, 0) + pixels)
+print("host CPU Fixture CPU: has fixture features", flush=True)
+time.sleep(60)
+''', encoding="utf-8")
+        relinker.write_text("#!" + sys.executable + "\nimport os, shutil, sys\nfrom pathlib import Path\n"
+                            "target = Path(sys.argv[-1])\nshutil.copyfile(Path(__file__).with_name('native.py'), target)\n"
+                            "target.chmod(0o700)\n", encoding="utf-8")
+        relinker.chmod(0o700)
+        package = self.root / "games/PPSA00001"
+        (package / "sce_sys").mkdir(parents=True)
+        (package / "eboot.bin").write_bytes(b"\x7fELF" + bytes(60))
+        (package / "sce_sys/param.json").write_text(json.dumps({"titleId": "PPSA00001", "titleName": "Fixture", "contentVersion": "01.00"}), encoding="utf-8")
+        titles = self.root / "titles.json"
+        evidence = {"summary": identities, "report": report, "summary_rows": list(summary_rows), "report_text": report_text}
+        titles.write_text(json.dumps({"PPSA00001": {"env": {"FIXTURE_NATIVE_EVIDENCE": json.dumps(evidence)}}}), encoding="utf-8")
+        out = self.root / "out"
+        command = [sys.executable, str(Path(title_run.__file__)), "--games", str(self.root / "games"),
+                   "--build", str(build), "--titles", str(titles), "--out", str(out), "--runs", "1", "--seconds", "1", "PPSA00001"]
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=15)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        paths = list(out.glob("*/summary.json"))
+        self.assertEqual(len(paths), 1, completed.stdout)
+        summary = json.loads(paths[0].read_text(encoding="utf-8"))
+        self.assertTrue(self.commit.startswith(summary["build"]["commit"]))
+        run = summary["titles"]["PPSA00001"]["runs"][0]
+        self.assertEqual(run["outcome"], "rendering", run)
+        self.assertEqual(run["fps"], 60.0)
+        return summary, run, paths[0], paths[0].with_name("summary.md").read_text(encoding="utf-8")
+
+    def test_cli_comparison_retains_real_metrics_but_qualifies_changed_content(self):
+        previous, native, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
+                                                           {"commit": self.commit, "modified": False})
+        previous["titles"]["PPSA00001"]["version"] = "older-content"
+        previous["titles"]["PPSA00001"]["runs"][0].update(outcome="blank", fps=10)
+        path.write_text(json.dumps(previous), encoding="utf-8")
+        command = [sys.executable, str(Path(title_run.__file__)), "--games", str(self.root / "games"),
+                   "--build", str(self.root / "build"), "--titles", str(self.root / "titles.json"),
+                   "--out", str(self.root / "out"), "--runs", "1", "--seconds", "1", "--compare", str(path), "--json", "PPSA00001"]
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=15)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        compared = json.loads(completed.stdout)["titles"]["PPSA00001"]
+        self.assertEqual(compared["fps"], {"before": 10, "now": 60.0})
+        self.assertIn("context", compared)
+        self.assertEqual(compared["context"]["status"], "differing")
+        self.assertEqual(compared["context"]["differences"], ["contentVersion"])
+        self.assertEqual(compared["context"]["unknowns"], {"before": [], "now": []})
+        self.assertEqual(compared["context"]["now"]["requestedSeconds"], 1)
+        self.assertEqual(compared["provenance"]["now"]["status"], "matched")
+        self.assertIn("written to", completed.stderr)
+        reports = list((self.root / "out").glob("*/summary.md"))
+        self.assertEqual(len(reports), 2)
+        latest = next(report for report in reports if report.parent != path.parent).read_text(encoding="utf-8")
+        self.assertNotIn("Improvements", latest)
+        self.assertIn("differences: contentVersion", latest)
+        self.assertIn("exploratory", latest)
+
+    def assert_qualification(self, summary, status):
+        compared = json.loads(title_run.compare_json(summary, summary))["titles"]["PPSA00001"]
+        self.assertIn("provenance", compared)
+        self.assertEqual(compared["provenance"]["now"]["status"], status)
+        self.assertIn(status, "\n".join(title_run.render_compare({"PPSA00001": compared})))
+
+    def test_stale_native_binary_is_retained_and_rejected_by_bisect(self):
+        import performance_bisect
+        native = "b" * 40
+        summary, run, path, markdown = self.run_fixture([{"commit": native[:12], "dirty": False}], {"commit": native, "modified": False})
+        self.assertIn("native", run)
+        self.assertEqual(run["native"]["summary"][0]["commit"], native[:12])
+        self.assertEqual(run["native"]["report"], {"commit": native, "modified": False})
+        self.assert_qualification(summary, "mismatch")
+        self.assertIn("source checkout", markdown.lower())
+        self.assertIn("mismatch", markdown)
+        with self.assertRaisesRegex(ValueError, "native.*mismatch"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
+
+    def test_matching_native_identity_reaches_comparison_and_bisect(self):
+        import performance_bisect
+        summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}], {"commit": self.commit, "modified": False})
+        self.assert_qualification(summary, "matched")
+        self.assertEqual(performance_bisect.sample_summary(path, "PPSA00001", self.commit)["fps"], 60.0)
+        self.assertIn("matched", markdown)
+
+    def test_unknown_native_identity_does_not_certify_source_commit(self):
+        import performance_bisect
+        summary, run, path, markdown = self.run_fixture([{"commit": "unknown", "dirty": None}], {"commit": None, "modified": None})
+        self.assert_qualification(summary, "unknown")
+        self.assertIn("unknown", markdown)
+        with self.assertRaisesRegex(ValueError, "native.*unknown"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
+
+    def test_modified_report_components_override_clean_trace(self):
+        import performance_bisect
+        summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}], {"commit": self.commit, "modified": True})
+        self.assert_qualification(summary, "modified")
+        with self.assertRaisesRegex(ValueError, "native.*modified"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
+
+    def test_conflicting_report_does_not_choose_the_source_matching_commit(self):
+        summary, run, path, markdown = self.run_fixture([{"commit": "b" * 12, "dirty": False}], {"commit": self.commit, "modified": False})
+        self.assert_qualification(summary, "conflicting")
+
+    def test_earlier_conflicting_periodic_identity_is_not_overwritten(self):
+        summary, run, path, markdown = self.run_fixture([{"commit": "b" * 12, "dirty": False},
+            {"commit": self.commit[:12], "dirty": False}], {"commit": self.commit, "modified": False})
+        self.assert_qualification(summary, "conflicting")
+        self.assertEqual(len(run["native"]["summary"]), 2)
+
+    def test_truncated_trace_record_cannot_certify_the_matching_intervals(self):
+        import performance_bisect
+        broken = '{"commit":"bbbbbbbbbbbb","dirty":false,"interval_start_s":1,'
+        summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
+            {"commit": self.commit, "modified": False}, summary_rows=[broken])
+        with self.assertRaisesRegex(ValueError, "native.*unknown"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
+        self.assert_qualification(summary, "unknown")
+        self.assertEqual(run["native"]["summary_errors"], {"malformed_rows": 1})
+        self.assertNotIn("bbbbbbbbbbbb", json.dumps(run["native"]))
+        self.assertIn("unknown", markdown)
+
+    def test_non_object_trace_records_cannot_certify_the_valid_intervals(self):
+        import performance_bisect
+        summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
+            {"commit": self.commit, "modified": False}, summary_rows=['[]', 'null', '7', '"not a summary object"'])
+        with self.assertRaisesRegex(ValueError, "native.*unknown"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
+        self.assert_qualification(summary, "unknown")
+        self.assertEqual(run["native"]["summary_errors"], {"non_object_rows": 4})
+
+    def test_ordinary_log_records_outside_the_summary_protocol_do_not_taint_native_identity(self):
+        import performance_bisect
+        logs = ['worker started', '[notification] ordinary message',
+                '{"level":"info","message":"ordinary JSON log"}',
+                '{"format":"application-log","commit":"bbbbbbbbbbbb","dirty":false,"message":"source log"}',
+                '{"format":"aps5-log/1","commit":"bbbbbbbbbbbb","dirty":false,"message":"ordinary native log"}', '']
+        summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
+            {"commit": self.commit, "modified": False}, summary_rows=logs)
+        self.assertEqual(performance_bisect.sample_summary(path, "PPSA00001", self.commit)["fps"], 60.0)
+        self.assert_qualification(summary, "matched")
+        self.assertFalse(run["native"].get("summary_errors"))
+
+    def test_malformed_report_does_not_qualify_from_clean_trace_alone(self):
+        import performance_bisect
+        summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
+            {"commit": self.commit, "modified": False}, report_text='{"format":"anyps5-report","anyps5":')
+        self.assertIsNone(run["report"])
+        self.assert_qualification(summary, "unknown")
+        with self.assertRaisesRegex(ValueError, "native.*unknown"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
+
+
 class ReportTests(unittest.TestCase):
+    def test_incomplete_observations_are_visible_without_a_progress_rank(self):
+        incomplete = run("incomplete", fps=0.0)
+        incomplete["reason"] = "no summary before the stall observation window"
+        for other in ("rendering", "stalled", "incomplete", "crashed"):
+            for reverse in (False, True):
+                before = summary({"PPSA00001": {"name": "Fixture", "version": "1.00", "seconds": 3,
+                    "missing_content": [], "runs": [run(other)]}})
+                now = copy.deepcopy(before)
+                now["titles"]["PPSA00001"]["runs"] = [incomplete]
+                for item in (before, now):
+                    item["driver_cache"] = "isolated"
+                if reverse:
+                    before, now = now, before
+                with self.subTest(other=other, reverse=reverse):
+                    self.assertEqual(title_run.compare(now, before), ([], []))
+                    compared = json.loads(title_run.compare_json(now, before))["titles"]["PPSA00001"]
+                    side = "before" if reverse else "now"
+                    self.assertEqual(compared["outcomes"][side], "incomplete")
+                    self.assertIsNone(compared["fps"][side])
+                    self.assertEqual(compared["context"]["status"], "matched")
+                    self.assertIn("provenance", compared)
+                    markdown = title_run.render_markdown(now, before)
+                    self.assertNotIn("Regressions", markdown)
+                    self.assertNotIn("Improvements", markdown)
+                    self.assertIn("incomplete", markdown)
+        for other in ("rendering", "crashed"):
+            mixed = [incomplete, run(other, "warm", 60.0)]
+            self.assertEqual(title_run.worst(mixed), "incomplete")
+            self.assertEqual(title_run.worst_recorded(mixed), "incomplete")
+            self.assertIn("incomplete", title_run.cell(mixed, "cold"))
+            self.assertIn("incomplete 1/2", title_run.cell([incomplete, run(other)], "cold"))
+        visible = summary({"PPSA00001": {"name": "Fixture", "version": "1.00", "runs": [incomplete]}})
+        markdown = title_run.render_markdown(visible)
+        self.assertIn("not recorded", markdown)
+        self.assertIn(incomplete["reason"], markdown)
+
     def test_cell(self):
         runs = [run("crashed"), run("rendering", "warm"), run("crashed", "warm")]
         self.assertEqual(title_run.cell(runs, "cold"), "crashed")
@@ -320,6 +612,10 @@ class ReportTests(unittest.TestCase):
                        "PPSA97358": {"name": "XPSemu", "version": "A2.1", "runs": [run("rendering"), run("rendering", "warm")]}})
         before = summary({"PPSA85300": {"name": "Light", "version": "0.4", "runs": [run("rendering"), run("rendering", "warm")]},
                           "PPSA97358": {"name": "XPSemu", "version": "A2.1", "runs": [run("stalled"), run("stalled", "warm")]}})
+        for item in (before, now):
+            item["driver_cache"] = "isolated"
+            for title in item["titles"].values():
+                title.update(seconds=60, missing_content=[])
         self.assertEqual(title_run.worst(now["titles"]["PPSA85300"]["runs"]), "crashed")
         self.assertEqual(title_run.compare(now, before),
                          ([("PPSA85300", "rendering", "crashed")], [("PPSA97358", "stalled", "rendering")]))
@@ -328,15 +624,20 @@ class ReportTests(unittest.TestCase):
         now = summary({"PPSA85300": {"name": "Light", "version": "0.4",
                                      "runs": [run("crashed", error="what(): unsupported MIB 1.1 | x"), run("rendering", "warm", 31.0)]}})
         before = summary({"PPSA85300": {"name": "Light", "version": "0.4", "runs": [run("rendering"), run("rendering", "warm")]}})
+        for item in (before, now):
+            item["driver_cache"] = "isolated"
+            item["titles"]["PPSA85300"].update(seconds=60, missing_content=[])
         report = title_run.render_markdown(now, before)
         self.assertTrue(report.startswith("\n".join([
             "AnyPS5 `abc1234`, main + #6814. Windows 11, Radeon 860M, driver 32.0.13058.8001, CPU Ryzen AI 7 350. 2 runs per title, 60 s each.",
             "",
-            "Regressions: Light (PPSA85300) rendering -> crashed",
+            "Build identity above records the source checkout. Native runtime identity is reported per run below.",
             "",
-            "| Title | ID | Version | Cold | Warm | FPS | First error | Before |",
-            "|---|---|---|---|---|---|---|---|",
-            "| Light | PPSA85300 | 0.4 | crashed | rendering | 31.0 | what(): unsupported MIB 1.1 \\| x | rendering |",
+            "Regressions (recorded context matched): Light (PPSA85300) rendering -> crashed",
+            "",
+            "| Title | ID | Version | Cold | Warm | FPS | First error | Native runtime provenance | Before |",
+            "|---|---|---|---|---|---|---|---|---|",
+            "| Light | PPSA85300 | 0.4 | crashed | rendering | 31.0 | what(): unsupported MIB 1.1 \\| x | unknown; unknown | rendering |",
             "",
         ])))
         self.assertIn("| Title | ID | Measure | Before | Now |", report)
@@ -1074,9 +1375,9 @@ class PreparationTests(unittest.TestCase):
     def test_json_comparison_is_the_only_output_on_stdout(self):
         package(self.root / "games/PPSA00001", "PPSA00001")
         titles = self.root / "titles.json"
-        titles.write_text(json.dumps({"PPSA00001": {"files": {"app0/pak0.pak": {"content": "pak0.pak"}}}}), encoding="utf-8")
+        titles.write_text(json.dumps({"PPSA00001": {"seconds": 90, "files": {"app0/pak0.pak": {"content": "pak0.pak"}}}}), encoding="utf-8")
         previous = self.root / "previous.json"
-        previous.write_text(json.dumps(summary({"PPSA00001": {"name": "Game", "version": "01.000.000", "runs": [run("rendering", fps=30.0)]}})),
+        previous.write_text(json.dumps(summary({"PPSA00001": {"name": "Game", "version": "01.000.000", "runs": [run("rendering", fps=30.0), run("rendering", "warm", fps=30.0)]}})),
                             encoding="utf-8")
 
         def prepare(title_id, found, entry, platform, build, work):
@@ -1098,7 +1399,16 @@ class PreparationTests(unittest.TestCase):
             stdout.seek(0)
             stderr.seek(0)
             printed, progress = stdout.read(), stderr.read()
-        self.assertEqual(json.loads(printed)["titles"]["PPSA00001"]["fps"], {"before": 30.0, "now": 0.0})
+        compared = json.loads(printed)["titles"]["PPSA00001"]
+        self.assertEqual(compared["fps"], {"before": 30.0, "now": 0.0})
+        self.assertIn("context", compared)
+        self.assertEqual(compared["context"]["status"], "unknown")
+        self.assertEqual(compared["context"]["now"]["requestedSeconds"], 90)
+        self.assertEqual(compared["context"]["now"]["missingContent"], ["pak0.pak"])
+        self.assertEqual(compared["context"]["now"]["runCaches"], ["cold", "warm"])
+        self.assertIsNone(compared["context"]["before"]["requestedSeconds"])
+        self.assertIsNone(compared["context"]["before"]["missingContent"])
+        self.assertEqual(json.loads(next(out.glob("*/summary.json")).read_text(encoding="utf-8"))["titles"]["PPSA00001"]["seconds"], 90)
         self.assertIn("PPSA00001: --content lacks pak0.pak; running without\n", progress)
         self.assertIn("PPSA00001 run1: exited\nPPSA00001 run2: exited\n", progress)
         self.assertIn(f"written to {out.resolve()}", progress)
@@ -1366,6 +1676,137 @@ class SessionTests(unittest.TestCase):
         self.assertTrue(wait_until(lambda: not session.alive()))
 
 
+class ComparisonContextTests(unittest.TestCase):
+    def recorded(self, outcome="rendering", fps=60):
+        result = summary({"PPSA00001": {"name": "Fixture", "version": "1", "seconds": 60, "missing_content": [],
+                                        "runs": [run(outcome, fps=fps), run(outcome, "warm", fps=fps)]}})
+        result["driver_cache"] = "isolated"
+        return result
+
+    def test_each_recorded_difference_keeps_pairs_without_claiming_an_improvement(self):
+        cases = [("contentVersion", "title", "version", "2"), ("os", "machine", "os", "Linux"),
+                 ("cpu", "machine", "cpu", "Another CPU"), ("gpu", "machine", "gpu", "Another GPU"),
+                 ("driver", "machine", "driver", "Another driver"), ("requestedSeconds", "title", "seconds", 120),
+                 ("driverCache", "summary", "driver_cache", "shared (not isolated)"),
+                 ("missingContent", "title", "missing_content", ["pak0.pak"])]
+        for field, section, key, value in cases:
+            with self.subTest(field=field):
+                previous, now = self.recorded("blank", 10), self.recorded()
+                target = now["titles"]["PPSA00001"] if section == "title" else now[section] if section == "machine" else now
+                target[key] = value
+                self.assertEqual(title_run.compare(now, previous), ([], []))
+                compared = json.loads(title_run.compare_json(now, previous))["titles"]["PPSA00001"]
+                self.assertEqual(compared["fps"], {"before": 10, "now": 60})
+                self.assertEqual(compared["outcomes"], {"before": "blank", "now": "rendering"})
+                self.assertEqual(compared["context"]["status"], "differing")
+                self.assertEqual(compared["context"]["differences"], [field])
+                self.assertEqual(compared["context"]["now"][field], value)
+                self.assertEqual(compared["context"]["unknowns"], {"before": [], "now": []})
+                markdown = title_run.render_markdown(now, previous)
+                self.assertIn(f"differences: {field}", markdown)
+                self.assertIn("exploratory", markdown)
+                self.assertNotIn("Improvements", markdown)
+                self.assertNotIn("Regressions", title_run.render_markdown(previous, now))
+
+    def test_same_recorded_context_allows_both_outcome_directions(self):
+        before, now = self.recorded("blank", 10), self.recorded()
+        self.assertEqual(title_run.compare(now, before), ([], [("PPSA00001", "blank", "rendering")]))
+        self.assertEqual(title_run.compare(before, now), ([("PPSA00001", "rendering", "blank")], []))
+        compared = json.loads(title_run.compare_json(now, before))["titles"]["PPSA00001"]
+        self.assertIn("context", compared)
+        self.assertEqual(compared["context"]["status"], "matched")
+        self.assertEqual(compared["context"]["before"], compared["context"]["now"])
+        self.assertIn("Improvements (recorded context matched):", title_run.render_markdown(now, before))
+        self.assertEqual(compared["provenance"]["now"]["status"], "unknown")
+
+    def test_all_run_cache_classes_are_compared_even_when_last_runs_match(self):
+        before, now = self.recorded("blank", 10), self.recorded()
+        now["titles"]["PPSA00001"]["runs"][0]["cache"] = "warm"
+        self.assertEqual(title_run.compare(now, before), ([], []))
+        compared = title_run.compare_runs(now, before)["PPSA00001"]
+        self.assertEqual(compared["context"]["differences"], ["runCaches"])
+        self.assertEqual(compared["context"]["before"]["runCaches"], ["cold", "warm"])
+        self.assertEqual(compared["context"]["now"]["runCaches"], ["warm", "warm"])
+        self.assertEqual(compared["fps"], {"before": 10, "now": 60})
+
+    def test_missing_content_is_a_set_and_absence_is_unknown(self):
+        before, now = self.recorded("blank"), self.recorded()
+        before["titles"]["PPSA00001"]["missing_content"] = ["b", "a", "a"]
+        now["titles"]["PPSA00001"]["missing_content"] = ["a", "b"]
+        compared = title_run.compare_runs(now, before)["PPSA00001"]
+        self.assertIn("context", compared)
+        context = compared["context"]
+        self.assertEqual(context["status"], "matched")
+        self.assertEqual(context["before"]["missingContent"], ["a", "b"])
+        del before["titles"]["PPSA00001"]["missing_content"]
+        now["titles"]["PPSA00001"]["missing_content"] = []
+        self.assertEqual(title_run.compare(now, before), ([], []))
+        compared = title_run.compare_runs(now, before)["PPSA00001"]
+        self.assertIn("context", compared)
+        context = compared["context"]
+        self.assertEqual(context["status"], "unknown")
+        self.assertIsNone(context["before"]["missingContent"])
+        self.assertEqual(context["now"]["missingContent"], [])
+        self.assertEqual(context["unknowns"], {"before": ["missingContent"], "now": []})
+
+    def test_absent_or_empty_cpu_is_unknown_on_each_side(self):
+        for side in ("before", "now"):
+            for value in (None, ""):
+                with self.subTest(side=side, value=value):
+                    before, now = self.recorded("blank"), self.recorded()
+                    target = before if side == "before" else now
+                    if value is None:
+                        del target["machine"]["cpu"]
+                    else:
+                        target["machine"]["cpu"] = value
+                    self.assertEqual(title_run.compare(now, before), ([], []))
+                    compared = title_run.compare_runs(now, before)["PPSA00001"]
+                    self.assertIn("context", compared)
+                    context = compared["context"]
+                    self.assertEqual(context["status"], "unknown")
+                    self.assertEqual(context["unknowns"][side], ["cpu"])
+                    self.assertIsNone(context[side]["cpu"])
+                    self.assertIn(f"unknown {side}: cpu", title_run.render_markdown(now, before))
+
+    def test_per_title_budget_overrides_global_and_observed_seconds(self):
+        before, now = self.recorded("blank"), self.recorded()
+        before["seconds"], now["seconds"] = 30, 120
+        for item in (before, now):
+            item["titles"]["PPSA00001"]["seconds"] = 90
+            item["titles"]["PPSA00001"]["runs"][0]["seconds"] = 0.1
+        compared = title_run.compare_runs(now, before)["PPSA00001"]
+        self.assertIn("context", compared)
+        context = compared["context"]
+        self.assertEqual(context["status"], "matched")
+        self.assertEqual(context["now"]["requestedSeconds"], 90)
+        del before["titles"]["PPSA00001"]["seconds"]
+        self.assertEqual(title_run.compare(now, before), ([], []))
+        compared = title_run.compare_runs(now, before)["PPSA00001"]
+        self.assertIn("context", compared)
+        context = compared["context"]
+        self.assertIsNone(context["before"]["requestedSeconds"])
+        self.assertEqual(context["unknowns"]["before"], ["requestedSeconds"])
+
+    def test_legacy_metadata_is_unknown_without_erasing_known_differences(self):
+        before, now = self.recorded("blank", 10), self.recorded()
+        del before["machine"]
+        del before["driver_cache"]
+        del before["titles"]["PPSA00001"]["seconds"]
+        del before["titles"]["PPSA00001"]["missing_content"]
+        del before["titles"]["PPSA00001"]["runs"][0]["cache"]
+        now["titles"]["PPSA00001"]["version"] = "2"
+        self.assertEqual(title_run.compare(now, before), ([], []))
+        compared = title_run.compare_runs(now, before)["PPSA00001"]
+        context = compared["context"]
+        self.assertEqual(context["status"], "differing")
+        self.assertEqual(context["differences"], ["contentVersion"])
+        self.assertEqual(set(context["unknowns"]["before"]),
+                         {"os", "cpu", "gpu", "driver", "requestedSeconds", "missingContent", "runCaches", "driverCache"})
+        self.assertEqual(context["before"]["runCaches"], [None, "warm"])
+        self.assertEqual(compared["fps"], {"before": 10, "now": 60})
+        self.assertIn("not recorded", title_run.render_markdown(now, before))
+
+
 class CompareTests(unittest.TestCase):
     def summary(self, **titles):
         return {"titles": {title_id: {"name": f"Game {title_id}", "runs": runs} for title_id, runs in titles.items()}}
@@ -1446,6 +1887,7 @@ class CompareTests(unittest.TestCase):
         compared = feature("compare_runs")(self.summary(PPSA00001=[now]), self.summary(PPSA00001=[before]))
         lines = feature("render_compare")(compared)
         self.assertEqual(lines[0], "| Title | ID | Measure | Before | Now |")
+        self.assertEqual(compared["PPSA00001"]["outcomes"], {"before": None, "now": "rendering"})
         self.assertIn("| Game PPSA00001 | PPSA00001 | FPS | 20.0 | 25.5 |", lines)
         self.assertIn("| Game PPSA00001 | PPSA00001 | Average FPS (report) | 58.0 | not recorded |", lines)
         self.assertIn("| Game PPSA00001 | PPSA00001 | Shader cache hits | not recorded | 50 |", lines)

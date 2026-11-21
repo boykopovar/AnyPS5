@@ -20,10 +20,11 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import pad_input
 import pad_timeline
+import title_run_provenance
 import unwrap_self
 from audit_dump import comparison_path
 from package_release import native_auxiliary_runtimes, windows_runtime
-OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "frame-unreadable", "blank", "rendering")
+OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "frame-unreadable", "blank", "rendering", "incomplete")
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
 TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "pad": dict, "files": dict, "smoke": bool}
 FILE_ROOTS = ("app0", "data", "download0")
@@ -31,6 +32,8 @@ FIXED_BASE_FLAGS = {"windows": "--windows-fixed-base", "linux": "--linux-fixed-b
 PAD_FIELDS = {"events", "after_s", "repeat", "gap_ms"}
 PAD_AFTER_SECONDS = 5
 REPORT_FILE = "anyps5-report.json"
+SUMMARY_FIELDS = {"commit", "dirty", "presents", "window", "interval_start_s", "interval_end_s", "trace"}
+SUMMARY_JSON = re.compile(r'^\s*(?:\{\s*(?:["}]|$)|\[\s*(?:[\[{"\]0-9-]|true\b|false\b|null\b|$)|")')
 FRAME_PERCENTILES = ("p50", "p90", "p99")
 SHADER_COUNTS = ("compiled", "failed", "cacheHits")
 UNSUPPORTED_KEYS = ("encoding", "opcode", "opcodeValue", "modifiers")
@@ -158,14 +161,25 @@ def warning_counts(text):
 
 
 def read_summary(path):
-    lines = []
+    lines, errors = [], {}
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if path.is_file() else []:
         try:
             decoded = json.loads(line)
         except ValueError:
+            if SUMMARY_JSON.match(line):
+                errors["malformed_rows"] = errors.get("malformed_rows", 0) + 1
             continue
         if isinstance(decoded, dict):
-            lines.append(decoded)
+            declared_format = decoded.get("format")
+            if SUMMARY_FIELDS.intersection(decoded) and (not isinstance(declared_format, str) or declared_format in ("", "aps5-bench/1")):
+                lines.append(decoded)
+        else:
+            errors["non_object_rows"] = errors.get("non_object_rows", 0) + 1
+    native = {}
+    if any("commit" in line or "dirty" in line for line in lines):
+        for line in lines:
+            identity = {"commit": line.get("commit"), "dirty": line.get("dirty")}
+            native[json.dumps(identity, sort_keys=True)] = identity
     intervals = [line for line in lines if "interval_start_s" in line]
     if intervals:
         lines = intervals
@@ -173,7 +187,8 @@ def read_summary(path):
     seconds = sum(line.get("window", {}).get("ms", 0) for line in lines) / 1000
     last = lines[-1] if lines else {}
     return {"presents": presents, "fps": round(presents / seconds, 1) if seconds else 0.0,
-            "gpu": last.get("gpu", ""), "driver": last.get("driver", ""), "os": last.get("os", "")}
+            "gpu": last.get("gpu", ""), "driver": last.get("driver", ""), "os": last.get("os", ""),
+            **({"native": list(native.values())} if native else {}), **({"native_errors": errors} if errors else {})}
 
 
 def section(document, name):
@@ -193,12 +208,16 @@ def read_report(path):
     functions, unsupported = missing.get("functions"), shaders.get("unsupported")
     functions = [entry for entry in functions if isinstance(entry, dict)] if isinstance(functions, list) else functions
     unsupported = [entry for entry in unsupported if isinstance(entry, dict)] if isinstance(unsupported, list) else unsupported
-    return {"averageFps": run.get("averageFps"),
+    result = {"averageFps": run.get("averageFps"),
             "frameMs": section(run, "frameMs") or None,
             "shaders": {name: shaders.get(name) for name in SHADER_COUNTS} if coverage.get("shaders") else None,
             "missing": functions if coverage.get("missing") and isinstance(functions, list) else None,
             "unsupported": unsupported if coverage.get("unsupported") and isinstance(unsupported, list) else None,
             "truncated": {"functions": truncated.get("functions", 0), "unsupported": truncated.get("unsupported", 0)}}
+    if "anyps5" in document:
+        identity = section(document, "anyps5")
+        result["native"] = {"commit": identity.get("commit"), "modified": identity.get("modified")}
+    return result
 
 
 def take_report(work, run_dir):
@@ -238,11 +257,13 @@ def frame_is_uniform(path, tolerance=8):
     return True
 
 
-def classify(relinked, exit_code, summary_age, framed, last_frame_uniform):
+def classify(relinked, exit_code, summary_age, framed, last_frame_uniform, elapsed=None):
     if not relinked:
         return "relink-failed"
     if exit_code is not None:
         return "crashed" if exit_code != 0 else "exited"
+    if summary_age is None and elapsed is not None and elapsed < STALL_SECONDS:
+        return "incomplete"
     if summary_age is None or summary_age > STALL_SECONDS or not framed:
         return "stalled"
     if last_frame_uniform is None:
@@ -262,15 +283,46 @@ def cell(runs, cache):
 
 
 def worst(runs):
+    if any(entry["outcome"] == "incomplete" for entry in runs):
+        return "incomplete"
     return min((entry["outcome"] for entry in runs), key=OUTCOMES.index)
+
+
+def worst_recorded(runs):
+    return worst(runs) if runs and all(run.get("outcome") in OUTCOMES for run in runs) else None
+
+
+def recorded_context(summary, title):
+    machine = summary.get("machine") or {}
+    seconds, missing = title.get("seconds"), title.get("missing_content")
+    context = {"contentVersion": title.get("version"), **{field: machine.get(field) for field in ("os", "cpu", "gpu", "driver")},
+               "driverCache": summary.get("driver_cache")}
+    context = {field: value if isinstance(value, str) and value.strip() else None for field, value in context.items()}
+    context["requestedSeconds"] = seconds if type(seconds) is int and seconds > 0 else None
+    context["runCaches"] = [run.get("cache") if run.get("cache") in ("cold", "warm") else None for run in title["runs"]]
+    context["missingContent"] = sorted(set(missing)) if isinstance(missing, list) and all(isinstance(item, str) for item in missing) else None
+    return context
+
+
+def comparison_context(summary, previous, title_id):
+    contexts = {"before": recorded_context(previous, previous["titles"][title_id]),
+                "now": recorded_context(summary, summary["titles"][title_id])}
+    unknowns = {side: [field for field, value in context.items() if value is None or field == "runCaches" and (not value or None in value)]
+                for side, context in contexts.items()}
+    differences = [field for field in contexts["before"] if all(field not in unknowns[side] for side in contexts)
+                   and contexts["before"][field] != contexts["now"][field]]
+    status = "differing" if differences else "unknown" if any(unknowns.values()) else "matched"
+    return {**contexts, "status": status, "differences": differences, "unknowns": unknowns}
 
 
 def compare(summary, previous):
     regressions, improvements = [], []
     for title_id, title in summary["titles"].items():
-        if title_id not in previous["titles"]:
+        if title_id not in previous["titles"] or comparison_context(summary, previous, title_id)["status"] != "matched":
             continue
         before, now = worst(previous["titles"][title_id]["runs"]), worst(title["runs"])
+        if "incomplete" in (before, now):
+            continue
         if OUTCOMES.index(now) < OUTCOMES.index(before):
             regressions.append((title_id, before, now))
         elif OUTCOMES.index(now) > OUTCOMES.index(before):
@@ -287,7 +339,7 @@ def pair(before, now):
 
 
 def fps_of(run):
-    return None if run.get("outcome") == "relink-failed" else run.get("fps")
+    return None if run.get("outcome") in ("relink-failed", "incomplete") else run.get("fps")
 
 
 def report_field(run, name):
@@ -347,6 +399,10 @@ def compare_runs(summary, previous):
         before_frames = section(before.get("report") or {}, "frameMs")
         now_frames = section(now.get("report") or {}, "frameMs")
         compared[title_id] = {"name": summary["titles"][title_id]["name"], "fps": pair(fps_of(before), fps_of(now)),
+                              "context": comparison_context(summary, previous, title_id),
+                              "outcomes": pair(worst_recorded(previous["titles"][title_id]["runs"]), worst_recorded(summary["titles"][title_id]["runs"])),
+                              "provenance": {"before": title_run_provenance.qualification(before, previous.get("build")),
+                                             "now": title_run_provenance.qualification(now, summary.get("build"))},
                               "averageFps": pair(report_field(before, "averageFps"), report_field(now, "averageFps")),
                               "frameMs": {name: pair(before_frames.get(name), now_frames.get(name)) for name in FRAME_PERCENTILES},
                               "shaders": {name: pair(shader_count(before, name), shader_count(now, name)) for name in SHADER_COUNTS},
@@ -376,12 +432,30 @@ def names(entries):
     return ", ".join(label(entry) for entry in entries)
 
 
+def context_display(value):
+    if isinstance(value, list):
+        return ", ".join(display(item) for item in value) if value else "none"
+    return display(value)
+
+
 def render_compare(compared):
     columns = ["Title", "ID", "Measure", "Before", "Now"]
     lines = ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
-    details = []
+    details = ["Recorded context compares content version, machine, requested time, cache classifications and missing content only; "
+               "it does not establish scene, environment, resolution or native runtime identity equivalence. "
+               "Numeric pairs use the last run; outcomes use the worst of all runs."]
     for title_id, title in compared.items():
+        context = title["context"]
+        details.append(f"{title['name']} ({title_id}), recorded comparison context: {context['status']}; "
+                       f"differences: {', '.join(context['differences']) or 'none'}; "
+                       f"unknown before: {', '.join(context['unknowns']['before']) or 'none'}; "
+                       f"unknown now: {', '.join(context['unknowns']['now']) or 'none'}."
+                       + (" Numeric pairs and outcome changes are exploratory; no improvement or regression is qualified." if context["status"] != "matched" else ""))
         measures = [
+            ("Recorded comparison context", {side: context["status"] for side in ("before", "now")}),
+            *((f"Context {field}", {side: context_display(context[side][field]) for side in ("before", "now")}) for field in context["before"]),
+            ("Worst outcome", title["outcomes"]),
+            ("Native runtime provenance", {side: title_run_provenance.label(title["provenance"][side]) for side in ("before", "now")}),
             ("FPS", title["fps"]),
             ("Average FPS (report)", title["averageFps"]),
             *((f"Frame time {name} (ms)", title["frameMs"][name]) for name in FRAME_PERCENTILES),
@@ -417,25 +491,26 @@ def compare_json(summary, previous):
 
 
 def render_markdown(summary, previous=None):
-    build, machine = summary["build"], summary["machine"]
+    build, machine = summary["build"], summary.get("machine") or {}
     header = f"AnyPS5 `{build['commit']}`" + (" (dirty)" if build["dirty"] else "") + (f", {build['note']}" if build["note"] else "")
-    parts = [machine["os"], machine["gpu"], machine["driver"] and f"driver {machine['driver']}", machine["cpu"] and f"CPU {machine['cpu']}"]
+    parts = [machine.get("os"), machine.get("gpu"), machine.get("driver") and f"driver {machine['driver']}",
+             machine.get("cpu") and f"CPU {machine['cpu']}"]
     known = ", ".join(part for part in parts if part)
     header += f". {known}." if known else "."
     lengths = sorted({title["seconds"] for title in summary["titles"].values() if "seconds" in title}) or [summary["seconds"]]
     length = f"{lengths[0]} to {lengths[-1]}" if len(lengths) > 1 else lengths[0]
     header += f" {summary['runs']} run{'' if summary['runs'] == 1 else 's'} per title, {length} s each."
-    lines = [header, ""]
+    lines = [header, "", "Build identity above records the source checkout. Native runtime identity is reported per run below.", ""]
     lacking = [f"{title['name']} ({title_id}) {', '.join(title['missing_content'])}" for title_id, title in sorted(summary["titles"].items()) if title.get("missing_content")]
     if lacking:
         lines += [f"Ran without content: {'; '.join(lacking)}", ""]
-    columns = ["Title", "ID", "Version", "Cold", "Warm", "FPS", "First error"] + (["Before"] if previous else [])
+    columns = ["Title", "ID", "Version", "Cold", "Warm", "FPS", "First error", "Native runtime provenance"] + (["Before"] if previous else [])
     if previous:
         regressions, improvements = compare(summary, previous)
         for label, changes in (("Regressions", regressions), ("Improvements", improvements)):
             if changes:
                 names = ", ".join(f"{summary['titles'][title_id]['name']} ({title_id}) {before} -> {now}" for title_id, before, now in changes)
-                lines += [f"{label}: {names}", ""]
+                lines += [f"{label} (recorded context matched): {names}", ""]
         missing = sorted(title_id for title_id in previous["titles"] if title_id not in summary["titles"])
         if missing:
             names = ", ".join(f"{previous['titles'][title_id]['name']} ({title_id})" for title_id in missing)
@@ -444,12 +519,19 @@ def render_markdown(summary, previous=None):
     for title_id, title in sorted(summary["titles"].items()):
         runs = title["runs"]
         error = next((entry["first_error"] for entry in runs if entry["outcome"] != "rendering" and entry["first_error"]), "")
-        row = [title["name"], title_id, title["version"], cell(runs, "cold"), cell(runs, "warm"), f"{runs[-1]['fps']:.1f}",
-               error[:120].replace("|", "\\|")]
+        row = [title["name"], title_id, title["version"], cell(runs, "cold"), cell(runs, "warm"),
+               "not recorded" if runs[-1]["outcome"] == "incomplete" else f"{runs[-1]['fps']:.1f}",
+               error[:120].replace("|", "\\|"),
+               "; ".join(title_run_provenance.label(title_run_provenance.qualification(run, build)) for run in runs)]
         if previous:
             old = previous["titles"].get(title_id)
             row.append(worst(old["runs"]) if old else "new")
         lines.append("| " + " | ".join(row) + " |")
+    incomplete = [f"{title['name']} ({title_id}), run {index}: {run.get('reason', 'insufficient observations')}"
+                  for title_id, title in sorted(summary["titles"].items()) for index, run in enumerate(title["runs"], 1)
+                  if run["outcome"] == "incomplete"]
+    if incomplete:
+        lines += ["", "Incomplete observations: " + "; ".join(incomplete)]
     if previous and (compared := compare_runs(summary, previous)):
         lines += ["", *render_compare(compared)]
     return "\n".join(lines + [""])
@@ -1022,7 +1104,7 @@ def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
                     queued = round(time.monotonic() - started, 1)
                 session.send_new_windows_to_back()
                 time.sleep(0.1 if time.monotonic() - started < 10 else 0.5)
-            elapsed = round(time.monotonic() - started, 1)
+            elapsed = time.monotonic() - started
             alive, ended = session.alive(), time.time()
             exit_code = None if alive else session.exit_code()
             if alive:
@@ -1040,9 +1122,14 @@ def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
     uniform = frame_is_uniform(run_dir / "frames" / frames[-1]) if frames else None
     age = ended - summary_path.stat().st_mtime if summary_path.is_file() else None
     cpu = re.search(r"host CPU (.+?): has", text)
-    return {"outcome": classify(True, exit_code, age, bool(frames), uniform), "exit_code": exit_code, "seconds": elapsed,
+    native = {"summary": summary.get("native", [{"commit": None, "dirty": None}] if summary_path.is_file() else []),
+              "report": (report or {}).get("native", {"commit": None, "modified": None}) if (run_dir / REPORT_FILE).is_file() else None,
+              **({"summary_errors": summary["native_errors"]} if "native_errors" in summary else {})}
+    outcome = classify(True, exit_code, age, bool(frames), uniform, elapsed)
+    return {"outcome": outcome, "exit_code": exit_code, "seconds": round(elapsed, 1),
+            **({"reason": "no summary before the stall observation window"} if outcome == "incomplete" else {}),
             "presents": summary["presents"], "fps": summary["fps"], "first_error": first_error(text),
-            "warnings": warning_counts(text), "frames": frames, "report": report, "gpu": summary["gpu"], "driver": summary["driver"],
+            "warnings": warning_counts(text), "frames": frames, "report": report, "native": native, "gpu": summary["gpu"], "driver": summary["driver"],
             "os": summary["os"], "cpu": cpu.group(1) if cpu else "", **({"pad_queued_s": queued} if pad else {})}
 
 
