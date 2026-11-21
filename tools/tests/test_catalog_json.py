@@ -54,6 +54,24 @@ class FeatureTests(unittest.TestCase):
         self.assertIsNone(data["entries"][0]["patch"])
         self.assertEqual(data["invalid"], 1)
 
+    def test_unique_json_keys_preserves_unique_and_refuses_duplicates(self):
+        import validate_patch_catalog
+        self.assertEqual(validate_patch_catalog.unique_json_keys([("a", 1), ("b", 2)]), {"a": 1, "b": 2})
+        with self.assertRaisesRegex(ValueError, "duplicate JSON key 'a'"):
+            validate_patch_catalog.unique_json_keys([("a", 1), ("a", 2)])
+
+    def test_text_output_reports_summary_on_stdout_and_errors_on_stderr(self):
+        catalog = self.root / "text_catalog"
+        catalog.mkdir()
+        (catalog / "index.json").write_text(json.dumps({"format": 1, "entries": []}))
+        result = self.cli("validate_patch_catalog.py", "--catalog", catalog)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Catalog validation: 0 entries valid.", result.stdout)
+        bad_catalog = self.root / "missing_catalog"
+        result = self.cli("validate_patch_catalog.py", "--catalog", bad_catalog)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Catalog validation:", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
