@@ -139,6 +139,17 @@ void StubBodyBuilder::RipOperand(const std::initializer_list<std::uint8_t> opcod
     _constants.push_back(constant);
 }
 
+void StubBodyBuilder::RipConstant(const std::span<const std::uint8_t> instruction, const std::size_t displacementOffset, const StubConstant& constant) {
+    if (displacementOffset + 4 > instruction.size())
+        throw CodegenException("Constant displacement lies outside its instruction");
+    const auto start = _bytes.size();
+    _bytes.insert(_bytes.end(), instruction.begin(), instruction.end());
+    const auto existing = std::find(_constants.begin(), _constants.end(), constant);
+    _fixups.push_back({start + displacementOffset, _bytes.size(), static_cast<std::size_t>(existing - _constants.begin())});
+    if (existing == _constants.end())
+        _constants.push_back(constant);
+}
+
 void StubBodyBuilder::Load(const std::uint8_t reg, const MemoryOperand& operand) {
     using namespace X64OpcodeConstants;
     const auto displacement = static_cast<std::int64_t>(operand.Displacement) + static_cast<std::int64_t>(operand.StackBase ? _stackDepth : 0);
