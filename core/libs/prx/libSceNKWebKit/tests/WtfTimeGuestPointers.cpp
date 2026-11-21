@@ -97,7 +97,19 @@ int main() {
     Require(_ZNK3WTF7SecondsplENS_13MonotonicTimeE(&seconds, WTF::MonotonicTime{1.0}).m_value == 4.0);
     Require(_ZNK3WTF7SecondsplENS_8WallTimeE(&seconds, WTF::WallTime{2.0}).m_value == 5.0);
     Require(_ZNK3WTF7CPUTime23percentageCPUUsageSinceERKS0_(&second, first) == 50.0);
-    Require(_ZNK3WTF7CPUTime23percentageCPUUsageSinceERKS0_(&first, second) == 0.0);
+    Require(_ZNK3WTF7CPUTime23percentageCPUUsageSinceERKS0_(&first, second) == 50.0);
+    Require(std::isnan(_ZNK3WTF7CPUTime23percentageCPUUsageSinceERKS0_(&first, first)));
+    const WTF::CPUTime sameClockMoreWork{{2.0}, {1.5}, {0.25}};
+    Require(_ZNK3WTF7CPUTime23percentageCPUUsageSinceERKS0_(&sameClockMoreWork, first) == infinity);
+    Require(_ZNK3WTF7CPUTime23percentageCPUUsageSinceERKS0_(&first, sameClockMoreWork) == -infinity);
+    for (const auto clock : {WTF::ClockType::Wall, WTF::ClockType::Monotonic, WTF::ClockType::Approximate}) {
+        Require(_ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(WTF::TimeWithDynamicClockType{-infinity, clock}));
+        Require(_ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(WTF::TimeWithDynamicClockType{std::numeric_limits<double>::quiet_NaN(), clock}));
+        Require(_ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(WTF::TimeWithDynamicClockType{0.0, clock}));
+        Require(_ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(WTF::TimeWithDynamicClockType{-0.0, clock}));
+        Require(_ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(WTF::TimeWithDynamicClockType{-5.0, clock}));
+        Require(!_ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(WTF::TimeWithDynamicClockType{infinity, clock}));
+    }
 
     WTF::GregorianDateTime date{};
     _ZN3WTF17GregorianDateTime21setToCurrentLocalTimeEv(&date);
