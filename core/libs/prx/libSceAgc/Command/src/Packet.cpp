@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -145,13 +146,23 @@ std::uint32_t* Allocate(CommandBuffer* buffer, std::uint32_t count, const char* 
     return result;
 }
 
+#ifdef ANYPS5_ENABLE_TSAN
+static void storePayload(std::uint32_t* destination, std::initializer_list<std::uint32_t> payload) {
+    for (const std::uint32_t value : payload) std::atomic_ref<std::uint32_t>(*destination++).store(value, std::memory_order_relaxed);
+}
+#else
+static void storePayload(std::uint32_t* destination, std::initializer_list<std::uint32_t> payload) {
+    std::copy(payload.begin(), payload.end(), destination);
+}
+#endif
+
 std::uint32_t* Emit(CommandBuffer* buffer, std::uint32_t opcode, std::initializer_list<std::uint32_t> payload, const char* function) {
     Require(payload.size() <= 0x4000u, function, "packet payload exceeds maximum size");
     const auto count = static_cast<std::uint32_t>(payload.size()) + 1u;
     const auto header = Header(opcode, count);
     auto* packet = Allocate(buffer, count, function);
     packet[0] = header;
-    std::copy(payload.begin(), payload.end(), packet + 1);
+    storePayload(packet + 1, payload);
     return packet;
 }
 

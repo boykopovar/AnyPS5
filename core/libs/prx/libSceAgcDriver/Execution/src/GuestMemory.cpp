@@ -2862,11 +2862,29 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std:
     });
 }
 
+static void storeGuestBytes(std::uint64_t address, std::span<const std::byte> source) {
+    if (source.size() == sizeof(std::uint64_t) && address % sizeof(std::uint64_t) == 0) {
+        std::uint64_t word = 0;
+        std::memcpy(&word, source.data(), sizeof(word));
+        std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address)).store(word, std::memory_order_release);
+        return;
+    }
+    if ((source.size() == sizeof(std::uint32_t) || source.size() == sizeof(std::uint64_t)) && address % sizeof(std::uint32_t) == 0) {
+        for (std::size_t at = 0; at < source.size(); at += sizeof(std::uint32_t)) {
+            std::uint32_t word = 0;
+            std::memcpy(&word, source.data() + at, sizeof(word));
+            std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(address + at)).store(word, std::memory_order_release);
+        }
+        return;
+    }
+    CopyToGuestBytes(reinterpret_cast<void*>(address), source.data(), source.size());
+}
+
 static void copyOwnBytes(std::uint64_t address, std::span<const std::byte> source) {
 #ifndef _WIN32
     if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix() && GuestArena::GuestArenaWriteSharedBacking_nid_no_patch(address, source.data(), source.size())) return;
 #endif
-    std::memcpy(reinterpret_cast<void*>(address), source.data(), source.size());
+    storeGuestBytes(address, source);
 }
 
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> source) {
@@ -3679,14 +3697,30 @@ void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t a
     CopyGuestBytes(destination.data(), source, destination.size());
 }
 
-#ifdef ANYPS5_ENABLE_ASAN
-[[gnu::no_sanitize("address")]] void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
-    using UnalignedWord [[gnu::aligned(1), gnu::may_alias]] = std::uint64_t;
+std::uint64_t ReadLabel(std::uint64_t address, std::size_t bytes) {
+    if (bytes != sizeof(std::uint32_t) && bytes != sizeof(std::uint64_t)) throw std::invalid_argument("a guest label is 4 or 8 bytes");
+    GuardRead(address, bytes);
+    FlushGpuWrites(address, bytes);
+    const TimedAccess timed(CounterRead, bytes);
+    CountReadCaller(__builtin_return_address(0));
+    CheckRange(reinterpret_cast<const void*>(address), bytes, bytes);
+    if (bytes == sizeof(std::uint64_t)) return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address)).load(std::memory_order_acquire);
+    return std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(address)).load(std::memory_order_acquire);
+}
+
+namespace {
+
+using UnalignedGuestWord [[gnu::aligned(1), gnu::may_alias]] = std::uint64_t;
+
+}
+
+#if defined(ANYPS5_ENABLE_ASAN) || defined(ANYPS5_ENABLE_TSAN)
+[[gnu::no_sanitize("address", "thread")]] void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
     auto* to = static_cast<unsigned char*>(destination);
     const auto* from = static_cast<const unsigned char*>(source);
     std::size_t index = 0;
     for (; index + sizeof(std::uint64_t) <= bytes; index += sizeof(std::uint64_t)) {
-        const std::uint64_t word = *reinterpret_cast<const volatile UnalignedWord*>(from + index);
+        const std::uint64_t word = *reinterpret_cast<const volatile UnalignedGuestWord*>(from + index);
         std::memcpy(to + index, &word, sizeof(word));
     }
     for (; index < bytes; ++index) to[index] = static_cast<const volatile unsigned char*>(from)[index];
@@ -3694,6 +3728,44 @@ void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t a
 #else
 void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
     std::memcpy(destination, source, bytes);
+}
+#endif
+
+#ifdef ANYPS5_ENABLE_TSAN
+[[gnu::no_sanitize("thread")]] void CopyToGuestBytes(void* destination, const void* source, std::size_t bytes) {
+    auto* to = static_cast<unsigned char*>(destination);
+    const auto* from = static_cast<const unsigned char*>(source);
+    std::size_t index = 0;
+    for (; index + sizeof(std::uint64_t) <= bytes; index += sizeof(std::uint64_t)) {
+        std::uint64_t word = 0;
+        std::memcpy(&word, from + index, sizeof(word));
+        *reinterpret_cast<volatile UnalignedGuestWord*>(to + index) = word;
+    }
+    for (; index < bytes; ++index) static_cast<volatile unsigned char*>(destination)[index] = from[index];
+}
+
+[[gnu::no_sanitize("thread")]] bool GuestBytesEqual(const void* guest, const void* expected, std::size_t bytes) {
+    const auto* from = static_cast<const unsigned char*>(guest);
+    const auto* other = static_cast<const unsigned char*>(expected);
+    std::size_t index = 0;
+    for (; index + sizeof(std::uint64_t) <= bytes; index += sizeof(std::uint64_t)) {
+        const std::uint64_t word = *reinterpret_cast<const volatile UnalignedGuestWord*>(from + index);
+        std::uint64_t wanted = 0;
+        std::memcpy(&wanted, other + index, sizeof(wanted));
+        if (word != wanted) return false;
+    }
+    for (; index < bytes; ++index) {
+        if (static_cast<const volatile unsigned char*>(guest)[index] != other[index]) return false;
+    }
+    return true;
+}
+#else
+void CopyToGuestBytes(void* destination, const void* source, std::size_t bytes) {
+    std::memcpy(destination, source, bytes);
+}
+
+bool GuestBytesEqual(const void* guest, const void* expected, std::size_t bytes) {
+    return std::memcmp(guest, expected, bytes) == 0;
 }
 #endif
 
@@ -3737,7 +3809,7 @@ void copyCommittedBytes(std::byte* destination, std::uint64_t source, std::size_
         if (!read) std::memset(destination + offset, 0, count);
     });
 #else
-    std::memcpy(destination, reinterpret_cast<const void*>(source), bytes);
+    CopyGuestBytes(destination, reinterpret_cast<const void*>(source), bytes);
 #endif
 }
 
@@ -3759,7 +3831,7 @@ bool equalsCommittedBytes(std::uint64_t address, const std::byte* expected, std:
     }
     return true;
 #else
-    return std::memcmp(reinterpret_cast<const void*>(address), expected, bytes) == 0;
+    return GuestBytesEqual(reinterpret_cast<const void*>(address), expected, bytes);
 #endif
 }
 
@@ -3826,7 +3898,7 @@ Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes) {
         if (!run.readable) outcome = Compare::Unmapped;
         else {
             if (compareMappedHook != nullptr) compareMappedHook(run.begin, static_cast<std::size_t>(run.end - run.begin));
-            if (std::memcmp(reinterpret_cast<const void*>(run.begin), bytes.data() + (run.begin - address), static_cast<std::size_t>(run.end - run.begin)) != 0) outcome = Compare::Differs;
+            if (!GuestBytesEqual(reinterpret_cast<const void*>(run.begin), bytes.data() + (run.begin - address), static_cast<std::size_t>(run.end - run.begin))) outcome = Compare::Differs;
         }
         return outcome == Compare::Equal;
     });
@@ -3845,7 +3917,7 @@ Compare CopyMapped(std::uint64_t address, std::span<std::byte> out) {
     auto outcome = Compare::Equal;
     const bool queried = describePages(static_cast<std::uintptr_t>(address), out.size(), [&](const PageRun& run) {
         if (!run.readable) outcome = Compare::Unmapped;
-        else std::memcpy(out.data() + (run.begin - address), reinterpret_cast<const void*>(run.begin), static_cast<std::size_t>(run.end - run.begin));
+        else CopyGuestBytes(out.data() + (run.begin - address), reinterpret_cast<const void*>(run.begin), static_cast<std::size_t>(run.end - run.begin));
         return outcome == Compare::Equal;
     });
     return queried ? outcome : Compare::Unmapped;
@@ -4018,7 +4090,7 @@ void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t
     StoreOwnBytes(address, source.size(), [&](std::span<std::byte> image) {
         CheckRange(destination, source.size(), alignment, true);
         if (source.size() >= PageBytes) copyOwnBytes(address, source);
-        else std::memcpy(destination, source.data(), source.size());
+        else storeGuestBytes(address, source);
         if (!image.empty()) std::memcpy(image.data(), source.data(), source.size());
     });
 }
