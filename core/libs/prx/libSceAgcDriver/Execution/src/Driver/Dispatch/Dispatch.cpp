@@ -916,6 +916,17 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     }
     bool captureChecked = fromAhead;
 
+    if (!localDevice->ComputePipelineBuilt(compiled)) {
+        if (!localDevice->HasComputePipeline(compiled)) {
+            SubmitComputePrebuild([localDevice, compiledResult, address] {
+                try { localDevice->PrebuildComputePipeline(*compiledResult, address); } catch (const std::exception&) {}
+            });
+            if (profile) std::fprintf(stderr, "[dispatch] %zu SPIR-V words (program 0x%llx): cold pipeline build submitted, skipping dispatch\n",
+                compiledResult->spirv.size(), static_cast<unsigned long long>(address));
+        }
+        return;
+    }
+
     for (;;) {
 
         std::shared_ptr<PreparedDispatch> prepared;

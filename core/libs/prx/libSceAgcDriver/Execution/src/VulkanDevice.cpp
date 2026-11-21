@@ -3000,6 +3000,14 @@ bool VulkanDevice::HasComputePipeline(const ShaderRecompiler::RecompileResult& s
     return !key.identity.Empty() && (state->computePipelines.contains(key) || state->computePipelinesBuilding.contains(key));
 }
 
+bool VulkanDevice::ComputePipelineBuilt(const ShaderRecompiler::RecompileResult& shader) const {
+    const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
+    const auto key = ComputePipelineKey::Of(shader, Graphics::PushConstantStages(shaders) != 0);
+    if (key.identity.Empty()) return true;
+    std::lock_guard pipelines(state->computePipelinesMutex);
+    return state->computePipelines.contains(key);
+}
+
 namespace {
 thread_local bool buildingAhead = false;
 
@@ -3018,7 +3026,6 @@ struct PipelineWaitClockPause {
     PipelineWaitClockPause(const PipelineWaitClockPause&) = delete;
     PipelineWaitClockPause& operator=(const PipelineWaitClockPause&) = delete;
 };
-}
 
 void VulkanDevice::PrebuildComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress) {
     std::optional<ComputePipelineKey> key;
