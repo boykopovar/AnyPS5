@@ -1,10 +1,12 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <source_location>
 
 namespace {
@@ -36,9 +38,21 @@ void TestDigest() {
     Require(EVP_MD_CTX_md_nid_postfix(nullptr) == nullptr);
 }
 
+void TestUnreadable() {
+    errno = 71;
+    bool threw = false;
+    try {
+        EVP_MD_CTX_md_nid_postfix(reinterpret_cast<const void*>(std::uintptr_t{0x10}));
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Require(threw && errno == 71);
+}
+
 }
 
 int main() {
     TestDigest();
+    TestUnreadable();
     std::puts("LibreSSL3 EVP_MD_CTX tests passed");
 }
