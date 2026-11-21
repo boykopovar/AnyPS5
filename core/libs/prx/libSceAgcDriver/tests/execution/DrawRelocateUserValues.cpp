@@ -288,6 +288,22 @@ void BufferValueWordsKeyByNothing() {
     Require(readable && first == second, "a V# value word changed the relocated content key");
 }
 
+void ForwardedWordWithoutDescriptorSelectsItsPatchedPushConstants() {
+    auto compiled = std::make_shared<RecompileResult>();
+    compiled->pushConstants.resize(8);
+    compiled->shaderDataUserWords = {4u};
+    const auto variant = Variant(compiled);
+    variant->valueWords = 1u << 4u;
+    variant->shaderDataPatches = {{0u, 0x3e800000u}};
+    Driver::applyShaderDataPatches(*variant);
+    Require(variant->patchedPushConstants.size() == compiled->pushConstants.size(), "a forwarded word without a descriptor slot did not keep patched push constants");
+    std::uint32_t patched = 0;
+    std::memcpy(&patched, variant->patchedPushConstants.data(), sizeof(patched));
+    Require(patched == 0x3e800000u, "the forwarded word was not patched into the push constants");
+    Require(AgcDriver::DriverDetail::UsesPatchedPushConstants(false, false, true, *variant), "a data-only candidate with a moved forwarded word did not use its patched push constants");
+    Require(!AgcDriver::DriverDetail::UsesPatchedPushConstants(false, false, false, *variant), "a full build used a candidate's patched push constants");
+}
+
 }
 
 int main() {
@@ -295,6 +311,7 @@ int main() {
         CalleeWordsAreKeyedByTheirCode();
         BufferValueWordsArePatchedInTheirBinding();
         BufferValueWordsKeyByNothing();
+        ForwardedWordWithoutDescriptorSelectsItsPatchedPushConstants();
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
