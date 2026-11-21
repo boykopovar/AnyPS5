@@ -688,6 +688,44 @@ static void TestUserContentURLPattern() {
     WKRelease(patStr);
 }
 
+static void TestSecurityOriginStringCopies() {
+    auto nullString = NKWebKit::Make<NKWebKit::String>();
+    Require(nullString->null);
+    const void* unset = WKSecurityOriginCreate(nullString.Get(), nullString.Get(), 0);
+    for (const void* copy : {WKSecurityOriginCopyProtocol(unset), WKSecurityOriginCopyHost(unset), WKSecurityOriginCopyToString(unset)}) {
+        Require(copy != nullptr);
+        Require(WKStringIsEmpty(copy));
+        Require(!static_cast<const NKWebKit::String*>(copy)->null);
+        WKRelease(copy);
+    }
+    WKRelease(unset);
+
+    auto emptyString = NKWebKit::String::FromUtf8("");
+    Require(!emptyString->null);
+    const void* empty = WKSecurityOriginCreate(emptyString.Get(), emptyString.Get(), 0);
+    for (const void* copy : {WKSecurityOriginCopyProtocol(empty), WKSecurityOriginCopyHost(empty), WKSecurityOriginCopyToString(empty)}) {
+        Require(WKStringIsEmpty(copy));
+        Require(!static_cast<const NKWebKit::String*>(copy)->null);
+        WKRelease(copy);
+    }
+    WKRelease(empty);
+
+    auto protocol = NKWebKit::String::FromUtf8("https");
+    auto host = NKWebKit::String::FromUtf8("example.org");
+    const void* origin = WKSecurityOriginCreate(protocol.Get(), host.Get(), 8443);
+    const void* copiedProtocol = WKSecurityOriginCopyProtocol(origin);
+    const void* copiedHost = WKSecurityOriginCopyHost(origin);
+    const void* copiedText = WKSecurityOriginCopyToString(origin);
+    Require(WKStringIsEqualToUTF8CString(copiedProtocol, "https"));
+    Require(WKStringIsEqualToUTF8CString(copiedHost, "example.org"));
+    Require(WKStringIsEqualToUTF8CString(copiedText, "https://example.org:8443"));
+    for (const void* copy : {copiedProtocol, copiedHost, copiedText}) {
+        Require(!static_cast<const NKWebKit::String*>(copy)->null);
+        WKRelease(copy);
+    }
+    WKRelease(origin);
+}
+
 static void TestURLRequestResponse() {
     Require(WKURLRequestGetTypeID() == 23);
     Require(WKURLResponseGetTypeID() == 24);
@@ -817,17 +855,36 @@ static void TestURLRequestResponse() {
 
     auto* emptyMime = WKURLResponseCopyMIMEType(defaultRef);
     Require(WKStringIsEmpty(emptyMime));
+    Require(!static_cast<const NKWebKit::String*>(emptyMime)->null);
     WKRelease(emptyMime);
 
     Require(WKURLResponseHTTPStatusCode(defaultRef) == 0);
 
     auto* emptyFilename = WKURLResponseCopySuggestedFilename(defaultRef);
     Require(WKStringIsEmpty(emptyFilename));
+    Require(!static_cast<const NKWebKit::String*>(emptyFilename)->null);
     WKRelease(emptyFilename);
 
     Require(!WKURLResponseIsAttachment(defaultRef));
     Require(WKURLResponseGetExpectedContentLength(defaultRef) == 0);
     WKRelease(defaultRef);
+
+    auto nullStringsObj = NKWebKit::Make<NKWebKit::URLResponse>(
+        NKWebKit::Make<NKWebKit::URL>("https://example.com/"),
+        NKWebKit::Make<NKWebKit::String>(),
+        200,
+        NKWebKit::Make<NKWebKit::String>(),
+        false,
+        0LL
+    );
+    const void* nullStringsRef = NKWebKit::ToRef(nullStringsObj);
+    for (const void* copy : {WKURLResponseCopyMIMEType(nullStringsRef), WKURLResponseCopySuggestedFilename(nullStringsRef)}) {
+        Require(copy != nullptr);
+        Require(WKStringIsEmpty(copy));
+        Require(!static_cast<const NKWebKit::String*>(copy)->null);
+        WKRelease(copy);
+    }
+    WKRelease(nullStringsRef);
 
     bool threw = false;
     try {
@@ -1508,8 +1565,12 @@ static void TestDownload() {
     auto download = NKWebKit::Make<NKWebKit::Download>();
     const void* ref = download.Get();
 
-    Require(!WKDownloadGetWasUserInitiated(ref));
-    Require(WKDownloadCopyRequest(ref) == nullptr);
+    Require(WKDownloadGetWasUserInitiated(ref));
+    auto* initialRequest = WKDownloadCopyRequest(ref);
+    Require(initialRequest != nullptr);
+    Require(WKGetTypeID(initialRequest) == WKURLRequestGetTypeID());
+    Require(WKURLRequestCopyURL(initialRequest) == nullptr);
+    WKRelease(initialRequest);
     Require(WKDownloadGetOriginatingPage(ref) == nullptr);
     Require(WKDownloadGetID(ref) == 0);
     Require(WKDownloadGetResumeData(ref) == nullptr);
@@ -1539,6 +1600,8 @@ static void TestDownload() {
     Require(WKArrayGetSize(chain) == 1);
     WKRelease(chain);
 
+    download->wasUserInitiated = false;
+    Require(!WKDownloadGetWasUserInitiated(ref));
     download->wasUserInitiated = true;
     Require(WKDownloadGetWasUserInitiated(ref));
 
@@ -1594,15 +1657,32 @@ static void TestDownload() {
     Require(threw);
 }
 
+static void RequireEmptyStringCopy(const void* string, int line) {
+    Check(string != nullptr, line);
+    Check(WKGetTypeID(string) == WKStringGetTypeID(), line);
+    Check(WKStringIsEmpty(string), line);
+    Check(!static_cast<const NKWebKit::String*>(string)->null, line);
+    WKRelease(string);
+}
+
 static void TestAXObject() {
     Require(WKAXObjectGetTypeID() == 132);
     auto ax = NKWebKit::Make<NKWebKit::AccessibilityObject>();
     const void* ref = ax.Get();
 
-    Require(WKAXObjectCopyTitle(ref) == nullptr);
-    Require(WKAXObjectCopyDescription(ref) == nullptr);
-    Require(WKAXObjectCopyHelpText(ref) == nullptr);
-    Require(WKAXObjectCopyURL(ref) == nullptr);
+    RequireEmptyStringCopy(WKAXObjectCopyTitle(ref), __LINE__);
+    RequireEmptyStringCopy(WKAXObjectCopyDescription(ref), __LINE__);
+    RequireEmptyStringCopy(WKAXObjectCopyHelpText(ref), __LINE__);
+    RequireEmptyStringCopy(WKAXObjectCopyURL(ref), __LINE__);
+
+    ax->title = NKWebKit::Make<NKWebKit::String>();
+    ax->description = NKWebKit::Make<NKWebKit::String>();
+    ax->helpText = NKWebKit::Make<NKWebKit::String>();
+    ax->url = NKWebKit::Make<NKWebKit::String>();
+    RequireEmptyStringCopy(WKAXObjectCopyTitle(ref), __LINE__);
+    RequireEmptyStringCopy(WKAXObjectCopyDescription(ref), __LINE__);
+    RequireEmptyStringCopy(WKAXObjectCopyHelpText(ref), __LINE__);
+    RequireEmptyStringCopy(WKAXObjectCopyURL(ref), __LINE__);
 
     ax->title = NKWebKit::String::FromUtf8("Submit Button");
     ax->description = NKWebKit::String::FromUtf8("Submits the form");
@@ -1611,6 +1691,7 @@ static void TestAXObject() {
 
     auto* title = WKAXObjectCopyTitle(ref);
     Require(title != nullptr);
+    Require(title != static_cast<const NKWebKit::Object*>(ax->title.Get()));
     Require(WKStringIsEqualToUTF8CString(title, "Submit Button"));
     WKRelease(title);
 
@@ -1647,11 +1728,14 @@ static void TestPopupMenuItem() {
     Require(WKPopupMenuItemIsEnabled(ref));
     Require(WKPopupMenuItemIsItem(ref));
     Require(!WKPopupMenuItemIsSeparator(ref));
-    Require(WKPopupMenuItemCopyText(ref) == nullptr);
+    RequireEmptyStringCopy(WKPopupMenuItemCopyText(ref), __LINE__);
+    item->text = NKWebKit::Make<NKWebKit::String>();
+    RequireEmptyStringCopy(WKPopupMenuItemCopyText(ref), __LINE__);
 
     item->text = NKWebKit::String::FromUtf8("Option 1");
     auto* text = WKPopupMenuItemCopyText(ref);
     Require(text != nullptr);
+    Require(text != static_cast<const NKWebKit::Object*>(item->text.Get()));
     Require(WKStringIsEqualToUTF8CString(text, "Option 1"));
     WKRelease(text);
 
@@ -1837,6 +1921,7 @@ static void TestProtectionSpace() {
     Require(WKProtectionSpaceGetAuthenticationScheme(space) == 2);
     Require(!WKProtectionSpaceGetIsProxy(space));
     Require(WKProtectionSpaceGetReceivesCredentialSecurely(space));
+    Require(WKProtectionSpaceCopyCertificateInfo(space) == nullptr);
     WKRelease(space);
 
     const Server servers[] = {Server::HTTP, Server::HTTPS, Server::FTP, Server::FTPS, Server::ProxyHTTP, Server::ProxyHTTPS, Server::ProxyFTP, Server::ProxySOCKS};
@@ -1878,7 +1963,16 @@ static void TestProtectionSpace() {
     Require(WKProtectionSpaceGetAuthenticationScheme(empty) == 1);
     Require(!WKProtectionSpaceGetIsProxy(empty));
     Require(!WKProtectionSpaceGetReceivesCredentialSecurely(empty));
+    Require(WKProtectionSpaceCopyCertificateInfo(empty) == nullptr);
     WKRelease(empty);
+
+    auto certInfo = NKWebKit::Make<NKWebKit::CertificateInfo>();
+    auto* spaceWithCert = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::ProtectionSpace>(
+        NKWebKit::String::FromUtf8("secure.example.com"), 443, Server::HTTPS, NKWebKit::String::FromUtf8("Secure Realm"), Scheme::ServerTrustEvaluationRequested, certInfo));
+    auto* copiedCert = WKProtectionSpaceCopyCertificateInfo(spaceWithCert);
+    Require(copiedCert == NKWebKit::ToRef(certInfo));
+    WKRelease(copiedCert);
+    WKRelease(spaceWithCert);
 
     auto* notSpace = NKWebKit::ToRef(NKWebKit::String::FromUtf8("not a protection space"));
     bool threw = false;
@@ -1888,11 +1982,27 @@ static void TestProtectionSpace() {
         threw = true;
     }
     Require(threw);
+
+    threw = false;
+    try {
+        WKProtectionSpaceCopyCertificateInfo(notSpace);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
     WKRelease(notSpace);
 
     threw = false;
     try {
         WKProtectionSpaceCopyHost(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKProtectionSpaceCopyCertificateInfo(nullptr);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -2134,13 +2244,35 @@ static void TestOpenPanelParameters() {
 static void TestNotification() {
     Require(WKNotificationGetTypeID() == 76);
 
+    {
+        auto fresh = NKWebKit::Make<NKWebKit::Notification>();
+        auto other = NKWebKit::Make<NKWebKit::Notification>();
+        const void* freshRef = NKWebKit::ToRef(fresh);
+        const void* otherRef = NKWebKit::ToRef(other);
+        auto* freshDir = WKNotificationCopyDir(freshRef);
+        Require(WKGetTypeID(freshDir) == 21);
+        Require(WKStringIsEqualToUTF8CString(freshDir, "auto"));
+        auto* againDir = WKNotificationCopyDir(freshRef);
+        Require(againDir != freshDir);
+        Require(WKStringIsEqualToUTF8CString(againDir, "auto"));
+        WKRelease(againDir);
+        WKRelease(freshDir);
+        const std::uint64_t freshID = WKNotificationGetID(freshRef);
+        Require(freshID != 0);
+        Require(freshID != std::numeric_limits<std::uint64_t>::max());
+        Require(WKNotificationGetID(otherRef) == freshID + 1);
+        Require(WKNotificationGetID(freshRef) == freshID);
+        WKRelease(otherRef);
+        WKRelease(freshRef);
+    }
+
     auto notif = NKWebKit::Make<NKWebKit::Notification>();
     notif->title = u"Alert";
     notif->body = u"Something happened";
     notif->iconURL = u"https://example.com/icon.png";
     notif->tag = u"tag1";
     notif->lang = u"en-US";
-    notif->dir = u"ltr";
+    notif->dir = NKWebKit::NotificationDirection::Ltr;
     notif->notificationID = 42;
 
     const void* ref = NKWebKit::ToRef(notif);
@@ -2169,6 +2301,26 @@ static void TestNotification() {
     auto* dir = WKNotificationCopyDir(ref);
     Require(WKStringIsEqualToUTF8CString(dir, "ltr"));
     WKRelease(dir);
+
+    notif->dir = NKWebKit::NotificationDirection::Rtl;
+    auto* rtlDir = WKNotificationCopyDir(ref);
+    Require(WKStringIsEqualToUTF8CString(rtlDir, "rtl"));
+    WKRelease(rtlDir);
+
+    notif->dir = NKWebKit::NotificationDirection::Auto;
+    auto* autoDir = WKNotificationCopyDir(ref);
+    Require(WKStringIsEqualToUTF8CString(autoDir, "auto"));
+    WKRelease(autoDir);
+
+    notif->dir = static_cast<NKWebKit::NotificationDirection>(3);
+    bool rejectedDirection = false;
+    try {
+        WKNotificationCopyDir(ref);
+    } catch (const std::logic_error&) {
+        rejectedDirection = true;
+    }
+    Require(rejectedDirection);
+    notif->dir = NKWebKit::NotificationDirection::Ltr;
 
     Require(WKNotificationGetID(ref) == 42);
 
@@ -3089,8 +3241,10 @@ static void TestView() {
     Require(view->drawsBackground);
 
     WKViewWillEnterFullScreen(ref);
-    Require(!WKViewIsFullScreen(ref));
+    Require(WKViewIsFullScreen(ref));
     WKViewDidEnterFullScreen(ref);
+    Require(WKViewIsFullScreen(ref));
+    WKViewRequestExitFullScreen(ref);
     Require(WKViewIsFullScreen(ref));
     WKViewWillExitFullScreen(ref);
     Require(WKViewIsFullScreen(ref));
@@ -3098,8 +3252,17 @@ static void TestView() {
     Require(!WKViewIsFullScreen(ref));
 
     WKViewDidEnterFullScreen(ref);
-    Require(WKViewIsFullScreen(ref));
+    Require(!WKViewIsFullScreen(ref));
     WKViewRequestExitFullScreen(ref);
+    Require(!WKViewIsFullScreen(ref));
+    WKViewWillExitFullScreen(ref);
+    Require(!WKViewIsFullScreen(ref));
+    WKViewDidExitFullScreen(ref);
+    Require(!WKViewIsFullScreen(ref));
+    WKViewWillEnterFullScreen(ref);
+    WKViewWillEnterFullScreen(ref);
+    Require(WKViewIsFullScreen(ref));
+    WKViewDidExitFullScreen(ref);
     Require(!WKViewIsFullScreen(ref));
 
     bool threw = false;
@@ -3257,6 +3420,7 @@ int main() {
     TestImage();
     TestAuthentication();
     TestCertificateInfo();
+    TestSecurityOriginStringCopies();
     try {
         TestEmptyFrameLoaderClient();
         TestEmptyFrameLoaderResourceCallbacks();

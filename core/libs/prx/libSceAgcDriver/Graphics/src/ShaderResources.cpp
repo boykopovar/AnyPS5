@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DescriptorValidation.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -322,7 +323,7 @@ void eraseTexture(TextureCache& cache, std::list<CachedTexture>::iterator it) {
             }
         }
     }
-    if (it->texture.use_count() > 1) noteReleased(it->texture, it->address);
+    if (it->accounted != 0 && it->texture.use_count() > 1) noteReleased(it->texture, it->address);
     cache.index.erase(it->key);
     cache.entries.erase(it);
     ++cache.erasures;
@@ -1047,6 +1048,9 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         return cachedTexture(context, words, window, components, 0, depthCompare, VK_IMAGE_VIEW_TYPE_2D, layerRows);
     }
     if (guestBytes == 0) guestBytes = SurfaceGuestBytes(resource);
+    const auto residency = depthCompare || layerRows || SrgbExpandsToRgba8(context, resource.format) ? std::nullopt : MinLodResidentLevels(resource);
+    const bool residentLevels = residency.has_value() && residency->bytes < guestBytes;
+    if (residentLevels) guestBytes = residency->bytes;
     if (guestBytes >= (1ull << 30u)) {
         static std::atomic<std::uint64_t> large{0};
         const auto count = large.fetch_add(1) + 1;
@@ -1119,7 +1123,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     // import, recorded behind the producer, so no bytes are read or compared on the CPU and nothing
     // waits for the producer. A fast-cleared surface (keys) is viewed only through an image whose own
     // descriptor carries the DCC address (below); it stays a snapshot otherwise, its texels not read.
-    if ((!depthCompare || depthCopy) && !layerRows && source == nullptr && !clearThroughKeys && SampledFromStorageEligible(context, resource, guestBytes)) {
+    if ((!depthCompare || depthCopy) && !layerRows && source == nullptr && !clearThroughKeys && !residentLevels && SampledFromStorageEligible(context, resource, guestBytes)) {
 
         keys = scanKeys();
         if (*keys == DccKeys::Uncompressed) {
@@ -1285,7 +1289,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     }
     const auto clear = source == nullptr ? SampledClearColor(context, resource, *keys, depthCompare) : std::nullopt;
     static const bool sampledImport = std::getenv("APS5_NO_SAMPLED_IMPORT") == nullptr;
-    const bool gpuWritten = sampledImport && source == nullptr && !clear && !depthCompare && !layerRows && !slabs.has_value() && *keys == DccKeys::Uncompressed && Recorder::SnapshotWriteOverlaps(address, bytes);
+    const bool gpuWritten = sampledImport && source == nullptr && !clear && !depthCompare && !layerRows && !residentLevels && !slabs.has_value() && *keys == DccKeys::Uncompressed && Recorder::SnapshotWriteOverlaps(address, bytes);
     const auto gpuSources = gpuWritten ? ExistingHostImportCopies(context, address, bytes) : std::vector<HostImportCopy>{};
     if (source != nullptr || clear.has_value() || !gpuSources.empty()) parkSnapshot(cache, recycled);
     CachedTexture entry{key, address, std::vector<std::byte>{}, nullptr, *keys, snapshotGeneration};
@@ -2397,38 +2401,6 @@ std::string HexText(std::uint64_t value) {
     return text;
 }
 
-std::string DescriptorLimitError(std::string_view description, std::uint64_t required, std::uint64_t limit) {
-    return std::string(description) + ": required " + std::to_string(required) + ", device limit " + std::to_string(limit);
-}
-
-void ValidateDescriptorLayout(const Context& context, std::span<const VkDescriptorSetLayoutBinding> bindings, bool updateAfterBind) {
-    const auto& indexed = context.descriptorIndexingLimits;
-    const bool sampledUpdateAfterBind = updateAfterBind && context.sampledImageUpdateAfterBind;
-    const auto maxStageResources = updateAfterBind ? indexed.maxPerStageUpdateAfterBindResources : context.limits.maxPerStageResources;
-    const auto maxStageSampledImages = sampledUpdateAfterBind ? indexed.maxPerStageDescriptorUpdateAfterBindSampledImages : context.limits.maxPerStageDescriptorSampledImages;
-    const auto maxStageSamplers = sampledUpdateAfterBind ? indexed.maxPerStageDescriptorUpdateAfterBindSamplers : context.limits.maxPerStageDescriptorSamplers;
-    const auto maxSetSampledImages = sampledUpdateAfterBind ? indexed.maxDescriptorSetUpdateAfterBindSampledImages : context.limits.maxDescriptorSetSampledImages;
-    const auto maxSetSamplers = sampledUpdateAfterBind ? indexed.maxDescriptorSetUpdateAfterBindSamplers : context.limits.maxDescriptorSetSamplers;
-    std::map<VkDescriptorType, std::uint64_t> heapTotals;
-    std::map<std::pair<VkShaderStageFlags, VkDescriptorType>, std::uint64_t> stageTotals;
-    std::map<VkShaderStageFlags, std::uint64_t> stageResources;
-    for (const auto& layout : bindings) {
-        heapTotals[layout.descriptorType] += layout.descriptorCount;
-        for (std::uint32_t bit = 0u; bit < 32u; ++bit) {
-            const auto stage = VkShaderStageFlags{1u} << bit;
-            if ((layout.stageFlags & stage) == 0u) continue;
-            const auto count = stageTotals[{stage, layout.descriptorType}] += layout.descriptorCount;
-            const auto all = stageResources[stage] += layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER ? 0u : layout.descriptorCount;
-            Require(all <= maxStageResources, "typed heaps exceed per-stage resource capacity");
-            if (layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE) Require(count <= maxStageSampledImages, "typed heaps exceed per-stage sampled image capacity");
-            if (layout.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) Require(count <= context.limits.maxPerStageDescriptorStorageImages, "typed heaps exceed per-stage storage image capacity");
-            if (layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER && count > maxStageSamplers) throw std::runtime_error(DescriptorLimitError("typed heaps exceed per-stage sampler capacity", count, maxStageSamplers));
-        }
-    }
-    Require(heapTotals[VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE] <= maxSetSampledImages && heapTotals[VK_DESCRIPTOR_TYPE_STORAGE_IMAGE] <= context.limits.maxDescriptorSetStorageImages, "typed heaps exceed descriptor set capacity");
-    if (heapTotals[VK_DESCRIPTOR_TYPE_SAMPLER] > maxSetSamplers) throw std::runtime_error(DescriptorLimitError("typed heaps exceed descriptor set sampler capacity", heapTotals[VK_DESCRIPTOR_TYPE_SAMPLER], maxSetSamplers));
-}
-
 void ValidateRuntimeResources(const CompiledShader& shader, std::span<const std::uint32_t> words) {
     Require(shader.program != nullptr, "missing compiled shader");
     const auto& program = *shader.program;
@@ -2648,7 +2620,8 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             tableBindings[set] = bindings.size() - 1u;
         }
         if (storageBuffers > context.limits.maxDescriptorSetStorageBuffers) {
-            Require(storageBuffers <= context.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindStorageBuffers, "pipeline descriptors exceed device limits");
+            const auto maxPipelineStorageBuffers = context.storageBufferUpdateAfterBind ? context.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindStorageBuffers : context.limits.maxDescriptorSetStorageBuffers;
+            if (storageBuffers > maxPipelineStorageBuffers) throw std::runtime_error(DescriptorLimitError("typed heaps exceed descriptor set storage buffer capacity", storageBuffers, maxPipelineStorageBuffers));
             updateAfterBind = true;
         }
         timing.bindingsMs = phase(BuildPhase::Bindings);
@@ -2852,6 +2825,10 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
         tablesUpdateAfterBind |= context.imageTableUpdateAfterBind;
     }
     if (storageBuffers > context.limits.maxDescriptorSetStorageBuffers) updateAfterBind = true;
+    const auto maxPipelineStorageBuffers = (context.storageBufferUpdateAfterBind && updateAfterBind) ? context.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindStorageBuffers : context.limits.maxDescriptorSetStorageBuffers;
+    if (storageBuffers > maxPipelineStorageBuffers) {
+        throw std::runtime_error(DescriptorLimitError("typed heaps exceed descriptor set storage buffer capacity", storageBuffers, maxPipelineStorageBuffers));
+    }
     for (std::size_t set = 0; set < descriptions.size(); ++set) {
         for (std::size_t index = 0; index < descriptions[set].size(); ++index) {
             if (updateAfterBind && descriptions[set][index].descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) bindingFlags[set][index] |= VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
@@ -5375,9 +5352,10 @@ namespace {
 std::uint32_t SetDescriptorLimit(const Context& context, VkDescriptorType type, bool updateAfterBind) {
     const auto& limits = context.limits;
     const auto& indexed = context.descriptorIndexingLimits;
+    const bool storageUpdateAfterBind = updateAfterBind && context.storageBufferUpdateAfterBind;
     const bool sampledUpdateAfterBind = updateAfterBind && context.sampledImageUpdateAfterBind;
     switch (type) {
-        case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: return updateAfterBind ? indexed.maxDescriptorSetUpdateAfterBindStorageBuffers : limits.maxDescriptorSetStorageBuffers;
+        case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: return storageUpdateAfterBind ? indexed.maxDescriptorSetUpdateAfterBindStorageBuffers : limits.maxDescriptorSetStorageBuffers;
         case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE: return sampledUpdateAfterBind ? indexed.maxDescriptorSetUpdateAfterBindSampledImages : limits.maxDescriptorSetSampledImages;
         case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE: return limits.maxDescriptorSetStorageImages;
         case VK_DESCRIPTOR_TYPE_SAMPLER: return sampledUpdateAfterBind ? indexed.maxDescriptorSetUpdateAfterBindSamplers : limits.maxDescriptorSetSamplers;

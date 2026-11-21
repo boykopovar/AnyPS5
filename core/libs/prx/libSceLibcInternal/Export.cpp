@@ -53,11 +53,6 @@ Slot MessagesSlot(const void* self, Slot GuestLocale::MessagesVtable::*member, c
 
 extern "C" {
 
-int APS5_VABI _ZNKSt8ios_base7failure8_DoraiseEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 void* APS5_VABI _ZNKSt8messagesIcE3getEiiiRKSs_nid_postfix(void* result, const void* self, int catalog, int set, int message, const void* fallback) {
     return MessagesSlot(self, &GuestLocale::MessagesVtable::get, "messages<char>::get")(static_cast<GuestLocale::String*>(result), static_cast<const GuestLocale::Facet*>(self), catalog, set, message, static_cast<const GuestLocale::String*>(fallback));
 }
@@ -672,11 +667,6 @@ int APS5_VABI _Daysto_nid_postfix(int year, int month) {
     return static_cast<int>(leapDays + static_cast<std::uint32_t>(common ? DaysBeforeMonth[month] : LeapDaysBeforeMonth[month]));
 }
 
-int APS5_VABI _Deletegloballocale_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 double APS5_VABI _Erfc_nid_postfix(double x) {
     return ErfcTail(x, erfc_nid_postfix, __func__);
 }
@@ -690,27 +680,12 @@ int APS5_VABI _FHypot_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _FLogpoly_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _FQuad_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI _FQuadph_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FRint_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FSincos_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1111,27 +1086,12 @@ int APS5_VABI _LHypot_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _LLogpoly_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _LQuad_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI _LQuadph_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LRint_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LSincos_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1171,11 +1131,6 @@ int APS5_VABI _Locterm_nid_postfix() {
 }
 
 int APS5_VABI _Locvar_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Logpoly_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -4636,7 +4636,7 @@ void multisampleTests() {
     }
     queue = multisampled();
     queue.context[0x31d] = 0x1000;
-    expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
+    Require(DecodeState(queue).samples == 1 && DecodeState(queue).colors[0].coverageSamples == 2, "a 2-sample one-fragment target under a 2x rasterizer without a depth target did not rasterize sample 0 alone");
     queue.context[0x31d] = 0;
     queue.context[0x293] = 0x10000u;
     Require(DecodeState(queue).samples == 1 && !DecodeState(queue).perSampleShading, "PS_ITER_SAMPLE into a one-sample target did not rasterize sample 0 alone");
@@ -5299,7 +5299,10 @@ void multisampledDepthTests() {
     queue = oneFragment();
     queue.context[0x010] = 0;
     queue.context[0x011] = 0;
-    expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
+    queue.context[0x201] = 0x00022200;
+    state = DecodeState(queue);
+    Require(state.samples == 1 && !state.depth && state.colors.size() == 1 && state.colors[0].samples == 1 && state.colors[0].coverageSamples == 4 && !state.truncatedCoverage && !state.mergedCoverage && !state.perSampleShading, "a 4-sample color target with one fragment and no depth target under a 4x rasterizer (CUSA00419's registers) did not draw sample 0's coverage into its one fragment");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck refused a 4-sample color target with one fragment and no depth target");
     queue = singleSampleScan();
     queue.context[0x010] = 0x22900983;
     expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
@@ -5911,11 +5914,66 @@ void TwoSampleDitheredAlphaToCoverageTests() {
     singleSample.context[0x2f8] = 0;
     singleSample.context[0x292] = 2;
     singleSample.context[0x203] &= ~0x800u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(singleSample); }, "requires two matched raster/DB_EQAA samples");
-    Require(AgcDriver::Graphics::DrawRejection(singleSample, false).find("requires two matched raster/DB_EQAA samples") != std::string::npos, "the precheck accepted DB_ALPHA_TO_MASK 0xe701 on a single-sample target");
-    singleSample.context[0x2dc] = 0x18701;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(singleSample); }, "requires eight matched raster/DB_EQAA samples");
-    Require(AgcDriver::Graphics::DrawRejection(singleSample, false).find("requires eight matched raster/DB_EQAA samples") != std::string::npos, "the precheck accepted DB_ALPHA_TO_MASK 0x18701 on a single-sample target");
+    singleSample.context[0x201] = 0;
+    for (const auto alpha : {0xe701u, 0x18701u}) {
+        singleSample.context[0x2dc] = alpha;
+        for (const auto format : {4u, 9u}) {
+            singleSample.context[0x1c5] = format;
+            const auto decoded = AgcDriver::Graphics::DecodeState(singleSample);
+            const auto pattern = alpha == 0xe701u ? ShaderRecompiler::SingleSampleDither::E701 : ShaderRecompiler::SingleSampleDither::Rounded18701;
+            Require(decoded.alphaToCoverage && decoded.ditheredAlphaToCoverage && decoded.ditheredAlphaSamples == 1u && decoded.singleSampleDither == pattern && decoded.samples == 1u, "a measured single-sample dither did not reach the shader state");
+            Require(AgcDriver::Graphics::DrawRejection(singleSample, false).empty(), "the precheck refused a measured single-sample dither");
+            Require(AgcDriver::Graphics::CanonicalPipelineState(decoded).singleSampleDither == ShaderRecompiler::SingleSampleDither::None, "shader-only alpha dither entered the pipeline journal state");
+            for (const auto& locations : std::array{
+                std::array{0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u},
+                std::array{0x77777777u, 0x77777777u, 0x77777777u, 0x77777777u},
+                std::array{0x88888888u, 0x88888888u, 0x88888888u, 0x88888888u},
+                std::array{0x01234567u, 0x89abcdefu, 0xfedcba98u, 0x76543210u}}) {
+                auto shifted = singleSample;
+                for (std::uint32_t pixel = 0; pixel < locations.size(); ++pixel) shifted.context[0x2feu + pixel * 4u] = locations[pixel];
+                const auto state = AgcDriver::Graphics::DecodeState(shifted);
+                Require(state.samples == 1u && state.singleSampleDither == pattern && !state.customSampleLocations && !state.sampleLocationGrid && std::ranges::all_of(state.sampleLocations, [](auto location) { return location == 0; }), "single-sample dither retained ignored sample locations without MSAA_ENABLE");
+                Require(AgcDriver::Graphics::DrawRejection(shifted, false).empty(), "the single-sample dither precheck refused ignored sample locations without MSAA_ENABLE");
+            }
+        }
+        for (const auto eqaa : {0x100u, 0x1000u, 0x10u, 0x1u}) {
+            auto invalid = singleSample;
+            invalid.context[0x201] = eqaa;
+            expectFailure([&] { AgcDriver::Graphics::DecodeState(invalid); }, "matched raster/DB_EQAA samples");
+            Require(!AgcDriver::Graphics::DrawRejection(invalid, false).empty(), "the precheck accepted unmeasured single-sample EQAA");
+        }
+        auto invalid = singleSample;
+        invalid.context[0x292] |= 1u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(invalid); }, "matched raster/DB_EQAA samples");
+        Require(!AgcDriver::Graphics::DrawRejection(invalid, false).empty(), "the precheck accepted MSAA_ENABLE for the single-sample dither");
+        invalid = singleSample;
+        invalid.context[0x1c5] = 5u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(invalid); }, "FP16_ABGR or 32_ABGR");
+        Require(!AgcDriver::Graphics::DrawRejection(invalid, false).empty(), "the precheck accepted an unmeasured single-sample export packing");
+        invalid = singleSample;
+        invalid.context[0x203] |= 0x800u;
+        const auto disabled = AgcDriver::Graphics::DecodeState(invalid);
+        Require(!disabled.alphaToCoverage && disabled.singleSampleDither == ShaderRecompiler::SingleSampleDither::None, "the single-sample dither ignored the shader disable override");
+    }
+}
+
+void SingleSampleDitherStateProbe() {
+    auto state = makeState();
+    state.context[0x1b3] = 2u;
+    state.context[0x1b4] = 2u;
+    state.context[0x2f8] = 0u;
+    state.context[0x292] = 2u;
+    state.context[0x203] &= ~0x800u;
+    state.context[0x201] = 0u;
+    for (const auto alpha : {0xe701u, 0x18701u}) {
+        state.context[0x2dc] = alpha;
+        for (const auto format : {4u, 9u}) {
+            state.context[0x1c5] = format;
+            const auto decoded = AgcDriver::Graphics::DecodeState(state);
+            Require(decoded.alphaToCoverage && decoded.ditheredAlphaToCoverage && decoded.ditheredAlphaSamples == 1u && decoded.samples == 1u, "single-sample dither registers did not decode as one sample");
+            Require(AgcDriver::Graphics::DrawRejection(state, false).empty(), "single-sample dither registers failed the draw precheck");
+        }
+    }
 }
 
 void AlphaToCoverageTests() {
@@ -6631,6 +6689,7 @@ AgcDriver::Graphics::Context mockContext() {
     context.limits.maxPerStageDescriptorStorageBuffers = 16;
     context.limits.maxPerStageResources = 128;
     context.limits.maxDescriptorSetStorageBuffers = 32;
+    context.storageBufferUpdateAfterBind = true;
     context.limits.maxImageArrayLayers = 2048;
     return context;
 }
@@ -7975,6 +8034,29 @@ void resourceTests() {
         fragment.bindings.front().binding = 1;
         fragment.bindings.front().guestDescriptor = vsharp(guestFirst.data(), 16);
     }
+    {
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        for (std::uint32_t i = 0; i < 12; ++i) vertex.bindings.push_back(makeBinding(Role::GuestBuffers, i, 1, vsharp(guestFirst.data(), 16)));
+        for (std::uint32_t i = 0; i < 12; ++i) fragment.bindings.push_back(makeBinding(Role::GuestBuffers, 12 + i, 1, vsharp(guestSecond.data(), 32)));
+        for (auto& binding : fragment.bindings) binding.descriptorSet = ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet;
+        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+        auto limited = mockContext();
+        limited.limits.maxPerStageDescriptorStorageBuffers = 16;
+        limited.limits.maxDescriptorSetStorageBuffers = 10;
+        limited.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindStorageBuffers = 16;
+        limited.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindStorageBuffers = 20;
+        limited.descriptorIndexingLimits.maxPerStageUpdateAfterBindResources = 128;
+        limited.storageBufferUpdateAfterBind = true;
+        auto cache = std::make_unique<AgcDriver::Graphics::DescriptorCache>(limited);
+        limited.descriptorCache = cache.get();
+        expectFailure([&] { DescribeSetLayouts(limited, shaders); }, "typed heaps exceed descriptor set storage buffer capacity: required 24, device limit 20");
+        vertex.bindings.resize(10);
+        fragment.bindings.resize(10);
+        const auto layouts = DescribeSetLayouts(limited, shaders);
+        Require(layouts.layouts.split, "split layouts expected for separated vertex and fragment buffer bindings");
+        limited.descriptorCache = nullptr;
+    }
 }
 
 void unsetFormatStorageImageTests() {
@@ -8199,6 +8281,8 @@ void descriptorCacheTests() {
     Require(mock.live == 0, "the descriptor cache leaked a pool or layout");
     mock = MockVulkan{};
     context.limits.maxDescriptorSetStorageBuffers = 16;
+    context.storageBufferUpdateAfterBind = true;
+    context.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindStorageBuffers = 8192;
     context.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindStorageBuffers = 8192;
     context.descriptorIndexingLimits.maxPerStageUpdateAfterBindResources = 16384;
     context.limits.maxPerStageDescriptorSampledImages = 2048;
@@ -8237,6 +8321,14 @@ void descriptorCacheTests() {
         cache.Free(larger);
         cache.Free(same);
         expectFailure([&] { cache.Allocate(fittingLayout, fitting, false, 3u); }, "descriptor set exceeds the device's per-set descriptor limit");
+        const std::array<VkDescriptorSetLayoutBinding, 1> excessiveBindings{{{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 8193, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}}};
+        const std::array<VkDescriptorBindingFlags, 1> excessiveFlags{VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT};
+        const std::array<std::uint32_t, 5> excessiveKey{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 8193, VK_SHADER_STAGE_FRAGMENT_BIT, VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT};
+        expectFailure([&] { cache.Layout(excessiveKey, excessiveBindings, true, excessiveFlags); }, "typed heaps exceed per-stage storage buffer capacity");
+        const std::array<VkDescriptorSetLayoutBinding, 1> regularExcessiveBindings{{{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 17, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}}};
+        const std::array<VkDescriptorBindingFlags, 1> regularFlags{0};
+        const std::array<std::uint32_t, 4> regularExcessiveKey{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 17, VK_SHADER_STAGE_FRAGMENT_BIT};
+        expectFailure([&] { cache.Layout(regularExcessiveKey, regularExcessiveBindings, false, regularFlags); }, "typed heaps exceed descriptor set storage buffer capacity");
     }
     Require(mock.live == 0, "the combined descriptor cache leaked a pool or layout");
     mock = MockVulkan{};
@@ -12377,6 +12469,13 @@ void uintTargetTests() {
     auto halfwords = queue;
     halfwords.context[0x31c] = (halfwords.context.at(0x31c) & ~0x1f7cu) | (2u << 2u) | (4u << 8u);
     Require(AgcDriver::Graphics::DecodeState(halfwords).color.packing == ColorExportPacking::UintClamp16, "a 32_ABGR export into a 16-bit UINT target did not get the clamping packing");
+    auto tenBits = queue;
+    tenBits.context[0x31c] = (tenBits.context.at(0x31c) & ~0x1f7cu) | (9u << 2u) | (4u << 8u);
+    for (const auto& [exportFormat, packing] : std::array<std::pair<std::uint32_t, ColorExportPacking>, 4>{{{1u, ColorExportPacking::UintMask10_10_10_2}, {2u, ColorExportPacking::UintClamp10_10_10_2}, {3u, ColorExportPacking::Uint}, {9u, ColorExportPacking::UintClamp10_10_10_2}}}) {
+        tenBits.context[0x1c5] = exportFormat;
+        const auto ten = AgcDriver::Graphics::DecodeState(tenBits);
+        Require(ten.color.format == VK_FORMAT_A2B10G10R10_UINT_PACK32 && ten.color.elementBytes == 4 && ten.color.componentMapping == 0xe4u && ten.color.packing == packing && AgcDriver::Graphics::ExportPackings(ten)[0] == packing && !ten.blends.at(0).blendEnable, "a 32-bit export into a 2_10_10_10 UINT target did not get the packing of its export format");
+    }
     for (const auto& [exportFormat, eightPacking, sixteenPacking] : std::array<std::tuple<std::uint32_t, ColorExportPacking, ColorExportPacking>, 3>{{{1u, ColorExportPacking::UintMask8, ColorExportPacking::UintMask16}, {2u, ColorExportPacking::UintClamp8, ColorExportPacking::UintClamp16}, {3u, ColorExportPacking::Uint, ColorExportPacking::Uint}}}) {
         auto narrow = bytes;
         narrow.context[0x1c5] = exportFormat;
@@ -12392,7 +12491,7 @@ void uintTargetTests() {
     Require(uint16.color.packing == ColorExportPacking::None && uint16.color.uintExport, "a UINT16_ABGR export into a UINT target was retyped twice");
     auto halves = queue;
     halves.context[0x1c5] = 4u;
-    for (const auto& [format, vkFormat, packing] : std::array<std::tuple<std::uint32_t, VkFormat, ColorExportPacking>, 5>{{{4u, VK_FORMAT_R32_UINT, ColorExportPacking::Uint}, {1u, VK_FORMAT_R8_UINT, ColorExportPacking::UintClamp8}, {10u, VK_FORMAT_R8G8B8A8_UINT, ColorExportPacking::UintClamp8}, {2u, VK_FORMAT_R16_UINT, ColorExportPacking::UintClamp16}, {12u, VK_FORMAT_R16G16B16A16_UINT, ColorExportPacking::UintClamp16}}}) {
+    for (const auto& [format, vkFormat, packing] : std::array<std::tuple<std::uint32_t, VkFormat, ColorExportPacking>, 6>{{{4u, VK_FORMAT_R32_UINT, ColorExportPacking::Uint}, {1u, VK_FORMAT_R8_UINT, ColorExportPacking::UintClamp8}, {10u, VK_FORMAT_R8G8B8A8_UINT, ColorExportPacking::UintClamp8}, {2u, VK_FORMAT_R16_UINT, ColorExportPacking::UintClamp16}, {12u, VK_FORMAT_R16G16B16A16_UINT, ColorExportPacking::UintClamp16}, {9u, VK_FORMAT_A2B10G10R10_UINT_PACK32, ColorExportPacking::UintClamp10_10_10_2}}}) {
         halves.context[0x31c] = (queue.context.at(0x31c) & ~0x1f7cu) | (format << 2u) | (4u << 8u);
         const auto half = AgcDriver::Graphics::DecodeState(halves);
         Require(half.color.format == vkFormat && half.color.packing == packing && !half.color.uintExport && AgcDriver::Graphics::ExportPackings(half)[0] == packing && !half.blends.at(0).blendEnable, "an FP16_ABGR export into a UINT target did not get the packing that clamps to its channel width");
@@ -12957,7 +13056,7 @@ void float11_11_10TargetTests() {
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &packed, 0}}};
     Require(AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false) == std::set<std::uint32_t>{0u}, "the packed float export did not reach attachment 0");
     auto invalid = request;
-    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(9);
+    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(static_cast<std::uint8_t>(ColorExportPacking::UintMask10_10_10_2) + 1u);
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(invalid)); }, "invalid prepared fragment export packing");
 }
 
@@ -15782,6 +15881,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--descriptor-layout-flags") {
             descriptorLayoutFlagTests();
             std::cout << "Descriptor layout native and captured binding flags passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--single-sample-dither-state") {
+            SingleSampleDitherStateProbe();
+            std::cout << "Measured single-sample dither state passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--alpha-to-coverage-state") {
