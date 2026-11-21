@@ -597,15 +597,9 @@ Bytes Attribute(unsigned char type, unsigned char tag, const Bytes& value) {
     return Element(0x30, Concat({Element(0x06, {0x55, 0x04, type}), Element(tag, value)}));
 }
 
-std::string CertificatePem(const Bytes& name) {
-    const Bytes algorithm = Element(0x30, Element(0x06, {0x2b, 0x65, 0x70}));
-    const Bytes validity = Element(0x30, Concat({Element(0x17, Bytes(UtcStart, UtcStart + 13)),
-        Element(0x17, Bytes(UtcEnd, UtcEnd + 13))}));
-    const Bytes key = Element(0x30, Concat({algorithm, Element(0x03, Concat({{0x00}, Bytes(32, 0x11)}))}));
-    const Bytes info = Element(0x30, Concat({Element(0xa0, Element(0x02, {0x02})), Element(0x02, {0x01}), algorithm,
-        name, validity, name, key}));
-    const Bytes der = Element(0x30, Concat({info, algorithm, Element(0x03, Concat({{0x00}, Bytes(64, 0x22)}))}));
-    static constexpr char Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+constexpr char Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+std::string PemText(const Bytes& der) {
     std::string text = "-----BEGIN CERTIFICATE-----\n";
     for (std::size_t index = 0; index < der.size(); index += 3) {
         const std::size_t count = std::min<std::size_t>(3, der.size() - index);
@@ -617,6 +611,16 @@ std::string CertificatePem(const Bytes& name) {
     }
     if (text.back() != '\n') text.push_back('\n');
     return text + "-----END CERTIFICATE-----\n";
+}
+
+std::string CertificatePem(const Bytes& name) {
+    const Bytes algorithm = Element(0x30, Element(0x06, {0x2b, 0x65, 0x70}));
+    const Bytes validity = Element(0x30, Concat({Element(0x17, Bytes(UtcStart, UtcStart + 13)),
+        Element(0x17, Bytes(UtcEnd, UtcEnd + 13))}));
+    const Bytes key = Element(0x30, Concat({algorithm, Element(0x03, Concat({{0x00}, Bytes(32, 0x11)}))}));
+    const Bytes info = Element(0x30, Concat({Element(0xa0, Element(0x02, {0x02})), Element(0x02, {0x01}), algorithm,
+        name, validity, name, key}));
+    return PemText(Element(0x30, Concat({info, algorithm, Element(0x03, Concat({{0x00}, Bytes(64, 0x22)}))})));
 }
 
 const LibreSslX509Name* LoadedName(const LibreSslX509Store* store, bool subject) {
@@ -696,6 +700,170 @@ void TestRejectedNameStrings() {
         X509_STORE_free_nid_postfix(store);
         Require(remove_nid_postfix(path.c_str()) == 0);
     }
+}
+
+Bytes DerFromPem(const char* pem) {
+    Bytes der;
+    std::uint32_t group = 0;
+    int bits = 0;
+    for (const char* cursor = std::strchr(pem, '\n') + 1; *cursor != '-'; ++cursor) {
+        const char* digit = std::strchr(Alphabet, *cursor);
+        if (*cursor == '\n' || *cursor == '=' || !digit) continue;
+        group = (group << 6) | static_cast<std::uint32_t>(digit - Alphabet);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            der.push_back(static_cast<unsigned char>(group >> bits));
+        }
+    }
+    return der;
+}
+
+Bytes Replace(const Bytes& der, std::initializer_list<std::pair<std::size_t, Bytes>> edits) {
+    Bytes output = der;
+    std::size_t shift = 0;
+    for (const auto& [offset, header] : edits) {
+        std::size_t old = 2;
+        if (output[offset + shift + 1] & 0x80) old += output[offset + shift + 1] & 0x7f;
+        output.erase(output.begin() + static_cast<std::ptrdiff_t>(offset + shift),
+            output.begin() + static_cast<std::ptrdiff_t>(offset + shift + old));
+        output.insert(output.begin() + static_cast<std::ptrdiff_t>(offset + shift), header.begin(), header.end());
+        shift += header.size() - old;
+    }
+    return output;
+}
+
+Bytes Ended(Bytes der, std::size_t offset, std::size_t length) {
+    der.insert(der.begin() + static_cast<std::ptrdiff_t>(offset + length), {0x00, 0x00});
+    return der;
+}
+
+Bytes Spliced(Bytes der, std::size_t offset, std::size_t count, const Bytes& bytes) {
+    der.erase(der.begin() + static_cast<std::ptrdiff_t>(offset), der.begin() + static_cast<std::ptrdiff_t>(offset + count));
+    der.insert(der.begin() + static_cast<std::ptrdiff_t>(offset), bytes.begin(), bytes.end());
+    return der;
+}
+
+std::string Hex(const unsigned char* bytes, std::size_t length) {
+    std::string text;
+    char digits[3];
+    for (std::size_t byte = 0; byte < length; ++byte) {
+        std::snprintf(digits, sizeof(digits), "%02x", bytes[byte]);
+        text += digits;
+    }
+    return text;
+}
+
+std::string HexDigest(const unsigned char* bytes, std::size_t length) {
+    unsigned char digest[20];
+    Require(SHA1_nid_postfix(bytes, length, digest) != nullptr);
+    return Hex(digest, sizeof(digest));
+}
+
+void RequireBerLoad(const Bytes& der, int length, const char* digest) {
+    const std::string path = WriteFile("libressl3-load-locations-ber.pem", PemText(der));
+    LibreSslX509Store* store = NewStore();
+    ERR_clear_error_nid_postfix();
+    Require(X509_STORE_load_locations_nid_postfix(store, path.c_str(), nullptr) == 1);
+    Require(ObjectCount(store) == 1 && ERR_get_error_nid_postfix() == 0);
+    const auto* certificate = reinterpret_cast<const LibreSsl3Certificate*>(StoredObject(store, 0)->data);
+    unsigned char* encoded = nullptr;
+    Require(i2d_X509_nid_postfix(certificate, &encoded) == length);
+    Require(HexDigest(encoded, static_cast<std::size_t>(length)) == digest);
+    free_nid_postfix(encoded);
+    unsigned char hash[20];
+    std::uint32_t size = 0;
+    Require(X509_digest_nid_postfix(certificate, reinterpret_cast<const EvpMd*>(EVP_sha1_nid_postfix()), hash, &size) == 1);
+    Require(size == 20 && Hex(hash, size) == digest);
+    for (const bool subject : {true, false}) {
+        const LibreSslX509Name* name = LoadedName(store, subject);
+        Require(name->canonEnclen == static_cast<int>(sizeof(SubjectEncodingA)));
+        Require(std::memcmp(name->canonEnc, SubjectEncodingA, sizeof(SubjectEncodingA)) == 0);
+    }
+    Require(Throws([store] { X509_STORE_free_nid_postfix(store); }));
+    Require(remove_nid_postfix(path.c_str()) == 0);
+}
+
+void RequireBerRejected(const Bytes& der, std::uint64_t error) {
+    const std::string path = WriteFile("libressl3-load-locations-ber.pem", PemText(der));
+    LibreSslX509Store* store = NewStore();
+    ERR_clear_error_nid_postfix();
+    Require(X509_STORE_load_locations_nid_postfix(store, path.c_str(), nullptr) == 0);
+    Require(ObjectCount(store) == 0);
+    Require(ERR_get_error_nid_postfix() == error && ERR_get_error_nid_postfix() == PemAsn1);
+    Require(ERR_get_error_nid_postfix() == X509Pem && ERR_get_error_nid_postfix() == 0);
+    X509_STORE_free_nid_postfix(store);
+    Require(remove_nid_postfix(path.c_str()) == 0);
+}
+
+void TestBerLengths() {
+    const Bytes der = DerFromPem(CertificateA);
+    Require(der.size() == 748 && HexDigest(der.data(), der.size()) == "a235b4a5a3cc3122ee1fe86e5c5b623565cc77b4");
+    const char* const same = "a235b4a5a3cc3122ee1fe86e5c5b623565cc77b4";
+    RequireBerLoad(Replace(der, {{0, {0x30, 0x83, 0x00, 0x02, 0xe8}}}), 748, same);
+    RequireBerLoad(Replace(der, {{0, {0x30, 0x89, 0, 0, 0, 0, 0, 0, 0, 0x02, 0xe8}}}), 748, same);
+    Bytes padded{0x30, 0xff};
+    padded.resize(127, 0x00);
+    padded.insert(padded.end(), {0x02, 0xe8});
+    RequireBerLoad(Replace(der, {{0, padded}}), 748, same);
+    RequireBerLoad(Replace(der, {{0, {0x30, 0x82, 0x02, 0xe9}}, {4, {0x30, 0x83, 0x00, 0x01, 0xd0}}}), 749,
+        "62f962783e6797c1882621e0080ea75a4f56b326");
+    RequireBerLoad(Replace(der, {{0, {0x30, 0x82, 0x02, 0xe9}}, {4, {0x30, 0x82, 0x01, 0xd1}}, {13, {0x02, 0x81, 0x14}}}),
+        749, "37e0b319cbb5b4dcde06f8875d23861bc219f576");
+    Bytes serial{0x02, 0xff};
+    serial.resize(129, 0x00);
+    serial.back() = 0x14;
+    RequireBerLoad(Replace(der, {{0, {0x30, 0x82, 0x03, 0x67}}, {4, {0x30, 0x82, 0x02, 0x4f}}, {13, serial}}), 875,
+        "3529206cd273a5f3ec431892cecfb8d54fc0f2a3");
+    Bytes counted{0x02, 0x81, 0xc8};
+    for (int value = 1; value <= 200; ++value) counted.push_back(static_cast<unsigned char>(value));
+    RequireBerLoad(Spliced(Replace(der, {{0, {0x30, 0x82, 0x03, 0x9d}}, {4, {0x30, 0x82, 0x02, 0x85}}}), 13, 22, counted), 929,
+        "7f2b164557ec64ff6666d2d913cc6171af70607d");
+    RequireBerLoad(Ended(Replace(der, {{0, {0x30, 0x80}}}), 2, 744), 748, same);
+    RequireBerLoad(Replace(Ended(der, 8, 464), {{4, {0x30, 0x80}}}), 748,
+        "e7716ca9e79ccb3f2ace82b9f1e564d5c4020b70");
+    RequireBerLoad(Ended(Ended(Replace(der, {{0, {0x30, 0x80}}, {4, {0x30, 0x80}}}), 4, 464), 2, 744), 748,
+        "e7716ca9e79ccb3f2ace82b9f1e564d5c4020b70");
+    RequireBerLoad(Replace(der, {{0, {0x30, 0x82, 0x02, 0xe9}}, {4, {0x30, 0x82, 0x01, 0xd1}}, {50, {0x30, 0x15}},
+        {52, {0x31, 0x13}}, {54, {0x30, 0x11}}, {61, {0x0c, 0x81, 0x09}}}), 749, "593dad31fdff8389fb1f2554039a1b31f8b8656c");
+    RequireBerLoad(Replace(Ended(der, 56, 16), {{0, {0x30, 0x82, 0x02, 0xeb}}, {4, {0x30, 0x82, 0x01, 0xd3}},
+        {50, {0x30, 0x17}}, {52, {0x31, 0x15}}, {54, {0x30, 0x80}}, {61, {0x1f, 0x0c, 0x09}}}), 751,
+        "691179a05a6d909227631ceb14ea5e4027327f0d");
+    RequireBerLoad(Replace(Ended(der, 63, 9), {{0, {0x30, 0x82, 0x02, 0xec}}, {4, {0x30, 0x82, 0x01, 0xd4}},
+        {50, {0x30, 0x18}}, {52, {0x31, 0x16}}, {54, {0x30, 0x14}}, {61, {0x2c, 0x80, 0x0c, 0x09}}}), 752,
+        "e5612618bb3145c05339aa94ec73362f9ddc2d97");
+    RequireBerLoad(Replace(Ended(der, 10, 3), {{0, {0x30, 0x82, 0x02, 0xea}}, {4, {0x30, 0x82, 0x01, 0xd2}},
+        {8, {0xa0, 0x80}}}), 750, "aae2140cf04274e27ed9f99e5b5e7fc971099150");
+    RequireBerLoad(Replace(Ended(der, 422, 50), {{0, {0x30, 0x82, 0x02, 0xea}}, {4, {0x30, 0x82, 0x01, 0xd2}},
+        {420, {0xa3, 0x80}}}), 750, "0b03fd8c44bea2428e29dd2bc9330d375aa1390c");
+    RequireBerLoad(Replace(der, {{0, {0x30, 0x82, 0x02, 0xe9}}, {4, {0x30, 0x82, 0x01, 0xd1}}, {13, {0x1f, 0x02, 0x14}}}),
+        749, "14b35967cf5b8ea0065deb906b16a8aeb0d6589b");
+    RequireBerLoad(Replace(der, {{0, {0x30, 0x82, 0x02, 0xe9}}, {4, {0x30, 0x82, 0x01, 0xd1}}, {8, {0xbf, 0x00, 0x03}}}),
+        749, "c35e30767a6b76a7ce795c88e3a0fb27b8fc86b6");
+    RequireBerRejected(Replace(der, {{0, {0x30, 0x89, 0x01, 0, 0, 0, 0, 0, 0, 0x02, 0xe8}}}), 0x0dfff07b);
+    RequireBerRejected(Replace(der, {{0, {0x30, 0x88, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}}}), 0x0dfff09b);
+    RequireBerRejected({0x30, 0x84, 0x00, 0x00}, 0x0dfff07b);
+    RequireBerRejected({0x00, 0x00}, 0x0dfff0a8);
+    RequireBerRejected({0x30, 0x80, 0x30, 0x80, 0xa0, 0x80, 0x02, 0x84, 0x01}, 0x0dfff07b);
+    RequireBerRejected(Spliced(Replace(Ended(der, 8, 464), {{0, {0x30, 0x82, 0x02, 0xeb}}, {4, {0x30, 0x80}}}), 6, 0,
+        {0x00, 0x01, 0x00}), 0x0dfff0a8);
+    RequireBerRejected(Spliced(Replace(der, {{0, {0x30, 0x82, 0x02, 0xdb}}, {4, {0x30, 0x82, 0x01, 0xc3}}}), 35, 15,
+        {0x30, 0x00}), 0x0dfff079);
+    RequireBerRejected(Spliced(Replace(der, {{0, {0x30, 0x82, 0x02, 0xe7}}, {4, {0x30, 0x82, 0x01, 0xcf}}}), 8, 5,
+        {0xa0, 0x80, 0x00, 0x00}), 0x0dfff0a8);
+    RequireBerRejected(Spliced(Replace(der, {{0, {0x30, 0x82, 0x02, 0xea}}, {4, {0x30, 0x82, 0x01, 0xd2}}}), 8, 0,
+        {0x00, 0x00}), 0x0dfff09f);
+    RequireBerRejected(Spliced(Replace(Ended(der, 10, 3), {{0, {0x30, 0x82, 0x02, 0xec}}, {4, {0x30, 0x82, 0x01, 0xd4}},
+        {8, {0xa0, 0x80}}}), 13, 0, {0x05, 0x00}), 0x0dfff089);
+    RequireBerRejected(Spliced(Replace(der, {{0, {0x30, 0x82, 0x02, 0xeb}}, {4, {0x30, 0x82, 0x01, 0xd3}}}), 420, 0,
+        {0x81, 0x85, 0x01}), 0x0dfff09b);
+    RequireBerRejected(Replace(der, {{0, {0x30, 0x88, 0x80, 0, 0, 0, 0, 0, 0x02, 0xe8}}}), 0x0dfff07b);
+    RequireBerRejected(Replace(der, {{0, {0x30, 0x88, 0, 0, 0x01, 0, 0, 0, 0, 0}}}), 0x0dfff09b);
+    RequireBerRejected(Replace(der, {{13, {0x02, 0x80}}}), 0x0dfff07b);
+    RequireBerRejected(Replace(der, {{0, {0x30, 0x82, 0x02, 0xea}}, {4, {0x30, 0x82, 0x01, 0xd2}}, {35, {0x30, 0x0f}},
+        {48, {0x05, 0x80, 0x00, 0x00}}}), 0x0dfff07b);
+    RequireBerRejected(Replace(der, {{0, {0x30, 0x80}}}), 0x0dfff089);
+    RequireBerRejected(Replace(der, {{0, {0x30, 0x82, 0x02, 0xe6}}, {4, {0x30, 0x80}}}), 0x0dfff089);
 }
 
 void TestLatin1LookupName() {
@@ -813,15 +981,13 @@ void TestRejectedNameValueTags() {
         {Element(0x3c, Element(0x04, {0x00, 0x00, 0x00})), 0x0dfff0d7},
         {Element(0x2c, Element(0x04, {0xc0, 0x80})), 0x0dfff086},
     };
-    const std::pair<Bytes, std::uint64_t> unsupportedLengths[] = {
-        {Concat({{0x0c, 0x81, 0x02}, ab}), 0x0dfff066},
-        {Concat({{0x0c, 0x82, 0x00, 0x02}, ab}), 0x0dfff066},
-        {Concat({{0x0c, 0x82, 0x00, 0x80}, Bytes(0x80, 'A')}), 0x0dfff066},
-        {Concat({{0x2c, 0x80}, Element(0x04, ab), {0x00, 0x00}}), 0x0dfff066},
+    const std::pair<Bytes, std::uint64_t> indefiniteLengths[] = {
+        {Concat({{0x2c, 0x80}, Element(0x04, ab)}), 0x0dfff089},
+        {Concat({{0x0c, 0x80}, ab, {0x00, 0x00}}), 0x0dfff07b},
     };
     cases.insert(cases.end(), std::begin(headers), std::end(headers));
     cases.insert(cases.end(), std::begin(contents), std::end(contents));
-    cases.insert(cases.end(), std::begin(unsupportedLengths), std::end(unsupportedLengths));
+    cases.insert(cases.end(), std::begin(indefiniteLengths), std::end(indefiniteLengths));
     for (const auto& [value, error] : cases) {
         const std::string path = WriteFile("libressl3-load-locations-tags.pem", CertificatePem(NameWithValue(value)));
         LibreSslX509Store* store = NewStore();
@@ -891,6 +1057,10 @@ void TestBuiltNameValueForms() {
         {Element(0x27, Element(0x04, ab)), 7, ab, 7, ab},
         {Element(0x3d, Element(0x04, ab)), 29, ab, 29, ab},
         {Element(0x12, {'1', '2', '3'}), 18, {'1', '2', '3'}, 18, {'1', '2', '3'}},
+        {Concat({{0x0c, 0x81, 0x02}, ab}), 12, ab, 12, {'a', 'b'}},
+        {Concat({{0x0c, 0x82, 0x00, 0x02}, ab}), 12, ab, 12, {'a', 'b'}},
+        {Concat({{0x0c, 0x82, 0x00, 0x80}, Bytes(0x80, 'A')}), 12, Bytes(0x80, 'A'), 12, Bytes(0x80, 'a')},
+        {Concat({{0x2c, 0x80}, Element(0x04, ab), {0x00, 0x00}}), 12, ab, 12, {'a', 'b'}},
     };
     for (const auto& test : cases) {
         const std::string path = WriteFile("libressl3-load-locations-built.pem", CertificatePem(NameWithValue(test.value)));
@@ -954,6 +1124,7 @@ int main() {
     TestUnreadablePath();
     TestHashedDirectory();
     TestNegativeControl();
+    TestBerLengths();
     TestConvertedNameStrings();
     TestRejectedNameStrings();
     TestLatin1LookupName();
