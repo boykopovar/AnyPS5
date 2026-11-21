@@ -8,8 +8,7 @@
 extern "C" {
 
 void APS5_VABI WKViewDidEnterFullScreen(const void* viewRef) {
-    auto* view = NKWebKit::Cast<NKWebKit::View>(viewRef, __func__);
-    view->isFullScreen = true;
+    NKWebKit::Cast<NKWebKit::View>(viewRef, __func__);
 }
 
 void APS5_VABI WKViewDidExitFullScreen(const void* viewRef) {
@@ -33,8 +32,7 @@ bool APS5_VABI WKViewIsFullScreen(const void* viewRef) {
 }
 
 void APS5_VABI WKViewRequestExitFullScreen(const void* viewRef) {
-    auto* view = NKWebKit::Cast<NKWebKit::View>(viewRef, __func__);
-    view->isFullScreen = false;
+    NKWebKit::Cast<NKWebKit::View>(viewRef, __func__);
 }
 
 void APS5_VABI WKViewSetDrawsBackground(const void* viewRef, bool drawsBackground) {
@@ -55,7 +53,8 @@ void APS5_VABI WKViewSetViewScaleFactor(const void* viewRef, double scale) {
 }
 
 void APS5_VABI WKViewWillEnterFullScreen(const void* viewRef) {
-    NKWebKit::Cast<NKWebKit::View>(viewRef, __func__);
+    auto* view = NKWebKit::Cast<NKWebKit::View>(viewRef, __func__);
+    view->isFullScreen = true;
 }
 
 void APS5_VABI WKViewWillExitFullScreen(const void* viewRef) {

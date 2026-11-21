@@ -380,6 +380,8 @@ def main(argv=None):
             root = (Path.cwd() / git(Path.cwd(), "rev-parse", "--show-cdup").strip()).resolve()
     except subprocess.CalledProcessError as error:
         parser.error(f"not a git repository: {error}")
+    except OSError as error:
+        parser.error(f"cannot run git: {error}")
     command_split(root) if args.command == "split" else command_resolve(root)
 
 
