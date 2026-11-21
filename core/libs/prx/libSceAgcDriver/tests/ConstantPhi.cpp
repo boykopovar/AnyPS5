@@ -79,6 +79,34 @@ void CheckDiamond(unsigned mode) {
     }
 }
 
+void CheckBranchConditionIdentity() {
+    IrProgram program;
+    for (std::uint32_t id = 0; id < 3u; ++id) {
+        auto& block = program.CreateBlock();
+        program.BlockOrder().push_back(&block);
+        BlockInfo info;
+        info.id = id;
+        info.terminator.kind = TerminatorKind::Return;
+        program.Metadata().blockInfo.push_back(info);
+    }
+    auto& entry = *program.BlockOrder()[0];
+    program.SetEntryBlock(entry);
+    entry.AddBranch(program.BlockOrder()[1]);
+    entry.AddBranch(program.BlockOrder()[2]);
+    auto& entryInfo = program.Metadata().blockInfo[0];
+    entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+    entryInfo.terminator.trueBlock = 1u;
+    entryInfo.terminator.falseBlock = 2u;
+    IrBuilder builder(program);
+    builder.SetInsertionPoint(entry);
+    auto& lane = builder.Emit(IrOpcode::LaneId, IrType::U32, {});
+    auto& compare = builder.Emit(IrOpcode::ULessThan32, IrType::Bool, {&lane, &builder.Constant(16u)});
+    auto& condition = builder.Emit(IrOpcode::LogicalAnd, IrType::Bool, {&compare, &builder.ConstantBool(true)});
+    entryInfo.condition = &condition;
+    ConstantFolder{}.Fold(program);
+    Require(entryInfo.condition == &compare, "folding left a branch condition on a replaced value");
+}
+
 void CheckUnobservedPhiCycles() {
     IrProgram empty;
     DeadCodeEliminator{}.EliminateUnobservedPhis(empty);
@@ -205,6 +233,7 @@ int main() {
         for (unsigned mode = 0; mode < 5u; ++mode) CheckDiamond(mode);
         CheckLongAncillaryForwarding();
         CheckUnobservedPhiCycles();
+        CheckBranchConditionIdentity();
         std::puts("constant phi dominance tests passed");
         return 0;
     } catch (const std::exception& error) {
