@@ -3,6 +3,7 @@
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -496,8 +497,14 @@ void* Decode(const LibreSsl3X509Extension& extension, Decoder decoder) {
 
 }
 
-extern "C" void* APS5_VABI X509V3_EXT_d2i_nid_postfix(LibreSsl3X509Extension* extension) {
-    if (!extension) throw std::invalid_argument(std::string(__func__) + ": null extension");
+extern "C" void* APS5_VABI X509V3_EXT_d2i_nid_postfix(LibreSsl3X509Extension* guestExtension) {
+    if (!guestExtension) throw std::invalid_argument(std::string(__func__) + ": null extension");
+    const int savedErrno = errno;
+    LibreSsl3X509Extension local{};
+    const bool copied = GuestCopyIn_nid_no_patch(&local, guestExtension, sizeof(local));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(__func__) + ": unreadable extension");
+    const LibreSsl3X509Extension* extension = &local;
     if (extension->object && extension->object->length > 0 && !extension->object->data)
         throw std::invalid_argument(std::string(__func__) + ": null extension object data");
     const int nid = OBJ_obj2nid_nid_postfix(extension->object);
