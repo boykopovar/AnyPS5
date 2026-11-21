@@ -619,6 +619,7 @@ int APS5_VABI bind_nid_postfix(int descriptor, const void* address, std::uint32_
 int APS5_VABI shutdown_nid_postfix(int descriptor, int how);
 int APS5_VABI getsockname_nid_postfix(int descriptor, void* address, std::uint32_t* length);
 int APS5_VABI getpeername_nid_postfix(int descriptor, void* address, std::uint32_t* length);
+int APS5_VABI sockatmark_nid_postfix(int descriptor);
 int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* argument);
 int APS5_VABI _ioctl_nid_postfix(int descriptor, std::uint64_t request, void* argument);
 std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength);
