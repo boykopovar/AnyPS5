@@ -10,7 +10,6 @@
 #include <cstring>
 #include <initializer_list>
 #include <string_view>
-#include <stdexcept>
 #include <string>
 
 namespace {
@@ -127,6 +126,8 @@ int main() {
         {"eng_USA_POSIX", "en_US_POSIX"}, {"fra-can", "fr_CA"},
         {"en_a1_POSIX", "en_A1_POSIX"}, {"en__US", "en__US"},
         {"en-u-attr2-attr1", "en"}, {"de-DE-x-ab", "de_DE"}, {"sr-Latn-RS-a-bbb", "sr_Latn_RS"},
+        {"en-u-ca-buddhist", "en"}, {"en-u-ca-gregory-nu-thai", "en"}, {"de-DE-u-co-phonebk", "de_DE"},
+        {"en-US-u-va-posix", "en_US_POSIX"}, {"sr-Latn-RS-u-attr1-ca-islamic-civil", "sr_Latn_RS"},
         {"i-default", "en"}, {"i-hakka_MT_XEMXIJA", "i-hakka_MT_XEMXIJA"}, {"x-piglatin_ML.MBE", "x-piglatin_ML.MBE"},
         {"x-elmer", ""}, {"en-a-bbb-x-foo", "en"}, {"i-klingon@currency=EUR", "i-klingon"},
         {"x-private@currency=EUR", "x-private"}, {"x_foo", "x-foo"}, {"i-klingon.utf8", "i-klingon.utf8"},
@@ -141,6 +142,9 @@ int main() {
         {"deu_DEU@currency=EUR", "de_DE@currency=EUR"},
         {"en-12", "en_12"}, {"en__US", "en__US"},
         {"en-u-attr2-attr1", "en@attribute=attr1-attr2"}, {"de-DE-x-ab", "de_DE@x=ab"},
+        {"en-u-ca-buddhist", "en@calendar=buddhist"}, {"en-u-ca-gregory-nu-thai", "en@calendar=gregorian;numbers=thai"},
+        {"de-DE-u-co-phonebk", "de_DE@collation=phonebook"}, {"en-US-u-va-posix", "en_US_POSIX"},
+        {"sr-Latn-RS-u-attr1-ca-islamic-civil", "sr_Latn_RS@attribute=attr1;calendar=islamic-civil"},
         {"i-default", "en@x=i-default"}, {"x-piglatin_ML.MBE", "x-piglatin_ML"},
         {"i-cherokee_US.utf7", "i-cherokee_US"}, {"x-filfli_MT_FILFLA.gb-18030", "x-filfli_MT_FILFLA"},
         {"X-KLINGON_us_SANJOSE", "x-klingon_US_SANJOSE"},
@@ -219,13 +223,12 @@ int main() {
         output.fill('Q');
     }
     status = 0;
-    bool keywordThrown = false;
-    try {
-        uloc_getKeywordValue("en-u-ca-buddhist", "calendar", output.data(), 16, &status);
-    } catch (const std::runtime_error&) {
-        keywordThrown = true;
-    }
-    assert(keywordThrown && status == 0 && output[0] == 'Q');
+    assert(uloc_getKeywordValue("en-u-ca-buddhist", "calendar", output.data(), 16, &status) == 8);
+    assert(status == 0 && std::string_view(output.data()) == "buddhist");
+    output.fill('Q');
+    assert(uloc_getKeywordValue("en-u-ca-gregory-nu-thai", "numbers", output.data(), 16, &status) == 4);
+    assert(status == 0 && std::string_view(output.data()) == "thai");
+    output.fill('Q');
     status = 15;
     assert(uloc_getKeywordValue("en-u-ca-buddhist", "calendar", output.data(), 16, &status) == 0);
     assert(status == 15 && output[0] == 'Q');

@@ -352,9 +352,24 @@ int APS5_VABI sceSysUtilSendSystemNotification2(const void* param) {
     return sceKernelSendNotificationRequest(0, request.data(), request.size(), 0);
 }
 
-int APS5_VABI sceSysUtilSendSystemNotificationWithParams() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSysUtilSendSystemNotificationWithParams(int32_t type, SysUtilNotificationWithParams params) {
+    static_assert(sizeof(SysUtilNotificationWithParams) == 0x21c);
+    auto request = NotificationRequest();
+    StoreLong(request, 0, static_cast<std::int64_t>((std::uint64_t{0xffffffff} << 32) | 11));
+    StoreInt(request, TypeOffset, type);
+    StoreLong(request, 0x14, -1);
+    StoreInt(request, 0x1c, -1);
+    const auto copyField = [&](std::size_t offset, const char* field) {
+        for (std::size_t index = 0; index < TextLimit; ++index) {
+            const char value = field[index];
+            request[offset + index] = static_cast<unsigned char>(value);
+            if (value == '\0') break;
+        }
+    };
+    copyField(TextOffset, params.first);
+    copyField(TextOffset + 0xb4, params.second);
+    copyField(TextOffset + 0x168, params.third);
+    return sceKernelSendNotificationRequest(0, request.data(), request.size(), 0);
 }
 
 int APS5_VABI sceSysUtilSendTrcCheckNotificationRequest(const char* message, int32_t flags) {

@@ -48,9 +48,19 @@
 #include <unistd.h>
 #endif
 
+#ifdef _WIN32
+std::vector<std::filesystem::path> longTree;
+#endif
+
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
         std::fprintf(stderr, "Kernel sys check failed at line %u (guest errno %d)\n", location.line(), *__error_nid_postfix());
+#ifdef _WIN32
+        for (auto entry = longTree.rbegin(); entry != longTree.rend(); ++entry) {
+            const auto path = LR"(\\?\)" + std::filesystem::absolute(*entry).wstring();
+            if (::RemoveDirectoryW(path.c_str()) == FALSE) ::DeleteFileW(path.c_str());
+        }
+#endif
         std::abort();
     }
 }
@@ -1525,6 +1535,59 @@ static void CheckGetfsstat() {
     }
 }
 
+#ifdef _WIN32
+static void LongDirectoryAtCalls(const std::filesystem::path& root) {
+    std::vector<std::filesystem::path> levels{root / "long-at"};
+    for (int level = 0; level < 5; ++level) levels.push_back(levels.back() / std::string(60, 'd'));
+    longTree = levels;
+    for (const char* name : {"file.txt", "moved.txt", "made"}) longTree.push_back(levels.back() / name);
+    const auto verbatim = [](const std::filesystem::path& path) { return LR"(\\?\)" + std::filesystem::absolute(path).wstring(); };
+    for (const auto& level : levels) Require(::CreateDirectoryW(verbatim(level).c_str(), nullptr) != FALSE);
+    const auto& path = levels.back();
+    Require(std::filesystem::absolute(path).native().size() > MAX_PATH);
+    const auto exists = [&](const char* name) { return ::GetFileAttributesW(verbatim(path / name).c_str()) != INVALID_FILE_ATTRIBUTES; };
+    const HANDLE file = ::CreateFileW(verbatim(path / "file.txt").c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr);
+    Require(file != INVALID_HANDLE_VALUE && ::CloseHandle(file) != FALSE);
+    const int directory = sceKernelOpen(path.generic_string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(directory >= 0);
+    Require(mkdirat_nid_postfix(directory, "made", 0755) == 0 && exists("made"));
+    Require(mkdirat_nid_postfix(directory, "made", 0755) == -1 && Error() == 17);
+    char link[16];
+    Require(readlinkat_nid_postfix(directory, "file.txt", link, sizeof(link)) == -1 && Error() == 22);
+    Require(readlinkat_nid_postfix(directory, "missing", link, sizeof(link)) == -1 && Error() == 2);
+    Require(renameat_nid_postfix(directory, "file.txt", directory, "moved.txt") == 0 && !exists("file.txt") && exists("moved.txt"));
+    Require(renameat_nid_postfix(directory, "missing", directory, "other.txt") == -1 && Error() == 2);
+    Require(unlinkat_nid_postfix(directory, "moved.txt", 0) == 0 && !exists("moved.txt"));
+    Require(unlinkat_nid_postfix(directory, "missing", 0) == -1 && Error() == 2);
+    Require(unlinkat_nid_postfix(directory, "made", 0x800) == 0 && !exists("made"));
+    Require(sceKernelClose(directory) == 0);
+    for (auto level = levels.rbegin(); level != levels.rend(); ++level) Require(::RemoveDirectoryW(verbatim(*level).c_str()) != FALSE);
+    longTree.clear();
+}
+
+static void LongDirectoryFchdir(const std::filesystem::path& root) {
+    std::vector<std::filesystem::path> levels{root / "long"};
+    for (int level = 0; level < 5; ++level) levels.push_back(levels.back() / std::string(60, 'd'));
+    longTree = levels;
+    const auto verbatim = [](const std::filesystem::path& path) { return LR"(\\?\)" + std::filesystem::absolute(path).wstring(); };
+    for (const auto& level : levels) Require(::CreateDirectoryW(verbatim(level).c_str(), nullptr) != FALSE);
+    const auto& path = levels.back();
+    Require(std::filesystem::absolute(path).native().size() > MAX_PATH);
+    const int directory = sceKernelOpen(path.generic_string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(directory >= 0);
+    char previous[4096];
+    Require(getcwd_nid_postfix(previous, sizeof(previous)) == previous);
+    const std::string expected = (std::strcmp(previous, "/") == 0 ? std::string() : std::string(previous)) + "/" + path.generic_string();
+    Require(fchdir_nid_postfix(directory) == 0);
+    char current[4096];
+    Require(getcwd_nid_postfix(current, sizeof(current)) == current && expected == current);
+    Require(chdir_nid_postfix(previous) == 0);
+    Require(sceKernelClose(directory) == 0);
+    for (auto level = levels.rbegin(); level != levels.rend(); ++level) Require(::RemoveDirectoryW(verbatim(*level).c_str()) != FALSE);
+    longTree.clear();
+}
+#endif
+
 int main() {
 #ifdef _WIN32
     auto hostDirectorySpelling = std::filesystem::current_path().native();
@@ -1564,6 +1627,10 @@ int main() {
     const auto root = std::filesystem::path("anyps5-kernel-sys-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
+#ifdef _WIN32
+    LongDirectoryAtCalls(root);
+    LongDirectoryFchdir(root);
+#endif
     DirectoryRenameTests(root);
     OwnershipAndLinkTests(root);
     CheckLinkSymbolicLinkLimit(root);
@@ -1601,6 +1668,12 @@ int main() {
     CheckUnsupportedPathconf(fpathconf_nid_postfix, kqueueDescriptor);
     CheckUnsupportedPathconf(_fpathconf_nid_postfix, kqueueDescriptor);
     Require(close_nid_postfix(kqueueDescriptor) == 0);
+    std::intptr_t semaphore = -1;
+    Require(ksem_init_nid_postfix(&semaphore, 0) == 0 && semaphore >= 0);
+    CheckUnsupportedPathconf(fpathconf_nid_postfix, static_cast<int>(semaphore));
+    CheckUnsupportedPathconf(_fpathconf_nid_postfix, static_cast<int>(semaphore));
+    Require(fchdir_nid_postfix(static_cast<int>(semaphore)) == -1 && Error() == 22);
+    Require(ksem_destroy_nid_postfix(semaphore) == 0);
     const std::string namedSharedMemory = "/anyps5-kernel-sys-pathconf-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     const int sharedMemoryDescriptor = shm_open_nid_postfix(namedSharedMemory.c_str(), SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT, 0600);
