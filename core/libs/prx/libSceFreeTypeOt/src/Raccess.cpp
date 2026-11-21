@@ -228,7 +228,7 @@ int APS5_VABI FT_Raccess_Get_DataOffsets_nid_postfix(GuestRaccessLibrary* librar
     const int types = FT_Stream_ReadUShort_nid_postfix(stream, &error) + 1;
     if (error) return error;
     for (int type = 0; type < types; ++type) {
-        const std::int64_t typeTag = FT_Stream_ReadLong_nid_postfix(stream, &error);
+        const auto typeTag = static_cast<std::int64_t>(FT_Stream_ReadULong_nid_postfix(stream, &error));
         if (error) return error;
         const int subCount = FT_Stream_ReadUShort_nid_postfix(stream, &error);
         if (error) return error;

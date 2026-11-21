@@ -162,6 +162,26 @@ void RejectedHeaders() {
     Require(FT_Raccess_Get_HeaderInfo_nid_postfix(&truncated.library, &truncated.stream, 11, &mapOffset, &rdataPos) == 0x55, "a fork offset past the stream is Invalid_Stream_Operation");
 }
 
+void HighBitTypeTag() {
+    constexpr std::uint32_t Tag = 0xA9736E74;
+    Fork fork = MakeFork(0, false);
+    Put32(fork.bytes, fork.mapPos + fork.typeList + 2, Tag);
+    Session session(fork.bytes);
+    const std::int64_t mapOffset = fork.mapPos + fork.typeList;
+    const std::int64_t rdataPos = fork.dataStart;
+    std::int64_t* offsets = nullptr;
+    std::int64_t count = 0;
+    Require(FT_Raccess_Get_DataOffsets_nid_postfix(&session.library, &session.stream, mapOffset, rdataPos, Tag, &offsets, &count) == 0, "a type tag with the top bit set is read zero-extended");
+    Require(count == 1 && offsets && offsets[0] == rdataPos + 0x10, "the zero-extended tag returns its reference");
+    ft_mem_free_nid_postfix(&session.recorder.memory, offsets);
+
+    offsets = nullptr;
+    count = -1;
+    const std::int64_t signExtended = static_cast<std::int32_t>(Tag);
+    Require(FT_Raccess_Get_DataOffsets_nid_postfix(&session.library, &session.stream, mapOffset, rdataPos, signExtended, &offsets, &count) == 0x01, "a sign-extended tag does not match");
+    Require(count == -1 && !offsets, "an unmatched tag writes nothing");
+}
+
 void TruncatedReferences() {
     Fork fork = MakeFork(0, false);
     fork.bytes.resize(0x140 + 28 + 22 + 12 + 6);
@@ -179,6 +199,7 @@ int main() {
     HeaderAndOffsets(0, false);
     HeaderAndOffsets(0x80, true);
     RejectedHeaders();
+    HighBitTypeTag();
     TruncatedReferences();
     std::puts("Guest FreeType Ot raccess tests passed");
     return 0;
