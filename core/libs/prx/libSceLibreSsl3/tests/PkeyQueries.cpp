@@ -1,6 +1,8 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 
 #include <array>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -203,11 +205,40 @@ void CheckComparison() {
     replacementMethod = nullptr;
 }
 
+template<class TAction>
+void Rejects(TAction action, const char* message) {
+    errno = EINVAL;
+    bool rejected = false;
+    try {
+        action();
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected && errno == EINVAL, message);
+}
+
+void CheckGuestPointers() {
+    const auto* const unmappedKey = reinterpret_cast<const LibreSsl3EvpPkey*>(std::uintptr_t{0x10});
+    LibreSsl3EvpPkey key{};
+    key.type = 6;
+    Rejects([&] { EVP_PKEY_size_nid_postfix(unmappedKey); }, "size of an unmapped key did not reject");
+    Rejects([&] { EVP_PKEY_security_bits_nid_postfix(unmappedKey); }, "security bits of an unmapped key did not reject");
+    Rejects([&] { EVP_PKEY_cmp_nid_postfix(unmappedKey, &key); }, "comparison with an unmapped first key did not reject");
+    Rejects([&] { EVP_PKEY_cmp_nid_postfix(&key, unmappedKey); }, "comparison with an unmapped second key did not reject");
+    key.method = reinterpret_cast<const void*>(std::uintptr_t{0x10});
+    const auto before = Snapshot(key);
+    Rejects([&] { EVP_PKEY_size_nid_postfix(&key); }, "size through an unmapped method did not reject");
+    Rejects([&] { EVP_PKEY_security_bits_nid_postfix(&key); }, "security bits through an unmapped method did not reject");
+    Rejects([&] { EVP_PKEY_cmp_nid_postfix(&key, &key); }, "comparison through an unmapped method did not reject");
+    Require(Snapshot(key) == before, "rejected query mutated the key");
+}
+
 } // namespace
 
 int main() {
     CheckQueries();
     CheckComparison();
+    CheckGuestPointers();
     std::printf("PKEY queries: %d matrix cases, %d checks\n", cases, checks);
     return 0;
 }

@@ -1,8 +1,11 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
+#include <stdexcept>
 
 namespace {
 
@@ -39,4 +42,12 @@ int main() {
     Require(BaseId(0) == 0);
     Require(BaseId(811) == 0);
     Require(BaseId(-1) == 0);
+    errno = EINVAL;
+    bool rejected = false;
+    try {
+        EVP_PKEY_base_id_nid_postfix(reinterpret_cast<const LibreSsl3EvpPkey*>(std::uintptr_t{0x10}));
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected && errno == EINVAL);
 }
