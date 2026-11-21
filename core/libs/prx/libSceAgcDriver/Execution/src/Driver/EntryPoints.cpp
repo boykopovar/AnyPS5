@@ -94,6 +94,12 @@ extern "C" void AgcDriverWaitIdle_nid_postfix() try {
     LibcAwaitExit_nid_postfix();
 }
 
+extern "C" void AgcDriverWaitSubmissionPaced_nid_postfix(std::uint32_t milliseconds) try {
+    AgcDriver::DriverDetail::Driver::Get().WaitSubmissionPacedFor(std::chrono::milliseconds(milliseconds));
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
 extern "C" void AgcDriverSubmitGraphics_nid_postfix(std::uint32_t* commands, std::uint32_t dwords) {
     const Packet packet{commands, dwords, 0, {}};
     AgcDriver::Submit(&packet, 0);

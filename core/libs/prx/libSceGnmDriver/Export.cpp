@@ -379,7 +379,7 @@ ComputeRing& MappedRing(std::uint32_t id, const char* unmapped) {
 void SubmitLocked(std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes) {
     static FrameStart frameStart;
     static const bool waitIdle = std::getenv("APS5_GNM_SUBMIT_WAIT_IDLE") != nullptr;
-    if (waitIdle && g_workQueued) AgcDriverWaitIdle_nid_postfix();
+    if (waitIdle && g_workQueued) AgcDriverWaitSubmissionPaced_nid_postfix(5000);
     std::vector<std::vector<std::uint32_t>> merged;
     for (std::uint32_t i = 0; i < count; ++i) {
         const auto constantWords = ccbBytes ? ccbBytes[i] / 4 : 0;

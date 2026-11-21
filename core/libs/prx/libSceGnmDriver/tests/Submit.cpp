@@ -18,6 +18,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -62,6 +63,8 @@ struct Labels {
     alignas(256) volatile std::uint32_t gate = 0;
     alignas(256) volatile std::uint32_t first = 0;
     alignas(256) volatile std::uint32_t second = 0;
+    alignas(256) std::uint32_t ring[16]{};
+    alignas(256) std::uint32_t readOffset = 0;
 };
 
 class GuestBlock {
@@ -138,6 +141,34 @@ void TestFrameBoundaryWait() {
     Require(labels.second == 1, "the second submission did not run");
 }
 
+void TestParkedComputeQueueWait() {
+    GuestBlock block;
+    auto& labels = block.Data();
+    std::vector<std::uint32_t> initWords;
+    WriteData(initWords, &labels.second, 1);
+    Require(Submit(initWords) == 0, "Submit init failed");
+    AgcDriverWaitIdle_nid_postfix();
+    const int queue = sceGnmMapComputeQueue(0, 0, labels.ring, 16, &labels.readOffset);
+    Require(queue > 0, "sceGnmMapComputeQueue failed");
+    std::vector<std::uint32_t> computeWords;
+    WaitEqual(computeWords, &labels.gate, 1);
+    WriteData(computeWords, &labels.first, 1);
+    for (std::size_t i = 0; i < computeWords.size(); ++i) labels.ring[i] = computeWords[i];
+    Require(sceGnmDingDong(queue, static_cast<std::uint32_t>(computeWords.size())) == 0, "sceGnmDingDong failed");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    std::vector<std::uint32_t> drawWords;
+    WriteData(drawWords, &labels.second, 2);
+    auto pending = std::async(std::launch::async, [&] { return Submit(drawWords); });
+    const bool ready = pending.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+    labels.gate = 1;
+    Require(ready, "Submit hung while compute queue was parked on title");
+    Require(pending.get() == 0, "Submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(labels.first == 1, "compute queue did not finish");
+    Require(labels.second == 2, "submitted draw did not finish");
+    Require(sceGnmUnmapComputeQueue(queue) == 0, "sceGnmUnmapComputeQueue failed");
+}
+
 void EnableSubmitWaitIdle() {
 #ifdef _WIN32
     _putenv_s("APS5_GNM_SUBMIT_WAIT_IDLE", "1");
@@ -160,6 +191,7 @@ int main(int argc, char** argv) {
         device.reset();
         EnableSubmitWaitIdle();
         TestFrameBoundaryWait();
+        TestParkedComputeQueueWait();
         std::puts("GnmDriver submission wait tests passed");
         return 0;
     } catch (const std::exception& error) {
