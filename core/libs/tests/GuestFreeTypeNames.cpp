@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -112,6 +113,21 @@ int main() {
         CheckFace(unnamed, false);
         Require(FT_Get_Postscript_Name_nid_postfix(&unnamed.guest.rec) == nullptr);
         Require(FT_Get_Postscript_Name_nid_postfix(&first.guest.rec) == retained && std::strcmp(retained, "NameFixture-A") == 0);
+        static const char readOnlyBuffer[24]{"unchanged"};
+        for (const std::uint32_t index : {1u, 3u, 0x80000000u}) {
+            errno = 71;
+            Require(FT_Get_Glyph_Name_nid_postfix(&first.guest.rec, index, const_cast<char*>(readOnlyBuffer), sizeof(readOnlyBuffer)) ==
+                    FT_Err_Invalid_Argument);
+            Require(errno == 71 && std::strcmp(readOnlyBuffer, "unchanged") == 0);
+            errno = 71;
+            Require(FT_Get_Glyph_Name_nid_postfix(&first.guest.rec, index, reinterpret_cast<void*>(std::uintptr_t{0x10}), 24) ==
+                    FT_Err_Invalid_Argument);
+            Require(errno == 71);
+        }
+        errno = 71;
+        Require(FT_Get_Glyph_Name_nid_postfix(nullptr, 1, const_cast<char*>(readOnlyBuffer), sizeof(readOnlyBuffer)) ==
+                FT_Err_Invalid_Face_Handle);
+        Require(errno == 71 && std::strcmp(readOnlyBuffer, "unchanged") == 0);
         for (const std::uint32_t size : {0u, 1u, 24u}) CompareGlyph(nullptr, nullptr, 0, size);
         Require(FT_Get_Glyph_Name_nid_postfix(nullptr, 0, nullptr, 0) == FT_Err_Invalid_Face_Handle);
         Require(FT_Get_Name_Index_nid_postfix(nullptr, "alpha.custom") == 0);
