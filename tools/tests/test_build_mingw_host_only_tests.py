@@ -41,6 +41,76 @@ class BuildMingwHostOnlyTestsTests(unittest.TestCase):
         self.assertFalse(build_mingw_host_only_tests.link_command_mentions_target("a.o -lfoobar", target))
         self.assertFalse(build_mingw_host_only_tests.link_command_mentions_target("a.o -lbar", target))
 
+class IsProductLibraryTests(unittest.TestCase):
+    ROOT = Path("root")
+
+    def target(self, source_dir, sources, kind="STATIC_LIBRARY"):
+        return {"type": kind, "paths": {"source": source_dir}, "sources": sources}
+
+    def test_non_library_targets_are_not_products(self):
+        target = self.target("core/libs/prx/libX", [{"path": "core/libs/prx/libX/a.cpp"}], kind="EXECUTABLE")
+        self.assertFalse(build_mingw_host_only_tests.is_product_library(target, self.ROOT))
+
+    def test_libraries_outside_core_libs_are_not_products(self):
+        target = self.target("tools/x", [{"path": "tools/x/a.cpp"}])
+        self.assertFalse(build_mingw_host_only_tests.is_product_library(target, self.ROOT))
+
+    def test_library_with_a_non_test_source_is_a_product(self):
+        sources = [{"path": "core/libs/prx/libX/tests/t.cpp"}, {"path": "core/libs/prx/libX/a.cpp"}]
+        for kind in ("STATIC_LIBRARY", "SHARED_LIBRARY", "MODULE_LIBRARY"):
+            self.assertTrue(build_mingw_host_only_tests.is_product_library(self.target("core/libs/prx/libX", sources, kind), self.ROOT))
+
+    def test_library_with_only_test_sources_is_not_a_product(self):
+        target = self.target("core/libs/prx/libX", [{"path": "core/libs/prx/libX/tests/t.cpp"}])
+        self.assertFalse(build_mingw_host_only_tests.is_product_library(target, self.ROOT))
+
+    def test_library_with_only_generated_sources_depends_on_its_directory(self):
+        generated = [{"path": "build/g.cpp", "isGenerated": True}]
+        self.assertTrue(build_mingw_host_only_tests.is_product_library(self.target("core/libs/prx/libX", generated), self.ROOT))
+        self.assertFalse(build_mingw_host_only_tests.is_product_library(self.target("core/libs/tests/helpers", generated), self.ROOT))
+
+    def test_malformed_sources_are_refused(self):
+        for sources in ("a.cpp", ["a.cpp"]):
+            with self.assertRaisesRegex(ValueError, "invalid library sources"):
+                build_mingw_host_only_tests.is_product_library(self.target("core/libs/prx/libX", sources), self.ROOT)
+
+
+class TargetDocumentTests(unittest.TestCase):
+    def test_minimal_and_full_targets_are_accepted(self):
+        full = {"name": "t", "link": {"commandFragments": [{}]}, "artifacts": [{}], "sources": [{}]}
+        self.assertIs(build_mingw_host_only_tests.target_document(full, "t.json"), full)
+        self.assertEqual(build_mingw_host_only_tests.target_document({}, "t.json"), {})
+
+    def test_invalid_fields_name_what_was_wrong(self):
+        cases = (
+            ([], "CMake target"),
+            ({"name": 3}, "CMake target name"),
+            ({"link": []}, "CMake target link"),
+            ({"link": {"commandFragments": [1]}}, "CMake link command fragments"),
+            ({"artifacts": {}}, "CMake target artifacts"),
+            ({"sources": ["a"]}, "CMake target sources"),
+        )
+        for value, message in cases:
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, message):
+                build_mingw_host_only_tests.target_document(value, "t.json")
+
+
+class ObjectShapeTests(unittest.TestCase):
+    def test_object_document_returns_a_dict_and_refuses_other_types(self):
+        document = {"a": 1}
+        self.assertIs(build_mingw_host_only_tests.object_document(document, "p.json", "thing"), document)
+        for value in ([], "text", None, 3):
+            with self.assertRaisesRegex(ValueError, r"p\.json: invalid thing \(expected an object\)"):
+                build_mingw_host_only_tests.object_document(value, "p.json", "thing")
+
+    def test_object_entries_requires_a_list_of_objects(self):
+        entries = [{"a": 1}, {}]
+        self.assertIs(build_mingw_host_only_tests.object_entries(entries, "p.json", "items"), entries)
+        self.assertEqual(build_mingw_host_only_tests.object_entries([], "p.json", "items"), [])
+        for value in ({}, "text", [1], [{}, None]):
+            with self.assertRaisesRegex(ValueError, r"p\.json: invalid items \(expected a list of objects\)"):
+                build_mingw_host_only_tests.object_entries(value, "p.json", "items")
+
 
 if __name__ == "__main__":
     unittest.main()

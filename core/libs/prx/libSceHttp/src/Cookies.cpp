@@ -480,8 +480,9 @@ int APS5_VABI sceHttpAddCookie(int contextId, const char* url, const char* cooki
     if (!url || !cookie) return ERROR_INVALID_VALUE;
     RequestUrl parsed;
     if (const int result = parseUrl(url, parsed); result != 0) return result;
-    const std::string_view header(cookie, size);
-    return storeCookie(*jar, parsed, header.substr(0, header.find('\0')), Clock::now());
+    std::string header;
+    if (!HttpGuest::CopyText(cookie, size, header)) return ERROR_INVALID_VALUE;
+    return storeCookie(*jar, parsed, header, Clock::now());
 }
 
 int APS5_VABI sceHttpGetCookie(int contextId, const char* url, char* cookie, std::size_t* required, std::size_t prepared) {

@@ -24,6 +24,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <signal.h>
 #include <spawn.h>
 #endif
 #if defined(__linux__)
@@ -52,10 +53,12 @@ constexpr std::string_view MainExecutable = "/app0/eboot.bin";
 constexpr wchar_t LoadExecParentVariable[] = L"ANYPS5_LOADEXEC_PARENT";
 constexpr wchar_t LoadExecSkipVariable[] = L"ANYPS5_LOADEXEC_ARGV_SKIP=";
 #else
-constexpr std::uint32_t SpawnFlagsImplemented = 0x03;
+constexpr std::uint32_t SpawnFlagsImplemented = 0x33;
 #endif
 constexpr std::uint32_t SpawnFlagResetIds = 0x01;
 constexpr std::uint32_t SpawnFlagSetGroup = 0x02;
+constexpr std::uint32_t SpawnFlagSetSigDef = 0x10;
+constexpr std::uint32_t SpawnFlagSetSigMask = 0x20;
 
 template <typename T>
 T LoadSpawnValue(const T* source, const char* function, const char* what) {
@@ -278,8 +281,15 @@ std::vector<wchar_t> ChildEnvironment(char* const* environment) {
 int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileActions* const* actions,
     PosixSpawnAttributes* const* attributes, std::int32_t* processId, char* const* arguments, char* const* environment) {
     const auto target = ConvertedExecutableTarget(function, guest);
-    if (const std::uint32_t attributes_flags = SpawnAttributeFlags(attributes); attributes_flags != 0)
-        NotImplemented_nid_no_patch(("posix_spawn: the attribute flags " + HexFlag(attributes_flags) + " on this host").c_str());
+    if (const std::uint32_t attributes_flags = SpawnAttributeFlags(attributes); attributes_flags != 0) {
+        if ((attributes_flags & ~(SpawnFlagSetSigDef | SpawnFlagSetSigMask)) != 0)
+            NotImplemented_nid_no_patch(("posix_spawn: the attribute flags " + HexFlag(attributes_flags) + " on this host").c_str());
+        if ((attributes_flags & SpawnFlagSetSigMask) != 0) {
+            const auto& mask = (*attributes)->signalMask;
+            if ((mask.bits[0] | mask.bits[1] | mask.bits[2] | mask.bits[3]) != 0)
+                NotImplemented_nid_no_patch("posix_spawn: a non-empty POSIX_SPAWN_SETSIGMASK signal mask on this host");
+        }
+    }
     ChildStreams streams;
     const DWORD identifiers[] = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
     bool redirected = false;
@@ -345,6 +355,66 @@ int HostSpawnError(int error) {
     return error == 0 ? 0 : GuestErrnoFromHost_nid_no_patch(error);
 }
 
+sigset_t GuestSetToHost(const GuestSignalSet& guestSet) {
+    sigset_t hostSet;
+    sigemptyset(&hostSet);
+    constexpr int standardSignals[] = {
+        0,
+        SIGHUP,
+        SIGINT,
+        SIGQUIT,
+        SIGILL,
+        SIGTRAP,
+        SIGABRT,
+#ifdef SIGEMT
+        SIGEMT,
+#else
+        0,
+#endif
+        SIGFPE,
+        SIGKILL,
+        SIGBUS,
+        SIGSEGV,
+        SIGSYS,
+        SIGPIPE,
+        SIGALRM,
+        SIGTERM,
+        SIGURG,
+        SIGSTOP,
+        SIGTSTP,
+        SIGCONT,
+        SIGCHLD,
+        SIGTTIN,
+        SIGTTOU,
+        SIGIO,
+        SIGXCPU,
+        SIGXFSZ,
+        SIGVTALRM,
+        SIGPROF,
+        SIGWINCH,
+#ifdef SIGINFO
+        SIGINFO,
+#else
+        0,
+#endif
+        SIGUSR1,
+        SIGUSR2
+    };
+    for (int guest = 1; guest <= 31; ++guest) {
+        const int host = standardSignals[guest];
+        if (host != 0 && (guestSet.bits[0] & (1u << (guest - 1))) != 0)
+            sigaddset(&hostSet, host);
+    }
+#if defined(SIGRTMIN) && defined(SIGRTMAX)
+    for (int guest = 65; guest <= 126; ++guest) {
+        if ((guestSet.bits[static_cast<std::size_t>(guest - 1) / 32] & (1u << ((guest - 1) % 32))) == 0) continue;
+        const int host = SIGRTMIN + (guest - 65);
+        if (host <= SIGRTMAX) sigaddset(&hostSet, host);
+    }
+#endif
+    return hostSet;
+}
+
 int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileActions* const* actions,
     PosixSpawnAttributes* const* attributes, std::int32_t* processId, char* const* arguments, char* const* environment) {
     const auto target = ConvertedExecutableTarget(function, guest);
@@ -361,6 +431,16 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
         if ((flags & SpawnFlagSetGroup) != 0) {
             hostFlags |= POSIX_SPAWN_SETPGROUP;
             posix_spawnattr_setpgroup(usedAttributes, (*attributes)->processGroup);
+        }
+        if ((flags & SpawnFlagSetSigDef) != 0) {
+            hostFlags |= POSIX_SPAWN_SETSIGDEF;
+            const sigset_t hostDefault = GuestSetToHost((*attributes)->signalDefault);
+            posix_spawnattr_setsigdefault(usedAttributes, &hostDefault);
+        }
+        if ((flags & SpawnFlagSetSigMask) != 0) {
+            hostFlags |= POSIX_SPAWN_SETSIGMASK;
+            const sigset_t hostMask = GuestSetToHost((*attributes)->signalMask);
+            posix_spawnattr_setsigmask(usedAttributes, &hostMask);
         }
         posix_spawnattr_setflags(usedAttributes, hostFlags);
     }

@@ -12,6 +12,10 @@
 extern "C" {
 std::size_t GuestFaultCopyBytes(void* destination, const void* source, std::size_t bytes);
 extern const char GuestFaultCopyAccess[];
+extern const char GuestFaultCopyLoad[];
+extern const char GuestFaultCopyStore[];
+extern const char GuestFaultCopyWordLoad[];
+extern const char GuestFaultCopyWordStore[];
 extern const char GuestFaultCopyResume[];
 }
 
@@ -24,6 +28,39 @@ __asm__(
     "GuestFaultCopyBytes:\n"
     ".cfi_startproc\n"
     "    movq %rdx, %rcx\n"
+    "    cmpq $4, %rcx\n"
+    "    ja GuestFaultCopyAccess\n"
+    "    je .LGuestFaultCopyWord\n"
+    "    testq %rcx, %rcx\n"
+    "    jz GuestFaultCopyResume\n"
+    ".globl GuestFaultCopyLoad\n"
+    ".hidden GuestFaultCopyLoad\n"
+    "GuestFaultCopyLoad:\n"
+    "    movb (%rsi), %al\n"
+    ".globl GuestFaultCopyStore\n"
+    ".hidden GuestFaultCopyStore\n"
+    "GuestFaultCopyStore:\n"
+    "    movb %al, (%rdi)\n"
+    "    incq %rsi\n"
+    "    incq %rdi\n"
+    "    decq %rcx\n"
+    "    jnz GuestFaultCopyLoad\n"
+    "    jmp GuestFaultCopyResume\n"
+    ".LGuestFaultCopyWord:\n"
+    "    movq %rsi, %rax\n"
+    "    orq %rdi, %rax\n"
+    "    testb $3, %al\n"
+    "    jnz GuestFaultCopyLoad\n"
+    ".globl GuestFaultCopyWordLoad\n"
+    ".hidden GuestFaultCopyWordLoad\n"
+    "GuestFaultCopyWordLoad:\n"
+    "    movl (%rsi), %eax\n"
+    ".globl GuestFaultCopyWordStore\n"
+    ".hidden GuestFaultCopyWordStore\n"
+    "GuestFaultCopyWordStore:\n"
+    "    movl %eax, (%rdi)\n"
+    "    xorq %rcx, %rcx\n"
+    "    jmp GuestFaultCopyResume\n"
     ".globl GuestFaultCopyAccess\n"
     ".hidden GuestFaultCopyAccess\n"
     "GuestFaultCopyAccess:\n"
@@ -53,21 +90,26 @@ void Chain(int signal, siginfo_t* info, void* context) {
     std::size_t slot = 0;
     while (slot < std::size(CopySignals) && CopySignals[slot] != signal) ++slot;
     if (slot == std::size(CopySignals)) return;
-    const struct sigaction& previous = g_previous[g_active.load(std::memory_order_acquire)][slot];
-    if ((previous.sa_flags & SA_SIGINFO) != 0 && previous.sa_sigaction != nullptr) {
-        previous.sa_sigaction(signal, info, context);
-        return;
-    }
-    if (previous.sa_handler != SIG_DFL && previous.sa_handler != SIG_IGN && previous.sa_handler != nullptr) {
+    const int active = g_active.load(std::memory_order_acquire);
+    const struct sigaction previous = g_previous[active][slot];
+    if (previous.sa_handler != SIG_DFL && previous.sa_handler != SIG_IGN) {
+        if ((previous.sa_flags & SA_RESETHAND) != 0) {
+            g_previous[active][slot] = {};
+            g_previous[active][slot].sa_handler = SIG_DFL;
+        }
+        if ((previous.sa_flags & SA_SIGINFO) != 0 && previous.sa_sigaction != nullptr) {
+            previous.sa_sigaction(signal, info, context);
+            return;
+        }
         previous.sa_handler(signal);
         return;
     }
-    if (info->si_code <= 0 && previous.sa_handler == SIG_IGN) return;
+    if (info != nullptr && info->si_code <= 0 && previous.sa_handler == SIG_IGN) return;
     struct sigaction fallback{};
     fallback.sa_handler = SIG_DFL;
     sigemptyset(&fallback.sa_mask);
     sigaction(signal, &fallback, nullptr);
-    if (info->si_code <= 0) raise(signal);
+    if (info != nullptr && info->si_code <= 0) raise(signal);
 }
 
 void OnCopyFault(int signal, siginfo_t* info, void* context) {
@@ -147,7 +189,8 @@ bool Resume(const siginfo_t* info, void* context) {
     if (info == nullptr || context == nullptr || info->si_code <= 0) return false;
     if (info->si_signo != SIGSEGV && info->si_signo != SIGBUS) return false;
     auto& registers = static_cast<ucontext_t*>(context)->uc_mcontext.gregs;
-    if (registers[REG_RIP] != reinterpret_cast<greg_t>(GuestFaultCopyAccess)) return false;
+    const auto instruction = registers[REG_RIP];
+    if (instruction != reinterpret_cast<greg_t>(GuestFaultCopyAccess) && instruction != reinterpret_cast<greg_t>(GuestFaultCopyLoad) && instruction != reinterpret_cast<greg_t>(GuestFaultCopyStore) && instruction != reinterpret_cast<greg_t>(GuestFaultCopyWordLoad) && instruction != reinterpret_cast<greg_t>(GuestFaultCopyWordStore)) return false;
     registers[REG_RIP] = reinterpret_cast<greg_t>(GuestFaultCopyResume);
     return true;
 }

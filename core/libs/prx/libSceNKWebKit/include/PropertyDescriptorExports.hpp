@@ -9,6 +9,7 @@ extern "C" {
 
 bool APS5_VABI _ZNK3JSC18PropertyDescriptor8writableEv(const NKWebKit::JscAbi::PropertyDescriptor* self);
 bool APS5_VABI _ZNK3JSC18PropertyDescriptor10enumerableEv(const NKWebKit::JscAbi::PropertyDescriptor* self);
+bool APS5_VABI _ZNK3JSC18PropertyDescriptor12configurableEv(const NKWebKit::JscAbi::PropertyDescriptor* self);
 bool APS5_VABI _ZNK3JSC18PropertyDescriptor16isDataDescriptorEv(const NKWebKit::JscAbi::PropertyDescriptor* self);
 bool APS5_VABI _ZNK3JSC18PropertyDescriptor20isAccessorDescriptorEv(const NKWebKit::JscAbi::PropertyDescriptor* self);
 void APS5_VABI _ZN3JSC18PropertyDescriptor11setWritableEb(NKWebKit::JscAbi::PropertyDescriptor* self, bool writable);

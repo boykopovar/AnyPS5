@@ -127,7 +127,7 @@ void leaseSnapshotTests() {
     Require(readable.use_count() == 3, "the kept snapshots do not hold a readable range once each");
     {
         GuestAllocations::Mutation mutation;
-        mutation.Protect(memory.data() + 64, 64, false, false, true, [] {});
+        mutation.Protect(memory.data() + 64, 64, false, false, false, [] {});
     }
     Require(readable.expired(), "a kept snapshot holds a range that a protection change replaced");
     {
@@ -135,7 +135,15 @@ void leaseSnapshotTests() {
         Require(std::none_of(lease.begin(), lease.end(), [&](const auto& range) { return range->address == address + 64; }), "a lease taken after a range turned unreadable returned the old snapshot");
         const auto all = GuestAllocations::GuestAllocationsAcquireAll_nid_postfix();
         const auto found = std::find_if(all.begin(), all.end(), [&](const auto& range) { return range->address == address + 64; });
-        Require(found != all.end() && !(*found)->readable && !(*found)->writable, "a lease of all ranges taken after a range turned unreadable returned the old snapshot");
+        Require(found != all.end() && !(*found)->readable && !(*found)->writable && !(*found)->gpu, "a lease of all ranges taken after a range turned unreadable returned the old snapshot");
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(memory.data() + 64, 64, false, false, true, true, [] {});
+    }
+    {
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        Require(std::any_of(lease.begin(), lease.end(), [&](const auto& range) { return range->address == address + 64 && !range->readable && !range->writable && range->gpu && range->gpuWritable; }), "a lease taken after a range turned gpu-only missed it");
     }
     {
         GuestAllocations::Mutation mutation;
