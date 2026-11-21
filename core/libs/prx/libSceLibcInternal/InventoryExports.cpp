@@ -117,11 +117,6 @@ int APS5_VABI libSceLibcInternalInventory_016_nid_no_patch() {
 }
 APS5_EXPORT("uVOxy7dQTFc", libSceLibcInternalInventory_016_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_017_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("rNYLEsL7M0k", libSceLibcInternalInventory_017_nid_no_patch);
-
 void APS5_VABI libSceLibcInternalInventory_019_nid_no_patch(LibcException::SystemErrorObject* self, LibcException::ErrorCode code, const char* message) {
     LibcExceptionConstructSystemError_nid_no_patch(self, code, message);
 }

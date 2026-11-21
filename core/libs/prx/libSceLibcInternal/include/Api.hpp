@@ -183,6 +183,9 @@ const std::error_category* APS5_VABI sceLibcInternalIostreamCategory_nid_no_patc
 void APS5_VABI sceLibcInternalFutureErrorBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalOverflowErrorBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalUnderflowErrorBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalFutureErrorDeletingDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalOverflowErrorDeletingDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalUnderflowErrorDeletingDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalFutureErrorCategoryDeletingDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalSystemErrorCategoryDeletingDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalSystemErrorCategoryDestructor_nid_no_patch(void* self);
