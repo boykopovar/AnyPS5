@@ -144,6 +144,14 @@ static void TestNullPointerPassing() {
     *__error_nid_postfix() = 0;
     Require(clock_getres_nid_postfix(GUEST_CLOCK_MONOTONIC, nullptr) == SCE_OK);
     Require(*__error_nid_postfix() == 0);
+
+    auto* const unmapped = reinterpret_cast<KernelTimespec*>(0x10);
+    *__error_nid_postfix() = 0;
+    Require(clock_gettime_nid_postfix(GUEST_CLOCK_REALTIME, unmapped) == -1);
+    Require(*__error_nid_postfix() == GUEST_EFAULT);
+    *__error_nid_postfix() = 0;
+    Require(clock_getres_nid_postfix(GUEST_CLOCK_REALTIME, unmapped) == -1);
+    Require(*__error_nid_postfix() == GUEST_EFAULT);
 }
 
 int main() {

@@ -661,11 +661,10 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
     }
     KernelTimespec value{};
     if (ReadClock(clockId, &value) != 0) return -1;
-    if (tp == nullptr) {
+    if (tp == nullptr || !GuestCopyOut_nid_no_patch(tp, &value, sizeof(value))) {
         *__error_nid_postfix() = GUEST_EFAULT;
         return -1;
     }
-    *tp = value;
     return 0;
 }
 
@@ -702,6 +701,7 @@ int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* output, KernelTimezone* zo
 int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
     if (res == nullptr) return 0;
     if (IsCpuClock(clockId)) clockId = GUEST_CLOCK_THREAD_CPUTIME_ID;
+    KernelTimespec value{};
     switch (clockId) {
         case 0:
         case 4:
@@ -712,23 +712,28 @@ int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
         case 10:
         case 11:
         case 12:
-            *res = {0, 81};
-            return 0;
+            value = {0, 81};
+            break;
         case 1:
         case 2:
-            *res = {0, 1000000};
-            return 0;
+            value = {0, 1000000};
+            break;
         case 13:
-            *res = {1, 0};
-            return 0;
+            value = {1, 0};
+            break;
         case GUEST_CLOCK_THREAD_CPUTIME_ID:
         case 21:
-            *res = {0, 1000};
-            return 0;
+            value = {0, 1000};
+            break;
         default:
             *__error_nid_postfix() = GUEST_EINVAL;
             return -1;
     }
+    if (!GuestCopyOut_nid_no_patch(res, &value, sizeof(value))) {
+        *__error_nid_postfix() = GUEST_EFAULT;
+        return -1;
+    }
+    return 0;
 }
 
 int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp) {
