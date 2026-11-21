@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -273,9 +274,8 @@ int APS5_VABI __atomic_load_n_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI sceLibcInternalUnknown6_080_bTQcNwRc8hE_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceLibcInternalUnknown6_080_bTQcNwRc8hE_nid_no_patch(void* self) {
+    _ZNSt8ios_base4InitC1Ev(self);
 }
 APS5_EXPORT("bTQcNwRc8hE", sceLibcInternalUnknown6_080_bTQcNwRc8hE_nid_no_patch);
 
@@ -474,11 +474,6 @@ void APS5_VABI _ZNSt7codecvtIcc9_MbstatetE5_InitERKSt8_Locinfo(void* self, const
 
 void APS5_VABI _ZNSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEED1Ev(void* self) {
     (void)self;
-}
-
-int APS5_VABI _ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI _ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix() {

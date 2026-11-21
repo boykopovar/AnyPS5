@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -66,6 +67,23 @@ class RedactTests(unittest.TestCase):
     def test_text_without_matches_is_unchanged(self):
         text = "frames=120 averageFps=59.9 version 1.2.3"
         self.assertEqual(bug_report.redact(text, home="/home/ana", user="ana", host="box"), "frames=120 averageFps=59.9 version 1.2.3")
+
+
+class SettingsTests(unittest.TestCase):
+    identity = {"home": "/home/ana", "user": "ana", "host": "serverfestivo"}
+
+    def test_only_anyps5_variables_are_listed_in_name_order(self):
+        environ = {"PATH": "/usr/bin", "ANYPS5_ZETA": "1", "APS5_NO_LABEL_READ_TRAP": "1", "ANYPS5_ALPHA": "on", "HOME": "/home/ana", "XAPS5_OTHER": "x"}
+        self.assertEqual(bug_report.settings_text(environ, self.identity), "ANYPS5_ALPHA=on\nANYPS5_ZETA=1\nAPS5_NO_LABEL_READ_TRAP=1\n")
+
+    def test_values_are_redacted(self):
+        environ = {"ANYPS5_INPUT_CONFIG": "/home/ana/cfg/serverfestivo.ini", "ANYPS5_DNS_OVERRIDE": "store.example=192.168.1.20"}
+        text = bug_report.settings_text(environ, self.identity)
+        self.assertIn("ANYPS5_INPUT_CONFIG=~/cfg/<host>.ini", text)
+        self.assertIn("ANYPS5_DNS_OVERRIDE=store.example=<ip>", text)
+
+    def test_no_variables_says_so(self):
+        self.assertEqual(bug_report.settings_text({"PATH": "/x"}, self.identity), "No ANYPS5_ or APS5_ variables were set.\n")
 
 
 class BundleTests(unittest.TestCase):
@@ -203,8 +221,18 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("wrote", out)
         with zipfile.ZipFile(target) as bundle:
-            self.assertEqual(sorted(bundle.namelist()), ["README.txt", "anyps5-report.json", "anyps5.log", "host.txt"])
+            self.assertEqual(sorted(bundle.namelist()), ["README.txt", "anyps5-report.json", "anyps5-settings.txt", "anyps5.log", "host.txt"])
             self.assertEqual(bundle.read("anyps5.log").decode("utf-8"), "opened ~/title.elf on <host>\n")
+
+    def test_bundle_redacts_environment_settings_once(self):
+        target = self.root / "bundle.zip"
+        identity = {"home": "C:/Users/user", "user": "user", "host": "host"}
+        environ = {"ANYPS5_INPUT_CONFIG": "C:/Users/user/host.ini", "APS5_TEST": "user@192.0.2.1"}
+        with patch.object(bug_report, "identities", return_value=identity), patch.dict(os.environ, environ, clear=True):
+            code, _, err = self.run_main(["--report", str(self.report), "--log", "", "--input-config", "", "--out", str(target)])
+        self.assertEqual(code, 0, err)
+        with zipfile.ZipFile(target) as bundle:
+            self.assertEqual(bundle.read("anyps5-settings.txt"), b"ANYPS5_INPUT_CONFIG=~/<host>.ini\nAPS5_TEST=<user>@<ip>\n")
 
     def test_colliding_redacted_keys_refuse_the_bundle(self):
         first, second = "192.0.2.1", "192.0.2.2"
@@ -249,6 +277,38 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 0)
         with zipfile.ZipFile(target) as bundle:
             self.assertEqual(bundle.read("anyps5-input.ini").decode("utf-8"), "Cross = KEY:~/F\n")
+
+    def test_bundle_includes_the_profile_next_to_the_configured_input_mapping(self):
+        self.report.write_text('{"game": {"titleId": "PPSA00001"}}', encoding="utf-8")
+        config = self.root / "config"
+        config.mkdir()
+        ini = config / "controls.ini"
+        ini.write_text("Cross = KEY:F\n", encoding="utf-8")
+        (config / "anyps5-input.PPSA00001.ini").write_text(
+            "# /home/ana/controls on serverfestivo\nCross = KEY:G\n", encoding="utf-8")
+        (config / "anyps5-input.PPSA00002.ini").write_text("Cross = KEY:H\n", encoding="utf-8")
+        target = self.root / "bundle.zip"
+        with patch.dict(os.environ, {"ANYPS5_INPUT_CONFIG": str(ini)}):
+            code, _, err = self.run_main(["--report", str(self.report), "--log", "", "--out", str(target)])
+        self.assertEqual(code, 0, err)
+        with zipfile.ZipFile(target) as bundle:
+            self.assertEqual(sorted(name for name in bundle.namelist() if name.endswith(".ini")),
+                             ["anyps5-input-profile.ini", "anyps5-input.ini"])
+            self.assertEqual(bundle.read("anyps5-input.ini").decode("utf-8"), "Cross = KEY:F\n")
+            self.assertEqual(bundle.read("anyps5-input-profile.ini").decode("utf-8"),
+                             "# ~/controls on <host>\nCross = KEY:G\n")
+
+    def test_bundle_includes_the_title_profile_without_a_default_shared_mapping(self):
+        self.report.write_text('{"game": {"titleId": "PPSA00001"}}', encoding="utf-8")
+        (self.root / "anyps5-input.PPSA00001.ini").write_text("Cross = KEY:G\n", encoding="utf-8")
+        env = {name: value for name, value in os.environ.items() if name != "ANYPS5_INPUT_CONFIG"}
+        result = subprocess.run([sys.executable, bug_report.__file__, "--log", ""], cwd=self.root, env=env,
+                                capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with zipfile.ZipFile(self.root / "bug-report.zip") as bundle:
+            self.assertNotIn("anyps5-input.ini", bundle.namelist())
+            self.assertIn("anyps5-input-profile.ini", bundle.namelist())
+            self.assertEqual(bundle.read("anyps5-input-profile.ini").decode("utf-8"), "Cross = KEY:G\n")
 
     def test_invalid_report_json_is_an_error(self):
         self.report.write_text("not json", encoding="utf-8")
@@ -301,3 +361,14 @@ class RedactReportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HostTextTests(unittest.TestCase):
+    def test_host_text_names_the_system_processor_cpus_and_python(self):
+        with patch.object(bug_report.platform, "system", return_value="Linux"), \
+                patch.object(bug_report.platform, "release", return_value="6.1.0"), \
+                patch.object(bug_report.platform, "machine", return_value="x86_64"), \
+                patch.object(bug_report.platform, "processor", return_value=""), \
+                patch.object(bug_report.os, "cpu_count", return_value=8):
+            text = bug_report.host_text()
+        self.assertEqual(text.splitlines(), ["os: Linux 6.1.0", "machine: x86_64", "processor: unknown", "logical cpus: 8", f"python: {bug_report.platform.python_version()}"])

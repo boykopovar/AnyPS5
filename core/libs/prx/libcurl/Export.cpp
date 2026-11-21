@@ -4,6 +4,7 @@
 #include "prx/libcurl/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/FilesystemError.hpp"
 
 #include "prx/libc/include/Api.hpp"
 
@@ -13,6 +14,7 @@
 #include <climits>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -988,8 +990,11 @@ char* APS5_VABI curl_pushheader_byname_nid_postfix(struct curl_pushheaders* h, c
 
 std::int32_t APS5_VABI curl_formadd_nid_postfix(struct guest_curl_httppost** httppost, struct guest_curl_httppost** last_post, ...) {
     if (!httppost || !last_post) NotImplemented_nid_no_patch(__func__);
+    guest_curl_httppost* last = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&last, last_post, sizeof(last))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     std::vector<curl_forms> options;
     bool nullArray = false;
+    bool unreadableArray = false;
     CURL_ARGS_START(last_post);
     for (;;) {
         const auto option = static_cast<CURLformoption>(CURL_ARG(int));
@@ -1000,8 +1005,15 @@ std::int32_t APS5_VABI curl_formadd_nid_postfix(struct guest_curl_httppost** htt
                 nullArray = true;
                 break;
             }
-            for (; forms->option != CURLFORM_END; ++forms)
-                AddFormOption(options, static_cast<CURLformoption>(forms->option), forms->value);
+            for (guest_curl_forms entry{};; ++forms) {
+                if (!GuestCopyIn_nid_no_patch(&entry, forms, sizeof(entry))) {
+                    unreadableArray = true;
+                    break;
+                }
+                if (entry.option == CURLFORM_END) break;
+                AddFormOption(options, static_cast<CURLformoption>(entry.option), entry.value);
+            }
+            if (unreadableArray) break;
             continue;
         }
         if (IsFormLengthOption(option) || option == CURLFORM_CONTENTLEN) {
@@ -1014,6 +1026,7 @@ std::int32_t APS5_VABI curl_formadd_nid_postfix(struct guest_curl_httppost** htt
         }
     }
     CURL_ARGS_END();
+    if (unreadableArray) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     options.push_back({CURLFORM_END, nullptr});
 
     curl_httppost* hostHead = nullptr;
@@ -1024,17 +1037,19 @@ std::int32_t APS5_VABI curl_formadd_nid_postfix(struct guest_curl_httppost** htt
         return result == CURL_FORMADD_OK ? CURL_FORMADD_NULL : result;
     }
     if (!hostHead) return result;
+    guest_curl_httppost** const link = last ? &last->next : httppost;
+    if (!GuestWritable_nid_no_patch(link, sizeof(*link)) || !GuestWritable_nid_no_patch(last_post, sizeof(*last_post))) {
+        ::curl_formfree(hostHead);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     auto* const guest = GuestFormFromHost(hostHead);
     if (!guest) {
         ::curl_formfree(hostHead);
         return CURL_FORMADD_MEMORY;
     }
     FreeHostFormNodes(hostHead);
-    if (*last_post)
-        (*last_post)->next = guest;
-    else
-        *httppost = guest;
-    *last_post = guest;
+    if (!GuestCopyOut_nid_no_patch(link, &guest, sizeof(guest)) || !GuestCopyOut_nid_no_patch(last_post, &guest, sizeof(guest)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return result;
 }
 
@@ -1231,9 +1246,6 @@ std::int32_t APS5_VABI curl_easy_setopt_nid_postfix(CURL* handle, std::int32_t g
         break;
     case CURLOPT_SSL_CTX_FUNCTION: throw std::invalid_argument("CURLOPT_SSL_CTX_FUNCTION");
     case CURLOPT_SSL_CTX_DATA: throw std::invalid_argument("CURLOPT_SSL_CTX_DATA");
-    case CURLOPT_CONV_FROM_NETWORK_FUNCTION: throw std::invalid_argument("CURLOPT_CONV_FROM_NETWORK_FUNCTION");
-    case CURLOPT_CONV_TO_NETWORK_FUNCTION: throw std::invalid_argument("CURLOPT_CONV_TO_NETWORK_FUNCTION");
-    case CURLOPT_CONV_FROM_UTF8_FUNCTION: throw std::invalid_argument("CURLOPT_CONV_FROM_UTF8_FUNCTION");
     default: break;
     }
     if (!::curl_easy_option_by_id(option)) return ::curl_easy_setopt(handle, option);
@@ -1569,9 +1581,20 @@ std::time_t APS5_VABI curl_getdate_nid_postfix(const char* p, const std::time_t*
 }
 
 std::int32_t APS5_VABI curl_mime_filedata_nid_postfix(curl_mimepart* part, const char* filename) {
-    const auto result = ::curl_mime_filedata(part, filename);
-    if (part) ReplacePartContent(part, nullptr, nullptr);
-    return result;
+    if (!part || !filename) {
+        const auto result = ::curl_mime_filedata(part, filename);
+        if (part) ReplacePartContent(part, nullptr, nullptr);
+        return result;
+    }
+    char base[1024];
+    if (!basename_r_nid_postfix(filename, base))
+        throw std::length_error("curl_mime_filedata: the base name does not fit basename's buffer, and curl passes the null result to strdup");
+    std::filesystem::path host;
+    const std::string hostName = ResolvePathError_nid_no_patch(filename, host) == 0 ? host.string() : std::string{};
+    const auto result = ::curl_mime_filedata(part, hostName.c_str());
+    ReplacePartContent(part, nullptr, nullptr);
+    const auto named = ::curl_mime_filename(part, base);
+    return named == CURLE_OK ? result : named;
 }
 
 std::int32_t APS5_VABI curl_multi_timeout_nid_postfix(CURLM* multi_handle, int64_t* milliseconds) {
