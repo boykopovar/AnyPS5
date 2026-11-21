@@ -32,6 +32,8 @@ std::map<Domain::VirtualAddress, std::uint64_t> ReadRelrRelocations(
     if (*size % 8 != 0)
         throw Domain::RelinkerException("Invalid DT_RELRSZ: expected a multiple of 8 bytes");
     if (*size == 0) return {};
+    if (*address == 0)
+        throw Domain::RelinkerException("DT_RELR address is zero");
 
     for (const auto& header : headers) {
         if (header.Type != PT_LOAD) continue;
