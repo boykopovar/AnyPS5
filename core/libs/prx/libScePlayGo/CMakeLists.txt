@@ -1,5 +1,8 @@
+include(${CMAKE_SOURCE_DIR}/cmake/LibXml2.cmake)
+
 add_library(libScePlayGo SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libScePlayGo PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libScePlayGo PRIVATE LibXml2)
 configure_windows_unwind(libScePlayGo)
 
 if(BUILD_TESTING)
