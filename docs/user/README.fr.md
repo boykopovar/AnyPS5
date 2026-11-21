@@ -34,7 +34,7 @@ L'état et les rapports de test de chaque jeu se trouvent dans les discussions [
 
 ## Mappage des contrôles
 
-Les manettes de jeu compatibles SDL sont prises en charge, notamment les joysticks analogiques et les gâchettes. Les commandes clavier et souris peuvent être configurées à l'aide d'un fichier `anyps5-input.ini`. Consultez la section [input mapping](INPUT_MAPPING.md) pour connaître les périphériques compatibles et le format de configuration.
+Les manettes de jeu compatibles SDL sont prises en charge, notamment les joysticks analogiques et les gâchettes. Les commandes clavier et souris peuvent être configurées à l'aide d'un fichier `anyps5-input.ini`. Consultez la section [Mappage des contrôles](INPUT_MAPPING.md) pour connaître les périphériques compatibles et le format de configuration.
 
 ## Clause de non-responsabilité
 
