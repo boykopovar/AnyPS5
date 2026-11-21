@@ -9984,14 +9984,6 @@ int APS5_VABI WKPageListenForLayoutMilestones() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageLoadAlternateHTMLStringWithUserData() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageLoadAlternateHTMLString() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageLoadData() {
     NotImplemented_nid_no_patch(__func__);
 }
