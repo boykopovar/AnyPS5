@@ -1,0 +1,5 @@
+# shader
+
+## add Functional
+
+- [s_getreg_b32 through HW_ID1 and HW_ID2](../../../core/shader/recompiler/Translation/src/ScalarInstructions.cpp) now answers a read of hardware registers 23 (`HW_ID1`) and 24 (`HW_ID2`) with zero for any field instead of throwing. The RDNA3 instruction set reference lists both as read-only, debug-only registers whose contents are not predictable, which is what makes a fixed answer legitimate, and the host exposes no shader-engine, WGP or wave identity to report: every wave therefore reports engine 0, SIMD 0, wave 0 and VMID 0. The fields these registers carry (wave, SIMD, WGP, SA and SE ids in `HW_ID1`; queue, pipe, ME, state, WG and VM ids in `HW_ID2`) are not compared against console hardware, so a title that distributes work per shader engine sees a single-engine GPU. Every other read-only register (`STATUS`, `TRAPSTS`, `HW_ID`, `GPR_ALLOC`, `LDS_ALLOC`, `IB_STS`, `TBA`, `TMA`, `FLAT_SCR`, `XNACK_MASK`) still throws, and so does a field that runs past the 32-bit register.
