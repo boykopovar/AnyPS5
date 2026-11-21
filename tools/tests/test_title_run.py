@@ -51,6 +51,11 @@ class TitlesTests(unittest.TestCase):
         self.assertEqual(sorted(title_id for title_id, entry in titles.items() if entry.get("smoke")),
                          ["PPSA17641", "PPSA85300", "PPSA98766", "PPSA99203", "PPSA99505", "PPSA99666"])
 
+    def test_byte_order_mark_is_accepted(self):
+        path = self.root / "titles.json"
+        path.write_text(json.dumps({"PPSA00001": {"seconds": 30}}), encoding="utf-8-sig")
+        self.assertEqual(title_run.load_titles(path)["PPSA00001"]["seconds"], 30)
+
     def test_unknown_field_is_refused(self):
         with self.assertRaisesRegex(ValueError, "PPSA00001: unknown field rlink"):
             title_run.load_titles(self.write({"PPSA00001": {"rlink": []}}))

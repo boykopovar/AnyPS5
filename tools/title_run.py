@@ -93,7 +93,7 @@ def load_titles(path):
             fields[name] = value
         return fields
 
-    titles = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=unique_fields)
+    titles = json.loads(Path(path).read_text(encoding="utf-8-sig"), object_pairs_hook=unique_fields)
     for title_id, entry in titles.items():
         if not TITLE_ID.fullmatch(title_id):
             raise ValueError(f"{path}: {title_id} is not a title ID")
