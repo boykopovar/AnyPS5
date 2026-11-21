@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/FrameCapture.hpp"
+#include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
@@ -10,6 +11,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTextureLayout.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -271,11 +274,12 @@ struct Block {
     std::uint8_t* data = nullptr;
 };
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(std::uint64_t address, std::uint32_t sampleShift = SampleShift, VkExtent2D extent = {Side, Side}) {
+AgcDriver::Graphics::ColorTarget DecodeTarget(std::uint64_t address, std::uint32_t sampleShift = SampleShift, VkExtent2D extent = {Side, Side}, std::uint32_t infoBits = 0u) {
     AgcDriver::Registers cx;
     cx[0x318] = static_cast<std::uint32_t>(address >> 8u);
     cx[0x31b] = 0;
-    cx[0x31c] = Float16x4Info;
+    cx[0x31c] = Float16x4Info | infoBits;
+    cx[0x31f] = 0u;
     cx[0x31d] = (sampleShift << 12u) | (sampleShift << 15u);
     cx[0x3b0] = ((extent.width - 1u) << 14u) | (extent.height - 1u);
     cx[0x3b8] = TiledAttrib3;
@@ -844,12 +848,13 @@ void CheckClaimedTargets(AgcDriver::VulkanDevice& device) {
         Require(AgcDriver::Graphics::MultisampledColorBytes(wide.color) == 2u * BlockBytes && AgcDriver::Graphics::MultisampledColorBytes(narrow.color) == BlockBytes, "the 2x target does not span the 4x target and one more block");
         Draw(device, wide);
         device.WaitIdle();
-        std::string refusal;
-        try { Draw(device, narrow); }
-        catch (const std::runtime_error& error) { refusal = error.what(); }
-        Require(refusal.find("overlap another native owner") != std::string::npos, "an incompatible target shape did not refuse unpublished native samples");
-        Require(Refused(reused.Address() + BlockBytes, 0x1000u, "a read after a refused narrower target"), "a refused narrower target retired the original owner's tail");
-        Require(Refused(reused.Address(), 0x1000u, "a read of the original target after a refused replacement"), "a refused narrower target retired the original owner");
+        const auto previous = AgcDriver::Graphics::ReadMultisampleTargetColorSnapshot_nid_no_patch(context, wide.color);
+        Draw(device, narrow);
+        const auto replacement = AgcDriver::Graphics::ReadMultisampleTargetColorSnapshot_nid_no_patch(context, narrow.color);
+        Require(std::equal(replacement.original.begin(), replacement.original.end(), previous.current.begin()), "a different-sample replacement imported stale guest samples");
+        Require(std::equal(previous.current.begin(), previous.current.end(), reinterpret_cast<const std::byte*>(reused.data)), "a narrower replacement lost the old owner's complete footprint");
+        Require(!Refused(reused.Address() + BlockBytes, 0x1000u, "a read after a narrower target"), "the published original owner's tail is still guarded");
+        Require(Refused(reused.Address(), 0x1000u, "a read of the replacement target"), "a narrower replacement did not guard its own native samples");
     }
     if (context.storageImageMultisample) {
         Block color(BlockBytes);
@@ -1674,10 +1679,12 @@ void UniformInitialRefusals(AgcDriver::VulkanDevice& device) {
     Require(original && original->active->load(std::memory_order_acquire), "uniform initialization did not retain its owner");
     auto alias = color;
     alias.format = VK_FORMAT_R32G32_SFLOAT;
-    refuses(alias, "overlap another native owner");
+    PrepareMultisampleTargetForDraw_nid_no_patch(context, alias);
     const auto current = MultisampleColorTargetOver(color.address, static_cast<std::size_t>(MultisampledColorBytes(color)));
-    Require(current && current->active == original->active && original->active->load(std::memory_order_acquire), "refused replacement retired the original owner");
-    CheckUniform(LoadSamples(device, block), Ones, "after refused owner replacement");
+    Require(current && current->active != original->active && !original->active->load(std::memory_order_acquire), "a prepared format replacement did not publish and replace its owner");
+    const auto replacement = ReadMultisampleTargetColorSnapshot_nid_no_patch(context, alias);
+    Require(replacement.original == replacement.current, "a uniform format replacement changed the published samples or padding");
+    Require(std::equal(replacement.original.begin(), replacement.original.end(), reinterpret_cast<const std::byte*>(block.data)), "the uniform format replacement imported different guest bytes");
     Block depthMemory(4u * BlockBytes, true), htile(BlockBytes, true);
     DepthTarget depth{depthMemory.Address(), 0u, {Side, Side}, VK_FORMAT_D32_SFLOAT, 0.0f, 0u, htile.Address(), false, Samples};
     depth.depthSwizzle = 24u;
@@ -1801,14 +1808,14 @@ void CheckBufferLoad(AgcDriver::VulkanDevice& device, const ShaderRecompiler::Re
 }
 
 template<class TAction>
-void CheckBufferRefused(TAction&& action, const char* name, std::vector<std::string>& missing) {
+void CheckBufferRefused(TAction&& action, const char* name, std::vector<std::string>& missing, std::string_view expected = "whose samples are only on the host") {
     std::string refusal;
     try {
         action();
     } catch (const std::runtime_error& error) {
         refusal = error.what();
     }
-    const bool refused = refusal.find("whose samples are only on the host") != std::string::npos;
+    const bool refused = refusal.find(expected) != std::string::npos;
     std::cout << "native buffer " << name << ": " << (refused ? "refused" : "missing refusal") << '\n';
     if (!refused) missing.emplace_back(std::string(name) + ": " + refusal);
 }
@@ -1883,6 +1890,681 @@ int NativeVertexInput(std::unique_ptr<AgcDriver::VulkanDevice>& device) {
     std::puts("native vertex controls: shared-import=1 source-samples=1024 neighbor-values=passed");
     Require(missed == 0u, "native vertex inputs missed " + std::to_string(missed) + " resident-image refusals");
     return 0;
+}
+
+void RequirePublicationRefused(const AgcDriver::Graphics::Context& context, const AgcDriver::Graphics::ColorTarget& color, const std::string& expected) {
+    std::string refusal;
+    try {
+        AgcDriver::Graphics::PublishMultisampleTargetColor_nid_no_patch(context, color);
+    } catch (const std::exception& error) {
+        refusal = error.what();
+    }
+    Require(refusal.find(expected) != std::string::npos, "native color publication was not refused: " + refusal);
+}
+
+void CompressionPublication(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    for (const bool existing : {false, true}) {
+        Block block(2u * BlockBytes);
+        const auto plain = DecodeTarget(block);
+        const auto compressed = DecodeTarget(block.Address(), SampleShift, {Side, Side}, 0x4000u);
+        Require(compressed.cmaskAddress == 0u, "the compression-only control acquired CMASK");
+        if (existing) {
+            StoreInitial(block, Samples, 0u, false);
+            Draw(device, TargetState(plain));
+        }
+        const auto* begin = reinterpret_cast<const std::byte*>(block.data);
+        const std::vector<std::byte> before(begin, begin + block.bytes);
+        Draw(device, TargetState(compressed));
+        device.WaitIdle();
+        RequireColorSnapshotRefused(context, compressed, "unsupported tiling or multisample metadata");
+        RequirePublicationRefused(context, compressed, "unsupported tiling or multisample metadata");
+        if (existing) RequirePublicationRefused(context, plain, "unsupported tiling or multisample metadata");
+        Require(std::equal(before.begin(), before.end(), begin), "compressed publication or draw changed guest bytes");
+        Require(Refused(block.Address(), 1u, "a compressed publication control"), "refused compressed publication lost its owner guard");
+        ClearMultisampleTargets(context.device);
+    }
+    Block block(2u * BlockBytes);
+    const auto compressed = DecodeTarget(block.Address(), SampleShift, {Side, Side}, 0x4000u);
+    StoreInitial(block, Samples, 0u, false);
+    const auto* begin = reinterpret_cast<const std::byte*>(block.data);
+    const std::vector<std::byte> before(begin, begin + block.bytes);
+    RequireInitialRefused(context, compressed, "nonuniform compressed multisample color import");
+    Require(std::equal(before.begin(), before.end(), begin), "refused compressed import changed guest bytes");
+    std::printf("compressed color: uniform rendering, snapshot/publication refusal, resident transition and nonuniform import refusal passed\n");
+}
+
+int InitialReuse(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (!InitialCountSupported(context, VK_FORMAT_R16G16B16A16_SFLOAT, Samples)) return VulkanTestSkipped;
+    Block reused(2u * BlockBytes);
+    StoreInitial(reused, Samples, 0u, false);
+    const auto wide = TargetState(DecodeTarget(reused.Address(), SampleShift, {4u * Side, 4u * Side}));
+    const auto narrow = DecodeTarget(reused);
+    Require(MultisampledColorBytes(wide.color) == reused.bytes && MultisampledColorBytes(narrow) == BlockBytes, "the reused initial color footprints differ from two blocks and one block");
+    Draw(device, wide);
+    device.WaitIdle();
+    const auto previous = ReadMultisampleTargetColorSnapshot_nid_no_patch(context, wide.color);
+    const auto* begin = reinterpret_cast<const std::byte*>(reused.data);
+    Require(previous.current != previous.original, "the reuse control has no newer GPU samples");
+    Require(std::equal(previous.original.begin(), previous.original.end(), begin), "the reuse control published before replacement");
+    PrepareMultisampleTargetForDraw_nid_no_patch(context, narrow);
+    const auto replacement = ReadMultisampleTargetColorSnapshot_nid_no_patch(context, narrow);
+    Require(std::equal(replacement.original.begin(), replacement.original.end(), previous.current.begin()), "replacement imported stale guest bytes instead of the old owner's GPU samples");
+    Require(replacement.current == replacement.original, "replacement initialization changed the published samples or padding");
+    Require(std::equal(previous.current.begin(), previous.current.end(), begin), "replacement lost the old owner's samples outside its own footprint");
+    RequireReadbackRefused(context, wide.color, "requires an existing resident target");
+    std::puts("native color initial reuse: a 4x replacement imports the old owner's actual GPU samples and preserves its complete footprint");
+    return 0;
+}
+
+int ReusedPublication(AgcDriver::VulkanDevice& device, std::string_view cause, std::string_view route) {
+    using namespace AgcDriver::Graphics;
+    const bool automatic = route != "explicit";
+    Require(route == "explicit" || route == "cpu" || route == "display" || route == "display_texels", "unknown publication read route");
+    Require(cause == "live" || cause == "claimed" || cause == "written" || cause == "same_cpu" || cause == "same_driver" || cause == "same_gpu" || cause == "adjacent_driver", "unknown publication reuse case");
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (!InitialCountSupported(context, VK_FORMAT_R16G16B16A16_SFLOAT, Samples)) return VulkanTestSkipped;
+    Block block(2u * BlockBytes, true);
+    if ((cause == "written" || cause.starts_with("same_") || cause == "adjacent_driver") && !AgcDriver::GuestMemory::Watched(block.Address(), block.bytes)) return VulkanTestSkipped;
+    const auto color = DecodeTarget(block);
+    StoreInitial(block, Samples, 0u, false);
+    Draw(device, TargetState(color));
+    const auto loaded = LoadSamples(device, block);
+    device.WaitIdle();
+    const auto colorBytes = static_cast<std::size_t>(MultisampledColorBytes(color));
+    Require(colorBytes >= 256u && colorBytes <= block.bytes, "the publication reuse footprint does not fit its block");
+    if (cause == "written") Require(AgcDriver::GuestMemory::Watched(block.Address(), colorBytes), "the publication reuse target lost write watching");
+    if (cause == "claimed") ClaimMultisampleTargetMemory(color.address, colorBytes);
+    if (cause == "written") std::memset(block.data + colorBytes - 256u, 0x5a, 256u);
+    const auto tail = block.Address() + colorBytes - 16u;
+    if (cause == "same_cpu") {
+        auto* destination = reinterpret_cast<volatile std::uint8_t*>(tail);
+        *destination = *destination;
+    }
+    if (cause == "same_driver") {
+        const auto* data = reinterpret_cast<const std::byte*>(tail);
+        const std::vector<std::byte> current(data, data + 16u);
+        auto original = current;
+        original.front() ^= std::byte{1u};
+        AgcDriver::GuestMemory::WriteChanged(tail, current, original);
+    }
+    if (cause == "same_gpu") AgcDriver::GuestMemory::MarkWritten(tail, 16u);
+    if (cause == "adjacent_driver") AgcDriver::GuestMemory::MarkWritten(block.Address() + colorBytes, 16u);
+    const auto* begin = reinterpret_cast<const std::byte*>(block.data);
+    const std::vector<std::byte> before(begin, begin + block.bytes);
+    auto expected = before;
+    if (cause == "live" || cause == "adjacent_driver") {
+        const MultisampleTextureLayout layout(TextureTileMode::kR64KBX, color.elementBytes, Samples, Side, Side, 1u, 0u);
+        layout.Tile(HalfSamples(loaded), std::span(expected).first(colorBytes));
+        Require(expected != before, "the live publication control has no changed native samples");
+    }
+    if (automatic) {
+        std::array<std::byte, 16> read{};
+        if (route == "cpu") {
+            AgcDriver::GuestMemory::Read(block.Address(), read);
+            Require(std::equal(read.begin(), read.end(), expected.begin()), "the synchronized read changed the reused or live owner's bytes");
+        } else {
+            const AgcDriver::DisplayBuffer display{block.Address(), 0x8000000022000000ull, Side, Side, 1u};
+            const auto image = route == "display" ? AgcDriver::ReadDisplayBuffer(display) : AgcDriver::ReadDisplayBufferTexels(display);
+            const auto footprint = std::span(expected).first(AgcDriver::DisplayBufferSize(display));
+            const auto expectedImage = route == "display" ? AgcDriver::DecodeDisplayBuffer(display, footprint) : AgcDriver::DisplayBufferTexels(display, footprint);
+            Require(image == expectedImage, "the display read observed stale bytes of a native color owner");
+        }
+    } else PublishMultisampleTargetColor_nid_no_patch(context, color);
+    Require(std::equal(expected.begin(), expected.end(), begin), "publication overwrote reused guest data or lost live native samples");
+    RequireReadbackRefused(context, color, "requires an existing resident target");
+    RequireNoMultisampleTarget(block.Address(), colorBytes, "after publication of a reused or live owner");
+    std::printf("native color publication reuse: %.*s, %s, complete bytes and retirement passed\n", static_cast<int>(cause.size()), cause.data(), automatic ? "CPU read" : "explicit");
+    return 0;
+}
+
+void Publication(AgcDriver::VulkanDevice& device, bool automatic = false) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    std::uint32_t exercised = 0;
+    for (const auto fragments : {2u, 4u, 8u}) {
+        if (!InitialCountSupported(context, VK_FORMAT_R16G16B16A16_SFLOAT, fragments)) continue;
+        for (const auto pipeBankXor : {0u, 0x8100u}) {
+            for (const auto profile : {0u, 1u, 2u}) {
+                Block block(2u * BlockBytes);
+                auto color = DecodeTarget(block.Address(), std::countr_zero(fragments));
+                color.pipeBankXor = pipeBankXor;
+                const auto initial = StoreInitial(block, fragments, pipeBankXor, false);
+                RequirePublicationRefused(context, color, "requires an existing resident target");
+                const auto state = TargetState(color);
+                Draw(device, state);
+                const auto colorBytes = static_cast<std::size_t>(MultisampledColorBytes(color));
+                if (profile != 0u) {
+                    NoteColorMetadataFill(block.Address(), colorBytes, profile == 1u ? FillOnes : 0u);
+                    Draw(device, state);
+                }
+                const auto loaded = LoadColorSamples(device, block, color);
+                if (profile == 0u) CheckReadbackSamples(state, loaded, {}, initial);
+                else CheckReadbackSamples(state, loaded, profile == 1u ? Ones : std::array<float, 4>{});
+                const auto* begin = reinterpret_cast<const std::byte*>(block.data);
+                const std::vector<std::byte> before(begin, begin + block.bytes);
+                auto expected = before;
+                if (profile != 0u) {
+                    const auto fill = profile == 1u ? FillOnes : 0u;
+                    for (std::size_t offset = 0u; offset < colorBytes; offset += sizeof(fill)) std::memcpy(expected.data() + offset, &fill, sizeof(fill));
+                }
+                if (profile != 0u) {
+                    const auto pattern = profile == 1u ? FillOnes : 0u;
+                    for (std::size_t offset = 0; offset < colorBytes; offset += sizeof(pattern)) std::memcpy(expected.data() + offset, &pattern, sizeof(pattern));
+                }
+                const MultisampleTextureLayout layout(TextureTileMode::kR64KBX, color.elementBytes, fragments, Side, Side, 1u, pipeBankXor);
+                layout.Tile(HalfSamples(loaded), std::span(expected).first(colorBytes));
+                if (fragments == Samples && pipeBankXor == 0u && profile == 0u) {
+                    {
+                        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                        auto* recording = Recorder::Active();
+                        Require(recording != nullptr && context.recorder != nullptr, "the publication fixture has no owning recorder");
+                        Recorder other(context);
+                        other.Activate();
+                        RequireReadbackRefused(context, color, "another active recorder on the same device");
+                        RequirePublicationRefused(context, color, "another active recorder on the same device");
+                        recording->Activate();
+                    }
+                    auto wrong = color;
+                    wrong.pipeBankXor = 0x8100u;
+                    RequirePublicationRefused(context, wrong, "subresource does not match");
+                    {
+                        GuestAllocations::Mutation mutation;
+                        mutation.Protect(block.data + 4096u, 4096u, true, false, true, [] {});
+                    }
+                    RequirePublicationRefused(context, color, "requires writable registered guest memory");
+                    {
+                        GuestAllocations::Mutation mutation;
+                        mutation.Protect(block.data + 4096u, 4096u, true, true, true, [] {});
+                    }
+                    block.data[colorBytes - 1u] ^= 0x5au;
+                    RequirePublicationRefused(context, color, "no longer matches its initial contents or a known full fill");
+                    block.data[colorBytes - 1u] ^= 0x5au;
+                    Require(std::equal(before.begin(), before.end(), begin), "refused publication changed guest bytes");
+                    std::string guard;
+                    try {
+                        RequireNoMultisampleTarget(block.Address(), 1u, "publication refusal validation");
+                    } catch (const std::exception& error) {
+                        guard = error.what();
+                    }
+                    Require(guard.find("overlaps multisampled color target") != std::string::npos, "refused publication lost its resident guard");
+                }
+                std::shared_ptr<void> retained;
+                VkImage oldImage = VK_NULL_HANDLE;
+                {
+                    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                    MultisampleTargetView(context, color, retained, &oldImage);
+                }
+                std::vector<std::byte> read(block.bytes);
+                if (automatic) {
+                    std::array<std::byte, 128> adjacent{};
+                    AgcDriver::GuestMemory::Read(block.Address() + colorBytes, adjacent);
+                    Require(ReadMultisampleTargetSamples_nid_no_patch(context, color).size() == Side * Side * fragments * 8u, "an adjacent CPU read retired the color owner");
+                    if (profile == 0u) AgcDriver::GuestMemory::Read(block.Address(), read);
+                    else if (profile == 1u) AgcDriver::GuestMemory::ReadCommitted(block.Address(), read);
+                    else AgcDriver::GuestMemory::ReadCommittedUnsynced(block.Address(), read);
+                } else {
+                    PublishMultisampleTargetColor_nid_no_patch(context, color);
+                    AgcDriver::GuestMemory::Read(block.Address(), read);
+                }
+                RequireNoMultisampleTarget(block.Address(), colorBytes, "after explicit publication");
+                RequireReadbackRefused(context, color, "requires an existing resident target");
+                Require(read == expected, "published guest color differs from MIMG samples, padding or neighboring bytes");
+                Draw(device, state);
+                Require(LoadColorSamples(device, block, color) == loaded, "a fresh target did not import the published samples");
+                VkImage newImage = VK_NULL_HANDLE;
+                {
+                    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                    MultisampleTargetView(context, color, &newImage);
+                }
+                Require(newImage != oldImage, "publication reused the retired native image");
+                std::printf("native color publication: fragments=%u xor=0x%x profile=%u complete bytes, bounds, retirement and reimport passed\n", fragments, pipeBankXor, profile);
+                ++exercised;
+            }
+        }
+    }
+    Require(exercised != 0u, "no supported native color publication case was exercised");
+    if (!InitialCountSupported(context, VK_FORMAT_R16G16B16A16_SFLOAT, Samples)) return;
+    auto completed = std::make_shared<Block>(BlockBytes);
+    auto color = DecodeTarget(*completed);
+    StoreInitial(*completed, Samples, 0u, false);
+    Draw(device, TargetState(color));
+    const auto completionRefusal = std::make_shared<std::string>();
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        auto* recorder = context.recorder != nullptr ? context.recorder : Recorder::Active();
+        Require(recorder != nullptr, "the publication fixture has no owning recorder");
+        recorder->OnComplete([completed, color, context, automatic, completionRefusal] {
+            try {
+                if (automatic) {
+                    std::array<std::byte, 4> word{};
+                    AgcDriver::GuestMemory::Read(completed->Address(), word);
+                } else PublishMultisampleTargetColor_nid_no_patch(context, color);
+            } catch (const std::exception& error) {
+                *completionRefusal = error.what();
+            }
+            StoreWords(*completed, completed->bytes, FillOnes);
+            NoteColorMetadataFill(completed->Address(), completed->bytes, FillOnes);
+        });
+    }
+    if (!automatic) PublishMultisampleTargetColor_nid_no_patch(context, color);
+    std::vector<std::uint32_t> read(completed->bytes / sizeof(std::uint32_t));
+    AgcDriver::GuestMemory::Read(completed->Address(), std::as_writable_bytes(std::span(read)));
+    Require(completionRefusal->find("during a recorder completion") != std::string::npos, "recursive publication from a completion was not refused: " + *completionRefusal);
+    Require(std::all_of(read.begin(), read.end(), [](const auto word) { return word == FillOnes; }), "publication captured its guest baseline before producer completions");
+    std::puts("native color publication: known full fill from a producer completion precedes the publication baseline; recursive publication stays refused");
+}
+
+int PublicationMappings(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (!InitialCountSupported(context, VK_FORMAT_R16G16B16A16_SFLOAT, Samples)) return VulkanTestSkipped;
+    for (const bool duringCompletion : {false, true}) {
+        auto block = std::make_shared<Block>(2u * BlockBytes);
+        const auto color = DecodeTarget(*block);
+        StoreInitial(*block, Samples, 0u, false);
+        Draw(device, TargetState(color));
+        const auto* begin = reinterpret_cast<const std::byte*>(block->data);
+        const std::vector<std::byte> before(begin, begin + block->bytes);
+        auto applied = std::make_shared<bool>(false);
+        const auto protect = [block, applied, duringCompletion] {
+            GuestAllocations::Mutation mutation;
+            mutation.Protect(block->data + 4096u, 4096u, duringCompletion, false, duringCompletion, [] {});
+            *applied = true;
+        };
+        if (duringCompletion) {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            auto* recorder = context.recorder != nullptr ? context.recorder : Recorder::Active();
+            Require(recorder != nullptr, "the publication mapping fixture has no owning recorder");
+            recorder->OnComplete(protect);
+        } else protect();
+        RequirePublicationRefused(context, color, duringCompletion ? "requires writable registered guest memory" : "requires readable registered guest memory");
+        Require(*applied, "the publication mapping mutation did not complete");
+        Require(std::equal(before.begin(), before.end(), begin), "refused mapping publication changed guest bytes");
+        std::string guard;
+        try { RequireNoMultisampleTarget(block->Address(), 1u, "a refused publication mapping"); }
+        catch (const std::exception& error) { guard = error.what(); }
+        Require(guard.find("overlaps multisampled color target") != std::string::npos, "refused mapping publication lost its resident guard");
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Protect(block->data + 4096u, 4096u, true, true, true, [] {});
+        }
+        const auto expected = ReadMultisampleTargetColorSnapshot_nid_no_patch(context, color).current;
+        PublishMultisampleTargetColor_nid_no_patch(context, color);
+        Require(std::equal(expected.begin(), expected.end(), begin), "restored mappings lost the published samples or padding");
+        RequireNoMultisampleTarget(block->Address(), expected.size(), "after restored mapping publication");
+        std::printf("native color publication mappings: completion=%u refusal preserved bytes/owner, restoration published samples\n", static_cast<unsigned>(duringCompletion));
+    }
+    {
+        Block block(2u * BlockBytes);
+        const auto color = DecodeTarget(block);
+        StoreInitial(block, Samples, 0u, false);
+        Draw(device, TargetState(color));
+        const auto expected = ReadMultisampleTargetColorSnapshot_nid_no_patch(context, color).current;
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Protect(block.data + 4096u, 4096u, false, false, true, true, [] {});
+        }
+        PublishMultisampleTargetColor_nid_no_patch(context, color);
+        const auto* begin = reinterpret_cast<const std::byte*>(block.data);
+        Require(std::equal(expected.begin(), expected.end(), begin), "GPU-only writable mapping lost published samples or padding");
+        RequireNoMultisampleTarget(block.Address(), expected.size(), "after GPU-only mapping publication");
+        std::printf("native color publication mappings: GPU-only readable/writable mapping published samples and retired the owner\n");
+    }
+
+    return 0;
+}
+
+void BufferAdjacentControls(std::unique_ptr<AgcDriver::VulkanDevice>& device) {
+    Block block(4u * BlockBytes);
+    Block output(2u * 1024u * 1024u);
+    struct ReleaseDevice {
+        decltype(device)& value;
+        ~ReleaseDevice() { value.reset(); }
+    } releaseDevice{device};
+    auto color = DecodeTarget(block);
+    color.tileMode = AgcDriver::Graphics::ColorTileMode::Standard4KB;
+    color.bytes = AgcDriver::Graphics::ColorTargetLayout(Side, Side, color.tileMode, color.elementBytes).Bytes();
+    const auto state = TargetState(color);
+    Draw(*device, state);
+    CheckSamples(state, LoadSamples(*device, block), {});
+    const auto colorBytes = AgcDriver::Graphics::MultisampledColorBytes(color);
+    Require(colorBytes != 0 && colorBytes <= block.bytes, "the 4x target's color memory does not fit its block");
+    AgcDriver::Graphics::NoteColorMetadataFill(block.Address(), static_cast<std::size_t>(colorBytes), FillOnes);
+    CheckUniform(LoadSamples(*device, block), Ones, "after a fill of the target's color memory with half-float ones");
+    const auto guardedBytes = std::max(color.bytes * color.samples, static_cast<std::uint64_t>(Side) * Side * color.elementBytes * color.samples);
+    Require(guardedBytes + Threads * 4u <= block.bytes, "the target guard leaves no adjacent buffer control");
+    CheckBufferLoad(*device, CompileBufferLoad(*device, block.Address() + guardedBytes, output.Address()), output);
+    CheckUniform(LoadSamples(*device, block), Ones, "after the adjacent buffer control");
+    std::puts("native buffer controls: adjacent read passed without changing native samples");
+}
+
+void BufferPublication(std::unique_ptr<AgcDriver::VulkanDevice>& device) {
+    using namespace AgcDriver::Graphics;
+    Block block(4u * BlockBytes);
+    Block output(2u * 1024u * 1024u);
+    struct ReleaseDevice {
+        std::unique_ptr<AgcDriver::VulkanDevice>& value;
+        ~ReleaseDevice() { value.reset(); }
+    } releaseDevice{device};
+    const auto color = DecodeTarget(block);
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+    const auto bytes = static_cast<std::size_t>(MultisampledColorBytes(color));
+    const auto warm = CompileBufferLoad(*device, block.Address(), output.Address());
+    std::shared_ptr<const AgcDriver::Recipe> recipe;
+    const auto check = [&](const auto& action, bool edge, std::uint32_t value) {
+        const std::span words(reinterpret_cast<std::uint32_t*>(output.data), Threads * 2u);
+        std::fill(words.begin(), words.end(), 0xdeadbeefu);
+        action();
+        device->WaitIdle();
+        for (std::size_t index = 0; index < Threads; ++index) Require(words[index] == (edge && index != 0u ? 0u : value), "a native buffer consumer read stale or reordered color words at lane " + std::to_string(index));
+        Require(std::all_of(words.begin() + Threads, words.end(), [](auto word) { return word == 0xdeadbeefu; }), "a native buffer consumer changed its output boundary");
+    };
+    const auto dispatch = [&](const auto& program) { device->Dispatch(program, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data())); };
+    check([&] { device->Dispatch(warm, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()), nullptr, &recipe); }, false, 0u);
+    Require(recipe != nullptr, "the buffer publication fixture did not capture a recipe");
+    const auto hit = device->PrepareRecipe(recipe, false);
+    Require(hit != nullptr, "the buffer publication fixture did not prepare a recipe hit");
+    const auto deferredProgram = CompileBufferLoad(*device, block.Address() + Threads * 4u, output.Address());
+    const auto prepared = device->PrepareDispatch(deferredProgram, {}, Threads, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()));
+    Require(prepared != nullptr, "the buffer publication fixture did not prepare a deferred dispatch");
+    const std::vector<std::byte> zeros(bytes);
+    const auto arm = [&] {
+        AgcDriver::GuestMemory::Write(block.Address(), zeros);
+        Draw(*device, TargetState(color));
+        NoteColorMetadataFill(block.Address(), bytes, FillOnes);
+        CheckUniform(LoadSamples(*device, block), Ones, "before a native buffer consumer");
+    };
+    arm();
+    check([&] { dispatch(CompileBufferLoad(*device, block.Address() + bytes, output.Address())); }, false, 0u);
+    Require(ReadMultisampleTargetSamples_nid_no_patch(context, color).size() == Side * Side * Samples * 8u, "a neighboring logical buffer retired the native owner");
+    CheckUniform(LoadSamples(*device, block), Ones, "after the neighboring logical buffer control");
+    check([&] { dispatch(warm); }, false, FillOnes);
+    RequireNoMultisampleTarget(block.Address(), bytes, "after warmed buffer publication");
+    std::puts("native buffer publication: adjacent range retains owner; warmed dispatch reads native words");
+    arm();
+    check([&] { dispatch(CompileBufferLoad(*device, block.Address() + 4u, output.Address())); }, false, FillOnes);
+    std::puts("native buffer publication: fresh dispatch reads native words");
+    arm();
+    check([&] { dispatch(CompileBufferLoad(*device, block.Address() + bytes - 4u, output.Address())); }, true, FillOnes);
+    std::puts("native buffer publication: edge range preserves the neighboring words");
+    arm();
+    check([&] { device->Dispatch(deferredProgram, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()), prepared); }, false, FillOnes);
+    std::puts("native buffer publication: deferred dispatch refreshes the captured input");
+    arm();
+    check([&] {
+        AgcDriver::VulkanDevice::IndirectOutcome outcome{};
+        device->DispatchRecipe(warm, 1u, 1u, 1u, 0u, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()), hit, outcome);
+    }, false, FillOnes);
+    std::puts("native buffer publication: recipe dispatch reads native words");
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        const CompiledShader compiled{ShaderStage::Compute, &warm, 0u};
+        ShaderResources resources(context, compiled);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        Require(resources.Revalidate(compiled), "the direct buffer proof did not start current");
+        arm();
+        ShaderResources::ProofReport proof;
+        const auto current = resources.Revalidate(compiled, &proof);
+        RequireNoMultisampleTarget(block.Address(), bytes, "after direct reuse proof");
+        for (std::size_t offset = 0u; offset < bytes; offset += sizeof(FillOnes)) Require(std::memcmp(block.data + offset, &FillOnes, sizeof(FillOnes)) == 0, "the reuse proof did not publish current native samples");
+        std::printf("native buffer proof: epoch-enabled=%u epoch=%llu current=%u; publication precedes reuse proof\n", ShaderResources::EpochProofs(), static_cast<unsigned long long>(AgcDriver::GuestMemory::CollectEpoch()), current);
+    }
+    check([&] { dispatch(warm); }, false, FillOnes);
+    auto unused = color;
+    unused.tileMode = ColorTileMode::Standard4KB;
+    unused.bytes = ColorTargetLayout(Side, Side, unused.tileMode, unused.elementBytes).Bytes();
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        MultisampleTargetView(context, unused);
+    }
+    Block movedSource(4u * BlockBytes);
+    const auto movedColor = DecodeTarget(movedSource);
+    Draw(*device, TargetState(movedColor));
+    NoteColorMetadataFill(movedSource.Address(), static_cast<std::size_t>(MultisampledColorBytes(movedColor)), FillOnes);
+    CheckUniform(LoadSamples(*device, movedSource), Ones, "before moved dispatch publication");
+    const auto beforeMoves = AgcDriver::VulkanDevice::DispatchMoveCounts();
+    auto movedProgram = warm;
+    std::size_t movedBindings = 0u;
+    for (auto& binding : movedProgram.bindings) {
+        if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
+        Require(binding.guestDescriptor.size() == binding.count * 4u && binding.bufferWritten.size() == binding.count, "the moved dispatch bindings have another shape");
+        for (std::uint32_t element = 0u; element < binding.count; ++element) {
+            if (binding.bufferWritten[element]) continue;
+            const auto address = movedSource.Address() + 4u;
+            binding.guestDescriptor[element * 4u] = static_cast<std::uint32_t>(address);
+            binding.guestDescriptor[element * 4u + 1u] = (binding.guestDescriptor[element * 4u + 1u] & 0xffff0000u) | static_cast<std::uint32_t>((address >> 32u) & 0xffffu);
+            ++movedBindings;
+        }
+    }
+    Require(movedBindings == 1u, "the moved dispatch does not have one read-only buffer");
+    check([&] { dispatch(movedProgram); }, false, FillOnes);
+    const auto afterMoves = AgcDriver::VulkanDevice::DispatchMoveCounts();
+    Require(afterMoves.moved == beforeMoves.moved + 1u, "the moved native buffer rebuilt instead of reusing its template");
+    Require(Refused(block.Address(), Threads * 4u, "the unused original dispatch buffer"), "the moved dispatch consumed or retired its unused original range");
+    RequireNoMultisampleTarget(movedSource.Address(), static_cast<std::size_t>(MultisampledColorBytes(movedColor)), "after moved dispatch publication");
+    std::puts("native moved dispatch: current source published and unused old guard retained");
+
+}
+
+ShaderRecompiler::RecompileResult CompileMovedVertex(AgcDriver::VulkanDevice& device, std::uint64_t address) {
+    const std::array<std::uint32_t, 4> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (16u << 16u), static_cast<std::uint32_t>(Triangle.size()), 0x01016facu};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Vertex, reinterpret_cast<std::uintptr_t>(VertexCode.data()), VertexCode, 0, {}},
+        {64, 0, userData, std::nullopt, std::nullopt, ShaderRecompiler::ShaderVertexStageInfo{}, memory},
+        device.Target(), {0, 0, 0, 64}
+    };
+    request.useCache = false;
+    return ShaderRecompiler::Recompile(request);
+}
+
+std::vector<std::array<std::uint32_t, 4>> RasterMovedSnapshot(const AgcDriver::Graphics::Context& context, const AgcDriver::Graphics::State& state, std::span<const AgcDriver::Graphics::CompiledShader> shaders, const AgcDriver::Graphics::ShaderResources& resources, const AgcDriver::Graphics::ShaderResources::DrawBindings& prepared) {
+    using namespace AgcDriver::Graphics;
+    const auto vertexInput = BuildVertexInputLayout(context, shaders.front().program->vertexAttributes);
+    Require(vertexInput.bindings.empty(), "the moved raster shader does not fetch positions through its guest buffer");
+    constexpr auto pixelBytes = sizeof(std::array<std::uint32_t, 4>);
+    constexpr auto resultBytes = Side * Side * pixelBytes;
+    AgcDriver::Graphics::Buffer staging(context, resultBytes + 2u * pixelBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    std::fill(staging.Bytes().begin(), staging.Bytes().end(), std::byte{0xa5});
+    auto target = std::make_shared<RenderTarget>(context, state.color, false);
+    Pipeline pipeline(context, state, vertexInput, resources, shaders, VK_IMAGE_LAYOUT_GENERAL);
+    const std::array views{target->View()};
+    const std::array<std::shared_ptr<void>, 1> owners{target};
+    const auto framebuffer = pipeline.AcquireFramebuffer(views, owners, state.renderExtent);
+    CommandBatch batch(context);
+    const auto commands = batch.Handle();
+    VkImageMemoryBarrier initialize{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    initialize.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    initialize.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    initialize.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    initialize.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    initialize.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    initialize.image = target->Image();
+    initialize.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, 1u};
+    context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0u, 0u, nullptr, 0u, nullptr, 1u, &initialize);
+    VkClearColorValue clear{};
+    context.Resolved(&DeviceFunctions::cmdClearColorImage, "vkCmdClearColorImage")(commands, target->Image(), VK_IMAGE_LAYOUT_GENERAL, &clear, 1u, &initialize.subresourceRange);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+    CommandState recording;
+    recording.Begin(commands, false);
+    pipeline.Begin(recording, *framebuffer, state.renderExtent, state);
+    auto pushes = AssemblePushConstants(shaders);
+    resources.PatchPushConstants(pushes);
+    pipeline.PushConstants(commands, PushConstantStages(shaders), pushes);
+    if (prepared.allocation.set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.Layout(), 0u, 1u, &prepared.allocation.set, 0u, nullptr);
+    if (prepared.fragmentAllocation.set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.Layout(), ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1u, &prepared.fragmentAllocation.set, 0u, nullptr);
+    context.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(commands, static_cast<std::uint32_t>(Triangle.size()), 1u, 0u, 0u);
+    EndRenderPass(context, commands);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    VkBufferImageCopy copy{};
+    copy.bufferOffset = pixelBytes;
+    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, 1u};
+    copy.imageExtent = {Side, Side, 1u};
+    context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, target->Image(), VK_IMAGE_LAYOUT_GENERAL, staging.Handle(), 1u, &copy);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    batch.SubmitAndWait();
+    staging.Invalidate();
+    const auto bytes = staging.Bytes();
+    Require(std::all_of(bytes.begin(), bytes.begin() + pixelBytes, [](auto value) { return value == std::byte{0xa5}; }) && std::all_of(bytes.end() - pixelBytes, bytes.end(), [](auto value) { return value == std::byte{0xa5}; }), "moved raster readback changed its outer sentinels");
+    std::vector<std::array<std::uint32_t, 4>> result(Side * Side);
+    std::memcpy(result.data(), bytes.data() + pixelBytes, resultBytes);
+    return result;
+}
+
+void CheckRecipePixels(AgcDriver::VulkanDevice& device, const Block& destination, const AgcDriver::Graphics::ColorTarget& target, std::uint32_t word) {
+    device.WaitIdle();
+    std::vector<std::byte> tiled(destination.bytes);
+    AgcDriver::GuestMemory::Read(destination.Address(), tiled);
+    const AgcDriver::Graphics::ColorTargetLayout layout(Side, Side, target.tileMode, target.elementBytes);
+    Require(layout.Bytes() == target.bytes && target.bytes <= tiled.size(), "the recipe output footprint is invalid");
+    Require(std::all_of(tiled.begin() + target.bytes, tiled.end(), [](auto value) { return value == std::byte{0xa5}; }), "the recipe output changed its neighboring bytes");
+    std::vector<std::array<std::uint32_t, 4>> pixels(Side * Side);
+    layout.Detile(std::span(tiled).first(target.bytes), std::as_writable_bytes(std::span(pixels)));
+    const std::array<std::uint32_t, 4> drawn{word, 0u, 0u, std::bit_cast<std::uint32_t>(1.0f)};
+    std::uint32_t checked = 0u;
+    std::uint32_t covered = 0u;
+    for (std::uint32_t y = 0; y < Side; ++y) {
+        for (std::uint32_t x = 0; x < Side; ++x) {
+            const auto& pixel = pixels[y * Side + x];
+            Require(pixel == drawn || pixel == std::array<std::uint32_t, 4>{}, "the recipe draw rendered stale or unexpected buffer bits at pixel " + std::to_string(y * Side + x) + ": expected red " + std::to_string(word) + ", got " + std::to_string(pixel[0]) + "," + std::to_string(pixel[1]) + "," + std::to_string(pixel[2]) + "," + std::to_string(pixel[3]));
+            covered += pixel == drawn ? 1u : 0u;
+            const auto distance = std::min({EdgeDistance(x + 0.5, y + 0.5, 0u), EdgeDistance(x + 0.5, y + 0.5, 1u), EdgeDistance(x + 0.5, y + 0.5, 2u)});
+            if (std::fabs(distance) < EdgeMargin) continue;
+            ++checked;
+            Require((pixel == drawn) == (distance > 0.0), "the recipe result disagrees with triangle coverage");
+        }
+    }
+    Require(checked >= Side * Side * 9u / 10u && covered != 0u && covered != pixels.size(), "the recipe fixture did not check covered and clear pixels");
+    std::printf("native draw recipe: word=0x%08x covered=%u checked=%u; pixels and neighboring bytes passed\n", word, covered, checked);
+}
+
+void DrawRecipePublication(std::unique_ptr<AgcDriver::VulkanDevice>& device) {
+    using namespace AgcDriver::Graphics;
+    Block source(4u * BlockBytes);
+    Block movedSource(4u * BlockBytes);
+    Block destination(2u * BlockBytes);
+    Block vertexData(BlockBytes);
+    struct ReleaseDevice {
+        std::unique_ptr<AgcDriver::VulkanDevice>& value;
+        ~ReleaseDevice() { value.reset(); }
+    } releaseDevice{device};
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+    Require(context.recorder != nullptr, "the draw recipe fixture has no recorder");
+    StoreWords(source, source.bytes, FillOnes);
+    StoreWords(movedSource, movedSource.bytes, FillOnes);
+    std::memcpy(vertexData.data, Triangle.data(), sizeof(Triangle));
+    ColorTarget output{};
+    output.address = destination.Address();
+    output.surfaceAddress = output.address;
+    output.extent = {Side, Side};
+    output.surfaceExtent = output.extent;
+    output.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    output.componentMapping = 0xe4u;
+    output.elementBytes = 16u;
+    output.tileMode = ColorTileMode::RenderTarget;
+    output.bytes = ColorTargetLayout(Side, Side, output.tileMode, output.elementBytes).Bytes();
+    Require(output.bytes < destination.bytes, "the recipe target has no neighboring sentinel range");
+    std::fill(destination.data + output.bytes, destination.data + destination.bytes, std::uint8_t{0xa5});
+    const auto state = TargetState(output);
+    auto vertex = CompileMovedVertex(*device, vertexData.Address());
+    alignas(256) static constexpr std::array<std::uint32_t, 9> code{
+        0x7e020280u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0x7e000280u, 0x7e0602f2u, 0xf800180fu, 0x03010002u, 0xbf810000u,
+    };
+    const auto address = source.Address() + 4u;
+    const std::array<std::uint32_t, 4> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), Threads * 4u, 0x31016facu};
+    const auto codeAddress = reinterpret_cast<std::uintptr_t>(code.data());
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{codeAddress, std::as_bytes(std::span(code))}}};
+    const AgcDriver::Registers registers{{0x1b6, 0x8000}, {0x1b3, 0}, {0x1b4, 0}, {0x203, 0}, {0x1c5, Float32Export}};
+    const auto vertexPush = static_cast<std::uint32_t>(vertex.pushConstants.size());
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Fragment, codeAddress, code, 0, {}},
+        {64, 0, userData, std::nullopt, DecodePixelStageInfo(registers, ExportMappings(state)), std::nullopt, memory},
+        device->Target(), PixelPushLayout(vertexPush, device->Target())
+    };
+    request.useCache = false;
+    auto fragment = ShaderRecompiler::Recompile(request);
+    const auto binding = std::find_if(fragment.bindings.begin(), fragment.bindings.end(), [](const auto& entry) { return entry.role == ShaderRecompiler::DescriptorRole::GuestBuffers; });
+    Require(binding != fragment.bindings.end() && binding->count == 1u && binding->guestDescriptor.size() == 4u && binding->bufferWritten.size() == 1u && !binding->bufferWritten[0], "the recipe fragment shader does not have one read-only guest buffer");
+    const std::array<CompiledShader, 2> shaders{{{ShaderStage::Vertex, &vertex, 0u}, {ShaderStage::Fragment, &fragment, PixelPushOffset(vertexPush, device->Target())}}};
+    const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
+    std::shared_ptr<const AgcDriver::DrawRecipe> recipe;
+    device->Draw(state, draw, shaders, {}, &recipe);
+    Require(recipe != nullptr, "the initial buffer draw did not capture a recipe");
+    CheckRecipePixels(*device, destination, output, FillOnes);
+    Require(device->DrawFromRecipe(state, draw, shaders, {}, recipe) == AgcDriver::RecipeOutcome::Recorded, "the ordinary buffer draw recipe did not replay");
+    CheckRecipePixels(*device, destination, output, FillOnes);
+    const auto arm = [&](const Block& block, std::uint32_t fill) {
+        const auto color = DecodeTarget(block);
+        Draw(*device, TargetState(color));
+        NoteColorMetadataFill(block.Address(), static_cast<std::size_t>(MultisampledColorBytes(color)), fill);
+        CheckUniform(LoadSamples(*device, block), fill == FillOnes ? Ones : std::array<float, 4>{}, "before recipe source writes");
+        StoreSamples(*device, TargetDescriptor(block, SampleShift), SampleWrites([](std::uint32_t, std::uint32_t y, std::uint32_t sample) { return y < 2u && sample == 0u; }));
+        const auto loaded = LoadSamples(*device, block);
+        const MultisampleTextureLayout layout(TextureTileMode::kR64KBX, color.elementBytes, Samples, Side, Side, 1u, 0u);
+        std::vector<std::byte> expected(static_cast<std::size_t>(layout.Bytes()));
+        for (std::size_t offset = 0; offset < expected.size(); offset += sizeof(fill)) std::memcpy(expected.data() + offset, &fill, sizeof(fill));
+        layout.Tile(HalfSamples(loaded), expected);
+        for (std::size_t offset = 0; offset < expected.size(); offset += sizeof(FillOnes)) Require(std::memcmp(block.data + offset, &FillOnes, sizeof(FillOnes)) == 0, "the native recipe source was published early");
+        return expected;
+    };
+    const auto checkSource = [&](const Block& block, const std::vector<std::byte>& expected) {
+        RequireNoMultisampleTarget(block.Address(), expected.size(), "after a recipe consumer");
+        Require(std::equal(expected.begin(), expected.end(), reinterpret_cast<const std::byte*>(block.data)), "the recipe consumer published incorrect source bytes or padding");
+    };
+    const auto consume = [&](bool replay) {
+        if (!replay) {
+            device->Draw(state, draw, shaders, {}, &recipe);
+            std::puts("native draw routing: a moved descriptor uses the ordinary draw path");
+            return;
+        }
+        const auto outcome = device->DrawFromRecipe(state, draw, shaders, {}, recipe);
+        Require(outcome == AgcDriver::RecipeOutcome::Recorded, "the unchanged guarded input did not replay from its recipe");
+        std::puts("native draw recipe: guarded input recorded from recipe");
+    };
+    const auto expected = arm(source, FillOnes);
+    std::uint32_t word = 0u;
+    std::memcpy(&word, expected.data() + 4u, sizeof(word));
+    Require(word != FillOnes, "the guarded recipe source did not change its loaded word");
+    consume(true);
+    CheckRecipePixels(*device, destination, output, word);
+    checkSource(source, expected);
+    AgcDriver::GuestMemory::StoreOwnBytes(source.Address(), source.bytes, [&] { StoreWords(source, source.bytes, FillOnes); });
+    device->Draw(state, draw, shaders, {}, &recipe);
+    Require(recipe != nullptr, "the restored ordinary buffer draw did not capture a recipe");
+    CheckRecipePixels(*device, destination, output, FillOnes);
+    auto oldColor = DecodeTarget(source);
+    oldColor.tileMode = ColorTileMode::Standard4KB;
+    oldColor.bytes = ColorTargetLayout(Side, Side, oldColor.tileMode, oldColor.elementBytes).Bytes();
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        MultisampleTargetView(context, oldColor);
+    }
+    const auto retainedRecipe = recipe;
+    const auto retainedTemplate = retainedRecipe->templateRef.lock();
+    Require(retainedTemplate != nullptr, "the moved draw lost its warmed resource template");
+    const auto movedExpected = arm(movedSource, 0u);
+    const auto movedAddress = movedSource.Address() + 8u;
+    binding->guestDescriptor[0] = static_cast<std::uint32_t>(movedAddress);
+    binding->guestDescriptor[1] = (binding->guestDescriptor[1] & 0xffff0000u) | static_cast<std::uint32_t>((movedAddress >> 32u) & 0xffffu);
+    std::uint32_t movedWord = 0u;
+    std::memcpy(&movedWord, movedExpected.data() + 8u, sizeof(movedWord));
+    Require(movedWord != FillOnes && movedWord != word, "the moved recipe source did not distinguish current and old buffers");
+    consume(false);
+    Require(SharedResourceCache().Find(retainedRecipe->key) == retainedTemplate, "the moved draw rebuilt its template instead of rebinding it");
+    CheckRecipePixels(*device, destination, output, movedWord);
+    checkSource(movedSource, movedExpected);
+    std::string refusal;
+    try {
+        RequireNoMultisampleTarget(source.Address(), Threads * 4u, "the unused original recipe buffer");
+    } catch (const std::exception& error) {
+        refusal = error.what();
+    }
+    Require(refusal.find("overlaps multisampled color target") != std::string::npos, "the moved recipe consumed or retired its unused original range");
+    std::puts("native draw recipe: current source, moved source, old guard, complete bytes and output bounds passed");
 }
 
 alignas(256) constexpr std::array<std::uint32_t, 10> NativeFmaskCode{0x34020084u, 0xe0381000u, 0x80000201u, 0xbf8c3f70u, 0xf0001f08u, 0x00020602u, 0xbf8c3f70u, 0xe0781000u, 0x80010601u, 0xbf810000u};
@@ -2095,6 +2777,17 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--native-vertex-input") return NativeVertexInput(device);
+        if (argc == 4 && std::string_view(argv[1]) == "--reused-publication") {
+            return ReusedPublication(*device, argv[2], argv[3]);
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--compression-publication") { CompressionPublication(*device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--publication") { Publication(*device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--draw-recipe") { DrawRecipePublication(device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--buffer-refusal") { BufferAdjacentControls(device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--buffer-publication") { BufferPublication(device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--cpu-publication") { Publication(*device, true); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--initial-reuse") return InitialReuse(*device);
+        if (argc == 2 && std::string_view(argv[1]) == "--publication-mappings") return PublicationMappings(*device);
         if (argc == 2 && std::string_view(argv[1]) == "--readback") { Readback(*device); return 0; }
         if (argc == 2 && std::string_view(argv[1]) == "--snapshot") { ColorSnapshots(*device); return 0; }
         if (argc == 2 && std::string_view(argv[1]) == "--snapshot_refusals") { ColorSnapshotRefusals(*device); return 0; }
@@ -2134,12 +2827,11 @@ int main(int argc, char** argv) {
         CheckFirstSampleReads(*device, TargetDescriptor(zeroed, SampleShift), std::vector<std::array<float, 4>>(Side * Side * Samples), false, "from zeroed color memory no draw rendered to");
         Block aliased(4u * BlockBytes);
         Draw(*device, TargetState(DecodeSwappedTarget(aliased)), 0, 2u, Unorm8PixelCode);
-        const auto originalAliasSamples = LoadSamples(*device, aliased, Format8888Unorm);
-        std::string aliasRefusal;
-        try { Draw(*device, TargetState(DecodeTarget(aliased))); }
-        catch (const std::runtime_error& error) { aliasRefusal = error.what(); }
-        Require(aliasRefusal.find("overlap another native owner") != std::string::npos, "an unrelated-format draw did not refuse unpublished native samples");
-        Require(LoadSamples(*device, aliased, Format8888Unorm) == originalAliasSamples, "a refused unrelated-format draw changed the original native samples");
+        AgcDriver::Graphics::NoteColorMetadataFill(aliased.Address(), static_cast<std::size_t>(AgcDriver::Graphics::MultisampledColorBytes(DecodeTarget(aliased))), 0u);
+        Draw(*device, TargetState(DecodeTarget(aliased)));
+        const auto aliasedSamples = LoadSamples(*device, aliased);
+        CheckSamples(state, aliasedSamples, {});
+        CheckFirstSampleReads(*device, TargetDescriptor(aliased, SampleShift), aliasedSamples, true, "from a 4x RGBA16F target drawn after a BGRA8 target and a full color fill at the same address");
         std::puts("DIM 2D image_load, image_sample_lz and image_sample_l reads of a 4x color target return each pixel's sample 0");
         Block swapped(4u * BlockBytes);
         Draw(*device, TargetState(DecodeSwappedTarget(swapped)), 0, 2u, Unorm8PixelCode);
@@ -2192,20 +2884,21 @@ int main(int argc, char** argv) {
         Require(colorBytes != 0 && colorBytes <= block.bytes, "the 4x target's color memory does not fit its block");
         AgcDriver::Graphics::NoteColorMetadataFill(block.Address(), static_cast<std::size_t>(colorBytes), FillOnes);
         CheckUniform(LoadSamples(*device, block), Ones, "after a fill of the target's color memory with half-float ones");
+        const std::vector<std::uint8_t> guardedBytes(block.data, block.data + block.bytes);
+        constexpr std::string_view mismatch = "guest color no longer matches its initial contents or a known full fill";
         std::vector<std::string> missing;
         const auto dispatch = [&](const auto& program) {
             device->Dispatch(program, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()));
             device->WaitIdle();
         };
-        CheckBufferRefused([&] { dispatch(CompileBufferLoad(*device, block.Address() + 4u, output.Address())); }, "fresh read", missing);
-        CheckBufferRefused([&] { dispatch(CompileBufferLoad(*device, block.Address() + colorBytes - 4u, output.Address())); }, "edge read", missing);
-        CheckBufferRefused([&] { dispatch(CompileBufferLoad(*device, block.Address() + colorBytes, block.Address())); }, "write", missing);
-        CheckBufferRefused([&] { dispatch(warm); }, "warmed dispatch", missing);
+        CheckBufferRefused([&] { dispatch(CompileBufferLoad(*device, block.Address() + 4u, output.Address())); }, "fresh read", missing, mismatch);
+        CheckBufferRefused([&] { dispatch(CompileBufferLoad(*device, block.Address() + colorBytes - 4u, output.Address())); }, "edge read", missing, mismatch);
+        CheckBufferRefused([&] { dispatch(warm); }, "warmed dispatch", missing, mismatch);
         if (prepared != nullptr) {
             CheckBufferRefused([&] {
                 device->Dispatch(deferredProgram, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()), prepared);
                 device->WaitIdle();
-            }, "deferred dispatch", missing);
+            }, "deferred dispatch", missing, mismatch);
         }
         bool recipeReused = false;
         if (recipe != nullptr) {
@@ -2219,15 +2912,20 @@ int main(int argc, char** argv) {
                     device->Dispatch(warm, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()));
                 }
                 device->WaitIdle();
-            }, "recipe dispatch", missing);
+            }, "recipe dispatch", missing, mismatch);
         }
+        Require(std::equal(guardedBytes.begin(), guardedBytes.end(), block.data), "a refused buffer publication changed guest color bytes");
+        Require(Refused(block.Address(), static_cast<std::size_t>(colorBytes), "before the adjacent buffer control"), "refused buffer publication removed the live color guard");
         std::memset(block.data + colorBytes, 0, BlockBytes);
+        const std::vector<std::uint8_t> controlBytes(block.data, block.data + block.bytes);
         CheckBufferLoad(*device, CompileBufferLoad(*device, block.Address() + colorBytes, output.Address()), output);
         CheckUniform(LoadSamples(*device, block), Ones, "after the native buffer access refusals and adjacent buffer control");
         std::cout << "native buffer controls: adjacent=passed deferred=" << (prepared != nullptr) << " recipe=" << recipeReused << std::endl;
         std::string failures;
         for (const auto& item : missing) failures += " " + item;
         Require(missing.empty(), "buffer aliases of live native MSAA color memory bypassed the guard:" + failures);
+        Require(std::equal(controlBytes.begin(), controlBytes.end(), block.data), "the adjacent buffer control changed guest bytes");
+        Require(Refused(block.Address(), static_cast<std::size_t>(colorBytes), "after refused buffer publication"), "refused buffer publication removed the live color guard");
         recipe.reset();
         prepared.reset();
         RequireRefused(*device, TargetDescriptor(block, 3u), "texture of 8 samples", "loading a 4x target as an 8x texture");
