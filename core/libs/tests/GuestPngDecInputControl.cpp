@@ -403,6 +403,8 @@ int main() {
         Require(scePngDecDecodeWithInputControl(paletteDecoder.handle, &param, &paletteInfo) == (2 << 16 | 2));
         const std::uint8_t indexedPalette[] = {255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 255, 255, 255, 0, 128};
         Require(std::equal(std::begin(indexedPalette), std::end(indexedPalette), indexedImage.begin()));
+        Require(std::all_of(indexedImage.begin() + sizeof(indexedPalette), indexedImage.begin() + paletteSize,
+                            [](std::uint8_t byte) { return byte == 0xCC; }));
         const std::uint8_t paddedIndices[] = {0, 1, 0xCC, 0xCC, 0xCC, 2, 3, 0xCC, 0xCC, 0xCC};
         Require(std::equal(std::begin(paddedIndices), std::end(paddedIndices), indexedImage.begin() + paletteSize));
     }

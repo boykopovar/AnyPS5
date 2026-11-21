@@ -666,7 +666,7 @@ int main() {
     Require(info.color_space == 4 && info.bit_depth == 2 && info.image_flag == 2);
     Require(std::equal(paletteImage.begin(), paletteImage.end(), indexedImage.begin()));
     Require(std::all_of(indexedImage.begin() + paletteImage.size(), indexedImage.begin() + paletteSize,
-                        [](std::uint8_t byte) { return byte == 0; }));
+                        [](std::uint8_t byte) { return byte == 0xCC; }));
     const std::uint8_t tightlyPacked[] = {0, 1, 2, 3, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC};
     Require(std::equal(std::begin(tightlyPacked), std::end(tightlyPacked), indexedImage.begin() + paletteSize));
     --decode.image_mem_size;
@@ -686,6 +686,40 @@ int main() {
     Require(scePngDecDecode(handle, &decode, &info) == invalidParam);
     decode.image_pitch = 1;
     Require(scePngDecDecode(handle, &decode, &info) == invalidParam);
+
+    auto oversizedPalette = SplitChunks(lowDepthPalettePng);
+    oversizedPalette[1].data.insert(oversizedPalette[1].data.end(), {1, 2, 3, 4, 5, 6});
+    const auto oversizedPalettePng = JoinChunks(oversizedPalette);
+    std::fill(indexedImage.begin(), indexedImage.end(), 0xA5);
+    decode = DecodeParam(oversizedPalettePng, indexedImage);
+    decode.pixel_format = 132;
+    Require(scePngDecDecode(handle, &decode, &info) == (2 << 16 | 2));
+    Require(std::equal(std::begin(indexedPalette), std::end(indexedPalette), indexedImage.begin()));
+    Require(std::all_of(indexedImage.begin() + sizeof(indexedPalette), indexedImage.begin() + paletteSize,
+                        [](std::uint8_t byte) { return byte == 0xA5; }));
+    const std::uint8_t interlacedIndices[] = {1, 0, 0, 1};
+    Require(std::equal(std::begin(interlacedIndices), std::end(interlacedIndices), indexedImage.begin() + paletteSize));
+
+    auto shortPalette = SplitChunks(opaquePalettePng);
+    shortPalette[1].data.resize(6);
+    shortPalette[2].data = {0x78, 0x9C, 0x63, 0x60, 0xFC, 0xCF, 0x70, 0x82, 0x01, 0x00, 0x05, 0x97, 0x01, 0xC9};
+    for (const auto& alpha : {std::vector<std::uint8_t>{0x31}, std::vector<std::uint8_t>{0x31, 0x32, 0x33}}) {
+        const auto shortPalettePng = JoinChunks(WithChunk(shortPalette, 2, {"tRNS", alpha}));
+        std::fill(indexedImage.begin(), indexedImage.end(), 0x5A);
+        decode = DecodeParam(shortPalettePng, indexedImage);
+        decode.pixel_format = 132;
+        decode.alpha_value = 0x80;
+        Require(scePngDecDecode(handle, &decode, &info) == (2 << 16 | 2));
+        const bool hasTransparency = alpha.size() == 1;
+        Require(info.image_flag == (hasTransparency ? 2u : 0u));
+        Require(indexedImage[0] == 255 && indexedImage[1] == 0 && indexedImage[2] == 0);
+        Require(indexedImage[3] == (hasTransparency ? 0x31 : 0xFF));
+        Require(indexedImage[4] == 0 && indexedImage[5] == 255 && indexedImage[6] == 0 && indexedImage[7] == 255);
+        Require(std::all_of(indexedImage.begin() + 8, indexedImage.begin() + paletteSize,
+                            [](std::uint8_t byte) { return byte == 0x5A; }));
+        const std::uint8_t unmodifiedIndices[] = {1, 255, 200, 0};
+        Require(std::equal(std::begin(unmodifiedIndices), std::end(unmodifiedIndices), indexedImage.begin() + paletteSize));
+    }
 
     decode = DecodeParam(rgbPng, indexedImage);
     decode.pixel_format = 132;
