@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -26,6 +27,7 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -1041,6 +1043,46 @@ void Disabled(Scene& scene) {
     Require(Builds() == before + 1, "address draw space reuse: with APS5_NO_ADDRESS_DRAW_REUSE=1 a repeated address-based draw did not build its resources again");
 }
 
+void ShadowedConstants(Scene& scene, bool cpuOverwrite) {
+    using namespace AgcDriver::Graphics;
+    constexpr std::uint8_t Before = 40;
+    constexpr std::uint8_t Shadow = 210;
+    constexpr std::uint8_t Cpu = 90;
+    scene.Store(scene.constants, 0, Before);
+    scene.Point(scene.constants.Address());
+    Require(scene.DrawnColor() == Before && scene.DrawnColor() == Before, "address draw space reuse: the shadow control draws read the wrong constant");
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(scene.device);
+        const auto address = scene.constants.Address();
+        const auto* import = ExistingHostImportFor(context, address, BlockBytes);
+        Require(import != nullptr, "address draw space reuse: the constant's host import is missing");
+        static_cast<void>(AgcDriver::GuestMemory::CollectWritesUncached(address, BlockBytes));
+        auto destination = ShadowDestinationFor(context, *import, address, address + BlockBytes);
+        Require(destination.has_value() && destination->seedUnits.empty(), "address draw space reuse: cannot create a whole-unit shadow for the constant");
+        CommandBatch batch(context);
+        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(batch.Handle(), destination->buffer, destination->offset, BlockBytes, std::bit_cast<std::uint32_t>(Level(Shadow)));
+        const VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT};
+        context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(batch.Handle(), VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+        batch.SubmitAndWait();
+        const auto generation = AgcDriver::GuestMemory::MarkWritten(address, BlockBytes);
+        const std::array<ShadowedRange, 1> ranges{{{address, address + BlockBytes, destination->slab}}};
+        MarkShadowed(*import, ranges, generation);
+        Require(!LiveShadowedRanges(address, BlockBytes, PublishScope::Whole).empty(), "address draw space reuse: the new GPU constant is not in a live unpublished shadow");
+    }
+    if (cpuOverwrite) scene.Store(scene.constants, 0, Cpu);
+    const Outcomes outcomes;
+    const auto color = scene.DrawnColor();
+    const auto expected = cpuOverwrite ? Cpu : Shadow;
+    if (!ShaderResources::SpaceReuseDisabled()) Require(outcomes[AddressDrawReuse::Reused] == 1, "address draw space reuse: the unit-shadow draw did not exercise a cached space hit: " + outcomes.Text());
+    Require(color == expected, "address draw space reuse: a draw after a unit-shadow write read " + std::to_string(color) + " instead of " + std::to_string(expected));
+}
+
+void ShadowPublish(Scene& scene) { ShadowedConstants(scene, false); }
+void ShadowCpuOverwrite(Scene& scene) { ShadowedConstants(scene, true); }
+
 void LimitPinWait() {
     if (std::getenv("APS5_PIN_WAIT_MS") != nullptr) return;
     const auto wait = std::to_string(PinWaitMs);
@@ -1058,7 +1100,7 @@ struct NamedCase {
     Case run;
 };
 
-constexpr std::array<NamedCase, 15> DefaultCases{{
+constexpr std::array<NamedCase, 17> DefaultCases{{
     {"unchanged", UnchangedInputs},
     {"cpu-write", CpuWrite},
     {"idle-free", IdleFree},
@@ -1074,6 +1116,8 @@ constexpr std::array<NamedCase, 15> DefaultCases{{
     {"multisample-target-inside", MultisampleTargetInside},
     {"multisample-target-outside", MultisampleTargetOutside},
     {"sampled-texture", SampledTexture},
+    {"shadow-publish", ShadowPublish},
+    {"shadow-cpu-overwrite", ShadowCpuOverwrite},
 }};
 
 constexpr std::array<NamedCase, 2> HeldCases{{
