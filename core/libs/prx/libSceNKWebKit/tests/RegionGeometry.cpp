@@ -178,8 +178,132 @@ static void TestRegionGeometryOps() {
     _ZN7WebCore6RegionD1Ev(translated.ptr());
 }
 
+static void TestShapeUsesFastHeap() {
+    constexpr std::size_t shapeSize = sizeof(WebCore::Region::Shape);
+    const WebCore::IntRect first{WebCore::IntPoint{0, 0}, WebCore::IntSize{10, 10}};
+    const WebCore::IntRect second{WebCore::IntPoint{50, 50}, WebCore::IntSize{10, 10}};
+
+    RegionHolder united;
+    _ZN7WebCore6RegionC1ERKNS_7IntRectE(united.ptr(), first);
+    RegionHolder other;
+    _ZN7WebCore6RegionC1ERKNS_7IntRectE(other.ptr(), second);
+    _ZN7WebCore6Region5uniteERKS0_(united.ptr(), *other.ptr());
+    Require(united.ptr()->m_shape != nullptr);
+    Require(_ZN3WTF14fastMallocSizeEPKv(united.ptr()->m_shape.get()) == shapeSize);
+
+    RegionHolder copy;
+    _ZN7WebCore6RegionC1ERKS0_(copy.ptr(), *united.ptr());
+    Require(copy.ptr()->m_shape != nullptr && copy.ptr()->m_shape != united.ptr()->m_shape);
+    Require(_ZN3WTF14fastMallocSizeEPKv(copy.ptr()->m_shape.get()) == shapeSize);
+
+    RegionHolder assigned;
+    _ZN7WebCore6RegionC1Ev(assigned.ptr());
+    _ZN7WebCore6RegionaSERKS0_(assigned.ptr(), *united.ptr());
+    Require(assigned.ptr()->m_shape != nullptr);
+    Require(_ZN3WTF14fastMallocSizeEPKv(assigned.ptr()->m_shape.get()) == shapeSize);
+
+    RegionHolder filled;
+    _ZN7WebCore6RegionC1Ev(filled.ptr());
+    _ZN7WebCore6Region5uniteERKS0_(filled.ptr(), *united.ptr());
+    Require(filled.ptr()->m_shape != nullptr);
+    Require(_ZN3WTF14fastMallocSizeEPKv(filled.ptr()->m_shape.get()) == shapeSize);
+
+    RegionHolder cut;
+    _ZN7WebCore6RegionC1ERKNS_7IntRectE(cut.ptr(), WebCore::IntRect{WebCore::IntPoint{0, 0}, WebCore::IntSize{100, 100}});
+    _ZN7WebCore6Region8subtractERKS0_(cut.ptr(), *other.ptr());
+    Require(cut.ptr()->m_shape != nullptr);
+    Require(_ZN3WTF14fastMallocSizeEPKv(cut.ptr()->m_shape.get()) == shapeSize);
+
+    RegionHolder guest;
+    _ZN7WebCore6RegionC1ERKNS_7IntRectE(guest.ptr(), united.ptr()->bounds());
+    void* storage = _ZN3WTF10fastMallocEm(shapeSize);
+    guest.ptr()->m_shape.reset(new (storage) WebCore::Region::Shape(*united.ptr()->m_shape));
+    Require(_ZNK7WebCore6Region9totalAreaEv(guest.ptr()) == 200);
+    _ZN7WebCore6Region5uniteERKS0_(guest.ptr(), WebCore::Region{WebCore::IntRect{WebCore::IntPoint{0, 0}, WebCore::IntSize{200, 200}}, nullptr});
+    Require(guest.ptr()->m_shape == nullptr && _ZNK7WebCore6Region9totalAreaEv(guest.ptr()) == 40000);
+
+    storage = _ZN3WTF10fastMallocEm(shapeSize);
+    guest.ptr()->m_shape.reset(new (storage) WebCore::Region::Shape(*united.ptr()->m_shape));
+    guest.ptr()->m_bounds = united.ptr()->bounds();
+    _ZN7WebCore6RegionaSERKS0_(guest.ptr(), *other.ptr());
+    Require(guest.ptr()->m_shape == nullptr && _ZNK7WebCore6Region9totalAreaEv(guest.ptr()) == 100);
+
+    storage = _ZN3WTF10fastMallocEm(shapeSize);
+    guest.ptr()->m_shape.reset(new (storage) WebCore::Region::Shape(*united.ptr()->m_shape));
+    guest.ptr()->m_bounds = united.ptr()->bounds();
+    _ZN7WebCore6RegionD1Ev(guest.ptr());
+    Require(guest.ptr()->m_shape == nullptr);
+
+    WebCore::Region::Shape* released = united.ptr()->m_shape.release();
+    released->~Shape();
+    _ZN3WTF8fastFreeEPv(released);
+
+    _ZN7WebCore6RegionD1Ev(cut.ptr());
+    _ZN7WebCore6RegionD1Ev(filled.ptr());
+    _ZN7WebCore6RegionD1Ev(assigned.ptr());
+    _ZN7WebCore6RegionD1Ev(copy.ptr());
+    _ZN7WebCore6RegionD1Ev(other.ptr());
+    _ZN7WebCore6RegionD1Ev(united.ptr());
+}
+
+static void TestAffineTransformMapRegion() {
+    RegionHolder emptyHolder;
+    _ZN7WebCore6RegionC1Ev(emptyHolder.ptr());
+    WebCore::AffineTransform translate;
+    _ZN7WebCore15AffineTransform12makeIdentityEv(&translate);
+    _ZN7WebCore15AffineTransform9translateEdd(&translate, 12.6, -4.4);
+
+    WebCore::Region mappedEmpty = _ZNK7WebCore15AffineTransform9mapRegionERKNS_6RegionE(&translate, *emptyHolder.ptr());
+    Require(mappedEmpty.isEmpty());
+    Require(_ZNK7WebCore6Region5rectsEv(&mappedEmpty).isEmpty());
+
+    RegionHolder multiHolder;
+    _ZN7WebCore6RegionC1ERKNS_7IntRectE(multiHolder.ptr(), WebCore::IntRect{WebCore::IntPoint{10, 20}, WebCore::IntSize{30, 40}});
+    RegionHolder secondHolder;
+    _ZN7WebCore6RegionC1ERKNS_7IntRectE(secondHolder.ptr(), WebCore::IntRect{WebCore::IntPoint{100, 10}, WebCore::IntSize{20, 15}});
+    _ZN7WebCore6Region5uniteERKS0_(multiHolder.ptr(), *secondHolder.ptr());
+
+    WebCore::Region translated = _ZNK7WebCore15AffineTransform9mapRegionERKNS_6RegionE(&translate, *multiHolder.ptr());
+    Require(!translated.isEmpty());
+    Require(_ZNK7WebCore6Region9totalAreaEv(&translated) == 1500);
+    Require(translated.bounds().m_location.m_x == 23);
+    Require(translated.bounds().m_location.m_y == 6);
+    Require(_ZNK7WebCore6Region8containsERKNS_8IntPointE(&translated, WebCore::IntPoint{23, 16}));
+    Require(_ZNK7WebCore6Region8containsERKNS_8IntPointE(&translated, WebCore::IntPoint{113, 6}));
+
+    WebCore::AffineTransform scaleAndTranslate;
+    _ZN7WebCore15AffineTransform12makeIdentityEv(&scaleAndTranslate);
+    _ZN7WebCore15AffineTransform9translateEdd(&scaleAndTranslate, 5.0, -2.0);
+    _ZN7WebCore15AffineTransform15scaleNonUniformEdd(&scaleAndTranslate, 2.0, 3.0);
+    WebCore::Region scaled = _ZNK7WebCore15AffineTransform9mapRegionERKNS_6RegionE(&scaleAndTranslate, *multiHolder.ptr());
+    Require(scaled.bounds().m_location.m_x == 25);
+    Require(scaled.bounds().m_location.m_y == 28);
+    Require(_ZNK7WebCore6Region9totalAreaEv(&scaled) == (60 * 120 + 40 * 45));
+    Require(!_ZNK7WebCore6Region8containsERKNS_8IntPointE(&scaled, WebCore::IntPoint{150, 100}));
+
+    WebCore::AffineTransform zeroScale;
+    _ZN7WebCore15AffineTransform12makeIdentityEv(&zeroScale);
+    _ZN7WebCore15AffineTransform15scaleNonUniformEdd(&zeroScale, 0.0, 1.0);
+    WebCore::Region collapsed = _ZNK7WebCore15AffineTransform9mapRegionERKNS_6RegionE(&zeroScale, *multiHolder.ptr());
+    Require(collapsed.isEmpty());
+
+    bool threw = false;
+    try {
+        (void)_ZNK7WebCore15AffineTransform9mapRegionERKNS_6RegionE(nullptr, *multiHolder.ptr());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    _ZN7WebCore6RegionD1Ev(secondHolder.ptr());
+    _ZN7WebCore6RegionD1Ev(multiHolder.ptr());
+    _ZN7WebCore6RegionD1Ev(emptyHolder.ptr());
+}
+
 int main() {
     TestRegionBasicsAndShape();
     TestRegionGeometryOps();
+    TestShapeUsesFastHeap();
+    TestAffineTransformMapRegion();
     return 0;
 }

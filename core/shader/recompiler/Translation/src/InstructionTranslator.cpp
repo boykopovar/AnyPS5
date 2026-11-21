@@ -1,6 +1,5 @@
 #include "Translation/InstructionTranslator.hpp"
 #include "Recompiler.hpp"
-#include "Translation/DispatchInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <algorithm>
 #include <cstdlib>
@@ -690,9 +689,11 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
     for (const auto& cfgBlock : cfg.blocks) {
         const auto typedIndex = blockIndices.at(cfgBlock.id);
         TranslationContext context(program, *blocks[typedIndex], vectorLimit);
+        if (const auto* workgroup = shaderWorkgroupInput(options.stage, options.inputInfo)) context.SetBufferLdsSize(workgroup->ldsSizeDwords * 4u);
         context.SetPixelInput(options.inputInfo.pixel, options.fragmentShaderBarycentricEnabled);
         context.SetFloatMode(options.floatMode);
-        context.SetNativeFloat16(options.nativeFloat16, options.nativeFloat16Fma);
+        context.SetNativeFloat16(options.nativeFloat16, options.nativeFloat16Fma, options.float16HostNans);
+        context.SetNativeInteger16(options.nativeInteger16);
         context.SetFloat32DenormPreserve(options.float32DenormPreserve);
         context.SetFloat32FlushToZero(options.float32FlushToZero);
         context.SetFloat32FlushDeclared(options.float32FlushDeclared);
@@ -702,8 +703,16 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         const bool insideWindow = !scopedWindow || windowRegion.contains(cfgBlock.id);
         context.SetVectorWindowActive(insideWindow);
         if (syncsWindow(insideWindow) && syncedOnEntry(cfgBlock.id)) context.SyncVectorWindow(insideWindow);
+        const auto splitPoints = [&](std::uint32_t programCounter, bool afterInstruction) {
+            if (options.splitState == nullptr) return;
+            for (const auto& point : options.splitState->points) {
+                if (point.programCounter == programCounter && point.afterInstruction == afterInstruction) context.TranslateSplitState(*options.splitState, point);
+            }
+        };
         for (std::uint32_t index = cfgBlock.instructionBegin; index < cfgBlock.instructionEnd; index++) {
             const auto& instruction = decoded.instructions[index];
+            if (index != cfgBlock.instructionBegin) splitPoints(decoded.instructions[index - 1u].programCounter, true);
+            splitPoints(instruction.programCounter, false);
             if (isCodeTableLoad(cfg, instruction.programCounter)) {
                 const auto table = std::find_if(cfg.codeTableLoads.begin(), cfg.codeTableLoads.end(), [&](const auto& entry) { return entry.programCounter == instruction.programCounter; });
                 if (table == cfg.codeTableLoads.end()) throw std::runtime_error("missing shader code table values");
@@ -733,6 +742,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
                 });
             }
         }
+        if (cfgBlock.instructionEnd != cfgBlock.instructionBegin) splitPoints(decoded.instructions[cfgBlock.instructionEnd - 1u].programCounter, true);
         if (syncsWindow(!insideWindow) && std::ranges::any_of(cfgBlock.successors, [&](std::uint32_t successor) { return windowRegion.contains(successor) != insideWindow && !syncedOnEntry(successor); })) {
             context.SyncVectorWindow(!insideWindow);
         }
@@ -740,14 +750,11 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
     }
 
     program.Metadata().blockInfo = std::move(blockInfos);
+    program.Metadata().splitState = options.splitState != nullptr;
     program.BlockOrder() = blocks;
 
     ValidateProgram(program, false);
     return program;
-}
-
-void InstructionTranslator::translateInstruction(IrBuilder& builder, const RdnaInstruction& instruction, const ControlFlowGraph& cfg, const TranslateOptions& options) const {
-    DispatchInstruction(builder, instruction, cfg, options);
 }
 
 TranslationContext::TranslationContext(IrProgram& program, IrBlock& block, std::uint32_t vectorLimit) : program(program), ir(program), block(block), instructionBranchCondition(IrU1(program.CreateValue(IrOpcode::Void, IrType::Bool))), currentVectorLimit(vectorLimit) {

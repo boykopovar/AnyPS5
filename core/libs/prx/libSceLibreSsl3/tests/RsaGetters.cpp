@@ -2,17 +2,28 @@
 
 #include <array>
 #include <bit>
+#include <cerrno>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <filesystem>
 #include <source_location>
+#include <stdexcept>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -25,6 +36,52 @@ void Require(bool condition, std::source_location location = std::source_locatio
     std::fprintf(stderr, "LibreSSL3 RSA getter check failed at line %u\n", location.line());
     std::abort();
 }
+
+template<typename TAction> void RequireNotImplemented(TAction action, std::source_location location = std::source_location::current()) {
+    try { action(); } catch (const std::runtime_error&) { return; }
+    Require(false, location);
+}
+
+class ReadOnlyPage {
+public:
+    explicit ReadOnlyPage(const void* initial = nullptr, std::size_t size = 0) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        _size = info.dwPageSize != 0 ? info.dwPageSize : 4096u;
+        _page = VirtualAlloc(nullptr, _size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(_page != nullptr);
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(_page, _size, PAGE_READONLY, &oldProtect) != 0);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        _size = pageSize > 0 ? static_cast<std::size_t>(pageSize) : 4096u;
+        _page = mmap(nullptr, _size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(_page != MAP_FAILED);
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        Require(mprotect(_page, _size, PROT_READ) == 0);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+        if (!_page) return;
+#ifdef _WIN32
+        VirtualFree(_page, 0, MEM_RELEASE);
+#else
+        munmap(_page, _size);
+#endif
+    }
+
+    ReadOnlyPage(const ReadOnlyPage&) = delete;
+    ReadOnlyPage& operator=(const ReadOnlyPage&) = delete;
+
+    template<typename T> T* As() const { return static_cast<T*>(_page); }
+
+private:
+    void* _page = nullptr;
+    std::size_t _size = 0;
+};
 
 void Run(Factors factors, CrtParams crtParams) {
     std::array<int, 6> values{};
@@ -86,6 +143,48 @@ void Run(Factors factors, CrtParams crtParams) {
         catch (const std::exception&) { threw = true; }
         Require(threw && value == &values[5]);
     }
+
+    LibreSsl3Rsa guestRsa{};
+    guestRsa.p = &values[0];
+    guestRsa.q = &values[1];
+    guestRsa.dmp1 = &values[2];
+    guestRsa.dmq1 = &values[3];
+    guestRsa.iqmp = &values[4];
+    const void* const sentinel = &values[5];
+    ReadOnlyPage roOut(&sentinel, sizeof(sentinel));
+    const void** const badPtr = roOut.As<const void*>();
+
+    const void* outP = sentinel;
+    const void* outQ = sentinel;
+    errno = 73;
+    RequireNotImplemented([&] { factors(reinterpret_cast<const LibreSsl3Rsa*>(0x10), &outP, &outQ); });
+    Require(errno == 73 && outP == sentinel && outQ == sentinel);
+    errno = 73;
+    RequireNotImplemented([&] { factors(&guestRsa, badPtr, &outQ); });
+    Require(errno == 73 && outQ == sentinel);
+    errno = 73;
+    RequireNotImplemented([&] { factors(&guestRsa, &outP, badPtr); });
+    Require(errno == 73 && outP == sentinel);
+
+    const void* outDmp1 = sentinel;
+    const void* outDmq1 = sentinel;
+    const void* outIqmp = sentinel;
+    const void* shared = sentinel;
+    errno = 73;
+    RequireNotImplemented([&] { crtParams(reinterpret_cast<const LibreSsl3Rsa*>(0x10), &outDmp1, &outDmq1, &outIqmp); });
+    Require(errno == 73 && outDmp1 == sentinel && outDmq1 == sentinel && outIqmp == sentinel);
+    errno = 73;
+    RequireNotImplemented([&] { crtParams(&guestRsa, badPtr, &outDmq1, &outIqmp); });
+    Require(errno == 73 && outDmq1 == sentinel && outIqmp == sentinel);
+    errno = 73;
+    RequireNotImplemented([&] { crtParams(&guestRsa, &outDmp1, badPtr, &outIqmp); });
+    Require(errno == 73 && outDmp1 == sentinel && outIqmp == sentinel);
+    errno = 73;
+    RequireNotImplemented([&] { crtParams(&guestRsa, &outDmp1, &outDmq1, badPtr); });
+    Require(errno == 73 && outDmp1 == sentinel && outDmq1 == sentinel);
+    errno = 73;
+    RequireNotImplemented([&] { crtParams(&guestRsa, &shared, &shared, badPtr); });
+    Require(errno == 73 && shared == sentinel);
 }
 
 }

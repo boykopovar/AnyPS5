@@ -114,6 +114,12 @@ void TestRejectedFactoryArguments() {
     Require(Read<std::int32_t>(static_cast<std::uint8_t*>(output.object), 0) == 1);
     ReleaseRemovedPlayer(&output);
     Require(deletionCount == 1);
+    IntrusivePtr memberOutput{};
+    Require(CreateMember(nullptr, "member", &memberOutput) == static_cast<int>(0x80553503));
+    Require(CreateMember(&context, "member", nullptr) == static_cast<int>(0x80553503));
+    IntrusivePtr teamOutput{};
+    Require(CreateTeam(nullptr, "team", &teamOutput) == static_cast<int>(0x80553503));
+    Require(CreateTeam(&context, "team", nullptr) == static_cast<int>(0x80553503));
 }
 
 void TestFailedFactoryPayload() {
@@ -159,8 +165,29 @@ void RunFactoryOwnershipChecks() {
 
 }
 
+void TestBookkeepingSurface() {
+    std::uint64_t context = 1;
+    IntrusivePtr response{};
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V119CreateMatchResponseEEC1Ev(&response);
+    Require(response.object == nullptr && response.deleter == nullptr && response.libContext == nullptr);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V119CreateMatchResponseEED1Ev(&response);
+
+    alignas(8) std::array<std::uint8_t, 0x50> vectorBody{};
+    Write<std::uint64_t>(vectorBody.data(), 0x00, 0x434e507056656342ULL);
+    Write<std::uint64_t>(vectorBody.data(), 0x40, 3);
+    IntrusivePtr statistics{};
+    statistics.object = vectorBody.data();
+    statistics.libContext = &context;
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V119AdditionalStatisticEEEE4sizeEv(&statistics) == 3);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V122RequestPlayerStatisticEEEE4sizeEv(&statistics) == 3);
+
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_7Matches2V119CreateMatchResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv(nullptr) == 0);
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_7Matches2V119CreateMatchResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERS8_(nullptr, nullptr) == static_cast<int>(0x80552907u));
+}
+
 int main(int argc, char** argv) {
     RunFactoryOwnershipChecks();
+    TestBookkeepingSurface();
     if (argc == 2 && std::strcmp(argv[1], "factory-ownership") == 0) return 0;
     alignas(8) std::array<std::uint8_t, 0x200> request{};
     std::memset(request.data(), 0, request.size());
@@ -574,6 +601,19 @@ int main(int argc, char** argv) {
     Require(Read<std::int32_t>(rosterObject.data(), 0) == 2);
     created.deleter(created.object);
     Require(Read<std::int32_t>(rosterObject.data(), 0) == 1);
+    created = {};
+
+    alignas(8) std::array<std::uint8_t, 0x50> updateRosterObject{};
+    Write<std::int32_t>(updateRosterObject.data(), 0, 1);
+    IntrusivePtr updateRosterHandle{};
+    updateRosterHandle.object = updateRosterObject.data();
+    updateRosterHandle.libContext = &context;
+    Require(_ZN3sce2Np9CppWebApi7Matches2V131UpdateMatchDetailRequestFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_24UpdateMatchDetailRequestEEE(&context, &created) == 0);
+    Require(Read<const void*>(static_cast<const std::uint8_t*>(created.object), 0x08) == &context);
+    Require(_ZN3sce2Np9CppWebApi7Matches2V124UpdateMatchDetailRequest15setInGameRosterERKNS1_6Common12IntrusivePtrINS3_19RequestInGameRosterEEE(created.object, &updateRosterHandle) == 0);
+    Require(Read<std::int32_t>(updateRosterObject.data(), 0) == 2);
+    created.deleter(created.object);
+    Require(Read<std::int32_t>(updateRosterObject.data(), 0) == 1);
     created = {};
 
     return 0;

@@ -1,5 +1,6 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include "prx/libSceAudioOut/include/InventoryExports.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -19,10 +20,14 @@ static int AudioOut2QueryMemoryLo(const AudioOut2ContextParam* params, const std
     if (params->queue_depth > (exParams ? 0x40u : 0x10u)) return ErrorInvalidParam;
     if (memory_size) {
         const auto slot_words = [](std::uint32_t n) { return 0xc + ((n + 0x1f) >> 5) * 4; };
-        *memory_size = static_cast<std::size_t>(params->max_ports + extra_ports + params->max_object_ports) * 0xb60
+        const std::size_t required = static_cast<std::size_t>(params->max_ports + extra_ports + params->max_object_ports) * 0xb60
             + static_cast<std::size_t>(slot_words(params->max_ports) + slot_words(params->max_object_ports))
             + (exParams ? static_cast<std::size_t>(slot_words(extra_ports)) : 0)
             + ((static_cast<std::size_t>(params->max_object_ports) * 24 + 0x7f) & ~static_cast<std::size_t>(0x7f));
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(memory_size, &required, sizeof(required));
+        errno = savedErrno;
+        if (!copied) return ErrorInvalidParam;
     }
     return 0;
 }
@@ -47,6 +52,7 @@ int APS5_VABI sceAudioOut2LoInit(void) {
 }
 
 int APS5_VABI sceAudioOut2LoTerminate(void) {
+    AudioOut2DestroyAllContexts();
     return 0;
 }
 
@@ -79,7 +85,12 @@ int APS5_VABI sceAudioOut2LoContextGetAttributes(AudioOut2ContextHandle ctx, Aud
     if (!AudioOut2FindContext(ctx)) return ErrorInvalidParam;
     if (!attributes && num != 0) return ErrorInvalidParam;
     for (uint32_t index = 0; index < num; index++) {
-        const auto id = attributes[index].attribute_id;
+        AudioOut2Attribute attribute{};
+        const int savedErrno = errno;
+        const bool read = GuestCopyIn_nid_no_patch(&attribute, attributes + index, sizeof(attribute));
+        errno = savedErrno;
+        if (!read) return ErrorInvalidParam;
+        const auto id = attribute.attribute_id;
         if (id != 0x1e && id != 0x1f) return ErrorInvalidParam;
         NotImplemented_nid_no_patch(__func__);
     }

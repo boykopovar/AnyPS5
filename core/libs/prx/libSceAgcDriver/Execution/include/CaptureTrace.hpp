@@ -1,6 +1,8 @@
 #pragma once
+#include "prx/libc/include/HostThread.hpp"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -8,7 +10,9 @@
 #include <fstream>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
+#include <vector>
 
 namespace AgcDriver {
 
@@ -18,6 +22,49 @@ inline const char* CaptureTracePath() {
     return "capture-trace.log";
 }
 
+class CaptureTraceFilter {
+public:
+    explicit CaptureTraceFilter(const char* configured) {
+        std::string_view remaining = configured == nullptr ? "" : configured;
+        while (!remaining.empty()) {
+            const auto separator = remaining.find(',');
+            const auto prefix = remaining.substr(0, separator);
+            if (!prefix.empty()) prefixes.emplace_back(prefix);
+            if (separator == std::string_view::npos) break;
+            remaining.remove_prefix(separator + 1);
+        }
+    }
+
+    bool Active() const {
+        return !prefixes.empty();
+    }
+
+    bool Matches(std::string_view record) const {
+        if (!Active()) return true;
+        for (const auto& prefix : prefixes) {
+            if (record.starts_with(prefix)) return true;
+        }
+        return false;
+    }
+
+    bool MayMatchFormat(std::string_view format) const {
+        if (!Active()) return true;
+        const auto literal = format.substr(0, format.find('%'));
+        for (const auto& prefix : prefixes) {
+            if (literal.starts_with(prefix) || std::string_view(prefix).starts_with(literal)) return true;
+        }
+        return false;
+    }
+
+private:
+    std::vector<std::string> prefixes;
+};
+
+inline const CaptureTraceFilter& CaptureTracePrefixes() {
+    static const CaptureTraceFilter filter(std::getenv("APS5_CAPTURE_TRACE_PREFIXES"));
+    return filter;
+}
+
 class CaptureTrace {
 public:
     static bool Enabled() {
@@ -25,11 +72,19 @@ public:
         return enabled;
     }
 
+    static void Stop() {
+        if (auto* trace = current.load(std::memory_order_acquire)) trace->stop();
+    }
+
     template<typename... TArgs>
     static void Log(const char* format, TArgs... args) {
         if (!Enabled()) return;
+        const auto& filter = CaptureTracePrefixes();
+        if (!filter.MayMatchFormat(format)) return;
         std::array<char, 2048> line{};
         const auto size = std::snprintf(line.data(), line.size(), format, args...);
+        if (size >= 0 && static_cast<std::size_t>(size) < line.size() &&
+            !filter.Matches(std::string_view(line.data(), static_cast<std::size_t>(size)))) return;
         static CaptureTrace& trace = instance();
         if (size < 0 || static_cast<std::size_t>(size) >= line.size()) {
             trace.drop();
@@ -50,8 +105,12 @@ private:
     friend struct CaptureTraceTestAccess;
 
     static CaptureTrace& instance() {
-        static CaptureTrace trace;
-        return trace;
+        static auto* const trace = [] {
+            static CaptureTrace value;
+            current.store(&value, std::memory_order_release);
+            return &value;
+        }();
+        return *trace;
     }
 
     CaptureTrace() {
@@ -62,16 +121,23 @@ private:
             return;
         }
         active = true;
-        worker = std::thread([this] { run(); });
+        if (CaptureTracePrefixes().Active()) appendRecord(pending, "capture-trace-filter active=1");
+        worker = Libc::StartHostThread([this] { run(); });
     }
 
     ~CaptureTrace() {
-        {
-            std::lock_guard lock(mutex);
-            stopping = true;
-        }
-        changed.notify_one();
-        if (worker.joinable()) worker.join();
+        stop();
+    }
+
+    void stop() {
+        std::call_once(stopped, [this] {
+            {
+                std::lock_guard lock(mutex);
+                stopping = true;
+            }
+            changed.notify_one();
+            if (worker.joinable()) worker.join();
+        });
     }
 
     void append(std::string line) {
@@ -144,6 +210,8 @@ private:
         }
     }
 
+    inline static std::atomic<CaptureTrace*> current{nullptr};
+    std::once_flag stopped;
     std::ofstream output;
     std::mutex mutex;
     std::condition_variable changed;

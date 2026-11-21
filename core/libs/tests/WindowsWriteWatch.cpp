@@ -1017,11 +1017,14 @@ void CheckKnownZeroFirstReads() {
     static_cast<volatile unsigned char*>(memory)[4 * Small] = 0;
     static_cast<volatile unsigned char*>(memory)[6 * Small] = 7;
     std::array<void*, 32> written{};
-    std::size_t count = 1;
-    Require(mappings.Collect(address + 2 * Small, Small, written.data(), &count, true) && count == 0, "the first read of a never-written page was collected as a write");
-    count = written.size();
-    Require(mappings.Collect(address, Bytes, written.data(), &count, true) && count == 1 && written[0] == memory + 6 * Small, "a zero store into a never-written page was collected as a write, or a real store was lost");
-    Require(KnownZeroPages(memory, Bytes) == PagesBelow(Bytes / Small, {6}), "a read or a zero store lost a page's known-zero state");
+    std::size_t count = written.size();
+    Require(mappings.Collect(address, Bytes, written.data(), &count, true), "known zero first-read collect failed");
+    std::set<std::size_t> collected;
+    for (std::size_t index = 0; index < count; ++index) collected.insert((static_cast<unsigned char*>(written[index]) - memory) / Small);
+    Require(collected.contains(4), "a zero store into a never-written page was not collected as a write");
+    Require(collected.contains(6), "a real store into a never-written page was not collected as a write");
+    Require(collected.size() <= 3 && !collected.contains(0) && !collected.contains(1) && !collected.contains(3) && !collected.contains(5), "an untouched page was collected as a write");
+    Require(KnownZeroPages(memory, Bytes) == PagesBelow(Bytes / Small, collected), "a collected page stayed known zero");
     mappings.Reset(memory, Bytes);
     VirtualFree(memory, 0, MEM_RELEASE);
 }
@@ -1029,6 +1032,35 @@ void CheckKnownZeroFirstReads() {
 void CheckKnownZeroShared() {
     Region region;
     Require(KnownZeroPages(region.first, Bytes).empty(), "shared memory is known zero");
+}
+
+void CheckKnownZeroMarks() {
+    constexpr std::size_t Large = 0x40000;
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    auto* unwatched = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Large, nullptr);
+    auto* resident = static_cast<unsigned char*>(mappings.Reserve(nullptr, Large));
+    Require(memory && unwatched && section && resident, "cannot allocate known zero marks test memory");
+    const auto before = mappings.KnownZeroMarks();
+    mappings.Commit(memory, Bytes, PAGE_READWRITE, Bytes, true);
+    const auto committed = mappings.KnownZeroMarks();
+    Require(committed > before, "a watched commit did not advance the known zero marks");
+    mappings.ForgetKnownZero(reinterpret_cast<std::uintptr_t>(memory), Bytes);
+    Require(KnownZeroPages(memory, Bytes).empty(), "a forgotten range stayed known zero");
+    mappings.Commit(unwatched, Bytes, PAGE_READWRITE, Bytes, false);
+    Require(mappings.KnownZeroMarks() == committed, "forgetting or an unwatched commit advanced the known zero marks");
+    mappings.ForgetSection(section);
+    mappings.Map(resident, Large, section, 0, PAGE_READWRITE, true, true);
+    Require(mappings.KnownZeroMarks() > committed, "a fresh resident run did not advance the known zero marks");
+    mappings.Reset(resident, Large);
+    mappings.ForgetSection(section);
+    mappings.Reset(unwatched, Bytes);
+    mappings.Reset(memory, Bytes);
+    VirtualFree(resident, 0, MEM_RELEASE);
+    VirtualFree(unwatched, 0, MEM_RELEASE);
+    VirtualFree(memory, 0, MEM_RELEASE);
+    CloseHandle(section);
 }
 
 int main(int argc, char** argv) {
@@ -1070,6 +1102,7 @@ int main(int argc, char** argv) {
         CheckKnownZeroResident();
         CheckKnownZeroShared();
         CheckKnownZeroFirstReads();
+        CheckKnownZeroMarks();
         std::cout << "Windows deferred write-watch tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

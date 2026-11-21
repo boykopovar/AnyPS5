@@ -1,0 +1,15 @@
+add_library(libSceGic SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceGic PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceGic)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_gic_tests ${LIBS_INCLUDE_DIR}/tests/GuestGic.cpp)
+    target_include_directories(guest_gic_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_gic_tests PRIVATE libSceGic libc)
+    configure_windows_unwind(guest_gic_tests)
+    add_test(NAME guest_gic COMMAND guest_gic_tests)
+    if(WIN32)
+        set_tests_properties(guest_gic PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGic>")
+    endif()
+endif()

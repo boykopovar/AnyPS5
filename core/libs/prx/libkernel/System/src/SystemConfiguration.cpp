@@ -6,6 +6,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
@@ -78,6 +79,7 @@ constexpr SystemInteger SystemIntegers[] = {
     {{1, 8}, "kern.argmax", 262144},
     {{1, 18}, "kern.ngroups", 1023},
     {{1, 24}, "kern.osreldate", 900000},
+    {{1, 46}, "kern.sdk_version", 0x01000000},
 };
 
 const SystemString* FindSystemString(const int* name) {
@@ -203,11 +205,19 @@ struct GuestKinfoProc {
     std::int32_t parentPid;
     unsigned char reserved1[288];
     std::int64_t flag;
-    unsigned char reserved2[71];
+    unsigned char reserved2[18];
+    char threadName[17];
+    unsigned char reserved3[36];
     char command[20];
-    unsigned char reserved3[621];
+    unsigned char reserved4[35];
+    char moreThreadName[4];
+    unsigned char reserved5[90];
+    std::int32_t threadCount;
+    std::int32_t threadId;
+    unsigned char reserved6[484];
 };
 static_assert(offsetof(GuestKinfoProc, pid) == 72 && offsetof(GuestKinfoProc, parentPid) == 76 && offsetof(GuestKinfoProc, flag) == 368 && offsetof(GuestKinfoProc, command) == 447 && sizeof(GuestKinfoProc) == 1088);
+static_assert(offsetof(GuestKinfoProc, threadName) == 394 && offsetof(GuestKinfoProc, moreThreadName) == 502 && offsetof(GuestKinfoProc, threadCount) == 596 && offsetof(GuestKinfoProc, threadId) == 600);
 
 GuestKinfoProc GuestProcessRecord() {
     GuestKinfoProc process{};
@@ -216,6 +226,28 @@ GuestKinfoProc GuestProcessRecord() {
     process.parentPid = getppid_nid_postfix();
     std::memcpy(process.command, "eboot.bin", sizeof("eboot.bin"));
     return process;
+}
+
+bool CallingProcessId(int id) {
+    constexpr int PidMax = 99999;
+    if (id == getpid_nid_postfix()) return true;
+    return id > PidMax && (id == scePthreadGetthreadid() || LiveGuestThreadExists(id));
+}
+
+std::vector<GuestKinfoProc> GuestThreadRecords() {
+    const auto threads = LiveGuestThreadNames();
+    std::vector<GuestKinfoProc> records;
+    for (const auto& thread : threads) {
+        GuestKinfoProc record = GuestProcessRecord();
+        record.threadCount = static_cast<std::int32_t>(threads.size());
+        record.threadId = static_cast<std::int32_t>(thread.tid);
+        const std::size_t head = std::min(thread.name.size(), sizeof(record.threadName) - 1);
+        std::memcpy(record.threadName, thread.name.data(), head);
+        const std::size_t tail = std::min(thread.name.size() - head, sizeof(record.moreThreadName) - 1);
+        std::memcpy(record.moreThreadName, thread.name.data() + head, tail);
+        records.push_back(record);
+    }
+    return records;
 }
 
 std::vector<GuestVmEntry> GuestVmEntries() {
@@ -460,7 +492,7 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             return -1;
         }
         const int pid = name[3];
-        if (pid != -1 && pid != getpid_nid_postfix()) {
+        if (pid != -1 && !CallingProcessId(pid)) {
             *__error_nid_postfix() = 3;
             return -1;
         }
@@ -476,6 +508,10 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             *__error_nid_postfix() = 22;
             return -1;
         }
+        if (oldValue == nullptr) {
+            constexpr std::size_t EstimatedExtraProcesses = 5;
+            return CopyOut(nullptr, (EstimatedExtraProcesses + 1) * sizeof(GuestKinfoProc), nullptr, oldLength);
+        }
         const GuestKinfoProc process = GuestProcessRecord();
         return CopyOut(&process, sizeof(process), oldValue, oldLength);
     }
@@ -488,12 +524,28 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             *__error_nid_postfix() = 22;
             return -1;
         }
-        if (name[3] != getpid_nid_postfix()) {
+        if (!CallingProcessId(name[3])) {
             *__error_nid_postfix() = 3;
             return -1;
         }
         const GuestKinfoProc process = GuestProcessRecord();
         return CopyOut(&process, sizeof(process), oldValue, oldLength);
+    }
+    if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 17) {
+        if (newValue != nullptr) {
+            *__error_nid_postfix() = 1;
+            return -1;
+        }
+        if (nameLength != 4) {
+            *__error_nid_postfix() = 22;
+            return -1;
+        }
+        if (!CallingProcessId(name[3])) {
+            *__error_nid_postfix() = 3;
+            return -1;
+        }
+        const auto records = GuestThreadRecords();
+        return CopyOut(records.data(), records.size() * sizeof(GuestKinfoProc), oldValue, oldLength);
     }
     if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 35) {
         if (newValue != nullptr) {
@@ -504,7 +556,7 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             *__error_nid_postfix() = 22;
             return -1;
         }
-        if (name[3] != getpid_nid_postfix()) {
+        if (!CallingProcessId(name[3])) {
             *__error_nid_postfix() = 3;
             return -1;
         }
@@ -519,7 +571,7 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             *__error_nid_postfix() = 22;
             return -1;
         }
-        if (name[3] != getpid_nid_postfix()) {
+        if (!CallingProcessId(name[3])) {
             *__error_nid_postfix() = 3;
             return -1;
         }
@@ -551,7 +603,10 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
         return 0;
     }
     if (nameLength == 2 && name[0] == 1 && name[1] == 50) {
-        if (newValue != nullptr) throw std::runtime_error(std::string(__func__) + ": writing kern.rng_pseudo is unverified");
+        if (newValue != nullptr) {
+            *__error_nid_postfix() = 1;
+            return -1;
+        }
         std::array<std::uint8_t, 64> bytes{};
         if (oldValue != nullptr && oldLength != nullptr) {
             static std::random_device device;
@@ -622,15 +677,8 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
         return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
     }
     if (std::strcmp(name, "kern.rng_pseudo") == 0) {
-        if (newValue != nullptr) {
-            *__error_nid_postfix() = 1;
-            return -1;
-        }
-        static std::random_device device;
-        std::uint8_t block[64]{};
-        if (oldValue != nullptr && oldLength != nullptr)
-            for (auto& byte : block) byte = static_cast<std::uint8_t>(device());
-        return CopyOut(block, sizeof(block), oldValue, oldLength);
+        static constexpr int mib[] = {1, 50};
+        return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
     }
     if (std::strcmp(name, "vm.overcommit") == 0) {
         if (newValue != nullptr) {
@@ -639,14 +687,6 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
         }
         static constexpr int overcommit = 0;
         return CopyOut(&overcommit, sizeof(overcommit), oldValue, oldLength);
-    }
-    if (std::strcmp(name, "kern.sdk_version") == 0) {
-        if (newValue != nullptr) {
-            *__error_nid_postfix() = 1;
-            return -1;
-        }
-        static constexpr std::uint32_t sdkVersion = 0x01000000;
-        return CopyOut(&sdkVersion, sizeof(sdkVersion), oldValue, oldLength);
     }
     if (std::strcmp(name, "machdep.tsc_freq") == 0) {
         if (newValue != nullptr) {

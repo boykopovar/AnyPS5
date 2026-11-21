@@ -3,6 +3,7 @@
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -23,10 +24,27 @@ static void Check(bool value, int line) {
 }
 #define Require(value) Check((value), __LINE__)
 
-static void SameFace(const GuestFaceRec* guest, FT_Face native) {
+static void SameFace(const GuestFaceRec* guest, FT_Face native, bool externalStream = false) {
     Require(guest->num_faces == native->num_faces && guest->face_index == native->face_index);
-    Require(guest->face_flags == native->face_flags && guest->num_glyphs == native->num_glyphs);
+    const auto expectedFlags = native->face_flags | (externalStream ? FT_FACE_FLAG_EXTERNAL_STREAM : 0);
+    Require(guest->face_flags == expectedFlags && guest->num_glyphs == native->num_glyphs);
     Require(guest->units_per_EM == native->units_per_EM && guest->ascender == native->ascender && guest->descender == native->descender);
+}
+
+static int streamReads = 0;
+static int streamCloses = 0;
+
+static std::uint64_t APS5_VABI ReadStream(GuestStreamRec* stream, std::uint64_t offset, unsigned char* output, std::uint64_t count) {
+    ++streamReads;
+    if (!count || offset >= stream->size) return 0;
+    const auto length = std::min(count, stream->size - offset);
+    std::memcpy(output, stream->base + offset, static_cast<std::size_t>(length));
+    stream->pos = offset + length;
+    return length;
+}
+
+static void APS5_VABI CloseStream(GuestStreamRec*) {
+    ++streamCloses;
 }
 
 int main() {
@@ -54,6 +72,43 @@ int main() {
     Require(face && expected);
     SameFace(face, expected);
     Require(FT_Done_Face_nid_postfix(face) == 0 && FT_Done_Face(expected) == 0);
+
+    GuestStreamRec memoryStream{};
+    memoryStream.base = const_cast<unsigned char*>(font.data());
+    memoryStream.size = font.size();
+    memoryStream.close = CloseStream;
+    GuestOpenArgs memoryStreamArgs{FT_OPEN_STREAM, nullptr, 0, nullptr, &memoryStream, nullptr, 0, nullptr};
+    face = nullptr;
+    expected = nullptr;
+    Require(FT_Open_Face_nid_postfix(&library, &memoryStreamArgs, 0, &face) == FT_Open_Face(native, &nativeMemory, 0, &expected));
+    Require(face && expected && streamCloses == 0);
+    SameFace(face, expected, true);
+    Require(FT_Done_Face_nid_postfix(face) == 0 && FT_Done_Face(expected) == 0);
+    Require(streamCloses == 1);
+
+    GuestStreamRec callbackStream{};
+    callbackStream.base = const_cast<unsigned char*>(font.data());
+    callbackStream.size = font.size();
+    callbackStream.read = ReadStream;
+    callbackStream.close = CloseStream;
+    GuestOpenArgs callbackArgs{FT_OPEN_STREAM, nullptr, 0, nullptr, &callbackStream, nullptr, 0, nullptr};
+    face = nullptr;
+    expected = nullptr;
+    Require(FT_Open_Face_nid_postfix(&library, &callbackArgs, 0, &face) == FT_Open_Face(native, &nativeMemory, 0, &expected));
+    Require(face && expected && streamReads > 0 && streamCloses == 1);
+    SameFace(face, expected, true);
+    Require(FT_Done_Face_nid_postfix(face) == 0 && FT_Done_Face(expected) == 0);
+    Require(streamCloses == 2);
+
+    unsigned char invalidBytes[4]{};
+    GuestStreamRec invalidStream{};
+    invalidStream.base = invalidBytes;
+    invalidStream.size = sizeof(invalidBytes);
+    invalidStream.close = CloseStream;
+    GuestOpenArgs invalidStreamArgs{FT_OPEN_STREAM, nullptr, 0, nullptr, &invalidStream, nullptr, 0, nullptr};
+    face = nullptr;
+    Require(FT_Open_Face_nid_postfix(&library, &invalidStreamArgs, 0, &face) != 0);
+    Require(face == nullptr && streamCloses == 3);
 
     char path[] = "/app0/open.ttf";
     GuestOpenArgs byPath{FT_OPEN_PATHNAME, nullptr, 0, path, nullptr, nullptr, 0, nullptr};

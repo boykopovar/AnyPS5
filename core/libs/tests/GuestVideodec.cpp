@@ -109,6 +109,88 @@ struct Session {
     FrameBuffer MakeTarget() { return FrameBuffer{sizeof(FrameBuffer), buffer.data(), buffer.size()}; }
 };
 
+PictureInfo makeSentinelPicture() {
+    PictureInfo picture{sizeof(PictureInfo)};
+    picture.isValid = 0;
+    picture.codecType = 0x5au;
+    picture.frameWidth = 0x1234u;
+    picture.framePitch = 0x2345u;
+    picture.frameHeight = 0x3456u;
+    picture.isErrorPic = 1;
+    picture.ptsData = 0x1122334455667788ull;
+    picture.attachedData = 0x8877665544332211ull;
+    return picture;
+}
+
+bool isPictureUntouched(const PictureInfo& picture, const PictureInfo& sentinel) {
+    return picture.thisSize == sentinel.thisSize &&
+           picture.isValid == sentinel.isValid &&
+           picture.codecType == sentinel.codecType &&
+           picture.frameWidth == sentinel.frameWidth &&
+           picture.framePitch == sentinel.framePitch &&
+           picture.frameHeight == sentinel.frameHeight &&
+           picture.isErrorPic == sentinel.isErrorPic &&
+           picture.ptsData == sentinel.ptsData &&
+           picture.attachedData == sentinel.attachedData;
+}
+
+void testDecodeCopyFailure(const std::vector<std::vector<std::uint8_t>>& units, FrameBuffer& badFrame, int expectedError, const std::string& label) {
+    Session session;
+    const auto sentinel = makeSentinelPicture();
+    int refusals = 0;
+    for (std::size_t unit = 0; unit < units.size(); ++unit) {
+        const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+        auto picture = sentinel;
+        const auto status = sceVideodecDecode(&session.ctrl, &input, &badFrame, &picture);
+        check(status == 0 || status == expectedError, "unexpected decode status for " + label);
+        if (status == 0) {
+            check(!picture.isValid, "decode succeeded with a valid picture for " + label);
+        } else {
+            ++refusals;
+            check(!picture.isValid && isPictureUntouched(picture, sentinel), "failed decode modified picture info for " + label);
+        }
+    }
+    check(refusals > 0, "no decode picture failed for " + label);
+}
+
+void testFlushCopyFailure(const std::vector<std::vector<std::uint8_t>>& units, FrameBuffer& badFrame, int expectedError, const std::string& label) {
+    Session session;
+    for (std::size_t unit = 0; unit < units.size(); ++unit) {
+        const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+        auto target = session.MakeTarget();
+        PictureInfo picture{sizeof(PictureInfo)};
+        check(sceVideodecDecode(&session.ctrl, &input, &target, &picture) == 0, "decode failed before flush test for " + label);
+    }
+    const auto sentinel = makeSentinelPicture();
+    int refusals = 0;
+    for (;;) {
+        auto picture = sentinel;
+        const auto status = sceVideodecFlush(&session.ctrl, &badFrame, &picture);
+        check(status == 0 || status == expectedError, "unexpected flush status for " + label);
+        if (status == 0) {
+            check(!picture.isValid, "flush succeeded with a valid picture for " + label);
+            break;
+        }
+        ++refusals;
+        check(!picture.isValid && isPictureUntouched(picture, sentinel), "failed flush modified picture info for " + label);
+    }
+    check(refusals > 0, "no flush picture failed for " + label);
+}
+
+void testCopyFailureLeavesPictureUntouched() {
+    const auto units = accessUnits(false);
+    std::vector<std::uint8_t> storage(FrameBytes);
+    FrameBuffer shortBuffer{sizeof(FrameBuffer), storage.data(), FrameBytes - 1};
+    const std::vector<std::uint8_t> zeros(Pitch, 0);
+    PageTail readOnlyPixels(zeros.data(), zeros.size());
+    readOnlyPixels.ReadOnly();
+    FrameBuffer readOnlyFrame{sizeof(FrameBuffer), readOnlyPixels.As<void>(), FrameBytes};
+    testDecodeCopyFailure(units, shortBuffer, ErrorFrameBufferSize, "short frame buffer");
+    testDecodeCopyFailure(units, readOnlyFrame, ErrorFrameBufferPointer, "read-only frame pixel buffer");
+    testFlushCopyFailure(units, shortBuffer, ErrorFrameBufferSize, "short frame buffer");
+    testFlushCopyFailure(units, readOnlyFrame, ErrorFrameBufferPointer, "read-only frame pixel buffer");
+}
+
 void testDecode(const std::vector<std::vector<std::uint8_t>>& units, std::uint32_t cropTop, std::uint32_t cropBottom) {
     Session session;
     check(units.size() == PictureHashes.size(), "unexpected access unit count");
@@ -168,6 +250,9 @@ void testErrors() {
     const ConfigInfo shortConfig{sizeof(ConfigInfo) - 8};
     check(sceVideodecCreateDecoder(&shortConfig, &resource, &ctrl) == ErrorStructSize, "a short configuration was accepted");
     check(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "decoder creation failed");
+    PictureInfo freshPicture{sizeof(PictureInfo)};
+    FrameBuffer unset{sizeof(FrameBuffer), nullptr, FrameBytes};
+    check(sceVideodecFlush(&ctrl, &unset, &freshPicture) == ErrorFrameBufferPointer, "flush accepted a null frame buffer");
     check(sceVideodecDeleteDecoder(nullptr) == ErrorArgumentPointer, "a null control block was accepted by delete");
     Ctrl shortCtrl{sizeof(Ctrl) - 8};
     check(sceVideodecDeleteDecoder(&shortCtrl) == ErrorStructSize, "a short control block was accepted by delete");
@@ -213,6 +298,12 @@ void testErrors() {
     check(sceVideodecDecode(&ctrl, &input, &shortFrame, &picture) == ErrorStructSize, "a short frame buffer structure was accepted");
     PictureInfo shortPicture{sizeof(PictureInfo) - 8};
     check(sceVideodecDecode(&ctrl, &input, &frame, &shortPicture) == ErrorStructSize, "a short picture information structure was accepted");
+    check(sceVideodecDecode(&ctrl, &input, nullptr, nullptr) == ErrorArgumentPointer, "decode reported the frame buffer before a null picture info");
+    check(sceVideodecDecode(&ctrl, nullptr, nullptr, &picture) == ErrorArgumentPointer, "decode reported the frame buffer before a null input block");
+    const SceVideodec2::InputData shortInput{sizeof(SceVideodec2::InputData) - 8, units[0].data(), units[0].size(), 0, 0, 0};
+    check(sceVideodecDecode(&ctrl, &shortInput, &frame, &picture) == ErrorStructSize, "a short input structure was accepted");
+    check(sceVideodecFlush(&ctrl, nullptr, nullptr) == ErrorArgumentPointer, "flush reported the frame buffer before a null picture info");
+    check(sceVideodecFlush(&foreign, &frame, &picture) == ErrorHandle, "flush accepted an unknown decoder");
     check(sceVideodecDeleteDecoder(&ctrl) == 0, "the decoder was not deleted");
     check(sceVideodecDeleteDecoder(&ctrl) == ErrorHandle, "the decoder was deleted twice");
     check(sceVideodecReset(&ctrl) == ErrorHandle, "a deleted decoder was reset");
@@ -380,6 +471,34 @@ void testQueryResourceInfo() {
     check(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "create failed after a refused read-only control block");
     check(sceVideodecDeleteDecoder(&ctrl) == 0, "the decoder created after a refused read-only control block was not deleted");
 }
+void testMapMemory() {
+    unsigned char memory[0x48]{};
+    const auto setSize = [&](std::uint64_t size) { std::memcpy(memory, &size, sizeof(size)); };
+    const auto setFlags = [&](std::uint32_t flags) { std::memcpy(memory + 0x20, &flags, sizeof(flags)); };
+    Ctrl ctrl{sizeof(Ctrl), memory, 0};
+    Ctrl noHandle{sizeof(Ctrl), nullptr, 0};
+    Ctrl wrongSize{sizeof(Ctrl) + 8, nullptr, 0};
+    setSize(0x20);
+    check(sceVideodecMapMemory(nullptr, memory) == ErrorArgumentPointer, "map memory accepted a null control block");
+    check(sceVideodecMapMemory(&ctrl, nullptr) == ErrorArgumentPointer, "map memory accepted a null memory block");
+    check(sceVideodecMapMemory(&wrongSize, memory) == ErrorStructSize, "map memory accepted a control block size other than 24");
+    for (const std::uint64_t size : {0ull, 0x18ull, 0x1full, 0x21ull, 0x30ull, 0x40ull, 0x47ull, 0x49ull, 0x50ull}) {
+        setSize(size);
+        check(sceVideodecMapMemory(&noHandle, memory) == ErrorStructSize, "map memory did not check the memory block size before the handle");
+    }
+    for (const std::uint64_t size : {0x20ull, 0x28ull, 0x48ull}) {
+        setSize(size);
+        setFlags(1);
+        check(sceVideodecMapMemory(&noHandle, memory) == ErrorHandle, "map memory accepted a control block without a handle");
+    }
+    for (const std::uint64_t size : {0x28ull, 0x48ull}) {
+        setSize(size);
+        for (const std::uint32_t flags : {1u, 0x80000000u, 0xffffffffu}) {
+            setFlags(flags);
+            check(sceVideodecMapMemory(&ctrl, memory) == ErrorApiFail, "map memory accepted a non-zero field at 0x20");
+        }
+    }
+}
 
 }
 
@@ -388,10 +507,12 @@ int main() {
         testDecode();
         testDecodeCropped();
         testErrors();
+        testCopyFailureLeavesPictureUntouched();
         testReset();
         testDeepPicture();
         testDeepReorderedPicture();
         testQueryResourceInfo();
+        testMapMemory();
         std::puts("Videodec tests passed");
         return 0;
     } catch (const std::exception& error) {
@@ -399,3 +520,4 @@ int main() {
         return 1;
     }
 }
+

@@ -6,6 +6,7 @@
 #include FT_FREETYPE_H
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -175,8 +176,32 @@ static void CheckBitmap() {
     }
 }
 
+static void CheckGuestPointers() {
+    auto rejectsRuntime = [](auto&& call) {
+        errno = 71;
+        bool threw = false;
+        try {
+            call();
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw && errno == 71);
+    };
+
+    const auto* badRequest = reinterpret_cast<const GuestSizeRequestRec*>(std::uintptr_t{0x10});
+    auto* badFace = reinterpret_cast<GuestFaceRec*>(std::uintptr_t{0x10});
+    Require(FT_Request_Size_nid_postfix(nullptr, badRequest) == FT_Err_Invalid_Face_Handle);
+    rejectsRuntime([&] { FT_Request_Size_nid_postfix(badFace, nullptr); });
+    rejectsRuntime([&] { FT_Request_Size_nid_postfix(badFace, badRequest); });
+
+    Fixture fixture(SquareGlyphFont('A', 913));
+    rejectsRuntime([&] { FT_Request_Size_nid_postfix(fixture.guest, badRequest); });
+    fixture.CheckMetrics();
+}
+
 int main() {
     CheckScalable();
     CheckInvalid();
     CheckBitmap();
+    CheckGuestPointers();
 }

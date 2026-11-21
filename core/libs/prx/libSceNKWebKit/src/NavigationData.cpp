@@ -26,4 +26,11 @@ const void* APS5_VABI WKNavigationDataCopyNavigationDestinationURL(const void* n
     return CopyURL(NKWebKit::Cast<NKWebKit::NavigationData>(navigationDataRef, __func__)->url);
 }
 
+const void* APS5_VABI WKNavigationDataCopyOriginalRequest(const void* navigationDataRef) {
+    const auto* data = NKWebKit::Cast<NKWebKit::NavigationData>(navigationDataRef, __func__);
+    if (!data->originalRequestURL || data->originalRequestURL->empty()) return nullptr;
+    auto url = NKWebKit::Make<NKWebKit::URL>(*data->originalRequestURL);
+    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::URLRequest>(std::move(url)));
+}
+
 }

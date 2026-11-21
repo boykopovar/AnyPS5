@@ -59,10 +59,7 @@ void CheckTypes(const void* resource, const char* name) {
     const TypeRecord* type = TypeOf(resource);
     Require(std::strcmp(type->name, name) == 0, name);
     Require(type->vtable == TypeInfoVptr(_ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix), "resource type is a single-base class");
-    const TypeRecord* identity = type->base;
-    Require(std::strcmp(identity->name, "NSt3pmr24_Identity_equal_resourceE") == 0, "_Identity_equal_resource base");
-    Require(identity->vtable == TypeInfoVptr(_ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix), "_Identity_equal_resource is a single-base class");
-    const TypeRecord* root = identity->base;
+    const TypeRecord* root = type->base;
     Require(std::strcmp(root->name, "NSt3pmr15memory_resourceE") == 0, "memory_resource root");
     Require(root->vtable == TypeInfoVptr(_ZTVN10__cxxabiv117__class_type_infoE_nid_postfix), "memory_resource has no base");
 }
@@ -87,8 +84,8 @@ int main() {
     Require(newDelete != aligned && newDelete != unaligned && newDelete != libcNull, "standard new_delete is distinct from __sce_v2 family");
     Require(nullRes != aligned && nullRes != unaligned && nullRes != libcNull, "standard null_memory_resource is distinct from __sce_v2 family");
 
-    CheckTypes(newDelete, "NSt3pmr33_Aligned_new_delete_resource_implE");
-    CheckTypes(nullRes, "ZNSt3pmr20null_memory_resourceEvE14_Null_resource");
+    CheckTypes(newDelete, "NSt3pmr17_New_del_resourceE");
+    CheckTypes(nullRes, "NSt3pmr18_Null_mem_resourceE");
 
     for (void* resource : {newDelete, nullRes}) {
         Require(Slot<IsEqual>(resource, 4)(resource, resource), "is_equal to itself");

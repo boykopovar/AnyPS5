@@ -36,6 +36,8 @@ struct HTTPHeaderMap {
     UncommonHeadersVector uncommon;
 };
 
+void UpdateCommonHeader_nid_no_patch(HTTPHeaderMap& map, HTTPHeaderName name, const String& value, bool add);
+
 struct ASCIILiteral {
     const char* characters;
 };

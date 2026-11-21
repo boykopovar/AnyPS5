@@ -24,5 +24,7 @@ int APS5_VABI FT_Raccess_Get_HeaderInfo_nid_postfix(FreeType::GuestRaccessLibrar
                                                     std::int64_t* mapOffset, std::int64_t* rdataPos);
 int APS5_VABI FT_Raccess_Get_DataOffsets_nid_postfix(FreeType::GuestRaccessLibrary* library, FreeType::GuestStreamRec* stream, std::int64_t mapOffset,
                                                      std::int64_t rdataPos, std::int64_t tag, std::int64_t** offsets, std::int64_t* count);
+void APS5_VABI FT_Raccess_Guess_nid_postfix(FreeType::GuestRaccessLibrary* library, FreeType::GuestStreamRec* stream, char* baseName, char** newNames,
+                                           std::int64_t* offsets, std::int32_t* errors);
 
 }

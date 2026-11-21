@@ -1,0 +1,20 @@
+#pragma once
+
+#include "SceTypes.hpp"
+#include "prx/libSceNKWebKit/src/CrossOriginAccessControlAbi.hpp"
+
+extern "C" {
+
+void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisabler39setCrossOriginAccessControlCheckEnabledEb(NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler* self, bool enabled);
+NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler& APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisabler9singletonEv();
+void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerC1ERKS0_(NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler* self, const NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler* other);
+void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerC1Ev(NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler* self);
+void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerC2ERKS0_(NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler* self, const NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler* other);
+void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerC2Ev(NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler* self);
+void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD0Ev(NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler* self);
+void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD1Ev(NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler* self);
+void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD2Ev(NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler* self);
+NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler& APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisableraSERKS0_(NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler* self, const NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler* other);
+bool APS5_VABI _ZNK7WebCore37CrossOriginAccessControlCheckDisabler36crossOriginAccessControlCheckEnabledEv(const NKWebKit::WebCoreAbi::CrossOriginAccessControlCheckDisabler* self);
+
+}

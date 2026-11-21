@@ -1,0 +1,15 @@
+add_library(libScePlayReady2 SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libScePlayReady2 PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libScePlayReady2)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_play_ready2_tests ${LIBS_INCLUDE_DIR}/tests/GuestPlayReady2.cpp)
+    target_include_directories(guest_play_ready2_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_play_ready2_tests PRIVATE libScePlayReady2 libc)
+    configure_windows_unwind(guest_play_ready2_tests)
+    add_test(NAME guest_play_ready2 COMMAND guest_play_ready2_tests)
+    if(WIN32)
+        set_tests_properties(guest_play_ready2 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayReady2>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

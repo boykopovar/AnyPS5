@@ -1,5 +1,7 @@
 #include "prx/libSceNpSessionSignaling/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -7,6 +9,10 @@
 #include <array>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 constexpr int InvalidArgument = static_cast<int>(0x80553303u);
 constexpr int Unavailable = static_cast<int>(0x80552D06u);
@@ -16,6 +22,8 @@ constexpr int AlreadyInitialized = static_cast<int>(0x80553302u);
 constexpr int ContextLimit = static_cast<int>(0x80553307u);
 constexpr int ContextNotFound = static_cast<int>(0x80553308u);
 constexpr int GroupNotFound = static_cast<int>(0x8055330Au);
+constexpr int NpInvalidArgument = static_cast<int>(0x80550003u);
+constexpr int NpSignedOut = static_cast<int>(0x80550006u);
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -27,9 +35,14 @@ void Require(bool condition, const char* message) {
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     alignas(8) unsigned char initializeParam[40] = {};
     Require(sceNpSessionSignalingTerminate() == NotInitialized, "terminate before initialize");
     Require(sceNpSessionSignalingCreateContext2(nullptr, nullptr) == NotInitialized, "initialization check precedes context arguments");
+    errno = 71;
+    Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(0x10), nullptr) == NotInitialized, "unmapped context2 before initialize");
+    Require(errno == 71, "errno preserved before initialize");
     Require(sceNpSessionSignalingGetConnectionStatus(0, 0, nullptr, nullptr, nullptr) == NotInitialized, "status before initialize");
     Require(sceNpSessionSignalingGetMemoryInfo(nullptr) == NotInitialized, "memory info before initialize");
     Require(sceNpSessionSignalingGetConnectionStatistics(nullptr) == NotInitialized, "statistics before initialize");
@@ -37,7 +50,14 @@ int main() {
     Require(sceNpSessionSignalingGetCustomProperty(0, nullptr) == NotInitialized, "custom property before initialize");
     Require(sceNpSessionSignalingSetCustomProperty(0, nullptr, nullptr) == NotInitialized, "set custom property before initialize");
     Require(sceNpSessionSignalingRegisterInternalCallback(0, nullptr, nullptr) == NotInitialized, "register callback before initialize");
+    Require(sceNpSessionSignalingManualUdpCreateJoin(nullptr, nullptr, nullptr) == NotInitialized, "manual UDP create-join before initialize");
+    Require(sceNpSessionSignalingManualUdpJoin(nullptr, nullptr, nullptr, nullptr) == NotInitialized, "manual UDP join before initialize");
+    Require(sceNpSessionSignalingManualUdpEstablishConnection(0, 0) == NotInitialized, "manual UDP establish before initialize");
+    Require(sceNpSessionSignalingManualUdpAbortConnection(0) == NotInitialized, "manual UDP abort before initialize");
     Require(sceNpSessionSignalingInitialize(nullptr) == InvalidArgument, "null initialize parameter");
+    errno = 71;
+    Require(sceNpSessionSignalingInitialize(reinterpret_cast<const SessionSignalingInitParam*>(0x10)) == InvalidArgument, "unmapped initialize parameter");
+    Require(errno == 71, "errno preserved on unmapped initialize parameter");
     Require(sceNpSessionSignalingInitialize(reinterpret_cast<const SessionSignalingInitParam*>(initializeParam)) == InvalidArgument, "zero pool size");
     const std::uint64_t poolSize = 4 * 1024 * 1024;
     std::memcpy(initializeParam + 8, &poolSize, sizeof(poolSize));
@@ -55,16 +75,47 @@ int main() {
     Require(sceNpSessionSignalingGetConnectionStatistics(&statistics) == 0, "statistics failed");
     Require(statistics.peakConnectionCount == 0 && statistics.connectionCount == 0 && statistics.connectingCount == 0 && statistics.connectedCount == 0, "statistics contents");
     Require(sceNpSessionSignalingInitialize(nullptr) == AlreadyInitialized, "initialization check precedes initialize arguments");
+    errno = 71;
+    Require(sceNpSessionSignalingInitialize(reinterpret_cast<const SessionSignalingInitParam*>(0x10)) == AlreadyInitialized, "unmapped initialize parameter after init");
+    Require(errno == 71, "errno preserved on unmapped initialize parameter after init");
     alignas(8) unsigned char contextParam[56] = {};
     std::uint32_t contextId = 0;
     Require(sceNpSessionSignalingCreateContext(nullptr, &contextId) == InvalidArgument, "null context parameter");
+    errno = 71;
+    Require(sceNpSessionSignalingCreateContext(reinterpret_cast<const SessionSignalingContextParam1*>(0x10), &contextId) == InvalidArgument, "unmapped context parameter");
+    Require(errno == 71, "errno preserved on unmapped context parameter");
     Require(contextId == 0, "invalid context parameter wrote an id");
     Require(sceNpSessionSignalingCreateContext2(nullptr, &contextId) == InvalidArgument, "null context2 parameter");
+    errno = 71;
+    Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(0x10), &contextId) == InvalidArgument, "unmapped context2 parameter");
+    Require(errno == 71, "errno preserved on unmapped context2 parameter");
     Require(contextId == 0, "invalid context2 parameter wrote an id");
     Require(sceNpSessionSignalingCreateContext(reinterpret_cast<const SessionSignalingContextParam1*>(contextParam), nullptr) == InvalidArgument, "null context id");
     Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), nullptr) == InvalidArgument, "null context2 id");
     Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), &contextId) == 0, "context creation failed");
     const auto firstId = contextId;
+    unsigned char manualParam[0x28] = {};
+    std::uint32_t manualId = 0x5A5A5A5Au;
+    Require(sceNpSessionSignalingManualUdpCreateJoin(nullptr, &manualId, nullptr) == InvalidArgument, "manual UDP create-join without a parameter");
+    Require(sceNpSessionSignalingManualUdpCreateJoin(manualParam, nullptr, &manualId) == InvalidArgument, "manual UDP create-join without an id output");
+    Require(sceNpSessionSignalingManualUdpJoin(nullptr, "name", &manualId, nullptr) == InvalidArgument, "manual UDP join without a parameter");
+    Require(sceNpSessionSignalingManualUdpJoin(manualParam, nullptr, &manualId, nullptr) == InvalidArgument, "manual UDP join without a name");
+    Require(sceNpSessionSignalingManualUdpJoin(manualParam, "name", nullptr, &manualId) == InvalidArgument, "manual UDP join without an id output");
+    Require(sceNpSessionSignalingManualUdpJoin(manualParam, "", &manualId, nullptr) == InvalidArgument, "manual UDP join with an empty name");
+    Require(manualId == 0x5A5A5A5Au, "a refused manual UDP call wrote the id");
+    Require(sceNpSessionSignalingManualUdpEstablishConnection(firstId, 0) == GroupNotFound, "manual UDP establish on a context with no group");
+    Require(sceNpSessionSignalingManualUdpAbortConnection(firstId) == GroupNotFound, "manual UDP abort on a context with no group");
+    const std::int32_t manualUser = 1;
+    std::memcpy(manualParam, &manualUser, sizeof(manualUser));
+    Require(sceNpSessionSignalingManualUdpCreateJoin(manualParam, &manualId, nullptr) == NpSignedOut, "manual UDP create-join did not return NpManager's answer for the user");
+    Require(sceNpSessionSignalingManualUdpJoin(manualParam, "name", &manualId, nullptr) == NpSignedOut, "manual UDP join did not return NpManager's answer for the user");
+    const std::int32_t invalidUser = -1;
+    std::memcpy(manualParam, &invalidUser, sizeof(invalidUser));
+    Require(sceNpSessionSignalingManualUdpCreateJoin(manualParam, &manualId, nullptr) == NpInvalidArgument, "manual UDP create-join did not return NpManager's answer for user -1");
+    std::memcpy(manualParam, &manualUser, sizeof(manualUser));
+    Require(manualId == 0x5A5A5A5Au, "a refused manual UDP call wrote the id");
+    Require(sceNpSessionSignalingManualUdpEstablishConnection(firstId + 1000, 0) == ContextNotFound, "manual UDP establish on an unknown context");
+    Require(sceNpSessionSignalingManualUdpAbortConnection(firstId + 1000) == ContextNotFound, "manual UDP abort on an unknown context");
     Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), &contextId) == ContextLimit, "duplicate user context");
     Require(contextId == firstId, "duplicate context modified output");
     std::array<std::uint32_t, 9> otherContexts{};
@@ -72,9 +123,11 @@ int main() {
         std::memcpy(contextParam, &userId, sizeof(userId));
         Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), &otherContexts[userId - 1]) == 0, "create remaining contexts");
     }
+    Require(otherContexts[0] == firstId + 1 + 3 * 10, "three refused manual UDP calls did not each release the next slot");
     const std::int32_t overflowUser = 10;
     std::memcpy(contextParam, &overflowUser, sizeof(overflowUser));
     Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), &contextId) == ContextLimit, "context limit");
+    Require(sceNpSessionSignalingManualUdpCreateJoin(manualParam, &manualId, nullptr) == ContextLimit, "manual UDP create-join with every context slot in use");
     Require(contextId == firstId, "context limit modified output");
     Require(sceNpSessionSignalingDestroyContext(firstId) == 0, "destroy first context");
     Require(sceNpSessionSignalingDestroyContext(firstId) == ContextNotFound, "destroy stale context");
@@ -169,9 +222,25 @@ int main() {
     std::uint32_t property = 0;
     Require(sceNpSessionSignalingGetCustomProperty(firstId, &property) == ContextNotFound, "custom property stale context");
     Require(sceNpSessionSignalingGetCustomProperty(contextId, nullptr) == 0, "null custom property output");
+    errno = 71;
+    Require(sceNpSessionSignalingGetCustomProperty(contextId, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument, "unwritable custom property output");
+    Require(errno == 71, "errno preserved on unwritable custom property output");
     Require(sceNpSessionSignalingGetCustomProperty(contextId, &property) == 0 && property == 0, "default custom property");
     Require(sceNpSessionSignalingSetCustomProperty(contextId, nullptr, nullptr) == InvalidArgument, "null custom property value");
     Require(sceNpSessionSignalingSetCustomProperty(firstId, &property, nullptr) == ContextNotFound, "set custom property stale context");
+    const std::uint32_t firstProperty = 0x11223344u;
+    previousProperty = 0xffffffffu;
+    Require(sceNpSessionSignalingSetCustomProperty(contextId, &firstProperty, &previousProperty) == 0 && previousProperty == 0, "first custom property update");
+    Require(sceNpSessionSignalingGetCustomProperty(contextId, &property) == 0 && property == firstProperty, "stored custom property");
+    errno = 71;
+    Require(sceNpSessionSignalingSetCustomProperty(contextId, &firstProperty, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument, "unwritable previous custom property output");
+    Require(errno == 71, "errno preserved on unwritable previous custom property output");
+    Require(sceNpSessionSignalingGetCustomProperty(contextId, &property) == 0 && property == firstProperty, "rejected update changed the custom property");
+    const std::uint32_t secondProperty = 0x55667788u;
+    previousProperty = 0;
+    Require(sceNpSessionSignalingSetCustomProperty(contextId, &secondProperty, &previousProperty) == 0 && previousProperty == firstProperty, "second custom property update reports its predecessor");
+    Require(sceNpSessionSignalingSetCustomProperty(contextId, &secondProperty, nullptr) == 0, "custom property update without a previous output");
+    Require(sceNpSessionSignalingGetCustomProperty(contextId, &property) == 0 && property == secondProperty, "updated custom property");
     Require(sceNpSessionSignalingRegisterInternalCallback(firstId, nullptr, nullptr) == ContextNotFound, "register callback stale context");
     Require(sceNpSessionSignalingRegisterInternalCallback(contextId, nullptr, nullptr) == 0, "register callback");
     const char* const activateSessionId = reinterpret_cast<const char*>(sessionId);
@@ -179,6 +248,9 @@ int main() {
     std::uint32_t activatedGroup = 0xa5a5a5a5u;
     Require(sceNpSessionSignalingActivateSession(contextId, nullptr, 0, &sessionParam, &activatedGroup) == InvalidArgument, "activate with a null session id");
     Require(sceNpSessionSignalingActivateSession(contextId, activateSessionId, 0, nullptr, &activatedGroup) == InvalidArgument, "activate with a null session param");
+    errno = 71;
+    Require(sceNpSessionSignalingActivateSession(contextId, activateSessionId, 0, reinterpret_cast<const SessionSignalingSessionParam*>(0x10), &activatedGroup) == InvalidArgument, "activate with an unmapped session param");
+    Require(errno == 71, "errno preserved on unmapped session param");
     Require(sceNpSessionSignalingActivateSession(contextId, activateSessionId, 0, &sessionParam, nullptr) == InvalidArgument, "activate with a null group id");
     Require(sceNpSessionSignalingActivateSession(firstId, nullptr, 0, &sessionParam, &activatedGroup) == InvalidArgument, "activation argument precedence");
     Require(sceNpSessionSignalingActivateSession(firstId, activateSessionId, 0, &sessionParam, &activatedGroup) == ContextNotFound, "activate on a stale context");
@@ -191,6 +263,28 @@ int main() {
     Require(activatedGroup == 0xa5a5a5a5u, "failed mode 2 activation wrote a group id");
     Require(sceNpSessionSignalingActivateSession(contextId, activateSessionId, 0, &sessionParam, &activatedGroup) == Unavailable, "activate without network");
     Require(activatedGroup == 0xa5a5a5a5u, "a failed activation wrote a group id");
+
+    std::uint32_t requestGroup = 0xa5a5a5a5u;
+    std::uint32_t requestConnection = 0xa5a5a5a5u;
+    Require(sceNpSessionSignalingCreateJoinActivate(nullptr, &requestGroup, nullptr) == InvalidArgument, "create join activate accepted a null session id");
+    Require(sceNpSessionSignalingCreateJoinActivate(activateSessionId, nullptr, nullptr) == InvalidArgument, "create join activate accepted a null group id");
+    Require(sceNpSessionSignalingCreateJoinActivate(activateSessionId, &requestGroup, &requestConnection) == Unavailable, "create join activate without network");
+    Require(requestGroup == 0xa5a5a5a5u && requestConnection == 0xa5a5a5a5u, "a failed create join activate wrote an output");
+    const std::array<unsigned char, 8> joinParam = {1};
+    const std::array<unsigned char, 8> zeroMode{};
+    Require(sceNpSessionSignalingJoinActivate(nullptr, joinParam.data(), &requestGroup, nullptr) == InvalidArgument, "join activate accepted a null session id");
+    Require(sceNpSessionSignalingJoinActivate(activateSessionId, nullptr, &requestGroup, nullptr) == InvalidArgument, "join activate accepted a null parameter");
+    Require(sceNpSessionSignalingJoinActivate(activateSessionId, joinParam.data(), nullptr, nullptr) == InvalidArgument, "join activate accepted a null group id");
+    errno = 71;
+    Require(sceNpSessionSignalingJoinActivate(activateSessionId, zeroMode.data(), &requestGroup, nullptr) == InvalidArgument, "join activate accepted a zero mode");
+    Require(errno == 71, "join activate zero mode clobbered errno");
+    errno = 71;
+    Require(sceNpSessionSignalingJoinActivate(activateSessionId, reinterpret_cast<const void*>(0x10), &requestGroup, nullptr) == InvalidArgument, "join activate accepted an unmapped parameter");
+    Require(errno == 71, "join activate unmapped parameter clobbered errno");
+    errno = 71;
+    Require(sceNpSessionSignalingJoinActivate(activateSessionId, joinParam.data(), &requestGroup, &requestConnection) == Unavailable, "join activate without network");
+    Require(errno == 71, "join activate clobbered errno");
+    Require(requestGroup == 0xa5a5a5a5u && requestConnection == 0xa5a5a5a5u, "a failed join activate wrote an output");
 
     const auto* peerAddressParam = reinterpret_cast<const SessionSignalingPeerAddress*>(peer);
     std::uint32_t connectionId = 0xa5a5a5a5u;
@@ -212,6 +306,9 @@ int main() {
     Require(std::memcmp(&connectionInfo, untouchedConnectionInfo, sizeof(connectionInfo)) == 0, "failed connection info query modified the info");
 
     Require(sceNpSessionSignalingTerminate() == 0, "terminate failed");
+    errno = 71;
+    Require(sceNpSessionSignalingInitialize(reinterpret_cast<const SessionSignalingInitParam*>(0x10)) == InvalidArgument, "unmapped initialize after terminate");
+    Require(errno == 71, "errno preserved on unmapped initialize after terminate");
     Require(sceNpSessionSignalingDestroyContext(contextId) == NotInitialized, "destroy after terminate");
     Require(sceNpSessionSignalingActivateUser(contextId, nullptr, nullptr) == NotInitialized, "activate user after terminate");
     Require(sceNpSessionSignalingDeactivate(contextId, 1) == NotInitialized, "deactivate after terminate");
@@ -233,6 +330,12 @@ int main() {
     Require(sceNpSessionSignalingInitializeWithPort(nullptr, 0x217b, 0) == InvalidArgument, "null initialize with port parameter");
     Require(sceNpSessionSignalingInitializeWithPort(reinterpret_cast<const SessionSignalingInitParam*>(initializeParam), 0x217b, 0) == 0, "initialize with port failed");
     Require(sceNpSessionSignalingInitializeWithPort(reinterpret_cast<const SessionSignalingInitParam*>(initializeParam), 0x217b, 0) == AlreadyInitialized, "initialize with port after initialize");
+    errno = 71;
+    Require(sceNpSessionSignalingGetMemoryInfo(reinterpret_cast<SessionSignalingMemoryInfo*>(0x10)) == InvalidArgument, "unwritable memory info rejected");
+    Require(sceNpSessionSignalingGetConnectionStatistics(reinterpret_cast<SessionSignalingConnectionStatistics*>(0x10)) == InvalidArgument, "unwritable statistics rejected");
+    Require(errno == 71, "errno preserved");
     Require(sceNpSessionSignalingGetMemoryInfo(&memoryInfo) == 0 && memoryInfo.poolSize == poolSize && memoryInfo.usedSize == 0 && memoryInfo.peakUsedSize == 0, "memory info after initialize with port");
     Require(sceNpSessionSignalingTerminate() == 0, "final terminate after initialize with port");
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }

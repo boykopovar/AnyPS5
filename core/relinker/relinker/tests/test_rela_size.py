@@ -105,22 +105,31 @@ def main():
                 if result.returncode != 2 or lines != [f"FAIL: Conflicting duplicate {name} tags"] or output.exists():
                     failures.append((case, result.returncode, result.stdout, result.stderr))
 
-        same = with_entries(fixture(), (8, 24))
-        for index, options in enumerate(targets):
-            result, output = relink(f"same-relasz-{index}", same, options)
-            if options in (["--windows"], ["--macos"]):
-                valid = (result.returncode == 2 and "Code analysis: duplicate dynamic tag" in result.stderr
-                         and not output.exists())
-            else:
-                valid = result.returncode == 0 and output.exists() and output_tags(output).get(8, 0) == 24
-            if not valid:
-                failures.append(("same-relasz", options, result.returncode, result.stdout, result.stderr))
+        magics = (b"\x7fELF", b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe")
+        for name, entries in (("same-relasz", ((8, 24),)), ("same-flags", ((30, 8), (30, 8))),
+                              ("same-debug", ((21, 0), (21, 0)))):
+            same = with_entries(fixture(), *entries)
+            for index, (options, magic) in enumerate(zip(targets, magics)):
+                result, output = relink(f"{name}-{index}", same, options)
+                valid = result.returncode == 0 and output.exists() and output.read_bytes().startswith(magic)
+                if valid and name == "same-relasz" and magic == b"\x7fELF":
+                    valid = output_tags(output).get(8, 0) == 24
+                if not valid:
+                    failures.append((name, options, result.returncode, result.stdout, result.stderr))
+
+        init = with_entries(fixture(), (12, 0x200), (12, 0x210))
+        for index, options in enumerate((["--windows"], ["--macos"])):
+            result, output = relink(f"conflicting-init-{index}", init, options)
+            lines = [line for line in result.stderr.splitlines() if line.startswith("FAIL: ")]
+            if (result.returncode != 2 or output.exists()
+                    or lines != ["FAIL: Code analysis: conflicting duplicate dynamic tag (offset 0x480)"]):
+                failures.append(("conflicting-init", options, result.returncode, result.stdout, result.stderr))
 
         needed = fixture()
         needed[0x600:0x613] = b"\0liba.prx\0libb.prx\0"
         struct.pack_into("<qQ", needed, 0x410, 10, 19)
         with_entries(needed, (1, 1), (1, 10))
-        for index, (options, magic) in enumerate(zip(targets, (b"\x7fELF", b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe"))):
+        for index, (options, magic) in enumerate(zip(targets, magics)):
             result, output = relink(f"repeated-needed-{index}", needed, options)
             if result.returncode != 0 or not output.exists() or not output.read_bytes().startswith(magic):
                 failures.append(("repeated-needed", options, result.returncode, result.stdout, result.stderr))

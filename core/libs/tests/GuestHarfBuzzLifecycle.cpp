@@ -1,9 +1,14 @@
+#include "FontFixture.hpp"
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libharfbuzz/include/Lifecycle.hpp"
+#include "prx/libharfbuzz/include/InventoryExports.hpp"
 
-#include <hb.h>
+#include <hb-ft.h>
 
 #include <array>
 #include <bit>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -11,6 +16,7 @@
 #include <filesystem>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -43,6 +49,15 @@ struct Api {
     decltype(&hb_face_destroy_nid_postfix) destroyFace;
     decltype(&hb_font_create_nid_postfix) font;
     decltype(&hb_font_destroy_nid_postfix) destroyFont;
+    decltype(&hb_ft_face_create_cached_nid_postfix) cachedFace;
+};
+
+struct FreeTypeApi {
+    decltype(&FT_Init_FreeType_nid_postfix) initialize;
+    decltype(&FT_Done_FreeType_nid_postfix) doneLibrary;
+    decltype(&FT_New_Memory_Face_nid_postfix) newFace;
+    decltype(&FT_Done_Face_nid_postfix) doneFace;
+    decltype(&FT_Set_Pixel_Sizes_nid_postfix) setPixelSizes;
 };
 
 struct Owner {
@@ -134,6 +149,34 @@ static void CheckBlobBoundaries(const Api& api) {
     Require(threw && owner.destroyed == 0);
 }
 
+static void CheckSubBlobLifetime(const Api& api) {
+    std::array<char, 8> data{'s', 'u', 'b', '\0', 'b', 'l', 'o', 'b'};
+    const auto original = data;
+    Owner owner{0, &api, true};
+    auto* parent = api.blob(data.data(), data.size(), HB_MEMORY_MODE_READONLY, &owner, Destroy);
+    Require(parent != nullptr && owner.destroyed == 0);
+    CheckData(parent, original.data(), original.size());
+
+    auto* first = hb_blob_create_sub_blob(parent, 1, 4);
+    auto* second = hb_blob_create_sub_blob(parent, 5, 10);
+    Require(first != nullptr && second != nullptr && first != parent && second != parent && first != second);
+    CheckData(first, original.data() + 1, 4);
+    CheckData(second, original.data() + 5, 3);
+    Require(owner.destroyed == 0);
+
+    hb_blob_destroy(parent);
+    Require(owner.destroyed == 0);
+    CheckData(first, original.data() + 1, 4);
+    CheckData(second, original.data() + 5, 3);
+
+    hb_blob_destroy(first);
+    Require(owner.destroyed == 0);
+    CheckData(second, original.data() + 5, 3);
+
+    hb_blob_destroy(second);
+    Require(owner.destroyed == 1);
+}
+
 struct FaceState {
     const Api* api;
     hb_face_t* face = nullptr;
@@ -186,6 +229,87 @@ static void CheckFaceLifetime(const Api& api) {
     Require(state.tableOwner.destroyed == 1);
 }
 
+struct IsolatedFaceState {
+    const Api* api;
+    hb_face_t* face = nullptr;
+    Owner faceOwner;
+    std::array<Owner, 2> tableOwners;
+    std::uint32_t expectedTag = 0;
+    const char* payload = nullptr;
+    unsigned payloadLength = 0;
+    unsigned requests = 0;
+};
+
+static hb_blob_t* APS5_VABI IsolatedTable(hb_face_t* face, std::uint32_t tag, void* opaque) {
+    auto& state = *static_cast<IsolatedFaceState*>(opaque);
+    Require(face == state.face && state.faceOwner.destroyed == 0);
+    Require(tag == state.expectedTag);
+    Require(state.requests < state.tableOwners.size());
+    auto& owner = state.tableOwners[state.requests++];
+    return state.api->blob(state.payload, state.payloadLength, HB_MEMORY_MODE_READONLY, &owner, Destroy);
+}
+
+static void APS5_VABI DestroyIsolatedFace(void* opaque) {
+    auto& state = *static_cast<IsolatedFaceState*>(opaque);
+    Destroy(&state.faceOwner);
+}
+
+static void CheckFaceContextIsolation(const Api& api) {
+    constexpr auto tag = HB_TAG('C', 'T', 'X', 'T');
+    std::array<char, 4> payloadA{'a', '\0', '1', 'A'};
+    std::array<char, 6> payloadB{'b', '\0', '2', 'B', '\xff', '!'};
+    IsolatedFaceState stateA{&api, nullptr, {}, {}, tag, payloadA.data(), static_cast<unsigned>(payloadA.size())};
+    IsolatedFaceState stateB{&api, nullptr, {}, {}, tag, payloadB.data(), static_cast<unsigned>(payloadB.size())};
+    stateA.face = api.face(IsolatedTable, &stateA, DestroyIsolatedFace);
+    stateB.face = api.face(IsolatedTable, &stateB, DestroyIsolatedFace);
+    Require(stateA.face != nullptr && stateB.face != nullptr && stateA.face != stateB.face);
+    Require(stateA.faceOwner.destroyed == 0 && stateB.faceOwner.destroyed == 0);
+    Require(stateA.requests == 0 && stateB.requests == 0);
+
+    auto* blobA1 = hb_face_reference_table(stateA.face, tag);
+    Require(stateA.requests == 1 && stateB.requests == 0);
+    CheckData(blobA1, payloadA.data(), payloadA.size());
+
+    auto* blobB1 = hb_face_reference_table(stateB.face, tag);
+    Require(stateA.requests == 1 && stateB.requests == 1);
+    CheckData(blobB1, payloadB.data(), payloadB.size());
+
+    auto* blobA2 = hb_face_reference_table(stateA.face, tag);
+    Require(stateA.requests == 2 && stateB.requests == 1);
+    CheckData(blobA2, payloadA.data(), payloadA.size());
+    Require(blobA1 != blobB1 && blobA2 != blobB1);
+
+    hb_blob_destroy(blobA2);
+    Require(stateA.tableOwners[1].destroyed == 1);
+    Require(stateA.tableOwners[0].destroyed == 0 && stateB.tableOwners[0].destroyed == 0);
+
+    api.destroyFace(stateA.face);
+    Require(stateA.faceOwner.destroyed == 1 && stateB.faceOwner.destroyed == 0);
+    Require(stateA.tableOwners[0].destroyed == 0 && stateB.tableOwners[0].destroyed == 0);
+    CheckData(blobA1, payloadA.data(), payloadA.size());
+
+    auto* blobB2 = hb_face_reference_table(stateB.face, tag);
+    Require(stateA.requests == 2 && stateB.requests == 2);
+    CheckData(blobB2, payloadB.data(), payloadB.size());
+    CheckData(blobB1, payloadB.data(), payloadB.size());
+    CheckData(blobA1, payloadA.data(), payloadA.size());
+
+    hb_blob_destroy(blobA1);
+    Require(stateA.tableOwners[0].destroyed == 1);
+    Require(stateB.tableOwners[0].destroyed == 0 && stateB.tableOwners[1].destroyed == 0);
+
+    hb_blob_destroy(blobB1);
+    Require(stateB.tableOwners[0].destroyed == 1 && stateB.tableOwners[1].destroyed == 0);
+    Require(stateB.faceOwner.destroyed == 0);
+
+    api.destroyFace(stateB.face);
+    Require(stateB.faceOwner.destroyed == 1 && stateB.tableOwners[1].destroyed == 0);
+    CheckData(blobB2, payloadB.data(), payloadB.size());
+
+    hb_blob_destroy(blobB2);
+    Require(stateB.tableOwners[1].destroyed == 1);
+}
+
 static void CheckEmptyFaces(const Api& api) {
     Owner owner;
     auto* empty = api.face(nullptr, &owner, Destroy);
@@ -205,31 +329,137 @@ static void CheckEmptyFaces(const Api& api) {
     api.destroyFace(nullptr);
 }
 
-int main(int argc, char** argv) try {
-    Require(argc == 3);
-    const bool patched = std::strcmp(argv[2], "patched") == 0;
-    Require(patched || std::strcmp(argv[2], "unpatched") == 0);
+struct FaceGenericState {
+    FreeType::GuestFaceRec* face;
+    unsigned calls = 0;
+};
+
+static void APS5_VABI FinalizeGuestGeneric(void* object) {
+    auto* face = static_cast<FreeType::GuestFaceRec*>(object);
+    auto& state = *static_cast<FaceGenericState*>(face->generic.data);
+    Require(face == state.face && state.calls++ == 0);
+}
+
+static void CheckCachedFace(const Api& api, const FreeTypeApi& ft) {
+    constexpr auto tag = HB_TAG('T', 'E', 'S', 'T');
+    const auto payload = FontFixture::Words({0, 0x1234, 0xFEFF});
+    const auto bytes = FontFixture::BuildFont(3, {{"TEST", payload}});
+    FreeType::GuestLibrary* library = nullptr;
+    Require(ft.initialize(&library) == 0);
+    FreeType::GuestFaceRec* first = nullptr;
+    FreeType::GuestFaceRec* second = nullptr;
+    Require(ft.newFace(library, bytes.data(), bytes.size(), 0, &first) == 0);
+    Require(ft.newFace(library, bytes.data(), bytes.size(), 0, &second) == 0);
+
+    FaceGenericState previous{first};
+    first->generic = {&previous, FinalizeGuestGeneric};
+    auto* cached = api.cachedFace(first);
+    Require(cached && previous.calls == 1 && first->generic.data == cached);
+    auto* retained = api.cachedFace(first);
+    Require(retained == cached && previous.calls == 1);
+    Require(ft.setPixelSizes(first, 0, 16) == 0 && first->size->metrics.y_ppem == 16);
+    auto* other = api.cachedFace(second);
+    Require(other && other != cached && second->generic.data == other);
+
+    FT_Library nativeLibrary = nullptr;
+    FT_Face nativeFace = nullptr;
+    Require(FT_Init_FreeType(&nativeLibrary) == 0);
+    Require(FT_New_Memory_Face(nativeLibrary, bytes.data(), bytes.size(), 0, &nativeFace) == 0);
+    auto* native = hb_ft_face_create_cached(nativeFace);
+    Require(hb_face_get_upem(retained) == hb_face_get_upem(native));
+    Require(hb_face_get_index(retained) == hb_face_get_index(native));
+    Require(hb_face_get_glyph_count(retained) == 3 && hb_face_get_glyph_count(native) == 3);
+    auto* table = hb_face_reference_table(retained, tag);
+    auto* nativeTable = hb_face_reference_table(native, tag);
+    CheckData(table, reinterpret_cast<const char*>(payload.data()), payload.size());
+    CheckData(nativeTable, reinterpret_cast<const char*>(payload.data()), payload.size());
+    hb_blob_destroy(table);
+    hb_blob_destroy(nativeTable);
+    hb_face_destroy(native);
+    Require(FT_Done_Face(nativeFace) == 0 && FT_Done_FreeType(nativeLibrary) == 0);
+
+    hb_user_data_key_t key{};
+    Owner firstOwner;
+    Owner secondOwner;
+    const auto destroy = [](void* object) { Destroy(object); };
+    Require(hb_face_set_user_data(cached, &key, &firstOwner, destroy, false));
+    Require(hb_face_set_user_data(other, &key, &secondOwner, destroy, false));
+    api.destroyFace(cached);
+    Require(hb_face_get_user_data(retained, &key) == &firstOwner);
+    api.destroyFace(retained);
+    api.destroyFace(other);
+    Require(firstOwner.destroyed == 0 && secondOwner.destroyed == 0);
+    auto* again = api.cachedFace(first);
+    Require(again == cached && hb_face_get_user_data(again, &key) == &firstOwner);
+    api.destroyFace(again);
+    Require(ft.doneFace(first) == 0 && previous.calls == 1 && firstOwner.destroyed == 1);
+    Require(secondOwner.destroyed == 0);
+    Require(ft.doneLibrary(library) == 0 && secondOwner.destroyed == 1);
+
+    FreeType::GuestFaceRec empty{};
+    for (auto* invalid : std::array<FreeType::GuestFaceRec*, 2>{nullptr, &empty}) {
+        bool threw = false;
+        try { api.cachedFace(invalid); }
+        catch (const std::exception&) { threw = true; }
+        Require(threw);
+    }
+
+    auto rejectsRuntime = [](auto&& call) {
+        errno = 71;
+        bool threw = false;
+        try { call(); }
+        catch (const std::runtime_error&) { threw = true; }
+        Require(threw && errno == 71);
+    };
+    rejectsRuntime([&] { api.cachedFace(reinterpret_cast<FreeType::GuestFaceRec*>(std::uintptr_t{0x10})); });
+    FreeType::GuestFaceRec badOwner{};
+    badOwner.internal = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    rejectsRuntime([&] { api.cachedFace(&badOwner); });
+}
+
+static auto OpenModule(const char* path) {
 #ifdef _WIN32
-    auto module = LoadLibraryW(std::filesystem::path(argv[1]).c_str());
+    auto module = LoadLibraryW(std::filesystem::path(path).c_str());
     if (!module) std::fprintf(stderr, "LoadLibraryW failed: %lu\n", GetLastError());
 #else
-    auto module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
+    auto module = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!module) std::fprintf(stderr, "%s\n", dlerror());
 #endif
     Require(module != nullptr);
+    return module;
+}
+
+int main(int argc, char** argv) try {
+    Require(argc == 4);
+    const bool patched = std::strcmp(argv[3], "patched") == 0;
+    Require(patched || std::strcmp(argv[3], "unpatched") == 0);
+    auto module = OpenModule(argv[1]);
+    auto freeType = OpenModule(argv[2]);
     Api api{
         Import<decltype(Api::blob)>(module, patched ? "hj1KIIN5D54" : "hb_blob_create_nid_postfix"),
         Import<decltype(Api::face)>(module, patched ? "l7GEYs5PMVU" : "hb_face_create_for_tables_nid_postfix"),
         Import<decltype(Api::destroyFace)>(module, patched ? "ULNHQXciJ3s" : "hb_face_destroy_nid_postfix"),
         Import<decltype(Api::font)>(module, patched ? "FVhYusaWqA4" : "hb_font_create_nid_postfix"),
-        Import<decltype(Api::destroyFont)>(module, patched ? "-8t2aEtFws4" : "hb_font_destroy_nid_postfix")};
+        Import<decltype(Api::destroyFont)>(module, patched ? "-8t2aEtFws4" : "hb_font_destroy_nid_postfix"),
+        Import<decltype(Api::cachedFace)>(module, patched ? "RTxFQhlbF+U" : "hb_ft_face_create_cached_nid_postfix")};
+    FreeTypeApi ft{
+        Import<decltype(FreeTypeApi::initialize)>(freeType, patched ? "GNsiLzm4SH8" : "FT_Init_FreeType_nid_postfix"),
+        Import<decltype(FreeTypeApi::doneLibrary)>(freeType, patched ? "dH02CpEEcYk" : "FT_Done_FreeType_nid_postfix"),
+        Import<decltype(FreeTypeApi::newFace)>(freeType, patched ? "40Wa2neSLM0" : "FT_New_Memory_Face_nid_postfix"),
+        Import<decltype(FreeTypeApi::doneFace)>(freeType, patched ? "OgFczHko0w8" : "FT_Done_Face_nid_postfix"),
+        Import<decltype(FreeTypeApi::setPixelSizes)>(freeType, patched ? "lJxMIwj81SQ" : "FT_Set_Pixel_Sizes_nid_postfix")};
     CheckBlobModes(api);
     CheckBlobBoundaries(api);
+    CheckSubBlobLifetime(api);
     CheckFaceLifetime(api);
+    CheckFaceContextIsolation(api);
     CheckEmptyFaces(api);
+    CheckCachedFace(api, ft);
 #ifdef _WIN32
+    Require(FreeLibrary(freeType) != 0);
     Require(FreeLibrary(module) != 0);
 #else
+    Require(dlclose(freeType) == 0);
     Require(dlclose(module) == 0);
 #endif
     std::puts("HarfBuzz lifecycle checks passed");

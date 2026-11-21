@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
+#include <climits>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
@@ -14,7 +15,8 @@ struct Timeval {
 static void Require(bool value) { if (!value) std::abort(); }
 static std::int64_t CpuMicros(int who) {
     GuestResourceUsage usage{};
-    Require(getrusage_nid_postfix(who, &usage) == 0);
+    *__error_nid_postfix() = 77;
+    Require(getrusage_nid_postfix(who, &usage) == 0 && *__error_nid_postfix() == 77);
     return (usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) * 1000000 + usage.ru_utime.tv_usec + usage.ru_stime.tv_usec;
 }
 static void SpinUntil(int who, std::int64_t micros) {
@@ -36,6 +38,8 @@ int main() {
     const GuestResourceUsage pattern = untouched;
     RequireFailure(2, &untouched, 22);
     RequireFailure(-2, &untouched, 22);
+    RequireFailure(INT_MIN, &untouched, 22);
+    RequireFailure(INT_MAX, &untouched, 22);
     Require(std::memcmp(&untouched, &pattern, sizeof(untouched)) == 0);
     RequireFailure(7, nullptr, 22);
     RequireFailure(0, nullptr, 14);
@@ -48,7 +52,8 @@ int main() {
     RequireFailure(-1, invalid, 14);
     GuestResourceUsage children;
     std::memset(&children, 0xff, sizeof(children));
-    Require(getrusage_nid_postfix(-1, &children) == 0);
+    *__error_nid_postfix() = 77;
+    Require(getrusage_nid_postfix(-1, &children) == 0 && *__error_nid_postfix() == 77);
     const GuestResourceUsage empty{};
     Require(std::memcmp(&children, &empty, sizeof(children)) == 0);
     SpinUntil(0, 400000);
@@ -62,4 +67,8 @@ int main() {
     });
     worker.join();
     Require(CpuMicros(0) >= 500000);
+    std::memset(&children, 0xff, sizeof(children));
+    *__error_nid_postfix() = 77;
+    Require(getrusage_nid_postfix(-1, &children) == 0 && *__error_nid_postfix() == 77);
+    Require(std::memcmp(&children, &empty, sizeof(children)) == 0);
 }

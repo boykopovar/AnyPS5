@@ -7,8 +7,12 @@ if(BUILD_TESTING)
     target_include_directories(guest_move_tracker_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_move_tracker_tests PRIVATE libSceMoveTracker)
     add_test(NAME guest_move_tracker COMMAND guest_move_tracker_tests)
+    add_test_executable(guest_move_tracker_not_initialized_tests ${LIBS_INCLUDE_DIR}/tests/GuestMoveTrackerNotInitialized.cpp)
+    target_include_directories(guest_move_tracker_not_initialized_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_move_tracker_not_initialized_tests PRIVATE libSceMoveTracker)
+    add_test(NAME guest_move_tracker_not_initialized COMMAND guest_move_tracker_not_initialized_tests)
     if(WIN32)
-        set_tests_properties(guest_move_tracker PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_move_tracker guest_move_tracker_not_initialized PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceMoveTracker>")
     endif()
 endif()

@@ -1461,6 +1461,7 @@ struct HttpNBEvent { std::uint8_t opaque[64]; };
 
 struct SceHttpUriElement {
     int opaque = 0;
+    std::uint32_t pad0 = 0;
     char* scheme = nullptr;
     char* username = nullptr;
     char* password = nullptr;
@@ -1470,6 +1471,7 @@ struct SceHttpUriElement {
     char* fragment = nullptr;
     std::uint16_t port = 0;
     std::uint8_t reserved[10]{};
+    std::uint32_t pad1 = 0;
 };
 
 struct Http2AsyncResult {
@@ -1513,7 +1515,15 @@ struct SharePlayConnectionInfo {
     std::int32_t visitorUserId;
 };
 static_assert(sizeof(SharePlayConnectionInfo) == 56 && offsetof(SharePlayConnectionInfo, hostUserId) == 48);
-struct NpId { NpOnlineId online_id; std::uint8_t opaque[4]; };
+struct NpId {
+    union {
+        NpOnlineId handle;
+        NpOnlineId online_id;
+    };
+    std::uint8_t opt[8];
+    std::uint8_t reserved[8];
+};
+static_assert(sizeof(NpId) == 36);
 struct NpCreateAsyncRequestParameter { std::uint8_t opaque[64]; };
 struct NpCheckPremiumParameter { std::uint8_t opaque[64]; };
 struct NpCheckPremiumResult { std::uint8_t opaque[64]; };
