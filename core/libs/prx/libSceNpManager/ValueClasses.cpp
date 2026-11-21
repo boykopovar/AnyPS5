@@ -39,6 +39,13 @@ bool ProbeGuestWritable(T* destination) {
     return ok;
 }
 
+bool ReadUserId(const UserObject* self, int& userId) {
+    UserObject local{};
+    if (!ReadGuest(self, local)) return false;
+    userId = local.userId;
+    return true;
+}
+
 bool SameOnlineId(const char* lhs, const char* rhs) {
     return std::strncmp(lhs, rhs, NP_ONLINE_ID_SIZE) == 0;
 }
@@ -125,7 +132,9 @@ int APS5_VABI _ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(NpOnlineIdObject* sel
 }
 
 bool APS5_VABI _ZNK3sce2np10NpOnlineId7IsEmptyEv(const NpOnlineIdObject* self) {
-    return self->data[0] == '\0';
+    char first = 0;
+    if (!ReadGuest(self->data, first)) return true;
+    return first == '\0';
 }
 
 int APS5_VABI _ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(const UserObject* user, SceNpOnlineId* out) {
@@ -233,28 +242,38 @@ void APS5_VABI _ZN3sce2np4User5ClearEv(UserObject* self) {
 }
 
 bool APS5_VABI _ZNK3sce2np4User7IsEmptyEv(const UserObject* self) {
-    return self->userId == USER_SERVICE_USER_ID_INVALID;
+    int userId = 0;
+    if (!ReadUserId(self, userId)) return true;
+    return userId == USER_SERVICE_USER_ID_INVALID;
 }
 
 int APS5_VABI _ZNK3sce2np4User9GetUserIdEv(const UserObject* self) {
-    return self->userId;
+    int userId = 0;
+    if (!ReadUserId(self, userId)) return USER_SERVICE_USER_ID_INVALID;
+    return userId;
 }
 
 bool APS5_VABI _ZNK3sce2np4User10IsLoggedInEv(const UserObject* self) {
-    if (self->userId == USER_SERVICE_USER_ID_INVALID) return false;
+    int userId = 0;
+    if (!ReadUserId(self, userId)) return false;
+    if (userId == USER_SERVICE_USER_ID_INVALID) return false;
     std::uint64_t accountId = 0;
-    return sceUserServiceGetNpAccountId(self->userId, &accountId) == 0;
+    return sceUserServiceGetNpAccountId(userId, &accountId) == 0;
 }
 
 bool APS5_VABI _ZNK3sce2np4User7IsGuestEv(const UserObject* self) {
-    return sceUserServiceIsGuestUser(self->userId) != 0;
+    int userId = 0;
+    if (!ReadUserId(self, userId)) return false;
+    return sceUserServiceIsGuestUser(userId) != 0;
 }
 
 int APS5_VABI _ZNK3sce2np4User12GetAccountIdEPm(const UserObject* self, std::uint64_t* accountId) {
     if (accountId == nullptr) return NP_ERROR_INVALID_ARGUMENT;
+    int userId = 0;
+    if (!ReadUserId(self, userId)) return NP_ERROR_INVALID_ARGUMENT;
     std::uint64_t value = 0;
     if (!GuestCopyOut_nid_no_patch(accountId, &value, sizeof(value))) return NP_ERROR_INVALID_ARGUMENT;
-    const int result = sceUserServiceGetNpAccountId(self->userId, &value);
+    const int result = sceUserServiceGetNpAccountId(userId, &value);
     if (result < 0) return result;
     if (!GuestCopyOut_nid_no_patch(accountId, &value, sizeof(value))) return NP_ERROR_INVALID_ARGUMENT;
     if (value == 0) return NP_ERROR_ACCOUNT_ID_MISSING;
@@ -263,8 +282,10 @@ int APS5_VABI _ZNK3sce2np4User12GetAccountIdEPm(const UserObject* self, std::uin
 
 int APS5_VABI _ZNK3sce2np4User12HasAccountIdEPb(const UserObject* self, bool* hasAccountId) {
     if (hasAccountId == nullptr) return NP_ERROR_INVALID_ARGUMENT;
+    int userId = 0;
+    if (!ReadUserId(self, userId)) return NP_ERROR_INVALID_ARGUMENT;
     std::uint64_t accountId = 0;
-    const int result = sceUserServiceGetNpAccountId(self->userId, &accountId);
+    const int result = sceUserServiceGetNpAccountId(userId, &accountId);
     if (result < 0) return result;
     const bool has = accountId != 0;
     if (!GuestCopyOut_nid_no_patch(hasAccountId, &has, sizeof(has))) return NP_ERROR_INVALID_ARGUMENT;
@@ -272,8 +293,14 @@ int APS5_VABI _ZNK3sce2np4User12HasAccountIdEPb(const UserObject* self, bool* ha
 }
 
 int APS5_VABI _ZNK3sce2np4User25GetAccountIdFromRegistoryEPm(const UserObject* self, std::uint64_t* accountId) {
-    const int result = sceUserServiceGetNpAccountId(self->userId, accountId);
-    return result < 0 ? result : 0;
+    if (accountId == nullptr) return NP_ERROR_INVALID_ARGUMENT;
+    int userId = 0;
+    if (!ReadUserId(self, userId)) return NP_ERROR_INVALID_ARGUMENT;
+    std::uint64_t value = 0;
+    const int result = sceUserServiceGetNpAccountId(userId, &value);
+    if (result < 0) return result;
+    if (!GuestCopyOut_nid_no_patch(accountId, &value, sizeof(value))) return NP_ERROR_INVALID_ARGUMENT;
+    return 0;
 }
 
 int APS5_VABI _ZN3sce2np4User7GetUserEiPS1_(int userId, UserObject* out) {
