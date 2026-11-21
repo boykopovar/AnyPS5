@@ -1,6 +1,7 @@
 #include "prx/libSceAgc/Misc/include/Semaphore.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -61,7 +62,12 @@ int APS5_VABI sceAgcGetSemaphoreLabel(std::uint32_t index, void** label) {
     if (semaphoreBytes == 0) return GRAPHICS5_ERROR_SEMAPHORE_MEMORY_UNREGISTERED;
     if (index >= semaphoreBytes / semaphoreLabelBytes) return GRAPHICS5_ERROR_OUT_OF_RANGE;
     Agc::Command::Require(label != nullptr, __func__, "null semaphore label output");
-    *label = semaphoreMemory + static_cast<std::uint64_t>(index) * semaphoreLabelBytes;
+    Agc::Command::Require(GuestWritable_nid_no_patch(label, sizeof(*label)), __func__, "unwritable semaphore label output");
+    void* result = semaphoreMemory + static_cast<std::uint64_t>(index) * semaphoreLabelBytes;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(label, &result, sizeof(result));
+    errno = savedErrno;
+    Agc::Command::Require(copied, __func__, "unwritable semaphore label output");
     return 0;
 }
 
