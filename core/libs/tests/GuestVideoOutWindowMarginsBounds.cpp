@@ -86,6 +86,14 @@ void TestClosedHandleBounds(int handle) {
 int main() {
     VideoOutTestEnvironment environment;
 
+    try {
+        static_cast<void>(sceVideoOutSetWindowModeMargins(-1, 0, 0));
+    } catch (const std::runtime_error& error) {
+        if (std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr) throw;
+        std::printf("skipped, no display or Vulkan device: %s\n", error.what());
+        return 77;
+    }
+
     TestUnopenedHandleBounds();
 
     int handle = -1;
