@@ -472,6 +472,7 @@
 #include "prx/libSceLibreSsl/include/ObjectTable.hpp"
 #include "prx/libSceLibreSsl/include/OcspResponse.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
@@ -481,6 +482,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -617,12 +619,55 @@ int Dump(LibreSsl::Bio* out, const unsigned char* data, int length, int indent) 
     return result;
 }
 
-const Asn1String& ExtensionValue(const Extension& extension) {
-    const Asn1String* value = extension.value;
-    if (!value) throw std::invalid_argument("X509V3_EXT_print: null extension value");
-    if (value->length < 0) throw std::invalid_argument("X509V3_EXT_print: negative extension value length");
-    if (!value->data && value->length) throw std::invalid_argument("X509V3_EXT_print: null extension value data");
-    return *value;
+template <typename T>
+T LoadGuest(const T* source) {
+    T value{};
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch("X509V3_EXT_print", __FILE__, __LINE__);
+    return value;
+}
+
+std::vector<unsigned char> LoadGuestBytes(const unsigned char* source, std::size_t size) {
+    std::vector<unsigned char> bytes;
+    unsigned char chunk[4096];
+    for (std::size_t done = 0; done < size;) {
+        const std::size_t count = std::min(size - done, sizeof(chunk));
+        const int savedErrno = errno;
+        const bool ok = GuestCopyIn_nid_no_patch(chunk, source + done, count);
+        errno = savedErrno;
+        if (!ok) NotImplementedAt_nid_no_patch("X509V3_EXT_print", __FILE__, __LINE__);
+        bytes.insert(bytes.end(), chunk, chunk + count);
+        done += count;
+    }
+    return bytes;
+}
+
+int GuestObjectNid(const LibreSslAsn1Object* guestObject) {
+    if (!guestObject) return LibreSslObjectNid_nid_no_patch(nullptr);
+    LibreSslAsn1Object object = LoadGuest(guestObject);
+    if (object.nid != 0 || !object.data || object.length <= 0) return LibreSslObjectNid_nid_no_patch(&object);
+    const std::vector<unsigned char> data = LoadGuestBytes(object.data, static_cast<std::size_t>(object.length));
+    object.data = data.data();
+    return LibreSslObjectNid_nid_no_patch(&object);
+}
+
+struct HostString {
+    Asn1String value;
+    std::vector<unsigned char> bytes;
+};
+
+HostString ExtensionValue(const Extension& extension) {
+    if (!extension.value) throw std::invalid_argument("X509V3_EXT_print: null extension value");
+    HostString result{LoadGuest(extension.value), {}};
+    if (result.value.length < 0) throw std::invalid_argument("X509V3_EXT_print: negative extension value length");
+    if (!result.value.data && result.value.length) throw std::invalid_argument("X509V3_EXT_print: null extension value data");
+    if (result.value.length > 0) {
+        result.bytes = LoadGuestBytes(result.value.data, static_cast<std::size_t>(result.value.length));
+        result.value.data = result.bytes.data();
+    }
+    return result;
 }
 
 int PrintUnknown(LibreSsl::Bio* out, const Extension& extension, std::uint64_t flag, int indent, bool supported) {
@@ -636,8 +681,8 @@ int PrintUnknown(LibreSsl::Bio* out, const Extension& extension, std::uint64_t f
         ExtensionValue(extension);
         NotImplemented_nid_no_patch("X509V3_EXT_print: ASN1_parse_dump of an extension value");
     case DumpUnknown: {
-        const Asn1String& value = ExtensionValue(extension);
-        return Dump(out, value.data, value.length, indent);
+        const HostString value = ExtensionValue(extension);
+        return Dump(out, value.value.data, value.value.length, indent);
     }
     default:
         return 1;
@@ -725,11 +770,12 @@ extern "C" {
 
 int APS5_VABI X509V3_EXT_print_nid_postfix(LibreSsl::Bio* out, void* extension, std::uint64_t flag, int indent) {
     if (!extension) throw std::invalid_argument(std::string(__func__) + ": null extension");
-    const auto& ext = *static_cast<const Extension*>(extension);
-    const int nid = LibreSslObjectNid_nid_no_patch(ext.object);
+    const Extension ext = LoadGuest(static_cast<const Extension*>(extension));
+    const int nid = GuestObjectNid(ext.object);
     const StandardExtension* standard = nid == 0 ? nullptr : FindExtension(nid);
     if (!standard) return PrintUnknown(out, ext, flag, indent, false);
-    const Asn1String& value = ExtensionValue(ext);
+    const HostString host = ExtensionValue(ext);
+    const Asn1String& value = host.value;
     if (standard->method == Method::Unported)
         NotImplemented_nid_no_patch(("X509V3_EXT_print: the extension method of NID " + std::to_string(nid)).c_str());
     void* decoded = standard->method == Method::Nonce ? DecodeNonce(value)

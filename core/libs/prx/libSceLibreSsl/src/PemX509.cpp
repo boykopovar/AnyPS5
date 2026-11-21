@@ -112,6 +112,9 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libc/include/General.hpp"
+#include <cerrno>
+#include <cstddef>
 
 namespace {
 
@@ -121,6 +124,31 @@ struct BioGuard {
         BIO_free_nid_postfix(bio);
     }
 };
+
+template <typename T>
+T LoadGuest(const T* source, const char* function) {
+    T value{};
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+template <typename T>
+void StoreGuest(T* destination, const T& value, const char* function) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void RequireGuestWritable(void* destination, std::size_t size, const char* function) {
+    const int savedErrno = errno;
+    const bool ok = GuestWritable_nid_no_patch(destination, size);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
 
 }  // namespace
 
@@ -139,6 +167,10 @@ extern "C" LibreSslX509* PEM_read_X509_impl_nid_no_patch(void* stream, LibreSslX
 extern "C" LibreSslRsa* APS5_VABI PEM_read_RSAPrivateKey_nid_postfix(void* stream, LibreSslRsa** rsa,
                                                                     LibreSslPemPasswordCallback passwordCallback,
                                                                     void* userData) {
+    if (rsa) {
+        LoadGuest(rsa, __func__);
+        RequireGuestWritable(rsa, sizeof(*rsa), __func__);
+    }
     void* key = nullptr;
     {
         auto* bio = BIO_new_fp_nid_postfix(stream, 0);
@@ -154,8 +186,8 @@ extern "C" LibreSslRsa* APS5_VABI PEM_read_RSAPrivateKey_nid_postfix(void* strea
     EVP_PKEY_free_nid_postfix(key);
     if (!result) return nullptr;
     if (rsa) {
-        RSA_free_nid_postfix(*rsa);
-        *rsa = result;
+        RSA_free_nid_postfix(LoadGuest(rsa, __func__));
+        StoreGuest(rsa, result, __func__);
     }
     return result;
 }

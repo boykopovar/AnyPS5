@@ -297,6 +297,7 @@
 
 #include "prx/libSceLibreSsl/include/CipherList.hpp"
 #include "prx/libc/include/Api.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -1119,6 +1120,31 @@ int ProcessRuleString(const char* ruleString, CipherOrder** headOut, CipherOrder
     return retval;
 }
 
+template <typename T>
+T LoadGuestField(const void* object, std::size_t offset, const char* function) {
+    T value{};
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&value, static_cast<const std::byte*>(object) + offset, sizeof(T));
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+template <typename T>
+void StoreGuestField(void* object, std::size_t offset, const T& value, const char* function) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(static_cast<std::byte*>(object) + offset, &value, sizeof(T));
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void RequireGuestWritable(void* object, std::size_t offset, std::size_t size, const char* function) {
+    const int savedErrno = errno;
+    const bool ok = GuestWritable_nid_no_patch(static_cast<std::byte*>(object) + offset, size);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
 }
 
 extern "C" {
@@ -1229,12 +1255,15 @@ LibreSslStack* LibreSslCreateCipherList_nid_no_patch(LibreSslStack** cipherList,
 
 int APS5_VABI SSL_CTX_set_cipher_list_nid_postfix(LibreSslCtx* ctx, const char* rules) {
     if (!ctx) throw std::invalid_argument(std::string(__func__) + ": null context");
-    if (!ctx->internal) throw std::invalid_argument(std::string(__func__) + ": null internal state");
-    auto* cipherList = static_cast<LibreSslStack*>(ctx->cipherList);
-    auto* cipherListById = static_cast<LibreSslStack*>(ctx->internal->cipherListById);
+    auto* const internal = LoadGuestField<LibreSslCtxInternal*>(ctx, offsetof(LibreSslCtx, internal), __func__);
+    if (!internal) throw std::invalid_argument(std::string(__func__) + ": null internal state");
+    auto* cipherList = LoadGuestField<LibreSslStack*>(ctx, offsetof(LibreSslCtx, cipherList), __func__);
+    auto* cipherListById = LoadGuestField<LibreSslStack*>(internal, offsetof(LibreSslCtxInternal, cipherListById), __func__);
+    RequireGuestWritable(ctx, offsetof(LibreSslCtx, cipherList), sizeof(cipherList), __func__);
+    RequireGuestWritable(internal, offsetof(LibreSslCtxInternal, cipherListById), sizeof(cipherListById), __func__);
     LibreSslStack* const stack = LibreSslCreateCipherList_nid_no_patch(&cipherList, &cipherListById, rules);
-    ctx->cipherList = cipherList;
-    ctx->internal->cipherListById = cipherListById;
+    StoreGuestField(ctx, offsetof(LibreSslCtx, cipherList), cipherList, __func__);
+    StoreGuestField(internal, offsetof(LibreSslCtxInternal, cipherListById), cipherListById, __func__);
     if (stack == nullptr) return 0;
     if (stack->num == 0) {
         LibreSslPutError_nid_no_patch(ErrLibSsl, ErrFunctionNone, NoCipherMatch, __FILE__, __LINE__);

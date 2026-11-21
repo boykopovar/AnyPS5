@@ -4,6 +4,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -166,6 +167,15 @@ template<typename TAction> static void RequireThrows(TAction action, std::source
     try { action(); } catch (const std::exception&) { return; }
     Require(false, location);
 }
+
+template<typename TAction> static void RequireRejected(TAction action, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    bool rejected = false;
+    try { action(); } catch (const std::runtime_error&) { rejected = errno == 71; }
+    Require(rejected, location);
+}
+
+static const TestCtxInternal readOnlyInternal{};
 
 static std::uint64_t IdOf(const void* cipher) {
     return static_cast<const CipherView*>(cipher)->id;
@@ -348,6 +358,16 @@ static void TestArguments() {
     Require(existing.ctx.cipherList == ordered && existing.internal.cipherListById == byId && DrainErrors().empty());
     Require(existing.OrderedNames() == std::vector<std::string>{"AES128-SHA", "AES256-SHA"});
     RequireShape(existing);
+
+    RequireRejected([] { SSL_CTX_set_cipher_list_nid_postfix(reinterpret_cast<LibreSslCtx*>(0x10), "AES128-SHA"); });
+    Fixture unreadable;
+    unreadable.ctx.internal = reinterpret_cast<TestCtxInternal*>(0x10);
+    RequireRejected([&] { SSL_CTX_set_cipher_list_nid_postfix(Context(&unreadable.ctx), "AES128-SHA"); });
+    Require(unreadable.ctx.cipherList == nullptr);
+    Fixture readOnly;
+    readOnly.ctx.internal = const_cast<TestCtxInternal*>(&readOnlyInternal);
+    RequireRejected([&] { SSL_CTX_set_cipher_list_nid_postfix(Context(&readOnly.ctx), "AES128-SHA"); });
+    Require(readOnly.ctx.cipherList == nullptr && readOnlyInternal.cipherListById == nullptr);
 }
 
 static void TestSingleCipher() {
