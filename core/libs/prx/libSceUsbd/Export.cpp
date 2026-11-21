@@ -605,9 +605,9 @@ std::int32_t APS5_VABI sceUsbdControlTransfer(void* deviceHandle, std::uint8_t r
     std::vector<std::uint8_t> host(length);
     if (length != 0 && !GuestCopyIn_nid_no_patch(host.data(), data, length)) return SCE_USBD_ERROR_INVALID_ARG;
     const bool deviceToHost = (requestType & LIBUSB_ENDPOINT_IN) != 0;
-    if (deviceToHost && length != 0 && !GuestCopyOut_nid_no_patch(data, host.data(), length)) return SCE_USBD_ERROR_INVALID_ARG;
+    if (deviceToHost && length != 0 && !GuestOutputWritable(data, length)) return SCE_USBD_ERROR_INVALID_ARG;
     const int result = libusb_control_transfer(KnownHandle(deviceHandle, __func__), requestType, request, value, index, host.data(), length, timeout);
-    if (deviceToHost && result > 0 && !GuestCopyOut_nid_no_patch(data, host.data(), static_cast<std::size_t>(result))) return SCE_USBD_ERROR_INVALID_ARG;
+    if (deviceToHost && result > 0 && !GuestOutputWritable(data, static_cast<std::size_t>(result))) return SCE_USBD_ERROR_INVALID_ARG;
     return ToGuestError(result);
 }
 
