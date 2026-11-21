@@ -6,12 +6,149 @@
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
+#include <mutex>
+#include <stdexcept>
+
+namespace {
+
+constexpr int kNotInitialized = static_cast<int>(0x809D420Bu);
+constexpr std::size_t kParserBytes = 0x7b8;
+constexpr std::size_t kHelperBytes = 0x28;
+using Allocate = void* (APS5_VABI*)(std::size_t);
+using Free = void (APS5_VABI*)(void*);
+
+struct Config {
+    Allocate allocate;
+    std::uintptr_t other[2];
+    Free release;
+    std::uintptr_t rest[7];
+};
+static_assert(sizeof(Config) == 0x58);
+
+struct Parser {
+    Config config{};
+    void* parser = nullptr;
+    void* helper = nullptr;
+    bool initializing = false;
+    bool finalizePending = false;
+};
+
+struct GuestString {
+    union {
+        char bytes[16];
+        const char* pointer;
+    };
+    std::uint64_t size;
+    std::uint64_t capacity;
+};
+static_assert(sizeof(GuestString) == 32);
+
+std::mutex g_mutex;
+Parser g_parser;
+
+void CopyIn(void* destination, const void* source, std::size_t size, const char* what) {
+    const int saved = errno;
+    const bool copied = source != nullptr && GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = saved;
+    if (!copied) throw std::invalid_argument(what);
+}
+
+int Gate(const void* pathObject, const char* name) {
+    GuestString path{};
+    CopyIn(&path, pathObject, sizeof(path), "GvMp4 parser: unreadable path string");
+    if (path.size > path.capacity) throw std::invalid_argument("GvMp4 parser: invalid path string size");
+    bool initialized;
+    {
+        const std::lock_guard lock(g_mutex);
+        initialized = g_parser.parser != nullptr || g_parser.helper != nullptr;
+    }
+    if (!initialized) {
+        if (path.size > 15) throw std::logic_error("GvMp4 parser: the path copy calls the allocator before Initialize");
+        return kNotInitialized;
+    }
+    NotImplemented_nid_no_patch(name);
+    return 0;
+}
+
+}
 
 extern "C" {
 
+int APS5_VABI libSceGvMp4ParserUnknown_sSswLa3vxMA_nid_no_patch(const void* config) {
+    Config callbacks{};
+    {
+        const std::lock_guard lock(g_mutex);
+        if (g_parser.parser || g_parser.helper || g_parser.initializing) return kNotInitialized;
+        CopyIn(&callbacks, config, sizeof(callbacks), "GvMp4 parser: unreadable allocator table");
+        if (!callbacks.allocate || !callbacks.release) throw std::invalid_argument("GvMp4 parser: missing allocator callback");
+        g_parser.config = callbacks;
+        g_parser.initializing = true;
+    }
+    void* parser = nullptr;
+    void* helper = nullptr;
+    try {
+        parser = callbacks.allocate(kParserBytes);
+        if (!parser) throw std::runtime_error("GvMp4 parser: a refused parser object allocation was not read on 13.42");
+        helper = callbacks.allocate(kHelperBytes);
+        if (!helper) throw std::runtime_error("GvMp4 parser: a refused second object allocation was not read on 13.42");
+        {
+            const std::lock_guard lock(g_mutex);
+            if (!g_parser.finalizePending) {
+                g_parser.initializing = false;
+                g_parser.parser = parser;
+                g_parser.helper = helper;
+                return 0;
+            }
+        }
+    } catch (...) {
+        {
+            const std::lock_guard lock(g_mutex);
+            g_parser = {};
+        }
+        if (parser) callbacks.release(parser);
+        throw;
+    }
+    {
+        const std::lock_guard lock(g_mutex);
+        g_parser = {};
+    }
+    callbacks.release(parser);
+    callbacks.release(helper);
+    return kNotInitialized;
+}
+APS5_EXPORT("sSswLa3vxMA", libSceGvMp4ParserUnknown_sSswLa3vxMA_nid_no_patch);
+
 int APS5_VABI _ZN23sceMetadataReaderWriter11gvMp4Parser19gvMp4ParserFinalizeEv() {
+    Parser saved;
+    {
+        const std::lock_guard lock(g_mutex);
+        if (g_parser.initializing) {
+            g_parser.finalizePending = true;
+            return 0;
+        }
+        saved = g_parser;
+        g_parser = {};
+    }
+    if (saved.parser) saved.config.release(saved.parser);
+    if (saved.helper) saved.config.release(saved.helper);
     return 0;
 }
+
+int APS5_VABI libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch(const void* path, void*, void*) {
+    return Gate(path, __func__);
+}
+APS5_EXPORT("PJigiYrhUwQ", libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch);
+
+int APS5_VABI libSceGvMp4ParserUnknown_tcsvdFwGn9U_nid_no_patch(const void* path, void*) {
+    return Gate(path, __func__);
+}
+APS5_EXPORT("tcsvdFwGn9U", libSceGvMp4ParserUnknown_tcsvdFwGn9U_nid_no_patch);
+
+int APS5_VABI libSceGvMp4ParserUnknown_iPAZM6la8Gk_nid_no_patch(const void* path, std::uint32_t, std::uint32_t, void*) {
+    return Gate(path, __func__);
+}
+APS5_EXPORT("iPAZM6la8Gk", libSceGvMp4ParserUnknown_iPAZM6la8Gk_nid_no_patch);
 
 int APS5_VABI _ZN23sceMetadataReaderWriter11gvMp4Parser21gvMp4ParserInitializeEv() {
     NotImplemented_nid_no_patch(__func__);

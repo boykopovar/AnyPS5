@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -413,6 +414,49 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(group["done_names"], ["Forward_nid_no_patch", "capture_nid_postfix", "restore_nid_postfix", "signal_nid_postfix"])
         self.assertEqual(group["todo_names"], [])
         self.assertEqual(group["inert_names"], [])
+
+    def test_internal_linkage_callbacks_are_not_counted(self):
+        source = (
+            "int APS5_VABI Exported() { return 1; }\n"
+            "static int APS5_VABI StaticCallback() { return 2; }\n"
+            "namespace {\n"
+            "int APS5_VABI AnonCallback() { return 3; }\n"
+            "}\n"
+            "namespace detail {\n"
+            "int APS5_VABI NamedNamespaceExport() { return 4; }\n"
+            "}\n")
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(source, encoding="utf-8")
+            group = progress.scan_library(library)
+        self.assertEqual(group["done_names"], ["Exported", "NamedNamespaceExport"])
+        self.assertEqual(group["todo_names"], [])
+
+    def test_internal_linkage_follows_declarations_and_scope(self):
+        source = (
+            "static int APS5_VABI Forwarded(int);\n"
+            "int APS5_VABI Forwarded(int value) { return value + 1; }\n"
+            "int APS5_VABI Visible(int value) { return Forwarded(value); }\n"
+            "namespace {\n"
+            "namespace inner {\n"
+            "int APS5_VABI NestedCallback() { return 2; }\n"
+            "}\n"
+            "}\n"
+            "struct Holder {\n"
+            "    static int APS5_VABI Member();\n"
+            "    static int APS5_VABI Inline() { return 3; }\n"
+            "};\n"
+            "int APS5_VABI Member() { return 4; }\n"
+            "static int APS5_VABI Exported() { return 5; }\n"
+            "APS5_EXPORT(\"AAAAAAAAAAA\", Exported);\n")
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(source, encoding="utf-8")
+            group = progress.scan_library(library)
+        self.assertEqual(group["done_names"], ["Exported", "Inline", "Member", "Visible"])
+        self.assertEqual(group["todo_names"], [])
 
     def test_stub_marker_inside_raw_literals_does_not_mark_implementation_as_stub(self):
         for prefix in ("", "u8", "u", "U", "L"):
@@ -850,6 +894,25 @@ class ProgressTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, 2)
             self.assertIn(str(blocked), stderr.getvalue())
             self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_non_file_site_destination_preserves_existing_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "source"
+            (root / "core/libs/prx").mkdir(parents=True)
+            opcodes = root / progress.OPCODES.relative_to(progress.ROOT)
+            opcodes.parent.mkdir(parents=True)
+            opcodes.write_text("enum class RdnaOpcode {\n    SEndpgm,\n};\n", encoding="utf-8")
+            output = Path(directory) / "site"
+            blocked = output / "progress.html"
+            blocked.mkdir(parents=True)
+            previous = output / "progress.json"
+            previous.write_bytes(b"previous JSON report")
+            completed = subprocess.run([sys.executable, str(Path(progress.__file__)), "--root", str(root), str(output)],
+                                       capture_output=True, text=True, timeout=10)
+            self.assertEqual(completed.returncode, 2, completed.stderr)
+            self.assertEqual(previous.read_bytes(), b"previous JSON report")
+            self.assertIn(f"{blocked}: report destination must be a regular file", completed.stderr)
+            self.assertEqual(set(output.iterdir()), {blocked, previous})
 
     def test_aliased_reports_are_refused_and_left_unchanged(self):
         libraries, shaders = self.library_snapshot()

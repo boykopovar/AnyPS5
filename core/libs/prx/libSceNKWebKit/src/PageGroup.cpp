@@ -75,7 +75,7 @@ void APS5_VABI WKPageGroupAddUserScript(
     if (!source) return;
     const auto* src = NKWebKit::Cast<NKWebKit::String>(source, __func__);
     if (src->null || src->characters.empty()) return;
-    auto script = NKWebKit::Make<NKWebKit::UserScript>(src->characters, injectionTime, injectedFrames == 1);
+    auto script = NKWebKit::Make<NKWebKit::UserScript>(src->characters, injectionTime == 1 ? 1u : 0u, injectedFrames == 1);
     script->baseURL = BaseURL(baseURL, __func__);
     script->allowedURLPatterns = Patterns(allowedURLPatterns, __func__);
     script->blockedURLPatterns = Patterns(blockedURLPatterns, __func__);
