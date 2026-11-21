@@ -2064,9 +2064,13 @@ int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKc(NpCommIdObject* out, const char*
 }
 
 int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKcm(NpCommIdObject* out, const char* text, std::size_t length) {
-    if (length != NP_TITLE_ID_LENGTH || !IsCommIdText(text)) return NP_ERROR_TITLE_ID_INVALID;
+    if (length != NP_TITLE_ID_LENGTH) return NP_ERROR_TITLE_ID_INVALID;
     char copy[NP_TITLE_ID_LENGTH + 1] = {};
-    std::memcpy(copy, text, NP_TITLE_ID_LENGTH);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(copy, text, NP_TITLE_ID_LENGTH);
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
+    if (!IsCommIdText(copy)) return NP_ERROR_TITLE_ID_INVALID;
     return NpResult(sceNpUtilParseTitleId(&out->commId, copy));
 }
 

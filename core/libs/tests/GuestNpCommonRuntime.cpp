@@ -2206,6 +2206,23 @@ void TestCommIdObjects() {
     Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
 }
 
+void TestCommIdGuestPointers() {
+    const auto* unmapped = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    GuardedPage page;
+    NpCommIdObject commId {};
+    _ZN3sce2np8NpCommIdC1Ev(&commId);
+    commId.commId.num = 42;
+    errno = 71;
+    Require(_ZN3sce2np8NpCommId5ParseEPS1_PKcm(&commId, unmapped, 12) == NpInvalidArgument &&
+                _ZN3sce2np8NpCommId5ParseEPS1_PKcm(&commId, page.End() - 6, 12) == NpInvalidArgument && commId.commId.num == 42 && errno == 71,
+        "parsing an unmapped counted communication id is refused and leaves the object");
+    Require(_ZN3sce2np8NpCommId5ParseEPS1_PKcm(&commId, unmapped, 11) == NpTitleIdInvalid, "a wrong length is refused before the text is read");
+    std::memcpy(page.End() - 12, "ABCD12345_07", 12);
+    Require(_ZN3sce2np8NpCommId5ParseEPS1_PKcm(&commId, page.End() - 12, 12) == 0 && commId.commId.num == 7 &&
+                std::memcmp(commId.commId.data, "ABCD12345", 9) == 0,
+        "a counted communication id that ends at the last mapped byte is parsed");
+}
+
 int main() {
     TestAtomics();
     TestSemaphoresAndFlags();
@@ -2228,6 +2245,7 @@ int main() {
     TestStreamHelpers();
     TestRefObjects();
     TestCommIdObjects();
+    TestCommIdGuestPointers();
     TestBase64();
     TestNumbers();
     TestHexAndCopies();
