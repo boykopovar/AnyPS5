@@ -7,9 +7,6 @@ agcbuild_AcbCondExec_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbCopyData_a	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
 agcbuild_AcbCopyData_b	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
 agcbuild_AcbCopyData_c	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
-agcbuild_AcbDispatchIndirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbDispatchIndirect_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbDispatchIndirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbDmaData_a	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
 agcbuild_AcbDmaData_b	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
 agcbuild_AcbDmaData_c	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
@@ -59,9 +56,6 @@ agcbuild_DcbContextStateOp_c	throw	AnyPS5 throws for arguments the console encod
 agcbuild_DcbCopyData_a	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
 agcbuild_DcbCopyData_b	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
 agcbuild_DcbCopyData_c	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
-agcbuild_DcbDispatchIndirect_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDispatchIndirect_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDispatchIndirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDmaData_a	diff	the recording passes six of the export's twelve arguments; the console's source address and byte count are not recorded
 agcbuild_DcbDmaData_b	diff	the recording passes six of the export's twelve arguments; the console's source address and byte count are not recorded
 agcbuild_DcbDmaData_c	diff	the recording passes six of the export's twelve arguments; the console's source address and byte count are not recorded
