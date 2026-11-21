@@ -145,6 +145,24 @@ std::uint32_t* Allocate(CommandBuffer* buffer, std::uint32_t count, const char* 
     return result;
 }
 
+bool TryReserve(CommandBuffer* buffer, std::uint32_t count, const char* function) {
+    Require(buffer != nullptr && count != 0, function, "null command buffer or empty allocation");
+    auto& stripe = allocationStripe(buffer);
+    std::unique_lock serialized(stripe.mutex);
+    stripe.grown.wait(serialized, [&] {
+        const auto entry = stripe.find(buffer);
+        return entry == stripe.growing.end() || entry->thread == std::this_thread::get_id();
+    });
+    if (available(*buffer, function) >= count) return true;
+    Require(buffer->callback != nullptr, function, "command buffer exhausted");
+    if (count > std::numeric_limits<std::uint32_t>::max() - buffer->reserved_dw) return false;
+    {
+        const GrowScope growing(stripe, serialized, buffer);
+        buffer->callback(buffer, count + buffer->reserved_dw, buffer->user_data);
+    }
+    return available(*buffer, function) >= count;
+}
+
 std::uint32_t* Emit(CommandBuffer* buffer, std::uint32_t opcode, std::initializer_list<std::uint32_t> payload, const char* function) {
     Require(payload.size() <= 0x4000u, function, "packet payload exceeds maximum size");
     const auto count = static_cast<std::uint32_t>(payload.size()) + 1u;

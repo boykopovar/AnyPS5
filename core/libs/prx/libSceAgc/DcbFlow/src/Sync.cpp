@@ -53,7 +53,7 @@ std::uint32_t APS5_VABI sceAgcDcbStallCommandBufferParserGetSize() {
 }
 
 std::uint32_t* APS5_VABI sceAgcDcbMemSemaphore(CommandBuffer* buf, const volatile void* address, std::uint8_t waitForMailbox, std::uint8_t signalType, std::uint8_t operation) {
-    return Agc::Command::WriteMemSemaphore(buf, address, waitForMailbox, signalType, operation, __func__);
+    return Agc::Command::WriteMemSemaphore(buf, address, waitForMailbox, signalType, operation, false, __func__);
 }
 
 }
