@@ -156,7 +156,8 @@ class TimelineTests(unittest.TestCase):
         items = names + [complete(tid, "Shader.Prepare", 0, 8000) for tid in (1, 2)]
         laid = trace_timeline.layout(trace_timeline.window_slices(trace_digest.Trace(items), 0, 10000), 0, 10000, 1000)
         self.assertEqual(laid["threads"], ["shader prepare", "shader prepare"])
-        self.assertEqual(sorted(bar["y"] for bar in laid["bars"]), [0, trace_timeline.ROW_HEIGHT])
+        self.assertEqual(sorted((bar["tid"], bar["y"]) for bar in laid["bars"]),
+                         [(1, 0), (2, trace_timeline.ROW_HEIGHT)])
         path = Path(self.tmp.name) / "a.json"
         path.write_text(json.dumps(items), encoding="utf-8")
         out = Path(self.tmp.name) / "a.html"
@@ -166,6 +167,8 @@ class TimelineTests(unittest.TestCase):
         text = out.read_text(encoding="utf-8")
         self.assertIn("2 threads, 2 bars", text)
         self.assertEqual(text.count(">shader prepare</text>"), 2)
+        for tid in (1, 2):
+            self.assertIn(f"<title>Shader.Prepare (8.000 ms), tid {tid}</title>", text)
 
     def test_layout_keeps_the_longest_slices_and_counts_the_rest(self):
         laid = trace_timeline.layout(trace_timeline_slices(self.items), 0, 10000, 1000, max_slices=1)
@@ -331,20 +334,13 @@ class ArgumentValueTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
                 trace_timeline.nonnegative_number(value)
 
-
-class ArgumentValueTests(unittest.TestCase):
-    def test_nonnegative_number_accepts_values_from_zero_below_1e300(self):
-        self.assertEqual(trace_timeline.nonnegative_number('0.5'), 0.5)
-        self.assertEqual(trace_timeline.nonnegative_number('1'), 1.0)
-        for value in ('-1', 'abc', '1e300', 'nan', 'inf'):
-            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
-                trace_timeline.nonnegative_number(value)
-
     def test_positive_integer_accepts_one_and_up(self):
         self.assertEqual(trace_timeline.positive_integer('3'), 3)
         for value in ('0', '-2', 'x', '1.5'):
             with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
                 trace_timeline.positive_integer(value)
+
+
 class PageTests(unittest.TestCase):
     def test_page_escapes_title_and_notes_and_keeps_the_svg(self):
         text = trace_timeline.page('<svg id="s"></svg>', '<b>T</b>', ['a < b'])
