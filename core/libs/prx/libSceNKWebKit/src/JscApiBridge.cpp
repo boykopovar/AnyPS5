@@ -1,5 +1,6 @@
 #include "prx/libSceJsc/include/ApiBridgeExports.hpp"
 #include "prx/libSceNKWebKit/src/Jsc.hpp"
+#include "prx/libSceNKWebKit/src/WtfTextAbi.hpp"
 
 namespace NKWebKit {
 
@@ -40,7 +41,11 @@ bool HasPropertyForKey(const void* context, const void* objectRef, const void* k
     return result != 0;
 }
 
-constexpr Jsc::ApiBridge bridge{&MakeString, &HasPropertyForKey};
+void ResizeStringBuilder(Jsc::WtfAbi::StringBuilder* builder, unsigned newSize) {
+    WtfAbi::Resize(*reinterpret_cast<WtfAbi::StringBuilder*>(builder), newSize);
+}
+
+constexpr Jsc::ApiBridge bridge{&MakeString, &HasPropertyForKey, &ResizeStringBuilder};
 const bool bridgeRegistered = (RegisterApiBridge_nid_no_patch(&bridge), true);
 
 }

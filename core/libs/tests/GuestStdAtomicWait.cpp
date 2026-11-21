@@ -2,9 +2,11 @@
 #include "prx/libc/include/AtomicWaitForwards.hpp"
 
 #include <cstdint>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -96,6 +98,23 @@ int main() {
     Require(last.address == &wide && last.count == 1, "notify one wakes one waiter");
     __std_atomic_notify_all_direct_nid_postfix(&wide);
     Require(last.address == &wide && last.count == 0x7fffffff, "notify all wakes every waiter");
+
+    alignas(8) std::int64_t libcxx = -7;
+    errno = ESRCH;
+    Require(_ZNSt3__123__libcpp_atomic_monitorEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEE_nid_postfix(&libcxx) == -7,
+            "libc++ monitor reads the signed 64-bit value");
+    Require(errno == ESRCH, "libc++ monitor preserves errno");
+    _ZNSt3__120__libcpp_atomic_waitEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEEl_nid_postfix(&libcxx, -7);
+    Require(last.address == &libcxx && last.expected == static_cast<std::uint64_t>(-7) && !last.timed,
+            "libc++ wait forwards the signed 64-bit value without a timeout");
+    _ZNSt3__123__cxx_atomic_notify_oneEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEE_nid_postfix(&libcxx);
+    Require(last.address == &libcxx && last.count == 1, "libc++ notify one wakes one waiter");
+    try { _ZNSt3__123__libcpp_atomic_monitorEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEE_nid_postfix(nullptr); std::abort(); }
+    catch (const std::invalid_argument&) {}
+    try { _ZNSt3__120__libcpp_atomic_waitEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEEl_nid_postfix(reinterpret_cast<const std::int64_t*>(1), -7); std::abort(); }
+    catch (const std::invalid_argument&) {}
+    try { _ZNSt3__123__cxx_atomic_notify_oneEPVKNS_17__cxx_atomic_implIlNS_22__cxx_atomic_base_implIlEEEE_nid_postfix(nullptr); std::abort(); }
+    catch (const std::invalid_argument&) {}
 
     RegisterAtomicWaitForwards_nid_no_patch(nullptr);
     return 0;

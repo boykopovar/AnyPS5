@@ -1,0 +1,4 @@
+# libSceRtc
+
+## change not followed here
+- [sceRtcFormatRFC3339Precise, sceRtcFormatRFC3339PreciseLocalTime](../../../core/libs/prx/libSceRtc/Export.cpp) (libSceRtc) - measured in a payload process on a PS5 (firmware 13.60): a null tick means the current tick, a precision outside 0 to 6 or a zone outside -1439 to 1439 minutes returns `0x80B50003`, the fraction is the microseconds truncated to the requested digits, a local tick before 0001 returns `0x80B50003` and one after 9999 `0x80B50008`, and nothing is written on an error. The local-time variant takes the offset at that tick and checks only the local result, so a tick just past 9999 formats in a zone west of UTC. Firmware 13.42's module, run in an emulator, returns `0x80B50008` instead before 0001 for titles built below SDK 3.00. At most 33 bytes are written; the output buffer size is unknown

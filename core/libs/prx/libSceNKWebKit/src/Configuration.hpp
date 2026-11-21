@@ -41,6 +41,16 @@ public:
     double pageZoomFactor = 1.0;
     double textZoomFactor = 1.0;
     bool supportsTextZoom = true;
+    bool isClosed = false;
+    std::optional<std::u16string> title;
+    Retained<URL> activeURL;
+    Retained<URL> provisionalURL;
+    Retained<URL> committedURL;
+    double estimatedProgress = 0.0;
+    std::optional<std::u16string> applicationNameForUserAgent;
+    std::optional<std::u16string> customUserAgent;
+    std::optional<std::u16string> customTextEncodingName;
+    bool backgroundExtendsBeyondPage = false;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
@@ -74,6 +84,27 @@ public:
     bool usesWebProcessCache = false;
     bool shouldConfigureJSCForTesting = false;
     std::vector<std::u16string> overrideLanguages;
+
+    Retained<ProcessPoolConfiguration> Duplicate() const {
+        auto copy = Make<ProcessPoolConfiguration>();
+        copy->injectedBundlePath = injectedBundlePath;
+        copy->webProcessPath = webProcessPath;
+        copy->networkProcessPath = networkProcessPath;
+        copy->cookieStoragePath = cookieStoragePath;
+        copy->userId = userId;
+        copy->fullySynchronousModeIsAllowedForTesting = fullySynchronousModeIsAllowedForTesting;
+        copy->ignoreSynchronousMessagingTimeoutsForTesting = ignoreSynchronousMessagingTimeoutsForTesting;
+        copy->processSwapsOnNavigationFromClient = processSwapsOnNavigationFromClient;
+        copy->processSwapsOnNavigationFromExperimentalFeatures = processSwapsOnNavigationFromExperimentalFeatures;
+        copy->processSwapsOnWindowOpenWithOpener = processSwapsOnWindowOpenWithOpener;
+        copy->alwaysKeepAndReuseSwappedProcesses = alwaysKeepAndReuseSwappedProcesses;
+        copy->isAutomaticProcessWarmingEnabledByClient = isAutomaticProcessWarmingEnabledByClient;
+        copy->clientWouldBenefitFromAutomaticProcessPrewarming = clientWouldBenefitFromAutomaticProcessPrewarming;
+        copy->usesWebProcessCache = usesWebProcessCache;
+        copy->shouldConfigureJSCForTesting = shouldConfigureJSCForTesting;
+        copy->overrideLanguages = overrideLanguages;
+        return copy;
+    }
 };
 
 class ProcessPool final : public ObjectOf<ObjectType::ProcessPool> {
@@ -83,7 +114,6 @@ public:
 
     Retained<ProcessPoolConfiguration> configuration;
     bool usesSingleWebProcess = false;
-    std::uint32_t cacheModel = 0;
     bool accessibilityEnabled = false;
     bool processTerminationEnabled = true;
     std::vector<std::string> visitedLinks;
@@ -100,6 +130,7 @@ public:
     std::vector<std::string> canDisplayOnlyIfCanRequestSchemes;
     std::vector<std::string> emptyDocumentSchemes;
     std::vector<std::string> secureSchemes;
+    std::vector<std::string> fontAllowList;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
@@ -116,15 +147,15 @@ public:
 
 class WebsiteDataStoreConfiguration final : public ObjectOf<ObjectType::WebsiteDataStoreConfiguration> {
 public:
-    std::optional<std::u16string> applicationCacheDirectory;
-    std::optional<std::u16string> networkCacheDirectory;
-    std::optional<std::u16string> indexedDBDatabaseDirectory;
-    std::optional<std::u16string> localStorageDirectory;
-    std::optional<std::u16string> webSQLDatabaseDirectory;
-    std::optional<std::u16string> cacheStorageDirectory;
-    std::optional<std::u16string> mediaKeysStorageDirectory;
-    std::optional<std::u16string> resourceLoadStatisticsDirectory;
-    std::optional<std::u16string> serviceWorkerRegistrationDirectory;
+    std::optional<std::u16string> applicationCacheDirectory = u"/app0/applications";
+    std::optional<std::u16string> networkCacheDirectory = u"/app0/WebKitCache";
+    std::optional<std::u16string> indexedDBDatabaseDirectory = u"/app0/indexeddb";
+    std::optional<std::u16string> localStorageDirectory = u"/app0/local";
+    std::optional<std::u16string> webSQLDatabaseDirectory = u"/app0/websql";
+    std::optional<std::u16string> cacheStorageDirectory = u"/app0/CacheStorage";
+    std::optional<std::u16string> mediaKeysStorageDirectory = u"/app0/mediakeys";
+    std::optional<std::u16string> resourceLoadStatisticsDirectory = u"/app0/itp";
+    std::optional<std::u16string> serviceWorkerRegistrationDirectory = u"/app0/serviceworkers";
     std::optional<std::u16string> cookieStorageFile;
     std::uint64_t perOriginStorageQuota = 1000ULL * 1024ULL * 1024ULL;
     bool networkCacheSpeculativeValidationEnabled = false;

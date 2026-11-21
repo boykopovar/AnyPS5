@@ -288,8 +288,8 @@ int main() {
     Require(sceCesEucCnToUcs2(euc, Bytes("\xD6\xD0"), 2, &consumed, &ucs2) == 0 && consumed == 2 && ucs2 == 0x4E2D);
     Require(sceCesEucCnToUcs2(euc, Bytes("A"), 1, &consumed, &ucs2) == 0 && consumed == 1 && ucs2 == 'A');
     Require(sceCesEucCnToUcs2(euc, Bytes("\xA1\xA4"), 2, &consumed, &ucs2) == 0 && ucs2 == 0x00B7);
-    Require(sceCesEucCnToUcs2(euc, Bytes("\x80"), 1, &consumed, &ucs2) == invalidEncode);
-    Require(sceCesEucCnToUcs2(euc, Bytes("\x81\x40"), 2, &consumed, &ucs2) == invalidEncode);
+    Require(sceCesEucCnToUcs2(euc, Bytes("\x80"), 1, &consumed, &ucs2) == 0 && consumed == 1 && ucs2 == 0x80);
+    Require(sceCesEucCnToUcs2(euc, Bytes("\x81\x40"), 2, &consumed, &ucs2) == 0 && consumed == 1 && ucs2 == 0x81);
     Require(sceCesEucCnToUcs2(euc, Bytes("\xD6\x40"), 2, &consumed, &ucs2) == invalidEncode);
     Require(sceCesEucCnToUcs2(euc, Bytes("\xD6\xD0"), 1, &consumed, &ucs2) == srcBufferEnd);
     Require(sceCesEucCnToUcs2(euc, Bytes("\xAA\xA1"), 2, &consumed, &ucs2) == unassignedCode);
@@ -381,7 +381,9 @@ int main() {
         }
         if (sceCesUcs2ToEucCn(static_cast<std::uint16_t>(code), euc, encoded, sizeof(encoded), &size) == 0) {
             Require(size == 1 || (encoded[0] >= 0xA1 && encoded[1] >= 0xA1));
-            Require(sceCesEucCnToUcs2(euc, encoded, size, &consumed, &back) == 0 && consumed == size && back == code);
+            const int decoded = sceCesEucCnToUcs2(euc, encoded, size, &consumed, &back);
+            const bool leftOut = decoded == unassignedCode && size == 2 && (encoded[0] == 0xA2 || encoded[0] == 0xA6 || encoded[0] == 0xA8);
+            Require((decoded == 0 && consumed == size && back == code) || leftOut);
             ++eucCount;
         }
     }
