@@ -2,11 +2,13 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 static_assert(sizeof(WVorbisHeaderPacketParameter) == 0x48);
@@ -88,6 +90,12 @@ void TestValidation() {
     Require(Create(param) == OutputTooSmall, "zero capacity output is refused");
     param = Valid(output.data(), 55);
     Require(Create(param) == OutputTooSmall, "output below header size is refused");
+    param = Valid(output.data(), 56 + 0x1FFFFu);
+    param.setupPacketSize = 0x1FFFFu;
+    Require(Create(param) == InvalidSetup, "a setup packet above 0x1FFFE bytes is refused before allocation");
+    param = Valid(output.data(), std::numeric_limits<std::size_t>::max());
+    param.setupPacketSize = std::numeric_limits<std::size_t>::max() - 56;
+    Require(Create(param) == InvalidSetup, "a huge setup packet size and capacity is refused without allocation");
 }
 
 void TestInstanceCodecType() {
@@ -128,6 +136,43 @@ void TestLargePacket() {
     Require(output[56 + setup.size()] == 0xEE, "nothing is written past the large packet");
 }
 
+void TestGuestPointers() {
+    std::array<std::uint8_t, 128> output {};
+    output.fill(0xEE);
+    static const std::array<std::uint8_t, 128> readOnlyOutput {};
+    static std::array<std::uint8_t, 128> sinkOutput {};
+    static const WVorbisHeaderPacketParameter readOnlyParam {
+        sizeof(WVorbisHeaderPacketParameter), 2, 48000, 16000, 8, 11, 0, Setup.data(), Setup.size(), sinkOutput.data(), sinkOutput.size(), 99,
+    };
+
+    errno = 71;
+    Require(sceAjmDecWVorbisCreateHeaderPacket(reinterpret_cast<WVorbisHeaderPacketParameter*>(0x10)) == InvalidParameter && errno == 71,
+            "an unreadable parameter pointer is refused without changing errno");
+
+    auto param = Valid(output.data(), output.size());
+    param.outputSize = 99;
+    param.setupPacket = reinterpret_cast<const void*>(0x10);
+    Require(sceAjmDecWVorbisCreateHeaderPacket(&param) == InvalidParameter && errno == 71,
+            "an unreadable setup packet pointer is refused without changing errno");
+    Require(param.outputSize == 99 && output[0] == 0xEE, "refused unreadable setup packet leaves output untouched");
+
+    param = Valid(reinterpret_cast<std::uint8_t*>(0x10), output.size());
+    param.outputSize = 99;
+    Require(sceAjmDecWVorbisCreateHeaderPacket(&param) == InvalidParameter && errno == 71,
+            "an unwritable output pointer is refused without changing errno");
+    Require(param.outputSize == 99, "refused unwritable output leaves output size untouched");
+
+    param = Valid(const_cast<std::uint8_t*>(readOnlyOutput.data()), readOnlyOutput.size());
+    param.outputSize = 99;
+    Require(sceAjmDecWVorbisCreateHeaderPacket(&param) == InvalidParameter && errno == 71,
+            "a read-only output pointer is refused without changing errno");
+    Require(param.outputSize == 99, "refused read-only output leaves output size untouched");
+
+    Require(sceAjmDecWVorbisCreateHeaderPacket(const_cast<WVorbisHeaderPacketParameter*>(&readOnlyParam)) == InvalidParameter && errno == 71,
+            "a read-only parameter structure is refused without changing errno");
+    Require(readOnlyParam.outputSize == 99, "refused read-only parameter output size remains unchanged");
+}
+
 }
 
 int main() {
@@ -135,5 +180,6 @@ int main() {
     TestPacket();
     TestLargePacket();
     TestInstanceCodecType();
+    TestGuestPointers();
     std::puts("guest ajm wvorbis header packet: PASS");
 }
