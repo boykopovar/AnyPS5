@@ -56,7 +56,7 @@ std::uint64_t APS5_VABI sceGnmGetTheTessellationFactorRingBufferBaseAddress();
 int APS5_VABI sceGnmLogicalCuIndexToPhysicalCuIndex(std::uint32_t engine, std::uint32_t cuIndex);
 std::uint32_t APS5_VABI sceGnmLogicalCuMaskToPhysicalCuMask(std::uint32_t, std::uint32_t mask);
 int APS5_VABI sceGnmMapComputeQueue(std::uint32_t pipe, std::uint32_t queue, void* ring, std::uint32_t ringSizeInDwords, void* readOffset);
-int APS5_VABI sceGnmRequestFlipAndSubmitDone();
+int APS5_VABI sceGnmRequestFlipAndSubmitDone(std::uint32_t* gpuAddr, std::uint32_t gpuAddrSizeInBytes, std::uint32_t videoOutHandle, std::uint32_t displayBufferIndex, std::uint32_t flipMode, std::int64_t flipArg);
 int APS5_VABI sceGnmRequestMipStatsReportAndReset();
 int APS5_VABI sceGnmSetGsRingSizes();
 int APS5_VABI sceGnmSetupMipStatsReport();
