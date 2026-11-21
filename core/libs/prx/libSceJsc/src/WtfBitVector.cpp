@@ -26,6 +26,7 @@
 
 #include "prx/libSceJsc/include/WtfBitVectorExports.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -84,20 +85,25 @@ extern "C" {
 
 void APS5_VABI _ZN3WTF9BitVector10filterSlowERKS0_(BitVector* self, const BitVector* other) {
     if (!self || !other) throw std::invalid_argument("WTF::BitVector::filterSlow requires two vectors");
-    if (IsInline(*other)) {
-        if (IsInline(*self)) throw std::invalid_argument("WTF::BitVector::filterSlow: both vectors are inline");
-        *Words(OutOfLine(*self)) &= CleanseInlineBits(other->bitsOrPointer);
+    BitVector vector{};
+    BitVector filter{};
+    if (!GuestPtr<BitVector>(self).CopyIn(vector) || !GuestPtr<const BitVector>(other).CopyIn(filter))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (IsInline(filter)) {
+        if (IsInline(vector)) throw std::invalid_argument("WTF::BitVector::filterSlow: both vectors are inline");
+        *Words(OutOfLine(vector)) &= CleanseInlineBits(filter.bitsOrPointer);
         return;
     }
 
-    if (IsInline(*self)) {
-        self->bitsOrPointer &= *Words(OutOfLine(*other));
-        self->bitsOrPointer |= (static_cast<std::uintptr_t>(1) << MaxInlineBits);
+    if (IsInline(vector)) {
+        vector.bitsOrPointer &= *Words(OutOfLine(filter));
+        vector.bitsOrPointer |= (static_cast<std::uintptr_t>(1) << MaxInlineBits);
+        if (!GuestPtr<BitVector>(self).CopyOut(vector)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return;
     }
 
-    OutOfLineBits* a = OutOfLine(*self);
-    OutOfLineBits* b = OutOfLine(*other);
+    OutOfLineBits* a = OutOfLine(vector);
+    OutOfLineBits* b = OutOfLine(filter);
     for (unsigned i = std::min(NumWords(a), NumWords(b)); i--;)
         Words(a)[i] &= Words(b)[i];
 
@@ -108,15 +114,18 @@ void APS5_VABI _ZN3WTF9BitVector10filterSlowERKS0_(BitVector* self, const BitVec
 void APS5_VABI _ZN3WTF9BitVector15resizeOutOfLineEm(BitVector* self, std::size_t numBits) {
     if (!self) throw std::invalid_argument("WTF::BitVector::resizeOutOfLine requires a vector");
     if (numBits <= MaxInlineBits) throw std::invalid_argument("WTF::BitVector::resizeOutOfLine: size fits inline");
-    if (!IsInline(*self) && IsEmptyOrDeletedValue(*self))
+    BitVector vector{};
+    if (!GuestPtr<BitVector>(self).CopyIn(vector)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!IsInline(vector) && IsEmptyOrDeletedValue(vector))
         throw std::invalid_argument("WTF::BitVector::resizeOutOfLine: empty or deleted vector");
     OutOfLineBits* newBits = CreateOutOfLine(numBits);
     const std::size_t newNumWords = NumWords(newBits);
-    if (IsInline(*self)) {
-        *Words(newBits) = CleanseInlineBits(self->bitsOrPointer);
+    OutOfLineBits* oldBits = nullptr;
+    if (IsInline(vector)) {
+        *Words(newBits) = CleanseInlineBits(vector.bitsOrPointer);
         std::memset(Words(newBits) + 1, 0, (newNumWords - 1) * sizeof(std::uintptr_t));
     } else {
-        OutOfLineBits* oldBits = OutOfLine(*self);
+        oldBits = OutOfLine(vector);
         if (numBits > oldBits->numBits) {
             const std::size_t oldNumWords = NumWords(oldBits);
             std::memcpy(Words(newBits), Words(oldBits), oldNumWords * sizeof(std::uintptr_t));
@@ -124,9 +133,11 @@ void APS5_VABI _ZN3WTF9BitVector15resizeOutOfLineEm(BitVector* self, std::size_t
         } else {
             std::memcpy(Words(newBits), Words(oldBits), newNumWords * sizeof(std::uintptr_t));
         }
-        free_nid_postfix(oldBits);
     }
-    self->bitsOrPointer = reinterpret_cast<std::uintptr_t>(newBits) >> 1;
+    if (!GuestPtr<BitVector>(self).CopyOut(BitVector{reinterpret_cast<std::uintptr_t>(newBits) >> 1})) {
+        free_nid_postfix(newBits);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
+    if (oldBits) free_nid_postfix(oldBits);
 }
-
 }

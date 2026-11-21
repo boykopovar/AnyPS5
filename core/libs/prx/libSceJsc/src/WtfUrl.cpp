@@ -127,6 +127,7 @@ Derived from Source/WTF/wtf/text/StringView.cpp@c55364d53f971f63a709976f168d932d
  * Derived from Source/WTF/wtf/TimeWithDynamicClockType.cpp@c55364d53f971f63a709976f168d932d558b8909
  */
 
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libSceJsc/include/WtfUrlExports.hpp"
 
 #include <cstdint>
@@ -295,24 +296,34 @@ OptionalUInt16 APS5_VABI _ZN3WTF22defaultPortForProtocolENS_10StringViewE(String
 
 bool APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypeltERKS0_(const TimeWithDynamicClockType* self, const TimeWithDynamicClockType* other) {
     if (!self || !other) throw std::invalid_argument(__func__);
-    if (self->type != other->type) throw std::invalid_argument("WTF::TimeWithDynamicClockType::operator<: clock types differ");
-    return self->value < other->value;
+    TimeWithDynamicClockType lhs{};
+    TimeWithDynamicClockType rhs{};
+    if (!GuestPtr<const TimeWithDynamicClockType>(self).CopyIn(lhs) || !GuestPtr<const TimeWithDynamicClockType>(other).CopyIn(rhs))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (lhs.type != rhs.type) throw std::invalid_argument("WTF::TimeWithDynamicClockType::operator<: clock types differ");
+    return lhs.value < rhs.value;
 }
 
 TimeWithDynamicClockType APS5_VABI _ZNK3WTF7SecondsplERKNS_24TimeWithDynamicClockTypeE(const Seconds* self, const TimeWithDynamicClockType* other) {
     if (!self || !other) throw std::invalid_argument(__func__);
-    return {other->value + self->value, other->type};
+    Seconds seconds{};
+    TimeWithDynamicClockType time{};
+    if (!GuestPtr<const Seconds>(self).CopyIn(seconds) || !GuestPtr<const TimeWithDynamicClockType>(other).CopyIn(time))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return {time.value + seconds.value, time.type};
 }
 
 bool APS5_VABI _ZNK3WTF13StringBuilder10isAllASCIIEv(const StringBuilder* self) {
     if (!self) throw std::invalid_argument(__func__);
-    if (self->overflowed) throw std::invalid_argument("WTF::StringBuilder::isAllASCII: the builder has overflowed");
-    if (self->length < 0) throw std::invalid_argument("WTF::StringBuilder::isAllASCII: negative length");
-    const auto length = static_cast<unsigned>(self->length);
+    StringBuilder builder{};
+    if (!GuestPtr<const StringBuilder>(self).CopyIn(builder)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (builder.overflowed) throw std::invalid_argument("WTF::StringBuilder::isAllASCII: the builder has overflowed");
+    if (builder.length < 0) throw std::invalid_argument("WTF::StringBuilder::isAllASCII: negative length");
+    const auto length = static_cast<unsigned>(builder.length);
     if (!length) return true;
-    const StringImpl* characters = self->string ? self->string : self->buffer;
+    const StringImpl* characters = builder.string ? builder.string : builder.buffer;
     if (!characters) throw std::invalid_argument("WTF::StringBuilder::isAllASCII: no string or buffer");
-    return CharactersAreAllASCII({characters->data, length, self->is8Bit});
+    return CharactersAreAllASCII({characters->data, length, builder.is8Bit});
 }
 
 }
