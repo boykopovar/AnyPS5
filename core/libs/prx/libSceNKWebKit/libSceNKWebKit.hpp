@@ -81,6 +81,7 @@
 #include "prx/libSceNKWebKit/include/SpeculatedTypeExports.hpp"
 #include "prx/libSceNKWebKit/include/UrlHelpers.hpp"
 #include "prx/libSceNKWebKit/include/UrlParserExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfStreamPrintExports.hpp"
 #include "prx/libSceNKWebKit/include/URLDecompositionExports.hpp"
 
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"

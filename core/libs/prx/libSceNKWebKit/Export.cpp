@@ -12862,10 +12862,6 @@ int APS5_VABI _ZN3WTF10initializeEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF11PrintStream20printfVariableFormatEPKcz() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF11PrintStream6printfEPKcz() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -25626,10 +25622,6 @@ int APS5_VABI _ZNK3WTF15AutomaticThread19hasUnderlyingThreadERKNS_14AbstractLock
 }
 
 int APS5_VABI _ZNK3WTF15AutomaticThread4nameEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF19MetaAllocatorHandle4dumpERNS_11PrintStreamE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
