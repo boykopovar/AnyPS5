@@ -56,11 +56,15 @@ void CommonLanguages() {
     }
 }
 
-void LikelySubtags() {
-    for (const char* locale : {"", "ur", "ps_AF", "yi", "dv", "und", "und_", "und@x", "und.x", "root", "ROOT",
-                               "r", "e", "oo", "iw", "per", "x-foo", "i_klingon", "abcdefgh", "abcdefghijk_",
-                               "abcdefghijkl_Arab", "ur_Arabx", "@x", ".x", "_US"}) {
-        ExpectThrows(locale);
+void LikelySubtags(bool packaged) {
+    for (const Case& item : std::initializer_list<Case>{
+             {"", false}, {"ur", true}, {"ps_AF", true}, {"yi", true}, {"dv", true}, {"und", false},
+             {"und_", false}, {"und@x", false}, {"und.x", false}, {"root", false}, {"ROOT", false},
+             {"r", false}, {"e", false}, {"oo", false}, {"iw", true}, {"per", true}, {"x-foo", false},
+             {"i_klingon", false}, {"abcdefgh", false}, {"abcdefghijk_", false}, {"abcdefghijkl_Arab", false},
+             {"ur_Arabx", true}, {"@x", false}, {".x", false}, {"_US", false}}) {
+        if (packaged) Expect(item);
+        else ExpectThrows(item.locale);
     }
     try {
         const auto expected = uloc_isRightToLeft_nid_postfix(uloc_getDefault());
@@ -75,9 +79,9 @@ void LikelySubtags() {
 
 }
 
-int main() {
+int main(int argc, char**) {
     Scripts();
     CommonLanguages();
-    LikelySubtags();
+    LikelySubtags(argc == 2);
     return 0;
 }
