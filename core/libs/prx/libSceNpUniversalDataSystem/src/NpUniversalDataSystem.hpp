@@ -26,16 +26,18 @@ static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_KEY = -214190052
 static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE = -2141900523;
 static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_OBJECT = -2141900519;
 static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_ARRAY = -2141900518;
+static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_OUT_OF_MEMORY = -2141900543;
 
 static constexpr int NP_UNIVERSAL_DATA_SYSTEM_CONTEXT_DEFAULT = 1;
 static constexpr int NP_UNIVERSAL_DATA_SYSTEM_HANDLE_DEFAULT  = 1;
 
 namespace Uds {
 
-inline bool CopyText(const char* text, std::string& copied) {
+inline int CopyText(const char* text, std::string& copied, int unreadable) {
+    if (text == nullptr) return unreadable;
     const int result = CopyGuestString_nid_no_patch(text, std::numeric_limits<std::size_t>::max(), copied);
-    if (result == 12) throw std::bad_alloc();
-    return result == 0;
+    if (result == 12) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_OUT_OF_MEMORY;
+    return result == 0 ? 0 : unreadable;
 }
 
 template <typename TValue>

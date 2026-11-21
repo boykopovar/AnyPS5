@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <new>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include "NpUniversalDataSystem.hpp"
@@ -18,7 +20,8 @@ Uds::Owned<NpUniversalDataSystemEventPropertyObject>& objects() {
 
 int checkTarget(const NpUniversalDataSystemEventPropertyObject* object, const char* key, std::string& name) {
     if (object == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_OBJECT;
-    if (key == nullptr || !Uds::CopyText(key, name) || name.empty()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_KEY;
+    if (const int error = Uds::CopyText(key, name, SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_KEY); error != 0) return error;
+    if (name.empty()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_KEY;
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -51,7 +54,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetString(
     if (const int error = checkTarget(object, key, name); error != SCE_NP_UNIVERSAL_DATA_SYSTEM_OK) return error;
     key = name.c_str();
     std::string text;
-    if (value == nullptr || !Uds::CopyText(value, text)) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE;
+    if (const int error = Uds::CopyText(value, text, SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE); error != 0) return error;
     object->Set(key, std::move(text));
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
@@ -133,7 +136,14 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetBinary(
     if (const int error = checkTarget(object, key, name); error != SCE_NP_UNIVERSAL_DATA_SYSTEM_OK) return error;
     key = name.c_str();
     if (value == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE;
-    Uds::Binary bytes(value_size);
+    Uds::Binary bytes;
+    try {
+        bytes.resize(value_size);
+    } catch (const std::bad_alloc&) {
+        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_OUT_OF_MEMORY;
+    } catch (const std::length_error&) {
+        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_OUT_OF_MEMORY;
+    }
     if (!GuestCopyIn_nid_no_patch(bytes.data(), value, value_size)) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE;
     object->Set(key, std::move(bytes));
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
