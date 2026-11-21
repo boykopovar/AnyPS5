@@ -10,6 +10,13 @@
 
 namespace NKWebKit {
 
+enum class ReloadMode : std::uint32_t {
+    Normal = 0,
+    FromOrigin,
+    ExpiredOnly,
+    WithoutContentBlockers,
+};
+
 class Page : public ObjectOf<ObjectType::Page> {
 public:
     bool canGoBack = false;
@@ -51,6 +58,8 @@ public:
     std::optional<std::u16string> customUserAgent;
     std::optional<std::u16string> customTextEncodingName;
     bool backgroundExtendsBeyondPage = false;
+    std::optional<ReloadMode> lastReloadMode;
+    std::uint32_t reloadCount = 0;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};

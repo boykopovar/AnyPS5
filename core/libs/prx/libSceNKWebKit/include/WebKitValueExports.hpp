@@ -354,6 +354,10 @@ std::uint32_t APS5_VABI WKPageGroupGetTypeID();
 bool APS5_VABI WKPageHasHorizontalScrollbar(const void* pageRef);
 bool APS5_VABI WKPageHasVerticalScrollbar(const void* pageRef);
 bool APS5_VABI WKPageHorizontalRubberBandingIsEnabled(const void* pageRef);
+void APS5_VABI WKPageReload(const void* pageRef);
+void APS5_VABI WKPageReloadExpiredOnly(const void* pageRef);
+void APS5_VABI WKPageReloadFromOrigin(const void* pageRef);
+void APS5_VABI WKPageReloadWithoutContentBlockers(const void* pageRef);
 std::uint32_t APS5_VABI WKPageRequestStorageAccessConfirmResultListenerGetTypeID();
 bool APS5_VABI WKPageRubberBandsAtBottom(const void* pageRef);
 bool APS5_VABI WKPageRubberBandsAtLeft(const void* pageRef);
@@ -377,6 +381,7 @@ void APS5_VABI WKPageSetScrollPinningBehavior(const void* pageRef, std::uint32_t
 void APS5_VABI WKPageSetSuppressScrollbarAnimations(const void* pageRef, bool suppressAnimations);
 void APS5_VABI WKPageSetTextZoomFactor(const void* pageRef, double zoomFactor);
 void APS5_VABI WKPageSetUseFixedLayout(const void* pageRef, bool fixed);
+void APS5_VABI WKPageStopLoading(const void* pageRef);
 bool APS5_VABI WKPageSupportsTextZoom(const void* pageRef);
 bool APS5_VABI WKPageIsClosed(const void* pageRef);
 const void* APS5_VABI WKPageCopyTitle(const void* pageRef);
