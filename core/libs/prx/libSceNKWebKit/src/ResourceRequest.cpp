@@ -29,6 +29,7 @@
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
+#include "prx/libSceNKWebKit/include/PublicSuffixExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 #include "prx/libSceNKWebKit/src/WtfVector.hpp"
@@ -655,8 +656,12 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase12clearPurposeEv(ResourceRequestB
     request.platformRequestUpdated = false;
 }
 
-String APS5_VABI _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(const String*) {
-    return String(NKWebKit::WtfAbi::EmptyStringImpl());
+String APS5_VABI _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(const String* domain) {
+    if (!domain) throw std::invalid_argument("ResourceRequestBase::partitionName: null domain");
+    if (!domain->impl) return String(NKWebKit::WtfAbi::EmptyStringImpl());
+    String highLevel = _ZN7WebCore28topPrivatelyControlledDomainERKN3WTF6StringE(domain);
+    if (!highLevel.impl) return String(NKWebKit::WtfAbi::EmptyStringImpl());
+    return highLevel;
 }
 
 void APS5_VABI _ZN7WebCore19ResourceRequestBase17clearHTTPReferrerEv(ResourceRequestBase* self) {
