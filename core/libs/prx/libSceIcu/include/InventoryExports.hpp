@@ -4,20 +4,6 @@
 
 extern "C" {
 
-int APS5_VABI ubrk_close();
-int APS5_VABI ubrk_countAvailable();
-int APS5_VABI ubrk_current();
-int APS5_VABI ubrk_first();
-int APS5_VABI ubrk_following();
-int APS5_VABI ubrk_getAvailable();
-int APS5_VABI ubrk_getRuleStatus();
-int APS5_VABI ubrk_isBoundary();
-int APS5_VABI ubrk_last();
-int APS5_VABI ubrk_next();
-int APS5_VABI ubrk_open();
-int APS5_VABI ubrk_preceding();
-int APS5_VABI ubrk_previous();
-int APS5_VABI ubrk_setText();
 int APS5_VABI ubrk_setUText();
 int APS5_VABI ucnv_cbFromUWriteBytes();
 int APS5_VABI ucnv_close();
@@ -61,9 +47,6 @@ std::int32_t APS5_VABI uloc_toLanguageTag(const char* localeID, char* langtag, s
 const char* APS5_VABI uprv_getDefaultLocaleID_nid_postfix();
 double APS5_VABI uprv_getRawUTCtime_nid_postfix();
 double APS5_VABI uprv_getUTCtime_nid_postfix();
-int APS5_VABI ures_getByKey();
-int APS5_VABI ures_getStringByKey();
-int APS5_VABI ures_open();
 int APS5_VABI utext_openConstUnicodeString();
 int APS5_VABI utext_openUChars();
 int APS5_VABI utext_setup();
