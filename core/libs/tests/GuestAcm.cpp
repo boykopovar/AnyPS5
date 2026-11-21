@@ -189,9 +189,12 @@ static void TestAudio3dChainEncoders() {
     std::memset(commands, 0xCC, sizeof(commands));
     batch = {commands, 0, sizeof(commands)};
     Require(sceAcmChain_Audio3dPO1_Output(nullptr, outputBuf, 0, chain) == BadPointer);
+    Require(sceAcmChain_Audio3dPO1_Output(&batch, nullptr, 0, chain) == BadPointer && batch.offset == 0 && commands[0] == std::byte{0xCC});
+    Require(sceAcmChain_Audio3dPO1_Output(&batch, nullptr, 1, chain) == BadPointer && batch.offset == 0 && commands[0] == std::byte{0xCC});
     Require(sceAcmChain_Audio3dPO1_Output(&batch, outputBuf, 0, nullptr) == BadPointer);
     Require(sceAcmChain_Audio3dPO1_Output(&batch, outputBuf, 2, chain) == BadPointer);
     Require(sceAcmChain_Audio3dPO1_Output(&batch, outputBuf + 4, 0, chain) == BadAlignment);
+    Require(sceAcmChain_Audio3dPO1_Output(&batch, reinterpret_cast<void*>((~std::uintptr_t{0}) - 0xfffu), 0, chain) == BadPointer && batch.offset == 0 && commands[0] == std::byte{0xCC});
     Require(sceAcmChain_Audio3dPO1_Output(&batch, reinterpret_cast<void*>((~std::uintptr_t{0}) - 0x7ffu), 0, chain) == BadPointer && batch.offset == 0 && commands[0] == std::byte{0xCC});
     errno = 71;
     Require(sceAcmChain_Audio3dPO1_Output(badBatch, outputBuf, 0, chain) == BadPointer);
@@ -298,6 +301,10 @@ static void TestAudio3dChainEncoders() {
     Require(sceAcmChain_Audio3dPO2_RenderDelay(&batch, 0, 0, nullptr, outputBuf, delayBuffers, 0, 0, chain) == BadPointer);
     Require(sceAcmChain_Audio3dPO2_RenderDelay(&batch, 0, 0, inputBuf, nullptr, delayBuffers, 0, 0, chain) == BadPointer);
     Require(sceAcmChain_Audio3dPO2_RenderDelay(&batch, 0, 0, inputBuf, outputBuf, nullptr, 0, 0, chain) == BadPointer);
+    const void* nullDelay0[2]{nullptr, delayBuf1};
+    const void* nullDelay1[2]{delayBuf0, nullptr};
+    Require(sceAcmChain_Audio3dPO2_RenderDelay(&batch, 0, 0, inputBuf, outputBuf, nullDelay0, 0, 0, chain) == BadPointer && batch.offset == 0 && batch.buffer_size == sizeof(commands) && commands[0] == std::byte{0xCC});
+    Require(sceAcmChain_Audio3dPO2_RenderDelay(&batch, 0, 0, inputBuf, outputBuf, nullDelay1, 0, 0, chain) == BadPointer && batch.offset == 0 && batch.buffer_size == sizeof(commands) && commands[0] == std::byte{0xCC});
     Require(sceAcmChain_Audio3dPO2_RenderDelay(&batch, 0, 0, inputBuf, outputBuf, delayBuffers, 0, 0, nullptr) == BadPointer);
     Require(sceAcmChain_Audio3dPO2_RenderDelay(&batch, 2, 0, inputBuf, outputBuf, delayBuffers, 0, 0, chain) == BadPointer);
     Require(sceAcmChain_Audio3dPO2_RenderDelay(&batch, 0, 3, inputBuf, outputBuf, delayBuffers, 0, 0, chain) == BadPointer);
@@ -333,6 +340,10 @@ static void TestAudio3dChainEncoders() {
     const std::byte* const delayDesc1 = commands + sizeof(commands) - 0x100;
     Require(qword(commands, 24) == 0x008000000000000Dull && qword(commands, 32) == address(delayDesc1) && qword(commands, 40) == 0x0Aull);
     Require(dword(delayDesc1, 0x28) == 0x60u && dword(delayDesc1, 0x2c) == ((0x03u << 16) | (chain5c ^ chain0c)));
+    AcmBatchInfo nullBufBatch{nullptr, 0, sizeof(commands)};
+    Require(sceAcmChain_Audio3dPO1_Clear(&nullBufBatch, 0, chain) == BadPointer && nullBufBatch.offset == 0);
+    Require(sceAcmChain_Audio3dPO1_Output(&nullBufBatch, outputBuf, 0, chain) == BadPointer && nullBufBatch.offset == 0);
+    Require(sceAcmChain_Audio3dPO2_RenderDelay(&nullBufBatch, 0, 0, inputBuf, outputBuf, delayBuffers, 0, 0, chain) == BadPointer && nullBufBatch.offset == 0 && nullBufBatch.buffer_size == sizeof(commands));
 }
 
 int main() {
@@ -804,6 +815,10 @@ int main() {
     Require(sceAcmChain_Audio3dPO1_RenderAmbisonicsChannel(readOnlyBatch, 0, 0, 0, memory, memory + 0x100, 1.0f, 0, roChain) == BadPointer && errno == 71 && readOnlyBatch->offset == 0);
     Require(sceAcmChain_Audio3dPO1_RenderPassthroughObject(readOnlyBatch, 0, 0, 0, memory, memory + 0x100, 1.0f, 0, roChain) == BadPointer && errno == 71 && readOnlyBatch->offset == 0);
     Require(sceAcmChain_Audio3dPO2_RenderDelay(readOnlyBatch, 0, 0, memory, memory + 0x100, roDelays, 0, 0, roChain) == BadPointer && errno == 71 && readOnlyBatch->offset == 0);
+    AcmBatchInfo roStateBatch{commands, 0, sizeof(commands)};
+    void* const readOnlyState = acmReadOnlyMem + 0x100;
+    Require(sceAcmChain_Audio3dPO1_RenderAmbisonicsChannel(&roStateBatch, 0, 0, 0, memory, readOnlyState, 1.0f, 0, roChain) == BadPointer && errno == 71 && roStateBatch.offset == 0);
+    Require(sceAcmChain_Audio3dPO1_RenderPassthroughObject(&roStateBatch, 0, 0, 0, memory, readOnlyState, 1.0f, 0, roChain) == BadPointer && errno == 71 && roStateBatch.offset == 0);
     Require(commands[0] == std::byte{0xCC});
     std::memset(commands, 0xCC, sizeof(commands));
 #ifdef _WIN32
