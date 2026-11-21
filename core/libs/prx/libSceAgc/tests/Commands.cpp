@@ -37,6 +37,9 @@
 #include "prx/libc/include/Shutdown.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <thread>
 #include <array>
 #include <tuple>
 #include <cstdio>
@@ -86,6 +89,42 @@ bool APS5_VABI growReserved(CommandBuffer* buffer, std::uint32_t count, void* us
     buffer->cursor_up = buffer->bottom;
     buffer->cursor_down = buffer->top;
     return true;
+}
+
+struct ConcurrentGrowth {
+    std::array<std::uint32_t, 64> words{};
+    std::atomic<int> inside{0};
+    std::atomic<int> most{0};
+    std::atomic<int> calls{0};
+    std::atomic<bool> entered{false};
+};
+
+bool APS5_VABI growConcurrent(CommandBuffer* buffer, std::uint32_t, void* userData) {
+    auto& growth = *static_cast<ConcurrentGrowth*>(userData);
+    const int now = ++growth.inside;
+    int seen = growth.most.load();
+    while (now > seen && !growth.most.compare_exchange_weak(seen, now)) {}
+    if (++growth.calls == 1) {
+        growth.entered = true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    buffer->bottom = growth.words.data();
+    buffer->top = growth.words.data() + growth.words.size();
+    buffer->cursor_up = buffer->bottom;
+    buffer->cursor_down = buffer->top;
+    --growth.inside;
+    return true;
+}
+
+void testReserveGrowthLock() {
+    ConcurrentGrowth growth;
+    CommandBuffer buffer{nullptr, nullptr, nullptr, nullptr, growConcurrent, &growth, 0};
+    std::thread reserving([&] { Agc::Command::Reserve(&buffer, 4, __func__); });
+    while (!growth.entered) std::this_thread::yield();
+    Agc::Command::Allocate(&buffer, 4, __func__);
+    reserving.join();
+    check(growth.most == 1, "a command buffer grew in two threads at once");
+    check(growth.calls == 1, "a command buffer grown by Reserve was grown again by a waiting Allocate");
 }
 
 void testPackets() {
@@ -1357,6 +1396,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         testPackets();
+        testReserveGrowthLock();
         testEventWrite();
         testAcquireMem();
         testNop();
