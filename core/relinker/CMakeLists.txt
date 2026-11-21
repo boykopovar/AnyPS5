@@ -59,6 +59,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/BlsLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ShiftLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/BitfieldLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ParallelBitsLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/CountLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MovbeLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Avx2TwinLowering.cpp
@@ -141,6 +142,11 @@ if(BUILD_TESTING)
     target_link_libraries(bitfield_lowering_tests PRIVATE relinker_core)
     add_test(NAME bitfield_lowering COMMAND bitfield_lowering_tests)
     set_tests_properties(bitfield_lowering PROPERTIES TIMEOUT 60)
+
+    add_test_executable(parallel_bits_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/ParallelBitsLoweringTests.cpp)
+    target_link_libraries(parallel_bits_lowering_tests PRIVATE relinker_core)
+    add_test(NAME parallel_bits_lowering COMMAND parallel_bits_lowering_tests)
+    set_tests_properties(parallel_bits_lowering PROPERTIES TIMEOUT 60)
 
     add_test_executable(count_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/CountLoweringTests.cpp)
     target_link_libraries(count_lowering_tests PRIVATE relinker_core)
@@ -334,6 +340,7 @@ if(WIN32)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/BlsLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ShiftLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/BitfieldLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ParallelBitsLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/CountLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MovbeLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Avx2TwinLowering.cpp
@@ -658,6 +665,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/BlsLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ShiftLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/BitfieldLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ParallelBitsLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/CountLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MovbeLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Avx2TwinLowering.cpp
@@ -1157,6 +1165,9 @@ if(BUILD_TESTING)
         add_test(NAME mulx_conversion COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_mulx_conversion.py $<TARGET_FILE:relinker>)
         set_tests_properties(mulx_conversion PROPERTIES TIMEOUT 20)
+        add_test(NAME parallel_bits_conversion COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_parallel_bits_conversion.py $<TARGET_FILE:relinker>)
+        set_tests_properties(parallel_bits_conversion PROPERTIES TIMEOUT 20)
         add_test(NAME to_rosetta COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_to_rosetta.py $<TARGET_FILE:relinker>)
         add_test(NAME syscall_number COMMAND ${Python3_EXECUTABLE}
