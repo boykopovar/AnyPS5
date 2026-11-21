@@ -43,38 +43,86 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libwebrtc/include/ModuleStorage.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <stdexcept>
 
 namespace {
 
 constexpr int CodecTypeOther = 0;
-std::size_t RedundantCount(const WebRtcAudioEncodedInfo* info) {
-    return static_cast<std::size_t>(info->redundantEnd - info->redundantBegin);
+
+WebRtcAudioEncodedInfo ReadInfo(const WebRtcAudioEncodedInfo* info, const char* message) {
+    WebRtcAudioEncodedInfo host{};
+    if (!GuestPtr<const WebRtcAudioEncodedInfo>(info).CopyIn(host))
+        throw std::invalid_argument(message);
+    const auto begin = reinterpret_cast<std::uintptr_t>(host.redundantBegin);
+    const auto end = reinterpret_cast<std::uintptr_t>(host.redundantEnd);
+    const auto capacity = reinterpret_cast<std::uintptr_t>(host.redundantCapacity);
+    if (end < begin || capacity < end)
+        throw std::invalid_argument(message);
+    return host;
 }
 
-std::size_t RedundantCapacity(const WebRtcAudioEncodedInfo* info) {
-    return static_cast<std::size_t>(info->redundantCapacity - info->redundantBegin);
+WebRtcAudioEncodedInfo ReadWritableInfo(WebRtcAudioEncodedInfo* info, const char* message) {
+    if (!info || !GuestWritable_nid_no_patch(info, sizeof(*info)))
+        throw std::invalid_argument(message);
+    return ReadInfo(info, message);
 }
 
-void FreeRedundant(WebRtcAudioEncodedInfo* info) {
-    WebRtcModuleStorage::Free(info->redundantBegin, RedundantCapacity(info) * sizeof(WebRtcAudioEncodedInfoLeaf));
-    info->redundantBegin = nullptr;
-    info->redundantEnd = nullptr;
-    info->redundantCapacity = nullptr;
+void WriteInfo(WebRtcAudioEncodedInfo* info, const WebRtcAudioEncodedInfo& host, const char* message) {
+    if (!GuestPtr<WebRtcAudioEncodedInfo>(info).CopyOut(host))
+        throw std::invalid_argument(message);
 }
 
-void AllocateRedundant(WebRtcAudioEncodedInfo* info, std::size_t count) {
+std::size_t RedundantCount(const WebRtcAudioEncodedInfo& info) {
+    return static_cast<std::size_t>(info.redundantEnd - info.redundantBegin);
+}
+
+std::size_t RedundantCapacity(const WebRtcAudioEncodedInfo& info) {
+    return static_cast<std::size_t>(info.redundantCapacity - info.redundantBegin);
+}
+
+void FreeRedundant(WebRtcAudioEncodedInfo& info) {
+    WebRtcModuleStorage::Free(info.redundantBegin, RedundantCapacity(info) * sizeof(WebRtcAudioEncodedInfoLeaf));
+    info.redundantBegin = nullptr;
+    info.redundantEnd = nullptr;
+    info.redundantCapacity = nullptr;
+}
+
+void AllocateRedundant(WebRtcAudioEncodedInfo& info, std::size_t count) {
     auto* leaves = static_cast<WebRtcAudioEncodedInfoLeaf*>(WebRtcModuleStorage::Allocate(count * sizeof(WebRtcAudioEncodedInfoLeaf)));
-    info->redundantBegin = leaves;
-    info->redundantEnd = leaves;
-    info->redundantCapacity = leaves + count;
+    info.redundantBegin = leaves;
+    info.redundantEnd = leaves;
+    info.redundantCapacity = leaves + count;
 }
 
-void CopyLeaf(WebRtcAudioEncodedInfo* info, const WebRtcAudioEncodedInfo* other) {
-    std::memcpy(&info->leaf, &other->leaf, sizeof(info->leaf));
+constexpr std::size_t ChunkLeaves = 4096 / sizeof(WebRtcAudioEncodedInfoLeaf);
+
+void CheckRedundantReadable(const WebRtcAudioEncodedInfo& info, const char* message) {
+    WebRtcAudioEncodedInfoLeaf chunk[ChunkLeaves];
+    const std::size_t count = RedundantCount(info);
+    for (std::size_t done = 0; done < count; done += ChunkLeaves) {
+        if (!GuestPtr<const WebRtcAudioEncodedInfoLeaf>(info.redundantBegin + done).CopyIn(chunk, std::min(count - done, ChunkLeaves)))
+            throw std::invalid_argument(message);
+    }
+}
+
+bool CopyRedundant(WebRtcAudioEncodedInfoLeaf* target, const WebRtcAudioEncodedInfoLeaf* source, std::size_t count) {
+    const bool backward = target > source && target < source + count;
+    WebRtcAudioEncodedInfoLeaf chunk[ChunkLeaves];
+    for (std::size_t done = 0; done < count;) {
+        const std::size_t size = std::min(count - done, ChunkLeaves);
+        const std::size_t offset = backward ? count - done - size : done;
+        if (!GuestPtr<const WebRtcAudioEncodedInfoLeaf>(source + offset).CopyIn(chunk, size) ||
+            !GuestPtr<WebRtcAudioEncodedInfoLeaf>(target + offset).CopyOut(chunk, size))
+            return false;
+        done += size;
+    }
+    return true;
 }
 
 }
@@ -82,55 +130,74 @@ void CopyLeaf(WebRtcAudioEncodedInfo* info, const WebRtcAudioEncodedInfo* other)
 extern "C" {
 
 void APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoC1Ev_nid_postfix(WebRtcAudioEncodedInfo* info) {
-    if (!info)
-        throw std::invalid_argument("EncodedInfo constructor requires an object");
-    info->leaf.encodedBytes = 0;
-    info->leaf.encodedTimestamp = 0;
-    info->leaf.payloadType = 0;
-    info->leaf.sendEvenIfEmpty = false;
-    info->leaf.speech = true;
-    info->leaf.encoderType = CodecTypeOther;
-    info->leaf.unknownAt64 = false;
-    info->redundantBegin = nullptr;
-    info->redundantEnd = nullptr;
-    info->redundantCapacity = nullptr;
+    constexpr const char* message = "EncodedInfo constructor requires an object";
+    if (!info || !GuestWritable_nid_no_patch(info, sizeof(*info)))
+        throw std::invalid_argument(message);
+    WebRtcAudioEncodedInfo host{};
+    if (!GuestPtr<const WebRtcAudioEncodedInfo>(info).CopyIn(host))
+        throw std::invalid_argument(message);
+    host.leaf.encodedBytes = 0;
+    host.leaf.encodedTimestamp = 0;
+    host.leaf.payloadType = 0;
+    host.leaf.sendEvenIfEmpty = false;
+    host.leaf.speech = true;
+    host.leaf.encoderType = CodecTypeOther;
+    host.leaf.unknownAt64 = false;
+    host.redundantBegin = nullptr;
+    host.redundantEnd = nullptr;
+    host.redundantCapacity = nullptr;
+    WriteInfo(info, host, message);
 }
 
 void APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(WebRtcAudioEncodedInfo* info, const WebRtcAudioEncodedInfo* other) {
-    if (!info || !other)
-        throw std::invalid_argument("EncodedInfo copy constructor requires both objects");
-    CopyLeaf(info, other);
-    info->redundantBegin = nullptr;
-    info->redundantEnd = nullptr;
-    info->redundantCapacity = nullptr;
-    const std::size_t count = RedundantCount(other);
-    if (count == 0)
-        return;
-    AllocateRedundant(info, count);
-    std::memcpy(info->redundantBegin, other->redundantBegin, count * sizeof(WebRtcAudioEncodedInfoLeaf));
-    info->redundantEnd = info->redundantBegin + count;
+    constexpr const char* message = "EncodedInfo copy constructor requires both objects";
+    if (!info || !other || !GuestWritable_nid_no_patch(info, sizeof(*info)))
+        throw std::invalid_argument(message);
+    const WebRtcAudioEncodedInfo source = ReadInfo(other, message);
+    CheckRedundantReadable(source, message);
+    const std::size_t count = RedundantCount(source);
+    WebRtcAudioEncodedInfo host{};
+    std::memcpy(&host.leaf, &source.leaf, sizeof(host.leaf));
+    if (count) {
+        AllocateRedundant(host, count);
+        if (!CopyRedundant(host.redundantBegin, source.redundantBegin, count)) {
+            FreeRedundant(host);
+            throw std::invalid_argument(message);
+        }
+        host.redundantEnd = host.redundantBegin + count;
+    }
+    WriteInfo(info, host, message);
 }
 
 void APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(WebRtcAudioEncodedInfo* info) {
-    if (!info)
-        throw std::invalid_argument("EncodedInfo destructor requires an object");
-    FreeRedundant(info);
+    constexpr const char* message = "EncodedInfo destructor requires an object";
+    WebRtcAudioEncodedInfo host = ReadWritableInfo(info, message);
+    FreeRedundant(host);
+    WriteInfo(info, host, message);
 }
 
 WebRtcAudioEncodedInfo* APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(WebRtcAudioEncodedInfo* info, const WebRtcAudioEncodedInfo* other) {
-    if (!info || !other)
-        throw std::invalid_argument("EncodedInfo assignment requires both objects");
+    constexpr const char* message = "EncodedInfo assignment requires both objects";
+    if (!other)
+        throw std::invalid_argument(message);
+    WebRtcAudioEncodedInfo host = ReadWritableInfo(info, message);
     if (info == other)
         return info;
-    CopyLeaf(info, other);
-    const std::size_t count = RedundantCount(other);
-    if (count > RedundantCapacity(info)) {
-        FreeRedundant(info);
-        AllocateRedundant(info, count);
+    const WebRtcAudioEncodedInfo source = ReadInfo(other, message);
+    CheckRedundantReadable(source, message);
+    const std::size_t count = RedundantCount(source);
+    std::memcpy(&host.leaf, &source.leaf, sizeof(host.leaf));
+    if (count > RedundantCapacity(host)) {
+        FreeRedundant(host);
+        WriteInfo(info, host, message);
+        AllocateRedundant(host, count);
     }
-    if (count != 0)
-        std::memmove(info->redundantBegin, other->redundantBegin, count * sizeof(WebRtcAudioEncodedInfoLeaf));
-    info->redundantEnd = info->redundantBegin + count;
+    if (!CopyRedundant(host.redundantBegin, source.redundantBegin, count)) {
+        WriteInfo(info, host, message);
+        throw std::invalid_argument(message);
+    }
+    host.redundantEnd = host.redundantBegin + count;
+    WriteInfo(info, host, message);
     return info;
 }
 
