@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <span>
@@ -28,11 +29,18 @@ constexpr int AnyFunction = 0xfff;
 constexpr int MallocFailure = 65;
 constexpr int BadObjectHeader = 102;
 constexpr int FieldMissing = 121;
+constexpr int HeaderTooLong = 123;
+constexpr int MissingEndOfContents = 137;
 constexpr int SequenceLengthMismatch = 148;
 constexpr int SequenceNotConstructed = 149;
 constexpr int StringTooShort = 152;
 constexpr int TooLong = 155;
 constexpr int WrongTag = 168;
+constexpr int MstringNotUniversal = 139;
+constexpr int MstringWrongTag = 140;
+constexpr int TypeNotConstructed = 156;
+constexpr int UnexpectedEndOfContents = 159;
+constexpr int NestedAsn1String = 197;
 constexpr int InvalidDirectory = 113;
 constexpr int InvalidObjectEncoding = 216;
 constexpr int InvalidBitStringBitsLeft = 220;
@@ -51,7 +59,9 @@ constexpr int AddDirectoryCommand = 2;
 constexpr int IntegerType = 2;
 constexpr int BitStringType = 3;
 constexpr int OctetStringType = 4;
+constexpr int EnumeratedType = 10;
 constexpr int Utf8StringType = 12;
+constexpr int SequenceType = 16;
 constexpr int NumericStringType = 18;
 constexpr int PrintableStringType = 19;
 constexpr int T61StringType = 20;
@@ -64,6 +74,11 @@ constexpr int BmpStringType = 30;
 
 constexpr std::int64_t BitsLeftFlag = 0x08;
 constexpr unsigned char Constructed = 0x20;
+constexpr unsigned char ClassMask = 0xc0;
+constexpr unsigned char TagNumberMask = 0x1f;
+constexpr std::uint64_t MaxTagNumberBeforeShift = std::numeric_limits<std::int32_t>::max() >> 7;
+constexpr std::uint64_t MaxLength = std::numeric_limits<std::int64_t>::max();
+constexpr int MaxStringNesting = 5;
 constexpr int ObjectDynamic = 0x01;
 constexpr int ObjectDynamicData = 0x08;
 
@@ -83,6 +98,7 @@ constexpr unsigned char SubjectUniqueIdTag = 0x82;
 constexpr unsigned char ExtensionsTag = 0xa3;
 
 constexpr int StringTags[] = {12, 18, 19, 20, 21, 22, 26, 27, 28, 30};
+constexpr std::uint64_t NameValueTags[] = {3, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 20, 22, 28, 29, 30};
 
 struct Encoding {
     unsigned char* bytes;
@@ -431,12 +447,145 @@ bool IsStringTag(unsigned char tag) {
     return false;
 }
 
-Asn1String* DecodeNameValue(const Tlv& value) {
-    if (!IsStringTag(value.tag)) {
-        PutAsn1Error(WrongTag);
+bool IsNameValueTag(std::uint64_t number) {
+    return std::find(std::begin(NameValueTags), std::end(NameValueTags), number) != std::end(NameValueTags);
+}
+
+struct Header {
+    unsigned char identifier;
+    std::uint64_t number;
+    bool indefinite;
+    bool minimal;
+    std::size_t headerLength;
+    std::size_t length;
+};
+
+bool IsEndOfContents(std::span<const unsigned char> input) {
+    return input.size() >= 2 && input[0] == 0 && input[1] == 0;
+}
+
+int ReadHeader(std::span<const unsigned char> input, Header& header) {
+    if (input.empty()) return HeaderTooLong;
+    header = {input[0], static_cast<std::uint64_t>(input[0] & TagNumberMask), false, true, 1, 0};
+    if (header.number == TagNumberMask) {
+        header.number = 0;
+        for (;;) {
+            if (header.headerLength == input.size()) return HeaderTooLong;
+            const unsigned char octet = input[header.headerLength++];
+            header.number = (header.number << 7) | (octet & 0x7f);
+            if (!(octet & 0x80)) break;
+            if (header.number > MaxTagNumberBeforeShift) return HeaderTooLong;
+        }
+    }
+    if (header.headerLength == input.size()) return HeaderTooLong;
+    const unsigned char first = input[header.headerLength++];
+    if (first == 0x80) {
+        if (!(header.identifier & Constructed)) return HeaderTooLong;
+        header.indefinite = true;
+        return 0;
+    }
+    std::uint64_t length = first & 0x7f;
+    if (first & 0x80) {
+        std::size_t count = first & 0x7f;
+        if (input.size() - header.headerLength < count) return HeaderTooLong;
+        while (count != 0 && input[header.headerLength] == 0) {
+            ++header.headerLength;
+            --count;
+            header.minimal = false;
+        }
+        if (count > sizeof(std::uint64_t)) return HeaderTooLong;
+        length = 0;
+        for (; count != 0; --count) length = (length << 8) | input[header.headerLength++];
+        if (length > MaxLength) return HeaderTooLong;
+        if (length < 0x80) header.minimal = false;
+    }
+    if (length > input.size() - header.headerLength) return TooLong;
+    header.length = static_cast<std::size_t>(length);
+    return 0;
+}
+
+int CollectString(std::span<const unsigned char>& input, bool indefinite, int depth, std::vector<unsigned char>& output) {
+    while (!input.empty()) {
+        if (IsEndOfContents(input)) {
+            if (!indefinite) return UnexpectedEndOfContents;
+            input = input.subspan(2);
+            return 0;
+        }
+        Header header;
+        if (const int reason = ReadHeader(input, header)) return reason;
+        const std::size_t length = header.indefinite ? input.size() - header.headerLength : header.length;
+        const std::span<const unsigned char> inner = input.subspan(header.headerLength, length);
+        if (header.identifier & Constructed) {
+            if (depth >= MaxStringNesting) return NestedAsn1String;
+            std::span<const unsigned char> rest = inner;
+            if (const int reason = CollectString(rest, header.indefinite, depth + 1, output)) return reason;
+            input = input.subspan(header.headerLength + inner.size() - rest.size());
+        } else {
+            output.insert(output.end(), inner.begin(), inner.end());
+            input = input.subspan(header.headerLength + inner.size());
+        }
+    }
+    return indefinite ? MissingEndOfContents : 0;
+}
+
+Asn1String* DecodeNameValue(std::span<const unsigned char>& input) {
+    if (input.empty()) {
+        PutAsn1Error(FieldMissing);
         return nullptr;
     }
-    return NewString(value.tag, value.content);
+    if (IsEndOfContents(input)) {
+        PutAsn1Error(UnexpectedEndOfContents);
+        return nullptr;
+    }
+    Header header;
+    if (const int reason = ReadHeader(input, header)) {
+        PutAsn1Error(reason);
+        return nullptr;
+    }
+    if (header.identifier & ClassMask) {
+        PutAsn1Error(MstringNotUniversal);
+        return nullptr;
+    }
+    if (!IsNameValueTag(header.number)) {
+        PutAsn1Error(MstringWrongTag);
+        return nullptr;
+    }
+    const int number = static_cast<int>(header.number);
+    const bool constructed = (header.identifier & Constructed) != 0;
+    if (number == SequenceType && !constructed) {
+        PutAsn1Error(TypeNotConstructed);
+        return nullptr;
+    }
+    if (header.indefinite || !header.minimal) {
+        PutAsn1Error(BadObjectHeader);
+        return nullptr;
+    }
+    const std::span<const unsigned char> content = input.subspan(header.headerLength, header.length);
+    input = input.subspan(header.headerLength + header.length);
+    if (number == SequenceType) NotImplemented_nid_no_patch("X509_STORE_load_locations: a SEQUENCE name value");
+    std::vector<unsigned char> collected;
+    std::span<const unsigned char> data = content;
+    if (constructed) {
+        std::span<const unsigned char> rest = content;
+        if (const int reason = CollectString(rest, false, 0, collected)) {
+            PutAsn1Error(reason);
+            return nullptr;
+        }
+        data = collected;
+    }
+    if (number == BitStringType) {
+        if (data.empty()) {
+            PutAsn1Error(StringTooShort);
+            return nullptr;
+        }
+        if (data.front() > 7) {
+            PutAsn1Error(InvalidBitStringBitsLeft);
+            return nullptr;
+        }
+        NotImplemented_nid_no_patch("X509_STORE_load_locations: a BIT STRING name value");
+    }
+    if (number == EnumeratedType) NotImplemented_nid_no_patch("X509_STORE_load_locations: an ENUMERATED name value");
+    return NewString(number, data);
 }
 
 LibreSsl3Asn1Type* DecodeAnyType(const Tlv& value) {
@@ -679,12 +828,7 @@ LibreSslX509NameEntry* DecodeNameEntry(std::span<const unsigned char>& input, in
         free_nid_postfix(entry);
         return nullptr;
     }
-    Tlv value;
-    if (!ReadTlv(body, value)) {
-        FreeNameEntry(entry);
-        return nullptr;
-    }
-    entry->value = DecodeNameValue(value);
+    entry->value = DecodeNameValue(body);
     if (!entry->value) {
         FreeNameEntry(entry);
         return nullptr;
