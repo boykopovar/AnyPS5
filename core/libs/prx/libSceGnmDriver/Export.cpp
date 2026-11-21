@@ -189,6 +189,15 @@ constexpr std::array<std::uint32_t, 118> BaseHardwareState200 = [] {
     return base;
 }();
 
+template <std::size_t Words>
+std::uint32_t WriteHardwareState(std::uint32_t* cmd, const std::array<std::uint32_t, Words>& state) {
+    std::array<std::uint32_t, HwInitPacketWords> local{};
+    auto* at = std::copy(GnmNeo::ClearState.begin(), GnmNeo::ClearState.end(), local.data());
+    at = std::copy(state.begin(), state.end(), at);
+    Nop(at, static_cast<std::uint32_t>(local.data() + local.size() - at) - 1);
+    return GuestCopyOut_nid_no_patch(cmd, local.data(), sizeof(local)) ? HwInitPacketWords : static_cast<std::uint32_t>(-1);
+}
+
 std::mutex g_submitMutex;
 bool g_frameStarted = false;
 bool g_workQueued = false;
@@ -526,30 +535,23 @@ std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState175(std::uint32_t* cmd
 
 std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState200_nid_disambig1(std::uint32_t* cmd, std::uint32_t size) {
     if (size < HwInitPacketWords) return 0;
-    const bool neo = sceKernelIsNeoMode() != 0;
-    auto* at = std::copy(GnmNeo::ClearState.begin(), GnmNeo::ClearState.end(), cmd);
-    if (neo) at = std::copy(GnmNeo::HardwareState200.begin(), GnmNeo::HardwareState200.end(), at);
-    else at = std::copy(BaseHardwareState200.begin(), BaseHardwareState200.end(), at);
-    Nop(at, static_cast<std::uint32_t>(cmd + HwInitPacketWords - at) - 1);
-    return HwInitPacketWords;
+    if (sceKernelIsNeoMode() != 0) return WriteHardwareState(cmd, GnmNeo::HardwareState200);
+    return WriteHardwareState(cmd, BaseHardwareState200);
 }
 
 std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState350_nid_disambig1(std::uint32_t* cmd, std::uint32_t size) {
     if (!cmd) return static_cast<std::uint32_t>(-1);
     if (size < HwInitPacketWords) return 0;
-    auto* at = std::copy(GnmNeo::ClearState.begin(), GnmNeo::ClearState.end(), cmd);
-    if (sceKernelIsNeoMode()) at = std::copy(GnmNeo::HardwareState350.begin(), GnmNeo::HardwareState350.end(), at);
-    else at = std::copy(BaseHardwareState350.begin(), BaseHardwareState350.end(), at);
-    Nop(at, static_cast<std::uint32_t>(cmd + HwInitPacketWords - at) - 1);
-    return HwInitPacketWords;
+    if (sceKernelIsNeoMode()) return WriteHardwareState(cmd, GnmNeo::HardwareState350);
+    return WriteHardwareState(cmd, BaseHardwareState350);
 }
 
 std::uint32_t APS5_VABI sceGnmDrawInitToDefaultContextState400_nid_disambig1(std::uint32_t* cmd, std::uint32_t size) {
     if (!cmd) return static_cast<std::uint32_t>(-1);
     if (size != HwInitPacketWords) return 0;
-    if (sceKernelIsNeoMode()) std::copy(GnmNeo::ContextState400.begin(), GnmNeo::ContextState400.end(), cmd);
-    else std::copy(BaseContextState400.begin(), BaseContextState400.end(), cmd);
-    return HwInitPacketWords;
+    const bool written = sceKernelIsNeoMode() ? GuestCopyOut_nid_no_patch(cmd, GnmNeo::ContextState400.data(), sizeof(GnmNeo::ContextState400))
+                                              : GuestCopyOut_nid_no_patch(cmd, BaseContextState400.data(), sizeof(BaseContextState400));
+    return written ? HwInitPacketWords : static_cast<std::uint32_t>(-1);
 }
 
 std::uint32_t APS5_VABI sceGnmDispatchInitDefaultHardwareState(std::uint32_t* cmd, std::uint32_t size) {
