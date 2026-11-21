@@ -115,11 +115,17 @@ void APS5_VABI _ZN3sce2np8NpTicket5ClearEv(void* self) {
     if (self == nullptr) return;
     TicketObject ticket{};
     if (!CopyFromGuest(&ticket, self, sizeof(ticket))) return;
+    struct ClearedTicketFields {
+        void* data;
+        std::size_t size;
+    };
+    static_assert(sizeof(ClearedTicketFields) == sizeof(ticket.data) + sizeof(ticket.size));
+    static_assert(offsetof(TicketObject, size) == offsetof(TicketObject, data) + sizeof(ticket.data));
+    const ClearedTicketFields cleared{nullptr, 0};
+    if (!CopyToGuest(static_cast<std::uint8_t*>(self) + offsetof(TicketObject, data), &cleared, sizeof(cleared))) {
+        return;
+    }
     ReleaseTicket(ticket);
-    void* const clearedData = nullptr;
-    const std::size_t clearedSize = 0;
-    CopyToGuest(static_cast<std::uint8_t*>(self) + offsetof(TicketObject, data), &clearedData, sizeof(clearedData));
-    CopyToGuest(static_cast<std::uint8_t*>(self) + offsetof(TicketObject, size), &clearedSize, sizeof(clearedSize));
 }
 
 }
