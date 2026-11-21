@@ -102,6 +102,21 @@ void testCatalog() {
     }
 }
 
+void testLodStatsSkipped() {
+    alignas(64) std::array<std::uint32_t, 16> stats;
+    stats.fill(0xa5a5a5a5u);
+    const auto before = stats;
+    const auto packet = makePacket(0x8e, {sizeof(stats), low(stats.data()), high(stats.data()), 0x10051004u});
+    check(packet[0] == 0xc0038e00u, "the LOD statistics header is not the one sceAgcDcbGetLodStats emits");
+    AgcDriver::QueueState state;
+    execute(state, packet);
+    check(stats == before, "the LOD statistics packet wrote its buffer");
+    check(state.markers.empty() && state.indexBase == 0 && !state.indexBufferSize && state.instanceCount == 1 && state.predication.operation == 0 && !state.savedContext && state.constantRam.empty(), "the LOD statistics packet reached queue state");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x8e, {sizeof(stats), low(stats.data()) | 0x20u, high(stats.data()), 0}), 0); }, "LOD statistics");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x8e, {sizeof(stats), low(stats.data()), high(stats.data()), 0x40000000u}), 0); }, "LOD statistics");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x8e, {sizeof(stats), low(stats.data()), high(stats.data())}), 0); }, "packet size");
+}
+
 void testNopPad() {
     check(AgcDriver::Pm4::PacketWords(0xffff1000u) == 1, "the one-dword NOP is not one dword");
     for (const auto queue : {0u, 0x20u}) AgcDriver::Pm4::Validate(std::vector<std::uint32_t>{0xffff1000u}, queue);
@@ -2985,6 +3000,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         testCatalog();
+        testLodStatsSkipped();
         testNopPad();
         testWorkloadNopPayloadsIgnored();
         testRewindPayloadBits();
