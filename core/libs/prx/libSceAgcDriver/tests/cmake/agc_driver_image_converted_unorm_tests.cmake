@@ -1,6 +1,16 @@
 target_include_directories(agc_driver_image_converted_unorm_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
 if(BUILD_TESTING)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME agc_driver_image_converted_format_report COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/CheckConvertedFormatReport.py $<TARGET_FILE:agc_driver_image_converted_unorm_tests>)
+        set_tests_properties(agc_driver_image_converted_format_report PROPERTIES
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_REPORT=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        if(WIN32)
+            set_tests_properties(agc_driver_image_converted_format_report PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:agc_driver_image_converted_unorm_tests>")
+        endif()
+    endif()
     foreach(unsignedPackedFormat IN ITEMS 37 41 44 48)
         set(unsignedPackedTest agc_driver_image_unsigned_packed32_${unsignedPackedFormat})
         add_test(NAME ${unsignedPackedTest} COMMAND agc_driver_image_converted_unorm_tests --unsigned-packed32 ${unsignedPackedFormat})
