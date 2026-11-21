@@ -53,6 +53,16 @@ char* UnreadablePage() {
 #endif
 }
 
+std::array<unsigned char, 0x20> Notification(std::uint32_t size, std::int32_t value, const char* conditional,
+                                             const char* required) {
+    std::array<unsigned char, 0x20> block{};
+    std::memcpy(block.data(), &size, sizeof(size));
+    std::memcpy(block.data() + 0x04, &value, sizeof(value));
+    std::memcpy(block.data() + 0x08, &conditional, sizeof(conditional));
+    std::memcpy(block.data() + 0x10, &required, sizeof(required));
+    return block;
+}
+
 template <typename Call>
 void RequireFault(Call call) {
     bool threw = false;
@@ -69,6 +79,10 @@ void RequireFault(Call call) {
 int main() {
     char name[] = "name";
     char empty[] = "";
+    char nine[] = "123456789";
+    char ten[] = "1234567890";
+    char thirtySix[] = "123456789012345678901234567890123456";
+    char thirtySeven[] = "1234567890123456789012345678901234567";
     auto any = Block(0x5A5A5A5Au);
     auto initWrong = Block(9);
     auto fsStats = Block(0x18);
@@ -105,6 +119,35 @@ int main() {
         Require(sceIduGetPkgInstallStatus(name, nullptr, 0x220) == invalidArgument);
         Require(sceIduGetPkgInstallStatus(name, any.data(), 0x21F) == invalidArgument);
         Require(sceIduGetPkgInstallStatus(name, any.data(), 0x221) == invalidArgument);
+        Require(sceIduGetPkgInstallStatus(name, any.data(), 0x220) == invalidArgument);
+        Require(sceIduGetPkgInstallStatus(nine, any.data(), 0x220) == invalidArgument);
+        Require(sceIduGetPkgInstallStatus(thirtySeven, any.data(), 0x220) == invalidArgument);
+        Require(sceIduGetPkgInstallStatus(thirtySix, nullptr, 0x220) == invalidArgument);
+        Require(sceIduGetPkgInstallStatus(thirtySix, any.data(), 0x21F) == invalidArgument);
+        Require(sceIduGetPkgInstallStatus(thirtySix, any.data(), 0x220) == notInitialized);
+
+        Require(sceIduIsAppInstalled(nullptr) == invalidArgument);
+        Require(sceIduIsAppInstalled(empty) == invalidArgument);
+        Require(sceIduIsAppInstalled(name) == invalidArgument);
+        Require(sceIduIsAppInstalled(ten) == invalidArgument);
+        Require(sceIduIsAppInstalled(thirtySeven) == invalidArgument);
+        Require(sceIduIsAppInstalled(nine) == notInitialized);
+        Require(sceIduIsAppInstalled(thirtySix) == notInitialized);
+
+        Require(sceIduNotificationShow(nullptr) == invalidArgument);
+        Require(sceIduNotificationShow(Notification(0x1F, 1, name, name).data()) == invalidArgument);
+        Require(sceIduNotificationShow(Notification(0x21, 1, name, name).data()) == invalidArgument);
+        Require(sceIduNotificationShow(Notification(0x20, 1, name, nullptr).data()) == invalidArgument);
+        Require(sceIduNotificationShow(Notification(0x20, 1, name, empty).data()) == invalidArgument);
+        Require(sceIduNotificationShow(Notification(0x20, 0, nullptr, name).data()) == invalidArgument);
+        Require(sceIduNotificationShow(Notification(0x20, 0, empty, name).data()) == invalidArgument);
+        Require(sceIduNotificationShow(Notification(0x20, -1, nullptr, name).data()) == invalidArgument);
+        Require(sceIduNotificationShow(Notification(0x20, 0, name, name).data()) == notInitialized);
+        Require(sceIduNotificationShow(Notification(0x20, -1, name, name).data()) == notInitialized);
+        Require(sceIduNotificationShow(Notification(0x20, 1, nullptr, name).data()) == notInitialized);
+        Require(sceIduNotificationShow(Notification(0x20, 1, empty, name).data()) == notInitialized);
+
+        Require(sceIduTerm() == 0);
 
         Require(sceIduGetTitleList(nullptr, 1) == invalidArgument);
         Require(sceIduGetTitleList(nullptr, -1) == invalidArgument);
@@ -172,6 +215,25 @@ int main() {
     RequireFault([&] { return sceIduIsRifInstalled(unreadable); });
     RequireFault([&] { return sceIduInstallRif(unreadable, any.data(), 1); });
     RequireFault([&] { return sceIduStartTitle(any.data(), 0, nullptr, unreadable); });
+    errno = 71;
+    Require(sceIduIsAppInstalled(nine) == notInitialized);
+    Require(errno == 71);
+    Require(sceIduGetPkgInstallStatus(thirtySix, any.data(), 0x220) == notInitialized);
+    Require(errno == 71);
+    Require(sceIduNotificationShow(Notification(0x20, 0, name, name).data()) == notInitialized);
+    Require(errno == 71);
+    RequireFault([&] { return sceIduIsAppInstalled(unreadable); });
+    Require(errno == 71);
+    RequireFault([&] { return sceIduGetPkgInstallStatus(unreadable, nullptr, 0); });
+    RequireFault([&] { return sceIduNotificationShow(unreadable); });
+    RequireFault([&] { return sceIduNotificationShow(Notification(0x20, 1, name, unreadable).data()); });
+    RequireFault([&] { return sceIduNotificationShow(Notification(0x20, 0, unreadable, name).data()); });
+    Require(sceIduNotificationShow(Notification(0x20, 1, unreadable, name).data()) == notInitialized);
+    Require(errno == 71);
+    auto unchecked = Notification(0x20, 0, name, name);
+    std::memcpy(unchecked.data() + 0x18, &unreadable, sizeof(unreadable));
+    Require(sceIduNotificationShow(unchecked.data()) == notInitialized);
+    Require(errno == 71);
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     Require(sceIduInstallRif(name, unreadable, 1) == notInitialized);
