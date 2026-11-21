@@ -25,6 +25,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/LocalizedStringsExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
@@ -34,6 +35,7 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace {
@@ -69,7 +71,9 @@ extern "C" {
 
 String APS5_VABI _ZN7WebCore15localizedStringEPKc(const char* key) {
     if (!key) throw std::invalid_argument("null WebCore::localizedString key");
-    return _ZN3WTF6String8fromUTF8EPKhm(reinterpret_cast<const unsigned char*>(key), std::strlen(key));
+    std::string localKey;
+    if (CopyGuestString_nid_no_patch(key, 65536, localKey) != 0) throw std::invalid_argument("null WebCore::localizedString key");
+    return _ZN3WTF6String8fromUTF8EPKhm(reinterpret_cast<const unsigned char*>(localKey.data()), localKey.size());
 }
 
 String APS5_VABI _ZN7WebCore22multipleFileUploadTextEj(unsigned numberOfFiles) {
