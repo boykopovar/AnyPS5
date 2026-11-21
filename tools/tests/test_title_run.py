@@ -203,6 +203,18 @@ class AnalysisTests(unittest.TestCase):
                 path.write_text("\n".join(map(json.dumps, rows)), encoding="utf-8")
                 self.assertEqual(title_run.read_summary(path), dict(identity, presents=400, fps=20.0))
 
+    def test_unicode_separators_inside_title_names_keep_periodic_measurements(self):
+        path = self.root / "aps5-summary.jsonl"
+        identity = {"gpu": "GPU", "driver": "Driver", "os": "OS"}
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            with self.subTest(separator=repr(separator)):
+                title = f"Main title{separator}Subtitle"
+                intervals = [dict(identity, title=title, interval_start_s=start, interval_end_s=start + 10,
+                                  presents=presents, window={"ms": 10000})
+                             for start, presents in ((0, 300), (10, 500))]
+                path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in intervals), encoding="utf-8")
+                self.assertEqual(title_run.read_summary(path), dict(identity, presents=800, fps=40.0))
+
     def test_empty_periodic_window_does_not_fall_back_to_capture_frames(self):
         path = self.root / "aps5-summary.jsonl"
         interval = {"interval_start_s": 0, "interval_end_s": 10, "presents": 0, "window": {"ms": 10000}}
