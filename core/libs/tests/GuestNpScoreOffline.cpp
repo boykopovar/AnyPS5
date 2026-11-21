@@ -129,6 +129,11 @@ void CheckRequests() {
     int req = NewRequest();
     int result = 7;
     Require(sceNpScorePollAsync(req + 100, &result) == InvalidId, "sceNpScorePollAsync", "an unknown request was taken");
+    errno = 71;
+    Require(sceNpScorePollAsync(req, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpScorePollAsync", "unwritable result was not refused");
+    Require(errno == 71, "sceNpScorePollAsync", "errno was mutated");
+    Require(sceNpScoreWaitAsync(req, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpScoreWaitAsync", "unwritable result was not refused");
+    Require(errno == 71, "sceNpScoreWaitAsync", "errno was mutated");
     Require(sceNpScorePollAsync(req, &result) == PollRunning && result == 7, "sceNpScorePollAsync", "an unstarted request was not running");
     Require(sceNpScoreAbortRequest(req + 100) == InvalidId, "sceNpScoreAbortRequest", "an unknown request was taken");
     Require(sceNpScoreAbortRequest(req) == 0, "sceNpScoreAbortRequest", "aborting failed");
@@ -325,6 +330,11 @@ void CheckGameDataAndBoard() {
     int result = 0;
     Require(gameData(req, 1, emptyNpId, &totalSize, sizeof(data), data, nullptr) == InvalidArgument, "sceNpScoreGetGameData", "an empty online id was taken");
     Require(sceNpScorePollAsync(req, &result) == PollFinished && result == InvalidArgument, "sceNpScoreGetGameData", "an empty online id did not finish the request with INVALID_ARGUMENT");
+    sceNpScoreDeleteRequest(req);
+    req = NewRequest();
+    errno = 71;
+    Require(gameData(req, 1, reinterpret_cast<const void*>(0x10), &totalSize, sizeof(data), data, nullptr) == InvalidArgument, "sceNpScoreGetGameData", "unmapped npId was not refused");
+    Require(errno == 71, "sceNpScoreGetGameData", "errno was mutated");
     sceNpScoreDeleteRequest(req);
 
     req = NewRequest();
