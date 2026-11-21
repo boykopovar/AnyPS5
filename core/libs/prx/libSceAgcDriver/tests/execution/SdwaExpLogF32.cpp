@@ -19,7 +19,7 @@ using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
-constexpr std::uint32_t Inputs = 16;
+constexpr std::uint32_t Inputs = 18;
 constexpr std::uint32_t ResultsPerCase = 19;
 constexpr std::uint32_t Results = Inputs * ResultsPerCase;
 constexpr std::uint32_t Garbage = 0xabcd1234u;
@@ -32,20 +32,23 @@ struct TestCase {
     std::uint32_t input;
     std::uint32_t expectedFull;
     const char* name;
+    std::uint32_t allowedUlp{0};
 };
 
 constexpr TestCase TestCases[Inputs] = {
     {0x25u, 0x40000000u, 0x40800000u, "v_exp_f32 2.0"},
     {0x25u, 0x3f800000u, 0x40000000u, "v_exp_f32 1.0"},
     {0x25u, 0x00000000u, 0x3f800000u, "v_exp_f32 0.0"},
-    {0x25u, 0xbf800000u, 0x3f000000u, "v_exp_f32 -1.0"},
-    {0x25u, 0xc0000000u, 0x3e800000u, "v_exp_f32 -2.0"},
+    {0x25u, 0xbf800000u, 0x3f000000u, "v_exp_f32 -1.0", 1u},
+    {0x25u, 0xc0000000u, 0x3e800000u, "v_exp_f32 -2.0", 1u},
+    {0x25u, 0xbfa00000u, 0x3ed744fdu, "v_exp_f32 -1.25", 1u},
+    {0x25u, 0x3c810000u, 0x3f81679fu, "v_exp_f32 positive fractional", 1u},
     {0x25u, 0x3d4ccccdu, 0u, "v_exp_f32 oracle"},
-    {0x27u, 0x40800000u, 0x40000000u, "v_log_f32 4.0"},
-    {0x27u, 0x40000000u, 0x3f800000u, "v_log_f32 2.0"},
-    {0x27u, 0x3f000000u, 0xbf800000u, "v_log_f32 0.5"},
-    {0x27u, 0x3e800000u, 0xc0000000u, "v_log_f32 0.25"},
-    {0x27u, 0x41800000u, 0x40800000u, "v_log_f32 16.0"},
+    {0x27u, 0x40800000u, 0x40000000u, "v_log_f32 4.0", 2u},
+    {0x27u, 0x40000000u, 0x3f800000u, "v_log_f32 2.0", 2u},
+    {0x27u, 0x3f000000u, 0xbf800000u, "v_log_f32 0.5", 2u},
+    {0x27u, 0x3e800000u, 0xc0000000u, "v_log_f32 0.25", 2u},
+    {0x27u, 0x41800000u, 0x40800000u, "v_log_f32 16.0", 2u},
     {0x27u, 0x3f8ccccdu, 0u, "v_log_f32 oracle"},
     {0x2bu, 0x40800000u, 0x3e800000u, "v_rcp_iflag_f32 4.0"},
     {0x2bu, 0x3e800000u, 0x40800000u, "v_rcp_iflag_f32 0.25"},
@@ -214,7 +217,8 @@ void RunExecutionTests(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) 
         for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
             const auto actualFull = Output[lane * Results + checkIndex];
             if (TestCases[c].expectedFull != 0u) {
-                Require(actualFull == TestCases[c].expectedFull || (TestCases[c].opcode == 0x27u && (actualFull > TestCases[c].expectedFull ? actualFull - TestCases[c].expectedFull : TestCases[c].expectedFull - actualFull) <= 2u),
+                const auto difference = actualFull > TestCases[c].expectedFull ? actualFull - TestCases[c].expectedFull : TestCases[c].expectedFull - actualFull;
+                Require(difference <= TestCases[c].allowedUlp,
                     std::string(TestCases[c].name) + " full result lane " + std::to_string(lane) +
                     " is " + Hex(actualFull) + ", expected " + Hex(TestCases[c].expectedFull));
             } else if (TestCases[c].opcode == 0x25u) {

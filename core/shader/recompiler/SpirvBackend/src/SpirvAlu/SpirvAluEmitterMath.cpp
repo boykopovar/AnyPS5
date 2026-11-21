@@ -1494,7 +1494,16 @@ std::uint32_t EmitFPSqrt(SpirvEmitterState& state, std::uint32_t arg0) {
 }
 
 std::uint32_t EmitFPExp2(SpirvEmitterState& state, std::uint32_t arg0) {
-    return EmitExt(state, TypeF32(state), GLSLstd450Exp2, {arg0});
+    const auto value = EmitExt(state, TypeF32(state), GLSLstd450Exp2, {arg0});
+    const auto normal = Binary(state, spv::OpLogicalAnd, TypeBool(state),
+        Binary(state, spv::OpFOrdGreaterThanEqual, TypeBool(state), arg0, ConstantF32(state, 0xc2fc0000u)),
+        Binary(state, spv::OpFOrdLessThan, TypeBool(state), arg0, ConstantF32(state, 0x43000000u)));
+    return EmitValueOrDefaultIfCondition(state, normal, TypeF32(state), value, [&] {
+        const auto exponent = EmitExt(state, TypeF32(state), GLSLstd450Floor, {arg0});
+        const auto fraction = ExactSub(state, arg0, exponent);
+        const auto mantissa = EmitExt(state, TypeF32(state), GLSLstd450Exp2, {fraction});
+        return EmitExt(state, TypeF32(state), GLSLstd450Ldexp, {mantissa, Unary(state, spv::OpConvertFToS, TypeI32(state), exponent)});
+    });
 }
 
 std::uint32_t Log2SeriesNearOne(SpirvEmitterState& state, std::uint32_t difference) {
