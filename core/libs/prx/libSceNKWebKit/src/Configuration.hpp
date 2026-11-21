@@ -62,6 +62,10 @@ public:
     Retained<Object> websitePolicies;
     std::uint32_t layoutMilestones = 0;
     std::uint32_t mockCameraOrientation = 0;
+    std::optional<std::u16string> loadedAlternateHTML;
+    Retained<URL> loadedBaseURL;
+    Retained<URL> unreachableURL;
+    const void* loadUserData = nullptr;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};

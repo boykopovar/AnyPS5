@@ -433,6 +433,8 @@ const void* APS5_VABI WKPageCopyTitle(const void* pageRef);
 const void* APS5_VABI WKPageCopyActiveURL(const void* pageRef);
 const void* APS5_VABI WKPageCopyProvisionalURL(const void* pageRef);
 const void* APS5_VABI WKPageCopyCommittedURL(const void* pageRef);
+void APS5_VABI WKPageLoadAlternateHTMLString(const void* pageRef, const void* htmlStringRef, const void* baseURLRef, const void* unreachableURLRef);
+void APS5_VABI WKPageLoadAlternateHTMLStringWithUserData(const void* pageRef, const void* htmlStringRef, const void* baseURLRef, const void* unreachableURLRef, const void* userDataRef);
 double APS5_VABI WKPageGetEstimatedProgress(const void* pageRef);
 const void* APS5_VABI WKPageCopyApplicationNameForUserAgent(const void* pageRef);
 void APS5_VABI WKPageSetApplicationNameForUserAgent(const void* pageRef, const void* applicationNameRef);
