@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 
@@ -43,6 +44,8 @@ int main() {
     std::uint32_t coredumpMode = 0xA5A5A5A5u;
     Require(sceAgcDriverGetCoredumpMode(nullptr) == static_cast<int>(0x8A6D0003));
     Require(sceAgcDriverGetCoredumpMode(&coredumpMode) == 0 && coredumpMode == 0);
+    errno = 71;
+    Require(sceAgcDriverGetCoredumpMode(reinterpret_cast<uint32_t*>(0x10)) == static_cast<int>(0x8A6D0003) && errno == 71);
 
     std::array<std::uint8_t, 16> range{};
     range.fill(0x5A);
