@@ -30,6 +30,7 @@
 #include <mutex>
 #include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -232,6 +233,7 @@ struct DrawState {
     std::uint64_t stencilWriteBase = 0;
     const Triangle* vertices = &Gradient;
     bool pixelShader = false;
+    std::uint32_t width = Width;
 };
 
 DrawState DepthDrawn(const Surfaces& surfaces, const Triangle& vertices, std::uint32_t stencilInfo = StencilInfo) {
@@ -253,17 +255,17 @@ DrawState Expand(std::uint64_t writeBase, std::uint32_t stencilInfo = StencilInf
 }
 
 std::vector<std::uint32_t> Draw(const Surfaces& surfaces, const DrawState& state) {
-    const auto extent = (Height << 16u) | Width;
+    const auto extent = (Height << 16u) | state.width;
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
         {0x2d5, 0x2000}, {0x1b6, 0}, {0x203, 0}, {0x2dc, 0xaa00}, {0x293, 0},
         {0x80, 0}, {0x8d, 0}, {0x83, 0xffff}, {0x8c, 0xa}, {0x2f9, 0x2d}, {0x313, 0x6000}, {0x30e, 0xffffffff}, {0x30f, 0xffffffff},
         {0x206, 0x43f}, {0x204, 0x80000}, {0x205, 0x240}, {0x8f, 0}, {0x202, ColorDisabled},
         {0x1c4, 0}, {0x1c5, 0}, {0x1c3, 4}, {0x207, 0}, {0xc, 0}, {0x81, 0x80000000}, {0x90, 0x80000000}, {0x94, 0x80000000},
         {0xb4, 0}, {0xb5, std::bit_cast<std::uint32_t>(1.0f)}, {0x114, 0}, {0x113, std::bit_cast<std::uint32_t>(1.0f)},
-        {0x10f, std::bit_cast<std::uint32_t>(Width / 2.0f)}, {0x110, std::bit_cast<std::uint32_t>(Width / 2.0f)},
+        {0x10f, std::bit_cast<std::uint32_t>(state.width / 2.0f)}, {0x110, std::bit_cast<std::uint32_t>(state.width / 2.0f)},
         {0x111, std::bit_cast<std::uint32_t>(Height / 2.0f)}, {0x112, std::bit_cast<std::uint32_t>(Height / 2.0f)},
         {0xd, extent}, {0x82, extent}, {0x91, extent}, {0x95, extent},
-        {0x002, state.view}, {0x007, ((Height - 1u) << 16u) | (Width - 1u)}, {0x00a, 0}, {0x00b, std::bit_cast<std::uint32_t>(1.0f)},
+        {0x002, state.view}, {0x007, ((Height - 1u) << 16u) | (state.width - 1u)}, {0x00a, 0}, {0x00b, std::bit_cast<std::uint32_t>(1.0f)},
         {0x010, state.zInfo}, {0x011, state.stencilInfo}, {0x201, 0}, {0x10b, state.stencilControl}, {0x10c, state.stencilReference}, {0x10d, 0},
         {0x000, state.renderControl}, {0x200, state.depthControl},
         {0x8e, state.pixelShader ? 0xffffffffu : 0u}, {0x2f8, 0u}, {0x292, 2u},
@@ -651,6 +653,66 @@ void SecondSlice(TexelReader& reader) {
     std::puts("  slice 0 of the write base still holds what the CPU wrote");
 }
 
+Surfaces NewLiveSurface(TexelReader& reader, bool stencil, std::uint32_t width, const std::string& what) {
+    const auto live = NewSurfaces();
+    auto draw = DepthDrawn(live, Gradient, stencil ? StencilInfo : NoStencilInfo);
+    draw.width = width;
+    if (stencil) {
+        draw.depthControl = StencilReplaceAlways;
+        draw.stencilControl = StencilPassReplace;
+        draw.stencilReference = StencilValue | (0xffu << 8u) | (0xffu << 16u);
+    }
+    Submit(Draw(live, draw), what + ": depth draw into the surface at the write base");
+    if (stencil) RequireSame(reader.Read(live.stencil, Format8Uint, what + ": stencil at the write base"), std::vector<std::uint32_t>(Texels, StencilValue), what + ": stencil drawn at the write base");
+    return live;
+}
+
+void LiveSurfaceCovered(TexelReader& reader, bool liveStencil) {
+    const auto name = std::string(liveStencil ? "covered live depth and stencil surface" : "covered live depth surface");
+    std::puts(liveStencil ? "an expand whose write base holds a live depth and stencil surface it covers whole" : "an expand whose write base holds a live depth-only surface it covers whole");
+    const auto live = NewLiveSurface(reader, liveStencil, Width, name);
+    const auto surfaces = NewSurfaces();
+    Submit(Draw(surfaces, DepthDrawn(surfaces, SecondGradient)), name + ": depth draw into the read surface");
+    Submit(Draw(surfaces, Expand(live.depth)), name + ": DB expand");
+    const auto depth = RequireDepth(reader, surfaces.depth, SecondGradient, name + ": read base");
+    RequireExpanded(reader, live.depth, depth, name);
+    if (!liveStencil) return;
+    RequireSame(reader.Read(live.stencil, Format8Uint, name + ": stencil plane of the retired surface"), std::vector<std::uint32_t>(Texels, StencilValue), name + ": stencil plane of the retired surface");
+    std::vector<std::byte> raw(static_cast<std::size_t>(DepthSliceBytes({Width, Height}, 1u)));
+    AgcDriver::GuestMemory::Read(live.stencil, raw);
+    RequireSame(Detiled(live.stencil, raw, Format8Uint, 1u), std::vector<std::uint32_t>(Texels, StencilValue), name + ": raw read of the retired surface's stencil plane");
+}
+
+void RequireRefused(const Surfaces& surfaces, const DrawState& expand, std::string_view reason, const std::string& name) {
+    bool refused = false;
+    try {
+        Submit(Draw(surfaces, expand), name + ": DB expand");
+    } catch (const std::exception& error) {
+        refused = std::string_view(error.what()).find(reason) != std::string_view::npos;
+        if (!refused) throw;
+    }
+    std::printf("  %s: the expand %s\n", name.c_str(), refused ? "is refused" : "ran");
+    Require(refused, "depth expand review: " + name + ": the expand was not refused");
+}
+
+void LiveSurfacePartlyCovered(TexelReader& reader) {
+    std::puts("an expand whose write base holds a wider live depth surface");
+    const auto live = NewLiveSurface(reader, false, Width + 32u, "partly covered live surface");
+    const auto surfaces = NewSurfaces();
+    Submit(Draw(surfaces, DepthDrawn(surfaces, SecondGradient)), "partly covered live surface: depth draw into the read surface");
+    RequireRefused(surfaces, Expand(live.depth), "into a live depth surface it does not cover", "partly covered live surface");
+}
+
+void LiveStencilPlaneOnly(TexelReader& reader) {
+    std::puts("an expand whose stencil write base holds the stencil plane of a live surface with drawn depth at another base");
+    const auto live = NewLiveSurface(reader, true, Width, "live stencil plane");
+    const auto surfaces = NewSurfaces();
+    Submit(Draw(surfaces, DepthDrawn(surfaces, SecondGradient)), "live stencil plane: depth draw into the read surface");
+    auto expand = Expand(NewPlane());
+    expand.stencilWriteBase = live.stencil;
+    RequireRefused(surfaces, expand, "into the stencil plane of a live depth surface whose host-only depth it does not write", "live stencil plane");
+}
+
 void StencilMoved(TexelReader& reader, bool depthMoves) {
     const auto name = std::string(depthMoves ? "depth and stencil expand" : "stencil-only expand");
     std::puts(depthMoves ? "an out-of-place expand of the depth and stencil planes" : "an out-of-place expand of the stencil plane alone, the depth plane in place");
@@ -687,12 +749,24 @@ void StencilMoved(TexelReader& reader, bool depthMoves) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
         Register(VertexShader, VertexCode.data(), sizeof(VertexCode), 2);
         Register(PixelShader, PixelCode.data(), sizeof(PixelCode), 1);
         TexelReader reader;
+        if (argc > 1 && std::string_view(argv[1]) == "--partly-covered-live") {
+            LiveSurfacePartlyCovered(reader);
+            std::puts("depth expand review refusal test passed");
+            std::fflush(stdout);
+            std::_Exit(0);
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--live-stencil-plane") {
+            LiveStencilPlaneOnly(reader);
+            std::puts("depth expand review refusal test passed");
+            std::fflush(stdout);
+            std::_Exit(0);
+        }
         DepthOnlySurface(reader);
         StencilKept(reader);
         InPlaceUnchanged(reader);
@@ -705,6 +779,8 @@ int main() {
         SecondSlice(reader);
         StencilMoved(reader, true);
         StencilMoved(reader, false);
+        LiveSurfaceCovered(reader, false);
+        LiveSurfaceCovered(reader, true);
         AgcDriverShutdown_nid_postfix();
         std::puts("depth expand review tests passed");
         return 0;

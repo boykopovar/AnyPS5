@@ -5178,13 +5178,22 @@ void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass) {
         std::snprintf(text, sizeof(text), "AGC graphics: an out-of-place DB expand from 0x%llx (%ux%u) to 0x%llx %s is not implemented", static_cast<unsigned long long>(source.address), source.extent.width, source.extent.height, static_cast<unsigned long long>(destination), what);
         return std::runtime_error(text);
     };
-    {
-        std::lock_guard lock(surfacesMutex());
-        for (const auto address : {pass.destination, pass.stencilDestination}) {
-            if (address != 0 && planeSurface(context.device, address) != nullptr) throw failure(address, "into a live depth surface");
-        }
-    }
     const bool d16 = sixteenBitDepth(source.format);
+    for (const bool stencil : {false, true}) {
+        const auto address = stencil ? pass.stencilDestination : pass.destination;
+        if (address == 0) continue;
+        const std::uint32_t bytesPerTexel = stencil ? 1u : d16 ? 2u : 4u;
+        const auto [blockWidth, blockHeight] = DepthBlockExtent(bytesPerTexel);
+        const std::array<WrittenStorageExtent, 1> extents{{{address, source.extent.width, source.extent.height, bytesPerTexel, {65536u, blockWidth, blockHeight}, (source.extent.width + blockWidth - 1u) / blockWidth}}};
+        {
+            std::lock_guard lock(surfacesMutex());
+            if (planeSurface(context.device, address) == nullptr) continue;
+            if (stencil && std::any_of(surfaces().begin(), surfaces().end(), [&](const auto& surface) { return surface->context.device == context.device && !surface->retired && surface->target.stencilAddress == address && surface->AnyStale(); })) throw failure(address, "into the stencil plane of a live depth surface whose host-only depth it does not write");
+        }
+        RetireCoveredDepthSurfaces(context.device, {}, extents);
+        std::lock_guard lock(surfacesMutex());
+        if (planeSurface(context.device, address) != nullptr) throw failure(address, "into a live depth surface it does not cover");
+    }
     expandsRun.fetch_add(1, std::memory_order_relaxed);
     bool copied = false;
     for (const bool stencil : {false, true}) {
