@@ -695,16 +695,6 @@ int APS5_VABI _FQuadph_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _FRint_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FSincos_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _FTgamma_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1107,16 +1097,6 @@ int APS5_VABI _LQuad_nid_postfix() {
 }
 
 int APS5_VABI _LQuadph_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LRint_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LSincos_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
