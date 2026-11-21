@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -16,3 +17,11 @@ struct WebRtcI420Buffer {
 static_assert(sizeof(WebRtcI420Buffer) == 40);
 static_assert(offsetof(WebRtcI420Buffer, strideY) == 16);
 static_assert(offsetof(WebRtcI420Buffer, data) == 32);
+
+struct WebRtcRefCountedI420Buffer {
+    WebRtcI420Buffer buffer;
+    std::atomic<std::int32_t> refCount;
+};
+
+static_assert(sizeof(WebRtcRefCountedI420Buffer) == 48);
+static_assert(offsetof(WebRtcRefCountedI420Buffer, refCount) == 40);

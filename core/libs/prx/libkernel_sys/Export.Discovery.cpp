@@ -1437,11 +1437,6 @@ int APS5_VABI sceKernelMsync(void* address, std::size_t length, int flags) {
     return msync_nid_postfix(address, length, flags) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
 }
 
-int APS5_VABI sceKernelNormalizePath(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelNotifyAppEvent(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
