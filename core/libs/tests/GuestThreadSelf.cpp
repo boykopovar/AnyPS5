@@ -2,6 +2,8 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
@@ -35,6 +37,12 @@ static constexpr int GuestPthread_Cancel_Asynchronous = 2;
 static constexpr std::intptr_t WorkerRetval = 0x1234;
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+static void RequireGuestObject(Pthread thread) {
+    Require(GuestArena::GuestAddressOffset != 0 || reinterpret_cast<std::uintptr_t>(thread) < (std::uintptr_t{1} << 40));
+    GuestAllocations::Mutation mutation;
+    Require(mutation.Covers(thread, sizeof(std::int64_t)));
+}
 
 #ifdef _WIN32
 static constexpr std::uintptr_t GuestPage = 0x4000;
@@ -81,6 +89,7 @@ static DWORD WINAPI DefaultSizeHostThread(void*) {
     Require(sceKernelIsStack(&local, &start, &end) == SCE_OK);
     RequireGuardable(reinterpret_cast<std::uintptr_t>(start), reinterpret_cast<std::uintptr_t>(end));
     RequireGuardableStack(scePthreadSelf());
+    RequireGuestObject(scePthreadSelf());
     return 0;
 }
 
@@ -151,6 +160,7 @@ int main() {
     const Pthread mainSelf = scePthreadSelf();
     Require(mainSelf != nullptr);
     Require(scePthreadSelf() == mainSelf);
+    RequireGuestObject(mainSelf);
     const std::int64_t mainTid = ThreadIdField(mainSelf);
     Require(mainTid != 0);
     Require(scePthreadGetthreadid() == static_cast<int>(mainTid));
@@ -190,6 +200,7 @@ int main() {
     Require(reinterpret_cast<std::intptr_t>(result) == WorkerRetval);
     Require(context.selfFromWorker != nullptr);
     Require(context.selfFromWorker == context.thread);
+    RequireGuestObject(context.thread);
     Require(context.selfFromWorker != mainSelf);
     Require(context.workerTid != 0 && context.workerTid != mainTid);
     Require(context.workerThreadId == static_cast<int>(context.workerTid));

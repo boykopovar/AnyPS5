@@ -15,6 +15,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libc/include/CpuTopology.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include <algorithm>
 #include <cstddef>
@@ -626,6 +627,14 @@ PthreadPrivate::~PthreadPrivate() {
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
     registry.threads.erase(cpuClockThread);
+}
+
+void* PthreadPrivate::operator new(std::size_t bytes) {
+    return GuestHeap::GuestHeapAlign_nid_postfix(alignof(PthreadPrivate), bytes);
+}
+
+void PthreadPrivate::operator delete(void* pointer) noexcept {
+    GuestHeap::GuestHeapFree_nid_postfix(pointer);
 }
 
 static void BindHostCpuClock(PthreadPrivate* self) {
