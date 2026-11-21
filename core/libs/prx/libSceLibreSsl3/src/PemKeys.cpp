@@ -629,6 +629,7 @@ bool CheckPem(const std::string& found, const char* wanted) {
 bool GetCipherInfo(const std::string& headerText, LibreSsl3PemCipherInfo& info) {
     const char* header = headerText.c_str();
     info.cipher = nullptr;
+    info.des = LibreSsl3PemDes::None;
     if (*header == '\0' || *header == '\n') return true;
     if (std::strncmp(header, "Proc-Type: ", 11) != 0) {
         PutPemError(PemNotProcType);

@@ -5,10 +5,15 @@
  * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/evp_key.c
  * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/evp_pbe.c
  * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/evp_cipher.c
+ * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/e_des.c
+ * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/e_des3.c
  * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/pkcs12/p12_decr.c
  * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/pkcs12/p12_p8d.c
  * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/pkcs12/p12_p8e.c
+ * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/pkcs12/p12_key.c
+ * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/pkcs12/p12_utl.c
  * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/p5_pbev2.c
+ * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/p5_pbe.c
  * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_int.c
  * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_type.c
  * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_object.c
@@ -23,6 +28,8 @@
 /* $OpenBSD: pem_pkey.c,v 1.28 2023/11/19 15:46:10 tb Exp $ */
 /* $OpenBSD: pem_pk8.c,v 1.14 2023/07/07 13:40:44 beck Exp $ */
 /* $OpenBSD: evp_key.c,v 1.36 2024/04/09 13:52:41 beck Exp $ */
+/* $OpenBSD: e_des.c,v 1.24 2024/04/09 13:52:41 beck Exp $ */
+/* $OpenBSD: e_des3.c,v 1.30 2024/04/09 13:52:41 beck Exp $ */
 /* $OpenBSD: a_int.c,v 1.48 2024/07/08 14:52:31 beck Exp $ */
 /* $OpenBSD: a_type.c,v 1.27 2023/07/28 10:00:10 tb Exp $ */
 /* $OpenBSD: a_object.c,v 1.55 2024/07/08 14:52:31 beck Exp $ */
@@ -252,6 +259,9 @@
  *
  */
 /* $OpenBSD: p12_decr.c,v 1.26 2024/03/02 10:15:16 tb Exp $ */
+/* $OpenBSD: p12_key.c,v 1.35 2024/03/02 10:15:16 tb Exp $ */
+/* $OpenBSD: p12_utl.c,v 1.21 2023/02/16 08:38:17 tb Exp $ */
+/* $OpenBSD: p5_pbe.c,v 1.28 2024/07/08 14:48:49 beck Exp $ */
 /* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 1999.
  */
@@ -576,17 +586,20 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include <mbedtls/des.h>
 #include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
 #include <memory>
 #include <new>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -600,14 +613,17 @@ constexpr int Pkcs12Library = 35;
 constexpr int AnyFunction = 0xfff;
 
 constexpr int ErrREvpLib = 6;
+constexpr int ErrRMallocFailure = 65;
 
 constexpr int PemBadDecrypt = 101;
 constexpr int PemBadIvChars = 103;
 constexpr int PemBadPasswordRead = 104;
 constexpr int PemUnsupportedEncryption = 114;
 
+constexpr int EvpBadDecrypt = 100;
 constexpr int EvpIvTooLarge = 102;
 constexpr int EvpUnsupportedCipher = 107;
+constexpr int EvpWrongFinalBlockLength = 109;
 constexpr int EvpDecodeError = 114;
 constexpr int EvpKeygenFailure = 120;
 constexpr int EvpUnknownPbeAlgorithm = 121;
@@ -619,6 +635,7 @@ constexpr int EvpUnsupportedSaltType = 126;
 constexpr int EvpNoCipherSet = 131;
 constexpr int EvpUnsupportedNumberOfRounds = 135;
 constexpr int EvpBadKeyLength = 137;
+constexpr int EvpUnknownDigest = 161;
 
 constexpr int Asn1NestedError = 58;
 constexpr int Asn1LengthMismatch = 62;
@@ -645,6 +662,8 @@ constexpr int Asn1TypeNotPrimitive = 231;
 constexpr int Pkcs12DecodeError = 101;
 constexpr int Pkcs12EncodeError = 102;
 constexpr int Pkcs12EncryptError = 103;
+constexpr int Pkcs12IvGenError = 106;
+constexpr int Pkcs12KeyGenError = 107;
 constexpr int Pkcs12AlgorCipherInitError = 115;
 constexpr int Pkcs12CipherFinalError = 116;
 constexpr int Pkcs12PbeCryptError = 117;
@@ -654,6 +673,11 @@ constexpr std::size_t MaxKeyLength = 64;
 constexpr std::size_t MaxIvLength = 16;
 constexpr std::size_t Pkcs5SaltLength = 8;
 constexpr int Pkcs5DefaultIterations = 2048;
+constexpr std::size_t DesBlockSize = 8;
+constexpr std::size_t MaxDesKeyLength = 24;
+constexpr std::size_t Pkcs5IvEnd = 16;
+constexpr int Pkcs12KeyId = 1;
+constexpr int Pkcs12IvId = 2;
 
 constexpr int TypeBoolean = 1;
 constexpr int TypeInteger = 2;
@@ -683,7 +707,15 @@ constexpr unsigned char TagSequence = 0x30;
 constexpr std::string_view Aes128CbcOid = "\x60\x86\x48\x01\x65\x03\x04\x01\x02"sv;
 constexpr std::string_view Aes192CbcOid = "\x60\x86\x48\x01\x65\x03\x04\x01\x16"sv;
 constexpr std::string_view Aes256CbcOid = "\x60\x86\x48\x01\x65\x03\x04\x01\x2a"sv;
+constexpr std::string_view DesCbcOid = "\x2b\x0e\x03\x02\x07"sv;
+constexpr std::string_view DesEde3CbcOid = "\x2a\x86\x48\x86\xf7\x0d\x03\x07"sv;
 constexpr std::string_view Pbes2Oid = "\x2a\x86\x48\x86\xf7\x0d\x01\x05\x0d"sv;
+constexpr std::string_view PbeMd2DesOid = "\x2a\x86\x48\x86\xf7\x0d\x01\x05\x01"sv;
+constexpr std::string_view PbeMd5DesOid = "\x2a\x86\x48\x86\xf7\x0d\x01\x05\x03"sv;
+constexpr std::string_view PbeMd2Rc2Oid = "\x2a\x86\x48\x86\xf7\x0d\x01\x05\x04"sv;
+constexpr std::string_view PbeSha1DesOid = "\x2a\x86\x48\x86\xf7\x0d\x01\x05\x0a"sv;
+constexpr std::string_view PbeSha1TripleDesOid = "\x2a\x86\x48\x86\xf7\x0d\x01\x0c\x01\x03"sv;
+constexpr std::string_view PbeSha1TwoKeyDesOid = "\x2a\x86\x48\x86\xf7\x0d\x01\x0c\x01\x04"sv;
 constexpr std::string_view Pbkdf2Oid = "\x2a\x86\x48\x86\xf7\x0d\x01\x05\x0c"sv;
 constexpr std::string_view HmacWithMd5Oid = "\x2a\x86\x48\x86\xf7\x0d\x02\x06"sv;
 constexpr std::string_view HmacWithSha1Oid = "\x2a\x86\x48\x86\xf7\x0d\x02\x07"sv;
@@ -708,7 +740,7 @@ struct UnavailablePbeOid {
     std::string_view name;
 };
 
-constexpr std::array<std::string_view, 91> UnavailableCipherNames{
+constexpr std::array<std::string_view, 86> UnavailableCipherNames{
     "AES-128-CFB"sv, "AES-128-CFB1"sv, "AES-128-CFB8"sv, "AES-128-CTR"sv, "AES-128-ECB"sv, "AES-128-OFB"sv,
     "AES-128-XTS"sv, "AES-192-CFB"sv, "AES-192-CFB1"sv, "AES-192-CFB8"sv, "AES-192-CTR"sv, "AES-192-ECB"sv,
     "AES-192-OFB"sv, "AES-256-CFB"sv, "AES-256-CFB1"sv, "AES-256-CFB8"sv, "AES-256-CTR"sv, "AES-256-ECB"sv,
@@ -717,15 +749,15 @@ constexpr std::array<std::string_view, 91> UnavailableCipherNames{
     "CAMELLIA-192-CBC"sv, "CAMELLIA-192-CFB"sv, "CAMELLIA-192-CFB1"sv, "CAMELLIA-192-CFB8"sv, "CAMELLIA-192-ECB"sv,
     "CAMELLIA-192-OFB"sv, "CAMELLIA-256-CBC"sv, "CAMELLIA-256-CFB"sv, "CAMELLIA-256-CFB1"sv, "CAMELLIA-256-CFB8"sv,
     "CAMELLIA-256-ECB"sv, "CAMELLIA-256-OFB"sv, "CAMELLIA128"sv, "CAMELLIA192"sv, "CAMELLIA256"sv, "CAST"sv,
-    "CAST5-CBC"sv, "CAST5-CFB"sv, "CAST5-ECB"sv, "CAST5-OFB"sv, "DES"sv, "DES-CBC"sv, "DES-CFB"sv, "DES-CFB1"sv,
-    "DES-CFB8"sv, "DES-ECB"sv, "DES-EDE"sv, "DES-EDE-CBC"sv, "DES-EDE-CFB"sv, "DES-EDE-OFB"sv, "DES-EDE3"sv,
-    "DES-EDE3-CBC"sv, "DES-EDE3-CFB"sv, "DES-EDE3-CFB1"sv, "DES-EDE3-CFB8"sv, "DES-EDE3-OFB"sv, "DES-OFB"sv,
-    "DES3"sv, "DESX"sv, "DESX-CBC"sv, "IDEA"sv, "IDEA-CBC"sv, "IDEA-CFB"sv, "IDEA-ECB"sv, "IDEA-OFB"sv, "RC2"sv,
+    "CAST5-CBC"sv, "CAST5-CFB"sv, "CAST5-ECB"sv, "CAST5-OFB"sv, "DES-CFB"sv, "DES-CFB1"sv, "DES-CFB8"sv, "DES-ECB"sv,
+    "DES-EDE"sv, "DES-EDE-CFB"sv, "DES-EDE-OFB"sv, "DES-EDE3"sv, "DES-EDE3-CFB"sv, "DES-EDE3-CFB1"sv,
+    "DES-EDE3-CFB8"sv, "DES-EDE3-OFB"sv, "DES-OFB"sv, "DESX"sv, "DESX-CBC"sv, "IDEA"sv, "IDEA-CBC"sv, "IDEA-CFB"sv,
+    "IDEA-ECB"sv, "IDEA-OFB"sv, "RC2"sv,
     "RC2-40-CBC"sv, "RC2-64-CBC"sv, "RC2-CBC"sv, "RC2-CFB"sv, "RC2-ECB"sv, "RC2-OFB"sv, "RC4"sv, "RC4-40"sv,
     "SM4"sv, "SM4-CBC"sv, "SM4-CFB"sv, "SM4-CTR"sv, "SM4-ECB"sv, "SM4-OFB"sv,
 };
 
-constexpr std::array<UnavailableCipherOid, 46> UnavailableCipherOids{{
+constexpr std::array<UnavailableCipherOid, 44> UnavailableCipherOids{{
     {"\x60\x86\x48\x01\x65\x03\x04\x01\x04"sv, "AES-128-CFB"sv},
     {"\x60\x86\x48\x01\x65\x03\x04\x01\x01"sv, "AES-128-ECB"sv},
     {"\x60\x86\x48\x01\x65\x03\x04\x01\x03"sv, "AES-128-OFB"sv},
@@ -749,11 +781,9 @@ constexpr std::array<UnavailableCipherOid, 46> UnavailableCipherOids{{
     {"\x03\xa2\x31\x05\x03\x01\x09\x29"sv, "CAMELLIA-256-ECB"sv},
     {"\x03\xa2\x31\x05\x03\x01\x09\x2b"sv, "CAMELLIA-256-OFB"sv},
     {"\x2a\x86\x48\x86\xf6\x7d\x07\x42\x0a"sv, "CAST5-CBC"sv},
-    {"\x2b\x0e\x03\x02\x07"sv, "DES-CBC"sv},
     {"\x2b\x0e\x03\x02\x09"sv, "DES-CFB"sv},
     {"\x2b\x0e\x03\x02\x06"sv, "DES-ECB"sv},
     {"\x2b\x0e\x03\x02\x11"sv, "DES-EDE"sv},
-    {"\x2a\x86\x48\x86\xf7\x0d\x03\x07"sv, "DES-EDE3-CBC"sv},
     {"\x2b\x0e\x03\x02\x08"sv, "DES-OFB"sv},
     {"\x2b\x06\x01\x04\x01\x81\x3c\x07\x01\x01\x02"sv, "IDEA-CBC"sv},
     {"\x2a\x86\x48\x86\xf7\x0d\x03\x02"sv, "RC2-CBC"sv},
@@ -774,19 +804,27 @@ constexpr std::array<UnavailableCipherOid, 46> UnavailableCipherOids{{
     {"\x60\x86\x48\x01\x65\x03\x04\x01\x2d"sv, "id-aes256-wrap"sv},
 }};
 
-constexpr std::array<UnavailablePbeOid, 12> UnavailablePbeOids{{
-    {"\x2a\x86\x48\x86\xf7\x0d\x01\x05\x01"sv, "PBE-MD2-DES"sv},
-    {"\x2a\x86\x48\x86\xf7\x0d\x01\x05\x03"sv, "PBE-MD5-DES"sv},
+constexpr std::array<UnavailablePbeOid, 6> UnavailablePbeOids{{
     {"\x2a\x86\x48\x86\xf7\x0d\x01\x05\x0b"sv, "PBE-SHA1-RC2-64"sv},
     {"\x2a\x86\x48\x86\xf7\x0d\x01\x0c\x01\x01"sv, "PBE-SHA1-RC4-128"sv},
     {"\x2a\x86\x48\x86\xf7\x0d\x01\x0c\x01\x02"sv, "PBE-SHA1-RC4-40"sv},
-    {"\x2a\x86\x48\x86\xf7\x0d\x01\x0c\x01\x03"sv, "PBE-SHA1-3DES"sv},
-    {"\x2a\x86\x48\x86\xf7\x0d\x01\x0c\x01\x04"sv, "PBE-SHA1-2DES"sv},
     {"\x2a\x86\x48\x86\xf7\x0d\x01\x0c\x01\x05"sv, "PBE-SHA1-RC2-128"sv},
     {"\x2a\x86\x48\x86\xf7\x0d\x01\x0c\x01\x06"sv, "PBE-SHA1-RC2-40"sv},
-    {"\x2a\x86\x48\x86\xf7\x0d\x01\x05\x04"sv, "PBE-MD2-RC2-64"sv},
     {"\x2a\x86\x48\x86\xf7\x0d\x01\x05\x06"sv, "PBE-MD5-RC2-64"sv},
-    {"\x2a\x86\x48\x86\xf7\x0d\x01\x05\x0a"sv, "PBE-SHA1-DES"sv},
+}};
+
+struct DesPbeScheme {
+    std::string_view oid;
+    LibreSsl3PemDes cipher;
+    bool sha1;
+    bool pkcs12;
+};
+
+constexpr std::array<DesPbeScheme, 4> DesPbeSchemes{{
+    {PbeMd5DesOid, LibreSsl3PemDes::Single, false, false},
+    {PbeSha1DesOid, LibreSsl3PemDes::Single, true, false},
+    {PbeSha1TripleDesOid, LibreSsl3PemDes::ThreeKey, true, true},
+    {PbeSha1TwoKeyDesOid, LibreSsl3PemDes::TwoKey, true, true},
 }};
 
 void PutError(int library, int reason) {
@@ -839,22 +877,57 @@ const LibreSslEvpCipher* Aes256Cbc() {
     NotImplemented_nid_no_patch(message.c_str());
 }
 
-const LibreSslEvpCipher* CipherByName(std::string_view name) {
-    if (name == "AES-128-CBC"sv || name == "AES128"sv) return Aes128Cbc();
-    if (name == "AES-192-CBC"sv || name == "AES192"sv) return Aes192Cbc();
-    if (name == "AES-256-CBC"sv || name == "AES256"sv) return Aes256Cbc();
+struct CipherChoice {
+    const LibreSslEvpCipher* evp = nullptr;
+    LibreSsl3PemDes des = LibreSsl3PemDes::None;
+};
+
+bool IsSet(const CipherChoice& cipher) {
+    return cipher.evp != nullptr || cipher.des != LibreSsl3PemDes::None;
+}
+
+int DesKeyLength(LibreSsl3PemDes des) {
+    if (des == LibreSsl3PemDes::Single) return 8;
+    if (des == LibreSsl3PemDes::TwoKey) return 16;
+    return 24;
+}
+
+int KeyLength(const CipherChoice& cipher) {
+    return cipher.des != LibreSsl3PemDes::None ? DesKeyLength(cipher.des) : cipher.evp->keyLength;
+}
+
+int IvLength(const CipherChoice& cipher) {
+    return cipher.des != LibreSsl3PemDes::None ? static_cast<int>(DesBlockSize) : cipher.evp->ivLength;
+}
+
+CipherChoice CipherByName(std::string_view name) {
+    if (name == "AES-128-CBC"sv || name == "AES128"sv) return {Aes128Cbc(), LibreSsl3PemDes::None};
+    if (name == "AES-192-CBC"sv || name == "AES192"sv) return {Aes192Cbc(), LibreSsl3PemDes::None};
+    if (name == "AES-256-CBC"sv || name == "AES256"sv) return {Aes256Cbc(), LibreSsl3PemDes::None};
+    if (name == "DES-CBC"sv || name == "DES"sv) return {nullptr, LibreSsl3PemDes::Single};
+    if (name == "DES-EDE-CBC"sv) return {nullptr, LibreSsl3PemDes::TwoKey};
+    if (name == "DES-EDE3-CBC"sv || name == "DES3"sv) return {nullptr, LibreSsl3PemDes::ThreeKey};
     for (const std::string_view known : UnavailableCipherNames) {
         if (name == known) MissingPrimitive("PEM_get_EVP_CIPHER_INFO", name);
     }
-    return nullptr;
+    return {};
 }
 
-const LibreSslEvpCipher* CipherByOid(std::string_view oid) {
-    if (oid == Aes128CbcOid) return Aes128Cbc();
-    if (oid == Aes192CbcOid) return Aes192Cbc();
-    if (oid == Aes256CbcOid) return Aes256Cbc();
+CipherChoice CipherByOid(std::string_view oid) {
+    if (oid == Aes128CbcOid) return {Aes128Cbc(), LibreSsl3PemDes::None};
+    if (oid == Aes192CbcOid) return {Aes192Cbc(), LibreSsl3PemDes::None};
+    if (oid == Aes256CbcOid) return {Aes256Cbc(), LibreSsl3PemDes::None};
+    if (oid == DesCbcOid) return {nullptr, LibreSsl3PemDes::Single};
+    if (oid == DesEde3CbcOid) return {nullptr, LibreSsl3PemDes::ThreeKey};
     for (const UnavailableCipherOid& known : UnavailableCipherOids) {
         if (oid == known.oid) MissingPrimitive("PKCS5_v2_PBE_keyivgen", known.name);
+    }
+    return {};
+}
+
+const DesPbeScheme* FindDesPbeScheme(std::string_view oid) {
+    for (const DesPbeScheme& scheme : DesPbeSchemes) {
+        if (oid == scheme.oid) return &scheme;
     }
     return nullptr;
 }
@@ -944,10 +1017,8 @@ bool DeriveKeyBlocks(EvpMdContext* context, const EvpMd* digest, const unsigned 
     }
 }
 
-int BytesToKey(const LibreSslEvpCipher* type, const EvpMd* digest, const unsigned char* salt, const unsigned char* data,
+int BytesToKey(int keyLength, int ivLength, const EvpMd* digest, const unsigned char* salt, const unsigned char* data,
     int dataLength, int count, unsigned char* key, unsigned char* iv) {
-    const int keyLength = type->keyLength;
-    const int ivLength = type->ivLength;
     if (static_cast<std::size_t>(keyLength) > MaxKeyLength) {
         PutError(EvpLibrary, EvpBadKeyLength);
         return 0;
@@ -970,6 +1041,73 @@ int BytesToKey(const LibreSslEvpCipher* type, const EvpMd* digest, const unsigne
     }
     EVP_MD_CTX_destroy_nid_postfix(context);
     return derived ? keyLength : 0;
+}
+
+bool DesCbcDecrypt(LibreSsl3PemDes des, const unsigned char* key, const unsigned char* iv, const unsigned char* input,
+    std::size_t length, std::vector<unsigned char>& plain) {
+    if (length == 0 || (length % DesBlockSize) != 0) {
+        PutError(EvpLibrary, EvpWrongFinalBlockLength);
+        return false;
+    }
+    std::vector<unsigned char> blocks(length, 0);
+    const ClearVectorOnExit clearBlocks{blocks};
+    std::array<unsigned char, DesBlockSize> chain{};
+    std::memcpy(chain.data(), iv, chain.size());
+    int status = 0;
+    if (des == LibreSsl3PemDes::Single) {
+        mbedtls_des_context context;
+        mbedtls_des_init(&context);
+        status = mbedtls_des_setkey_dec(&context, key);
+        if (status == 0)
+            status = mbedtls_des_crypt_cbc(&context, MBEDTLS_DES_DECRYPT, length, chain.data(), input, blocks.data());
+        mbedtls_des_free(&context);
+    } else {
+        mbedtls_des3_context context;
+        mbedtls_des3_init(&context);
+        status = des == LibreSsl3PemDes::TwoKey ? mbedtls_des3_set2key_dec(&context, key)
+                                               : mbedtls_des3_set3key_dec(&context, key);
+        if (status == 0)
+            status = mbedtls_des3_crypt_cbc(&context, MBEDTLS_DES_DECRYPT, length, chain.data(), input, blocks.data());
+        mbedtls_des3_free(&context);
+    }
+    if (status != 0) throw std::runtime_error("DES CBC: mbedtls failed");
+    const std::size_t pad = blocks[length - 1];
+    if (pad == 0 || pad > DesBlockSize) {
+        PutError(EvpLibrary, EvpBadDecrypt);
+        return false;
+    }
+    const std::size_t plainLength = length - pad;
+    for (std::size_t index = plainLength; index < length; ++index) {
+        if (blocks[index] != pad) {
+            PutError(EvpLibrary, EvpBadDecrypt);
+            return false;
+        }
+    }
+    plain.assign(blocks.begin(), blocks.begin() + static_cast<std::ptrdiff_t>(plainLength));
+    return true;
+}
+
+struct MdContextHolder {
+    EvpMdContext* context = EVP_MD_CTX_create_nid_postfix();
+    MdContextHolder() = default;
+    MdContextHolder(const MdContextHolder&) = delete;
+    MdContextHolder& operator=(const MdContextHolder&) = delete;
+    ~MdContextHolder() {
+        if (context != nullptr) EVP_MD_CTX_destroy_nid_postfix(context);
+    }
+};
+
+using DigestPart = std::pair<const unsigned char*, std::size_t>;
+
+bool DigestParts(EvpMdContext* context, const EvpMd* digest, std::initializer_list<DigestPart> parts,
+    unsigned char* out, std::uint32_t& size) {
+    if (!EVP_DigestInit_ex_nid_postfix(context, digest, nullptr)) return false;
+    for (const DigestPart& part : parts) {
+        if (part.second != 0 && !EVP_DigestUpdate_nid_postfix(context, part.first, part.second)) return false;
+    }
+    if (!EVP_DigestFinal_ex_nid_postfix(context, out, &size)) return false;
+    RequireDigestFits(size, MaxDigestSize);
+    return true;
 }
 
 struct Reader {
@@ -1397,13 +1535,58 @@ bool ReadPbes2Parameters(const Element& parameter, Algorithm& keyFunction, Algor
     return SequenceComplete(inner);
 }
 
-bool Pbkdf2KeyIvGen(LibreSslEvpCipherCtx* context, const char* password, int passwordLength,
-    const Algorithm& keyFunction, int encrypt) {
-    if (context->cipher == nullptr) {
+struct PbeParameters {
+    Element salt;
+    Integer iterations;
+};
+
+bool ReadPbeParameters(const Element& parameter, PbeParameters& parameters) {
+    Reader reader{parameter.encoded, parameter.encodedLength};
+    Reader inner{nullptr, 0};
+    if (!EnterSequence(reader, inner)) return false;
+    bool present = false;
+    if (!AtField(inner, present)) return false;
+    if (!present) return MissingField();
+    if (ReadField(inner, TypeOctetString, false, parameters.salt) != 1) return false;
+    if (!AtField(inner, present)) return false;
+    if (!present) return MissingField();
+    Element iterations;
+    if (ReadField(inner, TypeInteger, false, iterations) != 1) return false;
+    StoreInteger(iterations, parameters.iterations);
+    return SequenceComplete(inner);
+}
+
+struct PbeContext {
+    CipherContext evp = NewCipherContext();
+    LibreSsl3PemDes des = LibreSsl3PemDes::None;
+    std::array<unsigned char, MaxDesKeyLength> desKey{};
+    std::array<unsigned char, DesBlockSize> desOiv{};
+    std::array<unsigned char, DesBlockSize> desIv{};
+    PbeContext() = default;
+    PbeContext(const PbeContext&) = delete;
+    PbeContext& operator=(const PbeContext&) = delete;
+    ~PbeContext() { ClearBytes(desKey.data(), desKey.size()); }
+};
+
+void SelectDes(PbeContext& context, LibreSsl3PemDes des) {
+    context.des = des;
+    context.desIv = context.desOiv;
+}
+
+void SetDesKey(PbeContext& context, const unsigned char* key, const unsigned char* iv) {
+    if (iv != nullptr) std::memcpy(context.desOiv.data(), iv, context.desOiv.size());
+    context.desIv = context.desOiv;
+    std::memcpy(context.desKey.data(), key, static_cast<std::size_t>(DesKeyLength(context.des)));
+}
+
+bool Pbkdf2KeyIvGen(PbeContext& context, const char* password, int passwordLength, const Algorithm& keyFunction,
+    int encrypt) {
+    if (context.des == LibreSsl3PemDes::None && context.evp.get()->cipher == nullptr) {
         PutError(EvpLibrary, EvpNoCipherSet);
         return false;
     }
-    const int keyLength = context->keyLen;
+    const int keyLength =
+        context.des != LibreSsl3PemDes::None ? DesKeyLength(context.des) : context.evp.get()->keyLen;
     std::array<unsigned char, MaxKeyLength> key{};
     const ClearArrayOnExit<MaxKeyLength> clearKey{key};
     if (static_cast<unsigned>(keyLength) > key.size()) {
@@ -1440,10 +1623,30 @@ bool Pbkdf2KeyIvGen(LibreSslEvpCipherCtx* context, const char* password, int pas
     if (!PKCS5_PBKDF2_HMAC_nid_postfix(password, passwordLength, parameters.salt.content,
             static_cast<int>(parameters.salt.length), iterations, digest, keyLength, key.data()))
         return false;
-    return EVP_CipherInit_ex_nid_postfix(context, nullptr, nullptr, key.data(), nullptr, encrypt) != 0;
+    if (context.des != LibreSsl3PemDes::None) {
+        SetDesKey(context, key.data(), nullptr);
+        return true;
+    }
+    return EVP_CipherInit_ex_nid_postfix(context.evp.get(), nullptr, nullptr, key.data(), nullptr, encrypt) != 0;
 }
 
-bool Pbes2KeyIvGen(LibreSslEvpCipherCtx* context, const char* password, int passwordLength, const Algorithm& algorithm,
+bool DesIvFromParameter(PbeContext& context, const Element& parameter) {
+    if (parameter.type != TypeOctetString) {
+        PutError(Asn1Library, Asn1DataIsWrong);
+        PutError(EvpLibrary, EvpCipherParameterError);
+        return false;
+    }
+    const std::size_t copied = parameter.length < DesBlockSize ? parameter.length : DesBlockSize;
+    if (copied != 0) std::memcpy(context.desOiv.data(), parameter.content, copied);
+    if (parameter.length != DesBlockSize) {
+        PutError(EvpLibrary, EvpCipherParameterError);
+        return false;
+    }
+    context.desIv = context.desOiv;
+    return true;
+}
+
+bool Pbes2KeyIvGen(PbeContext& context, const char* password, int passwordLength, const Algorithm& algorithm,
     int encrypt) {
     if (!algorithm.hasParameter || algorithm.parameter.type != TypeSequence) {
         PutError(EvpLibrary, EvpDecodeError);
@@ -1459,16 +1662,23 @@ bool Pbes2KeyIvGen(LibreSslEvpCipherCtx* context, const char* password, int pass
         PutError(EvpLibrary, EvpUnsupportedKeyDerivationFunction);
         return false;
     }
-    const LibreSslEvpCipher* cipher = CipherByOid(encryption.oid);
-    if (cipher == nullptr) {
+    const CipherChoice choice = CipherByOid(encryption.oid);
+    if (!IsSet(choice)) {
         PutError(EvpLibrary, EvpUnsupportedCipher);
         return false;
     }
-    if (!EVP_CipherInit_ex_nid_postfix(context, cipher, nullptr, nullptr, nullptr, encrypt)) return false;
+    if (choice.des != LibreSsl3PemDes::None) {
+        SelectDes(context, choice.des);
+        if (encryption.hasParameter && !DesIvFromParameter(context, encryption.parameter)) return false;
+        return Pbkdf2KeyIvGen(context, password, passwordLength, keyFunction, encrypt);
+    }
+    const LibreSslEvpCipher* const cipher = choice.evp;
+    LibreSslEvpCipherCtx* const evp = context.evp.get();
+    if (!EVP_CipherInit_ex_nid_postfix(evp, cipher, nullptr, nullptr, nullptr, encrypt)) return false;
     if (encryption.hasParameter) {
         const int ivLength = cipher->ivLength;
-        if (ivLength < 0 || static_cast<std::size_t>(ivLength) > sizeof(context->oiv)
-            || static_cast<std::size_t>(ivLength) > sizeof(context->iv)) {
+        if (ivLength < 0 || static_cast<std::size_t>(ivLength) > sizeof(evp->oiv)
+            || static_cast<std::size_t>(ivLength) > sizeof(evp->iv)) {
             PutError(EvpLibrary, EvpIvTooLarge);
         } else {
             if (encryption.parameter.type != TypeOctetString) {
@@ -1478,15 +1688,150 @@ bool Pbes2KeyIvGen(LibreSslEvpCipherCtx* context, const char* password, int pass
             }
             const std::size_t wanted = static_cast<std::size_t>(ivLength);
             const std::size_t copied = encryption.parameter.length < wanted ? encryption.parameter.length : wanted;
-            if (copied != 0) std::memcpy(context->oiv, encryption.parameter.content, copied);
+            if (copied != 0) std::memcpy(evp->oiv, encryption.parameter.content, copied);
             if (encryption.parameter.length != wanted) {
                 PutError(EvpLibrary, EvpCipherParameterError);
                 return false;
             }
-            if (wanted != 0) std::memcpy(context->iv, context->oiv, wanted);
+            if (wanted != 0) std::memcpy(evp->iv, evp->oiv, wanted);
         }
     }
     return Pbkdf2KeyIvGen(context, password, passwordLength, keyFunction, encrypt);
+}
+
+bool Pkcs5KeyIvGen(PbeContext& context, const char* password, int passwordLength, const Algorithm& algorithm,
+    LibreSsl3PemDes cipher, const EvpMd* digest) {
+    if (!algorithm.hasParameter || algorithm.parameter.type != TypeSequence) {
+        PutError(EvpLibrary, EvpDecodeError);
+        return false;
+    }
+    PbeParameters parameters;
+    if (!ReadPbeParameters(algorithm.parameter, parameters)) {
+        PutError(EvpLibrary, EvpDecodeError);
+        return false;
+    }
+    const int iterations = static_cast<int>(IntegerValue(parameters.iterations));
+    if (iterations <= 0) {
+        PutError(EvpLibrary, EvpUnsupportedNumberOfRounds);
+        return false;
+    }
+    if (password == nullptr) {
+        passwordLength = 0;
+    } else if (passwordLength == -1) {
+        passwordLength = static_cast<int>(std::strlen(password));
+    }
+    if (passwordLength < 0) throw std::invalid_argument("PKCS5_PBE_keyivgen: negative password length");
+    const MdContextHolder holder;
+    if (holder.context == nullptr) return false;
+    std::array<unsigned char, MaxDigestSize> block{};
+    const ClearArrayOnExit<MaxDigestSize> clearBlock{block};
+    std::uint32_t size = 0;
+    if (!DigestParts(holder.context, digest,
+            {{reinterpret_cast<const unsigned char*>(password), static_cast<std::size_t>(passwordLength)},
+                {parameters.salt.content, parameters.salt.length}},
+            block.data(), size))
+        return false;
+    for (int round = 1; round < iterations; ++round) {
+        const std::size_t previous = size;
+        if (!DigestParts(holder.context, digest, {{block.data(), previous}}, block.data(), size)) return false;
+    }
+    SelectDes(context, cipher);
+    SetDesKey(context, block.data(), block.data() + (Pkcs5IvEnd - DesBlockSize));
+    return true;
+}
+
+bool Pkcs12KeyGen(const char* password, int passwordLength, const unsigned char* salt, std::size_t saltLength, int id,
+    int iterations, std::size_t count, unsigned char* out, const EvpMd* digest) {
+    std::vector<unsigned char> unicode;
+    const ClearVectorOnExit clearUnicode{unicode};
+    if (password != nullptr) {
+        const std::size_t characters =
+            passwordLength < 0 ? std::strlen(password) : static_cast<std::size_t>(passwordLength);
+        unicode.assign((characters + 1) * 2, 0);
+        for (std::size_t index = 0; index < characters; ++index)
+            unicode[index * 2 + 1] = static_cast<unsigned char>(password[index]);
+    }
+    const MdContextHolder holder;
+    const int blockSize = EVP_MD_block_size_nid_postfix(digest);
+    const int digestSize = EVP_MD_size_nid_postfix(digest);
+    if (holder.context == nullptr || blockSize <= 0 || digestSize <= 0) {
+        PutError(Pkcs12Library, ErrRMallocFailure);
+        return false;
+    }
+    const std::size_t v = static_cast<std::size_t>(blockSize);
+    const std::size_t u = static_cast<std::size_t>(digestSize);
+    RequireDigestFits(static_cast<std::uint32_t>(digestSize), MaxDigestSize);
+    const std::size_t saltBlocks = v * ((saltLength + v - 1) / v);
+    const std::size_t passwordBlocks = unicode.empty() ? 0 : v * ((unicode.size() + v - 1) / v);
+    std::vector<unsigned char> input(saltBlocks + passwordBlocks, 0);
+    const ClearVectorOnExit clearInput{input};
+    for (std::size_t index = 0; index < saltBlocks; ++index) input[index] = salt[index % saltLength];
+    for (std::size_t index = 0; index < passwordBlocks; ++index)
+        input[saltBlocks + index] = unicode[index % unicode.size()];
+    const std::vector<unsigned char> diversifier(v, static_cast<unsigned char>(id));
+    std::vector<unsigned char> filler(v, 0);
+    const ClearVectorOnExit clearFiller{filler};
+    std::array<unsigned char, MaxDigestSize> block{};
+    const ClearArrayOnExit<MaxDigestSize> clearBlock{block};
+    for (;;) {
+        std::uint32_t size = 0;
+        bool hashed = DigestParts(holder.context, digest, {{diversifier.data(), v}, {input.data(), input.size()}},
+            block.data(), size);
+        for (int round = 1; hashed && round < iterations; ++round)
+            hashed = DigestParts(holder.context, digest, {{block.data(), u}}, block.data(), size);
+        if (!hashed) {
+            PutError(Pkcs12Library, ErrRMallocFailure);
+            return false;
+        }
+        const std::size_t copied = count < u ? count : u;
+        std::memcpy(out, block.data(), copied);
+        if (u >= count) return true;
+        count -= u;
+        out += u;
+        for (std::size_t index = 0; index < v; ++index) filler[index] = block[index % u];
+        for (std::size_t start = 0; start < input.size(); start += v) {
+            unsigned carry = 1;
+            for (std::size_t index = v; index-- > 0;) {
+                carry += static_cast<unsigned>(input[start + index]) + filler[index];
+                input[start + index] = static_cast<unsigned char>(carry);
+                carry >>= 8;
+            }
+        }
+    }
+}
+
+bool Pkcs12KeyIvGen(PbeContext& context, const char* password, int passwordLength, const Algorithm& algorithm,
+    LibreSsl3PemDes cipher, const EvpMd* digest) {
+    if (!algorithm.hasParameter || algorithm.parameter.type != TypeSequence) {
+        PutError(Pkcs12Library, Pkcs12DecodeError);
+        return false;
+    }
+    PbeParameters parameters;
+    if (!ReadPbeParameters(algorithm.parameter, parameters)) {
+        PutError(Pkcs12Library, Pkcs12DecodeError);
+        return false;
+    }
+    const int iterations = static_cast<int>(IntegerValue(parameters.iterations));
+    if (iterations <= 0) {
+        PutError(Pkcs12Library, Pkcs12DecodeError);
+        return false;
+    }
+    std::array<unsigned char, MaxDesKeyLength> key{};
+    const ClearArrayOnExit<MaxDesKeyLength> clearKey{key};
+    std::array<unsigned char, DesBlockSize> iv{};
+    if (!Pkcs12KeyGen(password, passwordLength, parameters.salt.content, parameters.salt.length, Pkcs12KeyId,
+            iterations, static_cast<std::size_t>(DesKeyLength(cipher)), key.data(), digest)) {
+        PutError(Pkcs12Library, Pkcs12KeyGenError);
+        return false;
+    }
+    if (!Pkcs12KeyGen(password, passwordLength, parameters.salt.content, parameters.salt.length, Pkcs12IvId,
+            iterations, iv.size(), iv.data(), digest)) {
+        PutError(Pkcs12Library, Pkcs12IvGenError);
+        return false;
+    }
+    SelectDes(context, cipher);
+    SetDesKey(context, key.data(), iv.data());
+    return true;
 }
 
 std::string_view UnavailablePbeName(std::string_view oid) {
@@ -1496,13 +1841,22 @@ std::string_view UnavailablePbeName(std::string_view oid) {
     return {};
 }
 
-bool PbeCipherInit(const Algorithm& algorithm, const char* password, int passwordLength, LibreSslEvpCipherCtx* context,
+bool PbeCipherInit(const Algorithm& algorithm, const char* password, int passwordLength, PbeContext& context,
     int encrypt) {
     bool generated = false;
     if (algorithm.oid == Pbes2Oid) {
         generated = Pbes2KeyIvGen(context, password, passwordLength, algorithm, encrypt);
     } else if (algorithm.oid == Pbkdf2Oid) {
         generated = Pbkdf2KeyIvGen(context, password, passwordLength, algorithm, encrypt);
+    } else if (const DesPbeScheme* const scheme = FindDesPbeScheme(algorithm.oid); scheme != nullptr) {
+        const EvpMd* const digest =
+            scheme->sha1 ? reinterpret_cast<const EvpMd*>(EVP_sha1_nid_postfix()) : EVP_md5_nid_postfix();
+        generated = scheme->pkcs12
+            ? Pkcs12KeyIvGen(context, password, passwordLength, algorithm, scheme->cipher, digest)
+            : Pkcs5KeyIvGen(context, password, passwordLength, algorithm, scheme->cipher, digest);
+    } else if (algorithm.oid == PbeMd2DesOid || algorithm.oid == PbeMd2Rc2Oid) {
+        PutError(EvpLibrary, EvpUnknownDigest);
+        return false;
     } else {
         const std::string_view unavailable = UnavailablePbeName(algorithm.oid);
         if (!unavailable.empty()) MissingPrimitive("EVP_PBE_CipherInit", unavailable);
@@ -1518,22 +1872,33 @@ bool PbeCipherInit(const Algorithm& algorithm, const char* password, int passwor
 
 bool PbeCrypt(const Algorithm& algorithm, const char* password, int passwordLength, const unsigned char* input,
     int inputLength, std::vector<unsigned char>& output, int encrypt) {
-    const CipherContext context = NewCipherContext();
-    if (!PbeCipherInit(algorithm, password, passwordLength, context.get(), encrypt)) {
+    PbeContext context;
+    if (!PbeCipherInit(algorithm, password, passwordLength, context, encrypt)) {
         PutError(Pkcs12Library, Pkcs12AlgorCipherInitError);
         return false;
     }
-    const int blockSize = context.get()->cipher->blockSize;
+    if (context.des != LibreSsl3PemDes::None) {
+        if (encrypt != 0) NotImplemented_nid_no_patch("PKCS12_pbe_crypt: DES encryption");
+        if (inputLength < 0) throw std::invalid_argument("PKCS12_pbe_crypt: input length outside 0 to INT_MAX");
+        if (!DesCbcDecrypt(context.des, context.desKey.data(), context.desIv.data(), input,
+                static_cast<std::size_t>(inputLength), output)) {
+            PutError(Pkcs12Library, Pkcs12CipherFinalError);
+            return false;
+        }
+        return true;
+    }
+    LibreSslEvpCipherCtx* const evp = context.evp.get();
+    const int blockSize = evp->cipher->blockSize;
     if (blockSize < 0 || inputLength < 0 || inputLength > std::numeric_limits<int>::max() - blockSize)
         throw std::invalid_argument("PKCS12_pbe_crypt: input length outside 0 to INT_MAX");
     output.assign(static_cast<std::size_t>(inputLength) + static_cast<std::size_t>(blockSize) + 1, 0);
     int written = 0;
-    if (!EVP_CipherUpdate_nid_disambig1_nid_postfix(context.get(), output.data(), &written, input, inputLength)) {
+    if (!EVP_CipherUpdate_nid_disambig1_nid_postfix(evp, output.data(), &written, input, inputLength)) {
         PutError(Pkcs12Library, ErrREvpLib);
         return false;
     }
     const int updated = written;
-    if (!EVP_CipherFinal_ex_nid_postfix(context.get(), output.data() + updated, &written)) {
+    if (!EVP_CipherFinal_ex_nid_postfix(evp, output.data() + updated, &written)) {
         PutError(Pkcs12Library, Pkcs12CipherFinalError);
         return false;
     }
@@ -1624,17 +1989,19 @@ bool PemCipherInfoFromDekInfo_nid_no_patch(const char* dekInfo, LibreSsl3PemCiph
     }
     const std::string_view name(dekInfo, static_cast<std::size_t>(header - dekInfo));
     const bool terminated = *header == '\0';
-    const LibreSslEvpCipher* cipher = CipherByName(name);
-    info.cipher = cipher;
-    if (cipher == nullptr) {
+    const CipherChoice cipher = CipherByName(name);
+    info.cipher = cipher.evp;
+    info.des = cipher.des;
+    if (!IsSet(cipher)) {
         PutError(PemLibrary, PemUnsupportedEncryption);
         return false;
     }
     if (terminated) throw std::invalid_argument("PEM_get_EVP_CIPHER_INFO: DEK-Info ends at the cipher name");
     ++header;
-    if (cipher->ivLength < 0 || static_cast<std::size_t>(cipher->ivLength) > sizeof(info.iv))
+    const int ivLength = IvLength(cipher);
+    if (ivLength < 0 || static_cast<std::size_t>(ivLength) > sizeof(info.iv))
         throw std::invalid_argument("PEM_get_EVP_CIPHER_INFO: IV length outside 0 to 16");
-    return LoadIv(header, info.iv, cipher->ivLength);
+    return LoadIv(header, info.iv, ivLength);
 }
 
 int PemReadPassword_nid_no_patch(char* buffer, int writeFlag, LibreSslPemPasswordCallback passwordCallback,
@@ -1663,7 +2030,8 @@ int PemReadPassword_nid_no_patch(char* buffer, int writeFlag, LibreSslPemPasswor
 
 bool PemDoHeader_nid_no_patch(const LibreSsl3PemCipherInfo& info, std::vector<unsigned char>& data, int& length,
     LibreSslPemPasswordCallback passwordCallback, void* userData) {
-    if (info.cipher == nullptr) return true;
+    const CipherChoice cipher{info.cipher, info.des};
+    if (!IsSet(cipher)) return true;
     if (length < 0 || static_cast<std::size_t>(length) > data.size())
         throw std::invalid_argument("PEM_do_header: length outside the record");
     std::array<char, LibreSsl3PemBufferSize> password{};
@@ -1676,8 +2044,21 @@ bool PemDoHeader_nid_no_patch(const LibreSsl3PemCipherInfo& info, std::vector<un
     std::array<unsigned char, MaxKeyLength> key{};
     const ClearArrayOnExit<MaxKeyLength> clearKey{key};
     const auto* const phrase = reinterpret_cast<const unsigned char*>(password.data());
-    if (!BytesToKey(info.cipher, EVP_md5_nid_postfix(), info.iv, phrase, passwordLength, 1, key.data(), nullptr))
+    if (!BytesToKey(KeyLength(cipher), IvLength(cipher), EVP_md5_nid_postfix(), info.iv, phrase, passwordLength, 1,
+            key.data(), nullptr))
         return false;
+    if (cipher.des != LibreSsl3PemDes::None) {
+        std::vector<unsigned char> decrypted;
+        const ClearVectorOnExit clearDecrypted{decrypted};
+        if (!DesCbcDecrypt(cipher.des, key.data(), info.iv, data.data(), static_cast<std::size_t>(length), decrypted)) {
+            PutError(PemLibrary, PemBadDecrypt);
+            return false;
+        }
+        ClearBytes(data.data(), data.size());
+        if (!decrypted.empty()) std::memcpy(data.data(), decrypted.data(), decrypted.size());
+        length = static_cast<int>(decrypted.size());
+        return true;
+    }
     const int blockSize = info.cipher->blockSize;
     if (blockSize < 0 || length > std::numeric_limits<int>::max() - blockSize)
         throw std::invalid_argument("PEM_do_header: record longer than INT_MAX");

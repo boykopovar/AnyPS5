@@ -83,6 +83,7 @@ constexpr int EvpUnsupportedPrf = 125;
 constexpr int EvpUnsupportedSaltType = 126;
 constexpr int EvpNoCipherSet = 131;
 constexpr int EvpUnsupportedNumberOfRounds = 135;
+constexpr int EvpUnknownDigest = 161;
 constexpr int Pkcs12Errors = 35;
 constexpr int Pkcs12DecodeError = 101;
 constexpr int Pkcs12EncryptError = 103;
@@ -358,6 +359,150 @@ constexpr char EcPkcs8Pbes1Pem[] =
     "0UdbMwBYJCzNpTlPyZm8EcOXO7vFZ2Tyj+/YfFTmJXy2+e4VF2JJj7mRrJBHQahA\n"
     "1oiQckUiFXg4eMr+w2qmVgPYiPAo+xqYOa1SgThBv9xJi4V0pprvMuAjZyocAJVu\n"
     "AqFRJ5tUAETg546DXBSBZEWt9v4F4xGeOTVjcdld5otuZS+2\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char EcTraditionalDes2Pem[] =
+    "-----BEGIN EC PRIVATE KEY-----\n"
+    "Proc-Type: 4,ENCRYPTED\n"
+    "DEK-Info: DES-EDE-CBC,1E0CD05B1444D7E6\n"
+    "\n"
+    "zumB2wLaqTm4iVvG8Z/Q5dMuOMcVFdF8r083oVPwSP1W+eb0xF92sjlpS3m1Y+O1\n"
+    "eAodC9G8mj210j8jQvmRFNEBo8bsPPJebDOjls2QSPfg9pt/pHx1G6HL1mn0RQJV\n"
+    "YTtrh9Mmuydcf4uZPMJCk73WS9BMIKQ2eF76GmIkoA8=\n"
+    "-----END EC PRIVATE KEY-----\n";
+
+constexpr char EcTraditionalDesPem[] =
+    "-----BEGIN EC PRIVATE KEY-----\n"
+    "Proc-Type: 4,ENCRYPTED\n"
+    "DEK-Info: DES-CBC,B12CEA20A6E4AC3D\n"
+    "\n"
+    "ecyLn7OEATKswXbjntanaTUTf3QCW7QpdEmBXAO7zBWEh3TqpQy9S+4I2Qa4iW3l\n"
+    "cix0Otkgi4GzsGrQz7IxfpDhWknUOcZqUwC2dpEK/XwEI/0XZft3hHH/oYIbbPIV\n"
+    "muu4tFEefwmbOsWlTNfpTqLktnIkCfU0ViSAQbZ1PYg=\n"
+    "-----END EC PRIVATE KEY-----\n";
+
+constexpr char EcTraditionalCamelliaPem[] =
+    "-----BEGIN EC PRIVATE KEY-----\n"
+    "Proc-Type: 4,ENCRYPTED\n"
+    "DEK-Info: CAMELLIA-128-CBC,431AC761BC10E1CC019F7ACC85806207\n"
+    "\n"
+    "gYBwiE2KAW/PCTZUEuURT1CyLABszHs3kMdUVrspBG+dlVxp91+hHD2M6DVjOLIz\n"
+    "rkZmnIn5uA/StunCq/lBwVoGC5wMy0Pw6WAgdn2XQYRmjtpBeEf/ekiWlRtlZt0H\n"
+    "KLcgC0ZON3FTNMw+aRgkP3OybRF4YJcY1jtInJ2wj0Y=\n"
+    "-----END EC PRIVATE KEY-----\n";
+
+constexpr char RsaTraditionalDes3Pem[] =
+    "-----BEGIN RSA PRIVATE KEY-----\n"
+    "Proc-Type: 4,ENCRYPTED\n"
+    "DEK-Info: DES-EDE3-CBC,5072208DAB758B36\n"
+    "\n"
+    "uG9fnqXWoL/ONjs8OBDqDZ7+f+3PiO9gdwA6mCohojJkssaF6bfRS5mKMnPgP7j1\n"
+    "0ubs/oPk6pdBDlcxaBiB0tud91eysWVTIf6XR+MleaiszUsO+jt3P26F1UcPlZCv\n"
+    "QfyF4J630VyiKF0CwN70F9Ci2G0bF9D+/vZc0QjI5PrhY1UxJW/MF1H66Aw+d6Kv\n"
+    "k5QhJmMz6pBRLt4DRmCfzFb1xJxv/glGaHwD2BGWr9yBex1IRk20L8kJOTTbJN+o\n"
+    "pcoCKeMX8LxiKxlpfKmXBiIKBa4PsxMgCpwQciQNXgUIR6GL3MtpA2BNGqRivlHn\n"
+    "grsljzqvvhaWXZsJFnGTcOeM2onuPBbLbU8rKC8SMk43wQavbQ34hbHjiTv4uplV\n"
+    "7f6LarCSlK+Yvjd3UEjIgLBdU+bZcOuWQ3YsmO38031RL5Jl5H4A5ICAzwu2JOpg\n"
+    "BftGS5kdY0Gxkdhxy0MBppYxqglEj/8oH8cHezE99CBTeFVWAFHKP2mjAnDtAnL4\n"
+    "CmLTPZ68yW6WVv/W66hgcBc2Gqjk02fZhD4GfTRW5i1qwOH6tyYBB9GGsPhwVdK0\n"
+    "dN7LlRjgDrnJFH814nHmevdKrjh8Gv96LWcT9rH2G0PYpNjiCdlbMW49nBlHssn6\n"
+    "Jnh5v6EKIR9cjYrqD3XViQZBe/hiEDGYNslwwEM7Ltt7BhgDr5nX4x8B8RZ8uIJ8\n"
+    "LekIaTxY3qFNmlozPrOqB+F4ONoUBqmuu8qUBy/u50R9LxBJaPdd10DnWB8sH10R\n"
+    "rRVn3EGb9f3TJLWrVe9AhK/N2s+DJ+9CkhffzMDJW6BjvXedXE6NVEuCNj4xQdWV\n"
+    "WWD826TG7PDcxFeE6Uq1w3OaMqB8CMZ0+iuIoDypatPR7YWuJtYVs43JQSODwdss\n"
+    "Wfy2buJeI7E1HwNd0i+8MRIGupXg/TFvKgxS56/4PH4xJiWSqrNhUaEd2KqeifMp\n"
+    "xcrp1csULne4E0+R/nQA/3TDdO/iYUpzEIwAdoyjZHmKVlklBlZ2E11o44L4ezlb\n"
+    "3DbQM78xeun6fP1LoPyrgM96TxfLULCKaC1SjYaVeoUV1EOT5+SLYM13B5x+3XNo\n"
+    "ww/7Dd4J8yiaLM1igs5PZsPWf34gHhY7BzIMXOeYSeM8KRePbbZIcodcoHN6Xund\n"
+    "SuqINSjAJK/FB0cvqtnSOvbtTPIi9Uv50IEFeMyYgPVkupFg1OiAVSQ+98AT9tJx\n"
+    "S9QZzAkHWFqghqpyHmfwpEg2MM0bSxzHRs6U7oUZLhFgl3B1GBsxcWjiGEV9Q9MI\n"
+    "BQ4A3Ximjw2ITUz8sDOsyeHQiTzfbURYPa6kiAoK8qXm/sA2JNVnNQaCJi8uhFHF\n"
+    "Es7H5dsW/1mgl74NqwiXXFRxKHL5tJfOT6R8/r1SU8u0Csfv95c3K0Q/JUG4+Sqx\n"
+    "ekWeYylKJuLB72DOL9hBMdpqsdPeadBlSidRrCeriaHTaCGGd/TOkEp3EpheU9mY\n"
+    "WamnjijlaG4XFjffG8K4nq35PDecmGA7obegJ8NbzdObg1YWdBQpwqpS3guSqp+J\n"
+    "n5QPKI5SQ2G1/vWXPnuSKu5f9yp5Mk9bSY9Rdso4W13QRYW/LDRxj1ra/MIMnayG\n"
+    "-----END RSA PRIVATE KEY-----\n";
+
+constexpr char EcPkcs8DesPem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIHnMFIGCSqGSIb3DQEFDTBFMDAGCSqGSIb3DQEFDDAjBBCucmsC155YWH0D4umx\n"
+    "yJA3AgEHMAwGCCqGSIb3DQIJBQAwEQYFKw4DAgcECFoPAfgf2mihBIGQ63HMKu0Z\n"
+    "jm3MnZaJBk1nLwePzAjh4vL7wvetYuRlK+lrUJ+h71NxUWDDa97/ZymBZuIg6n1c\n"
+    "7ujmcqapZ/kcUSGCYjbmNH56VmDTtabYak0li9mQ6ir+wM9onN5e5WDsc6Nvm9oT\n"
+    "zMiHyG7n3OEPgBXKOr3JcCPD8YC4IPvi7KSzJzlHtU7DIY6B3RPAeQS4\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char EcPkcs8Md5DesPem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIGwMBsGCSqGSIb3DQEFAzAOBAg+S/xlLLgsSwICCAAEgZAA8HKRVu5kp3QK/UZs\n"
+    "vnvvCnmC9DwEDVmZ7mFT8sIwYv1Q6emb/VCCWbG2ARoKShCP3FjHoUpwny/qsclJ\n"
+    "sdtMQMp5QlDOg0bQlfsJBpqmgVbLs3sg0fS6a0PqnlmVnRKL7J+jT5BQ8p1k7VUU\n"
+    "Vs5a/hJKeG/FZeYBqwFniiWSqIfPo07qfB3EpT4uyN2rORc=\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char EcPkcs8Sha1DesPem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIGvMBoGCSqGSIb3DQEFCjANBAjPhOYPp1+53gIBBQSBkPTtI7OhuMctl0SJ58uq\n"
+    "PNQaIdy/CQni4K8Is53rRRoqtCDBQnbSr3/Nq6yxcjaSl75jl20tEcrTvsgjeBVP\n"
+    "gXyXO0D1dAuiuUl0gGt/9mlGq6l7Yn/RhOkvGs5jBPBlYheTsKyn9DwUUSYA0gzw\n"
+    "x10wdo4gGxY4DNTOpiTccOh0aI9s1FRRAvZ1/lJfQVi1xA==\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char EcPkcs8Sha1TwoKeyDesPem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIGwMBsGCiqGSIb3DQEMAQQwDQQIitiHKhMufo4CAQMEgZBWDYvS+JbAH/IXNnky\n"
+    "m8imNUNRc9FFVpagsdQ8wCkbVwk3xbTawakNRPshYUYzAuGwRDeyCgjmC4P0GbVC\n"
+    "5915xw978sqRRuzSnYO1K+jRdkfV8BKDJrGrOUpWeUDaZKvC5SPvj7CTOVD7p3f9\n"
+    "ojb7NAzv58qgPz34O0nahOt0U3LQkln7LIEdKu56fCF9hlQ=\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char EcPkcs8Sha1Rc4Pem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIGqMBsGCiqGSIb3DQEMAQEwDQQIqmQrK5TelsICAQMEgYoch3L1GGBjIX0MMJb4\n"
+    "2iNA0b0bDe7BPCJmaq+Tg6EszIElShOC9jcjE2UyxR6N53I8KE4TOzoXIk22+7IP\n"
+    "UTwPkN9JCncrWKMUk9w5KBmPd7pDqjbVylvJkrglMOWMWMSzKnpS2Zrn/fKVXAQs\n"
+    "7B9bJHFteNOdO60hh5DT5fUWZXKOw9B08NwA9cM=\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char EcPkcs8CamelliaPem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIH1MGAGCSqGSIb3DQEFDTBTMDAGCSqGSIb3DQEFDDAjBBAS18zhH2CrOFRwXWpO\n"
+    "44fBAgEDMAwGCCqGSIb3DQIJBQAwHwYLKoMIjJpLPQEBAQIEEBLPDPShOmwEgmIu\n"
+    "LR/BVIAEgZByfY6vTcwLLTdkOx0hU8EtZq9l+JnATOJc8lWSKD2MQ6cXlqlWGZxn\n"
+    "q1905JwhDz+Q7farZRqgU2nuPJ0QbkKLMXjHbt99fcbBHcUUymkbLXBVZa5NWZM+\n"
+    "F9/RJU2XSLTpF5Dr/AM3kuLAEGdfVPCT8565p78zI7lZysSd1XaUVe76O0kXBnTh\n"
+    "DMbJUO5VHhA=\n"
+    "-----END ENCRYPTED PRIVATE KEY-----\n";
+
+constexpr char RsaPkcs8Sha1TripleDesPem[] =
+    "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "MIIE6jAcBgoqhkiG9w0BDAEDMA4ECFQofOW0eGtvAgIIAASCBMgJVjprvKozr6PZ\n"
+    "LbHZkJNPJi9sl/CAHTsrj7sP/bt69CEWrfPFUoFPayK9ILGEEBWsLd32MWjP1hnI\n"
+    "rT3uOuwv4QW6cIEPy7WIDGWxgIEByI1tg6/bojG4aDnftJjLpmkNj7Xw1TOeM8BA\n"
+    "hpOYK1G4YhwDTV/1+ShWnrleu+2uiUIwNufCcImRNxdIRubMIFdsTOrXR6oDpAP9\n"
+    "IrViaOyjSQ15+ZQMQ2baYpm1TeFca/n9VqKrsO3JvdtfZxl/7BHVPF+9JuiToPg9\n"
+    "eKNkvKDiOk3lIQ08Ic7PO+aDh1/qDRp0Q6CbQhgi+5yla4AYAhl/edmb4K0wWrAD\n"
+    "hlpV6jnqagF4gHEnHxY36fQIyHcHhReqNTR33MyzDOawz3MhGfr8B1iloOjfT049\n"
+    "qJ95nVNZxCRmOWmG+cbwkO+u7unogbJs1Obe06CgIVUlv+4nWghfjQ0S7g6y2gsD\n"
+    "dVWLhbQCTAGjXAcQP6trd/SXXZ6/NPjqXc6xlkEtQjixKVqWw3Jet5DqZulREKcH\n"
+    "LqooPFgLbQCrB8NIXEwPdwtEetjOWP7B7CDe7TOYRKPmsaw4sj6+rvyXUQ5vg1J3\n"
+    "mWQCFVkhVbFEMoHBK7VAIz0t9kI2KNn6BTCxbLe7Dpz9grGPF/yXpOFf2F/sQs7o\n"
+    "f9eNW6uKMRIgCr4PIdnwLiJTm5PkJxbKWkOpcw5LMIMauNi65B1bZbI6TkM99Pqe\n"
+    "/euecqv/ZyaBEdKFpgVfI+Vcpilh/HjKdBpl/4YfzYkjxdz3BmPdS1PotY1ThMQ/\n"
+    "77J8WaYgoifrq4Bisi8MXokHkBM37z5NvuaNuQx15C2zYtqK5hO9/LL2iqbp7gbD\n"
+    "wJQjb+qYCyswMk/6FdeScf4CBAwxtbll7yGG6uMrWTCAt0Rg4HNCwWTksM9E5neX\n"
+    "jQO0EWHmYq9E3HDW1ihfJqW/GMmlKNXUyQjh+eRwwaILlgXZtn9znxPq+DShv0zt\n"
+    "b6ceyQv0bi1zpkqPM8ccDTO/KLbHHR7JoQlqj2vm8ML9MwqXbGcNNO0DGT15WjSP\n"
+    "kig6xGMINMWGaRJZvCSmS1d38t74qbCeQNj0NV4HXHpTA7QUhOgGBpDUWvEQYGd3\n"
+    "PTy+lphH8AnPgFmZ/292+m72HB5oQEJT2dMRniZT6uMbVVGeHAwFoLXmGIOzCjUg\n"
+    "UxQnd4hLRdfxzg4mSgQXdWm2M4remN5AAgCW7hRiXwxsjsBqhq78GG4vDfyrKskw\n"
+    "NSPKWOvlpJD59GhtH5KksntaJ2rdgiANwpBdURSgXjSoSdkUep3tCnT5yD8NrNUr\n"
+    "7+m1q5DQewkq/XCeqOwoYggeul+M2hMtTG3gprpRX4LATv19xP2GRcIcSMGKOHbB\n"
+    "OY7coKYCrdIGx92V0TEQrGvlQvRli997zdImnR5SJ25q9n3ayj4RslFHUJamYEVe\n"
+    "zWvmpqPYg3mA4BIFj04NTDjaQ5BGHKjTK0U8gYujEM+WodyMRbEGNEhQt5ZqHjcL\n"
+    "73A9hdAk/vO0VVYJQOTsNxSZ9lOhkNxku4FaoCY4toYS1dVEGZ35P6ZxlS7T5E5E\n"
+    "ijudtdVWFCiX5z2MW7/hjAwl9+wQvQ8HxTuFdMT7VMJWF4ca9ih9ZFu/PJy7hLCe\n"
+    "o2SC9KIZD3vEE4lPFdk=\n"
     "-----END ENCRYPTED PRIVATE KEY-----\n";
 
 constexpr char RsaPkcs8Aes256Sha256Pem[] =
@@ -992,6 +1137,9 @@ const Bytes Aes128CbcOidBytes{0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x01, 0x
 const Bytes Aes192CbcOidBytes{0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x01, 0x16};
 const Bytes Aes256CbcOidBytes{0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x01, 0x2a};
 const Bytes UnknownOidBytes{0x2a, 0x03};
+const Bytes DesCbcOidBytes{0x2b, 0x0e, 0x03, 0x02, 0x07};
+const Bytes DesEde3CbcOidBytes{0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x03, 0x07};
+const Bytes DesEdeEcbOidBytes{0x2b, 0x0e, 0x03, 0x02, 0x11};
 
 struct PasswordRequest {
     const char* text = nullptr;
@@ -1342,7 +1490,7 @@ void TestEncryptedTraditionalErrors() {
     {
         PasswordRequest request{TestPassword};
         ExpectUnimplemented(
-            [&] { ReadPrivateKey(BytesOf(EcTraditionalDes3Pem), nullptr, SupplyPasswordCallback, &request); });
+            [&] { ReadPrivateKey(BytesOf(EcTraditionalCamelliaPem), nullptr, SupplyPasswordCallback, &request); });
         Require(request.calls == 0);
     }
 
@@ -1424,7 +1572,7 @@ void TestEncryptedPkcs8Read() {
         ExpectInvalidArgument([&] { ReadPrivateKey(record, nullptr, SupplyPasswordCallback, &request); });
     }
 
-    for (const char* unavailable : {EcPkcs8Des3Pem, EcPkcs8Pbes1Pem}) {
+    for (const char* unavailable : {EcPkcs8CamelliaPem, EcPkcs8Sha1Rc4Pem}) {
         PasswordRequest request{TestPassword};
         ExpectUnimplemented(
             [&] { ReadPrivateKey(BytesOf(unavailable), nullptr, SupplyPasswordCallback, &request); });
@@ -1762,6 +1910,357 @@ void TestEncryptedWrite() {
     Require(WrittenPrivateBytes(ecKey, nullptr) == plainPem);
     EVP_PKEY_free_nid_disambig1_nid_postfix(rsaKey);
     EVP_PKEY_free_nid_disambig1_nid_postfix(ecKey);
+}
+
+Bytes Pkcs5PbeOid(unsigned char last) {
+    return Bytes{0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, last};
+}
+
+Bytes Pkcs12PbeOid(unsigned char last) {
+    return Bytes{0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x0c, 0x01, last};
+}
+
+struct PbeParts {
+    Bytes oid;
+    Bytes salt;
+    Bytes iterations;
+    Bytes data;
+};
+
+PbeParts SplitPbe(const Bytes& der) {
+    const std::vector<Tlv> top = DerChildren(der);
+    Require(top.size() == 1 && top[0].tag == 0x30);
+    const std::vector<Tlv> key = DerChildren(top[0].content);
+    Require(key.size() == 2 && key[0].tag == 0x30 && key[1].tag == 0x04);
+    const std::vector<Tlv> algorithm = DerChildren(key[0].content);
+    Require(algorithm.size() == 2 && algorithm[0].tag == 0x06 && algorithm[1].tag == 0x30);
+    const std::vector<Tlv> parameter = DerChildren(algorithm[1].content);
+    Require(parameter.size() == 2 && parameter[0].tag == 0x04 && parameter[1].tag == 0x02);
+    PbeParts parts;
+    parts.oid = algorithm[0].content;
+    parts.salt = parameter[0].content;
+    parts.iterations = parameter[1].content;
+    parts.data = key[1].content;
+    return parts;
+}
+
+Bytes PbeParameter(const Bytes& salt, const Bytes& iterations) {
+    return Der(0x30, Join({Der(0x04, salt), Der(0x02, iterations)}));
+}
+
+Bytes PbeKey(const Bytes& oid, const Bytes& parameter, const Bytes& data) {
+    return EncryptedKey(Der(0x30, Join({Der(0x06, oid), parameter})), Der(0x04, data));
+}
+
+Bytes PbeRecord(const Bytes& oid, const Bytes& parameter, const Bytes& data) {
+    return EncryptedKeyPem(PbeKey(oid, parameter, data));
+}
+
+void ExpectGarbageAfterDecrypt(const Bytes& pem, const char* password, bool pkcs8,
+    std::source_location location = std::source_location::current()) {
+    PasswordRequest request{password};
+    ERR_clear_error_nid_postfix();
+    Require(ReadPrivateKey(pem, nullptr, SupplyPasswordCallback, &request) == nullptr, location);
+    Require(request.calls == 1, location);
+    const ErrorList errors = DrainErrors();
+    Require(!errors.empty() && errors.back() == std::pair<int, int>{PemLibrary, ErrorReasonAsn1Library}, location);
+    Require(!Contains(errors, {EvpErrors, EvpBadDecrypt}), location);
+    Require(!Contains(errors, {EvpErrors, EvpWrongFinalBlockLength}), location);
+    Require(!Contains(errors, {PemLibrary, PemBadDecrypt}), location);
+    Require(!Contains(errors, {Pkcs12Errors, Pkcs12CipherFinalError}), location);
+    if (!pkcs8) return;
+    Require(errors.size() >= 2, location);
+    Require(errors[errors.size() - 2] == std::pair<int, int>{Pkcs12Errors, Pkcs12DecodeError}, location);
+}
+
+void TestDesTraditional() {
+    auto* ecReference = KeyFromPkcs8Der(BodyBytes(BytesOf(Ec256Pkcs8Pem)));
+    auto* rsaReference = KeyFromPkcs8Der(BodyBytes(BytesOf(RsaPkcs8Pem)));
+    for (const char* record : {EcTraditionalDes3Pem, EcTraditionalDes2Pem, EcTraditionalDesPem})
+        ExpectEcReference(ReadWithPassword(BytesOf(record), TestPassword), ecReference);
+    ExpectRsaReference(ReadWithPassword(BytesOf(RsaTraditionalDes3Pem), TestPassword), rsaReference);
+
+    char phrase[] = "anyps5-pem-test";
+    ERR_clear_error_nid_postfix();
+    ExpectEcReference(ReadPrivateKey(BytesOf(EcTraditionalDes3Pem), nullptr, nullptr, phrase), ecReference);
+
+    struct Variant {
+        const char* record;
+        const char* name;
+        const char* alias;
+        const char* validPadding;
+    };
+    const Variant variants[] = {
+        {EcTraditionalDes3Pem, "DES-EDE3-CBC", "DES3", "wrong-162"},
+        {EcTraditionalDes2Pem, "DES-EDE-CBC", nullptr, "wrong-300"},
+        {EcTraditionalDesPem, "DES-CBC", "DES", "wrong-945"},
+    };
+    for (const Variant& variant : variants) {
+        const Bytes record = BytesOf(variant.record);
+        const TraditionalRecord parts = SplitEncryptedRecord(variant.record);
+        const std::string prefix = std::string(variant.name) + ",";
+        Require(parts.label == "EC PRIVATE KEY" && parts.dekInfo.rfind(prefix, 0) == 0);
+        Require(parts.dekInfo.size() == prefix.size() + 16);
+        Require(parts.data.size() > 8 && parts.data.size() % 8 == 0);
+        const std::string iv = parts.dekInfo.substr(prefix.size());
+        std::string lowered = iv;
+        for (char& character : lowered) {
+            if (character >= 'A' && character <= 'F') character = static_cast<char>(character - 'A' + 'a');
+        }
+        Require(lowered != iv);
+
+        std::vector<std::string> accepted{prefix + lowered, prefix + iv + iv, std::string(variant.name) + ";" + iv};
+        if (variant.alias != nullptr) accepted.push_back(std::string(variant.alias) + "," + iv);
+        for (const std::string& dekInfo : accepted)
+            ExpectEcReference(ReadWithPassword(EncryptedRecord(parts.label, dekInfo, parts.data), TestPassword),
+                ecReference);
+
+        ExpectFailedRead(record, "wrong-password", 1, {{EvpErrors, EvpBadDecrypt}, {PemLibrary, PemBadDecrypt}});
+        ExpectGarbageAfterDecrypt(record, variant.validPadding, false);
+
+        for (const std::string& dekInfo : {prefix + iv.substr(0, 14), prefix + "G" + iv.substr(1), prefix})
+            ExpectFailedRead(EncryptedRecord(parts.label, dekInfo, parts.data), TestPassword, 0,
+                {{PemLibrary, PemBadIvChars}});
+
+        Bytes shortened = parts.data;
+        shortened.resize(shortened.size() - 3);
+        ExpectFailedRead(EncryptedRecord(parts.label, parts.dekInfo, shortened), TestPassword, 1,
+            {{EvpErrors, EvpWrongFinalBlockLength}, {PemLibrary, PemBadDecrypt}});
+        shortened.resize(5);
+        ExpectFailedRead(EncryptedRecord(parts.label, parts.dekInfo, shortened), TestPassword, 1,
+            {{EvpErrors, EvpWrongFinalBlockLength}, {PemLibrary, PemBadDecrypt}});
+    }
+
+    const std::pair<const char*, const char*> paddingLookalikes[] = {
+        {EcTraditionalDesPem, "wrong-21"}, {EcTraditionalDesPem, "wrong-161"}, {EcTraditionalDes3Pem, "wrong-36"}};
+    for (const auto& [record, password] : paddingLookalikes)
+        ExpectFailedRead(BytesOf(record), password, 1, {{EvpErrors, EvpBadDecrypt}, {PemLibrary, PemBadDecrypt}});
+
+    const TraditionalRecord parts = SplitEncryptedRecord(EcTraditionalDes3Pem);
+    const std::string iv = parts.dekInfo.substr(13);
+    for (const char* name : {"DES-ECB", "DES-EDE", "DES-EDE3", "DES-CFB", "DES-OFB", "DES-EDE-CFB", "DES-EDE3-CFB",
+             "DES-EDE3-OFB", "DESX", "DESX-CBC", "RC4", "CAMELLIA-128-CBC"}) {
+        PasswordRequest request{TestPassword};
+        const Bytes record = EncryptedRecord(parts.label, std::string(name) + "," + iv, parts.data);
+        ExpectUnimplemented([&] { ReadPrivateKey(record, nullptr, SupplyPasswordCallback, &request); });
+        Require(request.calls == 0);
+    }
+    for (const char* name : {"DES-EDE3-CBD", "DES2", "3DES", "des3", "DES-EDE2-CBC"})
+        ExpectFailedRead(EncryptedRecord(parts.label, std::string(name) + "," + iv, parts.data), TestPassword, 0,
+            {{PemLibrary, PemUnsupportedEncryption}});
+
+    EVP_PKEY_free_nid_disambig1_nid_postfix(rsaReference);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(ecReference);
+}
+
+void TestDesPkcs8() {
+    auto* ecReference = KeyFromPkcs8Der(BodyBytes(BytesOf(Ec256Pkcs8Pem)));
+    auto* rsaReference = KeyFromPkcs8Der(BodyBytes(BytesOf(RsaPkcs8Pem)));
+    const char* const records[] = {EcPkcs8Des3Pem, EcPkcs8DesPem, EcPkcs8Md5DesPem, EcPkcs8Sha1DesPem,
+        EcPkcs8Pbes1Pem, EcPkcs8Sha1TwoKeyDesPem};
+    for (const char* record : records)
+        ExpectEcReference(ReadWithPassword(BytesOf(record), TestPassword), ecReference);
+    ExpectRsaReference(ReadWithPassword(BytesOf(RsaPkcs8Sha1TripleDesPem), TestPassword), rsaReference);
+
+    Require(SplitPbes2(BodyBytes(BytesOf(EcPkcs8Des3Pem))).cipherOid == DesEde3CbcOidBytes);
+    Require(SplitPbes2(BodyBytes(BytesOf(EcPkcs8DesPem))).cipherOid == DesCbcOidBytes);
+    Require(SplitPbe(BodyBytes(BytesOf(EcPkcs8Md5DesPem))).oid == Pkcs5PbeOid(0x03));
+    Require(SplitPbe(BodyBytes(BytesOf(EcPkcs8Sha1DesPem))).oid == Pkcs5PbeOid(0x0a));
+    Require(SplitPbe(BodyBytes(BytesOf(EcPkcs8Pbes1Pem))).oid == Pkcs12PbeOid(0x03));
+    Require(SplitPbe(BodyBytes(BytesOf(EcPkcs8Sha1TwoKeyDesPem))).oid == Pkcs12PbeOid(0x04));
+    Require(SplitPbe(BodyBytes(BytesOf(RsaPkcs8Sha1TripleDesPem))).oid == Pkcs12PbeOid(0x03));
+
+    char phrase[] = "anyps5-pem-test";
+    for (const char* record : {EcPkcs8DesPem, EcPkcs8Sha1DesPem, EcPkcs8Sha1TwoKeyDesPem}) {
+        ERR_clear_error_nid_postfix();
+        ExpectEcReference(ReadPrivateKey(BytesOf(record), nullptr, nullptr, phrase), ecReference);
+    }
+
+    const ErrorList badDecrypt{{EvpErrors, EvpBadDecrypt}, {Pkcs12Errors, Pkcs12CipherFinalError},
+        {Pkcs12Errors, Pkcs12PbeCryptError}, {PemLibrary, ErrorReasonAsn1Library}};
+    for (const char* record : records) ExpectFailedRead(BytesOf(record), "wrong-password", 1, badDecrypt);
+    ExpectFailedRead(BytesOf(RsaPkcs8Sha1TripleDesPem), "wrong-password", 1, badDecrypt);
+    ExpectFailedRead(BytesOf(EcPkcs8Sha1DesPem), "wrong-1", 1, badDecrypt);
+    ExpectFailedRead(BytesOf(EcPkcs8Sha1DesPem), "wrong-267", 1, badDecrypt);
+    ExpectFailedRead(BytesOf(EcPkcs8Sha1TwoKeyDesPem), "wrong-33", 1, badDecrypt);
+    ExpectGarbageAfterDecrypt(BytesOf(EcPkcs8DesPem), "wrong-426", true);
+    ExpectGarbageAfterDecrypt(BytesOf(EcPkcs8Sha1DesPem), "wrong-675", true);
+    ExpectGarbageAfterDecrypt(BytesOf(EcPkcs8Sha1TwoKeyDesPem), "wrong-416", true);
+
+    {
+        auto* slot = KeyFromPkcs8Der(BodyBytes(BytesOf(Ec384Pkcs8Pem)));
+        auto* const before = slot;
+        PasswordRequest wrong{"wrong-password"};
+        ERR_clear_error_nid_postfix();
+        Require(ReadPrivateKey(BytesOf(EcPkcs8Pbes1Pem), &slot, SupplyPasswordCallback, &wrong) == nullptr);
+        Require(wrong.calls == 1 && slot == before);
+        ExpectErrorSequence(badDecrypt);
+        PasswordRequest right{TestPassword};
+        auto* replaced = ReadPrivateKey(BytesOf(EcPkcs8Pbes1Pem), &slot, SupplyPasswordCallback, &right);
+        Require(replaced != nullptr && slot == replaced);
+        ExpectEcReference(replaced, ecReference);
+    }
+
+    EVP_PKEY_free_nid_disambig1_nid_postfix(rsaReference);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(ecReference);
+}
+
+void TestDesPbes2Parameters() {
+    auto* reference = KeyFromPkcs8Der(BodyBytes(BytesOf(Ec256Pkcs8Pem)));
+    const ErrorList wrongFinalBlock{{EvpErrors, EvpWrongFinalBlockLength}, {Pkcs12Errors, Pkcs12CipherFinalError},
+        {Pkcs12Errors, Pkcs12PbeCryptError}, {PemLibrary, ErrorReasonAsn1Library}};
+    struct Variant {
+        const char* record;
+        const Bytes* cipherOid;
+        unsigned char keyLength;
+        unsigned char otherKeyLength;
+    };
+    const Variant variants[] = {{EcPkcs8DesPem, &DesCbcOidBytes, 0x08, 0x18},
+        {EcPkcs8Des3Pem, &DesEde3CbcOidBytes, 0x18, 0x10}};
+    for (const Variant& variant : variants) {
+        const Bytes der = BodyBytes(BytesOf(variant.record));
+        const Pbes2Parts parts = SplitPbes2(der);
+        Require(Rebuild(parts) == der);
+        Require(parts.cipherOid == *variant.cipherOid && parts.iv.size() == 8 && parts.prfOid == HmacSha256OidBytes);
+        Require(parts.data.size() > 8 && parts.data.size() % 8 == 0);
+        const Bytes salt = Der(0x04, parts.salt);
+        const Bytes iterations = Der(0x02, parts.iterations);
+        const Bytes prf = PrfAlgorithm(parts.prfOid);
+        const Bytes keyFunction = KeyFunction(KdfParameters(parts));
+        const Bytes encryption = Encryption(parts.cipherOid, Der(0x04, parts.iv));
+        const Bytes digest = Der(0x04, parts.data);
+        const auto record = [&](const Bytes& algorithm) { return EncryptedKeyPem(EncryptedKey(algorithm, digest)); };
+        const auto withIv = [&](const Bytes& parameter) {
+            return record(Pbes2Algorithm(keyFunction, Encryption(parts.cipherOid, parameter)));
+        };
+        const auto withKdf = [&](const Bytes& kdfBody) {
+            return record(Pbes2Algorithm(KeyFunction(Der(0x30, kdfBody)), encryption));
+        };
+
+        for (const Bytes& parameter : {Der(0x04, Bytes(16, 0)), Der(0x04, Bytes(7, 0)), Der(0x04, Bytes(9, 0)),
+                 Der(0x04, {})})
+            ExpectFailedRead(withIv(parameter), TestPassword, 1,
+                KeygenFailure({{EvpErrors, EvpCipherParameterError}}));
+        ExpectFailedRead(withIv(Der(0x05, {})), TestPassword, 1,
+            KeygenFailure({{Asn1Errors, Asn1DataIsWrong}, {EvpErrors, EvpCipherParameterError}}));
+        {
+            PasswordRequest request{TestPassword};
+            ERR_clear_error_nid_postfix();
+            const Bytes withoutIv = record(Pbes2Algorithm(keyFunction, Der(0x30, Der(0x06, parts.cipherOid))));
+            Require(ReadPrivateKey(withoutIv, nullptr, SupplyPasswordCallback, &request) == nullptr);
+            Require(request.calls == 1);
+            const ErrorList errors = DrainErrors();
+            Require(errors.size() >= 2);
+            Require(errors[errors.size() - 2] == std::pair<int, int>{Pkcs12Errors, Pkcs12DecodeError});
+            Require(errors.back() == std::pair<int, int>{PemLibrary, ErrorReasonAsn1Library});
+            Require(!Contains(errors, {Pkcs12Errors, Pkcs12CipherFinalError}));
+        }
+
+        ExpectEcReference(
+            ReadWithPassword(withKdf(Join({salt, iterations, Der(0x02, {variant.keyLength}), prf})), TestPassword),
+            reference);
+        ExpectFailedRead(withKdf(Join({salt, iterations, Der(0x02, {variant.otherKeyLength}), prf})), TestPassword, 1,
+            KeygenFailure({{EvpErrors, EvpUnsupportedKeylength}}));
+        ExpectFailedRead(withKdf(Join({salt, Der(0x02, {0x00}), prf})), TestPassword, 1,
+            KeygenFailure({{EvpErrors, EvpUnsupportedNumberOfRounds}}));
+
+        const Bytes algorithm = Pbes2Algorithm(keyFunction, encryption);
+        Bytes shortened = parts.data;
+        shortened.pop_back();
+        ExpectFailedRead(EncryptedKeyPem(EncryptedKey(algorithm, Der(0x04, shortened))), TestPassword, 1,
+            wrongFinalBlock);
+        ExpectFailedRead(EncryptedKeyPem(EncryptedKey(algorithm, Der(0x04, {}))), TestPassword, 1, wrongFinalBlock);
+
+        PasswordRequest request{TestPassword};
+        const Bytes ecbRecord = record(Pbes2Algorithm(keyFunction, Encryption(DesEdeEcbOidBytes, Der(0x04, parts.iv))));
+        ExpectUnimplemented([&] { ReadPrivateKey(ecbRecord, nullptr, SupplyPasswordCallback, &request); });
+        Require(request.calls == 1);
+    }
+    EVP_PKEY_free_nid_disambig1_nid_postfix(reference);
+}
+
+void TestDesPbeParameters() {
+    auto* reference = KeyFromPkcs8Der(BodyBytes(BytesOf(Ec256Pkcs8Pem)));
+    const ErrorList wrongFinalBlock{{EvpErrors, EvpWrongFinalBlockLength}, {Pkcs12Errors, Pkcs12CipherFinalError},
+        {Pkcs12Errors, Pkcs12PbeCryptError}, {PemLibrary, ErrorReasonAsn1Library}};
+    struct Family {
+        const char* record;
+        std::pair<int, int> decodeError;
+        std::pair<int, int> roundsError;
+    };
+    const Family families[] = {
+        {EcPkcs8Sha1DesPem, {EvpErrors, EvpDecodeError}, {EvpErrors, EvpUnsupportedNumberOfRounds}},
+        {EcPkcs8Md5DesPem, {EvpErrors, EvpDecodeError}, {EvpErrors, EvpUnsupportedNumberOfRounds}},
+        {EcPkcs8Sha1TwoKeyDesPem, {Pkcs12Errors, Pkcs12DecodeError}, {Pkcs12Errors, Pkcs12DecodeError}},
+        {EcPkcs8Pbes1Pem, {Pkcs12Errors, Pkcs12DecodeError}, {Pkcs12Errors, Pkcs12DecodeError}},
+    };
+    for (const Family& family : families) {
+        const Bytes der = BodyBytes(BytesOf(family.record));
+        const PbeParts parts = SplitPbe(der);
+        Require(PbeKey(parts.oid, PbeParameter(parts.salt, parts.iterations), parts.data) == der);
+        Require(parts.salt.size() == 8 && parts.data.size() > 8 && parts.data.size() % 8 == 0);
+        const Bytes salt = Der(0x04, parts.salt);
+        const Bytes iterations = Der(0x02, parts.iterations);
+        const auto with = [&](const Bytes& parameter) { return PbeRecord(parts.oid, parameter, parts.data); };
+        const auto refused = [&](const Bytes& pem, ErrorList errors, const std::pair<int, int>& last,
+                                 std::source_location location = std::source_location::current()) {
+            errors.push_back(last);
+            ExpectFailedRead(pem, TestPassword, 1, KeygenFailure(std::move(errors)), location);
+        };
+
+        ExpectEcReference(ReadWithPassword(with(Der(0x30, Join({salt, iterations}))), TestPassword), reference);
+
+        refused(EncryptedKeyPem(EncryptedKey(Der(0x30, Der(0x06, parts.oid)), Der(0x04, parts.data))), {},
+            family.decodeError);
+        refused(with(Der(0x05, {})), {}, family.decodeError);
+        refused(with(salt), {}, family.decodeError);
+        refused(with(Der(0x30, {})), {{Asn1Errors, Asn1FieldMissing}}, family.decodeError);
+        refused(with(Der(0x30, salt)), {{Asn1Errors, Asn1FieldMissing}}, family.decodeError);
+        refused(with(Der(0x30, Join({Der(0x02, {0x01}), iterations}))),
+            {{Asn1Errors, Asn1WrongTag}, {Asn1Errors, Asn1NestedAsn1Error}, {Asn1Errors, Asn1NestedAsn1Error}},
+            family.decodeError);
+        refused(with(Der(0x30, Join({salt, Der(0x04, {0x01})}))),
+            {{Asn1Errors, Asn1WrongTag}, {Asn1Errors, Asn1NestedAsn1Error}, {Asn1Errors, Asn1NestedAsn1Error}},
+            family.decodeError);
+        refused(with(Der(0x30, Join({salt, iterations, Der(0x05, {})}))),
+            {{Asn1Errors, Asn1SequenceLengthMismatch}}, family.decodeError);
+        refused(with(Der(0x30, Join({Bytes{0x00, 0x00}, iterations}))), {{Asn1Errors, Asn1UnexpectedEoc}},
+            family.decodeError);
+        refused(with(Der(0x30, Join({salt, Der(0x02, {0x00, 0x01})}))),
+            {{Asn1Errors, Asn1LengthMismatch}, {Asn1Errors, Asn1NestedAsn1Error}}, family.decodeError);
+        refused(with(Der(0x30, Join({salt, Der(0x02, {0x00})}))), {}, family.roundsError);
+        refused(with(Der(0x30, Join({salt, Der(0x02, {0xff})}))), {}, family.roundsError);
+        refused(with(Der(0x30, Join({salt, Der(0x02, {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})}))),
+            {{Asn1Errors, Asn1TooLarge}}, family.roundsError);
+
+        const Bytes parameter = PbeParameter(parts.salt, parts.iterations);
+        Bytes shortened = parts.data;
+        shortened.pop_back();
+        ExpectFailedRead(PbeRecord(parts.oid, parameter, shortened), TestPassword, 1, wrongFinalBlock);
+        ExpectFailedRead(PbeRecord(parts.oid, parameter, {}), TestPassword, 1, wrongFinalBlock);
+    }
+
+    const PbeParts md5 = SplitPbe(BodyBytes(BytesOf(EcPkcs8Md5DesPem)));
+    const Bytes parameter = PbeParameter(md5.salt, md5.iterations);
+    const ErrorList unknownDigest = CipherInitFailure({{EvpErrors, EvpUnknownDigest}});
+    for (const Bytes& oid : {Pkcs5PbeOid(0x01), Pkcs5PbeOid(0x04)}) {
+        ExpectFailedRead(PbeRecord(oid, parameter, md5.data), TestPassword, 1, unknownDigest);
+        ExpectFailedRead(PbeRecord(oid, Der(0x05, {}), md5.data), TestPassword, 1, unknownDigest);
+        ExpectFailedRead(EncryptedKeyPem(EncryptedKey(Der(0x30, Der(0x06, oid)), Der(0x04, md5.data))), TestPassword, 1,
+            unknownDigest);
+    }
+    for (const Bytes& oid : {Pkcs5PbeOid(0x06), Pkcs5PbeOid(0x0b), Pkcs12PbeOid(0x01), Pkcs12PbeOid(0x02),
+             Pkcs12PbeOid(0x05), Pkcs12PbeOid(0x06)}) {
+        PasswordRequest request{TestPassword};
+        const Bytes record = PbeRecord(oid, parameter, md5.data);
+        ExpectUnimplemented([&] { ReadPrivateKey(record, nullptr, SupplyPasswordCallback, &request); });
+        Require(request.calls == 1);
+    }
+    const ErrorList unknownScheme = CipherInitFailure({{EvpErrors, EvpUnknownPbeAlgorithm}});
+    for (const Bytes& oid : {Pkcs5PbeOid(0x02), Pkcs5PbeOid(0x0e), Pkcs12PbeOid(0x07)})
+        ExpectFailedRead(PbeRecord(oid, parameter, md5.data), TestPassword, 1, unknownScheme);
+
+    EVP_PKEY_free_nid_disambig1_nid_postfix(reference);
 }
 
 void TestErrors() {
@@ -2386,7 +2885,8 @@ void TestRsaPrivateFile() {
         file.CloseAndVerify();
     }
 
-    for (const char* record : {RsaPkcs8Aes256Sha256Pem, RsaTraditionalAes256Pem}) {
+    for (const char* record :
+        {RsaPkcs8Aes256Sha256Pem, RsaTraditionalAes256Pem, RsaTraditionalDes3Pem, RsaPkcs8Sha1TripleDesPem}) {
         ERR_clear_error_nid_postfix();
         GuestPemFileFixture file(record);
         PasswordRequest request{TestPassword};
@@ -2531,6 +3031,10 @@ int main() {
     TestEncryptedPkcs8Structure();
     TestEncryptedPkcs8Parameters();
     TestEncryptedWrite();
+    TestDesTraditional();
+    TestDesPkcs8();
+    TestDesPbes2Parameters();
+    TestDesPbeParameters();
     TestHeaders();
     TestLabels();
     TestCorruptTraditionalEc();

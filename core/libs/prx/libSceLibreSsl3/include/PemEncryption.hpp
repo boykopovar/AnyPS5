@@ -8,8 +8,11 @@
 
 inline constexpr int LibreSsl3PemBufferSize = 1024;
 
+enum class LibreSsl3PemDes { None, Single, TwoKey, ThreeKey };
+
 struct LibreSsl3PemCipherInfo {
     const LibreSslEvpCipher* cipher = nullptr;
+    LibreSsl3PemDes des = LibreSsl3PemDes::None;
     unsigned char iv[16] = {};
 };
 
