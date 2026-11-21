@@ -410,7 +410,14 @@ def main(argv=None):
     except (OSError, KeyError) as error:
         parser.error(f"{args.build}: not a configured CMake build directory ({error})")
     if args.command == "targets":
-        _, listed = build.tests("-R", args.regex)
+        try:
+            _, listed = build.tests("-R", args.regex)
+        except json.JSONDecodeError as error:
+            diagnostic = next(
+                (line for line in error.doc.splitlines() if line.startswith("RegularExpression::compile():")),
+                str(error),
+            )
+            parser.error(f"ctest -R {args.regex}: {diagnostic}")
         if not listed:
             parser.error(f"no test matches {args.regex}")
         wanted = {build.output(path) for test in listed for path in paths(test.get("command") or [])} - {None}
