@@ -10,6 +10,11 @@
 
 namespace Fios {
 
+enum ExecutionPolicy {
+    Async,
+    Inline,
+};
+
 struct Completion {
     std::int32_t error = SCE_FIOS_OK;
     std::int64_t result = 0;
@@ -46,8 +51,8 @@ std::int32_t SyncStatus(SceFiosOp op);
 std::int64_t SyncCount(SceFiosOp op);
 std::uint64_t TimespecToDate(std::int64_t seconds, std::int64_t nanoseconds);
 
-SceFiosOp Submit(const SceFiosOpAttr* attr, OpInfo info, Work work);
-SceFiosOp SubmitFailed(const SceFiosOpAttr* attr, OpInfo info, std::int32_t error);
+SceFiosOp Submit(const SceFiosOpAttr* attr, OpInfo info, Work work, ExecutionPolicy policy = Async);
+SceFiosOp SubmitFailed(const SceFiosOpAttr* attr, OpInfo info, std::int32_t error, ExecutionPolicy policy = Async);
 std::int32_t Wait(SceFiosOp op);
 std::int32_t WaitUntil(SceFiosOp op, SceFiosTime deadline);
 bool SyncWait(SceFiosOp op, Completion& completion);

@@ -46,7 +46,7 @@ std::uint64_t RequiredBytes(const std::vector<std::string>& names) {
     return bytes;
 }
 
-SceFiosOp StartOpen(const SceFiosOpAttr* attr, SceFiosDH* outDH, const char* path, SceFiosBuffer buffer) {
+SceFiosOp StartOpen(const SceFiosOpAttr* attr, SceFiosDH* outDH, const char* path, SceFiosBuffer buffer, Fios::ExecutionPolicy policy = Fios::Async) {
     Fios::OpInfo info;
     info.buffer = buffer.pPtr;
     info.request = static_cast<std::int64_t>(buffer.length);
@@ -87,10 +87,10 @@ SceFiosOp StartOpen(const SceFiosOpAttr* attr, SceFiosDH* outDH, const char* pat
             Fios::RemoveDirectory(handle);
             completion.error = SCE_FIOS_ERROR_BAD_PTR;
         }
-    });
+    }, policy);
 }
 
-SceFiosOp StartRead(const SceFiosOpAttr* attr, SceFiosDH handle, SceFiosDirEntry* outEntry) {
+SceFiosOp StartRead(const SceFiosOpAttr* attr, SceFiosDH handle, SceFiosDirEntry* outEntry, Fios::ExecutionPolicy policy = Fios::Async) {
     Fios::OpInfo info;
     info.buffer = outEntry;
     if (const auto directory = Fios::FindDirectory(handle)) info.path = directory->path;
@@ -132,15 +132,15 @@ SceFiosOp StartRead(const SceFiosOpAttr* attr, SceFiosDH handle, SceFiosDirEntry
             return;
         }
         ++directory->next;
-    });
+    }, policy);
 }
 
-SceFiosOp StartClose(const SceFiosOpAttr* attr, SceFiosDH handle) {
+SceFiosOp StartClose(const SceFiosOpAttr* attr, SceFiosDH handle, Fios::ExecutionPolicy policy = Fios::Async) {
     Fios::OpInfo info;
     if (const auto directory = Fios::FindDirectory(handle)) info.path = directory->path;
     return Fios::Submit(attr, std::move(info), [handle](Fios::Completion& completion) {
         if (!Fios::RemoveDirectory(handle)) completion.error = SCE_FIOS_ERROR_BAD_DH;
-    });
+    }, policy);
 }
 
 int StatusSync(SceFiosOp op) {
@@ -152,27 +152,27 @@ int StatusSync(SceFiosOp op) {
 extern "C" {
 
 SceFiosOp APS5_VABI sceFiosDHOpen(const SceFiosOpAttr* attr, SceFiosDH* outDH, const char* path, SceFiosBuffer buffer) {
-    return StartOpen(attr, outDH, path, buffer);
+    return StartOpen(attr, outDH, path, buffer, Fios::Async);
 }
 
 int APS5_VABI sceFiosDHOpenSync(const SceFiosOpAttr* attr, SceFiosDH* outDH, const char* path, SceFiosBuffer buffer) {
-    return StatusSync(StartOpen(attr, outDH, path, buffer));
+    return StatusSync(StartOpen(attr, outDH, path, buffer, Fios::Inline));
 }
 
 SceFiosOp APS5_VABI sceFiosDHRead(const SceFiosOpAttr* attr, SceFiosDH dh, SceFiosDirEntry* outEntry) {
-    return StartRead(attr, dh, outEntry);
+    return StartRead(attr, dh, outEntry, Fios::Async);
 }
 
 int APS5_VABI sceFiosDHReadSync(const SceFiosOpAttr* attr, SceFiosDH dh, SceFiosDirEntry* outEntry) {
-    return StatusSync(StartRead(attr, dh, outEntry));
+    return StatusSync(StartRead(attr, dh, outEntry, Fios::Inline));
 }
 
 SceFiosOp APS5_VABI sceFiosDHClose(const SceFiosOpAttr* attr, SceFiosDH dh) {
-    return StartClose(attr, dh);
+    return StartClose(attr, dh, Fios::Async);
 }
 
 int APS5_VABI sceFiosDHCloseSync(const SceFiosOpAttr* attr, SceFiosDH dh) {
-    return StatusSync(StartClose(attr, dh));
+    return StatusSync(StartClose(attr, dh, Fios::Inline));
 }
 
 const char* APS5_VABI sceFiosDHGetPath(SceFiosDH dh) {
