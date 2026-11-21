@@ -1,3 +1,4 @@
+#include "BdaAbi.hpp"
 #include "ShaderDiskCache.hpp"
 #include "ImageTableAbi.hpp"
 #include "CacheKey.hpp"
@@ -427,7 +428,7 @@ struct SampleRequest {
         request.target.vulkanVersion = 0x00403000u;
         request.target.spirvVersion = 0x00010600u;
         request.target.subgroupSize = 32;
-        request.target.bdaAbiVersion = 1;
+        request.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
         request.target.supportedCapabilities = capabilities;
         request.target.supportedExtensions = extensions;
         request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
@@ -1352,7 +1353,7 @@ struct ComputeRequest {
         request.target.subgroupSize = 32;
         request.target.supportedCapabilities = capabilities;
         request.target.supportedExtensions = extensions;
-        request.target.bdaAbiVersion = 1u;
+        request.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
         request.layout.pushConstantSizeBytes = 128;
         request.useCache = useCache;
     }
@@ -1407,7 +1408,7 @@ struct ClockRequest {
         request.target.subgroupSize = 32;
         request.target.supportedCapabilities = capabilities;
         request.target.supportedExtensions = extensions;
-        request.target.bdaAbiVersion = 1u;
+        request.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
         request.layout.pushConstantSizeBytes = 128;
     }
 };
@@ -1872,7 +1873,7 @@ struct PlanFixture {
         request.target.subgroupSize = 32;
         request.target.supportedCapabilities = capabilities;
         request.target.supportedExtensions = extensions;
-        request.target.bdaAbiVersion = 1u;
+        request.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
         request.layout.pushConstantSizeBytes = 128;
         request.useCache = useCache;
         return request;

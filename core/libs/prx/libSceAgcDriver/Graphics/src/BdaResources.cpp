@@ -16,6 +16,7 @@
 #include <iomanip>
 #include <span>
 #include <sstream>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -155,7 +156,7 @@ VkDeviceSize faultStride(const Context& context, VkDeviceSize bytes) {
 bool faultSlotClean(std::span<const std::byte> bytes) {
     namespace Abi = ShaderRecompiler::BdaAbi;
     if (bytes.size() < Abi::FaultBufferBytes) return std::all_of(bytes.begin(), bytes.end(), [](std::byte value) { return value == std::byte{0}; });
-    std::array<std::uint32_t, Abi::WrittenSlotsWord> head{};
+    std::array<std::uint32_t, Abi::WrittenPageMapWord> head{};
     std::memcpy(head.data(), bytes.data(), sizeof(head));
     std::uint32_t guard = 0;
     std::memcpy(&guard, bytes.data() + Abi::SrtGuardWord * sizeof(std::uint32_t), sizeof(guard));
@@ -168,8 +169,81 @@ void clearFaultSlot(std::span<std::byte> bytes) {
         std::memset(bytes.data(), 0, bytes.size());
         return;
     }
-    std::memset(bytes.data(), 0, Abi::WrittenListWord * sizeof(std::uint32_t));
-    std::memset(bytes.data() + Abi::SrtGuardWord * sizeof(std::uint32_t), 0, sizeof(std::uint32_t));
+    std::memset(bytes.data(), 0, (Abi::SrtGuardWord + 1) * sizeof(std::uint32_t));
+}
+
+bool writeStatsEnabled() {
+    static const bool enabled = std::getenv("APS5_BDA_WRITE_STATS") != nullptr;
+    return enabled;
+}
+
+struct WriteCounts {
+    std::uint64_t granules = 0;
+    std::uint64_t grantedPages = 0;
+    std::uint64_t pages = 0;
+    std::uint64_t coarseGrantedPages = 0;
+    std::uint64_t coarsePages = 0;
+};
+
+struct WriteStats {
+    std::mutex mutex;
+    std::uint64_t tables = 0;
+    std::uint64_t coarseTables = 0;
+    std::uint32_t maxRanges = 0;
+    std::uint32_t maxWritable = 0;
+    std::uint32_t maxWords = 0;
+    std::uint32_t maxCoarse = 0;
+    std::uint32_t maxShift = 0;
+    std::uint64_t dispatches = 0;
+    WriteCounts total;
+    std::uint64_t coarseDispatchLines = 0;
+};
+
+WriteStats& writeStats() {
+    static WriteStats stats;
+    return stats;
+}
+
+void noteTableAssignment(std::size_t ranges, const ShaderRecompiler::BdaAbi::WrittenAssignment& used) {
+    if (!writeStatsEnabled()) return;
+    auto& stats = writeStats();
+    std::lock_guard lock(stats.mutex);
+    ++stats.tables;
+    if (used.coarse != 0) ++stats.coarseTables;
+    const bool larger = ranges > stats.maxRanges || used.writable > stats.maxWritable || used.words > stats.maxWords || used.coarse > stats.maxCoarse || used.maxShift > stats.maxShift;
+    stats.maxRanges = std::max(stats.maxRanges, static_cast<std::uint32_t>(ranges));
+    stats.maxWritable = std::max(stats.maxWritable, used.writable);
+    stats.maxWords = std::max(stats.maxWords, used.words);
+    stats.maxCoarse = std::max(stats.maxCoarse, used.coarse);
+    stats.maxShift = std::max(stats.maxShift, used.maxShift);
+    if (larger || stats.tables % 1024 == 0) {
+        std::fprintf(stderr, "[bda-written] table #%llu ranges=%zu writable=%u words=%u/%u coarse=%u maxShift=%u | max ranges=%u writable=%u words=%u coarse=%u shift=%u, tables with coarse=%llu\n",
+            static_cast<unsigned long long>(stats.tables), ranges, used.writable, used.words, ShaderRecompiler::BdaAbi::WrittenPoolWords, used.coarse, used.maxShift,
+            stats.maxRanges, stats.maxWritable, stats.maxWords, stats.maxCoarse, stats.maxShift, static_cast<unsigned long long>(stats.coarseTables));
+    }
+}
+
+void noteDispatchWrites(const WriteCounts& counts) {
+    if (!writeStatsEnabled()) return;
+    auto& stats = writeStats();
+    std::lock_guard lock(stats.mutex);
+    ++stats.dispatches;
+    stats.total.granules += counts.granules;
+    stats.total.grantedPages += counts.grantedPages;
+    stats.total.pages += counts.pages;
+    stats.total.coarseGrantedPages += counts.coarseGrantedPages;
+    stats.total.coarsePages += counts.coarsePages;
+    if (counts.coarseGrantedPages != 0 && stats.coarseDispatchLines < 64) {
+        ++stats.coarseDispatchLines;
+        std::fprintf(stderr, "[bda-written] dispatch #%llu granules=%llu pages in them=%llu marked=%llu, coarse: pages in granules=%llu marked=%llu\n",
+            static_cast<unsigned long long>(stats.dispatches), static_cast<unsigned long long>(counts.granules), static_cast<unsigned long long>(counts.grantedPages), static_cast<unsigned long long>(counts.pages),
+            static_cast<unsigned long long>(counts.coarseGrantedPages), static_cast<unsigned long long>(counts.coarsePages));
+    }
+    if (stats.dispatches % 4096 == 0) {
+        std::fprintf(stderr, "[bda-written] %llu dispatches stored: granules=%llu pages in them=%llu marked=%llu, coarse: pages in granules=%llu marked=%llu\n",
+            static_cast<unsigned long long>(stats.dispatches), static_cast<unsigned long long>(stats.total.granules), static_cast<unsigned long long>(stats.total.grantedPages), static_cast<unsigned long long>(stats.total.pages),
+            static_cast<unsigned long long>(stats.total.coarseGrantedPages), static_cast<unsigned long long>(stats.total.coarsePages));
+    }
 }
 
 void dropChunk(FaultArena& arena, const std::shared_ptr<BdaFaultChunk>& chunk, std::vector<std::shared_ptr<BdaFaultChunk>>& dropped) {
@@ -393,11 +467,14 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
         }
     }
     Require(ShaderRecompiler::BdaAbi::RangesOrdered(ranges.data(), ranges.size()), "BDA table ranges do not ascend by begin");
-    for (const auto& range : ranges) Require((range.permissions & ShaderRecompiler::BdaAbi::Write) == 0 || range.end <= ShaderRecompiler::BdaAbi::WrittenAddressLimit, "a writable BDA range ends past the addresses the written-page record can hold");
+    std::vector<ShaderRecompiler::BdaAbi::Range> annotated(ranges.begin(), ranges.end());
+    ShaderRecompiler::BdaAbi::WrittenAssignment assignment{};
+    Require(ShaderRecompiler::BdaAbi::AssignWrittenBlocks(annotated.data(), annotated.size(), &assignment), "more than " + std::to_string(ShaderRecompiler::BdaAbi::WrittenPoolWords) + " writable BDA ranges in one table are not implemented");
+    noteTableAssignment(annotated.size(), assignment);
     table = std::make_shared<Buffer>(context, tableBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     const ShaderRecompiler::BdaAbi::Header header{ShaderRecompiler::BdaAbi::Version, static_cast<std::uint32_t>(ranges.size()), sizeof(ShaderRecompiler::BdaAbi::Range), 0};
     std::memcpy(table->Bytes().data(), &header, sizeof(header));
-    if (!ranges.empty()) std::memcpy(table->Bytes().data() + sizeof(header), ranges.data(), ranges.size() * sizeof(ranges.front()));
+    if (!annotated.empty()) std::memcpy(table->Bytes().data() + sizeof(header), annotated.data(), annotated.size() * sizeof(annotated.front()));
     if (tableCacheEnabled()) {
         std::lock_guard lock(cache.mutex);
         ++cache.misses;
@@ -442,7 +519,12 @@ bool BdaResources::TableGuardCurrent(VkDevice device, std::span<const ShaderReco
     if (bytes.size() < sizeof(header)) return false;
     std::memcpy(&header, bytes.data(), sizeof(header));
     if (header.count != expected.size() || (bytes.size() - sizeof(header)) / sizeof(ShaderRecompiler::BdaAbi::Range) < expected.size()) return false;
-    if (!expected.empty() && std::memcmp(bytes.data() + sizeof(header), expected.data(), expected.size() * sizeof(ShaderRecompiler::BdaAbi::Range)) != 0) return false;
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        ShaderRecompiler::BdaAbi::Range range{};
+        std::memcpy(&range, bytes.data() + sizeof(header) + index * sizeof(range), sizeof(range));
+        const auto& want = expected[index];
+        if (range.begin != want.begin || range.end != want.end || range.deviceAddress != want.deviceAddress || range.permissions != want.permissions) return false;
+    }
     tableGuardSerial = generation;
     return true;
 }
@@ -578,27 +660,51 @@ void BdaResources::checkSrtGuard(const BdaResources& faults) const {
 
 void BdaResources::markWrittenPages(const BdaResources& record) const {
     namespace Abi = ShaderRecompiler::BdaAbi;
-    auto* words = reinterpret_cast<std::uint32_t*>(record.faultBytes().data());
-    Require(words[Abi::WrittenOverflowWord] == 0, "more than " + std::to_string(Abi::WrittenPageSlots) + " chunks of " + std::to_string(Abi::WrittenChunkPages) + " pages stored to through the BDA table in one use are not implemented");
-    const auto count = words[Abi::WrittenCountWord];
-    if (count == 0) return;
-    Require(Abi::ForEachWrittenRange(words, [&](std::uint64_t begin, std::size_t bytes) {
-        const auto end = begin + bytes;
-        for (const auto& [base, size] : imageTableRanges) {
-            if (size != 0 && begin < base + size && base < end) {
-                std::ostringstream message;
-                message << "image table at 0x" << std::hex << base << " is written by its own dispatch";
-                Require(false, message.str());
+    const auto bytes = record.faultBytes();
+    if (bytes.size() < Abi::FaultBufferBytes) return;
+    auto* words = reinterpret_cast<std::uint32_t*>(bytes.data());
+    if (words[Abi::WrittenDirtyWord] == 0) return;
+    const auto tableBytes = TableBytes();
+    Abi::Header header{};
+    Require(tableBytes.size() >= sizeof(header), "BDA written-page record without a page table");
+    std::memcpy(&header, tableBytes.data(), sizeof(header));
+    Require(header.entryBytes == sizeof(Abi::Range) && (tableBytes.size() - sizeof(header)) / sizeof(Abi::Range) >= header.count, "invalid BDA page table for the written-page record");
+    const auto wordCount = bytes.size() / sizeof(std::uint32_t);
+    WriteCounts counts;
+    std::vector<std::pair<std::uint64_t, std::size_t>> granted;
+    const auto pagesOf = [](std::uint64_t begin, std::size_t size) { return ((begin + size - 1) >> Abi::WrittenPageShift) - (begin >> Abi::WrittenPageShift) + 1; };
+    for (std::uint32_t index = 0; index < header.count; ++index) {
+        Abi::Range range{};
+        std::memcpy(&range, tableBytes.data() + sizeof(header) + index * sizeof(range), sizeof(range));
+        if (range.written == 0) continue;
+        const auto block = Abi::DecodeWrittenBlock(range.written);
+        const bool coarse = block.shift > Abi::WrittenPageShift;
+        Require(Abi::ForEachWrittenPage(words, wordCount, range, [&](std::uint64_t begin, std::size_t size) {
+            const auto end = begin + size;
+            for (const auto& [base, length] : imageTableRanges) {
+                if (length != 0 && begin < base + length && base < end) {
+                    std::ostringstream message;
+                    message << "image table at 0x" << std::hex << base << " is written by its own dispatch";
+                    Require(false, message.str());
+                }
             }
-        }
-        GuestMemory::MarkPossiblyWritten(begin, bytes);
-    }), "invalid BDA written-page record");
-    for (std::uint32_t claim = 0; claim < count; ++claim) {
-        const auto slot = words[Abi::WrittenListWord + claim];
-        words[Abi::WrittenSlotsWord + 2 * slot] = 0;
-        words[Abi::WrittenSlotsWord + 2 * slot + 1] = 0;
+            GuestMemory::MarkPossiblyWritten(begin, size);
+            const auto marked = pagesOf(begin, size);
+            counts.pages += marked;
+            if (coarse) counts.coarsePages += marked;
+        }, [&](std::uint64_t begin, std::size_t size) {
+            granted.emplace_back(begin, size);
+            const auto inside = pagesOf(begin, size);
+            counts.granules += ((begin + size - 1) >> block.shift) - (begin >> block.shift) + 1;
+            counts.grantedPages += inside;
+            if (coarse) counts.coarseGrantedPages += inside;
+        }), "invalid BDA written-page record");
+        const auto count = Abi::WrittenBlockWords(range.begin, range.end, block.shift);
+        std::memset(words + block.word, 0, static_cast<std::size_t>(count) * sizeof(std::uint32_t));
     }
-    words[Abi::WrittenCountWord] = 0;
+    for (const auto& [begin, size] : granted) Abi::ClearWrittenPageMap(words, begin, size);
+    words[Abi::WrittenDirtyWord] = 0;
+    noteDispatchWrites(counts);
 }
 
 }

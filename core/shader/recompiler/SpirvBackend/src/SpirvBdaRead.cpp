@@ -112,7 +112,6 @@ void EmitBdaStoreAt(SpirvEmitterState& state, std::uint32_t address, std::uint32
         const auto pointer = state.module.AllocateId();
         state.module.AddFunction(spv::OpConvertUToPtr, pointerType, pointer, physical);
         state.module.AddFunction(spv::OpStore, pointer, value, accessMask, bytes);
-        state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), state.bdaNoteWriteFunction, address);
     });
 }
 
@@ -657,7 +656,7 @@ std::uint32_t EmitBdaReadBytes(SpirvValueEmitContext& ctx, const IrValue& inst, 
 
 void EmitBdaWrite(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t value, std::uint32_t bits) {
     auto& state = ctx.state;
-    if (state.bdaWritePointerFunction == 0 || state.bdaNoteWriteFunction == 0) ctx.Fail(inst, "BDA write functions are missing");
+    if (state.bdaWritePointerFunction == 0) ctx.Fail(inst, "BDA write functions are missing");
     const auto instruction = BdaInstructionPc(state, inst);
     if (bits != 8u && bits != 16u && bits != 32u) ctx.Fail(inst, "unsupported BDA write width");
     const auto storeBytes = [&] {
@@ -732,7 +731,7 @@ void DefineBdaByteWriteFunctions(SpirvEmitterState& state) {
 void EmitBdaStore(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t value, std::uint32_t bits) {
     auto& state = ctx.state;
     if (bits != 8u && bits != 16u && bits != 32u) ctx.Fail(inst, "unsupported BDA store width");
-    if (state.bdaWritePointerFunction == 0 || state.bdaNoteWriteFunction == 0) ctx.Fail(inst, "BDA write functions are missing");
+    if (state.bdaWritePointerFunction == 0) ctx.Fail(inst, "BDA write functions are missing");
     const auto instruction = BdaInstructionPc(state, inst);
     const auto storeBytes = [&] {
         const auto function = state.bdaByteWriteFunctions[BdaCoherent(state, inst)];
@@ -753,7 +752,7 @@ void EmitBdaStore(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t
 void EmitBdaDwordWrites(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t offset, std::uint32_t dwords, std::uint32_t value) {
     auto& state = ctx.state;
     if (dwords < 2u || dwords > 4u) ctx.Fail(inst, "unsupported BDA dword store count");
-    if (state.bdaWritePointerFunction == 0 || state.bdaNoteWriteFunction == 0) ctx.Fail(inst, "BDA write functions are missing");
+    if (state.bdaWritePointerFunction == 0) ctx.Fail(inst, "BDA write functions are missing");
     const auto u32 = TypeU32(state);
     const auto u64 = TypeScalarU64(state);
     const auto boolean = TypeBool(state);
@@ -808,13 +807,6 @@ void EmitBdaDwordWrites(SpirvValueEmitContext& ctx, const IrValue& inst, std::ui
         });
         EmitIfCondition(state, Unary(state, spv::OpLogicalNot, boolean, vectorAligned), separate);
     }
-    const auto last = addresses[dwords - 1u];
-    state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), state.bdaNoteWriteFunction, addresses[0]);
-    const auto pageShift = BdaConstant(state, BdaAbi::WrittenPageShift);
-    const auto crosses = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpShiftRightLogical, u64, addresses[0], pageShift), Binary(state, spv::OpShiftRightLogical, u64, last, pageShift));
-    EmitIfCondition(state, crosses, [&] {
-        state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), state.bdaNoteWriteFunction, last);
-    });
     state.module.AddFunction(spv::OpBranch, merge);
     EmitLabel(state, dwordLabel);
     storeDwords();
@@ -825,7 +817,7 @@ void EmitBdaDwordWrites(SpirvValueEmitContext& ctx, const IrValue& inst, std::ui
 std::uint32_t EmitBdaAtomic(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t bytes, const std::function<std::uint32_t(std::uint32_t)>& operation) {
     auto& state = ctx.state;
     if (bytes != 4u && bytes != 8u) ctx.Fail(inst, "unsupported BDA atomic width");
-    if (state.bdaWritePointerFunction == 0 || state.bdaNoteWriteFunction == 0) ctx.Fail(inst, "BDA write functions are missing");
+    if (state.bdaWritePointerFunction == 0) ctx.Fail(inst, "BDA write functions are missing");
     const auto instruction = BdaInstructionPc(state, inst);
     const auto type = bytes == 8u ? TypeScalarU64(state) : TypeU32(state);
     const auto zero = bytes == 8u ? BdaConstant(state, 0u) : ConstantU32(state, 0u);
@@ -838,7 +830,6 @@ std::uint32_t EmitBdaAtomic(SpirvValueEmitContext& ctx, const IrValue& inst, std
             const auto pointer = state.module.AllocateId();
             state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, type), pointer, physical);
             const auto old = operation(pointer);
-            state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), state.bdaNoteWriteFunction, address);
             return old;
         });
     });

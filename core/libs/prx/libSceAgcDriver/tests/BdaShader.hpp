@@ -34,6 +34,7 @@ std::vector<std::uint32_t> MakeBdaAnchoredReadTestShader(const BdaAnchoredReadPr
 void RunBdaStoreExecutionTests(const AgcDriver::Graphics::Context& context);
 void RunBdaFaultSlotExecutionTests(const AgcDriver::Graphics::Context& context);
 void RunBdaExecutionTests(const AgcDriver::Graphics::Context& context);
+void RunWrittenRangeDecodeTests();
 void RunBdaContractTests();
 
 #endif
