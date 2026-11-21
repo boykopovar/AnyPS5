@@ -85,6 +85,7 @@ public:
     void WaitForPipelineJournal();
     bool WaitIdleFor(std::chrono::milliseconds timeout);
     bool WaitIdleUnlessTitleWaitsFor(std::chrono::milliseconds timeout);
+    bool WaitSubmissionPacedFor(std::chrono::milliseconds timeout);
     bool WaitSettledFor(std::chrono::milliseconds timeout);
     void ReleaseSettled();
     bool SettledHeld();
@@ -164,6 +165,7 @@ private:
     static bool flipWorkDone(const std::shared_ptr<FlipWork>& work);
     bool awaitsTitle(std::uint64_t awaited) const;
     bool parkedOnTitle() const;
+    bool submissionPaced() const;
     void noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited);
     void releaseFlipHold();
     void beginFlipReady(std::uint32_t handle);

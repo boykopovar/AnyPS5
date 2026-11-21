@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <future>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -286,13 +287,57 @@ void TestCalledBuffers() {
     Require(sceGnmUnmapComputeQueue(queue) == 0, "sceGnmUnmapComputeQueue failed");
 }
 
+int Submit(const std::vector<std::uint32_t>& words) {
+    auto* buffer = const_cast<std::uint32_t*>(words.data());
+    const std::uint32_t bytes = static_cast<std::uint32_t>(words.size() * sizeof(std::uint32_t));
+    return sceGnmSubmitCommandBuffers(1, &buffer, &bytes, nullptr, nullptr);
 }
 
-int main() {
+void TestOrderedGdsWithGraphics() {
+    GuestBlock block;
+    auto& memory = block.Data();
+    memory.gate = 0;
+    const int queue = sceGnmMapComputeQueue(0, 0, memory.ringA, RingWords, &memory.readA);
+    Require(queue > 0, "sceGnmMapComputeQueue did not return a queue id");
+
+    std::vector<std::uint32_t> gfxWords;
+    WaitEqual(gfxWords, &memory.gate, 1);
+    gfxWords.insert(gfxWords.end(), {Type3(0x50, 6), 0x40100000u, 0x12345678u, 0u, 0x40u, 0u, 4u});
+    Require(Submit(gfxWords) == 0, "Submit graphics DMA_DATA failed");
+
+    std::vector<std::uint32_t> computeWords{Type3(0x50, 6), 0x20000000u, 0x40u, 0u, Low(&memory.direct), High(&memory.direct), 4u};
+    const auto offset1 = Put(memory.ringA, 0, computeWords);
+    auto pending = std::async(std::launch::async, [&] { return sceGnmDingDong(queue, offset1); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    memory.gate = 1;
+    Require(pending.get() == 0, "sceGnmDingDong failed");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(memory.direct == 0x12345678u, "compute queue did not observe GDS value written by graphics");
+
+    std::vector<std::uint32_t> computeWords2{Type3(0x50, 6), 0x40100000u, 0x87654321u, 0u, 0x40u, 0u, 4u};
+    const auto offset2 = Put(memory.ringA, offset1, computeWords2);
+    Require(sceGnmDingDong(queue, offset2) == 0, "sceGnmDingDong failed");
+
+    std::vector<std::uint32_t> gfxWords2{Type3(0x50, 6), 0x20000000u, 0x40u, 0u, Low(&memory.indirect), High(&memory.indirect), 4u};
+    Require(Submit(gfxWords2) == 0, "Submit graphics DMA_DATA failed");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(memory.indirect == 0x87654321u, "graphics did not observe GDS value written by compute queue");
+
+    Require(sceGnmUnmapComputeQueue(queue) == 0, "sceGnmUnmapComputeQueue failed");
+}
+
+}
+
+int main(int argc, char** argv) {
     try {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         device.reset();
+        if (argc == 2 && std::string(argv[1]) == "--ordered") {
+            TestOrderedGdsWithGraphics();
+            std::puts("GnmDriver compute queue ordered tests passed");
+            return 0;
+        }
         TestComputeQueues();
         TestCalledBuffers();
         std::puts("GnmDriver compute queue tests passed");
