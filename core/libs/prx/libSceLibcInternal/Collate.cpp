@@ -72,6 +72,19 @@ void APS5_VABI _ZNSt7collateIcEC2EPKcm_nid_postfix(GuestLocale::CollateFacet* se
     ConstructNamedCollate(self, localeName, references);
 }
 
+void APS5_VABI _ZNSt7collateIcEC2Em_nid_postfix(GuestLocale::CollateFacet* self, std::size_t references) {
+    ConstructNamedCollate(self, "C", references);
+}
+
+void APS5_VABI _ZNSt7collateIcEC2ERKSt8_Locinfom_nid_postfix(GuestLocale::CollateFacet* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references) {
+    _ZNSt7collateIcEC1ERKSt8_Locinfom_nid_postfix(self, locinfo, references);
+}
+
+void APS5_VABI _ZNSt7collateIcED0Ev_nid_postfix(GuestLocale::CollateFacet* self) {
+    if (self == nullptr) throw std::invalid_argument("collate<char>::~collate: null object");
+    _ZdlPv_nid_postfix(self);
+}
+
 int APS5_VABI sceLibcInternalCollateDoCompare_nid_no_patch(const GuestLocale::CollateFacet* self, const char* first1, const char* last1, const char* first2, const char* last2) {
     return BaseCollate().compare(self, first1, last1, first2, last2);
 }

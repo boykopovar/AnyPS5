@@ -1249,8 +1249,41 @@ std::uint32_t EmitPackFloat2x16Rtz(SpirvEmitterState& state, std::uint32_t arg0,
     return Binary(state, spv::OpBitwiseOr, TypeU32(state), low, high);
 }
 
-std::uint32_t EmitFPSaturate32(SpirvEmitterState& state, std::uint32_t arg0) {
-    const auto bits = Unary(state, spv::OpBitcast, TypeU32(state), arg0);
+std::uint32_t EmitFPSaturate32(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    const auto uncast = [](const IrValue* value) {
+        value = value->Resolve();
+        while (value->Flags<std::uint64_t>() == 0u && (value->Opcode() == IrOpcode::BitCastU32F32 || value->Opcode() == IrOpcode::BitCastF32U32)) value = value->Argument(0)->Resolve();
+        return value;
+    };
+    const auto* source = uncast(inst.Argument(0));
+    if (inst.Flags<std::uint64_t>() == 0u && source->Flags<std::uint64_t>() == 0u && source->Opcode() == IrOpcode::FPMax32) {
+        for (std::uint32_t index = 0u; index < 2u; ++index) {
+            const auto* zero = source->Argument(index)->Resolve();
+            if (zero->HasImmediate() && zero->Type() == IrType::F32 && std::bit_cast<std::uint32_t>(zero->ImmediateF32()) == 0u) {
+                source = uncast(source->Argument(1u - index));
+                break;
+            }
+        }
+    }
+    if (inst.Flags<std::uint64_t>() == 0u && source->Flags<std::uint64_t>() == 0u && source->Opcode() == IrOpcode::SelectU32) {
+        const auto* test = source->Argument(0)->Resolve();
+        const auto* sign = source->Argument(1)->Resolve();
+        const auto* original = source->Argument(2)->Resolve();
+        const auto masked = [&](const IrValue* value, std::uint32_t mask) {
+            return value->Flags<std::uint64_t>() == 0u && value->Opcode() == IrOpcode::BitwiseAnd32 &&
+                ((uncast(value->Argument(0)) == uncast(original) && IsU32(value->Argument(1), mask)) || (uncast(value->Argument(1)) == uncast(original) && IsU32(value->Argument(0), mask)));
+        };
+        if (test->Flags<std::uint64_t>() == 0u && test->Opcode() == IrOpcode::IEqual32 && masked(sign, 0x80000000u) &&
+            ((IsU32(test->Argument(0), 0u) && masked(test->Argument(1)->Resolve(), 0x7f800000u)) || (IsU32(test->Argument(1), 0u) && masked(test->Argument(0)->Resolve(), 0x7f800000u)))) {
+            const auto bits = ctx.Def(original);
+            const auto range = Binary(state, spv::OpISub, TypeU32(state), bits, ConstantU32(state, 0x00800000u));
+            const auto positive = Binary(state, spv::OpULessThanEqual, TypeBool(state), range, ConstantU32(state, 0x7f000000u));
+            const auto upper = EmitExt(state, TypeU32(state), GLSLstd450UMin, {bits, ConstantU32(state, 0x3f800000u)});
+            return Unary(state, spv::OpBitcast, TypeF32(state), Select(state, TypeU32(state), positive, upper, ConstantU32(state, 0u)));
+        }
+    }
+    const auto bits = Unary(state, spv::OpBitcast, TypeU32(state), ctx.Arg(inst, 0));
     const auto positive = Binary(state, spv::OpULessThan, TypeBool(state), Binary(state, spv::OpISub, TypeU32(state), bits, ConstantU32(state, 1u)), ConstantU32(state, 0x7f800000u));
     const auto upper = EmitExt(state, TypeU32(state), GLSLstd450UMin, {bits, ConstantU32(state, 0x3f800000u)});
     return Unary(state, spv::OpBitcast, TypeF32(state), Select(state, TypeU32(state), positive, upper, ConstantU32(state, 0u)));

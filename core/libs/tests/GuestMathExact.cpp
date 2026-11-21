@@ -107,6 +107,19 @@ static void CheckLogblLroundl() {
     Require(lroundl_nid_postfix(0x1p62L) == (INT64_C(1) << 62));
 }
 
+static void CheckLroundlOverflowFlags() {
+    for (const bool overflowing : {false, true}) {
+        for (const bool useLlround : {false, true}) {
+            const long double value = overflowing ? -0x1.8p80L : 0x1.8p61L;
+            Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+            const std::int64_t result = useLlround ? llroundl_nid_postfix(value) : lroundl_nid_postfix(value);
+            const int exceptions = std::fetestexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT);
+            Require(result == (overflowing ? INT64_MIN : INT64_C(3) << 60) && exceptions == (overflowing ? FE_INVALID | FE_INEXACT : 0));
+        }
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+}
+
 static void CheckSignalingNanPassThrough() {
     const long double signaling = Extended(0x7fff, 0x8000000000001234ull);
     Require(SameBits(fdiml_nid_postfix(signaling, 1.0L), signaling));
@@ -375,6 +388,33 @@ static void CheckLongDoubleExpTinyRounding() {
         Require((std::fetestexcept(FE_ALL_EXCEPT) & (FE_UNDERFLOW | FE_INEXACT)) == (FE_UNDERFLOW | FE_INEXACT));
     }
     Require(std::fesetround(saved) == 0);
+}
+
+static void CheckRoundlAndFdimlFlags() {
+    constexpr int Flags = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT;
+    const auto raised = [] {
+        const int flags = std::fetestexcept(FE_ALL_EXCEPT) & Flags;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        return flags;
+    };
+    const long double infinity = std::numeric_limits<long double>::infinity();
+    const long double signaling = Extended(0x7fff, 0xa000000000000000ull);
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(SameBits(roundl_nid_postfix(2.5L), 3.0L) && raised() == FE_INEXACT);
+    Require(SameBits(roundl_nid_postfix(-2.5L), -3.0L) && raised() == FE_INEXACT);
+    Require(SameBits(roundl_nid_postfix(0.25L), 0.0L) && raised() == FE_INEXACT);
+    Require(SameBits(roundl_nid_postfix(3.0L), 3.0L) && raised() == 0);
+    Require(SameBits(roundl_nid_postfix(-0.0L), -0.0L) && raised() == 0);
+    Require(SameBits(roundl_nid_postfix(0x1p70L), 0x1p70L) && raised() == FE_INEXACT);
+    Require(SameBits(roundl_nid_postfix(Extended(0xc045, 0x8000000000000001ull)), Extended(0xc045, 0x8000000000000001ull)) && raised() == FE_INEXACT);
+    Require(SameBits(roundl_nid_postfix(signaling), signaling) && raised() == 0);
+    Require(SameBits(fdiml_nid_postfix(3.0L, 5.0L), 0.0L) && raised() == 0);
+    Require(SameBits(fdiml_nid_postfix(5.0L, 3.0L), 2.0L) && raised() == 0);
+    Require(SameBits(fdiml_nid_postfix(0x1p-68L, 1.0L), 0.0L) && raised() == FE_INEXACT);
+    Require(SameBits(fdiml_nid_postfix(1.0L, 0x1p-68L), 1.0L) && raised() == FE_INEXACT);
+    Require(SameBits(fdiml_nid_postfix(infinity, infinity), 0.0L) && raised() == FE_INVALID);
+    Require(SameBits(fdiml_nid_postfix(signaling, 1.0L), signaling) && raised() == 0);
+    Require(SameBits(fdiml_nid_postfix(1.0L, signaling), signaling) && raised() == 0);
 }
 
 static void CheckRintTiesToEven() {
@@ -971,6 +1011,7 @@ int main(int argc, char** argv) {
     CheckRoundingAndScaling();
     CheckSqrtlNegativeFlags();
     CheckLogblLroundl();
+    CheckLroundlOverflowFlags();
     CheckSignalingNanPassThrough();
     CheckModflPartsAndFlags();
     CheckErrno();
@@ -983,6 +1024,7 @@ int main(int argc, char** argv) {
     CheckLongDoubleExpTinyMultiplierOverflow();
     CheckLongDoubleExpTinyRounding();
     CheckRintTiesToEven();
+    CheckRoundlAndFdimlFlags();
     CheckClassification();
     CheckLongDoubleExp();
     CheckRoundHalfwayAwayFromZero();

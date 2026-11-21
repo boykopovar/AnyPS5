@@ -96,7 +96,7 @@ std::int32_t APS5_VABI uloc_setKeywordValue_nid_postfix(const char* keyword, con
     const std::string initial = ReadText(buffer, fullCapacity + 1, __func__, "buffer");
     const bool valueRead = value && initial.size() <= fullCapacity;
     const std::string valueText = valueRead ? ReadText(value, Unbounded, __func__, "value") : std::string();
-    auto hostCapacity = (std::min)(fullCapacity, initial.size() + 1);
+    auto hostCapacity = (std::min)(fullCapacity, (std::max)(initial.size() + 1, std::size_t{2}));
     std::vector<char> host;
     std::int32_t length = 0;
     for (;;) {
@@ -108,7 +108,7 @@ std::int32_t APS5_VABI uloc_setKeywordValue_nid_postfix(const char* keyword, con
         if (hostCapacity == fullCapacity || length < 0 || static_cast<std::size_t>(length) < hostCapacity) break;
         hostCapacity = (std::min)(fullCapacity, static_cast<std::size_t>(length) + 1);
     }
-    if (U_SUCCESS(local) && length > 0) {
+    if (U_SUCCESS(local) && length >= 0) {
         const auto bytes = (std::min)(fullCapacity, static_cast<std::size_t>(length) + 1);
         if (!CopyOut(buffer, host.data(), bytes)) throw std::invalid_argument(std::string(__func__) + ": unwritable buffer");
     }
