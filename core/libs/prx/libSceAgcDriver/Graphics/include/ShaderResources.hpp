@@ -306,7 +306,9 @@ public:
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
     bool SpaceReuse() const { return spaceReuse; }
     static bool SpaceReuseDisabled();
+    static bool ReadsShadowsInPlace(bool usesBda, bool bdaReadOnly, bool spaceCandidate) { return usesBda && bdaReadOnly && !spaceCandidate; }
     bool BdaReadOnly() const { return usesBda && bdaReadOnly; }
+    bool SpaceReuseShape() const { return !htileClear.has_value() && drawBuild && !SpaceReuseDisabled() && guestMemory.SpaceOnly() && multisampleSources.empty(); }
     bool RetakeSpace() { return guestMemory.RetakeSpace(); }
     bool SpaceHeld() const { return guestMemory.SpaceHeld(); }
     SnapshotService SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const { return guestMemory.SnapshotsServedInPlace(snapshots); }
