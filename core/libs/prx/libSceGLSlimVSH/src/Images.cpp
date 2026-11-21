@@ -74,14 +74,16 @@ std::array<unsigned char, 4> Convert(std::array<unsigned char, 4> color, GLenum 
     return color;
 }
 
-void Upload(Image& image, GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels, int size) {
-    if (!pixels || !width || !height) return;
+bool Upload(Image& image, GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels, int size) {
+    if (!pixels || !width || !height) return true;
     auto& c = Current_nid_no_patch();
     std::size_t alignment = static_cast<std::size_t>(c.state[0x0cf5][0]);
     std::size_t stride = (std::size_t(width) * size + alignment - 1) & ~(alignment - 1);
-    auto* bytes = static_cast<const unsigned char*>(pixels);
+    std::vector<unsigned char> bytes(std::size_t(height - 1) * stride + std::size_t(width) * size);
+    if (!GuestCopyIn_nid_no_patch(bytes.data(), pixels, bytes.size())) return false;
     for (GLsizei row = 0; row < height; ++row) for (GLsizei col = 0; col < width; ++col)
-        image.color[std::size_t(y + row) * image.width + x + col] = Decode(bytes + std::size_t(row) * stride + std::size_t(col) * size, format, type);
+        image.color[std::size_t(y + row) * image.width + x + col] = Decode(bytes.data() + std::size_t(row) * stride + std::size_t(col) * size, format, type);
+    return true;
 }
 
 bool Parameter(GLenum name, GLint value) {
@@ -236,17 +238,18 @@ GLboolean APS5_VABI glIsTexture_nid_postfix(GLuint name) {
 void APS5_VABI glDeleteTextures_nid_postfix(GLsizei count, const GLuint* textures) {
     std::lock_guard lock(mutex);
     if (count < 0) { Error_nid_no_patch(0x0501); return; }
+    if (count == 0) return;
     auto& c = Current_nid_no_patch();
-    for (GLsizei i = 0; i < count; ++i) {
-        auto it = c.share->textures.find(textures[i]);
-        if (it == c.share->textures.end()) continue;
+    if (!ForEachGuestName(count, textures, [&](GLuint name) {
+        auto it = c.share->textures.find(name);
+        if (it == c.share->textures.end()) return;
         auto object = it->second;
         if (object) {
             for (auto& unit : c.textures) for (auto& binding : unit) if (binding == object) binding.reset();
             if (c.framebuffer) for (auto& attachment : c.framebuffer->attachments) if (attachment.texture == object) attachment = {};
         }
         c.share->textures.erase(it);
-    }
+    })) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glTexParameteri_nid_postfix(GLenum target, GLenum name, GLint value) {
@@ -263,8 +266,22 @@ void APS5_VABI glTexParameterf_nid_postfix(GLenum target, GLenum name, GLfloat v
     glTexParameteri_nid_postfix(target, name, static_cast<GLint>(std::round(value)));
 }
 
-void APS5_VABI glTexParameteriv_nid_postfix(GLenum target, GLenum name, const GLint* values) { glTexParameteri_nid_postfix(target, name, *values); }
-void APS5_VABI glTexParameterfv_nid_postfix(GLenum target, GLenum name, const GLfloat* values) { glTexParameterf_nid_postfix(target, name, *values); }
+void APS5_VABI glTexParameteriv_nid_postfix(GLenum target, GLenum name, const GLint* values) {
+    GLint value;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, values, sizeof(value));
+    errno = savedErrno;
+    if (!copied) { std::lock_guard lock(mutex); Error_nid_no_patch(0x0501); return; }
+    glTexParameteri_nid_postfix(target, name, value);
+}
+void APS5_VABI glTexParameterfv_nid_postfix(GLenum target, GLenum name, const GLfloat* values) {
+    GLfloat value;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, values, sizeof(value));
+    errno = savedErrno;
+    if (!copied) { std::lock_guard lock(mutex); Error_nid_no_patch(0x0501); return; }
+    glTexParameterf_nid_postfix(target, name, value);
+}
 
 void APS5_VABI glGetTexParameteriv_nid_postfix(GLenum target, GLenum name, GLint* values) {
     std::lock_guard lock(mutex);
@@ -273,7 +290,11 @@ void APS5_VABI glGetTexParameteriv_nid_postfix(GLenum target, GLenum name, GLint
     auto object = BoundTexture(index);
     auto it = object->parameters.find(name);
     if (it == object->parameters.end()) { Error_nid_no_patch(0x0500); return; }
-    *values = it->second;
+    const GLint result = it->second;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(values, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glGetTexParameterfv_nid_postfix(GLenum target, GLenum name, GLfloat* values) {
@@ -283,7 +304,11 @@ void APS5_VABI glGetTexParameterfv_nid_postfix(GLenum target, GLenum name, GLflo
     auto object = BoundTexture(index);
     auto it = object->parameters.find(name);
     if (it == object->parameters.end()) { Error_nid_no_patch(0x0500); return; }
-    *values = static_cast<GLfloat>(it->second);
+    const GLfloat result = static_cast<GLfloat>(it->second);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(values, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glTexImage2D_nid_postfix(GLenum target, GLint level, GLint internalFormat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels) {
@@ -297,7 +322,7 @@ void APS5_VABI glTexImage2D_nid_postfix(GLenum target, GLint level, GLint intern
     try {
         Image image;
         image.Allocate(width, height, format);
-        Upload(image, 0, 0, width, height, format, type, pixels, size);
+        if (!Upload(image, 0, 0, width, height, format, type, pixels, size)) { Error_nid_no_patch(0x0501); return; }
         BoundTexture(index)->images[{target, level}] = std::move(image);
     } catch (const std::bad_alloc&) { Error_nid_no_patch(0x0505); }
 }
@@ -314,7 +339,9 @@ void APS5_VABI glTexSubImage2D_nid_postfix(GLenum target, GLint level, GLint x, 
     if (it == texture->images.end()) { Error_nid_no_patch(0x0502); return; }
     if (!Region(it->second, level, x, y, width, height)) return;
     if (format != it->second.format) { Error_nid_no_patch(0x0502); return; }
-    Upload(it->second, x, y, width, height, format, type, pixels, size);
+    try {
+        if (!Upload(it->second, x, y, width, height, format, type, pixels, size)) Error_nid_no_patch(0x0501);
+    } catch (const std::bad_alloc&) { Error_nid_no_patch(0x0505); }
 }
 
 void APS5_VABI glGenRenderbuffers_nid_postfix(GLsizei count, GLuint* names) {
@@ -344,17 +371,18 @@ GLboolean APS5_VABI glIsRenderbuffer_nid_postfix(GLuint name) {
 void APS5_VABI glDeleteRenderbuffers_nid_postfix(GLsizei count, const GLuint* names) {
     std::lock_guard lock(mutex);
     if (count < 0) { Error_nid_no_patch(0x0501); return; }
+    if (count == 0) return;
     auto& c = Current_nid_no_patch();
-    for (GLsizei i = 0; i < count; ++i) {
-        auto it = c.share->renderbuffers.find(names[i]);
-        if (it == c.share->renderbuffers.end()) continue;
+    if (!ForEachGuestName(count, names, [&](GLuint name) {
+        auto it = c.share->renderbuffers.find(name);
+        if (it == c.share->renderbuffers.end()) return;
         auto object = it->second;
         if (object) {
             if (c.renderbuffer == object) c.renderbuffer.reset();
             if (c.framebuffer) for (auto& a : c.framebuffer->attachments) if (a.renderbuffer == object) a = {};
         }
         c.share->renderbuffers.erase(it);
-    }
+    })) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glRenderbufferStorage_nid_postfix(GLenum target, GLenum format, GLsizei width, GLsizei height) {
@@ -374,9 +402,10 @@ void APS5_VABI glGetRenderbufferParameteriv_nid_postfix(GLenum target, GLenum na
     auto object = Current_nid_no_patch().renderbuffer;
     if (!object) { Error_nid_no_patch(0x0502); return; }
     const auto& image = object->image;
-    if (name == 0x8d42) *value = image.width;
-    else if (name == 0x8d43) *value = image.height;
-    else if (name == 0x8d44) *value = image.format ? image.format : 0x8056;
+    GLint result;
+    if (name == 0x8d42) result = image.width;
+    else if (name == 0x8d43) result = image.height;
+    else if (name == 0x8d44) result = image.format ? image.format : 0x8056;
     else if (name >= 0x8d50 && name <= 0x8d55) {
         GLint bits = 0;
         if (name <= 0x8d53) {
@@ -385,8 +414,12 @@ void APS5_VABI glGetRenderbufferParameteriv_nid_postfix(GLenum target, GLenum na
             if (image.format == 0x8d62) bits = name == 0x8d53 ? 0 : name == 0x8d51 ? 6 : 5;
         } else if (name == 0x8d54 && image.format == 0x81a5) bits = 16;
         else if (name == 0x8d55 && image.format == 0x8d48) bits = 8;
-        *value = bits;
-    } else Error_nid_no_patch(0x0500);
+        result = bits;
+    } else { Error_nid_no_patch(0x0500); return; }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glGenFramebuffers_nid_postfix(GLsizei count, GLuint* names) {
@@ -416,13 +449,14 @@ GLboolean APS5_VABI glIsFramebuffer_nid_postfix(GLuint name) {
 void APS5_VABI glDeleteFramebuffers_nid_postfix(GLsizei count, const GLuint* names) {
     std::lock_guard lock(mutex);
     if (count < 0) { Error_nid_no_patch(0x0501); return; }
+    if (count == 0) return;
     auto& c = Current_nid_no_patch();
-    for (GLsizei i = 0; i < count; ++i) {
-        auto it = c.framebuffers.find(names[i]);
-        if (it == c.framebuffers.end()) continue;
+    if (!ForEachGuestName(count, names, [&](GLuint name) {
+        auto it = c.framebuffers.find(name);
+        if (it == c.framebuffers.end()) return;
         if (c.framebuffer == it->second) c.framebuffer.reset();
         c.framebuffers.erase(it);
-    }
+    })) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glFramebufferRenderbuffer_nid_postfix(GLenum target, GLenum attachment, GLenum renderbufferTarget, GLuint name) {
@@ -461,11 +495,16 @@ void APS5_VABI glGetFramebufferAttachmentParameteriv_nid_postfix(GLenum target, 
     std::lock_guard lock(mutex);
     auto* a = BoundAttachment(target, attachment);
     if (!a) return;
-    if (name == 0x8cd0) *value = a->texture ? 0x1702 : a->renderbuffer ? 0x8d41 : 0;
-    else if (name == 0x8cd1 && (a->texture || a->renderbuffer)) *value = a->texture ? a->texture->name : a->renderbuffer->name;
-    else if (name == 0x8cd2 && a->texture) *value = a->level;
-    else if (name == 0x8cd3 && a->texture) *value = a->face == 0x0de1 ? 0 : a->face;
-    else Error_nid_no_patch(0x0500);
+    GLint result;
+    if (name == 0x8cd0) result = a->texture ? 0x1702 : a->renderbuffer ? 0x8d41 : 0;
+    else if (name == 0x8cd1 && (a->texture || a->renderbuffer)) result = a->texture ? a->texture->name : a->renderbuffer->name;
+    else if (name == 0x8cd2 && a->texture) result = a->level;
+    else if (name == 0x8cd3 && a->texture) result = a->face == 0x0de1 ? 0 : a->face;
+    else { Error_nid_no_patch(0x0500); return; }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glClear_nid_postfix(GLenum mask) {
@@ -529,10 +568,17 @@ void APS5_VABI glReadPixels_nid_postfix(GLint x, GLint y, GLsizei width, GLsizei
     std::int64_t lastColumn = std::min<std::int64_t>(width, std::int64_t(image->width) - x);
     std::int64_t firstRow = std::max<std::int64_t>(0, -std::int64_t(y));
     std::int64_t lastRow = std::min<std::int64_t>(height, std::int64_t(image->height) - y);
-    for (auto row = firstRow; row < lastRow; ++row) for (auto col = firstColumn; col < lastColumn; ++col) {
-        auto color = Convert(image->color[std::size_t(y + row) * image->width + std::size_t(x + col)], image->format);
-        std::memcpy(bytes + std::size_t(row) * stride + std::size_t(col) * 4, color.data(), 4);
-    }
+    if (firstRow >= lastRow || firstColumn >= lastColumn) return;
+    const std::size_t span = std::size_t(lastColumn - firstColumn) * 4;
+    try {
+        std::vector<unsigned char> rows(std::size_t(lastRow - firstRow) * span);
+        for (auto row = firstRow; row < lastRow; ++row) for (auto col = firstColumn; col < lastColumn; ++col) {
+            auto color = Convert(image->color[std::size_t(y + row) * image->width + std::size_t(x + col)], image->format);
+            std::memcpy(rows.data() + std::size_t(row - firstRow) * span + std::size_t(col - firstColumn) * 4, color.data(), 4);
+        }
+        auto* first = bytes + std::size_t(firstRow) * stride + std::size_t(firstColumn) * 4;
+        if (!GuestCopyOutRows_nid_no_patch(first, stride, rows.data(), span, span, std::size_t(lastRow - firstRow))) Error_nid_no_patch(0x0501);
+    } catch (const std::bad_alloc&) { Error_nid_no_patch(0x0505); }
 }
 
 void APS5_VABI glCopyTexImage2D_nid_postfix(GLenum target, GLint level, GLenum format, GLint x, GLint y, GLsizei width, GLsizei height, GLint border) {

@@ -6,7 +6,19 @@ from pathlib import Path
 import sys
 import tempfile
 
-from pad_input import BUTTONS, next_sequence
+from pad_input import BUTTONS, COMMAND_FILE_BYTES, next_sequence
+
+
+def load_timeline(path):
+    def unique_fields(pairs):
+        fields = {}
+        for name, value in pairs:
+            if name in fields:
+                raise ValueError(f"duplicate timeline field {name!r}")
+            fields[name] = value
+        return fields
+
+    return json.loads(path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_fields)
 
 
 def integer(value, field, minimum, maximum):
@@ -61,7 +73,11 @@ def compile_timeline(document, sequence, repeat=1, gap_ms=200):
     rows = [f"APS5_PAD_TIMELINE 1 {sequence} {len(events) * repeat}"]
     for iteration in range(repeat):
         rows.extend(f"{start + iteration * period} {duration} {buttons}{axes}" for start, duration, buttons, axes in events)
-    return "\n".join(rows) + "\n"
+    text = "\n".join(rows) + "\n"
+    size = len(text.encode("ascii"))
+    if size > COMMAND_FILE_BYTES:
+        raise ValueError(f"timeline command file is {size} bytes; the runtime reads at most {COMMAND_FILE_BYTES}")
+    return text
 
 
 def queue_timeline(path, text):
@@ -103,7 +119,7 @@ def main(argv=None):
             raise ValueError(f"{args.path} is a directory")
         if not args.path.parent.is_dir():
             raise ValueError(f"directory does not exist: {args.path.parent}")
-        document = json.loads(args.timeline.read_text(encoding="utf-8-sig"))
+        document = load_timeline(args.timeline)
         text = compile_timeline(document, next_sequence(args.path), args.repeat, args.gap_ms)
         queue_timeline(args.path, text)
     except (OSError, ValueError, RecursionError) as error:

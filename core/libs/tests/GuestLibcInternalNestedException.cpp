@@ -46,11 +46,11 @@ int main() {
     _ZNSt16nested_exceptionD1Ev_nid_postfix(nullptr);
     _ZNSt16nested_exceptionD0Ev_nid_postfix(nullptr);
 
-    NestedExceptionLayout baseObj{};
+    NestedExceptionLayout baseObj{nullptr, GuestExceptionPointer(nullptr)};
     _ZNSt16nested_exceptionD2Ev_nid_postfix(&baseObj);
     Require(_ZNKSt15__exception_ptr13exception_ptr6_M_getEv_nid_postfix(&baseObj.ptr) == nullptr, "base destructor leaves pointer null");
 
-    NestedExceptionLayout completeObj{};
+    NestedExceptionLayout completeObj{nullptr, GuestExceptionPointer(nullptr)};
     _ZNSt16nested_exceptionD1Ev_nid_postfix(&completeObj);
     Require(_ZNKSt15__exception_ptr13exception_ptr6_M_getEv_nid_postfix(&completeObj.ptr) == nullptr, "complete destructor leaves pointer null");
 

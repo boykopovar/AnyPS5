@@ -9,6 +9,7 @@
 #include <cstring>
 #include <exception>
 #include <filesystem>
+#include <new>
 #include <source_location>
 #include <span>
 #include <vector>
@@ -17,6 +18,7 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <sys/resource.h>
 #endif
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -140,7 +142,25 @@ static void Check(const Api& api) {
     try { api.shape(font, nullptr, nullptr, 0); } catch (const std::exception&) { ++throws; }
     try { api.shape(nullptr, buffer, nullptr, 0); } catch (const std::exception&) { ++throws; }
     try { api.shape(font, buffer, nullptr, 1); } catch (const std::exception&) { ++throws; }
-    Require(throws == 3 && hb_buffer_get_length(buffer) == 1);
+    try { api.shape(font, buffer, reinterpret_cast<const HarfBuzz::Feature*>(0x10), 1); } catch (const std::exception&) { ++throws; }
+    Require(throws == 4 && hb_buffer_get_length(buffer) == 1);
+#ifndef _WIN32
+    rusage before{};
+    getrusage(RUSAGE_SELF, &before);
+#endif
+    bool refused = false;
+    try {
+        api.shape(font, buffer, reinterpret_cast<const HarfBuzz::Feature*>(0x10), 0x10000000u);
+    } catch (const std::bad_alloc&) {
+    } catch (const std::exception&) {
+        refused = true;
+    }
+    Require(refused && hb_buffer_get_length(buffer) == 1);
+#ifndef _WIN32
+    rusage after{};
+    getrusage(RUSAGE_SELF, &after);
+    Require(after.ru_maxrss - before.ru_maxrss < 64 * 1024);
+#endif
     api.destroyBuffer(buffer);
     api.destroyFont(font);
     api.destroyFace(face);

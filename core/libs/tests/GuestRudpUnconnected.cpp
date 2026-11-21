@@ -111,6 +111,7 @@ int main() {
     for (std::size_t size = 1; size <= 16; ++size) {
         Require(BufferStatusIs(bufferStatus, context, size, 0, 0), "the buffer status was not size zero bytes");
     }
+    Require(bufferStatus(context, reinterpret_cast<void*>(0x10), 16) == InvalidArgument, "an unwritable buffer status was not refused");
     Require(BufferStatusIs(bufferStatus, context, 17, InvalidArgument, 0x5a), "a buffer status of 17 bytes was taken");
 
     Require(sceRudpBind(context, 10, 0x1234, 1) == 0, "sceRudpBind failed");

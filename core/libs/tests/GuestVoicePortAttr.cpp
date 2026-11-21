@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -52,6 +53,12 @@ int main() {
         if (type == 5) param.device.type = 2;
         std::uint32_t port = 0;
         Require(sceVoiceCreatePort(&port, &param) == 0);
+        if (type == 0 || type >= 3) {
+            std::array<unsigned char, 0x40> info;
+            info.fill(0xcc);
+            Require(sceVoiceGetPortInfo(port, reinterpret_cast<VoicePortInfo*>(info.data())) == static_cast<std::int32_t>(0x804e080au));
+            for (std::size_t i = 0; i < info.size(); ++i) Require(info[i] == (i < 0x20 ? 0 : 0xcc));
+        }
         for (const auto attr : {1000, 1001, 1002, 1003, 2000, 2001, 2002}) {
             const auto size = attr == 1003 ? 2 : attr == 1002 || attr == 2001 ? 4 : 1;
             Require(sceVoiceGetPortAttr(port, attr, buffer.data() + 1, size + 1) == invalidArgument);
@@ -60,6 +67,8 @@ int main() {
                 Require(sceVoiceGetPortAttr(port, attr, buffer.data() + 1, size) == 0);
                 Require(buffer[0] == original[0] && buffer[1] == 0 && buffer[2] == original[2]);
                 Require(buffer[3] == original[3] && buffer[4] == original[4] && buffer[5] == original[5]);
+                errno = 42;
+                Require(sceVoiceGetPortAttr(port, attr, reinterpret_cast<void*>(0x10), size) == invalidArgument && errno == 42);
                 buffer = original;
             } else if (type == (attr == 1003 ? 5 : 0)) {
                 Require(Throws([&] { sceVoiceGetPortAttr(port, attr, buffer.data() + 1, size); }, "device attribute backend"));

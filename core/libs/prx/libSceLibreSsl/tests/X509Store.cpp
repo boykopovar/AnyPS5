@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -201,6 +202,22 @@ void Hosts() {
     Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, "c.d", 0) == 1, "a name after clearing");
     Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, nullptr, 5) == 1 && param->id->hosts == nullptr, "a null name clears the list");
     Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, nullptr, 0) == 1 && param->id->hosts == nullptr, "clearing an empty list");
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, "kept.example", 0) == 1, "a name before unreadable ones");
+    errno = 71;
+    const auto* unreadable = reinterpret_cast<const char*>(0x10);
+    RequireInvalidArgument([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(param, unreadable, 0); }, "an unreadable terminated name");
+    RequireInvalidArgument([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(param, unreadable, 4); }, "an unreadable counted name");
+    Require(errno == 71, "an unreadable name keeps errno");
+    Require(HostCount(param) == 1 && std::strcmp(Host(param, 0), "kept.example") == 0, "an unreadable name keeps the list");
+    static char longName[5001];
+    std::memset(longName, 'a', 5000);
+    longName[4999] = 'z';
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, longName, 0) == 1 && std::strcmp(Host(param, 0), longName) == 0, "a terminated name longer than a page");
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, longName, 4500) == 1 && std::strlen(Host(param, 0)) == 4500 && std::strncmp(Host(param, 0), longName, 4500) == 0,
+        "a counted name longer than a page");
+    longName[4400] = '\0';
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, longName, 4500) == 0, "an embedded NUL past the first page is refused");
+    Require(std::strlen(Host(param, 0)) == 4500 && std::strncmp(Host(param, 0), longName, 4400) == 0, "a refused long name keeps the list");
     Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, "last.example", 0) == 1, "a name that the store frees");
     RequireInvalidArgument([] { X509_VERIFY_PARAM_set1_host_nid_postfix(nullptr, "a", 0); }, "null verify parameters");
     auto* id = param->id;

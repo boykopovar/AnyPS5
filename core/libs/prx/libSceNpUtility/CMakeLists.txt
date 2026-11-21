@@ -13,4 +13,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_np_utility_offline PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpUtility>")
     endif()
+    add_test_executable(guest_np_utility_argument_checks_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpUtilityArgumentChecks.cpp)
+    target_include_directories(guest_np_utility_argument_checks_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_utility_argument_checks_tests PRIVATE libSceNpUtility)
+    configure_windows_unwind(guest_np_utility_argument_checks_tests)
+    add_test(NAME guest_np_utility_argument_checks COMMAND guest_np_utility_argument_checks_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_utility_argument_checks PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpUtility>")
+    endif()
 endif()

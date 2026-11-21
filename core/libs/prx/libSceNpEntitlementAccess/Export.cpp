@@ -5,6 +5,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -23,6 +24,20 @@ static constexpr uint32_t SKU_FLAG_FULL = 3;
 static constexpr std::int32_t USER_ID_INVALID = -1;
 
 namespace {
+
+bool CopyGuestInPreservingErrno_nid_no_patch(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyGuestOutPreservingErrno_nid_no_patch(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return copied;
+}
 
 const std::vector<NpEntitlementAccessAddcontEntitlementInfo>& OwnedAddons() {
     static const auto owned = [] {
@@ -81,13 +96,16 @@ extern "C" {
 int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfo(uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label, NpEntitlementAccessAddcontEntitlementInfo* info) {
     (void)service_label;
     if (!entitlement_label || !info) return SCE_NP_ENTITLEMENT_ACCESS_ERROR_PARAMETER;
-    for (const auto& addon : OwnedAddons()) {
-        if (std::strncmp(addon.entitlement_label.data, entitlement_label->data, sizeof(entitlement_label->data)) == 0) {
-            *info = addon;
+    const auto& owned = OwnedAddons();
+    NpUnifiedEntitlementLabel label{};
+    if (!CopyGuestInPreservingErrno_nid_no_patch(&label, entitlement_label, sizeof(label.data))) return SCE_NP_ENTITLEMENT_ACCESS_ERROR_PARAMETER;
+    for (const auto& addon : owned) {
+        if (std::strncmp(addon.entitlement_label.data, label.data, sizeof(label.data)) == 0) {
+            if (!CopyGuestOutPreservingErrno_nid_no_patch(info, &addon, sizeof(addon))) return SCE_NP_ENTITLEMENT_ACCESS_ERROR_PARAMETER;
             return 0;
         }
     }
-    ReportUnlisted(std::string(entitlement_label->data, strnlen(entitlement_label->data, sizeof(entitlement_label->data))));
+    ReportUnlisted(std::string(label.data, strnlen(label.data, sizeof(label.data))));
     return SCE_NP_ENTITLEMENT_ACCESS_ERROR_NOT_FOUND;
 }
 
@@ -95,15 +113,19 @@ int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfoList(uint32_t servi
     (void)service_label;
     if (!hit_num || (!list && list_num != 0)) return SCE_NP_ENTITLEMENT_ACCESS_ERROR_PARAMETER;
     const auto& owned = OwnedAddons();
-    *hit_num = static_cast<uint32_t>(owned.size());
-    std::copy_n(owned.begin(), std::min<std::size_t>(list_num, owned.size()), list);
+    const auto hits = static_cast<uint32_t>(owned.size());
+    if (!CopyGuestOutPreservingErrno_nid_no_patch(hit_num, &hits, sizeof(hits))) return SCE_NP_ENTITLEMENT_ACCESS_ERROR_PARAMETER;
+    const std::size_t count = std::min<std::size_t>(list_num, owned.size());
+    if (count != 0 && !CopyGuestOutPreservingErrno_nid_no_patch(list, owned.data(), count * sizeof(owned.front()))) {
+        return SCE_NP_ENTITLEMENT_ACCESS_ERROR_PARAMETER;
+    }
     return 0;
 }
 
 int APS5_VABI sceNpEntitlementAccessGetSkuFlag(uint32_t* sku_flag) {
     if (!sku_flag) return SCE_NP_ENTITLEMENT_ACCESS_ERROR_PARAMETER;
-    *sku_flag = SKU_FLAG_FULL;
-    return 0;
+    const std::uint32_t value = SKU_FLAG_FULL;
+    return CopyGuestOutPreservingErrno_nid_no_patch(sku_flag, &value, sizeof(value)) ? 0 : SCE_NP_ENTITLEMENT_ACCESS_ERROR_PARAMETER;
 }
 
 int APS5_VABI sceNpEntitlementAccessGetEntitlementKey(
@@ -124,8 +146,15 @@ int APS5_VABI sceNpEntitlementAccessInitialize(const NpEntitlementAccessInitPara
     std::lock_guard lock(mutex);
     if (initialized) return errorAlreadyInitialized;
     if (init_param == nullptr || boot_param == nullptr) return errorParameter;
-    if (!std::all_of(std::begin(init_param->reserved), std::end(init_param->reserved), [](char value) { return value == 0; })) return errorParameter;
-    if (!std::all_of(std::begin(boot_param->reserved), std::end(boot_param->reserved), [](char value) { return value == 0; })) return errorParameter;
+    NpEntitlementAccessInitParam localInit;
+    NpEntitlementAccessBootParam localBoot;
+    const int savedErrno = errno;
+    const bool copiedInit = GuestCopyIn_nid_no_patch(&localInit, init_param, sizeof(localInit));
+    const bool copiedBoot = GuestCopyIn_nid_no_patch(&localBoot, boot_param, sizeof(localBoot));
+    errno = savedErrno;
+    if (!copiedInit || !copiedBoot) return errorParameter;
+    if (!std::all_of(std::begin(localInit.reserved), std::end(localInit.reserved), [](char value) { return value == 0; })) return errorParameter;
+    if (!std::all_of(std::begin(localBoot.reserved), std::end(localBoot.reserved), [](char value) { return value == 0; })) return errorParameter;
     initialized = true;
     return 0;
 }
@@ -176,15 +205,15 @@ int APS5_VABI sceNpEntitlementAccessRequestUnifiedEntitlementInfo(std::int32_t u
 int APS5_VABI sceNpEntitlementAccessGetPftFlag(uint32_t* flag) {
     constexpr int errorParameter = static_cast<int>(0x817D0002);
     if (!flag) return errorParameter;
-    *flag = 0;
-    return 0;
+    const std::uint32_t value = 0;
+    return CopyGuestOutPreservingErrno_nid_no_patch(flag, &value, sizeof(value)) ? 0 : errorParameter;
 }
 
 int APS5_VABI sceNpEntitlementAccessGetGameTrialsFlag(uint32_t* flag) {
     constexpr int errorParameter = static_cast<int>(0x817D0002);
     if (!flag) return errorParameter;
-    *flag = 0;
-    return 0;
+    const std::uint32_t value = 0;
+    return CopyGuestOutPreservingErrno_nid_no_patch(flag, &value, sizeof(value)) ? 0 : errorParameter;
 }
 
 int APS5_VABI sceNpEntitlementAccessPollServiceEntitlementInfoList(std::int64_t requestId, std::int32_t* result, NpEntitlementAccessServiceInfo* infos, std::uint32_t capacity, std::int32_t* firstResult, std::int32_t* secondResult, std::int32_t* thirdResult) {

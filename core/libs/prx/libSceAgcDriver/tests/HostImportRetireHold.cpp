@@ -6,6 +6,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -41,6 +42,8 @@ struct MockDevice {
     std::set<VkBuffer> buffers;
     std::map<VkBuffer, VkDeviceSize> sizes;
     std::set<VkDeviceMemory> memories;
+    std::map<VkDeviceMemory, VkDeviceSize> importedMemories;
+    std::map<VkDeviceMemory, std::vector<std::byte>> contents;
     std::uint64_t nextAddress = 0x500000000ull;
 };
 
@@ -126,15 +129,28 @@ VKAPI_ATTR void VKAPI_CALL mockGetBufferMemoryRequirements(VkDevice, VkBuffer bu
     requirements->memoryTypeBits = 1;
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL mockAllocateMemory(VkDevice, const VkMemoryAllocateInfo*, const VkAllocationCallbacks*, VkDeviceMemory* memory) {
+VKAPI_ATTR VkResult VKAPI_CALL mockAllocateMemory(VkDevice, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks*, VkDeviceMemory* memory) {
     *memory = reinterpret_cast<VkDeviceMemory>(mock.next++);
     mock.memories.insert(*memory);
+    mock.contents[*memory].resize(static_cast<std::size_t>(info->allocationSize));
+    for (const auto* link = static_cast<const VkBaseInStructure*>(info->pNext); link != nullptr; link = link->pNext) {
+        if (link->sType == VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT) mock.importedMemories[*memory] = info->allocationSize;
+    }
     return VK_SUCCESS;
 }
 
 VKAPI_ATTR void VKAPI_CALL mockFreeMemory(VkDevice, VkDeviceMemory memory, const VkAllocationCallbacks*) {
     mock.memories.erase(memory);
+    mock.importedMemories.erase(memory);
+    mock.contents.erase(memory);
 }
+
+VKAPI_ATTR VkResult VKAPI_CALL mockMapMemory(VkDevice, VkDeviceMemory memory, VkDeviceSize offset, VkDeviceSize, VkMemoryMapFlags, void** data) {
+    *data = mock.contents.at(memory).data() + offset;
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL mockUnmapMemory(VkDevice, VkDeviceMemory) {}
 
 VKAPI_ATTR VkResult VKAPI_CALL mockBindBufferMemory(VkDevice, VkBuffer, VkDeviceMemory, VkDeviceSize) {
     return VK_SUCCESS;
@@ -173,6 +189,8 @@ PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
         {"vkGetBufferMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(mockGetBufferMemoryRequirements)},
         {"vkAllocateMemory", reinterpret_cast<PFN_vkVoidFunction>(mockAllocateMemory)},
         {"vkFreeMemory", reinterpret_cast<PFN_vkVoidFunction>(mockFreeMemory)},
+        {"vkMapMemory", reinterpret_cast<PFN_vkVoidFunction>(mockMapMemory)},
+        {"vkUnmapMemory", reinterpret_cast<PFN_vkVoidFunction>(mockUnmapMemory)},
         {"vkBindBufferMemory", reinterpret_cast<PFN_vkVoidFunction>(mockBindBufferMemory)},
         {"vkGetBufferDeviceAddressKHR", reinterpret_cast<PFN_vkVoidFunction>(mockGetBufferDeviceAddress)},
     };
@@ -184,6 +202,19 @@ Context mockContext() {
     static const auto device = reinterpret_cast<VkDevice>(mock.next++);
     static const auto queue = reinterpret_cast<VkQueue>(mock.next++);
     Context context{};
+    context.bufferDeviceAddress = true;
+    context.memory.memoryTypeCount = 1;
+    context.memory.memoryTypes[0].propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    context.memory.memoryHeapCount = 1;
+    context.limits.nonCoherentAtomSize = 64;
+    context.limits.minStorageBufferOffsetAlignment = 16;
+    context.limits.minMemoryMapAlignment = 64;
+    context.limits.maxStorageBufferRange = 0xffffffffu;
+    context.limits.maxMemoryAllocationCount = 4096;
+    context.limits.bufferImageGranularity = 1;
+    context.limits.minUniformBufferOffsetAlignment = 16;
+    context.memory.memoryHeaps[0].size = std::uint64_t{1} << 34u;
+    context.memory.memoryHeaps[0].flags = VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
     context.device = device;
     context.queue = queue;
     context.deviceProc = mockProc;
@@ -198,9 +229,9 @@ struct Heap {
 
     Heap() {
 #ifdef _WIN32
-        base = static_cast<std::byte*>(VirtualAlloc(nullptr, 2 * RangeBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        base = static_cast<std::byte*>(VirtualAlloc(nullptr, 4 * RangeBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 #else
-        base = static_cast<std::byte*>(std::aligned_alloc(Alignment, 2 * RangeBytes));
+        base = static_cast<std::byte*>(std::aligned_alloc(Alignment, 4 * RangeBytes));
 #endif
         if (base == nullptr) throw std::runtime_error("cannot allocate the test heap");
         GuestAllocations::Mutation mutation;
@@ -247,6 +278,13 @@ struct ActiveRecorder {
         recorder.reset();
     }
 };
+
+void PromoteThroughBuild(const Context& context) {
+    GuestBufferMemory promoting(context);
+    promoting.AcquireRegistered();
+    promoting.Upload(true);
+    promoting.WriteBack();
+}
 
 void WindowPromotionOutlivesTheHold() {
     struct RestoreWindow {
@@ -297,9 +335,11 @@ void IdleRetireOutlivesTheHold() {
         retired = taken->buffer;
         Expect(recorder.Idle(), "the recorder is not idle before the drop");
         heap.Grow();
+        PromoteThroughBuild(context);
         const auto* grown = HostImportFor(context, heap.Address(RangeBytes), 4096);
-        Expect(grown != nullptr && grown->buffer != retired && grown->base == heap.Address() && grown->bytes == 2 * RangeBytes, "the grown run was not imported as one import replacing the first");
+        Expect(grown != nullptr && grown->buffer != retired && grown->base == heap.Address() && grown->bytes == 2 * RangeBytes, "the next build did not import the grown run as one import replacing the first");
         Expect(Live(retired), "an import dropped with the recorder idle was destroyed at once, while the hold that took it can still record with it");
+        Expect(HostImportCounters().retiredPinnedBytes == RangeBytes, "an import dropped with the recorder active but idle was not counted as pinned, although its hold keeps it");
         if (!Live(retired)) return;
         Expect(taken->buffer == retired && taken->base == heap.Address(), "the dropped import's entry changed under the hold that took it");
         recorder.Commands();
@@ -335,7 +375,8 @@ void BusyRetireOutlivesALaterBatch() {
         if (taken == nullptr) return;
         retired = taken->buffer;
         heap.Grow();
-        Expect(HostImportFor(context, heap.Address(RangeBytes), 4096) != nullptr, "the grown run was not imported");
+        PromoteThroughBuild(context);
+        Expect(HostImportFor(context, heap.Address(RangeBytes), 4096) != nullptr, "the next build did not import the grown run");
         mock.submitted.clear();
         recorder.Submit();
         recorder.Commands();
@@ -371,10 +412,161 @@ void RecentImportFollowsReplacement() {
     Expect(HostImportFor(context, heap.Address(), 4096) == first, "a repeated lookup did not find the same import");
     const auto retired = first->buffer;
     heap.Grow();
+    PromoteThroughBuild(context);
     const auto* grown = HostImportFor(context, heap.Address(RangeBytes), 4096);
-    Expect(grown != nullptr && grown->buffer != retired, "the grown run was not imported as a new import");
+    Expect(grown != nullptr && grown->buffer != retired, "the next build did not import the grown run as a new import");
     if (grown == nullptr) return;
     Expect(HostImportFor(context, heap.Address(), 4096) == grown, "a lookup after the replacement served the retired import instead of the one that replaced it");
+}
+
+
+std::uint64_t PhysicalImportBytes() {
+    std::uint64_t bytes = 0;
+    for (const auto& [memory, size] : mock.importedMemories) bytes += size;
+    return bytes;
+}
+
+struct RestoreBudget {
+    ~RestoreBudget() { SetHostImportBudget(0); }
+};
+
+void PinnedBytesBoundTheBudget() {
+    constexpr std::uint64_t budget = 8 * RangeBytes;
+    const RestoreBudget restore;
+    const auto context = mockContext();
+    ClearHostImports(context.device);
+    const auto baseline = PhysicalImportBytes();
+    Heap heaps[3];
+    ActiveRecorder active;
+    auto& recorder = *active.recorder;
+    SetHostImportBudget(budget);
+    const auto promoted = [&](Heap& heap) { return ExistingHostImportFor(context, heap.Address(), 2 * RangeBytes) != nullptr; };
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Expect(HostImportCounters().retiredPinnedBytes == 0, "bytes were counted as retired and pinned before any import retired");
+        for (auto& heap : heaps) Expect(HostImportFor(context, heap.Address(), 4096) != nullptr, "a first range was not imported");
+        for (std::size_t index = 0; index < 2; ++index) {
+            heaps[index].Grow();
+            PromoteThroughBuild(context);
+            Expect(HostImportFor(context, heaps[index].Address(RangeBytes), 4096) != nullptr && promoted(heaps[index]), "a grown run that fits the budget was not imported as one import");
+        }
+        auto counts = HostImportCounters();
+        Expect(counts.retiredPinnedBytes == 2 * RangeBytes, "the replaced imports held by the recorder were not counted as retired and pinned: " + std::to_string(counts.retiredPinnedBytes));
+        Expect(PhysicalImportBytes() - baseline == counts.liveBytes + counts.retiredPinnedBytes, "the live and retired bytes differ from the memory the driver holds");
+        heaps[2].Grow();
+        PromoteThroughBuild(context);
+        static_cast<void>(HostImportFor(context, heaps[2].Address(RangeBytes), 4096));
+        counts = HostImportCounters();
+        Expect(!promoted(heaps[2]), "a grown run that fits the budget only when the imports it replaces and the retired imports are not counted was imported");
+        Expect(counts.retiredPinnedBytes == 2 * RangeBytes && PhysicalImportBytes() - baseline == counts.liveBytes + counts.retiredPinnedBytes, "the counts differ from the memory the driver holds after the refused promotion");
+        Expect(PhysicalImportBytes() - baseline <= budget, "the imports pin more than the budget");
+        recorder.Commands();
+        recorder.Submit();
+    }
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Expect(HostImportCounters().retiredPinnedBytes == 2 * RangeBytes, "a hold ending released the retired imports while their batch is in flight");
+        PromoteThroughBuild(context);
+        Expect(!promoted(heaps[2]), "a build promoted the run while the retired imports are still pinned");
+        recorder.Sync();
+    }
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Expect(HostImportCounters().retiredPinnedBytes == 0, "the retired bytes were not released when the recorder completed");
+        Expect(!promoted(heaps[2]), "the run was promoted before a build");
+        const auto before = AddressSpaceCounters().rebuiltGrowth;
+        PromoteThroughBuild(context);
+        Expect(promoted(heaps[2]), "the run refused for pinned bytes was not promoted by the next build after the recorder released them, with no registry or budget change");
+        Expect(AddressSpaceCounters().rebuiltGrowth == before + 1, "the release did not wake the cached address space as a growth rebuild");
+        Expect(PhysicalImportBytes() - baseline <= budget, "the imports pin more than the budget after the release");
+    }
+    ClearHostImports(context.device);
+}
+
+void RepeatedPromotionsStayInTheBudget() {
+    constexpr std::uint64_t budget = 4 * RangeBytes;
+    const RestoreBudget restore;
+    const auto context = mockContext();
+    ClearHostImports(context.device);
+    const auto baseline = PhysicalImportBytes();
+    Heap heaps[3];
+    ActiveRecorder active;
+    auto& recorder = *active.recorder;
+    SetHostImportBudget(budget);
+    std::uint64_t peak = 0;
+    std::uint64_t promoted = 0;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        for (auto& heap : heaps) {
+            const auto* taken = HostImportFor(context, heap.Address(), 4096);
+            peak = std::max(peak, PhysicalImportBytes() - baseline);
+            if (taken == nullptr) continue;
+            heap.Grow();
+            PromoteThroughBuild(context);
+            const auto* grown = HostImportFor(context, heap.Address(RangeBytes), 4096);
+            if (grown != nullptr && grown->bytes == 2 * RangeBytes) ++promoted;
+            peak = std::max(peak, PhysicalImportBytes() - baseline);
+        }
+        recorder.Commands();
+        recorder.Submit();
+    }
+    Expect(peak <= budget, "repeated promotions with their old imports held pinned " + std::to_string(peak) + " bytes of a " + std::to_string(budget) + " byte budget");
+    Expect(promoted >= 1 && promoted < 3, "the promotions did not fill the budget and then stay queued: " + std::to_string(promoted) + " of 3 promoted");
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        recorder.Sync();
+    }
+    Expect(HostImportCounters().retiredPinnedBytes == 0, "the retired bytes were not all released");
+    ClearHostImports(context.device);
+}
+
+void RetiredBytesReleaseOnce() {
+    const auto context = mockContext();
+    ClearHostImports(context.device);
+    Heap heap;
+    ActiveRecorder active;
+    auto& recorder = *active.recorder;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Expect(HostImportFor(context, heap.Address(), 4096) != nullptr, "the first range was not imported");
+        heap.Grow();
+        PromoteThroughBuild(context);
+        Expect(HostImportFor(context, heap.Address(RangeBytes), 4096) != nullptr, "the grown run was not imported");
+        Expect(HostImportCounters().retiredPinnedBytes == RangeBytes, "the replaced import was not counted as retired and pinned");
+        recorder.Commands();
+        recorder.Submit();
+    }
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        ClearHostImports(context.device);
+        Expect(HostImportCounters().retiredPinnedBytes == RangeBytes && HostImportCounters().liveBytes == 0, "dropping the live imports released a retired import a batch still holds");
+        recorder.Sync();
+        recorder.Sync();
+        recorder.Reap();
+    }
+    Expect(HostImportCounters().retiredPinnedBytes == 0, "a retired import was released more or fewer than once: " + std::to_string(HostImportCounters().retiredPinnedBytes) + " bytes remain");
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        ClearHostImports(context.device);
+        recorder.Sync();
+    }
+    Expect(HostImportCounters().retiredPinnedBytes == 0, "an import dropped after its holder released changed the retired bytes");
+}
+
+void ParkedImportsStayPinned() {
+    const auto context = mockContext();
+    ClearHostImports(context.device);
+    Heap heap;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Expect(HostImportFor(context, heap.Address(), 4096) != nullptr, "the first range was not imported");
+        auto elsewhere = context;
+        elsewhere.device = reinterpret_cast<VkDevice>(mock.next++);
+        static_cast<void>(HostImportFor(elsewhere, heap.Address(), 4096));
+        Expect(HostImportCounters().retiredPinnedBytes >= RangeBytes, "an import parked by a device change was not counted as pinned");
+        ClearHostImports(context.device);
+    }
+    Expect(HostImportCounters().retiredPinnedBytes == 0, "a parked import destroyed by ClearHostImports left its bytes counted");
 }
 
 }
@@ -392,6 +584,10 @@ int main() {
         BusyRetireOutlivesALaterBatch();
         AgcDriver::Tests::RunHostImportFailureTests(mockContext(), false);
         RecentImportFollowsReplacement();
+        PinnedBytesBoundTheBudget();
+        RepeatedPromotionsStayInTheBudget();
+        RetiredBytesReleaseOnce();
+        ParkedImportsStayPinned();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

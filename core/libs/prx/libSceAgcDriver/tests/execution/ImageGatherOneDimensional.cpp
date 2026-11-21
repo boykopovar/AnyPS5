@@ -25,6 +25,7 @@ constexpr std::uint32_t Format8888UNorm = 56;
 constexpr std::uint32_t Type1D = 8;
 constexpr std::uint32_t ClampWrap = 0;
 constexpr std::uint32_t ClampEdge = 2;
+constexpr std::uint32_t ClampBorder = 6;
 
 alignas(256) std::array<std::uint32_t, Threads * 4> Input{};
 alignas(256) std::array<float, Threads * 4> Output{};
@@ -36,6 +37,11 @@ alignas(256) constexpr std::array<std::uint32_t, 10> Gather1D{
 };
 alignas(256) constexpr std::array<std::uint32_t, 10> Gather1DOffset{
     0x34020084, 0xe0381000, 0x80000201, 0xbf8c3f70, 0xf15c0100, 0x00820602, 0xbf8c3f70, 0xe0781000,
+    0x80010601, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 10> Gather2DOnLine{
+    0x34020084, 0xe0381000, 0x80000201, 0xbf8c3f70, 0xf11c0108, 0x00820603, 0xbf8c3f70, 0xe0781000,
     0x80010601, 0xbf810000,
 };
 
@@ -63,7 +69,7 @@ std::array<std::uint32_t, 8> TextureDescriptor() {
 }
 
 std::array<std::uint32_t, 4> SamplerDescriptor(std::uint32_t clamp) {
-    return {clamp | (ClampEdge << 3u) | (ClampEdge << 6u), 0u, 0u, 0u};
+    return {clamp | (clamp << 3u) | (clamp << 6u), 0u, 0u, 0u};
 }
 
 std::uint8_t Red(std::uint32_t x) {
@@ -89,13 +95,15 @@ void FillInput() {
         const auto offset = static_cast<std::int32_t>(tid % 11u) - 5;
         Input[tid * 4u + 0u] = (static_cast<std::uint32_t>(offset) & 0x3fu) | (tid % 3u == 0u ? 0x3f00u : 0u);
         Input[tid * 4u + 1u] = std::bit_cast<std::uint32_t>(-0.3f + 0.05f * static_cast<float>(tid));
-        Input[tid * 4u + 2u] = 0u;
+        const std::array<float, 4> v{-1.0f, 0.0f, 0.5f, 2.0f};
+        Input[tid * 4u + 2u] = std::bit_cast<std::uint32_t>(v[tid % v.size()]);
         Input[tid * 4u + 3u] = 0u;
     }
 }
 
 std::uint32_t Texel(int x, std::uint32_t clamp) {
     const int size = static_cast<int>(Width);
+    if (clamp == ClampBorder && (x < 0 || x >= size)) return 0;
     const int address = clamp == ClampEdge ? std::clamp(x, 0, size - 1) : ((x % size) + size) % size;
     return Red(static_cast<std::uint32_t>(address));
 }
@@ -161,6 +169,10 @@ int main() {
         Run(*device, {Gather1D, false, ClampWrap, "1D gather, wrap"});
         Run(*device, {Gather1DOffset, true, ClampEdge, "1D gather with offsets, clamp to edge"});
         Run(*device, {Gather1DOffset, true, ClampWrap, "1D gather with offsets, wrap"});
+        Run(*device, {Gather1D, false, ClampBorder, "1D gather, clamp to border"});
+        Run(*device, {Gather2DOnLine, false, ClampEdge, "2D gather on a 1D texture, clamp to edge"});
+        Run(*device, {Gather2DOnLine, false, ClampWrap, "2D gather on a 1D texture, wrap"});
+        Run(*device, {Gather2DOnLine, false, ClampBorder, "2D gather on a 1D texture, clamp to border"});
         std::puts("image 1D gather tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -8,6 +8,7 @@ extern "C" {
 
 bool APS5_VABI WKContextConfigurationAlwaysKeepAndReuseSwappedProcesses(const void* configuration);
 const void* APS5_VABI WKContextConfigurationCopyApplicationCacheDirectory(const void* configuration);
+const void* APS5_VABI WKContextConfigurationCopyCookieStoragePath(const void* configuration);
 const void* APS5_VABI WKContextConfigurationCopyCustomClassesForParameterCoder(const void* configuration);
 const void* APS5_VABI WKContextConfigurationCopyDiskCacheDirectory(const void* configuration);
 const void* APS5_VABI WKContextConfigurationCopyIndexedDBDatabaseDirectory(const void* configuration);
@@ -27,8 +28,10 @@ std::int32_t APS5_VABI WKContextConfigurationGetUserId(const void* configuration
 bool APS5_VABI WKContextConfigurationIgnoreSynchronousMessagingTimeoutsForTesting(const void* configuration);
 bool APS5_VABI WKContextConfigurationPrewarmsProcessesAutomatically(const void* configuration);
 bool APS5_VABI WKContextConfigurationProcessSwapsOnNavigation(const void* configuration);
+bool APS5_VABI WKContextConfigurationProcessSwapsOnWindowOpenWithOpener(const void* configuration);
 void APS5_VABI WKContextConfigurationSetAlwaysKeepAndReuseSwappedProcesses(const void* configuration, bool keepAndReuse);
 void APS5_VABI WKContextConfigurationSetApplicationCacheDirectory(const void* configuration, const void* applicationCacheDirectory);
+void APS5_VABI WKContextConfigurationSetCookieStoragePath(const void* configuration, const void* cookieStoragePath);
 void APS5_VABI WKContextConfigurationSetCustomClassesForParameterCoder(const void* configuration, const void* classesForCoder);
 void APS5_VABI WKContextConfigurationSetDiskCacheDirectory(const void* configuration, const void* diskCacheDirectory);
 void APS5_VABI WKContextConfigurationSetDiskCacheSizeOverride(const void* configuration, std::int64_t size);
@@ -42,6 +45,7 @@ void APS5_VABI WKContextConfigurationSetNetworkProcessPath(const void* configura
 void APS5_VABI WKContextConfigurationSetOverrideLanguages(const void* configuration, const void* overrideLanguages);
 void APS5_VABI WKContextConfigurationSetPrewarmsProcessesAutomatically(const void* configuration, bool prewarms);
 void APS5_VABI WKContextConfigurationSetProcessSwapsOnNavigation(const void* configuration, bool swaps);
+void APS5_VABI WKContextConfigurationSetProcessSwapsOnWindowOpenWithOpener(const void* configuration, bool processSwapsOnWindowOpenWithOpener);
 void APS5_VABI WKContextConfigurationSetResourceLoadStatisticsDirectory(const void* configuration, const void* resourceLoadStatisticsDirectory);
 void APS5_VABI WKContextConfigurationSetShouldCaptureAudioInUIProcess(const void* configuration, bool allowed);
 void APS5_VABI WKContextConfigurationSetShouldConfigureJSCForTesting(const void* configuration, bool value);

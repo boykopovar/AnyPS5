@@ -37,7 +37,7 @@ std::string Text(const String& string) {
 }
 
 ContentType Construct(const char* text) {
-    ContentType value{};
+    ContentType value;
     String string = Make(text);
     _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(&value, &string);
     return value;
@@ -79,23 +79,23 @@ void TestConstructors() {
     const unsigned before = impl->refCount;
 
     {
-        ContentType copied{};
+        ContentType copied;
         _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(&copied, &original);
         Require(copied.type.impl == impl);
         Require(impl->refCount == before + 2);
-        ContentType copiedBase{};
+        ContentType copiedBase;
         _ZN7WebCore11ContentTypeC2ERKN3WTF6StringE(&copiedBase, &original);
         Require(copiedBase.type.impl == impl);
         Require(impl->refCount == before + 4);
 
         String source = original;
-        ContentType moved{};
+        ContentType moved;
         _ZN7WebCore11ContentTypeC1EON3WTF6StringE(&moved, &source);
         Require(source.impl == nullptr);
         Require(moved.type.impl == impl);
         Require(impl->refCount == before + 6);
         String sourceBase = original;
-        ContentType movedBase{};
+        ContentType movedBase;
         _ZN7WebCore11ContentTypeC2EON3WTF6StringE(&movedBase, &sourceBase);
         Require(sourceBase.impl == nullptr);
         Require(movedBase.type.impl == impl);
@@ -104,9 +104,9 @@ void TestConstructors() {
     Require(impl->refCount == before);
 
     RequireThrows([] { String s = Make("a"); _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(nullptr, &s); });
-    RequireThrows([] { ContentType c{}; _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(&c, nullptr); });
+    RequireThrows([] { ContentType c; _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(&c, nullptr); });
     RequireThrows([] { String s = Make("a"); _ZN7WebCore11ContentTypeC1EON3WTF6StringE(nullptr, &s); });
-    RequireThrows([] { ContentType c{}; _ZN7WebCore11ContentTypeC1EON3WTF6StringE(&c, nullptr); });
+    RequireThrows([] { ContentType c; _ZN7WebCore11ContentTypeC1EON3WTF6StringE(&c, nullptr); });
 }
 
 void TestContainerType() {
@@ -119,13 +119,13 @@ void TestContainerType() {
     Require(Container("") == "");
     Require(Container("a;b;c") == "a");
 
-    ContentType none{};
+    ContentType none;
     String result = _ZNK7WebCore11ContentType13containerTypeEv(&none);
     Require(result.impl == nullptr);
     RequireThrows([] { String r = _ZNK7WebCore11ContentType13containerTypeEv(nullptr); });
 
     const char16_t wide[] = u"audio/éx ; q=1";
-    ContentType type{};
+    ContentType type;
     String string = Make16(wide, sizeof(wide) / sizeof(wide[0]) - 1);
     _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(&type, &string);
     String container = _ZNK7WebCore11ContentType13containerTypeEv(&type);
@@ -170,7 +170,7 @@ void TestParameterAbsent() {
     Require(Parameter("codecs=avc1", "codecs") == "<null>");
     Require(Parameter("video/mp4;codecs", "codecs") == "<null>");
 
-    ContentType none{};
+    ContentType none;
     String name = Make("codecs");
     String result = _ZNK7WebCore11ContentType9parameterERKN3WTF6StringE(&none, &name);
     Require(result.impl == nullptr);

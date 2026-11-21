@@ -57,14 +57,30 @@ constexpr std::uint32_t SpawnFlagsImplemented = 0x03;
 constexpr std::uint32_t SpawnFlagResetIds = 0x01;
 constexpr std::uint32_t SpawnFlagSetGroup = 0x02;
 
+template <typename T>
+T LoadSpawnValue(const T* source, const char* function, const char* what) {
+    T value{};
+    if (!GuestCopyIn_nid_no_patch(&value, source, sizeof(T))) throw std::invalid_argument(std::string(function) + ": unreadable " + what);
+    return value;
+}
+
+template <typename T>
+void StoreSpawnValue(T* destination, const T& value, const char* function, const char* what) {
+    if (!GuestCopyOut_nid_no_patch(destination, &value, sizeof(T))) throw std::invalid_argument(std::string(function) + ": unwritable " + what);
+}
+
 PosixSpawnAttributes& Attributes(PosixSpawnAttributes* const* attributes, const char* function) {
-    if (attributes == nullptr || *attributes == nullptr) throw std::invalid_argument(std::string(function) + ": uninitialized attributes");
-    return **attributes;
+    if (attributes == nullptr) throw std::invalid_argument(std::string(function) + ": uninitialized attributes");
+    auto* object = LoadSpawnValue(attributes, function, "attributes");
+    if (object == nullptr) throw std::invalid_argument(std::string(function) + ": uninitialized attributes");
+    return *object;
 }
 
 PosixSpawnFileActions& FileActions(PosixSpawnFileActions* const* actions, const char* function) {
-    if (actions == nullptr || *actions == nullptr) throw std::invalid_argument(std::string(function) + ": uninitialized file actions");
-    return **actions;
+    if (actions == nullptr) throw std::invalid_argument(std::string(function) + ": uninitialized file actions");
+    auto* object = LoadSpawnValue(actions, function, "file actions");
+    if (object == nullptr) throw std::invalid_argument(std::string(function) + ": uninitialized file actions");
+    return *object;
 }
 
 int Append(PosixSpawnFileActions& actions, PosixSpawnFileAction action) {
@@ -407,13 +423,16 @@ int APS5_VABI posix_spawnattr_init_nid_postfix(PosixSpawnAttributes** attributes
     if (attributes == nullptr) throw std::invalid_argument("posix_spawnattr_init: null attributes");
     auto* created = new (std::nothrow) PosixSpawnAttributes{};
     if (created == nullptr) return OutOfMemory;
-    *attributes = created;
+    if (!GuestCopyOut_nid_no_patch(attributes, &created, sizeof(created))) {
+        delete created;
+        throw std::invalid_argument("posix_spawnattr_init: unwritable attributes");
+    }
     return 0;
 }
 
 int APS5_VABI posix_spawnattr_destroy_nid_postfix(PosixSpawnAttributes** attributes) {
     if (attributes == nullptr) throw std::invalid_argument("posix_spawnattr_destroy: null attributes");
-    delete *attributes;
+    delete LoadSpawnValue(attributes, "posix_spawnattr_destroy", "attributes");
     return 0;
 }
 
@@ -425,49 +444,49 @@ int APS5_VABI posix_spawnattr_setflags_nid_postfix(PosixSpawnAttributes** attrib
 int APS5_VABI posix_spawnattr_setsigdefault_nid_postfix(PosixSpawnAttributes** attributes, const GuestSignalSet* signalDefault) {
     auto& target = Attributes(attributes, "posix_spawnattr_setsigdefault");
     if (signalDefault == nullptr) throw std::invalid_argument("posix_spawnattr_setsigdefault: null signal set");
-    target.signalDefault = *signalDefault;
+    target.signalDefault = LoadSpawnValue(signalDefault, "posix_spawnattr_setsigdefault", "signal set");
     return 0;
 }
 
 int APS5_VABI posix_spawnattr_getflags_nid_postfix(PosixSpawnAttributes* const* attributes, std::int16_t* flags) {
     const auto& source = Attributes(attributes, "posix_spawnattr_getflags");
     if (flags == nullptr) throw std::invalid_argument("posix_spawnattr_getflags: null flags");
-    *flags = source.flags;
+    StoreSpawnValue(flags, source.flags, "posix_spawnattr_getflags", "flags");
     return 0;
 }
 
 int APS5_VABI posix_spawnattr_getpgroup_nid_postfix(PosixSpawnAttributes* const* attributes, std::int32_t* processGroup) {
     const auto& source = Attributes(attributes, "posix_spawnattr_getpgroup");
     if (processGroup == nullptr) throw std::invalid_argument("posix_spawnattr_getpgroup: null process group");
-    *processGroup = source.processGroup;
+    StoreSpawnValue(processGroup, source.processGroup, "posix_spawnattr_getpgroup", "process group");
     return 0;
 }
 
 int APS5_VABI posix_spawnattr_getschedparam_nid_postfix(PosixSpawnAttributes* const* attributes, std::int32_t* schedulingParameter) {
     const auto& source = Attributes(attributes, "posix_spawnattr_getschedparam");
     if (schedulingParameter == nullptr) throw std::invalid_argument("posix_spawnattr_getschedparam: null scheduling parameter");
-    *schedulingParameter = source.schedulingPriority;
+    StoreSpawnValue(schedulingParameter, source.schedulingPriority, "posix_spawnattr_getschedparam", "scheduling parameter");
     return 0;
 }
 
 int APS5_VABI posix_spawnattr_getschedpolicy_nid_postfix(PosixSpawnAttributes* const* attributes, std::int32_t* schedulingPolicy) {
     const auto& source = Attributes(attributes, "posix_spawnattr_getschedpolicy");
     if (schedulingPolicy == nullptr) throw std::invalid_argument("posix_spawnattr_getschedpolicy: null scheduling policy");
-    *schedulingPolicy = source.schedulingPolicy;
+    StoreSpawnValue(schedulingPolicy, source.schedulingPolicy, "posix_spawnattr_getschedpolicy", "scheduling policy");
     return 0;
 }
 
 int APS5_VABI posix_spawnattr_getsigdefault_nid_postfix(PosixSpawnAttributes* const* attributes, GuestSignalSet* signalDefault) {
     const auto& source = Attributes(attributes, "posix_spawnattr_getsigdefault");
     if (signalDefault == nullptr) throw std::invalid_argument("posix_spawnattr_getsigdefault: null signal set");
-    *signalDefault = source.signalDefault;
+    StoreSpawnValue(signalDefault, source.signalDefault, "posix_spawnattr_getsigdefault", "signal set");
     return 0;
 }
 
 int APS5_VABI posix_spawnattr_getsigmask_nid_postfix(PosixSpawnAttributes* const* attributes, GuestSignalSet* signalMask) {
     const auto& source = Attributes(attributes, "posix_spawnattr_getsigmask");
     if (signalMask == nullptr) throw std::invalid_argument("posix_spawnattr_getsigmask: null signal set");
-    *signalMask = source.signalMask;
+    StoreSpawnValue(signalMask, source.signalMask, "posix_spawnattr_getsigmask", "signal set");
     return 0;
 }
 
@@ -479,7 +498,7 @@ int APS5_VABI posix_spawnattr_setpgroup_nid_postfix(PosixSpawnAttributes** attri
 int APS5_VABI posix_spawnattr_setschedparam_nid_postfix(PosixSpawnAttributes** attributes, const std::int32_t* schedulingParameter) {
     auto& target = Attributes(attributes, "posix_spawnattr_setschedparam");
     if (schedulingParameter == nullptr) throw std::invalid_argument("posix_spawnattr_setschedparam: null scheduling parameter");
-    target.schedulingPriority = *schedulingParameter;
+    target.schedulingPriority = LoadSpawnValue(schedulingParameter, "posix_spawnattr_setschedparam", "scheduling parameter");
     return 0;
 }
 
@@ -491,7 +510,7 @@ int APS5_VABI posix_spawnattr_setschedpolicy_nid_postfix(PosixSpawnAttributes** 
 int APS5_VABI posix_spawnattr_setsigmask_nid_postfix(PosixSpawnAttributes** attributes, const GuestSignalSet* signalMask) {
     auto& target = Attributes(attributes, "posix_spawnattr_setsigmask");
     if (signalMask == nullptr) throw std::invalid_argument("posix_spawnattr_setsigmask: null signal set");
-    target.signalMask = *signalMask;
+    target.signalMask = LoadSpawnValue(signalMask, "posix_spawnattr_setsigmask", "signal set");
     return 0;
 }
 
@@ -499,7 +518,10 @@ int APS5_VABI posix_spawn_file_actions_init_nid_postfix(PosixSpawnFileActions** 
     if (actions == nullptr) throw std::invalid_argument("posix_spawn_file_actions_init: null file actions");
     auto* created = new (std::nothrow) PosixSpawnFileActions{};
     if (created == nullptr) return -1;
-    *actions = created;
+    if (!GuestCopyOut_nid_no_patch(actions, &created, sizeof(created))) {
+        delete created;
+        throw std::invalid_argument("posix_spawn_file_actions_init: unwritable file actions");
+    }
     return 0;
 }
 

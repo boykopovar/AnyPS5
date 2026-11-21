@@ -3,7 +3,7 @@ import json
 import sys
 from pathlib import Path
 
-from pad_timeline import compile_timeline
+from pad_timeline import compile_timeline, load_timeline
 
 
 def preview(document, repeat=1, gap_ms=200):
@@ -30,7 +30,7 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     try:
-        document = json.loads(args.timeline.read_text(encoding="utf-8-sig"))
+        document = load_timeline(args.timeline)
         result = preview(document, args.repeat, args.gap_ms)
     except (OSError, ValueError, RecursionError) as error:
         parser.exit(2, f"{parser.prog}: {error}\n")

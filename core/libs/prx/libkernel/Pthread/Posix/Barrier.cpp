@@ -44,9 +44,9 @@ int APS5_VABI pthread_barrierattr_destroy_nid_postfix(PthreadBarrierattrPrivate*
 
 int APS5_VABI pthread_barrierattr_getpshared_nid_postfix(PthreadBarrierattrPrivate* const* attr, int* pshared) {
     if (!attr) return 22;
-    if (!pshared) APS5_INVALID_ARG_EX;
     PthreadBarrierattrPrivate* value = nullptr;
     if (!GuestCopyIn_nid_no_patch(&value, attr, sizeof(value)) || !value) return 22;
+    if (!pshared) APS5_INVALID_ARG_EX;
     if (!GuestCopyOut_nid_no_patch(pshared, &value->pshared, sizeof(value->pshared))) return 14;
     return 0;
 }

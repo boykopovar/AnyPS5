@@ -3,8 +3,10 @@
 #include "prx/libc/include/RemoveTree.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libScePosixForWebKit/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -14,14 +16,17 @@
 #include <filesystem>
 #include <fstream>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 
 namespace {
 
 constexpr int Enoent = 2;
 constexpr int Ebadf = 9;
+constexpr int Efault = 14;
 constexpr int Eexist = 17;
 constexpr int Einval = 22;
+constexpr int ClockMonotonicFast = 12;
 constexpr std::uint32_t Unchanged = 0xffffffffu;
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -35,9 +40,110 @@ bool Fails(std::int64_t result, int error) {
     return result == -1 && *__error_nid_postfix() == error;
 }
 
+template<typename TException, typename TAction> bool Throws(TAction action) {
+    try {
+        action();
+    } catch (const TException&) {
+        return true;
+    }
+    return false;
+}
+
+void TestClockGettimeNp() {
+    KernelTimespec first{};
+    KernelTimespec second{};
+    Require(clock_gettime_np(ClockMonotonicFast, &first) == 0 && clock_gettime_np(ClockMonotonicFast, &second) == 0);
+    Require(first.tv_nsec >= 0 && first.tv_nsec < 1000000000 && second.tv_nsec >= 0 && second.tv_nsec < 1000000000);
+    Require(second.tv_sec > first.tv_sec || (second.tv_sec == first.tv_sec && second.tv_nsec >= first.tv_nsec));
+    KernelTimespec plain{};
+    Require(clock_gettime_nid_postfix(ClockMonotonicFast, &plain) == 0 && plain.tv_sec >= second.tv_sec);
+    Require(Fails(clock_gettime_np(3, &first), Einval));
+}
+
+void TestGetenvNp() {
+    Require(setenv_nid_postfix("ANYPS5_GETENV_NP_TEST", "ja-JP", 1) == 0);
+    char buffer[16];
+    std::memset(buffer, 'x', sizeof(buffer));
+    Require(getenv_np("ANYPS5_GETENV_NP_TEST", buffer, sizeof(buffer)) == 0 && std::strcmp(buffer, "ja-JP") == 0);
+    std::memset(buffer, 'x', sizeof(buffer));
+    Require(getenv_np("ANYPS5_GETENV_NP_TEST", buffer, 6) == 0 && std::strcmp(buffer, "ja-JP") == 0);
+    std::memset(buffer, 'x', sizeof(buffer));
+    Require(unsetenv_nid_postfix("ANYPS5_GETENV_NP_TEST") == 0);
+    Require(getenv_np("ANYPS5_GETENV_NP_TEST", buffer, sizeof(buffer)) != 0 && buffer[0] == 'x');
+    Require(setenv_nid_postfix("ANYPS5_GETENV_NP_TEST", "ja-JP", 1) == 0);
+    Require(Throws<std::runtime_error>([&] { getenv_np("ANYPS5_GETENV_NP_TEST", buffer, 5); }));
+    Require(Throws<std::invalid_argument>([&] { getenv_np(nullptr, buffer, sizeof(buffer)); }));
+    Require(Throws<std::invalid_argument>([&] { getenv_np("ANYPS5_GETENV_NP_TEST", nullptr, sizeof(buffer)); }));
+    errno = 73;
+    Require(Throws<std::invalid_argument>([&] { getenv_np("ANYPS5_GETENV_NP_TEST", reinterpret_cast<char*>(0x10), sizeof(buffer)); }));
+    Require(errno == 73);
+    Require(unsetenv_nid_postfix("ANYPS5_GETENV_NP_TEST") == 0);
+}
+
+void TestSysinfoAndSetenvNp() {
+    Require(Fails(setenv_np(nullptr, "1", 1), Einval));
+    Require(Fails(setenv_np("A", nullptr, 1), Einval));
+    errno = 73;
+    Require(Throws<std::invalid_argument>([] { setenv_np(reinterpret_cast<const char*>(std::uintptr_t{0x10}), "1", 1); }));
+    Require(errno == 73);
+    Require(setenv_np("TOTAL_MEMORY_SIZE_ASSUMPTION", "3221225472", 1) == 0);
+    Require(setenv_np("TOTAL_MEMORY_SIZE_ASSUMPTION", "4294967296", 0) == 0);
+    char buffer[32]{};
+    Require(getenv_np("TOTAL_MEMORY_SIZE_ASSUMPTION", buffer, sizeof(buffer)) == 0);
+    Require(std::strcmp(buffer, "3221225472") == 0);
+    Require(Fails(scePosixForWebKit_sysinfo(nullptr), Efault));
+    struct PaddedSysinfo {
+        PosixForWebKitSysinfo info{};
+        std::uint32_t tail = 0xdeadbeefu;
+    } output{};
+    Require(scePosixForWebKit_sysinfo(&output.info) == 0);
+    Require(output.info.total == 3221225472ULL && output.info.one == 1u && output.tail == 0xdeadbeefu);
+    Require(setenv_np("TOTAL_MEMORY_SIZE_ASSUMPTION", "4294967296", 1) == 0);
+    PosixForWebKitSysinfo cached{};
+    Require(scePosixForWebKit_sysinfo(&cached) == 0);
+    Require(cached.total == 3221225472ULL && cached.one == 1u);
+    errno = 73;
+    Require(Throws<std::invalid_argument>([] { scePosixForWebKit_sysinfo(reinterpret_cast<PosixForWebKitSysinfo*>(std::uintptr_t{0x10})); }));
+    Require(errno == 73);
+}
+
+void TestMsetnameSchedAndMmapNp() {
+    Require(msetname(nullptr, 0, nullptr) == 0);
+    void* flex = nullptr;
+    Require(sceKernelMapFlexibleMemory(&flex, 16384, 3, 0) == 0 && flex != nullptr);
+    Require(msetname(flex, 16384, "Heap") == 0);
+    VirtualQueryInfo query{};
+    Require(sceKernelVirtualQuery(flex, 0, &query, sizeof(query)) == 0);
+    Require(std::strcmp(query.name, "SceNKHeap") == 0);
+    Require(msetname(flex, 16384, "SceNKCustom") == 0);
+    Require(sceKernelVirtualQuery(flex, 0, &query, sizeof(query)) == 0);
+    Require(std::strcmp(query.name, "SceNKCustom") == 0);
+    errno = 73;
+    Require(Throws<std::invalid_argument>([&] { msetname(flex, 16384, reinterpret_cast<const char*>(std::uintptr_t{0x10})); }));
+    Require(errno == 73);
+    Require(sceKernelReleaseFlexibleMemory(flex, 16384) == 0);
+
+    KernelSchedParam param{0};
+    Require(Throws<std::runtime_error>([&] { pthread_setschedparam_np(pthread_self_nid_postfix(), 2, &param); }));
+    Require(pthread_setschedparam_np(pthread_self_nid_postfix(), 0, &param) == pthread_setschedparam_nid_postfix(pthread_self_nid_postfix(), 0, &param));
+
+    *__error_nid_postfix() = 0;
+    Require(mmap_np(nullptr, 16384, 3, 0x1012, -1, 0, nullptr) == reinterpret_cast<void*>(-1));
+    Require(*__error_nid_postfix() == Einval);
+    *__error_nid_postfix() = 0;
+    Require(mmap_np(nullptr, 16384, 3, (5 << 24) | 0x1002, -1, 0, nullptr) == reinterpret_cast<void*>(-1));
+    Require(*__error_nid_postfix() == Einval);
+    Require(Throws<std::runtime_error>([] { mmap_np(nullptr, 16384, 3, 0x1002, -1, 0, nullptr); }));
+    Require(mmap_np(nullptr, 16384, 3, 1, -1, 0, nullptr) == reinterpret_cast<void*>(-1));
+}
+
 }
 
 int main() {
+    TestClockGettimeNp();
+    TestGetenvNp();
+    TestSysinfoAndSetenvNp();
+    TestMsetnameSchedAndMmapNp();
     const auto root = std::filesystem::path("anyps5-posix-wrap-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));

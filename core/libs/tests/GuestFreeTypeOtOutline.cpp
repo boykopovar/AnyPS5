@@ -98,8 +98,10 @@ void NullArguments(const Api& api) {
     GuestOutline outline = Sentinel();
     Require(api.newOutline(nullptr, 1, 1, &outline) == 0x06 && Same(outline, Sentinel()), "a null memory is Invalid_Argument and leaves the outline");
     Require(api.newOutline(&recorder.memory, 1, 1, nullptr) == 0x06 && recorder.sizes.empty(), "a null outline is Invalid_Argument without allocating");
+    Require(api.newOutline(&recorder.memory, 1, 1, reinterpret_cast<GuestOutline*>(0x10)) == 0x06 && recorder.sizes.empty(), "an unmapped outline is Invalid_Argument without allocating");
     Require(api.doneOutline(nullptr, &outline) == 0x06 && Same(outline, Sentinel()), "done with a null memory is Invalid_Argument and leaves the outline");
     Require(api.doneOutline(&recorder.memory, nullptr) == 0x06 && recorder.freed.empty(), "done with a null outline is Invalid_Argument");
+    Require(api.doneOutline(&recorder.memory, reinterpret_cast<GuestOutline*>(0x10)) == 0x06 && recorder.freed.empty(), "done with an unmapped outline is Invalid_Argument");
 }
 
 void Allocation(const Api& api) {

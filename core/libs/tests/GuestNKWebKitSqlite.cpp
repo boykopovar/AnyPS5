@@ -6,10 +6,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <exception>
 #include <filesystem>
 #include <random>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -18,6 +18,7 @@ constexpr int SQLITE_ERROR = 1;
 constexpr int SQLITE_BUSY = 5;
 constexpr int SQLITE_READONLY = 8;
 constexpr int SQLITE_CANTOPEN = 14;
+constexpr int SQLITE_PERM = 3;
 constexpr int SQLITE_INTERRUPT = 9;
 constexpr int SQLITE_MISUSE = 21;
 constexpr int SQLITE_AUTH = 23;
@@ -225,6 +226,95 @@ void CheckStatements(sqlite3* db) {
     Require(sqlite3_finalize_nid_postfix(select) == SQLITE_OK, "finalize select");
 }
 
+std::string capturedText;
+int capturedBytes = -1;
+
+void APS5_VABI CaptureValue(sqlite3_context*, int count, sqlite3_value** values) {
+    Require(count == 1, "capture argument count");
+    const unsigned char* text = sqlite3_value_text_nid_postfix(values[0]);
+    capturedText = text ? reinterpret_cast<const char*>(text) : "<null>";
+    capturedBytes = sqlite3_value_bytes_nid_postfix(values[0]);
+}
+
+void CheckUtf8Adapters(sqlite3* db) {
+    Execute(db, "CREATE TABLE u(x TEXT, y INTEGER)");
+    sqlite3_stmt* insert = Prepare(db, "INSERT INTO u VALUES(?, ?)");
+    Require(sqlite3_stmt_readonly_nid_postfix(insert) == 0, "insert is not readonly");
+    auto* text = static_cast<char*>(std::malloc(8));
+    std::memcpy(text, "h\xC3\xA9\xE2\x82\xAC", 6);
+    const int destroyed = destroyedBuffers;
+    Require(sqlite3_bind_text_nid_postfix(insert, 1, text, 6, FreeBuffer) == SQLITE_OK, "bind text");
+    Require(destroyedBuffers == destroyed, "bound text stays owned by the binding");
+    Require(sqlite3_bind_int_nid_postfix(insert, 2, 41) == SQLITE_OK, "bind text row int");
+    Require(sqlite3_step_nid_postfix(insert) == SQLITE_DONE, "insert text row");
+    Require(sqlite3_changes_nid_postfix(db) == 1, "changes after insert");
+    Require(sqlite3_finalize_nid_postfix(insert) == SQLITE_OK, "finalize text insert");
+    Require(destroyedBuffers == destroyed + 1, "finalize releases the bound text");
+
+    sqlite3_stmt* failing = Prepare(db, "INSERT INTO u VALUES(?, ?)");
+    auto* dropped = static_cast<char*>(std::malloc(8));
+    std::memcpy(dropped, "dropped!", 8);
+    Require(sqlite3_bind_text_nid_postfix(failing, 5, dropped, 7, FreeBuffer) != SQLITE_OK, "bad text index");
+    Require(destroyedBuffers == destroyed + 2, "destructor runs when the text bind fails");
+    Require(sqlite3_finalize_nid_postfix(failing) == SQLITE_OK, "finalize failed bind");
+
+    sqlite3_stmt* second = Prepare(db, "INSERT INTO u VALUES(?, ?)");
+    char transientSource[8] = "plain";
+    Require(sqlite3_bind_text_nid_postfix(second, 1, transientSource, -1, SQLITE_TRANSIENT) == SQLITE_OK,
+        "transient text");
+    std::strcpy(transientSource, "XXXXXX");
+    Require(sqlite3_bind_int_nid_postfix(second, 2, 42) == SQLITE_OK, "bind second int");
+    Require(sqlite3_step_nid_postfix(second) == SQLITE_DONE, "second text insert");
+    Require(sqlite3_reset_nid_postfix(second) == SQLITE_OK, "reset second insert");
+    static const char fixedText[] = "static";
+    Require(sqlite3_bind_text_nid_postfix(second, 1, fixedText, -1, SQLITE_STATIC) == SQLITE_OK, "static text");
+    Require(sqlite3_bind_text_nid_postfix(second, 1, "a\0b", 3, SQLITE_TRANSIENT) == SQLITE_OK,
+        "rebind replaces static with embedded NUL");
+    Require(sqlite3_bind_null_nid_postfix(second, 2) == SQLITE_OK, "bind null int");
+    Require(sqlite3_step_nid_postfix(second) == SQLITE_DONE, "third text insert");
+    Require(sqlite3_reset_nid_postfix(second) == SQLITE_OK, "reset third insert");
+    Require(sqlite3_bind_text_nid_postfix(second, 1, nullptr, -1, SQLITE_STATIC) == SQLITE_OK, "null text binds null");
+    Require(sqlite3_bind_text_nid_postfix(second, 2, "", -1, SQLITE_TRANSIENT) == SQLITE_OK, "empty text");
+    Require(sqlite3_step_nid_postfix(second) == SQLITE_DONE, "fourth text insert");
+    Require(sqlite3_finalize_nid_postfix(second) == SQLITE_OK, "finalize second insert");
+    Execute(db, "UPDATE u SET y = y WHERE y < 0");
+    Require(sqlite3_changes_nid_postfix(db) == 0, "changes after empty update");
+
+    sqlite3_stmt* select = Prepare(db, "SELECT x, y FROM u ORDER BY rowid");
+    Require(sqlite3_stmt_readonly_nid_postfix(select) != 0, "select is readonly");
+    Require(sqlite3_step_nid_postfix(select) == SQLITE_ROW, "first utf8 row");
+    Require(std::strcmp(sqlite3_column_name_nid_postfix(select, 0), "x") == 0, "column name");
+    Require(std::strcmp(sqlite3_column_name_nid_postfix(select, 1), "y") == 0, "second column name");
+    const unsigned char* first = sqlite3_column_text_nid_postfix(select, 0);
+    Require(first != nullptr && std::memcmp(first, "h\xC3\xA9\xE2\x82\xAC", 7) == 0, "column text");
+    Require(sqlite3_column_bytes_nid_postfix(select, 0) == 6, "column text bytes");
+    Require(sqlite3_step_nid_postfix(select) == SQLITE_ROW, "second utf8 row");
+    const unsigned char* secondRow = sqlite3_column_text_nid_postfix(select, 0);
+    Require(secondRow != nullptr && std::strcmp(reinterpret_cast<const char*>(secondRow), "plain") == 0,
+        "transient copied before the source changed");
+    Require(sqlite3_step_nid_postfix(select) == SQLITE_ROW, "third utf8 row");
+    const unsigned char* thirdRow = sqlite3_column_text_nid_postfix(select, 0);
+    Require(thirdRow != nullptr && std::memcmp(thirdRow, "a\0b", 3) == 0, "embedded NUL text");
+    Require(sqlite3_column_bytes_nid_postfix(select, 0) == 3, "embedded NUL bytes");
+    Require(sqlite3_step_nid_postfix(select) == SQLITE_ROW, "fourth utf8 row");
+    Require(sqlite3_column_type_nid_postfix(select, 0) == SQLITE_NULL, "null text column");
+    Require(sqlite3_column_type_nid_postfix(select, 1) == SQLITE_TEXT, "empty text column");
+    const unsigned char* empty = sqlite3_column_text_nid_postfix(select, 1);
+    Require(empty != nullptr && *empty == 0 && sqlite3_column_bytes_nid_postfix(select, 1) == 0, "empty text bytes");
+    Require(sqlite3_step_nid_postfix(select) == SQLITE_DONE, "end of utf8 rows");
+    Require(sqlite3_finalize_nid_postfix(select) == SQLITE_OK, "finalize utf8 select");
+    Require(sqlite3_db_release_memory_nid_postfix(db) >= 0, "release memory");
+
+    Require(sqlite3_create_function_nid_postfix(db, "capture", 1, SQLITE_UTF8, nullptr, CaptureValue, nullptr,
+        nullptr) == SQLITE_OK, "create capture");
+    Execute(db, "SELECT capture(x) FROM u WHERE y = 41");
+    Require(capturedText == "h\xC3\xA9\xE2\x82\xAC" && capturedBytes == 6, "value text in callback");
+    Execute(db, "SELECT capture(y) FROM u WHERE y = 42");
+    Require(capturedText == "42" && capturedBytes == 2, "numeric value text in callback");
+    Execute(db, "SELECT capture(y) FROM u WHERE y IS NULL");
+    Require(capturedText == "<null>" && capturedBytes == 0, "null value in callback");
+}
+
 void CheckFunctions(sqlite3* db) {
     static int application = 0x42;
     Require(sqlite3_create_function_nid_postfix(db, "probe", 1, SQLITE_UTF8, &application, Probe, nullptr,
@@ -418,6 +508,37 @@ void CheckGuestPaths(const std::filesystem::path& directory) {
     Execute(uri, "CREATE TABLE memoryvfs.t(v)");
     Require(!std::filesystem::exists(directory / "memdb-only.db"), "memdb remains memory-only");
     Require(sqlite3_close_nid_postfix(uri) == SQLITE_OK, "close URI connection");
+
+    constexpr int uriFlags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI;
+    for (const auto& [name, file] : {std::pair{"file:/sqlite-store/opened%20uri.db?mode=rwc", "opened uri.db"},
+             std::pair{"file:///SQLITE-STORE/empty-authority.db", "empty-authority.db"},
+             std::pair{"file://localhost/sqlite-store/localhost.db", "localhost.db"},
+             std::pair{"file:sqlite-store/relative-uri.db", "relative-uri.db"}}) {
+        sqlite3* opened = nullptr;
+        Require(sqlite3_open_v2_nid_postfix(name, &opened, uriFlags, nullptr) == SQLITE_OK, "open mapped file URI");
+        Execute(opened, "CREATE TABLE t(v)");
+        Require(sqlite3_close_nid_postfix(opened) == SQLITE_OK, "close mapped file URI");
+        Require(std::filesystem::is_regular_file(storage / file), "an opened file URI uses the guest mount");
+        CheckWrittenDatabase(storage, file);
+    }
+    sqlite3* readonly = nullptr;
+    Require(sqlite3_open_v2_nid_postfix("file:/sqlite-exports/copy's%20file.db?mode=ro", &readonly, uriFlags, nullptr) ==
+        SQLITE_OK, "open read-only file URI");
+    CheckValue(readonly, "SELECT v FROM t", 42);
+    Require(SqlResult(readonly, "INSERT INTO t VALUES(99)") == SQLITE_READONLY, "opened URI read-only mode is preserved");
+    Require(sqlite3_close_nid_postfix(readonly) == SQLITE_OK, "close read-only file URI");
+    const auto refuse = [&](const char* name, int expected) {
+        sqlite3* refused = nullptr;
+        Require(sqlite3_open_v2_nid_postfix(name, &refused, uriFlags, nullptr) == expected, name);
+        Require(sqlite3_close_nid_postfix(refused) == SQLITE_OK, "close refused file URI");
+    };
+    refuse("file://elsewhere/sqlite-store/remote.db", SQLITE_ERROR);
+    Require(!std::filesystem::exists(storage / "remote.db"), "a URI authority other than localhost opens nothing");
+    refuse("file:/sqlite-blocked/blocked.db?mode=rwc", SQLITE_CANTOPEN);
+    Require(std::filesystem::is_empty(directory / "sqlite-blocked"), "an opened URI cannot use a blocked guest mount");
+    refuse("file:unmapped.db?vfs=unix-dotfile", SQLITE_ERROR);
+    refuse("file:unmapped.db?vfs=win32-longpath", SQLITE_ERROR);
+    Require(!std::filesystem::exists(directory / "unmapped.db"), "an opened URI cannot select an unwrapped disk VFS");
     RemovePathAlias_nid_no_patch("/sqlite-store");
     RemovePathAlias_nid_no_patch("/sqlite-exports");
 }
@@ -462,6 +583,7 @@ int main() {
     Require(sqlite3_initialize_nid_postfix() == SQLITE_OK, "initialize");
     sqlite3* db = Open(":memory:");
     CheckStatements(db);
+    CheckUtf8Adapters(db);
     CheckFunctions(db);
     CheckCollation(db);
     CheckAuthorizer(db);
@@ -479,23 +601,37 @@ int main() {
     std::filesystem::create_directories(directory);
     std::filesystem::current_path(directory);
     constexpr int uriFlags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI;
-    for (const char* name : {"file:mode=memory.db?mode=rwc", "file:mode=memory.db", "file::memory:x", "file:later.db?mode=memory&mode=rwc", "file:encoded.db?mode=memory&mod%65=rwc", "file:m1.db?mode=rwc", "file:plain.db"}) {
-        for (const int flags : {uriFlags, uriFlags | SQLITE_OPEN_MEMORY}) {
-            sqlite3* host = nullptr;
-            try {
-                sqlite3_open_v2_nid_postfix(name, &host, flags, nullptr);
-            } catch (const std::exception&) {
-            }
-            if (host != nullptr) sqlite3_close_nid_postfix(host);
-            Require(std::filesystem::is_empty(directory), "a URI that only mentions mode=memory in its path creates no host file");
-        }
-    }
     for (const char* name : {"file:one?mode=memory", "file:two?cache=shared&mode=memory", "file::memory:?cache=private", "file:three?mode=rwc&mode=memory"}) {
         sqlite3* inMemory = nullptr;
         Require(sqlite3_open_v2_nid_postfix(name, &inMemory, uriFlags, nullptr) == SQLITE_OK, "memory URI parameter");
         Execute(inMemory, "CREATE TABLE t(v)");
         Require(sqlite3_close_nid_postfix(inMemory) == SQLITE_OK, "close memory URI parameter");
         Require(std::filesystem::is_empty(directory), "a memory URI creates no host file");
+    }
+    sqlite3* flagged = nullptr;
+    Require(sqlite3_open_v2_nid_postfix("file:flagged.db", &flagged, uriFlags | SQLITE_OPEN_MEMORY, nullptr) == SQLITE_OK,
+        "file URI with the memory flag");
+    Execute(flagged, "CREATE TABLE t(v)");
+    Require(sqlite3_close_nid_postfix(flagged) == SQLITE_OK, "close file URI with the memory flag");
+    Require(std::filesystem::is_empty(directory), "the memory flag keeps a file URI in memory");
+    for (const auto& [name, file] : {std::pair{"file:mode=memory.db?mode=rwc", "mode=memory.db"},
+             std::pair{"file:mode=memory.db", "mode=memory.db"}, std::pair{"file:m1.db?mode=rwc", "m1.db"},
+             std::pair{"file:later.db?mode=memory&mode=rwc", "later.db"}, std::pair{"file:plain.db", "plain.db"},
+             std::pair{"file:/encoded%20name.db?mod%65=rwc", "encoded name.db"}}) {
+        sqlite3* disk = nullptr;
+        Require(sqlite3_open_v2_nid_postfix(name, &disk, uriFlags, nullptr) == SQLITE_OK, "file URI");
+        Execute(disk, "CREATE TABLE IF NOT EXISTS t(v)");
+        Require(sqlite3_close_nid_postfix(disk) == SQLITE_OK, "close file URI");
+        Require(std::filesystem::is_regular_file(directory / file), "a file URI opens its decoded path in the guest root");
+        CheckWrittenDatabase(directory, file);
+    }
+    sqlite3* denied = nullptr;
+    Require(sqlite3_open_v2_nid_postfix("file:denied.db?mode=rwc", &denied, SQLITE_OPEN_READWRITE | SQLITE_OPEN_URI,
+        nullptr) == SQLITE_PERM, "a URI mode may not add access the flags do not grant");
+    Require(sqlite3_close_nid_postfix(denied) == SQLITE_OK, "close refused URI");
+    Require(!std::filesystem::exists(directory / "denied.db"), "a refused URI creates no file");
+    for (const char* file : {"mode=memory.db", "m1.db", "later.db", "plain.db", "encoded name.db"}) {
+        std::filesystem::remove(directory / file);
     }
     CheckGuestPaths(directory);
     CheckFileDatabase(directory);

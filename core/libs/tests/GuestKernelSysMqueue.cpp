@@ -13,6 +13,12 @@
 #include <source_location>
 #include <string>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -231,10 +237,83 @@ void ConcurrentSetattr() {
     Require(close_nid_postfix(queue) == 0 && kmq_unlink_nid_postfix(name.c_str()) == 0);
 }
 
+class UnreadablePage {
+public:
+    UnreadablePage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS));
+        Require(memory != nullptr);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        Require(pageSize > 0);
+        size = static_cast<std::size_t>(pageSize);
+        memory = static_cast<char*>(mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+#endif
+    }
+
+    ~UnreadablePage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, size);
+#endif
+    }
+
+    UnreadablePage(const UnreadablePage&) = delete;
+    UnreadablePage& operator=(const UnreadablePage&) = delete;
+
+    void* Address() const { return memory; }
+
+private:
+    char* memory = nullptr;
+    std::size_t size = 0;
+};
+
+void BadPointers() {
+    UnreadablePage page;
+    const void* const bad[] = {reinterpret_cast<const void*>(0x10), page.Address()};
+    const auto name = Name("badpointers");
+    const GuestMqAttr small{0, 3, 16, 0, {}};
+    const int queue = kmq_open_nid_postfix(name.c_str(), ORdwr | OCreat, 0600, &small);
+    Require(queue >= 0);
+    char buffer[16]{};
+    unsigned priority = 0;
+    for (const void* pointer : bad) {
+        Require(kmq_timedsend_nid_postfix(queue, "bad", 3, 1, nullptr) == 0);
+        Require(kmq_timedreceive_nid_postfix(queue, const_cast<char*>(static_cast<const char*>(pointer)), sizeof(buffer), &priority, nullptr) == -1 && Error() == Efault);
+    }
+    for (const void* pointer : bad) {
+        Require(kmq_timedsend_nid_postfix(queue, "bad", 3, 1, nullptr) == 0);
+        Require(kmq_timedreceive_nid_postfix(queue, buffer, sizeof(buffer), const_cast<unsigned*>(static_cast<const unsigned*>(pointer)), nullptr) == -1 && Error() == Efault);
+    }
+    for (const void* pointer : bad) {
+        const auto badAttr = static_cast<const GuestMqAttr*>(pointer);
+        auto badOut = const_cast<GuestMqAttr*>(badAttr);
+        const auto createBad = Name("badcreate");
+        Require(kmq_open_nid_postfix(createBad.c_str(), ORdwr | OCreat, 0600, badAttr) == -1 && Error() == Efault);
+        const int opened = kmq_open_nid_postfix(name.c_str(), ORdwr, 0600, badAttr);
+        Require(opened >= 0 && close_nid_postfix(opened) == 0);
+        Require(kmq_setattr_nid_postfix(queue, badAttr, nullptr) == -1 && Error() == Efault);
+        Require(kmq_setattr_nid_postfix(queue, nullptr, badOut) == -1 && Error() == Efault);
+        Require(kmq_setattr_nid_postfix(queue, badAttr, badOut) == -1 && Error() == Efault);
+    }
+    const GuestMqAttr on{ONonblock, 0, 0, 0, {}};
+    Require(kmq_setattr_nid_postfix(queue, &on, const_cast<GuestMqAttr*>(static_cast<const GuestMqAttr*>(bad[0]))) == -1 && Error() == Efault);
+    GuestMqAttr check{};
+    Require(kmq_setattr_nid_postfix(queue, nullptr, &check) == 0);
+    Require((check.flags & ONonblock) == 0);
+    Require(close_nid_postfix(queue) == 0 && kmq_unlink_nid_postfix(name.c_str()) == 0);
+}
+
 }
 
 int main() {
     OpenRules();
+    BadPointers();
     Messages();
     Waiting();
     Access();

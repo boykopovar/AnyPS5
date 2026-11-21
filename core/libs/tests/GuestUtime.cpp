@@ -74,6 +74,8 @@ int main() {
     Check(utime_nid_postfix(nullptr, &times) == -1 && *__error_nid_postfix() == 14);
     *__error_nid_postfix() = 71;
     Check(utime_nid_postfix(nullptr, nullptr) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 71;
+    Check(utime_nid_postfix(path.c_str(), reinterpret_cast<const LibcUtimbuf*>(0x10)) == -1 && *__error_nid_postfix() == 14);
     const auto unchanged = ReadTimes(file, true);
     Check(unchanged.actime == times.actime && unchanged.modtime == times.modtime);
     const auto before = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());

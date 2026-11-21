@@ -23,11 +23,20 @@ extern "C" void* APS5_VABI fdopendir_nid_postfix(int fd) {
         virtualDirectory ? SeekDirectoryDescriptorCallback_nid_no_patch : nullptr);
 }
 
+namespace {
+
+int APS5_VABI EmptyClose(int) { return 0; }
+int APS5_VABI EmptyRead(int, char*, int) { return 0; }
+std::int64_t APS5_VABI EmptySeek(int, std::int64_t, int) { return 0; }
+
+}
+
 extern "C" void* APS5_VABI __opendir2_nid_postfix(const char* name, int flags) {
     constexpr int ReadAll = 0x8;
-    constexpr int SkipRead = 0x10;
-    if ((flags & (ReadAll | SkipRead)) != 0) return nullptr;
-    return opendir_nid_postfix(name);
+    void* directory = opendir_nid_postfix(name);
+    if (directory == nullptr || (flags & ReadAll) == 0) return directory;
+    closedir_nid_postfix(directory);
+    return OpenDescriptorDirectory_nid_no_patch(name, -1, EmptyClose, 0, EmptyRead, EmptySeek);
 }
 
 extern "C" GuestDirectoryEntry* APS5_VABI _readdir_unlocked_nid_postfix(void* handle, int skip) {

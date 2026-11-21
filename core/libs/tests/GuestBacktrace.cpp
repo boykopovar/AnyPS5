@@ -11,6 +11,7 @@
 #include <dlfcn.h>
 #endif
 #include <string>
+#include <stdexcept>
 #include <vector>
 
 extern "C" {
@@ -56,6 +57,8 @@ std::vector<Record> Parse(const std::vector<unsigned char>& buffer, std::size_t 
         Require(length < limit, "module name is not terminated inside the record");
         record.module.assign(name, length);
         record.bytes = (NameOffset + length + 1 + 7) & ~std::size_t{7};
+        Require(static_cast<std::size_t>(cursor - base) + record.bytes <= used, "record runs past the written bytes");
+        for (std::size_t index = NameOffset + length + 1; index < record.bytes; ++index) Require(cursor[index] == std::byte{0}, "record padding is not zeroed");
         Require(record.next == nullptr || record.next == cursor + record.bytes, "next does not point to the following record");
         records.push_back(record);
         cursor = record.next;
@@ -144,6 +147,57 @@ std::size_t Used(const std::vector<Record>& records) {
     }
 }
 
+void CheckUnreadableOutputs() {
+    auto* invalidCount = reinterpret_cast<int*>(std::uintptr_t{0x10});
+    auto* invalidSize = reinterpret_cast<std::size_t*>(std::uintptr_t{0x10});
+    auto* invalidBuffer = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    int count = -1;
+    std::size_t size = 0;
+    bool rejected = false;
+    try {
+        sceLibcBacktraceGetBufferSize_nid_postfix(1, invalidCount, &size);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected, "GetBufferSize accepted an unreadable count output");
+    rejected = false;
+    try {
+        sceLibcBacktraceGetBufferSize_nid_postfix(1, &count, invalidSize);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected, "GetBufferSize accepted an unreadable size output");
+    rejected = false;
+    try {
+        sceLibcBacktraceSelf_nid_postfix(1, invalidBuffer, 4096, &count);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected, "Self accepted an unreadable frame output");
+    std::vector<unsigned char> buffer(4096, Fill);
+    rejected = false;
+    try {
+        sceLibcBacktraceSelf_nid_postfix(1, buffer.data(), buffer.size(), invalidCount);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected, "Self accepted an unreadable count output");
+}
+
+void CheckNullArguments() {
+    int count = -1;
+    std::size_t size = 0;
+    std::vector<unsigned char> buffer(4096, Fill);
+    Require(sceLibcBacktraceGetBufferSize_nid_postfix(1, nullptr, &size) == 1, "GetBufferSize accepted a null count");
+    Require(sceLibcBacktraceGetBufferSize_nid_postfix(1, &count, nullptr) == 1, "GetBufferSize accepted a null size");
+    Require(sceLibcBacktraceSelf_nid_postfix(1, nullptr, buffer.size(), &count) == 1, "Self accepted a null buffer");
+    Require(sceLibcBacktraceSelf_nid_postfix(1, buffer.data(), buffer.size(), nullptr) == 1, "Self accepted a null count");
+    Require(count == -1 && size == 0, "a rejected call wrote an output");
+    for (const auto byte : buffer) Require(byte == Fill, "a rejected call wrote the buffer");
+}
+
 int main() {
+    CheckNullArguments();
     CheckBacktrace();
+    CheckUnreadableOutputs();
 }

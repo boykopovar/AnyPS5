@@ -1,0 +1,9 @@
+# libSceIcu
+
+## change [Locale writing direction]
+
+- [Locale writing direction](../../../core/libs/prx/libSceIcu/RightToLeft.cpp) is unverified on a console. `uloc_isRightToLeft` resolves a null locale through `uloc_getDefault` as ICU does, and throws for a locale with no script whose language is not one of the 17 that ICU 78.1 [loclikely.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/loclikely.cpp#L348-L386) lists: ICU then needs the likely subtags data, which no host library provides. Otherwise it follows that function, with the script direction from the ICU submodule. The NID is the ICU 68 name; [ICU 68.2](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/loclikely.cpp#L1301-L1348) returns false for a language of eight or more letters without a script, which throws here, and for the scripts `Ougr`, `Gara` and `Sidt`, which return true here. Closes when: compared with the console and the likely subtags data is available.
+
+## change [Character property]
+
+- [Character property](../../../core/libs/prx/libSceIcu/Properties.cpp) exports forward to ICU 78.1 with its compiled-in tables plus the pinned `uemoji.icu`, `ulayout.icu`, `nfkc.nrm` and `nfkc_cf.nrm` from the [3rdparty/icu](https://github.com/unicode-org/icu/tree/049e0d6a4206/icu4c/source/data/in) submodule, embedded in the common data entry point. Values follow Unicode 17; the console's ICU 68 has Unicode 13. [Case mapping](../../../core/libs/prx/libSceIcu/CaseMapping.cpp) `u_strToLower` and `u_strToUpper` resolve a null locale through `uloc_getDefault` as ICU does. Prototypes follow the ICU 78.1 headers; null pointers ICU dereferences and lengths below -1 throw `std::invalid_argument`. Closes when: compared with the console.

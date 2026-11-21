@@ -1,5 +1,6 @@
 #include "prx/libSceFontGs.native/include/Api.hpp"
 #include "prx/libSceFont/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -15,6 +16,22 @@ constexpr std::uint8_t FontAgcSurfaceTag = 0x58;
 constexpr std::uint16_t FontAgcSequenceTag = 0xf80;
 constexpr float FontAgcDrawupLimit = 16834.0f;
 constexpr std::size_t FontAgcRecordStateOffset = 0x10;
+
+template<class T>
+bool ReadGuest(T* destination, const T* source) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, sizeof(T));
+    errno = savedErrno;
+    return copied;
+}
+
+template<class T>
+bool WriteGuest(T* destination, const T& value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    return copied;
+}
 
 struct FontAgcSurface {
     void* head;
@@ -90,10 +107,9 @@ int APS5_VABI sceFontGraphicsAgcSurfaceInit(void* surface, const void* config) {
 
 int APS5_VABI sceFontGraphicsAgcDrawupFillTextureImage(FontGraphicsFrame* graphicsObject, const void* surface, void** output,
                                                      float x, float y, float width, float height) {
-    if (output == nullptr) {
+    if (output == nullptr || !WriteGuest<void*>(output, nullptr)) {
         return FontGsInvalidParameter;
     }
-    *output = nullptr;
     if (graphicsObject == nullptr || surface == nullptr) {
         return FontGsInvalidParameter;
     }
@@ -112,17 +128,20 @@ int APS5_VABI sceFontGraphicsAgcDrawupFillTextureImage(FontGraphicsFrame* graphi
     if (error != 0) {
         return error;
     }
-    MarkAgcRecord(*output);
+    void* record = nullptr;
+    if (!ReadGuest(&record, output)) {
+        return FontGsInvalidParameter;
+    }
+    MarkAgcRecord(record);
     return 0;
 }
 
 int APS5_VABI sceFontGraphicsAgcDrawupFillTexturePattern(FontGraphicsFrame* graphicsObject, const void* surface, std::uint32_t format,
                                                        std::uint32_t select, std::uint32_t dimension1, std::uint32_t option1,
                                                        std::uint32_t option2, std::uint32_t dimension2, void** output) {
-    if (output == nullptr) {
+    if (output == nullptr || !WriteGuest<void*>(output, nullptr)) {
         return FontGsInvalidParameter;
     }
-    *output = nullptr;
     if (graphicsObject == nullptr || surface == nullptr) {
         return FontGsInvalidParameter;
     }
@@ -135,23 +154,21 @@ int APS5_VABI sceFontGraphicsAgcDrawupFillTexturePattern(FontGraphicsFrame* grap
     if (error != 0) {
         return error;
     }
-    MarkAgcRecord(*output);
+    void* record = nullptr;
+    if (!ReadGuest(&record, output)) {
+        return FontGsInvalidParameter;
+    }
+    MarkAgcRecord(record);
     return 0;
 }
 
 int APS5_VABI sceFontGraphicsSequenceGetAgcCommandsForJump(FontGraphicsCanvasSequence* sequence, void** commands,
                                                          std::uint32_t* numCommands, void** commands2, std::uint32_t* numCommands2) {
-    if (commands != nullptr) {
-        *commands = nullptr;
-    }
-    if (numCommands != nullptr) {
-        *numCommands = 0;
-    }
-    if (commands2 != nullptr) {
-        *commands2 = nullptr;
-    }
-    if (numCommands2 != nullptr) {
-        *numCommands2 = 0;
+    if ((commands != nullptr && !WriteGuest<void*>(commands, nullptr)) ||
+        (numCommands != nullptr && !WriteGuest<std::uint32_t>(numCommands, 0)) ||
+        (commands2 != nullptr && !WriteGuest<void*>(commands2, nullptr)) ||
+        (numCommands2 != nullptr && !WriteGuest<std::uint32_t>(numCommands2, 0))) {
+        return FontGsInvalidParameter;
     }
     const auto* const seq = reinterpret_cast<const FontAgcSequence*>(sequence);
     if (seq == nullptr || seq->tag != FontAgcSequenceTag) {
@@ -167,20 +184,18 @@ int APS5_VABI sceFontGraphicsSequenceGetAgcCommandsForJump(FontGraphicsCanvasSeq
     if (agc == nullptr) {
         return FontGsNoCommands;
     }
-    *commands = const_cast<void*>(agc->first);
-    *numCommands = agc->firstSize >> 2;
-    *commands2 = const_cast<void*>(agc->second);
-    *numCommands2 = agc->secondCount;
+    if (!WriteGuest(commands, const_cast<void*>(agc->first)) || !WriteGuest<std::uint32_t>(numCommands, agc->firstSize >> 2) ||
+        !WriteGuest(commands2, const_cast<void*>(agc->second)) || !WriteGuest<std::uint32_t>(numCommands2, agc->secondCount)) {
+        return FontGsInvalidParameter;
+    }
     return 0;
 }
 
 int APS5_VABI sceFontGraphicsSequenceGetAgcCommandsForSubmit(FontGraphicsCanvasSequence* sequence, void** commands,
                                                            std::uint32_t* numCommands) {
-    if (commands != nullptr) {
-        *commands = nullptr;
-    }
-    if (numCommands != nullptr) {
-        *numCommands = 0;
+    if ((commands != nullptr && !WriteGuest<void*>(commands, nullptr)) ||
+        (numCommands != nullptr && !WriteGuest<std::uint32_t>(numCommands, 0))) {
+        return FontGsInvalidParameter;
     }
     const auto* const seq = reinterpret_cast<const FontAgcSequence*>(sequence);
     if (seq == nullptr || seq->tag != FontAgcSequenceTag) {
@@ -196,8 +211,9 @@ int APS5_VABI sceFontGraphicsSequenceGetAgcCommandsForSubmit(FontGraphicsCanvasS
     if (agc == nullptr) {
         return FontGsNoCommands;
     }
-    *commands = const_cast<void*>(agc->first);
-    *numCommands = agc->firstSize;
+    if (!WriteGuest(commands, const_cast<void*>(agc->first)) || !WriteGuest<std::uint32_t>(numCommands, agc->firstSize)) {
+        return FontGsInvalidParameter;
+    }
     return 0;
 }
 

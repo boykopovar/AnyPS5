@@ -16,8 +16,7 @@ int APS5_VABI sceAgcInit(std::uint32_t version) {
     return 0;
 }
 
-int APS5_VABI sceAgcInit_0090(std::uint32_t* state, std::uint32_t version) {
-    Agc::Command::CheckAddress(reinterpret_cast<std::uintptr_t>(state), alignof(std::uint32_t), __func__);
+int APS5_VABI sceAgcInit_0090(std::uint32_t*, std::uint32_t version) {
     return sceAgcInit(version);
 }
 
