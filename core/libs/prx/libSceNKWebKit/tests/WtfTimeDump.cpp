@@ -2,12 +2,21 @@
 #include "prx/libc/include/Api.hpp"
 
 #include <cmath>
+#include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -23,6 +32,7 @@ struct TestStream {
     std::string* log;
     char tag;
     TestStream* target;
+    void (*onBegin)() = nullptr;
 };
 
 static void APS5_VABI Destroy(TestStream*) {
@@ -40,7 +50,7 @@ static bool IsNanText(const char* text) {
 }
 
 static void APS5_VABI Vprintf(TestStream* self, const char* format, VaList* arguments) {
-    char buffer[128];
+    char buffer[4096];
     Require(vsnprintf_nid_postfix(buffer, sizeof(buffer), format, arguments) >= 0);
     *self->log += '[';
     *self->log += self->tag;
@@ -60,6 +70,7 @@ static void APS5_VABI Flush(TestStream*) {
 static TestStream* APS5_VABI Begin(TestStream* self) {
     *self->log += '<';
     *self->log += self->tag;
+    if (self->onBegin) self->onBegin();
     return self->target;
 }
 
@@ -114,7 +125,131 @@ static std::string DumpMedia(const WTF::MediaTime& time) {
     return streams.log;
 }
 
+template<typename TFunction>
+static void RequireFault(TFunction function) {
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        return;
+    }
+    Require(false);
+}
+
+struct GuardedPages {
+    char* bytes;
+    std::size_t pageSize;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        bytes = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        Require(bytes != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(bytes + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        bytes = static_cast<char*>(mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(bytes != MAP_FAILED);
+        Require(mprotect(bytes + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+#ifdef _WIN32
+        Require(VirtualFree(bytes, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(bytes, pageSize * 2) == 0);
+#endif
+    }
+
+    char* End() { return bytes + pageSize; }
+};
+
+static void FaultingPointers() {
+    GuardedPages pages;
+    const auto* unavailable = pages.End();
+    Streams streams;
+    RequireFault([&] { _ZNK3WTF7Seconds4dumpERNS_11PrintStreamE(reinterpret_cast<const WTF::Seconds*>(unavailable), streams.Out()); });
+    RequireFault([&] { _ZNK3WTF8WallTime4dumpERNS_11PrintStreamE(reinterpret_cast<const WTF::WallTime*>(unavailable), streams.Out()); });
+    RequireFault([&] { _ZNK3WTF13MonotonicTime4dumpERNS_11PrintStreamE(reinterpret_cast<const WTF::MonotonicTime*>(unavailable), streams.Out()); });
+    RequireFault([&] { _ZNK3WTF24TimeWithDynamicClockType4dumpERNS_11PrintStreamE(reinterpret_cast<const WTF::TimeWithDynamicClockType*>(unavailable), streams.Out()); });
+    RequireFault([&] { _ZNK3WTF12ASCIILiteral4dumpERNS_11PrintStreamE(reinterpret_cast<const NKWebKit::HttpAbi::ASCIILiteral*>(unavailable), streams.Out()); });
+    Require(streams.log.empty());
+    RequireFault([&] { _ZNK3WTF9MediaTime4dumpERNS_11PrintStreamE(reinterpret_cast<const WTF::MediaTime*>(unavailable), streams.Out()); });
+    Require(streams.log == "<A[B:{]A>");
+    streams.log.clear();
+    RequireFault([&] { _ZNK3WTF7Seconds4dumpERNS_11PrintStreamE(reinterpret_cast<const WTF::Seconds*>(pages.End() - 1), streams.Out()); });
+    WTF::Seconds seconds{1.25};
+    auto* badStream = reinterpret_cast<NKWebKit::WtfDumpAbi::PrintStream*>(pages.End());
+    RequireFault([&] { _ZNK3WTF7Seconds4dumpERNS_11PrintStreamE(&seconds, badStream); });
+    streams.outer.vtable = reinterpret_cast<void* const*>(pages.End());
+    RequireFault([&] { _ZNK3WTF7Seconds4dumpERNS_11PrintStreamE(&seconds, streams.Out()); });
+    Require(streams.log.empty());
+    streams.outer.vtable = testVtable;
+    streams.outer.target = nullptr;
+    RequireFault([&] { _ZNK3WTF7Seconds4dumpERNS_11PrintStreamE(&seconds, streams.Out()); });
+    Require(streams.log == "<A");
+    streams.log.clear();
+    streams.outer.target = &streams.inner;
+    std::array<void*, 6> missing{};
+    std::copy(std::begin(testVtable), std::end(testVtable), missing.begin());
+    missing[2] = nullptr;
+    streams.inner.vtable = missing.data();
+    RequireFault([&] { _ZNK3WTF7Seconds4dumpERNS_11PrintStreamE(&seconds, streams.Out()); });
+    Require(streams.log == "<A");
+    streams.log.clear();
+    streams.inner.vtable = testVtable;
+    auto* literalRecord = reinterpret_cast<NKWebKit::HttpAbi::ASCIILiteral*>(pages.End() - sizeof(NKWebKit::HttpAbi::ASCIILiteral));
+    NKWebKit::HttpAbi::ASCIILiteral literal{pages.bytes};
+    std::memcpy(literalRecord, &literal, sizeof(literal));
+    std::memset(pages.bytes, 'x', 2048);
+    pages.bytes[2048] = 0;
+    _ZNK3WTF12ASCIILiteral4dumpERNS_11PrintStreamE(literalRecord, streams.Out());
+    Require(streams.log == "<A[B:" + std::string(2048, 'x') + "]A>");
+    streams.log.clear();
+    pages.End()[-2] = 'z';
+    pages.End()[-1] = 0;
+    literal.characters = pages.End() - 2;
+    _ZNK3WTF12ASCIILiteral4dumpERNS_11PrintStreamE(&literal, streams.Out());
+    Require(streams.log == "<A[B:z]A>");
+    streams.log.clear();
+    pages.End()[-1] = 'z';
+    errno = 71;
+    RequireFault([&] { _ZNK3WTF12ASCIILiteral4dumpERNS_11PrintStreamE(&literal, streams.Out()); });
+    Require(streams.log == "<A" && errno == 71);
+}
+
+static WTF::MediaTime* changingTime;
+static int beginCount;
+
+static void ChangeMediaTime() {
+    ++beginCount;
+    if (beginCount == 1) {
+        changingTime->m_timeValue = 9;
+        changingTime->m_timeScale = 3;
+    } else if (beginCount == 2) {
+        changingTime->m_timeValue = 15;
+        changingTime->m_timeScale = 3;
+    }
+}
+
+static void CallbackChangesAreObserved() {
+    Streams streams;
+    WTF::MediaTime time(1, 1, WTF::MediaTime::Valid);
+    changingTime = &time;
+    beginCount = 0;
+    streams.outer.onBegin = ChangeMediaTime;
+    _ZNK3WTF9MediaTime4dumpERNS_11PrintStreamE(&time, streams.Out());
+    Require(streams.log == "<A[B:{]A><A[B:9][B:/][B:3][B: = ]A><A[B:5.000000][B:}]A>");
+}
+
 int main() {
+    FaultingPointers();
+    CallbackChangesAreObserved();
     {
         Streams streams;
         WTF::Seconds seconds{1.5};
