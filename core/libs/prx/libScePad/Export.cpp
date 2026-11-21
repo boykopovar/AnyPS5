@@ -1200,8 +1200,7 @@ int APS5_VABI scePadReadBlasterForTracker(std::int32_t handle, PadBlasterTracker
 }
 
 int APS5_VABI scePadResetOrientationForTracker(std::int32_t handle) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return scePadResetOrientation(handle);
 }
 
 int APS5_VABI scePadGetMotionTimerUnit(std::int32_t handle, float* unit) {
