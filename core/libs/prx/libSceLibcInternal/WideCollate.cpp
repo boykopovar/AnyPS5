@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/WideCollate.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
@@ -50,5 +51,10 @@ GuestLocale::String* APS5_VABI sceLibcInternalWideCollateTransform_nid_no_patch(
     return DynamicVtable(self, "collate<wchar_t>::transform").transform(result, self, Characters(first), Characters(last));
 }
 APS5_EXPORT("81uX7PzrtG8", sceLibcInternalWideCollateTransform_nid_no_patch);
+
+int APS5_VABI _ZSt9_LStrcollIwEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(const char16_t* first1, const char16_t* last1, const char16_t* first2, const char16_t* last2, const void* collvec) {
+    (void)collvec;
+    return sceLibcInternalWideCollateDoCompare_nid_no_patch(nullptr, first1, last1, first2, last2);
+}
 
 }
