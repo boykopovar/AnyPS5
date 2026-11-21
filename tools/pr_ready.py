@@ -209,7 +209,7 @@ def fetch(repo):
 
 def fetch_one(repo, number):
     page = json.loads(pr_labels.gh("api", "graphql", "-f", f"query={EXPLAIN_QUERY}",
-                                   "-f", f"url=/{repo}/pull/{number}"))
+                                   "-f", f"url=https://github.com/{repo}/pull/{number}"))
     if page.get("errors"):
         raise ValueError(str(page["errors"])[:300])
     node = page["data"]["resource"]

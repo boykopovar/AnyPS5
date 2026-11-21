@@ -193,7 +193,7 @@ class MainTests(unittest.TestCase):
                 if "--explain" in argv:
                     number = int(argv[argv.index("--explain") + 1])
                     self.assertIn("resource(url: $url)", args[3])
-                    self.assertEqual(args[-1], f"url=/o/r/pull/{number}")
+                    self.assertEqual(args[-1], f"url=https://github.com/o/r/pull/{number}")
                     match = next((pr for pr in prs if pr["number"] == number), None)
                     resource = {"state": "OPEN", "baseRefName": "main", **match} if match else None
                     return json.dumps({"data": {"resource": resource}})
