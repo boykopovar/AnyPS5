@@ -2793,8 +2793,12 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
     bool controlTruncated = false;
 #endif
     bool shut = ReceiveEnded(*socket);
+    const bool emptyStream = socket->type == 1 && total == 0 && !passing;
+    if (emptyStream && !shut) {
+        if (const int error = ReceiveAnsweredHere(*socket, 0)) return Fail(error);
+    }
     std::vector<unsigned char> stamps;
-    if (!shut && (total != 0 || socket->type == 1 || ReadableNow(*socket))) {
+    if (!shut && !emptyStream && (total != 0 || socket->type == 1 || ReadableNow(*socket))) {
         size = sizeof(native);
         if (const int waited = WaitForTransfer(*socket, false, flags, descriptor)) return Fail(waited);
         shut = ReceiveEnded(*socket);
