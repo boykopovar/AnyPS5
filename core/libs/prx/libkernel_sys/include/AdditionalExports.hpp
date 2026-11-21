@@ -7,8 +7,8 @@
 
 extern "C" {
 
-int APS5_VABI __cfi_slowpath_diag_nid_postfix();
-int APS5_VABI __cfi_slowpath_nid_postfix();
+void APS5_VABI __cfi_slowpath_diag_nid_postfix(std::uint64_t callSiteTypeId, void* target, void* diagData);
+void APS5_VABI __cfi_slowpath_nid_postfix(std::uint64_t callSiteTypeId, void* target);
 int APS5_VABI __freeze_nid_postfix();
 int APS5_VABI __sceKernelGetGPI_nid_postfix();
 int APS5_VABI __sys_debug_init_nid_postfix();
