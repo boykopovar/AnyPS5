@@ -13,6 +13,7 @@
 
 namespace {
 
+constexpr int kOutOfMemory = static_cast<int>(0x80553101u);
 constexpr int kInvalidArgument = static_cast<int>(0x80553102u);
 constexpr int kInvalidName = static_cast<int>(0x8055310Du);
 constexpr int kInvalidParamSize = static_cast<int>(0x80553112u);
@@ -216,10 +217,12 @@ int main() {
     Require(sceNpUniversalDataSystemIntCreateRecordData(unreadable, &unusedData) == kInvalidName && unusedData == nullptr, "unreadable record type");
     Require(sceNpUniversalDataSystemIntRecordArraySetString(array, unreadable) == kNullValue, "unreadable array string");
     Require(sceNpUniversalDataSystemIntRecordArraySetBinary(array, unmapped, 3) == kNullValue, "unreadable array binary");
+    Require(sceNpUniversalDataSystemIntRecordArraySetBinary(array, unmapped, SIZE_MAX) == kOutOfMemory, "array binary too large for host memory");
     Require(arrayRecord->values.size() == arrayValues, "failed array sets store nothing");
     Require(sceNpUniversalDataSystemIntRecordObjectSetBool(object, unreadable, true) == kInvalidKey, "unreadable object key");
     Require(sceNpUniversalDataSystemIntRecordObjectSetString(object, "unread", unreadable) == kNullValue, "unreadable object string");
     Require(sceNpUniversalDataSystemIntRecordObjectSetBinary(object, "unread", unmapped, 3) == kNullValue, "unreadable object binary");
+    Require(sceNpUniversalDataSystemIntRecordObjectSetBinary(object, "unread", unmapped, SIZE_MAX) == kOutOfMemory, "object binary too large for host memory");
     Require(sceNpUniversalDataSystemIntRecordObjectSetObject(object, unreadable, object, nullptr) == kInvalidKey, "unreadable object object key");
     Require(sceNpUniversalDataSystemIntRecordObjectSetArray(object, unreadable, array, nullptr) == kInvalidKey, "unreadable object array key");
     Require(objectRecord->properties.size() == objectProperties && objectRecord->Find("unread") == nullptr, "failed object sets store nothing");

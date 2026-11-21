@@ -102,6 +102,8 @@ void testGuestPointerFaults() {
     check(sceNpUniversalDataSystemEventPropertyObjectSetBinary(object, "binary", unmapped, 3) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE, "unreadable binary bytes were accepted");
     check(sceNpUniversalDataSystemEventPropertyArraySetString(list, unreadable) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE, "an unreadable array string was accepted");
     check(sceNpUniversalDataSystemEventPropertyArraySetBinary(list, unmapped, 3) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE, "unreadable array bytes were accepted");
+    check(sceNpUniversalDataSystemEventPropertyObjectSetBinary(object, "binary", unmapped, SIZE_MAX) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_OUT_OF_MEMORY, "binary bytes too large for host memory were accepted");
+    check(sceNpUniversalDataSystemEventPropertyArraySetBinary(list, unmapped, SIZE_MAX) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_OUT_OF_MEMORY, "array bytes too large for host memory were accepted");
     check(errno == 71, "errno changed");
     check(object->properties.size() == properties && list->values.size() == values, "a rejected call changed the object");
     call(sceNpUniversalDataSystemDestroyEventPropertyObject(object), "property object was not destroyed");
