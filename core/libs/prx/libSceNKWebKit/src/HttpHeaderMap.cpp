@@ -31,6 +31,7 @@
 
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -133,6 +134,12 @@ void Append(HeaderVector<TEntry>& vector, TEntry entry, unsigned minimum) {
     ++vector.size;
 }
 
+template<class TEntry>
+void DestroyCopy(HeaderVector<TEntry>& vector) {
+    for (unsigned i = 0; i < vector.size; ++i) std::destroy_at(vector.buffer + i);
+    _ZN3WTF8fastFreeEPv(vector.buffer);
+}
+
 void Replace(String& destination, const String& source) {
     String retained(source);
     std::swap(destination.impl, retained.impl);
@@ -209,6 +216,28 @@ void APS5_VABI _ZN7WebCore13HTTPHeaderMapC1Ev(NKWebKit::HttpAbi::HTTPHeaderMap* 
 
 void APS5_VABI _ZN7WebCore13HTTPHeaderMapC2Ev(NKWebKit::HttpAbi::HTTPHeaderMap* self) {
     std::construct_at(&Map(self), NKWebKit::HttpAbi::HTTPHeaderMap {});
+}
+
+NKWebKit::HttpAbi::HTTPHeaderMap APS5_VABI _ZNK7WebCore13HTTPHeaderMap12isolatedCopyEv(const NKWebKit::HttpAbi::HTTPHeaderMap* self) {
+    const auto& source = Map(self);
+    Validate(source.common);
+    Validate(source.uncommon);
+    HTTPHeaderMap copy {};
+    try {
+        for (unsigned i = 0; i < source.common.size; ++i) {
+            const auto& entry = source.common.buffer[i];
+            Append(copy.common, CommonHeader { entry.key, _ZNKR3WTF6String12isolatedCopyEv(&entry.value) }, source.common.size);
+        }
+        for (unsigned i = 0; i < source.uncommon.size; ++i) {
+            const auto& entry = source.uncommon.buffer[i];
+            Append(copy.uncommon, UncommonHeader { _ZNKR3WTF6String12isolatedCopyEv(&entry.key), _ZNKR3WTF6String12isolatedCopyEv(&entry.value) }, source.uncommon.size);
+        }
+    } catch (...) {
+        DestroyCopy(copy.common);
+        DestroyCopy(copy.uncommon);
+        throw;
+    }
+    return copy;
 }
 
 void APS5_VABI _ZN7WebCore13HTTPHeaderMap3addERKN3WTF6StringES4_(NKWebKit::HttpAbi::HTTPHeaderMap* self, const NKWebKit::WtfAbi::String& name, const NKWebKit::WtfAbi::String& value) {
