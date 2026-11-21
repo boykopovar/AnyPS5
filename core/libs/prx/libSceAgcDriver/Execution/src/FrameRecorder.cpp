@@ -150,7 +150,7 @@ FrameRecorder* FrameRecorder::Active() {
 }
 
 FrameRecorder::FrameRecorder(std::filesystem::path directory, std::filesystem::path trigger, std::uint64_t atBoundary, std::uint64_t frames)
-    : directory(std::move(directory)), trigger(std::move(trigger)), atBoundary(atBoundary), frames(frames), origin(std::chrono::steady_clock::now()) {}
+    : directory(std::move(directory)), trigger(std::move(trigger)), atBoundary(atBoundary), frames(frames), beforeFirstSubmit(readNumber(std::getenv("APS5_FRAME_CAPTURE_BEFORE_FIRST_SUBMIT"), 0) != 0), origin(std::chrono::steady_clock::now()) {}
 
 FrameCall FrameRecorder::make(FrameCallKind kind) {
     FrameCall call;
@@ -278,6 +278,9 @@ void FrameRecorder::writeReferenceFrames() {
 
 void FrameRecorder::record(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders, const std::function<void()>& accept) {
     std::unique_lock lock(mutex);
+    if (accept && state == State::Waiting && beforeFirstSubmit && call.kind == FrameCallKind::Submit &&
+        boundaries == 0 && atBoundary == 0 && unrecordedAccepts.load(std::memory_order_acquire) == 0 &&
+        DriverDetail::Driver::Get().SerialProgress().first == 0 && (trigger.empty() || triggered())) start();
     if (accept && !prologueCall && state != State::Recording) {
         unrecordedAccepts.fetch_add(1, std::memory_order_relaxed);
         lock.unlock();

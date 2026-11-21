@@ -359,6 +359,53 @@ void finishedWithin(const std::function<void()>& call, const char* what) {
     finished.get();
 }
 
+void testRecorderBeforeFirstSubmission(const std::string& mode) {
+    auto* const recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "the frame recorder is not active");
+    const std::filesystem::path directory(captureDirectory());
+    std::filesystem::remove_all(directory);
+    const char* const trigger = std::getenv("APS5_FRAME_CAPTURE_TRIGGER");
+    if (trigger != nullptr) std::filesystem::remove(trigger);
+    auto& driver = AgcDriver::DriverDetail::Driver::Get();
+    auto* const block = allocate();
+    auto* const label = reinterpret_cast<std::uint32_t*>(block + BlockBytes / 2);
+    *label = 2;
+    const auto address = reinterpret_cast<std::uintptr_t>(label);
+    const std::array<std::uint32_t, 5> write{0xc0033700u, 0x00100200u, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 1u};
+    std::memcpy(block, write.data(), sizeof(write));
+    const Packet packet{reinterpret_cast<std::uint32_t*>(block), static_cast<std::uint32_t>(write.size()), 0, {}};
+    if (mode == "before_prior") {
+        driver.Submit(&packet, 0);
+        AgcDriverWaitIdle_nid_postfix();
+    }
+    const bool early = mode == "before_first";
+    recorder->Submit(packet, 0, [&] {
+        check(std::filesystem::exists(directory / FrameCaptureWriter::MemoryName) == early,
+              early ? "capture did not start before accepting the first submission" : "capture started despite a delayed or previously accepted submission");
+        driver.Submit(&packet, 0);
+    });
+    AgcDriverWaitIdle_nid_postfix();
+    check(*label == 1, "the submission did not write its label");
+    if (trigger != nullptr) { std::ofstream(trigger) << 1; }
+    recorder->FrameBoundary();
+    if (!early) recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    const auto submits = std::ranges::count_if(reader.Calls(), [](const auto& call) { return call.kind == FrameCallKind::Submit; });
+    check(submits == (early ? 1 : 0), "the capture did not retain exactly the submissions accepted while recording");
+    const bool snapshotted = std::ranges::any_of(reader.Chunks(), [&](const auto& chunk) {
+        if (chunk.kind != FrameMemoryKind::Snapshot || chunk.address > address || address + 4 > chunk.address + chunk.bytes) return false;
+        const auto bytes = reader.Read(chunk);
+        std::uint32_t value = 0;
+        std::memcpy(&value, bytes.data() + (address - chunk.address), sizeof(value));
+        return value == (early ? 2u : 1u);
+    });
+    check(snapshotted, "the initial snapshot was not taken on the requested side of the first submission");
+    const auto begin = std::ranges::find_if(reader.Calls(), [](const auto& call) { return call.kind == FrameCallKind::FrameStart; });
+    check(begin != reader.Calls().end(), "the capture has no frame start");
+    check(early ? begin->accepted == 0 && begin->completed == 0 : begin->accepted != 0 && begin->accepted == begin->completed,
+          "the capture started at an unexpected driver serial");
+}
+
 void testRecorderStartsAfterAdmittedCalls() {
     auto* const recorder = AgcDriver::FrameRecorder::Active();
     check(recorder != nullptr, "the frame recorder is not active");
@@ -446,6 +493,11 @@ void testRecorderStartsAfterAdmittedCalls() {
 
 int main(int argc, char** argv) {
     try {
+        if (argc > 1 && std::string(argv[1]).starts_with("before_")) {
+            testRecorderBeforeFirstSubmission(argv[1]);
+            std::puts("frame capture first submission tests passed");
+            return 0;
+        }
         if (argc > 1 && std::string(argv[1]) == "rewind") {
             testRewindTailFramesCount();
             std::puts("frame capture rewind tail tests passed");

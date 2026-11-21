@@ -92,6 +92,7 @@ private:
     std::filesystem::path trigger;
     std::uint64_t atBoundary = 0;
     std::uint64_t frames = DefaultFrames;
+    bool beforeFirstSubmit = false;
     std::mutex mutex;
     State state = State::Waiting;
     std::unique_ptr<FrameCaptureWriter> writer;
