@@ -39,6 +39,5 @@ int APS5_VABI _ZNKSt7_MpunctIcE16do_decimal_pointEv_nid_postfix();
 int APS5_VABI _ZNKSt19istreambuf_iteratorIcSt11char_traitsIcEE5equalERKS2__nid_postfix();
 int APS5_VABI _ZNKSt7_MpunctIcE13do_neg_formatEv_nid_postfix();
 int APS5_VABI _Strcollx_nid_postfix();
-int APS5_VABI _Tgamma_nid_postfix();
 
 }
