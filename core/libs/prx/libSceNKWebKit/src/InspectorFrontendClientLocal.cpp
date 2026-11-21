@@ -34,6 +34,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace {
 
@@ -41,17 +42,27 @@ constexpr float minimumAttachedHeight = 250.0f;
 constexpr float maximumAttachedHeightRatio = 0.75f;
 constexpr float minimumAttachedWidth = 500.0f;
 constexpr float minimumAttachedInspectedWidth = 320.0f;
+constexpr float unsignedLimit = 4294967296.0f;
+
+unsigned int RoundToUnsigned(float value) {
+    float rounded = std::roundf(value);
+    if (!(rounded > 0.0f))
+        return 0;
+    if (rounded >= unsignedLimit)
+        return std::numeric_limits<unsigned int>::max();
+    return static_cast<unsigned int>(rounded);
+}
 
 }
 
 extern "C" {
 
 unsigned int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal31constrainedAttachedWindowHeightEjj(unsigned int preferredHeight, unsigned int totalWindowHeight) {
-    return std::roundf(std::max(minimumAttachedHeight, std::min<float>(preferredHeight, totalWindowHeight * maximumAttachedHeightRatio)));
+    return RoundToUnsigned(std::max(minimumAttachedHeight, std::min<float>(preferredHeight, totalWindowHeight * maximumAttachedHeightRatio)));
 }
 
 unsigned int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal30constrainedAttachedWindowWidthEjj(unsigned int preferredWidth, unsigned int totalWindowWidth) {
-    return std::roundf(std::max(minimumAttachedWidth, std::min<float>(preferredWidth, totalWindowWidth - minimumAttachedInspectedWidth)));
+    return RoundToUnsigned(std::max(minimumAttachedWidth, std::min<float>(preferredWidth, totalWindowWidth - minimumAttachedInspectedWidth)));
 }
 
 }

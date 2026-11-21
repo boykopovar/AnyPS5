@@ -35,6 +35,8 @@ void TestHeight() {
     Require(Height(1000, 1001) == 751);
     Require(Height(1000, 1002) == 752);
     Require(Height(0xFFFFFFFFu, 0xFFFFFFFFu) == 3221225472u);
+    Require(Height(0xFFFFFF80u, 0xFFFFFFFFu) == 3221225472u);
+    Require(Height(0xC0000000u, 0xFFFFFF7Fu) == 3221225216u);
     std::printf("InspectorFrontendClientLocal::constrainedAttachedWindowHeight: minimum, ratio cap and rounding passed\n");
 }
 
@@ -45,7 +47,13 @@ void TestWidth() {
     Require(Width(600, 700) == 500);
     Require(Width(1000, 0) == 500);
     Require(Width(0xFFFFFFFFu, 0xFFFFFFFFu) == 4294967040u);
-    std::printf("InspectorFrontendClientLocal::constrainedAttachedWindowWidth: minimum, inspected-width cap and small windows passed\n");
+    Require(Width(0xFFFFFF00u, 0xFFFFFFFFu) == 4294967040u);
+    Require(Width(0xFFFFFF7Fu, 0xFFFFFFFFu) == 4294967040u);
+    Require(Width(0xFFFFFF80u, 0xFFFFFFFFu) == 4294967040u);
+    Require(Width(0xFFFFFFFFu, 0xFFFFFF80u) == 4294967040u);
+    Require(Width(0xFFFFFFFFu, 0xFFFFFF7Fu) == 4294966784u);
+    Require(Width(0xFFFFFFFFu, 0xFFFFFEC0u) == 4294966784u);
+    std::printf("InspectorFrontendClientLocal::constrainedAttachedWindowWidth: minimum, inspected-width cap, small windows and 2^32 rounding boundary passed\n");
 }
 
 }
