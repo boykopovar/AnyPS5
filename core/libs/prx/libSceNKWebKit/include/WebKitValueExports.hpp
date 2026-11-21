@@ -349,6 +349,8 @@ void APS5_VABI WKPageClearLoadedSubresourceDomains(const void* pageRef);
 void APS5_VABI WKPageClearUserMediaState(const void* pageRef);
 void APS5_VABI WKPageClearWheelEventTestMonitor(const void* pageRef);
 std::uint32_t APS5_VABI WKPageConfigurationGetTypeID();
+void APS5_VABI WKPageDidAllowPointerLock(const void* pageRef);
+void APS5_VABI WKPageDidDenyPointerLock(const void* pageRef);
 NKWebKit::SizeValue APS5_VABI WKPageFixedLayoutSize(const void* pageRef);
 bool APS5_VABI WKPageGetAddsVisitedLinks(const void* pageRef);
 double APS5_VABI WKPageGetGapBetweenPages(const void* pageRef);

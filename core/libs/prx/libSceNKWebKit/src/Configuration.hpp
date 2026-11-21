@@ -55,6 +55,7 @@ public:
     std::vector<std::string> loadedSubresourceDomains;
     bool userMediaStateCleared = false;
     bool wheelEventTestMonitorCleared = false;
+    bool pointerLockAllowed = false;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};

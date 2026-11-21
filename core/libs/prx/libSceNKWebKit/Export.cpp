@@ -9537,14 +9537,6 @@ int APS5_VABI WKPageCountStringMatches() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageDidAllowPointerLock() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageDidDenyPointerLock() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageEndPrinting() {
     NotImplemented_nid_no_patch(__func__);
 }
