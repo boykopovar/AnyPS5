@@ -110,6 +110,28 @@ static void CheckCharacterScanLengths() {
     }
 }
 
+static void CheckPlainScanResults() {
+#ifndef _WIN32
+    using Scanner = int (APS5_VABI*)(const char*, const char*, ...);
+    for (const Scanner scan : {Scanner{sscanf_nid_postfix}, Scanner{ScanList}}) {
+        for (const auto& [input, format, result] : {std::tuple{"8", "%*d%d%n", 0}, std::tuple{"8 ", "%*d %d%n", 0}, std::tuple{"ab", "%*s%d%n", 0}, std::tuple{"0x", "%i%n", EOF}}) {
+            int value = -7;
+            int count = -7;
+            Require(scan(input, format, &value, &count) == result && value == -7 && count == -7);
+        }
+        unsigned int hex = 0x55555555u;
+        int count = -7;
+        Require(scan("0x", "%x%n", &hex, &count) == EOF && hex == 0x55555555u && count == -7);
+        Require(scan("-0x", "%x%n", &hex, &count) == 0 && hex == 0x55555555u && count == -7);
+        char rest[4] = {'?', '?', '?', '?'};
+        Require(scan("0xg", "%x%s", &hex, rest) == 0 && hex == 0x55555555u && rest[0] == '?');
+        int first = -7;
+        int second = -7;
+        Require(scan("5 6", "%2$d %1$d", &first, &second) == 0 && first == -7 && second == -7);
+    }
+#endif
+}
+
 static void CheckFloatingScanRange() {
     const auto scan = [](const std::string& input) {
         double value = 0.0;
@@ -1136,6 +1158,7 @@ int main(int argc, char** argv) {
     CheckDanglingExponentScan();
     CheckSecureCountBeforeInputFailure();
     CheckFloatingScanRange();
+    CheckPlainScanResults();
     CheckSizeLimits();
     CheckIgnoredLengths();
     CheckCountInWritableFormat();
