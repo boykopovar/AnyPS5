@@ -11,6 +11,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 using namespace FreeType;
@@ -93,6 +94,10 @@ void APS5_VABI FT_Outline_Reverse_nid_postfix(GuestOutline* outline) {
     if (!outline) return;
     const GuestOutline guest = ReadGuestOutline(outline, __func__);
     const std::vector<std::uint16_t> contours = ReadGuestArray(guest.contours, guest.n_contours, __func__);
+    if (!contours.empty() &&
+        (contours.back() >= guest.n_points || std::adjacent_find(contours.begin(), contours.end(), std::greater_equal<>()) != contours.end())) {
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     std::size_t extent = 0;
     std::size_t first = 1;
     for (const std::size_t last : contours) {

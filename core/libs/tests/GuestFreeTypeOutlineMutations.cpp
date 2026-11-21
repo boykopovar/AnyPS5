@@ -14,6 +14,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 using namespace FreeType;
@@ -208,6 +209,20 @@ static void CheckGuestPointers() {
     rejectsRuntime([&] { FT_Outline_Reverse_nid_postfix(&readOnlyTagOutline); });
     Require(readOnlyTagOutline.flags == 0x40 && readOnlyTags == (std::array<unsigned char, 3>{4, 5, 6}));
     Require(Equal(points[0], {-1, 4}) && Equal(points[1], {6, -3}) && Equal(points[2], {2, 9}));
+
+    const std::vector<std::pair<std::uint16_t, std::vector<std::uint16_t>>> malformedContours = {
+        {3, {3}}, {3, {5}}, {3, {65535}}, {3, {2, 1}}, {3, {1, 1}}, {3, {0, 2, 1}}, {3, {0, 5, 2}}, {0, {0}}};
+    for (const auto& [pointCount, endpoints] : malformedContours) {
+        std::array<GuestVector, 6> spanPoints{{{1, 2}, {3, 4}, {5, 6}, {7, 8}, {9, 10}, {11, 12}}};
+        std::array<unsigned char, 6> spanTags{1, 2, 3, 4, 5, 6};
+        const auto originalPoints = spanPoints;
+        const auto originalTags = spanTags;
+        std::vector<std::uint16_t> contourEnds = endpoints;
+        GuestOutline malformed{static_cast<std::uint16_t>(contourEnds.size()), pointCount, spanPoints.data(), spanTags.data(), contourEnds.data(), 0x40};
+        rejectsRuntime([&] { FT_Outline_Reverse_nid_postfix(&malformed); });
+        Require(malformed.flags == 0x40 && spanTags == originalTags && contourEnds == endpoints);
+        for (std::size_t index = 0; index < spanPoints.size(); ++index) Require(Equal(spanPoints[index], originalPoints[index]));
+    }
 }
 
 int main() {
