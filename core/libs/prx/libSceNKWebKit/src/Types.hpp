@@ -259,6 +259,8 @@ public:
     Retained<String> description;
     Retained<String> helpText;
     Retained<String> url;
+    std::uint32_t role = 0;
+    std::uint32_t buttonState = 0;
 };
 
 class MediaSessionMetadata final : public ObjectOf<ObjectType::MediaSessionMetadata> {

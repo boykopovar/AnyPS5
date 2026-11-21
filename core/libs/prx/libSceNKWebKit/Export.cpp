@@ -8891,17 +8891,7 @@ int APS5_VABI JSSetOptions() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKAXObjectButtonState() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
-
 int APS5_VABI WKAXObjectPage() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKAXObjectRole() {
     NotImplemented_nid_no_patch(__func__);
 }
 
