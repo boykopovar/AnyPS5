@@ -1,0 +1,5 @@
+# libSceLibreSsl3
+
+## add Functional
+
+- [Key DER long-form lengths](../../../core/libs/prx/libSceLibreSsl3/src/KeyDer.cpp) (libSceLibreSsl3) - not checked on the console. `d2i_PUBKEY`, `d2i_RSA_PUBKEY`, `d2i_PKCS8_PRIV_KEY_INFO` and `EVP_PKCS82PKEY` accept long-form lengths below 128 and leading zero octets, as LibreSSL 3.4.1 [`asn1_get_length`](https://github.com/libressl/openbsd/blob/078b3d1df8ca2011c1605cd40418c58fa0f5b143/src/lib/libcrypto/asn1/asn1_lib.c#L156-L194) does, including a first length octet 0xff, which LibreSSL 4.0.0 refuses. `d2i_PKCS8_PRIV_KEY_INFO_bio`, `d2i_PrivateKey_bio` and `d2i_RSAPublicKey_bio` take at most six length octets (`ASN1_R_HEADER_TOO_LONG` beyond), as 3.4.1 [`asn1_d2i_read_bio`](https://github.com/libressl/openbsd/blob/078b3d1df8ca2011c1605cd40418c58fa0f5b143/src/lib/libcrypto/asn1/a_d2i_fp.c#L146-L203) does. Indefinite lengths, which 3.4.1 accepts on constructed values, are still refused. Closes when: indefinite lengths are read and the 0xff rule is settled against the console.
