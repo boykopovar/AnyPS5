@@ -209,6 +209,7 @@ private:
                 node.op = value->Opcode() == IrOpcode::ReadConstBuffer ? Op::ReadConstBuffer : Op::Read;
                 node.clean = current.clean;
                 node.loaded = LoadedFromMemory(*handle);
+                node.addressLoaded = AddressLoadedFromMemory(plan, *value);
                 node.source = value;
                 if (IrValue* low = handle->Argument(0); low != nullptr) {
                     low = low->Resolve();
@@ -440,7 +441,7 @@ bool SrtTape::compute(Frame& frame, const Node& node, std::uint64_t& result) con
                 return false;
             }
             if (frame.runtime.userDataUse != nullptr) frame.runtime.userDataUse->reads.emplace_back(address, origin);
-            if (node.loaded && frame.runtime.accessible != nullptr && !frame.runtime.accessible(frame.runtime.userContext, address, sizeof(std::uint32_t))) return false;
+            if (node.addressLoaded && frame.runtime.accessible != nullptr && !frame.runtime.accessible(frame.runtime.userContext, address, sizeof(std::uint32_t))) return false;
             if (auto* trace = frame.runtime.readTrace; trace != nullptr) {
                 if (node.source == trace->leaf) trace->leaves.emplace_back(trace->leafSlot, address);
                 else trace->otherReads.push_back(address);
