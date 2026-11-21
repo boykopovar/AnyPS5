@@ -698,6 +698,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         context.SetFloat32FlushToZero(options.float32FlushToZero);
         context.SetFloat32FlushDeclared(options.float32FlushDeclared);
         context.SetFloat64(options.float64);
+        context.SetTableLiterals(options.tableLiterals);
         context.SetSharedVectorRegisters(options.sharedVectorBase, options.sharedVectorCount);
         context.SetEntryRounding(entryRounding.at(cfgBlock.id));
         const bool insideWindow = !scopedWindow || windowRegion.contains(cfgBlock.id);
