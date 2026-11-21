@@ -2846,10 +2846,6 @@ int APS5_VABI _ZN7WebCore9Scrollbar21createNativeScrollbarERNS_14ScrollableAreaE
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageGroupCopyIdentifier() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore26Matrix3DTransformOperationeqERKNS_18TransformOperationE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4120,10 +4116,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_THYrKHts64I_nid_no_patch() {
 APS5_EXPORT("THYrKHts64I", libSceNKWebKitLegacyUnknown_THYrKHts64I_nid_no_patch);
 
 int APS5_VABI _ZThn176_N7WebCore8Document8postTaskEONS_22ScriptExecutionContext4TaskE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageGroupGetTypeID() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8879,10 +8871,6 @@ int APS5_VABI WKBundleAddOriginAccessAllowListEntry() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleBackForwardListClear() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleClearHistoryForTesting() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9259,14 +9247,6 @@ int APS5_VABI WKBundlePageGetAppCacheUsageForOrigin() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageGetPageZoomFactor() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageGetTextZoomFactor() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageHasLocalDataForURL() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9395,10 +9375,6 @@ int APS5_VABI WKBundlePageSetPageLoaderClient() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageSetPageZoomFactor() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageSetPolicyClient() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9408,10 +9384,6 @@ int APS5_VABI WKBundlePageSetResourceLoadClient() {
 }
 
 int APS5_VABI WKBundlePageSetScaleAtOrigin() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageSetTextZoomFactor() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9630,19 +9602,7 @@ int APS5_VABI WKFormSubmissionListenerContinue() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKFrameGetMainResourceData() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFrameGetPage() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKFrameGetResourceData() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFrameGetWebArchive() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9671,10 +9631,6 @@ int APS5_VABI WKFramePolicyListenerUse() {
 }
 
 int APS5_VABI WKFramePolicyListenerUseWithPolicies() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFrameStopLoading() {
     NotImplemented_nid_no_patch(__func__);
 }
 

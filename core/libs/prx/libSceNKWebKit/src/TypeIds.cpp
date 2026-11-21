@@ -35,11 +35,11 @@ std::uint32_t APS5_VABI WKBooleanGetTypeID() {
 }
 
 std::uint32_t APS5_VABI WKBundleBackForwardListGetTypeID() {
-    return 0;
+    return static_cast<std::uint32_t>(NKWebKit::ObjectType::BundleBackForwardList);
 }
 
 std::uint32_t APS5_VABI WKBundleBackForwardListItemGetTypeID() {
-    return 0;
+    return static_cast<std::uint32_t>(NKWebKit::ObjectType::BundleBackForwardListItem);
 }
 
 std::uint32_t APS5_VABI WKBundleDOMWindowExtensionGetTypeID() {
@@ -72,6 +72,10 @@ std::uint32_t APS5_VABI WKBundleNodeHandleGetTypeID() {
 
 std::uint32_t APS5_VABI WKBundlePageGetTypeID() {
     return NKWebKit::TypeID(NKWebKit::ObjectType::BundlePage);
+}
+
+std::uint32_t APS5_VABI WKBundlePageGroupGetTypeID() {
+    return NKWebKit::TypeID(NKWebKit::ObjectType::BundlePageGroup);
 }
 
 std::uint32_t APS5_VABI WKBundlePageOverlayGetTypeID() {
