@@ -23,7 +23,7 @@ static void Require(bool condition, std::source_location location = std::source_
 
 int main() {
     constexpr std::size_t page = PS5_PAGE_SIZE;
-    const auto size = static_cast<int64_t>(sceKernelGetDirectMemorySize());
+    const auto size = static_cast<int64_t>(DirectMemorySize());
     int64_t phys = 0;
 
     Require(sceKernelAllocateDirectMemoryForApp(0, size, 0, 0, 0, &phys) == SCE_KERNEL_ERROR_EINVAL);
@@ -32,6 +32,12 @@ int main() {
     Require(sceKernelAllocateDirectMemoryForApp(size, 0, page, 0, 0, &phys) == SCE_KERNEL_ERROR_EINVAL);
 
     Require(sceKernelAllocateDirectMemoryForApp(0, size, page, 0, 0, &phys) == 0);
+    int64_t availableStart = -1;
+    size_t availableSize = 0;
+    Require(sceKernelAvailableDirectMemorySize(0, size, page, &availableStart, &availableSize) == 0);
+    Require(availableStart == static_cast<int64_t>(page));
+    Require(availableSize == static_cast<size_t>(size) - page);
+    Require(sceKernelGetDirectMemorySize() == static_cast<size_t>(size));
     const auto freePage = phys;
     const auto pageEnd = freePage + static_cast<int64_t>(page);
     Require(sceKernelReleaseDirectMemory(phys, page) == 0);

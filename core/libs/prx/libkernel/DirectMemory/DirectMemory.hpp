@@ -19,6 +19,8 @@ using HostSharedMemory = int;
 #endif
 
 size_t DirectMemorySize();
+void DirectMemoryTouch() noexcept;
+bool DirectMemoryIsInitialized() noexcept;
 int DirectMemoryAlloc(int64_t searchStart, int64_t searchEnd, size_t len, size_t alignment, int memoryType, int64_t* physOut);
 void DirectMemoryFree(int64_t start, size_t len);
 bool DirectMemoryCheckedFree(int64_t start, size_t len);
