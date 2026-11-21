@@ -9,6 +9,7 @@
 #include <numeric>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <unordered_map>
 
 namespace ShaderRecompiler {
@@ -1276,6 +1277,20 @@ std::optional<std::set<std::uint32_t>> Values(const IrProgram& program, const Ir
     return finish(std::nullopt);
 }
 
+}
+
+StencilExportMode SelectStencilExportMode(const IrProgram& program, std::span<const std::uint32_t> capabilities, bool operationValue, bool earlyTests, bool ordered) {
+    const bool exports = program.Resources().stage == IrShaderStage::Pixel && std::ranges::any_of(program.Info().outputs, [](const StageOutput& output) { return output.kind == StageOutputKind::StencilRef; });
+    if (!exports) return StencilExportMode::None;
+    if (std::ranges::find(capabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) != capabilities.end()) return StencilExportMode::Native;
+    const auto values = StencilReferenceValues(program, operationValue ? 8u : 0u);
+    if (values.empty() && !operationValue) throw std::runtime_error("stencil reference export emulation found no stencil export");
+    if (!StencilReferenceDefinedForKeptInvocations(program)) throw std::runtime_error("stencil reference export emulation requires a stencil export on every kept path");
+    if (earlyTests || ordered) throw std::runtime_error("stencil reference export emulation requires a replay-safe pixel shader with late tests");
+    if (!values.empty() && StencilReplaySafe(program, StencilReplayLanesFixed(capabilities))) return StencilExportMode::Replay;
+    if (!operationValue) throw std::runtime_error("stencil reference export emulation requires a replay-safe pixel shader with late tests");
+    if (std::ranges::any_of(program.Info().outputs, [](const StageOutput& output) { return output.kind == StageOutputKind::Mrt && output.location == StencilAttachmentLocation; })) throw std::runtime_error("stencil operation value attachment export requires unused color output location 7");
+    return StencilExportMode::Attachment;
 }
 
 std::vector<std::uint32_t> StencilReferenceValues(const IrProgram& program) {

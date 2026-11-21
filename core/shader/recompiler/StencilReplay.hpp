@@ -8,6 +8,12 @@
 
 namespace ShaderRecompiler {
 
+enum class StencilExportMode { None, Native, Replay, Attachment };
+
+inline constexpr std::uint32_t StencilAttachmentLocation = 7u;
+
+[[nodiscard]] StencilExportMode SelectStencilExportMode(const IrProgram& program, std::span<const std::uint32_t> capabilities, bool operationValue, bool earlyTests, bool ordered);
+
 [[nodiscard]] std::vector<std::uint32_t> StencilReferenceValues(const IrProgram& program);
 [[nodiscard]] std::vector<std::uint32_t> StencilReferenceValues(const IrProgram& program, std::uint32_t shift);
 [[nodiscard]] bool LayerReplaySafe(const IrProgram& program);
