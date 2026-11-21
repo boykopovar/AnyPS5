@@ -73,6 +73,7 @@ struct SurfaceGeometry {
     bool thick = false;
     std::uint32_t blockDepth = 1;
     std::uint64_t layerBytes = 0;
+    std::uint32_t imageLevels = 1;
 
     bool levelMajor = false;
     std::uint64_t GuestOffset(std::uint32_t layer, const TileMipLayout& mip) const {
@@ -84,6 +85,7 @@ struct SurfaceGeometry {
     std::int32_t CopyDepth(std::uint32_t layer) const { return imageDepth > 1 ? static_cast<std::int32_t>(layer) : 0; }
     bool HasLayer(std::uint32_t level, std::uint32_t layer) const { return imageDepth <= 1 || layer < std::max(imageDepth >> level, 1u); }
 };
+std::uint32_t FullMipChainLevels(std::uint32_t width, std::uint32_t height, std::uint32_t depth);
 SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor);
 std::uint64_t DescribeSurfaceGuestBytes(const GuestTextureResource& descriptor);
 std::uint64_t SurfaceGuestBytes(const GuestTextureResource& descriptor);
