@@ -3999,6 +3999,24 @@ void gcnColorSliceTests() {
         const auto target = DecodeColorBuffer(queue.context, 0);
         Require(target.address == base + slice * GcnSliceBytes && target.bytes == GcnSliceBytes, "a GCN color view of one array slice does not address that slice");
     }
+    for (const std::uint32_t slice : {0u, 1u}) {
+        for (const std::uint32_t exports : {0u, (1u << 18u) - 1u, ~(1u << 18u)}) {
+            queue.context[0x207] = exports;
+            queue.context[0x31b] = slice | (2u << 13u);
+            const auto target = DecodeColorBuffer(queue.context, 0);
+            Require(target.address == base + slice * GcnSliceBytes && target.bytes == GcnSliceBytes && target.layers == 1u, "a GCN color view of several slices without a vertex render target index does not draw into its first slice");
+        }
+    }
+    queue.context.erase(0x207);
+    queue.context[0x31b] = 1u | (2u << 13u);
+    Require(DecodeColorBuffer(queue.context, 0).address == base + GcnSliceBytes, "a GCN color view of several slices decoded without PA_CL_VS_OUT_CNTL does not draw into its first slice");
+    queue.context[0x207] = 1u << 18u;
+    expectFailure([&] { static_cast<void>(DecodeColorBuffer(queue.context, 0)); }, "GCN layered rendering into several array slices through the vertex render target index is not implemented");
+    queue.context[0x31b] = 1u | (1u << 13u);
+    Require(DecodeColorBuffer(queue.context, 0).address == base + GcnSliceBytes, "a GCN color view of one slice is refused for a vertex render target index");
+    queue.context[0x207] = 0;
+    queue.context[0x31b] = 2u | (1u << 13u);
+    expectFailure([&] { static_cast<void>(DecodeColorBuffer(queue.context, 0)); }, "the color view ends before its first slice");
 }
 
 void cmaskTests() {
