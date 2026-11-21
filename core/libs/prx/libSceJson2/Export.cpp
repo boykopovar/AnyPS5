@@ -21,6 +21,7 @@
 #include <limits>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
@@ -1567,12 +1568,14 @@ void CreateDefault(ValueType type) {
 int InitializeResources(void* self, const void* parameter, std::int32_t format, bool modern) {
     auto& state = State();
     AllocationContext context;
-    std::memcpy(&context, parameter, offsetof(AllocationContext, fileBufferSize));
+    if (!GuestBytes(parameter).CopyIn(&context, offsetof(AllocationContext, fileBufferSize))) return JsonErrorInvalidArgument;
+    std::size_t fileBufferSize = 0;
+    if (!GuestPtr<std::size_t>(static_cast<const std::byte*>(parameter) + offsetof(AllocationContext, fileBufferSize)).CopyIn(fileBufferSize)) return JsonErrorInvalidArgument;
     auto* const* table = *static_cast<void* const* const*>(context.allocator);
     const auto allocate = reinterpret_cast<void* (APS5_VABI*)(void*, std::size_t, void*)>(table[2]);
     auto* allocation = static_cast<AllocationContext*>(allocate(context.allocator, sizeof(AllocationContext), context.userData));
     if (!allocation) return JsonErrorOutOfMemory;
-    std::memcpy(&context.fileBufferSize, static_cast<const std::byte*>(parameter) + offsetof(AllocationContext, fileBufferSize), sizeof(context.fileBufferSize));
+    context.fileBufferSize = fileBufferSize;
     *allocation = context;
     state.allocation = allocation;
     state.floatFormat = format;
@@ -2592,7 +2595,8 @@ void* const JsonMemAllocatorVtable[] = {
 extern "C" {
 
 void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void* self) {
-    *static_cast<std::uint8_t*>(self) = 0;
+    const std::uint8_t cleared = 0;
+    GuestPtr<std::uint8_t>(self).CopyOut(cleared);
 }
 
 void APS5_VABI _ZN3sce4Json11InitializerD1Ev(void* self) {
@@ -2603,9 +2607,13 @@ int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void*
     auto& state = State();
     std::lock_guard callbackLock(state.callbackMutex);
     std::lock_guard lock(state.mutex);
-    if (state.allocation || state.initialized || *static_cast<const std::uint8_t*>(self)) return JsonErrorAlreadyInitialized;
+    std::uint8_t flag = 0;
+    if (!GuestPtr<std::uint8_t>(self).CopyIn(flag)) return JsonErrorInvalidArgument;
+    if (state.allocation || state.initialized || flag) return JsonErrorAlreadyInitialized;
     if (!parameter) return JsonErrorInvalidArgument;
-    if (!*static_cast<void* const*>(parameter)) return JsonErrorOutOfMemory;
+    void* firstField = nullptr;
+    if (!GuestPtr<void*>(parameter).CopyIn(firstField)) return JsonErrorInvalidArgument;
+    if (!firstField) return JsonErrorOutOfMemory;
     ResetDefaults();
     return InitializeResources(self, parameter, 2, false);
 }
@@ -2636,7 +2644,9 @@ int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
     std::lock_guard callbackLock(state.callbackMutex);
     KernelMutexLock recoveryLock(state.recoveryMutex);
     std::lock_guard lock(state.mutex);
-    if (!state.initialized || !*static_cast<const std::uint8_t*>(self)) return JsonErrorNotInitialized;
+    std::uint8_t flag = 0;
+    if (!GuestPtr<std::uint8_t>(self).CopyIn(flag)) return JsonErrorInvalidArgument;
+    if (!state.initialized || !flag) return JsonErrorNotInitialized;
     if (state.internalMutexRetired || state.recoveryMutexRetired || state.retiredDefaultHeaders) NotImplemented_nid_no_patch(__func__);
     if (state.terminating || state.callbackActive || (allocatorCallbackDepth && state.allocationDepth)) NotImplemented_nid_no_patch(__func__);
     TerminationScope termination(state.terminating);
@@ -2646,14 +2656,17 @@ int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
     ReleaseRecoveryState();
     recoveryLock.Unlock();
     ReleaseKernelResources();
-    *static_cast<std::uint8_t*>(self) = 0;
+    const std::uint8_t cleared = 0;
+    GuestPtr<std::uint8_t>(self).CopyOut(cleared);
     return 0;
 }
 
 int APS5_VABI _ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_(void* self, NullAccessCallback callback, void* context) {
     auto& state = State();
     std::lock_guard lock(state.mutex);
-    if (!state.initialized || !*static_cast<const std::uint8_t*>(self)) return JsonErrorNotInitialized;
+    std::uint8_t flag = 0;
+    if (!GuestPtr<std::uint8_t>(self).CopyIn(flag)) return JsonErrorInvalidArgument;
+    if (!state.initialized || !flag) return JsonErrorNotInitialized;
     if (!callback) return JsonErrorInvalidArgument;
     if (state.callback) return static_cast<int>(0x80848112);
     state.callback = callback;
@@ -2678,7 +2691,8 @@ int APS5_VABI _ZN3sce4Json11Initializer36setGlobalElementAccessFailureHandlerEPF
 }
 
 void APS5_VABI _ZN3sce4Json12MemAllocatorC2Ev(void* self) {
-    *static_cast<void* const**>(self) = &JsonMemAllocatorVtable[2];
+    void* const* const vtable = &JsonMemAllocatorVtable[2];
+    GuestPtr<void* const*>(self).CopyOut(vtable);
 }
 
 void APS5_VABI _ZN3sce4Json12MemAllocatorD2Ev(void*) {}
