@@ -59,7 +59,7 @@ int main() {
     Require(sceAudioOutSetVolume(port, 1, nullptr) == INVALID_POINTER, "null volume pointer on valid port returns invalid pointer");
     Require(sceAudioOutSetVolume(port, 1, vol) == 0, "valid port and volume returns success");
     Require(sceAudioOutClose(port) == 0, "close port");
-    Require(sceAudioOutSetVolume(port, 1, vol) == INVALID_PORT, "closed port returns invalid port");
+    Require(sceAudioOutSetVolume(port, 1, vol) == -2144993279, "closed port returns the closed-port code");
 
     std::puts("audio out set volume validation: PASS");
 }
