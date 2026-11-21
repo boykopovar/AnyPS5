@@ -1,5 +1,5 @@
 add_library(libScePad SHARED EXCLUDE_FROM_ALL
-    ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
+    
     ${CMAKE_CURRENT_SOURCE_DIR}/InventoryExports.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PadState.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/HostVolumeState.cpp
@@ -282,4 +282,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_pad_trigger_effect_state_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>")
     endif()
+endif()
+
+add_library(libScePad_Export_Chunk01 STATIC chunks/Export_Chunk01.cpp)
+add_library(libScePad_Export_Chunk02 STATIC chunks/Export_Chunk02.cpp)
+add_library(libScePad_Export_Chunk03 STATIC chunks/Export_Chunk03.cpp)
+add_library(libScePad_Export_Chunk04 STATIC chunks/Export_Chunk04.cpp)
+target_link_libraries(libScePad PUBLIC libScePad_Export_Chunk01 libScePad_Export_Chunk02 libScePad_Export_Chunk03 libScePad_Export_Chunk04)
+get_target_property(libScePad_incdirs libScePad INCLUDE_DIRECTORIES)
+if(libScePad_incdirs)
+    target_include_directories(libScePad_Export_Chunk01 PRIVATE ${libScePad_incdirs})
+    target_include_directories(libScePad_Export_Chunk02 PRIVATE ${libScePad_incdirs})
+    target_include_directories(libScePad_Export_Chunk03 PRIVATE ${libScePad_incdirs})
+    target_include_directories(libScePad_Export_Chunk04 PRIVATE ${libScePad_incdirs})
 endif()

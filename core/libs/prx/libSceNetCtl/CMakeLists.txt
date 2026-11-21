@@ -1,4 +1,4 @@
-add_library(libSceNetCtl SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceNetCtl SHARED EXCLUDE_FROM_ALL )
 target_include_directories(libSceNetCtl PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceNetCtl)
 
@@ -55,4 +55,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_net_ctl PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNetCtl>")
     endif()
+endif()
+
+add_library(libSceNetCtl_Export_Chunk01 STATIC chunks/Export_Chunk01.cpp)
+add_library(libSceNetCtl_Export_Chunk02 STATIC chunks/Export_Chunk02.cpp)
+add_library(libSceNetCtl_Export_Chunk03 STATIC chunks/Export_Chunk03.cpp)
+add_library(libSceNetCtl_Export_Chunk04 STATIC chunks/Export_Chunk04.cpp)
+target_link_libraries(libSceNetCtl PUBLIC libSceNetCtl_Export_Chunk01 libSceNetCtl_Export_Chunk02 libSceNetCtl_Export_Chunk03 libSceNetCtl_Export_Chunk04)
+get_target_property(libSceNetCtl_incdirs libSceNetCtl INCLUDE_DIRECTORIES)
+if(libSceNetCtl_incdirs)
+    target_include_directories(libSceNetCtl_Export_Chunk01 PRIVATE ${libSceNetCtl_incdirs})
+    target_include_directories(libSceNetCtl_Export_Chunk02 PRIVATE ${libSceNetCtl_incdirs})
+    target_include_directories(libSceNetCtl_Export_Chunk03 PRIVATE ${libSceNetCtl_incdirs})
+    target_include_directories(libSceNetCtl_Export_Chunk04 PRIVATE ${libSceNetCtl_incdirs})
 endif()
