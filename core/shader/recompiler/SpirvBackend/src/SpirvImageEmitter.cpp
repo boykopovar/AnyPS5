@@ -404,6 +404,21 @@ std::uint32_t ResultVector(SpirvValueEmitContext& ctx, const ImageEmitAccess& ac
     return result;
 }
 
+std::uint32_t CanonicalSampleNans(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t bits, IrTextureNumericClass numericClass, bool dref) {
+    auto& state = ctx.state;
+    if (numericClass != IrTextureNumericClass::Float || dref || access.mem.dataBits != 32u || access.image.depthBits || access.image.depthUnorm16) return bits;
+    std::uint32_t component[4] = {};
+    for (std::uint32_t index = 0; index < 4u; index++) {
+        const auto scalar = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), scalar, bits, index);
+        const auto nan = Unary(state, spv::OpIsNan, TypeBool(state), Unary(state, spv::OpBitcast, TypeF32(state), scalar));
+        component[index] = Select(state, TypeU32(state), nan, ConstantU32(state, 0xffc00000u), scalar);
+    }
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4), result, component[0], component[1], component[2], component[3]);
+    return result;
+}
+
 constexpr std::array<std::uint32_t, 256> SrgbToLinear{
     0x00000000u, 0x399f0000u, 0x3a1f0000u, 0x3a6f0000u, 0x3a9f0000u, 0x3ac70000u, 0x3aef0000u, 0x3b0b0000u,
     0x3b1f0000u, 0x3b330000u, 0x3b470000u, 0x3b5b0000u, 0x3b710000u, 0x3b840000u, 0x3b900000u, 0x3b9d0000u,
@@ -1998,7 +2013,7 @@ void EmitEmulatedSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& acces
         return mix(top, bottom, weightV);
     });
     if (converted) {
-        ctx.Define(access.inst, ResultVector(ctx, access, filtered, IrTextureNumericClass::Float, false, false));
+        ctx.Define(access.inst, CanonicalSampleNans(ctx, access, ResultVector(ctx, access, filtered, IrTextureNumericClass::Float, false, false), IrTextureNumericClass::Float, false));
         return;
     }
     const auto result = filtered;
@@ -2214,7 +2229,7 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         state.module.AddFunction(spv::OpPhi, resultType, sample, foldSample, foldEnd, operandSample, operandEnd);
     }
     const auto result = setup.dref ? sample : UnpackImageTexel(ctx, access, sample);
-    ctx.Define(access.inst, ResultVector(ctx, access, result, setup.numericClass, setup.dref, false));
+    ctx.Define(access.inst, CanonicalSampleNans(ctx, access, ResultVector(ctx, access, result, setup.numericClass, setup.dref, false), setup.numericClass, setup.dref));
 }
 
 void EmitConstantSwizzleSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
