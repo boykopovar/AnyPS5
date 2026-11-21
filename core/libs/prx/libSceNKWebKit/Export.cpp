@@ -2430,10 +2430,6 @@ int APS5_VABI _ZN7WebCore20GraphicsContextStateD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore15nativeImageSizeERKN3WTF6RefPtrI14_cairo_surfaceNS0_13DumbPtrTraitsIS2_EEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore35createAccessControlPreflightRequestERKNS_15ResourceRequestERNS_14SecurityOriginERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -2694,10 +2690,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_IRYhi2PKG9M_nid_no_patch() {
 APS5_EXPORT("IRYhi2PKG9M", libSceNKWebKitLegacyUnknown_IRYhi2PKG9M_nid_no_patch);
 
 int APS5_VABI _ZN7WebCore16comparePositionsERKNS_15VisiblePositionES2_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3PAL5Clock6createEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -13083,10 +13075,6 @@ int APS5_VABI _ZN3WTF14FileSystemImpl18createSymbolicLinkERKNS_6StringES3_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF14FileSystemImpl18hardLinkOrCopyFileERKNS_6StringES3_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF14FileSystemImpl30appendFileContentsToFileHandleERKNS_6StringERi() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -13165,10 +13153,6 @@ int APS5_VABI _ZN3WTF15BinarySemaphore9waitUntilERKNS_24TimeWithDynamicClockType
 }
 
 int APS5_VABI _ZN3WTF15isWordTextBreakEP14UBreakIterator() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF15memoryFootprintEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -25622,10 +25606,6 @@ int APS5_VABI _ZNK3WTF10StringView16GraphemeClusters8IteratordeEv() {
 }
 
 int APS5_VABI _ZNK3WTF10StringView16GraphemeClusters8IteratoreqERKS2_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF14MediaTimeRange12toJSONStringEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 

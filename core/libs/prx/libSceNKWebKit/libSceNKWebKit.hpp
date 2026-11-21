@@ -1,4 +1,9 @@
 #pragma once
+#include "prx/libSceNKWebKit/include/PalClockExports.hpp"
+#include "prx/libSceNKWebKit/include/MemoryFootprintExports.hpp"
+#include "prx/libSceNKWebKit/include/MediaTimeRangeExports.hpp"
+#include "prx/libSceNKWebKit/include/NativeImageExports.hpp"
+#include "prx/libSceNKWebKit/include/FileSystemCopyExports.hpp"
 #include "prx/libSceNKWebKit/include/DoViCodecParameters.hpp"
 #include "prx/libSceNKWebKit/include/SecurityPolicyExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreRegistrationSlotsExports.hpp"
