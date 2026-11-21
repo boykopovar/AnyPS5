@@ -179,8 +179,9 @@ RuntimeDescriptor descriptor(SpirvValueEmitContext& context, const IrValue& inst
         index = context.Arg(instruction, 1u);
         const auto addTid = nonzero(state, field(state, word3, 23u, 1u));
         if (!memory.idxen) swizzled = both(state, swizzled, addTid);
-        if (state.program.Resources().stage == IrShaderStage::Compute) {
-            const auto lane = state.laneCount == 1u && state.hostSubgroupSize < state.program.WaveSize() ?
+        const auto stage = state.program.Resources().stage;
+        if (stage != IrShaderStage::TessellationControl) {
+            const auto lane = stage == IrShaderStage::Compute && state.laneCount == 1u && state.hostSubgroupSize < state.program.WaveSize() ?
                 Binary(state, spv::OpBitwiseAnd, u32, EmitLocalInvocationIndex(state), ConstantU32(state, state.program.WaveSize() - 1u)) : EmitSubgroupLocalInvocationId(state);
             if (!memory.idxen) index = Select(state, u32, addTid, lane, index);
         } else {
