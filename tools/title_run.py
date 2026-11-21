@@ -1221,7 +1221,20 @@ def last_line(text):
 
 
 def write_summary(output, summary):
-    (output / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+    text = json.dumps(summary, indent=2, default=str)
+    target = output / "summary.json"
+    try:
+        metadata = target.lstat()
+    except FileNotFoundError:
+        mode = None
+    else:
+        mode = stat.S_IMODE(metadata.st_mode) if stat.S_ISREG(metadata.st_mode) else None
+    with tempfile.TemporaryDirectory(prefix=".summary-", dir=output) as directory:
+        staged = Path(directory) / "summary.json"
+        staged.write_text(text, encoding="utf-8")
+        if mode is not None:
+            staged.chmod(mode)
+        staged.replace(target)
 
 
 def run_cli(argv, capture_resources):
