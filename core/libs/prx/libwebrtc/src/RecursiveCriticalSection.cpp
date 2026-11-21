@@ -60,12 +60,16 @@ struct ErrnoGuard {
     ~ErrnoGuard() { errno = savedErrno; }
 };
 
-void RequireWritable(const WebRtcRecursiveCriticalSection* section, const char* caller) {
-    if (!section)
-        throw std::invalid_argument(std::string(caller) + " requires a critical section");
+void RequireWritableBytes(const void* ptr, std::size_t bytes, const char* caller) {
+    if (!ptr)
+        throw std::invalid_argument(std::string(caller));
     ErrnoGuard guard;
-    if (!GuestWritable_nid_no_patch(const_cast<WebRtcRecursiveCriticalSection*>(section), sizeof(*section)))
-        throw std::invalid_argument(std::string(caller) + " requires a critical section");
+    if (!GuestWritable_nid_no_patch(const_cast<void*>(ptr), bytes))
+        throw std::invalid_argument(std::string(caller));
+}
+
+void RequireWritable(const WebRtcRecursiveCriticalSection* section, const char* caller) {
+    RequireWritableBytes(section, sizeof(*section), caller);
 }
 
 PthreadMutex* MutexField(const WebRtcRecursiveCriticalSection* section) {
@@ -120,15 +124,13 @@ void APS5_VABI _ZNK3rtc24RecursiveCriticalSection5LeaveEv_nid_postfix(const WebR
 }
 
 void APS5_VABI _ZN3rtc9CritScopeC1EPKNS_24RecursiveCriticalSectionE_nid_postfix(WebRtcCritScope* scope, const WebRtcRecursiveCriticalSection* section) {
-    if (!scope)
-        throw std::invalid_argument("CritScope::CritScope requires a scope");
+    RequireWritableBytes(scope, sizeof(*scope), "CritScope::CritScope requires a scope");
     Enter(section, "CritScope::CritScope");
     scope->section = section;
 }
 
 void APS5_VABI _ZN3rtc9CritScopeD1Ev_nid_postfix(WebRtcCritScope* scope) {
-    if (!scope)
-        throw std::invalid_argument("CritScope::~CritScope requires a scope");
+    RequireWritableBytes(scope, sizeof(*scope), "CritScope::~CritScope requires a scope");
     Leave(scope->section, "CritScope::~CritScope");
 }
 

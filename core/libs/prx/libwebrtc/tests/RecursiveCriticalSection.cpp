@@ -146,6 +146,11 @@ void CheckGuarded() {
     GuardedPage guard;
     Require(ThrowsInvalidArgument([&] { _ZN3rtc24RecursiveCriticalSectionC1Ev_nid_postfix(guard.As<WebRtcRecursiveCriticalSection>()); }), "guarded constructor target did not throw");
     Require(ThrowsInvalidArgument([&] { _ZN3rtc24RecursiveCriticalSectionD1Ev_nid_postfix(guard.As<WebRtcRecursiveCriticalSection>()); }), "guarded destructor target did not throw");
+    WebRtcRecursiveCriticalSection section{};
+    _ZN3rtc24RecursiveCriticalSectionC1Ev_nid_postfix(&section);
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc9CritScopeC1EPKNS_24RecursiveCriticalSectionE_nid_postfix(guard.As<WebRtcCritScope>(), &section); }), "guarded CritScope ctor did not throw");
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc9CritScopeD1Ev_nid_postfix(guard.As<WebRtcCritScope>()); }), "guarded CritScope dtor did not throw");
+    _ZN3rtc24RecursiveCriticalSectionD1Ev_nid_postfix(&section);
 }
 
 }
