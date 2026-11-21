@@ -1,0 +1,5 @@
+# libwebrtc
+
+## add Public source implementations
+
+- [rtc::NetworkManagerBase::enumeration_permission, set_default_local_addresses, GetDefaultLocalAddress and GetNetworkFromAddress](../../../core/libs/prx/libwebrtc/src/NetworkManager.cpp) (libwebrtc) - layout unverified on the console. Follows [network.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/rtc_base/network.cc) and its header at M134,, libc++ containers and the bundled `sigslot.h` default (single-threaded, 56-byte signals): `NetworkManagerBase` is 272 bytes with `enumeration_permission_` at 128, `networks_` at 136 and the default IPv4 and IPv6 addresses at 200 and 232; with 40-byte guest strings `Network` has `prefix_` at 208 and `ips_` at 288, and `InterfaceAddress` puts `ipv6_flags_` in the tail padding of `IPAddress` at 28. `GetDefaultLocalAddress` for IPv6 returns the best address of the network that holds the default one. A null manager, or a null address that upstream would read or write, throws. Closes when: compared with the console.
