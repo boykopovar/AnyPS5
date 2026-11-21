@@ -548,6 +548,7 @@ private:
         visit(&CommandFunctions::CmdSetColorWriteMaskEXT, &DeviceFunctions::cmdSetColorWriteMask, "vkCmdSetColorWriteMaskEXT");
         visit(&CommandFunctions::CmdSetCullModeEXT, &DeviceFunctions::cmdSetCullMode, "vkCmdSetCullModeEXT");
         visit(&CommandFunctions::CmdSetDepthBias, &DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias");
+        visit(&CommandFunctions::CmdSetDepthBiasEnableEXT, &DeviceFunctions::cmdSetDepthBiasEnable, "vkCmdSetDepthBiasEnableEXT");
         visit(&CommandFunctions::CmdSetDepthBounds, &DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds");
         visit(&CommandFunctions::CmdSetDepthBoundsTestEnableEXT, &DeviceFunctions::cmdSetDepthBoundsTestEnable, "vkCmdSetDepthBoundsTestEnableEXT");
         visit(&CommandFunctions::CmdSetDepthCompareOpEXT, &DeviceFunctions::cmdSetDepthCompareOp, "vkCmdSetDepthCompareOpEXT");

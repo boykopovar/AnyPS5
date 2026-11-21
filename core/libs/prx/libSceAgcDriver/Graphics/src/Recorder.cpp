@@ -1703,7 +1703,7 @@ void CommandState::SetDepthTestEnable(const Context& context, VkBool32 enable) {
 }
 
 void CommandState::SetDepthBiasEnable(const Context& context, VkBool32 enable) {
-    apply(DepthBiasEnable, &CommandState::depthBiasEnable, enable, std::equal_to<>{}, [&] { context.tracked(&DeviceFunctions::cmdSetDepthBiasEnable, "vkCmdSetDepthBiasEnableEXT")(commands, enable); });
+    apply(DepthBiasEnable, &CommandState::depthBiasEnable, enable, std::equal_to<>{}, [&] { context.ForBatch(context.BatchFor(functions), &CommandFunctions::CmdSetDepthBiasEnableEXT, &DeviceFunctions::cmdSetDepthBiasEnable, "vkCmdSetDepthBiasEnableEXT")(commands, enable); });
 }
 
 void CommandState::SetDepthWriteEnable(const Context& context, VkBool32 enable) {

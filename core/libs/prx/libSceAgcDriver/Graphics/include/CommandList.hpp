@@ -26,6 +26,7 @@
     X(CmdCopyImageToBuffer) \
     X(CmdCopyQueryPoolResults) \
     X(CmdDispatch) \
+    X(CmdDispatchBase) \
     X(CmdDispatchIndirect) \
     X(CmdDraw) \
     X(CmdDrawIndexed) \
@@ -51,6 +52,7 @@
     X(CmdSetCullModeEXT) \
     X(CmdSetDepthBias) \
     X(CmdSetDepthBias2EXT) \
+    X(CmdSetDepthBiasEnableEXT) \
     X(CmdSetDepthBounds) \
     X(CmdSetDepthBoundsTestEnable) \
     X(CmdSetDepthBoundsTestEnableEXT) \
