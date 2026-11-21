@@ -55,6 +55,11 @@ struct Submission {
     std::chrono::steady_clock::time_point orderedAt{};
     const std::uint32_t* rewindTail = nullptr;
     std::size_t rewindWords = 0;
+    struct RewindReturn {
+        std::shared_ptr<const std::vector<std::uint32_t>> words;
+        const std::uint32_t* origin = nullptr;
+    };
+    std::vector<RewindReturn> rewindReturns;
     using PreparedWaits = std::map<std::pair<std::uint32_t, std::uint32_t>, std::shared_ptr<IRenderingWait>>;
     struct IndirectSegment {
         std::size_t start;
