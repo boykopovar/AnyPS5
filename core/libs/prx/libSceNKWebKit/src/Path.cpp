@@ -28,11 +28,8 @@
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
-#include "prx/libSceNKWebKit/src/PathAbi.hpp"
-#include "prx/libcairo/include/Context.hpp"
-#include "prx/libcairo/include/Matrix.hpp"
-#include "prx/libcairo/include/Path.hpp"
-#include "prx/libcairo/include/Surface.hpp"
+#include "prx/libSceNKWebKit/include/PathExports.hpp"
+#include "prx/libcairo/include/Bridge.hpp"
 
 #include <cmath>
 #include <cstddef>
@@ -108,10 +105,10 @@ void AppendElement(Path& path, PathElement::Type type, const WebCore::FloatPoint
 
 CairoContext* EnsureCairo(Path& path, const char* function) {
     if (path.m_path) return static_cast<CairoContext*>(path.m_path);
-    CairoSurface* surface = cairo_image_surface_create(CairoFormatA8, 1, 1);
+    CairoSurface* surface = CairoImageSurfaceCreate_nid_no_patch(CairoFormatA8, 1, 1);
     if (!surface) throw std::runtime_error(std::string(function) + " could not create a cairo surface");
-    path.m_path = cairo_create(surface);
-    cairo_surface_destroy(surface);
+    path.m_path = CairoCreate_nid_no_patch(surface);
+    CairoSurfaceDestroy_nid_no_patch(surface);
     if (!path.m_path) throw std::runtime_error(std::string(function) + " could not create a cairo context");
     return static_cast<CairoContext*>(path.m_path);
 }
@@ -119,12 +116,12 @@ CairoContext* EnsureCairo(Path& path, const char* function) {
 void CopyCairo(Path& to, const Path& from, const char* function) {
     CairoContext* context = EnsureCairo(to, function);
     CairoMatrix matrix{};
-    cairo_get_matrix(static_cast<CairoContext*>(from.m_path), &matrix);
-    cairo_set_matrix(context, &matrix);
-    CairoPath* copy = cairo_copy_path(static_cast<CairoContext*>(from.m_path));
+    CairoGetMatrix_nid_no_patch(static_cast<CairoContext*>(from.m_path), &matrix);
+    CairoSetMatrix_nid_no_patch(context, &matrix);
+    CairoPath* copy = CairoCopyPath_nid_no_patch(static_cast<CairoContext*>(from.m_path));
     if (!copy) throw std::runtime_error(std::string(function) + " could not copy a cairo path");
-    cairo_append_path(context, copy);
-    cairo_path_destroy(copy);
+    CairoAppendPath_nid_no_patch(context, copy);
+    CairoPathDestroy_nid_no_patch(copy);
 }
 
 void Initialize(Path& path) {
@@ -132,11 +129,11 @@ void Initialize(Path& path) {
     path.m_elements.buffer = nullptr;
     path.m_elements.capacity = 0;
     path.m_elements.size = 0;
-    path.m_elementsEngaged = false;
+    path.m_elementsEngaged = true;
 }
 
 void Destroy(Path& path) {
-    if (path.m_path) cairo_destroy(static_cast<CairoContext*>(path.m_path));
+    if (path.m_path) CairoDestroy_nid_no_patch(static_cast<CairoContext*>(path.m_path));
     path.m_path = nullptr;
     FreeElements(path);
     path.m_elementsEngaged = false;
@@ -153,15 +150,15 @@ void CopyPath(Path& to, const Path& from) {
 Path& AssignPath(Path& to, const Path& from) {
     if (&to == &from) return to;
     if (!from.m_path) {
-        if (to.m_path) cairo_destroy(static_cast<CairoContext*>(to.m_path));
+        if (to.m_path) CairoDestroy_nid_no_patch(static_cast<CairoContext*>(to.m_path));
         to.m_path = nullptr;
         FreeElements(to);
         to.m_elementsEngaged = true;
         return to;
     }
     if (to.m_path) {
-        cairo_identity_matrix(static_cast<CairoContext*>(to.m_path));
-        cairo_new_path(static_cast<CairoContext*>(to.m_path));
+        CairoIdentityMatrix_nid_no_patch(static_cast<CairoContext*>(to.m_path));
+        CairoNewPath_nid_no_patch(static_cast<CairoContext*>(to.m_path));
     }
     CopyCairo(to, from, "WebCore::Path::operator=");
     FreeElements(to);
@@ -172,7 +169,7 @@ Path& AssignPath(Path& to, const Path& from) {
 
 Path& MoveAssignPath(Path& to, Path& from) {
     if (&to == &from) return to;
-    if (to.m_path) cairo_destroy(static_cast<CairoContext*>(to.m_path));
+    if (to.m_path) CairoDestroy_nid_no_patch(static_cast<CairoContext*>(to.m_path));
     FreeElements(to);
     to.m_path = std::exchange(from.m_path, nullptr);
     to.m_elements = std::exchange(from.m_elements, {nullptr, 0, 0});
@@ -181,16 +178,20 @@ Path& MoveAssignPath(Path& to, Path& from) {
 }
 
 void Clear(Path& path) {
-    if (!path.m_path) return;
-    cairo_identity_matrix(static_cast<CairoContext*>(path.m_path));
-    cairo_new_path(static_cast<CairoContext*>(path.m_path));
+    if (!path.m_path) {
+        FreeElements(path);
+        path.m_elementsEngaged = true;
+        return;
+    }
+    CairoIdentityMatrix_nid_no_patch(static_cast<CairoContext*>(path.m_path));
+    CairoNewPath_nid_no_patch(static_cast<CairoContext*>(path.m_path));
     FreeElements(path);
     path.m_elementsEngaged = true;
 }
 
 void AddRect(Path& path, const WebCore::FloatRect& rect) {
     CairoContext* context = EnsureCairo(path, "WebCore::Path::addRoundedRect");
-    cairo_rectangle(context, rect.x(), rect.y(), rect.width(), rect.height());
+    CairoRectangle_nid_no_patch(context, rect.x(), rect.y(), rect.width(), rect.height());
     const WebCore::FloatPoint topLeft{rect.x(), rect.y()};
     const WebCore::FloatPoint topRight{rect.x() + rect.width(), rect.y()};
     const WebCore::FloatPoint bottomRight{rect.x() + rect.width(), rect.y() + rect.height()};
@@ -202,8 +203,8 @@ void AddRect(Path& path, const WebCore::FloatRect& rect) {
     AppendElement(path, PathElement::Type::CloseSubpath, nullptr, 0, "WebCore::Path::addRoundedRect");
     double x = 0;
     double y = 0;
-    if (cairo_has_current_point(context)) {
-        cairo_get_current_point(context, &x, &y);
+    if (CairoHasCurrentPoint_nid_no_patch(context)) {
+        CairoGetCurrentPoint_nid_no_patch(context, &x, &y);
         const WebCore::FloatPoint current{static_cast<float>(x), static_cast<float>(y)};
         AppendElement(path, PathElement::Type::MoveToPoint, &current, 1, "WebCore::Path::addRoundedRect");
     }
@@ -279,7 +280,7 @@ void Invoke(const PathElementFunction& function, const PathElement& element) {
 }
 
 void ApplyCairoPath(const Path& path, const PathElementFunction& function) {
-    CairoPath* copy = cairo_copy_path(static_cast<CairoContext*>(path.m_path));
+    CairoPath* copy = CairoCopyPath_nid_no_patch(static_cast<CairoContext*>(path.m_path));
     if (!copy) return;
     for (int i = 0; i < copy->num_data; i += copy->data[i].header.length) {
         const CairoPathData& data = copy->data[i];
@@ -307,7 +308,7 @@ void ApplyCairoPath(const Path& path, const PathElementFunction& function) {
         }
         Invoke(function, element);
     }
-    cairo_path_destroy(copy);
+    CairoPathDestroy_nid_no_patch(copy);
 }
 
 }  // namespace
@@ -341,14 +342,14 @@ Path& APS5_VABI _ZN7WebCore4PathaSEOS0_(Path* self, Path* other) {
 void APS5_VABI _ZN7WebCore4Path6moveToERKNS_10FloatPointE(Path* self, const WebCore::FloatPoint* point) {
     auto& path = Checked(self, "WebCore::Path::moveTo");
     if (!point) throw std::invalid_argument("WebCore::Path::moveTo requires a point");
-    cairo_move_to(EnsureCairo(path, "WebCore::Path::moveTo"), point->m_x, point->m_y);
+    CairoMoveTo_nid_no_patch(EnsureCairo(path, "WebCore::Path::moveTo"), point->m_x, point->m_y);
     AppendElement(path, PathElement::Type::MoveToPoint, point, 1, "WebCore::Path::moveTo");
 }
 
 void APS5_VABI _ZN7WebCore4Path9addLineToERKNS_10FloatPointE(Path* self, const WebCore::FloatPoint* point) {
     auto& path = Checked(self, "WebCore::Path::addLineTo");
     if (!point) throw std::invalid_argument("WebCore::Path::addLineTo requires a point");
-    cairo_line_to(EnsureCairo(path, "WebCore::Path::addLineTo"), point->m_x, point->m_y);
+    CairoLineTo_nid_no_patch(EnsureCairo(path, "WebCore::Path::addLineTo"), point->m_x, point->m_y);
     AppendElement(path, PathElement::Type::AddLineToPoint, point, 1, "WebCore::Path::addLineTo");
 }
 
@@ -358,12 +359,12 @@ void APS5_VABI _ZN7WebCore4Path14addQuadCurveToERKNS_10FloatPointES3_(Path* self
     CairoContext* context = EnsureCairo(path, "WebCore::Path::addQuadCurveTo");
     double x = 0;
     double y = 0;
-    cairo_get_current_point(context, &x, &y);
+    CairoGetCurrentPoint_nid_no_patch(context, &x, &y);
     const double controlX = controlPoint->m_x;
     const double controlY = controlPoint->m_y;
     const double endX = endPoint->m_x;
     const double endY = endPoint->m_y;
-    cairo_curve_to(context,
+    CairoCurveTo_nid_no_patch(context,
         x + 2.0 / 3.0 * (controlX - x), y + 2.0 / 3.0 * (controlY - y),
         endX + 2.0 / 3.0 * (controlX - endX), endY + 2.0 / 3.0 * (controlY - endY),
         endX, endY);
@@ -374,7 +375,7 @@ void APS5_VABI _ZN7WebCore4Path14addQuadCurveToERKNS_10FloatPointES3_(Path* self
 void APS5_VABI _ZN7WebCore4Path16addBezierCurveToERKNS_10FloatPointES3_S3_(Path* self, const WebCore::FloatPoint* controlPoint1, const WebCore::FloatPoint* controlPoint2, const WebCore::FloatPoint* endPoint) {
     auto& path = Checked(self, "WebCore::Path::addBezierCurveTo");
     if (!controlPoint1 || !controlPoint2 || !endPoint) throw std::invalid_argument("WebCore::Path::addBezierCurveTo requires three points");
-    cairo_curve_to(EnsureCairo(path, "WebCore::Path::addBezierCurveTo"),
+    CairoCurveTo_nid_no_patch(EnsureCairo(path, "WebCore::Path::addBezierCurveTo"),
         controlPoint1->m_x, controlPoint1->m_y, controlPoint2->m_x, controlPoint2->m_y, endPoint->m_x, endPoint->m_y);
     const WebCore::FloatPoint points[3] = {*controlPoint1, *controlPoint2, *endPoint};
     AppendElement(path, PathElement::Type::AddCurveToPoint, points, 3, "WebCore::Path::addBezierCurveTo");
@@ -383,13 +384,13 @@ void APS5_VABI _ZN7WebCore4Path16addBezierCurveToERKNS_10FloatPointES3_S3_(Path*
 void APS5_VABI _ZN7WebCore4Path12closeSubpathEv(Path* self) {
     auto& path = Checked(self, "WebCore::Path::closeSubpath");
     CairoContext* context = EnsureCairo(path, "WebCore::Path::closeSubpath");
-    cairo_close_path(context);
+    CairoClosePath_nid_no_patch(context);
     if (!path.m_elementsEngaged) return;
     AppendElement(path, PathElement::Type::CloseSubpath, nullptr, 0, "WebCore::Path::closeSubpath");
     double x = 0;
     double y = 0;
-    if (cairo_has_current_point(context)) {
-        cairo_get_current_point(context, &x, &y);
+    if (CairoHasCurrentPoint_nid_no_patch(context)) {
+        CairoGetCurrentPoint_nid_no_patch(context, &x, &y);
         const WebCore::FloatPoint current{static_cast<float>(x), static_cast<float>(y)};
         AppendElement(path, PathElement::Type::MoveToPoint, &current, 1, "WebCore::Path::closeSubpath");
     }
@@ -433,11 +434,11 @@ std::size_t APS5_VABI _ZNK7WebCore4Path12elementCountEv(const Path* self) {
         CheckElements(path, "WebCore::Path::elementCount");
         return path.m_elements.size;
     }
-    CairoPath* copy = cairo_copy_path(static_cast<CairoContext*>(path.m_path));
+    CairoPath* copy = CairoCopyPath_nid_no_patch(static_cast<CairoContext*>(path.m_path));
     if (!copy) return 0;
     std::size_t count = 0;
     for (int i = 0; i < copy->num_data; i += copy->data[i].header.length) ++count;
-    cairo_path_destroy(copy);
+    CairoPathDestroy_nid_no_patch(copy);
     return count;
 }
 
@@ -460,7 +461,7 @@ WebCore::FloatRect APS5_VABI _ZNK7WebCore4Path16fastBoundingRectEv(const Path* s
     double y1 = 0;
     double x2 = 0;
     double y2 = 0;
-    cairo_path_extents(static_cast<CairoContext*>(path.m_path), &x1, &y1, &x2, &y2);
+    CairoPathExtents_nid_no_patch(static_cast<CairoContext*>(path.m_path), &x1, &y1, &x2, &y2);
     return {{static_cast<float>(x1), static_cast<float>(y1)}, {static_cast<float>(x2 - x1), static_cast<float>(y2 - y1)}};
 }
 

@@ -1,4 +1,4 @@
-﻿#include "prx/libSceNKWebKit/src/PathAbi.hpp"
+#include "prx/libSceNKWebKit/include/PathExports.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -181,6 +181,34 @@ void TestClear() {
     Require(ElementsOf(path.path).empty());
 }
 
+void TestEmptyCopyAndClear() {
+    OwnedPath source;
+    alignas(8) unsigned char storage[sizeof(Path)];
+    auto* copy = reinterpret_cast<Path*>(storage);
+    _ZN7WebCore4PathC1ERKS0_(copy, &source.path);
+    Require(copy->m_elementsEngaged);
+    const WebCore::FloatPoint copyMove{3.0f, 4.0f};
+    _ZN7WebCore4Path6moveToERKNS_10FloatPointE(copy, &copyMove);
+    Require(_ZNK7WebCore4Path12elementCountEv(copy) == 1);
+    auto elements = ElementsOf(*copy);
+    Require(elements.size() == 1);
+    Require(elements[0].type == PathElement::Type::MoveToPoint);
+    _ZN7WebCore4PathD1Ev(copy);
+
+    OwnedPath cleared;
+    cleared.path.m_elementsEngaged = false;
+    _ZN7WebCore4Path5clearEv(&cleared.path);
+    Require(cleared.path.m_elementsEngaged);
+    const WebCore::FloatPoint start{1.0f, 2.0f};
+    const WebCore::FloatPoint end{5.0f, 6.0f};
+    _ZN7WebCore4Path6moveToERKNS_10FloatPointE(&cleared.path, &start);
+    _ZN7WebCore4Path9addLineToERKNS_10FloatPointE(&cleared.path, &end);
+    Require(_ZNK7WebCore4Path12elementCountEv(&cleared.path) == 2);
+    elements = ElementsOf(cleared.path);
+    Require(elements.size() == 2);
+    Require(elements[1].type == PathElement::Type::AddLineToPoint);
+}
+
 void TestRoundedRects() {
     OwnedPath path;
     const WebCore::FloatRect rect{{0.0f, 0.0f}, {100.0f, 50.0f}};
@@ -213,6 +241,7 @@ int main() {
         TestSegments();
         TestCopyAndMove();
         TestClear();
+        TestEmptyCopyAndClear();
         TestRoundedRects();
         TestFaults();
     } catch (const std::exception& error) {
@@ -222,4 +251,3 @@ int main() {
     std::puts("WebCore::Path tests passed.");
     return 0;
 }
-

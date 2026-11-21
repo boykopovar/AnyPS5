@@ -1,5 +1,5 @@
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
-#include "prx/libSceNKWebKit/src/PathAbi.hpp"
+#include "prx/libSceNKWebKit/include/PathExports.hpp"
 
 #include <cstdint>
 #include <cstdio>
