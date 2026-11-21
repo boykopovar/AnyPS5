@@ -51,6 +51,10 @@ public:
     std::optional<std::u16string> customUserAgent;
     std::optional<std::u16string> customTextEncodingName;
     bool backgroundExtendsBeyondPage = false;
+    std::optional<std::u16string> loadedHTML;
+    std::optional<std::u16string> loadedPlainText;
+    Retained<URL> loadedBaseURL;
+    const void* loadUserData = nullptr;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
