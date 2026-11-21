@@ -131,6 +131,11 @@ public:
     std::vector<std::string> emptyDocumentSchemes;
     std::vector<std::string> secureSchemes;
     std::vector<std::string> fontAllowList;
+    bool clientConfigured = false;
+    bool historyClientConfigured = false;
+    using InvalidMessageFunction = void (*)(const void* messageName);
+    static InvalidMessageFunction GetInvalidMessageFunction();
+    static void SetInvalidMessageFunction(InvalidMessageFunction function);
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
