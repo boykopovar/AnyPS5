@@ -338,6 +338,8 @@ std::vector<std::uint32_t> MergeEngines(std::span<const std::uint32_t> dcb, std:
             case OpIncrementDeCounter:
                 ++g_drawCounter;
                 break;
+            case OpRewind:
+                NotImplemented_nid_no_patch("a REWIND packet in a submitted draw command buffer");
             default:
                 Lower(out, packet);
         }

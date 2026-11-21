@@ -9,6 +9,7 @@
 #endif
 #include <windows.h>
 #endif
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -18,6 +19,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -34,6 +36,8 @@ std::string ExpectFailure(TAction action) {
 }
 
 constexpr std::uint32_t OpNop = 0x10;
+constexpr std::uint32_t OpIndirectBuffer = 0x3f;
+constexpr std::uint32_t OpRewind = 0x59;
 constexpr std::uint32_t Type2Filler = 0x80000000u;
 constexpr std::uint32_t Type1Header = 0x40000000u;
 
@@ -54,6 +58,8 @@ void TestPackets() {
     Require(message.find("type 1") != std::string::npos && message.find("0x40000000") != std::string::npos && message.find("dword 2 of 4") != std::string::npos, "a type-1 packet did not throw with its header and position: " + message);
     const std::vector<std::uint32_t> truncated{Type3(OpNop, 3), 0u};
     Require(ExpectFailure([&] { MergeEngines(truncated, {}); }).find("truncated") != std::string::npos, "a truncated type-3 packet did not throw");
+    const std::vector<std::uint32_t> rewind{Type3(OpNop, 1), 0u, Type3(OpRewind, 1), 0u, Type3(OpNop, 1), 0u};
+    Require(ExpectFailure([&] { MergeEngines(rewind, {}); }).find("a REWIND packet in a submitted draw command buffer") != std::string::npos, "a REWIND packet in a submitted draw command buffer did not throw");
 }
 
 constexpr std::size_t BlockBytes = 65536;
@@ -90,6 +96,7 @@ public:
     GuestBlock& operator=(const GuestBlock&) = delete;
 
     Labels& Data() { return *reinterpret_cast<Labels*>(block); }
+    std::uint32_t* Words(std::size_t offset) { return reinterpret_cast<std::uint32_t*>(block + offset); }
 
 private:
     std::uint8_t* block = nullptr;
@@ -146,6 +153,26 @@ void EnableSubmitWaitIdle() {
 #endif
 }
 
+void TestCalledRewind() {
+    GuestBlock block;
+    auto& labels = block.Data();
+    std::uint32_t* called = block.Words(0x2000);
+    std::vector<std::uint32_t> after;
+    WriteData(after, &labels.first, 1);
+    called[0] = Type3(OpRewind, 1);
+    called[1] = 0u;
+    std::memcpy(called + 2, after.data(), after.size() * sizeof(std::uint32_t));
+    std::vector<std::uint32_t> draw{Type3(OpIndirectBuffer, 3), Low(called) & ~3u, High(called) & 0xffffu, static_cast<std::uint32_t>(2u + after.size())};
+    Require(Submit(draw) == 0, "the submission that calls a buffer with a REWIND failed");
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    Require(labels.first == 0, "the packets after a REWIND in a called buffer ran before the REWIND was released");
+    std::atomic_ref<std::uint32_t>(called[1]).store(0x80000000u, std::memory_order_release);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (labels.first == 0 && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    Require(labels.first == 1, "the packets after a released REWIND in a called buffer did not run");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -159,6 +186,7 @@ int main(int argc, char** argv) {
         if (!device) return VulkanTestSkipped;
         device.reset();
         EnableSubmitWaitIdle();
+        TestCalledRewind();
         TestFrameBoundaryWait();
         std::puts("GnmDriver submission wait tests passed");
         return 0;
