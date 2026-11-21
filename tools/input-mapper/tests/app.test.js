@@ -159,6 +159,32 @@ for (const outcome of ['valid', 'invalid', 'failed']) {
     });
 }
 
+test('a delayed close cannot answer the confirmation for a newer import', async t => {
+    const app = await setup(t, 'stale-confirmation');
+    app.get('mappings').querySelector('.add-binding').click();
+    const confirmation = app.get('replace-dialog');
+    confirmation.showModal = () => { confirmation.open = true; };
+
+    await app.importFile('first.ini', 'Cross = KEY:F\n');
+    assert.equal(confirmation.open, true);
+    const laterRead = Promise.withResolvers();
+    await app.importFile('second.ini', 'Square = KEY:J\n', laterRead.promise);
+    confirmation.open = false;
+    confirmation.returnValue = 'cancel';
+    laterRead.resolve();
+    await setImmediate();
+    assert.equal(confirmation.open, true);
+    confirmation.dispatchEvent(new Event('close'));
+    await setImmediate();
+    assert.equal(app.get('preview').value, '');
+
+    confirmation.open = false;
+    confirmation.returnValue = 'discard';
+    confirmation.dispatchEvent(new Event('close'));
+    await setImmediate();
+    assert.equal(app.get('preview').value, 'Square = KEY:J\n');
+});
+
 test('a late import cannot restore a configuration after reset', async t => {
     const app = await setup(t, 'stale-import-after-reset');
     await app.importFile('first.ini', 'Cross = KEY:F\n');

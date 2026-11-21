@@ -124,7 +124,12 @@ async function confirmReplacement() {
     const confirmation = byId('replace-dialog');
     confirmation.returnValue = 'cancel';
     return new Promise(resolve => {
-        confirmation.addEventListener('close', () => resolve(confirmation.returnValue === 'discard'), {once: true});
+        function finish() {
+            if (confirmation.open) return;
+            confirmation.removeEventListener('close', finish);
+            resolve(confirmation.returnValue === 'discard');
+        }
+        confirmation.addEventListener('close', finish);
         confirmation.showModal();
     });
 }
