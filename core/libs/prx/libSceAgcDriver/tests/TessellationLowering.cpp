@@ -809,7 +809,8 @@ ModelResult CompareWithConsole(const QuadWalk& console, const IrProgram& lowered
     constexpr std::uint32_t Patches = 85u;
     constexpr std::uint32_t ControlPoints = 3u;
     constexpr std::uint32_t Threads = Patches * ControlPoints;
-    std::mt19937 random(0x5eedu);
+    std::mt19937 engine(0x5eedu);
+    const auto random = [&engine] { return static_cast<std::uint32_t>(engine()); };
     ModelResult result;
     for (std::uint32_t list = 0; list < lists; ++list) {
         std::vector<std::uint32_t> points(2u * Threads);
