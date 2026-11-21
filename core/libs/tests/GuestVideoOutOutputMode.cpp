@@ -22,7 +22,7 @@ static constexpr int UNKNOWN_OUTPUT_MODE = static_cast<int>(0x8029001E);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
-int main() {
+static int GuestMain(int, char**) {
     VideoOutTestEnvironment environment;
     std::array<std::uint8_t, sizeof(VideoOutOutputOptions)> raw{};
     raw.fill(0xAA);
@@ -114,4 +114,7 @@ int main() {
     Require(sceVideoOutIsOutputSupported(handle, 1, &options, nullptr, 0) == INVALID_HANDLE);
     Require(sceVideoOutConfigureOutput(handle, 1, &options, nullptr, 0) == INVALID_HANDLE);
     LibcRunShutdown_nid_postfix();
+    return 0;
 }
+
+int main(int argc, char** argv) { return RunAsGuest(argc, argv, GuestMain); }

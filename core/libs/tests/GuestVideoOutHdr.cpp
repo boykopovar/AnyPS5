@@ -212,7 +212,7 @@ void ValidateHdrModeEnumerationAndNegativePointers(int handle) {
 
 }
 
-int main() {
+static int GuestMain(int, char**) {
     VideoOutTestEnvironment environment;
     int handle = 0;
     try {
@@ -312,3 +312,5 @@ int main() {
     LibcRunShutdown_nid_postfix();
     return 0;
 }
+
+int main(int argc, char** argv) { return RunAsGuest(argc, argv, GuestMain); }
