@@ -52,6 +52,9 @@ public:
     std::optional<std::u16string> customUserAgent;
     std::optional<std::u16string> customTextEncodingName;
     bool backgroundExtendsBeyondPage = false;
+    Retained<URL> loadedFileURL;
+    Retained<URL> allowedDirectoryURL;
+    const void* loadUserData = nullptr;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};

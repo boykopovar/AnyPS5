@@ -8590,10 +8590,6 @@ int APS5_VABI _ZNK7WebCore11WindowProxy6windowEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageLoadFile() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC13JSSetIterator14finishCreationERNS_2VMEPNS_5JSSetENS_13IterationKindE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -10001,10 +9997,6 @@ int APS5_VABI WKPageLoadData() {
 }
 
 int APS5_VABI WKPageLoadDataWithUserData() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageLoadFileWithUserData() {
     NotImplemented_nid_no_patch(__func__);
 }
 
