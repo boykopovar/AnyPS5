@@ -51,6 +51,11 @@ class FragmentLinkTests(unittest.TestCase):
     def test_the_fragment_is_decoded(self):
         self.assertEqual(feature("fragment_links")("docs/x.md", "[a](guide.md#Upper%20Case)"), [("guide.md#Upper%20Case", "docs/guide.md", "Upper Case")])
 
+    def test_angle_brackets_and_query_parameters_are_stripped(self):
+        self.assertEqual(feature("fragment_links")("docs/x.md", "[a](<guide.md#setup>) [b](guide.md?v=1#setup)"),
+                         [("guide.md#setup", "docs/guide.md", "setup"),
+                          ("guide.md?v=1#setup", "docs/guide.md", "setup")])
+
 
 class DocAnchorCommandTests(unittest.TestCase):
     def run_checker(self, root):
