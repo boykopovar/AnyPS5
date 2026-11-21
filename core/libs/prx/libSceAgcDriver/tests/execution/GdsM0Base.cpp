@@ -170,6 +170,8 @@ int main() {
             std::printf("skipped, the device's subgroups are narrower than a wave32 (%u lanes)\n", device->Target().subgroupSize);
             return VulkanTestSkipped;
         }
+        const bool int64Atomics = TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics);
+        if (!int64Atomics) std::puts("skipping the 64-bit add, the device has no shaderBufferInt64Atomics");
         AgcDriver::QueueState queue;
         for (const auto& workgroup : Workgroups) {
             SetWords(queue, Base, Starts);
@@ -181,6 +183,7 @@ int main() {
             SetWords(queue, 0, Canaries);
             Run(*device, workgroup, ReadCode);
             CheckRead(workgroup);
+            if (!int64Atomics) continue;
             SetWords(queue, Base, Starts);
             SetWords(queue, 0, Canaries);
             Run(*device, workgroup, Add64Code);
