@@ -1178,15 +1178,19 @@ std::uint32_t StoreChannelClassValue(SpirvEmitterState& state, const ImageEmitAc
     const auto u32 = TypeU32(state);
     const auto resource = access.mem.resource;
     if (access.image.table != NoTable) return ConstantU32(state, 0u);
-    if (!state.registrationModules) return state.module.SpecializationConstant(u32, PipelineSpecialization::StoreChannelsBase + resource, 0u);
-    const auto word1 = RuntimeImageDword(state, resource, offsetof(RuntimeAbi::ResourceMetadata, descriptor) / sizeof(std::uint32_t) + 1u);
-    const auto code = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, word1, ConstantU32(state, 20u)), ConstantU32(state, 0x1ffu));
-    auto result = ConstantU32(state, 0u);
-    for (std::uint32_t value = 1u; value <= static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float); ++value) {
-        const auto storeClass = StoreChannelClass(value);
-        if (storeClass != 0u) result = Select(state, u32, Binary(state, spv::OpIEqual, TypeBool(state), code, ConstantU32(state, value)), ConstantU32(state, storeClass), result);
+    return state.module.SpecializationConstant(u32, PipelineSpecialization::StoreChannelsBase + resource, 0u);
+}
+
+std::array<std::uint32_t, 4> SwizzledStoreChannels(SpirvEmitterState& state, const std::array<std::uint32_t, 4>& selectors, const std::array<std::uint32_t, 4>& slots) {
+    std::array<std::uint32_t, 4> channels{};
+    for (std::uint32_t component = 0; component < 4u; component++) {
+        channels[component] = ConstantU32(state, 0u);
+        for (std::uint32_t reverse = 4u; reverse != 0u; --reverse) {
+            const auto source = reverse - 1u;
+            channels[component] = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), selectors[source], ConstantU32(state, component + 4u)), slots[source], channels[component]);
+        }
     }
-    return result;
+    return channels;
 }
 
 std::array<std::uint32_t, 4> MeasuredStoreChannels(SpirvEmitterState& state, std::uint32_t storeClass, const std::array<std::uint32_t, 4>& selectors, const std::array<std::uint32_t, 4>& slots,
@@ -1225,6 +1229,61 @@ std::array<std::uint32_t, 4> MeasuredStoreChannels(SpirvEmitterState& state, std
     return result;
 }
 
+std::array<std::uint32_t, 4> RegistrationStoreChannels(SpirvEmitterState& state, std::uint32_t resource, const std::array<std::uint32_t, 4>& selectors, const std::array<std::uint32_t, 4>& slots) {
+    const auto u32 = TypeU32(state);
+    const auto vector = TypeU32Vector(state, 4);
+    const auto split = [&](std::uint32_t value) {
+        std::array<std::uint32_t, 4> parts{};
+        for (std::uint32_t index = 0; index < 4u; ++index) {
+            parts[index] = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, u32, parts[index], value, index);
+        }
+        return parts;
+    };
+    const auto join = [&](const std::array<std::uint32_t, 4>& parts) {
+        const auto id = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, vector, id, parts[0], parts[1], parts[2], parts[3]);
+        return id;
+    };
+    if (state.imageStoreChannelsFunction == 0u) {
+        const auto id = state.module.AllocateId();
+        struct Restore {
+            SpirvEmitterState& state;
+            std::uint32_t label;
+            ~Restore() {
+                state.module.EndHelperFunction();
+                state.currentLabel = label;
+            }
+        };
+        state.module.BeginHelperFunction();
+        const Restore restore{state, state.currentLabel};
+        state.module.AddName(id, "image_store_channels");
+        state.module.AddFunction(spv::OpFunction, vector, id, spv::FunctionControlMaskNone, state.module.Type(spv::OpTypeFunction, vector, u32, vector, vector));
+        const auto code = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionParameter, u32, code);
+        const auto selectorVector = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionParameter, vector, selectorVector);
+        const auto slotVector = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionParameter, vector, slotVector);
+        EmitLabel(state, state.module.AllocateId());
+        auto storeClass = ConstantU32(state, 0u);
+        for (std::uint32_t value = 1u; value <= static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float); ++value) {
+            const auto known = StoreChannelClass(value);
+            if (known != 0u) storeClass = Select(state, u32, Binary(state, spv::OpIEqual, TypeBool(state), code, ConstantU32(state, value)), ConstantU32(state, known), storeClass);
+        }
+        const auto selectorParts = split(selectorVector);
+        const auto slotParts = split(slotVector);
+        state.module.AddFunction(spv::OpReturnValue, join(MeasuredStoreChannels(state, storeClass, selectorParts, slotParts, SwizzledStoreChannels(state, selectorParts, slotParts))));
+        state.module.AddFunction(spv::OpFunctionEnd);
+        state.imageStoreChannelsFunction = id;
+    }
+    const auto word1 = RuntimeImageDword(state, resource, offsetof(RuntimeAbi::ResourceMetadata, descriptor) / sizeof(std::uint32_t) + 1u);
+    const auto code = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, word1, ConstantU32(state, 20u)), ConstantU32(state, 0x1ffu));
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionCall, vector, result, state.imageStoreChannelsFunction, code, join(selectors), join(slots));
+    return split(result);
+}
+
 std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t data, bool integer) {
     auto& state = ctx.state;
     const auto& mem = access.mem;
@@ -1251,15 +1310,9 @@ std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& acce
         }
         selectors[source] = RuntimeImageSwizzle(state, mem.resource, source);
     }
-    std::array<std::uint32_t, 4> channels{};
-    for (std::uint32_t component = 0; component < 4u; component++) {
-        channels[component] = ConstantU32(state, 0u);
-        for (std::uint32_t reverse = 4u; reverse != 0u; --reverse) {
-            const auto source = reverse - 1u;
-            channels[component] = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), selectors[source], ConstantU32(state, component + 4u)), slots[source], channels[component]);
-        }
-    }
-    if (mem.dataBits != 16u) {
+    const bool shared = state.registrationModules && access.image.table == NoTable && mem.dataBits != 16u;
+    auto channels = shared ? RegistrationStoreChannels(state, mem.resource, selectors, slots) : SwizzledStoreChannels(state, selectors, slots);
+    if (!shared && mem.dataBits != 16u) {
         channels = MeasuredStoreChannels(state, StoreChannelClassValue(state, access), selectors, slots, channels);
     }
     for (std::uint32_t component = 0; component < 4u; component++) {
