@@ -12,9 +12,10 @@ from sanitizer_report import cell
 
 PREFIXES = ("APS5_", "ANYPS5_")
 DOC = "docs/dev/ENVIRONMENT.md"
-ROOTS = ("core",)
+ROOTS = ("core", "tools")
 EXTENSIONS = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp", ".py"}
 SKIP = {"build", "build-linux", "build-relinker", "3rdparty", ".git"}
+FIXTURE_PREFIXES = ("tools/tests/",)
 
 INTEGER_READERS = {"kibSetting", "MaskFromEnvironment", "EnvInt", "configured", "environmentCount", "EnvironmentNumber",
                    "MebibytesFromEnvironment"}
@@ -53,6 +54,7 @@ def forms(prefixes=PREFIXES):
         ("addWideString", re.compile(r'\baddWideString\(\s*u"(?P<name>' + name + r')"\s*\)')),
         ("MebibytesFromEnvironment", re.compile(r'\bMebibytesFromEnvironment\(\s*"(?P<name>' + name + r')"'
                                                 r'\s*,\s*(?P<default>' + INTEGER + r')')),
+        ("environ.get", re.compile(r'\benviron\.get\(\s*"(?P<name>' + name + r')"')),
         ("EnvironmentPath", re.compile(r'\bEnvironmentPath\(\s*L"(?P<name>' + name + r')"\s*,\s*"(?P=name)"\s*\)')),
     )
     return tuple((reader, re.compile(form.pattern.replace(r"\(", r"\s*\(", 1), form.flags)) for reader, form in readers)
@@ -126,6 +128,8 @@ def source_files(root):
         return
     for path in sorted(root.rglob("*")):
         if path.suffix not in EXTENSIONS or any(part in SKIP for part in path.relative_to(root).parts):
+            continue
+        if path.as_posix().startswith(FIXTURE_PREFIXES):
             continue
         yield path
 
