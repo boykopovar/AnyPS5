@@ -1,0 +1,5 @@
+# shader
+
+## add Unknown function info
+
+- [GCN multisampled loads](../../../core/shader/recompiler/Optimization/src/ResourceMaterializer.cpp) (shader, PS4) - not measured on GCN hardware. A load without a mip or sampler through a 2D MSAA T# reads x, y and a fragment index, as LLVM's `image_load` does for its 2D MSAA dimension ([LLVM](https://github.com/llvm/llvm-project/blob/48d0dc8f61a7680190a144ef89bd80543c0ec4f9/llvm/include/llvm/IR/IntrinsicsAMDGPU.td#L1119), [L1403-L1406](https://github.com/llvm/llvm-project/blob/48d0dc8f61a7680190a144ef89bd80543c0ec4f9/llvm/include/llvm/IR/IntrinsicsAMDGPU.td#L1403-L1406); `image_load_mip` has no multisampled form). Only an image whose every use is such a 32-bit load, without DA and outside tables, gets the mode: a sample, mip load, query or store through a 2D MSAA T#, or a load with DA, still throws, and a load through a 2D MSAA-array T# throws when the driver binds it. The fragment index is used as the host image's sample index; guest FMASK is not modelled.
