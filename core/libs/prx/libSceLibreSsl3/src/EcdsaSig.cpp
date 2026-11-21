@@ -143,13 +143,19 @@ void APS5_VABI ASN1_TYPE_free_nid_postfix(Asn1Type* value) {
 }
 
 LibreSsl3EcdsaSig* APS5_VABI ECDSA_SIG_new_nid_postfix(void) {
-    auto* signature = static_cast<LibreSsl3EcdsaSig*>(malloc_nid_postfix(sizeof(LibreSsl3EcdsaSig)));
+    auto* signature = static_cast<LibreSsl3EcdsaSig*>(calloc_nid_postfix(1, sizeof(LibreSsl3EcdsaSig)));
     if (!signature) {
         PutError(MallocFailure);
         return nullptr;
     }
-    signature->r = nullptr;
-    signature->s = nullptr;
+    signature->r = BN_new_nid_postfix();
+    if (signature->r) signature->s = BN_new_nid_postfix();
+    if (!signature->r || !signature->s) {
+        PutError(MallocFailure);
+        PutError(MallocFailure);
+        ECDSA_SIG_free_nid_postfix(signature);
+        return nullptr;
+    }
     return signature;
 }
 

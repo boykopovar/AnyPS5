@@ -1133,6 +1133,26 @@ int RsaBitCount_nid_no_patch(const LibreSsl3Rsa* rsa) {
     return BitCount(RequireComponent(rsa->n, "RSA_bits", "modulus"));
 }
 
+int RsaSecurityBits_nid_no_patch(const LibreSsl3Rsa* rsa) {
+    if (!rsa) Reject("RSA_security_bits: null key");
+    const int bits = BitCount(RequireComponent(rsa->n, "RSA_security_bits", "modulus"));
+    if (bits >= 15360) return 256;
+    if (bits >= 7680) return 192;
+    if (bits >= 3072) return 128;
+    if (bits >= 2048) return 112;
+    if (bits >= 1024) return 80;
+    return 0;
+}
+
+int RsaPublicCompare_nid_no_patch(const LibreSsl3Rsa* first, const LibreSsl3Rsa* second) {
+    if (!first || !second) Reject("EVP_PKEY_cmp: null RSA key");
+    const auto same = [](const void* left, const void* right, const char* name) {
+        if (!left || !right) return left == right;
+        return CompareComponents(RequireComponent(left, "EVP_PKEY_cmp", name), RequireComponent(right, "EVP_PKEY_cmp", name)) == 0;
+    };
+    return same(second->n, first->n, "modulus") && same(second->e, first->e, "exponent") ? 1 : 0;
+}
+
 int RsaComponentBits_nid_no_patch(const void* component) {
     return BitCount(RequireComponent(component, "BN_num_bits", "number"));
 }
@@ -1871,15 +1891,20 @@ int APS5_VABI RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(LibreSsl3Rsa* rsa, unsi
 int APS5_VABI RSA_check_key_nid_postfix(const LibreSsl3Rsa* rsa) {
     constexpr auto function = "RSA_check_key";
     if (!rsa) NotImplemented_nid_no_patch("RSA_check_key of a null key");
-    if (!rsa->p || !rsa->q || !rsa->n || !rsa->e || !rsa->d) {
+    LibreSsl3Rsa key{};
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&key, rsa, sizeof(key));
+    errno = savedErrno;
+    if (!readable) throw std::invalid_argument(std::string(function) + ": unreadable rsa");
+    if (!key.p || !key.q || !key.n || !key.e || !key.d) {
         QueueError(ReasonValueMissing);
         return 0;
     }
-    const auto p = ComponentNumber(RequireComponent(rsa->p, function, "p"), function);
-    const auto q = ComponentNumber(RequireComponent(rsa->q, function, "q"), function);
-    const auto n = ComponentNumber(RequireComponent(rsa->n, function, "n"), function);
-    const auto e = ComponentNumber(RequireComponent(rsa->e, function, "e"), function);
-    const auto d = ComponentNumber(RequireComponent(rsa->d, function, "d"), function);
+    const auto p = ComponentNumber(RequireComponent(key.p, function, "p"), function);
+    const auto q = ComponentNumber(RequireComponent(key.q, function, "q"), function);
+    const auto n = ComponentNumber(RequireComponent(key.n, function, "n"), function);
+    const auto e = ComponentNumber(RequireComponent(key.e, function, "e"), function);
+    const auto d = ComponentNumber(RequireComponent(key.d, function, "d"), function);
     auto result = 1;
     if (IsOne(e)) {
         result = 0;
@@ -1927,10 +1952,10 @@ int APS5_VABI RSA_check_key_nid_postfix(const LibreSsl3Rsa* rsa) {
         result = 0;
         QueueError(ReasonDeNotCongruentToOne);
     }
-    if (!rsa->dmp1 || !rsa->dmq1 || !rsa->iqmp) return result;
-    const auto dmp1 = ComponentNumber(RequireComponent(rsa->dmp1, function, "dmp1"), function);
-    const auto dmq1 = ComponentNumber(RequireComponent(rsa->dmq1, function, "dmq1"), function);
-    const auto iqmp = ComponentNumber(RequireComponent(rsa->iqmp, function, "iqmp"), function);
+    if (!key.dmp1 || !key.dmq1 || !key.iqmp) return result;
+    const auto dmp1 = ComponentNumber(RequireComponent(key.dmp1, function, "dmp1"), function);
+    const auto dmq1 = ComponentNumber(RequireComponent(key.dmq1, function, "dmq1"), function);
+    const auto iqmp = ComponentNumber(RequireComponent(key.iqmp, function, "iqmp"), function);
     Number reduced;
     if (!Magnitude(pMinusOne, function) || !Magnitude(qMinusOne, function)) return -1;
     if (!CheckedRemainder(reduced, d, pMinusOne, function)) return -1;
