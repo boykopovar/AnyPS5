@@ -64,6 +64,7 @@ struct GuestImage {
     bool UsePlatformTlsResolver = true;
     bool Symbolic = false;
     bool FunctionSymbolRoots = false;
+    std::uint64_t IgnoredGlobDatAddends = 0;
     std::vector<std::size_t> NamedImports;
 };
 

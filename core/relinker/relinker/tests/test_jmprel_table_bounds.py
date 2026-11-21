@@ -163,8 +163,12 @@ def main():
                 prefix = f"{output_target}-{'glob-dat' if data else 'jump-slot'}-addend"
                 run(relinker, work, prefix + "-zero", fixture(linux=True, data_relocations=data), target=output_target)
                 for addend in (0x10, -8):
-                    run(relinker, work, f"{prefix}-{addend:x}", fixture(linux=True, data_relocations=data, addend=addend),
-                        "GLOB_DAT/JUMP_SLOT relocation has a nonzero addend (offset 0x300)", target=output_target)
+                    if data:
+                        run(relinker, work, f"{prefix}-{addend:x}", fixture(linux=True, data_relocations=data, addend=addend),
+                            target=output_target)
+                    else:
+                        run(relinker, work, f"{prefix}-{addend:x}", fixture(linux=True, data_relocations=data, addend=addend),
+                            "JUMP_SLOT relocation has a nonzero addend", target=output_target)
     print("Jump relocation table bounds tests passed")
 
 
