@@ -262,6 +262,8 @@ class CtestSkipPolicyTests(unittest.TestCase):
             ('<skipped message="SKIP_RETURN_CODE=77"/><system-out>host CPU has SSE2\nskipped, flaky</system-out>', "skipped, flaky"),
             ('<skipped message="SKIP_RETURN_CODE=77"/><system-out>SKIP: Windows symbolic-link privileges unavailable</system-out>',
              "SKIP: Windows symbolic-link privileges unavailable"),
+            ('<skipped message="SKIP_RETURN_CODE=77"/><system-err>pad_identify_wiring: skipped, host joysticks take the pad slots</system-err>',
+             "pad_identify_wiring: skipped, host joysticks take the pad slots"),
         )
         with tempfile.TemporaryDirectory() as directory:
             junit = Path(directory) / "junit.xml"

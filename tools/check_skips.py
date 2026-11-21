@@ -67,7 +67,7 @@ def environment_loader_retention(output):
 
 
 def skip_summary(output):
-    stated = next((match.group(0).strip() for line in output.splitlines() if (match := re.search(r"(?:skipped,|SKIP:).*", line, re.IGNORECASE))), None)
+    stated = next((line.strip() for line in output.splitlines() if re.search(r"skipped,|SKIP:", line, re.IGNORECASE)), None)
     if stated is not None:
         return stated
     first = next((line.strip() for line in output.splitlines() if line.strip()), None)
