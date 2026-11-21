@@ -64,7 +64,7 @@ Three more actions control the host's output volume: `VolumeDown` (F5), `VolumeU
 
 ### Default bindings
 
-Without an `anyps5-input.ini`, or for actions the file does not mention, these bindings apply:
+Each action keeps its built-in bindings unless the shared file or the current title's [per-game profile](#per-game-profiles) overrides it.
 
 | Action | Keyboard and mouse |
 |--------|--------------------|
@@ -209,7 +209,7 @@ While the `Shake` input is held (X by default), the controller reports its accel
 
 ## Per-game profiles
 
-A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA00001.ini`. The profile has the same format and overrides only the actions, settings and SDL controller buttons it lists. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`. An invalid line in a profile reports the profile's file and line number.
+A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA00001.ini`. With `ANYPS5_INPUT_CONFIG` unset, you can use the profile beside the game executable without creating `anyps5-input.ini`. The profile has the same format and overrides only the actions, settings and SDL controller buttons it lists. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`. An invalid line in a profile reports the profile's file and line number.
 
 For example, a profile that gives one title a lower mouse sensitivity and Cross on F:
 
@@ -240,7 +240,7 @@ MouseCurve = 1.3
 
 Earlier versions sampled the mouse every 33 ms and tilted the stick at least halfway for any movement. `MouseDeadzoneOffset = 0.5`, `MouseSmoothingMs = 0` and `MouseDecayMs = 33` come close to that behavior.
 
-An invalid line stops the game when video output starts, with an error that names the file and line number. If the file named by `ANYPS5_INPUT_CONFIG` does not exist, or the configuration file cannot be read, the game stops with an error. With no `anyps5-input.ini` and no `ANYPS5_INPUT_CONFIG`, the built-in mapping is used.
+An invalid line stops the game when video output starts, with an error that names the file and line number. If the file named by `ANYPS5_INPUT_CONFIG` does not exist, or the configuration file cannot be read, the game stops with an error.
 
 ## Web configurator
 
