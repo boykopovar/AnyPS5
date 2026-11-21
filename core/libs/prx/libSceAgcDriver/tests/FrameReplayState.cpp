@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "FakeHandles.hpp"
 #define main frameReplayToolMain
 #include "../tools/FrameReplay.cpp"
 #undef main
@@ -428,7 +429,7 @@ std::uintptr_t mockHandles = 1;
 std::map<VkFence, bool> mockFences;
 
 VKAPI_ATTR VkResult VKAPI_CALL mockAllocateCommandBuffers(VkDevice, const VkCommandBufferAllocateInfo*, VkCommandBuffer* commands) {
-    *commands = reinterpret_cast<VkCommandBuffer>(mockHandles++);
+    *commands = FakeCommandBuffer(mockHandles++);
     return VK_SUCCESS;
 }
 

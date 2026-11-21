@@ -2,6 +2,8 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RECORDER_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/BarrierBatch.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/CommandList.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/SealedBatch.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PassHazards.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
@@ -12,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <array>
+#include <exception>
 #include <deque>
 #include <mutex>
 #include <functional>
@@ -25,6 +28,7 @@
 #include <utility>
 #include <string>
 #include <vector>
+#include <type_traits>
 
 namespace AgcDriver::Graphics {
 
@@ -64,9 +68,10 @@ public:
     CommandState(const CommandState&) = delete;
     CommandState& operator=(const CommandState&) = delete;
 
-    void Begin(VkCommandBuffer commands, bool suppress = true);
+    void Begin(VkCommandBuffer commands, bool suppress = true, const CommandFunctions* functions = nullptr);
     void Invalidate() noexcept;
     VkCommandBuffer Commands() const { return commands; }
+    const CommandFunctions* FunctionsFor(VkCommandBuffer recording, const Context& context) const noexcept { return recording == commands ? context.BatchFor(functions) : nullptr; }
     bool Known(Slot slot) const { return (valid & Mask(slot)) != 0; }
     VkPipeline BoundPipeline() const { return pipelineKnown ? pipeline : VK_NULL_HANDLE; }
     void BindPipeline(const Context& context, VkPipeline pipeline, std::uint32_t dynamicSlots);
@@ -108,6 +113,7 @@ private:
     void applyFaces(Slot first, VkStencilFaceFlags faces, std::array<TValue, 2> CommandState::*field, const TValue& value, TEmit emit);
 
     VkCommandBuffer commands = VK_NULL_HANDLE;
+    const CommandFunctions* functions = nullptr;
     std::uint32_t trackable = 0;
     std::uint32_t valid = 0;
     std::uint32_t overwritten = 0;
@@ -148,10 +154,10 @@ private:
 // up to serial S" WITHOUT the mutex (WaitSerial), because the monotonic value cannot be reset or
 // recycled the way the pooled batch fences are, and afterwards run the completions under the mutex
 // (FinishUpTo). Without timeline semaphores callers use the locked Sync as before.
-class Recorder {
+class Recorder : private StreamMaterializer {
 public:
     // `timelineSemaphores`: the device enabled VK_KHR_timeline_semaphore (WaitSerial is usable).
-    explicit Recorder(const Context& context, bool timelineSemaphores = false);
+    explicit Recorder(const Context& context, bool timelineSemaphores = false, bool deferredBatches = false, std::uint32_t queueFamily = 0, WorkBudget::Limits limits = {});
     ~Recorder();
     Recorder(const Recorder&) = delete;
     Recorder& operator=(const Recorder&) = delete;
@@ -163,7 +169,7 @@ public:
     // so a dispatch, fill or copy whose leading barrier asks for a subset of them may skip it
     // (the [barriers] line counts the merges). The call clears the mask (whatever the caller
     // records is assumed uncovered until it marks); a new batch starts uncovered.
-    VkCommandBuffer Commands(VkAccessFlags* coveredAccess = nullptr);
+    VkCommandBuffer Commands(VkAccessFlags* coveredAccess = nullptr, std::source_location where = std::source_location::current());
     // After a trailing barrier with ALL_COMMANDS as its destination stage: `access` is its
     // destination access mask.
     void MarkCovered(VkAccessFlags access);
@@ -174,9 +180,9 @@ public:
     static constexpr std::uint64_t RunAccessWritten = 1, RunAccessImage = 2;
     using RunAccess = std::array<std::uint64_t, 3>;
     static std::uint32_t PeekUnorderedDispatch();
-    VkCommandBuffer OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped);
+    VkCommandBuffer OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped, std::source_location where = std::source_location::current());
     void DeferDispatchBarrier(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses);
-    VkCommandBuffer RunCommands(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, bool& inRun, VkAccessFlags* coveredAccess);
+    VkCommandBuffer RunCommands(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, bool& inRun, VkAccessFlags* coveredAccess, std::source_location where = std::source_location::current());
     void OpenBatch() { ensureOpen(); }
     bool RunOpen() const { return open != nullptr && open->deferredDispatchQueue != 0; }
     void AfterRun(std::function<void(Recorder&)> work);
@@ -209,8 +215,8 @@ public:
     void FlushKeyStores();
     void FlushKeyStoresOverlapping(std::uint64_t address, std::size_t bytes) { if (HasQueuedKeyStores() && QueuedKeyStoreOverlaps(address, bytes)) FlushKeyStores(); }
     bool Recording() const { return open != nullptr; }
-    bool Idle() const { return open == nullptr && inFlight.empty(); }
-    std::uint64_t OpenSerial() const { return submissions + 1; }
+    bool Idle() const { return open == nullptr && sealedBatches.empty() && inFlight.empty(); }
+    std::uint64_t OpenSerial() const { return sealedThrough + 1; }
     std::uint64_t CompletedThrough() const { return inFlight.empty() ? submissions : inFlight.front()->serial - 1; }
     // Whether recorded work still has completion actions (write-backs the CPU must see) to run.
     bool HasCompletions() const;
@@ -349,6 +355,9 @@ public:
     std::optional<PendingWriteInfo> DescribePendingWrite(std::uint64_t address, std::size_t bytes) const;
     // Ends and submits the open batch without waiting.
     void Submit();
+    std::uint64_t Seal();
+    std::uint64_t QueueSealed();
+    std::size_t SealedBatches() const noexcept { return sealedBatches.size(); }
     void HoldNextSubmit(VkSemaphore semaphore, std::uint64_t value);
     bool SubmitHeld() const;
     // Submits the open batch and returns the serial of the newest submitted batch (0 when nothing was
@@ -602,6 +611,34 @@ public:
     // there must not have a publish recorded for it (UnitShadow), see SyncThrough.
     static bool InCompletion();
     void Activate();
+    class UnwindPoison {
+    public:
+        explicit UnwindPoison(Recorder& recorder) : recorder(recorder), exceptions(std::uncaught_exceptions()) {}
+        ~UnwindPoison() {
+            if (std::uncaught_exceptions() > exceptions) recorder.poisonOpen();
+        }
+        UnwindPoison(const UnwindPoison&) = delete;
+        UnwindPoison& operator=(const UnwindPoison&) = delete;
+
+    private:
+        Recorder& recorder;
+        int exceptions;
+    };
+    UnwindPoison UnwindGuard() { return UnwindPoison(*this); }
+    struct StreamStatistics {
+        std::uint64_t deferred = 0;
+        std::uint64_t direct = 0;
+        std::uint64_t refused = 0;
+        std::uint64_t demoted = 0;
+        std::uint64_t poisoned = 0;
+        std::uint64_t replayed = 0;
+        std::uint64_t replayFailed = 0;
+    };
+    StreamStatistics StreamCounts() const;
+    std::vector<std::pair<std::string, std::uint64_t>> Demotions() const;
+    std::string StreamReport() const;
+    std::uint64_t StreamOps() const { return open != nullptr && open->stream != nullptr ? open->stream->Ops() : 0; }
+    bool Deferred() const { return open != nullptr && open->stream != nullptr && open->stream->Materialized() == VK_NULL_HANDLE; }
     // APS5_PROFILE_DRAW: syncs by source (0 device idle, 1 CPU access to pending writes, 2 CPU read
     // after a recorded store, 3 address-based dispatch, 4 other). Contract: the call announces the
     // source for the Sync/SyncThrough this thread makes NEXT, which consumes it (a sync without a
@@ -742,9 +779,23 @@ private:
         bool overwritten = false;
         const Batch* batch = nullptr;
     };
+    struct SampleSegment {
+        std::shared_ptr<void> pool;
+        VkQueryPool handle;
+        std::uint32_t slot = 0;
+        std::uint64_t batch = 0;
+    };
+    static_assert(std::is_nothrow_move_constructible_v<SampleSegment> && std::is_nothrow_move_assignable_v<SampleSegment>);
     struct Batch {
+        std::unique_ptr<CommandStream> stream;
+        std::shared_ptr<SealedBatch> sealed;
+        VkCommandBuffer real = VK_NULL_HANDLE;
+        std::uint64_t sampleBatch = 0;
+        std::vector<SampleSegment> foldedSamples;
         VkCommandBuffer commands = VK_NULL_HANDLE;
+        const CommandFunctions* functions = nullptr;
         CommandState graphicsState;
+        VkCommandPool pool = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<void>> kept;
         std::size_t keptBytes = 0;
@@ -772,6 +823,10 @@ private:
         // Submission number (1-based): identifies a batch after its allocation may have been reused.
         std::uint64_t serial = 0;
         std::uint64_t predictedSerial = 0;
+        std::uint64_t sealedSerial = 0;
+        VkSemaphore hold = VK_NULL_HANDLE;
+        std::uint64_t holdValue = 0;
+        std::int64_t labelSince = std::numeric_limits<std::int64_t>::min();
         AgcDriver::FaultToken firstToken = 0;
         AgcDriver::FaultToken lastToken = 0;
         std::uint64_t traceId = 0;
@@ -915,17 +970,14 @@ private:
     void beginSegment(Batch& batch);
     void endSegment(Batch& batch);
     void copySegments(VkCommandBuffer commands, std::uint32_t count);
+    void reserveSampleRestore(const Batch& batch);
     void retireSegments(std::uint32_t count);
     void recordQueuedDumps(VkCommandBuffer commands, std::span<const Batch::StoreRun::Queued> writes);
     void dispatchDumps(VkCommandBuffer commands, std::uint32_t firstDump, std::uint32_t dumps, std::uint32_t firstSegment, std::uint32_t lastSegment);
     void foldSegments();
     void foldQueuedDumps(VkCommandBuffer commands, std::span<const Batch::StoreRun::Queued> writes, std::size_t first, std::size_t end, std::uint32_t& dumpIndex, std::uint32_t& consumed);
-    struct SampleSegment {
-        std::shared_ptr<void> pool;
-        VkQueryPool handle;
-        std::uint32_t slot = 0;
-    };
     std::vector<SampleSegment> pendingSamples;
+    std::uint64_t sampleBatches = 0;
     bool countingSamples = false;
     int meshArgumentState = 0;
     VkPipelineLayout meshArgumentLayout = VK_NULL_HANDLE;
@@ -937,7 +989,6 @@ private:
     VkDescriptorSetLayout boundChangedCopySetLayout = VK_NULL_HANDLE;
     VkPipelineLayout boundChangedCopyLayout = VK_NULL_HANDLE;
     VkPipeline boundChangedCopyPipeline = VK_NULL_HANDLE;
-    PFN_vkCmdPushDescriptorSetKHR cmdPushChangedCopySet = nullptr;
     int sampleCounterState = 0;
     std::unique_ptr<Buffer> sampleCounter;
     VkPipelineLayout sampleLayout = VK_NULL_HANDLE;
@@ -972,8 +1023,8 @@ private:
     PFN_vkCmdPushConstants cmdPushConstants = nullptr;
     PFN_vkCmdDispatch cmdDispatch = nullptr;
     template<typename TFunction>
-    TFunction function(TFunction resolved, FunctionName name) const {
-        return resolved != nullptr ? resolved : context.Function<TFunction>(name);
+    TFunction function(TFunction resolved, FunctionName name, std::source_location where = std::source_location::current()) const {
+        return resolved != nullptr ? resolved : context.Function<TFunction>(name, where);
     }
     VkResult fenceStatus(VkFence fence) const { return function(getFenceStatus, "vkGetFenceStatus")(context.device, fence); }
     bool gpuDone(const Batch& batch) const;
@@ -992,7 +1043,7 @@ private:
     // form, toward the host only); returns whether the batch's host-read barrier was included.
     bool closeStoreRun(bool atSubmit = false);
     // Ends the render pass a draw left open (vkCmdEndRenderPass, the pass's trailing barrier).
-    void endOpenRenderPass(PassBreak by, bool barrier = true);
+    void endOpenRenderPass(PassBreak by, bool barrier = true, std::source_location where = std::source_location::current());
     // Records the queued key stores as one run (`forWriter`: before a command writing, reading or
     // labelling over one, not at Submit).
     void recordKeyStores(bool forWriter);
@@ -1004,6 +1055,11 @@ private:
     // `source` is the CountSync source the wait is attributed to.
     void finish(std::unique_ptr<Batch> batch, bool wait, int source, bool releaseNow = false);
     void discard(std::unique_ptr<Batch> batch) noexcept;
+    std::unique_ptr<Batch> sealOpen();
+    std::uint64_t queue(std::unique_ptr<Batch> batch);
+    void unqueued(std::unique_ptr<Batch> batch, std::exception_ptr reason) noexcept;
+    void markLabel(Batch& batch);
+    void refreshLabelMark() noexcept;
     void removeLabels(Batch& batch);
     void release(Batch& batch) noexcept;
     static bool overlaps(const Batch& batch, std::uint64_t address, std::uint64_t end);
@@ -1067,6 +1123,32 @@ private:
     // table is empty (most of the time between label groups).
     std::atomic<std::size_t> recordedLabels{0};
     std::unique_ptr<Batch> open;
+    VkCommandBuffer Begin(CommandStream& stream) override;
+    VkCommandBuffer allocateBegun();
+    std::unique_ptr<ReplayExecutor> makeExecutor();
+    bool defers() const;
+    void poisonOpen() noexcept;
+    void overlayListed();
+    void noteDemotion(const Demotion& demotion);
+    VkCommandBuffer live() { return open->commands; }
+    CommandFunctions realCommands;
+    DeviceFunctions listedFunctions;
+    CommandFunctions directCommands;
+    CommandFunctions streamedCommands;
+    bool realResolved = false;
+    FailureLatch latch;
+    WorkBudget budget;
+    std::unique_ptr<ReplayExecutor> executor;
+    std::uint32_t queueFamily = 0;
+    bool deferring = false;
+    std::atomic<std::uint64_t> deferredBatches{0};
+    std::atomic<std::uint64_t> directBatches{0};
+    std::atomic<std::uint64_t> demotedBatches{0};
+    std::atomic<std::uint64_t> poisonedBatches{0};
+    std::atomic<std::uint64_t> replayedBatches{0};
+    std::atomic<std::uint64_t> failedReplays{0};
+    mutable std::mutex demotionMutex;
+    std::map<std::string, std::uint64_t> demotions;
     std::uint64_t passGeneration = 0;
     std::vector<std::shared_ptr<void>> holdKept;
     std::uint64_t holdKeptSerial = 0;
@@ -1076,6 +1158,8 @@ private:
     std::vector<const Batch*> finishing;
     mutable std::shared_ptr<const WriteRanges> published;
     std::uint64_t submissions = 0;
+    std::uint64_t sealedThrough = 0;
+    std::deque<std::unique_ptr<Batch>> sealedBatches;
     std::size_t inFlightKeptBytes = 0;
     std::uint64_t writeNoteCount = 0;
     std::shared_ptr<Buffer> drawUpload;

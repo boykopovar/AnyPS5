@@ -7,6 +7,7 @@
 #include <mutex>
 #include <vulkan/vulkan.h>
 #include "prx/libc/include/PrimedSharedMutex.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/CommandList.hpp"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -16,6 +17,7 @@
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
+#include <source_location>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -181,6 +183,8 @@ struct DeviceFunctions {
     PFN_vkCmdCopyBufferToImage cmdCopyBufferToImage = nullptr;
     PFN_vkCmdCopyImageToBuffer cmdCopyImageToBuffer = nullptr;
     PFN_vkCmdClearColorImage cmdClearColorImage = nullptr;
+    PFN_vkCmdBeginQuery cmdBeginQuery = nullptr;
+    PFN_vkCmdEndQuery cmdEndQuery = nullptr;
     PFN_vkUpdateDescriptorSets updateDescriptorSets = nullptr;
     PFN_vkAllocateDescriptorSets allocateDescriptorSets = nullptr;
     PFN_vkGetFenceStatus getFenceStatus = nullptr;
@@ -353,15 +357,47 @@ struct Context {
     VertexBufferFormats* vertexFormats = nullptr;
 
     template<typename TFunction>
-    TFunction Function(FunctionName name) const {
-        return lookup<TFunction>(name.Value());
+    TFunction Function(FunctionName name, std::source_location where = std::source_location::current()) const {
+        return lookup<TFunction>(name.Value(), where);
     }
 
     // The table's entry point, or a per-call lookup while the table is absent or lacks it.
+    const DeviceFunctions* Table() const { return functions; }
+
     template<typename TFunction>
     TFunction Resolved(TFunction DeviceFunctions::*member, FunctionName name) const {
-        if (functions != nullptr && functions->*member != nullptr) return functions->*member;
+        if (const auto* table = Table(); table != nullptr && table->*member != nullptr) return table->*member;
         return lookup<TFunction>(name.Value());
+    }
+
+    const CommandFunctions* BatchFor(const CommandFunctions* batch) const noexcept {
+        return batch != nullptr && batch->listed == Table() ? batch : nullptr;
+    }
+
+    template<typename TFunction>
+    TFunction ForBatch(const CommandFunctions* batch, TFunction CommandFunctions::*command, TFunction DeviceFunctions::*member, FunctionName name) const {
+        if (batch != nullptr && batch->*command != nullptr) return batch->*command;
+        return Resolved(member, name);
+    }
+
+    template<typename TFunction>
+    TFunction ForBatch(const CommandFunctions* batch, TFunction CommandFunctions::*command, TrackedFunction<TFunction> DeviceFunctions::*member, const char* name) const {
+        if (batch != nullptr && batch->*command != nullptr) return batch->*command;
+        return tracked(member, name);
+    }
+
+    void OverlayCommands(CommandFunctions& target, const CommandFunctions& real) const {
+        const auto* table = Table();
+        if (table == nullptr) return;
+        forEachOverlay([&](auto command, auto member, const char* name) { overlay(target.*command, real.*command, entry(*table, member), name); });
+    }
+
+    bool OverlayMatches(const DeviceFunctions& snapshot) const {
+        const auto* table = Table();
+        if (table == nullptr) return true;
+        bool same = true;
+        forEachOverlay([&](auto, auto member, const char*) { same = same && entry(*table, member) == entry(snapshot, member); });
+        return same;
     }
 
     class ComputeBinder {
@@ -491,17 +527,64 @@ private:
     friend void FillDeviceFunctions(const Context& context, DeviceFunctions& functions);
 
     template<typename TFunction>
-    TFunction lookup(const char* name) const {
+    TFunction lookup(const char* name, [[maybe_unused]] std::source_location where = std::source_location::current()) const {
         Require(deviceProc != nullptr, "missing Vulkan device function resolver");
         ++DeviceProcLookups();
-        const auto function = reinterpret_cast<TFunction>(deviceProc(device, name));
+        const auto function = deviceProc(device, name);
         if (function == nullptr) throw std::runtime_error(std::string("AGC graphics: missing Vulkan function: ") + name);
-        return function;
+        if (IsCommandName(name)) return reinterpret_cast<TFunction>(CommandThunk(name, function, device));
+        return reinterpret_cast<TFunction>(function);
+    }
+
+    template<typename TVisit>
+    static void forEachOverlay(TVisit&& visit) {
+        visit(&CommandFunctions::CmdBindDescriptorSets, &DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets");
+        visit(&CommandFunctions::CmdBindIndexBuffer, &DeviceFunctions::cmdBindIndexBuffer, "vkCmdBindIndexBuffer");
+        visit(&CommandFunctions::CmdBindPipeline, &DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline");
+        visit(&CommandFunctions::CmdBindVertexBuffers, &DeviceFunctions::cmdBindVertexBuffers, "vkCmdBindVertexBuffers");
+        visit(&CommandFunctions::CmdDraw, &DeviceFunctions::cmdDraw, "vkCmdDraw");
+        visit(&CommandFunctions::CmdDrawIndexed, &DeviceFunctions::cmdDrawIndexed, "vkCmdDrawIndexed");
+        visit(&CommandFunctions::CmdDrawIndexedIndirect, &DeviceFunctions::cmdDrawIndexedIndirect, "vkCmdDrawIndexedIndirect");
+        visit(&CommandFunctions::CmdDrawIndirect, &DeviceFunctions::cmdDrawIndirect, "vkCmdDrawIndirect");
+        visit(&CommandFunctions::CmdSetColorWriteMaskEXT, &DeviceFunctions::cmdSetColorWriteMask, "vkCmdSetColorWriteMaskEXT");
+        visit(&CommandFunctions::CmdSetCullModeEXT, &DeviceFunctions::cmdSetCullMode, "vkCmdSetCullModeEXT");
+        visit(&CommandFunctions::CmdSetDepthBias, &DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias");
+        visit(&CommandFunctions::CmdSetDepthBiasEnableEXT, &DeviceFunctions::cmdSetDepthBiasEnable, "vkCmdSetDepthBiasEnableEXT");
+        visit(&CommandFunctions::CmdSetDepthBounds, &DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds");
+        visit(&CommandFunctions::CmdSetDepthBoundsTestEnableEXT, &DeviceFunctions::cmdSetDepthBoundsTestEnable, "vkCmdSetDepthBoundsTestEnableEXT");
+        visit(&CommandFunctions::CmdSetDepthCompareOpEXT, &DeviceFunctions::cmdSetDepthCompareOp, "vkCmdSetDepthCompareOpEXT");
+        visit(&CommandFunctions::CmdSetDepthTestEnableEXT, &DeviceFunctions::cmdSetDepthTestEnable, "vkCmdSetDepthTestEnableEXT");
+        visit(&CommandFunctions::CmdSetDepthWriteEnableEXT, &DeviceFunctions::cmdSetDepthWriteEnable, "vkCmdSetDepthWriteEnableEXT");
+        visit(&CommandFunctions::CmdSetFrontFaceEXT, &DeviceFunctions::cmdSetFrontFace, "vkCmdSetFrontFaceEXT");
+        visit(&CommandFunctions::CmdSetScissor, &DeviceFunctions::cmdSetScissor, "vkCmdSetScissor");
+        visit(&CommandFunctions::CmdSetStencilCompareMask, &DeviceFunctions::cmdSetStencilCompareMask, "vkCmdSetStencilCompareMask");
+        visit(&CommandFunctions::CmdSetStencilOpEXT, &DeviceFunctions::cmdSetStencilOp, "vkCmdSetStencilOpEXT");
+        visit(&CommandFunctions::CmdSetStencilReference, &DeviceFunctions::cmdSetStencilReference, "vkCmdSetStencilReference");
+        visit(&CommandFunctions::CmdSetStencilTestEnableEXT, &DeviceFunctions::cmdSetStencilTestEnable, "vkCmdSetStencilTestEnableEXT");
+        visit(&CommandFunctions::CmdSetStencilWriteMask, &DeviceFunctions::cmdSetStencilWriteMask, "vkCmdSetStencilWriteMask");
+        visit(&CommandFunctions::CmdSetViewport, &DeviceFunctions::cmdSetViewport, "vkCmdSetViewport");
+    }
+
+    template<typename TFunction>
+    static TFunction entry(const DeviceFunctions& table, TFunction DeviceFunctions::*member) {
+        return table.*member;
+    }
+
+    template<typename TFunction>
+    static TFunction entry(const DeviceFunctions& table, TrackedFunction<TFunction> DeviceFunctions::*member) {
+        return (table.*member).function;
+    }
+
+    template<typename TFunction>
+    void overlay(TFunction& target, TFunction real, TFunction listed, const char* name) const {
+        if (listed == nullptr) return;
+        if (real != nullptr && (listed == real || CommandThunk(name, reinterpret_cast<PFN_vkVoidFunction>(real), device) == reinterpret_cast<PFN_vkVoidFunction>(listed))) return;
+        target = listed;
     }
 
     template<typename TFunction>
     TFunction tracked(TrackedFunction<TFunction> DeviceFunctions::*member, const char* name) const {
-        if (functions != nullptr && (functions->*member).function != nullptr) return (functions->*member).function;
+        if (const auto* table = Table(); table != nullptr && (table->*member).function != nullptr) return (table->*member).function;
         return lookup<TFunction>(name);
     }
 };

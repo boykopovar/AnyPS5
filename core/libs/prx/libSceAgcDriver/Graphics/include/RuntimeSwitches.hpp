@@ -28,6 +28,11 @@ enum class RuntimeSwitch : std::size_t {
     NoTargetMemoOverlapCache,
     IndexInPlaceBehindWriter,
     WideLibraryKeys,
+    NoRecordEncoder,
+    NoAdaptiveEncoder,
+    QuiescedSegments,
+    DirectBatches,
+    NoStreamedPushDescriptors,
     Count,
 };
 
@@ -36,6 +41,7 @@ namespace RuntimeSwitches {
 const char* Name(RuntimeSwitch id);
 bool Set(RuntimeSwitch id);
 void Assign(RuntimeSwitch id, bool set);
+std::uint64_t Generation();
 std::optional<RuntimeSwitch> Find(std::string_view name);
 
 }

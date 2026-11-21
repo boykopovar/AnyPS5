@@ -463,6 +463,9 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DeferredDestruction.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MemoryAccounting.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PlaceholderImages.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/CommandStream.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/CommandThunks.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/SealedBatch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Recorder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ParallelCompare.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderInputState.cpp
@@ -1159,3 +1162,20 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(agc_driver_scattered_runs_tests PRIVATE tests/AllocationFailure.cpp)
+add_library(agc_stream_guard_accepted OBJECT tests/StreamGuards.cpp)
+target_include_directories(agc_stream_guard_accepted PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+foreach(agcStreamGuard IN ITEMS owning_payload owning_array pointer_argument)
+    string(TOUPPER "${agcStreamGuard}" agcStreamGuardDefine)
+    add_library(agc_stream_guard_${agcStreamGuard} OBJECT EXCLUDE_FROM_ALL tests/StreamGuards.cpp)
+    target_include_directories(agc_stream_guard_${agcStreamGuard} PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+    target_compile_definitions(agc_stream_guard_${agcStreamGuard} PRIVATE APS5_GUARD_${agcStreamGuardDefine})
+    add_test(NAME agc_stream_guard_${agcStreamGuard} COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target agc_stream_guard_${agcStreamGuard} --config $<CONFIG>)
+endforeach()
+set_tests_properties(agc_stream_guard_owning_payload PROPERTIES PASS_REGULAR_EXPRESSION "payload is never destroyed, so it must be trivially destructible")
+set_tests_properties(agc_stream_guard_owning_array PROPERTIES PASS_REGULAR_EXPRESSION "arrays are copied as bytes, so their elements must be trivially copyable")
+set_tests_properties(agc_stream_guard_pointer_argument PROPERTIES PASS_REGULAR_EXPRESSION "pointer-to-const argument would be read")
+set_tests_properties(agc_stream_guard_owning_payload agc_stream_guard_owning_array agc_stream_guard_pointer_argument PROPERTIES RESOURCE_LOCK agc_stream_guard_build TIMEOUT 300)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME agc_command_resolver_sites COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_command_resolver_sites.py)
+    set_tests_properties(agc_command_resolver_sites PROPERTIES TIMEOUT 20)
+endif()

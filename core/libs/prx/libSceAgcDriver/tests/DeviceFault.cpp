@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/DeviceFault.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "FakeHandles.hpp"
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -424,7 +425,7 @@ void TokenEmission() {
     emitCmd = VK_NULL_HANDLE;
     emitMarker = nullptr;
     emitCalls = 0;
-    static VkCommandBuffer fakeCmd = reinterpret_cast<VkCommandBuffer>(static_cast<std::uintptr_t>(0xC0FFEE1));
+    static VkCommandBuffer fakeCmd = FakeCommandBuffer(0xC0FFEE1);
     AgcDriver::Graphics::EmitNvCheckpointToken(fakeCmd, token, MockEmitCheckpoint);
     Require(emitCalls == 1, "the checkpoint backend was not called once");
     Require(emitCmd == fakeCmd, "the checkpoint backend got the wrong command buffer");
@@ -571,7 +572,7 @@ void IndirectRoundTrip() {
     emitCmd = VK_NULL_HANDLE;
     emitMarker = nullptr;
     emitCalls = 0;
-    static VkCommandBuffer fakeCmd = reinterpret_cast<VkCommandBuffer>(static_cast<std::uintptr_t>(0xC0FFEE2));
+    static VkCommandBuffer fakeCmd = FakeCommandBuffer(0xC0FFEE2);
     AgcDriver::Graphics::EmitNvCheckpointToken(fakeCmd, token, MockEmitCheckpoint);
     Require(emitCalls == 1, "the indirect checkpoint backend was not called once");
     Require(emitCmd == fakeCmd, "the indirect checkpoint backend got the wrong command buffer");

@@ -529,6 +529,9 @@ public:
     using Clock = std::chrono::steady_clock;
     static constexpr std::array<std::string_view, 5> WorkerBusyScopes{"Driver.Packet", "Driver.Suspend", "Driver.EndSubmission", "Driver.Rewind", "Driver.Completion"};
     static constexpr std::string_view WorkerWaitScope = "Driver.WorkerWait";
+    static constexpr char EncoderPostScope[] = "Encoder.post";
+    static constexpr char EncoderCommandScope[] = "Encoder.command";
+    static constexpr char EncoderWaitScope[] = "Encoder.wait";
     static constexpr std::string_view WorkerPrefix = "queue worker ";
     static constexpr std::size_t TopPhases = 8;
 
@@ -692,6 +695,10 @@ public:
         bool firstWorker = true;
         std::map<std::string, Clock::duration> phases;
         std::map<std::string, std::uint64_t> ownedCounts;
+        std::uint64_t encoderPosts = 0;
+        std::uint64_t encoderCommands = 0;
+        std::uint64_t encoderWaits = 0;
+        Clock::duration encoderWait{};
         std::map<std::string, std::uint64_t> graphicsCounts;
         bool dropped = summary.ownedDrawUnbound != 0;
         if (summary.ownedDrawUnbound != 0) ownedCounts["OwnedDraw.unbound"] = summary.ownedDrawUnbound;
@@ -715,7 +722,12 @@ public:
             for (const auto& total : thread.totals) {
                 const std::string_view scope = total.scope;
                 if (total.stage == nullptr && std::find(WorkerBusyScopes.begin(), WorkerBusyScopes.end(), scope) != WorkerBusyScopes.end()) busy += total.length;
-                if (total.stage == nullptr && GraphicsTrackScope(scope)) graphicsCounts[std::string(scope)] += total.count;
+                if (total.stage == nullptr && scope == EncoderPostScope) encoderPosts += total.count;
+                else if (total.stage == nullptr && scope == EncoderCommandScope) encoderCommands += total.count;
+                else if (total.stage == nullptr && scope == EncoderWaitScope) {
+                    encoderWaits += total.count;
+                    encoderWait += total.length;
+                } else if (total.stage == nullptr && GraphicsTrackScope(scope)) graphicsCounts[std::string(scope)] += total.count;
                 else if (scope.starts_with("OwnedDraw.") && total.stage == nullptr) ownedCounts[std::string(scope)] += total.count;
                 else if (scope != WorkerWaitScope) phases[Name(total.scope, total.stage)] += total.length;
             }
@@ -751,6 +763,7 @@ public:
             output += ':' + std::to_string(value);
         }
         output += '}';
+        output += ",\"encoder\":{\"posts\":" + std::to_string(encoderPosts) + ",\"commands\":" + std::to_string(encoderCommands) + ",\"waits\":" + std::to_string(encoderWaits) + ",\"wait_ms_per_frame\":" + number(milliseconds(encoderWait) * perPresent) + '}';
         output += ",\"graphics_track\":{";
         bool firstGraphics = true;
         for (const auto& [name, value] : graphicsCounts) {

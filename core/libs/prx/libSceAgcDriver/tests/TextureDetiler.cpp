@@ -1,4 +1,5 @@
 #include "GraphicsTests.hpp"
+#include "FakeHandles.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -69,7 +70,7 @@ void reject(TAction action, std::string_view reason) {
 
 void RunTextureDetilerTests(const Context& context, const TextureDetilerTestAccess& access) {
     TextureDetiler detiler(context);
-    const auto commands = reinterpret_cast<VkCommandBuffer>(static_cast<std::uintptr_t>(1));
+    const auto commands = FakeCommandBuffer(1);
     const auto source = access.makeBuffer(4096);
     const auto destination = access.makeBuffer(4096);
 
@@ -213,7 +214,7 @@ void RunTextureDetilerTests(const Context& context, const TextureDetilerTestAcce
         DeviceFunctions table{};
         table.updateDescriptorSets = context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets");
         table.allocateDescriptorSets = context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets");
-        table.cmdBindPipeline = reinterpret_cast<PFN_vkCmdBindPipeline>(context.deviceProc(context.device, "vkCmdBindPipeline"));
+        table.cmdBindPipeline = reinterpret_cast<PFN_vkCmdBindPipeline>(AgcDriver::Graphics::CommandThunk("vkCmdBindPipeline", context.deviceProc(context.device, "vkCmdBindPipeline"), context.device));
         table.cmdBindDescriptorSets = context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets");
         table.cmdPushConstants = context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants");
         table.cmdDispatch = context.Function<PFN_vkCmdDispatch>("vkCmdDispatch");

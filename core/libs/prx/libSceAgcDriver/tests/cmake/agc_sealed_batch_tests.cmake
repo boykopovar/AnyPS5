@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(agc_sealed_batch_tests tests/SealedBatch.cpp Graphics/src/CommandStream.cpp Graphics/src/SealedBatch.cpp Graphics/src/CommandThunks.cpp Graphics/src/RuntimeSwitches.cpp tests/AllocationFailure.cpp)
+    target_include_directories(agc_sealed_batch_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include)
+    target_link_libraries(agc_sealed_batch_tests PRIVATE libc)
+    configure_windows_unwind(agc_sealed_batch_tests)
+    add_test(NAME agc_sealed_batch COMMAND agc_sealed_batch_tests)
+    set_tests_properties(agc_sealed_batch PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_sealed_batch PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

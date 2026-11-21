@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "FakeHandles.hpp"
 #include "AllocationFailure.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -83,7 +84,7 @@ VKAPI_ATTR void VKAPI_CALL mockDestroyFence(VkDevice, VkFence fence, const VkAll
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockAllocateCommandBuffers(VkDevice, const VkCommandBufferAllocateInfo*, VkCommandBuffer* commands) {
-    *commands = reinterpret_cast<VkCommandBuffer>(mock.next++);
+    *commands = FakeCommandBuffer(mock.next++);
     return VK_SUCCESS;
 }
 
