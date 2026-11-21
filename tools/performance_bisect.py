@@ -299,7 +299,7 @@ def bisect(repo, good, bad, recipe, output_dir, temp_dir=None):
         raise ValueError(f"report already exists: {output_dir}")
     good_sha, bad_sha, commits = first_parent_commits(repo, good, bad)
     with tempfile.TemporaryDirectory(prefix="anyps5-performance-bisect-", dir=temp_dir) as temporary:
-        root = Path(temporary)
+        root = Path(temporary).resolve()
         worktree = root / "source"
         results = root / "results"
         results.mkdir()
