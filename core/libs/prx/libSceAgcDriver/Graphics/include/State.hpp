@@ -25,6 +25,12 @@ struct TessellationCapture {
     std::shared_ptr<Buffer> items;
 };
 
+enum class DepthBiasUnits : std::uint8_t {
+    Target,
+    Unorm16,
+    Float
+};
+
 enum class ShaderPath {
     Vertex,
     Geometry,
@@ -161,6 +167,7 @@ struct State {
     float maxDepthBounds = 1.0f;
     bool depthBias = false;
     float depthBiasConstant = 0.0f;
+    DepthBiasUnits depthBiasUnits = DepthBiasUnits::Target;
     float depthBiasSlope = 0.0f;
     float depthBiasClamp = 0.0f;
     bool depthBiasPerFace = false;
