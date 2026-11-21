@@ -22,3 +22,5 @@ guest_sce_net
 guest_socket_port_zero
 # #20161
 guest_poll
+# #16510
+nkwebkit_filteroperation
