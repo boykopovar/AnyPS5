@@ -150,6 +150,44 @@ void TestStreaming() {
     Require(Terminate(&builder) == 0, "terminate");
 }
 
+std::vector<std::string> ChildNames(XmlHandle* builder, const char* text) {
+    Require(Parse(builder, text, true) == 0, "parse");
+    XmlHandle document{nullptr};
+    _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv(&document, builder);
+    XmlNodeId root{};
+    _ZNK3sce3Xml3Dom8Document7getRootEv(&root, &document);
+    std::vector<std::string> names;
+    XmlNodeId child{};
+    _ZNK3sce3Xml3Dom8Document13getFirstChildENS1_6NodeIdE(&child, &document, root);
+    while (child.first != nullptr) {
+        XmlString name{};
+        _ZNK3sce3Xml3Dom8Document11getNodeNameENS1_6NodeIdE(&name, &document, child);
+        const bool hasChildren = _ZNK3sce3Xml3Dom8Document13hasChildNodesENS1_6NodeIdE(&document, child);
+        names.push_back(std::string(name.buffer, name.size) + (hasChildren ? "+" : ""));
+        XmlNodeId next{};
+        _ZNK3sce3Xml3Dom8Document10getSiblingENS1_6NodeIdE(&next, &document, child);
+        child = next;
+    }
+    _ZN3sce3Xml3Dom8DocumentD1Ev(&document);
+    return names;
+}
+
+void TestSkipIgnorableWhiteSpaceDefault() {
+    Fixture f;
+    XmlHandle builder{nullptr};
+    const char* text = "<r>\n <a> </a>\n <b>x </b>\n</r>";
+    const std::vector<std::string> skipped{"a", "b+"};
+    const std::vector<std::string> kept{"\n ", "a+", "\n ", "b+", "\n"};
+    Require(Initialize(&builder, &f.initializer) == 0, "initialize");
+    Require(ChildNames(&builder, text) == skipped, "a new builder skips white space that is a node's only text, as 13.40 does");
+    _ZN3sce3Xml3Dom15DocumentBuilder26setSkipIgnorableWhiteSpaceEb(&builder, false);
+    Require(ChildNames(&builder, text) == kept, "without skipping, the white space is text");
+    Require(ChildNames(&builder, text) == kept, "the setting holds for the next document");
+    Require(Terminate(&builder) == 0 && Initialize(&builder, &f.initializer) == 0, "initialize again");
+    Require(ChildNames(&builder, text) == skipped, "initialize restores the default");
+    Require(Terminate(&builder) == 0, "terminate");
+}
+
 void TestAllocationFailures() {
     Fixture f;
     XmlHandle builder{nullptr};
@@ -173,6 +211,7 @@ void TestAllocationFailures() {
 int main() {
     TestLifecycle();
     TestStreaming();
+    TestSkipIgnorableWhiteSpaceDefault();
     TestAllocationFailures();
     std::puts("guest_xml_document_builder: all checks passed");
     return 0;
