@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import math
+import os
 import subprocess
 import sys
 import tempfile
@@ -365,8 +366,10 @@ target.write_text(json.dumps({'build': {'commit': commit, 'dirty': False}, 'mach
                       "{build_dir}", "{result_dir}", "{commit}"]]}
         output = root / "report.json"
         original_worktrees = performance_bisect.git(self.repo, "worktree", "list", "--porcelain")
+        self.addCleanup(os.chdir, Path.cwd())
+        os.chdir(root)
         with patch.object(performance_bisect, "TOOLS_DIR", tools):
-            report = performance_bisect.bisect(self.repo, self.good, self.commits[-1], recipe, output, root)
+            report = performance_bisect.bisect(self.repo, self.good, self.commits[-1], recipe, output, Path("."))
         self.assertEqual(report["first_bad"]["commit"], self.commits[4])
         self.assertEqual(report["previous_good"]["commit"], self.commits[3])
         self.assertEqual(report["tested_commits"], 5)
