@@ -42,3 +42,7 @@ std::int64_t Writev(int descriptor, const Iovec* iov, int iovcnt);
 
 extern "C" bool GuestSocketIsOpen_nid_no_patch(int descriptor);
 extern "C" bool GuestSocketReadGuest_nid_no_patch(void* destination, const void* source, std::size_t bytes);
+extern "C" void GuestSocketReadWaitObserverForTest_nid_no_patch(void (*observer)(std::size_t) noexcept);
+extern "C" bool KernelIoActive_nid_no_patch();
+extern "C" bool KernelIoInterrupted_nid_no_patch();
+extern "C" void KernelIoNoRestart_nid_no_patch();
