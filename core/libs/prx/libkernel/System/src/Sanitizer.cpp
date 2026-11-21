@@ -12,13 +12,11 @@ int APS5_VABI sceKernelIsThreadSanitizerEnabled(void) {
 }
 
 MallocReplace* APS5_VABI sceKernelGetSanitizerMallocReplaceExternal(void) {
-    static MallocReplace replacement{};
-    return &replacement;
+    return nullptr;
 }
 
 NewReplace* APS5_VABI sceKernelGetSanitizerNewReplaceExternal(void) {
-    static NewReplace replacement{};
-    return &replacement;
+    return nullptr;
 }
 
 }
