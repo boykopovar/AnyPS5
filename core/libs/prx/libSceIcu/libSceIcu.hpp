@@ -45,6 +45,7 @@
 #include "Search.hpp"
 #include "Character.hpp"
 #include "Configuration.hpp"
+#include "TimeZone.hpp"
 #include "DataInfo.hpp"
 
 #include "ConverterHelpers.hpp"
