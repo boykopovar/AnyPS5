@@ -418,11 +418,6 @@ int APS5_VABI sceLibcInternalUnknown6_119_xFva4yxsVW8_nid_no_patch() {
 }
 APS5_EXPORT("xFva4yxsVW8", sceLibcInternalUnknown6_119_xFva4yxsVW8_nid_no_patch);
 
-int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE4syncEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNSt7_MpunctIwED0Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
