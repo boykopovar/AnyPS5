@@ -141,6 +141,8 @@ void TestAsn1() {
     CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:1,5"), 83, 0, {0x03, 0x02, 0x02, 0x44});
     CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:9, 0 "), 83, 0, {0x03, 0x03, 0x06, 0x80, 0x40});
     CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:+3,3,-0"), 83, 0, {0x03, 0x02, 0x04, 0x90});
+    CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-0000"), 83, 0, {0x03, 0x02, 0x07, 0x80});
+    CheckValue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:+0001"), 83, 0, {0x03, 0x02, 0x06, 0x40});
     CheckValue(Conf(83, "ASN1:FORMAT:HEX,BITSTRING:80"), 83, 0, {0x03, 0x02, 0x00, 0x80});
     CheckValue(Conf(83, "ASN1:FORMAT:HEX,BITSTRING:0100"), 83, 0, {0x03, 0x03, 0x00, 0x01, 0x00});
     CheckValue(Conf(83, "ASN1:BITSTRING:ab"), 83, 0, {0x03, 0x03, 0x00, 'a', 'b'});
@@ -222,6 +224,23 @@ void TestErrorQueue() {
     RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-18446744073709551615"), {0x0dfff0bc, 0x22fff074});
     RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:9223372036854775808"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
     RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:99999999999999999999x"), {0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-18446744073709551617"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-00018446744073709551617"),
+        {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-18446744073709551617,1"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-1000000000000000000000000000000"),
+        {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:1000000000000000000000000000000"),
+        {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:18446744073709551617"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:+18446744073709551616"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:18446744073709551615"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:+0009223372036854775808"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-9223372036854775807"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-4294967296"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-2147483648"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:-0001"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:FORMAT:BITLIST,BITSTRING:0,-1"), {0x0dfff0bb, 0x0dfff0bc, 0x22fff074});
     RequireQueue(Conf(83, "ASN1:FORMAT:HEX,UTF8:x"), {0x0dfff0b1, 0x22fff074});
     RequireQueue(Conf(83, "ASN1:OID:bogus"), {0x0dfff0b7, 0x22fff074});
     RequireQueue(Conf(83, "ASN1:OBJECT:undefined"), {0x0dfff0b7, 0x22fff074});
