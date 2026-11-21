@@ -18,6 +18,7 @@ namespace {
 
 FileStream* g_errFile = nullptr;
 ErrExit g_errExit = nullptr;
+thread_local int g_libcInternalErrno = 0;
 
 FileStream* ErrFile() {
     if (g_errFile == nullptr) g_errFile = &_Stderr_nid_postfix;
@@ -61,7 +62,7 @@ void Report(const char* format, VaList* args, const int* code) {
 extern "C" {
 
 int* APS5_VABI _Geterrno_nid_postfix() {
-    return __error_nid_postfix();
+    return &g_libcInternalErrno;
 }
 
 void APS5_VABI err_set_file_nid_postfix(FileStream* stream) {

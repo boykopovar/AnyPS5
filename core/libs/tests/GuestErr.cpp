@@ -1,13 +1,17 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include "tests/TemporaryFile.hpp"
+#include <chrono>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <thread>
 #ifdef _WIN32
 #include <io.h>
 #else
@@ -120,6 +124,58 @@ void APS5_VABI CallVariant(Variant variant, int status, int code, const char* fo
 #endif
 }
 
+void CheckInternalErrno() {
+    constexpr int guestEbadf = 9;
+    constexpr int internalMarker = 0x13579;
+    constexpr int workerMarker = 0x2468;
+
+    int* const internalErrno = _Geterrno_nid_postfix();
+    int* const kernelErrno = __error_nid_postfix();
+
+    Require(internalErrno != nullptr, "internal errno non-null");
+    Require(kernelErrno != nullptr, "kernel errno non-null");
+    Require(internalErrno == _Geterrno_nid_postfix(), "internal errno stable on same thread");
+    Require(internalErrno != kernelErrno, "internal errno distinct from libkernel __error");
+
+    const int savedInternal = *internalErrno;
+    const int savedKernel = *kernelErrno;
+
+    *internalErrno = internalMarker;
+    *kernelErrno = 0;
+
+    const auto missingPath = "anyps5_geterrno_missing_" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+        "/file";
+    Require(open_nid_postfix(missingPath.c_str(), SCE_KERNEL_O_RDONLY, 0) == -1, "open missing file fails");
+    Require(*kernelErrno != 0, "open failure sets kernel errno");
+    Require(*internalErrno == internalMarker, "open failure does not modify internal errno");
+
+    *kernelErrno = 0;
+    Require(close_nid_postfix(-1) == -1, "close invalid descriptor fails");
+    Require(*kernelErrno == guestEbadf, "close failure sets kernel errno to EBADF");
+    Require(*internalErrno == internalMarker, "close failure does not modify internal errno");
+
+    bool workerPointerIsDistinct = false;
+    bool workerValueIsIsolated = false;
+
+    std::thread worker([&] {
+        int* const workerErrno = _Geterrno_nid_postfix();
+        int* const workerKernelErrno = __error_nid_postfix();
+        *workerErrno = workerMarker;
+        workerPointerIsDistinct = workerErrno != internalErrno && workerErrno != workerKernelErrno;
+        workerValueIsIsolated = *workerErrno == workerMarker && *internalErrno == internalMarker;
+    });
+
+    worker.join();
+
+    Require(workerPointerIsDistinct, "worker thread receives distinct _Geterrno slot");
+    Require(workerValueIsIsolated, "worker thread store does not modify main thread slot");
+    Require(*internalErrno == internalMarker, "main thread slot preserved after worker join");
+
+    *internalErrno = savedInternal;
+    *kernelErrno = savedKernel;
+}
+
 }
 
 int main() {
@@ -198,5 +254,6 @@ int main() {
     Require(DescriptorTwoOutput([] { psignal_nid_postfix(32, nullptr); }) == "Unknown signal\n", "psignal unknown signal");
     Require(DescriptorTwoOutput([] { psignal_nid_postfix(2, reinterpret_cast<const char*>(0x10)); }) == std::string(sys_siglist_nid_postfix[2]) + "\n",
         "psignal unreadable prefix");
+    CheckInternalErrno();
     return 0;
 }
