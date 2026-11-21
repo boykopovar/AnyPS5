@@ -336,6 +336,18 @@ class AuditDumpTests(unittest.TestCase):
         self.assertTrue((work / "source" / "lapy.elf").is_file())
         audit.assert_not_called()
 
+    def test_a_forbidden_syscall_that_is_not_an_sdk_stub_still_fails(self):
+        self.module("sce_module/libc.prx")
+        self.module("lapy.elf", PAYLOAD)
+        work = self.root / "work"
+        refusal = "FAIL: Forbidden syscall instruction at code offset 0x1a0: syscall number 20"
+        code, commands, audit, printed, errors = self.run_refusing(work, "lapy.elf", refusal)
+        self.assertEqual(code, 2)
+        self.assertEqual(len(commands), 1)
+        self.assertIn("Forbidden syscall instruction at code offset 0x1a0: syscall number 20", errors)
+        self.assertTrue((work / "source" / "lapy.elf").is_file())
+        audit.assert_not_called()
+
     def test_the_modules_beside_eboot_are_audited_without_the_executable(self):
         self.module("sce_module/libc.prx")
         self.module("libfmod.prx")

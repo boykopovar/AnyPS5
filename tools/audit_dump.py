@@ -15,8 +15,8 @@ it ships (sce_module/, sce_modules/ and prx/, Unity's Media/Modules/ and Media/P
 eboot.bin) into a work directory, converts them with relinker --registry, and runs tools/import_audit.py on the
 registries with the unwrapped modules as --modules. A file found by its header rather than a module suffix that is
 not a shared module after unwrapping, such as a dumper's eboot.bin.esbak backup, is skipped with a message. So is
-one the relinker refuses for a kernel call of its own, such as a payload for the console's ELF loader: the conversion
-then runs again without it. The dump
+one the relinker refuses for a ps5-payload-dev SDK syscall stub, such as a payload for the console's ELF loader: the
+conversion then runs again without it. The dump
 is only read; the source/ and output/ directories of a reused --work directory are emptied first. Exit code: that of import_audit.py, or 2
 when unwrapping or conversion fails."""
 
@@ -27,7 +27,7 @@ ELF_MAGIC = b"\x7fELF"
 MODULE_MAGICS = (ELF_MAGIC, unwrap_self.SELF_MAGIC.to_bytes(4, "little"),
                  unwrap_self.SELF_MAGIC_KERNEL.to_bytes(4, "little"))
 SHARED_MODULE_TYPES = (3, 0xFE18)
-PAYLOAD_REFUSAL = "Forbidden syscall instruction"
+PAYLOAD_REFUSAL = "it is a ps5-payload-dev SDK syscall stub"
 INPUT_PREFIX = "Input: "
 
 
