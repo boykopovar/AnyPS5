@@ -164,7 +164,8 @@ def check_signed_entry(directory, data):
 def check_runtime_dependencies(relinker, directory):
     for needed, expected in (
             (b"libc.prx", ["@rpath/libc.prx", "@rpath/libkernel.prx"]),
-            (b"libkernel.prx", ["@rpath/libkernel.prx", "@rpath/libc.prx"]),
+            (b"libkernel.prx", ["@rpath/libkernel.prx", "@rpath/libc.prx", "@rpath/libkernel_sys.prx"]),
+            (b"libkernel.sprx", ["@rpath/libkernel.prx", "@rpath/libc.prx", "@rpath/libkernel_sys.prx"]),
             (b"libSceLibcInternal.prx", ["@rpath/libSceLibcInternal.prx", "@rpath/libkernel.prx", "@rpath/libc.prx"]),
             (b"libSceVideoOut.prx", ["@rpath/libSceVideoOut.prx", "@rpath/libkernel.prx", "@rpath/libc.prx"])):
         name = needed.decode().removesuffix(".prx")

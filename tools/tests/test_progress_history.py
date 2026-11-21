@@ -859,6 +859,34 @@ class ProgressHistoryTests(unittest.TestCase):
             self.assertIn(str(path), str(raised.exception))
             self.assertEqual(path.read_bytes(), b"preserve cache")
 
+    def test_duplicate_cache_commit_is_rejected_before_writing_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "reports"
+            output.mkdir()
+            csv_report = output / "history.csv"
+            csv_report.write_bytes(b"previous CSV")
+            cache = root / "counts.json"
+            checkout = root / "checkout"
+            subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+            day = "2026-01-01"
+            commit(checkout, day, "example", "int APS5_VABI Ready() { return 1; }\n")
+            sha = subprocess.check_output(["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip()
+            counts = {"libraries": {"done": 1, "total": 2, "percent": 50},
+                      "shaders": {"done": 0, "total": 1, "percent": 0}, "shader_metric": "legacy"}
+            changed = {**counts, "libraries": {"done": 2, "total": 2, "percent": 100}}
+            original = (f'{{"schema_version":2,"rules":"{progress_history.cache_signature()}",'
+                        f'"commits":{{"{sha}":{json.dumps(counts)},"{sha}":{json.dumps(changed)}}}}}').encode()
+            cache.write_bytes(original)
+            completed = subprocess.run([sys.executable, str(Path(progress_history.__file__)), str(output), "--csv",
+                                        "--cache", str(cache), "--since", day, "--until", day],
+                                       capture_output=True, timeout=10, env={**os.environ, "GIT_DIR": str(checkout / ".git")})
+            self.assertEqual(completed.returncode, 2, (completed.stdout, completed.stderr, csv_report.read_bytes()))
+            self.assertIn(f"{cache}: duplicate JSON key '{sha}'".encode(), completed.stderr)
+            self.assertEqual(cache.read_bytes(), original)
+            self.assertEqual(csv_report.read_bytes(), b"previous CSV")
+            self.assertFalse((output / "history.json").exists())
+
     def test_real_deep_cache_cli_is_bounded_and_preserves_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

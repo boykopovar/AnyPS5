@@ -879,6 +879,20 @@ class PreparationTests(unittest.TestCase):
             title_run.stage_inputs(source, entry, target)
             self.assertEqual(sorted(path.relative_to(target).as_posix() for path in target.rglob("*.*")), expected)
 
+    def test_plural_module_dir_is_staged_without_singular_fallback(self):
+        package_root = package(self.root / "pkg", "PPSA00001")
+        modules = package_root / "sce_modules"
+        modules.mkdir()
+        elf = b"\x7fELF" + bytes(60)
+        (package_root / "eboot.bin").write_bytes(elf)
+        (modules / "helper.prx").write_bytes(elf)
+        staged = self.root / "input"
+
+        title_run.stage_inputs(package_root, {}, staged)
+
+        self.assertEqual((staged / "sce_modules/helper.prx").read_bytes(), elf)
+        self.assertFalse((staged / "sce_module").exists())
+
     def test_module_dirs_keep_every_module_and_empty_directories(self):
         source = package(self.root / "pkg", "PPSA00001")
         elf = b"\x7fELF" + bytes(60)
