@@ -1,9 +1,18 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using NKWebKit::WebCoreAbi::AuthenticationChallenge;
 using NKWebKit::WtfAbi::StringImpl;
@@ -43,6 +52,57 @@ static void TestIsNull() {
     Require(threw);
 }
 
+class GuardedMapping {
+    unsigned char* base;
+    std::size_t pageSize;
+
+public:
+    GuardedMapping() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_NONE) == 0);
+        Require(pageSize >= 0x200u);
+#endif
+    }
+
+    ~GuardedMapping() {
+#ifdef _WIN32
+        Require(VirtualFree(base, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(base, pageSize * 2) == 0);
+#endif
+    }
+
+    GuardedMapping(const GuardedMapping&) = delete;
+    GuardedMapping& operator=(const GuardedMapping&) = delete;
+
+    unsigned char* GuardPage() const { return base + pageSize; }
+
+    unsigned char* ReadOnlyPage() const { return base; }
+
+    void MakeReadOnly() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(base, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(base, pageSize, PROT_READ) == 0);
+#endif
+    }
+};
+
 static void TestNullify() {
     alignas(16) unsigned char storage[0x200] = {};
     auto* challenge = reinterpret_cast<AuthenticationChallenge*>(storage);
@@ -59,6 +119,40 @@ static void TestNullify() {
         threw = true;
     }
     Require(threw);
+
+    {
+        GuardedMapping mapping;
+        unsigned char* guardPage = mapping.GuardPage();
+        auto* guarded = reinterpret_cast<AuthenticationChallenge*>(guardPage);
+
+        bool caught = false;
+        int savedErrno = errno;
+        errno = 0x42;
+        try {
+            _ZN7WebCore27AuthenticationChallengeBase7nullifyEv(guarded);
+        } catch (const std::invalid_argument&) {
+            caught = true;
+        }
+        Require(caught);
+        Require(errno == 0x42);
+    }
+
+    {
+        GuardedMapping mapping;
+        unsigned char* page = mapping.ReadOnlyPage();
+        auto* readOnly = reinterpret_cast<AuthenticationChallenge*>(page);
+        std::memset(page, 0x5A, sizeof(AuthenticationChallenge));
+        mapping.MakeReadOnly();
+
+        bool caught = false;
+        try {
+            _ZN7WebCore27AuthenticationChallengeBase7nullifyEv(readOnly);
+        } catch (const std::invalid_argument&) {
+            caught = true;
+        }
+        Require(caught);
+        for (std::size_t i = 0; i < sizeof(AuthenticationChallenge); ++i) Require(page[i] == 0x5A);
+    }
 }
 
 static void TestAuthenticationClient() {

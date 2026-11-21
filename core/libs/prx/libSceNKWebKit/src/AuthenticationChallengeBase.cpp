@@ -28,7 +28,9 @@
 
 #include "prx/libSceNKWebKit/include/AuthenticationChallengeExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <stdexcept>
 
 namespace {
@@ -50,6 +52,10 @@ bool APS5_VABI _ZNK7WebCore27AuthenticationChallengeBase6isNullEv(const Authenti
 
 void APS5_VABI _ZN7WebCore27AuthenticationChallengeBase7nullifyEv(AuthenticationChallenge* self) {
     if (!self) throw std::invalid_argument("null WebCore::AuthenticationChallenge");
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(self, sizeof(*self));
+    errno = savedErrno;
+    if (!writable) throw std::invalid_argument("unwritable WebCore::AuthenticationChallenge");
     self->isNull = 1;
 }
 
