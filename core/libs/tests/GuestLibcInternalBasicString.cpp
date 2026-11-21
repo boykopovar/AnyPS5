@@ -45,6 +45,7 @@ long live = 0;
 bool failNextAllocation = false;
 int failedAllocations = 0;
 std::size_t lastAllocationSize = 0;
+std::size_t allocationCount = 0;
 
 void* APS5_VABI TestAllocate(std::size_t size) {
     lastAllocationSize = size;
@@ -57,6 +58,7 @@ void* APS5_VABI TestAllocate(std::size_t size) {
         throw std::bad_alloc();
     }
     ++live;
+    ++allocationCount;
     return std::malloc(size);
 }
 void APS5_VABI TestFree(void* pointer) {
@@ -464,6 +466,67 @@ void CheckNarrowInsertGrowth() {
     GuestLocale::ReleaseStringStorage(string);
 }
 
+void CheckNarrowModifierGrowth() {
+    const std::string original(63, 'a');
+    const std::string longer(64, 'b');
+    String append = Make(original.c_str());
+    _ZNSs6appendEmc_nid_postfix(&append, 1, 'x');
+    Require(Holds(append, (original + "x").c_str()) && append.capacity == 94,
+        "narrow append uses the unrounded geometric capacity");
+    GuestLocale::ReleaseStringStorage(append);
+
+    String self = Make(original.c_str());
+    _ZNSs6appendERKSsmm_nid_postfix(&self, &self, 0, 1);
+    Require(Holds(self, (original + "a").c_str()) && self.capacity == 94,
+        "narrow self append retains its source across geometric growth");
+    GuestLocale::ReleaseStringStorage(self);
+
+    String pointer = Make(original.c_str());
+    _ZNSs6assignEPKcm_nid_postfix(&pointer, longer.data(), longer.size());
+    Require(Holds(pointer, longer.c_str()) && pointer.capacity == 94,
+        "narrow pointer assignment uses the geometric capacity");
+    GuestLocale::ReleaseStringStorage(pointer);
+
+    String fill = Make(original.c_str());
+    _ZNSs6assignEmc_nid_postfix(&fill, 64, 'b');
+    Require(Holds(fill, longer.c_str()) && fill.capacity == 94,
+        "narrow fill assignment uses the geometric capacity");
+    GuestLocale::ReleaseStringStorage(fill);
+
+    String source = Make(longer.c_str());
+    String substring = Make(original.c_str());
+    _ZNSs6assignERKSsmm_nid_postfix(&substring, &source, 0, NoPosition);
+    Require(Holds(substring, longer.c_str()) && substring.capacity == 94 && Holds(source, longer.c_str()),
+        "narrow substring assignment grows geometrically without changing its source");
+    GuestLocale::ReleaseStringStorage(substring);
+    GuestLocale::ReleaseStringStorage(source);
+
+    String repeated = Empty();
+    const auto before = allocationCount;
+    for (std::size_t index = 0; index < 4096; ++index) _ZNSs6appendEmc_nid_postfix(&repeated, 1, 'z');
+    Require(Holds(repeated, std::string(4096, 'z').c_str()) && repeated.capacity == 6013
+        && allocationCount - before == 14, "repeated narrow append follows geometric allocation boundaries");
+    Require(lastAllocationSize == 6014 + GuestStringStorage::AllocationPadding
+        && (reinterpret_cast<std::uintptr_t>(repeated.pointer) & 0x1f) == 0,
+        "narrow geometric growth retains padded aligned large storage");
+    GuestLocale::ReleaseStringStorage(repeated);
+
+    String failed = Make(original.c_str());
+    const auto oldPointer = failed.pointer;
+    const auto oldCapacity = failed.capacity;
+    const auto oldLive = live;
+    failNextAllocation = true;
+    bool caughtBadAlloc = false;
+    try {
+        _ZNSs6appendEmc_nid_postfix(&failed, 1, 'x');
+    } catch (const std::bad_alloc&) {
+        caughtBadAlloc = true;
+    }
+    Require(caughtBadAlloc && !failNextAllocation && failed.pointer == oldPointer && failed.capacity == oldCapacity
+        && live == oldLive && Holds(failed, original.c_str()), "failed narrow geometric growth preserves ownership and contents");
+    GuestLocale::ReleaseStringStorage(failed);
+}
+
 void CheckWideCapacityAndAliases() {
     const std::uint16_t inlineText[]{'a', 'b', 'c', 'd', 'e', 'f', 'g'};
     const std::uint16_t inlineExpected[]{'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'};
@@ -658,6 +721,7 @@ int main() {
     CheckErase();
     CheckWideModifiersAndNarrowInsert();
     CheckNarrowInsertGrowth();
+    CheckNarrowModifierGrowth();
     CheckWideCapacityAndAliases();
     CheckWideBoundaryAndFailures();
     CheckWideCopy();
