@@ -869,6 +869,69 @@ void TestGetStatistics(std::uint32_t context) {
     Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
+std::string BatchFailure(std::uint32_t context, const AjmBatchInfo& info) {
+    std::uint32_t id = 0;
+    AjmBatchError error{};
+    try {
+        static_cast<void>(sceAjmBatchStart(context, &info, SCE_AJM_PRIORITY_MIN, &error, &id));
+    } catch (const std::runtime_error& failure) {
+        return failure.what();
+    }
+    return {};
+}
+
+void TestJobBuffersUnmapped(std::uint32_t context) {
+    std::uint32_t instance = 0;
+    Require(sceAjmInstanceCreate(context, 24, 0, &instance) == 0);
+    const std::uint32_t parameters[3] = {2, 48000, 0};
+    std::vector<std::uint8_t> batch(4096);
+    AjmBatchInfo info{};
+    std::int64_t initResult[2] = {-1, -1};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobInitialize(&info, instance, parameters, sizeof(parameters), initResult) == 0);
+    Submit(context, info);
+    Require(initResult[0] == 0);
+    auto* unmapped = reinterpret_cast<std::uint8_t*>(std::uintptr_t{0x10});
+    std::vector<std::int16_t> pcm(960 * 2);
+    const std::size_t pcmBytes = pcm.size() * sizeof(std::int16_t);
+    DecodeSideband sideband{};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobDecode(&info, instance, unmapped, 64, pcm.data(), pcmBytes, &sideband) == 0);
+    Require(BatchFailure(context, info) == "AJM job input is unreadable");
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobDecode(&info, instance, nullptr, 64, pcm.data(), pcmBytes, &sideband) == 0);
+    Require(BatchFailure(context, info) == "AJM job input is unreadable");
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobDecode(&info, instance, OPUS_STEREO, sizeof(OPUS_STEREO), unmapped, pcmBytes, &sideband) == 0);
+    Require(BatchFailure(context, info) == "AJM job output buffer is unwritable");
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobDecode(&info, instance, OPUS_STEREO, sizeof(OPUS_STEREO), pcm.data(), pcmBytes, reinterpret_cast<DecodeSideband*>(unmapped)) == 0);
+    Require(BatchFailure(context, info) == "AJM job sideband is unwritable");
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+
+    std::uint32_t mp3 = 0;
+    Require(sceAjmInstanceCreate(context, 0, 0, &mp3) == 0);
+    std::vector<std::int16_t> mp3Pcm(1152 * 2);
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobDecodeSingle(&info, mp3, unmapped, sizeof(MP3_MONO), mp3Pcm.data(), mp3Pcm.size() * sizeof(std::int16_t), &sideband) == 0);
+    Require(BatchFailure(context, info) == "AJM job input is unreadable");
+    Require(sceAjmInstanceDestroy(context, mp3) == 0);
+
+    std::uint32_t at9 = 0;
+    Require(sceAjmInstanceCreate(context, 1, 0, &at9) == 0);
+    const std::uint8_t config[8] = {0xFE, 0x72, 0x1F, 0xF0};
+    std::int32_t at9Init[2] = {-1, -1};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobInitialize(&info, at9, config, sizeof(config), at9Init) == 0);
+    Submit(context, info);
+    Require(at9Init[0] == 0);
+    std::vector<std::int16_t> at9Pcm(4096 * 2);
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobDecode(&info, at9, unmapped, 4096, at9Pcm.data(), at9Pcm.size() * sizeof(std::int16_t), &sideband) == 0);
+    Require(BatchFailure(context, info) == "AJM job input is unreadable");
+    Require(sceAjmInstanceDestroy(context, at9) == 0);
+}
+
 void TestBatchBounds(std::uint32_t context) {
     constexpr int invalidParameter = static_cast<int>(0x80930005);
     std::vector<std::uint8_t> storage(128);
@@ -2998,6 +3061,7 @@ int main(int argc, char** argv) {
     TestGetInfo(context);
     TestGetStatistics(context);
     TestBatchBounds(context);
+    TestJobBuffersUnmapped(context);
     TestBatchJobCountRange(context);
     TestBatchJobRunSplitChecks();
     TestBatchStartPriority(context);
