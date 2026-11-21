@@ -478,7 +478,7 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                 const bool pair = inst->Opcode() == IrOpcode::LoadBufferU32x2 || inst->Opcode() == IrOpcode::StoreBufferU32x2;
                 requirements.coherentBufferPairs = requirements.coherentBufferPairs || (pair && memory.coherent && !memory.gpuDescriptor);
                 if (!memory.planningOnly) {
-                    requirements.subgroupLocalInvocationId = requirements.subgroupLocalInvocationId || program.Resources().stage == IrShaderStage::Compute;
+                    requirements.subgroupLocalInvocationId = requirements.subgroupLocalInvocationId || program.Resources().stage != IrShaderStage::TessellationControl;
                 }
             }
             const auto bufferAccess = BufferAccessOf(inst->Opcode());
