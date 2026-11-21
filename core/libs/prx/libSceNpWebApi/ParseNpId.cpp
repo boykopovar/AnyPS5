@@ -75,17 +75,18 @@ std::string DecodeBase64(std::string_view in) {
         return -1;
     };
     std::string out;
-    int buf = 0;
+    std::uint32_t buf = 0;
     int bits = 0;
     for (char c : in) {
         if (c == '=' || c == '\0') break;
         const int v = val(c);
         if (v < 0) continue;
-        buf = (buf << 6) | v;
+        buf = (buf << 6) | static_cast<std::uint32_t>(v);
         bits += 6;
         if (bits >= 8) {
             bits -= 8;
             out.push_back(static_cast<char>((buf >> bits) & 0xFF));
+            buf &= (1u << bits) - 1u;
         }
     }
     return out;
