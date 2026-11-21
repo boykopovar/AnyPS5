@@ -421,12 +421,30 @@ static void TestPageGroup() {
     Require(list->elements.size() == 2);
     Require(!WKUserScriptGetMainFrameOnly(list->elements[0].Get()));
     Require(WKUserScriptGetMainFrameOnly(list->elements[1].Get()));
+    Require(WKUserScriptGetInjectionTime(list->elements[0].Get()) == 0);
+    Require(WKUserScriptGetInjectionTime(list->elements[1].Get()) == 0);
     WKRelease(scripts);
 
     WKPageGroupRemoveAllUserScripts(group);
     const void* scripts2 = WKUserContentControllerCopyUserScripts(ucc);
     Require(static_cast<const NKWebKit::Array*>(scripts2)->elements.empty());
     WKRelease(scripts2);
+
+    WKPageGroupAddUserScript(group, jssrc, nullptr, nullptr, nullptr, 1, 1);
+    for (const std::uint32_t outOfRange : {2u, 7u, 0x100u, 0x80000001u, 0xFFFFFFFFu}) {
+        WKPageGroupAddUserScript(group, jssrc, nullptr, nullptr, nullptr, outOfRange, outOfRange);
+    }
+    const void* timedScripts = WKUserContentControllerCopyUserScripts(ucc);
+    const auto* timedList = static_cast<const NKWebKit::Array*>(timedScripts);
+    Require(timedList->elements.size() == 6);
+    Require(WKUserScriptGetInjectionTime(timedList->elements[0].Get()) == 1);
+    Require(WKUserScriptGetMainFrameOnly(timedList->elements[0].Get()));
+    for (std::size_t index = 1; index < timedList->elements.size(); ++index) {
+        Require(WKUserScriptGetInjectionTime(timedList->elements[index].Get()) == 0);
+        Require(!WKUserScriptGetMainFrameOnly(timedList->elements[index].Get()));
+    }
+    WKRelease(timedScripts);
+    WKPageGroupRemoveAllUserScripts(group);
 
     WKRelease(src);
     WKRelease(jssrc);
