@@ -379,6 +379,12 @@ class DeviceSkipPolicyTests(unittest.TestCase):
             "[shader-disk-cache] cache (source version 5110620204023565, format 60)",
             "[videoout] HDR output available: peak 1000.0 nits, full frame 600.0 nits, black 0.0050 nits",
             "[videoout] HDR output unavailable (display in HDR: no, surface offers HDR10: yes)",
+            "[Vulkan Loader] LAYER:          Searching for implicit layer manifest files",
+            "[Vulkan Loader] INFO | LAYER:   Insert instance layer \"VK_LAYER_KHRONOS_validation\" (VkLayer_khronos_validation.dll)",
+            "[Vulkan Loader] INFO | LAYER:",
+            "[Vulkan Loader] WARNING | LAYER: env var 'VK_INSTANCE_LAYERS' defined and adding layers \"VK_LAYER_KHRONOS_validation\"",
+            "[Vulkan Loader] DEBUG | LAYER:  Unloading layer library VkLayer_khronos_validation.dll",
+            "[Vulkan Loader] DRIVER:              ||",
             f"skipped, {reason}",
         ))
         reports = (
@@ -409,6 +415,9 @@ class DeviceSkipPolicyTests(unittest.TestCase):
             f'<skipped message="{reason}"/><system-err>[probe] unexpected failure detail</system-err>',
             f'<skipped message="{reason}"/><system-err>[videoout] unexpected failure detail</system-err>',
             f'<skipped message="{reason}"/><system-err>[videoout] HDR output unavailable (display in HDR: no, surface offers HDR10: yes): unexpected error</system-err>',
+            f'<skipped message="{reason}"/><system-err>[Vulkan Loader] ERROR | DRIVER: loader_icd_scan: failed to read the ICD manifest</system-err>',
+            f'<skipped/><system-out>[Vulkan Loader] INFO | LAYER: skipped, flaky\nskipped, {reason}</system-out>',
+            f'<skipped/><system-out>[Vulkan Loader] unexpected failure detail\nskipped, {reason}</system-out>',
         )
         with tempfile.TemporaryDirectory() as directory:
             junit = Path(directory) / "junit.xml"
