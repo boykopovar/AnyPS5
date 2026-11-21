@@ -722,7 +722,13 @@ int APS5_VABI scePadGetDataInternal(std::uint8_t port, PadData* data) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (port >= PAD_MAX_CONTROLLERS) return PAD_ERROR_INVALID_ARG;
 
-    localData = Pad::ReadState(port);
+    try {
+        localData = Pad::ReadState(port);
+    } catch (const std::invalid_argument&) {
+        return PAD_ERROR_INVALID_ARG;
+    } catch (const std::exception&) {
+        return PAD_ERROR_NOT_INITIALIZED;
+    }
     const int savedErrno2 = errno;
     if (!GuestCopyOut_nid_no_patch(data, &localData, sizeof(localData))) {
         errno = savedErrno2;
