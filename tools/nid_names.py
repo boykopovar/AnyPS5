@@ -46,6 +46,7 @@ _STRING_TAIL = re.compile(r'"(?:\\[\s\S]|[^"\\])*"')
 _CHAR_TAIL = re.compile(r"'(?:\\[\s\S]|[^'\\])*'")
 _RAW_HEAD = re.compile(r'"(?P<delim>[^\s()\\]{0,16})\(')
 _NUM_TAIL = re.compile(r"[A-Za-z0-9_.']*")
+_NUMERIC_START = re.compile(r"[0-9]|\.[0-9]")
 _ASCII_IDENT = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_")
 _NUM_PREFIX_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.'")
 
@@ -58,40 +59,55 @@ def _join_continuations(text):
     return text
 
 
-def _literal_prefix_start(text, quote_pos):
+def _numeric_token_end(text, pos, floor):
+    if pos <= floor or text[pos - 1] not in _NUM_PREFIX_CHARS:
+        return None
+    newline = text.rfind("\n", floor, pos)
+    scan_start = newline + 1 if newline >= 0 else floor
+    for match in CPP_TOKEN.finditer(text, scan_start, pos + 1):
+        if match.start() < pos < match.end():
+            if match.lastgroup == "code" and _NUMERIC_START.match(text, match.start()) is not None:
+                return _NUM_TAIL.match(text, pos).end()
+            return None
+        if match.start() >= pos:
+            break
+    return None
+
+
+def _is_standalone_prefix(text, prefix_pos, floor):
+    if prefix_pos < floor:
+        return False
+    if prefix_pos == floor:
+        return True
+    prev = text[prefix_pos - 1]
+    if prev in _ASCII_IDENT:
+        return False
+    if prev in ".'" and _numeric_token_end(text, prefix_pos, floor) is not None:
+        return False
+    return True
+
+
+def _literal_prefix_start(text, quote_pos, floor):
     if quote_pos >= 2 and text[quote_pos - 2:quote_pos] == "u8":
-        if quote_pos == 2 or text[quote_pos - 3] not in _ASCII_IDENT:
+        if _is_standalone_prefix(text, quote_pos - 2, floor):
             return quote_pos - 2
     if quote_pos >= 1 and text[quote_pos - 1] in "uUL":
-        if quote_pos == 1 or text[quote_pos - 2] not in _ASCII_IDENT:
+        if _is_standalone_prefix(text, quote_pos - 1, floor):
             return quote_pos - 1
     return quote_pos
 
 
-def _raw_prefix_start(text, quote_pos):
+def _raw_prefix_start(text, quote_pos, floor):
     if quote_pos >= 1 and text[quote_pos - 1] == "R":
-        start = _literal_prefix_start(text, quote_pos - 1)
-        if start < quote_pos - 1 or quote_pos == 1 or text[quote_pos - 2] not in _ASCII_IDENT:
+        start = _literal_prefix_start(text, quote_pos - 1, floor)
+        if start < quote_pos - 1 or _is_standalone_prefix(text, quote_pos - 1, floor):
             return start
-    return None
-
-
-def _digit_separator_end(text, quote_pos, floor):
-    if quote_pos <= floor or text[quote_pos - 1] not in _NUM_PREFIX_CHARS:
-        return None
-    newline = text.rfind("\n", floor, quote_pos)
-    scan_start = newline + 1 if newline >= 0 else floor
-    for match in CPP_TOKEN.finditer(text, scan_start, quote_pos + 1):
-        if match.start() < quote_pos < match.end():
-            return _NUM_TAIL.match(text, quote_pos).end()
-        if match.start() >= quote_pos:
-            break
     return None
 
 
 def _consume_quote(text, start, floor):
     if text[start] == '"':
-        raw_start = _raw_prefix_start(text, start)
+        raw_start = _raw_prefix_start(text, start, floor)
         if raw_start is not None:
             head = _RAW_HEAD.match(text, start)
             if head is not None:
@@ -101,14 +117,14 @@ def _consume_quote(text, start, floor):
                     return raw_start, close_pos + len(closing), True
         string_match = _STRING_TAIL.match(text, start)
         if string_match is not None:
-            return _literal_prefix_start(text, start), string_match.end(), True
+            return _literal_prefix_start(text, start, floor), string_match.end(), True
         return start, start + 1, False
-    num_end = _digit_separator_end(text, start, floor)
+    num_end = _numeric_token_end(text, start, floor)
     if num_end is not None:
         return start, num_end, False
     char_match = _CHAR_TAIL.match(text, start)
     if char_match is not None:
-        return _literal_prefix_start(text, start), char_match.end(), True
+        return _literal_prefix_start(text, start, floor), char_match.end(), True
     return start, start + 1, False
 
 
