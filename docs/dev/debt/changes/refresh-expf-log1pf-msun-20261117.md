@@ -1,0 +1,10 @@
+# libc
+
+## add Functional
+
+- [log1pf](../../../core/libs/prx/libc/src/Math.cpp) (libc) follows FreeBSD msun's [`s_log1pf.c`](https://github.com/freebsd/freebsd-src/blob/59bc2f095289a10b8cfa55cbb2b45c3bd6c2d4ae/lib/msun/src/s_log1pf.c) for finite inputs above -1 with its own helper, including the negative-input branches (the `atanhf` helper only has the paths for the positive arguments that function passes). Over every such `float` it gives the same result bits as the pinned source. Invalid-domain and non-finite inputs retain the host `std::log1p` fallback. Issue [#9707](https://github.com/boykopovar/AnyPS5/issues/9707) measured about 1.4 million result-bit differences against a Windows host implementation in 20 million samples. The exact `libSceLibcInternal` implementation and title-build FMA behavior are not verified
+- [expf](../../../core/libs/prx/libc/src/MathExpf.cpp) (libc) follows the msun-derived PPSA21564 implementation, including its argument-1 literal, `_Feraise` range branches, small-argument inexact trigger and directed-rounding operation order. Its dedicated source uses `-frounding-math`; guarded CPU fixtures compare result bits, raw flags, errno and caller controls. Console and Windows qualification of these changes remain unverified. Earlier all-float Windows replay applied to the older default-rounding port. FMA-contracted PPSA13934 differs by 1 ulp on 82,009 arguments, so no single implementation matches every title build. Labels: tested, console, windows
+
+## change [atanhf]
+
+- [atanhf](../../../core/libs/prx/libc/src/Math.cpp) (libc) lacks an exhaustive Linux replay; equivalence to `libSceLibcInternal` in PPSA99305 is assumed. It follows PPSA28319 bundled code and FreeBSD msun [e_atanhf.c](https://github.com/freebsd/freebsd-src/blob/59bc2f095289a10b8cfa55cbb2b45c3bd6c2d4ae/lib/msun/src/e_atanhf.c), with the positive-input log1pf paths inlined. The exported log1pf follows msun for finite inputs above -1. Console error handling sets EDOM and FE_INVALID for invalid/nonfinite inputs, and ERANGE with FE_DIVBYZERO at |x|=1. The original Windows replay matched bits, errno and exceptions over all 2^32 inputs.
