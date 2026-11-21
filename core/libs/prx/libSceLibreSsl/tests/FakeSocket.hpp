@@ -98,6 +98,8 @@ inline int FakeTransfer(KernelSocketPoll::NativeOwner* owner, bool send, void* b
 #endif
         return -1;
     }
+    auto* backing = static_cast<KernelSocketPoll::NativeOwner*>(fake.backing.get());
+    if (backing && backing->transfer) return backing->transfer(backing, send, buffer, length);
 #ifdef _WIN32
     return send ? ::send(static_cast<SOCKET>(fake.native), static_cast<const char*>(buffer), length, 0)
                 : ::recv(static_cast<SOCKET>(fake.native), static_cast<char*>(buffer), length, 0);
