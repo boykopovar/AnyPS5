@@ -25,8 +25,8 @@ void* APS5_VABI sceAgcGetRegisterDefaults2Internal(std::uint32_t version) {
     return Agc::Command::GetRegisterDefaults(version, true, __func__);
 }
 
-int APS5_VABI sceAgcGetDefaultCxStateFlat(void* out_state, std::uint32_t size) {
-    return Agc::Command::GetDefaultCxStateFlat(out_state, size);
+int APS5_VABI sceAgcGetDefaultCxStateFlat(void* outState, std::uint32_t first, std::uint32_t last, std::uint32_t instance) {
+    return Agc::Command::GetDefaultCxStateFlat(outState, first, last, instance);
 }
 
 }
