@@ -24,7 +24,7 @@ def redact(text, *, home, user, host):
     if user and len(user) >= 2:
         text = re.sub(r"(?<![\w-])" + re.escape(user) + r"(?![\w-])", "<user>", text)
     if host and len(host) >= 2:
-        text = re.sub(r"(?<![\w-])" + re.escape(host) + r"(?![\w-])", "<host>", text)
+        text = re.sub(r"(?<![\w-])" + re.escape(host) + r"(?![\w-])", "<host>", text, flags=re.IGNORECASE)
     return IPV4.sub("<ip>", text)
 
 
