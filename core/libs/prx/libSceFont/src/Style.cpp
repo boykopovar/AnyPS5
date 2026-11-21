@@ -373,9 +373,17 @@ int APS5_VABI sceFontGetRenderScalePoint(FontHandle fontHandle, float* w, float*
 }
 
 int APS5_VABI sceFontGetRenderEffectSlant(FontHandle fontHandle, float* slantRatio) {
-    const int rc = ReadRenderStyle(fontHandle, true, [&](FontHandleNative* font) { return StyleStateGetSlantRatio(&font->cached_style.state, slantRatio); });
-    if (rc != SCE_FONT_OK && slantRatio) *slantRatio = 0.0f;
-    return rc;
+    float localSlant = 0.0f;
+    const int rc = ReadRenderStyle(fontHandle, true, [&](FontHandleNative* font) {
+        if (!slantRatio) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        return StyleStateGetSlantRatio(&font->cached_style.state, &localSlant);
+    });
+    if (rc != SCE_FONT_OK) {
+        if (slantRatio) CopyOutGuest(slantRatio, 0.0f);
+        return rc;
+    }
+    if (!CopyOutGuest(slantRatio, localSlant)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontGetRenderEffectWeight(FontHandle fontHandle, float* weightXScale, float* weightYScale, std::uint32_t* mode) {

@@ -27,6 +27,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libSceNKWebKit/src/WebCoreLayoutUnit.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
@@ -133,12 +134,12 @@ WebCore::FloatRect APS5_VABI _ZN7WebCore37smallestRectWithAspectRatioAroundRectE
 WebCore::IntRect APS5_VABI _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(const WebCore::FloatRect& rect) {
     return WebCore::IntRect{
         WebCore::IntPoint{
-            static_cast<int>(std::round(rect.x())),
-            static_cast<int>(std::round(rect.y()))
+            WebCore::ClampToInteger(std::round(rect.x())),
+            WebCore::ClampToInteger(std::round(rect.y()))
         },
         WebCore::IntSize{
-            static_cast<int>(std::round(rect.width())),
-            static_cast<int>(std::round(rect.height()))
+            WebCore::ClampToInteger(std::round(rect.width())),
+            WebCore::ClampToInteger(std::round(rect.height()))
         }
     };
 }

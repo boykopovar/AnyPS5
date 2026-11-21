@@ -251,7 +251,7 @@ static void CheckConfigurationQueries() {
     }
     FcFontSetDestroy(set);
     FcObjectSetDestroy(objects);
-    FcPatternDestroy(pattern);
+    FcPatternDestroy_nid_postfix(pattern);
 }
 
 int main() {

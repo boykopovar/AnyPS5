@@ -38,6 +38,7 @@ constexpr int SslBioGetRenegotiates = 126;
 constexpr int SslBioGetClose = 8;
 constexpr int SslBioSetClose = 9;
 constexpr int SslBioInfo = 3;
+constexpr int SslBioSetCallback = 14;
 
 struct BioSslData {
     void* ssl;
@@ -193,8 +194,26 @@ int APS5_VABI destroySsl(Bio* bio) {
     return 1;
 }
 
-std::int64_t APS5_VABI callbackControlSsl(Bio*, int, LibreSsl::BioInfoCallback) {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t forwardCallbackControl(Bio* bio, int command, LibreSsl::BioInfoCallback callback) {
+    if (!bio) return 0;
+    if (!bio->method || !bio->method->callbackControl) return queueError(BioLibrary, UnsupportedMethod, -2);
+    const auto bioCallback = bio->callback;
+    if (bioCallback) {
+        const auto result = bioCallback(bio, 6, reinterpret_cast<const char*>(&callback), command, 0, 1);
+        if (result <= 0) return result;
+    }
+    const auto result = bio->method->callbackControl(bio, command, callback);
+    return bioCallback ? bioCallback(bio, 0x86, reinterpret_cast<const char*>(&callback), command, 0, result) : result;
+}
+
+std::int64_t APS5_VABI callbackControlSsl(Bio* bio, int command, LibreSsl::BioInfoCallback callback) {
+    auto& state = sslData(bio);
+    if (!state.ssl) throw std::invalid_argument("SSL BIO callback control: null SSL");
+    auto& ssl = *static_cast<LibreSslSsl*>(state.ssl);
+    if (command != SslBioSetCallback) return forwardCallbackControl(static_cast<Bio*>(ssl.rbio), command, callback);
+    if (!ssl.internal) throw std::invalid_argument("SSL BIO callback control: null internal state");
+    ssl.internal->infoCallback = reinterpret_cast<void*>(callback);
+    return 1;
 }
 
 void consumeMemory(Bio* bio, BioBuffer& buffer, std::size_t count) {

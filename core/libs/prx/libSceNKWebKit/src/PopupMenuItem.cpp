@@ -5,7 +5,7 @@ extern "C" {
 
 const void* APS5_VABI WKPopupMenuItemCopyText(const void* itemRef) {
     const auto* item = NKWebKit::Cast<NKWebKit::PopupMenuItem>(itemRef, __func__);
-    return item->text ? NKWebKit::ToRef(item->text) : nullptr;
+    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(item->text ? item->text->characters : std::u16string()));
 }
 
 bool APS5_VABI WKPopupMenuItemIsEnabled(const void* itemRef) {

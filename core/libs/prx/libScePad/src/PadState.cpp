@@ -214,7 +214,7 @@ PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t chang
     data.right_stick_x = sticks[2];
     data.right_stick_y = sticks[3];
     const auto trigger = [&](std::uint8_t analog, std::uint32_t bit) -> std::uint8_t {
-        return (!intercepted && (injected.buttons & bit) != 0) || (analog == 0 && (state.buttons & bit) != 0) ? 255 : analog;
+        return !intercepted && ((injected.buttons & bit) != 0 || (analog == 0 && (state.buttons & bit) != 0)) ? 255 : analog;
     };
     data.analog_buttons_l2 = trigger(state.analogButtonsL2, 0x100);
     data.analog_buttons_r2 = trigger(state.analogButtonsR2, 0x200);
@@ -278,11 +278,11 @@ PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t chang
         }
         ++touchNum;
     }
-    const bool injectedTouch = !intercepted && (injected.touchLeft || injected.touchRight);
-    if (!injectedContact && touchNum == 0 && (state.touchLeft || state.touchRight || injectedTouch)) {
+    const bool injectedTouch = injected.touchLeft || injected.touchRight;
+    if (!intercepted && !injectedContact && touchNum == 0 && (state.touchLeft || state.touchRight || injectedTouch)) {
         data.buttons |= 0x100000;
         touchNum = 1;
-        data.touch_data_touch0_x = state.touchRight || (!intercepted && injected.touchRight) ? kTouchPadWidth * 3 / 4 : kTouchPadWidth / 4;
+        data.touch_data_touch0_x = state.touchRight || injected.touchRight ? kTouchPadWidth * 3 / 4 : kTouchPadWidth / 4;
         data.touch_data_touch0_y = kTouchPadHeight / 2;
         data.touch_data_touch0_id = 0;
     }
@@ -438,7 +438,7 @@ PadData Pad::ReadState(int port) {
     auto& slot = slots[port];
     const bool withdrawn = WithdrawnPort(port, slot);
     PadData data = withdrawn ? WithdrawnData(slot.timestamp) : BuildData(slot, slot.state, now, now, injected, port);
-    if (!withdrawn && slot.pressedSinceRead != 0 && now - slot.pressedAt <= LatchExpiry(slot)) {
+    if (!withdrawn && !slot.state.intercepted && slot.pressedSinceRead != 0 && now - slot.pressedAt <= LatchExpiry(slot)) {
         data.buttons |= slot.pressedSinceRead;
         if (slot.pressedSinceRead & 0x100u) data.analog_buttons_l2 = std::max(data.analog_buttons_l2, slot.pressedAnalogL2);
         if (slot.pressedSinceRead & 0x200u) data.analog_buttons_r2 = std::max(data.analog_buttons_r2, slot.pressedAnalogR2);
@@ -688,18 +688,25 @@ extern "C" void PadPublishInputForPort_nid_postfix(int port, const PadInputState
         slot.state.touchLeft == input.touchLeft && slot.state.touchRight == input.touchRight &&
         slot.state.hasMotion == input.hasMotion && slot.state.accel == input.accel && slot.state.gyro == input.gyro &&
         slot.state.touch == input.touch && slot.state.deviceKind == input.deviceKind && slot.state.intercepted == input.intercepted) return;
+    slot.timestamp = sceKernelGetProcessTime();
     if (input.intercepted) {
         slot.pressedSinceRead = 0;
+        slot.pressedAnalogL2 = 0;
+        slot.pressedAnalogR2 = 0;
         if (!slot.state.intercepted) slot.queue.clear();
-    }
-    const std::uint32_t pressed = input.buttons & ~slot.state.buttons;
-    slot.timestamp = sceKernelGetProcessTime();
-    if (pressed != 0) {
-        if (slot.pressedSinceRead != 0 && slot.timestamp - slot.pressedAt > LatchExpiry(slot)) slot.pressedSinceRead = 0;
-        slot.pressedSinceRead |= pressed;
-        slot.pressedAt = slot.timestamp;
-        if (pressed & 0x100u) slot.pressedAnalogL2 = input.analogButtonsL2;
-        if (pressed & 0x200u) slot.pressedAnalogR2 = input.analogButtonsR2;
+    } else {
+        const std::uint32_t pressed = input.buttons & ~slot.state.buttons;
+        if (pressed != 0) {
+            if (slot.pressedSinceRead != 0 && slot.timestamp - slot.pressedAt > LatchExpiry(slot)) {
+                slot.pressedSinceRead = 0;
+                slot.pressedAnalogL2 = 0;
+                slot.pressedAnalogR2 = 0;
+            }
+            slot.pressedSinceRead |= pressed;
+            slot.pressedAt = slot.timestamp;
+            if (pressed & 0x100u) slot.pressedAnalogL2 = input.analogButtonsL2;
+            if (pressed & 0x200u) slot.pressedAnalogR2 = input.analogButtonsR2;
+        }
     }
     slot.state = input;
     if (slot.queue.size() == kQueueCapacity) slot.queue.pop_front();

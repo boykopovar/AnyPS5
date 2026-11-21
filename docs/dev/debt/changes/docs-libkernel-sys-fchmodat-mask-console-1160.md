@@ -1,0 +1,9 @@
+# libkernel_sys
+
+## change [fchmodat]
+
+- [fchmodat](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) passes `AT_FDCWD` (-100) and absolute paths to `chmod`; any other relative path is joined to the descriptor's host directory the same way as for `openat`, so guest path aliases and case-insensitive name matching do not apply to it and a `..` component is not kept inside the guest root. A flag other than `0` or `AT_SYMLINK_NOFOLLOW` (0x200) returns `EINVAL`; the mode is masked to `07777`. With `AT_SYMLINK_NOFOLLOW` a symbolic link throws through `NotImplemented_nid_no_patch` on Windows and Linux, whose hosts cannot change a link's own mode, while a regular file is changed either way. The mode maps to the host file mode, which on Windows is only the CRT's read-only bit. PPSA99621 calls it through `std::filesystem::permissions`. On a PS5 payload process (firmware 11.60, owner 0) only the bits 0777 of the mode were kept, where this keeps `07777`, and four other flags gave `EINVAL`, as here; titles not measured.
+
+## change [lchmod]
+
+- [lchmod](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) passes everything, a symbolic link included, to `fchmodat(AT_FDCWD, path, mode, AT_SYMLINK_NOFOLLOW)`, as FreeBSD 11.4's [`sys_lchmod`](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/sys/kern/vfs_syscalls.c#L2490-L2496) does, so a file or directory is changed as by `chmod`, with `fchmodat`'s path lookup and Windows mode mapping, and a link throws there on Windows and Linux. On Windows any reparse point counts as a link. On a PS5 payload process (firmware 11.60) it changed a file and a directory as `chmod` does, with the same 0777 mask as `fchmodat`, and returned `ENOENT` for a missing path, `ENAMETOOLONG` for one of 1100 characters and `EFAULT` for a null path; symbolic links were not measured.

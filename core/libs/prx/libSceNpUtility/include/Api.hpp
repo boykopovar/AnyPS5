@@ -94,9 +94,9 @@ int APS5_VABI sceNpServiceCheckerIntGetAvailability(std::int32_t requestId, cons
 int APS5_VABI sceNpServiceCheckerIntGetAvailabilityList(std::int32_t requestId, const void* const* npIds, std::size_t count, void* results);
 int APS5_VABI sceNpServiceCheckerIntInitialize(std::int32_t userId);
 int APS5_VABI sceNpServiceCheckerIntIsCached(std::int32_t requestId, std::uint8_t* cached);
-int APS5_VABI sceNpTitleMetadataIntAbortRequest();
-int APS5_VABI sceNpTitleMetadataIntCreateRequest();
-int APS5_VABI sceNpTitleMetadataIntDeleteRequest();
+int APS5_VABI sceNpTitleMetadataIntAbortRequest(std::int32_t requestId);
+int APS5_VABI sceNpTitleMetadataIntCreateRequest(void);
+int APS5_VABI sceNpTitleMetadataIntDeleteRequest(std::int32_t requestId);
 int APS5_VABI sceNpTitleMetadataIntGetInfo(std::uint32_t argument1, void* argument2, void* argument3);
 int APS5_VABI sceNpTitleMetadataIntGetNpTitleId(const char* titleId, std::size_t titleIdLength, char* npTitleId);
 int APS5_VABI sceNpUtilityInit();
