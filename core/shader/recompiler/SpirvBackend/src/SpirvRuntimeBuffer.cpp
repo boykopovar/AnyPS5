@@ -217,7 +217,7 @@ RuntimeAddress byteAddress(SpirvValueEmitContext& context, const IrValue& instru
     const auto byte = add(Select(state, u32, resource.swizzle, swizzled, linear), soffset);
     const auto mode = field(state, resource.word3, 28u, 2u);
     const auto indexInBounds = less(resource.index, resource.records);
-    const auto structured = both(state, indexInBounds, less(offset, resource.stride));
+    const auto structured = both(state, indexInBounds, fits(offset, resource.stride));
     const auto rawRecords = Binary(state, spv::OpISub, u32, resource.records, soffset);
     const auto raw = both(state, Binary(state, spv::OpULessThanEqual, boolean, soffset, resource.records), Select(state, boolean, resource.swizzle, both(state, less(resource.index, rawRecords), fits(offset, resource.stride)), fits(offset, rawRecords)));
     auto inBounds = Select(state, boolean, equal(state, mode, constant(0u)), structured, indexInBounds);
