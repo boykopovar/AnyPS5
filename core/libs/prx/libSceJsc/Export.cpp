@@ -558,10 +558,6 @@ int APS5_VABI _ZN9Inspector21CSSFrontendDispatcher15styleSheetAddedEN3WTF6RefPtr
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC18sanitizeStackForVMERNS_2VME() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC6Config23enableRestrictedOptionsEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1491,10 +1487,6 @@ int APS5_VABI _ZN3WTF17TextBreakIteratorC1ENS_10StringViewENS0_4ModeERKNS_10Atom
 }
 
 int APS5_VABI _ZN3WTF17TextBreakIteratorC2ENS_10StringViewENS0_4ModeERKNS_10AtomStringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF19initializeThreadingEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
