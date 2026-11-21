@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include <vector>
 
 extern "C" {
@@ -1052,6 +1053,12 @@ int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT
         return -2;
     }
     return GetLocaleText<char>(*first, last, numFields, ptr);
+}
+
+
+void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2Em_nid_postfix(GuestLocale::Facet* self, std::size_t refs) {
+    if (self == nullptr) throw std::invalid_argument("time_put<wchar_t>::time_put: null facet");
+    *self = {&g_timePutWideVtable.facet, static_cast<std::uint32_t>(refs), 0};
 }
 
 }
