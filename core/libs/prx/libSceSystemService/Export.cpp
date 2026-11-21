@@ -252,8 +252,10 @@ template<typename TValue>
 int AnswerForRunningApp(const std::string& caller, std::int32_t appId, TValue* destination, std::type_identity_t<TValue> value, int nullOutputResult) {
     if (destination == nullptr) return nullOutputResult;
     if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) throw std::runtime_error(caller + ": application other than the running title");
-    *destination = value;
-    return SYSTEM_SERVICE_OK;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    return copied ? SYSTEM_SERVICE_OK : nullOutputResult;
 }
 
 int AnswerRunningAppCategoryType(const char* caller, std::int32_t appId, std::uint32_t* categoryType, int nullOutputResult) {
