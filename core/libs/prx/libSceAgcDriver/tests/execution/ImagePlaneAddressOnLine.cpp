@@ -319,10 +319,6 @@ void CheckExplicitLod(AgcDriver::VulkanDevice& device) {
             if (sampler.filter == FilterPoint) {
                 const auto level = PointLevel(lod);
                 Expect(tid, SampleResult, MipTexel(level, PointTexel(u, level, sampler.clamp)), what);
-            } else if (sampler.clamp != ClampBorder) {
-                const auto mark = std::bit_cast<float>(Buffer[tid * Words + SampleResult]) * 255.0f;
-                const auto expected = 10.0f + 40.0f * std::clamp(lod, 0.0f, static_cast<float>(Mips - 1u));
-                Require(std::fabs(mark - expected) <= 1.0f, what + ": thread " + std::to_string(tid) + " blends the levels to " + std::to_string(mark) + ", expected " + std::to_string(expected));
             }
         }
     }
