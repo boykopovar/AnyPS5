@@ -159,7 +159,10 @@ static void TestAudio3dChainEncoders() {
     const std::uint16_t wrapSize = 0x80u;
     std::memcpy(chain + 0x20, &wrapPtr, sizeof(wrapPtr));
     std::memcpy(chain + 0x50, &wrapSize, sizeof(wrapSize));
-    Require(sceAcmChain_Audio3dPO1_Activate(&batch, 0, chain) == BadPointer);
+    Require(sceAcmChain_Audio3dPO1_Activate(&batch, 0, chain) == BadPointer && batch.offset == 0 && commands[0] == std::byte{0xCC});
+    const std::uint16_t wrapSizeNonZero = 0x100u;
+    std::memcpy(chain + 0x50, &wrapSizeNonZero, sizeof(wrapSizeNonZero));
+    Require(sceAcmChain_Audio3dPO1_Activate(&batch, 0, chain) == BadPointer && batch.offset == 0 && commands[0] == std::byte{0xCC});
     std::memcpy(chain + 0x20, &chain20, sizeof(chain20));
     std::memcpy(chain + 0x50, &chain50, sizeof(chain50));
     batch = {commands, 0, 55};
@@ -189,6 +192,7 @@ static void TestAudio3dChainEncoders() {
     Require(sceAcmChain_Audio3dPO1_Output(&batch, outputBuf, 0, nullptr) == BadPointer);
     Require(sceAcmChain_Audio3dPO1_Output(&batch, outputBuf, 2, chain) == BadPointer);
     Require(sceAcmChain_Audio3dPO1_Output(&batch, outputBuf + 4, 0, chain) == BadAlignment);
+    Require(sceAcmChain_Audio3dPO1_Output(&batch, reinterpret_cast<void*>((~std::uintptr_t{0}) - 0x7ffu), 0, chain) == BadPointer && batch.offset == 0 && commands[0] == std::byte{0xCC});
     errno = 71;
     Require(sceAcmChain_Audio3dPO1_Output(badBatch, outputBuf, 0, chain) == BadPointer);
     Require(sceAcmChain_Audio3dPO1_Output(&batch, outputBuf, 0, badPtr) == BadPointer);
@@ -306,6 +310,7 @@ static void TestAudio3dChainEncoders() {
     const void* badAlignDelay1[2]{delayBuf0, delayBuf1 + 4};
     Require(sceAcmChain_Audio3dPO2_RenderDelay(&batch, 0, 0, inputBuf, outputBuf, badAlignDelay0, 0, 0, chain) == BadAlignment);
     Require(sceAcmChain_Audio3dPO2_RenderDelay(&batch, 0, 0, inputBuf, outputBuf, badAlignDelay1, 0, 0, chain) == BadAlignment);
+    Require(sceAcmChain_Audio3dPO2_RenderDelay(&batch, 0, 0, reinterpret_cast<const void*>((~std::uintptr_t{0}) - 0xfffu), outputBuf, delayBuffers, 0, 0, chain) == BadPointer && batch.offset == 0 && batch.buffer_size == sizeof(commands) && commands[0] == std::byte{0xCC});
     errno = 71;
     Require(sceAcmChain_Audio3dPO2_RenderDelay(badBatch, 0, 0, inputBuf, outputBuf, delayBuffers, 0, 0, chain) == BadPointer);
     Require(sceAcmChain_Audio3dPO2_RenderDelay(&batch, 0, 0, inputBuf, outputBuf, reinterpret_cast<const void* const*>(0x10), 0, 0, chain) == BadPointer);
@@ -785,6 +790,7 @@ int main() {
     errno = 71;
     Require(sceAcm_Panner(&readOnlyCommands, 1, sources, 0, 0, 1, sources, sources, nullptr, outputs) == BadPointer);
     Require(errno == 71 && readOnlyCommands.offset == 0 && readOnlyCommands.buffer_size == acmPageSize);
+    std::memset(commands, 0xCC, sizeof(commands));
     alignas(16) std::byte roChain[0x80]{};
     const std::int32_t roMaxCh = 4;
     std::memcpy(roChain + 0x08, &roMaxCh, sizeof(roMaxCh));
