@@ -143,6 +143,13 @@ bool APS5_VABI _ZNK9Inspector22RemoteAutomationTarget20remoteControlAllowedEv(co
     return !Checked(self, __func__).flag;
 }
 
+void APS5_VABI _ZN9Inspector22RemoteAutomationTargetC2ERKS0_(RemoteTarget* self, const RemoteTarget* other) {
+    const RemoteTarget& source = Checked(other, __func__);
+    if (!self) throw std::invalid_argument(std::string(__func__) + ": null this");
+    self->identifier = source.identifier;
+    self->flag = source.flag;
+}
+
 const OptionalString* APS5_VABI _ZNK9Inspector18InjectedScriptHost16savedResultAliasEv(const InjectedScriptHost* self) {
     return &Checked(self, __func__).savedResultAlias;
 }
