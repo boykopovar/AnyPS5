@@ -2101,7 +2101,7 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bo
         return;
     }
     if (opcode == RdnaOpcode::VCvtPkU8F32) {
-        if ((abs & ~1u) != 0u || opSel != 0u || clamp != 0u || omod != 0u || (neg & ~1u) != 0u) {
+        if ((abs & ~1u) != 0u || opSel != 0u || omod != 0u || (neg & ~1u) != 0u) {
             throw std::invalid_argument("VOP3 source modifiers are not implemented");
         }
         return;
