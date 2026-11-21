@@ -571,6 +571,10 @@ std::int64_t APS5_VABI detachISRead_nid_postfix(void* codec, Jxr::BitIo* io) {
     errno = initialErrno;
     if (!initialCopied || !guestIo.stream) APS5_INVALID_ARG_EX;
     auto* stream = guestIo.stream;
+    const int flushWriteErrno = errno;
+    const bool ioWritable = GuestCopyOut_nid_no_patch(io, &guestIo, sizeof(guestIo));
+    errno = flushWriteErrno;
+    if (!ioWritable) APS5_INVALID_ARG_EX;
     flushToByte_nid_postfix(io);
     const int afterFlushErrno = errno;
     const bool afterFlushCopied = GuestCopyIn_nid_no_patch(&guestIo, io, sizeof(guestIo));

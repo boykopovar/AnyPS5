@@ -14,6 +14,15 @@
 #include <span>
 #include <stdexcept>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 
 
@@ -559,12 +568,6 @@ void MemoryBitIo() {
 void PacketBitIoGuestPointers(Jxr::Stream& stream) {
     auto* unmappedIo = reinterpret_cast<Jxr::BitIo*>(0x10);
     auto* unmappedStream = reinterpret_cast<Jxr::Stream*>(0x10);
-    static const std::array<std::uint8_t, 4096> roPacket{};
-    static const Jxr::BitIo readOnlyIo{
-        0, 0, 0, ~8192,
-        const_cast<std::uint8_t*>(roPacket.data()),
-        const_cast<std::uint8_t*>(roPacket.data()) + 4096,
-        nullptr, 0};
 
     errno = 71;
     RequireInvalidArgument([&] { readIS_nid_postfix(nullptr, unmappedIo); }, "readIS accepted unmapped io");
@@ -576,7 +579,8 @@ void PacketBitIoGuestPointers(Jxr::Stream& stream) {
     RequireInvalidArgument([&] { detachISWrite_nid_postfix(nullptr, unmappedIo); }, "detachISWrite accepted unmapped io");
     Require(errno == 71, "detachISWrite unmapped io changed errno");
 
-    Jxr::BitIo badStreamIo{0, 0, 0, ~8192, ring.data(), ring.data() + PacketSize, unmappedStream, 0};
+    constexpr std::int32_t readMask = ~static_cast<std::int32_t>(8192) & ~std::int32_t{1};
+    Jxr::BitIo badStreamIo{0, 0, 0, readMask, ring.data(), ring.data() + PacketSize, unmappedStream, 0};
     RequireInvalidArgument([&] { readIS_nid_postfix(nullptr, &badStreamIo); }, "readIS accepted unmapped stream");
     Require(errno == 71, "readIS unmapped stream changed errno");
     RequireInvalidArgument([&] { writeIS_nid_postfix(nullptr, &badStreamIo); }, "writeIS accepted unmapped stream");
@@ -585,17 +589,70 @@ void PacketBitIoGuestPointers(Jxr::Stream& stream) {
     Require(errno == 71, "detachISRead unmapped stream changed errno");
     RequireInvalidArgument([&] { detachISWrite_nid_postfix(nullptr, &badStreamIo); }, "detachISWrite accepted unmapped stream");
     Require(errno == 71, "detachISWrite unmapped stream changed errno");
+    Jxr::BitIo badDetachReadStreamIo{0, 0, 0, readMask, ring.data(), ring.data(), unmappedStream, 8192};
+    RequireInvalidArgument([&] { detachISRead_nid_postfix(nullptr, &badDetachReadStreamIo); }, "detachISRead accepted unmapped stream after buffered read");
+    Require(errno == 71, "detachISRead buffered unmapped stream changed errno");
 
-    Jxr::BitIo roIoCopy = readOnlyIo;
-    roIoCopy.stream = &stream;
-    static const Jxr::BitIo readOnlyAlignedIo{
-        0, 0, 0, ~8192,
-        const_cast<std::uint8_t*>(roPacket.data()),
-        const_cast<std::uint8_t*>(roPacket.data()),
-        nullptr, 0};
-    (void)readOnlyAlignedIo;
-    RequireInvalidArgument([&] { writeIS_nid_postfix(nullptr, const_cast<Jxr::BitIo*>(&readOnlyIo)); }, "writeIS accepted read-only io");
+#ifdef _WIN32
+    SYSTEM_INFO si{};
+    GetSystemInfo(&si);
+    const std::size_t pageSize = si.dwPageSize;
+    void* roPage = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(roPage != nullptr, "allocate read-only bit io page");
+#else
+    const long page = sysconf(_SC_PAGESIZE);
+    Require(page > 0, "query page size");
+    const std::size_t pageSize = static_cast<std::size_t>(page);
+    void* roPage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(roPage != MAP_FAILED, "allocate read-only bit io page");
+#endif
+    Require(pageSize >= 4 * sizeof(Jxr::BitIo), "read-only page too small for test records");
+    auto* roIos = static_cast<Jxr::BitIo*>(roPage);
+    roIos[0] = {0, 0, 0, ~8192, ring.data(), ring.data() + PacketSize, &stream, 0};
+    roIos[1] = {0, 0, 0, ~8192, ring.data(), ring.data() + PacketSize, &stream, 0};
+    roIos[2] = {0, 0, 0, readMask, ring.data(), ring.data(), &stream, 8192};
+    roIos[3] = {0, 0, 0, ~8192, ring.data(), ring.data(), &stream, 0};
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(roPage, pageSize, PAGE_READONLY, &oldProtect) != 0, "protect bit io page read-only");
+#else
+    Require(mprotect(roPage, pageSize, PROT_READ) == 0, "protect bit io page read-only");
+#endif
+
+    mutation = {};
+    readResult = 0;
+    writeResult = 0;
+    seekResult = 0;
+
+    calls.clear();
+    errno = 71;
+    RequireInvalidArgument([&] { writeIS_nid_postfix(nullptr, &roIos[0]); }, "writeIS accepted read-only io");
     Require(errno == 71, "writeIS read-only io changed errno");
+    Require(calls == std::vector<char>({'w'}) && roIos[0].start == ring.data(), "writeIS read-only io mutated state");
+
+    calls.clear();
+    errno = 71;
+    RequireInvalidArgument([&] { readIS_nid_postfix(nullptr, &roIos[1]); }, "readIS accepted read-only io");
+    Require(errno == 71, "readIS read-only io changed errno");
+    Require(calls == std::vector<char>({'s', 'r'}) && roIos[1].referenceOffset == 0, "readIS read-only io mutated state");
+
+    calls.clear();
+    errno = 71;
+    RequireInvalidArgument([&] { detachISRead_nid_postfix(nullptr, &roIos[2]); }, "detachISRead accepted read-only io");
+    Require(errno == 71, "detachISRead read-only io changed errno");
+    Require(calls.empty() && roIos[2].stream == &stream, "detachISRead read-only io invoked callbacks or cleared stream");
+
+    calls.clear();
+    errno = 71;
+    RequireInvalidArgument([&] { detachISWrite_nid_postfix(nullptr, &roIos[3]); }, "detachISWrite accepted read-only io");
+    Require(errno == 71, "detachISWrite read-only io changed errno");
+    Require(calls == std::vector<char>({'w'}) && roIos[3].stream == &stream, "detachISWrite read-only io cleared stream");
+
+#ifdef _WIN32
+    Require(VirtualFree(roPage, 0, MEM_RELEASE) != 0, "release read-only bit io page");
+#else
+    Require(munmap(roPage, pageSize) == 0, "release read-only bit io page");
+#endif
 }
 
 }
