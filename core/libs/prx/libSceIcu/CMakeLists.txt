@@ -473,7 +473,7 @@ endif()
 if(BUILD_TESTING)
     add_test_executable(guest_icu_configuration_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Configuration.cpp)
     target_include_directories(guest_icu_configuration_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_icu_configuration_tests PRIVATE libSceIcu)
+    target_link_libraries(guest_icu_configuration_tests PRIVATE libSceIcu icu_common)
     configure_windows_unwind(guest_icu_configuration_tests)
     add_test(NAME guest_icu_configuration COMMAND guest_icu_configuration_tests)
     set_tests_properties(guest_icu_configuration PROPERTIES TIMEOUT 30)
@@ -759,6 +759,7 @@ set(ICU_RECOVERED_SOURCES
     PluralRules.cpp
     RelativeDateTimeFormatter.cpp
     ResourceBundle.cpp
+    ResourceUtf8.cpp
     StringSearch.cpp
     UText.cpp)
 target_sources(libSceIcu PRIVATE ${ICU_RECOVERED_SOURCES})
@@ -975,6 +976,55 @@ if(BUILD_TESTING)
     set_tests_properties(guest_icu_invariant_chars PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_icu_invariant_chars PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+    add_test_executable(guest_icu_string_hash_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/StringHash.cpp)
+    target_include_directories(guest_icu_string_hash_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_string_hash_tests PRIVATE libSceIcu libc libkernel)
+    configure_windows_unwind(guest_icu_string_hash_tests)
+    add_test(NAME guest_icu_string_hash COMMAND guest_icu_string_hash_tests)
+    set_tests_properties(guest_icu_string_hash PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_icu_string_hash PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_delete_uobject_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/DeleteUObject.cpp)
+    target_include_directories(guest_icu_delete_uobject_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_delete_uobject_tests PRIVATE libSceIcu icu_common)
+    configure_windows_unwind(guest_icu_delete_uobject_tests)
+    add_test(NAME guest_icu_delete_uobject COMMAND guest_icu_delete_uobject_tests)
+    set_tests_properties(guest_icu_delete_uobject PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_delete_uobject PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_functional_equivalent_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/FunctionalEquivalent.cpp)
+    target_include_directories(guest_icu_functional_equivalent_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_functional_equivalent_tests PRIVATE libSceIcu icu_common)
+    configure_windows_unwind(guest_icu_functional_equivalent_tests)
+    add_test(NAME guest_icu_functional_equivalent COMMAND guest_icu_functional_equivalent_tests)
+    set_tests_properties(guest_icu_functional_equivalent PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_functional_equivalent PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_resource_utf8_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/ResourceUtf8.cpp)
+    target_include_directories(guest_icu_resource_utf8_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_resource_utf8_tests PRIVATE libSceIcu libc libkernel)
+    configure_windows_unwind(guest_icu_resource_utf8_tests)
+    add_test(NAME guest_icu_resource_utf8 COMMAND guest_icu_resource_utf8_tests)
+    set_tests_properties(guest_icu_resource_utf8 PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_icu_resource_utf8 PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()

@@ -9,7 +9,7 @@
 extern "C" {
 
 std::uint64_t APS5_VABI _ZNK7WebCore6ISOBox4sizeEv(const NKWebKit::IsoAbi::Box* self);
-std::uint32_t APS5_VABI _ZNK7WebCore6ISOBox7boxTypeEv(const NKWebKit::IsoAbi::Box* self);
+const std::uint32_t* APS5_VABI _ZNK7WebCore6ISOBox7boxTypeEv(const NKWebKit::IsoAbi::Box* self);
 const NKWebKit::IsoAbi::ByteVector& APS5_VABI _ZNK7WebCore6ISOBox12extendedTypeEv(const NKWebKit::IsoAbi::Box* self);
 std::uint8_t APS5_VABI _ZNK7WebCore10ISOFullBox7versionEv(const NKWebKit::IsoAbi::FullBox* self);
 std::uint32_t APS5_VABI _ZNK7WebCore10ISOFullBox5flagsEv(const NKWebKit::IsoAbi::FullBox* self);

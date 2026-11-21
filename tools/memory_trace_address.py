@@ -1,8 +1,10 @@
 import argparse
+import codecs
 import re
 import sys
 from collections import deque
 from dataclasses import dataclass
+from io import TextIOWrapper
 from pathlib import Path
 
 
@@ -12,6 +14,7 @@ OPERATIONS = (
     "remap fixed",
     "map direct",
     "map anon",
+    "flexible backing",
     "map file",
     "map shared",
     "protect",
@@ -52,8 +55,13 @@ def iter_events(lines):
 
 def parse_range(address, size):
     try:
-        start = int(address, 0)
-        length = int(size, 0)
+        def parse_number(value):
+            if re.fullmatch(r"[+-]?[0-9](?:_?[0-9])*", value.strip()):
+                return int(value, 10)
+            return int(value, 0)
+
+        start = parse_number(address)
+        length = parse_number(size)
     except ValueError as error:
         raise ValueError("address and byte count must be decimal or 0x-prefixed integers") from error
     if start < 0 or start >= 1 << 64:
@@ -90,6 +98,12 @@ def render_events(events, path, start, size, limit):
     return "\n".join(lines) + "\n"
 
 
+def decode_trace(source):
+    bom = source.peek(2)[:2]
+    encoding = "utf-16" if bom in (codecs.BOM_UTF16_BE, codecs.BOM_UTF16_LE) else "utf-8-sig"
+    return TextIOWrapper(source, encoding=encoding, errors="replace")
+
+
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -105,7 +119,7 @@ def main(argv=None):
         parser.error("--limit must be positive")
     try:
         start, size = parse_range(args.address, args.length)
-        with args.trace.open(encoding="utf-8-sig", errors="replace") as source:
+        with args.trace.open("rb") as raw, decode_trace(raw) as source:
             output = render_events(iter_events(source), args.trace, start, size, args.limit)
         sys.stdout.write(output)
     except (OSError, ValueError) as error:

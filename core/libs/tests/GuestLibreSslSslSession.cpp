@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <climits>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -19,7 +20,8 @@ struct TestCert {
 };
 
 struct TestSession {
-    unsigned char beforeCipher[168];
+    unsigned char beforeReferences[160];
+    int references;
     const void* cipher;
     unsigned char rest[56];
 };
@@ -33,7 +35,7 @@ struct TestSsl {
 };
 
 static_assert(sizeof(TestCertKey) == 24 && sizeof(TestCert) == 256);
-static_assert(sizeof(TestSession) == 232 && offsetof(TestSession, cipher) == 168);
+static_assert(sizeof(TestSession) == 232 && offsetof(TestSession, references) == 160 && offsetof(TestSession, cipher) == 168);
 static_assert(sizeof(TestSsl) == 232 && offsetof(TestSsl, cert) == 80 && offsetof(TestSsl, session) == 128);
 
 static const LibreSslSsl* Connection(const TestSsl* ssl) {
@@ -60,6 +62,40 @@ static void TestGetSession() {
     ssl.cert = &cert;
     ssl.session = &session;
     Require(reinterpret_cast<TestSession*>(SSL_get_session_nid_postfix(Connection(&ssl))) == &session);
+}
+
+static void TestGet1Session() {
+    TestSession session {};
+    TestSsl ssl {};
+    RequireThrows([] { SSL_get1_session_nid_postfix(nullptr); });
+    Require(SSL_get1_session_nid_postfix(reinterpret_cast<LibreSslSsl*>(&ssl)) == nullptr);
+    session.references = 1;
+    ssl.session = &session;
+    Require(SSL_get1_session_nid_postfix(reinterpret_cast<LibreSslSsl*>(&ssl)) == &session);
+    Require(session.references == 2);
+    Require(SSL_get1_session_nid_postfix(reinterpret_cast<LibreSslSsl*>(&ssl)) == &session);
+    Require(session.references == 3);
+    session.references = INT_MAX;
+    RequireThrows([&] { SSL_get1_session_nid_postfix(reinterpret_cast<LibreSslSsl*>(&ssl)); });
+    Require(session.references == INT_MAX);
+}
+
+static void TestSessionFree() {
+    TestSession session {};
+    SSL_SESSION_free_nid_postfix(nullptr);
+    session.references = 3;
+    SSL_SESSION_free_nid_postfix(&session);
+    Require(session.references == 2);
+    SSL_SESSION_free_nid_postfix(&session);
+    Require(session.references == 1);
+    RequireThrows([&] { SSL_SESSION_free_nid_postfix(&session); });
+    Require(session.references == 1);
+    session.references = 0;
+    RequireThrows([&] { SSL_SESSION_free_nid_postfix(&session); });
+    Require(session.references == 0);
+    session.references = -1;
+    RequireThrows([&] { SSL_SESSION_free_nid_postfix(&session); });
+    Require(session.references == -1);
 }
 
 static void TestCurrentCipher() {
@@ -114,6 +150,8 @@ static void TestGetPrivateKey() {
 
 int main() {
     TestGetSession();
+    TestGet1Session();
+    TestSessionFree();
     TestCurrentCipher();
     TestGetCertificate();
     TestGetPrivateKey();

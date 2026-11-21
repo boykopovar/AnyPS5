@@ -370,12 +370,16 @@ class ImportRelocationTests(unittest.TestCase):
 
 
 class ObjdumpDiscoveryTests(unittest.TestCase):
-    def discover(self, versions):
+    def discover(self, versions, unsupported=()):
         def which(name):
             return "/bin/" + name if name in versions else None
 
         def run(command, **kwargs):
-            return subprocess.CompletedProcess(command, 0, versions[Path(command[0]).name], "")
+            name = Path(command[0]).name
+            if command[1] == "--version":
+                return subprocess.CompletedProcess(command, 0, versions[name], "")
+            self.assertIn("i386:x86-64", command)
+            return subprocess.CompletedProcess(command, int(name in unsupported), "", "")
 
         annotate_module.gnu_objdump.cache_clear()
         self.addCleanup(annotate_module.gnu_objdump.cache_clear)
@@ -386,10 +390,16 @@ class ObjdumpDiscoveryTests(unittest.TestCase):
         found = self.discover({"objdump": "Apple LLVM version 21.0.0\n", "gobjdump": "GNU objdump (GNU Binutils) 2.45\n"})
         self.assertEqual(found, "/bin/gobjdump")
 
+    def test_arm_gnu_objdump_is_passed_over_for_x86_64_cross_objdump(self):
+        version = "GNU objdump (GNU Binutils) 2.42\n"
+        found = self.discover({"objdump": version, "x86_64-linux-gnu-objdump": version}, unsupported=("objdump",))
+        self.assertEqual(found, "/bin/x86_64-linux-gnu-objdump")
+        self.assertIsNone(self.discover({"objdump": version}, unsupported=("objdump",)))
+
     def test_only_llvm_objdump_is_refused_by_name(self):
         self.assertIsNone(self.discover({"objdump": "Apple LLVM version 21.0.0\n"}))
         with mock.patch.object(annotate_module, "gnu_objdump", lambda: None):
-            with self.assertRaisesRegex(annotate_module.ModuleError, "GNU binutils objdump was not found as any of objdump, gobjdump"):
+            with self.assertRaisesRegex(annotate_module.ModuleError, "GNU binutils objdump with x86-64 support is required"):
                 annotate_module.disassemble(b"\xc3", 0x1000)
 
 

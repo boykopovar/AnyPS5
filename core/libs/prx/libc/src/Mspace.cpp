@@ -45,10 +45,10 @@ std::uintptr_t AlignUp(std::uintptr_t value, std::uintptr_t alignment) {
     return (value + alignment - 1) & ~(alignment - 1);
 }
 
-Arena* Find(void* handle) {
+Arena* Find(void* handle, bool setErrno = true) {
     const auto found = arenas.find(reinterpret_cast<std::uintptr_t>(handle));
     if (found != arenas.end()) return found->second.get();
-    Error(22);
+    if (setErrno) Error(22);
     return nullptr;
 }
 
@@ -61,12 +61,12 @@ void RemoveFree(Arena& arena, std::map<std::uintptr_t, Chunk>::iterator chunk) {
     arena.free.erase({chunk->second.end - chunk->first, chunk->first});
 }
 
-void* Allocate(Arena* arena, std::size_t size, std::size_t alignment) {
+void* Allocate(Arena* arena, std::size_t size, std::size_t alignment, bool setErrno = true) {
     if (!arena) return nullptr;
     alignment = std::max<std::size_t>(alignment, MinimumAlignment);
     const auto needed = AlignUp(std::max<std::size_t>(size, 1), MinimumAlignment);
     if (needed < size || needed > std::numeric_limits<std::uintptr_t>::max() - alignment) {
-        Error(12);
+        if (setErrno) Error(12);
         return nullptr;
     }
     for (auto candidate = arena->free.lower_bound({needed, 0}); candidate != arena->free.end(); ++candidate) {
@@ -85,7 +85,7 @@ void* Allocate(Arena* arena, std::size_t size, std::size_t alignment) {
         arena->peakInUse = std::max(arena->peakInUse, arena->inUse);
         return reinterpret_cast<void*>(aligned);
     }
-    Error(12);
+    if (setErrno) Error(12);
     return nullptr;
 }
 
@@ -130,7 +130,7 @@ bool InsideAllocation(const Arena& arena, std::uintptr_t start, std::size_t size
 int FillStats(void* handle, MallocManagedSize* stats) {
     if (!stats || stats->size < sizeof(MallocManagedSize)) return 22;
     std::lock_guard lock(arenaMutex);
-    auto* arena = Find(handle);
+    auto* arena = Find(handle, false);
     if (!arena) return 22;
     const auto system = arena->end - arena->base;
     stats->maxSystemSize = system;
@@ -236,9 +236,9 @@ int APS5_VABI sceLibcMspacePosixMemalign_nid_postfix(void* handle, void** result
                                                    std::size_t alignment, std::size_t size) {
     if (!result || alignment < sizeof(void*) || (alignment & (alignment - 1))) return 22;
     std::lock_guard lock(arenaMutex);
-    auto* arena = Find(handle);
+    auto* arena = Find(handle, false);
     if (!arena) return 22;
-    void* pointer = Allocate(arena, size, alignment);
+    void* pointer = Allocate(arena, size, alignment, false);
     if (!pointer) return 12;
     const int savedErrno = errno;
     const bool writable = GuestCopyOut_nid_no_patch(result, &pointer, sizeof(pointer));

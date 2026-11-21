@@ -203,6 +203,18 @@ class AnalysisTests(unittest.TestCase):
                 path.write_text("\n".join(map(json.dumps, rows)), encoding="utf-8")
                 self.assertEqual(title_run.read_summary(path), dict(identity, presents=400, fps=20.0))
 
+    def test_unicode_separators_inside_title_names_keep_periodic_measurements(self):
+        path = self.root / "aps5-summary.jsonl"
+        identity = {"gpu": "GPU", "driver": "Driver", "os": "OS"}
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            with self.subTest(separator=repr(separator)):
+                title = f"Main title{separator}Subtitle"
+                intervals = [dict(identity, title=title, interval_start_s=start, interval_end_s=start + 10,
+                                  presents=presents, window={"ms": 10000})
+                             for start, presents in ((0, 300), (10, 500))]
+                path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in intervals), encoding="utf-8")
+                self.assertEqual(title_run.read_summary(path), dict(identity, presents=800, fps=40.0))
+
     def test_empty_periodic_window_does_not_fall_back_to_capture_frames(self):
         path = self.root / "aps5-summary.jsonl"
         interval = {"interval_start_s": 0, "interval_end_s": 10, "presents": 0, "window": {"ms": 10000}}
@@ -646,6 +658,84 @@ class PreparationTests(unittest.TestCase):
         self.assertIsNotNone(again)
         again.close()
 
+    def test_work_lock_is_released_with_a_retained_failure_traceback(self):
+        title_id = "PPSA00001"
+        package(self.root / "games" / title_id, title_id)
+        out = self.root / "out"
+        lock = out / "work" / f"{title_id}.lock"
+        failure = SystemExit("git failed")
+
+        def fail(*args):
+            self.assertIsNone(title_run.lock_work(lock))
+            raise failure
+
+        try:
+            with patch.object(title_run, "git", side_effect=fail):
+                try:
+                    title_run.main(["--games", str(self.root / "games"), "--out", str(out), title_id])
+                except SystemExit as error:
+                    self.assertIs(error, failure)
+                else:
+                    self.fail("the Git failure was not propagated")
+            self.assertIsNotNone(failure.__traceback__)
+            again = title_run.lock_work(lock)
+            if again is not None:
+                again.close()
+            self.assertIsNotNone(again)
+        finally:
+            failure.__traceback__ = None
+
+    def test_busy_title_releases_the_other_work_locks(self):
+        first, second = "PPSA00001", "PPSA00002"
+        for title_id in (first, second):
+            package(self.root / "games" / title_id, title_id)
+        out = self.root / "out"
+        failure = None
+        with title_run.lock_work(out / "work" / f"{second}.lock"):
+            try:
+                try:
+                    title_run.main(["--games", str(self.root / "games"), "--out", str(out), first, second])
+                except SystemExit as error:
+                    failure = error
+                self.assertIsNotNone(failure)
+                self.assertIn(f": {second}", str(failure))
+                again = title_run.lock_work(out / "work" / f"{first}.lock")
+                if again is not None:
+                    again.close()
+                self.assertIsNotNone(again)
+                self.assertIsNone(title_run.lock_work(out / "work" / f"{second}.lock"))
+            finally:
+                if failure is not None:
+                    failure.__traceback__ = None
+
+    def test_lock_acquisition_error_releases_the_earlier_work_lock(self):
+        first, second = "PPSA00001", "PPSA00002"
+        for title_id in (first, second):
+            package(self.root / "games" / title_id, title_id)
+        out = self.root / "out"
+        lock_work = title_run.lock_work
+        failure = OSError("cannot open the second lock")
+
+        def acquire(path):
+            if path.stem == second:
+                raise failure
+            return lock_work(path)
+
+        try:
+            with patch.object(title_run, "lock_work", side_effect=acquire):
+                try:
+                    title_run.main(["--games", str(self.root / "games"), "--out", str(out), first, second])
+                except OSError as error:
+                    self.assertIs(error, failure)
+                else:
+                    self.fail("the lock acquisition error was not propagated")
+            again = lock_work(out / "work" / f"{first}.lock")
+            if again is not None:
+                again.close()
+            self.assertIsNotNone(again)
+        finally:
+            failure.__traceback__ = None
+
     def test_unreadable_catalog_and_comparison_files_are_reported_without_a_traceback(self):
         import contextlib
         import io
@@ -788,6 +878,20 @@ class PreparationTests(unittest.TestCase):
             target = self.root / f"input{index}"
             title_run.stage_inputs(source, entry, target)
             self.assertEqual(sorted(path.relative_to(target).as_posix() for path in target.rglob("*.*")), expected)
+
+    def test_plural_module_dir_is_staged_without_singular_fallback(self):
+        package_root = package(self.root / "pkg", "PPSA00001")
+        modules = package_root / "sce_modules"
+        modules.mkdir()
+        elf = b"\x7fELF" + bytes(60)
+        (package_root / "eboot.bin").write_bytes(elf)
+        (modules / "helper.prx").write_bytes(elf)
+        staged = self.root / "input"
+
+        title_run.stage_inputs(package_root, {}, staged)
+
+        self.assertEqual((staged / "sce_modules/helper.prx").read_bytes(), elf)
+        self.assertFalse((staged / "sce_module").exists())
 
     def test_module_dirs_keep_every_module_and_empty_directories(self):
         source = package(self.root / "pkg", "PPSA00001")

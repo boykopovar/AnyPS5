@@ -1740,14 +1740,18 @@ struct WriteTracker {
         for (auto block = first; block <= last; ++block) unstampedStores[block % UnstampedSlots] = generation;
     }
 
-    std::uint64_t newestStamp(std::uint64_t address, std::uint64_t end) const {
+    std::uint64_t newestUnstampedStamp(std::uint64_t address, std::uint64_t end) const {
+        if (unstampedStores.empty()) return 0;
+        const auto first = address / WriteBlockBytes;
+        const auto last = (end - 1) / WriteBlockBytes;
+        if (last - first >= UnstampedSlots) return *std::max_element(unstampedStores.begin(), unstampedStores.end());
         std::uint64_t newest = 0;
-        if (!unstampedStores.empty()) {
-            const auto first = address / WriteBlockBytes;
-            const auto last = (end - 1) / WriteBlockBytes;
-            if (last - first >= UnstampedSlots) newest = *std::max_element(unstampedStores.begin(), unstampedStores.end());
-            else for (auto block = first; block <= last; ++block) newest = std::max(newest, unstampedStores[block % UnstampedSlots]);
-        }
+        for (auto block = first; block <= last; ++block) newest = std::max(newest, unstampedStores[block % UnstampedSlots]);
+        return newest;
+    }
+
+    std::uint64_t newestStamp(std::uint64_t address, std::uint64_t end) const {
+        auto newest = newestUnstampedStamp(address, end);
         if (!watched) return newest;
 #ifdef _WIN32
         address = std::max<std::uint64_t>(address, base);
@@ -1811,6 +1815,25 @@ struct WriteTracker {
                 if (!walked && newerPage(walkPages, 0, WriteBlockBytes)) return true;
                 continue;
             }
+            const auto& entry = found->second;
+            if (entry.whole > generation || entry.dropped > generation || entry.possibleWhole > generation || entry.possibleDropped > generation) return true;
+            for (const auto& piece : entry.pieces) {
+                if (piece.generation > generation && piece.begin < to && from < piece.end) return true;
+            }
+            for (const auto& piece : entry.possiblePieces) {
+                if (piece.generation > generation && piece.begin < to && from < piece.end) return true;
+            }
+        }
+        return false;
+    }
+
+    bool driverStoredOver(std::uint64_t address, std::uint64_t end, std::uint64_t generation) const {
+        for (auto block = blockOf(address); block <= blockOf(end - 1); ++block) {
+            const auto found = driverPieces.find(block);
+            if (found == driverPieces.end()) continue;
+            const auto begin = blockBegin(block);
+            const auto from = std::max(address, begin) - begin;
+            const auto to = std::min<std::uint64_t>(end, begin + WriteBlockBytes) - begin;
             const auto& entry = found->second;
             if (entry.whole > generation || entry.dropped > generation || entry.possibleWhole > generation || entry.possibleDropped > generation) return true;
             for (const auto& piece : entry.pieces) {
@@ -2228,6 +2251,69 @@ std::uint64_t WriteGeneration() {
     return Tracker().generation.load(std::memory_order_acquire);
 }
 
+std::atomic<bool> changedSinceWalkFailureForTest{false};
+
+void SetChangedSinceWalkFailureForTest(bool fail) {
+    changedSinceWalkFailureForTest.store(fail, std::memory_order_release);
+}
+
+std::uint64_t ChangedSince(std::uint64_t address, std::size_t bytes, std::uint64_t since, std::vector<std::pair<std::uint64_t, std::uint64_t>>& changed) {
+    changed.clear();
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return 0;
+    const auto end = address + bytes;
+    const auto append = [&](std::uint64_t begin, std::uint64_t stop) {
+        if (!changed.empty() && changed.back().second == begin) changed.back().second = stop;
+        else changed.emplace_back(begin, stop);
+    };
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched) {
+        append(address, end);
+        return 0;
+    }
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> covered;
+    for (auto begin = address; begin < end;) {
+        const auto stop = std::min<std::uint64_t>(end, (begin & ~std::uint64_t{WriteBlockBytes - 1}) + WriteBlockBytes);
+        if (tracker.covers(begin, static_cast<std::size_t>(stop - begin))) {
+            if (!covered.empty() && covered.back().second == begin) covered.back().second = stop;
+            else covered.emplace_back(begin, stop);
+        }
+        begin = stop;
+    }
+    std::vector<bool> walked(covered.size(), true);
+    const bool cutForTest = changedSinceWalkFailureForTest.load(std::memory_order_acquire);
+    for (std::size_t index = 0; index < covered.size(); ++index) {
+        const auto first = covered[index].first & ~std::uint64_t{WritePageBytes - 1};
+        const auto stop = (covered[index].second + WritePageBytes - 1) & ~std::uint64_t{WritePageBytes - 1};
+        if (!cutForTest) {
+            walked[index] = walkWrites(tracker, first, stop, StampKind::Cpu);
+            continue;
+        }
+        const auto cut = first + (((stop - first) / 2) & ~std::uint64_t{WritePageBytes - 1});
+        if (cut > first) walkWrites(tracker, first, cut, StampKind::Cpu);
+#ifdef _WIN32
+        noteRefusedWalk(tracker, cut, stop);
+#endif
+        walked[index] = false;
+    }
+    const auto newest = [&](std::uint64_t begin) {
+        const auto block = tracker.blockOf(begin);
+        auto stamp = std::max(tracker.stampOf(block), tracker.cpuStampOf(block));
+        if (!tracker.unstampedStores.empty()) stamp = std::max(stamp, tracker.unstampedStores[(begin / WriteBlockBytes) % WriteTracker::UnstampedSlots]);
+        return stamp;
+    };
+    auto next = covered.begin();
+    for (auto begin = address; begin < end;) {
+        const auto stop = std::min<std::uint64_t>(end, (begin & ~std::uint64_t{WriteBlockBytes - 1}) + WriteBlockBytes);
+        while (next != covered.end() && next->second <= begin) ++next;
+        const bool inside = next != covered.end() && next->first <= begin;
+        if (!inside || !walked[static_cast<std::size_t>(next - covered.begin())] || newest(begin) > since) append(begin, stop);
+        begin = stop;
+    }
+    return tracker.generation.load(std::memory_order_relaxed);
+}
+
 std::uint64_t CollectWrittenBlocks(std::uint64_t address, std::size_t bytes, std::uint64_t since, std::vector<std::pair<std::uint64_t, std::uint64_t>>& written) {
     written.clear();
     if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return 0;
@@ -2634,8 +2720,10 @@ bool OnlyRewatchedSince(std::uint64_t address, std::size_t bytes, std::uint64_t 
     const auto lock = lockTracker(tracker);
     tracker.initialize();
     if (!tracker.watched || !tracker.covers(address, bytes)) return false;
+    const auto end = address + bytes;
+    if (tracker.newestUnstampedStamp(address, end) > generation) return false;
     bool rewatched = false;
-    for (auto block = tracker.blockOf(address); block <= tracker.blockOf(address + bytes - 1); ++block) {
+    for (auto block = tracker.blockOf(address); block <= tracker.blockOf(end - 1); ++block) {
         const auto stamp = tracker.stampOf(block);
         if (stamp <= generation) continue;
         const auto found = tracker.rewatchStamps.find(block);
@@ -2948,6 +3036,14 @@ bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generati
     if (GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(address, bytes)) return true;
 #endif
     return tracker.storedOver(address, address + bytes, generation, false);
+}
+
+bool DriverStoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched || generation == 0 || bytes == 0 || !tracker.covers(address, bytes)) return true;
+    return tracker.driverStoredOver(address, address + bytes, generation);
 }
 
 bool StoredAllSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {
