@@ -123,6 +123,12 @@ if(BUILD_TESTING)
         set_tests_properties(audio_out_buffer_size_any_index PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME audio_out_buffer_size_invalid_length COMMAND audio_out_buffer_size_tests invalid_length)
+    set_tests_properties(audio_out_buffer_size_invalid_length PROPERTIES TIMEOUT 5)
+    if(WIN32)
+        set_tests_properties(audio_out_buffer_size_invalid_length PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 
     add_test_executable(audio_out_vibration_tests tests/AudioOutVibration.cpp)
     target_include_directories(audio_out_vibration_tests PRIVATE ${LIBS_INCLUDE_DIR})
