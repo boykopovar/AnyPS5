@@ -157,6 +157,7 @@ std::atomic<std::uint64_t> partialUploads{0}, partialUploadBytes{0}, partialWrit
 // (Refresh).
 std::atomic<std::uint64_t> pretestSkipped{0}, unregisteredDropped{0}, keyFlipKept{0};
 std::atomic<std::uint64_t> queuedReadHeld{0};
+std::atomic<std::uint64_t> selectionHolds{0}, selectionHoldsEmpty{0}, selectionHoldWaitNs{0}, selectionHoldEmptyWaitNs{0};
 // Images stored by a FlushPending after a hook skip of theirs (AccessKeptByCpu), of which by the
 // hook for the read site of the last skip; images evictStale dropped (the [hooksync] and [storage] lines).
 std::atomic<std::uint64_t> flushedAfterSkip{0}, flushedAfterSkipSameSite{0}, staleEvicted{0};
@@ -229,7 +230,7 @@ void reportStorageTraffic(StorageTraffic& traffic) {
     const auto take = [](std::atomic<std::uint64_t>& counter) { return static_cast<unsigned long long>(counter.exchange(0, std::memory_order_relaxed)); };
     const auto partialUploadCount = take(partialUploads), partialWriteBackCount = take(partialWriteBacks);
     const auto uploadMiB = take(partialUploadBytes) / 1048576.0, writeBackMiB = take(partialWriteBackBytes) / 1048576.0;
-    AgcDriver::ProfilePrint_nid_no_patch( "[storage] uploads by path (count/MiB, 10 s):%s; %llu write-backs GPU-direct, %llu stored nothing; block units: partial uploads %llu/%.1f, partial write-backs %llu/%.1f, %llu widened to every pending unit, units dropped %llu, superseded %llu, handed over at %llu clear-key refreshes and %llu image creations (%llu units superseded), dropped unregistered %llu, kept over a key flip %llu%s, pretest skipped %llu, held for a queued draw read %llu, evicted stale %llu; refreshes proved %llu, %llu of them over pending driver key stores (cumulative); drawn linear targets: stores by reason (count/MiB):%s, pending %zu images / %.1f MiB, oldest %.1f ms\n", line.c_str(), static_cast<unsigned long long>(traffic.directWriteBacks), take(emptyWriteBacks), partialUploadCount, uploadMiB, partialWriteBackCount, writeBackMiB, take(coalescedWriteBacks), take(unitsDropped), take(unitsSuperseded), take(clearHandOvers), take(creationHandOvers), take(handedOverSuperseded), take(unregisteredDropped), take(keyFlipKept), ShadowReport().c_str(), take(pretestSkipped), take(queuedReadHeld), take(staleEvicted), static_cast<unsigned long long>(refreshesProved.load(std::memory_order_relaxed)), static_cast<unsigned long long>(refreshesProvedPendingKeys.load(std::memory_order_relaxed)), drawnLine.c_str(), drawn.images, drawn.bytes / 1048576.0, drawn.oldestMs);
+    AgcDriver::ProfilePrint_nid_no_patch( "[storage] uploads by path (count/MiB, 10 s):%s; %llu write-backs GPU-direct, %llu stored nothing; block units: partial uploads %llu/%.1f, partial write-backs %llu/%.1f, %llu widened to every pending unit, units dropped %llu, superseded %llu, handed over at %llu clear-key refreshes and %llu image creations (%llu units superseded), dropped unregistered %llu, kept over a key flip %llu%s, pretest skipped %llu, held for a queued draw read %llu, GPU mutex taken to select %llu times (%.1f ms waiting), %llu of them selecting nothing (%.1f ms waiting), evicted stale %llu; refreshes proved %llu, %llu of them over pending driver key stores (cumulative); drawn linear targets: stores by reason (count/MiB):%s, pending %zu images / %.1f MiB, oldest %.1f ms\n", line.c_str(), static_cast<unsigned long long>(traffic.directWriteBacks), take(emptyWriteBacks), partialUploadCount, uploadMiB, partialWriteBackCount, writeBackMiB, take(coalescedWriteBacks), take(unitsDropped), take(unitsSuperseded), take(clearHandOvers), take(creationHandOvers), take(handedOverSuperseded), take(unregisteredDropped), take(keyFlipKept), ShadowReport().c_str(), take(pretestSkipped), take(queuedReadHeld), take(selectionHolds), static_cast<double>(take(selectionHoldWaitNs)) / 1e6, take(selectionHoldsEmpty), static_cast<double>(take(selectionHoldEmptyWaitNs)) / 1e6, take(staleEvicted), static_cast<unsigned long long>(refreshesProved.load(std::memory_order_relaxed)), static_cast<unsigned long long>(refreshesProvedPendingKeys.load(std::memory_order_relaxed)), drawnLine.c_str(), drawn.images, drawn.bytes / 1048576.0, drawn.oldestMs);
     traffic.writeBacks.clear();
     traffic.uploadReasons.clear();
     traffic.drawnStores.clear();
@@ -281,6 +282,7 @@ struct LiveImages {
 
 std::atomic<void (*)()> publishHookForTest{nullptr};
 std::atomic<void (*)(std::uint64_t, std::size_t)> pendingHookForTest{nullptr};
+std::atomic<void (*)(std::uint64_t, std::size_t)> flushingHookForTest{nullptr};
 
 LiveImages& Live() {
     static LiveImages live;
@@ -5327,16 +5329,18 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         queuedReadHeld.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
-    std::unique_lock<GuestMemory::GpuMutexType> drawnHold;
-    if (auto& drawnPending = Pending(); drawnPending.drawnCount.load(std::memory_order_acquire) != 0 && !GuestMemory::GpuMutex().HeldByThisThread()) {
-        bool overlap = false;
-        {
-            std::lock_guard lock(drawnPending.mutex);
-            overlap = std::any_of(drawnPending.drawn.begin(), drawnPending.drawn.end(), [&](const PendingWrites::Drawn& entry) { return entry.texture->dirty && entry.texture->overlaps(address, bytes); });
-        }
-        if (overlap) {
-            GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
-            drawnHold = std::unique_lock(GuestMemory::GpuMutex());
+    std::unique_lock<GuestMemory::GpuMutexType> selectionHold;
+    std::uint64_t selectionWaitNs = 0;
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) {
+        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
+        if (LookupOutcomes::Profiled()) {
+            const auto waitFrom = std::chrono::steady_clock::now();
+            selectionHold = std::unique_lock(GuestMemory::GpuMutex());
+            selectionWaitNs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitFrom).count());
+            selectionHolds.fetch_add(1, std::memory_order_relaxed);
+            selectionHoldWaitNs.fetch_add(selectionWaitNs, std::memory_order_relaxed);
+        } else {
+            selectionHold = std::unique_lock(GuestMemory::GpuMutex());
         }
     }
     // The images stay alive across the scan: their last owner may be a batch's kept list, which
@@ -5392,7 +5396,13 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         }
     }
     if (flush.empty()) {
-        if (drawnHold.owns_lock()) drawnHold.unlock();
+        if (selectionHold.owns_lock()) {
+            if (LookupOutcomes::Profiled()) {
+                selectionHoldsEmpty.fetch_add(1, std::memory_order_relaxed);
+                selectionHoldEmptyWaitNs.fetch_add(selectionWaitNs, std::memory_order_relaxed);
+            }
+            selectionHold.unlock();
+        }
         const bool stored = WaitForFlushing(address, bytes, except);
         // Units shadowed over the range (another image's results retiled into the import's unit
         // shadow, or an earlier flush's) still reach the import as the scope asks.
@@ -5410,6 +5420,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
             BumpPendingSerial();
         }
     } unregister{flush};
+    if (const auto hook = flushingHookForTest.load(std::memory_order_acquire)) hook(address, bytes);
     // Debug aid: APS5_TRACE_FLUSH names what forces pending results to guest memory.
     static const bool trace = std::getenv("APS5_TRACE_FLUSH") != nullptr;
     if (trace) {
@@ -5550,6 +5561,10 @@ void StorageTexture::SetPublishHookForTest(void (*hook)()) {
 
 void StorageTexture::SetPendingHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes)) {
     pendingHookForTest.store(hook, std::memory_order_release);
+}
+
+void StorageTexture::SetFlushingHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes)) {
+    flushingHookForTest.store(hook, std::memory_order_release);
 }
 
 bool StorageTexture::UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
