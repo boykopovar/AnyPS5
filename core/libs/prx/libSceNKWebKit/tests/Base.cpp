@@ -586,6 +586,33 @@ static void TestUserContentURLPattern() {
     WKRelease(literalStarUrl);
     WKRelease(simplePat);
 
+    struct PatternCase {
+        const char* pattern;
+        const char* url;
+        bool matches;
+    };
+    for (const PatternCase& item : {
+             PatternCase{"https://example.com/public/*", "https://example.com/public/../private/x", false},
+             PatternCase{"https://example.com/public/*", "https://example.com/other/../public/x", true},
+             PatternCase{"https://*.example.com/x", "https://a.example.com/./x", true},
+             PatternCase{"https://example.com/a%20b/*", "https://example.com/a b/c", true},
+             PatternCase{"https://example.com/*", "https://example.com:80x/a", false},
+             PatternCase{"https://example.com/*", "https:/example.com/a", true},
+             PatternCase{"https://example.com/*", "not a url", false},
+             PatternCase{"*://example.com/*", "HTTPS://EXAMPLE.com/a", true},
+             PatternCase{"*://example.com/*", "ftp://example.com/a", false},
+             PatternCase{"https://example.com/*", "blob:https://example.com/a", false},
+             PatternCase{"file:///tmp/*", "file://localhost/tmp/x", true},
+             PatternCase{"https://example.com/*", "https://user:pw@example.com:8443/a?q#f", true},
+         }) {
+        auto* casePattern = WKUserContentURLPatternCreate(WKStringCreateWithUTF8CString(item.pattern));
+        Require(WKUserContentURLPatternIsValid(casePattern));
+        auto* caseUrl = WKURLCreateWithUTF8CString(item.url);
+        Require(WKUserContentURLPatternMatchesURL(casePattern, caseUrl) == item.matches);
+        WKRelease(caseUrl);
+        WKRelease(casePattern);
+    }
+
     auto* upperPat = WKUserContentURLPatternCreate(WKStringCreateWithUTF8CString("http://EXAMPLE.COM/*"));
     Require(WKUserContentURLPatternIsValid(upperPat));
     auto* lowerUrl = WKURLCreateWithUTF8CString("http://example.com/foo");
@@ -661,6 +688,44 @@ static void TestUserContentURLPattern() {
     WKRelease(patStr);
 }
 
+static void TestSecurityOriginStringCopies() {
+    auto nullString = NKWebKit::Make<NKWebKit::String>();
+    Require(nullString->null);
+    const void* unset = WKSecurityOriginCreate(nullString.Get(), nullString.Get(), 0);
+    for (const void* copy : {WKSecurityOriginCopyProtocol(unset), WKSecurityOriginCopyHost(unset), WKSecurityOriginCopyToString(unset)}) {
+        Require(copy != nullptr);
+        Require(WKStringIsEmpty(copy));
+        Require(!static_cast<const NKWebKit::String*>(copy)->null);
+        WKRelease(copy);
+    }
+    WKRelease(unset);
+
+    auto emptyString = NKWebKit::String::FromUtf8("");
+    Require(!emptyString->null);
+    const void* empty = WKSecurityOriginCreate(emptyString.Get(), emptyString.Get(), 0);
+    for (const void* copy : {WKSecurityOriginCopyProtocol(empty), WKSecurityOriginCopyHost(empty), WKSecurityOriginCopyToString(empty)}) {
+        Require(WKStringIsEmpty(copy));
+        Require(!static_cast<const NKWebKit::String*>(copy)->null);
+        WKRelease(copy);
+    }
+    WKRelease(empty);
+
+    auto protocol = NKWebKit::String::FromUtf8("https");
+    auto host = NKWebKit::String::FromUtf8("example.org");
+    const void* origin = WKSecurityOriginCreate(protocol.Get(), host.Get(), 8443);
+    const void* copiedProtocol = WKSecurityOriginCopyProtocol(origin);
+    const void* copiedHost = WKSecurityOriginCopyHost(origin);
+    const void* copiedText = WKSecurityOriginCopyToString(origin);
+    Require(WKStringIsEqualToUTF8CString(copiedProtocol, "https"));
+    Require(WKStringIsEqualToUTF8CString(copiedHost, "example.org"));
+    Require(WKStringIsEqualToUTF8CString(copiedText, "https://example.org:8443"));
+    for (const void* copy : {copiedProtocol, copiedHost, copiedText}) {
+        Require(!static_cast<const NKWebKit::String*>(copy)->null);
+        WKRelease(copy);
+    }
+    WKRelease(origin);
+}
+
 static void TestURLRequestResponse() {
     Require(WKURLRequestGetTypeID() == 23);
     Require(WKURLResponseGetTypeID() == 24);
@@ -706,6 +771,46 @@ static void TestURLRequestResponse() {
     WKRelease(request);
     WKRelease(url);
 
+    struct RequestCase {
+        const char* given;
+        const char* kept;
+    };
+    for (const RequestCase& item : {
+             RequestCase{"https://playstation.com", "https://playstation.com/"},
+             RequestCase{"HTTPS://PlayStation.COM:443/a/../b c?q r#f", "https://playstation.com/b%20c?q%20r#f"},
+             RequestCase{"http://example.com:80x/y", "http://example.com:80x/y"},
+             RequestCase{"not a url", "not a url"},
+             RequestCase{"", ""},
+             RequestCase{"about:blank", "about:blank"},
+             RequestCase{"file://localhost/tmp/x", "file:///tmp/x"},
+         }) {
+        auto* givenUrl = WKURLCreateWithUTF8CString(item.given);
+        auto* givenRequest = WKURLRequestCreateWithWKURL(givenUrl);
+        auto* keptUrl = WKURLRequestCopyURL(givenRequest);
+        Require(keptUrl != nullptr);
+        auto* keptText = WKURLCopyString(keptUrl);
+        Require(WKStringIsEqualToUTF8CString(keptText, item.kept));
+        auto* withBody = WKURLRequestCopySettingHTTPBody(givenRequest, nullptr);
+        auto* bodyUrl = WKURLRequestCopyURL(withBody);
+        auto* bodyText = WKURLCopyString(bodyUrl);
+        Require(WKStringIsEqualToUTF8CString(bodyText, item.kept));
+        auto* givenText = WKURLCopyString(givenUrl);
+        Require(WKStringIsEqualToUTF8CString(givenText, item.given));
+        WKRelease(givenText);
+        WKRelease(bodyText);
+        WKRelease(bodyUrl);
+        WKRelease(withBody);
+        WKRelease(keptText);
+        WKRelease(keptUrl);
+        WKRelease(givenRequest);
+        WKRelease(givenUrl);
+    }
+    auto* invalidUtf8Url = WKURLCreateWithUTF8CString("http://example.com/\xC3");
+    auto* invalidUtf8Request = WKURLRequestCreateWithWKURL(invalidUtf8Url);
+    Require(WKURLRequestCopyURL(invalidUtf8Request) == nullptr);
+    WKRelease(invalidUtf8Request);
+    WKRelease(invalidUtf8Url);
+
     auto responseObj = NKWebKit::Make<NKWebKit::URLResponse>(
         NKWebKit::Make<NKWebKit::URL>("https://example.com/test.png"),
         NKWebKit::String::FromUtf8("image/png"),
@@ -750,17 +855,36 @@ static void TestURLRequestResponse() {
 
     auto* emptyMime = WKURLResponseCopyMIMEType(defaultRef);
     Require(WKStringIsEmpty(emptyMime));
+    Require(!static_cast<const NKWebKit::String*>(emptyMime)->null);
     WKRelease(emptyMime);
 
     Require(WKURLResponseHTTPStatusCode(defaultRef) == 0);
 
     auto* emptyFilename = WKURLResponseCopySuggestedFilename(defaultRef);
     Require(WKStringIsEmpty(emptyFilename));
+    Require(!static_cast<const NKWebKit::String*>(emptyFilename)->null);
     WKRelease(emptyFilename);
 
     Require(!WKURLResponseIsAttachment(defaultRef));
     Require(WKURLResponseGetExpectedContentLength(defaultRef) == 0);
     WKRelease(defaultRef);
+
+    auto nullStringsObj = NKWebKit::Make<NKWebKit::URLResponse>(
+        NKWebKit::Make<NKWebKit::URL>("https://example.com/"),
+        NKWebKit::Make<NKWebKit::String>(),
+        200,
+        NKWebKit::Make<NKWebKit::String>(),
+        false,
+        0LL
+    );
+    const void* nullStringsRef = NKWebKit::ToRef(nullStringsObj);
+    for (const void* copy : {WKURLResponseCopyMIMEType(nullStringsRef), WKURLResponseCopySuggestedFilename(nullStringsRef)}) {
+        Require(copy != nullptr);
+        Require(WKStringIsEmpty(copy));
+        Require(!static_cast<const NKWebKit::String*>(copy)->null);
+        WKRelease(copy);
+    }
+    WKRelease(nullStringsRef);
 
     bool threw = false;
     try {
@@ -3001,6 +3125,172 @@ static void TestRenderTree() {
     requireThrows([&] { WKRenderObjectGetChildren(layer.Get()); });
 }
 
+static void TestView() {
+    auto view = NKWebKit::Make<NKWebKit::View>();
+    const void* ref = view.Get();
+
+    Require(WKViewGetPageScaleFactor(ref) == 1.0);
+    Require(WKViewGetViewScaleFactor(ref) == 1.0);
+    Require(!WKViewIsFullScreen(ref));
+    Require(view->drawsBackground);
+
+    WKViewSetPageScaleFactor(ref, 2.5);
+    Require(WKViewGetPageScaleFactor(ref) == 2.5);
+
+    WKViewSetViewScaleFactor(ref, 1.75);
+    Require(WKViewGetViewScaleFactor(ref) == 1.75);
+
+    WKViewSetDrawsBackground(ref, false);
+    Require(!view->drawsBackground);
+    WKViewSetDrawsBackground(ref, true);
+    Require(view->drawsBackground);
+
+    WKViewWillEnterFullScreen(ref);
+    Require(WKViewIsFullScreen(ref));
+    WKViewDidEnterFullScreen(ref);
+    Require(WKViewIsFullScreen(ref));
+    WKViewRequestExitFullScreen(ref);
+    Require(WKViewIsFullScreen(ref));
+    WKViewWillExitFullScreen(ref);
+    Require(WKViewIsFullScreen(ref));
+    WKViewDidExitFullScreen(ref);
+    Require(!WKViewIsFullScreen(ref));
+
+    WKViewDidEnterFullScreen(ref);
+    Require(!WKViewIsFullScreen(ref));
+    WKViewRequestExitFullScreen(ref);
+    Require(!WKViewIsFullScreen(ref));
+    WKViewWillExitFullScreen(ref);
+    Require(!WKViewIsFullScreen(ref));
+    WKViewDidExitFullScreen(ref);
+    Require(!WKViewIsFullScreen(ref));
+    WKViewWillEnterFullScreen(ref);
+    WKViewWillEnterFullScreen(ref);
+    Require(WKViewIsFullScreen(ref));
+    WKViewDidExitFullScreen(ref);
+    Require(!WKViewIsFullScreen(ref));
+
+    bool threw = false;
+    try {
+        WKViewSetPageScaleFactor(ref, 0.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetPageScaleFactor(ref, -1.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetViewScaleFactor(ref, 0.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetViewScaleFactor(ref, -0.5);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewDidEnterFullScreen(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewDidExitFullScreen(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewRequestExitFullScreen(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewWillEnterFullScreen(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewWillExitFullScreen(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewGetPageScaleFactor(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewGetViewScaleFactor(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewIsFullScreen(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetDrawsBackground(nullptr, true);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetPageScaleFactor(nullptr, 1.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKViewSetViewScaleFactor(nullptr, 1.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -3035,6 +3325,7 @@ int main() {
     TestImage();
     TestAuthentication();
     TestCertificateInfo();
+    TestSecurityOriginStringCopies();
     try {
         TestEmptyFrameLoaderClient();
         TestEmptyFrameLoaderResourceCallbacks();
@@ -3056,6 +3347,7 @@ int main() {
     }
     TestFrame();
     TestRenderTree();
+    TestView();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
 }

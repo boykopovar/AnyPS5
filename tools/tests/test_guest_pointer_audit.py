@@ -366,5 +366,23 @@ class CheckedDereferenceTests(unittest.TestCase):
         self.assertTrue(guest_pointer_audit.internal_linkage(text, text.index("int c"), spans))
 
 
+class SourceCodeBlankingTests(unittest.TestCase):
+    def test_comments_become_spaces_and_literals_become_a_placeholder(self):
+        text = 'int a; /* c1\nc2 */ const char *s = "x\\ny"; // tail\nint b;\n'
+        code = guest_pointer_audit.source_code(text)
+        self.assertEqual(code.count("\n"), text.count("\n"))
+        self.assertIn("LITERAL", code)
+        for gone in ("c1", "c2", "tail", "x\\ny"):
+            self.assertNotIn(gone, code)
+        for kept in ("int a;", "const char *s =", "int b;"):
+            self.assertIn(kept, code)
+
+    def test_multi_line_literal_keeps_its_line_count(self):
+        text = 'f("a\\\nb");\ng();\n'
+        code = guest_pointer_audit.source_code(text)
+        self.assertEqual(code.count("\n"), text.count("\n"))
+        self.assertIn("g();", code)
+
+
 if __name__ == "__main__":
     unittest.main()

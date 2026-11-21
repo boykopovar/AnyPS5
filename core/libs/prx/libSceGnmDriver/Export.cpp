@@ -699,13 +699,15 @@ bool APS5_VABI sceGnmDriverCaptureInProgress() {
 
 int APS5_VABI sceGnmCreateWorkloadStream_nid_disambig1(std::uint64_t name, std::uint32_t* stream) {
     if (name == 0 || !stream) return 3;
-    *stream = 1;
+    const std::uint32_t value = 1;
+    if (!GuestCopyOut_nid_no_patch(stream, &value, sizeof(value))) return 3;
     return 0;
 }
 
 int APS5_VABI sceGnmBeginWorkload_nid_disambig1(std::uint32_t stream, std::uint64_t* workload) {
     if (!workload) return 3;
-    *workload = stream < 0x10 ? 1 : 0;
+    const std::uint64_t value = stream < 0x10 ? 1 : 0;
+    if (!GuestCopyOut_nid_no_patch(workload, &value, sizeof(value))) return 3;
     return stream < 0x10 ? 0 : 1;
 }
 

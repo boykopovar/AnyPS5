@@ -74,6 +74,9 @@ DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t addr
 void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived, std::uint32_t lowest = 0);
 inline constexpr std::uint64_t InPlaceDrawInputMaxReads = 512;
 const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite = nullptr, std::size_t fetched = std::numeric_limits<std::size_t>::max(), std::uint64_t reads = std::numeric_limits<std::uint64_t>::max());
+enum class IndexBehindWriter : std::uint8_t { Taken, Off, NoWriter, VertexAttributes, IndexLimit, MeshStage, PrimitiveRestart, VertexOffset, UnitShadow, PendingStorage, LabelOrStore, CopiedWriter, NoImport, Refused, Count };
+std::array<std::uint64_t, static_cast<std::size_t>(IndexBehindWriter::Count)> IndexBehindWriterCounts();
+const HostImport* InPlaceIndexBehindWriter(const Context& context, std::uint64_t address, std::size_t bytes, std::uint32_t indexSize, bool vertexAttributes, bool meshStage, bool primitiveRestart, std::uint32_t firstVertex, IndexBehindWriter* outcome = nullptr);
 struct InPlaceIndices {
     std::optional<std::uint32_t> highest;
     std::uint32_t lowest = 0;
