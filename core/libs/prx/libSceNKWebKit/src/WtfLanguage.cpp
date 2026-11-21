@@ -27,11 +27,13 @@
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstddef>
 #include <mutex>
 #include <new>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -116,6 +118,54 @@ StringVector Copy(const StringVector& source) {
     return result;
 }
 
+struct GuestStringVector {
+    const String* buffer;
+    unsigned capacity;
+    unsigned size;
+};
+
+static_assert(sizeof(GuestStringVector) == sizeof(StringVector));
+static_assert(sizeof(String) == sizeof(NKWebKit::WtfAbi::StringImpl*));
+
+constexpr std::size_t ImplChunk = 4096 / sizeof(String);
+
+NKWebKit::WtfAbi::StringImpl* LoadImpl(const String* string, const char* operation) {
+    NKWebKit::WtfAbi::StringImpl* impl = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&impl, &string->impl, sizeof(impl))) throw std::invalid_argument(std::string(operation) + ": unreadable string");
+    return impl;
+}
+
+GuestStringVector LoadVector(const StringVector* vector, const char* operation) {
+    GuestStringVector header{};
+    if (!GuestCopyIn_nid_no_patch(&header, vector, sizeof(header))) throw std::invalid_argument(std::string(operation) + ": unreadable string vector");
+    return header;
+}
+
+void LoadImpls(NKWebKit::WtfAbi::StringImpl** impls, const GuestStringVector& vector, std::size_t offset, const char* operation) {
+    const std::size_t count = std::min(ImplChunk, vector.size - offset);
+    if (!GuestCopyIn_nid_no_patch(impls, vector.buffer + offset, count * sizeof(String))) throw std::invalid_argument(std::string(operation) + ": unreadable string vector buffer");
+}
+
+String Retained(NKWebKit::WtfAbi::StringImpl* impl) {
+    if (impl) impl->refCount += 2;
+    return String(impl);
+}
+
+StringVector CopyGuest(const StringVector* vector, const char* operation) {
+    const auto source = LoadVector(vector, operation);
+    NKWebKit::WtfAbi::StringImpl* impls[ImplChunk];
+    for (std::size_t offset = 0; offset < source.size; offset += ImplChunk) LoadImpls(impls, source, offset, operation);
+    StringVector result;
+    if (!source.size) return result;
+    result.buffer = static_cast<String*>(_ZN3WTF10fastMallocEm(std::size_t{source.size} * sizeof(String)));
+    result.capacity = source.size;
+    for (; result.size < source.size; ++result.size) {
+        if (result.size % ImplChunk == 0) LoadImpls(impls, source, result.size, operation);
+        new (&result.buffer[result.size]) String(Retained(impls[result.size % ImplChunk]));
+    }
+    return result;
+}
+
 void Swap(StringVector& a, StringVector& b) {
     std::swap(a.buffer, b.buffer);
     std::swap(a.capacity, b.capacity);
@@ -184,7 +234,7 @@ extern "C" void APS5_VABI _ZN3WTF30overrideUserPreferredLanguagesERKNS_6VectorIN
     if (!languages) throw std::invalid_argument("null WTF string vector");
     {
         std::lock_guard<std::mutex> locker(languagesLock);
-        StringVector copy = Copy(*languages);
+        StringVector copy = CopyGuest(languages, "WTF::overrideUserPreferredLanguages");
         Swap(copy, PreferredLanguagesOverride());
     }
     _ZN3WTF17languageDidChangeEv();
@@ -197,16 +247,20 @@ extern "C" NKWebKit::WtfAbi::StringVector APS5_VABI _ZN3WTF30userPreferredLangua
 
 extern "C" std::size_t APS5_VABI _ZN3WTF33indexOfBestMatchingLanguageInListERKNS_6StringERKNS_6VectorIS0_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEERb(const String* language, const StringVector* languageList, bool* exactMatch) {
     if (!language || !languageList || !exactMatch) throw std::invalid_argument("null WTF language match argument");
-    String lowercaseLanguage = Lowercase(*language);
-    const String* languageWithoutLocaleMatch = nullptr;
-    const String* languageMatchButNotLocale = nullptr;
+    constexpr const char* operation = "WTF::indexOfBestMatchingLanguageInList";
+    String lowercaseLanguage = Lowercase(Retained(LoadImpl(language, operation)));
+    const auto list = LoadVector(languageList, operation);
+    NKWebKit::WtfAbi::StringImpl* impls[ImplChunk];
+    bool languageWithoutLocaleMatch = false;
+    bool languageMatchButNotLocale = false;
     std::size_t languageWithoutLocaleMatchIndex = 0;
     std::size_t languageMatchButNotLocaleMatchIndex = 0;
     const unsigned languageLength = Length(lowercaseLanguage);
     const bool canMatchLanguageOnly = languageLength == 2 || (languageLength >= 3 && Character(lowercaseLanguage, 2) == '-');
 
-    for (std::size_t i = 0; i < languageList->size; ++i) {
-        String canonicalizedLanguageFromList = CanonicalLanguageIdentifier(languageList->buffer[i]);
+    for (std::size_t i = 0; i < list.size; ++i) {
+        if (i % ImplChunk == 0) LoadImpls(impls, list, i, operation);
+        String canonicalizedLanguageFromList = CanonicalLanguageIdentifier(Retained(impls[i % ImplChunk]));
 
         if (_ZN3WTF5equalEPKNS_10StringImplES2_(lowercaseLanguage.impl, canonicalizedLanguageFromList.impl)) {
             StoreExactMatch(exactMatch, true);
@@ -217,11 +271,11 @@ extern "C" std::size_t APS5_VABI _ZN3WTF33indexOfBestMatchingLanguageInListERKNS
         if (canMatchLanguageOnly && canonicalizedLength >= 2) {
             if (Character(lowercaseLanguage, 0) == Character(canonicalizedLanguageFromList, 0) && Character(lowercaseLanguage, 1) == Character(canonicalizedLanguageFromList, 1)) {
                 if (!languageWithoutLocaleMatch && canonicalizedLength == 2) {
-                    languageWithoutLocaleMatch = &languageList->buffer[i];
+                    languageWithoutLocaleMatch = true;
                     languageWithoutLocaleMatchIndex = i;
                 }
                 if (!languageMatchButNotLocale && canonicalizedLength >= 3) {
-                    languageMatchButNotLocale = &languageList->buffer[i];
+                    languageMatchButNotLocale = true;
                     languageMatchButNotLocaleMatchIndex = i;
                 }
             }
@@ -234,5 +288,5 @@ extern "C" std::size_t APS5_VABI _ZN3WTF33indexOfBestMatchingLanguageInListERKNS
 
     if (languageMatchButNotLocale) return languageMatchButNotLocaleMatchIndex;
 
-    return languageList->size;
+    return list.size;
 }
