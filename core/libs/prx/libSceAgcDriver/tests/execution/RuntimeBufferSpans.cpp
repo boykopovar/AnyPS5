@@ -242,9 +242,15 @@ int main(int argc, char** argv) {
             std::puts("runtime buffer span fault preserves unmapped address, instruction and byte width");
             return 0;
         }
+        const auto selectedWave = argc > 3 ? static_cast<std::uint32_t>(std::strtoul(argv[3], nullptr, 10)) : 0u;
+        Require(argc <= 3 || selectedWave == 32u || selectedWave == 64u, "runtime buffer spans: invalid wave size");
+        const auto selectedCoherent = argc > 4 ? std::string_view(argv[4]) : std::string_view{};
+        Require(argc <= 4 || selectedCoherent == "0" || selectedCoherent == "1", "runtime buffer spans: invalid coherence selection");
         unsigned checked = 0;
         for (const auto wave : {32u, 64u}) {
+            if (selectedWave != 0u && wave != selectedWave) continue;
             for (const bool coherent : {false, true}) {
+                if (!selectedCoherent.empty() && coherent != (selectedCoherent == "1")) continue;
                 for (const bool barrier : {false, true}) {
                     if (argc == 1 && barrier) continue;
                     for (const auto& test : Cases) {
@@ -254,6 +260,7 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        Require(checked != 0u, "runtime buffer spans: no case selected");
         std::printf("runtime buffer x%u span tests passed: %u alignment/bounds/swizzle/wrap/split/coherent/barrier/EXEC/structured cases\n", components, checked);
         return 0;
     } catch (const std::exception& error) {
