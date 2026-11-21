@@ -36,6 +36,13 @@ public:
     }
 };
 
+struct PageClientRegistration {
+    int version = 0;
+    const void* clientInfo = nullptr;
+    const void* raw = nullptr;
+};
+};
+
 class Page : public ObjectOf<ObjectType::Page> {
 public:
     bool canGoBack = false;
@@ -97,6 +104,10 @@ public:
     bool allowsRemoteInspection = false;
     Retained<URL> pendingAPIRequestURL;
     Retained<PageConfiguration> configuration;
+    std::optional<PageClientRegistration> loaderClient;
+    std::optional<PageClientRegistration> navigationClient;
+    std::optional<PageClientRegistration> policyClient;
+    std::optional<PageClientRegistration> uiClient;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
