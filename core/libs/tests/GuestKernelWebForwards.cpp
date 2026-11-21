@@ -87,7 +87,14 @@ void TestNamedObject() {
                    "a deleted id is still live");
     const int reused = __sys_namedobj_create_nid_postfix("kernel_web_named", &object, MutexType);
     Require(reused == id, "libkernel_sys did not reuse the id released through the shared table");
-    Require(__sys_namedobj_delete_nid_postfix(static_cast<std::uint32_t>(reused), MutexType) == 0, "deleting the reused id failed");
+    RequireFailure(__sys_namedobj_delete_nid_disambig1_nid_postfix(static_cast<std::uint32_t>(reused), MutexType + 1), GuestEsrch,
+                   "__sys_namedobj_delete with another type did not fail with ESRCH");
+    Require(__sys_namedobj_delete_nid_disambig1_nid_postfix(static_cast<std::uint32_t>(reused), MutexType) == 0,
+            "libkernel_web did not delete the id created through libkernel_sys");
+    RequireFailure(__sys_namedobj_delete_nid_disambig1_nid_postfix(static_cast<std::uint32_t>(reused), MutexType), GuestEsrch,
+                   "libkernel_web deleted an id twice");
+    RequireFailure(__sys_namedobj_delete_nid_postfix(static_cast<std::uint32_t>(reused), MutexType), GuestEsrch,
+                   "libkernel_sys still sees the id deleted through libkernel_web");
 }
 
 void TestWait4() {

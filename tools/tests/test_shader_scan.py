@@ -236,6 +236,14 @@ class Gfx1013ProfileTests(unittest.TestCase):
 
 
 class ScanTests(unittest.TestCase):
+    def test_digit_separators_keep_following_braces_and_comments_visible(self):
+        source = "int first() { return 0xDEAD'BEEF'CAFE'0001; } // removed\nint second() { return 1'000; }"
+        stripped = shader_scan.strip_comments(source)
+        self.assertNotIn("removed", stripped)
+        self.assertEqual(shader_scan.function_body(stripped, "first").strip(), "return 0xDEAD'BEEF'CAFE'0001;")
+        self.assertEqual(shader_scan.function_body(stripped, "second").strip(), "return 1'000;")
+        self.assertEqual(shader_scan.function_body("int letter() { return u8'}'; }", "letter").strip(), "return u8'}';")
+
     def test_known_answers_on_a_small_tree(self):
         with tempfile.TemporaryDirectory() as directory:
             write_tree(directory)
