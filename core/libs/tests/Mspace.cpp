@@ -38,6 +38,8 @@ static void CheckPaf() {
     const int owner = 0;
     auto* block = static_cast<unsigned char*>(sceLibcPafMspaceMalloc_nid_postfix(arena, 40, &owner));
     Require(block != nullptr && sceLibcMspaceMallocUsableSize_nid_postfix(block) >= 40);
+    Require(sceLibcPafMspaceMallocUsableSize_nid_postfix(block) == sceLibcMspaceMallocUsableSize_nid_postfix(block));
+    Require(sceLibcPafMspaceMallocUsableSize_nid_postfix(nullptr) == 0);
     Require(sceLibcMspaceIsHeapEmpty_nid_postfix(arena) == 0 && sceLibcPafMspaceIsHeapEmpty_nid_postfix(arena) == 0);
     std::memset(block, 0x5a, 40);
     auto* zeroed = static_cast<unsigned char*>(sceLibcPafMspaceCalloc_nid_postfix(arena, 4, 8, arena));

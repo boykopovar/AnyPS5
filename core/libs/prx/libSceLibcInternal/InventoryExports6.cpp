@@ -96,11 +96,10 @@ int APS5_VABI sceLibcInternalUnknown6_030_m2lChTxm9tM_nid_no_patch() {
 }
 APS5_EXPORT("m2lChTx-9tM", sceLibcInternalUnknown6_030_m2lChTxm9tM_nid_no_patch);
 
-int APS5_VABI sceLibcInternalUnknown6_032_6JcY5RDA4jY_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::size_t APS5_VABI sceLibcPafMspaceMallocUsableSize(const void* pointer) {
+    return sceLibcPafMspaceMallocUsableSize_nid_postfix(pointer);
 }
-APS5_EXPORT("6JcY5RDA4jY", sceLibcInternalUnknown6_032_6JcY5RDA4jY_nid_no_patch);
+APS5_EXPORT("6JcY5RDA4jY", sceLibcPafMspaceMallocUsableSize);
 
 int APS5_VABI sceLibcInternalUnknown6_033_RV6sGVpYamo_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);

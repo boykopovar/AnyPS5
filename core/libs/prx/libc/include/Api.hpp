@@ -1049,6 +1049,7 @@ void* APS5_VABI sceLibcPafMspaceReallocalign_nid_postfix(void* handle, void* poi
 int APS5_VABI sceLibcPafMspacePosixMemalign_nid_postfix(void* handle, void** result, std::size_t alignment, std::size_t size, const void* owner);
 int APS5_VABI sceLibcPafMspaceMallocStats_nid_postfix(void* handle, MallocManagedSize* stats);
 int APS5_VABI sceLibcPafMspaceMallocStatsFast_nid_postfix(void* handle, MallocManagedSize* stats);
+std::size_t APS5_VABI sceLibcPafMspaceMallocUsableSize_nid_postfix(const void* pointer);
 int APS5_VABI ___mb_cur_max_nid_postfix();
 int APS5_VABI _Getmbcurmax_nid_postfix();
 int APS5_VABI mbsinit_nid_postfix(const void* state);

@@ -368,4 +368,8 @@ int APS5_VABI sceLibcPafMspaceMallocStatsFast_nid_postfix(void* handle, MallocMa
 int APS5_VABI sceLibcPafMspaceIsHeapEmpty_nid_postfix(void* handle) {
     return sceLibcMspaceIsHeapEmpty_nid_postfix(handle);
 }
+
+std::size_t APS5_VABI sceLibcPafMspaceMallocUsableSize_nid_postfix(const void* pointer) {
+    return sceLibcMspaceMallocUsableSize_nid_postfix(pointer);
+}
 }
