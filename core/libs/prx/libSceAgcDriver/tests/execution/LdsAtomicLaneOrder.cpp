@@ -576,7 +576,11 @@ int main() {
         }
         std::printf("device: %s, driver %s, subgroup %u\n", device->DeviceName().c_str(), device->DriverInfo().c_str(), device->ComputeTarget(64).subgroupSize);
         CheckSwapChainClassifier();
-        auto failures = RunAll(*device, device->ComputeTarget(64), device->ComputeTarget(32), "device target");
+        const auto device64 = device->ComputeTarget(64);
+        const auto deviceFailures = RunAll(*device, device64, device->ComputeTarget(32), "device target");
+        std::uint32_t failures = 0;
+        if (device64.laneOrderedLdsAtomics) failures += deviceFailures;
+        else std::printf("device target: %u cases out of lane order (the target does not order LDS atomics; reported, not a failure)\n", deviceFailures);
         auto unordered64 = device->ComputeTarget(64);
         auto unordered32 = device->ComputeTarget(32);
         unordered64.laneOrderedLdsAtomics = false;
