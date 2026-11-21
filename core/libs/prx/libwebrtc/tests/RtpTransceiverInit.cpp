@@ -180,6 +180,7 @@ private:
 void TestGuardedObjectThrows() {
     GuardedPage page;
     Require(ThrowsInvalid([&] { _ZN6webrtc18RtpTransceiverInitD1Ev_nid_postfix(page.As<WebRtcRtpTransceiverInit>()); }));
+    Require(ThrowsInvalid([&] { _ZN6webrtc18RtpTransceiverInitC1Ev_nid_postfix(page.As<WebRtcRtpTransceiverInit>()); }));
 }
 
 }
