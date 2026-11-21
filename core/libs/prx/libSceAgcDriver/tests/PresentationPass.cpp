@@ -846,12 +846,28 @@ void upscaleModeTests() {
     Require(!SelectUpscaleMode("", "").fsr, "an empty ANYPS5_UPSCALE is not the same as an unset one");
     const auto fsr = SelectUpscaleMode("fsr", "1.5");
     Require(fsr.fsr && fsr.sharpness == 1.5f, "ANYPS5_UPSCALE=fsr with ANYPS5_FSR_SHARPNESS=1.5 was not selected");
+    const auto dlss = SelectUpscaleMode("dlss", nullptr);
+    Require(dlss.dlss && !dlss.fsr && !dlss.linear, "ANYPS5_UPSCALE=dlss was not selected");
+    const auto linear = SelectUpscaleMode("linear", nullptr);
+    Require(linear.linear && !linear.fsr && !linear.dlss, "ANYPS5_UPSCALE=linear was not selected");
     Require(SelectUpscaleMode("fsr", "0").sharpness == 0.0f && SelectUpscaleMode("fsr", "2.0").sharpness == 2.0f && SelectUpscaleMode("fsr", nullptr).sharpness == 0.2f, "the FSR sharpness range or default is wrong");
-    for (const char* value : {"FSR", "fsr1", "bilinear", " fsr", "fsr "}) {
+    Require(SelectUpscaleMode("dlss", nullptr, "quality", nullptr).dlssQuality == 2, "quality DLSS mode");
+    Require(SelectUpscaleMode("dlss", nullptr, "performance", nullptr).dlssQuality == 0, "performance DLSS mode");
+    Require(SelectUpscaleMode("dlss", nullptr, "balanced", nullptr).dlssQuality == 1, "balanced DLSS mode");
+    Require(SelectUpscaleMode("dlss", nullptr, "ultra_performance", nullptr).dlssQuality == 3, "ultra performance DLSS mode");
+    Require(SelectUpscaleMode("dlss", nullptr, "dlaa", nullptr).dlssQuality == 4, "dlaa DLSS mode");
+    Require(SelectUpscaleMode("dlss", nullptr, nullptr, "0.5").sharpness == 0.5f, "DLSS sharpness");
+    for (const char* value : {"FSR", "fsr1", "bilinear", " fsr", "fsr ", "DLSS", "dlss2", "dlss "}) {
         Require(refused([value] { static_cast<void>(SelectUpscaleMode(value, nullptr)); }), std::string("ANYPS5_UPSCALE accepted ") + value);
     }
     for (const char* value : {"-0.1", "2.01", "abc", "0.5x", "nan", "inf", " 1", "1 "}) {
         Require(refused([value] { static_cast<void>(SelectUpscaleMode("fsr", value)); }), std::string("ANYPS5_FSR_SHARPNESS accepted ") + value);
+    }
+    for (const char* value : {"invalid", "high", "low", "1080p"}) {
+        Require(refused([value] { static_cast<void>(SelectUpscaleMode("dlss", nullptr, value, nullptr)); }), std::string("ANYPS5_DLSS_QUALITY accepted ") + value);
+    }
+    for (const char* value : {"-0.1", "1.01", "abc", "0.5x"}) {
+        Require(refused([value] { static_cast<void>(SelectUpscaleMode("dlss", nullptr, nullptr, value)); }), std::string("ANYPS5_DLSS_SHARPNESS accepted ") + value);
     }
 }
 
@@ -1115,6 +1131,10 @@ std::vector<std::byte> fsrPresent(const Context& context, PresentationPass& pass
 
 void defaultPathTests(const Context& context) {
     Require(!AgcDriver::SelectUpscaleMode(nullptr, nullptr).fsr, "the default presentation selects FSR");
+    AgcDriver::UpscaleMode dlssMode;
+    dlssMode.dlss = true;
+    PresentationUpscaler fallbackUpscaler(context, 1, dlssMode);
+    Require(!fallbackUpscaler.IsDlss(), "the presentation upscaler falls back when DLSS is requested without instance or device support");
     PresentationPass pass(context, 1);
     PresentationUpscaler upscaler(context, 1, 0.2f);
     const auto source = makeSource(Bgra8, VK_FORMAT_B8G8R8A8_UNORM, 200, 130);
