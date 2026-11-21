@@ -220,10 +220,18 @@ ShaderMemory::PendingWrite Driver::classifyPendingWrite(std::uint64_t address, s
     return validateSkipVerify() ? Policy::VerifyRaw : Policy::Raw;
 }
 
+namespace {
+
+bool checksQueuedWrites() {
+    return DrawPipeline::Active() || DrawFinisher::OnFinisherThread();
+}
+
+}
+
 ShaderMemory::PendingWrite Driver::queryPendingWrite(std::uint64_t address, std::size_t bytes, std::span<std::byte> known) {
     using Policy = ShaderMemory::PendingWrite;
     auto queued = DrawPipeline::QueuedWrite::None;
-    if (DrawPipeline::Active()) {
+    if (checksQueuedWrites()) {
         auto& pipeline = DrawPipeline::Queue0();
         if (pipeline.Busy()) queued = pipeline.StoredBytes(address, bytes, known.size() == bytes ? known : std::span<std::byte>{});
         if (queued == DrawPipeline::QueuedWrite::Stored && known.size() == bytes) {
@@ -241,7 +249,7 @@ ShaderMemory::PendingWrite Driver::queryPendingWrite(std::uint64_t address, std:
 }
 
 ShaderMemory::PendingWrite Driver::QueryPendingSpan(std::uint64_t address, std::size_t bytes, std::span<std::byte> known) {
-    if (DrawPipeline::Active()) {
+    if (checksQueuedWrites()) {
         auto& pipeline = DrawPipeline::Queue0();
         if (pipeline.Busy() && pipeline.Overlaps(address, bytes)) return ShaderMemory::PendingWrite::Sync;
     }
