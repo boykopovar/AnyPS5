@@ -264,3 +264,9 @@ All 33 named declarations were matched by recomputing candidate spellings agains
 ### Functional
 
 - [sceNpAsmClientExtAbortRequest, sceNpAsmClientExtCreateRequest, sceNpAsmClientExtDeleteRequest, sceNpAsmClientExtGetPlayingTitleNpTitleToken and sceNpAsmClientExtTerminate](../../../core/libs/prx/libSceNpManager/AdditionalExports.cpp) (libSceNpManager) - return `0x8055CE07`, the answer firmware 13.42 gives while the module's AsmClientExt flag is clear, read from its disassembly, not measured on a console. Only `sceNpAsmClientExtInitialize` sets that flag, and it still throws here, so the flag is never set; once it is implemented these must test it and implement what follows.
+
+
+### Silent stubs
+
+- [sceNpInGameMessageCheckCallback](../../../core/libs/prx/libSceNpManager/chunks/Export_Chunk02.cpp:59) (libSceNpManager) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [sceNpRegisterGamePresenceCallback](../../../core/libs/prx/libSceNpManager/chunks/Export_Chunk03.cpp:321) (libSceNpManager) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
