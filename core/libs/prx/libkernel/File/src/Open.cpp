@@ -21,6 +21,7 @@
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libkernel/Semaphore/include/Ksem.hpp"
 #include "SceTypes.hpp"
 
 #include <cerrno>
@@ -452,7 +453,7 @@ int APS5_VABI sceKernelClose(int d) {
 
 std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
     if (File::IsDirectoryDescriptor(d)) return SceErrorFromErrno(EISDIR);
-    if (IsKqueueDescriptor_nid_no_patch(d)) return nbytes == 0 ? 0 : SCE_KERNEL_ERROR_EOPNOTSUPP;
+    if (IsKqueueDescriptor_nid_no_patch(d) || IsKsemDescriptor(d)) return nbytes == 0 ? 0 : SCE_KERNEL_ERROR_EOPNOTSUPP;
     if (GuestSockets::IsOpen(d)) {
         const auto n = GuestSockets::Read(d, buf, nbytes);
         return n < 0 ? SceKernelError(*__error_nid_postfix()) : n;
@@ -473,7 +474,7 @@ std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
 
 std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes) {
     if (File::IsVirtualDirectoryDescriptor(d)) return SceErrorFromErrno(EISDIR);
-    if (IsKqueueDescriptor_nid_no_patch(d)) return SCE_KERNEL_ERROR_EOPNOTSUPP;
+    if (IsKqueueDescriptor_nid_no_patch(d) || IsKsemDescriptor(d)) return SCE_KERNEL_ERROR_EOPNOTSUPP;
     if (GuestSockets::IsOpen(d)) {
         const auto n = GuestSockets::Write(d, buf, nbytes);
         return n < 0 ? SceKernelError(*__error_nid_postfix()) : n;
@@ -503,7 +504,7 @@ static bool SeekOverflows(int d, std::int64_t offset, int whence) {
 }
 
 std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence) {
-    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return SCE_KERNEL_ERROR_ESPIPE;
+    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d) || IsKsemDescriptor(d)) return SCE_KERNEL_ERROR_ESPIPE;
     if (whence < 0 || whence > 2) {
         throw std::invalid_argument(std::string(__func__) + ": invalid whence=" + std::to_string(whence));
     }

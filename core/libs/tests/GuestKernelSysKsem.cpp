@@ -2,6 +2,9 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Semaphore/include/Ksem.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/KernelStatfs.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -28,7 +31,9 @@ constexpr int Efault = 14;
 constexpr int Ebusy = 16;
 constexpr int Einval = 22;
 constexpr int Enospc = 28;
+constexpr int Espipe = 29;
 constexpr int Eagain = 35;
+constexpr int Eopnotsupp = 45;
 constexpr int Etimedout = 60;
 constexpr int Eoverflow = 84;
 
@@ -289,6 +294,60 @@ void BadPointers() {
     Require(ksem_init_nid_postfix(&id, 1) == 0 && ksem_timedwait_nid_postfix(id, &valid) == 0 && ksem_destroy_nid_postfix(id) == 0);
 }
 
+void Transfers() {
+    std::intptr_t id = -1;
+    Require(ksem_init_nid_postfix(&id, 1) == 0 && id >= 0);
+    const int d = static_cast<int>(id);
+    char byte = 'k';
+    KernelIovec one{&byte, 1};
+    KernelIovec none{&byte, 0};
+    Require(read_nid_postfix(d, &byte, 1) == -1 && Error() == Eopnotsupp);
+    Require(read_nid_postfix(d, nullptr, 1) == -1 && Error() == Eopnotsupp);
+    Require(write_nid_postfix(d, "x", 1) == -1 && Error() == Eopnotsupp);
+    Require(write_nid_postfix(d, nullptr, 1) == -1 && Error() == Eopnotsupp);
+    Require(read_nid_postfix(d, &byte, 0) == 0);
+    Require(write_nid_postfix(d, "x", 0) == -1 && Error() == Eopnotsupp);
+    Require(readv_nid_postfix(d, &one, 1) == -1 && Error() == Eopnotsupp);
+    Require(writev_nid_postfix(d, &one, 1) == -1 && Error() == Eopnotsupp);
+    Require(readv_nid_postfix(d, &none, 1) == 0);
+    Require(writev_nid_postfix(d, &none, 1) == -1 && Error() == Eopnotsupp);
+    Require(lseek_nid_postfix(d, 0, 0) == -1 && Error() == Espipe);
+    Require(pread_nid_postfix(d, &byte, 1, 0) == -1 && Error() == Espipe);
+    Require(pread_nid_postfix(d, nullptr, 1, -1) == -1 && Error() == Espipe);
+    Require(pwrite_nid_disambig1_nid_postfix(d, &byte, 1, 0) == -1 && Error() == Espipe);
+    Require(preadv_nid_postfix(d, &one, 1, 0) == -1 && Error() == Espipe);
+    Require(pwritev_nid_postfix(d, &one, 1, 0) == -1 && Error() == Espipe);
+    Require(sceKernelRead(d, &byte, 1) == SceKernelError(Eopnotsupp));
+    Require(sceKernelWrite(d, &byte, 1) == SceKernelError(Eopnotsupp));
+    Require(sceKernelReadv(d, &one, 1) == SceKernelError(Eopnotsupp));
+    Require(sceKernelLseek(d, 0, 0) == SceKernelError(Espipe));
+    Require(sceKernelPread(d, &byte, 1, 0) == SceKernelError(Espipe));
+    Require(sceKernelPwritev(d, &one, 1, 0) == SceKernelError(Espipe));
+    Require(byte == 'k' && Value(id) == 1);
+    Require(ksem_destroy_nid_postfix(id) == 0);
+}
+
+void VnodeCalls() {
+    std::intptr_t id = -1;
+    Require(ksem_init_nid_postfix(&id, 1) == 0 && id >= 0);
+    const int d = static_cast<int>(id);
+    Require(fsync_nid_postfix(d) == -1 && Error() == Einval);
+    Require(fdatasync_nid_postfix(d) == -1 && Error() == Einval);
+    Require(sceKernelFsync(d) == SceKernelError(Einval));
+    Require(sceKernelFdatasync(d) == SceKernelError(Einval));
+    KernelStatfs statistics{};
+    Require(_fstatfs_nid_postfix(d, &statistics) == -1 && Error() == Einval);
+    for (const std::uint64_t flags : {std::uint64_t{0}, std::uint64_t{1}, ~std::uint64_t{0}})
+        Require(fchflags_nid_postfix(d, flags) == -1 && Error() == Einval);
+    for (const int operation : {1, 2, 8, 0})
+        Require(flock_nid_postfix(d, operation) == -1 && Error() == Eopnotsupp);
+    Require(futimes_nid_postfix(d, nullptr) == -1 && Error() == Einval);
+    const KernelTimeval times[2] = {{1, 0}, {2, 0}};
+    Require(sceKernelFutimes(d, times) == SceKernelError(Einval));
+    Require(Value(id) == 1);
+    Require(ksem_destroy_nid_postfix(id) == 0);
+}
+
 int main() {
     BadPointers();
     Counting();
@@ -298,6 +357,8 @@ int main() {
     Blocking();
     Identifiers();
     Duplicates();
+    Transfers();
+    VnodeCalls();
     Limit();
     std::puts("ksem unnamed semaphores passed");
     return 0;
