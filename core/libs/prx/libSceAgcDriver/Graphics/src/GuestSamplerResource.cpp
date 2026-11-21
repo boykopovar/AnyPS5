@@ -110,7 +110,6 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     static_cast<void>(anisoOverride);
     Require(!blendZeroPrt, "guest sampler descriptor uses PRT blend-zero which is not implemented");
     if (mipFilter > 2u) Require(false, "guest sampler descriptor uses an unknown mip filter " + std::to_string(mipFilter));
-    Require(mipFilter != 2u || reductionMode == VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT, "guest sampler descriptor combines a min or max reduction with a linear mip filter, which is not implemented");
 
     const auto aniso = isAnisoFilter(xyMagFilter) || isAnisoFilter(xyMinFilter);
     auto anisoRatio = 1.0f;

@@ -22,6 +22,7 @@ namespace AgcDriver::Graphics {
         if (descriptor.reductionMode != VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT) {
             Require(context.samplerFilterMinmax, "guest sampler descriptor uses a min or max reduction which the device does not support");
             Require(!descriptor.compareEnable, "guest sampler descriptor combines a min or max reduction with depth comparison, which is not implemented");
+            Require(descriptor.mipmapMode != VK_SAMPLER_MIPMAP_MODE_LINEAR || context.samplerFilterMinmaxAcrossMips, "guest sampler descriptor combines a min or max reduction with a linear mip filter, which lavapipe does not reduce across both levels");
         }
     }
 
@@ -34,7 +35,7 @@ namespace AgcDriver::Graphics {
         VkSamplerReductionModeCreateInfoEXT reduction{VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO_EXT, nullptr, descriptor.reductionMode};
         if (descriptor.reductionMode != VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT) {
             info.pNext = &reduction;
-            requiresFilterMinmax = descriptor.magFilter == VK_FILTER_LINEAR || descriptor.minFilter == VK_FILTER_LINEAR;
+            requiresFilterMinmax = descriptor.magFilter == VK_FILTER_LINEAR || descriptor.minFilter == VK_FILTER_LINEAR || descriptor.mipmapMode == VK_SAMPLER_MIPMAP_MODE_LINEAR;
         }
         info.magFilter = descriptor.magFilter;
         info.minFilter = descriptor.minFilter;
