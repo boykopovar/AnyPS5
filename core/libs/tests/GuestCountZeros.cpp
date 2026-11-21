@@ -1,4 +1,6 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+#include <array>
 #include "prx/libc/GuestStringStorage.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -15,6 +17,8 @@ static void Require(bool condition) {
 }
 
 static void CheckGuestStringStorage() {
+    std::array<void*, 10> heapApi{};
+    ApplicationHeapRegister_nid_no_patch(heapApi.data());
     GuestStringStorage::Deallocate(nullptr, GuestStringStorage::LargeAllocation);
     GuestStringStorage::Deallocate(nullptr, 0x2000);
     GuestStringStorage::Deallocate(nullptr, 0);
