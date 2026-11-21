@@ -1430,7 +1430,6 @@ void CheckRawGetcwdErrors() {
     Require(unlinkat_nid_postfix(-100, directory.c_str(), 0x800) == 0);
 }
 
-#ifndef _WIN32
 void CheckRawGetcwdPathLimit() {
     std::array<char, 4096> previous{};
     Require(getcwd_nid_postfix(previous.data(), previous.size()) == previous.data());
@@ -1476,7 +1475,6 @@ void CheckRawGetcwdPathLimit() {
     Require(chdir_nid_postfix(previous.data()) == 0);
     Require(unlinkat_nid_postfix(-100, root.c_str(), 0x800) == 0);
 }
-#endif
 
 void CheckRawGetcwd() {
     std::array<char, 4096> expected{};
@@ -1597,9 +1595,7 @@ int main() {
     Require(sceKernelGetPhysPageSize() == 16384);
     CheckProcessQueries();
     CheckRawGetcwdErrors();
-#ifndef _WIN32
     CheckRawGetcwdPathLimit();
-#endif
     CheckRawGetcwd();
     CheckKqueueFromEqueue();
     Require(setsid_nid_postfix() == -1 && Error() == 1);

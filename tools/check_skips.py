@@ -34,8 +34,11 @@ def device_limitations(output, patterns):
     return bool(reasons) and all(any(pattern.search(reason) for pattern in patterns) for reason in reasons)
 
 
+SYMLINK_PRIVILEGE_TESTS = tuple(f"guest_kernel_sys_paths_{case}{suffix}" for case in ("symlinkat", "readlink_limits", "readlinkat_limits") for suffix in ("", "_patched"))
+
+
 def symlink_privilege_limitation(name, output):
-    if name not in ("guest_kernel_sys_paths_symlinkat", "guest_kernel_sys_paths_symlinkat_patched"):
+    if name not in SYMLINK_PRIVILEGE_TESTS:
         return False
     reasons = [match.group(0).strip() for line in output.splitlines() if (match := re.search(r"(?:skipped,|SKIP:).*", line, re.IGNORECASE))]
     return bool(reasons) and all(reason == "SKIP: Windows symbolic-link privileges unavailable" for reason in reasons)
@@ -115,7 +118,7 @@ def main(argv=None):
         return 0
     if args.job == "windows":
         unexpected = [name for name, output in found if not name.startswith(WINDOWS_PREFIX) and not symlink_privilege_limitation(name, output) and not device_limitations(output, (NO_DISPLAY, NO_VULKAN_DEVICE, NO_RAW_SOCKET)) and not high_refresh_limitation(output)]
-        expected = f"any {WINDOWS_PREFIX}* test, which the runner has no Vulkan driver for, or a test that reports no display or Vulkan device, a display without a 120 Hz mode or no permission to create a raw socket, or the two symlink creation tests reporting unavailable Windows symbolic-link privileges"
+        expected = f"any {WINDOWS_PREFIX}* test, which the runner has no Vulkan driver for, or a test that reports no display or Vulkan device, a display without a 120 Hz mode or no permission to create a raw socket, or the symlink creation and readlink limit tests reporting unavailable Windows symbolic-link privileges"
     else:
         unexpected = [name for name, output in found if not device_limitations(output, (DEVICE_LIMITATION,)) and not high_refresh_limitation(output)
                       and not (name == "guest_environment_binding_unload" and environment_loader_retention(output))]
