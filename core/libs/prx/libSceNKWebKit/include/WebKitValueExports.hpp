@@ -22,6 +22,8 @@ const void* APS5_VABI WKAXObjectCopyTitle(const void* objectRef);
 const void* APS5_VABI WKAXObjectCopyDescription(const void* objectRef);
 const void* APS5_VABI WKAXObjectCopyHelpText(const void* objectRef);
 const void* APS5_VABI WKAXObjectCopyURL(const void* objectRef);
+std::uint32_t APS5_VABI WKAXObjectButtonState(const void* objectRef);
+std::uint32_t APS5_VABI WKAXObjectRole(const void* objectRef);
 void APS5_VABI WKApplicationCacheManagerDeleteAllEntries(const void* managerRef);
 void APS5_VABI WKApplicationCacheManagerDeleteEntriesForOrigin(const void* managerRef, const void* originRef);
 void APS5_VABI WKApplicationCacheManagerGetApplicationCacheOrigins(const void* managerRef, void* context, void (*callback)(const void*, const void*, void*));
