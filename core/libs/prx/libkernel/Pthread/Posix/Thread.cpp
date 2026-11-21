@@ -246,11 +246,15 @@ void APS5_VABI pthread_exit_nid_postfix(void* value) {
 }
 
 int APS5_VABI scePthreadGetschedparam(Pthread thread, int* policy, KernelSchedParam* param) {
-    if (!policy || !param) return SCE_KERNEL_ERROR_EINVAL;
+    if (!policy || !param || !thread) return SCE_KERNEL_ERROR_EINVAL;
     KernelSchedParam current{};
-    const int result = scePthreadGetprio(thread, &current.sched_priority);
-    if (result != 0) return result;
-    const int currentPolicy = thread->schedPolicy.load(std::memory_order_relaxed);
+    int currentPolicy = 0;
+    {
+        const auto registered = LockRegisteredGuestThread(thread);
+        if (!registered) return SCE_KERNEL_ERROR_ESRCH;
+        current.sched_priority = thread->priority.load(std::memory_order_relaxed);
+        currentPolicy = thread->schedPolicy.load(std::memory_order_relaxed);
+    }
     if (!GuestCopyOut_nid_no_patch(param, &current, sizeof(current)) ||
         !GuestCopyOut_nid_no_patch(policy, &currentPolicy, sizeof(currentPolicy)))
         return SCE_KERNEL_ERROR_EFAULT;
@@ -262,9 +266,12 @@ int APS5_VABI scePthreadSetschedparam(Pthread thread, int policy, const KernelSc
     KernelSchedParam requested{};
     if (!GuestCopyIn_nid_no_patch(&requested, param, sizeof(requested))) return SCE_KERNEL_ERROR_EFAULT;
     if (!AcceptsSchedParam(policy, requested.sched_priority)) return SCE_KERNEL_ERROR_EINVAL;
-    const int result = scePthreadSetprio(thread, requested.sched_priority);
-    if (result == 0) thread->schedPolicy.store(policy, std::memory_order_relaxed);
-    return result;
+    if (!thread) return SCE_KERNEL_ERROR_EINVAL;
+    const auto live = LockLiveGuestThread(thread);
+    if (!live) return SCE_KERNEL_ERROR_ESRCH;
+    thread->priority.store(requested.sched_priority, std::memory_order_relaxed);
+    thread->schedPolicy.store(policy, std::memory_order_relaxed);
+    return 0;
 }
 
 int APS5_VABI pthread_getschedparam_nid_postfix(Pthread thread, int* policy, KernelSchedParam* param) {
@@ -461,9 +468,12 @@ int APS5_VABI pthread_rename_np_nid_postfix(Pthread thread, const char* name) {
 int APS5_VABI pthread_getname_np_nid_postfix(Pthread thread, char* name) {
     if (!thread) return PosixThread::GUEST_ESRCH;
     if (!name) return PosixThread::GUEST_EFAULT;
+    auto registered = LockRegisteredGuestThread(thread);
+    if (!registered) return PosixThread::GUEST_ESRCH;
     // A joined thread answers ESRCH on the console (PS5 firmware 13.60); the object is retained
     // after scePthreadJoin, so _joined tells it apart from a live thread.
     if (thread->_joined.load(std::memory_order_acquire)) return PosixThread::GUEST_ESRCH;
+    registered.unlock();
     return PosixThread::ToErrno(scePthreadGetname(thread, name));
 }
 
@@ -488,6 +498,8 @@ int APS5_VABI pthread_getcpuclockid_nid_postfix(Pthread thread, int* clockId) {
     constexpr int guestFault = 14;
     if (!thread) return PosixThread::GUEST_EINVAL;
     if (!clockId) return guestFault;
+    const auto registered = LockRegisteredGuestThread(thread);
+    if (!registered) return PosixThread::GUEST_ESRCH;
     const int id = GuestThreadCpuClockId(thread);
     if (!GuestCopyOut_nid_no_patch(clockId, &id, sizeof(id))) return guestFault;
     return 0;

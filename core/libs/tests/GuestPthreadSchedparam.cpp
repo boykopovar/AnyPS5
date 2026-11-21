@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <atomic>
 #include <cstdlib>
 #include <cstdint>
 #include <future>
@@ -182,6 +183,37 @@ static void* APS5_VABI Spawn(void*) {
     return nullptr;
 }
 
+struct Alternation {
+    Pthread target = nullptr;
+    std::atomic<bool> done{false};
+};
+
+static void* APS5_VABI Alternate(void* arg) {
+    auto& alternation = *static_cast<Alternation*>(arg);
+    for (int round = 0; round < 20000; ++round) {
+        const KernelSchedParam requested{round % 2 == 0 ? 700 : 300};
+        Require(scePthreadSetschedparam(alternation.target, round % 2 == 0 ? GUEST_SCHED_RR : GUEST_SCHED_FIFO, &requested) == SCE_OK);
+    }
+    alternation.done.store(true);
+    return nullptr;
+}
+
+static void RequireSchedparamPairs() {
+    const KernelSchedParam initial{300};
+    Require(scePthreadSetschedparam(scePthreadSelf(), GUEST_SCHED_FIFO, &initial) == SCE_OK);
+    Alternation alternation;
+    alternation.target = scePthreadSelf();
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, Alternate, &alternation, "alternate") == SCE_OK);
+    while (!alternation.done.load()) {
+        int policy = -1;
+        KernelSchedParam param{};
+        Require(scePthreadGetschedparam(scePthreadSelf(), &policy, &param) == SCE_OK);
+        Require((policy == GUEST_SCHED_FIFO && param.sched_priority == 300) || (policy == GUEST_SCHED_RR && param.sched_priority == 700));
+    }
+    Require(scePthreadJoin(thread, nullptr) == SCE_OK);
+}
+
 int main() {
     *__error_nid_postfix() = 1234;
     Require(pthread_getprio_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == GUEST_EINVAL);
@@ -207,4 +239,5 @@ int main() {
     Require(CreatedPolicy(INHERIT_SCHED, GUEST_SCHED_RR) == GUEST_SCHED_FIFO);
     Require(scePthreadCreate(&thread, nullptr, Spawn, nullptr, "spawn") == SCE_OK);
     Require(scePthreadJoin(thread, nullptr) == SCE_OK);
+    RequireSchedparamPairs();
 }
