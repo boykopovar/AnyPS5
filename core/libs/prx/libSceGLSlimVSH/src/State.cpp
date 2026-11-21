@@ -67,6 +67,12 @@ Context::Context() : state{
     }
 }
 
+Context::~Context() {
+    executable.reset();
+    program.reset();
+    if (share) CollectPrograms_nid_no_patch(*share);
+}
+
 Context& Current_nid_no_patch() {
     if (!Thread().context) NotImplemented_nid_no_patch(__func__);
     return *Thread().context;
@@ -144,7 +150,7 @@ bool Query_nid_no_patch(GLenum name, std::vector<double>& result) {
         auto t = c.textures[c.activeTexture][name == 0x8514];
         result = {double(t ? t->name : 0)}; break;
     }
-    case 0x8b8d: result = {0}; break;
+    case 0x8b8d: result = {double(c.program ? c.program->name : 0)}; break;
     case 0x0d33: case 0x851c: case 0x84e8: result = {2048}; break;
     case 0x0d3a: result = {2048, 2048}; break;
     case 0x8869: case 0x8872: case 0x8b4d: result = {8}; break;
@@ -156,7 +162,7 @@ bool Query_nid_no_patch(GLenum name, std::vector<double>& result) {
     case 0x0d50: result = {4}; break;
     case 0x80a8: case 0x80a9: case 0x86a2: case 0x8df9: result = {0}; break;
     case 0x86a3: case 0x8df8: result.clear(); break;
-    case 0x8dfa: NotImplemented_nid_no_patch(__func__);
+    case 0x8dfa: result = {1}; break;
     case 0x8b9a: result = {0x1401}; break;
     case 0x8b9b: result = {0x1908}; break;
     case 0x0d52: case 0x0d53: case 0x0d54: case 0x0d55: case 0x0d56: case 0x0d57: {

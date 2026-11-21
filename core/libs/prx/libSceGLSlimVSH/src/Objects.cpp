@@ -20,7 +20,16 @@ Buffer* BoundBuffer(GLenum target) {
     return binding->get();
 }
 
-Slim::Shader* FindShader(GLuint name) {
+GLuint ShaderName(ShareGroup& share) {
+    for (GLuint name = 1; name; ++name) if (!share.shaders.contains(name) && !share.programs.contains(name)) return name;
+    throw std::bad_alloc();
+}
+
+}
+
+namespace Slim {
+
+Shader* FindShader_nid_no_patch(GLuint name) {
     auto& share = *Current_nid_no_patch().share;
     auto it = share.shaders.find(name);
     if (it != share.shaders.end()) return it->second.get();
@@ -28,7 +37,7 @@ Slim::Shader* FindShader(GLuint name) {
     return nullptr;
 }
 
-Program* FindProgram(GLuint name) {
+Program* FindProgram_nid_no_patch(GLuint name) {
     auto& share = *Current_nid_no_patch().share;
     auto it = share.programs.find(name);
     if (it != share.programs.end()) return it->second.get();
@@ -36,16 +45,16 @@ Program* FindProgram(GLuint name) {
     return nullptr;
 }
 
-GLuint ShaderName(ShareGroup& share) {
-    for (GLuint name = 1; name; ++name) if (!share.shaders.contains(name) && !share.programs.contains(name)) return name;
-    throw std::bad_alloc();
-}
-
-void CollectShaders(ShareGroup& share) {
+void CollectShaders_nid_no_patch(ShareGroup& share) {
     std::erase_if(share.shaders, [](const auto& item) { return item.second->deleted && item.second.use_count() == 1; });
 }
 
-void CopyString(const std::string& source, GLsizei size, GLsizei* length, GLchar* output) {
+void CollectPrograms_nid_no_patch(ShareGroup& share) {
+    std::erase_if(share.programs, [](const auto& item) { return item.second->deleted && item.second.use_count() == 1; });
+    CollectShaders_nid_no_patch(share);
+}
+
+void CopyString_nid_no_patch(const std::string& source, GLsizei size, GLsizei* length, GLchar* output) {
     const GLsizei count = size ? static_cast<GLsizei>(std::min<std::size_t>(source.size(), size - 1)) : 0;
     if (size) {
         try {
@@ -180,7 +189,9 @@ GLuint APS5_VABI glCreateProgram_nid_postfix() {
     try {
         auto& share = *Current_nid_no_patch().share;
         auto name = ShaderName(share);
-        share.programs.emplace(name, std::make_shared<Program>());
+        auto program = std::make_shared<Program>();
+        program->name = name;
+        share.programs.emplace(name, std::move(program));
         return name;
     } catch (const std::bad_alloc&) { Error_nid_no_patch(0x0505); return 0; }
 }
@@ -198,23 +209,22 @@ GLboolean APS5_VABI glIsProgram_nid_postfix(GLuint name) {
 void APS5_VABI glDeleteShader_nid_postfix(GLuint name) {
     std::lock_guard lock(mutex);
     if (!name) return;
-    if (auto* shader = FindShader(name)) shader->deleted = true;
-    CollectShaders(*Current_nid_no_patch().share);
+    if (auto* shader = FindShader_nid_no_patch(name)) shader->deleted = true;
+    CollectShaders_nid_no_patch(*Current_nid_no_patch().share);
 }
 
 void APS5_VABI glDeleteProgram_nid_postfix(GLuint name) {
     std::lock_guard lock(mutex);
-    if (!name || !FindProgram(name)) return;
-    auto& share = *Current_nid_no_patch().share;
-    share.programs.erase(name);
-    CollectShaders(share);
+    if (!name) return;
+    if (auto* program = FindProgram_nid_no_patch(name)) program->deleted = true;
+    CollectPrograms_nid_no_patch(*Current_nid_no_patch().share);
 }
 
 void APS5_VABI glAttachShader_nid_postfix(GLuint program, GLuint shader) {
     std::lock_guard lock(mutex);
-    auto* p = FindProgram(program);
+    auto* p = FindProgram_nid_no_patch(program);
     if (!p) return;
-    auto* object = FindShader(shader);
+    auto* object = FindShader_nid_no_patch(shader);
     if (!object) return;
     for (auto& entry : p->shaders) if (entry.second->type == object->type) { Error_nid_no_patch(0x0502); return; }
     try { p->shaders.emplace(shader, Current_nid_no_patch().share->shaders.at(shader)); }
@@ -223,15 +233,15 @@ void APS5_VABI glAttachShader_nid_postfix(GLuint program, GLuint shader) {
 
 void APS5_VABI glDetachShader_nid_postfix(GLuint program, GLuint shader) {
     std::lock_guard lock(mutex);
-    auto* p = FindProgram(program);
-    if (!p || !FindShader(shader)) return;
+    auto* p = FindProgram_nid_no_patch(program);
+    if (!p || !FindShader_nid_no_patch(shader)) return;
     if (!p->shaders.erase(shader)) { Error_nid_no_patch(0x0502); return; }
-    CollectShaders(*Current_nid_no_patch().share);
+    CollectShaders_nid_no_patch(*Current_nid_no_patch().share);
 }
 
 void APS5_VABI glShaderSource_nid_postfix(GLuint shader, GLsizei count, const GLchar* const* strings, const GLint* lengths) {
     std::lock_guard lock(mutex);
-    auto* object = FindShader(shader);
+    auto* object = FindShader_nid_no_patch(shader);
     if (!object) return;
     if (count < 0) { Error_nid_no_patch(0x0501); return; }
     if (count > MaxBatchNames) { Error_nid_no_patch(0x0505); return; }
@@ -282,13 +292,14 @@ void APS5_VABI glShaderSource_nid_postfix(GLuint shader, GLsizei count, const GL
 
 void APS5_VABI glGetShaderiv_nid_postfix(GLuint shader, GLenum name, GLint* value) {
     std::lock_guard lock(mutex);
-    auto* object = FindShader(shader);
+    auto* object = FindShader_nid_no_patch(shader);
     if (!object) return;
     GLint result;
     switch (name) {
     case 0x8b4f: result = object->type; break;
     case 0x8b80: result = object->deleted; break;
-    case 0x8b81: case 0x8b84: result = 0; break;
+    case 0x8b81: result = object->compiled; break;
+    case 0x8b84: result = object->infoLog.empty() ? 0 : static_cast<GLint>(std::min<std::size_t>(object->infoLog.size() + 1, std::numeric_limits<GLint>::max())); break;
     case 0x8b88: result = object->source.empty() ? 0 : static_cast<GLint>(std::min<std::size_t>(object->source.size() + 1, std::numeric_limits<GLint>::max())); break;
     default: Error_nid_no_patch(0x0500); return;
     }
@@ -300,13 +311,31 @@ void APS5_VABI glGetShaderiv_nid_postfix(GLuint shader, GLenum name, GLint* valu
 
 void APS5_VABI glGetProgramiv_nid_postfix(GLuint program, GLenum name, GLint* value) {
     std::lock_guard lock(mutex);
-    auto* object = FindProgram(program);
+    auto* object = FindProgram_nid_no_patch(program);
     if (!object) return;
-    GLint result;
+    GLint result = 0;
     switch (name) {
     case 0x8b80: result = object->deleted; break;
+    case 0x8b82: result = object->linked; break;
+    case 0x8b83: result = object->validated; break;
+    case 0x8b84: result = object->infoLog.empty() ? 0 : static_cast<GLint>(std::min<std::size_t>(object->infoLog.size() + 1, std::numeric_limits<GLint>::max())); break;
     case 0x8b85: result = static_cast<GLint>(object->shaders.size()); break;
-    case 0x8b82: case 0x8b83: case 0x8b84: case 0x8b86: case 0x8b87: case 0x8b89: case 0x8b8a: result = 0; break;
+    case 0x8b86: result = object->executable ? static_cast<GLint>(object->executable->uniforms.size()) : 0; break;
+    case 0x8b87:
+        if (object->executable) {
+            std::size_t maximum = 0;
+            for (const auto& u : object->executable->uniforms) maximum = std::max(maximum, u.name.size() + 1);
+            result = static_cast<GLint>(std::min<std::size_t>(maximum, std::numeric_limits<GLint>::max()));
+        }
+        break;
+    case 0x8b89: result = object->executable ? static_cast<GLint>(object->executable->attributes.size()) : 0; break;
+    case 0x8b8a:
+        if (object->executable) {
+            std::size_t maximum = 0;
+            for (const auto& a : object->executable->attributes) maximum = std::max(maximum, a.name.size() + 1);
+            result = static_cast<GLint>(std::min<std::size_t>(maximum, std::numeric_limits<GLint>::max()));
+        }
+        break;
     default: Error_nid_no_patch(0x0500); return;
     }
     const int savedErrno = errno;
@@ -318,7 +347,7 @@ void APS5_VABI glGetProgramiv_nid_postfix(GLuint program, GLenum name, GLint* va
 void APS5_VABI glGetAttachedShaders_nid_postfix(GLuint program, GLsizei size, GLsizei* count, GLuint* shaders) {
     std::lock_guard lock(mutex);
     if (size < 0) { Error_nid_no_patch(0x0501); return; }
-    auto* object = FindProgram(program);
+    auto* object = FindProgram_nid_no_patch(program);
     if (!object) return;
     std::vector<GLuint> local;
     for (auto& entry : object->shaders) {
@@ -343,22 +372,35 @@ void APS5_VABI glGetAttachedShaders_nid_postfix(GLuint program, GLsizei size, GL
 void APS5_VABI glGetShaderInfoLog_nid_postfix(GLuint shader, GLsizei size, GLsizei* length, GLchar* log) {
     std::lock_guard lock(mutex);
     if (size < 0) { Error_nid_no_patch(0x0501); return; }
-    if (FindShader(shader)) CopyString({}, size, length, log);
+    if (auto* object = FindShader_nid_no_patch(shader)) CopyString_nid_no_patch(object->infoLog, size, length, log);
 }
 
 void APS5_VABI glGetProgramInfoLog_nid_postfix(GLuint program, GLsizei size, GLsizei* length, GLchar* log) {
     std::lock_guard lock(mutex);
     if (size < 0) { Error_nid_no_patch(0x0501); return; }
-    if (FindProgram(program)) CopyString({}, size, length, log);
+    if (auto* object = FindProgram_nid_no_patch(program)) CopyString_nid_no_patch(object->infoLog, size, length, log);
 }
 
 void APS5_VABI glBindAttribLocation_nid_postfix(GLuint program, GLuint index, const GLchar* name) {
     std::lock_guard lock(mutex);
-    auto* object = FindProgram(program);
+    auto* object = FindProgram_nid_no_patch(program);
     if (!object) return;
     if (index >= 8) { Error_nid_no_patch(0x0501); return; }
     std::string localName;
-    if (!name || CopyGuestString_nid_no_patch(name, 1024, localName) != 0) { Error_nid_no_patch(0x0501); return; }
+    const int savedErrno = errno;
+    const int status = name ? CopyGuestString_nid_no_patch(name, 4096, localName) : 14;
+    errno = savedErrno;
+    if (status == 12) { Error_nid_no_patch(0x0505); return; }
+    if (status == 63) {
+        char prefix[3]{};
+        const int savedErrno2 = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(prefix, name, sizeof(prefix));
+        errno = savedErrno2;
+        if (!copied) { Error_nid_no_patch(0x0501); return; }
+        if (std::memcmp(prefix, "gl_", 3) == 0) Error_nid_no_patch(0x0502);
+        return;
+    }
+    if (status != 0) { Error_nid_no_patch(0x0501); return; }
     if (localName.starts_with("gl_")) { Error_nid_no_patch(0x0502); return; }
     try { object->attributes[localName] = index; }
     catch (const std::bad_alloc&) { Error_nid_no_patch(0x0505); }
@@ -366,7 +408,19 @@ void APS5_VABI glBindAttribLocation_nid_postfix(GLuint program, GLuint index, co
 
 void APS5_VABI glUseProgram_nid_postfix(GLuint program) {
     std::lock_guard lock(mutex);
-    if (program && FindProgram(program)) Error_nid_no_patch(0x0502);
+    auto& c = Current_nid_no_patch();
+    if (!program) {
+        c.program.reset();
+        c.executable.reset();
+        CollectPrograms_nid_no_patch(*c.share);
+        return;
+    }
+    auto* object = FindProgram_nid_no_patch(program);
+    if (!object) return;
+    if (!object->linked || !object->executable) { Error_nid_no_patch(0x0502); return; }
+    c.program = c.share->programs.at(program);
+    c.executable = object->executable;
+    CollectPrograms_nid_no_patch(*c.share);
 }
 
 void APS5_VABI glReleaseShaderCompiler_nid_postfix() { std::lock_guard lock(mutex); Current_nid_no_patch(); }
