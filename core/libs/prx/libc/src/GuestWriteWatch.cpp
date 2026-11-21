@@ -624,6 +624,25 @@ public:
         if (found != _hostWrites.end()) _hostWrites.erase(found);
     }
 
+    void BeginOwnStore(std::uintptr_t begin, std::uintptr_t end) {
+        if (!_available || end <= begin) return;
+        begin = pageStart(begin);
+        end = pageEnd(end);
+        if (end <= begin) return;
+        const Lock lock(_lock);
+        _ownStores.emplace_back(begin, end);
+    }
+
+    void EndOwnStore(std::uintptr_t begin, std::uintptr_t end) {
+        if (!_available || end <= begin) return;
+        begin = pageStart(begin);
+        end = pageEnd(end);
+        if (end <= begin) return;
+        const Lock lock(_lock);
+        const auto found = std::find(_ownStores.begin(), _ownStores.end(), std::pair{begin, end});
+        if (found != _ownStores.end()) _ownStores.erase(found);
+    }
+
     int Protection(std::uintptr_t address, std::uintptr_t limit, std::uintptr_t* runEnd) {
         const auto page = pageStart(address);
         const Lock lock(_lock);
@@ -838,7 +857,9 @@ private:
             std::size_t count = 1;
             if (_faultAhead > 1 && index >= 2 && writtenOpen(index - 1) && writtenOpen(index - 2)) {
                 const auto blockPages = static_cast<std::size_t>(((page | (FaultAheadBlock - 1)) + 1 - page) / _page);
-                const auto limit = std::min({_faultAhead, blockPages, pages.size() - index});
+                auto limit = std::min({_faultAhead, blockPages, pages.size() - index});
+                for (const auto& [ownBegin, ownEnd] : _ownStores)
+                    if (page >= ownBegin && page < ownEnd) limit = std::min(limit, static_cast<std::size_t>((ownEnd - page) / _page));
                 while (count < limit && (pages[index + count] & (Protected | ReadTrapped)) == Protected && (pages[index + count] & ProtectionMask) == protection) ++count;
             }
             if (::mprotect(reinterpret_cast<void*>(page), count * _page, protection) != 0) return false;
@@ -1156,6 +1177,7 @@ private:
     Mutex _lock;
     std::map<std::uintptr_t, Range> _ranges;
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _hostWrites;
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _ownStores;
     std::multimap<std::uintptr_t, std::uintptr_t> _traps;
     std::vector<Resolving> _resolving;
     std::vector<Resolving> _deferred;
@@ -1279,6 +1301,24 @@ void GuestWriteWatchEndHostWrite_nid_postfix(const void* pointer, std::size_t by
     Watch::Get().EndHostWrite(begin, begin + bytes);
 #else
     static_cast<void>(pointer);
+    static_cast<void>(bytes);
+#endif
+}
+
+void GuestWriteWatchBeginOwnStore_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+#if defined(__APPLE__)
+    Watch::Get().BeginOwnStore(address, address + bytes);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+#endif
+}
+
+void GuestWriteWatchEndOwnStore_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+#if defined(__APPLE__)
+    Watch::Get().EndOwnStore(address, address + bytes);
+#else
+    static_cast<void>(address);
     static_cast<void>(bytes);
 #endif
 }
