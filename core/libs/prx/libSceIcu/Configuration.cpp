@@ -84,16 +84,40 @@ char* DuplicateSource(const char* source, std::size_t length, const char* functi
     return duplicate;
 }
 
+std::string ReadSource(const char* source, const char* function) {
+    std::size_t length = 0;
+    std::string text;
+    if (SourceLength(source, length)) {
+        text.resize(length);
+        if (CopySource(text.data(), source, length)) return text;
+    }
+    throw std::invalid_argument(std::string(function) + ": unreadable source");
+}
+
+std::int32_t ReadStatus(const std::int32_t* status, const char* function) {
+    Icu::RequireStatus(status);
+    std::int32_t value = 0;
+    if (!CopySource(&value, status, sizeof(value))) throw std::invalid_argument(std::string(function) + ": unreadable status");
+    return value;
+}
+
+void WriteStatus(std::int32_t* status, std::int32_t value, const char* function) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": unwritable status");
+}
+
 }
 
 extern "C" {
 
 void APS5_VABI u_setMutexFunctions_nid_postfix(const void*, const void*, const void*, const void*, const void*, std::int32_t* status) {
-    if (!Icu::Failure(status)) *status = Icu::UnsupportedError;
+    if (ReadStatus(status, __func__) <= 0) WriteStatus(status, Icu::UnsupportedError, __func__);
 }
 
 void APS5_VABI u_setAtomicIncDecFunctions_nid_postfix(const void*, const void*, const void*, std::int32_t* status) {
-    if (!Icu::Failure(status)) *status = Icu::UnsupportedError;
+    if (ReadStatus(status, __func__) <= 0) WriteStatus(status, Icu::UnsupportedError, __func__);
 }
 
 
@@ -115,22 +139,23 @@ const char* APS5_VABI u_getDataDirectory_nid_postfix() {
 }
 
 void APS5_VABI u_setDataDirectory_nid_postfix(const char* directory) {
-    std::string copy = directory ? directory : "";
+    std::string copy = directory ? ReadSource(directory, __func__) : "";
     const std::lock_guard lock(DirectoryLock);
     DataDirectory = std::move(copy);
 }
 
 
 const char* APS5_VABI u_getTimeZoneFilesDirectory_nid_postfix(std::int32_t* status) {
-    if (Icu::Failure(status)) return "";
+    if (ReadStatus(status, __func__) > 0) return "";
     const std::lock_guard lock(DirectoryLock);
     return TimeZoneDirectory.c_str();
 }
 
 void APS5_VABI u_setTimeZoneFilesDirectory_nid_postfix(const char* path, std::int32_t* status) {
-    if (Icu::Failure(status)) return;
+    if (ReadStatus(status, __func__) > 0) return;
+    std::string copy = path ? ReadSource(path, __func__) : "";
     const std::lock_guard lock(DirectoryLock);
-    TimeZoneDirectory = path ? path : "";
+    TimeZoneDirectory = std::move(copy);
 }
 
 
