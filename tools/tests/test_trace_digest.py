@@ -523,6 +523,19 @@ class TraceDigestTests(unittest.TestCase):
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertEqual(path.read_bytes(), original)
 
+    def test_cli_reports_missing_fields_used_to_render_the_summary(self):
+        path = self.trace.with_name("aps5-summary.jsonl")
+        cases = (("gpu", {key: value for key, value in SUMMARY.items() if key != "gpu"}),
+                 ("p99", dict(SUMMARY, frame_ms={"p50": 10.0, "p90": 20.0, "max": 20.0})))
+        for field, record in cases:
+            with self.subTest(field=field):
+                path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace)],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(result.stderr, f"FAIL: the summary line has no {field!r} field\n")
+
     def test_mixed_summary_jsonl_objects_preserve_selection_and_intervals(self):
         path = self.trace.with_name("aps5-summary.jsonl")
         expected = self.json_output(self.trace)
@@ -615,6 +628,22 @@ class TraceDigestTests(unittest.TestCase):
                     self.assertIn("FAIL: " + message, result.stderr)
                     self.assertNotIn("Traceback", result.stderr)
                     self.assertEqual(result.stdout, "")
+
+    def test_cli_rejects_duplicate_trace_fields_without_partial_output(self):
+        cases = (("traceEvents", '{"traceEvents":[{"ph":"X","name":"work","tid":1,"ts":0,"dur":1}],"traceEvents":[]}'),
+                 ("dur", '[{"ph":"X","name":"work","tid":1,"ts":0,"dur":1,"dur":2}]'))
+        for field, document in cases:
+            for compressed in (False, True):
+                with self.subTest(field=field, compressed=compressed):
+                    path = Path(self.directory.name) / ("duplicate.json.gz" if compressed else "duplicate.json")
+                    data = document.encode("utf-8")
+                    path.write_bytes(gzip.compress(data) if compressed else data)
+                    result = subprocess.run([sys.executable, trace_digest.__file__, str(path), "--json"],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=20)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn(f"FAIL: {path}: duplicate JSON field: {field!r}", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
 
     def test_cli_rejects_invalid_event_fields_without_partial_output(self):
         slice_event = complete(1, "Driver.Packet", 0, 10)

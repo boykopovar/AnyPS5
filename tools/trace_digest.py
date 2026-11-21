@@ -158,9 +158,11 @@ def load_trace(path):
     opener = gzip.open if str(path).endswith(".gz") else open
     with opener(path, "rt", encoding="utf-8-sig") as handle:
         try:
-            document = json.load(handle)
+            document = json.load(handle, object_pairs_hook=unique_json_object)
         except RecursionError as error:
             raise ValueError(f"{path}: trace JSON nesting is too deep: {error}") from error
+        except ValueError as error:
+            raise ValueError(f"{path}: {error}") from error
         return Trace(document)
 
 
@@ -684,11 +686,12 @@ def main(arguments=None):
     summary = load_summary(options.summary, options.trace)
     try:
         result = digest(trace, summary, stacks, options.frames, options.top)
+        if options.thread:
+            result["thread_filter"] = sorted(set(options.thread))
+        output = json.dumps(result, indent=1) + "\n" if options.json else markdown(result)
     except KeyError as error:
         parser.exit(2, f"FAIL: the summary line has no {error} field\n")
-    if options.thread:
-        result["thread_filter"] = sorted(set(options.thread))
-    sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown(result))
+    sys.stdout.write(output)
     return 0
 
 
