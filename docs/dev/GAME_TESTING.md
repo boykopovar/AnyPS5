@@ -120,3 +120,63 @@ Include, in this order:
 8. The date of the test. Leave unknown fields empty rather than filling them from another report.
 
 Keep AI-generated analysis separate from measured data, and say which is which.
+
+## Clean window captures
+
+Use the opt-in performance profile from an interactive terminal to produce the native evidence required by the [performance report](../../.github/ISSUE_TEMPLATE/performance.yml):
+
+```sh
+python tools/title_run.py PPSA00001 --games games --build build --profile performance --trace-seconds 30:10 --warmup-seconds 60 --seconds 120 --runs 1 --scene "Level and position, fixed camera, default settings"
+```
+
+Supply exactly one title ID and either `--trace-frames START:COUNT` or `--trace-seconds START:LENGTH`. The native window starts at presents, as described under [Performance trace](BUILD.md#performance-trace); `--seconds` is the process deadline, so allow time to reach and finish the window. Performance defaults to one capture; `--runs` requests more. Each capture has a bounded warm-up followed by a restart from the same staged work and caches, using one console for the invocation. A warm-up that crashes or requires forced termination prevents the capture. Cache-disabling settings are rejected. `--scene` records the operator's description; a restart does not prove the intended scene was reached or its shaders were warmed. Keep the scene, settings and inputs matched yourself.
+
+This profile removes inherited and recipe tracing, profiling, dumps, sampling, capture diagnostics, pipeline statistics and `ANYPS5_LOG_FILE` from the child environment. It retains runtime options and input recipes, enables one native window, and writes to a fresh per-attempt trace directory. Smoke runs retain their existing settings, logs and screenshot classification. Performance runs default to `build/performance-runs` and are classified from the native trace and summary, independently of screenshots. `--compare`, `--json` and `--smoke` are not combined with this profile; use the existing trace digest and performance comparison tools on its original artifacts.
+
+The launcher verifies output console handles and never tees the native output to files. Windows can allocate an owned visible console when the process has no console association; it never detaches an existing console. An inherited hidden console can prevent allocation, in which case launch the printed command in a normal interactive terminal. POSIX requires terminal file descriptors for both output streams. Titles that redirect their own output internally still need their logging checked separately. The Windows native handle test can be enabled with `ANYPS5_TEST_INTERACTIVE_CONSOLE=1` when running `tools/tests/test_performance_console.py`; it opens and releases its own console.
+
+Each `runN/capture.json` records the capture state, original native summary, report sizes and SHA-256 hashes, operator scene description, removed instrumentation, console provenance, exit code and cleanup. Native commit and dirty state describe the loaded runtime; they are not replaced with the tool checkout's identity. The referenced native process must belong to the owned session. After metadata signals completion, the launcher closes the session and validates the original gzip and summary once. Limits are 1 MiB for the summary, 64 MiB compressed and 256 MiB decoded trace data, and two million events. Missing, malformed, duplicate, mismatched or oversized artifacts fail qualification and remain available for investigation. Original bytes are retained.
+
+Dropped events make slice-based evidence incomplete; lost phase totals are reported separately. A complete artifact pair can therefore carry warnings and incomplete metrics. The tool does not increase trace buffers or choose a faster retry automatically. Review these states before comparing captures, and run the base and change on the same machine and scene.
+
+## External PresentMon comparisons
+
+Use this offline comparison when builds use different renderers or cannot both emit AnyPS5 performance traces. On Windows, record the same gameplay scene for each attempt with the same PresentMon console version. With a console release that supports `--v1_metrics`, use a command such as the following, replacing `1234` with the title process ID and changing the output file for each attempt.
+
+```powershell
+.\PresentMon.exe --v1_metrics --process_id 1234 --timed 30 --terminate_after_timed --output_file baseline-1.csv
+```
+
+Keep the original UTF-8 CSVs with the capture-relative `TimeInSeconds` column and dropped rows. Choose one application, PID and swapchain per capture. `0x0` is valid for some Vulkan and OpenGL captures, where PresentMon may use a kernel event as the timestamp. Record enough data on both sides of the selected window. If the collector reports lost ETW events, buffers or presents, exclude the affected attempt. Check the scene, camera and settings yourself before counting an attempt as captured. See the [PresentMon console options](https://github.com/GameTechDev/PresentMon/blob/main/README-ConsoleApplication.md).
+
+Create an `aps5-presentmon-series/1` JSON manifest. Replace the example SHA-256 strings with hashes of the original bytes (`Get-FileHash -Algorithm SHA256` on Windows). Record the build revisions and executable hashes for both arms. The common `context` describes the workload and host. Include display mode, refresh rate and power state in `settings`. Record `save` and `input` as SHA-256 hashes or `none` when unused.
+
+```json
+{
+  "format": "aps5-presentmon-series/1",
+  "presentmon_version": "<console version>",
+  "duration_s": 10,
+  "context": {
+    "title_id": "PPSA00001", "content_version": "1.0", "scene": "Fixed camera at the save point",
+    "cpu": "CPU model", "gpu": "GPU model", "driver": "Driver version", "os": "Windows build",
+    "resolution": "1920x1080", "settings": "Defaults, windowed at 60 Hz, AC power", "cache_state": "warm",
+    "save": "<save SHA-256>", "input": "none"
+  },
+  "baseline": {"renderer": "AnyPS5", "revision": "<build revision>", "executable_sha256": "<baseline SHA-256>"},
+  "candidate": {"renderer": "Alternative renderer", "revision": "<build revision>", "executable_sha256": "<candidate SHA-256>"},
+  "runs": [
+    {"id": "a1", "arm": "baseline", "status": "captured", "capture": "baseline-1.csv", "sha256": "<CSV SHA-256>",
+     "application": "title.exe", "pid": 1234, "swapchain": "0x0", "start_s": 5},
+    {"id": "b1", "arm": "candidate", "status": "captured", "capture": "candidate-1.csv", "sha256": "<CSV SHA-256>",
+     "application": "title.exe", "pid": 5678, "swapchain": "0x0", "start_s": 6}
+  ]
+}
+```
+
+Use paths relative to the manifest and list attempts in alternating arm order. For repeated measurements, add more pairs with different CSVs and IDs. For an unsuccessful or disturbed attempt, keep its `id` and `arm` with `status` set to `failed` or `excluded` and a `reason`. An incomplete pair stays in the report. To measure repeatability, use the same build identity for both arms and record independent attempts.
+
+```sh
+python tools/benchmark_compare.py compare-presentmon series.json --sha256 MANIFEST_SHA256
+```
+
+Add `--json` for a machine-readable report. Each run counts application presents in `[start_s, start_s + duration_s)`, including rows marked dropped. The report counts those rows separately and gives median and nearest-rank p99 for intervals with both presents inside the window. Check the attempt results and paired changes together. The hashes verify the manifest and CSV bytes. Build identity, host, save, input and scene are operator declarations. Use the native trace workflow above for the project's performance report requirements.

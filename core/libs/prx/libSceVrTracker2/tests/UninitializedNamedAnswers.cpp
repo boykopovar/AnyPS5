@@ -49,6 +49,54 @@ int main() {
             "get play area oriented bounding box before initialization");
     Require(output.Untouched(), "get play area oriented bounding box wrote nothing");
 
+    Require(sceVrTracker2ActivateMap() == NotInitialized, "activate map before initialization");
+    Require(sceVrTracker2InitializeMap(1, reinterpret_cast<const float*>(parameter.bytes)) == NotInitialized, "initialize map before initialization");
+    Require(parameter.Untouched(), "initialize map wrote nothing to the parameter");
+    Require(sceVrTracker2RefineMap() == NotInitialized, "refine map before initialization");
+    Require(sceVrTracker2RemoveMap() == NotInitialized, "remove map before initialization");
+
+    Require(sceVrTracker2CheckDeviceIsInsidePlayAreaBoundary(1, reinterpret_cast<VrTracker2SpatialQueryResult*>(output.bytes)) == NotInitialized,
+            "check device inside boundary before initialization");
+    Require(output.Untouched(), "check device inside boundary wrote nothing");
+    Require(sceVrTracker2CheckPointIsInsidePlayAreaBoundary(reinterpret_cast<const float*>(parameter.bytes),
+                                                            reinterpret_cast<VrTracker2SpatialQueryResult*>(output.bytes)) == NotInitialized,
+            "check point inside boundary before initialization");
+    Require(parameter.Untouched(), "check point inside boundary wrote nothing to the parameter");
+    Require(output.Untouched(), "check point inside boundary wrote nothing to the result");
+
+    Require(sceVrTracker2GetPlayAreaConfig(reinterpret_cast<VrTracker2ScalarResult*>(output.bytes)) == NotInitialized,
+            "get play area configuration before initialization");
+    Require(output.Untouched(), "get play area configuration wrote nothing");
+    Require(sceVrTracker2SetPlayAreaConfig(reinterpret_cast<const VrTracker2ModeParameter*>(parameter.bytes)) == NotInitialized,
+            "set play area configuration before initialization");
+    Require(parameter.Untouched(), "set play area configuration wrote nothing to the parameter");
+    Require(sceVrTracker2GetPlayAreaData(reinterpret_cast<VrTracker2BoundaryParameter*>(output.bytes)) == NotInitialized,
+            "get play area data before initialization");
+    Require(output.Untouched(), "get play area data wrote nothing");
+    Require(sceVrTracker2SetPlayAreaData(reinterpret_cast<const VrTracker2BoundaryParameter*>(parameter.bytes)) == NotInitialized,
+            "set play area data before initialization");
+    Require(parameter.Untouched(), "set play area data wrote nothing to the parameter");
+    Require(sceVrTracker2GetPlayAreaData2(1, 0, reinterpret_cast<VrTracker2DeviceBoundaryParameter*>(output.bytes)) == NotInitialized,
+            "get device play area data before initialization");
+    Require(output.Untouched(), "get device play area data wrote nothing");
+    Require(sceVrTracker2SetPlayAreaData2(1, 0, reinterpret_cast<const VrTracker2DeviceBoundaryParameter*>(parameter.bytes)) == NotInitialized,
+            "set device play area data before initialization");
+    Require(parameter.Untouched(), "set device play area data wrote nothing to the parameter");
+
+    Require(sceVrTracker2GetPlayAreaInformation(reinterpret_cast<VrTracker2RuntimeStatus*>(output.bytes)) == NotInitialized,
+            "get play area information before initialization");
+    Require(output.Untouched(), "get play area information wrote nothing");
+    Require(sceVrTracker2GetPlayAreaResult(reinterpret_cast<VrTracker2TrackingStatus*>(output.bytes)) == NotInitialized,
+            "get play area result before initialization");
+    Require(output.Untouched(), "get play area result wrote nothing");
+    Require(sceVrTracker2GetPlayAreaOrientedBoundingBoxEx(reinterpret_cast<VrTracker2OrientedBoundingBox*>(output.bytes)) == NotInitialized,
+            "get extended play area bounding box before initialization");
+    Require(output.Untouched(), "get extended play area bounding box wrote nothing");
+    Require(sceVrTracker2GetCurrentPlayAreaId(1, reinterpret_cast<std::int32_t*>(output.bytes)) == NotInitialized,
+            "get current play area id before initialization");
+    Require(output.Untouched(), "get current play area id wrote nothing");
+    Require(sceVrTracker2SetCurrentPlayAreaId(1, 0) == NotInitialized, "set current play area id before initialization");
+
     Require(sceVrTracker2GetResult(reinterpret_cast<const VrTracker2ResultParameter*>(parameter.bytes),
                                    reinterpret_cast<VrTracker2Result*>(output.bytes)) == NotInitialized,
             "get result before initialization");

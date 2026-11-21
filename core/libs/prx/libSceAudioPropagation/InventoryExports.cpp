@@ -5,10 +5,6 @@
 
 extern "C" {
 
-int APS5_VABI sceAudioPropagationSourceQueryAudioPaths() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceAudioPropagationUnknown_TrQMW7ARZXY_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

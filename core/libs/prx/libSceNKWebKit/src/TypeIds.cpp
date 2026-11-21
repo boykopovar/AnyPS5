@@ -186,6 +186,10 @@ std::uint32_t APS5_VABI WKKeyValueStorageManagerGetTypeID() {
     return 0;
 }
 
+std::uint32_t APS5_VABI WKMediaSessionMetadataGetTypeID() {
+    return NKWebKit::TypeID(NKWebKit::ObjectType::MediaSessionMetadata);
+}
+
 std::uint32_t APS5_VABI WKMessageListenerGetTypeID() {
     return NKWebKit::TypeID(NKWebKit::ObjectType::MessageListener);
 }
@@ -264,6 +268,10 @@ std::uint32_t APS5_VABI WKPointGetTypeID() {
 
 std::uint32_t APS5_VABI WKPopupMenuItemGetTypeID() {
     return NKWebKit::TypeID(NKWebKit::ObjectType::PopupMenuItem);
+}
+
+std::uint32_t APS5_VABI WKPreferencesGetTypeID() {
+    return NKWebKit::TypeID(NKWebKit::ObjectType::Preferences);
 }
 
 std::uint32_t APS5_VABI WKProtectionSpaceGetTypeID() {

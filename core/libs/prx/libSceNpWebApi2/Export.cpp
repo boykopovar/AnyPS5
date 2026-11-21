@@ -55,6 +55,13 @@ struct MultipartRequest {
 static std::mutex g_multipartMutex;
 static std::unordered_map<std::int64_t, MultipartRequest> g_multipartRequests;
 
+static bool CopyOutRequestId(int64_t* requestId, int64_t created) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(requestId, &created, sizeof(created));
+    errno = savedErrno;
+    return copied;
+}
+
 static void RegisterRequest(std::int64_t requestId) {
     std::lock_guard lock(g_multipartMutex);
     g_multipartRequests.try_emplace(requestId);
@@ -63,6 +70,13 @@ static void RegisterRequest(std::int64_t requestId) {
 static void ForgetRequest(std::int64_t requestId) {
     std::lock_guard lock(g_multipartMutex);
     g_multipartRequests.erase(requestId);
+}
+
+static int CopyGuestStringPreservingErrno(const char* source, std::size_t maximum, std::string& out) {
+    const int savedErrno = errno;
+    const int status = CopyGuestString_nid_no_patch(source, maximum, out);
+    errno = savedErrno;
+    return status;
 }
 
 extern "C" {
@@ -91,6 +105,8 @@ int APS5_VABI sceNpWebApi2AddHttpRequestHeader(int64_t request_id, const char* f
 int APS5_VABI sceNpWebApi2AddWebTraceTag(std::int64_t requestId, const char* value) {
     (void)requestId;
     if (!value) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    std::string tagCopy;
+    if (CopyGuestStringPreservingErrno(value, 4096, tagCopy) != 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -113,7 +129,7 @@ int APS5_VABI sceNpWebApi2CreateRequest(int user_context_id, const char* api_gro
     }
     if (!request_id) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     const int64_t created = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
-    if (!GuestCopyOut_nid_no_patch(request_id, &created, sizeof(created))) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    if (!CopyOutRequestId(request_id, created)) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     RegisterRequest(created);
     return 0;
 }
@@ -242,6 +258,8 @@ int APS5_VABI sceNpWebApi2Terminate(int lib_ctx_id) {
 }
 
 int APS5_VABI sceNpWebApi2PushEventCreatePushContext(std::int32_t userContextId, NpWebApi2PushContextId* pushContextId) {
+    (void)userContextId;
+    if (!pushContextId) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return SCE_NP_WEBAPI2_ERROR_UNAVAILABLE;
 }
 
@@ -264,6 +282,13 @@ int APS5_VABI sceNpWebApi2PushEventRegisterPushContextCallback(std::int32_t user
 }
 
 int APS5_VABI sceNpWebApi2PushEventStartPushContextCallback(std::int32_t userContextId, const NpWebApi2PushContextId* pushContextId) {
+    (void)userContextId;
+    if (!pushContextId) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    NpWebApi2PushContextId localPushContextId{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localPushContextId, pushContextId, sizeof(localPushContextId));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -310,7 +335,7 @@ int APS5_VABI sceNpWebApi2CreateMultipartRequest(int user_ctx_id, const char* ap
     (void)user_ctx_id;
     if (!api_group || !path || !method) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     const int64_t created = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
-    if (request_id && !GuestCopyOut_nid_no_patch(request_id, &created, sizeof(created))) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    if (request_id && !CopyOutRequestId(request_id, created)) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     RegisterRequest(created);
     return 0;
 }
@@ -364,8 +389,8 @@ int APS5_VABI sceNpWebApi2SetMultipartContentType(int64_t request_id, const char
     if (!type_name) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     std::string contentType;
     std::string boundaryCopy;
-    if (CopyGuestString_nid_no_patch(type_name, 64, contentType) != 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
-    if (boundary != nullptr && CopyGuestString_nid_no_patch(boundary, 64, boundaryCopy) != 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    if (CopyGuestStringPreservingErrno(type_name, 64, contentType) != 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    if (boundary != nullptr && CopyGuestStringPreservingErrno(boundary, 64, boundaryCopy) != 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_multipartMutex);
     const auto request = g_multipartRequests.find(request_id);
     if (request == g_multipartRequests.end()) return SCE_NP_WEBAPI2_ERROR_INVALID_HANDLE;

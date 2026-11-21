@@ -2,6 +2,7 @@ add_library(${LIB_NAME} SHARED EXCLUDE_FROM_ALL Export.cpp Export.Discovery.cpp 
 target_include_directories(${LIB_NAME} PRIVATE ${LIBS_INCLUDE_DIR})
 target_sources(${LIB_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/AdditionalExports.cpp)
 target_sources(${LIB_NAME} PRIVATE Mqueue.cpp)
+target_sources(${LIB_NAME} PRIVATE NamedObject.cpp)
 configure_windows_unwind(${LIB_NAME})
 
-target_sources(${LIB_NAME} PRIVATE Wait.cpp Uuid.cpp)
+target_sources(${LIB_NAME} PRIVATE Wait.cpp Uuid.cpp Lwfs.cpp NormalizePath.cpp)

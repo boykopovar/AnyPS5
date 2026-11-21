@@ -3,6 +3,7 @@
 ### Functional
 
 - [sceBgftServiceIntInit](../../../core/libs/prx/libSceBgft/Export.cpp) - returning `0x80990004` (`SCE_BGFT_ERROR_INVALID_ARGUMENT`) for an unmapped or unreadable parameter pointer is a defensive host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+- [sceBgftServiceIntDownloadRegisterTaskByStorageEx](../../../core/libs/prx/libSceBgft/Export.cpp) - returning `0x80990004` (`SCE_BGFT_ERROR_INVALID_ARGUMENT`) for an unreadable `params` pointer or unreadable non-null string field via `GuestCopyIn_nid_no_patch` and `CopyGuestString_nid_no_patch` is a defensive host-safety fallback preserving host `errno`; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
 
 ### Silent stubs
 

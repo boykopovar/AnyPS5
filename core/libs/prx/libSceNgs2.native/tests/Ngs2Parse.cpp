@@ -366,6 +366,18 @@ static void TestParseUser() {
         static_cast<int>(0x804A0408u));
 }
 
+static void TestParseGuestErrors() {
+    const auto wave = PcmFile(1, 22050, 16, 64);
+    auto* const unmapped = reinterpret_cast<Ngs2WaveformInfo*>(0x10);
+    errno = 0x5566;
+    Require(sceNgs2ParseWaveformData(wave.data(), wave.size(), unmapped) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    Require(sceNgs2ParseWaveformData(nullptr, 0, unmapped) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    Require(sceNgs2ParseWaveformFile(nullptr, 0, unmapped) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    Require(sceNgs2ParseWaveformUser(reinterpret_cast<std::uintptr_t>(&ReadUserWaveform), reinterpret_cast<std::uintptr_t>(&wave), unmapped) ==
+        SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    Require(errno == 0x5566);
+}
+
 static void TestCalcWaveformBlockGuestErrors() {
     const Ngs2WaveformFormat format{SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 2, 48000, 0, 0, 0};
     Ngs2WaveformBlock block{};
@@ -406,6 +418,7 @@ int main() {
     TestParseFileBank();
     TestFrameInfoPcm();
     TestFrameInfoErrors();
+    TestParseGuestErrors();
     TestCalcWaveformBlockGuestErrors();
     TestFrameInfoGuestErrors();
     return 0;

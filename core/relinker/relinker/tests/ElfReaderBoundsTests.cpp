@@ -420,6 +420,15 @@ int main() {
             const auto sections = Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
             Require(sections.size() == 3 && sections[1].Type == 0 && sections[1].Alignment == 3);
         }},
+        {"SHT_NULL section names are ignored", [] {
+            for (const std::size_t offset : {128u, 192u}) {
+                auto bytes = Fixture();
+                Write<std::uint32_t>(bytes, offset, std::numeric_limits<std::uint32_t>::max());
+                Write<std::uint32_t>(bytes, offset + 4, 0);
+                const auto sections = Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
+                Require(sections.size() == 3 && sections[(offset - 128) / 64].Name.empty());
+            }
+        }},
         {"SHT_SYMTAB section entry size mismatch", [] {
             for (const std::uint64_t entrySize : {0ULL, 1ULL, 16ULL, 20ULL, 23ULL, 25ULL, 32ULL, 64ULL, 0xffffffffffffffffULL}) {
                 auto bytes = Fixture();
@@ -443,9 +452,17 @@ int main() {
             }
         }},
         {"section name table index", [] {
-            auto bytes = Fixture();
-            Write<std::uint16_t>(bytes, 62, 3);
-            RejectSections(std::move(bytes));
+            for (const std::uint16_t index : {std::uint16_t{3}, std::uint16_t{4}, std::uint16_t{0xff00}}) {
+                auto bytes = Fixture();
+                Write<std::uint16_t>(bytes, 62, index);
+                RejectSections(std::move(bytes), "Section header string table index out of bounds", 0x3e);
+            }
+            for (const std::uint16_t index : {std::uint16_t{1}, std::uint16_t{0xff00}}) {
+                auto zeroSections = Fixture();
+                Write<std::uint16_t>(zeroSections, 60, 0);
+                Write<std::uint16_t>(zeroSections, 62, index);
+                RejectSections(std::move(zeroSections), "Section header string table index out of bounds", 0x3e);
+            }
         }},
         {"section name table type", [] {
             auto bytes = Fixture();

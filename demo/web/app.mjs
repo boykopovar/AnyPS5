@@ -416,8 +416,9 @@ $("convert").onclick = async () => {
     const target = document.querySelector('input[name="target"]:checked').value;
     if ($("save").value === "zip") {
       const name = selectedInputs.length > 1 ? `anyps5-${target}-apps.zip` : `${selectedInputs[0].name.replace(/\.zip$/iu, "")}-${target}.zip`;
-      sink = await createZipSink(name, () => currentWorker === worker);
-      if (sink === null) return;
+      const writable = await createZipSink(name, () => currentWorker === worker);
+      if (writable === null) return;
+      sink = writable;
     } else if ($("save").value === "disk") {
       const name = selectedInputs[0].name.replace(/\.zip$/iu, "") + "-" + target;
       const parent = await window.showDirectoryPicker({ mode: "readwrite" });
@@ -455,7 +456,7 @@ updateLocaleButton();
 update();
 lock(false);
 if (supported) fetch("./release.json", { cache: "no-cache" }).then(response => { if (!response.ok) throw localizedError(() => translate(locale, "cannotLoadReleaseInfo", { status: response.status, hint: response.status === 404 ? translate(locale, "cannotLoadReleaseInfoHint") : "" })); return response.json(); }).then(value => {
-  if (!value.tag || !["windows", "linux"].every(target => Number.isSafeInteger(value.platforms?.[target]?.expandedBytes))) throw localizedError(() => translate(locale, "invalidReleaseInfo"));
+  if (!value || typeof value !== "object" || typeof value.tag !== "string" || !/^v[0-9A-Za-z][0-9A-Za-z._-]*$/u.test(value.tag) || value.tag.endsWith(".") || !["windows", "linux"].every(target => Number.isSafeInteger(value.platforms?.[target]?.expandedBytes))) throw localizedError(() => translate(locale, "invalidReleaseInfo"));
   release = value;
   update();
 }).catch(error => fail(error instanceof TypeError ? () => translate(locale, "cannotReachReleaseInfo") : error));

@@ -219,6 +219,7 @@ int main() {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (!UnitShadowEnabled()) return Skip("unit shadows are off");
+        if (SkipOnLlvmpipe(*device, "host write over a shadowed unit: the import made without the GPU lock was refused")) return VulkanTestSkipped;
 
         backing = memfd_create("anyps5-host-write-shadowed-unit", MFD_CLOEXEC | MFD_ALLOW_SEALING);
         Require(backing >= 0 && ftruncate(backing, static_cast<off_t>(MappingBytes)) == 0, "host write over a shadowed unit: cannot make the backing file");
@@ -246,7 +247,7 @@ int main() {
             std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
             import = HostImportFor(context, address, MappingBytes);
         }
-        if (import == nullptr || !import->dmaBuf) return Skip("the device imported the mapping through a host pointer, which is compared, not watched");
+        if (import == nullptr || !import->dmaBuf) return Skip("the device imports shared memory through host pointers here, which are compared, not watched");
         if (!AgcDriver::GuestMemory::Watched(firstUnit, 8 * Unit)) return Skip("the imported units are not write-watched");
 
         landHook = AgcDriver::GuestMemory::CurrentFlushHook();

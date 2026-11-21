@@ -224,10 +224,9 @@ def load_stacks(path):
         if line.startswith("#") or not line.strip():
             continue
         frames, _, count = line.rpartition(" ")
-        try:
-            weight = int(count)
-        except ValueError as error:
-            raise ValueError(f"{path}:{number}: sample count must be a positive integer") from error
+        if not (count.isascii() and count.isdigit()):
+            raise ValueError(f"{path}:{number}: sample count must be a positive integer")
+        weight = int(count)
         if weight <= 0 or any(not frame.strip() for frame in frames.split(";")):
             raise ValueError(f"{path}:{number}: expected nonempty frames and a positive sample count")
         stacks.append((frames.split(";"), weight))
@@ -263,15 +262,54 @@ def persistent_peaks(values):
     return sorted((entry for entry in peaks if entry[1] > 0), key=lambda entry: (-entry[1], entry[0]))
 
 
+def recorded_span(trace, tid, frames, full_at):
+    kept = [frame for frame in frames if frame[2] <= full_at]
+    if not kept or tid not in trace.slices:
+        return {}
+    start, until = frames[0][1], kept[-1][2]
+    span_us = until - start
+    if span_us <= 0:
+        return {}
+    gpu = trace.name(tid) == "gpu"
+    traced = waited = 0.0
+    covered_until = -math.inf
+    leaders = collections.Counter()
+    for ts, dur, name, depth, nested in trace.slices[tid]:
+        begin, end = max(ts, start), min(ts + dur, until)
+        if end <= begin:
+            continue
+        waiting = is_wait(name)
+        if depth == 0 or gpu:
+            contribution = max(end - max(begin, covered_until), 0.0) if gpu else end - begin
+            covered_until = max(covered_until, end)
+            traced += contribution
+            if contribution > 0 and not waiting:
+                leaders[name] += contribution
+        if waiting and not nested:
+            waited += end - begin
+    count = len(kept)
+    return {"frames_before_full": count, "recorded_ms": span_us / 1000.0,
+            "busy_ms_per_frame": (traced - waited) / 1000.0 / count, "wait_ms_per_frame": waited / 1000.0 / count,
+            "busy_pct": 100.0 * (traced - waited) / span_us,
+            "top": [{"name": name, "ms_per_frame": us / 1000.0 / count} for name, us in leaders.most_common(2)]}
+
+
 def digest(trace, summary=None, stacks=None, worst=5, top=10):
-    window_ms = summary["window"]["ms"] if summary else None
-    frames = trace.frames(window_ms * 1000.0 if window_ms is not None else None)
+    window_end = None
+    if summary:
+        window = summary["window"]
+        if not isinstance(window, dict):
+            raise ValueError("window must be an object")
+        window_end = interval_number(window["ms"], "window.ms") * 1000.0
+        if not math.isfinite(window_end):
+            raise ValueError("window.ms is too large to convert to microseconds")
+    frames = trace.frames(window_end)
     span_us = frames[-1][2] - frames[0][1] if frames else 0.0
     count = max(len(frames), 1)
     result = {"summary": summary, "frames": len(frames), "window_ms": span_us / 1000.0}
     if trace.losses or (summary and summary.get("trace_dropped")):
         result["trace_incomplete"] = True
-        result["event_loss"] = [{"thread": trace.name(tid), "at_ms": ts / 1000.0, "events_lost": lost}
+        result["event_loss"] = [{"thread": trace.name(tid), "at_ms": ts / 1000.0, "events_lost": lost, **recorded_span(trace, tid, frames, ts)}
                                 for tid, ts, lost in trace.losses]
 
     slowest = []
@@ -415,18 +453,24 @@ def markdown(result):
     if result.get("trace_incomplete"):
         lines += ["", "**Incomplete trace:** recorded data was lost. Slice-based timings, waits and batch inventories cover retained events only; missing slices are not idle time. Summary statistics are reported separately."]
         for loss in result["event_loss"]:
-            lines.append(f"- {table_cell(loss['thread'])}: {loss['events_lost']} events lost; buffer full at {loss['at_ms']:.1f} ms")
+            span = ""
+            if "frames_before_full" in loss:
+                largest = ", ".join(f"{markdown_text(entry['name'])} {entry['ms_per_frame']:.1f}" for entry in loss["top"])
+                span = (f"; over the {loss['frames_before_full']} of {result['frames']} frames that ended before it: busy {loss['busy_ms_per_frame']:.1f} ms per frame "
+                        f"({loss['busy_pct']:.0f} %), wait {loss['wait_ms_per_frame']:.1f}" + (f", largest {largest}" if largest else "")
+                        + " (the thread table divides the retained slices by every frame)")
+            lines.append(f"- {table_cell(loss['thread'])}: {loss['events_lost']} events lost; buffer full at {loss['at_ms']:.1f} ms{span}")
     lines.append("")
     lines.append("**Slowest frames** (largest slices inside each, inclusive)")
     lines.append("")
     for frame in result["slowest_frames"]:
         parts = ", ".join(f"{markdown_text(entry['name'])} ({markdown_text(entry['thread'])}) {entry['ms']:.1f}" for entry in frame["slices"])
-        lines.append(f"- present {frame['present']}: {frame['ms']:.1f} ms at {frame['at_ms']:.0f} ms: {parts}")
+        lines.append(f"- present {markdown_text(frame['present'])}: {frame['ms']:.1f} ms at {frame['at_ms']:.0f} ms: {parts}")
     lines.append("")
     lines.append("**Persistent spikes** (frame time above the fastest frame that separates it from a longer frame; one entry per stall, not per frame)")
     lines.append("")
     for spike in result["persistent_spikes"]:
-        lines.append(f"- present {spike['present']}: {spike['ms']:.1f} ms at {spike['at_ms']:.0f} ms, persistence {spike['persistence_ms']:.1f} ms")
+        lines.append(f"- present {markdown_text(spike['present'])}: {spike['ms']:.1f} ms at {spike['at_ms']:.0f} ms, persistence {spike['persistence_ms']:.1f} ms")
     lines.append("")
     lines.append("**Threads** (ms per frame)")
     lines.append("")
@@ -442,7 +486,7 @@ def markdown(result):
     lines.append("**Longest waits**")
     lines.append("")
     for wait in result["longest_waits"]:
-        lines.append(f"- {markdown_text(wait['name'])} ({markdown_text(wait['thread'])}) {wait['ms']:.1f} ms at {wait['at_ms']:.0f} ms, present {wait['present']}")
+        lines.append(f"- {markdown_text(wait['name'])} ({markdown_text(wait['thread'])}) {wait['ms']:.1f} ms at {wait['at_ms']:.0f} ms, present {markdown_text(wait['present'])}")
     if "largest_gpu_batches" in result:
         lines.append("")
         lines.append("**Largest GPU batches** (GPU ranges inside, and the CPU slices that recorded each, inclusive)")
@@ -450,7 +494,7 @@ def markdown(result):
         for batch in result["largest_gpu_batches"]:
             ranges = ", ".join(f"{markdown_text(entry['name'])} {entry['ms']:.1f}" for entry in batch["gpu_ranges"]) or "no ranges"
             recorded = ", ".join(f"{markdown_text(entry['name'])} ({markdown_text(entry['thread'])}) {entry['ms']:.1f}" for entry in batch["recorded_by"]) or "no CPU slices"
-            lines.append(f"- batch {batch['batch']}: {batch['ms']:.1f} ms at {batch['at_ms']:.0f} ms, present {batch['present']}: GPU {ranges}; recorded by {recorded}")
+            lines.append(f"- batch {markdown_text(batch['batch'])}: {batch['ms']:.1f} ms at {batch['at_ms']:.0f} ms, present {markdown_text(batch['present'])}: GPU {ranges}; recorded by {recorded}")
     if "stacks" in result:
         stacks = result["stacks"]
         lines.append("")
@@ -466,7 +510,7 @@ def load_intervals(path):
     candidate = resolve_summary_path(path)
     lines = []
     for number, record in load_summary_lines(candidate, numbered=True, label=path):
-        if "interval_start_s" not in record:
+        if "interval_start_s" not in record and "interval_end_s" not in record:
             continue
         try:
             validate_interval(record)
@@ -509,6 +553,9 @@ def validate_interval(record):
     counts = record.get("owned_draw_counts", {})
     if not isinstance(counts, dict) or any(not isinstance(name, str) or type(value) is not int or value < 0 for name, value in counts.items()):
         raise ValueError("owned_draw_counts must map names to non-negative integers")
+    graphics = record.get("graphics_track", {})
+    if not isinstance(graphics, dict) or any(not isinstance(name, str) or type(value) is not int or value < 0 for name, value in graphics.items()):
+        raise ValueError("graphics_track must map names to non-negative integers")
     if "trace_dropped" in record and type(record["trace_dropped"]) is not bool:
         raise ValueError("trace_dropped must be a boolean")
 
@@ -531,7 +578,8 @@ def digest_intervals(lines):
                      "frame_ms": line["frame_ms"], "gpu_busy_ms_per_present": line["gpu_busy_ms_per_present"],
                      "busiest_worker": {"thread": busiest[0], "pct": busiest[1]} if busiest else None,
                      "top_phase": {"name": largest[0], "ms_per_frame": largest[1]} if largest else None,
-                     "trace_dropped": line.get("trace_dropped", False), "owned_draw_counts": line.get("owned_draw_counts")})
+                     "trace_dropped": line.get("trace_dropped", False), "owned_draw_counts": line.get("owned_draw_counts"),
+                     "graphics_track": line.get("graphics_track")})
     first = lines[0] if lines else {}
     keys = ("commit", "dirty", "env", "gpu", "driver", "os", "resolution",
             "cpu", "cpu_threads", "memory_mib", "title_id", "title", "content_version")
@@ -561,6 +609,21 @@ def markdown_intervals(result):
         lines += ["", "| # | " + " | ".join(table_cell(name) for name in count_names) + " |", "|---|" + "---|" * len(count_names)]
         for index, row in enumerate(rows, 1):
             lines.append(f"| {index} | " + " | ".join(str(row["owned_draw_counts"].get(name, 0)) if row["owned_draw_counts"] is not None else "-" for name in count_names) + " |")
+    track = [row["graphics_track"] or {} for row in rows]
+    if any(track):
+        lines += ["", "| # | passes | continued | closed | top close reason | barriers | merged | copies | copy MiB |",
+                  "|---|---|---|---|---|---|---|---|---|"]
+        for index, (row, counts) in enumerate(zip(rows, track), 1):
+            if row["graphics_track"] is None:
+                lines.append(f"| {index} | " + " | ".join(["-"] * 8) + " |")
+                continue
+            closes = {name[len("Graphics.RenderPass.Close."):]: value for name, value in counts.items() if name.startswith("Graphics.RenderPass.Close.")}
+            top_close = max(closes, key=closes.get) if closes else "-"
+            barriers = sum(value for name, value in counts.items() if name.startswith("Graphics.Barrier."))
+            merged = sum(value for name, value in counts.items() if name.startswith("Graphics.BarrierMerged."))
+            lines.append(f"| {index} | {counts.get('Graphics.RenderPass', 0)} | {counts.get('Graphics.RenderPass.Continued', 0)} "
+                         f"| {sum(closes.values())} | {table_cell(top_close)} | {barriers} | {merged} "
+                         f"| {counts.get('Graphics.Copy', 0)} | {counts.get('Graphics.Copy.bytes', 0) / (1024 * 1024):.1f} |")
     p99 = [row["frame_ms"]["p99"] for row in rows]
     gpu = [row["gpu_busy_ms_per_present"] for row in rows]
     lines += ["", "```", f"p99 ms  {sparkline(p99)}  0-{max(p99):.1f}", f"gpu ms  {sparkline(gpu)}  0-{max(gpu):.1f}", "```"]

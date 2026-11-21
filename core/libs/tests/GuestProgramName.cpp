@@ -65,4 +65,16 @@ int main() {
     }
     Require(nullNameThrew);
     Require(getprogname_nid_postfix() == original);
+    bool unreadableNameThrew = false;
+    try {
+        setprogname_nid_postfix(reinterpret_cast<const char*>(0x10));
+    } catch (const std::invalid_argument&) {
+        unreadableNameThrew = true;
+    }
+    Require(unreadableNameThrew);
+    Require(getprogname_nid_postfix() == original);
+    static const char path[] = "/app0/sub/game.self";
+    setprogname_nid_postfix(path);
+    Require(getprogname_nid_postfix() == path + 10);
+    setprogname_nid_postfix(original);
 }

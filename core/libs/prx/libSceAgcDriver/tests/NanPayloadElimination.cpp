@@ -69,6 +69,13 @@ struct Builder {
         return select(isNan(result), nan, result);
     }
 
+    IrValue& conditionalNanRule(IrValue& lhs, IrValue& rhs) {
+        auto& result = emit(IrOpcode::FPMul32, IrType::F32, {&f32(lhs), &f32(rhs)});
+        auto& invalid = program.CreateValue(IrOpcode::Void, IrType::U1);
+        invalid.SetImmediateBool(false);
+        return bits(emit(IrOpcode::NanPropagateF32, IrType::F32, {&result, &constant(5u), &invalid, &f32(lhs), &f32(rhs), &f32(lhs)}));
+    }
+
     IrValue& saturate(IrValue& value) {
         return bits(emit(IrOpcode::FPSaturate32, IrType::F32, {&f32(value)}));
     }
@@ -105,17 +112,19 @@ bool run(const char* name, const std::function<bool()>& test) {
 
 std::vector<std::uint32_t> Recompiled(std::span<const std::uint32_t> code) {
     const std::array<std::uint32_t, 4> userData{0x10000000u, 0x00100000u, 0x40u, 0x00027facu};
-    const std::array<std::uint32_t, 2> capabilities{1u, 61u};
+    const std::array<std::uint32_t, 4> capabilities{1u, 61u, spv::CapabilityDenormPreserve, spv::CapabilitySignedZeroInfNanPreserve};
     const std::array<std::string_view, 1> extensions{"SPV_KHR_storage_buffer_storage_class"};
     RecompileRequest request{};
     request.shader = {ShaderStage::Compute, 0x20000u, code, 0, {}};
     request.context.waveSize = 32;
+    request.context.floatMode = ShaderFloatMode{0xf0u, true, false, false};
     request.context.userDataBaseRegister = 0;
     request.context.userData = userData;
     request.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
     request.target.vulkanVersion = 0x00403000u;
     request.target.spirvVersion = 0x00010600u;
     request.target.subgroupSize = 32u;
+    request.target.float32DenormPreserve = true;
     request.target.bdaAbiVersion = 1;
     request.target.supportedCapabilities = capabilities;
     request.target.supportedExtensions = extensions;
@@ -155,6 +164,38 @@ int main() {
         b.keep(b.saturate(sum));
         const auto stats = b.eliminate();
         return stats.removedSelects >= 1u && !sum.HasUses();
+    });
+
+    passed &= run("conditional NaN repair is removed through a clamp but retained at a raw sink", [] {
+        Builder clamped;
+        auto& discarded = clamped.conditionalNanRule(clamped.unknown(), clamped.unknown());
+        clamped.keep(clamped.saturate(discarded));
+        clamped.eliminate();
+        Builder raw;
+        auto& observed = raw.conditionalNanRule(raw.unknown(), raw.unknown());
+        raw.keep(observed);
+        raw.eliminate();
+        return discarded.Argument(0)->Opcode() != IrOpcode::NanPropagateF32 && observed.Argument(0)->Opcode() == IrOpcode::NanPropagateF32;
+    });
+
+    passed &= run("a conditional repair feeding an observed chain stays while a clamped branch is removed", [] {
+        Builder b;
+        auto& first = b.conditionalNanRule(b.unknown(), b.unknown());
+        auto& clamped = b.conditionalNanRule(first, b.unknown());
+        auto& observed = b.conditionalNanRule(first, b.unknown());
+        b.keep(b.saturate(clamped));
+        b.keep(observed);
+        b.eliminate();
+        return first.Argument(0)->Opcode() == IrOpcode::NanPropagateF32 && observed.Argument(0)->Opcode() == IrOpcode::NanPropagateF32 && clamped.Argument(0)->Opcode() != IrOpcode::NanPropagateF32;
+    });
+
+    passed &= run("bit work on conditional repair remains observable through a clamp", [] {
+        Builder b;
+        auto& repaired = b.conditionalNanRule(b.unknown(), b.unknown());
+        auto& changed = b.emit(IrOpcode::BitwiseXor32, IrType::U32, {&repaired, &b.constant(0x7f800000u)});
+        b.keep(b.saturate(changed));
+        b.eliminate();
+        return repaired.Argument(0)->Opcode() == IrOpcode::NanPropagateF32;
     });
 
     passed &= run("an f32 NaN result kept as raw bits keeps every select", [] {
@@ -255,23 +296,30 @@ int main() {
         return b.eliminate().removedSelects >= 1u && !sum.HasUses();
     });
 
-    passed &= run("through Recompile, a clamped v_add_f32 stored to a buffer drops the NaN tests an unclamped one keeps", [] {
-        const std::array<std::uint32_t, 6> clamped{
+    passed &= run("through Recompile, clamped add and multiply stored to a buffer drops the NaN tests an unclamped one keeps", [] {
+        std::array<std::uint32_t, 6> clamped{
             0x06020100u,
             0xd5038002u, 0x00020301u,
             0xe0700000u, 0x80000200u,
             0xbf810000u,
         };
-        const std::array<std::uint32_t, 6> unclamped{
+        std::array<std::uint32_t, 6> unclamped{
             0x06020100u,
             0xd5030002u, 0x00020301u,
             0xe0700000u, 0x80000200u,
             0xbf810000u,
         };
-        const auto kept = NanTests(Recompiled(unclamped));
-        const auto left = NanTests(Recompiled(clamped));
-        if (left != 0u || kept == 0u) std::fprintf(stderr, "  %zu NaN tests with clamp, %zu without; expected none with clamp and some without\n", left, kept);
-        return left == 0u && kept != 0u;
+        for (const auto opcode : {0xd5030002u, 0xd5080002u}) {
+            clamped[1] = opcode | 0x8000u;
+            unclamped[1] = opcode;
+            const auto kept = NanTests(Recompiled(unclamped));
+            const auto left = NanTests(Recompiled(clamped));
+            if (left != 0u || kept == 0u) {
+                std::fprintf(stderr, "  opcode %08x: %zu NaN tests with clamp, %zu without; expected none with clamp and some without\n", opcode, left, kept);
+                return false;
+            }
+        }
+        return true;
     });
 
     return passed ? 0 : 1;

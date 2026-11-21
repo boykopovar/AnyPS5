@@ -21,6 +21,7 @@ DT_OS_PLTGOT = 0x61000027
 DT_OS_JMPREL = 0x61000029
 DT_OS_PLTREL = 0x6100002B
 DT_OS_PLTRELSZ = 0x6100002D
+DT_OS_SYMTAB = 0x61000039
 DT_OS_SYMTABSZ = 0x6100003F
 
 
@@ -34,7 +35,7 @@ TARGET_OPTIONS = {
 
 def fixture(jmprel=0x700, pltrelsz=24, os_tags=True, target=0x300, symtab=0x620,
             symbol_bytes=48, symbol_index=1, relocation_type=None, data_relocations=False, linux=False,
-            addend=0):
+            addend=0, sce_size=0x1000):
     image = bytearray(0x1000)
     if relocation_type is None:
         relocation_type = 6 if data_relocations else 7
@@ -46,7 +47,7 @@ def fixture(jmprel=0x700, pltrelsz=24, os_tags=True, target=0x300, symtab=0x620,
         (DT_NEEDED, 1),
         (DT_STRTAB, 0x600),
         (DT_STRSZ, 16),
-        (DT_SYMTAB, symtab),
+        (DT_OS_SYMTAB if os_tags else DT_SYMTAB, symtab),
         (DT_SYMENT, 24),
         (DT_OS_SYMTABSZ, symbol_bytes),
         (DT_RELA, 0x700 if data_relocations else 0x7A0),
@@ -65,7 +66,7 @@ def fixture(jmprel=0x700, pltrelsz=24, os_tags=True, target=0x300, symtab=0x620,
     struct.pack_into("<IIQQQQQQ", image, 120,
                      2, 6, 0x400, 0x400, 0x400, len(tags) * 16, len(tags) * 16, 8)
     struct.pack_into("<IIQQQQQQ", image, 176,
-                     0x61000000, 0, 0, 0, 0, len(image), len(image), 1)
+                     0x61000000, 0, 0, 0, 0, sce_size, sce_size, 1)
     if linux:
         for index in range(3, 8):
             struct.pack_into("<I", image, 64 + index * 56, 0x6fffff01)
@@ -104,7 +105,18 @@ def main():
         work = Path(directory)
         run(relinker, work, "os-valid", fixture())
         run(relinker, work, "sysv-valid", fixture(os_tags=False))
+        run(relinker, work, "os-table-inside-sce-dynlibdata", fixture(sce_size=0x718))
+        run(relinker, work, "os-table-outside-sce-dynlibdata", fixture(sce_size=0x700),
+            "Jump relocation table is outside PT_SCE_DYNLIBDATA")
         run(relinker, work, "empty-table", fixture(pltrelsz=0))
+        run(relinker, work, "symbol-entry-outside-sce-segment",
+            fixture(symtab=0xFE0, symbol_bytes=None), "Symbol table entry out of bounds")
+        run(relinker, work, "symbol-entry-past-sce-segment",
+            fixture(symtab=0x780, symbol_bytes=None, sce_size=0x798), "Symbol table entry out of bounds")
+        run(relinker, work, "symbol-entry-past-sce-segment-last-byte",
+            fixture(symtab=0x780, symbol_bytes=None, sce_size=0x7AF), "Symbol table entry out of bounds")
+        run(relinker, work, "symbol-entry-at-sce-segment-end",
+            fixture(symtab=0x780, symbol_bytes=0x30, sce_size=0x7B0))
         run(relinker, work, "offset-max-empty-table",
             fixture(jmprel=0xFFFFFFFFFFFFFFFF, pltrelsz=0), error)
         run(relinker, work, "offset-wrap-empty-table",

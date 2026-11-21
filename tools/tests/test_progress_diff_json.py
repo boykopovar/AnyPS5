@@ -56,6 +56,20 @@ class FeatureTests(unittest.TestCase):
             result = self.cli("progress_diff.py", base, head)
             self.assertEqual((result.returncode, result.stdout), (2, ""))
 
+    def test_duplicate_json_keys_are_rejected_without_partial_json(self):
+        good = '{"libraries":{"percent":0,"groups":[]},"shaders":{"percent":0,"groups":[]}}'
+        base, head = self.root / "base.json", self.root / "head.json"
+        for text, key in ((good[:-1] + ',"libraries":{"percent":50,"groups":[]}}', "libraries"),
+                          (good.replace('"percent":0,"groups":[]}}', '"percent":0,"percent":9,"groups":[]}}'), "percent")):
+            for paths in ((base, head), (head, base)):
+                with self.subTest(key=key, duplicate=paths[1].name):
+                    paths[0].write_text(good)
+                    paths[1].write_text(text)
+                    result = self.cli("progress_diff.py", base, head)
+                    self.assertEqual((result.returncode, result.stdout), (2, ""))
+                    self.assertIn(f"duplicate JSON key '{key}'", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

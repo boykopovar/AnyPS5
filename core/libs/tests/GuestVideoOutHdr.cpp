@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceVideoOut/include/Buffer.hpp"
 #include "prx/libSceVideoOut/include/Output.hpp"
 #include "prx/libSceVideoOut/include/Event.hpp"
 #include "prx/libSceVideoOut/include/VideoOut.hpp"
@@ -20,6 +21,7 @@
 #include <limits>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -221,6 +223,16 @@ int main() {
         return 77;
     }
     Require(handle > 0, "sceVideoOutOpen failed");
+    std::array<std::byte, 80> fresh{};
+    Require(sceVideoOutGetOutputStatusWithVrr(handle, fresh.data()) == static_cast<int>(0x8029001Cu), "the output status with VRR of a handle without buffers is not refused");
+    std::vector<std::byte> allocation(16u * 1024u * 1024u);
+    const auto aligned = (reinterpret_cast<std::uintptr_t>(allocation.data()) + 65535u) & ~static_cast<std::uintptr_t>(65535u);
+    VideoOutBuffers buffers{reinterpret_cast<void*>(aligned), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    attribute.width = 1920;
+    attribute.height = 1080;
+    attribute.pixel_format = 0x8000000022000000ull;
+    Require(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffers, 1, &attribute, 0, nullptr) == 0, "the buffer registration failed");
     AgcDriverSetHostDisplayHdr_nid_postfix({});
     AgcDriverSetSurfaceHdr10_nid_postfix(false);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));

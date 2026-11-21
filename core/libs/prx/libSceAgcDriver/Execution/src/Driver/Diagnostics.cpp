@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -93,6 +94,14 @@ bool SkippedShader(std::uint64_t address) {
 bool SkipRefusedDraws() {
     static const bool skip = std::getenv("APS5_SKIP_REFUSED_DRAWS") != nullptr;
     return skip;
+}
+
+bool AsyncDrawCompile() {
+    static const bool enabled = [] {
+        const char* text = std::getenv("APS5_ASYNC_DRAW_COMPILE");
+        return text != nullptr && std::strcmp(text, "0") != 0;
+    }();
+    return enabled;
 }
 
 namespace {
