@@ -338,6 +338,39 @@ void CongruentLargeAlignmentOnASharedPage() {
     Require(MaximumAlignment(fixed) == 0x4000, "the largest PT_LOAD alignment at a fixed base fell to " + std::to_string(MaximumAlignment(fixed)));
 }
 
+void RepairsIncongruentLargeAlignmentAtPageStart() {
+    auto source = Fixture(0x2000);
+    std::fill(source.begin() + 0x1000, source.begin() + 0x1100, std::uint8_t{0xAA});
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1000, 0x5000, 0x100, 0x100, 6, 0x8000),
+    };
+    const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
+    RequireImage(output, source, headers, "page-aligned segment with an incongruent large alignment");
+    Require(OutputOffset(output, 0x5000) != 0x1000, "segment with an incongruent large alignment was not moved");
+    Require(OutputAlignment(output, 0x5000) == kPage, "repaired segment still declares an incongruent large alignment");
+    Require(MaximumAlignment(output) == 0x8000, "the original base alignment was not preserved");
+    const auto fixed = Patcher(0x400000).Patch(source, headers, {}, 0, "$ORIGIN/libs", false, false, {});
+    Require(MaximumAlignment(fixed) == 0x8000, "the original base alignment was not preserved at a fixed base");
+
+    const std::vector<Domain::ProgramHeader> bssHeaders{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1000, 0x5000, 0, 0x100, 6, 0x8000),
+    };
+    const auto bssOutput = Patcher().Patch(source, bssHeaders, {}, 0, "$ORIGIN/libs", true, false, {});
+    RequireImage(bssOutput, source, bssHeaders, "zero-file-size segment with an incongruent large alignment");
+    Require(OutputAlignment(bssOutput, 0x5000) == kPage, "zero-file-size segment still declares an incongruent large alignment");
+    Require(MaximumAlignment(bssOutput) == 0x8000, "zero-file-size segment lost the original base alignment");
+
+    const std::vector<Domain::ProgramHeader> unalignedBssHeaders{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1100, 0x5000, 0, 0x100, 6, 0x8000),
+    };
+    const auto unalignedBssOutput = Patcher().Patch(source, unalignedBssHeaders, {}, 0, "$ORIGIN/libs", true, false, {});
+    Require(OutputAlignment(unalignedBssOutput, 0x5000) == 1, "zero-file-size segment with a page-incongruent offset retained an invalid alignment");
+    Require(MaximumAlignment(unalignedBssOutput) == 0x8000, "page-incongruent zero-file-size segment lost the original base alignment");
+}
+
 void LargeAlignmentAtAFixedBaseIsRefused() {
     for (const auto alignment : {std::uint64_t{0x80000000}, std::uint64_t{0x8000000000000000}}) {
         auto source = Fixture(0x2000);
@@ -371,6 +404,7 @@ int main() {
         LargeAlignmentMovesToThePage();
         LargeAlignmentOnASharedPage();
         CongruentLargeAlignmentOnASharedPage();
+        RepairsIncongruentLargeAlignmentAtPageStart();
         LargeAlignmentAtAFixedBaseIsRefused();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
