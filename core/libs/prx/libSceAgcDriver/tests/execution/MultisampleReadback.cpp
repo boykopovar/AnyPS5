@@ -92,6 +92,7 @@ struct Surface {
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkImageView arrayView = VK_NULL_HANDLE;
+    VkImageView storageView = VK_NULL_HANDLE;
     VkRenderPass pass = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -131,7 +132,15 @@ struct Surface {
             view.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
             view.format = format;
             view.subresourceRange = {aspect, 0u, 1u, 0u, layers};
+            VkImageViewUsageCreateInfo viewUsage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
+            viewUsage.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+            if (writable) view.pNext = &viewUsage;
             Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &view, nullptr, &arrayView), "readback fixture array view");
+            if (writable) {
+                viewUsage.usage = VK_IMAGE_USAGE_STORAGE_BIT;
+                Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &view, nullptr, &storageView), "readback fixture storage view");
+            }
+            view.pNext = nullptr;
             VkAttachmentDescription attachment{};
             attachment.format = format;
             attachment.samples = info.samples;
@@ -241,6 +250,7 @@ struct Surface {
         for (const auto framebuffer : framebuffers) if (framebuffer) context.Function<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(context.device, framebuffer, nullptr);
         if (pass) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, pass, nullptr);
         for (const auto view : views) if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
+        if (storageView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, storageView, nullptr);
         if (arrayView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, arrayView, nullptr);
         if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
         if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
@@ -409,7 +419,7 @@ std::vector<std::byte> Upload(TextureDetiler& transfer, TextureDetiler& reader, 
     for (std::uint32_t repeat = 0; repeat < repetitions; ++repeat) {
         for (std::size_t done = 0; done < bytes; done += stride) {
             const auto count = std::min(stride, bytes - done);
-            transfer.DispatchMultisampleImage(batch.Handle(), surface.elementBytes, source.Handle(), offset + done, (count + 3u) & ~std::size_t{3}, surface.arrayView, surface.width, surface.height, surface.layers, surface.samples, first + static_cast<std::uint32_t>(done / surface.elementBytes), static_cast<std::uint32_t>(count / surface.elementBytes));
+            transfer.DispatchMultisampleImage(batch.Handle(), surface.elementBytes, source.Handle(), offset + done, (count + 3u) & ~std::size_t{3}, surface.storageView, surface.width, surface.height, surface.layers, surface.samples, first + static_cast<std::uint32_t>(done / surface.elementBytes), static_cast<std::uint32_t>(count / surface.elementBytes));
         }
         RecordMemoryBarrier(surface.context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     }
@@ -423,23 +433,23 @@ void CheckUploadRefusals(TextureDetiler& transfer, const Surface& surface) {
     Buffer source(surface.context, 256u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     CommandBatch batch(surface.context);
     const auto call = [&](std::uint32_t bytes, std::uint32_t fragments, std::uint32_t first, std::uint32_t elements, std::uint64_t offset = 0u, std::uint64_t range = 4u) {
-        transfer.DispatchMultisampleImage(batch.Handle(), bytes, source.Handle(), offset, range, surface.arrayView, 1u, 1u, 1u, fragments, first, elements);
+        transfer.DispatchMultisampleImage(batch.Handle(), bytes, source.Handle(), offset, range, surface.storageView, 1u, 1u, 1u, fragments, first, elements);
     };
     for (const auto bytes : {0u, 3u, 32u}) Refused([&] { call(bytes, 4u, 0u, 1u); }, "element size is unsupported");
     for (const auto fragments : {0u, 1u, 3u, 16u}) Refused([&] { call(4u, fragments, 0u, 1u); }, "fragment count is unsupported");
     for (const auto range : {std::array{0u, 0u}, std::array{4u, 1u}, std::array{3u, 2u}, std::array{0xffffffffu, 2u}}) Refused([&] { call(4u, 4u, range[0], range[1]); }, "element range is invalid");
     for (const auto range : {std::array<std::uint64_t, 2>{1u, 4u}, std::array<std::uint64_t, 2>{0u, 0u}, std::array<std::uint64_t, 2>{0u, 3u}, std::array<std::uint64_t, 2>{0u, 260u}, std::array<std::uint64_t, 2>{~std::uint64_t{0} - 3u, 8u}}) Refused([&] { call(4u, 4u, 0u, 1u, range[0], range[1]); }, "buffer range is invalid");
-    Refused([&] { transfer.DispatchMultisampleImage(VK_NULL_HANDLE, 4u, source.Handle(), 0u, 4u, surface.arrayView, 1u, 1u, 1u, 4u, 0u, 1u); }, "requires commands, buffer and array view");
-    Refused([&] { transfer.DispatchMultisampleImage(batch.Handle(), 4u, VK_NULL_HANDLE, 0u, 4u, surface.arrayView, 1u, 1u, 1u, 4u, 0u, 1u); }, "requires commands, buffer and array view");
+    Refused([&] { transfer.DispatchMultisampleImage(VK_NULL_HANDLE, 4u, source.Handle(), 0u, 4u, surface.storageView, 1u, 1u, 1u, 4u, 0u, 1u); }, "requires commands, buffer and array view");
+    Refused([&] { transfer.DispatchMultisampleImage(batch.Handle(), 4u, VK_NULL_HANDLE, 0u, 4u, surface.storageView, 1u, 1u, 1u, 4u, 0u, 1u); }, "requires commands, buffer and array view");
     Refused([&] { transfer.DispatchMultisampleImage(batch.Handle(), 4u, source.Handle(), 0u, 4u, VK_NULL_HANDLE, 1u, 1u, 1u, 4u, 0u, 1u); }, "requires commands, buffer and array view");
-    for (const auto extent : {std::array{0u, 1u, 1u}, std::array{1u, 0u, 1u}, std::array{1u, 1u, 0u}, std::array{16385u, 1u, 1u}, std::array{1u, 16385u, 1u}, std::array{1u, 1u, 8193u}}) Refused([&] { transfer.DispatchMultisampleImage(batch.Handle(), 4u, source.Handle(), 0u, 4u, surface.arrayView, extent[0], extent[1], extent[2], 4u, 0u, 1u); }, "extent is unsupported");
-    Refused([&] { transfer.DispatchMultisampleImage(batch.Handle(), 4u, source.Handle(), 0u, 4u, surface.arrayView, 16384u, 16384u, 8192u, 8u, 0u, 1u); }, "element range is invalid");
+    for (const auto extent : {std::array{0u, 1u, 1u}, std::array{1u, 0u, 1u}, std::array{1u, 1u, 0u}, std::array{16385u, 1u, 1u}, std::array{1u, 16385u, 1u}, std::array{1u, 1u, 8193u}}) Refused([&] { transfer.DispatchMultisampleImage(batch.Handle(), 4u, source.Handle(), 0u, 4u, surface.storageView, extent[0], extent[1], extent[2], 4u, 0u, 1u); }, "extent is unsupported");
+    Refused([&] { transfer.DispatchMultisampleImage(batch.Handle(), 4u, source.Handle(), 0u, 4u, surface.storageView, 16384u, 16384u, 8192u, 8u, 0u, 1u); }, "element range is invalid");
     for (const bool multisample : {false, true}) {
         auto unsupported = surface.context;
         if (multisample) unsupported.storageImageMultisample = false;
         else unsupported.storageImageWriteWithoutFormat = false;
         TextureDetiler unavailable(unsupported);
-        Refused([&] { unavailable.DispatchMultisampleImage(batch.Handle(), 4u, source.Handle(), 0u, 4u, surface.arrayView, 1u, 1u, 1u, 4u, 0u, 1u); }, "does not enable multisampled storage image writes without format");
+        Refused([&] { unavailable.DispatchMultisampleImage(batch.Handle(), 4u, source.Handle(), 0u, 4u, surface.storageView, 1u, 1u, 1u, 4u, 0u, 1u); }, "does not enable multisampled storage image writes without format");
     }
 }
 
