@@ -9,6 +9,7 @@
 #include FT_TRIGONOMETRY_H
 #include FT_GLYPH_H
 #include FT_MODULE_H
+#include FT_RENDER_H
 #include FT_TYPE1_TABLES_H
 #include <algorithm>
 #include <array>
@@ -16,7 +17,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <exception>
 #include <random>
 #include <vector>
 #ifdef _WIN32
@@ -39,6 +39,7 @@ struct Exports {
     decltype(&FT_Outline_Copy_nid_postfix) copy;
     decltype(&FT_Outline_Decompose_nid_postfix) decompose;
     decltype(&FT_Outline_Get_Bitmap_nid_postfix) outlineBitmap;
+    decltype(&FT_Set_Renderer_nid_postfix) setRenderer;
 };
 
 using SetCoordinates = decltype(&FT_Set_Var_Design_Coordinates_nid_postfix);
@@ -148,6 +149,14 @@ void Libraries() {
     FreeType::GuestLibrary* library = nullptr;
     FT_Library native = nullptr;
     Require(forwarded.init(&library) == 0 && library && FT_Init_FreeType(&native) == 0, "initialize libraries");
+    auto* renderer = forwarded.getModule(library, "smooth");
+    auto* nativeRenderer = reinterpret_cast<FT_Renderer>(FT_Get_Module(native, "smooth"));
+    Require(renderer != nullptr && nativeRenderer != nullptr, "find the smooth renderer");
+    Require(ot.setRenderer(library, renderer, 0, nullptr) == FT_Set_Renderer(native, nativeRenderer, 0, nullptr),
+            "select the smooth renderer");
+    Require(FT_Get_Renderer(native, FT_GLYPH_FORMAT_OUTLINE) == nativeRenderer, "native renderer selected");
+    Require(ot.setRenderer(library, nullptr, 0, nullptr) == FT_Set_Renderer(native, nullptr, 0, nullptr),
+            "reject a missing renderer");
     for (FreeType::GuestLibrary* queried : {library, static_cast<FreeType::GuestLibrary*>(nullptr)}) {
         std::array<std::int32_t, 3> actual{-1, -1, -1};
         std::array<FT_Int, 3> expected{-1, -1, -1};
@@ -417,36 +426,22 @@ void Strokers() {
                     FT_Stroker_GetBorderCounts(host, static_cast<FT_StrokerBorder>(border), &nativePointCount, &nativeContourCount), "border counts");
             Require(pointCount == nativePointCount && contourCount == nativeContourCount, "border count values");
             Require(border == FT_STROKER_BORDER_RIGHT || pointCount > 0, "left border has points");
-            if constexpr (sizeof(FT_Pos) == sizeof(std::int64_t)) {
-                std::vector<GuestVector> exportedPoints(pointCount);
-                std::vector<unsigned char> exportedTags(pointCount);
-                std::vector<std::uint16_t> exportedContours(contourCount);
-                GuestOutline exported{0, 0, exportedPoints.data(), exportedTags.data(), exportedContours.data(), 0};
-                std::vector<FT_Vector> expectedPoints(pointCount);
-                std::vector<unsigned char> expectedTags(pointCount);
-                std::vector<unsigned short> expectedContours(contourCount);
-                FT_Outline expected{0, 0, expectedPoints.data(), expectedTags.data(), expectedContours.data(), 0};
-                strokers.exportBorder(guest, border, &exported);
-                FT_Stroker_ExportBorder(host, static_cast<FT_StrokerBorder>(border), &expected);
-                Require(exported.n_points == expected.n_points && exported.n_contours == expected.n_contours && exported.n_points == pointCount, "exported counts");
-                for (std::uint32_t index = 0; index < pointCount; ++index) {
-                    Require(exportedPoints[index].x == expectedPoints[index].x && exportedPoints[index].y == expectedPoints[index].y, "exported points");
-                    Require(exportedTags[index] == expectedTags[index], "exported tags");
-                }
-                for (std::uint32_t index = 0; index < contourCount; ++index) Require(exportedContours[index] == expectedContours[index], "exported contours");
-            } else {
-                std::vector<GuestVector> exportedPoints(pointCount);
-                std::vector<unsigned char> exportedTags(pointCount);
-                std::vector<std::uint16_t> exportedContours(contourCount);
-                GuestOutline exported{0, 0, exportedPoints.data(), exportedTags.data(), exportedContours.data(), 0};
-                bool threw = false;
-                try {
-                    strokers.exportBorder(guest, border, &exported);
-                } catch (const std::exception&) {
-                    threw = true;
-                }
-                Require(threw, "32-bit FT_Pos export border throws");
+            std::vector<GuestVector> exportedPoints(pointCount);
+            std::vector<unsigned char> exportedTags(pointCount);
+            std::vector<std::uint16_t> exportedContours(contourCount);
+            GuestOutline exported{0, 0, exportedPoints.data(), exportedTags.data(), exportedContours.data(), 0};
+            std::vector<FT_Vector> expectedPoints(pointCount);
+            std::vector<unsigned char> expectedTags(pointCount);
+            std::vector<unsigned short> expectedContours(contourCount);
+            FT_Outline expected{0, 0, expectedPoints.data(), expectedTags.data(), expectedContours.data(), 0};
+            strokers.exportBorder(guest, border, &exported);
+            FT_Stroker_ExportBorder(host, static_cast<FT_StrokerBorder>(border), &expected);
+            Require(exported.n_points == expected.n_points && exported.n_contours == expected.n_contours && exported.n_points == pointCount, "exported counts");
+            for (std::uint32_t index = 0; index < pointCount; ++index) {
+                Require(exportedPoints[index].x == expectedPoints[index].x && exportedPoints[index].y == expectedPoints[index].y, "exported points");
+                Require(exportedTags[index] == expectedTags[index], "exported tags");
             }
+            for (std::uint32_t index = 0; index < contourCount; ++index) Require(exportedContours[index] == expectedContours[index], "exported contours");
             strokers.exportBorder(guest, border, nullptr);
         }
         strokers.done(guest);
@@ -491,6 +486,9 @@ int main(int argc, char** argv) {
     const bool forwards = true;
     void* dependency = library;
 #endif
+    Resolve(ot.setRenderer, library, patched, "Yu9oXRVmTTo", "sceFreeTypeOtSetRenderer_nid_no_patch");
+    Require(ot.setRenderer(nullptr, nullptr, 0, nullptr) == FT_Set_Renderer(nullptr, nullptr, 0, nullptr),
+            "reject a missing library");
     if (forwards) {
         Require(dependency != nullptr, "locate libSceFreeType");
         Resolve(forwarded.init, library, patched, "GNsiLzm4SH8", "FT_Init_FreeType_nid_postfix");

@@ -13,6 +13,7 @@ void Require(bool value) {
 
 int main() {
     constexpr int notInitialized = static_cast<int>(0x8178000Au);
+    constexpr int nullArgument = static_cast<int>(0x81780001u);
     for (int call = 0; call < 2; ++call) {
         Require(libSceEsvmEngineUnknown_TLCfQqZ_minus_6AU_nid_no_patch() == notInitialized);
         Require(sceEsvmEngineAddDecoder() == notInitialized);
@@ -35,6 +36,9 @@ int main() {
         Require(sceEsvmEngineSetMediaKeys() == notInitialized);
         Require(sceEsvmEngineSetPlaybackRate() == notInitialized);
         Require(sceEsvmEngineSyncVideo() == notInitialized);
+        Require(sceEsvmEngineInitializeCdm(nullptr) == nullArgument);
+        Require(sceEsvmEngineQueryVideoMemory(nullptr) == nullArgument);
+        Require(libSceEsvmEngineUnknown_Y6Rtwfuj0Bw_nid_no_patch(nullptr) == nullArgument);
     }
     return 0;
 }
