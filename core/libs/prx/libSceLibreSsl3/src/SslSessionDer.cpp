@@ -18,9 +18,7 @@ namespace {
 constexpr int Asn1Library = 13;
 constexpr int AnyFunction = 0xfff;
 constexpr int BadObjectHeader = 102;
-constexpr int TooLong = 155;
 constexpr int MallocFailure = 65;
-constexpr int WrongTag = 168;
 
 constexpr char DecodeCaller[] = "d2i_SSL_SESSION";
 
@@ -136,7 +134,8 @@ bool EncodeSession(const LibreSsl3SslSession& session, std::vector<unsigned char
     AppendInteger(content, SessionAsn1Version);
     AppendInteger(content, static_cast<std::uint64_t>(session.sslVersion));
 
-    const std::array<unsigned char, 2> cipherSuite{0, 0};
+    const std::array<unsigned char, 2> cipherSuite{static_cast<unsigned char>(session.cipherValue >> 8),
+        static_cast<unsigned char>(session.cipherValue)};
     AppendTlv(content, OctetStringTag, cipherSuite);
 
     AppendTlv(content, OctetStringTag,
@@ -165,42 +164,24 @@ bool EncodeSession(const LibreSsl3SslSession& session, std::vector<unsigned char
 }
 
 bool ReadTlv(std::span<const unsigned char>& input, Tlv& value) {
-    if (input.size() < 2) {
-        PutError(BadObjectHeader);
-        return false;
-    }
+    if (input.size() < 2) return false;
     const unsigned char tag = input[0];
     const unsigned char lengthByte = input[1];
-    if ((tag & 0x1f) == 0x1f) {
-        PutError(BadObjectHeader);
-        return false;
-    }
+    if ((tag & 0x1f) == 0x1f) return false;
     std::size_t header = 2;
     std::size_t length = lengthByte;
     if ((lengthByte & 0x80) != 0) {
         const std::size_t count = lengthByte & 0x7f;
-        if (count == 0 || count == 0x7f || count > 4) {
-            PutError(BadObjectHeader);
-            return false;
-        }
-        if (input.size() < 2 + count) {
-            PutError(BadObjectHeader);
-            return false;
-        }
+        if (count == 0 || count == 0x7f || count > 4) return false;
+        if (input.size() < 2 + count) return false;
         std::size_t longLength = 0;
         for (std::size_t index = 0; index < count; ++index)
             longLength = (longLength << 8) | input[2 + index];
-        if (longLength < 0x80 || input[2] == 0) {
-            PutError(BadObjectHeader);
-            return false;
-        }
+        if (longLength < 0x80 || input[2] == 0) return false;
         length = longLength;
         header += count;
     }
-    if (length > input.size() - header) {
-        PutError(TooLong);
-        return false;
-    }
+    if (length > input.size() - header) return false;
     value.tag = tag;
     value.content = input.subspan(header, length);
     input = input.subspan(header + length);
@@ -208,12 +189,7 @@ bool ReadTlv(std::span<const unsigned char>& input, Tlv& value) {
 }
 
 bool ReadTlv(std::span<const unsigned char>& input, unsigned char tag, Tlv& value) {
-    if (!ReadTlv(input, value)) return false;
-    if (value.tag != tag) {
-        PutError(WrongTag);
-        return false;
-    }
-    return true;
+    return ReadTlv(input, value) && value.tag == tag;
 }
 
 bool ReadOptional(std::span<const unsigned char>& input, unsigned char tag, Tlv& value, bool& present) {
@@ -223,24 +199,12 @@ bool ReadOptional(std::span<const unsigned char>& input, unsigned char tag, Tlv&
 }
 
 bool ReadIntegerContent(std::span<const unsigned char> content, std::uint64_t& value) {
-    if (content.empty()) {
-        PutError(BadObjectHeader);
-        return false;
-    }
-    if ((content[0] & 0x80) != 0) {
-        PutError(BadObjectHeader);
-        return false;
-    }
-    if (content[0] == 0 && content.size() > 1 && (content[1] & 0x80) == 0) {
-        PutError(BadObjectHeader);
-        return false;
-    }
+    if (content.empty()) return false;
+    if ((content[0] & 0x80) != 0) return false;
+    if (content[0] == 0 && content.size() > 1 && (content[1] & 0x80) == 0) return false;
     value = 0;
     for (const unsigned char byte : content) {
-        if ((value >> 56) != 0) {
-            PutError(TooLong);
-            return false;
-        }
+        if ((value >> 56) != 0) return false;
         value = (value << 8) | byte;
     }
     return true;
@@ -264,10 +228,7 @@ bool ReadOptionalInteger(std::span<const unsigned char>& input, unsigned char ta
     std::span<const unsigned char> remaining = element.content;
     Tlv integer;
     if (!ReadTlv(remaining, IntegerTag, integer)) return false;
-    if (!remaining.empty()) {
-        PutError(TooLong);
-        return false;
-    }
+    if (!remaining.empty()) return false;
     return ReadIntegerContent(integer.content, value);
 }
 
@@ -286,19 +247,13 @@ bool ReadOptionalOctets(std::span<const unsigned char>& input, unsigned char tag
     std::span<const unsigned char> remaining = element.content;
     Tlv octets;
     if (!ReadTlv(remaining, OctetStringTag, octets)) return false;
-    if (!remaining.empty()) {
-        PutError(TooLong);
-        return false;
-    }
+    if (!remaining.empty()) return false;
     value = octets.content;
     return true;
 }
 
 bool CopyIntoArray(std::span<const unsigned char> source, unsigned char* destination, std::size_t capacity) {
-    if (source.size() > capacity) {
-        PutError(TooLong);
-        return false;
-    }
+    if (source.size() > capacity) return false;
     if (!source.empty()) std::memcpy(destination, source.data(), source.size());
     return true;
 }
@@ -311,25 +266,17 @@ bool DecodeSession(std::span<const unsigned char> input, std::span<const unsigne
 
     std::uint64_t version = 0;
     if (!ReadRequiredInteger(content, version)) return false;
-    if (version != SessionAsn1Version) {
-        PutError(BadObjectHeader);
-        return false;
-    }
+    if (version != SessionAsn1Version) return false;
 
     std::uint64_t tlsVersion = 0;
     if (!ReadRequiredInteger(content, tlsVersion)) return false;
-    if (tlsVersion > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
-        PutError(TooLong);
-        return false;
-    }
+    if (tlsVersion > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) return false;
     session.sslVersion = static_cast<std::int32_t>(tlsVersion);
 
     std::span<const unsigned char> cipherSuite;
     if (!ReadRequiredOctets(content, cipherSuite)) return false;
-    if (cipherSuite.size() != 2) {
-        PutError(BadObjectHeader);
-        return false;
-    }
+    if (cipherSuite.size() != 2) return false;
+    session.cipherValue = static_cast<std::uint16_t>(cipherSuite[0] << 8 | cipherSuite[1]);
 
     std::span<const unsigned char> sessionId;
     if (!ReadRequiredOctets(content, sessionId)) return false;
@@ -343,19 +290,13 @@ bool DecodeSession(std::span<const unsigned char> input, std::span<const unsigne
 
     std::uint64_t sessionTime = 0;
     if (!ReadOptionalInteger(content, TimeTag, sessionTime, 0)) return false;
-    if (sessionTime > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
-        PutError(TooLong);
-        return false;
-    }
+    if (sessionTime > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) return false;
     session.time = static_cast<std::int64_t>(std::time(nullptr));
     if (sessionTime != 0) session.time = static_cast<std::int64_t>(sessionTime);
 
     std::uint64_t timeout = 0;
     if (!ReadOptionalInteger(content, TimeoutTag, timeout, DefaultSessionTimeout)) return false;
-    if (timeout > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
-        PutError(TooLong);
-        return false;
-    }
+    if (timeout > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) return false;
     session.timeout = static_cast<std::int64_t>(DefaultSessionTimeout);
     if (timeout != 0) session.timeout = static_cast<std::int64_t>(timeout);
 
@@ -375,10 +316,7 @@ bool DecodeSession(std::span<const unsigned char> input, std::span<const unsigne
 
     std::uint64_t verifyResult = 0;
     if (!ReadOptionalInteger(content, VerifyResultTag, verifyResult, 0)) return false;
-    if (verifyResult > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
-        PutError(TooLong);
-        return false;
-    }
+    if (verifyResult > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) return false;
     session.verifyResult = static_cast<std::int64_t>(verifyResult);
 
     std::span<const unsigned char> hostname;
@@ -405,6 +343,7 @@ int APS5_VABI i2d_SSL_SESSION_nid_postfix(LibreSsl3SslSession* session, unsigned
     if (!session) return 0;
     LibreSsl3SslSession fields{};
     if (!CopyIn(&fields, session, sizeof(fields))) NotImplemented_nid_no_patch(__func__);
+    if (fields.cipherValue == 0) return 0;
 
     std::vector<unsigned char> encoded;
     if (!EncodeSession(fields, encoded)) return -1;

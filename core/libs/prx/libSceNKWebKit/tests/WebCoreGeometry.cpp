@@ -524,6 +524,28 @@ static void TestTransformationMatrix() {
     _ZN7WebCore20TransformationMatrix6rotateEd(&rotMat, 90.0);
     Require(AlmostEqual(rotMat.m_matrix[0][1], 1.0));
 
+    for (const double turns : {360.0, -360.0, 720.0, 3600.0, 0.0, -0.0}) {
+        WebCore::TransformationMatrix turned;
+        Require(&_ZN7WebCore20TransformationMatrix6rotateEd(&turned, turns) == &turned);
+        Require(turned.m_matrix[0][0] == 1.0 && turned.m_matrix[0][1] == 0.0);
+        Require(turned.m_matrix[1][0] == 0.0 && turned.m_matrix[1][1] == 1.0);
+        const WebCore::IntRect whole{WebCore::IntPoint{0, 0}, WebCore::IntSize{100, 100}};
+        const WebCore::IntRect mapped = _ZNK7WebCore20TransformationMatrix7mapRectERKNS_7IntRectE(&turned, whole);
+        Require(mapped.m_location.m_x == 0 && mapped.m_location.m_y == 0);
+        Require(mapped.m_size.m_width == 100 && mapped.m_size.m_height == 100);
+    }
+    WebCore::TransformationMatrix sheared;
+    _ZN7WebCore20TransformationMatrix4skewEdd(&sheared, 30.0, 45.0);
+    const WebCore::TransformationMatrix shearedBefore = sheared;
+    _ZN7WebCore20TransformationMatrix6rotateEd(&sheared, 360.0);
+    for (int row = 0; row < 4; ++row)
+        for (int column = 0; column < 4; ++column)
+            Require(sheared.m_matrix[row][column] == shearedBefore.m_matrix[row][column]);
+    WebCore::TransformationMatrix half;
+    _ZN7WebCore20TransformationMatrix6rotateEd(&half, 180.0);
+    Require(half.m_matrix[0][0] == -1.0 && half.m_matrix[1][1] == -1.0);
+    Require(half.m_matrix[0][1] != 0.0 && AlmostEqual(half.m_matrix[0][1], 0.0));
+
     WebCore::TransformationMatrix rot3dMat;
     _ZN7WebCore20TransformationMatrix8rotate3dEddd(&rot3dMat, 0.0, 90.0, 0.0);
     Require(_ZNK7WebCore20TransformationMatrix12isInvertibleEv(&rot3dMat));

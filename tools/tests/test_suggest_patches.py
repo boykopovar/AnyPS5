@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import tomllib
 from types import SimpleNamespace
 import unittest
@@ -620,6 +621,11 @@ class PatchAdvisorTests(unittest.TestCase):
     @patch.object(suggest_patches.subprocess, "run")
     def test_invalid_timeout_is_rejected_before_relinker(self, run):
         self.assertEqual(self.advise("--timeout-seconds", "0"), 2)
+        run.assert_not_called()
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_timeout_above_platform_limit_is_rejected_before_relinker(self, run):
+        self.assertEqual(self.advise("--timeout-seconds", str(int(threading.TIMEOUT_MAX) + 1024)), 2)
         run.assert_not_called()
 
 
