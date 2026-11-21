@@ -315,6 +315,16 @@ void AttachStream(const std::filesystem::path& root) {
         closes = nativeCloses = 0;
         Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == 0 && FT_Attach_Stream(pair.oracle, &native) == 0);
         Require(closes == 0 && nativeCloses == 0);
+        void* bogus = &bogus;
+        guest.flags = native.flags = FT_OPEN_MEMORY | FT_OPEN_DRIVER | FT_OPEN_PARAMS;
+        guest.driver = bogus;
+        guest.num_params = native.num_params = 3;
+        guest.params = bogus;
+        native.driver = static_cast<FT_Module>(bogus);
+        native.params = static_cast<FT_Parameter*>(bogus);
+        Require(FT_Attach_Stream_nid_postfix(pair.face, &guest) == 0 && FT_Attach_Stream(pair.oracle, &native) == 0);
+        Require(closes == 0 && nativeCloses == 0);
+        pair.Matches();
         guest = {};
         guest.flags = FT_OPEN_PATHNAME;
         Require(Throws([&] { FT_Attach_Stream_nid_postfix(pair.face, &guest); }));
