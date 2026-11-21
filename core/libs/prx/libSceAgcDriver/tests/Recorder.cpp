@@ -14956,10 +14956,11 @@ void oneFragmentFmaskGuardTests(const Device& device) {
     std::cout << "One-fragment FMASK guard tests passed\n";
 }
 
-void fmaskDecompressMsaaTests(const Device& device, Recorder& recorder) {
+void msaaClearPassTests(const Device& device, Recorder& recorder, ColorMetadataPass::Mode mode) {
+    const std::string name = mode == ColorMetadataPass::Mode::FmaskDecompress ? "FMASK decompress" : "fast-clear eliminate";
     const auto& base = device.GetContext();
     if ((base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0 || base.hostImportAlignment == 0) {
-        std::cout << "4x color targets or host imports unavailable: FMASK decompress not tested\n";
+        std::cout << "4x color targets or host imports unavailable: " << name << " not tested\n";
         return;
     }
     constexpr std::uint32_t side = 128;
@@ -14972,7 +14973,7 @@ void fmaskDecompressMsaaTests(const Device& device, Recorder& recorder) {
 #else
     void* block = std::aligned_alloc(65536, (bytes + 65535u) & ~std::size_t{65535u});
 #endif
-    Require(block != nullptr, "cannot allocate the FMASK decompress block");
+    Require(block != nullptr, "cannot allocate the " + name + " block");
     std::memset(block, 0, bytes);
     const auto address = reinterpret_cast<std::uint64_t>(block);
     const auto cmaskAddress = address + 5u * 65536u;
@@ -15027,7 +15028,7 @@ void fmaskDecompressMsaaTests(const Device& device, Recorder& recorder) {
     destination.tileMode = ColorTileMode::RenderTarget;
     {
         std::lock_guard gpu(GpuMutex());
-        RunColorMetadataPass(context, {ColorMetadataPass::Mode::FmaskDecompress, {source}});
+        RunColorMetadataPass(context, {mode, {source}});
         auto recolored = source;
         recolored.clearWords = {0x55667788u, 0};
         RunColorMetadataPass(context, {ColorMetadataPass::Mode::Resolve, {destination}, recolored});
@@ -15037,14 +15038,14 @@ void fmaskDecompressMsaaTests(const Device& device, Recorder& recorder) {
     }
     std::vector<std::uint32_t> resolved(destBytes / 4);
     AgcDriver::GuestMemory::Read(destAddress, std::as_writable_bytes(std::span(resolved)));
-    Require(std::ranges::all_of(resolved, [](auto word) { return word == 0x11223344u; }), "FMASK decompress did not materialize the seeded clear to the host multisampled image");
+    Require(std::ranges::all_of(resolved, [](auto word) { return word == 0x11223344u; }), name + " did not materialize the seeded clear to the host multisampled image");
     source.clearWords = {0x55667788u, 0};
     ColorTarget destination2 = destination;
     destination2.address = destAddress2;
     destination2.surfaceAddress = destAddress2;
     {
         std::lock_guard gpu(GpuMutex());
-        RunColorMetadataPass(context, {ColorMetadataPass::Mode::FmaskDecompress, {source}});
+        RunColorMetadataPass(context, {mode, {source}});
         RunColorMetadataPass(context, {ColorMetadataPass::Mode::Resolve, {destination2}, source});
         recorder.Submit();
         device.WaitQueue();
@@ -15052,8 +15053,8 @@ void fmaskDecompressMsaaTests(const Device& device, Recorder& recorder) {
     }
     std::vector<std::uint32_t> resolved2(destBytes / 4);
     AgcDriver::GuestMemory::Read(destAddress2, std::as_writable_bytes(std::span(resolved2)));
-    Require(std::ranges::all_of(resolved2, [](auto word) { return word == 0x11223344u; }), "subsequent FMASK decompress re-cleared the multisampled target");
-    std::cout << "FMASK decompress MSAA clear and resolve tests passed\n";
+    Require(std::ranges::all_of(resolved2, [](auto word) { return word == 0x11223344u; }), "subsequent " + name + " re-cleared the multisampled target");
+    std::cout << name << " MSAA clear and resolve tests passed\n";
 }
 
 void tiledResolveTests(const Device& device, Recorder& recorder) {
@@ -18860,7 +18861,8 @@ int main(int argc, char** argv) {
             multisampleGuestAccessTests(device, recorder);
             multisampleTargetOverPendingStorageTests(device, recorder);
             oneFragmentFmaskGuardTests(device);
-            fmaskDecompressMsaaTests(device, recorder);
+            msaaClearPassTests(device, recorder, ColorMetadataPass::Mode::FmaskDecompress);
+            msaaClearPassTests(device, recorder, ColorMetadataPass::Mode::EliminateFastClear);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-descriptors-only") {
@@ -18943,7 +18945,8 @@ int main(int argc, char** argv) {
         repeatStorageGuardTests(device, recorder);
         oneFragmentFmaskGuardTests(device);
         tiledResolveTests(device, recorder);
-        fmaskDecompressMsaaTests(device, recorder);
+        msaaClearPassTests(device, recorder, ColorMetadataPass::Mode::FmaskDecompress);
+        msaaClearPassTests(device, recorder, ColorMetadataPass::Mode::EliminateFastClear);
         misalignedSnapshotTests(device, recorder);
         misalignedRegionTests(device, recorder);
         pendingUploadGpuCopyTests(device, recorder);
