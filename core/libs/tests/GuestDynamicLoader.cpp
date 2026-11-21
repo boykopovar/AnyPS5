@@ -199,6 +199,10 @@ int main(int argc, char** argv) {
     other.join();
     Require(dlerror_nid_postfix() != nullptr);
     Require(dlerror_nid_postfix() == nullptr);
+    Require(dlsym_nid_postfix(module, reinterpret_cast<const char*>(0x10)) == nullptr);
+    Require(dlerror_nid_postfix() != nullptr);
+    Require(dlsym_nid_postfix(module, "") == nullptr);
+    Require(dlerror_nid_postfix() != nullptr);
     void* second = dlopen_nid_postfix(argv[1], 1);
     Require(second && second != module);
     Require(dlclose_nid_postfix(module) == 0);
