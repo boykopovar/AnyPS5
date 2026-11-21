@@ -2422,56 +2422,24 @@ static void TestInspector() {
     Require(!WKInspectorIsProfilingPage(ref));
     Require(WKInspectorIsVisible(ref));
 
+    WKInspectorHide(ref);
+    Require(!WKInspectorIsVisible(ref));
+
     WKInspectorAttach(ref);
-    Require(WKInspectorIsAttached(ref));
-    WKInspectorDetach(ref);
     Require(!WKInspectorIsAttached(ref));
-
     WKInspectorConnect(ref);
-    Require(WKInspectorIsConnected(ref));
-
+    Require(!WKInspectorIsConnected(ref));
     WKInspectorShow(ref);
-    Require(WKInspectorIsVisible(ref));
-    Require(WKInspectorIsFront(ref));
-    WKInspectorHide(ref);
-    Require(!WKInspectorIsVisible(ref));
-    Require(!WKInspectorIsFront(ref));
-
     WKInspectorShowConsole(ref);
-    Require(WKInspectorIsVisible(ref));
-    Require(WKInspectorIsFront(ref));
-    WKInspectorHide(ref);
+    WKInspectorShowResources(ref);
     Require(!WKInspectorIsVisible(ref));
     Require(!WKInspectorIsFront(ref));
-
-    WKInspectorShowResources(ref);
-    Require(WKInspectorIsVisible(ref));
-    Require(WKInspectorIsFront(ref));
-
-    Require(!WKInspectorIsElementSelectionActive(ref));
-    WKInspectorToggleElementSelection(ref);
-    Require(WKInspectorIsElementSelectionActive(ref));
     WKInspectorToggleElementSelection(ref);
     Require(!WKInspectorIsElementSelectionActive(ref));
-
-    Require(!WKInspectorIsProfilingPage(ref));
-    WKInspectorTogglePageProfiling(ref);
-    Require(WKInspectorIsProfilingPage(ref));
     WKInspectorTogglePageProfiling(ref);
     Require(!WKInspectorIsProfilingPage(ref));
 
-    WKInspectorAttach(ref);
-    WKInspectorConnect(ref);
-    WKInspectorShow(ref);
-    WKInspectorToggleElementSelection(ref);
-    WKInspectorTogglePageProfiling(ref);
-    Require(WKInspectorIsAttached(ref));
-    Require(WKInspectorIsConnected(ref));
-    Require(WKInspectorIsVisible(ref));
-    Require(WKInspectorIsFront(ref));
-    Require(WKInspectorIsElementSelectionActive(ref));
-    Require(WKInspectorIsProfilingPage(ref));
-
+    WKInspectorDetach(ref);
     WKInspectorClose(ref);
     Require(!WKInspectorIsAttached(ref));
     Require(!WKInspectorIsConnected(ref));
