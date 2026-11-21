@@ -359,7 +359,7 @@ class CheckMainSyncGitTests(CheckMainSyncFixture):
             subprocess.run(["git", "-C", other, "commit", "-qm", "upstream change"], check=True, capture_output=True,
                            env={**os.environ, **IDENTITY})
             self.repo.git("remote", "add", "-t", "other", "upstream", other)
-            for options in ((), ("--base", "upstream/main")):
+            for options in ((), ("--base", "upstream/main"), ("--base", "refs/remotes/upstream/main")):
                 with self.subTest(options=options):
                     self.repo.git("update-ref", "refs/remotes/upstream/main", "HEAD")
                     result = subprocess.run(
@@ -367,7 +367,8 @@ class CheckMainSyncGitTests(CheckMainSyncFixture):
                         capture_output=True, text=True,
                     )
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                    self.assertIn("0 ahead and 1 behind upstream/main", result.stdout)
+                    base = options[-1] if options else "refs/remotes/upstream/main"
+                    self.assertIn(f"0 ahead and 1 behind {base}", result.stdout)
 
 
     def test_missing_git_executable_reports_usage_error_without_traceback(self):

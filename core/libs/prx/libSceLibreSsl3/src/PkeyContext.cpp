@@ -1067,6 +1067,15 @@ int APS5_VABI RsaKeyBits(const LibreSsl3EvpPkey* key) {
     return LibreSsl3::RsaBitCount_nid_no_patch(static_cast<const LibreSsl3Rsa*>(key->key));
 }
 
+int APS5_VABI RsaKeySecurityBits(const LibreSsl3EvpPkey* key) {
+    return LibreSsl3::RsaSecurityBits_nid_no_patch(static_cast<const LibreSsl3Rsa*>(key->key));
+}
+
+int APS5_VABI RsaPublicKeyCompare(const LibreSsl3EvpPkey* first, const LibreSsl3EvpPkey* second) {
+    return LibreSsl3::RsaPublicCompare_nid_no_patch(static_cast<const LibreSsl3Rsa*>(first->key),
+        static_cast<const LibreSsl3Rsa*>(second->key));
+}
+
 void APS5_VABI RsaKeyFree(LibreSsl3EvpPkey* key) {
     LibreSsl3::FreeRsa_nid_no_patch(static_cast<LibreSsl3Rsa*>(key->key));
 }
@@ -1219,14 +1228,14 @@ const LibreSsl3PkeyAsn1Method RsaAsn1Method {
     "OpenSSL RSA method",
     nullptr,
     nullptr,
-    nullptr,
+    &RsaPublicKeyCompare,
     nullptr,
     nullptr,
     nullptr,
     nullptr,
     &RsaKeySize,
     &RsaKeyBits,
-    nullptr,
+    &RsaKeySecurityBits,
     nullptr,
     nullptr,
     nullptr,
@@ -1255,14 +1264,14 @@ const LibreSsl3PkeyAsn1Method RsaPssAsn1Method {
     "OpenSSL RSA-PSS method",
     nullptr,
     nullptr,
-    nullptr,
+    &RsaPublicKeyCompare,
     nullptr,
     nullptr,
     nullptr,
     nullptr,
     &RsaKeySize,
     &RsaKeyBits,
-    nullptr,
+    &RsaKeySecurityBits,
     nullptr,
     nullptr,
     nullptr,

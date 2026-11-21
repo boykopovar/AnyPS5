@@ -952,6 +952,20 @@ extern "C" GuestLocale::OutputIterator LibcWideTimePutDoPut_nid_no_patch(const G
     return out;
 }
 
+extern "C" GuestLocale::OutputIterator LibcPutWideElements_nid_no_patch(GuestLocale::OutputIterator out, const std::uint16_t* elements, std::size_t count) {
+    for (std::size_t index = 0; index < count; ++index) PutWideElement(out, elements[index]);
+    return out;
+}
+
+extern "C" GuestLocale::OutputIterator LibcRepeatWideElement_nid_no_patch(GuestLocale::OutputIterator out, std::uint16_t element, std::size_t count) {
+    for (; count != 0; --count) PutWideElement(out, element);
+    return out;
+}
+
+extern "C" GuestLocale::OutputIterator LibcNumPutInteger_nid_no_patch(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const char* digits, std::size_t count) {
+    return PutInteger(out, stream, fill, digits, count);
+}
+
 extern "C" GuestLocale::OutputIterator LibcTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, const char* first, const char* last) {
     const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix);
     const auto narrow = [ctype](char character) { return ctype != nullptr ? reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->narrow(ctype, character, '\0') : character; };

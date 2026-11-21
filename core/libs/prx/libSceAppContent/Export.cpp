@@ -514,10 +514,9 @@ int APS5_VABI sceAppContentDownload2Shrink(size_t size) {
 
 APS5_EXPORT("SWVxsi-ZBlw", sceAppContentUnknown_SWVxsi_ZBlw);
 int APS5_VABI sceAppContentUnknown_SWVxsi_ZBlw(const void* mdid, bool* matches) {
-    (void)mdid;
-    (void)matches;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (mdid == nullptr || matches == nullptr) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    NotImplemented_nid_no_patch("sceAppContentUnknown_SWVxsi_ZBlw query to the SceAppContent service");
 }
 
 int APS5_VABI sceAppContentGetAddcontInfoByEntitlementId(const char* entitlementId, AppContentAddcontInfo* info) {
