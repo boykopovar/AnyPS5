@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadState.hpp"
+#include "prx/libScePad/include/PadTriggerEffect.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -202,6 +203,28 @@ void TestExtensionPortStubsThrow() {
     Require(Throws([] { scePadSetExtensionReport(1, nullptr); }));
 }
 
+void TestTriggerEffectOffZeroesParameters() {
+    PadOutputState state{};
+    state.triggerDisabled = false;
+    state.triggerTouched[0] = true;
+    state.triggerTouched[1] = true;
+    state.trigger[0].effect[0] = 0;
+    state.trigger[1].effect[0] = 0x21;
+    for (int i = 1; i < 11; ++i) {
+        state.trigger[0].effect[i] = static_cast<std::uint8_t>(0xA0 + i);
+        state.trigger[1].effect[i] = static_cast<std::uint8_t>(0x30 + i);
+    }
+
+    const auto report = PadTriggerEffect::Build(state);
+    Require(report[0] == 0x0C);
+    Require(report[PadTriggerEffect::LeftOffset] == 0x05);
+    Require(report[PadTriggerEffect::RightOffset] == 0x21);
+    for (int i = 1; i < 11; ++i) {
+        Require(report[PadTriggerEffect::LeftOffset + i] == 0);
+        Require(report[PadTriggerEffect::RightOffset + i] == static_cast<std::uint8_t>(0x30 + i));
+    }
+}
+
 } // namespace
 
 int main() {
@@ -212,5 +235,6 @@ int main() {
     TestSpecialAndRemoteHandleBehavior();
     TestClosedStandardHandleBehavior();
     TestExtensionPortStubsThrow();
+    TestTriggerEffectOffZeroesParameters();
     return 0;
 }

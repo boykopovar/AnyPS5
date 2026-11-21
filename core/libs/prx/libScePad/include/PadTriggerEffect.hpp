@@ -18,12 +18,11 @@ inline std::array<std::uint8_t, ReportSize> Build(const PadOutputState& state) {
         if (!state.triggerTouched[trigger]) continue;
         report[0] |= trigger == 0 ? 0x08 : 0x04;
         std::uint8_t* destination = report.data() + (trigger == 0 ? LeftOffset : RightOffset);
-        if (state.triggerDisabled) {
+        if (state.triggerDisabled || state.trigger[trigger].effect[0] == 0) {
             destination[0] = 0x05;
             continue;
         }
         for (int index = 0; index < 11; ++index) destination[index] = state.trigger[trigger].effect[index];
-        if (destination[0] == 0) destination[0] = 0x05;
     }
     return report;
 }
