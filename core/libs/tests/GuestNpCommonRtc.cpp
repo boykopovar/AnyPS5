@@ -20,6 +20,15 @@ static void Require(bool value, int line) {
 }
 #define CHECK(value) Require((value), __LINE__)
 
+template <typename Function> static bool Throws(Function function) {
+    try {
+        function();
+    } catch (...) {
+        return true;
+    }
+    return false;
+}
+
 int main() {
     constexpr int invalidArgument = static_cast<int>(0x80558009u);
     constexpr int bufferTooSmall = static_cast<int>(0x80558008u);
@@ -75,6 +84,9 @@ int main() {
     CHECK(_ZN3sce2np4Time11GetDateTimeEPNS0_8DateTimeE(&time, &dateTime) == 0 && std::memcmp(&dateTime, &secondDay, sizeof(dateTime)) == 0);
     errno = 71;
     CHECK(_ZN3sce2np4Time11GetDateTimeEPNS0_8DateTimeE(&time, reinterpret_cast<RtcDateTime*>(0x10)) == invalidArgument && errno == 71);
+    NpTime kept{12345};
+    CHECK(_ZN3sce2np4Time11SetDateTimeERKNS0_8DateTimeE(&kept, reinterpret_cast<const RtcDateTime*>(0x10)) == invalidArgument && errno == 71
+        && kept.tick == 12345);
     CHECK(_ZNK3sce2np4Time18ConvertToPosixTimeEPl(&time, &seconds) == 0 && seconds == 97445);
     CHECK(_ZNK3sce2np4Time18ConvertToPosixTimeEPl(&zero, &seconds) == invalidArgument);
 
@@ -170,6 +182,16 @@ int main() {
             for (int op = 0; op < 6; ++op) CHECK(forms[op](pair.lhs, pair.rhs) == pair.expected[op]);
         }
     }
+    const auto* const unmapped = reinterpret_cast<const NpTime*>(std::uintptr_t{0x10});
+    for (const Compare* forms : formSets) {
+        for (int op = 0; op < 6; ++op) {
+            CHECK(Throws([&] { forms[op](unmapped, &low); }));
+            CHECK(Throws([&] { forms[op](&low, unmapped); }));
+        }
+    }
+    NpTime sum{low.tick};
+    CHECK(Throws([&] { _ZN3sce2np4TimeplERKS1_(&sum, unmapped); }) && sum.tick == low.tick);
+    CHECK(Throws([&] { _ZN3sce2np4TimeplERK10SceRtcTick(&sum, unmapped); }) && sum.tick == low.tick);
     RtcTick parsed{1};
     CHECK(sceNpRtcParseRFC3339(&parsed, "1970-01-01T00:00:00.00Z") == 0 && parsed.tick == unixEpochTick);
     parsed.tick = 1;

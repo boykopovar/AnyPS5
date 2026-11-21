@@ -143,6 +143,15 @@ void RequireTimeAdd(int result, const char* function) {
     if (result < 0) throw std::invalid_argument(std::string(function) + ": the tick is out of range");
 }
 
+std::uint64_t LoadTick(const RtcTick* value, const char* function) {
+    RtcTick local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, value, sizeof(local));
+    errno = savedErrno;
+    if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return local.tick;
+}
+
 constexpr int NP_ERROR_TITLE_ID_INVALID = static_cast<int>(0x80559E11);
 constexpr int NP_ERROR_TITLE_ID_BUFFER_TOO_SMALL = static_cast<int>(0x80559E0D);
 constexpr std::size_t NP_TITLE_ID_CODE_LENGTH = 9;
@@ -162,6 +171,22 @@ bool SameTitleId(const char* lhs, const char* rhs) {
     return std::strncmp(lhs, rhs, NP_TITLE_ID_LENGTH) == 0;
 }
 
+void StoreObjectBytes(void* destination, const void* source, std::size_t bytes, const char* function) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+NpTitleId LoadTitleId(const NpTitleId* value, const char* function) {
+    NpTitleId local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, value, sizeof(local));
+    errno = savedErrno;
+    if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return local;
+}
+
 bool IsTitleIdLetter(char c) {
     return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
 }
@@ -179,6 +204,15 @@ void* const NpTitleSecretVtable[] = {
 
 bool SameTitleSecret(const NpTitleSecret* lhs, const void* rhs) {
     return std::memcmp(lhs->data, rhs, NP_TITLE_SECRET_SIZE) == 0;
+}
+
+NpTitleSecret LoadSecret(const void* value, const char* function) {
+    NpTitleSecret local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, value, sizeof(local));
+    errno = savedErrno;
+    if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return local;
 }
 
 int OnlyFailure(int result) {
@@ -209,6 +243,15 @@ bool IsCommIdText(const char* text) {
 
 bool SameCommId(const NpCommunicationId& lhs, const NpCommunicationId& rhs) {
     return std::strncmp(lhs.data, rhs.data, sizeof(lhs.data)) == 0 && lhs.num == rhs.num;
+}
+
+NpCommunicationId LoadCommId(const NpCommunicationId* value, const char* function) {
+    NpCommunicationId local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, value, sizeof(local));
+    errno = savedErrno;
+    if (!copied) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return local;
 }
 constexpr std::size_t NP_SDK_VERSION_SIZE = 8;
 constexpr std::size_t NP_RFC3339_BUFFER_MIN = 0x80;
@@ -990,7 +1033,11 @@ int APS5_VABI _ZN3sce2np4Time20GetDebugNetworkClockEPS1_(NpTime* time) {
 }
 
 int APS5_VABI _ZN3sce2np4Time11SetDateTimeERKNS0_8DateTimeE(NpTime* self, const RtcDateTime* dateTime) {
-    const RtcDateTime copy = *dateTime;
+    RtcDateTime copy {};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&copy, dateTime, sizeof(copy));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
     const int result = sceRtcGetTick(&copy, self);
     return result < 0 ? result : 0;
 }
@@ -1072,85 +1119,85 @@ int APS5_VABI _ZNK3sce2np4Time13FormatRFC3339EPcmi(const NpTime* self, char* tex
 }
 
 NpTime* APS5_VABI _ZN3sce2np4TimeplERKS1_(NpTime* self, const NpTime* other) {
-    RequireTimeAdd(sceRtcTickAddTicks(self, self, static_cast<std::int64_t>(other->tick)), "sce::np::Time::operator+");
+    RequireTimeAdd(sceRtcTickAddTicks(self, self, static_cast<std::int64_t>(LoadTick(other, __func__))), "sce::np::Time::operator+");
     return self;
 }
 
 NpTime* APS5_VABI _ZN3sce2np4TimeplERK10SceRtcTick(NpTime* self, const RtcTick* tick) {
-    RequireTimeAdd(sceRtcTickAddTicks(self, self, static_cast<std::int64_t>(tick->tick)), "sce::np::Time::operator+");
+    RequireTimeAdd(sceRtcTickAddTicks(self, self, static_cast<std::int64_t>(LoadTick(tick, __func__))), "sce::np::Time::operator+");
     return self;
 }
 
 bool APS5_VABI _ZN3sce2npeqERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
-    return lhs->tick == rhs->tick;
+    return LoadTick(lhs, __func__) == LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npeqERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
-    return lhs->tick == rhs->tick;
+    return LoadTick(lhs, __func__) == LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npeqERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
-    return lhs->tick == rhs->tick;
+    return LoadTick(lhs, __func__) == LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npneERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
-    return lhs->tick != rhs->tick;
+    return LoadTick(lhs, __func__) != LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npneERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
-    return lhs->tick != rhs->tick;
+    return LoadTick(lhs, __func__) != LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npneERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
-    return lhs->tick != rhs->tick;
+    return LoadTick(lhs, __func__) != LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npleERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
-    return lhs->tick <= rhs->tick;
+    return LoadTick(lhs, __func__) <= LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npleERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
-    return lhs->tick <= rhs->tick;
+    return LoadTick(lhs, __func__) <= LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npleERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
-    return lhs->tick <= rhs->tick;
+    return LoadTick(lhs, __func__) <= LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npgeERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
-    return lhs->tick >= rhs->tick;
+    return LoadTick(lhs, __func__) >= LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npgeERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
-    return lhs->tick >= rhs->tick;
+    return LoadTick(lhs, __func__) >= LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npgeERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
-    return lhs->tick >= rhs->tick;
+    return LoadTick(lhs, __func__) >= LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npltERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
-    return lhs->tick < rhs->tick;
+    return LoadTick(lhs, __func__) < LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npltERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
-    return lhs->tick < rhs->tick;
+    return LoadTick(lhs, __func__) < LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npltERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
-    return lhs->tick < rhs->tick;
+    return LoadTick(lhs, __func__) < LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npgtERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
-    return lhs->tick > rhs->tick;
+    return LoadTick(lhs, __func__) > LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npgtERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
-    return lhs->tick > rhs->tick;
+    return LoadTick(lhs, __func__) > LoadTick(rhs, __func__);
 }
 
 bool APS5_VABI _ZN3sce2npgtERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
-    return lhs->tick > rhs->tick;
+    return LoadTick(lhs, __func__) > LoadTick(rhs, __func__);
 }
 
 int APS5_VABI sceNpRtcFormatRFC3339(char* text, std::size_t size, const RtcTick* utc, int timeZoneMinutes) {
@@ -1303,6 +1350,12 @@ int APS5_VABI sceNpCalloutStartOnCtx(NpCalloutContext* context, NpCallout* callo
 
 int APS5_VABI sceNpCalloutStopOnCtx(NpCalloutContext* context, NpCallout* callout, int* wasPending) {
     if (context->initialized == 0) return NP_ERROR_NOT_INITIALIZED;
+    if (wasPending != nullptr) {
+        const int savedErrno = errno;
+        const bool writable = GuestWritable_nid_no_patch(wasPending, sizeof(*wasPending));
+        errno = savedErrno;
+        if (!writable) return NP_ERROR_INVALID_ARGUMENT;
+    }
     sceNpMutexLock(&context->mutex);
 
     int removed = 0;
@@ -1312,8 +1365,13 @@ int APS5_VABI sceNpCalloutStopOnCtx(NpCalloutContext* context, NpCallout* callou
         removed = 1;
         break;
     }
-    if (wasPending != nullptr) *wasPending = removed;
     sceNpMutexUnlock(&context->mutex);
+    if (wasPending != nullptr) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(wasPending, &removed, sizeof(removed));
+        errno = savedErrno;
+        if (!copied) return NP_ERROR_INVALID_ARGUMENT;
+    }
 
     return 0;
 }
@@ -1682,8 +1740,8 @@ int APS5_VABI _ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(NpMemoryS
 }
 
 void APS5_VABI _ZN3sce2np9NpTitleIdC1Ev(NpTitleIdObject* self) {
-    self->vtable = &NpTitleIdVtable[2];
-    self->titleId = {};
+    const NpTitleIdObject object{&NpTitleIdVtable[2], {}};
+    StoreObjectBytes(self, &object, sizeof(object), __func__);
 }
 
 void APS5_VABI _ZN3sce2np9NpTitleIdC2Ev(NpTitleIdObject* self) {
@@ -1691,8 +1749,8 @@ void APS5_VABI _ZN3sce2np9NpTitleIdC2Ev(NpTitleIdObject* self) {
 }
 
 void APS5_VABI _ZN3sce2np9NpTitleIdC1ERKS1_(NpTitleIdObject* self, const NpTitleIdObject* other) {
-    self->vtable = &NpTitleIdVtable[2];
-    self->titleId = other->titleId;
+    const NpTitleIdObject object{&NpTitleIdVtable[2], LoadTitleId(&other->titleId, __func__)};
+    StoreObjectBytes(self, &object, sizeof(object), __func__);
 }
 
 void APS5_VABI _ZN3sce2np9NpTitleIdC2ERKS1_(NpTitleIdObject* self, const NpTitleIdObject* other) {
@@ -1700,8 +1758,8 @@ void APS5_VABI _ZN3sce2np9NpTitleIdC2ERKS1_(NpTitleIdObject* self, const NpTitle
 }
 
 void APS5_VABI _ZN3sce2np9NpTitleIdC1ERK12SceNpTitleId(NpTitleIdObject* self, const NpTitleId* titleId) {
-    self->vtable = &NpTitleIdVtable[2];
-    self->titleId = *titleId;
+    const NpTitleIdObject object{&NpTitleIdVtable[2], LoadTitleId(titleId, __func__)};
+    StoreObjectBytes(self, &object, sizeof(object), __func__);
 }
 
 void APS5_VABI _ZN3sce2np9NpTitleIdC2ERK12SceNpTitleId(NpTitleIdObject* self, const NpTitleId* titleId) {
@@ -1717,28 +1775,37 @@ void APS5_VABI _ZN3sce2np9NpTitleIdD0Ev(NpTitleIdObject* self) {
 }
 
 NpTitleIdObject* APS5_VABI _ZN3sce2np9NpTitleIdaSERKS1_(NpTitleIdObject* self, const NpTitleIdObject* other) {
-    self->titleId = other->titleId;
+    const auto titleId = LoadTitleId(&other->titleId, __func__);
+    StoreObjectBytes(&self->titleId, &titleId, sizeof(titleId), __func__);
     return self;
 }
 
 void APS5_VABI _ZN3sce2np9NpTitleId5ClearEv(NpTitleIdObject* self) {
-    self->titleId = {};
+    const NpTitleId titleId{};
+    StoreObjectBytes(&self->titleId, &titleId, sizeof(titleId), __func__);
 }
 
 bool APS5_VABI _ZNK3sce2np9NpTitleId7IsEmptyEv(const NpTitleIdObject* self) {
-    return self->titleId.data[0] == '\0';
+    return LoadTitleId(&self->titleId, __func__).data[0] == '\0';
 }
 
 bool APS5_VABI _ZNK3sce2np9NpTitleId6EqualsEPKc(const NpTitleIdObject* self, const char* titleId) {
-    return SameTitleId(self->titleId.data, titleId);
+    const auto own = LoadTitleId(&self->titleId, __func__);
+    char text[NP_TITLE_ID_LENGTH + 1] = {};
+    std::size_t length = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestTextLength(titleId, NP_TITLE_ID_LENGTH, length) && GuestCopyIn_nid_no_patch(text, titleId, length);
+    errno = savedErrno;
+    if (!copied) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return SameTitleId(own.data, text);
 }
 
 bool APS5_VABI _ZNK3sce2np9NpTitleId6EqualsERKS1_(const NpTitleIdObject* self, const NpTitleIdObject* other) {
-    return SameTitleId(self->titleId.data, other->titleId.data);
+    return SameTitleId(LoadTitleId(&self->titleId, __func__).data, LoadTitleId(&other->titleId, __func__).data);
 }
 
 bool APS5_VABI _ZNK3sce2np9NpTitleId6EqualsERK12SceNpTitleId(const NpTitleIdObject* self, const NpTitleId* titleId) {
-    return SameTitleId(self->titleId.data, titleId->data);
+    return SameTitleId(LoadTitleId(&self->titleId, __func__).data, LoadTitleId(titleId, __func__).data);
 }
 
 int APS5_VABI _ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKc(NpTitleIdObject* out, const char* text) {
@@ -1776,28 +1843,28 @@ int APS5_VABI _ZN3sce2np9NpTitleId5BuildERKS1_Pcm(const NpTitleIdObject* titleId
 }
 
 bool APS5_VABI _ZN3sce2npeqERKNS0_9NpTitleIdES3_(const NpTitleIdObject* lhs, const NpTitleIdObject* rhs) {
-    return SameTitleId(lhs->titleId.data, rhs->titleId.data);
+    return SameTitleId(LoadTitleId(&lhs->titleId, __func__).data, LoadTitleId(&rhs->titleId, __func__).data);
 }
 
 bool APS5_VABI _ZN3sce2npeqERKNS0_9NpTitleIdERK12SceNpTitleId(const NpTitleIdObject* lhs, const NpTitleId* rhs) {
-    return SameTitleId(lhs->titleId.data, rhs->data);
+    return SameTitleId(LoadTitleId(&lhs->titleId, __func__).data, LoadTitleId(rhs, __func__).data);
 }
 
 bool APS5_VABI _ZN3sce2npneERKNS0_9NpTitleIdES3_(const NpTitleIdObject* lhs, const NpTitleIdObject* rhs) {
-    return !SameTitleId(lhs->titleId.data, rhs->titleId.data);
+    return !SameTitleId(LoadTitleId(&lhs->titleId, __func__).data, LoadTitleId(&rhs->titleId, __func__).data);
 }
 
 bool APS5_VABI _ZN3sce2npneERK12SceNpTitleIdRKNS0_9NpTitleIdE(const NpTitleId* lhs, const NpTitleIdObject* rhs) {
-    return !SameTitleId(lhs->data, rhs->titleId.data);
+    return !SameTitleId(LoadTitleId(lhs, __func__).data, LoadTitleId(&rhs->titleId, __func__).data);
 }
 
 bool APS5_VABI _ZN3sce2npneERKNS0_9NpTitleIdERK12SceNpTitleId(const NpTitleIdObject* lhs, const NpTitleId* rhs) {
-    return !SameTitleId(lhs->titleId.data, rhs->data);
+    return !SameTitleId(LoadTitleId(&lhs->titleId, __func__).data, LoadTitleId(rhs, __func__).data);
 }
 
 void APS5_VABI _ZN3sce2np13NpTitleSecretC1Ev(NpTitleSecretObject* self) {
-    self->vtable = &NpTitleSecretVtable[2];
-    self->secret = {};
+    const NpTitleSecretObject object{&NpTitleSecretVtable[2], {}};
+    StoreObjectBytes(self, &object, sizeof(object), __func__);
 }
 
 void APS5_VABI _ZN3sce2np13NpTitleSecretC2Ev(NpTitleSecretObject* self) {
@@ -1805,8 +1872,8 @@ void APS5_VABI _ZN3sce2np13NpTitleSecretC2Ev(NpTitleSecretObject* self) {
 }
 
 void APS5_VABI _ZN3sce2np13NpTitleSecretC1ERKS1_(NpTitleSecretObject* self, const NpTitleSecretObject* other) {
-    self->vtable = &NpTitleSecretVtable[2];
-    self->secret = other->secret;
+    const NpTitleSecretObject object{&NpTitleSecretVtable[2], LoadSecret(&other->secret, __func__)};
+    StoreObjectBytes(self, &object, sizeof(object), __func__);
 }
 
 void APS5_VABI _ZN3sce2np13NpTitleSecretC2ERKS1_(NpTitleSecretObject* self, const NpTitleSecretObject* other) {
@@ -1814,8 +1881,8 @@ void APS5_VABI _ZN3sce2np13NpTitleSecretC2ERKS1_(NpTitleSecretObject* self, cons
 }
 
 void APS5_VABI _ZN3sce2np13NpTitleSecretC1ERK16SceNpTitleSecret(NpTitleSecretObject* self, const NpTitleSecret* secret) {
-    self->vtable = &NpTitleSecretVtable[2];
-    self->secret = *secret;
+    const NpTitleSecretObject object{&NpTitleSecretVtable[2], LoadSecret(secret, __func__)};
+    StoreObjectBytes(self, &object, sizeof(object), __func__);
 }
 
 void APS5_VABI _ZN3sce2np13NpTitleSecretC2ERK16SceNpTitleSecret(NpTitleSecretObject* self, const NpTitleSecret* secret) {
@@ -1823,9 +1890,11 @@ void APS5_VABI _ZN3sce2np13NpTitleSecretC2ERK16SceNpTitleSecret(NpTitleSecretObj
 }
 
 void APS5_VABI _ZN3sce2np13NpTitleSecretC1EPKvm(NpTitleSecretObject* self, const void* data, std::size_t size) {
-    self->vtable = &NpTitleSecretVtable[2];
+    const void* const* const vtable = &NpTitleSecretVtable[2];
+    StoreObjectBytes(&self->vtable, &vtable, sizeof(vtable), __func__);
     if (size != NP_TITLE_SECRET_SIZE) throw std::invalid_argument("sce::np::NpTitleSecret: the size is not 128");
-    std::memcpy(self->secret.data, data, NP_TITLE_SECRET_SIZE);
+    const auto secret = LoadSecret(data, __func__);
+    StoreObjectBytes(&self->secret, &secret, sizeof(secret), __func__);
 }
 
 void APS5_VABI _ZN3sce2np13NpTitleSecretC2EPKvm(NpTitleSecretObject* self, const void* data, std::size_t size) {
@@ -1841,31 +1910,38 @@ void APS5_VABI _ZN3sce2np13NpTitleSecretD0Ev(NpTitleSecretObject* self) {
 }
 
 NpTitleSecretObject* APS5_VABI _ZN3sce2np13NpTitleSecretaSERKS1_(NpTitleSecretObject* self, const NpTitleSecretObject* other) {
-    self->secret = other->secret;
+    const auto secret = LoadSecret(&other->secret, __func__);
+    StoreObjectBytes(&self->secret, &secret, sizeof(secret), __func__);
     return self;
 }
 
 int APS5_VABI _ZN3sce2np13NpTitleSecret13SetSecretDataEPvm(NpTitleSecretObject* self, const void* data, std::size_t size) {
     if (size != NP_TITLE_SECRET_SIZE) return NP_ERROR_TITLE_ID_INVALID;
-    std::memcpy(self->secret.data, data, NP_TITLE_SECRET_SIZE);
+    const auto secret = LoadSecret(data, __func__);
+    StoreObjectBytes(&self->secret, &secret, sizeof(secret), __func__);
     return 0;
 }
 
 bool APS5_VABI _ZNK3sce2np13NpTitleSecret7IsEmptyEv(const NpTitleSecretObject* self) {
     const NpTitleSecret empty {};
-    return SameTitleSecret(&self->secret, empty.data);
+    const auto own = LoadSecret(&self->secret, __func__);
+    return SameTitleSecret(&own, empty.data);
 }
 
 bool APS5_VABI _ZNK3sce2np13NpTitleSecret6EqualsEPvm(const NpTitleSecretObject* self, const void* data, std::size_t size) {
-    return size == NP_TITLE_SECRET_SIZE && SameTitleSecret(&self->secret, data);
+    if (size != NP_TITLE_SECRET_SIZE) return false;
+    const auto own = LoadSecret(&self->secret, __func__);
+    return SameTitleSecret(&own, LoadSecret(data, __func__).data);
 }
 
 bool APS5_VABI _ZNK3sce2np13NpTitleSecret6EqualsERKS1_(const NpTitleSecretObject* self, const NpTitleSecretObject* other) {
-    return SameTitleSecret(&self->secret, other->secret.data);
+    const auto own = LoadSecret(&self->secret, __func__);
+    return SameTitleSecret(&own, LoadSecret(&other->secret, __func__).data);
 }
 
 bool APS5_VABI _ZNK3sce2np13NpTitleSecret6EqualsERK16SceNpTitleSecret(const NpTitleSecretObject* self, const NpTitleSecret* secret) {
-    return SameTitleSecret(&self->secret, secret->data);
+    const auto own = LoadSecret(&self->secret, __func__);
+    return SameTitleSecret(&own, LoadSecret(secret, __func__).data);
 }
 
 int APS5_VABI _ZN3sce2np13NpTitleSecret8ParseHexEPS1_PKcm(NpTitleSecretObject* out, const char* hex, std::size_t length) {
@@ -1877,23 +1953,28 @@ int APS5_VABI _ZN3sce2np13NpTitleSecret8BuildHexERKS1_Pcmb(const NpTitleSecretOb
 }
 
 bool APS5_VABI _ZN3sce2npeqERKNS0_13NpTitleSecretES3_(const NpTitleSecretObject* lhs, const NpTitleSecretObject* rhs) {
-    return SameTitleSecret(&lhs->secret, rhs->secret.data);
+    const auto left = LoadSecret(&lhs->secret, __func__);
+    return SameTitleSecret(&left, LoadSecret(&rhs->secret, __func__).data);
 }
 
 bool APS5_VABI _ZN3sce2npeqERK16SceNpTitleSecretRKNS0_13NpTitleSecretE(const NpTitleSecret* lhs, const NpTitleSecretObject* rhs) {
-    return SameTitleSecret(lhs, rhs->secret.data);
+    const auto left = LoadSecret(lhs, __func__);
+    return SameTitleSecret(&left, LoadSecret(&rhs->secret, __func__).data);
 }
 
 bool APS5_VABI _ZN3sce2npeqERKNS0_13NpTitleSecretERK16SceNpTitleSecret(const NpTitleSecretObject* lhs, const NpTitleSecret* rhs) {
-    return SameTitleSecret(&lhs->secret, rhs->data);
+    const auto left = LoadSecret(&lhs->secret, __func__);
+    return SameTitleSecret(&left, LoadSecret(rhs, __func__).data);
 }
 
 bool APS5_VABI _ZN3sce2npneERKNS0_13NpTitleSecretES3_(const NpTitleSecretObject* lhs, const NpTitleSecretObject* rhs) {
-    return !SameTitleSecret(&lhs->secret, rhs->secret.data);
+    const auto left = LoadSecret(&lhs->secret, __func__);
+    return !SameTitleSecret(&left, LoadSecret(&rhs->secret, __func__).data);
 }
 
 bool APS5_VABI _ZN3sce2npneERK16SceNpTitleSecretRKNS0_13NpTitleSecretE(const NpTitleSecret* lhs, const NpTitleSecretObject* rhs) {
-    return !SameTitleSecret(lhs, rhs->secret.data);
+    const auto left = LoadSecret(lhs, __func__);
+    return !SameTitleSecret(&left, LoadSecret(&rhs->secret, __func__).data);
 }
 
 int APS5_VABI _ZN3sce2np12StreamReader4ReadEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, std::size_t size, std::size_t* read) {
@@ -2006,8 +2087,8 @@ int APS5_VABI sceNpUtilParseTitleId(NpCommunicationId* parts, const char* titleI
 }
 
 void APS5_VABI _ZN3sce2np8NpCommIdC1Ev(NpCommIdObject* self) {
-    self->vtable = &NpCommIdVtable[2];
-    self->commId = {};
+    const NpCommIdObject object{&NpCommIdVtable[2], {}};
+    StoreObjectBytes(self, &object, sizeof(object), __func__);
 }
 
 void APS5_VABI _ZN3sce2np8NpCommIdC2Ev(NpCommIdObject* self) {
@@ -2015,8 +2096,8 @@ void APS5_VABI _ZN3sce2np8NpCommIdC2Ev(NpCommIdObject* self) {
 }
 
 void APS5_VABI _ZN3sce2np8NpCommIdC1ERKS1_(NpCommIdObject* self, const NpCommIdObject* other) {
-    self->vtable = &NpCommIdVtable[2];
-    self->commId = other->commId;
+    const NpCommIdObject object{&NpCommIdVtable[2], LoadCommId(&other->commId, __func__)};
+    StoreObjectBytes(self, &object, sizeof(object), __func__);
 }
 
 void APS5_VABI _ZN3sce2np8NpCommIdC2ERKS1_(NpCommIdObject* self, const NpCommIdObject* other) {
@@ -2024,8 +2105,8 @@ void APS5_VABI _ZN3sce2np8NpCommIdC2ERKS1_(NpCommIdObject* self, const NpCommIdO
 }
 
 void APS5_VABI _ZN3sce2np8NpCommIdC1ERK20SceNpCommunicationId(NpCommIdObject* self, const NpCommunicationId* commId) {
-    self->vtable = &NpCommIdVtable[2];
-    self->commId = *commId;
+    const NpCommIdObject object{&NpCommIdVtable[2], LoadCommId(commId, __func__)};
+    StoreObjectBytes(self, &object, sizeof(object), __func__);
 }
 
 void APS5_VABI _ZN3sce2np8NpCommIdC2ERK20SceNpCommunicationId(NpCommIdObject* self, const NpCommunicationId* commId) {
@@ -2041,11 +2122,13 @@ void APS5_VABI _ZN3sce2np8NpCommIdD0Ev(NpCommIdObject* self) {
 }
 
 void APS5_VABI _ZN3sce2np8NpCommId5ClearEv(NpCommIdObject* self) {
-    self->commId = {};
+    const NpCommunicationId commId{};
+    StoreObjectBytes(&self->commId, &commId, sizeof(commId), __func__);
 }
 
 bool APS5_VABI _ZNK3sce2np8NpCommId7IsEmptyEv(const NpCommIdObject* self) {
-    return self->commId.data[0] == '\0' && self->commId.num == 0;
+    const auto commId = LoadCommId(&self->commId, __func__);
+    return commId.data[0] == '\0' && commId.num == 0;
 }
 
 bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsEPKc(const NpCommIdObject* self, const char* guestCommId) {
@@ -2054,15 +2137,16 @@ bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsEPKc(const NpCommIdObject* self, const
     const char* const commId = copy.c_str();
     if (copy.size() != NP_TITLE_ID_LENGTH || !IsCommIdText(commId)) return false;
     const auto num = static_cast<std::uint32_t>(std::strtol(commId + 10, nullptr, 10));
-    return self->commId.num == num && std::strncmp(self->commId.data, commId, sizeof(self->commId.data)) == 0;
+    const auto own = LoadCommId(&self->commId, __func__);
+    return own.num == num && std::strncmp(own.data, commId, sizeof(own.data)) == 0;
 }
 
 bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsERKS1_(const NpCommIdObject* self, const NpCommIdObject* other) {
-    return SameCommId(self->commId, other->commId);
+    return SameCommId(LoadCommId(&self->commId, __func__), LoadCommId(&other->commId, __func__));
 }
 
 bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsERK20SceNpCommunicationId(const NpCommIdObject* self, const NpCommunicationId* commId) {
-    return SameCommId(self->commId, *commId);
+    return SameCommId(LoadCommId(&self->commId, __func__), LoadCommId(commId, __func__));
 }
 
 int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKc(NpCommIdObject* out, const char* text) {
@@ -2091,27 +2175,27 @@ int APS5_VABI _ZN3sce2np8NpCommId5BuildERKS1_Pcm(const NpCommIdObject* commId, c
 }
 
 bool APS5_VABI _ZN3sce2npeqERKNS0_8NpCommIdES3_(const NpCommIdObject* lhs, const NpCommIdObject* rhs) {
-    return SameCommId(lhs->commId, rhs->commId);
+    return SameCommId(LoadCommId(&lhs->commId, __func__), LoadCommId(&rhs->commId, __func__));
 }
 
 bool APS5_VABI _ZN3sce2npeqERK20SceNpCommunicationIdRKNS0_8NpCommIdE(const NpCommunicationId* lhs, const NpCommIdObject* rhs) {
-    return SameCommId(*lhs, rhs->commId);
+    return SameCommId(LoadCommId(lhs, __func__), LoadCommId(&rhs->commId, __func__));
 }
 
 bool APS5_VABI _ZN3sce2npeqERKNS0_8NpCommIdERK20SceNpCommunicationId(const NpCommIdObject* lhs, const NpCommunicationId* rhs) {
-    return SameCommId(lhs->commId, *rhs);
+    return SameCommId(LoadCommId(&lhs->commId, __func__), LoadCommId(rhs, __func__));
 }
 
 bool APS5_VABI _ZN3sce2npneERKNS0_8NpCommIdES3_(const NpCommIdObject* lhs, const NpCommIdObject* rhs) {
-    return !SameCommId(lhs->commId, rhs->commId);
+    return !SameCommId(LoadCommId(&lhs->commId, __func__), LoadCommId(&rhs->commId, __func__));
 }
 
 bool APS5_VABI _ZN3sce2npneERK20SceNpCommunicationIdRKNS0_8NpCommIdE(const NpCommunicationId* lhs, const NpCommIdObject* rhs) {
-    return !SameCommId(*lhs, rhs->commId);
+    return !SameCommId(LoadCommId(lhs, __func__), LoadCommId(&rhs->commId, __func__));
 }
 
 bool APS5_VABI _ZN3sce2npneERKNS0_8NpCommIdERK20SceNpCommunicationId(const NpCommIdObject* lhs, const NpCommunicationId* rhs) {
-    return !SameCommId(lhs->commId, *rhs);
+    return !SameCommId(LoadCommId(&lhs->commId, __func__), LoadCommId(rhs, __func__));
 }
 
 void APS5_VABI _ZN3sce2np9EventFlagC1Ev(NpEventFlagObject* self) {
