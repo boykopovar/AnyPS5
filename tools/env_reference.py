@@ -196,6 +196,29 @@ def constant_forms(prefixes=PREFIXES):
     )
 
 
+@functools.lru_cache(maxsize=None)
+def computed_forms(prefixes=PREFIXES):
+    prefix = "|".join(re.escape(prefix) for prefix in prefixes)
+    declaration = re.compile(r'\b(?P<ident>[A-Za-z_]\w*)\s*=\s*(?:u8|u|U|L)?"(?P<prefix>(?:' + prefix + r')[A-Za-z0-9_]*)"'
+                             r'\s*\+\s*(?:std::)?to_string\s*\([^;{}]*?\)\s*\+\s*"(?P<suffix>[A-Za-z0-9_]*)"')
+    reader = re.compile(r'(?<![\w:])(?:std::)?(?P<reader>' + "|".join(IDENTIFIER_READERS) + r')\s*\(\s*'
+                        r'(?P<ident>[A-Za-z_]\w*)\.c_str\s*\(\s*\)')
+    return declaration, reader
+
+
+def computed_reads(text, prefixes=PREFIXES):
+    declaration, reader = computed_forms(tuple(prefixes))
+    names = {}
+    for match in declaration.finditer(text):
+        names.setdefault(match.group("ident"), set()).add(match.group("prefix") + "*" + match.group("suffix"))
+    found = []
+    for match in reader.finditer(text):
+        patterns = names.get(match.group("ident"), set())
+        if len(patterns) == 1:
+            found.append((match.group("reader"), _NamedRead(match, next(iter(patterns)))))
+    return found
+
+
 SHADOW = re.compile(r'(?<![\w.:>])[A-Za-z_][\w:]*(?:\s*[*&]+\s*|\s+)(?:const\s+)?(?P<name>[A-Za-z_]\w*)\s*(?P<after>[=;,)\[{(])')
 INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)
 
@@ -344,6 +367,8 @@ def reads(roots, prefixes=PREFIXES):
         has_literal = ((quoted_prefixes is None or any(prefix in raw for prefix in quoted_prefixes))
                        and any(token in raw for token in ALL_READER_TOKENS))
         matches = line_reads(text_of(path), prefixes) if has_literal else []
+        if has_literal and "to_string" in raw:
+            matches += computed_reads(text_of(path), prefixes)
         code = None
         if has_declared and any(reader in raw for reader in IDENTIFIER_READERS):
             constants = _visible_constants(path, includes_of, declared)
@@ -411,8 +436,19 @@ def check(found, doc, prefixes, out):
     if names is None:
         out.write(f"error: cannot read {doc}\n")
         return 1
-    missing = sorted(set(found) - names)
-    stale = sorted(names - set(found))
+    covered = set()
+    missing = []
+    for name in sorted(found):
+        if "*" in name:
+            pattern = re.compile(re.escape(name).replace(r"\*", "[A-Za-z0-9_]+") + r"\Z")
+            matched = {candidate for candidate in names if pattern.match(candidate)}
+            if matched:
+                covered |= matched
+            else:
+                missing.append(name)
+        elif name not in names:
+            missing.append(name)
+    stale = sorted(names - set(found) - covered)
     for name in missing:
         source, number, _, _ = found[name][0]
         out.write(f"error: {name} is read at {source}:{number} but has no row in {doc}\n")

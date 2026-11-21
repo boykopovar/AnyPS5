@@ -37,6 +37,54 @@ static std::uint64_t v = MyEnvironmentNumber("APS5_NOT_A_NUMBER_READ");
 """
 
 
+class ComputedEnvironmentTests(unittest.TestCase):
+    def fixture(self, text):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        (root / "core").mkdir()
+        (root / "core" / "Sample.cpp").write_text(text, encoding="utf-8")
+        return root
+
+    def check(self, found, rows):
+        with tempfile.TemporaryDirectory() as directory:
+            doc = Path(directory) / "ENVIRONMENT.md"
+            doc.write_text("| Name | Kind |\n|------|------|\n"
+                           + "".join(f"| `{row}` | string |\n" for row in rows), encoding="utf-8")
+            out = io.StringIO()
+            code = env_reference.check(found, doc, BOTH, out)
+            return code, out.getvalue()
+
+    def test_a_name_built_from_literals_and_to_string_is_a_read_pattern(self):
+        root = self.fixture('const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n'
+                            'if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n')
+        found = env_reference.reads([root / "core"], BOTH)
+        self.assertEqual(set(found), {"ANYPS5_PAD_PLAYER_*_SERIAL"})
+        self.assertEqual(found["ANYPS5_PAD_PLAYER_*_SERIAL"][0][1], 2)
+
+    def test_a_computed_name_no_reader_uses_is_not_a_read(self):
+        root = self.fixture('const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1) + "_SERIAL";\n')
+        self.assertEqual(env_reference.reads([root / "core"], BOTH), {})
+
+    def test_a_built_name_without_to_string_is_not_a_pattern(self):
+        root = self.fixture('const std::string name = "ANYPS5_PAD_PLAYER_SERIAL" + suffix;\n'
+                            'if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n')
+        self.assertEqual(env_reference.reads([root / "core"], BOTH), {})
+
+    def test_check_accepts_documented_rows_that_a_pattern_covers(self):
+        found = {"ANYPS5_PAD_PLAYER_*_SERIAL": [("core/Sample.cpp", 2, "string", "")]}
+        code, text = self.check(found, ["ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL"])
+        self.assertEqual((code, text), (0, "1 name(s), all documented\n"))
+
+    def test_check_reports_a_pattern_no_documented_row_matches(self):
+        found = {"ANYPS5_PAD_PLAYER_*_SERIAL": [("core/Sample.cpp", 2, "string", "")]}
+        code, text = self.check(found, ["ANYPS5_OTHER_SERIAL"])
+        self.assertEqual(code, 1)
+        self.assertIn("ANYPS5_PAD_PLAYER_*_SERIAL is read at core/Sample.cpp:2 but has no row", text)
+        self.assertIn("ANYPS5_OTHER_SERIAL has a row", text)
+        self.assertIn("1 name(s) undocumented, 1 stale", text)
+
+
 class EnvReferenceTests(unittest.TestCase):
     def test_reader_identifiers_require_a_token_boundary(self):
         root = self.fixture()
