@@ -221,6 +221,17 @@ static void Errors() {
     Require(Parse(value, "\"\\ud800x\"") == ErrorParse);
     Require(Parse(value, "[\"open") == ErrorNoMemory);
     Require(_ZNK3sce4Json5Value7getTypeEv_nid_no_patch(&value) == TypeNull);
+    Require(Parse(value, "\"abc\"") == 0);
+    Require(std::strcmp(Text(_ZNK3sce4Json5Value9getStringEv_nid_no_patch(&value)), "abc") == 0);
+    Require(Parse(value, "\"de\"") == 0);
+    Require(std::strcmp(Text(_ZNK3sce4Json5Value9getStringEv_nid_no_patch(&value)), "abcde") == 0);
+    _ZN3sce4Json5Value3setENS0_9ValueTypeE_nid_no_patch(&value, TypeNull);
+    Require(Parse(value, "\"a\\\"\"") == 0);
+    Require(std::strcmp(Text(_ZNK3sce4Json5Value9getStringEv_nid_no_patch(&value)), "a\"") == 0);
+    _ZN3sce4Json5Value3setENS0_9ValueTypeE_nid_no_patch(&value, TypeNull);
+    Require(Parse(value, "\"\\u0041\"") == 0);
+    Require(std::strcmp(Text(_ZNK3sce4Json5Value9getStringEv_nid_no_patch(&value)), "A") == 0);
+    Require(Parse(value, "\"abc") == ErrorNoMemory);
     Require(Parse(value, "1 garbage") == 0);
     Require(*_ZNK3sce4Json5Value11getUIntegerEv_nid_no_patch(&value) == 1);
     Require(Parse(value, "true false") == 0);
