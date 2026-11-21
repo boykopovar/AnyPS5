@@ -44,7 +44,6 @@ int APS5_VABI _ZNK7WebCore8Document7fgColorEv();
 int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal23stopProfilingJavaScriptEv();
 int APS5_VABI WKWheelEventMake();
 int APS5_VABI _ZNK7WebCore11WindowProxy6windowEv();
-int APS5_VABI WKPageLoadFile();
 int APS5_VABI _ZN3JSC13JSSetIterator14finishCreationERNS_2VMEPNS_5JSSetENS_13IterationKindE();
 int APS5_VABI _ZN3JSC21MarkedJSValueRefArrayC1EP15OpaqueJSContextj();
 int APS5_VABI _ZNK7WebCore4Page14renderTreeSizeEv();
