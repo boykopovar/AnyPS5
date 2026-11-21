@@ -171,6 +171,18 @@ void Driver::traceLabel(std::span<const std::uint32_t> packet, std::uint32_t que
     else if ((opcode == 0x3c || opcode == 0x93) && packet.size() >= 7) { target = (packet[2] & (Pm4::WaitAwaitedBytes(packet) == 8 ? ~7u : ~3u)) | (static_cast<std::uint64_t>(packet[3]) << 32u); kind = "WAIT_REG_MEM"; }
     else if (opcode == 0x40 && packet.size() >= 6) { target = packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u); kind = "COPY_DATA"; }
     std::uint64_t length = 4;
+    std::uint64_t value = 0;
+    bool valued = false;
+    if (opcode == 0x49 || opcode == 0x37) {
+        if (const auto label = Pm4::DecodeLabelWrite(packet)) {
+            length = label->Bytes().size();
+            const bool clocked = opcode == 0x49 && packet.size() >= 3 && ((packet[2] >> 29u) & 7u) >= 3u;
+            if (length <= sizeof(value) && !clocked) {
+                std::memcpy(&value, label->Bytes().data(), length);
+                valued = true;
+            }
+        }
+    }
     if (opcode == 0x50 && packet.size() >= 7) {
         target = packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u);
         length = packet[6] & 0x3ffffffu;
@@ -179,8 +191,9 @@ void Driver::traceLabel(std::span<const std::uint32_t> packet, std::uint32_t que
     if (kind == nullptr) return;
     if (std::string_view(kind) != "WAIT_REG_MEM") {
         std::lock_guard lock(writeHistoryMutex());
-        auto& entry = writeHistory()[writeCursor()++ % writeHistory().size()];
-        entry = {target, length, queue, opcode};
+        const auto order = writeCursor()++;
+        auto& entry = writeHistory()[order % writeHistory().size()];
+        entry = {target, length, queue, opcode, order, value, valued};
     }
     if (watched == 0 || target + length + 0x100 < watched || target > watched + 0x100) return;
     std::fprintf(stderr, "[label] %lld ms queue 0x%x %s 0x%llx:", static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()), queue, kind, static_cast<unsigned long long>(target));
