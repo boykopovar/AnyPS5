@@ -332,6 +332,26 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         else dataTargets.insert(address);
     };
     const auto inFunction = [&](std::uint64_t address) { const auto after = functions.upper_bound(address); return after != functions.begin() && address < std::prev(after)->second; };
+    const auto reachesPortIo = [&](std::uint64_t address) {
+        const Codegen::X64InstructionDecoder probe;
+        const auto code = codeAt(address);
+        std::size_t offset = 0;
+        for (std::size_t count = 0; count < 256 && offset < code.size(); ++count) {
+            const auto available = code.size() - offset;
+            Codegen::DecodedInstructionInfo info;
+            try {
+                info = probe.DecodeInstruction(code.data() + offset, available);
+            } catch (const Codegen::CodegenException&) {
+                return false;
+            }
+            if (info.Length == 0 || info.Length > available || info.OpcodeOffset >= info.Length) return false;
+            const auto opcode = code[offset + info.OpcodeOffset];
+            if ((opcode >= 0x6c && opcode <= 0x6f) || (opcode >= 0xe4 && opcode <= 0xe7) || (opcode >= 0xec && opcode <= 0xef)) return true;
+            if (info.FlowKind != Codegen::ControlFlowKind::Sequential && info.FlowKind != Codegen::ControlFlowKind::ConditionalBranch) return false;
+            offset += info.Length;
+        }
+        return false;
+    };
     const auto addAddressTakenRoot = [&](std::uint64_t address, const std::uint8_t* code, const Codegen::DecodedInstructionInfo& info) {
         if (!info.HasRipRelativeDisp || code[info.OpcodeOffset] != 0x8d || !(info.RexPrefix & 8)) return;
         const auto displacement = std::bit_cast<std::int32_t>(Io::ReadU32(bytes, fileOffset(address, info.Length) + info.RipRelativeDispOffset));
@@ -342,7 +362,7 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         }
         const auto following = codeAt(address);
         const auto computed = static_cast<unsigned>(((info.ModRmByte >> 3) & 7) | ((info.RexPrefix & 4) << 1));
-        if (UsedAsCodeAddress(following.data(), following.size(), info.Length, computed)) addRoot(target);
+        if (UsedAsCodeAddress(following.data(), following.size(), info.Length, computed) && !reachesPortIo(target)) addRoot(target);
         else dataTargets.insert(target);
     };
     const auto addFunction = [&](std::uint64_t begin, std::uint64_t size, bool symbolAlias) {

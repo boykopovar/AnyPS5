@@ -670,6 +670,12 @@ std::int64_t APS5_VABI _ZNSt3__16chrono12system_clock3nowEv_nid_postfix() noexce
     return micros;
 }
 
+std::int64_t APS5_VABI _ZNSt3__16chrono12system_clock9to_time_tERKNS0_10time_pointIS1_NS0_8durationIxNS_5ratioILl1ELl1000000EEEEEEE_nid_postfix(const std::int64_t* microseconds) {
+    std::int64_t value{};
+    if (!GuestCopyIn_nid_no_patch(&value, microseconds, sizeof(value))) throw std::invalid_argument("system_clock::to_time_t: unreadable time point");
+    return value / 1000000;
+}
+
 int APS5_VABI timespec_get_nid_postfix(KernelTimespec* ts, int base) {
     if (ts == nullptr || base != TIME_UTC) return 0;
 #ifdef _WIN32

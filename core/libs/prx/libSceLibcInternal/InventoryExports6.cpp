@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -191,11 +192,6 @@ int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE9_EndwriteEv_nid_postfix(
     return 0;
 }
 
-int APS5_VABI _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNSt10moneypunctIwLb1EED0Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -288,9 +284,8 @@ int APS5_VABI __atomic_load_n_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI sceLibcInternalUnknown6_080_bTQcNwRc8hE_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceLibcInternalUnknown6_080_bTQcNwRc8hE_nid_no_patch(void* self) {
+    libSceLibcInternalInventory_144_nid_no_patch(self);
 }
 APS5_EXPORT("bTQcNwRc8hE", sceLibcInternalUnknown6_080_bTQcNwRc8hE_nid_no_patch);
 

@@ -423,13 +423,15 @@ byId('file').addEventListener('change', async event => {
         const text = new TextDecoder('utf-8', {fatal: true}).decode(await file.arrayBuffer());
         const result = parseIni(text);
         const report = byId('import-report');
-        importReport = result;
-        renderImportReport();
         if (result.errors.length) {
+            importReport = result;
+            renderImportReport();
             report.focus();
             return;
         }
         if (!await confirmReplacement()) return;
+        importReport = result;
+        renderImportReport();
         entries = result.entries;
         settings = result.settings;
         controllerRemaps = result.controllerRemaps;
