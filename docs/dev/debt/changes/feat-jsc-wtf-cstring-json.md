@@ -6,17 +6,9 @@
 
 ## add Functional
 
-- [WTF UTF-8 conversion](../../../core/libs/prx/libSceJsc/src/WtfUtf8.cpp) - the console WTF and ICU versions and layouts are unverified. `CString` is one pointer to a `CStringBuffer` (4-byte refcount, length at 8, characters after it) and `Expected<CString, UTF8ConversionError>` adds a `bool` at offset 8, as in pinned [CString.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/CString.h) and [Expected.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/Expected.h). Guest code frees the buffers through libSceNKWebKit `fastFree`. The 11 exports port pinned UTF8Conversion.cpp, StringImpl.cpp and WTFString.cpp with WebKit's bundled ICU 62.2 macros. A full target, a range outside the string, a length above `INT_MAX`, a failed `String::utf8` and null arguments throw.
+- [WTF UTF-8 conversion](../../../core/libs/prx/libSceJsc/src/WtfUtf8.cpp) - the console WTF and ICU versions and layouts are unverified. `CString` is one pointer to a `CStringBuffer` (4-byte refcount, length at 8, characters after it) and `Expected<CString, UTF8ConversionError>` adds a `bool` at offset 8, as in pinned [CString.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/CString.h) and [Expected.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/Expected.h). Guest code frees the buffers through libSceNKWebKit `fastFree`. The 7 exports port pinned StringImpl.cpp and WTFString.cpp, with the UTF-16 and Latin-1 loops of UTF8Conversion.cpp and WebKit's bundled ICU 62.2 macros; the four `WTF::Unicode` converters are main's. A full target, a range outside the string, a length above `INT_MAX`, a failed `String::utf8` and null arguments throw.
 
 - [WTF JSON values](../../../core/libs/prx/libSceJsc/src/WtfJson.cpp) - the console WTF version and layouts are unverified; `asValue` and `asBoolean` are older NIDs. The six exports read a 24-byte `JSONImpl::Value` (vtable, refcount, type at 12, value at 16) and a 40-byte `ArrayBase` with its `Vector` at 24, as in pinned [JSONValues.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/JSONValues.h). The last deref calls vtable slot 1. Null arguments throw. `escapeString`, the object and array builders and getters, `parseJSON` and `writeJSON` still throw: `StringBuilder` and `HashMap` are not modelled.
-
-## remove | `_ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b` | `HblNi06Y6UI` |
-
-## remove | `_ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb` | `UjTDE3AQCRg` |
-
-## remove | `_ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_` | `AJ7+0UjKEww` |
-
-## remove | `_ZN3WTF7Unicode43convertUTF8ToUTF16ReplacingInvalidSequencesEPKcS2_PPDsS3_Pb` | `PqZUVw-1dv0` |
 
 ## remove | `_ZNK3WTF10StringImpl10tryGetUtf8ENS_14ConversionModeE` | `cz5x0BcGOZ8` |
 
