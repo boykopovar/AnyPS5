@@ -193,6 +193,8 @@ constexpr int MallocFailure = 65;
 constexpr int ConfNoSuchFile = 114;
 constexpr int BioNoSuchFile = 128;
 constexpr int GuestNoSuchFile = 2;
+constexpr int GuestNoSuchDeviceOrAddress = 6;
+constexpr std::uint64_t IgnoreReturnCodes = 0x2;
 constexpr std::uint64_t IgnoreMissingFile = 0x10;
 constexpr std::size_t ConfSize = 32;
 constexpr const char* CertificateArea = "/etc/ssl";
@@ -207,8 +209,9 @@ bool Opens(const char* file) {
         return true;
     }
     const int openError = errno;
+    const bool noSuchFile = openError == GuestNoSuchFile || openError == GuestNoSuchDeviceOrAddress;
     LibreSslPutError_nid_no_patch(SystemLibrary, UnnamedFunction, openError, __FILE__, __LINE__);
-    LibreSslPutError_nid_no_patch(BioLibrary, UnnamedFunction, openError == GuestNoSuchFile ? BioNoSuchFile : SystemLibraryFailure,
+    LibreSslPutError_nid_no_patch(BioLibrary, UnnamedFunction, noSuchFile ? BioNoSuchFile : SystemLibraryFailure,
                                   __FILE__, __LINE__);
     LibreSslPutError_nid_no_patch(ConfLibrary, UnnamedFunction,
                                   Reason(LibreSslPeekLastError_nid_no_patch()) == BioNoSuchFile ? ConfNoSuchFile : SystemLibraryFailure,
@@ -225,7 +228,7 @@ int APS5_VABI CONF_modules_load_file_nid_postfix(const char* filename, const cha
     void* conf = malloc_nid_postfix(ConfSize);
     if (!conf) {
         LibreSslPutError_nid_no_patch(ConfLibrary, UnnamedFunction, MallocFailure, __FILE__, __LINE__);
-        return 0;
+        return (flags & IgnoreReturnCodes) != 0 ? 1 : 0;
     }
     char* file = nullptr;
     const auto cleanup = [&] {
@@ -255,7 +258,7 @@ int APS5_VABI CONF_modules_load_file_nid_postfix(const char* filename, const cha
     }
     cleanup();
     if (exists) NotImplemented_nid_no_patch("CONF_modules_load_file of a configuration file that exists");
-    return result;
+    return (flags & IgnoreReturnCodes) != 0 ? 1 : result;
 }
 
 }

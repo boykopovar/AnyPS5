@@ -45,7 +45,7 @@ int main() {
     Require(!WKPageGetPaginationBehavesLikeColumns(pageRef));
     Require(WKPageGetGapBetweenPages(pageRef) == 0.0);
     Require(WKPageGetPageLength(pageRef) == 0.0);
-    Require(!page->paginationLineGridEnabled);
+    Require(!WKPageGetPaginationLineGridEnabled(pageRef));
 
     WKPageSetSuppressScrollbarAnimations(pageRef, true);
     Require(WKPageAreScrollbarAnimationsSuppressed(pageRef));
@@ -95,9 +95,9 @@ int main() {
     Require(!WKPageGetPaginationBehavesLikeColumns(pageRef));
 
     WKPageSetPaginationLineGridEnabled(pageRef, true);
-    Require(page->paginationLineGridEnabled);
+    Require(WKPageGetPaginationLineGridEnabled(pageRef));
     WKPageSetPaginationLineGridEnabled(pageRef, false);
-    Require(!page->paginationLineGridEnabled);
+    Require(!WKPageGetPaginationLineGridEnabled(pageRef));
 
     WKPageSetGapBetweenPages(pageRef, 32.0);
     Require(WKPageGetGapBetweenPages(pageRef) == 32.0);
@@ -124,6 +124,7 @@ int main() {
     RequireInvalidArgument([] { WKPageSetPaginationMode(nullptr, 0); });
     RequireInvalidArgument([] { WKPageGetPaginationBehavesLikeColumns(nullptr); });
     RequireInvalidArgument([] { WKPageSetPaginationBehavesLikeColumns(nullptr, true); });
+    RequireInvalidArgument([] { WKPageGetPaginationLineGridEnabled(nullptr); });
     RequireInvalidArgument([] { WKPageSetPaginationLineGridEnabled(nullptr, true); });
     RequireInvalidArgument([] { WKPageGetGapBetweenPages(nullptr); });
     RequireInvalidArgument([] { WKPageSetGapBetweenPages(nullptr, 10.0); });

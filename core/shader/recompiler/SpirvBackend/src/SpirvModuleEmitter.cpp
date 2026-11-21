@@ -481,17 +481,23 @@ std::uint32_t SelectExportPacking(SpirvEmitterState& state, std::uint32_t target
     const bool mask = mode == 1u;
     const auto eight = clamp ? ColorExportPacking::UintClamp8 : ColorExportPacking::UintMask8;
     const auto sixteen = clamp ? ColorExportPacking::UintClamp16 : ColorExportPacking::UintMask16;
-    const auto limit = clamp || mask ? Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(eight)), ConstantU32(state, 0xffu), Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(sixteen)), ConstantU32(state, 0xffffu), ConstantU32(state, 0xffffffffu))) : 0u;
+    const auto ten = clamp ? ColorExportPacking::UintClamp10_10_10_2 : ColorExportPacking::UintMask10_10_10_2;
+    const auto narrowLimit = [&](std::uint32_t tenBits) {
+        const auto packedTen = Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ten)), ConstantU32(state, tenBits), ConstantU32(state, 0xffffffffu));
+        return Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(eight)), ConstantU32(state, 0xffu), Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(sixteen)), ConstantU32(state, 0xffffu), packedTen));
+    };
+    const auto limit = clamp || mask ? narrowLimit(0x3ffu) : 0u;
+    const auto alphaLimit = clamp || mask ? narrowLimit(0x3u) : 0u;
     std::array<std::uint32_t, 4> components{};
     for (std::uint32_t component = 0; component < components.size(); ++component) {
         auto unpacked = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), unpacked, color, component);
         if (clamp) {
             const auto clamped = state.module.AllocateId();
-            state.module.AddFunction(spv::OpExtInst, TypeU32(state), clamped, GlslStd450(state), GLSLstd450UMin, Unary(state, spv::OpBitcast, TypeU32(state), unpacked), limit);
+            state.module.AddFunction(spv::OpExtInst, TypeU32(state), clamped, GlslStd450(state), GLSLstd450UMin, Unary(state, spv::OpBitcast, TypeU32(state), unpacked), component == 3u ? alphaLimit : limit);
             unpacked = Unary(state, spv::OpBitcast, TypeF32(state), clamped);
         } else if (mask) {
-            unpacked = Unary(state, spv::OpBitcast, TypeF32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), Unary(state, spv::OpBitcast, TypeU32(state), unpacked), limit));
+            unpacked = Unary(state, spv::OpBitcast, TypeF32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), Unary(state, spv::OpBitcast, TypeU32(state), unpacked), component == 3u ? alphaLimit : limit));
         }
         components[component] = Select(state, TypeF32(state), packed, component == 0u ? Unary(state, spv::OpBitcast, TypeF32(state), word) : ConstantF32(state, 0u), unpacked);
     }
@@ -714,6 +720,8 @@ void StoreCombinedCoverage(SpirvEmitterState& state, std::uint32_t coverage, std
 }
 
 void StoreDitheredAlphaCoverage(SpirvEmitterState& state, std::uint32_t color) {
+    constexpr std::array<std::uint32_t, 4> singleSampleMasks{{0x00000000u, 0x01000001u, 0x01000101u, 0x01010101u}};
+    constexpr std::array<std::uint32_t, 8> singleSampleRoundedMasks{{0x00000000u, 0x00000001u, 0x00000001u, 0x01000001u, 0x01000001u, 0x01010001u, 0x01010001u, 0x01010101u}};
     constexpr std::array<std::uint32_t, 8> twoSampleMasks{{
     0x00000000u, 0x02000002u, 0x01000201u, 0x01020201u, 0x01020101u, 0x03020103u, 0x03010303u, 0x03030303u,
     }};
@@ -727,7 +735,10 @@ void StoreDitheredAlphaCoverage(SpirvEmitterState& state, std::uint32_t color) {
     0x777d7e77u, 0x777d7ef7u, 0x777d7e7fu, 0xf77d7e7fu, 0xf7777e7fu, 0xf7f77e7fu, 0x7ff77e7fu, 0x7ff7fe7fu,
     0x7ff7fd7fu, 0x7ff7fdffu, 0x7f7ffdffu, 0xff7ffdffu, 0xff7ff7ffu, 0xfffff7ffu, 0xffff7fffu, 0xffffffffu,
     }};
-    const std::span<const std::uint32_t> masks = state.inputInfo.pixel->psDitheredAlphaSamples == 2u ? std::span<const std::uint32_t>(twoSampleMasks) : std::span<const std::uint32_t>(eightSampleMasks);
+    const auto single = state.inputInfo.pixel->psSingleSampleDither;
+    const std::span<const std::uint32_t> masks = single == SingleSampleDither::E701 ? std::span<const std::uint32_t>(singleSampleMasks)
+        : single == SingleSampleDither::Rounded18701 ? std::span<const std::uint32_t>(singleSampleRoundedMasks)
+        : state.inputInfo.pixel->psDitheredAlphaSamples == 2u ? std::span<const std::uint32_t>(twoSampleMasks) : std::span<const std::uint32_t>(eightSampleMasks);
     const auto levels = static_cast<float>(masks.size());
     const auto alpha = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), alpha, color, 3u);
@@ -1078,6 +1089,7 @@ namespace {
 
 std::uint32_t MeshArray(SpirvEmitterState& state, std::uint32_t storage, std::uint32_t type, std::uint32_t count) {
     const auto array = state.module.Type(spv::OpTypeArray, type, ConstantU32(state, count));
+    if (storage == spv::StorageClassPrivate) return state.module.DefineInitializedGlobalVariable(TypePointer(state, storage, array), storage, state.module.Constant(spv::OpConstantNull, array));
     return state.module.DefineGlobalVariable(TypePointer(state, storage, array), storage);
 }
 

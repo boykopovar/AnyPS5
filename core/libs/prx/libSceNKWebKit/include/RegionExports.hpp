@@ -487,6 +487,10 @@ public:
 
     class Shape {
     public:
+        void* operator new(std::size_t size) { return NKWebKit::Allocate(size); }
+        void* operator new(std::size_t, void* storage) noexcept { return storage; }
+        void operator delete(void* storage) { NKWebKit::Deallocate(storage); }
+
         Shape() = default;
         Shape(const IntRect& rect);
         Shape(WTF::Vector<int, 32>&& segments, WTF::Vector<Span, 16>&& spans);
