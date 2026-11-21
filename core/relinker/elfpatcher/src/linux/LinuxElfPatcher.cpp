@@ -133,7 +133,7 @@ void RequireLoaded(const std::vector<Domain::ProgramHeader>& headers, const std:
     };
     const auto containing = [&](const std::uint64_t vaddr) -> const Domain::ProgramHeader* {
         for (const auto& header : headers)
-            if (header.Type == PT_LOAD && (header.Flags == 0 || (header.Flags & flags) == flags) && vaddr >= header.MappedAddress && vaddr - header.MappedAddress < header.MemorySize)
+            if (header.Type == PT_LOAD && header.MemorySize != 0 && (header.Flags == 0 || (header.Flags & flags) == flags) && vaddr >= header.MappedAddress && vaddr - header.MappedAddress < header.MemorySize)
                 return &header;
         return nullptr;
     };

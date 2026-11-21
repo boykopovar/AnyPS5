@@ -100,7 +100,7 @@ std::uint32_t WindowsLoadImage::GetRva(const std::uint64_t address, const std::u
     for (std::uint64_t covered = address; covered < address + size;) {
         const auto* segment = static_cast<const Domain::ProgramHeader*>(nullptr);
         for (const auto& candidate : segments) {
-            if (covered >= candidate.MappedAddress && covered - candidate.MappedAddress < candidate.MemorySize) {
+            if (candidate.MemorySize != 0 && covered >= candidate.MappedAddress && covered - candidate.MappedAddress < candidate.MemorySize) {
                 segment = &candidate;
                 break;
             }
