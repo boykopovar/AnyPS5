@@ -145,6 +145,13 @@ void PointsAndContours() {
     const std::uint32_t maxPoints = loader->max_points;
     Require(FT_GlyphLoader_CheckPoints_nid_postfix(loader, 0x7FF8, 0) == 0x0A && loader->max_points == maxPoints, "CheckPoints over 0x7FFF points returns Array_Too_Large");
     Require(FT_GlyphLoader_CheckPoints_nid_postfix(loader, 0, 0x7FFD) == 0x0A && loader->max_contours == 4, "CheckPoints over 0x7FFF contours returns Array_Too_Large");
+    const int pointReallocs = recorder.reallocs;
+    const int pointAllocs = recorder.allocs;
+    Require(FT_GlyphLoader_CheckPoints_nid_postfix(loader, 0xFFFFFFF8, 0) == 0x0A && loader->max_points == maxPoints, "CheckPoints rejects a point count that wraps the total to zero");
+    Require(FT_GlyphLoader_CheckPoints_nid_postfix(loader, 0xFFFFFFFF, 0) == 0x0A && loader->max_points == maxPoints, "CheckPoints rejects the largest point count");
+    Require(FT_GlyphLoader_CheckPoints_nid_postfix(loader, 0, 0xFFFFFFFD) == 0x0A && loader->max_contours == 4, "CheckPoints rejects a contour count that wraps the total to zero");
+    Require(FT_GlyphLoader_CheckPoints_nid_postfix(loader, 9, 0x7FFD) == 0x0A && loader->max_points == maxPoints && loader->max_contours == 4, "CheckPoints grows nothing when the contours are too large");
+    Require(recorder.reallocs == pointReallocs && recorder.allocs == pointAllocs, "rejected point and contour counts do not allocate");
 
     recorder.fail = true;
     Require(FT_GlyphLoader_CheckPoints_nid_postfix(loader, 9, 0) == 0x40 && loader->max_points == maxPoints && loader->base.outline.points, "a failed resize reports Out_Of_Memory and keeps the tables");
@@ -213,6 +220,13 @@ void Subglyphs() {
     Require(FT_GlyphLoader_CheckSubGlyphs_nid_postfix(loader, 1) == 0 && loader->max_subglyphs == 4, "CheckSubGlyphs within capacity keeps the table");
     Require(FT_GlyphLoader_CheckSubGlyphs_nid_postfix(loader, 2) == 0 && loader->max_subglyphs == 6 && recorder.lastCurrent == 4 * sizeof(GuestSubGlyphRec), "CheckSubGlyphs grows from the old maximum");
     Require(Subs(loader->base.subglyphs)[2].index == 9 && Subs(loader->current.subglyphs) == Subs(loader->base.subglyphs) + 3, "CheckSubGlyphs keeps records and readjusts");
+    const int subReallocs = recorder.reallocs;
+    const int subAllocs = recorder.allocs;
+    void* const subTable = loader->base.subglyphs;
+    Require(FT_GlyphLoader_CheckSubGlyphs_nid_postfix(loader, 0xFFFFFFFD) == 0x0A && loader->max_subglyphs == 6, "CheckSubGlyphs rejects a count that wraps the total to zero");
+    Require(FT_GlyphLoader_CheckSubGlyphs_nid_postfix(loader, 0xFFFFFFFF) == 0x0A && loader->max_subglyphs == 6, "CheckSubGlyphs rejects the largest count");
+    Require(FT_GlyphLoader_CheckSubGlyphs_nid_postfix(loader, static_cast<std::uint32_t>(0x7FFFFFFF / sizeof(GuestSubGlyphRec))) == 0x0A && loader->max_subglyphs == 6, "CheckSubGlyphs rejects a table larger than 0x7FFFFFFF bytes");
+    Require(recorder.reallocs == subReallocs && recorder.allocs == subAllocs && loader->base.subglyphs == subTable, "rejected subglyph counts keep the table");
     recorder.fail = true;
     Require(FT_GlyphLoader_CheckSubGlyphs_nid_postfix(loader, 4) == 0x40 && loader->max_subglyphs == 6, "a failed subglyph resize reports Out_Of_Memory");
     recorder.fail = false;

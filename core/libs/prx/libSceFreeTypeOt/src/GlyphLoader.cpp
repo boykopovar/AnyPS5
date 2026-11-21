@@ -19,13 +19,18 @@ namespace {
 constexpr std::int32_t ArrayTooLarge = 0x0A;
 constexpr std::uint32_t OutlinePointsMax = 0x7FFF;
 constexpr std::uint32_t OutlineContoursMax = 0x7FFF;
+constexpr std::int64_t SubGlyphsMax = 0x7FFFFFFF / static_cast<std::int64_t>(sizeof(GuestSubGlyphRec));
 
 std::int32_t Count(std::uint16_t value) {
     return static_cast<std::int16_t>(value);
 }
 
-std::uint32_t PadCeil(std::uint32_t value, std::uint32_t step) {
+std::int64_t PadCeil(std::int64_t value, std::int64_t step) {
     return (value + step - 1) & ~(step - 1);
+}
+
+std::int64_t Required(std::int64_t used, std::uint32_t requested) {
+    return used + static_cast<std::int64_t>(requested);
 }
 
 GuestGlyphLoaderRec* Require(GuestGlyphLoaderRec* loader, const char* function) {
@@ -125,11 +130,15 @@ std::int32_t APS5_VABI FT_GlyphLoader_CheckPoints_nid_postfix(GuestGlyphLoaderRe
     const GuestOutline& current = loader->current.outline;
     bool adjust = false;
 
-    std::uint32_t newMax = static_cast<std::uint32_t>(Count(base.n_points) + Count(current.n_points)) + n_points;
-    std::uint32_t oldMax = loader->max_points;
-    if (newMax > oldMax) {
-        newMax = PadCeil(newMax, 8);
-        if (newMax > OutlinePointsMax) return ArrayTooLarge;
+    const std::int64_t points = Required(Count(base.n_points) + Count(current.n_points), n_points);
+    const std::int64_t contours = Required(Count(base.n_contours) + Count(current.n_contours), n_contours);
+    const std::int64_t pointsMax = points > loader->max_points ? PadCeil(points, 8) : 0;
+    const std::int64_t contoursMax = contours > loader->max_contours ? PadCeil(contours, 4) : 0;
+    if (pointsMax > OutlinePointsMax || contoursMax > OutlineContoursMax) return ArrayTooLarge;
+
+    if (pointsMax) {
+        const std::uint32_t oldMax = loader->max_points;
+        const auto newMax = static_cast<std::uint32_t>(pointsMax);
         if (Renew(memory, base.points, oldMax, newMax, error) || Renew(memory, base.tags, oldMax, newMax, error)) return error;
         if (loader->use_extra) {
             if (Renew(memory, loader->base.extra_points, 2 * static_cast<std::int64_t>(oldMax), 2 * static_cast<std::int64_t>(newMax), error)) {
@@ -142,12 +151,9 @@ std::int32_t APS5_VABI FT_GlyphLoader_CheckPoints_nid_postfix(GuestGlyphLoaderRe
         loader->max_points = newMax;
     }
 
-    oldMax = loader->max_contours;
-    newMax = static_cast<std::uint32_t>(Count(base.n_contours) + Count(current.n_contours)) + n_contours;
-    if (newMax > oldMax) {
-        newMax = PadCeil(newMax, 4);
-        if (newMax > OutlineContoursMax) return ArrayTooLarge;
-        if (Renew(memory, base.contours, oldMax, newMax, error)) return error;
+    if (contoursMax) {
+        const auto newMax = static_cast<std::uint32_t>(contoursMax);
+        if (Renew(memory, base.contours, loader->max_contours, newMax, error)) return error;
         adjust = true;
         loader->max_contours = newMax;
     }
@@ -159,13 +165,14 @@ std::int32_t APS5_VABI FT_GlyphLoader_CheckPoints_nid_postfix(GuestGlyphLoaderRe
 std::int32_t APS5_VABI FT_GlyphLoader_CheckSubGlyphs_nid_postfix(GuestGlyphLoaderRec* loader, std::uint32_t n_subs) {
     Require(loader, __func__);
     std::int32_t error = 0;
-    std::uint32_t newMax = loader->base.num_subglyphs + loader->current.num_subglyphs + n_subs;
+    const std::int64_t subs = Required(static_cast<std::int64_t>(loader->base.num_subglyphs) + loader->current.num_subglyphs, n_subs);
     const std::uint32_t oldMax = loader->max_subglyphs;
-    if (newMax > oldMax) {
-        newMax = PadCeil(newMax, 2);
+    if (subs > oldMax) {
+        const std::int64_t newMax = PadCeil(subs, 2);
+        if (newMax > SubGlyphsMax) return ArrayTooLarge;
         loader->base.subglyphs = ft_mem_realloc_nid_postfix(loader->memory, sizeof(GuestSubGlyphRec), oldMax, newMax, loader->base.subglyphs, &error);
         if (error) return error;
-        loader->max_subglyphs = newMax;
+        loader->max_subglyphs = static_cast<std::uint32_t>(newMax);
         AdjustSubglyphs(loader);
     }
     return error;
