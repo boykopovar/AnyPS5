@@ -148,7 +148,7 @@ endif()
 
 target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/General.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PreciseWait.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AppArchive.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AppArchiveBacking.cpp
@@ -158,15 +158,15 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LogFile.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/RunReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/gcc/StackGuard.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/windows/CrashReport.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/windows/GuestGs.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/x86_64/CallTrace.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/CrashReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/DlIteratePhdr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/GuestFaultCopy.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/macos/GuestGs.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/macos/GuestImages.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Strings.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AllocatingStrings.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/WideConversion.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/BoundsChecking.cpp
@@ -175,8 +175,8 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StringExtensions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GetSubOpt.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VectorAlgorithms.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
+        
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedExtendedPrecision.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Bessel.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/J0f.cpp
@@ -184,18 +184,18 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Jnf.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Random.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedMultiprecision.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatBuiltins.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatingPrefix.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HostEntropy.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Backtrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DinkumwareAtomics.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/DinkumwareInternals.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxNextPrime.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxSort.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/TimeExtras.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AtomicBuiltins.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/FileAndHeap.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Mergesort.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Heapsort.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HostErrno.cpp
@@ -204,11 +204,11 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StandardStreams.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StreamPurge.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedStreamInit.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestAllocations.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MemoryResource.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestArena.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestStacks.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestWriteWatch.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Interfaces.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestHeap.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HeapDiagnostics.cpp
@@ -216,19 +216,19 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ApplicationHeap.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ApplicationProcessParameters.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/JumpBuffer.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Formatting.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ScanWideField.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/FormattingWide.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/ScanningWide.cpp
+        
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/RuntimeSupport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/IntegerBuiltins.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/LocaleSupport.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/SonyCrt.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Process.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Hostname.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DeviceName.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Environment.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Directory.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Filesystem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedFilesystem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedFilesystemCalls.cpp
@@ -239,8 +239,9 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Syslog.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/RealPath.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/CxxAbiSupport.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Threads.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxCondition.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Backtrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Radix64.cpp
@@ -2334,7 +2335,7 @@ if(BUILD_TESTING)
         target_include_directories(exception_personality_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(exception_personality_tests PRIVATE libc)
         add_test(NAME exception_personality COMMAND exception_personality_tests)
-        add_test_executable(exception_compact_unwind_tests ${LIBS_INCLUDE_DIR}/tests/ExceptionCompactUnwind.cpp)
+        add_test_executable(exception_compact_unwind_tests ${LIBS_INCLUDE_DIR}/tests/ExceptionCompact)
         target_include_directories(exception_compact_unwind_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(exception_compact_unwind_tests PRIVATE libc)
         add_test(NAME exception_compact_unwind COMMAND exception_compact_unwind_tests)
@@ -2814,3 +2815,186 @@ list(SORT libcTestFragments)
 foreach(libcTestFragment IN LISTS libcTestFragments)
     include(${libcTestFragment})
 endforeach()
+
+add_library(libc_Math_Chunk01 STATIC src/chunks/Math_Chunk01.cpp)
+add_library(libc_Math_Chunk02 STATIC src/chunks/Math_Chunk02.cpp)
+add_library(libc_Math_Chunk03 STATIC src/chunks/Math_Chunk03.cpp)
+add_library(libc_Math_Chunk04 STATIC src/chunks/Math_Chunk04.cpp)
+add_library(libc_Math_Chunk05 STATIC src/chunks/Math_Chunk05.cpp)
+add_library(libc_Math_Chunk06 STATIC src/chunks/Math_Chunk06.cpp)
+add_library(libc_Math_Chunk07 STATIC src/chunks/Math_Chunk07.cpp)
+add_library(libc_Math_Chunk08 STATIC src/chunks/Math_Chunk08.cpp)
+add_library(libc_Math_Chunk09 STATIC src/chunks/Math_Chunk09.cpp)
+add_library(libc_Math_Chunk10 STATIC src/chunks/Math_Chunk10.cpp)
+add_library(libc_Math_Chunk11 STATIC src/chunks/Math_Chunk11.cpp)
+add_library(libc_Math_Chunk12 STATIC src/chunks/Math_Chunk12.cpp)
+target_link_libraries(libc PUBLIC libc_Math_Chunk01 libc_Math_Chunk02 libc_Math_Chunk03 libc_Math_Chunk04 libc_Math_Chunk05 libc_Math_Chunk06 libc_Math_Chunk07 libc_Math_Chunk08 libc_Math_Chunk09 libc_Math_Chunk10 libc_Math_Chunk11 libc_Math_Chunk12)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_Math_Chunk01 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk02 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk03 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk04 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk05 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk06 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk07 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk08 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk09 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk10 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk11 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Math_Chunk12 PRIVATE ${libc_incdirs})
+endif()
+
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+endif()
+
+add_library(libc_Formatting_Chunk01 STATIC src/chunks/Formatting_Chunk01.cpp)
+add_library(libc_Formatting_Chunk02 STATIC src/chunks/Formatting_Chunk02.cpp)
+add_library(libc_Formatting_Chunk03 STATIC src/chunks/Formatting_Chunk03.cpp)
+target_link_libraries(libc PUBLIC libc_Formatting_Chunk01 libc_Formatting_Chunk02 libc_Formatting_Chunk03)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_Formatting_Chunk01 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Formatting_Chunk02 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_Formatting_Chunk03 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_Strings_Chunk01 STATIC src/chunks/Strings_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_Strings_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_Strings_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_General_Chunk01 STATIC src/chunks/General_Chunk01.cpp)
+add_library(libc_General_Chunk02 STATIC src/chunks/General_Chunk02.cpp)
+target_link_libraries(libc PUBLIC libc_General_Chunk01 libc_General_Chunk02)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_General_Chunk01 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_General_Chunk02 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_LocaleSupport_Chunk01 STATIC src/chunks/LocaleSupport_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_LocaleSupport_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_LocaleSupport_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_GuestArena_Chunk01 STATIC src/chunks/GuestArena_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_GuestArena_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_GuestArena_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Process.cpp)
+target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RuntimeSupport.cpp)
+target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Threads.cpp)
+
+add_library(libc_DinkumwareInternals_Chunk01 STATIC src/chunks/DinkumwareInternals_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_DinkumwareInternals_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_DinkumwareInternals_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_Directory_Chunk01 STATIC src/chunks/Directory_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_Directory_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_Directory_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_FileAndHeap_Chunk01 STATIC src/chunks/FileAndHeap_Chunk01.cpp)
+add_library(libc_FileAndHeap_Chunk02 STATIC src/chunks/FileAndHeap_Chunk02.cpp)
+add_library(libc_FileAndHeap_Chunk03 STATIC src/chunks/FileAndHeap_Chunk03.cpp)
+target_link_libraries(libc PUBLIC libc_FileAndHeap_Chunk01 libc_FileAndHeap_Chunk02 libc_FileAndHeap_Chunk03)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_FileAndHeap_Chunk01 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_FileAndHeap_Chunk02 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_FileAndHeap_Chunk03 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_FloatBuiltins_Chunk01 STATIC src/chunks/FloatBuiltins_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_FloatBuiltins_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_FloatBuiltins_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_FormattingWide_Chunk01 STATIC src/chunks/FormattingWide_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_FormattingWide_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_FormattingWide_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_GuestAllocations_Chunk01 STATIC src/chunks/GuestAllocations_Chunk01.cpp)
+add_library(libc_GuestAllocations_Chunk02 STATIC src/chunks/GuestAllocations_Chunk02.cpp)
+target_link_libraries(libc PUBLIC libc_GuestAllocations_Chunk01 libc_GuestAllocations_Chunk02)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_GuestAllocations_Chunk01 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_GuestAllocations_Chunk02 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_GuestWriteWatch_Chunk01 STATIC src/chunks/GuestWriteWatch_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_GuestWriteWatch_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_GuestWriteWatch_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_MathExact_Chunk01 STATIC src/chunks/MathExact_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_MathExact_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_MathExact_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_ScanningWide_Chunk01 STATIC src/chunks/ScanningWide_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_ScanningWide_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_ScanningWide_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+endif()
+
+add_library(libc_Time_Chunk01 STATIC src/chunks/Time_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_Time_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_Time_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(guest_sdk_heap_fixture_Unwind_Chunk01 STATIC src/exception/chunks/Unwind_Chunk01.cpp)
+target_link_libraries(guest_sdk_heap_fixture PUBLIC guest_sdk_heap_fixture_Unwind_Chunk01)
+get_target_property(guest_sdk_heap_fixture_incdirs guest_sdk_heap_fixture INCLUDE_DIRECTORIES)
+if(guest_sdk_heap_fixture_incdirs)
+    target_include_directories(guest_sdk_heap_fixture_Unwind_Chunk01 PRIVATE ${guest_sdk_heap_fixture_incdirs})
+endif()
+
+add_library(libc_CrashReport_Chunk01 STATIC src/specifics/windows/chunks/CrashReport_Chunk01.cpp)
+add_library(libc_CrashReport_Chunk02 STATIC src/specifics/windows/chunks/CrashReport_Chunk02.cpp)
+target_link_libraries(libc PUBLIC libc_CrashReport_Chunk01 libc_CrashReport_Chunk02)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_CrashReport_Chunk01 PRIVATE ${libc_incdirs})
+    target_include_directories(libc_CrashReport_Chunk02 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_CallTrace_Chunk01 STATIC src/specifics/x86_64/chunks/CallTrace_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_CallTrace_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_CallTrace_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Process.cpp)
+target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RuntimeSupport.cpp)
+target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Threads.cpp)

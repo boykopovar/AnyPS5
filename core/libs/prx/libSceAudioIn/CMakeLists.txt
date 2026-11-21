@@ -1,4 +1,4 @@
-add_library(libSceAudioIn SHARED EXCLUDE_FROM_ALL Export.cpp InventoryExports.cpp)
+add_library(libSceAudioIn SHARED EXCLUDE_FROM_ALL  InventoryExports.cpp)
 target_include_directories(libSceAudioIn PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
 target_link_libraries(libSceAudioIn PRIVATE SDL2-static)
 if(NOT APPLE)
@@ -66,4 +66,11 @@ if(BUILD_TESTING)
         set_tests_properties(guest_audio_in_device_id_open_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioIn>")
     endif()
+endif()
+
+add_library(libSceAudioIn_Export_Chunk01 STATIC chunks/Export_Chunk01.cpp)
+target_link_libraries(libSceAudioIn PUBLIC libSceAudioIn_Export_Chunk01)
+get_target_property(libSceAudioIn_incdirs libSceAudioIn INCLUDE_DIRECTORIES)
+if(libSceAudioIn_incdirs)
+    target_include_directories(libSceAudioIn_Export_Chunk01 PRIVATE ${libSceAudioIn_incdirs})
 endif()

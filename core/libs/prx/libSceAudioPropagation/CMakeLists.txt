@@ -1,4 +1,4 @@
-add_library(libSceAudioPropagation SHARED EXCLUDE_FROM_ALL Export.cpp InventoryExports.cpp)
+add_library(libSceAudioPropagation SHARED EXCLUDE_FROM_ALL  InventoryExports.cpp)
 target_include_directories(libSceAudioPropagation PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceAudioPropagation)
 
@@ -12,4 +12,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_audio_propagation PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioPropagation>")
     endif()
+endif()
+
+add_library(libSceAudioPropagation_Export_Chunk01 STATIC chunks/Export_Chunk01.cpp)
+add_library(libSceAudioPropagation_Export_Chunk02 STATIC chunks/Export_Chunk02.cpp)
+target_link_libraries(libSceAudioPropagation PUBLIC libSceAudioPropagation_Export_Chunk01 libSceAudioPropagation_Export_Chunk02)
+get_target_property(libSceAudioPropagation_incdirs libSceAudioPropagation INCLUDE_DIRECTORIES)
+if(libSceAudioPropagation_incdirs)
+    target_include_directories(libSceAudioPropagation_Export_Chunk01 PRIVATE ${libSceAudioPropagation_incdirs})
+    target_include_directories(libSceAudioPropagation_Export_Chunk02 PRIVATE ${libSceAudioPropagation_incdirs})
 endif()

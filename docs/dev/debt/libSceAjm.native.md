@@ -71,3 +71,8 @@
 | `Unknown` | `qkuXdR4-Ihc` |
 
 - [AJM instance contexts](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp) (libSceAjm.native) - context validation and ownership on instance creation/destruction follow shadPS4, not PS5 measurements. Rejected creation leaves the output untouched and rejected destruction preserves the owner's instance. IDs remain globally allocated by this runtime. Finalization still does not invalidate contexts or release instances; batch jobs still look up instances globally without checking their context.
+
+
+### Silent stubs
+
+- [sceAjmMemoryUnregister](../../../core/libs/prx/libSceAjm.native/src/chunks/Ajm_Chunk05.cpp) (libSceAjm.native) - unimplemented export calling NotImplemented_nid_no_patch(__func__); listed after Ajm.cpp was split into small-size libraries.
