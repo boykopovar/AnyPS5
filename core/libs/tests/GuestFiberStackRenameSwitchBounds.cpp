@@ -32,6 +32,38 @@ FiberObject* const g_fiberA = reinterpret_cast<FiberObject*>(g_fiberStorageA);
 FiberObject* const g_fiberB = reinterpret_cast<FiberObject*>(g_fiberStorageB);
 FiberObject* const g_fiberC = reinterpret_cast<FiberObject*>(g_fiberStorageC);
 
+FiberInfo QueryFiberInfo(FiberObject* fiber) {
+    FiberInfo info{};
+    std::memset(&info, 0xA5, sizeof(info));
+    info.size = sizeof(info);
+    Require(sceFiberGetInfo(fiber, &info) == SCE_OK);
+    return info;
+}
+
+void AssertFiberInfoPreserved(FiberObject* fiber, const char* expectedName, GuestFiberEntry expectedEntry, std::uint64_t expectedArg, void* expectedContext, std::uint64_t expectedSize) {
+    const FiberInfo info = QueryFiberInfo(fiber);
+    Require(std::strcmp(info.name, expectedName) == 0);
+    Require(info.entry == expectedEntry);
+    Require(info.arg_on_initialize == expectedArg);
+    Require(info.addr_context == expectedContext);
+    Require(info.size_context == expectedSize);
+}
+
+void AssertThreadFramePointerParityInsideFiber(std::uint64_t* outFp) {
+    Require(sceFiberGetThreadFramePointerAddress(nullptr) == FiberErrorNull);
+    Require(_sceFiberGetThreadFramePointerAddress(nullptr) == FiberErrorNull);
+
+    std::uint64_t fpPrimary = 0;
+    std::uint64_t fpAlias = 0;
+    const std::int32_t rcPrimary = sceFiberGetThreadFramePointerAddress(&fpPrimary);
+    const std::int32_t rcAlias = _sceFiberGetThreadFramePointerAddress(&fpAlias);
+    Require(rcPrimary == SCE_OK);
+    Require(rcAlias == rcPrimary);
+    Require(fpPrimary != 0);
+    Require(fpAlias == fpPrimary);
+    *outFp = fpPrimary;
+}
+
 void APS5_VABI SmallStackEntry(std::uint64_t, std::uint64_t) {
     FiberInfo info{};
     info.size = sizeof(info);
@@ -61,6 +93,64 @@ void APS5_VABI LargeStackEntry(std::uint64_t, std::uint64_t) {
     Require(markerAddr >= low && markerAddr < high);
 
     Require(sceFiberReturnToThread(222, nullptr) == SCE_OK);
+}
+
+void APS5_VABI FramePointerProbeEntry(std::uint64_t, std::uint64_t) {
+    std::uint64_t fp = 0;
+    AssertThreadFramePointerParityInsideFiber(&fp);
+    Require(sceFiberReturnToThread(fp, nullptr) == SCE_OK);
+}
+
+void APS5_VABI ContextSizeCheckEntry(std::uint64_t, std::uint64_t) {
+    volatile std::uint8_t localScratch[512];
+    for (std::size_t i = 0; i < sizeof(localScratch); ++i) {
+        localScratch[i] = static_cast<std::uint8_t>(i & 0xffu);
+    }
+    Require(sceFiberReturnToThread(333, nullptr) == SCE_OK);
+}
+
+void APS5_VABI InFlightRenameFiberAEntry(std::uint64_t argOnInitialize, std::uint64_t argOnRun) {
+    Require(argOnInitialize == 0x1122334455667788ull);
+    Require(argOnRun == 1);
+
+    Require(sceFiberRename(g_fiberA, "running_phase_1") == SCE_OK);
+    AssertFiberInfoPreserved(g_fiberA, "running_phase_1", InFlightRenameFiberAEntry, 0x1122334455667788ull, g_largeContext, sizeof(g_largeContext));
+
+    std::uint64_t fromB = 0;
+    Require(sceFiberSwitch(g_fiberB, 42, &fromB) == SCE_OK);
+    Require(fromB == 84);
+    AssertFiberInfoPreserved(g_fiberA, "suspended_via_switch", InFlightRenameFiberAEntry, 0x1122334455667788ull, g_largeContext, sizeof(g_largeContext));
+
+    std::uint64_t fromHost = 0;
+    Require(sceFiberReturnToThread(101, &fromHost) == SCE_OK);
+    Require(fromHost == 202);
+    AssertFiberInfoPreserved(g_fiberA, "suspended_on_host", InFlightRenameFiberAEntry, 0x1122334455667788ull, g_largeContext, sizeof(g_largeContext));
+
+    Require(sceFiberRename(g_fiberA, "running_phase_2") == SCE_OK);
+    AssertFiberInfoPreserved(g_fiberA, "running_phase_2", InFlightRenameFiberAEntry, 0x1122334455667788ull, g_largeContext, sizeof(g_largeContext));
+
+    Require(sceFiberReturnToThread(303, nullptr) == SCE_OK);
+}
+
+void APS5_VABI InFlightRenameFiberBEntry(std::uint64_t argOnInitialize, std::uint64_t argOnRun) {
+    Require(argOnInitialize == 0x9988776655443322ull);
+    Require(argOnRun == 42);
+
+    AssertFiberInfoPreserved(g_fiberA, "running_phase_1", InFlightRenameFiberAEntry, 0x1122334455667788ull, g_largeContext, sizeof(g_largeContext));
+    Require(sceFiberRename(g_fiberA, "suspended_via_switch") == SCE_OK);
+    AssertFiberInfoPreserved(g_fiberA, "suspended_via_switch", InFlightRenameFiberAEntry, 0x1122334455667788ull, g_largeContext, sizeof(g_largeContext));
+
+    const FiberInfo beforeB = QueryFiberInfo(g_fiberB);
+    Require(std::strcmp(beforeB.name, "helper_fiber") == 0);
+    Require(beforeB.entry == InFlightRenameFiberBEntry);
+    Require(beforeB.arg_on_initialize == 0x9988776655443322ull);
+    Require(beforeB.size_context == sizeof(g_smallContext));
+
+    Require(sceFiberRename(g_fiberB, "helper_running") == SCE_OK);
+    AssertFiberInfoPreserved(g_fiberB, "helper_running", InFlightRenameFiberBEntry, 0x9988776655443322ull, beforeB.addr_context, sizeof(g_smallContext));
+
+    Require(sceFiberSwitch(g_fiberA, 84, nullptr) == SCE_OK);
+    Require(false);
 }
 
 void APS5_VABI FiberAEntry(std::uint64_t argOnInitialize, std::uint64_t argOnRun) {
@@ -183,11 +273,113 @@ void TestSwitchErrorConditionsAndTransitions() {
     Require(sceFiberFinalize(g_fiberC) == FiberErrorInvalid);
 }
 
+void TestThreadFramePointerAddressParity() {
+    Require(sceFiberGetThreadFramePointerAddress(nullptr) == FiberErrorNull);
+    Require(_sceFiberGetThreadFramePointerAddress(nullptr) == FiberErrorNull);
+
+    std::uint64_t hostFpPrimary = 0xA5A5A5A5A5A5A5A5ull;
+    std::uint64_t hostFpAlias = 0x5A5A5A5A5A5A5A5Aull;
+    const std::int32_t rcHostPrimary = sceFiberGetThreadFramePointerAddress(&hostFpPrimary);
+    const std::int32_t rcHostAlias = _sceFiberGetThreadFramePointerAddress(&hostFpAlias);
+    Require(rcHostPrimary == FiberErrorPermission);
+    Require(rcHostAlias == rcHostPrimary);
+    Require(hostFpPrimary == 0xA5A5A5A5A5A5A5A5ull);
+    Require(hostFpAlias == 0x5A5A5A5A5A5A5A5Aull);
+
+    Require(_sceFiberInitializeImpl_nid_postfix(g_fiberA, "fp_small", FramePointerProbeEntry, 0, g_smallContext, sizeof(g_smallContext), nullptr, 0) == SCE_OK);
+    std::uint64_t fpSmall = 0;
+    Require(sceFiberRun_nid_postfix(g_fiberA, 0, &fpSmall) == SCE_OK);
+    Require(fpSmall != 0);
+    Require(sceFiberFinalize(g_fiberA) == SCE_OK);
+
+    Require(_sceFiberInitializeImpl_nid_postfix(g_fiberB, "fp_large", FramePointerProbeEntry, 0, g_largeContext, sizeof(g_largeContext), nullptr, 0) == SCE_OK);
+    std::uint64_t fpLarge = 0;
+    Require(sceFiberRun_nid_postfix(g_fiberB, 0, &fpLarge) == SCE_OK);
+    Require(fpLarge != 0);
+    Require(sceFiberFinalize(g_fiberB) == SCE_OK);
+
+    Require(sceFiberGetThreadFramePointerAddress(&hostFpPrimary) == FiberErrorPermission);
+    Require(_sceFiberGetThreadFramePointerAddress(&hostFpAlias) == FiberErrorPermission);
+    Require(hostFpPrimary == 0xA5A5A5A5A5A5A5A5ull);
+    Require(hostFpAlias == 0x5A5A5A5A5A5A5A5Aull);
+}
+
+void TestContextSizeCheckLifecycle() {
+    Require(sceFiberStopContextSizeCheck() == FiberErrorState);
+    Require(sceFiberStartContextSizeCheck(1) == FiberErrorInvalid);
+    Require(sceFiberStartContextSizeCheck(0x10) == FiberErrorInvalid);
+    Require(sceFiberStartContextSizeCheck(0xffffffffu) == FiberErrorInvalid);
+    Require(sceFiberStopContextSizeCheck() == FiberErrorState);
+
+    Require(sceFiberStartContextSizeCheck(0) == SCE_OK);
+    Require(sceFiberStartContextSizeCheck(0) == FiberErrorState);
+    Require(sceFiberStartContextSizeCheck(1) == FiberErrorInvalid);
+
+    Require(_sceFiberInitializeImpl_nid_postfix(g_fiberA, "ctx_size_chk_on", ContextSizeCheckEntry, 0, g_smallContext, sizeof(g_smallContext), nullptr, 0) == SCE_OK);
+    FiberInfo info = QueryFiberInfo(g_fiberA);
+    Require(info.size_context_margin == sizeof(g_smallContext));
+
+    std::uint64_t returned = 0;
+    Require(sceFiberRun_nid_postfix(g_fiberA, 0, &returned) == SCE_OK);
+    Require(returned == 333);
+
+    info = QueryFiberInfo(g_fiberA);
+    Require(info.size_context_margin != static_cast<std::uint64_t>(-1));
+    Require(info.size_context_margin > 0);
+    Require(info.size_context_margin < sizeof(g_smallContext));
+    Require(info.size_context_margin % sizeof(std::uint64_t) == 0);
+    Require(sceFiberFinalize(g_fiberA) == SCE_OK);
+
+    Require(sceFiberStopContextSizeCheck() == SCE_OK);
+    Require(sceFiberStopContextSizeCheck() == FiberErrorState);
+
+    Require(_sceFiberInitializeImpl_nid_postfix(g_fiberA, "ctx_size_chk_off", ContextSizeCheckEntry, 0, g_smallContext, sizeof(g_smallContext), nullptr, 0) == SCE_OK);
+    info = QueryFiberInfo(g_fiberA);
+    Require(info.size_context_margin == static_cast<std::uint64_t>(-1));
+
+    returned = 0;
+    Require(sceFiberRun_nid_postfix(g_fiberA, 0, &returned) == SCE_OK);
+    Require(returned == 333);
+
+    info = QueryFiberInfo(g_fiberA);
+    Require(info.size_context_margin == static_cast<std::uint64_t>(-1));
+    Require(sceFiberFinalize(g_fiberA) == SCE_OK);
+
+    Require(sceFiberStartContextSizeCheck(0) == SCE_OK);
+    Require(sceFiberStopContextSizeCheck() == SCE_OK);
+}
+
+void TestInFlightRenamePreservesInfo() {
+    Require(_sceFiberInitializeImpl_nid_postfix(g_fiberA, "inflight_init", InFlightRenameFiberAEntry, 0x1122334455667788ull, g_largeContext, sizeof(g_largeContext), nullptr, 0) == SCE_OK);
+    Require(_sceFiberInitializeImpl_nid_postfix(g_fiberB, "helper_fiber", InFlightRenameFiberBEntry, 0x9988776655443322ull, g_smallContext, sizeof(g_smallContext), nullptr, 0) == SCE_OK);
+
+    AssertFiberInfoPreserved(g_fiberA, "inflight_init", InFlightRenameFiberAEntry, 0x1122334455667788ull, g_largeContext, sizeof(g_largeContext));
+
+    std::uint64_t returned = 0;
+    Require(sceFiberRun_nid_postfix(g_fiberA, 1, &returned) == SCE_OK);
+    Require(returned == 101);
+    AssertFiberInfoPreserved(g_fiberA, "suspended_via_switch", InFlightRenameFiberAEntry, 0x1122334455667788ull, g_largeContext, sizeof(g_largeContext));
+
+    Require(sceFiberRename(g_fiberA, "suspended_on_host") == SCE_OK);
+    AssertFiberInfoPreserved(g_fiberA, "suspended_on_host", InFlightRenameFiberAEntry, 0x1122334455667788ull, g_largeContext, sizeof(g_largeContext));
+
+    returned = 0;
+    Require(sceFiberRun_nid_postfix(g_fiberA, 202, &returned) == SCE_OK);
+    Require(returned == 303);
+    AssertFiberInfoPreserved(g_fiberA, "running_phase_2", InFlightRenameFiberAEntry, 0x1122334455667788ull, g_largeContext, sizeof(g_largeContext));
+
+    Require(sceFiberFinalize(g_fiberA) == SCE_OK);
+    Require(sceFiberFinalize(g_fiberB) == SCE_OK);
+}
+
 } // namespace
 
 int main() {
     TestStackBoundaryLimits();
     TestRenameStringBounds();
     TestSwitchErrorConditionsAndTransitions();
+    TestThreadFramePointerAddressParity();
+    TestContextSizeCheckLifecycle();
+    TestInFlightRenamePreservesInfo();
     return 0;
 }
