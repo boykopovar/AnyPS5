@@ -207,15 +207,15 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestAllocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MemoryResource.cpp
         
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestStacks.cpp
-        
-        
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestHeap.cpp
         
         
         
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/ApplicationProcessParameters.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/JumpBuffer.cpp
+        
+        
+        
+        
+        
+        
         
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ScanWideField.cpp
         
@@ -230,11 +230,11 @@ target_sources(libc PRIVATE
         
         
         
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedFilesystem.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedFilesystemCalls.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/AtomicWait.cpp
+        
+        
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxMutex.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Rename.cpp
+        
         
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Syslog.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/RealPath.cpp
@@ -279,8 +279,8 @@ if(ANYPS5_ENABLE_TSAN)
             TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-fno-sanitize=thread")
 endif()
 
-target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/BinaryWordIo.cpp)
-target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/LegacySignals.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SigvecExport.cpp)
+target_sources(libc PRIVATE )
+target_sources(libc PRIVATE  ${CMAKE_CURRENT_SOURCE_DIR}/src/SigvecExport.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_libcxx_condition_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxCondition.cpp)
@@ -413,7 +413,7 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatingPoint.cpp)
+target_sources(libc PRIVATE )
 target_sources(libc PRIVATE )
 
 if(BUILD_TESTING)
@@ -2836,15 +2836,8 @@ if(libc_incdirs)
     target_include_directories(libc_Math_Chunk12 PRIVATE ${libc_incdirs})
 endif()
 
-add_library(libc_Threads_Chunk01 STATIC src/chunks/Threads_Chunk01.cpp)
-add_library(libc_Threads_Chunk02 STATIC src/chunks/Threads_Chunk02.cpp)
-add_library(libc_Threads_Chunk03 STATIC src/chunks/Threads_Chunk03.cpp)
-target_link_libraries(libc PUBLIC libc_Threads_Chunk01 libc_Threads_Chunk02 libc_Threads_Chunk03)
 get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
 if(libc_incdirs)
-    target_include_directories(libc_Threads_Chunk01 PRIVATE ${libc_incdirs})
-    target_include_directories(libc_Threads_Chunk02 PRIVATE ${libc_incdirs})
-    target_include_directories(libc_Threads_Chunk03 PRIVATE ${libc_incdirs})
 endif()
 
 add_library(libc_Formatting_Chunk01 STATIC src/chunks/Formatting_Chunk01.cpp)
@@ -2930,11 +2923,8 @@ if(libc_incdirs)
     target_include_directories(libc_ApplicationHeap_Chunk01 PRIVATE ${libc_incdirs})
 endif()
 
-add_library(libc_RuntimeSupport_Chunk01 STATIC src/chunks/RuntimeSupport_Chunk01.cpp)
-target_link_libraries(libc PUBLIC libc_RuntimeSupport_Chunk01)
 get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
 if(libc_incdirs)
-    target_include_directories(libc_RuntimeSupport_Chunk01 PRIVATE ${libc_incdirs})
 endif()
 
 add_library(libc_Filesystem_Chunk01 STATIC src/chunks/Filesystem_Chunk01.cpp)
@@ -2951,11 +2941,8 @@ if(libc_incdirs)
     target_include_directories(libc_Environment_Chunk01 PRIVATE ${libc_incdirs})
 endif()
 
-add_library(libc_Process_Chunk01 STATIC src/chunks/Process_Chunk01.cpp)
-target_link_libraries(libc PUBLIC libc_Process_Chunk01)
 get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
 if(libc_incdirs)
-    target_include_directories(libc_Process_Chunk01 PRIVATE ${libc_incdirs})
 endif()
 
 add_library(libc_Directory_Chunk01 STATIC src/chunks/Directory_Chunk01.cpp)
@@ -2985,3 +2972,83 @@ get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
 if(libc_incdirs)
     target_include_directories(libc_CodecvtUtf_Chunk01 PRIVATE ${libc_incdirs})
 endif()
+
+add_library(libc_ApplicationProcessParameters_Chunk01 STATIC src/chunks/ApplicationProcessParameters_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_ApplicationProcessParameters_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_ApplicationProcessParameters_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_JumpBuffer_Chunk01 STATIC src/chunks/JumpBuffer_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_JumpBuffer_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_JumpBuffer_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_BinaryWordIo_Chunk01 STATIC src/chunks/BinaryWordIo_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_BinaryWordIo_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_BinaryWordIo_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_LegacySignals_Chunk01 STATIC src/chunks/LegacySignals_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_LegacySignals_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_LegacySignals_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_FloatingPoint_Chunk01 STATIC src/chunks/FloatingPoint_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_FloatingPoint_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_FloatingPoint_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_VersionedFilesystem_Chunk01 STATIC src/chunks/VersionedFilesystem_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_VersionedFilesystem_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_VersionedFilesystem_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_VersionedFilesystemCalls_Chunk01 STATIC src/chunks/VersionedFilesystemCalls_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_VersionedFilesystemCalls_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_VersionedFilesystemCalls_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_AtomicWait_Chunk01 STATIC src/chunks/AtomicWait_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_AtomicWait_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_AtomicWait_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_Rename_Chunk01 STATIC src/chunks/Rename_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_Rename_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_Rename_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_GuestStacks_Chunk01 STATIC src/chunks/GuestStacks_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_GuestStacks_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_GuestStacks_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_GuestHeap_Chunk01 STATIC src/chunks/GuestHeap_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_GuestHeap_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_GuestHeap_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Process.cpp)
+target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RuntimeSupport.cpp)
+target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Threads.cpp)
