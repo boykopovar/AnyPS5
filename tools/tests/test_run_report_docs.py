@@ -21,24 +21,22 @@ class DocsTests(unittest.TestCase):
         for path in (RUN_REPORT, USAGE):
             self.assertEqual(sorted(rows(path.read_text(encoding="utf-8"))), ["Linux", "Windows", "macOS"], path.name)
 
-    def test_loaded_and_started_are_macos_only(self):
+    def test_loaded_and_started_depend_on_startup_bridge(self):
         for path in (RUN_REPORT, USAGE):
             table = rows(path.read_text(encoding="utf-8"))
             self.assertTrue(table["Linux"][0].startswith(("not", "never")), path.name)
-            self.assertTrue(table["Windows"][0].startswith(("not", "never")), path.name)
+            self.assertEqual(table["Windows"][0], "recorded with a recent relinker and a runtime that supports the report hook", path.name)
             self.assertEqual(table["macOS"][0], "recorded", path.name)
             for system in table:
                 self.assertEqual(table[system][1], "recorded", f"{path.name}: {system} firstDraw/firstPresent")
                 self.assertEqual(table[system][2], "recorded", f"{path.name}: {system} stage and frames")
 
-    def test_a_missing_milestone_is_not_presented_as_not_reached(self):
-        text = RUN_REPORT.read_text(encoding="utf-8")
-        self.assertRegex(text, r"never as .not reached.")
-        self.assertIn("coverage.milestones", text)
-
-    def test_usage_says_the_same(self):
-        text = USAGE.read_text(encoding="utf-8")
-        self.assertRegex(text, r"either one the run did not reach or one this system does not record")
+    def test_missing_milestones_can_reflect_limited_support(self):
+        for path in (RUN_REPORT, USAGE):
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("the run ended earlier or that the system or conversion lacks support for it", text, path.name)
+            self.assertIn("Linux and older Windows conversions", text, path.name)
+        self.assertIn("coverage.milestones", RUN_REPORT.read_text(encoding="utf-8"))
 
     def test_the_switch_is_documented_in_both_docs(self):
         for path in (RUN_REPORT, USAGE):
