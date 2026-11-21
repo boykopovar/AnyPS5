@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
 #include <algorithm>
 #include <array>
@@ -43,6 +44,8 @@ static int APS5_VABI CompareUint32(const void* left, const void* right) {
 }
 
 int main() {
+    std::array<void*, 10> heapApi{};
+    ApplicationHeapRegister_nid_no_patch(heapApi.data());
     const std::array<unsigned char, 9> keys{1, 3, 3, 7, 9, 11, 13, 17, 21};
     for (std::size_t stride : {1, 3, 5, 7, 17}) {
         for (std::size_t offset : {0, 1, 2, 5}) {
