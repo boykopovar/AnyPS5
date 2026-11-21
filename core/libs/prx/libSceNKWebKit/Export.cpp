@@ -286,10 +286,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_0GGFzi4CsQg_nid_no_patch() {
 }
 APS5_EXPORT("0GGFzi4CsQg", libSceNKWebKitLegacyUnknown_0GGFzi4CsQg_nid_no_patch);
 
-int APS5_VABI _ZN7WebCore9subdivideERKN3WTF6VectorINS_10MarkedTextELm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEENS_15OverlapStrategyE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore8JSDOMURL6createEPN3JSC9StructureEPNS_17JSDOMGlobalObjectEON3WTF3RefINS_6DOMURLENS6_13DumbPtrTraitsIS8_EEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
