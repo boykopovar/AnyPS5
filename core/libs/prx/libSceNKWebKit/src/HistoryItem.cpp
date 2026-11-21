@@ -27,6 +27,7 @@
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"
+#include "prx/libSceNKWebKit/include/UrlParserExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 #include <stdexcept>
@@ -39,6 +40,7 @@ using NKWebKit::WebCoreAbi::HistoryItemVectorStorage;
 using NKWebKit::WebCoreAbi::CachedPage;
 using NKWebKit::WebCoreAbi::historyItemChangedHook;
 using NKWebKit::WtfAbi::String;
+using NKWebKit::WtfAbi::URL;
 using WebCore::IntPoint;
 
 HistoryItem& Checked(HistoryItem* self) {
@@ -55,6 +57,13 @@ template <typename T>
 const T& Checked(const T* value, const char* name) {
     if (!value) throw std::invalid_argument(name);
     return *value;
+}
+
+URL ParseWithoutBase(const String& string) {
+    const URL base{};
+    URL url{};
+    _ZN3WTF3URLC2ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE(&url, &base, &string, nullptr);
+    return url;
 }
 
 void Assign(String& target, const String& source) {
@@ -81,6 +90,14 @@ const String& APS5_VABI _ZNK7WebCore11HistoryItem9urlStringEv(const HistoryItem*
 
 const String& APS5_VABI _ZNK7WebCore11HistoryItem17originalURLStringEv(const HistoryItem* self) {
     return Checked(self).originalURLString;
+}
+
+URL APS5_VABI _ZNK7WebCore11HistoryItem3urlEv(const HistoryItem* self) {
+    return ParseWithoutBase(Checked(self).urlString);
+}
+
+URL APS5_VABI _ZNK7WebCore11HistoryItem11originalURLEv(const HistoryItem* self) {
+    return ParseWithoutBase(Checked(self).originalURLString);
 }
 
 const String& APS5_VABI _ZNK7WebCore11HistoryItem5titleEv(const HistoryItem* self) {

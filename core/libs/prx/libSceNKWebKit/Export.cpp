@@ -26086,14 +26086,6 @@ int APS5_VABI _ZNK7WebCore11HTMLElement9translateEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore11HistoryItem11originalURLEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore11HistoryItem3urlEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore11HistoryItem4copyEv() {
     NotImplemented_nid_no_patch(__func__);
 }
