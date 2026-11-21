@@ -100,6 +100,7 @@ NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEl(NKWebKit::WtfAbi
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEm(NKWebKit::WtfAbi::TextStream* self, std::uint64_t value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEx(NKWebKit::WtfAbi::TextStream* self, long long value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEy(NKWebKit::WtfAbi::TextStream* self, unsigned long long value);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10URLHelpers14userVisibleURLERKNS_7CStringE(const NKWebKit::WtfAbi::CString& url);
 void* APS5_VABI _ZN3WTF10fastCallocEmm(std::size_t count, std::size_t size);
 void* APS5_VABI _ZN3WTF10fastMallocEm(std::size_t size);
 char* APS5_VABI _ZN3WTF10fastStrDupEPKc(const char* str);
