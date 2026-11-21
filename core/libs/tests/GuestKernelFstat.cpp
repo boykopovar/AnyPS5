@@ -258,7 +258,7 @@ void AuditPipeAndSocketModes() {
 
 void AuditNativeFstatModeAttributes() {
     const auto uniqueSuffix = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-    const std::filesystem::path tempDir = std::filesystem::temp_directory_path() / ("anyps5-fstat-mode-" + uniqueSuffix);
+    const std::filesystem::path tempDir = std::filesystem::path("anyps5-fstat-mode-" + uniqueSuffix);
     std::filesystem::remove_all(tempDir);
     Require(std::filesystem::create_directories(tempDir), "create mode fixture directory failed");
     const std::filesystem::path tempFile = tempDir / "sample.bin";
