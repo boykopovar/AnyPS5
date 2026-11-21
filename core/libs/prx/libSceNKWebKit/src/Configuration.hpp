@@ -11,6 +11,12 @@
 
 namespace NKWebKit {
 
+struct PageClientRegistration {
+    int version = 0;
+    const void* clientInfo = nullptr;
+    const void* raw = nullptr;
+};
+
 class Page : public ObjectOf<ObjectType::Page> {
 public:
     bool canGoBack = false;
@@ -52,6 +58,17 @@ public:
     std::optional<std::u16string> customUserAgent;
     std::optional<std::u16string> customTextEncodingName;
     bool backgroundExtendsBeyondPage = false;
+    std::optional<PageClientRegistration> loaderClient;
+    std::optional<PageClientRegistration> navigationClient;
+    std::optional<PageClientRegistration> policyClient;
+    std::optional<PageClientRegistration> uiClient;
+    std::optional<PageClientRegistration> contextMenuClient;
+    std::optional<PageClientRegistration> diagnosticLoggingClient;
+    std::optional<PageClientRegistration> findClient;
+    std::optional<PageClientRegistration> findMatchesClient;
+    std::optional<PageClientRegistration> formClient;
+    std::optional<PageClientRegistration> injectedBundleClient;
+    std::optional<PageClientRegistration> stateClient;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
