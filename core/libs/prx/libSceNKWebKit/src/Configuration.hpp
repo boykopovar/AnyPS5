@@ -148,15 +148,15 @@ public:
 
 class WebsiteDataStoreConfiguration final : public ObjectOf<ObjectType::WebsiteDataStoreConfiguration> {
 public:
-    std::optional<std::u16string> applicationCacheDirectory;
-    std::optional<std::u16string> networkCacheDirectory;
-    std::optional<std::u16string> indexedDBDatabaseDirectory;
-    std::optional<std::u16string> localStorageDirectory;
-    std::optional<std::u16string> webSQLDatabaseDirectory;
-    std::optional<std::u16string> cacheStorageDirectory;
-    std::optional<std::u16string> mediaKeysStorageDirectory;
-    std::optional<std::u16string> resourceLoadStatisticsDirectory;
-    std::optional<std::u16string> serviceWorkerRegistrationDirectory;
+    std::optional<std::u16string> applicationCacheDirectory = u"/app0/applications";
+    std::optional<std::u16string> networkCacheDirectory = u"/app0/WebKitCache";
+    std::optional<std::u16string> indexedDBDatabaseDirectory = u"/app0/indexeddb";
+    std::optional<std::u16string> localStorageDirectory = u"/app0/local";
+    std::optional<std::u16string> webSQLDatabaseDirectory = u"/app0/websql";
+    std::optional<std::u16string> cacheStorageDirectory = u"/app0/CacheStorage";
+    std::optional<std::u16string> mediaKeysStorageDirectory = u"/app0/mediakeys";
+    std::optional<std::u16string> resourceLoadStatisticsDirectory = u"/app0/itp";
+    std::optional<std::u16string> serviceWorkerRegistrationDirectory = u"/app0/serviceworkers";
     std::optional<std::u16string> cookieStorageFile;
     std::uint64_t perOriginStorageQuota = 1000ULL * 1024ULL * 1024ULL;
     bool networkCacheSpeculativeValidationEnabled = false;
