@@ -14,6 +14,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <pthread.h>
 #else
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -49,6 +51,10 @@ unsigned long CurrentProcessId() {
 unsigned long CurrentThreadId() {
 #ifdef _WIN32
     return GetCurrentThreadId();
+#elif defined(__APPLE__)
+    std::uint64_t thread = 0;
+    pthread_threadid_np(nullptr, &thread);
+    return static_cast<unsigned long>(thread);
 #else
     return static_cast<unsigned long>(::syscall(SYS_gettid));
 #endif
