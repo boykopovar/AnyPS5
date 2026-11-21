@@ -10937,18 +10937,21 @@ void uploadBlockTests(const Device& device, Recorder& recorder) {
         std::size_t registeredEnd;
         std::size_t segments;
         std::size_t importWindow;
+        bool uniformHead;
     };
     const Case cases[] = {
-        {"a 64 KiB R_X 1024x1024 image over 64 adjacent 64 KiB pieces", 0, 4u << 20u, 0, window},
-        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces", piece, (4u << 20u) + 2 * piece, 2, window},
-        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces in 2 MiB import windows", piece, (4u << 20u) + 2 * piece, 3, std::size_t{2} << 20u},
+        {"a 64 KiB R_X 1024x1024 image over 64 adjacent 64 KiB pieces", 0, 4u << 20u, 0, window, false},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces", piece, (4u << 20u) + 2 * piece, 2, window, false},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces in 2 MiB import windows", piece, (4u << 20u) + 2 * piece, 3, std::size_t{2} << 20u, false},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces, one repeated word but its last piece", piece, (4u << 20u) + 2 * piece, 2, window, true},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces in 2 MiB import windows, one repeated word but its last piece", piece, (4u << 20u) + 2 * piece, 3, std::size_t{2} << 20u, true},
     };
     struct Window {
         ~Window() { SetHostImportWindow(0); }
     } restore;
-    const auto pattern = [](std::size_t i) { return static_cast<std::uint8_t>(i * 131u + 7u); };
     std::string failures;
     for (const auto& test : cases) {
+        const auto pattern = [&](std::size_t i) { return test.uniformHead && i >= test.offset && i < test.offset + (4u << 20u) - piece ? std::uint8_t{0x5a} : static_cast<std::uint8_t>(i * 131u + 7u); };
         SetHostImportWindow(test.importWindow);
         GuestTextureResource resource{};
         resource.width = 1024;
@@ -10985,12 +10988,15 @@ void uploadBlockTests(const Device& device, Recorder& recorder) {
         context.detiler = &detiler;
         resource.baseAddress = address;
         bool direct = false;
+        bool headRead = false;
         std::size_t kept = 0;
         {
             auto image = StorageTexture::Create(context, detiler, resource, 0);
             recorder.Keep(image);
             const auto read = recorder.DescribePendingRead(address + surfaceBytes - piece, piece);
             direct = read.has_value() && read->kind == Recorder::ReadKind::StorageUpload;
+            const auto head = recorder.DescribePendingRead(address, piece);
+            headRead = head.has_value() && head->kind == Recorder::ReadKind::StorageUpload;
             image->MarkDirty();
             image->WriteBack();
             recorder.Submit();
@@ -11002,6 +11008,7 @@ void uploadBlockTests(const Device& device, Recorder& recorder) {
         const auto segments = after.requesters[static_cast<std::size_t>(ImportRequester::Segment)].made - before.requesters[static_cast<std::size_t>(ImportRequester::Segment)].made;
         std::printf("%s: %zu segment imports, %s upload, %zu of %zu bytes kept through the round trip\n", test.name, static_cast<std::size_t>(segments), direct ? "GPU-direct" : "CPU", kept, surfaceBytes);
         if (!direct) failures += std::string(test.name) + ": the upload took the CPU path\n";
+        if (test.uniformHead && headRead) failures += std::string(test.name) + ": the upload read a piece holding one repeated word from guest memory instead of filling it on the GPU\n";
         if (segments != test.segments) failures += std::string(test.name) + ": " + std::to_string(segments) + " segment imports, expected " + std::to_string(test.segments) + "\n";
         if (kept != surfaceBytes) failures += std::string(test.name) + ": the upload and write-back changed " + std::to_string(surfaceBytes - kept) + " guest bytes\n";
         {
