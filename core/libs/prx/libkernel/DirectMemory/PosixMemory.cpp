@@ -106,6 +106,13 @@ void SetError(int error) {
     *__error_nid_postfix() = error;
 }
 
+int ForwardPosixLock(int result) {
+    if (result == 0) return 0;
+    constexpr int KernelInvalid = static_cast<int>(0x80020016);
+    SetError(result == KernelInvalid ? GuestInvalid : GuestNoMemory);
+    return -1;
+}
+
 bool Mapped(std::uintptr_t address) {
     VirtualQueryInfo info{};
     return sceKernelVirtualQuery(reinterpret_cast<const void*>(address), 0, &info, sizeof(info)) == 0;
@@ -349,17 +356,11 @@ int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protec
 }
 
 int APS5_VABI mlock_nid_postfix(const void* address, std::size_t length) {
-    (void)address;
-    (void)length;
-    SetError(GuestNotPermitted);
-    return -1;
+    return ForwardPosixLock(sceKernelMlock_nid_postfix(const_cast<void*>(address), length));
 }
 
 int APS5_VABI munlock_nid_postfix(const void* address, std::size_t length) {
-    (void)address;
-    (void)length;
-    SetError(GuestNotPermitted);
-    return -1;
+    return ForwardPosixLock(sceKernelMunlock_nid_postfix(const_cast<void*>(address), length));
 }
 
 int APS5_VABI mlockall_nid_postfix(int flags) {
