@@ -376,7 +376,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Dispatch/DispatchTiming.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Dispatch/IndirectDispatch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Dispatch/VariantValidation.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/Draw.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawProgramTrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawCache.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawCacheStatistics.cpp
@@ -406,12 +406,12 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Packets/PacketTiming.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Presentation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/QueueWorker.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/Submission.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/StallPrompt.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/SubmissionRing.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/WorkerAffinity.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Shaders/ShaderDiagnostics.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Shaders/ShaderRegistry.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Synchronization/DeferredLabels.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Synchronization/LabelHistory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Synchronization/SynchronizationStatistics.cpp
@@ -421,21 +421,21 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/HostAllocator.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PerformanceTrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PerformanceTraceThread.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/TraceFile.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ThreadPriority.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/GuestMemory.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ShaderMemory.cpp
+        
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/BdaFeatures.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/SubgroupClock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/HostReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/HostReportSources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/HostReportVulkan.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ShaderDeviceProfile.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Pm4.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/SubmissionCapture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FrameCapture.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FrameRecorder.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/VulkanDevice.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Frame
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Float16NanProbe.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FloatFlushProbe.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FloatProbeTolerance.cpp
@@ -448,8 +448,8 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/KeyboardOverlay.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PadStatusOverlay.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Screenshot.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Draw.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DepthSurface.cpp
+        
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MultisampleTarget.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/FirstSampleCopy.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ColorTargetLayout.cpp
@@ -457,41 +457,42 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Pipeline.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineLibrary.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineCache.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineJournal.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/RuntimeSwitches.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Resources.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DeferredDestruction.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MemoryAccounting.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PlaceholderImages.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Recorder.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ParallelCompare.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderInputState.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderResources.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderAddressResources.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestBufferMemory.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MapImportGate.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ResidentMirror.cpp
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ReferenceStorage.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BdaResources.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BufferAddress.cpp
+        
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DescriptorValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/State.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestTextureResource.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestSamplerResource.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/TextureFormat.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DccMetadata.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/TextureTiling.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MultisampleTextureLayout.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/TextureDetiler.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MultisampleReadback.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MultisampleUpload.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Texture.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PassHazards.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/SampleOrder.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/StagedMerge.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BarrierBatch.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/UnitShadow.cpp
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Sampler.cpp
         ${agcSampleOrderShaderHeaders}
         ${agcTextureDetileShaderHeader}
@@ -1160,3 +1161,581 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(agc_driver_scattered_runs_tests PRIVATE tests/AllocationFailure.cpp)
+
+add_library(libSceAgcDriver_BdaResources_Chunk01 STATIC Graphics/src/chunks/BdaResources_Chunk01.cpp)
+add_library(libSceAgcDriver_BdaResources_Chunk02 STATIC Graphics/src/chunks/BdaResources_Chunk02.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_BdaResources_Chunk01 libSceAgcDriver_BdaResources_Chunk02)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_BdaResources_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_BdaResources_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_DepthSurface_Chunk01 STATIC Graphics/src/chunks/DepthSurface_Chunk01.cpp)
+add_library(libSceAgcDriver_DepthSurface_Chunk02 STATIC Graphics/src/chunks/DepthSurface_Chunk02.cpp)
+add_library(libSceAgcDriver_DepthSurface_Chunk03 STATIC Graphics/src/chunks/DepthSurface_Chunk03.cpp)
+add_library(libSceAgcDriver_DepthSurface_Chunk04 STATIC Graphics/src/chunks/DepthSurface_Chunk04.cpp)
+add_library(libSceAgcDriver_DepthSurface_Chunk05 STATIC Graphics/src/chunks/DepthSurface_Chunk05.cpp)
+add_library(libSceAgcDriver_DepthSurface_Chunk06 STATIC Graphics/src/chunks/DepthSurface_Chunk06.cpp)
+add_library(libSceAgcDriver_DepthSurface_Chunk07 STATIC Graphics/src/chunks/DepthSurface_Chunk07.cpp)
+add_library(libSceAgcDriver_DepthSurface_Chunk08 STATIC Graphics/src/chunks/DepthSurface_Chunk08.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_DepthSurface_Chunk01 libSceAgcDriver_DepthSurface_Chunk02 libSceAgcDriver_DepthSurface_Chunk03 libSceAgcDriver_DepthSurface_Chunk04 libSceAgcDriver_DepthSurface_Chunk05 libSceAgcDriver_DepthSurface_Chunk06 libSceAgcDriver_DepthSurface_Chunk07 libSceAgcDriver_DepthSurface_Chunk08)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_DepthSurface_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_DepthSurface_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_DepthSurface_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_DepthSurface_Chunk04 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_DepthSurface_Chunk05 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_DepthSurface_Chunk06 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_DepthSurface_Chunk07 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_DepthSurface_Chunk08 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_ShaderResources_Chunk01 STATIC Graphics/src/chunks/ShaderResources_Chunk01.cpp)
+add_library(libSceAgcDriver_ShaderResources_Chunk02 STATIC Graphics/src/chunks/ShaderResources_Chunk02.cpp)
+add_library(libSceAgcDriver_ShaderResources_Chunk03 STATIC Graphics/src/chunks/ShaderResources_Chunk03.cpp)
+add_library(libSceAgcDriver_ShaderResources_Chunk04 STATIC Graphics/src/chunks/ShaderResources_Chunk04.cpp)
+add_library(libSceAgcDriver_ShaderResources_Chunk05 STATIC Graphics/src/chunks/ShaderResources_Chunk05.cpp)
+add_library(libSceAgcDriver_ShaderResources_Chunk06 STATIC Graphics/src/chunks/ShaderResources_Chunk06.cpp)
+add_library(libSceAgcDriver_ShaderResources_Chunk07 STATIC Graphics/src/chunks/ShaderResources_Chunk07.cpp)
+add_library(libSceAgcDriver_ShaderResources_Chunk08 STATIC Graphics/src/chunks/ShaderResources_Chunk08.cpp)
+add_library(libSceAgcDriver_ShaderResources_Chunk09 STATIC Graphics/src/chunks/ShaderResources_Chunk09.cpp)
+add_library(libSceAgcDriver_ShaderResources_Chunk10 STATIC Graphics/src/chunks/ShaderResources_Chunk10.cpp)
+add_library(libSceAgcDriver_ShaderResources_Chunk11 STATIC Graphics/src/chunks/ShaderResources_Chunk11.cpp)
+add_library(libSceAgcDriver_ShaderResources_Chunk12 STATIC Graphics/src/chunks/ShaderResources_Chunk12.cpp)
+add_library(libSceAgcDriver_ShaderResources_Chunk13 STATIC Graphics/src/chunks/ShaderResources_Chunk13.cpp)
+add_library(libSceAgcDriver_ShaderResources_Chunk14 STATIC Graphics/src/chunks/ShaderResources_Chunk14.cpp)
+add_library(libSceAgcDriver_ShaderResources_Chunk15 STATIC Graphics/src/chunks/ShaderResources_Chunk15.cpp)
+add_library(libSceAgcDriver_ShaderResources_Chunk16 STATIC Graphics/src/chunks/ShaderResources_Chunk16.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_ShaderResources_Chunk01 libSceAgcDriver_ShaderResources_Chunk02 libSceAgcDriver_ShaderResources_Chunk03 libSceAgcDriver_ShaderResources_Chunk04 libSceAgcDriver_ShaderResources_Chunk05 libSceAgcDriver_ShaderResources_Chunk06 libSceAgcDriver_ShaderResources_Chunk07 libSceAgcDriver_ShaderResources_Chunk08 libSceAgcDriver_ShaderResources_Chunk09 libSceAgcDriver_ShaderResources_Chunk10 libSceAgcDriver_ShaderResources_Chunk11 libSceAgcDriver_ShaderResources_Chunk12 libSceAgcDriver_ShaderResources_Chunk13 libSceAgcDriver_ShaderResources_Chunk14 libSceAgcDriver_ShaderResources_Chunk15 libSceAgcDriver_ShaderResources_Chunk16)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_ShaderResources_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderResources_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderResources_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderResources_Chunk04 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderResources_Chunk05 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderResources_Chunk06 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderResources_Chunk07 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderResources_Chunk08 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderResources_Chunk09 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderResources_Chunk10 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderResources_Chunk11 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderResources_Chunk12 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderResources_Chunk13 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderResources_Chunk14 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderResources_Chunk15 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderResources_Chunk16 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_VulkanDevice_Chunk01 STATIC Execution/src/chunks/VulkanDevice_Chunk01.cpp)
+add_library(libSceAgcDriver_VulkanDevice_Chunk02 STATIC Execution/src/chunks/VulkanDevice_Chunk02.cpp)
+add_library(libSceAgcDriver_VulkanDevice_Chunk03 STATIC Execution/src/chunks/VulkanDevice_Chunk03.cpp)
+add_library(libSceAgcDriver_VulkanDevice_Chunk04 STATIC Execution/src/chunks/VulkanDevice_Chunk04.cpp)
+add_library(libSceAgcDriver_VulkanDevice_Chunk05 STATIC Execution/src/chunks/VulkanDevice_Chunk05.cpp)
+add_library(libSceAgcDriver_VulkanDevice_Chunk06 STATIC Execution/src/chunks/VulkanDevice_Chunk06.cpp)
+add_library(libSceAgcDriver_VulkanDevice_Chunk07 STATIC Execution/src/chunks/VulkanDevice_Chunk07.cpp)
+add_library(libSceAgcDriver_VulkanDevice_Chunk08 STATIC Execution/src/chunks/VulkanDevice_Chunk08.cpp)
+add_library(libSceAgcDriver_VulkanDevice_Chunk09 STATIC Execution/src/chunks/VulkanDevice_Chunk09.cpp)
+add_library(libSceAgcDriver_VulkanDevice_Chunk10 STATIC Execution/src/chunks/VulkanDevice_Chunk10.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_VulkanDevice_Chunk01 libSceAgcDriver_VulkanDevice_Chunk02 libSceAgcDriver_VulkanDevice_Chunk03 libSceAgcDriver_VulkanDevice_Chunk04 libSceAgcDriver_VulkanDevice_Chunk05 libSceAgcDriver_VulkanDevice_Chunk06 libSceAgcDriver_VulkanDevice_Chunk07 libSceAgcDriver_VulkanDevice_Chunk08 libSceAgcDriver_VulkanDevice_Chunk09 libSceAgcDriver_VulkanDevice_Chunk10)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_VulkanDevice_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_VulkanDevice_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_VulkanDevice_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_VulkanDevice_Chunk04 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_VulkanDevice_Chunk05 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_VulkanDevice_Chunk06 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_VulkanDevice_Chunk07 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_VulkanDevice_Chunk08 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_VulkanDevice_Chunk09 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_VulkanDevice_Chunk10 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_Draw_Chunk01 STATIC Graphics/src/chunks/Draw_Chunk01.cpp)
+add_library(libSceAgcDriver_Draw_Chunk02 STATIC Graphics/src/chunks/Draw_Chunk02.cpp)
+add_library(libSceAgcDriver_Draw_Chunk03 STATIC Graphics/src/chunks/Draw_Chunk03.cpp)
+add_library(libSceAgcDriver_Draw_Chunk04 STATIC Graphics/src/chunks/Draw_Chunk04.cpp)
+add_library(libSceAgcDriver_Draw_Chunk05 STATIC Graphics/src/chunks/Draw_Chunk05.cpp)
+add_library(libSceAgcDriver_Draw_Chunk06 STATIC Graphics/src/chunks/Draw_Chunk06.cpp)
+add_library(libSceAgcDriver_Draw_Chunk07 STATIC Graphics/src/chunks/Draw_Chunk07.cpp)
+add_library(libSceAgcDriver_Draw_Chunk08 STATIC Graphics/src/chunks/Draw_Chunk08.cpp)
+add_library(libSceAgcDriver_Draw_Chunk09 STATIC Graphics/src/chunks/Draw_Chunk09.cpp)
+add_library(libSceAgcDriver_Draw_Chunk10 STATIC Graphics/src/chunks/Draw_Chunk10.cpp)
+add_library(libSceAgcDriver_Draw_Chunk11 STATIC Graphics/src/chunks/Draw_Chunk11.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_Draw_Chunk01 libSceAgcDriver_Draw_Chunk02 libSceAgcDriver_Draw_Chunk03 libSceAgcDriver_Draw_Chunk04 libSceAgcDriver_Draw_Chunk05 libSceAgcDriver_Draw_Chunk06 libSceAgcDriver_Draw_Chunk07 libSceAgcDriver_Draw_Chunk08 libSceAgcDriver_Draw_Chunk09 libSceAgcDriver_Draw_Chunk10 libSceAgcDriver_Draw_Chunk11)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_Draw_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Draw_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Draw_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Draw_Chunk04 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Draw_Chunk05 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Draw_Chunk06 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Draw_Chunk07 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Draw_Chunk08 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Draw_Chunk09 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Draw_Chunk10 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Draw_Chunk11 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_GuestBufferMemory_Chunk01 STATIC Graphics/src/chunks/GuestBufferMemory_Chunk01.cpp)
+add_library(libSceAgcDriver_GuestBufferMemory_Chunk02 STATIC Graphics/src/chunks/GuestBufferMemory_Chunk02.cpp)
+add_library(libSceAgcDriver_GuestBufferMemory_Chunk03 STATIC Graphics/src/chunks/GuestBufferMemory_Chunk03.cpp)
+add_library(libSceAgcDriver_GuestBufferMemory_Chunk04 STATIC Graphics/src/chunks/GuestBufferMemory_Chunk04.cpp)
+add_library(libSceAgcDriver_GuestBufferMemory_Chunk05 STATIC Graphics/src/chunks/GuestBufferMemory_Chunk05.cpp)
+add_library(libSceAgcDriver_GuestBufferMemory_Chunk06 STATIC Graphics/src/chunks/GuestBufferMemory_Chunk06.cpp)
+add_library(libSceAgcDriver_GuestBufferMemory_Chunk07 STATIC Graphics/src/chunks/GuestBufferMemory_Chunk07.cpp)
+add_library(libSceAgcDriver_GuestBufferMemory_Chunk08 STATIC Graphics/src/chunks/GuestBufferMemory_Chunk08.cpp)
+add_library(libSceAgcDriver_GuestBufferMemory_Chunk09 STATIC Graphics/src/chunks/GuestBufferMemory_Chunk09.cpp)
+add_library(libSceAgcDriver_GuestBufferMemory_Chunk10 STATIC Graphics/src/chunks/GuestBufferMemory_Chunk10.cpp)
+add_library(libSceAgcDriver_GuestBufferMemory_Chunk11 STATIC Graphics/src/chunks/GuestBufferMemory_Chunk11.cpp)
+add_library(libSceAgcDriver_GuestBufferMemory_Chunk12 STATIC Graphics/src/chunks/GuestBufferMemory_Chunk12.cpp)
+add_library(libSceAgcDriver_GuestBufferMemory_Chunk13 STATIC Graphics/src/chunks/GuestBufferMemory_Chunk13.cpp)
+add_library(libSceAgcDriver_GuestBufferMemory_Chunk14 STATIC Graphics/src/chunks/GuestBufferMemory_Chunk14.cpp)
+add_library(libSceAgcDriver_GuestBufferMemory_Chunk15 STATIC Graphics/src/chunks/GuestBufferMemory_Chunk15.cpp)
+add_library(libSceAgcDriver_GuestBufferMemory_Chunk16 STATIC Graphics/src/chunks/GuestBufferMemory_Chunk16.cpp)
+add_library(libSceAgcDriver_GuestBufferMemory_Chunk17 STATIC Graphics/src/chunks/GuestBufferMemory_Chunk17.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_GuestBufferMemory_Chunk01 libSceAgcDriver_GuestBufferMemory_Chunk02 libSceAgcDriver_GuestBufferMemory_Chunk03 libSceAgcDriver_GuestBufferMemory_Chunk04 libSceAgcDriver_GuestBufferMemory_Chunk05 libSceAgcDriver_GuestBufferMemory_Chunk06 libSceAgcDriver_GuestBufferMemory_Chunk07 libSceAgcDriver_GuestBufferMemory_Chunk08 libSceAgcDriver_GuestBufferMemory_Chunk09 libSceAgcDriver_GuestBufferMemory_Chunk10 libSceAgcDriver_GuestBufferMemory_Chunk11 libSceAgcDriver_GuestBufferMemory_Chunk12 libSceAgcDriver_GuestBufferMemory_Chunk13 libSceAgcDriver_GuestBufferMemory_Chunk14 libSceAgcDriver_GuestBufferMemory_Chunk15 libSceAgcDriver_GuestBufferMemory_Chunk16 libSceAgcDriver_GuestBufferMemory_Chunk17)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_GuestBufferMemory_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestBufferMemory_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestBufferMemory_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestBufferMemory_Chunk04 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestBufferMemory_Chunk05 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestBufferMemory_Chunk06 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestBufferMemory_Chunk07 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestBufferMemory_Chunk08 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestBufferMemory_Chunk09 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestBufferMemory_Chunk10 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestBufferMemory_Chunk11 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestBufferMemory_Chunk12 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestBufferMemory_Chunk13 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestBufferMemory_Chunk14 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestBufferMemory_Chunk15 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestBufferMemory_Chunk16 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestBufferMemory_Chunk17 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_Recorder_Chunk01 STATIC Graphics/src/chunks/Recorder_Chunk01.cpp)
+add_library(libSceAgcDriver_Recorder_Chunk02 STATIC Graphics/src/chunks/Recorder_Chunk02.cpp)
+add_library(libSceAgcDriver_Recorder_Chunk03 STATIC Graphics/src/chunks/Recorder_Chunk03.cpp)
+add_library(libSceAgcDriver_Recorder_Chunk04 STATIC Graphics/src/chunks/Recorder_Chunk04.cpp)
+add_library(libSceAgcDriver_Recorder_Chunk05 STATIC Graphics/src/chunks/Recorder_Chunk05.cpp)
+add_library(libSceAgcDriver_Recorder_Chunk06 STATIC Graphics/src/chunks/Recorder_Chunk06.cpp)
+add_library(libSceAgcDriver_Recorder_Chunk07 STATIC Graphics/src/chunks/Recorder_Chunk07.cpp)
+add_library(libSceAgcDriver_Recorder_Chunk08 STATIC Graphics/src/chunks/Recorder_Chunk08.cpp)
+add_library(libSceAgcDriver_Recorder_Chunk09 STATIC Graphics/src/chunks/Recorder_Chunk09.cpp)
+add_library(libSceAgcDriver_Recorder_Chunk10 STATIC Graphics/src/chunks/Recorder_Chunk10.cpp)
+add_library(libSceAgcDriver_Recorder_Chunk11 STATIC Graphics/src/chunks/Recorder_Chunk11.cpp)
+add_library(libSceAgcDriver_Recorder_Chunk12 STATIC Graphics/src/chunks/Recorder_Chunk12.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_Recorder_Chunk01 libSceAgcDriver_Recorder_Chunk02 libSceAgcDriver_Recorder_Chunk03 libSceAgcDriver_Recorder_Chunk04 libSceAgcDriver_Recorder_Chunk05 libSceAgcDriver_Recorder_Chunk06 libSceAgcDriver_Recorder_Chunk07 libSceAgcDriver_Recorder_Chunk08 libSceAgcDriver_Recorder_Chunk09 libSceAgcDriver_Recorder_Chunk10 libSceAgcDriver_Recorder_Chunk11 libSceAgcDriver_Recorder_Chunk12)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_Recorder_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Recorder_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Recorder_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Recorder_Chunk04 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Recorder_Chunk05 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Recorder_Chunk06 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Recorder_Chunk07 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Recorder_Chunk08 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Recorder_Chunk09 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Recorder_Chunk10 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Recorder_Chunk11 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Recorder_Chunk12 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_Texture_Chunk01 STATIC Graphics/src/chunks/Texture_Chunk01.cpp)
+add_library(libSceAgcDriver_Texture_Chunk02 STATIC Graphics/src/chunks/Texture_Chunk02.cpp)
+add_library(libSceAgcDriver_Texture_Chunk03 STATIC Graphics/src/chunks/Texture_Chunk03.cpp)
+add_library(libSceAgcDriver_Texture_Chunk04 STATIC Graphics/src/chunks/Texture_Chunk04.cpp)
+add_library(libSceAgcDriver_Texture_Chunk05 STATIC Graphics/src/chunks/Texture_Chunk05.cpp)
+add_library(libSceAgcDriver_Texture_Chunk06 STATIC Graphics/src/chunks/Texture_Chunk06.cpp)
+add_library(libSceAgcDriver_Texture_Chunk07 STATIC Graphics/src/chunks/Texture_Chunk07.cpp)
+add_library(libSceAgcDriver_Texture_Chunk08 STATIC Graphics/src/chunks/Texture_Chunk08.cpp)
+add_library(libSceAgcDriver_Texture_Chunk09 STATIC Graphics/src/chunks/Texture_Chunk09.cpp)
+add_library(libSceAgcDriver_Texture_Chunk10 STATIC Graphics/src/chunks/Texture_Chunk10.cpp)
+add_library(libSceAgcDriver_Texture_Chunk11 STATIC Graphics/src/chunks/Texture_Chunk11.cpp)
+add_library(libSceAgcDriver_Texture_Chunk12 STATIC Graphics/src/chunks/Texture_Chunk12.cpp)
+add_library(libSceAgcDriver_Texture_Chunk13 STATIC Graphics/src/chunks/Texture_Chunk13.cpp)
+add_library(libSceAgcDriver_Texture_Chunk14 STATIC Graphics/src/chunks/Texture_Chunk14.cpp)
+add_library(libSceAgcDriver_Texture_Chunk15 STATIC Graphics/src/chunks/Texture_Chunk15.cpp)
+add_library(libSceAgcDriver_Texture_Chunk16 STATIC Graphics/src/chunks/Texture_Chunk16.cpp)
+add_library(libSceAgcDriver_Texture_Chunk17 STATIC Graphics/src/chunks/Texture_Chunk17.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_Texture_Chunk01 libSceAgcDriver_Texture_Chunk02 libSceAgcDriver_Texture_Chunk03 libSceAgcDriver_Texture_Chunk04 libSceAgcDriver_Texture_Chunk05 libSceAgcDriver_Texture_Chunk06 libSceAgcDriver_Texture_Chunk07 libSceAgcDriver_Texture_Chunk08 libSceAgcDriver_Texture_Chunk09 libSceAgcDriver_Texture_Chunk10 libSceAgcDriver_Texture_Chunk11 libSceAgcDriver_Texture_Chunk12 libSceAgcDriver_Texture_Chunk13 libSceAgcDriver_Texture_Chunk14 libSceAgcDriver_Texture_Chunk15 libSceAgcDriver_Texture_Chunk16 libSceAgcDriver_Texture_Chunk17)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_Texture_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Texture_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Texture_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Texture_Chunk04 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Texture_Chunk05 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Texture_Chunk06 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Texture_Chunk07 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Texture_Chunk08 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Texture_Chunk09 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Texture_Chunk10 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Texture_Chunk11 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Texture_Chunk12 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Texture_Chunk13 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Texture_Chunk14 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Texture_Chunk15 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Texture_Chunk16 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Texture_Chunk17 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+endif()
+
+add_library(libSceAgcDriver_GuestMemory_Chunk01 STATIC Execution/src/chunks/GuestMemory_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_GuestMemory_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_GuestMemory_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_ShaderMemory_Chunk01 STATIC Execution/src/chunks/ShaderMemory_Chunk01.cpp)
+add_library(libSceAgcDriver_ShaderMemory_Chunk02 STATIC Execution/src/chunks/ShaderMemory_Chunk02.cpp)
+add_library(libSceAgcDriver_ShaderMemory_Chunk03 STATIC Execution/src/chunks/ShaderMemory_Chunk03.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_ShaderMemory_Chunk01 libSceAgcDriver_ShaderMemory_Chunk02 libSceAgcDriver_ShaderMemory_Chunk03)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_ShaderMemory_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderMemory_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderMemory_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_Resources_Chunk01 STATIC Graphics/src/chunks/Resources_Chunk01.cpp)
+add_library(libSceAgcDriver_Resources_Chunk02 STATIC Graphics/src/chunks/Resources_Chunk02.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_Resources_Chunk01 libSceAgcDriver_Resources_Chunk02)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_Resources_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Resources_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_MemoryAccounting_Chunk01 STATIC Graphics/src/chunks/MemoryAccounting_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_MemoryAccounting_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_MemoryAccounting_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_ParallelCompare_Chunk01 STATIC Graphics/src/chunks/ParallelCompare_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_ParallelCompare_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_ParallelCompare_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_ShaderInputState_Chunk01 STATIC Graphics/src/chunks/ShaderInputState_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_ShaderInputState_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_ShaderInputState_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_PipelineJournal_Chunk01 STATIC Graphics/src/chunks/PipelineJournal_Chunk01.cpp)
+add_library(libSceAgcDriver_PipelineJournal_Chunk02 STATIC Graphics/src/chunks/PipelineJournal_Chunk02.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_PipelineJournal_Chunk01 libSceAgcDriver_PipelineJournal_Chunk02)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_PipelineJournal_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_PipelineJournal_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_State_Chunk01 STATIC Graphics/src/chunks/State_Chunk01.cpp)
+add_library(libSceAgcDriver_State_Chunk02 STATIC Graphics/src/chunks/State_Chunk02.cpp)
+add_library(libSceAgcDriver_State_Chunk03 STATIC Graphics/src/chunks/State_Chunk03.cpp)
+add_library(libSceAgcDriver_State_Chunk04 STATIC Graphics/src/chunks/State_Chunk04.cpp)
+add_library(libSceAgcDriver_State_Chunk05 STATIC Graphics/src/chunks/State_Chunk05.cpp)
+add_library(libSceAgcDriver_State_Chunk06 STATIC Graphics/src/chunks/State_Chunk06.cpp)
+add_library(libSceAgcDriver_State_Chunk07 STATIC Graphics/src/chunks/State_Chunk07.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_State_Chunk01 libSceAgcDriver_State_Chunk02 libSceAgcDriver_State_Chunk03 libSceAgcDriver_State_Chunk04 libSceAgcDriver_State_Chunk05 libSceAgcDriver_State_Chunk06 libSceAgcDriver_State_Chunk07)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_State_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_State_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_State_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_State_Chunk04 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_State_Chunk05 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_State_Chunk06 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_State_Chunk07 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_UnitShadow_Chunk01 STATIC Graphics/src/chunks/UnitShadow_Chunk01.cpp)
+add_library(libSceAgcDriver_UnitShadow_Chunk02 STATIC Graphics/src/chunks/UnitShadow_Chunk02.cpp)
+add_library(libSceAgcDriver_UnitShadow_Chunk03 STATIC Graphics/src/chunks/UnitShadow_Chunk03.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_UnitShadow_Chunk01 libSceAgcDriver_UnitShadow_Chunk02 libSceAgcDriver_UnitShadow_Chunk03)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_UnitShadow_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_UnitShadow_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_UnitShadow_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk01 STATIC Graphics/src/chunks/State_Chunk01.cpp)
+add_library(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk02 STATIC Graphics/src/chunks/State_Chunk02.cpp)
+add_library(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk03 STATIC Graphics/src/chunks/State_Chunk03.cpp)
+add_library(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk04 STATIC Graphics/src/chunks/State_Chunk04.cpp)
+add_library(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk05 STATIC Graphics/src/chunks/State_Chunk05.cpp)
+add_library(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk06 STATIC Graphics/src/chunks/State_Chunk06.cpp)
+add_library(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk07 STATIC Graphics/src/chunks/State_Chunk07.cpp)
+target_link_libraries(libSceAgcDriver_ShaderInputState_Chunk01 PUBLIC libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk01 libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk02 libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk03 libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk04 libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk05 libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk06 libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk07)
+get_target_property(libSceAgcDriver_ShaderInputState_Chunk01_incdirs libSceAgcDriver_ShaderInputState_Chunk01 INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_ShaderInputState_Chunk01_incdirs)
+    target_include_directories(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk01 PRIVATE ${libSceAgcDriver_ShaderInputState_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk02 PRIVATE ${libSceAgcDriver_ShaderInputState_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk03 PRIVATE ${libSceAgcDriver_ShaderInputState_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk04 PRIVATE ${libSceAgcDriver_ShaderInputState_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk05 PRIVATE ${libSceAgcDriver_ShaderInputState_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk06 PRIVATE ${libSceAgcDriver_ShaderInputState_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_ShaderInputState_Chunk01_State_Chunk07 PRIVATE ${libSceAgcDriver_ShaderInputState_Chunk01_incdirs})
+endif()
+
+add_library(libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk01 STATIC Graphics/src/chunks/UnitShadow_Chunk01.cpp)
+add_library(libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk02 STATIC Graphics/src/chunks/UnitShadow_Chunk02.cpp)
+add_library(libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk03 STATIC Graphics/src/chunks/UnitShadow_Chunk03.cpp)
+target_link_libraries(libSceAgcDriver_UnitShadow_Chunk01 PUBLIC libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk01 libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk02 libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk03)
+get_target_property(libSceAgcDriver_UnitShadow_Chunk01_incdirs libSceAgcDriver_UnitShadow_Chunk01 INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_UnitShadow_Chunk01_incdirs)
+    target_include_directories(libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk01 PRIVATE ${libSceAgcDriver_UnitShadow_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk02 PRIVATE ${libSceAgcDriver_UnitShadow_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_UnitShadow_Chunk01_UnitShadow_Chunk03 PRIVATE ${libSceAgcDriver_UnitShadow_Chunk01_incdirs})
+endif()
+
+add_library(libSceAgcDriver_PipelineJournal_Chunk01_PipelineJournal_Chunk01 STATIC Graphics/src/chunks/PipelineJournal_Chunk01.cpp)
+add_library(libSceAgcDriver_PipelineJournal_Chunk01_PipelineJournal_Chunk02 STATIC Graphics/src/chunks/PipelineJournal_Chunk02.cpp)
+target_link_libraries(libSceAgcDriver_PipelineJournal_Chunk01 PUBLIC libSceAgcDriver_PipelineJournal_Chunk01_PipelineJournal_Chunk01 libSceAgcDriver_PipelineJournal_Chunk01_PipelineJournal_Chunk02)
+get_target_property(libSceAgcDriver_PipelineJournal_Chunk01_incdirs libSceAgcDriver_PipelineJournal_Chunk01 INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_PipelineJournal_Chunk01_incdirs)
+    target_include_directories(libSceAgcDriver_PipelineJournal_Chunk01_PipelineJournal_Chunk01 PRIVATE ${libSceAgcDriver_PipelineJournal_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_PipelineJournal_Chunk01_PipelineJournal_Chunk02 PRIVATE ${libSceAgcDriver_PipelineJournal_Chunk01_incdirs})
+endif()
+
+add_library(libSceAgcDriver_MapImportGate_Chunk01 STATIC Graphics/src/chunks/MapImportGate_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_MapImportGate_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_MapImportGate_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_TextureFormat_Chunk01 STATIC Graphics/src/chunks/TextureFormat_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_TextureFormat_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_TextureFormat_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_DccMetadata_Chunk01 STATIC Graphics/src/chunks/DccMetadata_Chunk01.cpp)
+add_library(libSceAgcDriver_DccMetadata_Chunk02 STATIC Graphics/src/chunks/DccMetadata_Chunk02.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_DccMetadata_Chunk01 libSceAgcDriver_DccMetadata_Chunk02)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_DccMetadata_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_DccMetadata_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_BufferAddress_Chunk01 STATIC Graphics/src/chunks/BufferAddress_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_BufferAddress_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_BufferAddress_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_ShaderAddressResources_Chunk01 STATIC Graphics/src/chunks/ShaderAddressResources_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_ShaderAddressResources_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_ShaderAddressResources_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_ResidentMirror_Chunk01 STATIC Graphics/src/chunks/ResidentMirror_Chunk01.cpp)
+add_library(libSceAgcDriver_ResidentMirror_Chunk02 STATIC Graphics/src/chunks/ResidentMirror_Chunk02.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_ResidentMirror_Chunk01 libSceAgcDriver_ResidentMirror_Chunk02)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_ResidentMirror_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_ResidentMirror_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_DeferredDestruction_Chunk01 STATIC Graphics/src/chunks/DeferredDestruction_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_DeferredDestruction_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_DeferredDestruction_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_PlaceholderImages_Chunk01 STATIC Graphics/src/chunks/PlaceholderImages_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_PlaceholderImages_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_PlaceholderImages_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_DeferredDestruction_Chunk01_DeferredDestruction_Chunk01 STATIC Graphics/src/chunks/DeferredDestruction_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver_DeferredDestruction_Chunk01 PUBLIC libSceAgcDriver_DeferredDestruction_Chunk01_DeferredDestruction_Chunk01)
+get_target_property(libSceAgcDriver_DeferredDestruction_Chunk01_incdirs libSceAgcDriver_DeferredDestruction_Chunk01 INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_DeferredDestruction_Chunk01_incdirs)
+    target_include_directories(libSceAgcDriver_DeferredDestruction_Chunk01_DeferredDestruction_Chunk01 PRIVATE ${libSceAgcDriver_DeferredDestruction_Chunk01_incdirs})
+endif()
+
+add_library(libSceAgcDriver_PlaceholderImages_Chunk01_PlaceholderImages_Chunk01 STATIC Graphics/src/chunks/PlaceholderImages_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver_PlaceholderImages_Chunk01 PUBLIC libSceAgcDriver_PlaceholderImages_Chunk01_PlaceholderImages_Chunk01)
+get_target_property(libSceAgcDriver_PlaceholderImages_Chunk01_incdirs libSceAgcDriver_PlaceholderImages_Chunk01 INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_PlaceholderImages_Chunk01_incdirs)
+    target_include_directories(libSceAgcDriver_PlaceholderImages_Chunk01_PlaceholderImages_Chunk01 PRIVATE ${libSceAgcDriver_PlaceholderImages_Chunk01_incdirs})
+endif()
+
+add_library(libSceAgcDriver_PassHazards_Chunk01 STATIC Graphics/src/chunks/PassHazards_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_PassHazards_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_PassHazards_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_SampleOrder_Chunk01 STATIC Graphics/src/chunks/SampleOrder_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_SampleOrder_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_SampleOrder_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_StagedMerge_Chunk01 STATIC Graphics/src/chunks/StagedMerge_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_StagedMerge_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_StagedMerge_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_BarrierBatch_Chunk01 STATIC Graphics/src/chunks/BarrierBatch_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_BarrierBatch_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_BarrierBatch_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_GuestTextureResource_Chunk01 STATIC Graphics/src/chunks/GuestTextureResource_Chunk01.cpp)
+add_library(libSceAgcDriver_GuestTextureResource_Chunk02 STATIC Graphics/src/chunks/GuestTextureResource_Chunk02.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_GuestTextureResource_Chunk01 libSceAgcDriver_GuestTextureResource_Chunk02)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_GuestTextureResource_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_GuestTextureResource_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_GuestSamplerResource_Chunk01 STATIC Graphics/src/chunks/GuestSamplerResource_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_GuestSamplerResource_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_GuestSamplerResource_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_TextureTiling_Chunk01 STATIC Graphics/src/chunks/TextureTiling_Chunk01.cpp)
+add_library(libSceAgcDriver_TextureTiling_Chunk02 STATIC Graphics/src/chunks/TextureTiling_Chunk02.cpp)
+add_library(libSceAgcDriver_TextureTiling_Chunk03 STATIC Graphics/src/chunks/TextureTiling_Chunk03.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_TextureTiling_Chunk01 libSceAgcDriver_TextureTiling_Chunk02 libSceAgcDriver_TextureTiling_Chunk03)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_TextureTiling_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_TextureTiling_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_TextureTiling_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_MultisampleTextureLayout_Chunk01 STATIC Graphics/src/chunks/MultisampleTextureLayout_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_MultisampleTextureLayout_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_MultisampleTextureLayout_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_TextureDetiler_Chunk01 STATIC Graphics/src/chunks/TextureDetiler_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_TextureDetiler_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_TextureDetiler_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_MultisampleReadback_Chunk01 STATIC Graphics/src/chunks/MultisampleReadback_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_MultisampleReadback_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_MultisampleReadback_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_MultisampleUpload_Chunk01 STATIC Graphics/src/chunks/MultisampleUpload_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_MultisampleUpload_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_MultisampleUpload_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_TextureTiling_Chunk01_TextureTiling_Chunk01 STATIC Graphics/src/chunks/TextureTiling_Chunk01.cpp)
+add_library(libSceAgcDriver_TextureTiling_Chunk01_TextureTiling_Chunk02 STATIC Graphics/src/chunks/TextureTiling_Chunk02.cpp)
+add_library(libSceAgcDriver_TextureTiling_Chunk01_TextureTiling_Chunk03 STATIC Graphics/src/chunks/TextureTiling_Chunk03.cpp)
+target_link_libraries(libSceAgcDriver_TextureTiling_Chunk01 PUBLIC libSceAgcDriver_TextureTiling_Chunk01_TextureTiling_Chunk01 libSceAgcDriver_TextureTiling_Chunk01_TextureTiling_Chunk02 libSceAgcDriver_TextureTiling_Chunk01_TextureTiling_Chunk03)
+get_target_property(libSceAgcDriver_TextureTiling_Chunk01_incdirs libSceAgcDriver_TextureTiling_Chunk01 INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_TextureTiling_Chunk01_incdirs)
+    target_include_directories(libSceAgcDriver_TextureTiling_Chunk01_TextureTiling_Chunk01 PRIVATE ${libSceAgcDriver_TextureTiling_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_TextureTiling_Chunk01_TextureTiling_Chunk02 PRIVATE ${libSceAgcDriver_TextureTiling_Chunk01_incdirs})
+    target_include_directories(libSceAgcDriver_TextureTiling_Chunk01_TextureTiling_Chunk03 PRIVATE ${libSceAgcDriver_TextureTiling_Chunk01_incdirs})
+endif()
+
+add_library(libSceAgcDriver_MultisampleTextureLayout_Chunk01_MultisampleTextureLayout_Chunk01 STATIC Graphics/src/chunks/MultisampleTextureLayout_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver_MultisampleTextureLayout_Chunk01 PUBLIC libSceAgcDriver_MultisampleTextureLayout_Chunk01_MultisampleTextureLayout_Chunk01)
+get_target_property(libSceAgcDriver_MultisampleTextureLayout_Chunk01_incdirs libSceAgcDriver_MultisampleTextureLayout_Chunk01 INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_MultisampleTextureLayout_Chunk01_incdirs)
+    target_include_directories(libSceAgcDriver_MultisampleTextureLayout_Chunk01_MultisampleTextureLayout_Chunk01 PRIVATE ${libSceAgcDriver_MultisampleTextureLayout_Chunk01_incdirs})
+endif()
+
+add_library(libSceAgcDriver_Pm4_Chunk01 STATIC Execution/src/chunks/Pm4_Chunk01.cpp)
+add_library(libSceAgcDriver_Pm4_Chunk02 STATIC Execution/src/chunks/Pm4_Chunk02.cpp)
+add_library(libSceAgcDriver_Pm4_Chunk03 STATIC Execution/src/chunks/Pm4_Chunk03.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_Pm4_Chunk01 libSceAgcDriver_Pm4_Chunk02 libSceAgcDriver_Pm4_Chunk03)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_Pm4_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Pm4_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Pm4_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_Submission_Chunk01 STATIC Execution/src/Driver/Queues/chunks/Submission_Chunk01.cpp)
+add_library(libSceAgcDriver_Submission_Chunk02 STATIC Execution/src/Driver/Queues/chunks/Submission_Chunk02.cpp)
+add_library(libSceAgcDriver_Submission_Chunk03 STATIC Execution/src/Driver/Queues/chunks/Submission_Chunk03.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_Submission_Chunk01 libSceAgcDriver_Submission_Chunk02 libSceAgcDriver_Submission_Chunk03)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_Submission_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Submission_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Submission_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_Draw_Chunk01 STATIC Execution/src/Driver/Draw/chunks/Draw_Chunk01.cpp)
+add_library(libSceAgcDriver_Draw_Chunk02 STATIC Execution/src/Driver/Draw/chunks/Draw_Chunk02.cpp)
+add_library(libSceAgcDriver_Draw_Chunk03 STATIC Execution/src/Driver/Draw/chunks/Draw_Chunk03.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_Draw_Chunk01 libSceAgcDriver_Draw_Chunk02 libSceAgcDriver_Draw_Chunk03)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_Draw_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Draw_Chunk02 PRIVATE ${libSceAgcDriver_incdirs})
+    target_include_directories(libSceAgcDriver_Draw_Chunk03 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_ShaderRegistry_Chunk01 STATIC Execution/src/Driver/Shaders/chunks/ShaderRegistry_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_ShaderRegistry_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_ShaderRegistry_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()
+
+add_library(libSceAgcDriver_TraceFile_Chunk01 STATIC Execution/src/chunks/TraceFile_Chunk01.cpp)
+target_link_libraries(libSceAgcDriver PUBLIC libSceAgcDriver_TraceFile_Chunk01)
+get_target_property(libSceAgcDriver_incdirs libSceAgcDriver INCLUDE_DIRECTORIES)
+if(libSceAgcDriver_incdirs)
+    target_include_directories(libSceAgcDriver_TraceFile_Chunk01 PRIVATE ${libSceAgcDriver_incdirs})
+endif()

@@ -1,7 +1,7 @@
 add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Unimplemented.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Apr/src/Apr.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/Equeue.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/src/EdgeWatch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/src/EventAccessors.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/ArchivedFile.cpp
@@ -19,14 +19,14 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/RandomDevice.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/HostStreams.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/SandboxCertificates.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Stdio.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/../libc/src/Rename.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Ksem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Semaphore.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/SyncOnAddress/src/SyncOnAddress.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/SyncOnAddress/src/AtomicWaitForwards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/Export.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/DirectMemory.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/Jit.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/PosixMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/MemoryPool.cpp
@@ -56,7 +56,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Pthread/src/LibcxxPlainMutexForwards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Pselect.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Socket.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Udp.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/SocketOptions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/AddressConversion.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/SocketConnect.cpp
@@ -3488,3 +3488,79 @@ list(SORT libkernelTestFragments)
 foreach(libkernelTestFragment IN LISTS libkernelTestFragments)
     include(${libkernelTestFragment})
 endforeach()
+
+add_library(libkernel_Udp_Chunk01 STATIC Socket/src/chunks/Udp_Chunk01.cpp)
+add_library(libkernel_Udp_Chunk02 STATIC Socket/src/chunks/Udp_Chunk02.cpp)
+add_library(libkernel_Udp_Chunk03 STATIC Socket/src/chunks/Udp_Chunk03.cpp)
+add_library(libkernel_Udp_Chunk04 STATIC Socket/src/chunks/Udp_Chunk04.cpp)
+add_library(libkernel_Udp_Chunk05 STATIC Socket/src/chunks/Udp_Chunk05.cpp)
+target_link_libraries(libkernel PUBLIC libkernel_Udp_Chunk01 libkernel_Udp_Chunk02 libkernel_Udp_Chunk03 libkernel_Udp_Chunk04 libkernel_Udp_Chunk05)
+get_target_property(libkernel_incdirs libkernel INCLUDE_DIRECTORIES)
+if(libkernel_incdirs)
+    target_include_directories(libkernel_Udp_Chunk01 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_Udp_Chunk02 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_Udp_Chunk03 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_Udp_Chunk04 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_Udp_Chunk05 PRIVATE ${libkernel_incdirs})
+endif()
+
+add_library(libkernel_Stdio_Chunk01 STATIC File/src/chunks/Stdio_Chunk01.cpp)
+add_library(libkernel_Stdio_Chunk02 STATIC File/src/chunks/Stdio_Chunk02.cpp)
+add_library(libkernel_Stdio_Chunk03 STATIC File/src/chunks/Stdio_Chunk03.cpp)
+target_link_libraries(libkernel PUBLIC libkernel_Stdio_Chunk01 libkernel_Stdio_Chunk02 libkernel_Stdio_Chunk03)
+get_target_property(libkernel_incdirs libkernel INCLUDE_DIRECTORIES)
+if(libkernel_incdirs)
+    target_include_directories(libkernel_Stdio_Chunk01 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_Stdio_Chunk02 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_Stdio_Chunk03 PRIVATE ${libkernel_incdirs})
+endif()
+
+add_library(libkernel_DirectMemory_Chunk01 STATIC DirectMemory/chunks/DirectMemory_Chunk01.cpp)
+add_library(libkernel_DirectMemory_Chunk02 STATIC DirectMemory/chunks/DirectMemory_Chunk02.cpp)
+add_library(libkernel_DirectMemory_Chunk03 STATIC DirectMemory/chunks/DirectMemory_Chunk03.cpp)
+target_link_libraries(libkernel PUBLIC libkernel_DirectMemory_Chunk01 libkernel_DirectMemory_Chunk02 libkernel_DirectMemory_Chunk03)
+get_target_property(libkernel_incdirs libkernel INCLUDE_DIRECTORIES)
+if(libkernel_incdirs)
+    target_include_directories(libkernel_DirectMemory_Chunk01 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_DirectMemory_Chunk02 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_DirectMemory_Chunk03 PRIVATE ${libkernel_incdirs})
+endif()
+
+add_library(libkernel_Apr_Chunk01 STATIC Apr/src/chunks/Apr_Chunk01.cpp)
+target_link_libraries(libkernel PUBLIC libkernel_Apr_Chunk01)
+get_target_property(libkernel_incdirs libkernel INCLUDE_DIRECTORIES)
+if(libkernel_incdirs)
+    target_include_directories(libkernel_Apr_Chunk01 PRIVATE ${libkernel_incdirs})
+endif()
+
+add_library(libkernel_Thread_Chunk01 STATIC Pthread/src/chunks/Thread_Chunk01.cpp)
+add_library(libkernel_Thread_Chunk02 STATIC Pthread/src/chunks/Thread_Chunk02.cpp)
+add_library(libkernel_Thread_Chunk03 STATIC Pthread/src/chunks/Thread_Chunk03.cpp)
+add_library(libkernel_Thread_Chunk04 STATIC Pthread/src/chunks/Thread_Chunk04.cpp)
+target_link_libraries(libkernel PUBLIC libkernel_Thread_Chunk01 libkernel_Thread_Chunk02 libkernel_Thread_Chunk03 libkernel_Thread_Chunk04)
+get_target_property(libkernel_incdirs libkernel INCLUDE_DIRECTORIES)
+if(libkernel_incdirs)
+    target_include_directories(libkernel_Thread_Chunk01 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_Thread_Chunk02 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_Thread_Chunk03 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_Thread_Chunk04 PRIVATE ${libkernel_incdirs})
+endif()
+
+add_library(libkernel_SyncOnAddress_Chunk01 STATIC SyncOnAddress/src/chunks/SyncOnAddress_Chunk01.cpp)
+target_link_libraries(libkernel PUBLIC libkernel_SyncOnAddress_Chunk01)
+get_target_property(libkernel_incdirs libkernel INCLUDE_DIRECTORIES)
+if(libkernel_incdirs)
+    target_include_directories(libkernel_SyncOnAddress_Chunk01 PRIVATE ${libkernel_incdirs})
+endif()
+
+add_library(libkernel_Equeue_Chunk01 STATIC Equeue/chunks/Equeue_Chunk01.cpp)
+add_library(libkernel_Equeue_Chunk02 STATIC Equeue/chunks/Equeue_Chunk02.cpp)
+add_library(libkernel_Equeue_Chunk03 STATIC Equeue/chunks/Equeue_Chunk03.cpp)
+target_link_libraries(libkernel PUBLIC libkernel_Equeue_Chunk01 libkernel_Equeue_Chunk02 libkernel_Equeue_Chunk03)
+get_target_property(libkernel_incdirs libkernel INCLUDE_DIRECTORIES)
+if(libkernel_incdirs)
+    target_include_directories(libkernel_Equeue_Chunk01 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_Equeue_Chunk02 PRIVATE ${libkernel_incdirs})
+    target_include_directories(libkernel_Equeue_Chunk03 PRIVATE ${libkernel_incdirs})
+endif()
+

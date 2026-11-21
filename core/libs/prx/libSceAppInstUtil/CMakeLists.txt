@@ -1,4 +1,4 @@
-add_library(libSceAppInstUtil SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceAppInstUtil SHARED EXCLUDE_FROM_ALL )
 target_include_directories(libSceAppInstUtil PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceAppInstUtil)
 
@@ -16,4 +16,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_app_inst_util PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAppInstUtil>")
     endif()
+endif()
+
+add_library(libSceAppInstUtil_Export_Chunk01 STATIC chunks/Export_Chunk01.cpp)
+add_library(libSceAppInstUtil_Export_Chunk02 STATIC chunks/Export_Chunk02.cpp)
+add_library(libSceAppInstUtil_Export_Chunk03 STATIC chunks/Export_Chunk03.cpp)
+target_link_libraries(libSceAppInstUtil PUBLIC libSceAppInstUtil_Export_Chunk01 libSceAppInstUtil_Export_Chunk02 libSceAppInstUtil_Export_Chunk03)
+get_target_property(libSceAppInstUtil_incdirs libSceAppInstUtil INCLUDE_DIRECTORIES)
+if(libSceAppInstUtil_incdirs)
+    target_include_directories(libSceAppInstUtil_Export_Chunk01 PRIVATE ${libSceAppInstUtil_incdirs})
+    target_include_directories(libSceAppInstUtil_Export_Chunk02 PRIVATE ${libSceAppInstUtil_incdirs})
+    target_include_directories(libSceAppInstUtil_Export_Chunk03 PRIVATE ${libSceAppInstUtil_incdirs})
 endif()
