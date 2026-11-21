@@ -40,12 +40,12 @@ int main() {
         Require(sceVideoDecoderArbitrationEnableSuspendMode() == 0);
         Require(sceVideoDecoderArbitrationAcceptEvent(2) == invalidArgument);
         Require(sceVideoDecoderArbitrationAcceptEvent(0xFFFFFFFFu) == invalidArgument);
-        Require(sceVideoDecoderArbitrationAcceptEvent(0) == alreadyInitialized);
-        Require(sceVideoDecoderArbitrationAcceptEvent(1) == alreadyInitialized);
+        Require(sceVideoDecoderArbitrationAcceptEvent(0) == invalidArgument);
+        Require(sceVideoDecoderArbitrationAcceptEvent(1) == invalidArgument);
         Require(sceVideoDecoderArbitrationEnable(1, &callbackTarget) == invalidArgument);
         Require(sceVideoDecoderArbitrationEnable(0, nullptr) == invalidArgument);
         Require(sceVideoDecoderArbitrationEnable(0x100000000u, nullptr) == invalidArgument);
-        Require(sceVideoDecoderArbitrationEnable(0, &callbackTarget) == alreadyInitialized);
+        Require(sceVideoDecoderArbitrationEnable(0, &callbackTarget) == invalidArgument);
         Require(sceVideoDecoderArbitrationInitialize(nullptr) == invalidArgument);
         errno = 71;
         Require(sceVideoDecoderArbitrationInitialize(reinterpret_cast<const void*>(std::uintptr_t{1})) == invalidArgument);

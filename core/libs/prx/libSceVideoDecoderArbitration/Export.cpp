@@ -49,11 +49,11 @@ int APS5_VABI sceVideoDecoderArbitrationAcceptEvent(std::uint32_t event) {
     if (result == 0) {
         return 0;
     }
-    if (result == SCE_VIDEO_ARBITRATION_ERROR_NOT_INITIALIZED) {
-        return SCE_VIDEO_DECODER_ARBITRATION_ERROR_ALREADY_INITIALIZED;
-    }
     if (result == SCE_VIDEO_ARBITRATION_ERROR_NO_EVENT) {
         return SCE_VIDEO_DECODER_ARBITRATION_ERROR_NO_EVENT;
+    }
+    if (result == SCE_VIDEO_ARBITRATION_ERROR_NOT_INITIALIZED) {
+        return SCE_VIDEO_DECODER_ARBITRATION_ERROR_INVALID_ARGUMENT;
     }
     return SCE_VIDEO_DECODER_ARBITRATION_ERROR_INVALID_ARGUMENT;
 }
@@ -73,7 +73,7 @@ int APS5_VABI sceVideoDecoderArbitrationEnable(std::uint64_t reserved, void* cal
     }
     g_callback = nullptr;
     if (result == SCE_VIDEO_ARBITRATION_ERROR_NOT_INITIALIZED) {
-        return SCE_VIDEO_DECODER_ARBITRATION_ERROR_ALREADY_INITIALIZED;
+        return SCE_VIDEO_DECODER_ARBITRATION_ERROR_INVALID_ARGUMENT;
     }
     return SCE_VIDEO_DECODER_ARBITRATION_ERROR_INVALID_ARGUMENT;
 }
