@@ -168,6 +168,15 @@ void* APS5_VABI _ZN7bmalloc3api29tryLargeZeroedMemalignVirtualEmmNS_8HeapKindE(s
 void APS5_VABI _ZN7bmalloc3api8scavengeEv() {
 }
 
+void APS5_VABI _ZN7bmalloc6IsoTLS8scavengeEv() {
+}
+
+void APS5_VABI _ZN7bmalloc9Scavenger29scheduleIfUnderMemoryPressureEm(void*, std::size_t) {
+}
+
+void APS5_VABI _ZN7bmalloc9Scavenger8scheduleEm(void*, std::size_t) {
+}
+
 bool APS5_VABI _ZN7bmalloc3api9isEnabledENS_8HeapKindE(std::uint32_t) {
     return true;
 }
