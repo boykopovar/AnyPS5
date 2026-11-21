@@ -23,6 +23,7 @@
  * Derived from Source/WTF/wtf/text/StringImpl.cpp, Source/WTF/wtf/text/WTFString.cpp and Source/WTF/wtf/text/StringView.cpp@c55364d53f971f63a709976f168d932d558b8909
  */
 
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceIcu/CaseMapping.hpp"
@@ -30,6 +31,7 @@
 #include "prx/libSceIcu/Normalization.hpp"
 #include "prx/libSceIcu/Properties.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
@@ -394,11 +396,20 @@ StringViewWithUnderlyingString APS5_VABI _ZN3WTF13normalizedNFCENS_10StringViewE
 }
 
 String APS5_VABI _ZN3WTF13normalizedNFCERKNS_6StringE(const String* string) {
-    const auto* impl = Impl(string);
+    if (!string) throw std::invalid_argument("null WTF::String");
+    StringImpl* impl = nullptr;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&impl, string, sizeof(impl));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("null WTF::String");
     if (impl) Self(impl);
     StringView view = impl ? StringView{impl->data, impl->length, Is8Bit(*impl)} : StringView{nullptr, 0, true};
     auto result = NormalizedNFC(view);
-    if (!result.underlyingString.impl) return *string;
+    if (!result.underlyingString.impl) {
+        String held(impl);
+        if (impl) impl->refCount += 2;
+        return held;
+    }
     return std::move(result.underlyingString);
 }
 
