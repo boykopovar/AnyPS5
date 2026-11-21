@@ -27,9 +27,11 @@ constexpr int ErrorNotInitialized = static_cast<int>(0x80848110);
 constexpr int ErrorAlreadyInitialized = static_cast<int>(0x80848111);
 
 static long liveAllocations = 0;
+static int failAllocation = 0;
 
 static void* APS5_VABI TestAllocate(MemAllocator*, std::size_t size, void* userData) {
     Require(userData == &liveAllocations);
+    if (failAllocation != 0 && --failAllocation == 0) return nullptr;
     ++liveAllocations;
     return std::malloc(size);
 }
@@ -219,6 +221,10 @@ static void Errors() {
     Require(Parse(value, "\"\\ud800x\"") == ErrorParse);
     Require(Parse(value, "[\"open") == ErrorNoMemory);
     Require(_ZNK3sce4Json5Value7getTypeEv_nid_no_patch(&value) == TypeNull);
+    Require(Parse(value, "1 garbage") == 0);
+    Require(*_ZNK3sce4Json5Value11getUIntegerEv_nid_no_patch(&value) == 1);
+    Require(Parse(value, "true false") == 0);
+    Require(*_ZNK3sce4Json5Value10getBooleanEv_nid_no_patch(&value));
     int remaining = 3;
     Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5__nid_no_patch(&value, FailingRead, &remaining) == -5);
     Require(Parse(value, "[1, [2, 3], 4]") == 0);
@@ -310,11 +316,30 @@ static void Files() {
     std::remove(path);
 }
 
+static void FailedInitialize(InitParameter& parameter) {
+    for (int failAt = 1; failAt <= 6; ++failAt) {
+        Initializer initializer {};
+        _ZN3sce4Json11InitializerC1Ev_nid_no_patch(&initializer);
+        failAllocation = failAt;
+        bool threw = false;
+        try {
+            _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE_nid_no_patch(&initializer, &parameter);
+        } catch (...) {
+            threw = true;
+        }
+        failAllocation = 0;
+        Require(threw && !initializer.initialized && liveAllocations == 0);
+        Require(_ZN3sce4Json11s_initparamE == nullptr && _ZN3sce4Json5Value12s_nullstringE == nullptr);
+        Require(_ZN3sce4Json5Value11s_nullarrayE == nullptr && _ZN3sce4Json5Value12s_nullobjectE == nullptr);
+    }
+}
+
 int main() {
     Uninitialized();
     Initializer initializer {};
     _ZN3sce4Json11InitializerC1Ev_nid_no_patch(&initializer);
     InitParameter parameter {&allocator, &liveAllocations, 0};
+    FailedInitialize(parameter);
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE_nid_no_patch(&initializer, &parameter) == 0);
     Initializer second {};
     _ZN3sce4Json11InitializerC1Ev_nid_no_patch(&second);

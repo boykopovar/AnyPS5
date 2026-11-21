@@ -1237,6 +1237,26 @@ int Parse(Value& value, ParserReadCallback read, void* context) {
     }
 }
 
+void ReleaseShared() {
+    if (_ZN3sce4Json5Value12s_nullstringE != nullptr) {
+        DestroyString(*_ZN3sce4Json5Value12s_nullstringE);
+        Release(_ZN3sce4Json5Value12s_nullstringE);
+        _ZN3sce4Json5Value12s_nullstringE = nullptr;
+    }
+    if (_ZN3sce4Json5Value11s_nullarrayE != nullptr) {
+        DestroyArray(*_ZN3sce4Json5Value11s_nullarrayE);
+        Release(_ZN3sce4Json5Value11s_nullarrayE);
+        _ZN3sce4Json5Value11s_nullarrayE = nullptr;
+    }
+    if (_ZN3sce4Json5Value12s_nullobjectE != nullptr) {
+        DestroyObject(*_ZN3sce4Json5Value12s_nullobjectE);
+        Release(_ZN3sce4Json5Value12s_nullobjectE);
+        _ZN3sce4Json5Value12s_nullobjectE = nullptr;
+    }
+    Release(_ZN3sce4Json11s_initparamE);
+    _ZN3sce4Json11s_initparamE = nullptr;
+}
+
 int ParseFile(Value& value, const char* path) {
     if (_ZN3sce4Json11s_initparamE == nullptr) return ErrorNotInitialized;
     if (_ZN3sce4Json11s_initparamE->fileBufferSize == 0) return ErrorFileBufferSize;
@@ -1311,17 +1331,7 @@ APS5_EXPORT("6qFqND4iwPA", _ZN3sce4Json11InitializerC2Ev_nid_no_patch);
 
 int APS5_VABI _ZN3sce4Json11Initializer9terminateEv_nid_no_patch(Initializer* self) {
     if (_ZN3sce4Json11s_initparamE == nullptr || !self->initialized) return ErrorNotInitialized;
-    DestroyString(*_ZN3sce4Json5Value12s_nullstringE);
-    Release(_ZN3sce4Json5Value12s_nullstringE);
-    _ZN3sce4Json5Value12s_nullstringE = nullptr;
-    DestroyArray(*_ZN3sce4Json5Value11s_nullarrayE);
-    Release(_ZN3sce4Json5Value11s_nullarrayE);
-    _ZN3sce4Json5Value11s_nullarrayE = nullptr;
-    DestroyObject(*_ZN3sce4Json5Value12s_nullobjectE);
-    Release(_ZN3sce4Json5Value12s_nullobjectE);
-    _ZN3sce4Json5Value12s_nullobjectE = nullptr;
-    Release(_ZN3sce4Json11s_initparamE);
-    _ZN3sce4Json11s_initparamE = nullptr;
+    ReleaseShared();
     self->initialized = false;
     return 0;
 }
@@ -1343,15 +1353,22 @@ int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE_nid_n
     *Required(stored) = {};
     _ZN3sce4Json11s_initparamE = stored;
     *stored = *parameter;
-    auto* text = Required(static_cast<String*>(AllocateFrom(*parameter, sizeof(String))));
-    ConstructString(*text);
-    _ZN3sce4Json5Value12s_nullstringE = text;
-    auto* array = Required(static_cast<Array*>(AllocateFrom(*parameter, sizeof(Array))));
-    ConstructArray(*array);
-    _ZN3sce4Json5Value11s_nullarrayE = array;
-    auto* object = Required(static_cast<Object*>(AllocateFrom(*parameter, sizeof(Object))));
-    ConstructObject(*object);
-    _ZN3sce4Json5Value12s_nullobjectE = object;
+    void* pending = nullptr;
+    try {
+        auto* text = static_cast<String*>(pending = AllocateFrom(*parameter, sizeof(String)));
+        ConstructString(*Required(text));
+        _ZN3sce4Json5Value12s_nullstringE = text;
+        auto* array = static_cast<Array*>(pending = AllocateFrom(*parameter, sizeof(Array)));
+        ConstructArray(*Required(array));
+        _ZN3sce4Json5Value11s_nullarrayE = array;
+        auto* object = static_cast<Object*>(pending = AllocateFrom(*parameter, sizeof(Object)));
+        ConstructObject(*Required(object));
+        _ZN3sce4Json5Value12s_nullobjectE = object;
+    } catch (...) {
+        if (pending != nullptr) Release(pending);
+        ReleaseShared();
+        throw;
+    }
     self->initialized = true;
     return 0;
 }
