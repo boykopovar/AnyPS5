@@ -42,6 +42,9 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 
+#include "prx/libc/include/General.hpp"
+
+#include <cerrno>
 #include <stdexcept>
 
 extern "C" {
@@ -49,7 +52,11 @@ extern "C" {
 void APS5_VABI _ZN3rtc11RaceCheckerC1Ev_nid_postfix(WebRtcRaceChecker* checker) {
     if (!checker)
         throw std::invalid_argument("RaceChecker constructor requires a checker");
-    checker->accessCount = 0;
+    std::int32_t accessCount = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(checker, &accessCount, sizeof(accessCount));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("RaceChecker constructor requires a writable checker");
 }
 
 }
