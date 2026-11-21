@@ -198,7 +198,7 @@ def json_pages(out):
 
 
 def open_prs(base):
-    query = urlencode({"state": "open", "base": base, "per_page": 100})
+    query = urlencode({"state": "open", "base": base, "sort": "created", "direction": "asc", "per_page": 100})
     url = f"repos/{REPO}/pulls?{query}"
     head, out = page(f"{url}&page=1")
     pages = json_pages(out)
@@ -232,8 +232,11 @@ def open_prs(base):
     pull_requests = [pr for found in pages for pr in found]
     prs = {}
     for pr in pull_requests:
-        prs[pr["number"]] = {
-            "ref": f"refs/pr/{pr['number']}",
+        number = pr["number"]
+        if number in prs:
+            raise ValueError(f"duplicate pull request #{number} in paginated results; rerun the overlap check")
+        prs[number] = {
+            "ref": f"refs/pr/{number}",
             "sha": pr["head"]["sha"],
             "branch": pr["head"]["ref"],
             "author": pr["user"]["login"],
