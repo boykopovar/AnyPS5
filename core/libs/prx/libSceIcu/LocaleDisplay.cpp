@@ -48,10 +48,11 @@ bool CopyOut(void* destination, const void* source, std::size_t bytes) {
 
 std::string ReadText(const char* source, const char* caller, const char* name) {
     std::string text;
-    for (;;) {
+    while (text.size() < ULOC_FULLNAME_CAPACITY) {
         char chunk[0x1000];
         const auto address = reinterpret_cast<std::uintptr_t>(source) + text.size();
-        const std::size_t count = sizeof(chunk) - address % sizeof(chunk);
+        const std::size_t count = (std::min)(
+            sizeof(chunk) - address % sizeof(chunk), ULOC_FULLNAME_CAPACITY - text.size());
         const auto* current = reinterpret_cast<const char*>(address);
         if (!CopyIn(chunk, current, count))
             throw std::invalid_argument(std::string(caller) + ": unreadable " + name);
@@ -59,6 +60,7 @@ std::string ReadText(const char* source, const char* caller, const char* name) {
         text.append(chunk, end ? static_cast<std::size_t>(end - chunk) : count);
         if (end) return text;
     }
+    throw std::invalid_argument(std::string(caller) + ": oversized " + name);
 }
 
 }

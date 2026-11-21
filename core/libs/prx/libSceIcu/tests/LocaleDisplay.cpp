@@ -148,9 +148,31 @@ void CheckGuestPointers() {
     Require(status == 1);
 }
 
+void CheckLocaleBounds() {
+    std::array<char, ULOC_FULLNAME_CAPACITY> maximum{};
+    maximum.fill('a');
+    maximum.back() = 0;
+    std::array<char16_t, 16> output{};
+    std::int32_t status = 0;
+    uloc_getDisplayScript_nid_postfix(maximum.data(), "en", output.data(), 16, &status);
+
+    std::array<char, ULOC_FULLNAME_CAPACITY + 1> oversized{};
+    oversized.fill('a');
+    oversized.back() = 0;
+    status = 0;
+    RequireInvalidArgument([&] {
+        uloc_getDisplayScript_nid_postfix(oversized.data(), "en", output.data(), 16, &status);
+    });
+    status = 0;
+    RequireInvalidArgument([&] {
+        uloc_getDisplayScript_nid_postfix("sr_Latn", oversized.data(), output.data(), 16, &status);
+    });
+}
+
 }
 
 int main() {
     CheckBehavior();
     CheckGuestPointers();
+    CheckLocaleBounds();
 }
