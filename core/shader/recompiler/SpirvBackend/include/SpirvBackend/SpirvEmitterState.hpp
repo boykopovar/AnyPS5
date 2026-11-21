@@ -140,6 +140,7 @@ struct SpirvEmitterState {
     bool deviceAtomicWorkgroupMemoryBarriers = false;
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
+    bool coherentBufferAtomics = false;
     std::unordered_set<const IrValue*> sharedLaneValues;
     std::uint32_t laneHalf = 0;
     bool laneValueShared = false;

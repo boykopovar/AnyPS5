@@ -38,6 +38,8 @@ bool NoOp(IrOpcode opcode) {
     case IrOpcode::Reference:
     case IrOpcode::ReferenceU32:
     case IrOpcode::Waitcnt:
+    case IrOpcode::GuestRelease:
+    case IrOpcode::GuestAcquire:
     case IrOpcode::InstPrefetch:
     case IrOpcode::ControlNop:
     case IrOpcode::Branch:

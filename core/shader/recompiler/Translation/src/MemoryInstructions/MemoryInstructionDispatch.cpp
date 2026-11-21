@@ -27,7 +27,8 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::BufferGl0Inv:
     case RdnaOpcode::BufferGl1Inv:
         program.Metadata().invalidatesCaches = true;
-        emitControlNop();
+        if (coherentBufferAtomics && (inst.op == RdnaOpcode::BufferGl0Inv || inst.op == RdnaOpcode::BufferGl1Inv)) (void)ir.Emit(IrOpcode::GuestAcquire, IrType::Void, {});
+        else emitControlNop();
         return true;
     case RdnaOpcode::SDcacheWb:
     case RdnaOpcode::SAtcProbe:

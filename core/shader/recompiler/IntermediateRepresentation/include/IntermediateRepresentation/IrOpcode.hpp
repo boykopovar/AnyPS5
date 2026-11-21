@@ -501,6 +501,8 @@ enum class IrOpcode : std::uint16_t {
     SelectU32,
     ImageBvhIntersectRay,
     NanPropagateF32,
+    GuestRelease,
+    GuestAcquire,
     Count
 };
 
