@@ -1,4 +1,5 @@
 #include "prx/libSceVcodec/include/InventoryExports.hpp"
+#include "prx/libSceVcodec/StatusConversion.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libkernel/include/Api.hpp"
@@ -27,7 +28,7 @@ constexpr std::uint32_t ClassCommand = 0xdb50832b;
 constexpr std::uint32_t SizeCommand = 0x9b50832c;
 constexpr std::uint32_t TypeCommand = 0x9b50832d;
 constexpr std::uint32_t StatusCommand = 0xdb50832e;
-constexpr std::size_t RequestBytes = 0x1b50;
+constexpr std::size_t RequestBytes = SceVcodec::Internal::StatusRequestSize;
 constexpr std::size_t AppInfoBytes = 0x98;
 
 struct Request {
@@ -185,7 +186,16 @@ int APS5_VABI libSceVcodecUnknown_Ac6aYjr1pY8_nid_no_patch(void* output) {
     Request request{};
     const int status = Control<StatusCommand>(request);
     if (status < 0 || output == nullptr) return status;
-    NotImplemented_nid_no_patch("Ac6aYjr1pY8: translating the device's budget status into the caller's structure");
+
+    SceVcodec::Internal::StatusRequest raw{};
+    std::memcpy(raw.data(), request.fields, raw.size());
+    SceVcodec::Internal::StatusOutput translated{};
+    SceVcodec::Internal::ConvertStatus(raw, translated);
+
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(output, translated.data(), translated.size());
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidArgument;
     return status;
 }
 APS5_EXPORT("Ac6aYjr1pY8", libSceVcodecUnknown_Ac6aYjr1pY8_nid_no_patch);
