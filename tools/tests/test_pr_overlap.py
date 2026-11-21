@@ -206,6 +206,19 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(git.call_args_list[1].args[5], "f" * 40)
         self.assertEqual(git.call_args_list[-1].args[-1], "00000000000000000000000000000000000000f9")
 
+    def test_skips_fetch_for_commits_already_present_locally(self):
+        prs = {
+            7: {"ref": "refs/pr/7", "sha": "a" * 40, "author": "one", "depends": set()},
+        }
+        with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
+                patch.object(pr_overlap, "git", side_effect=[f"{'c' * 40}\trefs/heads/main\n"]) as git, \
+                patch.object(pr_overlap, "missing_commits", return_value=[]):
+            self.assertEqual(pr_overlap.fetch("main", prs), "c" * 40)
+        self.assertEqual([call.args for call in git.call_args_list], [
+            ("ls-remote", "--exit-code", "https://github.com/owner/project.git", "refs/heads/main"),
+        ])
+        self.assertEqual(prs[7]["ref"], "a" * 40)
+
 
 class ConflictTests(unittest.TestCase):
     def test_uses_the_shared_base_parent_without_newer_merge_tree_option(self):

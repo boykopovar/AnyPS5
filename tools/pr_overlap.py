@@ -235,6 +235,21 @@ def open_prs(base):
     return prs
 
 
+def missing_commits(commits):
+    root = _repository_root()
+    try:
+        process = subprocess.Popen(["git", "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+                                    cwd=root, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                    text=True)
+        out, _ = process.communicate("\n".join(commits) + "\n")
+        if process.returncode != 0:
+            return commits
+        present = {line.split()[0] for line in out.splitlines() if line and not line.endswith("missing")}
+        return [commit for commit in commits if commit not in present]
+    except OSError:
+        return commits
+
+
 def fetch(base, prs):
     return fetch_heads(base_commit(base), prs)
 
@@ -246,9 +261,13 @@ def base_commit(base):
 def fetch_heads(base_sha, prs):
     remote = f"https://github.com/{REPO}.git"
     commits = [base_sha] + [pr["sha"] for pr in prs.values()]
-    for start in range(0, len(commits), FETCH_REFS):
-        git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, *commits[start:start + FETCH_REFS])
-        progress(f"fetched {min(start + FETCH_REFS, len(commits)) - 1}/{len(prs)} pull request heads")
+    missing = missing_commits(commits)
+    if missing:
+        for start in range(0, len(missing), FETCH_REFS):
+            git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, *missing[start:start + FETCH_REFS])
+            progress(f"fetched {min(start + FETCH_REFS, len(commits)) - 1}/{len(prs)} pull request heads")
+    else:
+        progress(f"fetched {len(prs)}/{len(prs)} pull request heads")
     for pr in prs.values():
         pr["ref"] = pr["sha"]
     return base_sha
