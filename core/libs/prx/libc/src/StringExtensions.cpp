@@ -104,7 +104,7 @@ char* APS5_VABI dirname_nid_postfix(const char* path) {
         errno = 63;
         return nullptr;
     }
-    std::memcpy(buffer, path, separator);
+    std::memmove(buffer, path, separator);
     buffer[separator] = '\0';
     return buffer;
 }
