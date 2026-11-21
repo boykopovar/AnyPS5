@@ -59,6 +59,9 @@ inline constexpr std::int32_t LibreSsl3PkeyControlPkcs7Decrypt = 4;
 inline constexpr std::int32_t LibreSsl3PkeyControlPkcs7Sign = 5;
 inline constexpr std::int32_t LibreSsl3PkeyControlSetMacKey = 6;
 inline constexpr std::int32_t LibreSsl3PkeyControlDigestInit = 7;
+inline constexpr std::int32_t LibreSsl3PkeyControlCmsEncrypt = 9;
+inline constexpr std::int32_t LibreSsl3PkeyControlCmsDecrypt = 10;
+inline constexpr std::int32_t LibreSsl3PkeyControlCmsSign = 11;
 inline constexpr std::int32_t LibreSsl3PkeyControlCipher = 12;
 inline constexpr std::int32_t LibreSsl3PkeyControlGetMessageDigest = 13;
 

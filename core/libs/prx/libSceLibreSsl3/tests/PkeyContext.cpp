@@ -575,6 +575,10 @@ void RsaPaddingControls() {
         nullptr) == 1);
     Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlDigestInit, 0,
         nullptr) == 1);
+    for (const int type : {LibreSsl3PkeyControlCmsEncrypt, LibreSsl3PkeyControlCmsDecrypt, LibreSsl3PkeyControlCmsSign}) {
+        Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, LibreSsl3PkeyRsa, -1, type, 0, nullptr) == 1);
+    }
+    ExpectErrors({});
     Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlCipher, 0,
         nullptr) == -2);
     ExpectErrors({EvpCode(147)});
@@ -618,6 +622,16 @@ void RestrictedPssKey() {
     std::size_t length = plain.size();
     Require(EVP_PKEY_encrypt_nid_postfix(context, plain.data(), &length, MessageBytes(), MessageLength) == -2);
     ExpectErrors({EvpCode(150)});
+    Require(EVP_PKEY_sign_init_nid_postfix(context) == 1);
+    for (const int type : {LibreSsl3PkeyControlPkcs7Sign, LibreSsl3PkeyControlCmsSign}) {
+        Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, LibreSsl3PkeyRsaPss, -1, type, 0, nullptr) == 1);
+    }
+    ExpectErrors({});
+    for (const int type : {LibreSsl3PkeyControlPkcs7Encrypt, LibreSsl3PkeyControlPkcs7Decrypt, LibreSsl3PkeyControlCmsEncrypt,
+                           LibreSsl3PkeyControlCmsDecrypt}) {
+        Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, LibreSsl3PkeyRsaPss, -1, type, 0, nullptr) == -2);
+        ExpectErrors({RsaCode(148), EvpCode(147)});
+    }
     EVP_PKEY_CTX_free_nid_postfix(context);
     ReleaseKey(key);
 }
