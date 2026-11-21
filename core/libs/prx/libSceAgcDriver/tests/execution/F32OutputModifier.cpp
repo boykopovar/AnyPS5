@@ -33,6 +33,16 @@ alignas(256) constexpr std::array<std::uint32_t, 46> Code{
     0x80010e03, 0xe0781020, 0x80011203, 0xe0781030, 0x80011603, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 54> LegacyCode{
+    0x34020084, 0x34060086, 0xe0381000, 0x80000401, 0xbf8c3f70, 0xd540000a, 0x041a0b04, 0xd540000b,
+    0x0c1a0b04, 0xd540000c, 0x141a0b04, 0xd540000d, 0x1c1a0b04, 0xd540800e, 0x041a0b04, 0xd540800f,
+    0x0c1a0b04, 0xd5408010, 0x141a0b04, 0xd5408011, 0x1c1a0b04, 0x7e240306, 0xd5060012, 0x00020b04,
+    0x7e260306, 0xd5060013, 0x08020b04, 0x7e280306, 0xd5060014, 0x10020b04, 0x7e2a0306, 0xd5060015,
+    0x18020b04, 0x7e2c0306, 0xd5068016, 0x00020b04, 0x7e2e0306, 0xd5068017, 0x08020b04, 0x7e300306,
+    0xd5068018, 0x10020b04, 0x7e320306, 0xd5068019, 0x18020b04, 0xe0781000, 0x80010a03, 0xe0781010,
+    0x80010e03, 0xe0781020, 0x80011203, 0xe0781030, 0x80011603, 0xbf810000,
+};
+
 constexpr std::uint32_t Rows[32][4] = {
     {0x80000000u, 0x3f800000u, 0x80000000u, 0x00000000u},
     {0x80800000u, 0x3f800000u, 0x80800000u, 0x00000000u},
@@ -209,15 +219,14 @@ void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, con
     Require(actual == expected, std::string("f32 output modifier: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
-void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode) {
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
+void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode,
+         std::span<const std::uint32_t> code = Code) {
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
-    const std::span<const std::uint32_t> code(Code);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -244,12 +253,59 @@ void Check(const std::uint32_t (&expected)[32][16], const char* mode) {
     }
 }
 
+void CheckLegacyModifiers(AgcDriver::VulkanDevice& device) {
+    struct Row {
+        std::array<std::uint32_t, 3> operands;
+        std::array<std::uint32_t, 4> scaled;
+    };
+    constexpr std::array<Row, 6> rows{{
+        {{0x3e800000u, 0x3f000000u, 0x3f000000u}, {0x3f200000u, 0x3fa00000u, 0x40200000u, 0x3ea00000u}},
+        {{0u, 0x7f800000u, 0x3ec00000u}, {0x3ec00000u, 0x3f400000u, 0x3fc00000u, 0x3e400000u}},
+        {{0x3f800000u, 0xbf800000u, 0x3f000000u}, {0xbf000000u, 0xbf800000u, 0xc0000000u, 0xbe800000u}},
+        {{0x3f800001u, 0x3f7fffffu, 0xbf800000u}, {0u, 0u, 0u, 0u}},
+        {{0x00800000u, 0x3f800000u, 0u}, {0x00800000u, 0x01000000u, 0x01800000u, 0u}},
+        {{0u, 0x7f800000u, 0x7fc12345u}, {0x7fc12345u, 0x7fc12345u, 0x7fc12345u, 0x7fc12345u}},
+    }};
+    for (std::size_t lane = 0; lane < rows.size(); ++lane) {
+        const auto& operands = rows[lane].operands;
+        std::copy(operands.begin(), operands.end(), Input.begin() + lane * Inputs);
+    }
+    constexpr std::array<ShaderRecompiler::ShaderFloatMode, 5> modes{{
+        {0xc0u, true, false, false}, {0xd0u, false, false, false},
+        {0xe0u, true, false, false}, {0xf0u, false, false, false}, {0xc0u, false, true, false},
+    }};
+    for (const auto& mode : modes) {
+        Run(device, mode, LegacyCode);
+        const auto denorm = (mode.floatMode >> 4u) & 3u;
+        for (std::uint32_t lane = 0; lane < rows.size(); ++lane) {
+            for (std::uint32_t slot = 0; slot < Results; ++slot) {
+                const auto omod = slot % 4;
+                const bool clamp = (slot & 4u) != 0u;
+                auto expected = rows[lane].scaled[!mode.ieeeMode && denorm < 2 ? omod : 0];
+                if (clamp) {
+                    const float value = std::bit_cast<float>(expected);
+                    if (std::isnan(value)) {
+                        if (mode.dx10Clamp) expected = 0u;
+                    } else {
+                        expected = std::bit_cast<std::uint32_t>(std::clamp(value, 0.0f, 1.0f));
+                    }
+                }
+                const std::string name = std::string(slot < 8 ? "v_mad_legacy_f32" : "v_mac_legacy_f32") +
+                    " omod=" + std::to_string(omod) + " clamp=" + std::to_string(clamp) +
+                    " denorm=" + std::to_string(denorm) + " ieee=" + std::to_string(mode.ieeeMode) + " dx10=" + std::to_string(mode.dx10Clamp);
+                Expect(lane, Output[lane * Results + slot], expected, name.c_str());
+            }
+        }
+    }
+}
+
 }
 
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
         Run(*device, std::nullopt);
         Check(Expected, "no float mode");
         Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
@@ -260,6 +316,7 @@ int main() {
         Check(ExpectedIeee, "IEEE=1 f32 denormals flushed");
         Run(*device, ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false});
         Check(ExpectedIeee, "IEEE=1 f32 denormals kept");
+        CheckLegacyModifiers(*device);
         std::puts("f32 output modifier tests passed");
         return 0;
     } catch (const std::exception& error) {
