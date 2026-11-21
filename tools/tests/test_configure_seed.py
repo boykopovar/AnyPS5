@@ -102,6 +102,15 @@ class ConfigureSeedStdoutTests(unittest.TestCase):
 
 
 class ConfigureSeedPathTests(unittest.TestCase):
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires named pipes")
+    def test_fifo_seed_is_preserved(self):
+        seed = self.root / "seed.cmake"
+        os.mkfifo(seed)
+        result = self.run_seed(seed)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertTrue(seed.is_fifo())
+        self.assertIn(str(seed), result.stderr)
+
     @unittest.skipUnless(os.name == "posix", "requires POSIX file size limits")
     def test_failed_write_preserves_existing_seed_and_allows_retry(self):
         seed = self.root / "seed.cmake"
