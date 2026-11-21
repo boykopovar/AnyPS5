@@ -71,7 +71,7 @@ std::vector<std::uint32_t> UserData() {
     return userData;
 }
 
-ShaderRecompiler::RecompileRequest Request(std::span<const std::uint32_t> code, const ShaderRecompiler::SpirvTarget& target, std::span<const std::uint32_t> userData, std::span<const ShaderRecompiler::MemoryRegion> memory) {
+ShaderRecompiler::RecompileRequest Request(std::span<const std::uint32_t> code, const ShaderRecompiler::SpirvTarget& target, std::span<const std::uint32_t> userData, std::span<const ShaderRecompiler::MemoryRegion> memory, bool ieee = false) {
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {true, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
@@ -80,7 +80,7 @@ ShaderRecompiler::RecompileRequest Request(std::span<const std::uint32_t> code, 
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false};
+    request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xc0u, true, ieee, false};
     return request;
 }
 
@@ -151,10 +151,10 @@ void VerifySpirv() {
     }
 }
 
-void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const ShaderRecompiler::SpirvTarget& target) {
+void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const ShaderRecompiler::SpirvTarget& target, bool ieee = false) {
     const auto userData = UserData();
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
-    const auto result = ShaderRecompiler::Recompile(Request(code, target, userData, memory));
+    const auto result = ShaderRecompiler::Recompile(Request(code, target, userData, memory, ieee));
     Output.fill(0xdeadbeefu);
     device.Dispatch(result, Halves / Threads, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -164,6 +164,12 @@ void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& t
     Dispatch(device, ConvertCode, target);
     for (std::uint32_t lane = 0; lane < Halves; ++lane) {
         Require(Output[lane] == HalfToFloatBits(lane), std::string("f16 to f32 unpack (") + name + "): v_cvt_f32_f16 of " + Hex(Input[lane]) + " is " + Hex(Output[lane]) + ", expected " + Hex(HalfToFloatBits(lane)));
+    }
+    Dispatch(device, ConvertCode, target, true);
+    for (std::uint32_t lane = 0; lane < Halves; ++lane) {
+        const bool nan = (lane & 0x7c00u) == 0x7c00u && (lane & 0x3ffu) != 0u;
+        const auto expected = HalfToFloatBits(lane) | (nan ? 0x00400000u : 0u);
+        Require(Output[lane] == expected, std::string("f16 to f32 unpack (") + name + "): v_cvt_f32_f16 with IEEE_MODE of " + Hex(Input[lane]) + " is " + Hex(Output[lane]) + ", expected " + Hex(expected));
     }
     Dispatch(device, ByteCode, target);
     for (std::uint32_t lane = 0; lane < Halves; ++lane) {

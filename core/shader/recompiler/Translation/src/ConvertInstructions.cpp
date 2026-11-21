@@ -119,7 +119,14 @@ void TranslationContext::vCvtF16F32(const RdnaInstruction& inst) {
 
 void TranslationContext::vCvtF32F16(const RdnaInstruction& inst) {
     const IrF32 value = flushF16InputValue(readF16AsF32(sourceAt(inst, 0u)));
-    writeOperand(inst.destination, &value.Value());
+    if (!ieeeMode) {
+        writeOperand(inst.destination, &value.Value());
+        return;
+    }
+    const IrU32 bits(ir.BitCastU32(value.Value()));
+    const IrU1 nan(ir.UGreaterThan(ir.BitwiseAnd(bits.Value(), ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u)));
+    const IrF32 quieted(ir.BitCastF32(ir.Select(nan.Value(), quietNan32(bits).Value(), bits.Value())));
+    writeOperand(inst.destination, &quieted.Value());
 }
 
 void TranslationContext::vCvtF1616(const RdnaInstruction& inst, bool signedValue) {
