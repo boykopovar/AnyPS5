@@ -29,7 +29,6 @@
 #include "prx/libSceJsc/include/YarrRegularExpressionExports.hpp"
 #include "prx/libSceJsc/src/YarrRegExpEngine.hpp"
 #include "prx/libc/include/Api.hpp"
-#include "prx/libc/include/General.hpp"
 
 #include <climits>
 #include <cstddef>
@@ -194,7 +193,7 @@ bool IsEngineLimit(std::string_view message) {
     return false;
 }
 
-std::uint8_t* Compile(const Units& pattern, int flags, const char* function) {
+std::uint8_t* Compile(const Units& pattern, int flags) {
     if (RejectedByYarr(pattern)) return nullptr;
     const std::string encoded = EncodePattern(pattern, (flags & LRE_FLAG_UNICODE) != 0);
     char marker = 0;
@@ -204,7 +203,7 @@ std::uint8_t* Compile(const Units& pattern, int flags, const char* function) {
     std::uint8_t* bytecode = lre_compile(&length, message, sizeof(message), encoded.c_str(), encoded.size(), flags, &state);
     if (bytecode) return bytecode;
     if (std::string_view(message) == "out of memory") throw std::bad_alloc();
-    if (IsEngineLimit(message)) NotImplemented_nid_no_patch(function);
+    if (IsEngineLimit(message)) throw std::logic_error(std::string("JSC::Yarr::RegularExpression: pattern beyond a libregexp limit: ") + message);
     return nullptr;
 }
 
@@ -213,7 +212,7 @@ const RegularExpression& Checked(const RegularExpression* self, const char* mess
     return *self;
 }
 
-int Match(RegularExpressionPrivate& d, const StringReference* string, int startFrom, int* matchLength, const char* function) {
+int Match(RegularExpressionPrivate& d, const StringReference* string, int startFrom, int* matchLength) {
     if (!string) throw std::invalid_argument("JSC::Yarr::RegularExpression: null string reference");
     if (!d.regExpByteCode) return -1;
     if (!string->impl) return -1;
@@ -230,7 +229,7 @@ int Match(RegularExpressionPrivate& d, const StringReference* string, int startF
         const int result = lre_exec(captures, bytecode, buffer, startFrom, static_cast<int>(input.length), type, &state);
         if (result == LRE_RET_MEMORY_ERROR) throw std::bad_alloc();
         if (result == 1) matched = true;
-        else if (result != 0 && result != LRE_RET_TIMEOUT) NotImplemented_nid_no_patch(function);
+        else if (result != 0 && result != LRE_RET_TIMEOUT) throw std::logic_error("JSC::Yarr::RegularExpression: unknown libregexp result " + std::to_string(result));
     }
     if (!matched) {
         d.lastMatchLength = -1;
@@ -244,7 +243,7 @@ int Match(RegularExpressionPrivate& d, const StringReference* string, int startF
     return begin;
 }
 
-void Construct(RegularExpression* self, const StringReference* pattern, int caseSensitivity, int multilineMode, int unicodeMode, const char* function) {
+void Construct(RegularExpression* self, const StringReference* pattern, int caseSensitivity, int multilineMode, int unicodeMode) {
     if (!self) throw std::invalid_argument("JSC::Yarr::RegularExpression: null this");
     if (!pattern) throw std::invalid_argument("JSC::Yarr::RegularExpression: null pattern reference");
     const Units units = UnitsOf(pattern->impl, "JSC::Yarr::RegularExpression: pattern with null characters and a nonzero length");
@@ -252,7 +251,7 @@ void Construct(RegularExpression* self, const StringReference* pattern, int case
     if (caseSensitivity == Jsc::YarrAbi::TextCaseInsensitive) flags |= LRE_FLAG_IGNORECASE;
     if (multilineMode == Jsc::YarrAbi::MultilineEnabled) flags |= LRE_FLAG_MULTILINE;
     if (unicodeMode == Jsc::YarrAbi::UnicodeAwareMode) flags |= LRE_FLAG_UNICODE;
-    std::uint8_t* bytecode = Compile(units, flags, function);
+    std::uint8_t* bytecode = Compile(units, flags);
     auto* d = static_cast<RegularExpressionPrivate*>(malloc_nid_postfix(sizeof(RegularExpressionPrivate)));
     if (!d) {
         std::free(bytecode);
@@ -271,15 +270,15 @@ void Construct(RegularExpression* self, const StringReference* pattern, int case
 extern "C" {
 
 void APS5_VABI _ZN3JSC4Yarr17RegularExpressionC1ERKN3WTF6StringENS0_19TextCaseSensitivityENS0_13MultilineModeENS0_11UnicodeModeE(RegularExpression* self, const StringReference* pattern, int caseSensitivity, int multilineMode, int unicodeMode) {
-    Construct(self, pattern, caseSensitivity, multilineMode, unicodeMode, __func__);
+    Construct(self, pattern, caseSensitivity, multilineMode, unicodeMode);
 }
 
 void APS5_VABI _ZN3JSC4Yarr17RegularExpressionC2ERKN3WTF6StringENS0_19TextCaseSensitivityENS0_13MultilineModeENS0_11UnicodeModeE(RegularExpression* self, const StringReference* pattern, int caseSensitivity, int multilineMode, int unicodeMode) {
-    Construct(self, pattern, caseSensitivity, multilineMode, unicodeMode, __func__);
+    Construct(self, pattern, caseSensitivity, multilineMode, unicodeMode);
 }
 
 int APS5_VABI _ZNK3JSC4Yarr17RegularExpression5matchERKN3WTF6StringEiPi(const RegularExpression* self, const StringReference* string, int startFrom, int* matchLength) {
-    return Match(*Checked(self, "JSC::Yarr::RegularExpression::match: null this").d, string, startFrom, matchLength, __func__);
+    return Match(*Checked(self, "JSC::Yarr::RegularExpression::match: null this").d, string, startFrom, matchLength);
 }
 
 int APS5_VABI _ZNK3JSC4Yarr17RegularExpression9searchRevERKN3WTF6StringE(const RegularExpression* self, const StringReference* string) {
@@ -290,7 +289,7 @@ int APS5_VABI _ZNK3JSC4Yarr17RegularExpression9searchRevERKN3WTF6StringE(const R
     int lastMatchLength = -1;
     do {
         int matchLength;
-        pos = Match(d, string, start, &matchLength, __func__);
+        pos = Match(d, string, start, &matchLength);
         if (pos >= 0) {
             if (pos + matchLength > lastPos + lastMatchLength) {
                 lastPos = pos;

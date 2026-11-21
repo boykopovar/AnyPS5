@@ -10,6 +10,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <typeinfo>
 
 using Jsc::WtfAbi::StringImpl;
 using Jsc::YarrAbi::RegularExpression;
@@ -98,6 +99,18 @@ struct Expression {
 bool Valid(const std::string& pattern, int caseSensitivity = 0, int multilineMode = 0, int unicodeMode = 0) {
     Expression expression(pattern, caseSensitivity, multilineMode, unicodeMode);
     return IsValid(&expression.value);
+}
+
+template<typename TException, typename TCall>
+bool ThrowsExactly(TCall call) {
+    try {
+        call();
+    } catch (const TException& error) {
+        return typeid(error) == typeid(TException);
+    } catch (...) {
+        return false;
+    }
+    return false;
 }
 
 template<typename TException, typename TCall>
@@ -298,14 +311,14 @@ void TestLimits() {
     RegularExpression expression{};
     expression.d = reinterpret_cast<RegularExpressionPrivate*>(std::uintptr_t{0x1234});
     const Text pattern(manyGroups);
-    Require(Throws<std::runtime_error>([&] { Construct(&expression, &pattern.reference, 0, 0, 0); }));
+    Require(ThrowsExactly<std::logic_error>([&] { Construct(&expression, &pattern.reference, 0, 0, 0); }));
     Require(expression.d == reinterpret_cast<RegularExpressionPrivate*>(std::uintptr_t{0x1234}));
     std::string nested;
     for (int index = 0; index < 20000; ++index) nested += "(?:";
     nested += "a";
     for (int index = 0; index < 20000; ++index) nested += ")";
     const Text deep(nested);
-    Require(Throws<std::runtime_error>([&] { Construct(&expression, &deep.reference, 0, 0, 0); }));
+    Require(ThrowsExactly<std::logic_error>([&] { Construct(&expression, &deep.reference, 0, 0, 0); }));
     Require(expression.d == reinterpret_cast<RegularExpressionPrivate*>(std::uintptr_t{0x1234}));
     Require(live.empty());
 }
