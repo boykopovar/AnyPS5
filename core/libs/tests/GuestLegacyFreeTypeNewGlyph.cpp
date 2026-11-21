@@ -125,13 +125,25 @@ void Arguments(NewGlyph call, GuestLibrary* library, FT_Library host) {
         Require(call(library, format, nullptr) == FT_New_Glyph(host, format, nullptr), "null output error");
         output.Guards();
     }
-    for (const auto format : {FT_GLYPH_FORMAT_NONE, FT_GLYPH_FORMAT_COMPOSITE, FT_GLYPH_FORMAT_PLOTTER,
-                              static_cast<FT_Glyph_Format>(0x12345678), static_cast<FT_Glyph_Format>(0xFFFFFFFFu)}) {
+    for (const auto format : {FT_GLYPH_FORMAT_NONE, FT_GLYPH_FORMAT_COMPOSITE, FT_GLYPH_FORMAT_PLOTTER, static_cast<FT_Glyph_Format>(0x12345678)}) {
         Output output;
         const auto original = output.glyph;
         FT_Glyph native = reinterpret_cast<FT_Glyph>(original);
         Require(call(library, format, &output.glyph) == FT_New_Glyph(host, format, &native), "unsupported format error");
         Require(output.glyph == original && native == reinterpret_cast<FT_Glyph>(original), "unsupported format preserves output");
+        output.Guards();
+    }
+    FT_Glyph unknown = nullptr;
+    Require(FT_New_Glyph(host, static_cast<FT_Glyph_Format>(0x12345678), &unknown) == FT_Err_Invalid_Glyph_Format && !unknown,
+            "a format no glyph class or renderer handles");
+    for (const std::uint32_t format : {0x80000000u, 0xFFFFFFFFu}) {
+        Output output;
+        const auto original = output.glyph;
+        Require(call(library, format, &output.glyph) == FT_Err_Invalid_Glyph_Format, "format outside FT_Glyph_Format error");
+        Require(output.glyph == original, "format outside FT_Glyph_Format preserves output");
+        Require(call(library, format, nullptr) == FT_Err_Invalid_Argument, "format outside FT_Glyph_Format null output error");
+        Require(call(nullptr, format, &output.glyph) == FT_Err_Invalid_Argument && output.glyph == original,
+                "format outside FT_Glyph_Format null library error");
         output.Guards();
     }
     GuestLibrary empty;

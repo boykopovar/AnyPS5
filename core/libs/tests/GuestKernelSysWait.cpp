@@ -4,6 +4,7 @@
 #include <nid/NidCompute.hpp>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -65,6 +66,28 @@ static Function LoadFunction(void* module, const char* name, bool patched, const
 
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "child") == 0) return 42;
+#ifdef _WIN32
+    if (argc == 2 && std::strcmp(argv[1], "block") == 0) {
+        char byte = 0;
+        DWORD read = 0;
+        return ReadFile(GetStdHandle(STD_INPUT_HANDLE), &byte, 1, &read, nullptr) != FALSE && read == 1 ? 42 : 99;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "burn") == 0) {
+        const auto ticks = [](const FILETIME& time) { return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime; };
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        volatile std::uint64_t sink = 0;
+        while (std::chrono::steady_clock::now() < deadline) {
+            for (std::uint64_t index = 0; index < 100000; ++index) sink = sink + index;
+            FILETIME creation{};
+            FILETIME exitTime{};
+            FILETIME kernel{};
+            FILETIME user{};
+            if (GetProcessTimes(GetCurrentProcess(), &creation, &exitTime, &kernel, &user) == FALSE) return 4;
+            if (ticks(user) + ticks(kernel) >= 500000) return 0;
+        }
+        return 3;
+    }
+#endif
     Require(argc == 4);
     const auto directory = std::filesystem::absolute(argv[1]);
     const bool patched = std::strcmp(argv[2], "patched") == 0;
@@ -103,17 +126,68 @@ int main(int argc, char** argv) {
     const auto length = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
     Require(length != 0 && length < executable.size());
     executable.resize(length);
-    std::wstring command = L"\"" + executable + L"\" child";
-    STARTUPINFOW startup{};
-    startup.cb = sizeof(startup);
-    PROCESS_INFORMATION child{};
-    Require(CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &child) != FALSE);
-    Require(CloseHandle(child.hThread) != FALSE);
     const auto registerChild = reinterpret_cast<void (*)(std::int32_t, std::int64_t)>(GetProcAddress(static_cast<HMODULE>(libc), "RegisterChildProcess_nid_no_patch"));
     Require(registerChild != nullptr);
-    registerChild(static_cast<std::int32_t>(child.dwProcessId), reinterpret_cast<std::int64_t>(child.hProcess));
-    const int reaped = test == "wait3" ? wait3(&status, 0, nullptr) : wait4(static_cast<int>(child.dwProcessId), &status, 0, nullptr);
-    Require(reaped == static_cast<int>(child.dwProcessId) && status == (42 << 8));
+    const auto spawn = [&](const wchar_t* mode, HANDLE input) {
+        std::wstring command = L"\"" + executable + L"\" " + mode;
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        if (input != nullptr) {
+            startup.dwFlags = STARTF_USESTDHANDLES;
+            startup.hStdInput = input;
+        }
+        PROCESS_INFORMATION child{};
+        Require(CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, input != nullptr ? TRUE : FALSE, 0, nullptr, nullptr, &startup, &child) != FALSE);
+        Require(CloseHandle(child.hThread) != FALSE);
+        registerChild(static_cast<std::int32_t>(child.dwProcessId), reinterpret_cast<std::int64_t>(child.hProcess));
+        return static_cast<int>(child.dwProcessId);
+    };
+    const auto waitChild = [&](int child, int* out, int options, void* resources) {
+        return test == "wait3" ? wait3(out, options, resources) : wait4(child, out, options, resources);
+    };
+    const auto readUsage = [&] {
+        GuestResourceUsage resources{};
+        static_assert(sizeof(resources) == sizeof(usage));
+        std::memcpy(&resources, usage.data(), sizeof(resources));
+        Require(resources.ru_utime.tv_sec >= 0 && resources.ru_stime.tv_sec >= 0);
+        Require(resources.ru_utime.tv_usec >= 0 && resources.ru_utime.tv_usec < 1000000);
+        Require(resources.ru_stime.tv_usec >= 0 && resources.ru_stime.tv_usec < 1000000);
+        const GuestResourceUsage empty{};
+        Require(std::memcmp(&resources.ru_maxrss, &empty.ru_maxrss, sizeof(resources) - offsetof(GuestResourceUsage, ru_maxrss)) == 0);
+        return resources;
+    };
+    const int first = spawn(L"child", nullptr);
+    Require(waitChild(first, &status, 0, nullptr) == first && status == (42 << 8));
+    SECURITY_ATTRIBUTES inheritable{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+    HANDLE readEnd = nullptr;
+    HANDLE writeEnd = nullptr;
+    Require(CreatePipe(&readEnd, &writeEnd, &inheritable, 0) != FALSE);
+    Require(SetHandleInformation(writeEnd, HANDLE_FLAG_INHERIT, 0) != FALSE);
+    const int blocked = spawn(L"block", readEnd);
+    Require(CloseHandle(readEnd) != FALSE);
+    status = 0x12345678;
+    Require(waitChild(blocked, &status, 1, usage.data()) == 0);
+    Require(status == 0x12345678);
+    for (auto byte : usage) Require(byte == 0xa5);
+    DWORD written = 0;
+    Require(WriteFile(writeEnd, "x", 1, &written, nullptr) != FALSE && written == 1 && CloseHandle(writeEnd) != FALSE);
+    Require(waitChild(blocked, &status, 0, usage.data()) == blocked && status == (42 << 8));
+    readUsage();
+    const int burned = spawn(L"burn", nullptr);
+    usage.fill(0xa5);
+    Require(waitChild(burned, &status, 0, usage.data()) == burned && status == 0);
+    const auto burnedUsage = readUsage();
+    const auto micros = [](const KernelTimeval& time) { return time.tv_sec * 1000000 + time.tv_usec; };
+    Require(micros(burnedUsage.ru_utime) + micros(burnedUsage.ru_stime) >= 50000);
+    const int second = spawn(L"child", nullptr);
+    status = 0;
+    const int failed = waitChild(second, &status, 0, reinterpret_cast<void*>(1));
+    Require(failed == -1 && *error() == 14 && status == (42 << 8));
+    Require(waitChild(second, &status, 1, nullptr) == -1 && *error() == 10);
+    const int third = spawn(L"child", nullptr);
+    const int badStatus = waitChild(third, reinterpret_cast<int*>(1), 0, nullptr);
+    Require(badStatus == -1 && *error() == 14);
+    Require(waitChild(third, &status, 1, nullptr) == -1 && *error() == 10);
 #else
     int barrier[2]{};
     Require(::pipe(barrier) == 0);

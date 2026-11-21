@@ -48,6 +48,7 @@ R_X86_64_TLSDESC = 36
 SYMBOL_SIZE = 24
 RELA_SIZE = 24
 R_X86_64_NONE = 0
+R_X86_64_COPY = 5
 R_X86_64_IRELATIVE = 37
 DYNAMIC_VALUE_TAGS = {
     12: "DT_INIT", 13: "DT_FINI",
@@ -242,7 +243,10 @@ class Module:
         slots = {}
         for offset, info, _ in self.relocations():
             if info >> 32:
-                slots[offset] = self.symbol(info >> 32)[0]
+                name, section, _, _, binding, visibility = self.symbol(info >> 32)
+                if section and (binding == 0 or visibility != 0) and (info & 0xffffffff) != R_X86_64_COPY:
+                    continue
+                slots[offset] = name
         return slots
 
     def exported_symbols(self):
@@ -444,18 +448,18 @@ def find_stubs(listing, slots, namer):
     return stubs
 
 
-def line_note(line, slots, stubs, namer):
+def line_note(line, slots, branch_targets, namer):
     note = ""
     branch = BRANCH.search(line)
-    if branch and int(branch.group(1), 16) in stubs:
-        note = "   ; -> " + stubs[int(branch.group(1), 16)]
+    if branch and int(branch.group(1), 16) in branch_targets:
+        note = "   ; -> " + branch_targets[int(branch.group(1), 16)]
     reference = referenced_address(line)
     if reference in slots:
         note = "   ; GOT " + namer.resolve(slots[reference])
     return note
 
 
-def annotate_listing(listing, slots, exports, stubs, namer, entry=None):
+def annotate_listing(listing, slots, exports, branch_targets, namer, entry=None):
     out = []
     for line in listing:
         head = LINE_ADDRESS.match(line)
@@ -464,7 +468,7 @@ def annotate_listing(listing, slots, exports, stubs, namer, entry=None):
         if head and int(head.group(1), 16) in exports:
             out.append("")
             out.extend("; ===== export " + namer.resolve(name) for name in exports[int(head.group(1), 16)])
-        out.append(line + line_note(line, slots, stubs, namer))
+        out.append(line + line_note(line, slots, branch_targets, namer))
     return out
 
 
@@ -522,7 +526,8 @@ def annotate(module_path, prefix, namer):
     exports, thread_local = module.exports()
     listing = []
     entry = module.entry_point()
-    for vaddr, code in module.code_segments():
+    segments = module.code_segments()
+    for vaddr, code in segments:
         listing.append("; ===== segment %#x" % vaddr)
         if entry is not None and vaddr < entry < vaddr + len(code):
             split = entry - vaddr
@@ -531,9 +536,15 @@ def annotate(module_path, prefix, namer):
             vaddr = entry
         listing.extend(disassemble(code, vaddr))
     stubs = find_stubs(listing, slots, namer)
+    functions = {}
+    for symbol, section, address, kind in module.exported_symbols():
+        if kind == STT_FUNC and section != SHN_COMMON and any(start <= address < start + len(code) for start, code in segments):
+            functions.setdefault(address, set()).add(namer.resolve(symbol))
+    branch_targets = {address: ", ".join(sorted(names)) for address, names in functions.items()}
+    branch_targets.update(stubs)
     write_lines(prefix + ".imports.txt", ["%#x %s %s" % (slot, slots[slot], namer.resolve(slots[slot])) for slot in sorted(slots)])
     write_lines(prefix + ".exports.txt", export_lines(exports, thread_local, namer))
-    write_lines(prefix + ".asm", annotate_listing(listing, slots, exports, stubs, namer, entry))
+    write_lines(prefix + ".asm", annotate_listing(listing, slots, exports, branch_targets, namer, entry))
     export_count = sum(len(names) for names in exports.values())
     tls_count = sum(len(names) for names in thread_local.values())
     return "%s: %d imports, %d exports, %d tls, %d stubs, %d lines" % (prefix, len(slots), export_count, tls_count, len(stubs), len(listing))
