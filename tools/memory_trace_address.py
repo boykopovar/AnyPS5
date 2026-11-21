@@ -1,8 +1,10 @@
 import argparse
+import codecs
 import re
 import sys
 from collections import deque
 from dataclasses import dataclass
+from io import TextIOWrapper
 from pathlib import Path
 
 
@@ -90,6 +92,12 @@ def render_events(events, path, start, size, limit):
     return "\n".join(lines) + "\n"
 
 
+def decode_trace(source):
+    bom = source.peek(2)[:2]
+    encoding = "utf-16" if bom in (codecs.BOM_UTF16_BE, codecs.BOM_UTF16_LE) else "utf-8-sig"
+    return TextIOWrapper(source, encoding=encoding, errors="replace")
+
+
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -105,7 +113,7 @@ def main(argv=None):
         parser.error("--limit must be positive")
     try:
         start, size = parse_range(args.address, args.length)
-        with args.trace.open(encoding="utf-8-sig", errors="replace") as source:
+        with args.trace.open("rb") as raw, decode_trace(raw) as source:
             output = render_events(iter_events(source), args.trace, start, size, args.limit)
         sys.stdout.write(output)
     except (OSError, ValueError) as error:
