@@ -70,6 +70,8 @@ python3 tools/select_tests.py ctest build --output-on-failure
 
 `tools/package_release.py --output <dir>` writes the release packages. With `--docs <dir>` it collects the documentation into the output folder. Otherwise `--platform` picks the package: `headers` writes the public header package for `--version` (and takes no `--build` or `--revision`); `linux`, `windows` and `web` package the build tree given by `--build` for `--version`, and `web` also needs `--revision`, which the other platforms refuse.
 
+With `BUILD_TESTING=ON` and Python available, the daily-tag workflow tests require Node.js. The self-hosted Linux Build job installs Node.js 24, matching `actions/github-script`; a missing Node executable fails these tests instead of silently skipping their JavaScript checks.
+
 ## Web converter releases
 
 The Release workflow builds the web converter and the Linux and Windows libraries from the same commit. It tests the converter and publishes its frontend and WASM files as `web-<tag>.zip`, with the tag and commit recorded in `web-release.json`.

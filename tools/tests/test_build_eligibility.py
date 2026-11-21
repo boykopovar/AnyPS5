@@ -206,6 +206,13 @@ class RelinkerEligibilityTests(unittest.TestCase):
                 self.assertIs(result["outputs"]["relinker"], False)
                 self.assertEqual(result["calls"], [])
 
+    def test_daily_tag_script_changes_run_its_relinker_tests(self):
+        for manual in (False, True):
+            with self.subTest(manual=manual):
+                result = self.run_gate([{"sha": "a"}], None,
+                                       files=(".github/workflows/daily-tag.yml",), manual=manual)
+                self.assertIs(result["outputs"]["relinker"], True)
+
     def test_workflow_edit_runs_only_the_jobs_it_touches(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         lines = text.splitlines()
