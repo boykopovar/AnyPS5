@@ -49,5 +49,7 @@ void APS5_VABI _ZN3JSC4Yarr17RegularExpressionC2ERKN3WTF6StringENS0_19TextCaseSe
 int APS5_VABI _ZNK3JSC4Yarr17RegularExpression5matchERKN3WTF6StringEiPi(const Jsc::YarrAbi::RegularExpression* self, const Jsc::YarrAbi::StringReference* string, int startFrom, int* matchLength);
 int APS5_VABI _ZNK3JSC4Yarr17RegularExpression9searchRevERKN3WTF6StringE(const Jsc::YarrAbi::RegularExpression* self, const Jsc::YarrAbi::StringReference* string);
 bool APS5_VABI _ZNK3JSC4Yarr17RegularExpression7isValidEv(const Jsc::YarrAbi::RegularExpression* self);
+void APS5_VABI JscRegularExpressionConstruct_nid_no_patch(Jsc::YarrAbi::RegularExpression* self, const Jsc::YarrAbi::StringReference* pattern, int caseSensitivity, int multilineMode, int unicodeMode);
+int APS5_VABI JscRegularExpressionMatch_nid_no_patch(const Jsc::YarrAbi::RegularExpression* self, const Jsc::YarrAbi::StringReference* string, int startFrom, int* matchLength);
 void APS5_VABI JscRegularExpressionRelease_nid_no_patch(Jsc::YarrAbi::RegularExpressionPrivate* d);
 }
