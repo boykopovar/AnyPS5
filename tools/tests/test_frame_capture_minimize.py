@@ -59,6 +59,14 @@ else:
         self.assertEqual(removed_calls, {0, 3})
         self.assertEqual(removed_chunks, {1, 5})
 
+    def test_two_rejected_singletons_finish_with_two_trials(self):
+        minimizer = PredicateMinimizer({0, 1}, set())
+        with patch.object(minimizer, "predicate", side_effect=[False, False, frame_capture_minimize.TrialLimitReached]) as trial:
+            remaining, _, _, complete = minimizer.minimize([0, 1], set(), set(), True)
+        self.assertEqual([args[0][0] for args in trial.call_args_list], [{0}, {1}])
+        self.assertEqual(remaining, [0, 1])
+        self.assertTrue(complete)
+
     def test_requires_repeated_confirmation_and_positive_trial_limit(self):
         for arguments in (("--confirm-runs", "1"), ("--max-trials", "0"), ("--replay-timeout", "0")):
             with self.subTest(arguments=arguments), self.assertRaises(SystemExit):

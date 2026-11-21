@@ -1,4 +1,6 @@
 import argparse
+import ast
+import itertools
 import json
 import re
 import subprocess
@@ -14,6 +16,8 @@ LEXICAL = re.compile(r'\\.|"(?:\\.|[^"\\])*"|\[(?P<literal_equals>=*)\[.*?\](?P=
 
 KNOWN_UNRUN = set()
 SANITIZER_SKIPPED_LIBRARIES = {"libSceAddressSanitizer"}
+SET_VARIABLE = re.compile(r'^[ \t]*set\(\s*(\w+)\s+"?([^"\s()]+)"?\s*\)', re.M | re.I)
+VARIABLE = re.compile(r"\$\{(\w+)\}")
 SCRIPT = re.compile(r"(?<![\w./-])(?:[\w.-]+/)*test_\w+\.py(?![\w./-])")
 EXPORTED = re.compile(r"\bAPS5_VABI\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*(?:noexcept\s*)?(?:->\s*[^;{]+)?(?:try\s*)?\{")
 INCLUDED_SOURCE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+\.cpp)"', re.M)
@@ -322,11 +326,12 @@ def is_disabled(value):
     return value is not None and value.upper() in ("1", "ON", "YES", "TRUE", "Y")
 
 
-def run_scripts(root, files):
+def run_scripts(root, files, invocations=None):
     run = set()
     for name in files:
         if name.endswith("CMakeLists.txt") or name.endswith(".cmake"):
             content = (Path(root) / name).read_text(encoding="utf-8", errors="replace")
+            variables = dict(SET_VARIABLE.findall(content))
             tests = []
             scopes = []
             for index, (command, arguments) in enumerate(commands(content)):
@@ -372,6 +377,9 @@ def run_scripts(root, files):
             for _, arguments, value, _ in tests:
                 if not value[1]:
                     run.update(argument.rpartition("}")[2].lstrip("/") for argument in arguments)
+                    if invocations is not None:
+                        invocations.append([VARIABLE.sub(lambda match: variables.get(match.group(1), match.group()), argument)
+                                            .rpartition("}")[2].lstrip("/") for argument in arguments])
         elif name.startswith(".github/workflows/") and name.endswith((".yml", ".yaml")):
             for line in workflow_run_lines((Path(root) / name).read_text(encoding="utf-8", errors="replace")):
                 if line.lstrip().startswith("#"):
@@ -379,7 +387,60 @@ def run_scripts(root, files):
                 line = re.split(r"\s#", line)[0]
                 if "python" in line:
                     run.update(token[2:] if token.startswith("./") else token for token in SCRIPT.findall(line))
+                    if invocations is not None:
+                        tokens = [token.strip("'\"") for token in line.split()]
+                        invocations.append([token[2:] if token.startswith("./") else token for token in tokens])
     return {name for name in run if SCRIPT.fullmatch(name)}
+
+
+def unittest_classes(path):
+    classes = {node.name: node for node in ast.parse(path.read_text(encoding="utf-8", errors="replace")).body
+               if isinstance(node, ast.ClassDef)}
+
+    def lineage(name, seen):
+        found = {name}
+        for base in classes[name].bases:
+            base = base.attr if isinstance(base, ast.Attribute) else getattr(base, "id", None)
+            if base in classes and base not in seen:
+                found |= lineage(base, seen | {base})
+            elif base:
+                found.add(base)
+        return found
+
+    def tested(name):
+        return name in classes and any(isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name.startswith("test")
+                                       for item in classes[name].body)
+
+    return [name for name in classes if any(base.endswith("TestCase") for base in lineage(name, {name}))
+            and any(tested(base) for base in lineage(name, {name}))]
+
+
+def unselected_classes(root):
+    files = listed(root)
+    invocations = []
+    run_scripts(root, files, invocations)
+    selections = {}
+    for arguments in invocations:
+        for index, argument in enumerate(arguments):
+            if SCRIPT.fullmatch(argument):
+                selections.setdefault(argument, []).append(
+                    list(itertools.takewhile(lambda token: token not in {"&&", "||", ";", "|"}, arguments[index + 1:])))
+    unselected = {}
+    for name in files:
+        if not re.match(r"^test_\w+\.py$", name.rpartition("/")[2]):
+            continue
+        runs = [names for path, found in selections.items() if name == path or name.endswith("/" + path) for names in found]
+        if not runs:
+            continue
+        classes = unittest_classes(Path(root) / name)
+        selected = set()
+        for names in runs:
+            if not any(argument.partition(".")[0] in classes for argument in names):
+                selected.update(classes)
+            selected.update(names)
+        if missing := [cls for cls in classes if cls not in selected]:
+            unselected[name] = missing
+    return unselected
 
 
 def unrun_scripts(root):
@@ -398,21 +459,29 @@ def main(argv=None):
     output = parser.add_mutually_exclusive_group()
     output.add_argument("--json", action="store_true", help="emit registration audit results as JSON")
     output.add_argument("--list", action="store_true", help="print every test executable and whether ctest runs it")
-    parser.add_argument("--scripts", action="store_true", help="instead check that an add_test or a workflow runs every test_*.py of the source tree")
+    parser.add_argument("--scripts", action="store_true", help="instead check that an add_test or a workflow runs every test_*.py of the source tree, "
+                                                                "and every test class of a script that is only run class by class")
     args = parser.parse_args(argv)
     if args.scripts:
         try:
-            scripts, unrun = unrun_scripts(Path(__file__).resolve().parents[1])
+            root = Path(__file__).resolve().parents[1]
+            scripts, unrun = unrun_scripts(root)
+            unselected = unselected_classes(root)
         except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
             parser.error(f"--scripts reads the source tree from git, so run it in a git checkout: {error}")
         if args.json:
-            print(json.dumps({"mode": "scripts", "tests": scripts, "unregistered": unrun,
+            print(json.dumps({"mode": "scripts", "tests": scripts, "unregistered": unrun, "unselected": unselected,
                               "registered": sorted(set(scripts) - set(unrun))}, sort_keys=True))
-            return int(bool(unrun))
+            return int(bool(unrun or unselected))
         for name in unrun:
             print(f"error: {name} is a test script that no add_test or workflow runs")
+        for name, classes in unselected.items():
+            print(f"error: {name} runs only some of its test classes; never run: {', '.join(classes)}")
         if unrun:
             print(f"{len(unrun)} test script(s) would never run: register each with add_test, or run it from a workflow")
+        if unselected:
+            print(f"{len(unselected)} test script(s) leave test classes unrun: name each class in an add_test, or run the whole script")
+        if unrun or unselected:
             return 1
         print(f"{len(scripts)} test script(s), each run by an add_test or a workflow")
         return 0

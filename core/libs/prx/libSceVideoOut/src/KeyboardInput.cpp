@@ -9,7 +9,7 @@ void KeyboardInput::HandleEvent(const SDL_Event& event, unsigned windowId) {
     switch (event.type) {
         case SDL_KEYDOWN:
         case SDL_KEYUP:
-            if (event.key.windowID != windowId || !focused || event.key.repeat != 0) return;
+            if (event.key.windowID != windowId || !focused) return;
             if (ModalDialogCapturesInput_nid_postfix()) {
                 if (suspended) return;
                 suspended = true;
@@ -17,6 +17,7 @@ void KeyboardInput::HandleEvent(const SDL_Event& event, unsigned windowId) {
                 break;
             }
             suspended = false;
+            if (event.key.repeat != 0) return;
             if (event.key.keysym.scancode <= SDL_SCANCODE_UNKNOWN || event.key.keysym.scancode > SDL_SCANCODE_RGUI) return;
             input.keyCode = static_cast<std::uint16_t>(event.key.keysym.scancode);
             input.pressed = event.type == SDL_KEYDOWN;
