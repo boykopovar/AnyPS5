@@ -1540,6 +1540,19 @@ private:
         auto& out = tables.tables.at(table);
         out = CopyRecords(records);
         out.pointerKeyed = column.pointerKeyed;
+        const bool linear = !column.indirect && !column.selected && column.pointerHops.empty() && !records.nested && column.foldedCarry == 0u && column.stride != 0u && (column.stride & 3u) == 0u && (column.addend & 3u) == 0u;
+        const auto span = static_cast<std::uint64_t>(column.addend) + static_cast<std::uint64_t>(records.keys) * column.stride;
+        if (linear && column.address && span <= 0xffffffffull) {
+            if (const auto start = ImageTableAbi::ScalarAddressDword(records.base, column.addend, column.offset)) {
+                out.recordStart = *start;
+                out.recordStride = column.stride;
+                out.recordBytes = column.dwordCount * 4u;
+            }
+        } else if (linear && !column.address && records.size != 0u && (column.offset & 3u) == 0u && span + column.offset <= 0xffffffffull) {
+            out.recordStart = records.base + column.addend + column.offset;
+            out.recordStride = column.stride;
+            out.recordBytes = column.dwordCount * 4u;
+        }
         for (std::uint32_t resource = 0; resource < plan.info.images.size(); ++resource) {
             const auto& image = plan.info.images[resource];
             if (image.table != table || !registeredSampledArrayCandidate(image) || runtime.normalizeImageView == nullptr) continue;
