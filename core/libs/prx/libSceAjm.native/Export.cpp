@@ -148,10 +148,7 @@ int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(WVorbisHeaderPacketParameter* p
 
     std::memcpy(out, setup.data(), p.setupPacketSize);
     const std::size_t finalOutputSize = headers + p.setupPacketSize;
-    std::size_t previousOutputSize = 0;
-    if (!GuestCopyIn_nid_no_patch(&previousOutputSize, &param->outputSize, sizeof(previousOutputSize))) {
-        return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
-    }
+    const std::size_t previousOutputSize = p.outputSize;
     if (!GuestCopyOut_nid_no_patch(&param->outputSize, &finalOutputSize, sizeof(finalOutputSize))) {
         return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
     }

@@ -112,8 +112,6 @@ void TestDanglingOutput() {
     Require(param.outputSize == 0 && setup[11] == 0xCC, "the refused call leaves the caller buffers untouched");
 }
 
-}
-
 void TestSetupSizeAtCapBoundary() {
     constexpr std::size_t Cap = 2 * 0xFFFF;
     std::vector<std::uint8_t> setup(Cap);
@@ -171,6 +169,8 @@ void TestDanglingOutputRestoresOutputSize() {
     param.outputSize = 0xAA55;
     Require(sceAjmDecWVorbisCreateHeaderPacket(&param) == InvalidParameter, "a dangling output buffer is refused");
     Require(param.outputSize == 0xAA55, "outputSize is restored when the output write fails");
+}
+
 }
 
 int main() {
