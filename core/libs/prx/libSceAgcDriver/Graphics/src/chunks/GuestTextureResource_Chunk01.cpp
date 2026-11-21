@@ -225,9 +225,6 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
     requireValidDstSel(dstSelZ);
     requireValidDstSel(dstSelW);
 
-    // The LOD warning threshold and mip statistics counters are texture-streaming feedback: the GPU
-    // reports which mips were wanted. Nothing is reported back here, which only affects what the title
-    // chooses to stream, not what this access returns.
     if (minLodWarn != 0 || mipStatsCntId != 0 || mipStatsCntEn) {
         static bool reported = false;
         if (!reported) {
@@ -241,8 +238,6 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
     Require(!iterate256 || (typeRaw == 14u && tileModeRaw == 24u && (format == 7u || format == 22u)), "guest texture descriptor ITERATE_256 is implemented only for multisampled Z depth");
     static_cast<void>(maxUncompBlkSize);
     static_cast<void>(maxCompBlkSize);
-    // Surfaces are always written uncompressed here (render targets and storage images bypass DCC), so
-    // only the fast-clear keys in DCC metadata change what a read returns (see DccMetadata.hpp).
     static_cast<void>(writeCompress);
     if (dccColorTransf) {
         static bool reported = false;
@@ -284,8 +279,6 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
         lastLevel = 0;
         maxMip = 0;
     }
-    // Views may name levels past MAX_MIP (a 512x512 view through 1x1 over a 9-level surface); the
-    // hardware never addresses them, so the view ends at the surface's last level.
     if (baseLevel <= maxMip) lastLevel = std::min(lastLevel, maxMip);
     std::uint32_t pipeBankXor = 0;
     baseAddress = normalizedDescriptorBaseAddress(baseAddress, tileMode, &pipeBankXor);
@@ -312,7 +305,6 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
             Require(depth == 0 && baseArray == 0, "guest multisampled 2D texture descriptor has a nonzero depth or base array");
             break;
         case TextureDimension::k3D:
-            // word4 DEPTH holds the depth minus one; BASE_ARRAY has no meaning for volumes.
             Require(baseArray == 0, "guest 3D texture descriptor has a nonzero base array");
             break;
         case TextureDimension::k2DArray:

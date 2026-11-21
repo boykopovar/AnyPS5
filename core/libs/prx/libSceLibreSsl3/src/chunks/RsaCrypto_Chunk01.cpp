@@ -1121,7 +1121,7 @@ void CheckSignatureMethod(const LibreSsl3Rsa* rsa, const char* function) {
         NotImplemented_nid_no_patch((std::string(function) + ": a key flagged for method signatures").c_str());
 }
 
-} // namespace
+}
 
 namespace LibreSsl3 {
 
@@ -1141,7 +1141,6 @@ int RsaComponentBits_nid_no_patch(const void* component) {
 LibreSsl3Bignum* NewRsaBignum_nid_no_patch(const unsigned char* bytes, std::size_t length) {
     auto* number = static_cast<LibreSsl3Bignum*>(malloc_nid_postfix(sizeof(LibreSsl3Bignum)));
     if (!number) return nullptr;
-    *number = {nullptr, 0, 0, 0, BignumAllocated};
     if (length == 0) return number;
     const std::size_t limbs = (length - 1) / 8 + 1;
     if (limbs > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
@@ -1403,9 +1402,7 @@ int RsaPaddingAddPkcs1Type2_nid_no_patch(unsigned char* to, int size, const unsi
         for (int index = 0; index < size - 3 - length; ++index) {
             unsigned char byte = 0;
             while (!byte) HostEntropy_nid_no_patch(&byte, 1);
-            *padding++ = byte;
         }
-        *padding++ = 0;
         std::memcpy(padding, from, static_cast<std::size_t>(length));
     }
     return 1;
@@ -1602,7 +1599,6 @@ int RsaSign_nid_no_patch(int type, const unsigned char* message, unsigned int me
     } else {
         const auto length = RsaPrivateEncrypt_nid_no_patch(encodedLength, encoded, signature, rsa, LibreSsl3RsaPaddingPkcs1);
         if (length > 0) {
-            *signatureLength = static_cast<unsigned int>(length);
             result = 1;
         }
     }
@@ -1677,7 +1673,6 @@ int RsaPaddingAddPkcs1PssMgf1_nid_no_patch(const LibreSsl3Rsa* rsa, unsigned cha
             QueueError(ReasonDataTooLargeForKeySize);
             return 0;
         }
-        *emStart++ = 0;
         emLen--;
     }
 
@@ -1715,7 +1710,6 @@ int RsaPaddingAddPkcs1PssMgf1_nid_no_patch(const LibreSsl3Rsa* rsa, unsigned cha
 
     unsigned char* p = emStart;
     p += emLen - saltLength - digestLength - 2;
-    *p++ ^= 0x1;
     if (saltLength > 0) {
         for (int index = 0; index < saltLength; ++index) *p++ ^= salt[index];
     }
@@ -1829,7 +1823,7 @@ int RsaVerifyPkcs1PssMgf1_nid_no_patch(const LibreSsl3Rsa* rsa, const unsigned c
     return 1;
 }
 
-} // namespace LibreSsl3
+}
 
 
 void APS5_VABI RSA_free_nid_disambig1_nid_postfix(LibreSsl3Rsa* rsa) {

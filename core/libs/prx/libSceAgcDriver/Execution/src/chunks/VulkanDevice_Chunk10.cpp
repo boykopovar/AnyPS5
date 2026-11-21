@@ -125,8 +125,6 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
     auto& timer = completion.timer;
     auto& timing = completion.timing;
     auto* groupsText = completion.groupsText;
-    // Recorded into the device's open batch: the CPU moves on to the next command while the GPU
-    // works; the batch is waited for where the guest expects results (labels, flips, CPU reads).
     auto& recorder = *state->recorder;
     IndirectOutcome outcome{0, 0};
     RecordedDispatch record{&context, &shaders[0], resources, objects, pushStages, &pushBytes, x, y, z, arguments, nullptr, programAddress, fromCache && TemplateDataRefresh() ? RecordedDispatch::DataRefresh::Words : RecordedDispatch::DataRefresh::None, 0, revalidateMs, &timer, htileClear};
@@ -134,16 +132,11 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
     record.bindings = overlay;
     record.threadGroup = threadGroup;
     if (arguments != 0) decideIndirect(record, outcome, groupsText);
-    // The indirect hold total below still covers the whole call of a CPU-resolved one.
     const bool indirect = record.arguments != 0 || outcome.cpuReason != 0;
     recordDispatch(record);
     timing.Mark("command_record");
     timer.phase(PhaseRecord);
     APS5_LOG_OUT_DEBUG("Dispatch recorded groups=%s", groupsText);
-    // Address-based shaders pin guest allocations until their write-back, which the completion runs
-    // when the batch finished (deferred lease release, see Graphics::SyncLeaseWork): a guest thread
-    // that needs a leased allocation syncs the recorder itself through the registry's pin waiter.
-    // APS5_SYNC_LEASE_DISPATCH=1 completes such dispatches at once, as before.
     if (SyncEachDispatch() || (resources->HoldsLease() && Graphics::SyncLeaseWork())) {
         Graphics::Recorder::CountSync(3);
         const auto syncStart = std::chrono::steady_clock::now();
@@ -151,8 +144,6 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
         timer.phase(PhaseSync);
         if (resources->HoldsLease()) Graphics::CountLeaseOutcome(true, 0, !resources->BdaReadOnly());
         if (profile) {
-            // APS5_PROFILE_DRAW: the [recorder] line's "address-based" syncs by program, every 10 s,
-            // so the programs still waiting here are known (under the GpuMutex, like the rest).
             struct Waits { std::uint64_t count = 0; double ms = 0; };
             static std::map<std::uint64_t, Waits> byProgram;
             static std::uint64_t syncs = 0;
@@ -176,16 +167,10 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
             }
         }
     } else if (resources->HoldsLease()) {
-        // The lease is in the open batch (kept above, nothing submitted since): the pin waiter
-        // finishes the recorder up to that batch's serial. Prints the [address-sync] leases line.
         Graphics::CountLeaseOutcome(false, recorder.Submissions() + 1, !resources->BdaReadOnly());
     }
     if (TraceDispatchIo()) std::fprintf(stderr, "[dispatch-io] %s:%s\n", groupsText, resources->Describe().c_str());
     WatchMemory(programAddress);
-    // The recipe for the caller's dispatch-cache variant (design_cpu_final M4, rule R3): only an
-    // object the resource cache serves under this content key (reusable: no lease, no copied
-    // writes, every direct region import- or mirror-served), so a hit's proof is the template's
-    // Revalidate and nothing needs completion work.
     if (recipeOut != nullptr && DispatchRecipes() && cacheable && overlay == nullptr && resources->Reusable() && !resources->NeedsCompletion() && objects != nullptr && !contentKey.empty()) {
         auto recipe = std::make_shared<Recipe>();
         recipe->device = state->device;
@@ -201,7 +186,6 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
         }
         recipe->needsCompletion = resources->NeedsCompletion();
         recipe->holdsLease = resources->HoldsLease();
-        *recipeOut = std::move(recipe);
     }
     timer.finish(lookupsBefore, groupsText, indirect);
     return outcome;
@@ -221,15 +205,11 @@ RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResu
     const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
     const auto context = graphicsContext();
     if (recipe.needsCompletion || recipe.holdsLease || !hit->resources->Reusable()) throw std::runtime_error("Vulkan dispatch: recipe over a non-reusable template");
-    // Without the refresh the template holds the words it was keyed with: a data-only hit takes
-    // the ordinary path, whose word-keyed lookup serves or builds the object for the live words.
     if (refreshByWords && !TemplateDataRefresh()) return RecipeOutcome::Rebuild;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     DispatchTimer timer(profile, arguments != 0, shader.spirv.size(), programAddress);
     DispatchTimer::countDispatch(profile);
     const auto lookupsBefore = Graphics::DeviceProcLookups();
-    // R10: the recipe names the device it was built on (the pre-check read it too, but the driver
-    // may replace the device between the two).
     if (recipe.device != state->device) {
         counters.rebuildDevice.fetch_add(1, std::memory_order_relaxed);
         return RecipeOutcome::Rebuild;
@@ -240,15 +220,6 @@ RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResu
         timer.phase(PhaseReap);
     }
     if (verify != nullptr) {
-        // APS5_VERIFY_RECIPE=1: the ordinary path's answers beside the recipe's. The found object
-        // is the cache's under the content key (PrepareDispatch's Find), the pipeline objects the
-        // map's, and the data refresh decision the per-word compare RefreshData makes; the proof
-        // itself is the same Revalidate on the same object, so it needs no second run.
-        // A found object that is not the recipe's template is no disagreement: the cache no longer
-        // serves the template under its key (removed by a sibling variant's failed proof, evicted,
-        // replaced by another worker's Insert) while the batch keeps it alive, so the ordinary path
-        // would use a content-equal object and the comparison has no counterpart. Counted, and the
-        // ordinary path runs with the prepared find (C10: the template goes to the batch).
         if (verify->cached.get() != hit->resources.get()) {
             counters.verifyReplaced.fetch_add(1, std::memory_order_relaxed);
             hit->resources->KeepStorageImageBytes(*state->recorder);
@@ -261,8 +232,6 @@ RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResu
             std::lock_guard pipelines(state->computePipelinesMutex);
             if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) mapped = found->second;
         }
-        // A data-only hit's words are the shader's, not the recipe's: its hash decision is
-        // computed from the shader, as the record below decides by words.
         const bool byHash = TemplateDataRefresh() && hit->resources->DataWordsHash() != (refreshByWords ? Graphics::ShaderResources::DataWordsHash(shaders[0]) : recipe.dataWordsHash);
         const bool byWords = TemplateDataRefresh() && hit->resources->DataWordsDiffer(shaders[0]);
         const char* disagreement = mapped != hit->objects ? "the pipeline objects" : byHash != byWords ? "the RefreshData decision" : nullptr;
@@ -273,8 +242,6 @@ RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResu
         }
         counters.verified.fetch_add(1, std::memory_order_relaxed);
     }
-    // The proof (rules R6/R7): the template's Revalidate, T1 included; a failure removes the
-    // template from the cache (the batch keeps it) and the caller rebuilds.
     const auto waitedBefore = profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
     const auto proofStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     Graphics::ShaderResources::ProofReport report;
@@ -287,7 +254,6 @@ RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResu
     if (!proved) {
         state->resourceCache.Remove(recipe.key, hit->resources.get());
         ++d.cacheInvalidated;
-        // Off the mutex with its batch, as an evicted entry.
         hit->resources->KeepStorageImageBytes(*state->recorder);
         state->recorder->Keep(std::move(hit->resources));
         counters.rebuilds[static_cast<std::size_t>(report.failure)].fetch_add(1, std::memory_order_relaxed);
@@ -296,9 +262,6 @@ RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResu
     counters.proofPaths[static_cast<std::size_t>(report.path)].fetch_add(1, std::memory_order_relaxed);
     ++d.cacheHits;
     state->resourceCache.Touch(recipe.key);
-    // The recipe's hash names the words it was attached with, not a data-only hit's: that hit
-    // refreshes by the per-word compare (RefreshData keeps the template's own hash exact, so a
-    // later exact hit of a sibling variant compares correctly against it).
     const auto dataRefresh = !TemplateDataRefresh() ? RecordedDispatch::DataRefresh::None : refreshByWords ? RecordedDispatch::DataRefresh::Words : RecordedDispatch::DataRefresh::Hash;
     if (dataRefresh == RecordedDispatch::DataRefresh::Words) counters.refreshByWords.fetch_add(1, std::memory_order_relaxed);
     RecordedDispatch record{&context, &shaders[0], hit->resources, hit->objects, recipe.pushes ? VkShaderStageFlags{VK_SHADER_STAGE_COMPUTE_BIT} : VkShaderStageFlags{0}, &recipe.pushBytes, x, y, z, arguments, nullptr, programAddress, dataRefresh, recipe.dataWordsHash, 0, &timer};

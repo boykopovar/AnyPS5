@@ -173,20 +173,12 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     if (state.quadList || StripPatches(state, shaders)) recipeOut = nullptr;
     if (context.recorder != nullptr) context.recorder->BoundKeptBytes();
     auto& timing = prepared.timing.emplace("Graphics.Draw");
-    // APS5_PROFILE_DRAW prints the time of each phase of the draw (microseconds) and the [draws] totals.
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto& timer = prepared.timer;
     timer = DrawTimer(profile);
-    // APS5_TRACE_DRAWS (together with APS5_PROFILE_DRAW; alone it only enables Driver.cpp's own
-    // [draw] lines) additionally prints one line per draw with its phases and, for synchronous
-    // draws, their inputs: per-draw string building at ~1400 draws per 10 s is itself a cost the
-    // totals must not carry.
     static const bool traceDraws = std::getenv("APS5_TRACE_DRAWS") != nullptr;
     auto& outcome = prepared.outcome;
     auto& built = prepared.built;
-    // The thread's GPU waits so far: the difference at the report, less the draw's own syncs
-    // (`ownWaitedMs`, sampled around them), is what this draw waited for through the flush hook
-    // (nested in the draw's hold, see DrawOutcome::hookWaitUs).
     const auto waitedBefore = prepared.waitedBefore = profile ? Recorder::ThreadWaitedMs() : 0.0;
     auto& ownWaitedMs = prepared.ownWaitedMs;
     const auto report = [&](const char* suffix) { reportDrawEnd(state, timer, built, outcome, waitedBefore, ownWaitedMs, suffix); };
@@ -262,22 +254,14 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             if (color.fmaskAddress != 0) GuardOneFragmentFmask(context, color);
             constexpr VkBufferUsageFlags copies = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
             timer.phase(PhaseSetup);
-            // Debug aid: APS5_NO_RESIDENT_TARGETS=1 copies every target in and out again.
             static const bool residentTargets = std::getenv("APS5_NO_RESIDENT_TARGETS") == nullptr;
             static const bool residentLinear = std::getenv("APS5_NO_RESIDENT_LINEAR") == nullptr;
             const bool linearResident = residentLinear && residentTargets && context.detiler != nullptr && color.tileMode == ColorTileMode::Linear && (ExistingHostImportFor(context, color.address, colorLayout.Bytes()) != nullptr || (GuestMemory::Watched(color.address, colorLayout.Bytes()) && HostImportFor(context, color.address, colorLayout.Bytes(), ImportRequester::ColorTarget) != nullptr));
             if ((binding.gpuTiling || ((!ColorTileModeIsLinear(color.tileMode) || linearResident) && context.detiler != nullptr)) && residentTargets) {
-                // The lookup refreshes the image on every draw (StorageTexture::Refresh: FlushPending,
-                // CollectWrites over the target's pages, the DCC key scan of TextureClearKeys, then
-                // UnchangedSince). The page walk is skipped while the worker's collect epoch lasts
-                // (GuestMemory::BumpCollectEpoch: ordering points of the queue, or every packet under
-                // APS5_PACKET_EPOCH=1); the key scan runs on every lookup regardless. Lookups of a
-                // millisecond or more are counted apart; the [texture] line says how many uploaded.
                 binding.resident = refreshResidentTarget(context, state, color, outcome, profile, [&] {
                     if (color.arrayLastSlice != 0) {
                         Require(color.dccAddress == 0 && color.cmaskAddress == 0 && AttachmentProxyFormat(context, color.format) == VK_FORMAT_UNDEFINED, "a slice of a 2D array color target with DCC, CMASK or an attachment proxy has no resident array image");
                         const auto array = ArraySurfaceForTarget(color);
-                        // DecodeColorBuffer offsets slice s by s times this size; every slice the image stores must agree.
                         const auto sliceBytes = ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
                         const auto geometry = DescribeSurface(array);
                         for (std::uint32_t slice = 0; slice <= color.arrayLastSlice; ++slice) Require(geometry.GuestLayerOffset(slice) == slice * sliceBytes, "the array image's layer pitch differs from the color view's slice offset");
@@ -337,7 +321,6 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
                     ReadColorTarget(color, binding.transfer->Bytes());
                 }
             }
-            // A fast-cleared DCC target holds its clear value wherever the draw does not write.
             if (color.dccAddress != 0) {
                 const auto keys = CurrentDccKeys(color.dccAddress, colorLayout.Bytes());
                 if (IsDccClear(keys)) {
@@ -472,15 +455,6 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     const auto& contentKey = resolved.contentKey;
     const bool cacheable = resolved.cacheable;
     built = resolved.built;
-    // The memory-state decision of an indirect draw, made here after the resource build (which may
-    // retire imports and wait for recorded work) and before anything is recorded, exactly as
-    // VulkanDevice::dispatch decides for DISPATCH_INDIRECT: the GPU reads the records in place from
-    // the host import unless storage-image results are pending over them (flushed, then synced), a
-    // label or a copied buffer's write-back still has to land on them, or they are not imported; in
-    // those cases (and with APS5_NO_GPU_INDIRECT_DRAW=1) the CPU reads them through the flush hook
-    // and records plain draws with the same per-dimension rules. The import pointer stays valid:
-    // refreshImports runs only under GuestMemory::GpuMutex, held here, and a retired import's
-    // buffer is kept while the recorder is busy.
     auto& indirect = prepared.indirect;
     indirect.args = args;
     auto& records = prepared.records;
@@ -518,8 +492,6 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             if (countPath != IndirectDrawPath::Settled) indirect.path = countPath;
         }
         if (indirect.path != IndirectDrawPath::Gpu) {
-            // The reads wait for the producing batch through the flush hook, as the driver's
-            // resolve did for every indirect dispatch before its GPU path.
             const auto readStart = std::chrono::steady_clock::now();
             FinishLeaseWrites();
             const auto count = std::min(args->countIndirect ? Pm4::ReadDrawCount(*args) : args->count, args->count);
@@ -535,34 +507,14 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             }
         }
     }
-    // A draw whose only completion work is a BDA fault check (the rect-list stages carry a fault
-    // buffer, so every rect-list draw needed one) is recorded too, with the check as a completion
-    // action like a dispatch's write-back: its own batch would first wait for everything recorded
-    // before it. A draw that writes a copied buffer (at the menu stage: 0x48-byte constant buffers
-    // inside an import but not at its storage offset alignment, so GuestBufferMemory copies them
-    // and every guest buffer counts as writable) is recorded and then waited for at once: the
-    // write-back runs before the next packet, without the separate command batch and fence a
-    // synchronous draw takes. The copied write-back is listed in DrawCopiedWriters, which lets such
-    // draws run without the wait; both consumers of the device's list in VulkanDevice.cpp
-    // (DispatchIndirect's argument check and the fill HLE's range check, see Draw.hpp) consult this
-    // list too. A draw holding an address-based build's lease (which pins guest allocations until
-    // the write-back releases it) runs free like the dispatch path's: the completion releases the
-    // lease, and a guest thread that needs a leased allocation syncs the recorder through the
-    // registry's pin waiter (see SyncLeaseWork); APS5_SYNC_LEASE_DISPATCH=1 waits for such draws
-    // at once as before. Debug aids:
-    // APS5_SYNC_COMPLETION_DRAWS=1 keeps every draw with completion work synchronous;
-    // APS5_NO_RECORDER_SYNC_DRAWS=1 gives the waited-for draws their own batch as before;
-    // APS5_NO_RECORD_COPIED_DRAWS=1 waits for copied-write draws at once instead of listing them.
     static const bool syncCompletionDraws = std::getenv("APS5_SYNC_COMPLETION_DRAWS") != nullptr;
     static const bool recorderSyncDraws = std::getenv("APS5_NO_RECORDER_SYNC_DRAWS") == nullptr;
     static const bool recordCopiedDraws = std::getenv("APS5_NO_RECORD_COPIED_DRAWS") == nullptr;
     const bool completion = prepared.completion = resources->NeedsCompletion();
     const bool copiedWrites = completion && resources->HasCopiedWrites();
-    // A lease only forces the wait when deferred release is off.
     const bool lease = resources->HoldsLease() && SyncLeaseWork();
     outcome.completion = completion;
     outcome.recorded = recordable;
-    // Whether the copied write-back is listed in DrawCopiedWriters instead of waited for.
     auto& listed = prepared.listed;
     if (!recordable) {
         outcome.reason = !recordDraws || dumpLimit != 0 ? SyncDisabled : recorder == nullptr ? SyncNoRecorder : SyncNotResident;
@@ -574,13 +526,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         else outcome.recorded = false;
     }
     const bool recorded = prepared.recorded = outcome.recorded;
-    // A build this recorded draw can share with later identical ones goes into the cache (a cache
-    // hit is reusable by construction, so `recorded` holds for it; one with completion work is
-    // never reusable).
     if (cacheable && built != nullptr && recorded && resources->Reusable()) SharedResourceCache().Insert(contentKey, resources);
-    // A recorded draw renders into its resident targets in the general layout (recordDraw). Debug
-    // aid: APS5_DRAW_TRANSITIONS=1 keeps the per-draw upload and download barriers, the layout
-    // transitions of every target and one pass per draw, as before.
     static const bool drawTransitions = std::getenv("APS5_DRAW_TRANSITIONS") != nullptr;
     const bool lean = prepared.lean = recorded && !drawTransitions;
     const bool multisampled = prepared.multisampled = std::any_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.multisampled; });
@@ -603,7 +549,6 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     }
     if (state.depth) RequireNoNativeDepthFeedback_nid_no_patch(context, *state.depth, resources->SampledTextures());
     APS5_LOG_CHARS_OUT_DEBUG("Creating Pipeline");
-    // The state is copied only when a mask must change.
     auto& masked = prepared.masked;
     masked = maskedState(state, inputs.fragmentOutputs);
     if (std::any_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.proxied; })) recipeOut = nullptr;
@@ -654,8 +599,6 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         if (!repeated && pipeline == nullptr) pipeline = CachedPipeline(context, pipelineState, inputs.VertexLayout(), layouts, shaders, attachmentLayout, nullptr, &storeHash);
         if (memoized) rememberShape(context, prepared.shape, targets, repeated ? nullptr : &pipeline, storeHash, inputs.VertexLayout(), layouts, shaders, attachmentLayout, inputs.fragmentOutputs);
     }
-    // Resident targets' views are stable while their storage image lives, so the framebuffer is
-    // reused with the pipeline; a per-draw RenderTarget gets a framebuffer of its own.
     auto& owners = prepared.owners;
     owners.reserve(targets.size());
     auto& framebufferOwners = prepared.framebufferOwners;

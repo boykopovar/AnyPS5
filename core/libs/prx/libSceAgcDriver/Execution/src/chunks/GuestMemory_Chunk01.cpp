@@ -78,7 +78,6 @@ void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(std::string("AGC driver: ") + reason);
 }
 
-// A code address relative to its module, for symbolizing debug traces with nm.
 unsigned long long ModuleOffset(const void* address) {
 #ifdef _WIN32
     HMODULE module = nullptr;
@@ -309,7 +308,6 @@ void ResetWriteIndexCounts() {
 
 namespace {
 std::atomic<std::uint64_t> forgetCalls{0};
-// See ForgetSerial: odd while a ForgetPages call stores its page states.
 std::atomic<std::uint64_t> forgetSerial{0};
 constexpr std::size_t ForgetSlotCount = 65536;
 constexpr std::uint64_t ForgetBlockBytes = 65536;
@@ -326,8 +324,6 @@ std::atomic<std::uint64_t> sharedWalkHits{0};
 std::atomic<bool> sharedCollectWalks{std::getenv("APS5_NO_SHARED_COLLECT_WALKS") == nullptr};
 std::atomic<std::uint64_t> collectEpochBumps{0};
 std::atomic<std::uint64_t> unwatchSerial{0};
-// Walks that reported at least one written page (the ones the probe pass used to double), and the
-// tracker mutex acquisitions that had to wait (APS5_PROFILE_DRAW; see lockTracker).
 std::atomic<std::uint64_t> collectDirty{0};
 #ifndef _WIN32
 std::atomic<std::uint64_t> collectDirtyRuns{0};
@@ -340,12 +336,6 @@ std::uintptr_t ImagePagesBase();
 std::size_t ImagePagesSize();
 }
 
-// Profile (APS5_PROFILE_DRAW): calls, bytes and time of the guest memory copies and comparisons the
-// driver makes, printed every 10 s as [guestmem]. Accumulated per thread (the calling thread is the
-// only writer: plain loads and stores, no locked RMW on a cache line every queue worker shares) and
-// folded at report time; a finished thread's totals move to `retired`. Nothing is counted without
-// the profile switch (the counters are only ever printed under it).
-// Debug aid: APS5_SHARED_MEMORY_COUNTERS=1 accumulates into one shared set with atomic RMWs as before.
 enum MemoryCounterKind { CounterRead, CounterCompare, CounterWrite, CounterChangedWrite, CounterCollect, CounterVerify, CounterQuery, MemoryCounterCount };
 constexpr const char* MemoryCounterNames[MemoryCounterCount] = {"read", "compare", "write", "write-changed", "collect", "verify", "query"};
 
@@ -377,7 +367,6 @@ struct MemoryCounters {
             totals[i][2] += counters[i].nanoseconds.load(std::memory_order_relaxed);
         }
     }
-    // Under the profile's threadsMutex (the only writer of `retired`).
     void AddFrom(const MemoryCounters& other) {
         for (std::size_t i = 0; i < MemoryCounterCount; ++i) {
             counters[i].calls.store(counters[i].calls.load(std::memory_order_relaxed) + other.counters[i].calls.load(std::memory_order_relaxed), std::memory_order_relaxed);
@@ -393,14 +382,11 @@ struct MemoryProfile {
     MemoryCounters retired;
     MemoryCounters shared;
     std::atomic<std::int64_t> lastReport{0};
-    // Sampled callers of Read and Write (module offsets), to name what touches guest memory most.
     AgcDriver::Mutex callersMutex;
     std::array<std::pair<unsigned long long, std::uint64_t>, 16> callers{};
     std::array<std::pair<unsigned long long, std::uint64_t>, 16> writeCallers{};
 };
 
-// Never destroyed: worker threads' counters unregister at thread exit, which can follow static
-// destruction at process exit.
 MemoryProfile& Profile() {
     static MemoryProfile& profile = *new MemoryProfile();
     return profile;
@@ -433,7 +419,6 @@ MemoryCounter& CounterFor(MemoryCounterKind kind) {
     return ThreadScratch<ThreadMemoryCounters, Slot>().counters.counters[kind];
 }
 
-// Every thread's counters, the retired and the shared ones summed: calls, bytes, nanoseconds per kind.
 std::array<std::array<std::uint64_t, 3>, MemoryCounterCount> FoldMemoryCounters() {
     auto& profile = Profile();
     std::array<std::array<std::uint64_t, 3>, MemoryCounterCount> totals{};
@@ -461,7 +446,6 @@ void CountCaller(std::array<std::pair<unsigned long long, std::uint64_t>, 16>& c
 struct CurrentPacketSlot {};
 struct CurrentReadSiteSlot {};
 constexpr std::uint64_t NoPacketBits = NoPacket | (std::uint64_t{0xffffffffu} << 32u);
-// Sampled reads by site (every 256th Read/ReadCommitted, like the callers), for the [guestmem] line.
 std::atomic<std::uint64_t> readSiteSamples[static_cast<std::size_t>(ReadSite::Count)] = {};
 
 void SetCurrentPacket(std::uint32_t opcode, std::uint32_t queue) {
@@ -496,19 +480,14 @@ ReadSite CurrentReadSite() {
 std::size_t CaptureCallerOffsets(std::span<unsigned long long> frames, unsigned skip) {
     if (frames.empty()) return 0;
 #ifdef _WIN32
-    // Walks the x64 unwind tables, so it needs no frame pointers (unlike __builtin_return_address(n)
-    // for n > 0); frame 0 of the capture is this function's caller.
     void* raw[16];
     const auto wanted = static_cast<DWORD>(std::min<std::size_t>(frames.size(), std::size(raw)));
     const auto captured = RtlCaptureStackBackTrace(1 + skip, wanted, raw, nullptr);
-    // The driver's module is resolved once (this function lives in it): a per-frame
-    // GetModuleHandleEx would take the loader lock several times per sync under the GpuMutex.
     static const auto module = [] {
         HMODULE handle = nullptr;
         GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCSTR>(&CaptureCallerOffsets), &handle);
         std::uintptr_t size = 0;
         if (handle != nullptr) {
-            // The image size comes from the mapped PE headers (no psapi dependency).
             const auto* base = reinterpret_cast<const std::byte*>(handle);
             const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
             const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
@@ -541,7 +520,6 @@ std::size_t CaptureCallerOffsets(std::span<unsigned long long> frames, unsigned 
 
 void CountReadCaller(const void* returnAddress) {
     thread_local std::uint32_t sampled = 0;
-    // Sampled at the same rate as the callers, in step with them (CountCaller advances the counter).
     if ((sampled + 1) % 256 == 0) readSiteSamples[static_cast<std::size_t>(CurrentReadSite())].fetch_add(256, std::memory_order_relaxed);
     CountCaller(Profile().callers, sampled, 256, returnAddress);
 }
@@ -601,16 +579,6 @@ private:
 
 namespace {
 
-// Page-state cache. VirtualQuery finds the extent of a run of equally mapped pages by walking page
-// tables, which costs tens of milliseconds inside the game's committed gigabyte heap, and GPU workers
-// verify ranges thousands of times per second. Committed pages of the guest arena are therefore
-// remembered, one byte of access flags per 4 KiB page (the table is committed lazily, so only the
-// pages ever verified cost memory). libc reports every range whose mapping or protection changed
-// (registry mutations and guest heap decommits) through the invalidator, which forgets those pages.
-// A second table covers the main guest image (the PE at 0x7ff6b...): its protections change only
-// through registry mutations (mprotect replaces the registered range and invalidates through the same
-// callback), and address-based builds verify every image section on each build, so without the table
-// each of those verifications was a VirtualQuery. APS5_NO_IMAGE_PAGE_CACHE=1 leaves the image uncached.
 constexpr std::size_t PageBytes = 4096;
 constexpr std::size_t BlockPages = 64;
 constexpr std::uint8_t PageReadable = 1;
@@ -620,7 +588,6 @@ constexpr std::uint8_t PageInaccessible = 4;
 struct PageSpan {
     std::uintptr_t base = 0;
     std::size_t size = 0;
-    // Per page: access flags, zero while unknown.
     std::uint8_t* pages = nullptr;
     std::uint8_t* blocks = nullptr;
     static constexpr std::size_t ChunkEntries = 65536;
@@ -731,7 +698,6 @@ struct PageSpan {
         settle(begin, end);
     }
 
-    // End of the run of pages equal to `value` that starts at `address`, at most `limit`.
     std::uintptr_t runEnd(std::uintptr_t address, std::uint8_t value, std::uintptr_t limit) const {
         auto index = (address - base) / PageBytes;
         const auto stop = std::min<std::uintptr_t>((std::min(limit, base + size) - base + PageBytes - 1) / PageBytes, size / PageBytes);
@@ -885,8 +851,6 @@ void PageStates::initialize() {
         const bool arenaCached = arena.allocate();
         bool imageCached = false;
 #ifdef _WIN32
-        // The image extent is the run of regions sharing the module's allocation base, as the registry
-        // walks it when it registers the main image.
         static const bool noImageCache = std::getenv("APS5_NO_IMAGE_PAGE_CACHE") != nullptr;
         if (const auto module = noImageCache ? nullptr : GetModuleHandleW(nullptr)) {
             const auto start = reinterpret_cast<std::uintptr_t>(module);
@@ -921,8 +885,6 @@ struct PageRun {
 };
 
 
-// Calls `emit` with consecutive runs of uniform accessibility covering [address, address + bytes) in
-// order, stopping early when it returns false. Returns false when the address space cannot be queried.
 template <class Emit>
 bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
     auto& pages = Pages();
@@ -943,9 +905,6 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
         const TimedAccess timed(CounterQuery, 0);
         MEMORY_BASIC_INFORMATION memory{};
         const auto queryStart = std::chrono::steady_clock::now();
-        // A mutation that changes these pages while they are being queried bumps the generation
-        // before it invalidates, so a generation change across the query and the store below means
-        // the stored pages may describe the old state and are forgotten again.
         const auto generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
         const auto access = pages.accessSerial.load(std::memory_order_acquire);
         if (cursor > userAddressLimit()) {
@@ -953,7 +912,6 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
             return true;
         }
         if (VirtualQuery(reinterpret_cast<const void*>(cursor), &memory, sizeof(memory)) != sizeof(memory)) return false;
-        // Debug aid: APS5_TRACE_QUERY prints every 16th page query with its cost.
         static const bool traceQuery = std::getenv("APS5_TRACE_QUERY") != nullptr;
         if (traceQuery) {
             static std::atomic<std::uint32_t> queries{0};
@@ -1138,8 +1096,6 @@ bool readableWithoutQuery(std::uintptr_t address, std::size_t bytes) {
 }
 #endif
 
-// Checks that [address, address + bytes) is mapped with read (and, if asked, write) access. Returns
-// an empty string when it is, otherwise why it is not.
 bool checkAccess(std::uintptr_t address, std::size_t bytes, bool writable, std::string* reason) {
     const TimedAccess timed(CounterVerify, bytes);
     if (onOwnLiveStack(address, bytes)) return true;
@@ -1153,7 +1109,6 @@ bool checkAccess(std::uintptr_t address, std::size_t bytes, bool writable, std::
             if (reason != nullptr) {
                 char text[128];
                 std::snprintf(text, sizeof(text), "guest memory is not readable at 0x%llx (range 0x%llx+0x%zx)", static_cast<unsigned long long>(run.begin), static_cast<unsigned long long>(address), bytes);
-                *reason = text;
             }
         } else if (writable && !run.writable) {
             accessible = false;
@@ -1183,7 +1138,6 @@ void CheckRange(const void* pointer, std::size_t bytes, std::size_t alignment, b
     require(bytes <= std::numeric_limits<std::uintptr_t>::max() - address, "address range overflow");
     const auto reason = verify(address, bytes, writable);
     if (!reason.empty()) {
-        // Debug aid: APS5_TRACE_UNREADABLE names the code that checked an inaccessible range.
         static const bool trace = std::getenv("APS5_TRACE_UNREADABLE") != nullptr;
         if (trace) std::fprintf(stderr, "[unreadable] %s from +0x%llx\n", reason.c_str(), ModuleOffset(__builtin_return_address(0)));
         require(false, reason.c_str());
@@ -1364,10 +1318,6 @@ struct WriteTracker {
 #else
     static constexpr std::size_t LeafCount = std::size_t{1} << 15;
 #endif
-    // Atomic only so a per-thread memo hit can read it without the mutex (every mutation and every
-    // stamp still happen under it): a hit must return the current value, including MarkWritten
-    // bumps, or an image refreshed after a stamp would keep failing UnchangedSince until the next
-    // walk of its range and re-upload at every use of the epoch.
     std::atomic<std::uint64_t> generation{1};
     std::atomic<std::uint64_t> stable{1};
     std::vector<void*> pages;
@@ -1693,7 +1643,6 @@ struct WriteTracker {
             else piece = {};
         }
         if (contained != nullptr) {
-            *contained = {stampGeneration, from, to};
             return;
         }
         auto* oldest = &pieces.front();
@@ -1701,7 +1650,6 @@ struct WriteTracker {
             if (piece.generation < oldest->generation) oldest = &piece;
         }
         dropped = std::max(dropped, oldest->generation);
-        *oldest = {stampGeneration, from, to};
     }
 
     Leaf& leafFor(std::uint64_t block) {
@@ -1874,8 +1822,6 @@ WriteTracker& Tracker() {
     return tracker;
 }
 
-// Takes the tracker mutex; under APS5_PROFILE_DRAW an acquisition that found it held is counted
-// ('tracker waits N / M' in [guestmem]), which says whether walking outside the lock would pay.
 class TrackerLock {
 public:
     explicit TrackerLock(WriteTracker& tracker) : tracker(tracker), lock(tracker.mutex, std::defer_lock) {
@@ -2966,8 +2912,6 @@ bool StoredAllSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::
 
 std::uint64_t TrackerGeneration() {
     auto& tracker = Tracker();
-    // Under the mutex: a collect bumps the generation before its walk, and a walk still running
-    // when the value is read absorbs stores made after it with a stamp not newer than the value.
     const auto lock = lockTracker(tracker);
     return tracker.generation;
 }
@@ -3103,15 +3047,9 @@ bool ChangedBlocks(std::uint64_t address, std::size_t bytes, std::span<const std
 
 namespace {
 
-// Per-thread GpuMutex wait accounting (APS5_PROFILE_DRAW): a queue worker tags its thread, other
-// threads (the presenter) report untagged.
 constexpr std::size_t GpuLockSiteCount = static_cast<std::size_t>(GpuLockSite::Count);
 constexpr const char* GpuLockSiteNames[GpuLockSiteCount] = {"other", "dispatch", "indirect", "draw", "hook", "wait", "label", "flush", "present", "fill", "copy", "end", "try"};
 
-// Hold-side holder matrix: nanoseconds held per (holder thread, site), added by EndHold. Column 0
-// is every untagged thread (the presenter, game threads); the queue workers take a column each on
-// their first hold. A contended lock() snapshots the matrix before and after its wait and credits
-// the deltas (the holds that ended during the wait) to the waiter's site.
 constexpr std::size_t HolderColumns = 12;
 constexpr std::uint32_t UnassignedHolder = 0xfffffffeu;
 constexpr std::uint32_t PresenterHolderTag = 0xfffffffdu;
@@ -3154,22 +3092,15 @@ struct GpuLockStats {
     std::uint64_t acquisitions = 0;
     std::uint64_t waits = 0;
     double waitedMs = 0;
-    // The same split by the site tagged before the acquisition (TagGpuLockSite); the tag of the
-    // next lock() is kept here and consumed by it.
     std::array<std::uint64_t, GpuLockSiteCount> siteAcquisitions{};
     std::array<std::uint64_t, GpuLockSiteCount> siteWaits{};
     std::array<double, GpuLockSiteCount> siteWaitedMs{};
     GpuLockSite nextSite = GpuLockSite::Other;
-    // Holds: the outermost (depth 0 -> 1) acquisition of this thread until the matching unlock,
-    // charged to that acquisition's site (a nested hook lock inside a dispatch's hold extends the
-    // dispatch's hold). The waits above say who waits; these say whom they wait for.
     std::array<std::uint64_t, GpuLockSiteCount> siteHolds{};
     std::array<double, GpuLockSiteCount> siteHeldMs{};
     std::array<double, GpuLockSiteCount> siteMaxHeldMs{};
     std::size_t holdSite = 0;
     std::chrono::steady_clock::time_point holdStart;
-    // This thread's column of the holder matrix (-1 until its first hold), and what its contended
-    // acquisitions waited behind: holds by (holder, site) that ended during the waits.
     int holderColumn = -1;
     HolderMatrixValues waitedBehindNs{};
     std::uint64_t tries = 0;
@@ -3189,8 +3120,6 @@ bool GpuLockProfiled() {
     return profiled;
 }
 
-// Hold timing costs two clock reads per outermost acquisition (~20000 per 10 s on queue 0, well
-// under a millisecond); APS5_NO_HOLD_PROFILE=1 keeps only the wait timing.
 bool GpuHoldProfiled() {
     static const bool profiled = GpuLockProfiled() && std::getenv("APS5_NO_HOLD_PROFILE") == nullptr;
     return profiled;
@@ -3221,7 +3150,6 @@ const char* HolderName(std::size_t column, char* text, std::size_t size) {
     return text;
 }
 
-// The waiter's matrix as text, largest first, entries of at least a millisecond.
 std::string WaitedBehindReport(const HolderMatrixValues& waited) {
     std::vector<std::tuple<std::uint64_t, std::size_t, std::size_t>> entries;
     for (std::size_t h = 0; h < HolderColumns; ++h) {
@@ -3276,8 +3204,6 @@ bool GpuMutexType::try_lock() {
         acquired();
         return true;
     }
-    // The tag is consumed whether or not the try succeeds (a failed try must not name the next
-    // acquisition); an untagged try's hold is charged to 'try' (a boundary reap, an idle worker).
     auto& stats = LockStats();
     const auto tagged = std::exchange(stats.nextSite, GpuLockSite::Other);
     ++stats.tries;
@@ -3306,12 +3232,9 @@ void GpuMutexType::unlock() {
     const bool outermost = --depth == 0;
     if (outermost) {
         owner.store(nullptr, std::memory_order_relaxed);
-        // Still the holder here: the hold ends when the mutex is given up, not before.
         if (GpuHoldProfiled()) EndHold();
         mutex.unlock();
     }
-    // After the release, so what the hook does (destroying a batch's kept objects) is neither part
-    // of the hold nor waited for by the next holder.
     if (outermost) {
         if (auto* hook = gpuUnlockHook.load(std::memory_order_acquire); hook != nullptr) hook();
     }
@@ -3322,7 +3245,6 @@ bool GpuMutexType::HeldByThisThread() const {
 }
 
 std::uint32_t GpuMutexType::DepthOnThisThread() const {
-    // `depth` is written by the holder only, so it is read only when that is this thread.
     return HeldByThisThread() ? depth : 0;
 }
 
@@ -3353,8 +3275,6 @@ void GpuMutexType::lock() {
     ++stats.acquisitions;
     const auto site = static_cast<std::size_t>(std::exchange(stats.nextSite, GpuLockSite::Other));
     ++stats.siteAcquisitions[site];
-    // An uncontended (or recursive) acquisition costs no clock reads for the wait; only a wait is
-    // timed. The hold timer (outermost acquisitions only) starts once the mutex is held.
     if (!tryEnter()) {
         const bool holders = GpuHoldProfiled();
         HolderMatrixValues before{};
@@ -3381,8 +3301,6 @@ void GpuMutexType::lock() {
         stats.siteWaitedMs[site] += waitedMs;
         ++stats.siteWaits[site];
         if (now - stats.lastReport < std::chrono::seconds(10)) return;
-        // The line is printed from inside a contended acquisition, so a thread that rarely waits
-        // reports a longer span than 10 s: the real interval is printed.
         const auto interval = std::chrono::duration<double>(now - stats.lastReport).count();
         stats.lastReport = now;
         std::string sites;
@@ -3392,7 +3310,6 @@ void GpuMutexType::lock() {
             std::snprintf(text, sizeof(text), " %s %llu/%llu %.0f ms", GpuLockSiteNames[i], static_cast<unsigned long long>(stats.siteAcquisitions[i]), static_cast<unsigned long long>(stats.siteWaits[i]), stats.siteWaitedMs[i]);
             sites += text;
         }
-        // Holds by site, longest total first: the sites whose holds the other threads wait behind.
         std::string holds;
         if (GpuHoldProfiled()) {
             std::array<std::size_t, GpuLockSiteCount> order{};
@@ -3436,7 +3353,6 @@ void GpuMutexType::lock() {
 }
 
 void TagGpuLockSite(GpuLockSite site) {
-    // Off the profiled path the tag is never read, so the thread-local is not touched either.
     if (!GpuLockProfiled() && !PerformanceTrace::Recording()) return;
     LockStats().nextSite = site;
 }
@@ -3800,7 +3716,6 @@ Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes) {
     if (bytes.empty()) return Compare::Equal;
     if (address == 0 || bytes.size() > std::numeric_limits<std::uintptr_t>::max() - address) return Compare::Unmapped;
     auto outcome = Compare::Equal;
-    // Each run's page state is consulted right before its bytes are compared.
     const bool queried = describePages(static_cast<std::uintptr_t>(address), bytes.size(), [&](const PageRun& run) {
         if (!run.readable) outcome = Compare::Unmapped;
         else {
@@ -3878,14 +3793,11 @@ static void writeChanged(std::uint64_t address, std::span<const std::byte> curre
     require(current.size() == original.size(), "write-back snapshot sizes differ");
     BreakProofs();
     if (current.empty()) return;
-    // A store: the hook sync it makes orders this write after a pending GPU write, whatever a read
-    // site above it was doing (the [hooksync] line counts stores apart).
     const ReadSiteScope site(ReadSite::Store);
     FlushGpuWrites(address, current.size());
     const TimedAccess timed(CounterChangedWrite, current.size());
     auto* destination = reinterpret_cast<std::byte*>(address);
     const auto size = current.size();
-    // Stamped like a GPU write: a collect memoized for this packet would not see the page fault.
     storeOwn(address, size, true, [&](std::span<std::byte> image) {
         CheckRange(destination, size, 1, true);
         std::size_t firstChanged = size;
@@ -3987,13 +3899,11 @@ std::size_t WriteChangedIfHeld(std::uint64_t address, std::span<const std::byte>
 
 void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t alignment) {
     if (source.empty()) return;
-    // A store, as in WriteChanged.
     const ReadSiteScope site(ReadSite::Store);
     FlushGpuWrites(address, source.size());
     const TimedAccess timed(CounterWrite, source.size());
     CountWriteCaller(__builtin_return_address(0));
     auto* destination = reinterpret_cast<void*>(address);
-    // Stamped like a GPU write: a collect memoized for this packet would not see the page fault.
     StoreOwnBytes(address, source.size(), [&](std::span<std::byte> image) {
         CheckRange(destination, source.size(), alignment, true);
         if (source.size() >= PageBytes) copyOwnBytes(address, source);

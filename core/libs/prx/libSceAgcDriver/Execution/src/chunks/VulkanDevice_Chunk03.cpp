@@ -205,25 +205,15 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
     CopyOutcome outcome{2, false, 0, CopyOutcome::None, false, false, 0, 0, 0, 0, false};
     if (!state->recorder || bytes == 0) return outcome;
     auto& recorder = *state->recorder;
-    // Finished batches were retired by the caller (Driver.cpp copyBuffer, on the graphics worker
-    // only, as WriteLabelOnGpu reaps), so their writes neither refuse the CPU copy nor force a wait.
     static const bool waitForSource = std::getenv("APS5_COPY_WAIT_SOURCE") != nullptr;
     static const bool verify = std::getenv("APS5_COPY_VERIFY") != nullptr;
-    // A store a batch's completion makes on the CPU over the range (a copied buffer's write-back,
-    // a completion-deferred label): it lands only when that batch is reaped, whatever its fence.
     const auto completionStoreOverlaps = [&](std::uint64_t address) { return completionStoresOver(address, bytes); };
-    // The CPU decision (see the header): pure queries, in the order that makes the first failing
-    // test the reason; a signaled writer of the source is fine (its in-place stores are final in
-    // host memory) as long as no completion store or label of it is still to land.
     bool settledBySignal = false;
     const auto refusal = [&]() -> int {
         settledBySignal = false;
         if (bytes > cpuMax) return CopyOutcome::Size;
-        // Both lists: an image whose write-back is in progress on another thread (moved to flushing,
-        // waiting for the GPU mutex) still stores over the range once this hold ends.
         const std::array<std::pair<std::uint64_t, std::uint64_t>, 2> ranges{{{source, source + bytes}, {destination, destination + bytes}}};
         if (Graphics::StorageTexture::AnyPendingOverlaps(ranges)) return CopyOutcome::Image;
-        // Results retiled into a unit shadow are not in the import's bytes: the GPU path publishes them.
         if (Graphics::AnyShadowedOverlaps(ranges)) return CopyOutcome::Shadow;
         if (recorder.PendingWriteOverlaps(source, bytes)) {
             if (!recorder.PendingWriteSettled(source, bytes)) return CopyOutcome::SourcePending;
@@ -231,10 +221,6 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
             settledBySignal = true;
         }
         if (recorder.PendingWriteOverlaps(destination, bytes)) {
-            // As for the source: a signaled writer's in-place stores are final and the memcpy lands
-            // after them; only a completion store of it still to run refuses (compute queues never
-            // reap, so a finished GPU copy into the same record stays in flight for a while).
-            // Debug aid: APS5_COPY_DESTINATION_STRICT=1 refuses any pending writer, as before.
             static const bool strict = std::getenv("APS5_COPY_DESTINATION_STRICT") != nullptr;
             if (strict || !recorder.PendingWriteSettled(destination, bytes)) return CopyOutcome::DestinationPending;
             if (completionStoreOverlaps(destination)) return CopyOutcome::DestinationUnsettled;
@@ -245,8 +231,6 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
     };
     outcome.reason = refusal();
     if (outcome.reason == CopyOutcome::SourcePending && waitForSource && queue != 0) {
-        // The experiment: only when the producer is the oldest batch in flight (the wait finishes
-        // nothing else), never on the frame-critical queue 0, unlocked (this hold is the outermost).
         if (const auto info = recorder.DescribePendingWrite(source, bytes); info.has_value() && !info->open && info->batchesToFinish == 1) {
             const auto waitStart = std::chrono::steady_clock::now();
             Graphics::Recorder::CountSync(4);
@@ -257,16 +241,12 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
         }
     }
     if (outcome.reason == CopyOutcome::None) {
-        // A plain CPU store, stamped for the write watch, with no pending write to note (nothing is
-        // outstanding on the range) and nothing recorded.
         std::vector<std::byte> expected;
         if (verify) expected.assign(reinterpret_cast<const std::byte*>(source), reinterpret_cast<const std::byte*>(source) + bytes);
         GuestMemory::StoreOwnBytes(destination, bytes, [&] { std::memcpy(reinterpret_cast<void*>(destination), reinterpret_cast<const void*>(source), bytes); });
         outcome.path = 0;
         outcome.sourceSettledBySignal = settledBySignal;
         if (verify) {
-            // The rule's reader answer without the fence shortcut: a reader still unsignaled now
-            // would have been unsignaled at the decision a moment ago.
             if (const auto reader = recorder.DescribePendingRead(destination, bytes); reader.has_value() && !reader->signaled) copyReaderMissed.fetch_add(1, std::memory_order_relaxed);
             Graphics::Recorder::CountSync(4);
             recorder.Sync();
@@ -285,10 +265,6 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
         }
     }
     const auto context = graphicsContext();
-    // The ordering decision of FillBuffer, for both ranges: GPU stores recorded earlier are ordered
-    // before the transfer (or the device copy below) by its barrier; a store a batch's completion
-    // makes on the CPU must land before the copy reads the source or writes the destination, so
-    // the copy waits for that batch (SyncThrough) first.
     const bool waitSource = copyWaitsOnCompletions(source, bytes);
     const bool waitDestination = copyWaitsOnCompletions(destination, bytes);
     if (waitSource || waitDestination) {
@@ -315,34 +291,23 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
         outcome.path = 8;
         return outcome;
     }
-    // The GPU path. Results still on the GPU: the source's must be stored before the transfer reads
-    // it, the destination's would be stored over the copy later (a flush into an import records
-    // the retile and notes it as a pending write, which is why it comes after the CPU decision).
     Graphics::StorageTexture::FlushPending(source, bytes, nullptr, "buffer copy source", Graphics::PublishScope::Whole);
     Graphics::StorageTexture::FlushPending(destination, bytes, nullptr, "buffer copy destination", Graphics::PublishScope::PartialUnits);
-    // Looked up after the sync (its completions' write-backs can refresh the import table and
-    // retire an import) and the flushes (which may import memory themselves).
     const Graphics::HostImport* destinationImport = Graphics::HostImportFor(context, destination, bytes);
     const Graphics::HostImport* sourceImport = destinationImport != nullptr ? Graphics::HostImportFor(context, source, bytes) : nullptr;
     if (destinationImport == nullptr || sourceImport == nullptr) return outcome;
     using CommandClass = Graphics::Recorder::CommandClass;
-    // A queued DCC key store over either range must land before the transfer reads or writes it.
     recorder.FlushKeyStoresOverlapping(source, bytes);
     recorder.FlushKeyStoresOverlapping(destination, bytes);
-    // A queued label store in either range lands before the transfer reads or writes it.
     recorder.FlushStoresOverlapping(source, bytes);
     recorder.FlushStoresOverlapping(destination, bytes);
     VkAccessFlags covered = 0;
     const auto commands = recorder.Commands(&covered);
-    // The class range covers the barriers too; the program-keyed range inside it is the transfer.
     const auto classTiming = recorder.BeginGpuTiming(CommandClass::Copy);
     if (Graphics::Recorder::BarrierValidate()) {
         const std::pair<std::uint64_t, std::uint64_t> read{source, source + bytes}, written{destination, destination + bytes};
         recorder.NoteAccess(CommandClass::Copy, Graphics::Recorder::Access{std::span(&read, 1), std::span(&written, 1), {}, VK_PIPELINE_STAGE_TRANSFER_BIT});
     }
-    // Every earlier recorded read or write of either range precedes the transfer, whichever stage
-    // made it, and host stores (the CPU copies above, the game's) are visible to it; the previous
-    // command's trailing barrier already did that when it covered transfer reads and writes.
     constexpr VkAccessFlags transferAccess = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
     if ((covered & transferAccess) == transferAccess && Graphics::Recorder::MergeBarriers()) {
         Graphics::Recorder::CountMerged(CommandClass::Copy);
@@ -354,7 +319,6 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
     const VkBufferCopy region{Graphics::HostImportOffset(*sourceImport, source), Graphics::HostImportOffset(*destinationImport, destination), bytes};
     context.Resolved(&Graphics::DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(commands, sourceImport->buffer, destinationImport->buffer, 1, &region);
     recorder.EndGpuTiming(gpuTiming, bytes);
-    // The copied bytes are visible to everything recorded after and to the host, as after a fill.
     constexpr VkAccessFlags copiedAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_HOST_READ_BIT;
     Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, copiedAccess);
     Graphics::Recorder::CountBarriers(CommandClass::Copy);
@@ -363,10 +327,6 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
     recorder.NotePendingRead(source, bytes, Graphics::Recorder::ReadKind::CopySource);
     GuestMemory::MarkWritten(destination, bytes);
     recorder.NotePendingWrite(destination, bytes);
-    // The destination's bytes after the transfer are the source's now when nothing recorded,
-    // pending or still to land can change the source before the transfer reads it (a CPU store
-    // to it in between is a hardware race too): the caller's ring entry carries them, stamped
-    // with the generation this store gets, and goes in ahead of the note.
     const auto generation = GuestMemory::MarkWritten(destination, bytes);
     const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> sourceRange{{{source, source + bytes}}};
     const bool sourceCurrent = bytes <= knownMax && generation != 0 && !recorder.PendingWriteOverlaps(source, bytes) && !recorder.PendingLabelIn(source, bytes) && !completionStoreOverlaps(source) && !Graphics::StorageTexture::AnyPendingOverlaps(sourceRange) && !Graphics::AnyShadowedOverlaps(sourceRange);
@@ -394,8 +354,6 @@ void VulkanDevice::Resize(std::uint32_t width, std::uint32_t height) {
 void VulkanDevice::recreateSwapchain(std::uint32_t width, std::uint32_t height, bool force) {
     VkSurfaceCapabilitiesKHR surface{};
     check(state->InstanceFunction<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>("vkGetPhysicalDeviceSurfaceCapabilitiesKHR")(state->physical, state->surface, &surface), "vkGetPhysicalDeviceSurfaceCapabilitiesKHR resize");
-    // The window's drawable size and the surface's extent can disagree for a moment while the window
-    // is being resized; the swapchain must match the surface, and the next present catches up.
     if (surface.currentExtent.width != std::numeric_limits<std::uint32_t>::max()) {
         width = surface.currentExtent.width;
         height = surface.currentExtent.height;

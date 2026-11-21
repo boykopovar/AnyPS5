@@ -84,11 +84,9 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::captureWa
 }
 
 std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle, const ShaderRecompiler::PreparedShaderInvocation* invocation) {
-    // The capture's word and page reads (through `read`) are attributed to it ([hooksync], [guestmem]).
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Capture);
     const bool profile = CaptureProfiled();
     auto& totals = CaptureTotals();
-    // The hook's GPU waits made anywhere inside the capture.
     const auto waitedBefore = profile ? WaitedMs() : 0.0;
     const auto started = std::chrono::steady_clock::now();
     ShaderRecompiler::SrtRuntime runtime;

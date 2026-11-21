@@ -533,11 +533,9 @@ static int TrigfRemPio2(float x, double* y) {
         const std::int32_t n = static_cast<std::int32_t>(fn);
         const double r = x - fn * pio2_1;
         const double w = fn * pio2_1t;
-        *y = r - w;
         return n;
     }
     if (ix >= 0x7f800000) {
-        *y = x - x;
         return 0;
     }
     const std::int32_t e0 = (ix >> 23) - 150;
@@ -545,10 +543,8 @@ static int TrigfRemPio2(float x, double* y) {
     double tx[1] = {z}, ty[1];
     const int n = TrigfKernelRemPio2(tx, ty, e0);
     if (hx < 0) {
-        *y = -ty[0];
         return -n;
     }
-    *y = ty[0];
     return n;
 }
 
@@ -669,8 +665,6 @@ float APS5_VABI tanf_nid_postfix(float x) {
 }
 
 void APS5_VABI sincosf_nid_postfix(float x, float* sinp, float* cosp) {
-    *sinp = sinf_nid_postfix(x);
-    *cosp = cosf_nid_postfix(x);
 }
 
 static std::int32_t HighWord(double x) {

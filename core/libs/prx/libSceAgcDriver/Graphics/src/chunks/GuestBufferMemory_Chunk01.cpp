@@ -91,14 +91,6 @@ constexpr unsigned long UDMABUF_CREATE_LIST = 0;
 
 namespace AgcDriver::Graphics {
 
-// Image mirrors. The main guest image (the PE at 0x7ff6b...) is MEM_IMAGE memory, which
-// VK_EXT_external_memory_host refuses, and address-based shaders map every registered range, so each
-// of their builds copied the whole image (~55 MiB: ~40 MiB of read-only sections snapshotted and copied
-// again, ~15 MiB of writable ones copied twice). Instead one host-cached device buffer per registered
-// image range persists here. Read-only ranges are filled once: their pages change only through an
-// mprotect, which replaces the registered Range object, and a mirror whose Range is gone is rebuilt.
-// Writable ranges keep a shadow of the guest bytes and copy the 64 KiB blocks that differ on each use.
-// A mirror never holds the Range shared_ptr: a pinned range makes the guest's mprotect spin and fail.
 struct ImageMirror {
     std::uint64_t base = 0;
     std::uint64_t bytes = 0;
@@ -114,33 +106,16 @@ struct ImageMirror {
     std::shared_ptr<ResidentBuffer> resident;
     std::uint64_t accounted = 0;
     bool listed = false;
-    // Writable ranges only: the guest bytes the mirror holds, compared on refresh and at write-back.
     std::vector<std::byte> shadow;
-    // Identity for the life of this mirror (see ImageMirrorSerial); the top bit keeps mirror serials
-    // apart from host import serials.
     std::uint64_t serial = 0;
     std::atomic<std::uint64_t> watchedSerial{0};
     std::uint64_t lastDispatch = 0;
 };
 
-// The address space. An address-based build maps every readable registered range; building that
-// list per build (the lease's ~1200 shared_ptrs, an import lookup per range, the sort and merge, the
-// upload loop, the BDA table) repeated the same result while the registry stood still. One space is
-// cached per device and taken by every build made while it is current: a pure function of the
-// registry generation read BEFORE its lease was acquired (a mutation bumps the generation before it
-// releases the registry, so an unchanged generation means the lease is the one a build would
-// acquire now), the import registry's epoch (bumped by every retire, so the `direct` pointers of
-// its regions stand) and the device. `base` holds the ranges served in place (imports, mirrors),
-// sorted and free of per-build state; the ranges copied per build are `copied`, re-added to each
-// build's own regions, as are the V#s and snapshots outside the space. The space's lease pins its
-// ranges while any build, batch or the cache holds it; the registry's pin waiter (WaitForLeases)
-// drops the cache's reference first, lock-free, so a guest free of a range held only by the cache
-// costs no GPU wait. APS5_NO_ADDRESS_SPACE_CACHE=1 restores the per-build path.
 struct GuestBufferMemory::AddressSpace {
     std::uint64_t generation = 0;
     std::uint64_t importsEpoch = 0;
     VkDevice device = VK_NULL_HANDLE;
-    // Identity for the life of this space (see CachedAddressTable).
     std::uint64_t serial = 0;
     GuestAllocations::Lease lease;
     std::vector<Region> base;
@@ -159,7 +134,6 @@ struct GuestBufferMemory::AddressSpace {
     mutable std::atomic<std::uint64_t> refreshedEpoch{0};
     mutable std::atomic<std::uint64_t> refreshedProof{0};
     std::vector<CopiedRange> copied;
-    // The BDA table entries of `base`, in its order.
     std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
     std::shared_ptr<const std::vector<std::pair<std::uint64_t, std::uint64_t>>> directReads;
     mutable AgcDriver::Mutex tableMutex;
@@ -194,7 +168,6 @@ std::atomic<bool> retiredPinnedReleased{false};
 struct AddressSpaceCache {
     AtomicSharedPtr<const GuestBufferMemory::AddressSpace> current;
     std::atomic<std::uint64_t> serials{0};
-    // Set by the waiter's drop, cleared by the next publish: the rebuild's reason.
     std::atomic<bool> droppedByWaiter{false};
     std::atomic<std::uint64_t> hits{0};
     std::atomic<std::uint64_t> rebuiltFirst{0};
@@ -345,8 +318,6 @@ private:
     AgcDriver::Mutex mutex;
 };
 
-// Imports persist across draws, keyed by allocation base, and are dropped when their allocation leaves
-// the registered set; a dropped import is destroyed once the recorded work that may read it completed.
 struct RefreshedRange {
     std::uint64_t address;
     std::uint64_t bytes;
@@ -379,7 +350,6 @@ struct HostImports {
     std::map<std::pair<std::uint64_t, std::uint64_t>, ImportRefusal> refusals;
     std::map<std::pair<std::uint64_t, std::uint64_t>, EvictingRefusal> evictingRefusals;
     std::map<std::pair<std::uint64_t, std::uint64_t>, GateRefusal> gateRefusals;
-    // Registry generation the imports were last reconciled with.
     std::uint64_t refreshedGeneration = 0;
     std::vector<RefreshedRange> refreshedRanges;
     std::uint64_t refreshedWindow = 0;
@@ -388,15 +358,11 @@ struct HostImports {
     std::uint64_t growthFloor = std::numeric_limits<std::uint64_t>::max();
     bool growthDue = false;
     std::uint64_t budgetChecks = 0;
-    // Bumped whenever an import is dropped, so HostImport pointers taken under the lock earlier can be
-    // reused while it is unchanged.
     std::uint64_t epoch = 1;
     std::uint64_t inserted = 0;
     VkDevice watchDevice = VK_NULL_HANDLE;
     bool unwatchImports = false;
     bool unwatchDmaBufImports = false;
-    // dma-buf imports are assumed CPU-coherent until the probe measures otherwise, so the
-    // fallback keeps main's pre-probe behaviour and only an incoherent measurement skips it.
     bool dmaBufImportsCoherent = true;
     bool watchPrivateImports = false;
     std::map<VkDevice, ImportSettle> settles;
@@ -538,8 +504,6 @@ void destroyImport(const Context& context, const HostImport& entry) {
 
 using ImportNode = std::map<std::uint64_t, HostImport>::node_type;
 
-// Frees a dropped import's Vulkan objects when it is released. Never copied: a copy would destroy the
-// same handles twice (and a temporary would destroy them at once).
 struct RetiredImport {
     RetiredImport(VkDevice device, PFN_vkDestroyBuffer destroyBuffer, PFN_vkFreeMemory freeMemory, ImportNode node)
         : device(device), destroyBuffer(destroyBuffer), freeMemory(freeMemory), node(std::move(node)) {}
@@ -593,9 +557,6 @@ void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, H
     auto* reading = forgetSettle(state, it->first);
 #endif
     state.pendingImports.erase(it->first);
-    // Results shadowed for the import reach its (old) buffer first where the memory is still a
-    // readable registered range (the import retires because its registration vanished or changed
-    // size); the holder below outlives the batch that copies them.
     RetireShadow(device, it->second, [&lease, joined = it->second.joined](std::uint64_t begin, std::uint64_t end) { return runCovers(lease, begin, end) || (joined && joinedCovers(lease, begin, end)); });
     bumpEpoch(state);
     retiredImports.fetch_add(1, std::memory_order_release);
@@ -669,8 +630,6 @@ struct ImportFamilies {
     std::uint32_t count = 0;
 };
 
-// A dma-buf import's buffer is used on the main queue, on the settle queue (settleImport) and, when
-// sparse, on the sparse queue.
 void shareDmaBufImport(const Context& context, VkBufferCreateInfo& info, ImportFamilies& families, bool sparse) {
     const auto add = [&](std::uint32_t family) {
         if (std::find(families.indices.begin(), families.indices.begin() + families.count, family) == families.indices.begin() + families.count) families.indices[families.count++] = family;
@@ -720,7 +679,6 @@ const char* bindImport(const Context& context, HostImport& entry, VkExternalMemo
     const VkExternalMemoryBufferCreateInfo external{VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO, nullptr, static_cast<VkExternalMemoryHandleTypeFlags>(handleType)};
     VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, &external};
     info.size = entry.bytes;
-    // INDIRECT_BUFFER: DISPATCH_INDIRECT group counts are read in place (VulkanDevice::DispatchIndirect).
     info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 #ifndef _WIN32

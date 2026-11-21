@@ -230,8 +230,6 @@ bool SetBytes(char** destination, std::uint64_t* length, const char* source, std
         copy[sourceLength] = '\0';
     }
     free_nid_postfix(*destination);
-    *destination = copy;
-    *length = sourceLength;
     return true;
 }
 

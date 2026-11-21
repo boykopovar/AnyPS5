@@ -67,7 +67,6 @@ bool ShaderResources::SpaceReuseDisabled() {
     return disabled;
 }
 
-// APS5_PROFILE_DRAW: the per-device descriptor caches' counters, every 10 s.
 void ShaderResources::reportDescriptorCaches() const {
     static AgcDriver::Mutex reportMutex;
     static auto lastReport = std::chrono::steady_clock::now();
@@ -180,8 +179,6 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
         packBits(binding.samplerCoordinatesIgnored);
         packBits(binding.imageUnnormalized);
         packBits(binding.imageUnnormalizedBaseLevel);
-        // Read-only elements are bound without a write set: an object built for one written set
-        // must not serve a build with another (the variant implies it, this makes it explicit).
         packBits(binding.bufferWritten);
         visit(static_cast<std::uint32_t>(binding.imageSamplers.size()));
         for (const auto sampler : binding.imageSamplers) {
@@ -325,10 +322,6 @@ bool MatchesContentKey(const CompiledShader& shader, std::span<const std::uint32
 
 namespace {
 
-// APS5_PROFILE_DRAW: Revalidate outcomes and time, printed as [rescache] every 10 s next to the
-// device's hit/miss line: failed = the object could not be reused (whichever image path it took);
-// of the reused ones, fast = every image proved current from stamps, full = the lookups were repeated.
-// Why the fast path left an object to the full walk (the "fast-fail by reason" counts).
 using FastFail = ShaderResources::FastFail;
 constexpr std::array<const char*, static_cast<std::size_t>(FastFail::Count)> FastFailNames{"no record", "collect", "pending image", "evicted image", "memory changed", "keys", "cleared view", "storage keys", "depth surface", "replaced texture", "audit"};
 using OwnRefreshFallback = ShaderResources::OwnRefreshFallback;
@@ -341,27 +334,13 @@ struct RevalidateProfile {
     std::atomic<std::uint64_t> full{0};
     std::atomic<std::uint64_t> failed{0};
     std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(FastFail::Count)> fastFails{};
-    // Epoch gate: registry scans skipped because the pending serial was unchanged, and import
-    // serial loops skipped because the table's identity was unchanged.
     std::atomic<std::uint64_t> serialSkips{0};
     std::atomic<std::uint64_t> importSkips{0};
-    // Elements with DCC keys the fast path accepted through the images' key proofs.
     std::atomic<std::uint64_t> keysProven{0};
     std::atomic<std::uint64_t> storageKeysProven{0};
-    // The 'pending image' fast-fails by what overlapped: a surface with an own object (the query
-    // excepts it, so the overlapping image is foreign to the surface) or a snapshot texture (no own
-    // object); and the fails whose overlapping surfaces all have an own object (the T1 trim of
-    // design_cpu_final applies: flush the foreign image, refresh the own object, no full walk).
     std::atomic<std::uint64_t> pendingForeign{0};
     std::atomic<std::uint64_t> pendingSnapshot{0};
     std::atomic<std::uint64_t> pendingT1Eligible{0};
-    // The full walks by the reason of the fast proof that preceded them (fastFails also counts the
-    // Pending failures the own-object refresh resolved), the Pending failures it resolved (with the
-    // objects it refreshed: storage images, view sources) and those it left to the walk by reason;
-    // view surfaces a foreign image overlapped that the proof accepted because FindPending names
-    // their own source; surfaces a foreign image was still pending over after their own object's
-    // refresh (its alias, a straddling image) that the re-run accepted; proofs the verify switch
-    // checked against the full walk.
     std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(FastFail::Count)> fullByReason{};
     std::atomic<std::uint64_t> ownRefreshed{0};
     std::atomic<std::uint64_t> ownStorageRefreshes{0};
@@ -443,22 +422,16 @@ void countOwnRefresh(bool storage) {
     if (BuildProfiled()) (storage ? Revalidations().ownStorageRefreshes : Revalidations().ownViewRefreshes).fetch_add(1, std::memory_order_relaxed);
 }
 
-// APS5_NO_OWN_IMAGE_REFRESH=1: a Pending failure of the fast proof takes the full walk, as before
-// the own-object refresh (T1).
 bool OwnImageRefreshEnabled() {
     static const bool disabled = std::getenv("APS5_NO_OWN_IMAGE_REFRESH") != nullptr;
     return !disabled;
 }
 
-// APS5_VERIFY_PROOFS=1: after every own-object refresh the full walk runs beside the proof and the
-// process aborts when it would return another object or upload again (a different decision).
 bool VerifyProofs() {
     static const bool enabled = std::getenv("APS5_VERIFY_PROOFS") != nullptr;
     return enabled;
 }
 
-// Whether a sampled surface's keys are the very keys of the image the view follows (the same
-// metadata, extent, format and alpha placement: the same scan), so the image's proof serves it.
 bool SameKeySurface(const StorageTexture* source, const GuestTextureResource& resource, std::uint64_t guestBytes) {
     if (source == nullptr) return false;
     const auto& own = source->Descriptor();
@@ -519,8 +492,6 @@ void countRevalidate(bool fast, bool ok, std::chrono::steady_clock::time_point s
     AgcDriver::ProfilePrint_nid_no_patch("[rescache] write index (10 s): %llu proofs %.1f ms: %llu accepted, %llu partial (%llu bumped elements, %llu looked up again, %llu re-bound), %llu unwatched elements compared, %llu fallbacks, %llu builds subscribed; %llu subscriptions over %llu blocks, %llu bumps by source:%s, %llu sweeps (%llu failed), %llu bump lists overflowed, writers' index lookups %llu in %.1f ms\n", static_cast<unsigned long long>(counts[IndexAccepted] + counts[IndexPartial] + counts[IndexFallback]), profile.indexNanoseconds.exchange(0, std::memory_order_relaxed) / 1e6, static_cast<unsigned long long>(counts[IndexAccepted]), static_cast<unsigned long long>(counts[IndexPartial]), static_cast<unsigned long long>(counts[IndexBumped]), static_cast<unsigned long long>(counts[IndexLookedUp]), static_cast<unsigned long long>(counts[IndexRebound]), static_cast<unsigned long long>(counts[IndexCompared]), static_cast<unsigned long long>(counts[IndexFallback]), static_cast<unsigned long long>(counts[IndexBuilds]), static_cast<unsigned long long>(index.subscriptions), static_cast<unsigned long long>(index.blocks), static_cast<unsigned long long>(index.bumps), sources.c_str(), static_cast<unsigned long long>(index.sweeps), static_cast<unsigned long long>(index.sweepFailures), static_cast<unsigned long long>(index.overflows), static_cast<unsigned long long>(index.lookups), static_cast<double>(index.lookupNanoseconds) / 1e6);
 }
 
-// APS5_NO_EPOCH_REVALIDATE=1: the per-element registry, cache and stamp checks and the per-region
-// flush and import lookups of every Revalidate, as before the epoch gate.
 bool EpochRevalidate() {
     static const bool enabled = std::getenv("APS5_NO_EPOCH_REVALIDATE") == nullptr;
     return enabled;

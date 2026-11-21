@@ -91,8 +91,6 @@ std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, co
     return resident;
 }
 
-// A draw's resources (resolveDrawResources): the resource-cache template a recordable draw's
-// stages repeat, or a fresh build.
 struct ResolvedResources {
     std::shared_ptr<ShaderResources> resources;
     std::vector<ShaderResources::MovedBuffer> moved;
@@ -160,14 +158,6 @@ bool drawStagingEnabled() {
 ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, const DrawPlan& plan, DrawOutcome& outcome, DrawTimer& timer) {
     ResolvedResources resolved;
     APS5_LOG_CHARS_OUT_DEBUG("Creating ShaderResources");
-    // A recordable draw whose stages' compiled content repeats an earlier one binds that build's
-    // descriptor set when it is still valid (see ResourceCache; the dispatch path does the same).
-    // Only recordable draws take part: a synchronous draw writes its resources back, which a shared
-    // object must never do. Revalidate proves a hit by texture identity, which needs the texture
-    // caches. Push constants still come from this draw's stages. APS5_NO_DRAW_RESOURCE_CACHE=1
-    // builds every draw's resources as before.
-    // The render target and index ranges stay out of the key (see DrawResourceKey); a hit repeats
-    // the alias checks instead. Debug aid: APS5_NO_DRAW_KEY_TRIM=1 keys them as before.
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
     const bool candidate = recordable && plan.candidate;
     resolved.cacheable = recordable && plan.keyed;
@@ -252,9 +242,6 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     return resolved;
 }
 
-// A GPU-side indirect draw's records (Draw's recorded path; a recipe draw has none) as recordDraw
-// takes them: the arguments, how they are read, their host imports and, on the CPU path, the
-// records read.
 struct IndirectRecord {
     const Pm4::DrawParameters::IndirectDraw* args = nullptr;
     IndirectDrawPath path = IndirectDrawPath::Gpu;
@@ -293,8 +280,6 @@ void CompactIndirectListRestart(const Context& context, const Pm4::DrawParameter
     inputs.indexOffset = 0;
 }
 
-// The draw commands of one draw: the vertex and index buffer binds, then the direct draw, the
-// GPU-side indirect draw from `argumentBuffer` or the CPU-read records with the driver's rules.
 bool recordDrawCommandsImpl(const Context& context, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, const IndirectRecord* indirect, VkBuffer argumentBuffer, VkDeviceSize argumentOffset, const DrawTraceContext* trace, std::uint32_t& subdraw, std::optional<std::uint32_t> pieceFirstIndex = std::nullopt) {
     bool emitted = false;
     if (context.recorder != nullptr) context.recorder->NoteSampledDraw(commands);
@@ -360,14 +345,11 @@ bool recordDrawCommandsImpl(const Context& context, VkCommandBuffer commands, co
             }
         }
     } else {
-        // The CPU-read records with the driver's rules: an InPlace dimension takes the record's
-        // value, a Constant one (the CP writes nowhere) the constant.
         using Rule = Pm4::DrawParameters::IndirectDraw::Rule;
         for (const auto& record : indirect->records) {
             if (record.count == 0 || record.instances == 0) continue;
             const auto firstInstance = args->instanceRule == Rule::InPlace ? record.firstInstance : args->instanceConstant;
             if (draw.indexed) {
-                // The CP clamps the index range to INDEX_BUFFER_SIZE (the bound copy).
                 const auto boundCount = inputs.indexCount.value_or(draw.indexCount);
                 if (record.firstVertexOrIndex >= boundCount) continue;
                 const auto vertexOffset = args->vertexRule == Rule::InPlace ? record.vertexOffset : args->vertexConstant;
@@ -397,12 +379,6 @@ void recordDrawCommands(const Context& context, VkCommandBuffer commands, const 
     if (recordDrawCommandsImpl(context, commands, state, draw, inputs, indirect, argumentBuffer, argumentOffset, trace, subdraw, pieceFirstIndex)) NoteGuestWorkIn(context, commands);
 }
 
-// The GPU-side records of an indirect draw, recorded outside the render pass: the stores that
-// produced them (a dispatch in place, a fill, the host) precede the indirect read, as for
-// DISPATCH_INDIRECT; a Constant dimension is rewritten in a scratch copy (vkCmdDrawIndirect reads
-// the record's dword as the first vertex / instance, and the constant is what the fixed-function
-// fetch must start at). The scratch is kept until the batch completed. Returns whether a copy was
-// rewritten; `argumentBuffer`/`argumentOffset` receive where the draw reads the records.
 bool recordIndirectArguments(const Context& context, VkCommandBuffer commands, Recorder* recorder, bool recorded, const IndirectRecord& indirect, std::unique_ptr<DeviceBuffer>& scratch, std::shared_ptr<Buffer>& snapshot, VkBuffer& argumentBuffer, VkDeviceSize& argumentOffset, const std::function<void(std::uint32_t)>& countBarrier) {
     using Rule = Pm4::DrawParameters::IndirectDraw::Rule;
     const auto* args = indirect.args;
@@ -425,7 +401,6 @@ bool recordIndirectArguments(const Context& context, VkCommandBuffer commands, R
         return rewritten;
     }
     if (recorded) {
-        // Read in place from the import when the batch runs (a synchronous draw waits for its own).
         recorder->NotePendingRead(args->arguments, static_cast<std::size_t>(args->RangeBytes()), Recorder::ReadKind::Indirect);
         if (args->countIndirect) recorder->NotePendingRead(args->countAddress, 4, Recorder::ReadKind::Indirect);
     }

@@ -719,7 +719,6 @@ int APS5_VABI RsaSign(LibreSsl3PkeyContext* context, unsigned char* signature, s
             const int ret = LibreSsl3::RsaSign_nid_no_patch(keyContext->digest->type, content,
                 static_cast<unsigned int>(contentLength), signature, &sltmp, rsa);
             if (ret <= 0) return ret;
-            *signatureLength = sltmp;
             return 1;
         } else if (keyContext->padding == LibreSsl3RsaPaddingPss) {
             if (!SetupTemporaryBuffer(keyContext, rsa)) return -1;
@@ -730,7 +729,6 @@ int APS5_VABI RsaSign(LibreSsl3PkeyContext* context, unsigned char* signature, s
             const int ret = LibreSsl3::RsaPrivateEncrypt_nid_no_patch(LibreSsl3::RsaByteCount_nid_no_patch(rsa),
                 keyContext->temporaryBuffer, signature, rsa, LibreSsl3RsaPaddingNone);
             if (ret < 0) return ret;
-            *signatureLength = ret;
             return 1;
         } else if (keyContext->padding == LibreSsl3RsaPaddingX931) {
             NotImplemented_nid_no_patch("RSA X9.31 signing");
@@ -741,7 +739,6 @@ int APS5_VABI RsaSign(LibreSsl3PkeyContext* context, unsigned char* signature, s
         const int ret = LibreSsl3::RsaPrivateEncrypt_nid_no_patch(static_cast<int>(contentLength), content,
             signature, rsa, keyContext->padding);
         if (ret < 0) return ret;
-        *signatureLength = ret;
         return 1;
     }
 }
@@ -850,13 +847,11 @@ int APS5_VABI RsaEncryption(LibreSsl3PkeyContext* context, unsigned char* output
         const int result = LibreSsl3::RsaPublicEncrypt_nid_no_patch(keyLength, keyContext->temporaryBuffer, output, rsa,
             LibreSsl3RsaPaddingNone);
         if (result < 0) return result;
-        *outputLength = static_cast<std::size_t>(result);
         return 1;
     }
     const int result = LibreSsl3::RsaPublicEncrypt_nid_no_patch(static_cast<int>(inputLength), input, output, rsa,
         keyContext->padding);
     if (result < 0) return result;
-    *outputLength = static_cast<std::size_t>(result);
     return 1;
 }
 
@@ -873,13 +868,11 @@ int APS5_VABI RsaDecryption(LibreSsl3PkeyContext* context, unsigned char* output
             keyContext->temporaryBuffer, decrypted, decrypted, keyContext->oaepLabel,
             static_cast<int>(keyContext->oaepLabelLength), keyContext->digest, keyContext->maskDigest);
         if (recovered < 0) return recovered;
-        *outputLength = static_cast<std::size_t>(recovered);
         return 1;
     }
     const int recovered = LibreSsl3::RsaPrivateDecrypt_nid_no_patch(static_cast<int>(inputLength), input, output, rsa,
         keyContext->padding);
     if (recovered < 0) return recovered;
-    *outputLength = static_cast<std::size_t>(recovered);
     return 1;
 }
 
@@ -910,7 +903,6 @@ badPadding:
 
     case LibreSsl3PkeyControlGetRsaPadding:
         if (!second) Reject("EVP_PKEY_CTX_ctrl get RSA padding without an output");
-        *static_cast<int*>(second) = keyContext->padding;
         return 1;
 
     case LibreSsl3PkeyControlRsaPssSaltLength:
@@ -921,7 +913,6 @@ badPadding:
         }
         if (type == LibreSsl3PkeyControlGetRsaPssSaltLength) {
             if (!second) Reject("EVP_PKEY_CTX_ctrl get RSA PSS salt length without an output");
-            *static_cast<int*>(second) = keyContext->saltLength;
         } else {
             if (first < LibreSsl3RsaPssSaltLengthMaximum) return -2;
             if (keyContext->minimumSaltLength != NoSaltLengthLimit) {
@@ -972,7 +963,6 @@ badPadding:
         }
         if (type == LibreSsl3PkeyControlGetRsaOaepDigest) {
             if (!second) Reject("EVP_PKEY_CTX_ctrl get OAEP digest without an output");
-            *static_cast<const DigestMethod**>(second) = keyContext->digest;
         } else {
             keyContext->digest = static_cast<const DigestMethod*>(second);
         }
@@ -992,7 +982,6 @@ badPadding:
 
     case LibreSsl3PkeyControlGetMessageDigest:
         if (!second) Reject("EVP_PKEY_CTX_ctrl get digest without an output");
-        *static_cast<const DigestMethod**>(second) = keyContext->digest;
         return 1;
 
     case LibreSsl3PkeyControlRsaMaskDigest:
@@ -1003,7 +992,6 @@ badPadding:
         }
         if (type == LibreSsl3PkeyControlGetRsaMaskDigest) {
             if (!second) Reject("EVP_PKEY_CTX_ctrl get MGF1 digest without an output");
-            *static_cast<const DigestMethod**>(second) = keyContext->maskDigest ? keyContext->maskDigest
                 : keyContext->digest;
         } else {
             if (keyContext->minimumSaltLength != NoSaltLengthLimit) {
@@ -1038,7 +1026,6 @@ badPadding:
             return -2;
         }
         if (!second) Reject("EVP_PKEY_CTX_ctrl get OAEP label without an output");
-        *static_cast<unsigned char**>(second) = keyContext->oaepLabel;
         return static_cast<int>(keyContext->oaepLabelLength);
 
     case LibreSsl3PkeyControlDigestInit:
@@ -1079,7 +1066,6 @@ int APS5_VABI RsaKeyControl(LibreSsl3EvpPkey* key, int operation, long first, vo
     if (!rsa) NotImplemented_nid_no_patch("EVP_PKEY_asn1 method control without a native RSA key");
     if (rsa->pss) NotImplemented_nid_no_patch("EVP_PKEY_asn1 method control of a key with PSS restrictions");
     if (!second) Reject("EVP_PKEY_asn1 method control without a digest identifier");
-    *static_cast<int*>(second) = DefaultDigestNid;
     return 1;
 }
 
@@ -1161,7 +1147,6 @@ int APS5_VABI EcDerive(LibreSsl3PkeyContext* context, unsigned char* output, std
         if (!outputLength) return 0;
         const int degree = EC_GROUP_get_degree_nid_postfix(ecKey->group);
         if (degree <= 0) return 0;
-        *outputLength = static_cast<std::size_t>((degree + 7) / 8);
         return 1;
     }
     if (!outputLength) return 0;
@@ -1182,7 +1167,6 @@ int APS5_VABI EcDerive(LibreSsl3PkeyContext* context, unsigned char* output, std
     if (result <= 0) return 0;
     const auto copied = std::min(*outputLength, static_cast<std::size_t>(result));
     std::copy_n(secret.data(), copied, output);
-    *outputLength = copied;
     std::fill(secret.begin(), secret.end(), 0);
     return 1;
 }
@@ -1479,7 +1463,7 @@ int DigestFinal(LibreSsl3::DigestContext* ctx, unsigned char* md, unsigned int* 
     return ret;
 }
 
-} // namespace
+}
 
 const LibreSsl3PkeyMethod* FindNativePkeyMethod_nid_no_patch(std::int32_t keyType) {
     if (keyType == LibreSsl3PkeyRsa) return &RsaMethod;
@@ -1533,7 +1517,7 @@ LibreSsl3PkeyContext* NewPkeyContext(LibreSsl3EvpPkey* key, const LibreSsl3PkeyM
     return context;
 }
 
-} // namespace
+}
 
 
 LibreSsl3PkeyContext* APS5_VABI EVP_PKEY_CTX_new_nid_postfix(LibreSsl3EvpPkey* key, void* engine) {

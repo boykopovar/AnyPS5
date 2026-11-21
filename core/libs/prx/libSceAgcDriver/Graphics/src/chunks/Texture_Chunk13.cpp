@@ -22,7 +22,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
-// For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -147,8 +146,6 @@ std::shared_ptr<StorageTexture> StorageTexture::FindPending(std::uint64_t addres
     for (auto* texture : pending.textures) {
         if (texture->descriptor.baseAddress != address || texture->guestBytes < bytes) continue;
         if (texture->guestBytes == bytes) return texture->weak_from_this().lock();
-        // Containment, not equality: a descriptor of a chain's first mips (its own guestBytes are
-        // shorter) is served by the chain's image; CanCopyFrom then checks the geometry.
         if (containing == nullptr) containing = texture;
     }
     return containing != nullptr ? containing->weak_from_this().lock() : nullptr;
@@ -183,8 +180,6 @@ bool PendingStorageOverlaps(std::uint64_t address, std::size_t bytes, const Stor
     std::lock_guard lock(pending.mutex);
     if (!pending.textures.MayOverlap(address, bytes)) return false;
     for (const auto* texture : pending.textures) {
-        // A free function (declared in ShaderResources.hpp): the overlap is computed from the public
-        // surface description rather than the private helper.
         const auto begin = texture->Descriptor().baseAddress;
         if (texture != except && address < begin + texture->GuestBytes() && begin < address + bytes) return true;
     }
@@ -355,7 +350,6 @@ void StorageTexture::NoteProved() const {
 }
 
 std::vector<std::shared_ptr<StorageTexture>> StorageTexture::overlappingPending(std::uint64_t address, std::size_t bytes) {
-    // FlushPending's listing; the images stay alive across the caller's scan as there.
     std::vector<std::shared_ptr<StorageTexture>> overlapping;
     auto& pending = Pending();
     if (pending.textures.SurelyClear(address, bytes)) return overlapping;
@@ -370,8 +364,6 @@ std::vector<std::shared_ptr<StorageTexture>> StorageTexture::overlappingPending(
 }
 
 bool StorageTexture::blocksKept(std::span<const std::shared_ptr<StorageTexture>> images, std::uint64_t address, std::size_t bytes) {
-    // The stamps are read outside the registry mutex (the tracker lock is never taken under it);
-    // per pending layer, as the keep decision of writeBackLayers reads them.
     constexpr std::uint64_t block = 65536;
     const auto accessEnd = address + bytes;
     for (const auto& texture : images) {
@@ -412,15 +404,7 @@ bool StorageTexture::AccessKeptByCpu(std::uint64_t address, std::size_t bytes, s
     const auto overlapping = overlappingPending(address, bytes);
     if (images != nullptr) *images = overlapping.size();
     if (overlapping.empty() || bytes > ClassifyLimit) return false;
-    // The keep decision of a store sees every CPU write to the range up to now (an uncached
-    // collect, as writeBackLayers makes it: a memo hit could leave the store's own faults for the
-    // next walk); so must this one.
     GuestMemory::CollectWritesUncached(address, bytes);
-    // A neighbour's write-back stamps the 64 KiB block its surface shares with one of these images
-    // and then advances that image's layer generation past the stamp (advanceAdjacent), both under
-    // the GpuMutex; read between the two, the stamp would pass for a CPU write and the access
-    // would read the image's stale bytes in the block. Under the mutex the layer state is what a
-    // store there would see, and the stamps only grow.
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Hook);
     std::lock_guard gpu(GuestMemory::GpuMutex());
     if (std::any_of(overlapping.begin(), overlapping.end(), [](const std::shared_ptr<StorageTexture>& texture) { return texture->drawnArea().drawn; })) return false;
@@ -446,8 +430,6 @@ bool StorageTexture::AccessKeptByCpu(std::uint64_t address, std::size_t bytes, s
 bool StorageTexture::evictStale(std::uint64_t address, std::size_t bytes, std::size_t& dropped) {
     static const bool staleEvict = std::getenv("APS5_STALE_EVICT") != nullptr;
     constexpr std::uint64_t block = 65536;
-    // writeBack's selection for the access: the pending layers it overlaps, every one under a
-    // clear code (see there), or every one of a dead image (H3).
     const bool whole = storesWhole();
     const bool all = whole || (staleEvict && provedPresent.load(std::memory_order_relaxed) + DeadImagePresents <= Recorder::Presents());
     const auto accessEnd = address + bytes;
@@ -468,8 +450,6 @@ bool StorageTexture::evictStale(std::uint64_t address, std::size_t bytes, std::s
     }
     if (last <= first) return false;
     if (beyond) {
-        // Blocks outside the access's own were not collected by this call: the walk of the layers'
-        // span (a write-back's own) runs once per present per image.
         const auto present = Recorder::Presents();
         if (staleCheckPresent == present) return false;
         staleCheckPresent = present;
@@ -484,8 +464,6 @@ bool StorageTexture::evictStale(std::uint64_t address, std::size_t bytes, std::s
             if (!GuestMemory::WrittenSince(from, static_cast<std::size_t>(std::min(at + block, end) - from), layerGeneration[layer])) return false;
         }
     }
-    // As the empty write-back leaves the layers: no results pending, the generation unchanged (the
-    // stamps make their next Refresh re-upload), `original` no longer vouching for the bytes.
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
         if (!selected(layer)) continue;
         layerPending[layer] = false;

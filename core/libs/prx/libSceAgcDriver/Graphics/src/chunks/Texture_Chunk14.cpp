@@ -22,7 +22,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
-// For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -157,9 +156,6 @@ std::size_t StorageTexture::DiscardPendingInside(std::uint64_t address, std::siz
         auto* texture = *it;
         const auto begin = texture->descriptor.baseAddress;
         if (texture != exempt && begin >= address && begin + texture->guestBytes <= end) {
-            // The content no longer matches guest memory anywhere: the next use re-uploads once the
-            // fill stamped the range, never from a matching `original` (the fill may not have
-            // touched the bytes a CPU-path upload copied).
             texture->dirty = false;
             texture->layerPending.assign(texture->trackedLayers, false);
             texture->layerOriginal.assign(texture->trackedLayers, false);
@@ -168,9 +164,6 @@ std::size_t StorageTexture::DiscardPendingInside(std::uint64_t address, std::siz
             it = pending.textures.erase(it);
             ++discarded;
         } else if (texture != exempt && texture->blockUnits && texture->overlaps(address, bytes)) {
-            // Its units wholly inside the range are dead too (re-uploaded from the range's bytes at
-            // the next use, never from a matching `original`: the dropped units hold results the
-            // bytes never received); the others stay pending.
             bool dropped = false;
             for (std::uint32_t unit = 0; unit < texture->trackedLayers; ++unit) {
                 const auto unitBegin = texture->layerBegin(unit);
@@ -206,9 +199,6 @@ StorageTexture::FillCoverage StorageTexture::ClassifyFill(std::uint64_t address,
     }
     const auto end = address + bytes;
     StorageTexture* covered = nullptr;
-    // The newest of several exact matches (the registry is in construction order): the same
-    // surface under two storage formats keeps two images, and the older one may be bound by
-    // nothing any more, so clearing it would only revive it for a write-back.
     for (auto* texture : overlapping) {
         if (texture->descriptor.baseAddress == address && texture->guestBytes == bytes) {
             covered = texture;
@@ -216,12 +206,9 @@ StorageTexture::FillCoverage StorageTexture::ClassifyFill(std::uint64_t address,
             coverage.layer = WholeImage;
         }
     }
-    // APS5_NO_LAYER_REFUSAL_MEMO=1: match a layer of an image whose surface check failed at its
-    // current generation anyway (the whole-surface collect that check costs then runs per fill).
     static const bool layerMemo = std::getenv("APS5_NO_LAYER_REFUSAL_MEMO") == nullptr;
     for (auto* texture : overlapping) {
         if (covered != nullptr) break;
-        // One array layer of a thin surface: its guest bytes are one contiguous slice.
         const auto& geometry = texture->geometry;
         const auto base = texture->descriptor.baseAddress;
         if (geometry.layers < 2 || geometry.thick || geometry.imageDepth != 1 || geometry.layers != geometry.imageLayers || geometry.layerBytes != bytes || geometry.layerBytes * geometry.layers != texture->guestBytes || address < base) continue;
@@ -255,9 +242,6 @@ StorageTexture::FillCoverage StorageTexture::ClassifyFill(std::uint64_t address,
         else if (address <= begin && end >= stop) coverage.cover = FillCover::Around;
         else coverage.cover = FillCover::Straddle;
     }
-    // Debug aid: APS5_TRACE_FILL_COVER=1 prints the first fills that meet images without covering
-    // one of them (or a layer of one), with the images' surfaces, so a wider conversion can be
-    // designed from them.
     static const bool trace = std::getenv("APS5_TRACE_FILL_COVER") != nullptr;
     static int traced = 0;
     const auto cover = coverage.cover;
@@ -396,8 +380,6 @@ bool StorageTexture::clearByKeysFill(DccKeys keys, std::uint8_t key) {
 }
 
 bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::uint32_t layer, const char*& refusal, bool allowRegisterClear) {
-    // Debug aid (APS5_TRACE_FILL_COVER=1): the first layer covers refused, with the surface, the
-    // pattern and the generation the refusal was memoized at (ClassifyFill's layerRefusedGeneration).
     static const bool trace = std::getenv("APS5_TRACE_FILL_COVER") != nullptr;
     struct TraceLayerRefusal {
         const StorageTexture& texture;
@@ -423,9 +405,6 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
         return false;
     }
     if (descriptor.dccAddress != 0) {
-        // Under a clear code reads see that value whatever the texels hold, and keys a recorded
-        // kernel still writes are not in the bytes yet: only keys that read as uncompressed now let
-        // the image stand for the texels.
         if (!allowRegisterClear && Recorder::SnapshotWriteOverlaps(descriptor.dccAddress, static_cast<std::size_t>(guestBytes / 256))) {
             refusal = "keys pending";
             return false;
@@ -442,18 +421,7 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
     }
     const auto begin = layer == WholeImage ? descriptor.baseAddress : descriptor.baseAddress + geometry.GuestLayerOffset(layer);
     const auto bytes = static_cast<std::size_t>(layer == WholeImage ? guestBytes : geometry.layerBytes);
-    // A tracked layer answers for itself (its own generation and pending flag): the rest of the
-    // surface may have changed under the image, which its own layers' next use uploads.
     if (layer != WholeImage && trackedLayers == 1) {
-        // The rest of the surface keeps the image's content, which must still be what guest memory
-        // holds: the one generation the write-back keeps CPU-written blocks after moves to now. A
-        // surface that changed under the image (another image's results stored into its memory, a
-        // fill of another layer stored as bytes) is not refreshed here: the images so filled at the
-        // movie stage are stale ones of an earlier use of the memory, and reviving one every frame
-        // (a 60 MiB write-back and re-upload inside the fill) cost what the conversion gained.
-        // Uncached, as writeBack's keep decision walks: a memo hit of this submission's epoch
-        // would leave pages the game dirtied since that walk unconsumed, and the check below
-        // would pass over them.
         GuestMemory::CollectWritesUncached(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
         const auto before = static_cast<std::size_t>(begin - descriptor.baseAddress);
         const auto after = static_cast<std::size_t>(descriptor.baseAddress + guestBytes - (begin + bytes));
@@ -467,9 +435,6 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
         refusal = "layer alignment";
         return false;
     }
-    // Other images over the range hold content the fill supersedes: stamped below, they re-upload
-    // at their next use (behind this image's write-back), and never from a matching `original`,
-    // since the fill leaves the bytes a CPU-path upload copied as they are.
     bool aliasedKeys = false;
     {
         auto& live = Live();
@@ -480,14 +445,8 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
             if (texture->descriptor.dccAddress != 0) aliasedKeys = true;
         }
     }
-    // Debug aid (APS5_TRACE_FILL_COVER=1): the first clears of a surface with DCC keys (its own or
-    // another image's over the same memory), with the pattern: a title that fills the keys to a
-    // clear code right after makes the clear moot for that image (its next lookup re-uploads
-    // under the code) unless the pattern is that code's.
     static std::atomic<int> traced{0};
     if (trace && (descriptor.dccAddress != 0 || aliasedKeys) && traced.fetch_add(1) < 16) std::fprintf(stderr, "[fill-cover] clear of surface 0x%llx+0x%llx (format %u, keys 0x%llx%s): pattern %08x %08x %08x %08x\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), descriptor.format, static_cast<unsigned long long>(descriptor.dccAddress), aliasedKeys ? ", another image over the memory has keys" : "", pattern[0], pattern[1], pattern[2], pattern[3]);
-    // A neighbour's results shadowed in the range's edge units reach the import before the stamp
-    // below makes those units stale (nothing for a 64 KiB-multiple surface).
     PublishShadow(begin, bytes, PublishScope::PartialUnits, PublishReason::FillClear);
     GuestMemory::MarkWritten(begin, bytes);
     const auto commands = recorder->Commands();
@@ -501,7 +460,6 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
     VkImageMemoryBarrier toClear{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     toClear.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     toClear.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    // A whole image is discarded into the clear; one layer keeps the others' content.
     toClear.oldLayout = layer == WholeImage ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL;
     toClear.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     toClear.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -518,13 +476,6 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
     context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
     recorder->EndGpuTiming(timing, bytes);
     traceRefusal.cleared = true;
-    // The image holds the fill and guest memory what it held: the texels reach it at the
-    // write-back, which keeps the 64 KiB blocks the CPU writes from now on (a CPU write before the
-    // fill is overwritten by it in program order; the stamps above are below this generation), and
-    // the keys were read uncompressed. The collect is uncached (see writeBack's keep decision): a
-    // memo hit of this submission's epoch would not consume pages the game dirtied since that
-    // walk, the write-back's own walk would stamp them above this generation and keep their
-    // blocks, and the fill's pattern would be lost in them.
     const bool watched = GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     if (watched) {
         layerOriginal.assign(trackedLayers, false);
@@ -533,8 +484,6 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
     }
     uploadedKeys = DccKeys::Uncompressed;
     if (layer != WholeImage && trackedLayers > 1) {
-        // The cleared layer's units alone: their stamps above lie below this generation, the other
-        // units keep theirs (their pages are consumed by their own collects).
         const auto first = blockUnits ? static_cast<std::uint32_t>((begin - descriptor.baseAddress) / trackedLayerBytes) : layer;
         const auto count = blockUnits ? static_cast<std::uint32_t>(bytes / trackedLayerBytes) : 1u;
         if (!watched) {

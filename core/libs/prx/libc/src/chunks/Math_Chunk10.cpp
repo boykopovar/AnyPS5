@@ -1048,7 +1048,6 @@ static long double Expm1lMsun(long double x) {
     if (-Expm1lSeriesBound < x && x < Expm1lSeriesBound) return Expm1lSeries(x, exponent);
     return Expm1lGeneral(x);
 }
-/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_sinhl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_sinhl.c */
 static constexpr long double SinhlS3 = 1.66666666666666666658e-1L;
 static constexpr double SinhlS5 = 8.3333333333333332e-3;
 static constexpr double SinhlS7 = 1.9841269841270074e-4;
@@ -1080,7 +1079,6 @@ static long double SinhlMsun(long double x) {
     if (std::fabs(x) <= HyperbolicOverflowThreshold) return sign * ExplHalf(std::fabs(x));
     return x * SinhlHuge;
 }
-/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_coshl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_coshl.c */
 static constexpr long double CoshlC4 = 4.16666666666666682297e-2L;
 static constexpr double CoshlC2 = 0.5;
 static constexpr double CoshlC6 = 1.3888888888888616e-3;
@@ -1110,7 +1108,6 @@ static long double CoshlMsun(long double x) {
     if (std::fabs(x) <= HyperbolicOverflowThreshold) return ExplHalf(std::fabs(x));
     return ExplHuge * ExplHuge;
 }
-/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_tanhl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_tanhl.c */
 static const volatile double TanhlTiny = 1.0e-300;
 static constexpr double TanhlOne = 1.0;
 static constexpr long double TanhlT3 = -3.33333333333333333017e-1L;

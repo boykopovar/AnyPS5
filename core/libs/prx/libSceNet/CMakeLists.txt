@@ -358,7 +358,6 @@ if(BUILD_TESTING)
     endforeach()
 endif()
 
-# --- small-size libraries split from Export.cpp ---
 add_library(libSceNet_Export_Chunk01 STATIC chunks/Export_Chunk01.cpp)
 add_library(libSceNet_Export_Chunk02 STATIC chunks/Export_Chunk02.cpp)
 add_library(libSceNet_Export_Chunk03 STATIC chunks/Export_Chunk03.cpp)

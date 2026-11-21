@@ -68,15 +68,6 @@ void countCache(std::uint64_t DrawProfile::*counter) {
 
 }
 
-// ValidateShaders decodes every SPIR-V instruction of every stage on every draw. Its outcome depends
-// only on the stages' compiled variants (a variant id names identical SPIR-V and binding layout),
-// their push constant placement and vertex attribute shapes, and the state fields it checks, so the
-// fragment output set is remembered by exactly those. Nothing here is keyed by pointer: the results
-// a draw hands in live in a per-draw vector. A stage without a variant id is validated as before,
-// except the rect-list control and evaluation stages, which are generated from the vertex and
-// fragment results the key already names (the pipeline key treats them the same way). `memoized`
-// says whether the memo applied, `hit` whether it answered. APS5_NO_VALIDATE_CACHE=1 validates
-// every draw.
 bool ValidationKey(const Context& context, std::span<const CompiledShader> shaders, const State& state, std::vector<std::uint64_t>& key) {
     using Stage = ShaderRecompiler::ShaderStage;
     static const bool disabled = std::getenv("APS5_NO_VALIDATE_CACHE") != nullptr;
@@ -106,7 +97,6 @@ bool ValidationKey(const Context& context, std::span<const CompiledShader> shade
                 add(attribute.components);
                 add(attribute.fetchIndex);
                 add(attribute.formatComponents);
-                // The data format bits of the V# decide the attribute's signature.
                 add((attribute.resource.fields[3] >> 12u) & 0x7fu);
             }
         }
@@ -243,7 +233,6 @@ std::uint32_t CachedFragmentOutputs(const Context& context, std::span<const Comp
     }
     if (keyed) {
         std::lock_guard lock(validationMutex());
-        // A handful of configurations recur; a runaway key space is dropped wholesale.
         if (memo.size() >= 1024) memo.clear();
         memo.emplace(key, outputs);
     }
@@ -251,17 +240,6 @@ std::uint32_t CachedFragmentOutputs(const Context& context, std::span<const Comp
     return outputs;
 }
 
-// The resource cache key of a recorded draw: a marker no compute key starts with (those begin with
-// the stage), the device handle (the cache is process-wide and the driver replaces the headless
-// device with the windowed one while workers may still use the old one: an entry's descriptor set
-// and pooled buffers belong to the device that built it) and every stage's content key
-// (ResourceCache::noteMiss walks this layout to attribute misses, so it changes together with it).
-// With `ranges`, also the render target and the index buffer the build's alias checks compared the
-// guest buffers against; without it the checks are repeated for a hit (CheckBufferAliases), since
-// neither range is part of the descriptor set (the target is attached, the index buffer copied per
-// draw), so a target or index ring that moves per frame does not miss on every draw. That guards a
-// workload with such rings; in the profiled menu stage every draw was DRAW_INDEX_AUTO (index range
-// 0) onto one fixed target, so its misses come from the stages' descriptor words themselves.
 bool MovableBuffers() {
     static const bool enabled = std::getenv("APS5_NO_MOVED_BUFFER_TEMPLATES") == nullptr;
     return enabled;
@@ -299,10 +277,6 @@ ResourceCache::Key DrawResourceKey(const Context& context, std::span<const Compi
     return key;
 }
 
-// The alias checks the build makes for every guest buffer descriptor (ShaderResources::
-// addGuestBuffer), repeated for a cached build whose own checks compared the buffers against
-// another draw's render target and index buffer. The same conditions and messages, so a draw that
-// would have failed its build fails its hit.
 void CheckBufferAliases(std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint64_t indexAddress, std::uint64_t indexBytes) {
     const auto overlap = [](std::uint64_t first, std::uint64_t firstSize, std::uint64_t second, std::uint64_t secondSize) { return first < second + secondSize && second < first + firstSize; };
     const auto targetAddress = target.MemoryAddress();
@@ -365,7 +339,6 @@ MeshArguments ResolveMeshArguments(const Pm4::DrawArguments& record, const MeshA
 }
 
 std::shared_ptr<std::vector<std::shared_ptr<ShaderResources>>> DrawCopiedWriters() {
-    // Never destroyed: a completion action of a batch still in flight at static teardown may erase from it.
     static auto* const writers = new std::shared_ptr<std::vector<std::shared_ptr<ShaderResources>>>(std::make_shared<std::vector<std::shared_ptr<ShaderResources>>>());
     return *writers;
 }
@@ -439,8 +412,6 @@ const char* DrawRecipeMissName(DrawRecipeMiss miss) {
 
 namespace {
 
-// APS5_PROFILE_DRAW: the per-phase timers of one draw (DrawPhase), shared by Draw's parts and
-// DrawWithRecipe.
 struct DrawTimer {
     bool profile;
     std::chrono::steady_clock::time_point phaseStart;
@@ -460,9 +431,6 @@ struct DrawTimer {
     }
 };
 
-// One line per draw with the phases that took time (APS5_TRACE_DRAWS), and the 10 s totals.
-// `waitedBefore` is the thread's GPU waits at the draw's start and `ownWaitedMs` the draw's own
-// syncs (see DrawOutcome::hookWaitUs).
 void reportDrawEnd(const State& state, const DrawTimer& timer, const ShaderResources::BuildTiming* built, DrawOutcome& outcome, double waitedBefore, double ownWaitedMs, const char* suffix) {
     if (!timer.profile) return;
     static const bool traceDraws = std::getenv("APS5_TRACE_DRAWS") != nullptr;

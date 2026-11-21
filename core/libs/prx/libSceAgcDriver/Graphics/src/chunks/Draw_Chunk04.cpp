@@ -153,11 +153,7 @@ InPlaceIndices InPlaceIndexRange(Recorder& recorder, std::uint64_t address, std:
 
 namespace {
 
-// The draw's inputs before its resources (prepareDrawInputs): the validated parameters, the index
-// buffer copy with its highest index, the vertex buffer copies and their layout, the fragment
-// outputs and the pipeline stages.
 struct DrawInputs {
-    // An empty auto draw: nothing to record.
     bool nothing = false;
     std::uint64_t indexBytes = 0;
     std::shared_ptr<Buffer> indices;
@@ -194,9 +190,6 @@ std::shared_ptr<Buffer> zeroVertexBuffer(const Context& context, std::size_t byt
     return zero;
 }
 
-// Draw's validation, index and vertex phases. With `recipe` the fragment outputs, the pipeline
-// stages and the vertex input layout are the recipe's (derived from the same compiled stages)
-// instead of computed.
 struct DrawPlan {
     bool nothing = false;
     std::uint64_t indexBytes = 0;
@@ -545,7 +538,6 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     const auto& attributes = shaders.front().program->vertexAttributes;
     inputs.vertexOffsets.assign(attributes.size(), 0);
     inputs.vertexHandles.reserve(attributes.size());
-    // An indexed draw's vertex offset moves every fetch: the copy must reach the last one.
     if (draw.indexed) {
         Require(draw.firstVertex <= std::numeric_limits<std::uint32_t>::max() - inputs.maxIndex, "indexed draw vertex range overflow");
         inputs.maxIndex += draw.firstVertex;
@@ -571,7 +563,6 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             zeroed[i] = zeroVertexBuffer(context, narrow.bytes + widened);
             continue;
         }
-        // An indirect draw's counts are unknown here: the descriptor's whole range is copied.
         const auto bytes = (args != nullptr ? VertexBufferExtent(attribute) : VertexBufferReadSize(attribute, inputs.maxIndex, draw.instanceCount, draw.firstInstance)) + widened;
         const auto& fields = attribute.resource.fields;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
@@ -649,10 +640,6 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     return inputs;
 }
 
-// The resident-target proof of one attachment (StorageTexture::Refresh: FlushPending, CollectWrites
-// over the target's pages, the DCC key scan of TextureClearKeys, then UnchangedSince), with the
-// [draws] target-lookup accounting. `lookup` makes (or finds) the image; DrawWithRecipe refreshes
-// the stored object instead.
 }
 }
 }

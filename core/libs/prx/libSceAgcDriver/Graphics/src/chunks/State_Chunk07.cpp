@@ -188,7 +188,6 @@ std::optional<DepthExpandPass> DecodeDepthExpandPass(const QueueState& queue) {
 std::string DrawRejection(const QueueState& queue, bool indexed) {
     if (auto reason = DepthMaintenanceRejection(queue); !reason.empty()) return reason;
     const auto& cx = queue.context;
-    // A register a rule needs that is absent gives no verdict here: DecodeState reports it.
     const auto value = [&](const Registers& registers, std::uint32_t offset, std::uint32_t& out) {
         const auto it = find(registers, offset, &registers == &queue.userConfig ? RegisterBank::UserConfig : RegisterBank::Context);
         if (it == registers.end()) return false;
@@ -366,7 +365,6 @@ bool StencilReferenceUnused(const State& state) {
 }
 
 bool DrawKeyCovers(RegisterRead read) {
-    // One bit per register offset of each bank, set from the table once.
     static const auto covered = [] {
         std::array<std::bitset<1024>, static_cast<std::size_t>(RegisterBank::Count)> bits{};
         for (const auto& range : DrawKeyRegisters) {

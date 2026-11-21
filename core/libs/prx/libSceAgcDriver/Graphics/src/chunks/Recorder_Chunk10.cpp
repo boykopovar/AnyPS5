@@ -88,7 +88,6 @@ bool Recorder::PendingReadOverlaps(std::uint64_t address, std::size_t bytes, boo
             return true;
         }
     }
-    // Newest first: the batch most likely still running decides without a status query per batch.
     for (auto it = inFlight.rbegin(); it != inFlight.rend(); ++it) {
         const auto kind = readOverlap(**it, address, end);
         if (!kind.has_value()) continue;
@@ -123,17 +122,12 @@ Recorder::ReadStatistics Recorder::ReadCounts() {
 std::optional<Recorder::PendingWriteInfo> Recorder::DescribePendingWrite(std::uint64_t address, std::size_t bytes) const {
     if (bytes == 0) return std::nullopt;
     const auto end = address + bytes;
-    // The same choice SyncThrough makes: the open batch forces a full Sync, otherwise the newest
-    // overlapping in-flight batch is the target. Of that batch's ranges the first overlapping one
-    // is reported (a dispatch notes each written V# once, so it is the range the access hit).
     const auto firstOverlap = [&](const Batch& batch) -> const std::pair<std::uint64_t, std::uint64_t>* {
         for (const auto& range : batch.writes) {
             if (address < range.second && range.first < end) return &range;
         }
         return nullptr;
     };
-    // With SyncThrough disabled every hit is a full Sync: the open batch (if any) is submitted and
-    // everything in flight finishes, whichever batch noted the range.
     const bool syncAll = !SyncThroughEnabled();
     const auto allBatches = inFlight.size() + (open != nullptr ? 1 : 0);
     if (open != nullptr) {
@@ -143,7 +137,6 @@ std::optional<Recorder::PendingWriteInfo> Recorder::DescribePendingWrite(std::ui
     for (auto it = inFlight.rbegin(); it != inFlight.rend(); ++it, --finished) {
         const auto* range = firstOverlap(**it);
         if (range == nullptr) continue;
-        // In flight means submitted, so the fence is live; signaled = the GPU already ran it.
         const bool signaled = fenceStatus((*it)->fence) == VK_SUCCESS;
         if (syncAll) return PendingWriteInfo{submissions + (open != nullptr ? 1 : 0), open != nullptr, signaled, range->first, range->second, allBatches};
         return PendingWriteInfo{(*it)->serial, false, signaled, range->first, range->second, finished};
@@ -160,8 +153,6 @@ bool Recorder::HasCompletions() const {
 }
 
 void Recorder::noteLabelOn(Batch& batch, std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool behindCompletion) {
-    // One entry per dword; a label overlapping older entries (a 4-byte store inside an 8-byte one or
-    // the reverse) replaces exactly the dwords it stores, so a lookup composes what memory will hold.
     std::lock_guard tableLock(labelTableMutex);
     for (std::size_t offset = 0; offset + 4 <= bytes.size(); offset += 4) {
         std::uint32_t value = 0;
@@ -183,8 +174,6 @@ void Recorder::markBehindCompletion(const Batch& batch, std::uint64_t begin, std
 
 void Recorder::NoteLabel(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue) {
     ensureOpen();
-    // The table entry before the write note: the note bumps the write generation a poller
-    // watches, and a poller that sees the bump then finds the label without the GPU mutex.
     const bool tabled = bytes.size() <= LabelTableBytes;
     if (tabled) {
         noteLabelOn(*open, address, bytes, stamp, queue);
@@ -203,7 +192,6 @@ void Recorder::NoteLabel(std::uint64_t address, std::span<const std::byte> bytes
 }
 
 std::optional<Recorder::LabelHit> Recorder::PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal) const {
-    // Under the GPU mutex; the table mutex is taken too so this one path serves both lock regimes.
     std::lock_guard tableLock(labelTableMutex);
     return lookupLabel(address, bytes, afterStamp, refusal);
 }
@@ -219,9 +207,6 @@ bool Recorder::PendingLabelIn(std::uint64_t address, std::size_t bytes) const {
     const auto end = address + bytes;
     if (const auto first = labels.lower_bound(address); first != labels.end() && first->first < end) return true;
     if (wideLabelInLocked(address, bytes)) return true;
-    // A queued label of another queue is unordered against the caller on hardware (nothing that
-    // queue recorded could have satisfied a wait yet); it is still reported, since the table mutex
-    // is held anyway and a caller deciding a CPU store wants the conservative answer.
     if (const auto first = queuedLabels.lower_bound(address); first != queuedLabels.end() && first->first < end) return true;
     return false;
 }
@@ -252,8 +237,6 @@ std::optional<Recorder::LabelHit> Recorder::lookupLabel(std::uint64_t address, s
     for (std::size_t offset = 0; offset < bytes; offset += 4) {
         const auto dword = address + offset;
         const LabelEntry* entry = nullptr;
-        // A queued label is only good for its own queue's wait (see NoteQueuedLabel), where it is
-        // that queue's newest store of the dword; everyone else sees the recorded entry.
         if (const auto own = queuedLabels.find(dword); own != queuedLabels.end() && own->second.queue == tag) {
             entry = &own->second;
             queued = true;
@@ -266,7 +249,6 @@ std::optional<Recorder::LabelHit> Recorder::lookupLabel(std::uint64_t address, s
         }
         if (entry == nullptr) return std::nullopt;
         if (entry->stamp <= afterStamp) {
-            // The late rule (see NoteLabel): counted in both modes, so a control run shows the population.
             if (!candidate) ++lateCounts.candidates;
             candidate = true;
             if (!LateTrustEnabled()) return refuse(LabelRefusal::TrustOff, nullptr, *entry);
@@ -298,9 +280,6 @@ void Recorder::AfterCompletions(std::uint64_t address, std::span<const std::byte
     Require(open != nullptr || !inFlight.empty(), "no batch to append a completion label to");
     Batch& batch = open != nullptr ? *open : *inFlight.back();
     std::vector<std::byte> copy(bytes.begin(), bytes.end());
-    // The store bypasses the flush hook: it runs inside finish() under the mutex, and the hook would
-    // find this very range noted (or a later label to it) and sync re-entrantly. Stamped like every
-    // driver store so a collect memoized for the packet sees it.
     static const bool always = std::getenv("APS5_LABEL_STORE_ALWAYS") != nullptr;
     const auto sequence = [&] {
         std::lock_guard ringLock(writtenBackMutex);
@@ -315,11 +294,6 @@ void Recorder::AfterCompletions(std::uint64_t address, std::span<const std::byte
         GuestMemory::CheckRange(reinterpret_cast<const void*>(address), copy.size(), 4, true);
         GuestMemory::StoreOwnBytes(address, copy);
     });
-    // Counted per batch and counted down when the batch finishes, on every exit path of finish()
-    // (a label whose range became unmapped is reported there, and a lost device throws before the
-    // completions run): a label that will never land must not leave the workers reaping forever.
-    // One stored on the GPU already needs no reap unless a write-back overlaps it (the store above
-    // is skipped otherwise), so it enters the count at that write-back (NoteWrittenBack).
     const bool behindCompletion = !(storedOnGpu && !always && !CountAllCompletionLabels());
     if (!behindCompletion) {
         batch.completionLabelRanges.push_back({address, address + bytes.size(), false});
@@ -330,8 +304,6 @@ void Recorder::AfterCompletions(std::uint64_t address, std::span<const std::byte
         completionStores.fetch_add(1, std::memory_order_acq_rel);
         GuestMemory::BreakProofs();
     }
-    // The table entry before the write note: the note bumps the generation a poller watches, and a
-    // poller that sees the bump then finds the label without the GPU mutex.
     noteLabelOn(batch, address, bytes, stamp, queue, behindCompletion);
     noteWriteOn(batch, address, bytes.size(), true);
     if (&batch == open.get() && activeRecorder == this && pendingLabelSince.load(std::memory_order_relaxed) == NoPendingLabel) {
@@ -363,10 +335,6 @@ void Recorder::NoteWrittenBack(std::uint64_t address, std::size_t bytes) {
         while (recorder->writtenBack.size() > 16384) recorder->writtenBack.pop_front();
     }
     if (recorder->recordedLabels.load(std::memory_order_relaxed) != 0 && recorder->PendingLabelIn(address, bytes)) writeBacksOverLabels.fetch_add(1, std::memory_order_relaxed);
-    // The GPU-stored completion labels this write-back overlaps now need their completion store,
-    // so they enter the pending count (once each; finish() subtracts the batch's count). Batches
-    // in `finishing` run their own completions in the same finish(), so only open and in-flight
-    // ones are scanned.
     const auto count = [&](Batch& batch) {
         for (auto& label : batch.completionLabelRanges) {
             if (label.counted || label.begin >= end || address >= label.end) continue;
@@ -405,10 +373,6 @@ void Recorder::FailNextSubmitsForTest(unsigned count) {
 
 void Recorder::Submit() {
     PerformanceTimer frameTiming("Recorder.Submit");
-    // The work count is cleared even when nothing is open: the driver counts a dispatch after its
-    // call returns (outside the mutex), so a submit by another thread in between leaves a stale
-    // count behind, and the callers that act on it would otherwise take the mutex for nothing at
-    // every packet or submission end until a real batch is next submitted.
     if (activeRecorder == this) workSinceSubmit.store(0, std::memory_order_relaxed);
     dropStaleHoldKept();
     if (open == nullptr) return;
@@ -425,16 +389,12 @@ void Recorder::Submit() {
     if (segments && pendingSamples.size() >= SampleFoldCapacity) foldSegments();
     if (BarrierValidate()) validateBatchEnds.fetch_add(1, std::memory_order_relaxed);
     if (open->hostReadOwed && !hostReadCovered) {
-        // A fence makes nothing visible to the host: a lean draw's writes (no download barrier of
-        // its own) get the batch's one here.
         recordBarrier(open->commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
         CountBarriers(CommandClass::Draw);
     }
     EndGpuTiming(open->batchTiming);
     if (!GpuTimingEnabled()) reportBarriers();
     if (FlipReadCheck()) {
-        // A CPU write into a noted read after this collect (and so possibly before the GPU read
-        // it) fails UnchangedSince at the presenter's check (VulkanDevice RetirePresents).
         for (const auto& [begin, end] : notedReads(*open)) open->readGeneration = std::max(open->readGeneration, GuestMemory::CollectWrites(begin, end - begin));
     }
     auto batch = std::move(open);
@@ -450,7 +410,6 @@ void Recorder::Submit() {
     VkSubmitInfo submission{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submission.commandBufferCount = 1;
     submission.pCommandBuffers = &batch->commands;
-    // The timeline reaches this batch's serial when it completes (see WaitSerial).
     const std::uint64_t serial = submissions + 1;
     if (CheckpointMarkersEnabled() && batch->queue == 0 && batch->predictedSerial != 0) {
         Require(batch->predictedSerial == serial, "Recorder::Submit submit serial mismatch");

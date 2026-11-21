@@ -22,7 +22,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
-// For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -97,7 +96,6 @@ std::vector<StorageTexture::SliceWindow> StorageTexture::sliceWindows(std::span<
                 SliceWindow window{layer, level, 0, 0, {}, 0, {}};
                 const auto pitch = static_cast<std::uint32_t>(mip.pitchBytes / elementBytes * BlockWidth(descriptor.format));
                 if (mip.tail) {
-                    // The tail block holds every tail level: each is moved whole.
                     window.tiledBegin = sliceBegin;
                     window.tiledEnd = sliceEnd;
                     window.window = {0, static_cast<std::uint32_t>(mip.tiledSize), 0, 0, mip.linearSize};
@@ -124,14 +122,12 @@ std::vector<StorageTexture::SliceWindow> StorageTexture::sliceWindows(std::span<
                 window.tiledEnd = sliceBegin + high;
                 window.linearBytes = static_cast<std::uint64_t>(rowEnd - rowBegin) * mip.pitchBytes;
                 window.window = {static_cast<std::uint32_t>(low), static_cast<std::uint32_t>(high), static_cast<std::uint32_t>(low), static_cast<std::uint32_t>(rowBegin) * mip.pitchBytes, window.linearBytes};
-                // The dispatched rectangle: the block rows, and inside one block row the block span.
                 window.window.rowBegin = rowBegin;
                 window.window.rowEnd = rowEnd;
                 if (firstRow == lastRow) {
                     window.window.columnBegin = static_cast<std::uint32_t>(firstBlock - static_cast<std::uint64_t>(firstRow) * mip.blocksPerRow) * block[1];
                     window.window.columnEnd = std::min(mip.width, static_cast<std::uint32_t>(lastBlock - static_cast<std::uint64_t>(firstRow) * mip.blocksPerRow + 1u) * block[1]);
                 }
-                // One region per block row; whole rows merge (a run's middle rows are whole).
                 for (auto row = firstRow; row <= lastRow; ++row) {
                     const auto rowFirst = std::max<std::uint64_t>(firstBlock, static_cast<std::uint64_t>(row) * mip.blocksPerRow);
                     const auto rowLast = std::min<std::uint64_t>(lastBlock, static_cast<std::uint64_t>(row + 1u) * mip.blocksPerRow - 1u);
@@ -365,8 +361,6 @@ void StorageTexture::recordDirectUploadDone(VkCommandBuffer commands) {
 
 std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segments, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, bool discard) {
     const auto elementBytes = BytesPerElement(descriptor.format);
-    // Each run's pieces by source (a unit shadow's slab while fresh, else the import), the tail
-    // blocks moved whole by one window each; the windows are built per piece.
     std::vector<std::pair<std::uint64_t, std::uint64_t>> tailBlocks;
     for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
         for (std::uint32_t level = 0; level < descriptor.mipCount; ++level) {
@@ -448,8 +442,6 @@ std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segme
         }
         throw std::runtime_error("AGC graphics: storage image window has no source");
     };
-    // One linear buffer for every window, each at a 256-byte position (the detiler's descriptor
-    // offsets are aligned by the dispatch).
     std::vector<std::uint64_t> positions;
     std::uint64_t linearTotal = 0, uploadedBytes = 0;
     for (const auto& window : windows) {
@@ -465,13 +457,10 @@ std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segme
     VkCommandBuffer commands = VK_NULL_HANDLE;
     auto timing = Recorder::NoTiming;
     if (recorder != nullptr) {
-        // The import pieces are read in place when the batch runs; the slab pieces are the
-        // device's own.
         std::vector<std::pair<std::uint64_t, std::uint64_t>> reads = gatherReads;
         for (const auto& source : read) {
             if (!source.shadow) reads.emplace_back(descriptor.baseAddress + source.begin, descriptor.baseAddress + source.end);
         }
-        // A queued label store in a run lands before the detile reads it.
         for (const auto& [begin, end] : reads) recorder->FlushStoresOverlapping(begin, static_cast<std::size_t>(end - begin));
         commands = recorder->Commands();
         timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageUpload);
@@ -528,11 +517,8 @@ std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segme
         auto detile = window.window;
         detile.pipeBankXor = descriptor.pipeBankXor;
         if (source.shadow) {
-            // The slab holds the piece from the window's first tiled byte: the window's tiled base
-            // is its range begin (sliceWindows builds it so), read from the piece's slab offset.
             detiler.Dispatch(commands, descriptor.tileMode, elementBytes, source.buffer, source.offset + (window.tiledBegin - source.begin), linear->Handle(), positions[i], mip, false, window.layer, false, detile);
         } else {
-            // The import holds the whole mip: the window's tiled base is the mip's.
             detile.tiledBase = 0;
             detiler.Dispatch(commands, descriptor.tileMode, elementBytes, import.buffer, importOffset + geometry.GuestOffset(window.layer, mip), linear->Handle(), positions[i], mip, false, window.layer, false, detile);
         }
@@ -545,7 +531,6 @@ std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segme
     VkImageMemoryBarrier toTransfer{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     toTransfer.srcAccessMask = discard ? 0u : VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    // The other blocks keep their content (a new image, every block of which is written, has none).
     toTransfer.oldLayout = discard ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL;
     toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;

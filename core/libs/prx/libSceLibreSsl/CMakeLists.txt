@@ -879,7 +879,6 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-# --- small-size libraries split from Rsa.cpp ---
 add_library(libSceLibreSsl_Rsa_Chunk01 STATIC src/chunks/Rsa_Chunk01.cpp)
 target_link_libraries(libSceLibreSsl PUBLIC libSceLibreSsl_Rsa_Chunk01)
 get_target_property(libSceLibreSsl_incdirs libSceLibreSsl INCLUDE_DIRECTORIES)
@@ -887,7 +886,6 @@ if(libSceLibreSsl_incdirs)
     target_include_directories(libSceLibreSsl_Rsa_Chunk01 PRIVATE ${libSceLibreSsl_incdirs})
 endif()
 
-# --- small-size libraries split from CipherList.cpp ---
 add_library(libSceLibreSsl_CipherList_Chunk01 STATIC src/chunks/CipherList_Chunk01.cpp)
 target_link_libraries(libSceLibreSsl PUBLIC libSceLibreSsl_CipherList_Chunk01)
 get_target_property(libSceLibreSsl_incdirs libSceLibreSsl INCLUDE_DIRECTORIES)

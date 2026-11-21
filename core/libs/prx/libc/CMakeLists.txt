@@ -2807,7 +2807,6 @@ foreach(libcTestFragment IN LISTS libcTestFragments)
     include(${libcTestFragment})
 endforeach()
 
-# --- small-size libraries split from Math.cpp ---
 add_library(libc_Math_Chunk01 STATIC src/chunks/Math_Chunk01.cpp)
 add_library(libc_Math_Chunk02 STATIC src/chunks/Math_Chunk02.cpp)
 add_library(libc_Math_Chunk03 STATIC src/chunks/Math_Chunk03.cpp)
@@ -2837,7 +2836,6 @@ if(libc_incdirs)
     target_include_directories(libc_Math_Chunk12 PRIVATE ${libc_incdirs})
 endif()
 
-# --- small-size libraries split from Threads.cpp ---
 add_library(libc_Threads_Chunk01 STATIC src/chunks/Threads_Chunk01.cpp)
 add_library(libc_Threads_Chunk02 STATIC src/chunks/Threads_Chunk02.cpp)
 add_library(libc_Threads_Chunk03 STATIC src/chunks/Threads_Chunk03.cpp)

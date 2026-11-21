@@ -156,7 +156,6 @@ LibreSslBignum* NewBignum(const unsigned char* bytes, std::size_t length) {
     constexpr std::size_t maxWords = INT_MAX / (4 * 64);
     auto* number = static_cast<LibreSslBignum*>(malloc_nid_postfix(sizeof(LibreSslBignum)));
     if (!number) return nullptr;
-    *number = {nullptr, 0, 0, 0, BignumFlagMalloced};
     if (!length) return number;
     const std::size_t words = (length - 1) / 8 + 1;
     if (words <= maxWords) number->d = static_cast<std::uint64_t*>(malloc_nid_postfix(words * sizeof(std::uint64_t)));
@@ -470,7 +469,6 @@ int AddPkcs1Type2(unsigned char* to, int size, const unsigned char* from, int le
     HostEntropy_nid_no_patch(padding, static_cast<std::size_t>(random));
     for (int index = 0; index < random; ++index, ++padding)
         while (!*padding) HostEntropy_nid_no_patch(padding, 1);
-    *padding++ = 0;
     if (length) std::memcpy(padding, from, static_cast<std::size_t>(length));
     return 1;
 }
@@ -488,7 +486,6 @@ int AddSslv23(unsigned char* to, int size, const unsigned char* from, int length
         while (!*padding) HostEntropy_nid_no_patch(padding, 1);
     std::memset(padding, 3, 8);
     padding += 8;
-    *padding++ = 0;
     if (length) std::memcpy(padding, from, static_cast<std::size_t>(length));
     return 1;
 }
@@ -1016,12 +1013,9 @@ int AddX931(unsigned char* to, int size, const unsigned char* from, int length, 
     RequireBuffer(from, length, function, "input");
     unsigned char* data = to;
     if (!padding) {
-        *data++ = 0x6A;
     } else {
-        *data++ = 0x6B;
         std::memset(data, 0xBB, static_cast<std::size_t>(padding - 1));
         data += padding - 1;
-        *data++ = 0xBA;
     }
     if (length) std::memcpy(data, from, static_cast<std::size_t>(length));
     data[length] = 0xCC;
@@ -1338,7 +1332,6 @@ int APS5_VABI RSA_sign_nid_postfix(int type, const unsigned char* digest, unsign
     const int result = RSA_private_encrypt_nid_postfix(static_cast<int>(length), data, signature, rsa, PaddingPkcs1);
     if (result <= 0) return 0;
     if (!signatureLength) throw std::invalid_argument(std::string(__func__) + ": null signature length");
-    *signatureLength = static_cast<unsigned int>(result);
     return 1;
 }
 
@@ -1392,10 +1385,8 @@ LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsig
     }
     auto* rsa = DecodeRsaPublicKey(key.data(), static_cast<long>(key.size()), __func__);
     if (!rsa) return nullptr;
-    *input = publicKey.end;
     if (out) {
         RSA_free_nid_postfix(*out);
-        *out = rsa;
     }
     return rsa;
 }
@@ -1508,7 +1499,6 @@ int AddPss(EvpMdContext& context, const LibreSslRsa* rsa, unsigned char* em, con
     const int topBits = (Bits(*static_cast<const LibreSslBignum*>(rsa->n)) - 1) & 0x7;
     if (!topBits) {
         if (!em) throw std::invalid_argument(std::string(function) + ": null EM");
-        *em++ = 0;
         --length;
     }
     if (saltLength == PssLongestSalt) {
@@ -1532,7 +1522,6 @@ int AddPss(EvpMdContext& context, const LibreSslRsa* rsa, unsigned char* em, con
     if (!EVP_DigestFinal_ex_nid_postfix(&context, digest, nullptr)) return 0;
     if (Mgf1(em, maskedLength, digest, digestLength, hash, function)) return 0;
     unsigned char* position = em + (length - saltLength - digestLength - 2);
-    *position++ ^= 0x01;
     for (unsigned char value : salt) *position++ ^= value;
     if (topBits) em[0] &= static_cast<unsigned char>(0xFF >> (8 - topBits));
     em[length - 1] = PssTrailer;
@@ -1595,7 +1584,6 @@ LibreSslRsa* DecodeRsaPrivateKey(const unsigned char** input, long length, const
         RSA_free_nid_postfix(rsa);
         return nullptr;
     }
-    *input = sequence.end;
     return rsa;
 }
 
@@ -1622,7 +1610,6 @@ bool DecodePkcs8(const unsigned char** input, long length, Pkcs8Key& key, const 
     key.keyType = privateKey.tagClass == 0 ? privateKey.tag : -3;
     key.key = key.keyType == 16 ? start : privateKey.content;
     key.keyLength = key.keyType == 16 ? privateKey.end - start : privateKey.length;
-    *input = sequence.end;
     return true;
 }
 

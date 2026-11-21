@@ -1143,7 +1143,6 @@ if(BUILD_TESTING)
         set_tests_properties(guest_libressl3_ssl_verified_chain PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
-# --- small-size libraries split from PkeyContext.cpp ---
 add_library(libSceLibreSsl3_PkeyContext_Chunk01 STATIC src/chunks/PkeyContext_Chunk01.cpp)
 target_link_libraries(libSceLibreSsl3 PUBLIC libSceLibreSsl3_PkeyContext_Chunk01)
 get_target_property(libSceLibreSsl3_incdirs libSceLibreSsl3 INCLUDE_DIRECTORIES)
@@ -1151,7 +1150,6 @@ if(libSceLibreSsl3_incdirs)
     target_include_directories(libSceLibreSsl3_PkeyContext_Chunk01 PRIVATE ${libSceLibreSsl3_incdirs})
 endif()
 
-# --- small-size libraries split from RsaCrypto.cpp ---
 add_library(libSceLibreSsl3_RsaCrypto_Chunk01 STATIC src/chunks/RsaCrypto_Chunk01.cpp)
 target_link_libraries(libSceLibreSsl3 PUBLIC libSceLibreSsl3_RsaCrypto_Chunk01)
 get_target_property(libSceLibreSsl3_incdirs libSceLibreSsl3 INCLUDE_DIRECTORIES)
@@ -1159,7 +1157,6 @@ if(libSceLibreSsl3_incdirs)
     target_include_directories(libSceLibreSsl3_RsaCrypto_Chunk01 PRIVATE ${libSceLibreSsl3_incdirs})
 endif()
 
-# --- small-size libraries split from EcAsn1.cpp ---
 add_library(libSceLibreSsl3_EcAsn1_Chunk01 STATIC src/chunks/EcAsn1_Chunk01.cpp)
 target_link_libraries(libSceLibreSsl3 PUBLIC libSceLibreSsl3_EcAsn1_Chunk01)
 get_target_property(libSceLibreSsl3_incdirs libSceLibreSsl3 INCLUDE_DIRECTORIES)
@@ -1167,7 +1164,6 @@ if(libSceLibreSsl3_incdirs)
     target_include_directories(libSceLibreSsl3_EcAsn1_Chunk01 PRIVATE ${libSceLibreSsl3_incdirs})
 endif()
 
-# --- small-size libraries split from KeyDer.cpp ---
 add_library(libSceLibreSsl3_KeyDer_Chunk01 STATIC src/chunks/KeyDer_Chunk01.cpp)
 target_link_libraries(libSceLibreSsl3 PUBLIC libSceLibreSsl3_KeyDer_Chunk01)
 get_target_property(libSceLibreSsl3_incdirs libSceLibreSsl3 INCLUDE_DIRECTORIES)
@@ -1175,7 +1171,6 @@ if(libSceLibreSsl3_incdirs)
     target_include_directories(libSceLibreSsl3_KeyDer_Chunk01 PRIVATE ${libSceLibreSsl3_incdirs})
 endif()
 
-# --- small-size libraries split from X509Crl.cpp ---
 add_library(libSceLibreSsl3_X509Crl_Chunk01 STATIC src/chunks/X509Crl_Chunk01.cpp)
 target_link_libraries(libSceLibreSsl3 PUBLIC libSceLibreSsl3_X509Crl_Chunk01)
 get_target_property(libSceLibreSsl3_incdirs libSceLibreSsl3 INCLUDE_DIRECTORIES)
@@ -1183,7 +1178,6 @@ if(libSceLibreSsl3_incdirs)
     target_include_directories(libSceLibreSsl3_X509Crl_Chunk01 PRIVATE ${libSceLibreSsl3_incdirs})
 endif()
 
-# --- small-size libraries split from X509StoreContext.cpp ---
 add_library(libSceLibreSsl3_X509StoreContext_Chunk01 STATIC src/chunks/X509StoreContext_Chunk01.cpp)
 target_link_libraries(libSceLibreSsl3 PUBLIC libSceLibreSsl3_X509StoreContext_Chunk01)
 get_target_property(libSceLibreSsl3_incdirs libSceLibreSsl3 INCLUDE_DIRECTORIES)
@@ -1191,7 +1185,6 @@ if(libSceLibreSsl3_incdirs)
     target_include_directories(libSceLibreSsl3_X509StoreContext_Chunk01 PRIVATE ${libSceLibreSsl3_incdirs})
 endif()
 
-# --- small-size libraries split from PkeyLifecycle.cpp ---
 add_library(libSceLibreSsl3_PkeyLifecycle_Chunk01 STATIC src/chunks/PkeyLifecycle_Chunk01.cpp)
 target_link_libraries(libSceLibreSsl3 PUBLIC libSceLibreSsl3_PkeyLifecycle_Chunk01)
 get_target_property(libSceLibreSsl3_incdirs libSceLibreSsl3 INCLUDE_DIRECTORIES)
@@ -1199,7 +1192,6 @@ if(libSceLibreSsl3_incdirs)
     target_include_directories(libSceLibreSsl3_PkeyLifecycle_Chunk01 PRIVATE ${libSceLibreSsl3_incdirs})
 endif()
 
-# --- small-size libraries split from AdditionalExports.cpp ---
 add_library(libSceLibreSsl3_AdditionalExports_Chunk01 STATIC chunks/AdditionalExports_Chunk01.cpp)
 target_link_libraries(libSceLibreSsl3 PUBLIC libSceLibreSsl3_AdditionalExports_Chunk01)
 get_target_property(libSceLibreSsl3_incdirs libSceLibreSsl3 INCLUDE_DIRECTORIES)
@@ -1230,7 +1222,6 @@ if(libSceLibreSsl3_incdirs)
     target_include_directories(libSceLibreSsl3_PemKeys_Chunk02 PRIVATE ${libSceLibreSsl3_incdirs})
 endif()
 
-# --- small-size libraries split from X509V3ExtConfNid.cpp ---
 add_library(libSceLibreSsl3_X509V3ExtConfNid_Chunk01 STATIC src/chunks/X509V3ExtConfNid_Chunk01.cpp)
 add_library(libSceLibreSsl3_X509V3ExtConfNid_Chunk02 STATIC src/chunks/X509V3ExtConfNid_Chunk02.cpp)
 target_link_libraries(libSceLibreSsl3 PUBLIC libSceLibreSsl3_X509V3ExtConfNid_Chunk01 libSceLibreSsl3_X509V3ExtConfNid_Chunk02)

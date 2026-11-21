@@ -138,8 +138,6 @@ ImportProbe ProbeImportWriteProtection(const Context& context) {
         probe.failure = "host import support";
         return probe;
     }
-    // Without a write watch the write-protection fields stay empty (the collect reports none),
-    // but the coherence measurement still runs: a plain CPU read after a GPU fill.
     constexpr std::uint64_t page = 4096;
     const std::uint64_t alignment = std::max<std::uint64_t>(context.hostImportAlignment, page);
     const std::uint64_t bytes = (4 * page + alignment - 1) / alignment * alignment;
@@ -451,7 +449,6 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
 #ifdef _WIN32
     settleUnwatchedImports(context, state);
 #endif
-    // A hit is only valid while the registry has not changed since the imports were reconciled.
     if (!importsStale(context, state)) {
         if (recentImportsEnabled()) {
             if (const auto* entry = recentImport(state, address, address + bytes)) {

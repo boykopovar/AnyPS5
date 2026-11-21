@@ -312,7 +312,6 @@ void memoryBarrier(const Context& context, VkCommandBuffer commands, VkPipelineS
     context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, sourceStage, destinationStage, 0, 1, &barrier, 0, nullptr, 0, nullptr);
 }
 
-// The color surface as one untailed SW_64KB_R_X mip for the GPU detiler, with tightly packed linear rows.
 TileMipLayout ColorTargetMip(const ColorTarget& color, const ColorTargetLayout& layout) {
     TileMipLayout mip{};
     mip.width = color.extent.width;
@@ -324,27 +323,18 @@ TileMipLayout ColorTargetMip(const ColorTarget& color, const ColorTargetLayout& 
     return mip;
 }
 
-// APS5_PROFILE_DRAW: per-draw phase timers in microseconds (a recorded draw's phases are far below
-// the millisecond the old print rounded to), totalled over 10 s in the [draws] line.
 enum DrawPhase : std::size_t { PhaseValidate, PhaseVertex, PhaseSetup, PhaseReadTarget, PhasePrepare, PhaseLookup, PhaseResources, PhasePipeline, PhaseRecord, PhaseKeep, PhaseSync, PhaseWriteBack, PhaseDescribe, PhaseCount };
 constexpr std::array<const char*, PhaseCount> DrawPhaseNames{"validate", "vertex", "setup", "readTarget", "prepare", "lookup", "resources", "pipeline", "record", "keep", "sync", "writeBack", "describe"};
 
-// Why a draw did not go into the recorder without a wait (counted in the [draws] line): its targets
-// are not all resident, no recorder is active, a switch (APS5_SYNC_DRAWS, APS5_DUMP_TARGETS,
-// APS5_SYNC_COMPLETION_DRAWS) forced it, or its completion work writes copied guest buffers or
-// releases an address-based build's lease, which the CPU must not outrun (see `recorded` in Draw).
 enum SyncReason : std::size_t { SyncNone, SyncNotResident, SyncNoRecorder, SyncDisabled, SyncCopiedWrites, SyncLease, SyncCount };
 constexpr std::array<const char*, SyncCount> SyncReasonNames{"none", "non-resident target", "no recorder", "disabled", "copied writes", "lease"};
 constexpr std::size_t IndirectPathCount = static_cast<std::size_t>(IndirectDrawPath::Count);
 constexpr std::array<const char*, IndirectPathCount> IndirectDrawPathNames{"gpu-side", "patched SGPR not folded", "fetch offset unknown", "non-vertex path", "GE_INDX_OFFSET", "draw index", "vertex range too large", "feature gap", "pending image results", "pending label or copied write", "not imported", "disabled", "index range not fully readable", "index limit unknown", "records settled"};
 
-// What became of one draw, for the totals.
 struct DrawOutcome {
-    // In the recorder; `waited` when the recorder was synced right after (copied writes or a lease).
     bool recorded = false;
     bool waited = false;
     bool completion = false;
-    // A recorded draw began a render pass of its own, or continued the previous draw's.
     bool passBegun = false;
     bool passContinued = false;
     PassBreak passBreak = PassBreak::Continued;
@@ -352,39 +342,21 @@ struct DrawOutcome {
     bool storesFlushed = false;
     bool addressDraw = false;
     SyncReason reason = SyncNone;
-    // Shader validation memo (see CachedFragmentOutputs).
     bool validateMemoized = false;
     bool validateHit = false;
-    // A build that acquired the allocation registry lease (BDA), whose cost sits outside the
-    // build's own sub-phases.
     bool addressBased = false;
-    // Resident target lookups, and those that took a millisecond or more. Whether a slow one
-    // re-uploaded the image or just walked its pages under contention is not visible from here
-    // (StorageTexture::Version advances on every MarkDirty as well as on an upload, and Generation
-    // is stamped afresh by every write-watch walk): the [texture] line's "reused" and "direct
-    // uploads" counters and APS5_TRACE_UPLOAD name the actual uploads.
     std::uint64_t targetLookups = 0;
     std::uint64_t slowLookups = 0;
     double slowLookupUs = 0;
-    // The lookups by whether the draw's scissor covers the whole target (an area-scoped proof
-    // would change nothing for those), the pages their write-watch collects walked and their time.
     std::uint64_t fullScissorLookups = 0;
     std::uint64_t partialLookups = 0;
     std::uint64_t pagesWalked = 0;
     double lookupUs = 0;
-    // How the draw's resources came about (DrawKind), for the per-kind averages.
     std::size_t kind = 0;
-    // The flush hook's fence waits made inside this draw (index and vertex reads, the target
-    // lookups' flushes, the build's texture lookups): nested in the draw's GpuMutex hold, so they
-    // are the part of the hold that is waiting rather than working. The draw's own syncs (a
-    // recorded-then-waited draw's recorder Sync, a synchronous draw's SubmitAndWait) are kept apart
-    // in ownSyncUs: those wait by design and would otherwise count as nested hook waits.
     double hookWaitUs = 0;
     double ownSyncUs = 0;
 };
 
-// The resources of a draw: a recipe hit (reserved for the draw recipe step), a resource-cache
-// template hit, a build, or an address-based (BDA) build.
 enum DrawKind : std::size_t { KindRecipeHit, KindTemplateHit, KindBuild, KindBda, KindCount };
 constexpr std::array<const char*, KindCount> DrawKindNames{"recipe hit", "template hit", "build", "BDA"};
 
@@ -397,17 +369,11 @@ struct DrawProfile {
     std::uint64_t pagesWalked = 0;
     double lookupUs = 0;
     std::array<double, PhaseCount> totalsUs{};
-    // The longest single draw's time per phase, and the longest draw: the [lock] line's 'draw'
-    // hold max (tens of ms against an average well under a millisecond) needs a phase name.
     std::array<double, PhaseCount> maxUs{};
     double maxDrawUs = 0;
     double hookWaitUs = 0;
     double maxHookWaitUs = 0;
     double ownSyncUs = 0;
-    // The resources build's sub-phases (ShaderResources::Timing) of draws only; dispatches report
-    // theirs in the [resources] line. `other` is the rest of the build (prepareAddressBindings:
-    // the registry lease and snapshots of an address-based build, the BDA table, the layout
-    // lookup), and how much of it address-based builds account for.
     double bindingsUs = 0;
     double uploadUs = 0;
     double descriptorsUs = 0;
@@ -417,45 +383,31 @@ struct DrawProfile {
     std::uint64_t draws = 0;
     std::uint64_t recorded = 0;
     std::uint64_t waited = 0;
-    // Recorded draws whose write-back (BDA fault check) runs as a completion action instead of
-    // making the draw synchronous (see APS5_SYNC_COMPLETION_DRAWS).
     std::uint64_t completion = 0;
-    // Render passes recorded draws began, and draws that continued the previous draw's pass.
     std::uint64_t passesBegun = 0;
     std::uint64_t passesContinued = 0;
     std::array<DrawPassCounts, 2> passTotals{};
     std::array<std::uint64_t, PassBreakCount> passBreaks{};
     std::array<std::uint64_t, PassBreakCount> reportedPassBreaks{};
     std::array<std::uint64_t, SyncCount> reasons{};
-    // The CPU inside Graphics::Draw, split by outcome: a synchronous draw costs ten times a recorded
-    // one, so one average would only show the synchronous population.
     double recordedUs = 0;
     double waitedUs = 0;
     double synchronousUs = 0;
     std::uint64_t targetLookups = 0;
     std::uint64_t slowLookups = 0;
     double slowLookupUs = 0;
-    // Resource cache outcomes: hits, misses (built and inserted when reusable), entries that failed
-    // Revalidate, and draws that could not use the cache (synchronous, no variant id, or disabled).
-    // Which key words the misses differ in is the cache's own "[rescache] miss churn" line
-    // (ResourceCache::noteMiss compares each miss with the last key of the same variants).
     std::uint64_t cacheHits = 0;
     std::uint64_t cacheMisses = 0;
     std::uint64_t cacheInvalidated = 0;
     std::uint64_t uncacheable = 0;
-    // Shader validation memo (see CachedFragmentOutputs).
     std::uint64_t validateHits = 0;
     std::uint64_t validateMisses = 0;
-    // Draw recipe outcomes (DrawWithRecipe): hits, and misses by DrawRecipeMiss.
     std::uint64_t recipeHits = 0;
     std::array<std::uint64_t, static_cast<std::size_t>(DrawRecipeMiss::Count)> recipeMisses{};
-    // Indirect draws by path (IndirectDrawPath), the GPU-side ones whose records were rewritten
-    // with a constant, and the time of the CPU record reads (their syncs).
     std::array<std::uint64_t, IndirectPathCount> indirect{};
     std::uint64_t indirectRewritten = 0;
     std::uint64_t indirectEmpty = 0;
     double indirectReadUs = 0;
-    // Draw packets that drew nothing, by DrawSkip, and their time.
     std::array<std::uint64_t, static_cast<std::size_t>(DrawSkip::Count)> skips{};
     std::array<double, static_cast<std::size_t>(DrawSkip::Count)> skipUs{};
     AddressDrawReuseCounts addressSeen{};
@@ -493,7 +445,6 @@ DrawProfile& Profile() {
     return profile;
 }
 
-// Adds one draw's phases to the totals and prints the [draws] and [rescache] lines every 10 s.
 void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources::BuildTiming* built, const DrawOutcome& outcome) {
     auto& profile = Profile();
     std::lock_guard lock(profile.mutex);
@@ -576,8 +527,6 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     for (std::size_t kind = 0; kind < KindCount && room(); ++kind) {
         n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " %s %.0f (%llu)", DrawKindNames[kind], average(profile.kindUs[kind], profile.kindCounts[kind]), static_cast<unsigned long long>(profile.kindCounts[kind]));
     }
-    // The longest draw and the longest single phase of any draw (which phase a long 'draw' hold
-    // was), plus the hook waits nested inside the draws.
     if (room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "; longest draw %.1f ms, longest phase of any draw:", profile.maxDrawUs / 1000.0);
     for (std::size_t i = 0; i < PhaseCount && room(); ++i) {
         if (profile.maxUs[i] < 500.0) continue;

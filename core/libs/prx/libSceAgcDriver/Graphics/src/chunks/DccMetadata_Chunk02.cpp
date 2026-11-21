@@ -142,10 +142,6 @@ void MarkDccUncompressed(std::uint64_t metaAddress, std::uint64_t surfaceBytes) 
 void MarkDccUncompressed(std::uint64_t metaAddress, std::uint64_t surfaceBytes, std::size_t keyCount) {
     const auto count = StoredKeyCount(metaAddress, surfaceBytes, keyCount);
     if (count == 0) return;
-    // The bytes are trusted only when no recorded work writes them (lock-free, with or without
-    // GuestMemory::GpuMutex); otherwise the store runs and waits through the flush hook. A pending
-    // GPU store of the driver's own is no reason to skip: a title kernel recorded into the same
-    // batch after it may write clear keys, and the memo cannot order inside a batch.
     if (!Recorder::SnapshotWriteOverlaps(metaAddress, count) && AlreadyUncompressed(metaAddress, count)) return;
     StoreUncompressedOnCpu(metaAddress, count);
 }
@@ -158,12 +154,6 @@ void MarkDccUncompressed(const Context& context, std::uint64_t metaAddress, std:
     const auto count = StoredKeyCount(metaAddress, surfaceBytes, keyCount);
     if (count == 0) return;
     auto* recorder = CpuKeysOnly() || !GuestMemory::GpuMutex().HeldByThisThread() ? nullptr : Recorder::Active();
-    // The bytes are scanned only when no recorded work writes them: a pending clear kernel's keys are
-    // not in memory yet, so the bytes could read as uncompressed while the kernel will store a clear
-    // code, and the range is stored without looking (the fill lands after the kernel). That includes
-    // a pending GPU store of the driver's own (the memo): a title kernel recorded into the same batch
-    // after it may write clear keys, and nothing orders inside a batch, so a fresh fill is recorded
-    // (idempotent, no wait) rather than trusting the earlier one.
     const bool pending = recorder != nullptr && recorder->PendingWriteOverlaps(metaAddress, count);
     if (!pending && AlreadyUncompressed(metaAddress, count)) return;
     if (recorder != nullptr && StoreUncompressedOnGpu(context, *recorder, metaAddress, count)) return;
@@ -237,8 +227,6 @@ DccKeys ProvedClearKeys(const GuestTextureResource& resource, std::uint64_t gues
         return TextureClearKeys(resource, guestBytes);
     }
     const auto count = static_cast<std::size_t>(guestBytes / KeyBytes);
-    // The collect precedes the scan: a write landing between them is stamped above `collected`, so
-    // the proof it would invalidate is never taken as current.
     const auto collected = count == 0 ? 0 : GuestMemory::CollectWrites(resource.dccAddress, count);
     if (proof.generation != 0 && collected != 0 && GuestMemory::UnchangedSince(resource.dccAddress, count, proof.generation) && PendingKeyProofHolds(resource, guestBytes, proof)) {
         counters.proved.fetch_add(1, std::memory_order_relaxed);
@@ -248,8 +236,6 @@ DccKeys ProvedClearKeys(const GuestTextureResource& resource, std::uint64_t gues
     const auto keys = textureClearKeys(resource, guestBytes, memoized);
     bool stable = collected != 0 && !memoized;
     if (stable) {
-        // After the scan: a write noted since the collect is stamped above it anyway; one noted
-        // before it may still land after the bytes were read.
         if (GuestMemory::GpuMutex().HeldByThisThread()) {
             if (auto* recorder = Recorder::Active(); recorder != nullptr) {
                 const auto info = recorder->DescribePendingWrite(resource.dccAddress, count);
@@ -318,7 +304,6 @@ DccKeys ProvedCurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceByt
 }
 
 void ReadTextureSurface(const GuestTextureResource& resource, DccKeys keys, std::span<std::byte> bytes) {
-    // Named for the [hooksync] attribution: the read goes through the flush hook.
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureRead);
     if (keys == DccKeys::Uncompressed || keys == DccKeys::ClearSingle) GuestMemory::ReadCommitted(resource.baseAddress, bytes);
     else FillDccClear(DccClearTextureFormat(resource.format), keys, resource.dccAlphaOnMsb, bytes);

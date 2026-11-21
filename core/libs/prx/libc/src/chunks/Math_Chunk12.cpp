@@ -861,14 +861,12 @@ double APS5_VABI remainder_nid_postfix(double x, double y) {
 double APS5_VABI remquo_nid_postfix(double x, double y, int* quo) {
     std::uint16_t status;
     const long double remainder = PartialRemainder(x, y, &status);
-    *quo = RemquoQuotient(status, std::signbit(x) != std::signbit(y));
     SetRemainderDomainError(x, y);
     return static_cast<double>(remainder);
 }
 float APS5_VABI remquof_nid_postfix(float x, float y, int* quo) {
     std::uint16_t status;
     const long double remainder = PartialRemainder(x, y, &status);
-    *quo = RemquoQuotient(status, std::signbit(x) != std::signbit(y));
     SetRemainderDomainError(x, y);
     return static_cast<float>(remainder);
 }
@@ -976,7 +974,6 @@ int APS5_VABI rand_nid_postfix() {
 
 int APS5_VABI rand_r_nid_postfix(unsigned int* state) {
     if (state == nullptr) throw std::invalid_argument("rand_r: null state");
-    *state = MinimalStandardNext(static_cast<std::int32_t>(*state));
     return static_cast<int>(*state);
 }
 

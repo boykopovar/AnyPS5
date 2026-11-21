@@ -86,9 +86,6 @@ void PopulateInitialLoginEvents() {
 }
 
 
-// Per-user keyboard settings. Nothing in AnyPS5 stores a keyboard type or input variant, so every known user reports
-// the keyboard type of the configured system language and 0 for the input variants (see
-// docs/dev/debt/libSceUserService.md).
 static int32_t KeyboardTypeForSystemLanguage() {
  constexpr int param_id_lang = 1;
  constexpr int32_t fallback = 20;
@@ -373,7 +370,6 @@ int APS5_VABI sceUserServiceGetAgeLevel(int user_id, uint32_t* age_level) {
  return USER_SERVICE_OK;
 }
 
-// The initial user is reported as logging in once per initialization; afterwards there are no user events.
 int APS5_VABI sceUserServiceGetEvent(SceUserServiceEvent* event) {
  if (!initialized.load()) {
   return USER_SERVICE_ERROR_NOT_INITIALIZED;

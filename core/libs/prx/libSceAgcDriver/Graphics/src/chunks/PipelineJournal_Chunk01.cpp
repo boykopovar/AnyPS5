@@ -54,8 +54,6 @@ static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "Tessel
 #endif
 
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
-// Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
-// layout guards above do not catch (a field renumbered or reinterpreted at the same size).
 constexpr std::uint32_t FileFormat = 19u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
@@ -397,10 +395,6 @@ std::uint64_t configured(const char* name, std::uint64_t fallback) {
     return value;
 }
 
-// Held while the journal is read, cut or appended: another process sharing the directory (a
-// second run of the same install) takes the same lock file, so its appends and this run's never
-// interleave and neither cuts a record the other is writing. Taken before the journal's mutex,
-// never while holding it.
 bool replaceFile(const std::filesystem::path& temporary, const std::filesystem::path& target) {
 #ifdef _WIN32
     return ::MoveFileExW(temporary.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
@@ -546,8 +540,6 @@ private:
     std::uint64_t size = 0;
 };
 
-// The end of the last whole record in [from, size) of the file: records another process appended
-// after this one loaded the file are kept, the torn tail of a record a crashed run left is cut.
 std::uint64_t validTail(const std::filesystem::path& path, std::uint64_t from, std::uint64_t size);
 
 struct LoadedModule {
@@ -774,10 +766,6 @@ public:
     [[nodiscard]] bool Enabled() const { return !path.empty() && !mismatched.load(std::memory_order_relaxed); }
     [[nodiscard]] const std::filesystem::path& Path() const { return path; }
 
-    // The journal belongs to one device per process: the first device to replay binds its
-    // fingerprint, the file header names it and a file written by another device starts over. A
-    // later device with another fingerprint (the window's device is the headless device's GPU, so a
-    // run does not see one) turns the journal off for the rest of the run.
     bool Bind(std::uint64_t fingerprint) {
         std::lock_guard lock(mutex);
         if (!bound.load(std::memory_order_relaxed)) {
@@ -790,8 +778,6 @@ public:
         return false;
     }
 
-    // Parses the file a record at a time and keeps it open for the replay, fills the dedupe index,
-    // and remembers how many bytes parsed so a torn tail is cut before the next append.
     LoadedJournal Load() {
         LoadedJournal loaded;
         if (!Enabled() || !bound.load(std::memory_order_acquire)) return loaded;
@@ -919,9 +905,6 @@ private:
         Libc::StartHostThread([this] { run(); }).detach();
     }
 
-    // Parses the file: with `loaded` set every record is decoded, otherwise only the index (the
-    // module identities and record hashes) is built. Stops at the first record that does not
-    // parse; the bytes before it stay valid.
     bool parse(const JournalFile& file, LoadedJournal& loaded, bool decode, std::vector<RecordSpan>* spans = nullptr) {
         std::uint64_t valid = 0;
         bool header = false;
@@ -1028,10 +1011,6 @@ private:
         return true;
     }
 
-    // The index the writer dedupes against, replaced from the file: what it holds and where it
-    // ends. Under the file lock. False when the file exists but could not be read, so nothing is
-    // written until it can be (the next record tries again) and the file is never started over for
-    // a read failure.
     bool indexLocked() {
         LoadedJournal index;
         std::error_code error;
@@ -1094,9 +1073,6 @@ private:
         }
     }
 
-    // One record per module the file lacks, then the pipeline record; a record whose payload the
-    // file already holds is skipped. The file is opened for appending per batch, after the torn
-    // tail of a crashed run (bytes past the last parsed record) was cut.
     void write(const Pending& pending) {
         if (!ensureIndexed()) throw std::runtime_error("the journal could not be read");
         for (unsigned attempt = 0; attempt < 3; ++attempt) {
@@ -1196,9 +1172,6 @@ private:
         return payload;
     }
 
-    // One attempt: false when the file was cut or replaced by someone else since it was indexed
-    // (it is indexed again, and the batch is rebuilt against that index), or when the file was
-    // rewritten to make room for the record (the batch is rebuilt against that file).
     bool append(const Pending& pending) {
         const auto recordHash = ShaderRecompiler::HashBytes(pending.payload);
         std::vector<ShaderRecompiler::PipelineIdentity> missing;

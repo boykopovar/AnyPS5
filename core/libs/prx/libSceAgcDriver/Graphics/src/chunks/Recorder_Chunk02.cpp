@@ -94,8 +94,6 @@ void ReportHookSyncs(HookSyncStats& stats) {
     stats = HookSyncStats{};
 }
 
-// Wraps one pending-write sync (constructed before it, under the GpuMutex): gathers what the sync
-// waits for and, in the destructor, the time it took and whether the bytes changed.
 class HookSyncScope {
 public:
     HookSyncScope(const Recorder& recorder, std::uint64_t address, std::size_t bytes) : enabled(HookSyncProfiled()), address(address), bytes(bytes) {
@@ -103,12 +101,7 @@ public:
         info = recorder.DescribePendingWrite(address, bytes);
         const auto packet = GuestMemory::CurrentPacket();
         key = HookSyncKey{packet.queue, packet.opcode, GuestMemory::CurrentReadSite(), {}};
-        // Frame 0 is the hook's caller (the GuestMemory entry, or the driver code when the entry
-        // was inlined); the driver code that made the access is one of the next frames.
         GuestMemory::CaptureCallerOffsets(key.frames, 1);
-        // The access's bytes are copied raw: a Read here would re-enter the hook. The same access
-        // check the accessing code makes guards the copy; a range that fails it is left unchecked.
-        // A store's bytes are not compared (counted as a store instead).
         if (!GuestMemory::WritesGuestMemory(key.site) && bytes <= CompareLimit && GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) {
             before.resize(bytes);
             std::memcpy(before.data(), reinterpret_cast<const void*>(address), bytes);
@@ -135,13 +128,10 @@ public:
             if (info->signaled) ++stats.signaledTargets;
             stats.batchesFinished += info->batchesToFinish;
         }
-        // One outcome per sync, on both the key's and the interval's counters.
         const auto outcome = [&]() -> std::uint64_t HookSyncOutcomes::* {
             if (GuestMemory::WritesGuestMemory(key.site)) return &HookSyncOutcomes::stores;
             if (before.empty() || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return &HookSyncOutcomes::unchecked;
             if (std::memcmp(before.data(), reinterpret_cast<const void*>(address), bytes) != 0) return &HookSyncOutcomes::changed;
-            // A target already signaled (or no target found: the batch is finishing) had run
-            // before the copy, so its unchanged bytes are not evidence of a false overlap.
             if (!info.has_value() || info->signaled) return &HookSyncOutcomes::unchangedSignaled;
             return info->open ? &HookSyncOutcomes::unchangedOpen : &HookSyncOutcomes::unchangedPending;
         }();
@@ -163,16 +153,6 @@ private:
     std::chrono::steady_clock::time_point start;
 };
 
-// Attribution of the hook's recorded-store syncs (source 2: a pending image's write-back or a unit
-// publish was recorded for the access and SyncThrough waits for it), the [hooksync] recorded-store
-// line every 10 s under the same switch as HookSyncScope: per (queue, packet, read site), the syncs,
-// their wait, the batches in flight at the sync, the C4 classification of the access (every 64 KiB
-// block CPU-written since the overlapping images' generations: the store would not change a byte
-// the CPU reads), whether the bytes changed over the wait, whether the images overlapped had a
-// consumer proof within StorageTexture::DeadImagePresents presents, and the accesses the C4 skip
-// took instead of a flush (with the images that left the registry there as an empty write-back
-// would have left them). The skips are counted without the GpuMutex (their own mutex); the syncs
-// under it.
 struct RecordedStoreTotals {
     std::uint64_t count = 0;
     double waitedMs = 0;
@@ -216,9 +196,6 @@ void ReportRecordedStoreSyncs(RecordedStoreStats& stats) {
     stats.totals = {};
 }
 
-// The key of the access the hook handles now: always inlined into FlushForAccess so that frame 0
-// is the hook's caller for the skip counters and the sync scope alike, whatever the inliner does
-// with the scope's constructor.
 [[gnu::always_inline]] inline HookSyncKey RecordedStoreKey() {
     const auto packet = GuestMemory::CurrentPacket();
     HookSyncKey key{packet.queue, packet.opcode, GuestMemory::CurrentReadSite(), {}};
@@ -294,18 +271,8 @@ private:
     std::chrono::steady_clock::time_point start;
 };
 
-// GuestMemory flush hook: a CPU access to memory that recorded GPU work will write waits for that
-// work first; then storage image results pending for the range are stored. The recorder is only
-// dereferenced under the GpuMutex (it is destroyed with its device under that lock).
 void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     if (DrawProfiled()) hookCalls.fetch_add(1, std::memory_order_relaxed);
-    // A label this worker queued but has not recorded writes the range: in queue order the label
-    // precedes this access, so the group is recorded first (it then notes the range as a pending
-    // write of the open batch, and the check below syncs on it like any recorded store). Not from
-    // inside a completion action (a write-back store made while a batch is reaped): the record
-    // would reap nested in the reap in progress, landing later batches' write-backs before the
-    // rest of this one's, and this queue's queued label follows every batch of its own in flight
-    // anyway, so the write-back landing first is the order the hardware gives.
     if (QueuedLabelsOnThread::Get() && QueuedLabelOverlaps(address, bytes)) {
         if (completionDepth() != 0 && HookCompletionGuard()) {
             queuedLabelHookInCompletion.fetch_add(1, std::memory_order_relaxed);
@@ -325,8 +292,6 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
         if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->PendingWriteOverlaps(address, bytes)) {
             const HookSyncScope attribution(*recorder, address, bytes);
             Recorder::CountSync(1);
-            // The wait runs without the mutex when this acquisition is the outermost one (a stage-A
-            // read, a game thread); the recorder is not dereferenced after the call.
             recorder->SyncThrough(address, bytes, true);
         }
     }
@@ -334,14 +299,8 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     const auto scope = site != GuestMemory::ReadSite::Store ? PublishScope::Whole : PublishScope::PartialUnits;
     const bool waited = completionDepth() != 0;
     bool published = false;
-    // The classification is made before the store (the store changes what it measures); profile only.
     StorageTexture::AccessClassification classification{};
     if (HookSyncProfiled()) StorageTexture::ClassifyAccess(address, bytes, classification);
-    // C4: an access whose every 64 KiB block the CPU wrote since the overlapping images' generations
-    // reads the same bytes with or without their store (the store keeps those blocks), so the
-    // images stay pending (short of the layers the store would have left empty-handed anyway) and
-    // only the unit shadows over the range are published; with no image over the range that
-    // publish is all FlushPending would do (one registry scan, not two).
     bool stored = false;
     std::size_t images = 0, evicted = 0;
     const bool kept = !HookFlushCpuBlocks() && StorageTexture::AccessKeptByCpu(address, bytes, &images, &evicted);
@@ -354,12 +313,6 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     }
     const bool publishInProgress = site == GuestMemory::ReadSite::HostWrite && AnyPublishInProgress();
     if (stored || published || publishInProgress || (completionDepth() == 0 && SnapshotOverlaps(address, bytes))) {
-        // Stores into imported memory were only recorded; the CPU is about to read them. The wait
-        // targets the batch holding them (the open one: SyncThrough submits it) and runs with the
-        // mutex released when this acquisition is the outermost; a nested hook waits locked through
-        // that batch ([lock] 'locked GPU waits'). Inside a completion action the store must land
-        // before the completing batch's CPU write-back (an older result under a newer one), which
-        // only the full Sync() gives there.
         GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Hook);
         std::lock_guard gpu(GuestMemory::GpuMutex());
         if (auto* recorder = Recorder::Active(); recorder != nullptr) {
@@ -611,7 +564,6 @@ Recorder::Recorder(const Context& context, bool timelineSemaphores) : context(co
         std::lock_guard lock(liveRecordersMutex);
         liveRecorders.push_back(id);
     }
-    // Idempotent: the same hook for every recorder (the deferred lists are per thread, not per recorder).
     GuestMemory::SetGpuUnlockHook(&ReleaseDeferredKeeps);
     if (ProcTable() && context.deviceProc != nullptr) {
         getFenceStatus = context.Function<PFN_vkGetFenceStatus>("vkGetFenceStatus");
@@ -630,10 +582,6 @@ Recorder::Recorder(const Context& context, bool timelineSemaphores) : context(co
         cmdDispatch = context.Function<PFN_vkCmdDispatch>("vkCmdDispatch");
     }
     if (!timelineSemaphores) return;
-    // The timeline starts at 0 and every Submit signals its serial (1, 2, ...): a value that only
-    // grows, so a thread waiting for it outside the mutex can never observe a reset or a reused
-    // handle (the batch fences are pooled and reset in release()). A failure here only disables the
-    // unlocked waits; the locked Sync path still works.
     VkSemaphoreTypeCreateInfoKHR type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO_KHR};
     type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE_KHR;
     type.initialValue = 0;
@@ -665,30 +613,14 @@ Recorder::~Recorder() {
         workSinceSubmit.store(0, std::memory_order_release);
     }
     {
-        // A thread that released the mutex around a wait on this recorder re-checks the id when it
-        // retakes the mutex and touches nothing then. That check is only sound while the device
-        // (and so this destructor) is torn down under the GpuMutex, as the driver's drain and
-        // failure paths do; a worker dropping the last device reference after releasing its lock
-        // would run this without the mutex, concurrently with a relocked waiter.
         std::lock_guard lock(liveRecordersMutex);
         liveRecorders.erase(std::remove(liveRecorders.begin(), liveRecorders.end(), id), liveRecorders.end());
     }
-    // Sync() above completed every batch, so every timeline wait in progress on this recorder
-    // returns now; the semaphore is destroyed only once they all left it.
     while (WaitersOf(id).load(std::memory_order_acquire) != 0) std::this_thread::yield();
-    // The kept objects of every batch this thread finished (Sync() above included) belong to the
-    // device that is going away: destroyed now, here (no hand-off: nothing should stay in flight
-    // behind this thread); the release thread is then stopped and joined (it drains its queue
-    // first, holding no mutex this thread holds: the destructors take only their caches' own
-    // mutexes, which order after the GpuMutex), and the releases still in progress inline on
-    // other threads (an unlock hook that found the queue stopping or full) are waited for before
-    // the caller destroys the device. The count is global: a newer recorder's batches (device
-    // replacement) are waited for too, which only prolongs the spin.
     if (!DeferredBatches().empty()) DestroyDeferred(TakeDeferred(), false);
     JoinReleaseThread();
     while (deferredPending.load(std::memory_order_acquire) != 0) std::this_thread::yield();
     {
-        // Unlocked lookups stop before `labels` is destroyed (after this body).
         std::lock_guard tableLock(labelTableMutex);
         if (labelTableOwner == this) labelTableOwner = nullptr;
     }
@@ -715,7 +647,6 @@ Recorder::~Recorder() {
     spare.clear();
     for (const auto pool : sparePools) context.Function<PFN_vkDestroyQueryPool>("vkDestroyQueryPool")(context.device, pool, nullptr);
     sparePools.clear();
-    // Sync() above waited for every batch, so no submission still signals the timeline.
     if (timeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroySemaphore>("vkDestroySemaphore")(context.device, timeline, nullptr);
     timeline = VK_NULL_HANDLE;
 }

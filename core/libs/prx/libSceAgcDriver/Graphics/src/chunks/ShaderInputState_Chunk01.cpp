@@ -93,8 +93,6 @@ ShaderRecompiler::ShaderComputeStageInfo DecodeComputeStageInfo(const Registers&
     const auto rsrc3 = shader.find(computePgmRsrc3);
     const std::uint32_t sharedVgprBlocks = rsrc3 == shader.end() ? 0u : rsrc3->second & 0xfu;
     const std::uint32_t granulatedVgprCount = sharedVgprBlocks == 0u ? 0u : read(shader, computePgmRsrc1, RegisterBank::Shader) & 0x3fu;
-    // Debug aid: APS5_LDS_SLACK=<dwords> grows every dispatch's LDS allocation by that much, to tell
-    // whether a program depends on addresses past its declared allocation.
     static const std::uint32_t ldsSlack = [] { const char* text = std::getenv("APS5_LDS_SLACK"); return text ? static_cast<std::uint32_t>(std::strtoul(text, nullptr, 0)) : 0u; }();
     return ShaderRecompiler::ShaderComputeStageInfo{
         {numThreadX, numThreadY, numThreadZ},
@@ -164,8 +162,6 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
         interpolatorSettings[i] = control == context.end() ? i : control->second;
     }
     const auto shaderControl = nullProgram ? 0u : read(context, dbShaderControl, RegisterBank::Context);
-    // Bits 9 and 11 are EXEC_ON_HIER_FAIL and ALPHA_TO_MASK_DISABLE on GFX10; neither changes what the
-    // recompiled pixel shader computes.
     const auto conservativeZExport = (shaderControl >> 13u) & 0x3u;
     if (conservativeZExport == 3u) {
         throw std::runtime_error("AGC graphics: DB_SHADER_CONTROL.CONSERVATIVE_Z_EXPORT uses the reserved value 3");

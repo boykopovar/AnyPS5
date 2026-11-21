@@ -201,12 +201,10 @@ extern "C" {
 int APS5_VABI _Mtx_init_nid_postfix(void** handle, int type) {
     if (!handle)
         throw std::invalid_argument("_Mtx_init: null handle pointer");
-    *handle = nullptr;
     auto* mutex = new (std::nothrow) DinkumwareMutex();
     if (!mutex)
         return threadNomem;
     mutex->type = type;
-    *handle = mutex;
     return threadSuccess;
 }
 
@@ -228,7 +226,6 @@ void APS5_VABI _Mtx_destroy_nid_postfix(void** handle) {
         throw std::logic_error("_Mtx_destroy: mutex destroyed while locked");
     mutex->tag = 0;
     delete mutex;
-    *handle = nullptr;
 }
 
 int APS5_VABI _Mtx_lock_nid_postfix(void** handle) {
@@ -311,11 +308,9 @@ int APS5_VABI _Mtx_unlock_nid_postfix(void** handle) {
 int APS5_VABI _Cnd_init_nid_postfix(void** handle) {
     if (!handle)
         throw std::invalid_argument("_Cnd_init: null handle pointer");
-    *handle = nullptr;
     auto* condition = new (std::nothrow) DinkumwareCondition();
     if (!condition)
         return threadNomem;
-    *handle = condition;
     return threadSuccess;
 }
 
@@ -343,7 +338,6 @@ void APS5_VABI _Cnd_destroy_nid_postfix(void** handle) {
     auto* condition = ResolveCondition(handle, "_Cnd_destroy");
     condition->tag = 0;
     delete condition;
-    *handle = nullptr;
 }
 
 int APS5_VABI _Cnd_wait_nid_postfix(void** conditionHandle, void** mutexHandle) {

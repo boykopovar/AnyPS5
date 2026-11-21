@@ -266,9 +266,6 @@ int DecodeBlock(unsigned char* out, const unsigned char* in, int count) {
                                     | static_cast<unsigned long>(b) << 12L
                                     | static_cast<unsigned long>(c) << 6L
                                     | static_cast<unsigned long>(d);
-        *out++ = static_cast<unsigned char>((value >> 16L) & 0xff);
-        *out++ = static_cast<unsigned char>((value >> 8L) & 0xff);
-        *out++ = static_cast<unsigned char>(value & 0xff);
         total += 3;
     }
     return total;
@@ -303,7 +300,6 @@ int DecodeUpdate(DecodeContext& context, unsigned char* out, int* outLength, con
             v = BinaryValue(temporary);
             if (v == Base64Error) {
                 rv = -1;
-                *outLength = ret;
                 context.num = n;
                 return rv;
             }
@@ -312,14 +308,12 @@ int DecodeUpdate(DecodeContext& context, unsigned char* out, int* outLength, con
                 ++eof;
             } else if (eof > 0 && !NotBase64(v)) {
                 rv = -1;
-                *outLength = ret;
                 context.num = n;
                 return rv;
             }
 
             if (eof > 2) {
                 rv = -1;
-                *outLength = ret;
                 context.num = n;
                 return rv;
             }
@@ -332,7 +326,6 @@ int DecodeUpdate(DecodeContext& context, unsigned char* out, int* outLength, con
             if (!NotBase64(v)) {
                 if (n >= 64) {
                     rv = -1;
-                    *outLength = ret;
                     context.num = n;
                     return rv;
                 }
@@ -344,7 +337,6 @@ int DecodeUpdate(DecodeContext& context, unsigned char* out, int* outLength, con
                 n = 0;
                 if (decodedLength < 0 || eof > decodedLength) {
                     rv = -1;
-                    *outLength = ret;
                     context.num = n;
                     return rv;
                 }
@@ -359,14 +351,12 @@ int DecodeUpdate(DecodeContext& context, unsigned char* out, int* outLength, con
                 n = 0;
                 if (decodedLength < 0 || eof > decodedLength) {
                     rv = -1;
-                    *outLength = ret;
                     context.num = n;
                     return rv;
                 }
                 ret += decodedLength - eof;
             } else if (seof) {
                 rv = -1;
-                *outLength = ret;
                 context.num = n;
                 return rv;
             }
@@ -375,18 +365,15 @@ int DecodeUpdate(DecodeContext& context, unsigned char* out, int* outLength, con
         rv = seof || (n == 0 && eof) ? 0 : 1;
     }
 
-    *outLength = ret;
     context.num = n;
     return rv;
 }
 
 int DecodeFinal(DecodeContext& context, unsigned char* out, int* outLength) {
-    *outLength = 0;
     if (context.num == 0) return 1;
     const int count = DecodeBlock(out, context.encodedData.data(), context.num);
     if (count < 0) return -1;
     context.num = 0;
-    *outLength = count;
     return 1;
 }
 
@@ -398,23 +385,14 @@ int EncodeBlock(unsigned char* out, const unsigned char* in, int length) {
             value = static_cast<unsigned long>(in[0]) << 16L
                     | (static_cast<unsigned long>(in[1]) << 8L)
                     | static_cast<unsigned long>(in[2]);
-            *out++ = BinaryToAscii[(value >> 18L) & 0x3f];
-            *out++ = BinaryToAscii[(value >> 12L) & 0x3f];
-            *out++ = BinaryToAscii[(value >> 6L) & 0x3f];
-            *out++ = BinaryToAscii[value & 0x3f];
         } else {
             value = static_cast<unsigned long>(in[0]) << 16L;
             if (remaining == 2)
                 value |= static_cast<unsigned long>(in[1]) << 8L;
-            *out++ = BinaryToAscii[(value >> 18L) & 0x3f];
-            *out++ = BinaryToAscii[(value >> 12L) & 0x3f];
-            *out++ = (remaining == 1) ? '=' : BinaryToAscii[(value >> 6L) & 0x3f];
-            *out++ = '=';
         }
         total += 4;
         in += 3;
     }
-    *out = '\0';
     return total;
 }
 
@@ -426,7 +404,6 @@ struct EncodeContext {
 int EncodeUpdate(EncodeContext& context, unsigned char* out, int* outLength, const unsigned char* in, int inLength) {
     std::size_t total = 0;
 
-    *outLength = 0;
     if (inLength <= 0) return 0;
     if (EncodeLineBytes - context.num > inLength) {
         std::memcpy(context.encodedData.data() + context.num, in, static_cast<std::size_t>(inLength));
@@ -442,8 +419,6 @@ int EncodeUpdate(EncodeContext& context, unsigned char* out, int* outLength, con
         const int written = EncodeBlock(out, context.encodedData.data(), EncodeLineBytes);
         context.num = 0;
         out += written;
-        *out++ = '\n';
-        *out = '\0';
         total = static_cast<std::size_t>(written) + 1;
     }
     while (pending >= EncodeLineBytes && total <= static_cast<std::size_t>(std::numeric_limits<int>::max())) {
@@ -451,18 +426,14 @@ int EncodeUpdate(EncodeContext& context, unsigned char* out, int* outLength, con
         in += EncodeLineBytes;
         pending -= EncodeLineBytes;
         out += written;
-        *out++ = '\n';
-        *out = '\0';
         total += static_cast<std::size_t>(written) + 1;
     }
     if (total > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-        *outLength = 0;
         return 0;
     }
     if (pending != 0)
         std::memcpy(context.encodedData.data(), in, static_cast<std::size_t>(pending));
     context.num = pending;
-    *outLength = static_cast<int>(total);
     return 1;
 }
 
@@ -474,7 +445,6 @@ void EncodeFinal(EncodeContext& context, unsigned char* out, int* outLength) {
         out[written] = '\0';
         context.num = 0;
     }
-    *outLength = static_cast<int>(written);
 }
 
 int BioGets(LibreSsl::Bio* bio, char* buffer, int size) {

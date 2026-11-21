@@ -83,19 +83,6 @@ void forEachImageElement(const ShaderRecompiler::RecompileResult& program, Visit
 }
 
 bool ShaderResources::precollectImages() {
-    // The image lookups of stage B (cachedTexture, StorageTexture::Refresh) each start with a
-    // GuestMemory::CollectWrites of their surface, the GetWriteWatch walk that is most of the
-    // lookups' time under the lock. The walk is memoized per thread epoch, and the worker thread
-    // passes no ordering point between the stages (see GuestMemory::BumpCollectEpoch), so walking
-    // every surface here makes stage B's collects memo hits: the walk leaves the lock, the lookups'
-    // checks stay where they were. A memo miss (the ring overflowed, an uncommitted page) just walks
-    // under the lock as before; a descriptor stage B rejects is left to it. APS5_NO_PRECOLLECT=1
-    // disables the pass.
-    // The pass also leaves one ImageRecord per element: the decode and the surface description are
-    // made once for the build, and a sampled element's cache entry is taken here (a hash lookup
-    // under the cache's own mutex) so that stage B, under the device lock, runs only the
-    // fastRevalidate predicate on it (see fastTexture). The collect comes before the entry is read,
-    // as the predicate's rule demands (the generation the entry moves to must predate the checks).
     static const bool disabled = std::getenv("APS5_NO_PRECOLLECT") != nullptr;
     static const bool noRecords = std::getenv("APS5_NO_STAGE_A_IMAGES") != nullptr;
     if (disabled || deferredImages.empty()) return false;
@@ -163,14 +150,6 @@ std::shared_ptr<Texture> ShaderResources::fastTexture(ImageRecord& record) {
             if (profile) LookupOutcomes::Add(hit ? LookupOutcomes::SampledFast : LookupOutcomes::SampledFastMiss, start);
         }
     } outcome{LookupOutcomes::Profiled(), LookupOutcomes::Profiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{}};
-    // Exactly the "unchanged" branches of cachedTexture, from write stamps, the pending-results
-    // registry and the DCC keys, the way fastRevalidate proves a built object current: the collect
-    // first (a memo hit: stage A walked the range), then no other image may have results pending
-    // over the memory (a lookup would flush them into it, or view them instead), a storage-sourced
-    // view needs its image to be the cache's image of the surface and current with guest memory,
-    // a snapshot needs the memory unchanged since its content matched, and the keys must be what
-    // the content was made under whenever the surface has any (re-read under the lock: a flush
-    // between the stages marks them uncompressed).
     const auto address = record.resource.baseAddress;
     const auto bytes = static_cast<std::size_t>(record.guestBytes);
     RequireNoMultisampleColorTarget(address, bytes != 0 ? bytes : 1u, "a texture read");
@@ -180,25 +159,17 @@ std::shared_ptr<Texture> ShaderResources::fastTexture(ImageRecord& record) {
     auto keys = record.keys;
     if (record.resource.dccAddress != 0) {
         const auto scanStart = outcome.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        // Through the proof of the image whose keys they are (the view's source when the surface
-        // is the image's, else the texture's): a scan only when the key range was stamped.
         keys = ProvedClearKeys(record.resource, record.guestBytes, SameKeySurface(record.source.get(), record.resource, record.guestBytes) ? record.source->KeyProof() : record.texture->KeyProof());
         if (outcome.profile) LookupOutcomes::Add(LookupOutcomes::DccScan, scanStart);
     }
-    // The keys the entry was made under (a view of a pending render target was made under its clear
-    // keys and stays valid while they are unchanged); a change is the full lookup's to judge.
     if (keys != record.entryKeys) return nullptr;
     if (record.source != nullptr) {
         if (!StorageImageCached(context, record.source.get()) || !GuestMemory::UnchangedSince(address, bytes, record.source->GenerationFor(address, bytes))) return nullptr;
         if (record.resource.dccAddress != 0 && IsDccClear(record.source->FilledKeys())) return nullptr;
-        // Under fast-clear keys the view holds only while its image's results are still pending over
-        // the surface; flushed, the clear the image cannot see makes the lookup take a snapshot.
         if (keys != DccKeys::Uncompressed && StorageTexture::FindPending(address, record.guestBytes) != record.source) return nullptr;
     } else if ((keys == DccKeys::Uncompressed || keys == DccKeys::ClearSingle) && !GuestMemory::UnchangedSince(address, bytes, record.entryGeneration)) {
         return nullptr;
     }
-    // The entry must still be the cache's, holding this object (an evicted object is not reused: the
-    // next lookup would make another), and it takes the stage-A generation like a hit would.
     auto& cache = Textures();
     std::lock_guard lock(cache.mutex);
     const auto it = findSampledEntry(cache, context.device, record.words, record.components);
@@ -228,7 +199,6 @@ void ShaderResources::applySamplerVariants() {
 
 void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBinding& binding, Binding& item, std::span<const std::shared_ptr<Sampler>> shaderSamplers) {
     auto& counters = TextureCounts();
-    // The element's stage-A record, when the pass ran (records follow the plan order exactly).
     const auto nextRecord = [&]() -> ImageRecord* { return nextImageRecord < imageRecords.size() ? &imageRecords[nextImageRecord++] : nullptr; };
     if (binding.kind == ShaderRecompiler::DescriptorKind::SampledImage) {
         Require(binding.imageSamplers.size() == binding.count, "guest sampled image binding is missing its image-sampler pairs");
@@ -318,13 +288,10 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             describedRanges.push_back({"texture", resource.baseAddress, guestBytes, resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), resource.dccAddress});
             item.imageAllocations.push_back(textures.size() - 1);
         }
-        // The line is due even when every element took the fast path (cachedTexture reports too).
         reportTextureCounters();
         return;
     }
     previousSampled = {};
-    // Consecutive identical storage descriptors address successive mips of one texture (dynamic-mip
-    // storage writes).
     std::uint32_t mipOffset = 0;
     for (std::uint32_t element = 0; element < binding.count; ++element) {
         const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
@@ -362,11 +329,9 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
         const auto guestBytes = record != nullptr && record->decoded ? record->guestBytes : SurfaceGuestBytes(resource);
         CompletePendingCpuWrites(context, resource.baseAddress, static_cast<std::size_t>(guestBytes));
         if (resource.dccAddress != 0) CompletePendingCpuWrites(context, resource.dccAddress, DccKeyBytes(guestBytes));
-        // Images the shader only reads have nothing to store back.
         const bool written = element >= binding.imageWritten.size() || binding.imageWritten[element];
         const bool stored = element < binding.imageWritten.size() && binding.imageWritten[element];
         if (stored) claimStoredMultisampleMemory(context, resource, guestBytes, mip);
-        // The same surface as the previous element: its image was just looked up and refreshed.
         if (sameAsPrevious && StorageDedupeEnabled()) storageTextures.push_back(storageTextures.back());
         else storageTextures.push_back(cachedStorageTexture(context, words, resource, mip, guestBytes, written));
         storageMips.push_back(mip);

@@ -90,20 +90,13 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         CompletePendingCpuWrites(context, image->Descriptor().baseAddress, static_cast<std::size_t>(image->GuestBytes()));
         if (image->Descriptor().dccAddress != 0) CompletePendingCpuWrites(context, image->Descriptor().dccAddress, DccKeyBytes(image->GuestBytes()));
     }
-    // APS5_NO_FAST_REVALIDATE=1 always repeats the lookups.
     static const bool noFast = std::getenv("APS5_NO_FAST_REVALIDATE") != nullptr;
     const auto finish = [&](bool fast, bool ok, ProofFailure failure = ProofFailure::Other) {
         if (profile) countRevalidate(fast, ok, start);
         if (report != nullptr) report->failure = ok ? ProofFailure::None : failure;
         return ok;
     };
-    // Loaded before any check (the memo rule of fastRevalidate): kept as the memo only when the
-    // registry did not move through the whole proof, flushes of this call included.
     const auto serialBefore = StorageTexture::PendingSerial();
-    // (1) Textures and storage images, from stamps when every element allows it (fastRevalidate),
-    // else by the same lookups as the build (which refresh or replace them as guest memory changed):
-    // they must hand back the very objects the set's views belong to. The build appended them stage
-    // by stage, binding by binding, so the walk repeats that order.
     const auto fullWalk = [&] {
         lastFullWalk = std::chrono::steady_clock::now();
         walkImportGeneration = HostImportSetGeneration();
@@ -194,9 +187,6 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
             }
         }
         if (textureIndex != textures.size() || storageIndex != storageTextures.size()) return false;
-        // The walk proved every object current again: the records move to what it proved, or one
-        // spurious stamp (a label sharing a 64 KiB block with a surface's edge) would keep this
-        // object on the full walk for good.
         captureValidation(spaceReuse);
         return true;
     };
@@ -217,11 +207,6 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         }
     }
     bool fast = indexProved || (!noFast && fastRevalidate(serialBefore, refreshed, reason, overlapping, accepted));
-    // T1 (design_cpu_final M3, rule RT1): a Pending failure whose overlapping images are foreign
-    // to the surfaces is resolved by the own objects' refresh (what the walk's lookups would do to
-    // them) and the fast proof run again, which is then authoritative (it accepts what stays
-    // pending over the refreshed surfaces, see fastRevalidate); a fallback, or a second failure,
-    // takes the full walk as before.
     bool ownRefreshed = false;
     if (!fast && !overlapping.empty()) {
         auto fallback = OwnRefreshFallback::Count;
@@ -266,9 +251,6 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     } else if (ownRefreshed || accepted) {
         if (profile && ownRefreshed) Revalidations().ownRefreshed.fetch_add(1, std::memory_order_relaxed);
         if (VerifyProofs()) {
-            // The walk after the refresh, or beside a proof that accepted a foreign overlap, must
-            // find every object in place and current: another object, or an upload (a moved
-            // content version), is a decision the proof got wrong.
             struct VersionsTag {};
             auto& versions = ThreadScratch<std::vector<std::pair<const StorageTexture*, std::uint64_t>>, VersionsTag>();
             versions.clear();
@@ -286,13 +268,6 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
             if (profile) Revalidations().proofsVerified.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    // (2) The imported buffers the set reads in place: results of storage images pending in them go
-    // to guest memory first (as an upload does), then each import must still be the one the set was
-    // written against. This comes last because the lookups and flushes above can reconcile imports
-    // themselves; nothing else touches them between here and the dispatch being recorded. Under the
-    // epoch gate the flush runs only for regions one registry scan finds pending images over (none
-    // while the serial is the memo's), and the serial loop only while the import table's identity
-    // moved since the last proof (a retire bumps its epoch, a registry change its generation).
     const auto serialLoop = [&] {
         for (const auto& region : directRegions) {
             auto serial = HostImportSerial(context, region.begin, static_cast<std::size_t>(region.end - region.begin), true);
@@ -313,8 +288,6 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
             for (const auto& region : directRegions) regions.push_back({region.begin, region.end, nullptr, nullptr, false});
             for (const auto& [begin, end] : guestMemory.Writes()) regions.push_back({begin, end, nullptr, nullptr, false});
             StorageTexture::ScanPending(regions);
-            // A region over a unit shadow's fresh results (a retile bumped the serial) is
-            // published by the flush, as one over a pending image is stored.
             for (const auto& region : regions) {
                 if (region.overlaps || AnyShadowedOverlaps(region.begin, static_cast<std::size_t>(region.end - region.begin))) StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(region.end - region.begin), nullptr, "imported buffer region");
             }
@@ -330,9 +303,6 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         for (const auto& [begin, end] : guestMemory.Writes()) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "written buffer range");
         if (!serialLoop()) return finish(fast, false, ProofFailure::Imports);
     }
-    // (3) Buffers staged in device memory (GuestBufferMemory::AllowDeviceStaging) are copied in
-    // from their imports anew for this use, after the flushes above and before the work is
-    // recorded; a failure to record leaves the object unusable for this dispatch, not the batch.
     if (!guestMemory.StagingDecisionsCurrent()) return finish(fast, false, ProofFailure::Changed);
     if (auto* recorder = Recorder::Active(); recorder != nullptr) {
         try {
@@ -374,10 +344,6 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
 
 namespace {
 
-// APS5_PROFILE_DRAW: what makes content keys miss. On a miss the key is compared with the last key
-// seen for the same shader variant(s) and the first differing word is charged to its binding's role
-// (and to its index within the V# or T# element), printed as [rescache] every 10 s: it says whether
-// V# bases of ring allocations, SRT words or image descriptors churn.
 struct KeyMissWindow {
     std::uint64_t compared = 0;
     std::uint64_t noCandidate = 0;
@@ -397,7 +363,6 @@ struct ChurnCounts {
     KeyMissWindow window;
 };
 
-// Dispatch keys and draw keys are counted apart: what churns a draw's key decides the draw steps.
 struct ChurnProfile {
     AgcDriver::Mutex mutex;
     std::unordered_map<std::uint64_t, ResourceCache::Key> lastByVariant;
@@ -423,8 +388,6 @@ ChurnProfile& Churn() {
     return profile;
 }
 
-// Charges word `diff` of `key` to the binding of the ContentKey that starts at `at` (the layout of
-// ShaderResources::ContentKey), moving `at` past that key; false when `diff` lies beyond it.
 bool chargeShaderKey(ChurnCounts& profile, const ResourceCache::Key& key, std::size_t& at, std::size_t end, std::size_t diff) {
     if (at + 5 > end || diff < at + 5) {
         ++profile.layout;

@@ -151,8 +151,6 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     for (const auto& entry : pipelines) {
         if (entry.first == key) return entry.second;
     }
-    // Constants 0-3 select element size, block size, addressing family and direction; 4-19 carry the
-    // per-bit XOR equation for the equation family (2); 20-21 override the block extent in elements.
     const bool gcn = IsGcnTiled(tileMode);
     std::array<std::uint32_t, 26> values{elementBytes, gcn ? 0u : BlockBytesFor(tileMode), tileMode == TextureTileMode::kLinear ? 0u : 1u, retile ? 1u : 0u};
     if (gcn) {
@@ -241,8 +239,6 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     const auto sourceBase = sourceOffset - sourceDescriptorOffset;
     const auto destinationBase = destinationOffset - destinationDescriptorOffset;
     Require(sourceBase <= UINT32_MAX && destinationBase <= UINT32_MAX, "texture detiling buffer offset exceeds addressable range");
-    // A window covers the mip's bytes from its base to the range's end (tiled) or the last row the
-    // range can touch (linear).
     const std::uint64_t tiledBytes = window.rangeEnd == 0xffffffffu ? layout.tiledSize : std::min<std::uint64_t>(layout.tiledSize, window.rangeEnd) - window.tiledBase;
     const std::uint64_t linearBytes = window.linearBytes != 0 ? window.linearBytes : layout.linearSize - std::min<std::uint64_t>(window.linearBase, layout.linearSize);
     const auto sourceRange = (sourceBase + (retile ? linearBytes : tiledBytes) + 3) / 4 * 4;

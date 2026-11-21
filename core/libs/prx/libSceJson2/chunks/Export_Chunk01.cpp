@@ -1215,7 +1215,6 @@ void TransferChildren(Value& destination, TLink* first, TLink* head, TNext next,
         if (!more) break;
         if (!*begin) { Release(begin); NotImplemented_nid_no_patch(__func__); }
         value(*begin).parent = &destination;
-        *begin = next(*begin);
     }
     Release(begin);
 }
@@ -1253,7 +1252,6 @@ template<typename T, typename TInitialize>
 void ConstructHandle(T*& destination, TInitialize initialize) {
     destination = static_cast<T*>(Allocate(sizeof(T)));
     if (!destination) return;
-    *destination = {};
     try { initialize(*destination); }
     catch (...) { Destroy(destination); throw; }
     if (!HasStorage(*destination)) { Release(destination); destination = nullptr; }
@@ -1481,7 +1479,6 @@ void ReleaseInitialization();
 PthreadMutex* CreateKernelMutex() {
     auto* mutex = static_cast<PthreadMutex*>(Allocate(sizeof(PthreadMutex)));
     if (!mutex) return nullptr;
-    *mutex = nullptr;
     PthreadMutexattr attribute = nullptr;
     try {
         if (scePthreadMutexattrInit(&attribute)) NotImplemented_nid_no_patch(__func__);
@@ -1556,7 +1553,6 @@ void CreateDefault(ValueType type) {
     value.type = type;
     defaults.ready[type] = true;
     if (handle) {
-        *handle = {};
         if constexpr (std::is_same_v<T, String>) Construct(*handle, std::string_view{});
         else Construct(*handle);
     }
@@ -1574,7 +1570,6 @@ int InitializeResources(void* self, const void* parameter, std::int32_t format, 
     auto* allocation = static_cast<AllocationContext*>(allocate(context.allocator, sizeof(AllocationContext), context.userData));
     if (!allocation) return JsonErrorOutOfMemory;
     std::memcpy(&context.fileBufferSize, static_cast<const std::byte*>(parameter) + offsetof(AllocationContext, fileBufferSize), sizeof(context.fileBufferSize));
-    *allocation = context;
     state.allocation = allocation;
     state.floatFormat = format;
     state.floatFormatEnabled = modern;
@@ -1590,7 +1585,6 @@ int InitializeResources(void* self, const void* parameter, std::int32_t format, 
     if (!admitted || !state.recoveryMutex) { ReleaseInitialization(); return JsonErrorOutOfMemory; }
     state.paddedStringGrowth = CompiledSdk() > 0x044fffff;
     state.initialized = true;
-    *static_cast<std::uint8_t*>(self) = 1;
     return 0;
 }
 
@@ -2268,7 +2262,6 @@ private:
                     if (!*iterator.state) { NotImplemented_nid_no_patch(__func__); return 0; }
                     status = serialize(*iterator.state);
                     if (status < 0) break;
-                    *iterator.state = next(*iterator.state);
                     current = position();
                 } while (iterator.Different(current.head, current.invalid));
             }
@@ -2592,7 +2585,6 @@ void* const JsonMemAllocatorVtable[] = {
 
 
 void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void* self) {
-    *static_cast<std::uint8_t*>(self) = 0;
 }
 
 void APS5_VABI _ZN3sce4Json11InitializerD1Ev(void* self) {
@@ -2646,7 +2638,6 @@ int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
     ReleaseRecoveryState();
     recoveryLock.Unlock();
     ReleaseKernelResources();
-    *static_cast<std::uint8_t*>(self) = 0;
     return 0;
 }
 
@@ -2678,7 +2669,6 @@ int APS5_VABI _ZN3sce4Json11Initializer36setGlobalElementAccessFailureHandlerEPF
 }
 
 void APS5_VABI _ZN3sce4Json12MemAllocatorC2Ev(void* self) {
-    *static_cast<void* const**>(self) = &JsonMemAllocatorVtable[2];
 }
 
 void APS5_VABI _ZN3sce4Json12MemAllocatorD2Ev(void*) {}

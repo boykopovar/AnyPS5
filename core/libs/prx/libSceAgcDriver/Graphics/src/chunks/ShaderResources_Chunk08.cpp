@@ -90,8 +90,6 @@ bool ShaderResources::keepsTemplateRecords() const {
     return always || !(usesBda || (usesFaultBuffer && LoopGuardEnabled()));
 }
 
-// Turns the lookups' records into this object's per-texture validation records (see
-// ValidatedSurface); the last record of an object is the freshest.
 void ShaderResources::captureValidation(bool spaceReusable) {
     if (!keepsTemplateRecords() && !(spaceReusable && !RuntimeSwitches::Set(RuntimeSwitch::NoSpaceReuseRecords))) {
         validatedTextures.clear();
@@ -161,21 +159,6 @@ std::size_t ShaderResources::LookupLogCapacity() {
     return lookupLog().capacity();
 }
 
-// Proves every texture and storage image still current without repeating its lookup: exactly the
-// "unchanged" branches of cachedTexture and StorageTexture::Refresh, evaluated from write stamps,
-// the pending-results registry and the DCC keys. Per element: collect first (stamps come only from
-// collects, and the generation a record moves to must predate the checks, so a write landing between
-// them is stamped newer: the rule of Driver's dispatch cache), then no other image may have results
-// pending over the memory (a lookup would flush them into it), a storage image must still be the
-// cache's image of its surface, the memory must be unchanged since the object's content matched it,
-// and the DCC keys must be what the content was made under whenever the surface has any (a fast
-// clear touches only the keys). Anything else, including a failed collect (memory outside the arena,
-// uncommitted pages), is left to the full walk.
-// The epoch gate: while the pending registry's serial is what this object's last proof saw
-// (pendingSerialSeen), the registry is what it was then (every change bumps the serial under the
-// registry mutex), so the pending-image checks are skipped; otherwise one scan answers them for
-// every surface at once. The stamp checks go through one tracker lock, the cache checks through
-// the images' cached flags and one touch of the cache.
 bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason, std::vector<PendingOverlap>& overlapping, bool& accepted, const std::vector<std::size_t>* only, bool withStorage) {
     reason = FastFail::Count;
     overlapping.clear();
@@ -195,7 +178,6 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
     auto& queries = ThreadScratch<std::vector<GuestMemory::UnchangedQuery>, QueriesTag>();
     struct PendingTag {};
     auto& pending = ThreadScratch<std::vector<StorageTexture::PendingQuery>, PendingTag>();
-    // The element each pending query stands for, in query order.
     struct OwnersTag {};
     auto& owners = ThreadScratch<std::vector<PendingOverlap>, OwnersTag>();
     struct ImagesTag {};
@@ -241,33 +223,20 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         }
         const auto* source = surface.source;
         if (!keyProofs) {
-            // Without proofs the keys are compared with the record's (a cleared view's identity
-            // below is the record's too): the scan repeats on every call, as before.
             if (surface.resource.dccAddress != 0 && TextureClearKeys(surface.resource, surface.bytes) != surface.keys) return fail(FastFail::Keys);
             scannedKeys[i] = surface.keys;
             if (!unchanged) query(address, address + bytes, source, source != nullptr && surface.keys != DccKeys::Uncompressed ? source : nullptr, {i, false, source != nullptr && surface.keys == DccKeys::Uncompressed});
         } else if (source != nullptr) {
-            // The view follows its image, so it stays valid while the image would Refresh as
-            // unchanged: the image's own keys must be what its content was uploaded under (its
-            // proof answers without a scan while they are unstamped), and its memory unchanged
-            // since its generation (the query below). The surface's own keys come from the same
-            // proof when they are the image's, else from the texture's.
             const auto& own = source->Descriptor();
             const auto sourceKeys = source->ProvedKeys();
             if (sourceKeys != source->UploadedKeys()) return fail(FastFail::Keys);
             const auto keys = surface.resource.dccAddress == 0 ? DccKeys::Uncompressed : SameKeySurface(source, surface.resource, surface.bytes) ? sourceKeys : ProvedClearKeys(surface.resource, surface.bytes, textures[i]->KeyProof());
             if (surface.resource.dccAddress != 0 && surface.resource.dccAddress != own.dccAddress && (keys != DccKeys::Uncompressed || !StorageImageServesKeys(*source, surface.resource.dccAddress))) return fail(FastFail::Keys);
             scannedKeys[i] = keys;
-            // A view of a fast-cleared surface stays one only while its image still has results
-            // pending over it (cachedTexture's hit rule), unless the image's own descriptor names
-            // the surface's metadata (the lookup views the cleared image then). The identity is
-            // asked whatever the registry's serial did: the keys may have moved since the last
-            // proof while the registry did not.
             if (keys != DccKeys::Uncompressed && !(own.dccAddress == surface.resource.dccAddress && ClearedViewEnabled() && StorageClearAvailable(context, surface.resource.format, keys))) query(address, address + bytes, source, source, {i, false, false});
             else if (!unchanged) query(address, address + bytes, source, nullptr, {i, false, keys == DccKeys::Uncompressed});
             if (surface.resource.dccAddress != 0 || own.dccAddress != 0) countKeysProven(false);
         } else {
-            // A snapshot holds its clear texels or the guest bytes: the keys must be what it was made under.
             const auto keys = surface.resource.dccAddress != 0 ? ProvedClearKeys(surface.resource, surface.bytes, textures[i]->KeyProof()) : DccKeys::Uncompressed;
             if (keys != surface.keys) return fail(FastFail::Keys);
             scannedKeys[i] = keys;
@@ -299,9 +268,6 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
             return fail(FastFail::Collect);
         }
         if (own.dccAddress != 0) {
-            // Refresh's unchanged branch (its key compare against the keys the content was
-            // uploaded under, through the image's proof; the memory query below), minus its
-            // byte-compare fallback; the image's generation is left where it is.
             if (!keyProofs || image->ProvedKeys() != image->UploadedKeys()) return fail(FastFail::StorageKeys);
             countKeysProven(true);
         }
@@ -312,14 +278,6 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
     }
     if (!pending.empty()) {
         if (!StorageTexture::ScanPending(pending)) return fail(FastFail::ClearedView);
-        // A foreign image over a view under uncompressed keys is no failure while FindPending
-        // names the view's own source: the lookup views the source (cachedTexture's hit rule)
-        // and touches nothing else. A surface whose own object T1 refreshed in this Revalidate
-        // (`refreshed`) is no failure either: a storage element's lookup is that Refresh and
-        // returns the image whatever stays registered over it; a view's lookup hits on the source
-        // when FindPending names it, and views the cached image of its key (the source, proved by
-        // refreshOwnObjects) when FindPending names nothing. Every other overlap is the full
-        // walk's, or T1's (Revalidate).
         const auto refreshedOwner = [&](const PendingOverlap& owner) {
             return std::find_if(refreshed.begin(), refreshed.end(), [&](const PendingOverlap& entry) { return entry.element == owner.element && entry.storage == owner.storage; });
         };
@@ -383,31 +341,18 @@ bool ShaderResources::fastRevalidateEach() {
         if (PendingStorageOverlaps(address, bytes, surface.source)) return false;
         if (surface.source != nullptr && surface.resource.dccAddress != 0 && surface.resource.dccAddress != surface.source->Descriptor().dccAddress) return false;
         if (surface.source != nullptr) {
-            // The view follows the image: it needs the image current with guest memory, as the
-            // lookup's Refresh would make it.
             if (!StorageImageCached(context, surface.source) || !GuestMemory::UnchangedSince(address, bytes, surface.source->GenerationFor(address, bytes))) return false;
         } else if (!GuestMemory::UnchangedSince(address, bytes, surface.generation)) {
             return false;
         }
         if (surface.resource.dccAddress != 0 && TextureClearKeys(surface.resource, surface.bytes) != surface.keys) return false;
-        // A view made under fast-clear keys stays one only while its image still has results pending
-        // over the surface (the lookup prefers them to the clear); once they are flushed the clear
-        // the image cannot see wins and the lookup makes a snapshot (cachedTexture's hit rule).
         if (surface.source != nullptr && surface.keys != DccKeys::Uncompressed && StorageTexture::FindPending(address, surface.bytes).get() != surface.source) return false;
     }
     for (std::size_t i = 0; i < storageTextures.size(); ++i) {
         if (storageTextures[i] != nullptr && (i >= storageKeys.size() || (storageKeys[i] != 0 && storageKeys[i] != storageTextures[i]->Descriptor().dccAddress))) return false;
-        // Consecutive elements of one mip chain share the image (see addStorageImageBinding).
         if (i != 0 && storageTextures[i] == storageTextures[i - 1]) continue;
         const auto* image = storageTextures[i].get();
         if (image == nullptr) return false;
-        // StorageTexture::Refresh checks the image's own surface, not the element's descriptor (one
-        // image serves every descriptor of its memory, with or without a DCC address), and compares
-        // its keys with the keys it was uploaded under, which only the image knows (they move to
-        // Uncompressed on every write-back; a fast clear after it puts the key bytes back to what a
-        // record saw while the image holds last frame's results), so a surface with keys is left to
-        // the full walk. Without a DCC address both sides of that compare are Uncompressed whatever
-        // happened, and the memory checks below are Refresh's.
         const auto& own = image->Descriptor();
         if (own.dccAddress != 0) return false;
         const auto address = own.baseAddress;
@@ -421,9 +366,6 @@ bool ShaderResources::fastRevalidateEach() {
         if (!StorageImageCached(context, image)) return false;
         if (!GuestMemory::UnchangedSince(address, bytes, image->GenerationFor(address, bytes))) return false;
     }
-    // Every check passed: snapshot textures are current at the collects issued before them. Storage
-    // images keep their own generation: nothing was stamped above it, so the blocks a later write
-    // stamps are the same set either way.
     for (auto& surface : validatedTextures) {
         if (surface.source == nullptr) surface.generation = surface.collected;
     }
@@ -434,11 +376,6 @@ ShaderResources::OwnRefreshFallback ShaderResources::refreshOwnObjects(std::span
     const auto listed = [&](std::size_t element, bool storage) {
         return std::find_if(overlapping.begin(), overlapping.end(), [&](const PendingOverlap& overlap) { return overlap.element == element && overlap.storage == storage; });
     };
-    // A sampled view's lookup (cachedTexture): the pending image FindPending serves the surface
-    // by, if it fits the view, else the cached storage image of the surface's key, refreshed; the
-    // view stays the lookup's answer only when that image is its own source. `sourceEligible` is
-    // recorded whichever branch answers: a later refresh of this call may flush the source, and
-    // the re-run then judges the surface by the other branch.
     const auto refreshView = [&](std::size_t i, PendingOverlap& overlap, bool depthCompare) {
         const auto& surface = validatedTextures[i];
         const auto& source = textures[i]->SharedStorageSource();
@@ -463,14 +400,10 @@ ShaderResources::OwnRefreshFallback ShaderResources::refreshOwnObjects(std::span
         if (!imported) return OwnRefreshFallback::NotImported;
         if (!overlap.sourceEligible) return OwnRefreshFallback::SurfaceKey;
         countOwnRefresh(false);
-        // The cache's image of the key is this source while it is cached (an entry is replaced
-        // only after its image left the cache), so the lookup would refresh and return it.
         source->Refresh();
         overlap.sourceRefreshed = true;
         return OwnRefreshFallback::Count;
     };
-    // A storage element's lookup (cachedStorageTexture): the cached image of its surface key,
-    // refreshed; the key is the element's words', which mapped to this image at the build.
     const auto refreshStorage = [&](std::size_t i) {
         auto& image = storageTextures[i];
         if (image == nullptr || !image->Cached()) return OwnRefreshFallback::Uncached;

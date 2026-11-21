@@ -86,9 +86,6 @@ std::shared_ptr<Buffer> recordMeshArguments(const Context& context, VkCommandBuf
     return arguments;
 }
 
-// Debug aid: APS5_CHECK_INDIRECT_ARGS=1 reads the records of a GPU-side draw back on the CPU once
-// its batch completed (the GPU has finished writing them by then) and prints the first 16, counting
-// records whose Constant dimension holds a value the hardware would have ignored. Empty otherwise.
 std::function<void()> indirectRecordCheck(const IndirectRecord* indirect) {
     static const bool checkArguments = std::getenv("APS5_CHECK_INDIRECT_ARGS") != nullptr;
     if (indirect == nullptr || indirect->args == nullptr || indirect->path != IndirectDrawPath::Gpu || !checkArguments) return {};
@@ -127,7 +124,6 @@ std::shared_ptr<std::shared_ptr<const void>> reserveSpaceKeep(Recorder& recorder
     return slot;
 }
 
-// Everything a recorded draw uses lives until its batch completes.
 struct Kept {
     std::shared_ptr<ShaderResources> resources;
     std::shared_ptr<Pipeline> pipeline;
@@ -138,9 +134,6 @@ struct Kept {
     std::unique_ptr<DeviceBuffer> scratch;
 };
 
-// The completion side of a recorded draw: the kept objects, the record check, the lease outcome,
-// the GPU write notes, the copied-buffer write-back (listed in DrawCopiedWriters or run as a
-// completion action) and the targets marked dirty.
 void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources, std::shared_ptr<Pipeline> pipeline, std::shared_ptr<Framebuffer> framebuffer, DrawInputs& inputs, std::vector<std::shared_ptr<StorageTexture>> targets, std::vector<std::pair<std::uint32_t, std::uint32_t>> slices, VkRect2D scissor, std::unique_ptr<DeviceBuffer> scratch, std::function<void()> checkRecords, bool listed, bool completion, const DrawOutcome& outcome, std::shared_ptr<ShaderResources::DrawUse> use, std::shared_ptr<const void>* spaceKeep) {
     auto kept = std::make_shared<Kept>();
     kept->resources = resources;
@@ -158,19 +151,10 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
     recorder.Keep(kept);
     if (resources != nullptr) recorder.KeepBytes(resources.get(), resources->CopiedBytes());
     if (checkRecords) recorder.OnComplete(std::move(checkRecords));
-    // Counted for the [address-sync] line: a lease released by the completion (the pin waiter
-    // finishes the recorder up to the open batch, which holds the kept resources and gets the
-    // next serial), or waited for by the caller (any wait releases it at once).
     if (resources->HoldsLease()) CountLeaseOutcome(outcome.waited, outcome.waited ? 0 : recorder.Submissions() + 1, !resources->BdaReadOnly());
-    // Every use of a (possibly shared) resources object registers its GPU writes anew.
     resources->MarkGpuWrites(recorder);
     if (spaceKeep != nullptr) *spaceKeep = resources->ReleaseSpace();
-    // The write-back (fault check, copied buffers) runs when the batch completed; a fault is
-    // reported by the recorder ("deferred write-back failed") instead of thrown out of the draw.
     if (listed && resources->HasCopiedWrites()) {
-        // As VulkanDevice::dispatch lists its copied writers: delisted before the write-back
-        // (one that fails must not keep indirect dispatches on the CPU), listed after the
-        // registration (a throw there leaves nothing behind).
         auto writers = DrawCopiedWriters();
         recorder.OnComplete([resources, writers] {
             writers->erase(std::remove(writers->begin(), writers->end(), resources), writers->end());
@@ -195,10 +179,6 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
     }
 }
 
-// What recordDraw records from: the recorder, the resources, the pipeline and framebuffer, the
-// resident targets with their views, the indirect records (null for a direct draw), how the
-// completion work is handled (`listed`, `completion`, `waited`: see Draw) and, from a recipe, the
-// push constant block (else assembled from the stages).
 struct StagedWrite {
     std::shared_ptr<StagedTemporary> temporary;
     VkImageView target = VK_NULL_HANDLE;
@@ -234,8 +214,6 @@ struct RecordedDraw {
     std::shared_ptr<std::shared_ptr<const void>>* spaceKeep = nullptr;
 };
 
-// A remapped viewport depth range reads its scale and offset from the draw's push block (the vertex shader's
-// RemapPositionDepth), so draws that differ only in them share one pipeline; the draw's own state supplies them.
 void patchDepthRemapPush(std::array<std::byte, PipelinePushConstantBytes>& block, const State& state) {
     if (state.depthRemap.mode == 0u) return;
     static_assert(ShaderRecompiler::DepthRemapPushOffsetBytes + ShaderRecompiler::DepthRemapPushBytes <= PipelinePushSlotBytes);
@@ -320,13 +298,6 @@ void pushDrawConstants(const Pipeline& pipeline, VkCommandBuffer commands, const
     pipeline.PushConstants(commands, stages | VK_SHADER_STAGE_MESH_BIT_EXT, block);
 }
 
-// The record of a draw whose targets are all resident (`lean`: recorded into the device's open
-// batch, rendering in the general layout): one memory barrier before the pass (earlier writes to
-// the attachments and the draw's inputs visible to it) and one after it, recorded by the recorder
-// when the pass ends (Recorder::LeaveRenderPassOpen), so consecutive draws into the same
-// attachments with nothing recorded between them share one pass; the host-write and host-read
-// barriers are implicit in the submission and the fence. Then the kept objects, the completion
-// work and, for a waited-for draw, the recorder sync.
 bool CaptureInputsEnabled() {
     static const bool enabled = std::getenv("APS5_CAPTURE_INPUTS") != nullptr;
     Require(!enabled || CaptureTrace::Enabled(), "APS5_CAPTURE_INPUTS requires APS5_CAPTURE_TRACE");
@@ -418,15 +389,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const bool gpuIndirect = args != nullptr && record.indirect->path == IndirectDrawPath::Gpu;
     using CommandClass = Recorder::CommandClass;
     const auto countBarrier = [&](std::uint32_t count) { Recorder::CountBarriers(CommandClass::Draw, count); };
-    // The pass is named by its attachment views (stable while the kept targets live, so unique
-    // within the open batch) and the extent. The previous draw's pass is continued only when this
-    // draw neither reads its attachments (a barrier would be owed, which no pass allows) nor
-    // records anything outside a pass (an indirect draw's argument barrier and scratch copies).
     const auto passKey = DrawRenderPassKey(context, state, record.targetViews);
     const bool readsTarget = std::any_of(record.targets.begin(), record.targets.end(), [&](const std::shared_ptr<StorageTexture>& target) { return resources.ReadsImage(target.get()); });
-    // A queued DCC key store over memory the draw writes or reads in place (unknown for an
-    // address-based build), or over its GPU-side records, lands before it, as before a dispatch
-    // (VulkanDevice::dispatch); the flush ends an open pass, so it comes before the decision.
     const auto touches = [&](std::uint64_t begin, std::uint64_t end) {
         const auto bytes = static_cast<std::size_t>(end - begin);
         if (resources.WritesOverlap(begin, bytes) || resources.ReadsOverlap(begin, bytes)) return true;
@@ -437,7 +401,6 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         recorder->FlushKeyStores();
         outcome.keyStoresFlushed = true;
     }
-    // A queued label store over such memory likewise (Recorder::RecordStore).
     if (recorder->HasQueuedStores() && (resources.HoldsLease() || recorder->AnyQueuedStore(touches))) {
         recorder->FlushStores();
         outcome.storesFlushed = true;
@@ -516,8 +479,6 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         PerformanceTrace::Amount(PerformanceTrace::RenderPassScope, 1);
     }
     if (capture) captureInputs(context, *recorder, commands, resources, drawBindings, record.targets.empty() || record.targets.front() == nullptr ? 0 : record.targets.front()->Descriptor().baseAddress);
-    // The draw's [gputime] class range: from its first barrier to the pass's trailing barrier (a
-    // continued draw lies inside its pass's range).
     const auto drawTiming = !continued ? recorder->BeginGpuTiming(CommandClass::Draw) : Recorder::NoTiming;
     if (!continued && Recorder::BarrierValidate()) {
         auto reads = resources.InPlaceReads();
@@ -569,8 +530,6 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         } else if (gpuIndirect) {
             rewritten = recordIndirectArguments(context, commands, recorder, true, *record.indirect, scratch, argumentSnapshot, argumentBuffer, argumentOffset, countBarrier);
         }
-        // Earlier recorded work (dispatches, the previous draw) wrote the images in the general
-        // layout, which a lean draw renders in: no transitions.
         if (!record.reordered.empty()) {
             std::vector<std::shared_ptr<void>> kept;
             RecordSampleOrder(context, recording, record.reorderPass, record.reordered, true, kept);
@@ -670,9 +629,6 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         }
     }
     if (record.waited) {
-        // The wait the dispatch path makes for such work (source 3, "address-based"): the
-        // write-back runs before the next packet, so the CPU never reads copied results or
-        // touches a leased allocation before they landed.
         Recorder::CountSync(3);
         const auto ownBefore = timer.profile ? Recorder::ThreadWaitedMs() : 0.0;
         recorder->Sync();
@@ -681,9 +637,6 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
 }
 
-// The state with the outputs the pixel shader lacks masked: Vulkan leaves attachments a pixel
-// shader has no output for undefined, so their writes are masked (shaders that only store to
-// images or buffers keep their targets as they were). Empty when no mask must change.
 }
 }
 }

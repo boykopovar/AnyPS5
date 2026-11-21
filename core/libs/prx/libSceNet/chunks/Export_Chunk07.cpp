@@ -63,7 +63,6 @@ extern "C" {
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "src/ResolverTestHooks.hpp"
 
-// Guest socket descriptors retain PS5 semantics while their transport is backed by host sockets.
 
 static_assert(sizeof(NetDhcpOptionInfo) == 24);
 static_assert(offsetof(NetDhcpOptionInfo, capacity) == 4);
@@ -106,7 +105,6 @@ static_assert(sizeof(NetDns6Info) == 32);
 static_assert(sizeof(NetIpv6InterfaceAddress) == 20);
 
 namespace {
-// FreeBSD errno numbers as reported through sceNetErrnoLoc (SCE_NET_ERROR_* is 0x80410100 + errno).
 constexpr int NET_ENOENT = 2;
 constexpr int NET_EINTR = 4;
 constexpr int NET_EBADF = 9;
@@ -314,7 +312,6 @@ bool guest_to_native_address(const void* address, std::uint32_t length,
 bool native_to_guest_address(const sockaddr_storage& native, void* address, std::uint32_t* length) {
     if (!address || !length) return false;
     if (native.ss_family == AF_UNSPEC) {
-        *length = 0;
         return true;
     }
     std::uint8_t bytes[28]{};
@@ -337,7 +334,6 @@ bool native_to_guest_address(const sockaddr_storage& native, void* address, std:
     }
     const auto copied = std::min<std::uint32_t>(*length, bytes[0]);
     std::memcpy(address, bytes, copied);
-    *length = copied;
     return true;
 }
 
@@ -470,8 +466,6 @@ bool IsZeroAddress(const NetIpv6Address& address) {
 }
 
 void set_errno(int err) {
-    *errno_slot() = err;
-    *__error_nid_postfix() = err;
 }
 
 int fail(int err) {
@@ -1002,7 +996,7 @@ std::optional<std::uint32_t> InterfaceIdOfHostIndex(std::uint32_t index) {
     return std::nullopt;
 }
 
-}  // namespace
+}
 
 void GuestSceNetTest::SetResolverLookupForTests_nid_no_patch(ResolverLookup lookup) noexcept {
     g_resolverLookupForTests.store(lookup);

@@ -83,7 +83,6 @@ std::uint32_t SetDescriptorLimit(const Context& context, VkDescriptorType type, 
     }
 }
 
-// What one chain pool holds; a set needing more of any type gets a dedicated pool.
 constexpr std::uint32_t ChainPoolSets = 1024;
 constexpr std::array<VkDescriptorPoolSize, 4> ChainPoolSizes{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4096}, {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1024}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1024}, {VK_DESCRIPTOR_TYPE_SAMPLER, 512}}};
 constexpr std::array<VkDescriptorPoolSize, 4> ChainPoolCreateSizes{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4096 + 2}, {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1024}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1024}, {VK_DESCRIPTOR_TYPE_SAMPLER, 512}}};
@@ -270,7 +269,6 @@ std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words
     Require(byteSize <= std::numeric_limits<std::size_t>::max(), "shader buffer size exceeds host address space");
     const auto size = static_cast<std::size_t>(BytesUpToTarget(address, byteSize, descriptor.Stride(), written ? nullptr : target));
     Require(target == nullptr || !overlap(address, size, target->MemoryAddress(), target->bytes), "shader buffer aliases the render target");
-    // APS5_ALL_BUFFERS_WRITTEN=1: every element is noted as written, as before bufferWritten existed.
     static const bool allWritten = std::getenv("APS5_ALL_BUFFERS_WRITTEN") != nullptr;
     Require(!written || !overlap(address, size, indexAddress, indexBytes), "writable shader buffer aliases the index buffer");
     written = written || allWritten;
@@ -292,7 +290,6 @@ std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words
 
 std::string ShaderResources::Describe() const {
     const auto sample = [](std::uint64_t address, std::uint64_t bytes) {
-        // Heaps bound whole can include uncommitted pages; those ranges are not sampled.
         if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), static_cast<std::size_t>(bytes))) return -1.0;
         std::size_t nonzero = 0;
         std::size_t samples = 0;
@@ -312,7 +309,6 @@ std::string ShaderResources::Describe() const {
             std::snprintf(line, sizeof(line), " dcc=%s@0x%llx", DccKeysName(keys), static_cast<unsigned long long>(range.dccAddress));
             text += line;
             if (keys == DccKeys::Mixed) {
-                // Where the keys change: first key, how many leading keys match it, and the next key.
                 const auto* bytes = reinterpret_cast<const std::uint8_t*>(range.dccAddress);
                 const auto count = static_cast<std::size_t>(range.bytes / 256u);
                 std::size_t run = 1;
@@ -322,7 +318,6 @@ std::string ShaderResources::Describe() const {
             }
         }
     }
-    // APS5_TRACE_DISPATCH_IO=2 also lists the words of small buffers (constants).
     static const bool words = [] { const char* value = std::getenv("APS5_TRACE_DISPATCH_IO"); return value != nullptr && value[0] == '2'; }();
     const auto appendWords = [&](const std::uint32_t* data, std::size_t bytes) {
         if (!words || bytes > 0x200) return;
@@ -364,8 +359,6 @@ std::size_t ShaderResources::addDataBuffer(std::span<const std::uint32_t> words)
 
 void ShaderResources::rehashDataWords() {
     dataWordsHash = FnvOffset;
-    // Data buffers are the non-guest allocations with a buffer (an address-role allocation has
-    // none), appended in binding order by buildPrepare: the order DataWordsHash(shader) hashes.
     for (const auto& allocation : allocations) {
         if (!allocation.guest && allocation.buffer != nullptr && allocation.role != ShaderRecompiler::DescriptorRole::ImageTableMap) mixDataWords(dataWordsHash, allocation.dataWords);
     }
@@ -403,8 +396,6 @@ bool ShaderResources::refreshData(VkCommandBuffer commands, const CompiledShader
     Require(shader.program != nullptr, "missing compiled shader");
     const auto& program = *shader.program;
     bool recorded = false;
-    // One [gputime] range of class TemplateDataRefresh around the updates, begun at the first one
-    // (a refresh that finds every word equal records nothing and times nothing).
     auto timing = Recorder::NoTiming;
     std::uint64_t refreshedBytes = 0;
     for (const auto& binding : program.bindings) {
@@ -483,7 +474,6 @@ void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding&
     Require((binding.kind == ShaderRecompiler::DescriptorKind::SampledImage && sampledHeap) || (binding.kind == ShaderRecompiler::DescriptorKind::StorageImage && storageHeap) || (binding.kind == ShaderRecompiler::DescriptorKind::Sampler && heap == ShaderRecompiler::RuntimeAbi::Binding::Samplers), "resource class disagrees with typed descriptor heap");
     Require(binding.kind == ShaderRecompiler::DescriptorKind::Sampler || context.nullDescriptors || context.placeholderImages != nullptr, "typed image heaps require nullDescriptor or placeholder images");
     if (binding.kind == ShaderRecompiler::DescriptorKind::StorageImage) {
-        // Storage images are guest textures the shader writes (looked up in stage B).
         Require(binding.role == ShaderRecompiler::DescriptorRole::GuestImages, "storage image binding has a non-image role");
         Require(binding.guestDescriptor.size() == static_cast<std::size_t>(binding.count) * 8u, "guest storage image descriptors must contain 8 dwords each");
         Require(context.detiler != nullptr, "device texture detiler is unavailable");
@@ -546,8 +536,6 @@ void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding&
 
 namespace {
 
-// Calls `visit(binding, element, words)` for every sampled and storage image element of a compiled
-// shader's bindings, in plan order (the order addImageBinding and resolveImageBinding walk).
 template <typename Visit>
 }
 }

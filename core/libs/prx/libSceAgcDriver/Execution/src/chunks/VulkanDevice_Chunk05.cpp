@@ -113,8 +113,6 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     require(state->extent.width != 0 && state->extent.height != 0, "output window is minimized");
     require(!state->queuePending, "the previous presentation was not queued");
     require(!state->presentSlots.empty(), "device has no presentation slots");
-    // The game path acquired the image before taking GpuMutex (Driver::Present); tests, tools and
-    // APS5_SYNC_FLIP=1 acquire here.
     if (!state->imageAcquired && !AcquireImage()) return false;
     state->imageAcquired = false;
     const auto index = state->acquiredIndex;
@@ -129,14 +127,9 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     require(!passthrough || drawn || clearOnly || (state->hdrScaler != nullptr && !dumpFrame), "an HDR10 presentation through the scaler needs the HDR10 scaler and dumps on the CPU");
     auto* scaler = passthrough && !drawn ? state->hdrScaler.get() : state->scaler.get();
     const float whiteNits = PqToSdrWhiteNits(AgcDriver::CurrentHostHdr());
-    // The scaler's source image, the color transfer's staging and the upload buffer are single
-    // objects an in-flight blit through them may still read: the paths using or re-creating them
-    // wait for every slot first. The game path did so before taking the mutex
-    // (PresentWaitsForSlots); this is the fallback.
     const bool shared = !clearOnly && !direct && !drawn;
     const bool upscaled = state->upscaler != nullptr && !clearOnly && PresentationUpscaler::Upscales(width, height, state->extent);
     if (shared && state->SharedSlotInFlight()) RetirePresents(0);
-    // The next slot is the oldest; a caller that did not retire it first (PresentPixels) waits here.
     if (state->presentSlots[state->presentCursor].inFlight) RetirePresents(state->presentSlots.size() - 1);
     auto& slot = state->presentSlots[state->presentCursor];
     require(!slot.inFlight, "presentation slot is still in flight");
@@ -157,9 +150,6 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
         state->colorTransfer->Upload(display->address, width, height, Graphics::ColorTileMode::RenderTarget, DisplayTexelBytes(display->pixelFormat));
     }
     if (!pixels.empty()) state->Upload(pixels);
-    // The frame's recorded work (and a refresh of the resident image) must reach the queue before the
-    // presentation's own submission, which reads the image in queue order. No reap first: queue 0
-    // reaps at its next packet, so the presenter's hold carries no completions.
     SubmitRecorded(false);
     std::chrono::steady_clock::time_point lastSubmittedAt{};
     const std::uint64_t batchesAtBlit = state->recorder ? state->recorder->NewestSubmitted(&lastSubmittedAt) : 0;
@@ -242,9 +232,6 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
         const VkPipelineStageFlags residentStage = drawn ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT;
         const VkAccessFlags residentRead = drawn ? VK_ACCESS_SHADER_READ_BIT : VK_ACCESS_TRANSFER_READ_BIT;
         if (resident != nullptr) {
-            // The draws and dispatches that produced the image were submitted before this command
-            // buffer; their writes become visible to the blit here. The layout stays GENERAL, the
-            // one the storage image is tracked in.
             residentBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
             residentBarrier.dstAccessMask = residentRead;
             residentBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
@@ -366,7 +353,6 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &rendered;
     timing.Mark("command_record_scale");
-    // The slot's fence signaled (retired above) or was never used: the reset cannot block.
     check(state->DeviceFunction<PFN_vkResetFences>("vkResetFences")(state->device, 1, &slot.fence), "vkResetFences present");
     check(state->DeviceFunction<PFN_vkQueueSubmit>("vkQueueSubmit")(state->queue, 1, &submit, slot.fence), "vkQueueSubmit clear");
     const auto submittedAt = std::chrono::steady_clock::now();
@@ -374,14 +360,11 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     APS5_LOG_CHARS_OUT_DEBUG("Presentation vkQueueSubmit OK");
     {
         std::lock_guard lock(state->presentMutex);
-        // The image stays alive until the slot is retired (storage-cache eviction only drops the
-        // cache's reference).
         slot.kept = resident;
         slot.keptPlane = planeSource.resident;
         slot.imageIndex = index;
         slot.inFlight = true;
         slot.shared = shared;
-        // Only a submitted readback is written after the fence (a failed submit tears the device down).
         slot.dumpRecorded = dumpFrame;
         slot.dumpScreenshot = dumpFrame && state->nextDumpScreenshot;
         slot.dumpIndex = state->nextDumpIndex;
@@ -398,9 +381,6 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
         if (plane != nullptr) ++presentCounters.planes;
         if (auto* frame = PerformanceContext::Current()) {
             frame->NoteBlit(batchesAtBlit, lastSubmittedAt, submittedAt);
-            // The serials are cumulative: only their difference (the batches other queues put
-            // ahead of the blit since the flip packet) is summed; a record without a flip sample
-            // (the drain paths) contributes nothing.
             const auto atFlip = frame->BatchesAtFlip();
             if (atFlip != 0 && batchesAtBlit >= atFlip) presentCounters.batchesAheadOfBlit += batchesAtBlit - atFlip;
             if (frame->FlipReached() != std::chrono::steady_clock::time_point{}) {
@@ -461,8 +441,6 @@ double VulkanDevice::RetirePresents(std::size_t keepInFlight) {
     auto inFlight = static_cast<std::size_t>(std::count_if(slots.begin(), slots.end(), [](const auto& slot) { return slot.inFlight; }));
     double waitedMs = 0;
     bool retired = false;
-    // Oldest first from the cursor; the fences of one queue signal in submission order, so the
-    // first unsignaled one ends the scan, and the ones beyond the bound are the oldest.
     for (std::size_t i = 0; i < slots.size() && inFlight != 0; ++i) {
         auto& slot = slots[(state->presentCursor + i) % slots.size()];
         if (!slot.inFlight) continue;

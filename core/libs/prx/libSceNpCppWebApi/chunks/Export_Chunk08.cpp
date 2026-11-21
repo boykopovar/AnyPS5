@@ -13,10 +13,6 @@ static constexpr std::size_t ReferenceCountOffset = 0;
 static constexpr std::size_t VectorReferenceCountOffset = 0x30;
 static constexpr int TransactionNotStarted = static_cast<int>(0x80553508);
 
-// Offline PSN: request entry points (API calls, transaction start/readData, factories) fail with
-// SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN, the constant shadPS4/fpPS4 document for this code; parameter
-// bookkeeping succeeds; the audited accessors read the measured offsets and the rest stay
-// unimplemented because a failed request never produces a response.
 
 static void ConstructParameter(void* self);
 static int InitializeParameter(void* self, const std::uint64_t* context, bool argumentsPresent);
@@ -55,7 +51,6 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_15ProfanityFilter2V
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_15ProfanityFilter2V219WebApiFilterRequestEEC1Ev(IntrusivePtr* self) {
-    *self = {};
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_15ProfanityFilter2V219WebApiFilterRequestEED1Ev(IntrusivePtr* self) {
@@ -63,7 +58,6 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_15ProfanityFilter2V
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_18ResponseHeaderBaseEEC1Ev(IntrusivePtr* self) {
-    *self = {};
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_18ResponseHeaderBaseEED1Ev(IntrusivePtr* self) {
@@ -71,7 +65,6 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_18ResponseHeaderBas
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6StringEEC1Ev(IntrusivePtr* self) {
-    *self = {};
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6StringEED1Ev(IntrusivePtr* self) {
@@ -88,7 +81,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEC1Ev(IntrusivePtr* self) {
-    *self = {};
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V120PlayerSessionForReadEEEEdeEv(const void* self) {
@@ -126,18 +118,12 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common13ConstIteratorImED2Ev(void* self) {
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody17setNpServiceLabelERKj(void* self, const std::uint32_t* label) {
-    *reinterpret_cast<std::uint32_t*>(static_cast<std::uint8_t*>(self) + 0x28) = *label;
-    *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(self) + 0x2c) = 1;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V122RecordScoreRequestBody15setWaitsForDataERKb(void* self, const bool* value) {
-    *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(self) + 0x79) = *value ? 1 : 0;
-    *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(self) + 0x7a) = 1;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V122RecordScoreRequestBody17setNpServiceLabelERKj(void* self, const std::uint32_t* label) {
-    *reinterpret_cast<std::uint32_t*>(static_cast<std::uint8_t*>(self) + 0x44) = *label;
-    *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(self) + 0x48) = 1;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V19BoardsApi29ParameterToGetBoardDefinition9setfieldsEPKc(void* self, const char* fields) {
@@ -146,22 +132,17 @@ int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V19BoardsApi29ParameterToGetBoa
     void* implementation = const_cast<void*>(parameter->implementation);
     const int result = AssignCommonString(CommonStringAt(implementation, 0x08), fields);
     if (result < 0) return result;
-    *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(implementation) + 0x28) = 1;
     return 0;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer14setkeepHtmlTagEb(void* self, bool value) {
     void* implementation = *reinterpret_cast<void**>(static_cast<std::uint8_t*>(self) + 0x08);
     if (implementation == nullptr) return;
-    *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(implementation) + 0x29) = value ? 1 : 0;
-    *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(implementation) + 0x2a) = 1;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer20setuseCurrencySymbolEb(void* self, bool value) {
     void* implementation = *reinterpret_cast<void**>(static_cast<std::uint8_t*>(self) + 0x08);
     if (implementation == nullptr) return;
-    *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(implementation) + 0x53) = value ? 1 : 0;
-    *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(implementation) + 0x54) = 1;
 }
 
 IntrusivePtr APS5_VABI _ZN3sce2Np9CppWebApi13InGameCatalog2V59Container7getSkusEv(void* self) {
@@ -245,7 +226,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V149PostPlayerSessionsSessionIdInvitationsRequestBodyEEC1Ev(IntrusivePtr* self) {
-    *self = {};
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V129GetPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE6finishEv() {
@@ -269,7 +249,6 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V1
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V12ToEEC1Ev(IntrusivePtr* self) {
-    *self = {};
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V129GetPlayerSessionsResponseBodyEEptEv(const IntrusivePtr* self) {

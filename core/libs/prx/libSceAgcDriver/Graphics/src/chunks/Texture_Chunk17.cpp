@@ -22,7 +22,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
-// For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -83,7 +82,6 @@ StorageTexture::~StorageTexture() {
         std::lock_guard lock(live.mutex);
         std::erase(live.textures, this);
     }
-    // Cache eviction flushes first; anything still pending here is being torn down with the device.
     {
         auto& pending = Pending();
         std::lock_guard lock(pending.mutex);

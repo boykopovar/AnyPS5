@@ -170,8 +170,6 @@ void ShaderResources::buildComplete() {
     const auto stageStart = std::chrono::steady_clock::now();
     phaseStart = stageStart;
     try {
-        // The lookups run in plan order: Revalidate walks the bindings the same way, and consecutive
-        // storage elements of one mip chain share the previous element's image.
         previousSampled = {};
         for (auto& source : samplerSources) {
             source.singleLevelImage = source.mipmappedImage = false;
@@ -181,9 +179,6 @@ void ShaderResources::buildComplete() {
         previousSampled = {};
         deferredImages.clear();
         applySamplerVariants();
-        // The records served their purpose: each holds the cache entry's objects as of stage A,
-        // which would otherwise keep a replaced texture or an evicted storage image (and its device
-        // memory) alive, outside the caches' budgets, for as long as this object is cached.
         imageRecords.clear();
         imageRecords.shrink_to_fit();
         nextImageRecord = 0;
@@ -200,8 +195,6 @@ void ShaderResources::buildComplete() {
         finishImageTables();
         phase(BuildPhase::Bda);
         if (_set != VK_NULL_HANDLE || fragment.set != VK_NULL_HANDLE) {
-            // One update call for the whole set: the info arrays are sized up front so every write's
-            // pointer into them stays valid until the call.
             std::size_t bufferCount = 0;
             std::size_t imageCount = 0;
             for (const auto& binding : bindings) {
@@ -349,14 +342,8 @@ void ShaderResources::buildComplete() {
     }
 }
 
-// Whether this build can serve later dispatches of the same content (see ContentKey): nothing to do
-// once the GPU completed (no BDA, no copied written buffers, no lease) and every guest buffer bound
-// in place through a host import (or staged in device memory from one, see
-// GuestBufferMemory::DirectRegions) whose identity is recorded for Revalidate.
 namespace {
 
-// APS5_NO_TEMPLATE_DATA_REFRESH=1: compute keys keep the ShaderData/FlattenedSrt words and no
-// template refreshes its data buffers (see ShaderResources::ContentKey).
 bool TemplateDataRefresh() {
     static const bool enabled = std::getenv("APS5_NO_TEMPLATE_DATA_REFRESH") == nullptr;
     return enabled;
@@ -366,10 +353,8 @@ bool DataRole(ShaderRecompiler::DescriptorRole role) {
     return role == ShaderRecompiler::DescriptorRole::ShaderData || role == ShaderRecompiler::DescriptorRole::FlattenedSrt;
 }
 
-// The largest data buffer vkCmdUpdateBuffer refreshes; a template with a bigger one is not reused.
 constexpr std::size_t MaxRefreshBytes = 65536;
 
-// FNV-1a over one data buffer's words, its count first (DataWordsHash).
 constexpr std::uint64_t FnvOffset = 14695981039346656037ull;
 constexpr std::uint64_t FnvPrime = 1099511628211ull;
 void mixDataWords(std::uint64_t& hash, std::span<const std::uint32_t> words) {
@@ -377,7 +362,6 @@ void mixDataWords(std::uint64_t& hash, std::span<const std::uint32_t> words) {
     for (const auto word : words) hash = (hash ^ word) * FnvPrime;
 }
 
-// ResourceCache::Find and Touch calls (the [rescache] line).
 std::atomic<std::uint64_t> resourceCacheFinds{0};
 std::atomic<std::uint64_t> resourceCacheTouches{0};
 std::atomic<std::uint64_t> depthGuardRefusals{0};
@@ -396,7 +380,6 @@ bool LoopGuardEnabled() {
 
 void ShaderResources::noteReusable() {
     const bool spaceReusable = !htileClear.has_value() && drawBuild && usesBda && bdaReadOnly && !SpaceReuseDisabled() && guestMemory.SpaceOnly() && !guestMemory.HasCopiedWrites() && multisampleSources.empty() && !(bda != nullptr && LoopGuardEnabled());
-    // Taken whether or not the object turns out reusable: the lookups' records are this build's.
     captureValidation(spaceReusable);
     reusable = false;
     importsReconcilable = false;
@@ -414,11 +397,7 @@ void ShaderResources::noteReusable() {
     if (!regions.has_value()) return;
     bool mirrored = false;
     for (const auto& [begin, end] : *regions) {
-        // No reconcile here: the upload just took these imports, and the set is about to be recorded
-        // against them.
         auto serial = HostImportSerial(context, begin, static_cast<std::size_t>(end - begin), false);
-        // Read-only image mirrors (exe ranges) are as stable as imports; their serials have the top
-        // bit set, so the two spaces never collide.
         const bool imported = serial != 0;
         if (serial == 0) serial = ImageMirrorSerial(context, begin, static_cast<std::size_t>(end - begin));
         if (serial == 0) return;

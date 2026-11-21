@@ -26,9 +26,6 @@ namespace {
 
 constexpr std::uint64_t KeyBytes = 256;
 
-// Whether every key in [keys, keys + count) equals `first`. Eight keys per compare: the scan runs
-// on every texture and storage validation, and an all-0xff (uncompressed) surface's keys are read
-// to the end each time (132 KiB for a 4K RGBA8 target). APS5_NO_DCC_WORD_SCAN=1 restores the byte loop.
 bool AllKeysEqual(const std::uint8_t* keys, std::size_t count, std::uint8_t first) {
     static const bool byteScan = std::getenv("APS5_NO_DCC_WORD_SCAN") != nullptr;
     if (byteScan) return std::all_of(keys, keys + count, [&](std::uint8_t key) { return key == first; });
@@ -66,9 +63,6 @@ void ExpandSingleBlocks(std::span<std::byte> bytes, std::size_t elementBytes) {
     }
 }
 
-// APS5_PROFILE_DRAW: key scans, their bytes and time, printed as [dcc] every 10 s, with the hits of
-// the GPU-store memo below and the "uncompressed" key stores by where they were made. Flush syncs
-// stay 0 (no key read syncs the recorder); the field is kept so the line's shape does not change.
 struct ScanProfile {
     std::atomic<std::uint64_t> scans{0};
     std::atomic<std::uint64_t> bytes{0};
@@ -76,7 +70,6 @@ struct ScanProfile {
     std::atomic<std::uint64_t> memoHits{0};
     std::atomic<std::uint64_t> flushSyncs{0};
     std::atomic<std::uint64_t> gpuStores{0};
-    // GPU stores whose range had a 4-byte unaligned head or tail (copied instead of filled).
     std::atomic<std::uint64_t> gpuSplitStores{0};
     std::atomic<std::uint64_t> cpuStores{0};
     std::atomic<std::int64_t> lastReport{0};
@@ -87,7 +80,6 @@ ScanProfile& Scans() {
     return profile;
 }
 
-// ProvedClearKeys outcomes, counted with or without profiling (the tests read them).
 struct ProofCounters {
     std::atomic<std::uint64_t> proved{0};
     std::atomic<std::uint64_t> scanned{0};
@@ -110,7 +102,6 @@ void ReportScans(std::chrono::steady_clock::time_point now) {
     auto& profile = Scans();
     const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
     auto last = profile.lastReport.load();
-    // The first event starts the period rather than reporting an empty one.
     if (last == 0) {
         profile.lastReport.compare_exchange_strong(last, nowMs);
         return;
@@ -135,22 +126,6 @@ void CountStore(std::atomic<std::uint64_t>& counter) {
     ReportScans(std::chrono::steady_clock::now());
 }
 
-// "Uncompressed" keys the driver stored on the GPU (MarkDccUncompressed's recorded fill) whose batch
-// may not have run yet: the bytes ReadDccKeys scans would still show the keys from before the store
-// (a fast-clear code), and a storage image whose write-back made the store would be re-uploaded as
-// cleared. While recorded work that writes the range is still running, the range reads as
-// uncompressed from here; the bytes are trusted again only once the newest recorded writer of the
-// range has signaled its fence (batches of the recorder's queue finish in order, so the fill and
-// every writer up to that one have landed and the bytes are final, whichever batch wrote last).
-// Dropping an entry on a later batch's serial alone would not do: until the fill's batch runs the
-// bytes PREDATE the fill (the previous clear code), and a later writer that is not a same-code clear
-// (a decompress kernel, a partial key write, a false overlap from an unrelated V#) would make the
-// next Refresh compare that stale code against the uploaded keys. The lookup runs with or without
-// GuestMemory::GpuMutex (a resource build's stage A reads keys unlocked, its stage B re-reads them
-// under the lock): unlocked it can only ask the lock-free snapshot whether the range is written at
-// all. Entries belong to one recorder: when the active recorder changes (device replacement; a new
-// recorder can reuse the old one's address) they are all dropped. Its mutex is a leaf (nothing is
-// taken under it).
 struct GpuKeyStore {
     std::uint64_t begin;
     std::uint64_t end;
@@ -169,7 +144,6 @@ KeyStoreMemo& Memo() {
     return memo;
 }
 
-// Under memo.mutex: the active recorder, with the entries of any other recorder dropped.
 Recorder* MemoRecorder(KeyStoreMemo& memo) {
     auto* active = Recorder::Active();
     if (active != memo.recorder) {
@@ -195,8 +169,6 @@ std::optional<DccKeys> MemoizedKeys(std::uint64_t begin, std::uint64_t end) {
         bool pending = false;
         if (recorder != nullptr) {
             if (GuestMemory::GpuMutex().HeldByThisThread()) {
-                // The open batch is never signaled (also with APS5_NO_SYNC_THROUGH, where the info
-                // carries the open flag with the newest in-flight batch's fence state).
                 const auto info = recorder->DescribePendingWrite(it->begin, bytes);
                 pending = info.has_value() && !info->signaled;
             } else {
@@ -213,7 +185,6 @@ std::optional<DccKeys> MemoizedKeys(std::uint64_t begin, std::uint64_t end) {
     return std::nullopt;
 }
 
-// Debug aid (APS5_TRACE_DCC_KEYS=1): every uncompressed key store, with the packet that made it.
 void TraceKeyStore(const char* path, std::uint64_t begin, std::size_t count) {
     static const bool trace = std::getenv("APS5_TRACE_DCC_KEYS") != nullptr;
     if (!trace) return;
@@ -221,13 +192,6 @@ void TraceKeyStore(const char* path, std::uint64_t begin, std::size_t count) {
     std::fprintf(stderr, "[dcc-keys] uncompressed keys stored on the %s: 0x%llx+0x%zx (packet 0x%x queue 0x%x)\n", path, static_cast<unsigned long long>(begin), count, packet.opcode, packet.queue);
 }
 
-// The 0xff keys as a fill recorded into the active recorder's open batch, into the range's host
-// import (the WriteLabelOnGpu / FillBuffer pattern): ordered behind every earlier recorded read or
-// write of the range (the title's DCC clear or decompress kernel storing keys through a V#, which the
-// CPU store had to wait for) and visible to the work recorded after it and to the host. vkCmdFillBuffer
-// needs a 4-byte aligned offset and size; an unaligned head or tail is copied from a kept 4-byte
-// buffer of 0xff instead. Under GuestMemory::GpuMutex (it records). False when the keys cannot be
-// stored this way (memory the GPU has no view of): the caller stores them on the CPU.
 bool StoreUncompressedOnGpu(const Context& context, Recorder& recorder, std::uint64_t begin, std::size_t count) {
     const auto* import = HostImportFor(context, begin, count);
     if (import == nullptr) return false;
@@ -235,25 +199,16 @@ bool StoreUncompressedOnGpu(const Context& context, Recorder& recorder, std::uin
     const VkDeviceSize last = first + count;
     const VkDeviceSize fillBegin = std::min((first + 3) & ~VkDeviceSize{3}, last);
     const VkDeviceSize fillEnd = std::max(last & ~VkDeviceSize{3}, fillBegin);
-    // Everything that can throw (the seed's allocation, the batch's command buffer) comes before the
-    // first recorded command: a fill left in the batch without its note and memo entry would be an
-    // unordered write of the keys.
     std::shared_ptr<Buffer> seed;
     if (fillBegin > first || last > fillEnd) {
         seed = std::make_shared<Buffer>(context, 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         std::memset(seed->Bytes().data(), 0xff, seed->Bytes().size());
         CountStore(Scans().gpuSplitStores);
     }
-    // A unit shadow's results in the key range's edge units reach the import before the fill
-    // lands over part of them (the stamp below then makes those units stale).
     if (AnyShadowedOverlaps(begin, count)) PublishShadow(begin, count, PublishScope::PartialUnits, PublishReason::Keys);
-    // Queued on the open batch and recorded with the batch's other key stores as one run (or before
-    // a later command writing the keys; see Recorder::QueueKeyStore).
     recorder.QueueKeyStore(import->buffer, first, last, std::move(seed), begin, begin + count);
     recorder.NotePendingFill(begin, count, 0xff);
     GuestMemory::MarkWritten(begin, count);
-    // After the note: an unlocked memo lookup drops an entry the snapshot does not cover yet. The
-    // entry is kept only for the active recorder (the one the flush hook and the lookups consult).
     {
         auto& memo = Memo();
         std::lock_guard lock(memo.mutex);
@@ -268,7 +223,6 @@ bool StoreUncompressedOnGpu(const Context& context, Recorder& recorder, std::uin
 
 void StoreUncompressedOnCpu(std::uint64_t begin, std::size_t count) {
     TraceKeyStore("cpu", begin, count);
-    // The write waits for recorded work over the range (the flush hook), so the bytes are current after.
     ForgetStores(begin, begin + count);
     const std::vector<std::byte> uncompressed(count, std::byte{0xff});
     GuestMemory::Write(begin, uncompressed);
@@ -364,8 +318,6 @@ std::optional<DccKeys> PendingStoreKeys(Recorder& recorder, std::uint64_t begin,
     return ByteKeys(static_cast<std::uint8_t>(landed.value));
 }
 
-// Whether the keys already read as uncompressed: scans the same bytes as ReadDccKeys, so it counts
-// as a scan too.
 bool AlreadyUncompressed(std::uint64_t metaAddress, std::size_t count) {
     const auto* keys = reinterpret_cast<const std::uint8_t*>(metaAddress);
     const auto start = ScanProfileEnabled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -430,7 +382,6 @@ bool LayoutFor(VkFormat format, Layout& layout) {
     }
 }
 
-// "1" in a channel of this kind and width.
 std::uint64_t One(Kind kind, std::uint32_t bits) {
     switch (kind) {
         case Kind::Unorm: case Kind::Uint: return bits >= 64 ? ~0ull : (1ull << bits) - 1u;
@@ -485,19 +436,13 @@ std::size_t DccKeyCount(const GuestTextureResource& surface, std::uint64_t surfa
 
 namespace {
 
-// ReadDccKeys, saying in `memoized` whether the answer came from the pending-store memo rather
-// than the bytes.
 DccKeys readDccKeys(std::uint64_t metaAddress, std::size_t count, bool& memoized) {
     memoized = false;
     if (metaAddress == 0 || count == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(metaAddress), count)) return DccKeys::Unreadable;
-    // A driver store still pending on the GPU is not in the bytes yet.
     if (const auto memo = MemoizedKeys(metaAddress, metaAddress + count)) {
         memoized = true;
         return *memo;
     }
-    // Keys under a unit shadow's fresh results (metadata aliased with a surface): under the
-    // device lock they are published and waited for; a build's unlocked stage answers "unstable"
-    // so its stage B reads them under the lock.
     if (AnyShadowedOverlaps(metaAddress, count)) {
         if (!GuestMemory::GpuMutex().HeldByThisThread()) {
             memoized = true;

@@ -22,7 +22,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
-// For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -80,12 +79,7 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
     }
     if (runs.empty()) return 0;
     auto windows = sliceWindows(runs);
-    // A kept unit can lie outside every window: the tracking grid is flat over the guest range
-    // while the slices of a 3D surface taper in depth with the level (HasLayer), so the upper
-    // depth slices' higher-level blocks belong to no window. There is no tiled data to retile.
     if (windows.empty()) return 0;
-    // The linear rows and the tiled bytes of every window, each at a 256-byte position; the tail
-    // levels of a layer retile into one scratch region (their block is shared).
     std::vector<std::uint64_t> linearPositions, scratchPositions;
     std::uint64_t linearTotal = 0, scratchTotal = 0;
     for (std::size_t i = 0; i < windows.size(); ++i) {
@@ -101,12 +95,6 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
         scratchPositions.push_back(scratchTotal);
         scratchTotal += (window.tiledEnd - window.tiledBegin + 255) & ~std::uint64_t{255};
     }
-    // The kept ranges inside each window, from the window's scratch (a shared tail region once)
-    // to their destination: the import's unit shadow where a slab takes the piece (split at slab
-    // boundaries; units a piece covers partly and does not already hold fresh are seeded from the
-    // import first), else the import as before. Decided before anything is recorded: making a
-    // slab may evict another with a publish of its own (a chosen slab stays pinned by its
-    // destination until the pieces are marked, so no later choice evicts it).
     struct SlabPieces {
         std::shared_ptr<ShadowSlab> slab;
         std::shared_ptr<ShadowSlabPin> pin;
@@ -168,7 +156,6 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
     const auto blockBytes = ThinBlockLayout(descriptor.tileMode, elementBytes)[0];
     for (std::size_t i = 0; i < windows.size(); ++i) {
         const auto& window = windows[i];
-        // The tail levels follow each other, sharing the previous one's region.
         if (i != 0 && scratchPositions[i] == scratchPositions[i - 1]) continue;
         const auto first = added.size();
         std::size_t kept = 0;
@@ -289,7 +276,6 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
         for (auto& entry : padding.copies) std::erase_if(entry.second, [](const VkBufferCopy& copy) { return copy.size == 0; });
         std::erase_if(padding.copies, [](const auto& entry) { return entry.second.empty(); });
     }
-    // A queued label or key store inside a seeded unit lands before the seed copies the import.
     auto flushBegin = firstStored;
     auto flushEnd = lastStored;
     for (const auto& seed : seeds) {
@@ -339,8 +325,6 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
     toSource.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, VK_REMAINING_ARRAY_LAYERS};
     if (!direct) context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toSource);
     if (!seeds.empty() || !padding.copies.empty() || !holeCopies.empty()) {
-        // The seeded units' import bytes (every earlier writer of them, host stores included)
-        // precede the seed copies; the previous command's trailing barrier may have covered that.
         constexpr VkAccessFlags transferAccess = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
         if (recorder != nullptr && (covered & transferAccess) == transferAccess && Recorder::MergeBarriers()) {
             Recorder::CountMerged(Recorder::CommandClass::StorageWriteBack);
@@ -349,13 +333,10 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
             Recorder::CountBarriers(Recorder::CommandClass::StorageWriteBack);
         }
         for (const auto& [begin, end, slab, import] : seeds) {
-            // The piece's own slab (a seeded unit is one the piece covers partly).
             const VkBufferCopy seed{HostImportOffset(*import, begin), SlabOffset(*import, *slab, begin), end - begin};
             context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(commands, import->buffer, slab->buffer, 1, &seed);
             NoteShadowSeed(begin, end);
         }
-        // The padding's current bytes, under the retile that follows (the import-ready barrier
-        // orders the scratch writes).
         for (const auto& [source, copies] : padding.copies) {
             context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(commands, source, tiledScratch->Handle(), static_cast<std::uint32_t>(copies.size()), copies.data());
             paddingSeedCopies.fetch_add(copies.size(), std::memory_order_relaxed);
@@ -407,8 +388,6 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
         }
     }
     if (tiledScratch) {
-        // The retiled scratch (and a seed's slab bytes, which the scratch copies overwrite in
-        // part) precede the copies into the slabs and the import.
         const VkMemoryBarrier scratchDone{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
         context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &scratchDone, 0, nullptr, 0, nullptr);
         const auto copyBuffer = context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
@@ -425,8 +404,6 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
     backToGeneral.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
     backToGeneral.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     backToGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    // Transfer writes are in the destination mask too: a following publish or detile of the slabs
-    // merges its leading barrier.
     constexpr VkAccessFlags storedAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT;
     const VkMemoryBarrier stored{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, storedAccess};
     context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &stored, 0, nullptr, direct ? 0u : 1u, &backToGeneral);
@@ -435,8 +412,6 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
     } else {
         recorder->EndGpuTiming(timing, storedBytes);
         recorder->MarkCovered(storedAccess);
-        // Only the pieces written into the import are stores a CPU reader must wait for; the
-        // shadowed ones reach it through a publish, which notes its own.
         if (!imported.empty()) recorder->NoteStampedWrites(imported);
     }
     partialWriteBacks.fetch_add(1, std::memory_order_relaxed);

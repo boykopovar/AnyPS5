@@ -291,7 +291,6 @@ static const char* SyncObjectName(const char* name) {
 
 int APS5_VABI _ZNSt8__sce_v219_Mtx_init_with_nameEPP13pthread_mutexiPKc_nid_postfix(void** mutex, int type, const char* name) {
     const auto& sync = PthreadSync(__func__);
-    *mutex = nullptr;
     void* attr = nullptr;
     const int created = sync.mutexattrInit(&attr);
     if (created != 0) return CreateResult(created);
@@ -438,7 +437,6 @@ void APS5_VABI _ZNSt8__sce_v232_Cnd_do_broadcast_at_thread_exitEv_nid_postfix() 
             if (entry.mutex != nullptr && entry.thread == thread) {
                 if (entry.ready != nullptr) {
                     static_cast<void>(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(entry.mutex));
-                    *entry.ready = 1;
                 }
                 _ZNSt8__sce_v214_Cnd_broadcastEPP12pthread_cond_nid_postfix(entry.condition);
                 _ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(entry.mutex);

@@ -141,10 +141,6 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         record.masked = prepared.masked.has_value() ? &*prepared.masked : nullptr;
         recordDraw(context, state, draw, shaders, inputs, record, outcome, timer, ownWaitedMs, prepared.trace);
         if (prepared.passAttachments) rememberAttachments(context, state, prepared);
-        // The recipe for the caller's draw-cache entry (design_cpu_final M8, rule R3 for draws):
-        // only a template the resource cache serves under this content key (reusable: no lease,
-        // no copied writes, every direct region import- or mirror-served) of a direct draw, so a
-        // hit's proof is the template's ProveCurrent and nothing needs completion work.
         if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && !resources->SpaceReuse() && !multisampled && !pipeline->ReordersSamples()) {
             auto recipe = std::make_shared<DrawRecipe>();
             recipe->device = context.device;
@@ -165,7 +161,6 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
             recipe->fragmentOutputs = inputs.fragmentOutputs;
             recipe->shaderStages = inputs.shaderStages;
             recipe->hasDepth = state.depth.has_value();
-            *recipeOut = std::move(recipe);
         }
         timing.Mark("draw_and_resource_release");
         report(outcome.waited ? (outcome.reason == SyncLease ? " recorded then waited (lease)" : " recorded then waited (copied writes)") : completion ? " recorded with completion" : " recorded");
@@ -184,17 +179,12 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     APS5_LOG_CHARS_OUT_DEBUG("Creating CommandBatch");
     std::optional<CommandBatch> batch;
     if (!recorded) {
-        // The color-target detiles below take their descriptor sets from a fresh batch.
         if (context.detiler != nullptr) context.detiler->BeginBatch();
         batch.emplace(context);
     }
     using CommandClass = Recorder::CommandClass;
     const auto countBarrier = [&](std::uint32_t count = 1) { if (recorded) Recorder::CountBarriers(CommandClass::Draw, count); };
-    // A queued DCC key store over memory the draw writes or reads in place (unknown for an
-    // address-based build), or over its GPU-side records, lands before it, as before a dispatch
-    // (VulkanDevice::dispatch).
     if (recorded && recorder->HasQueuedKeyStores() && (resources->HoldsLease() || recorder->AnyQueuedKeyStore(touches))) recorder->FlushKeyStores();
-    // A queued label store over such memory likewise (Recorder::RecordStore).
     if (recorded && recorder->HasQueuedStores() && (resources->HoldsLease() || recorder->AnyQueuedStore(touches))) recorder->FlushStores();
     const auto commands = recorded ? recorder->Commands() : batch->Handle();
     if (recorded) prepared.spaceKeep = reserveSpaceKeep(*recorder, *resources);
@@ -203,7 +193,6 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     auto& recording = recorded ? recorder->GraphicsState() : *batchRecording;
     if (recorded) recorder->PrepareSampleSlot();
     APS5_LOG_CHARS_OUT_DEBUG("CommandBatch created");
-    // The draw's [gputime] class range: from its first barrier to the download barrier.
     const auto drawTiming = recorded ? recorder->BeginGpuTiming(CommandClass::Draw) : Recorder::NoTiming;
     if (recorded && Recorder::BarrierValidate()) {
         auto reads = resources->InPlaceReads();
@@ -394,9 +383,6 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         keepRecordedDraw(*recorder, resources, pipeline, framebuffer, inputs, owners, [&] { std::vector<std::pair<std::uint32_t, std::uint32_t>> slices; for (const auto& binding : targets) slices.emplace_back(binding.color.arraySlice, binding.color.arrayLastSlice != 0 ? binding.color.layers : 1u); return slices; }(), state.scissor, std::move(scratch), std::move(checkRecords), listed, completion, outcome, drawUse, prepared.spaceKeep != nullptr ? prepared.spaceKeep.get() : nullptr);
         timer.phase(PhaseKeep);
         if (outcome.waited) {
-            // The wait the dispatch path makes for such work (source 3, "address-based"): the
-            // write-back runs before the next packet, so the CPU never reads copied results or
-            // touches a leased allocation before they landed.
             Recorder::CountSync(3);
             const auto ownBefore = profile ? Recorder::ThreadWaitedMs() : 0.0;
             recorder->Sync();
@@ -407,7 +393,6 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         return;
     }
     {
-        // The recorder sync SubmitAndWait makes is the draw's own wait, not a nested hook wait.
         const auto ownBefore = profile ? Recorder::ThreadWaitedMs() : 0.0;
         batch->SubmitAndWait();
         if (!stencilReferences.empty()) resources->CheckFaults();
@@ -436,22 +421,17 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     for (const auto& binding : targets) {
         if (skipTargetWrite) break;
         if (binding.resident != nullptr) {
-            // The results stay on the GPU until something reads the target's memory.
             binding.resident->MarkSliceDirty(binding.color.arraySlice, binding.color.arrayLastSlice != 0 ? binding.color.layers : 1u);
             continue;
         }
         if (binding.gpuTiling) GuestMemory::WriteChanged(binding.color.address, binding.tiled->Bytes(), binding.original);
         else if (binding.banded) GuestMemory::WriteChanged(binding.color.address + binding.bandOffset, binding.transfer->Bytes(), binding.original);
         else WriteColorTarget(binding.color, binding.transfer->Bytes());
-        // The stored texels are the whole target now, so later reads must see them rather than a fast clear.
         const auto targetBytes = ColorTargetLayout(binding.color.extent.width, binding.color.extent.height, binding.color.tileMode, binding.color.elementBytes).Bytes();
         MarkDccUncompressed(binding.color.dccAddress, targetBytes, colorKeyCount(binding.color, targetBytes));
     }
     timer.phase(PhaseWriteBack);
     if (profile && traceDraws) {
-        // A synchronous draw's inputs and target sample are described as a rendering debug aid;
-        // the ~0.5 ms that takes (Describe samples every bound range and reads its DCC keys) is
-        // shown as its own phase and kept out of the plain profile.
         std::size_t nonzero = 0;
         std::size_t sampled = 0;
         if (!targets.empty() && targets.front().resident == nullptr) {

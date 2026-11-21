@@ -66,7 +66,6 @@ bool StorageImageCached(const Context& context, const StorageTexture* image) {
 
 namespace {
 
-// StorageImageCached for several images under one acquisition of the cache mutex.
 bool StorageImagesCached(const Context& context, std::span<const StorageTexture* const> images) {
     if (images.empty()) return true;
     auto& cache = StorageTextures();
@@ -154,15 +153,11 @@ const char* kindName(ShaderRecompiler::DescriptorKind kind) {
     throw std::runtime_error("AGC graphics: unknown descriptor kind");
 }
 
-// Consecutive identical storage descriptors address successive mips of one texture (dynamic-mip
-// storage writes), so the second and later ones share the first one's image lookup.
-// APS5_NO_STORAGE_DEDUPE=1 looks each one up (and refreshes the image) separately as before.
 bool StorageDedupeEnabled() {
     static const bool disabled = std::getenv("APS5_NO_STORAGE_DEDUPE") != nullptr;
     return !disabled;
 }
 
-// Whether storage element `element` of `binding` repeats the previous element's eight words.
 bool SameAsPreviousStorageElement(const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t element) {
     if (element == 0) return false;
     const auto words = binding.guestDescriptor.begin() + static_cast<std::size_t>(element) * 8u;
@@ -195,7 +190,6 @@ ShaderResources::ShaderResources(const Context& context, const CompiledShader& c
 
 namespace {
 
-// Whether a compute stage maps registered guest memory through BDA tables (see prepareAddressBindings).
 bool UsesAddressTables(const CompiledShader& compute) {
     Require(compute.program != nullptr, "missing compiled shader");
     return std::any_of(compute.program->bindings.begin(), compute.program->bindings.end(), [](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; });
@@ -205,8 +199,6 @@ bool UsesAddressTables(const CompiledShader& compute) {
 
 ShaderResources::ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots, bool deferred, std::uint64_t dispatchThreads, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear) : context(context), guestMemory(context), dispatchThreads(dispatchThreads), htileClear(htileClear), deferredCompute(compute), deferredSnapshots(snapshots) {
     Require(compute.stage == ShaderRecompiler::ShaderStage::Compute, "compute resources require a compute shader");
-    // Every use of a compute build is a recorded dispatch that calls MarkGpuWrites, which staged
-    // buffers need (a synchronous draw's use would not).
     guestMemory.AllowDeviceStaging();
     static const std::uint64_t addressStagingMinThreads = [] {
         const char* value = std::getenv("APS5_BDA_STAGING_MIN_THREADS");
@@ -220,10 +212,6 @@ ShaderResources::ShaderResources(const Context& context, const CompiledShader& c
         forgetDeferredInputs();
         return;
     }
-    // Address-based shaders pin and mirror registered memory in prepareAddressBindings (reconciling
-    // imports retires buffers to the recorder, refreshing mirrors waits for recorded work): that is
-    // device-lock work, so their whole build waits for Complete(). Without tables the call only
-    // checks the bindings.
     lockedBuild = UsesAddressTables(compute);
     if (lockedBuild) return;
     unlockedPrepare = true;
@@ -243,9 +231,6 @@ void ShaderResources::Complete() {
 }
 
 void ShaderResources::forgetDeferredInputs() {
-    // The compiled shader and the captured regions belong to the dispatch, which returns while this
-    // object lives on in the resource cache and the recorder: nothing may reach for them after the
-    // build, so they are dropped rather than left dangling.
     deferredCompute = {};
     deferredSnapshots = {};
 }
@@ -294,10 +279,6 @@ VkDescriptorPool CreateSetPool(const Context& context, std::span<const VkDescrip
     return pool;
 }
 
-// APS5_PROFILE_DRAW: the [resources] phase totals. Each thread accumulates its builds' phases in
-// arrays of its own and merges them into the shared totals every 1000 of its builds (and when it
-// ends), so no build takes the shared mutex per phase; the totals lag by up to 999 builds per
-// worker.
 constexpr std::size_t BuildPhaseCount = static_cast<std::size_t>(ShaderResources::BuildPhase::Count);
 constexpr std::array<const char*, BuildPhaseCount> BuildPhaseNames{"bindings", "precollect", "guest memory upload", "descriptors", "stage A", "images", "bda", "stage B"};
 
@@ -345,9 +326,6 @@ void addBuildPhase(ShaderResources::BuildPhase which, double ms) {
     ThreadBuilds().ms[static_cast<std::size_t>(which)] += ms;
 }
 
-// APS5_PROFILE_DRAW: guest buffer elements bound by descriptor (addGuestBuffer) and how many the
-// recompiler proved read-only, plus the pending-write notes their uses skipped (MarkGpuWrites),
-// printed as [buffers] every 10 s from MarkGpuWrites. Cumulative.
 struct BufferWriteCounters {
     std::atomic<std::uint64_t> elements{0};
     std::atomic<std::uint64_t> readOnly{0};

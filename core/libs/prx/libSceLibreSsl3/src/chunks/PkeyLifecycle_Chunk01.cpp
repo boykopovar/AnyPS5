@@ -299,7 +299,7 @@ constexpr int DifferentKeyTypes = 101;
 constexpr int MissingParameters = 103;
 constexpr int EcType = 408;
 
-} // namespace
+}
 
 
 LibreSsl3EvpPkey* APS5_VABI EVP_PKEY_new_nid_disambig1_nid_postfix(void) {

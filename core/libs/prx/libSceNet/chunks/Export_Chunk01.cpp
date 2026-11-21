@@ -63,7 +63,6 @@ extern "C" {
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "src/ResolverTestHooks.hpp"
 
-// Guest socket descriptors retain PS5 semantics while their transport is backed by host sockets.
 
 static_assert(sizeof(NetDhcpOptionInfo) == 24);
 static_assert(offsetof(NetDhcpOptionInfo, capacity) == 4);
@@ -106,7 +105,6 @@ static_assert(sizeof(NetDns6Info) == 32);
 static_assert(sizeof(NetIpv6InterfaceAddress) == 20);
 
 namespace {
-// FreeBSD errno numbers as reported through sceNetErrnoLoc (SCE_NET_ERROR_* is 0x80410100 + errno).
 constexpr int NET_ENOENT = 2;
 constexpr int NET_EINTR = 4;
 constexpr int NET_EBADF = 9;
@@ -314,7 +312,6 @@ bool guest_to_native_address(const void* address, std::uint32_t length,
 bool native_to_guest_address(const sockaddr_storage& native, void* address, std::uint32_t* length) {
     if (!address || !length) return false;
     if (native.ss_family == AF_UNSPEC) {
-        *length = 0;
         return true;
     }
     std::uint8_t bytes[28]{};
@@ -337,7 +334,6 @@ bool native_to_guest_address(const sockaddr_storage& native, void* address, std:
     }
     const auto copied = std::min<std::uint32_t>(*length, bytes[0]);
     std::memcpy(address, bytes, copied);
-    *length = copied;
     return true;
 }
 
@@ -470,8 +466,6 @@ bool IsZeroAddress(const NetIpv6Address& address) {
 }
 
 void set_errno(int err) {
-    *errno_slot() = err;
-    *__error_nid_postfix() = err;
 }
 
 int fail(int err) {
@@ -1002,7 +996,7 @@ std::optional<std::uint32_t> InterfaceIdOfHostIndex(std::uint32_t index) {
     return std::nullopt;
 }
 
-}  // namespace
+}
 
 void GuestSceNetTest::SetResolverLookupForTests_nid_no_patch(ResolverLookup lookup) noexcept {
     g_resolverLookupForTests.store(lookup);
@@ -1093,7 +1087,6 @@ bool CloseSocketForKernel(int descriptor, int* error) {
             return false;
         }
     }
-    *error = sceNetSocketClose(descriptor) == 0 ? 0 : *errno_slot();
     return true;
 }
 
@@ -1105,11 +1098,9 @@ bool SetSocketOptionForKernel(int descriptor, int level, int option, const void*
         if (g_socks.count(descriptor) == 0) return false;
     }
     if (level == NET_SOL_SOCKET && (option == NET_SO_RCVTIMEO || option == NET_SO_SNDTIMEO)) {
-        *error = set_kernel_timeout(descriptor, option, value, length);
         if (*error != 0) set_errno(*error);
         return true;
     }
-    *error = sceNetSetsockopt(descriptor, level, option, value, length) == 0 ? 0 : *errno_slot();
     return true;
 }
 
@@ -1123,12 +1114,8 @@ bool GetSocketOptionForKernel(int descriptor, int level, int option, void* value
     std::array<unsigned char, sizeof(KernelTimeval)> result{};
     auto size = std::min<std::uint32_t>(*length, result.size());
     if (sceNetGetsockopt(descriptor, level, option, value ? result.data() : nullptr, &size) != 0) {
-        *error = *errno_slot();
     } else if (size != 0 && !GuestCopyOut_nid_no_patch(value, result.data(), size)) {
-        *error = NET_EFAULT;
     } else {
-        *length = size;
-        *error = 0;
     }
     return true;
 }
@@ -1186,12 +1173,10 @@ const KernelSocketPoll::Forwards g_socketForwards{
     },
     [](int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength, int* error) {
         const std::int64_t result = sceNetSendto(descriptor, buffer, static_cast<size_t>(length), flags, address, addressLength);
-        *error = ErrorOf(result);
         return result;
     },
     [](int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength, int* error) {
         const std::int64_t result = ReceiveForKernel(descriptor, buffer, length, flags, address, addressLength);
-        *error = ErrorOf(result);
         return result;
     },
     [](int descriptor, int how) {
@@ -1215,18 +1200,13 @@ bool ControlSocketStatusForKernel(int descriptor, int command, int flags, int* r
         if (it == g_socks.end()) return false;
         nonblock = it->second.native->nonblock;
     }
-    *result = 0;
-    *error = 0;
     if (command == GuestFcntlGetStatus) {
-        *result = GuestReadWrite | (nonblock ? GuestNonblocking : 0);
         return true;
     }
     if (command != GuestFcntlSetStatus) {
-        *error = NET_EINVAL;
         return true;
     }
     if ((flags & ~GuestStatusFlagsMask) != 0) {
-        *error = NET_EOPNOTSUPP;
         return true;
     }
     const int enabled = (flags & GuestNonblocking) != 0 ? 1 : 0;
@@ -1241,7 +1221,6 @@ bool ControlSocketIoctlForKernel(int descriptor, std::uint32_t request, void* ar
         std::lock_guard lk(g_mutex);
         if (g_socks.find(descriptor) == g_socks.end()) return false;
     }
-    *error = sceNetIoctl(descriptor, request, argument) == 0 ? 0 : *errno_slot();
     return true;
 }
 
@@ -1251,8 +1230,6 @@ bool FindSocketNativeForKernel(int descriptor, std::shared_ptr<void>* owner, std
     std::lock_guard lk(g_mutex);
     const auto it = g_socks.find(descriptor);
     if (it == g_socks.end() || !it->second.native) return false;
-    *native = static_cast<std::uintptr_t>(it->second.native->value);
-    *owner = std::static_pointer_cast<KernelSocketPoll::NativeOwner>(it->second.native);
     return true;
 }
 
@@ -1315,7 +1292,7 @@ int APS5_VABI sceNetSocket(const char* name, int family, int type, int protocol)
     if (native == INVALID_NATIVE_SOCKET) {
 #ifdef __APPLE__
         if (errno == EPROTOTYPE) return fail(NET_EPROTONOSUPPORT);
-#endif // __APPLE__
+#endif
         return fail(native_error());
     }
 #ifdef _WIN32

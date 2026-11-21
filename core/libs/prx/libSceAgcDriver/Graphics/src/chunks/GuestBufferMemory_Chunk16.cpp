@@ -293,12 +293,7 @@ bool GuestBufferMemory::HasCopiedWrites() const {
         if (found == nullptr) continue;
         const auto& region = *found;
         if (region.direct != nullptr) continue;
-        // A GPU copy whose written sub-ranges were copied back by the GPU lands like a direct
-        // write; until RecordCopyBacks ran it still counts (a use without it stores in WriteBack).
-        // A staged copy never counts: its use always records the copy-back (AllowDeviceStaging),
-        // and nothing could be stored from it by the CPU.
         if (region.gpuCopy && (region.copiedBack || region.deviceLocal)) continue;
-        // Writes into a read-only image mirror are never stored (its pages could not take them).
         if (region.mirror != nullptr && !region.mirror->writable) continue;
         return true;
     }
@@ -437,25 +432,18 @@ void GuestBufferMemory::takeHeapReferences() {
 void GuestBufferMemory::WriteBack() {
     Require(uploaded && !committed, "guest memory cannot be committed twice or before upload");
     const auto merged = mergeWrites(writes);
-    // The CPU keeps running while the GPU works, so storing whole ranges would roll back its writes to
-    // bytes the shader never touched. Only runs that differ from the uploaded copy are stored, and a
-    // host copy leaves the bytes the CPU changed since its upload as they are.
     for (const auto& [begin, end] : merged) {
         const auto* found = owner(begin, end);
         Require(found != nullptr, "write-back range has no GPU owner");
         const auto& region = *found;
-        // Every branch below but the direct, copied-back and staged ones stores from the CPU.
         if (region.direct == nullptr && !(region.gpuCopy && (region.copiedBack || region.deviceLocal)) && !(region.mirror != nullptr && !region.mirror->writable)) Recorder::NoteWrittenBack(begin, static_cast<std::size_t>(end - begin));
         if (region.direct != nullptr) {
-            // The GPU wrote imported guest memory directly; page write watching did not see it.
             StorageTexture::StampKeepingNewerResults(begin, static_cast<std::size_t>(end - begin), directWritesGeneration, [&] { return GuestMemory::MarkPossiblyWritten(begin, static_cast<std::size_t>(end - begin)); });
             continue;
         }
         if (region.mirror != nullptr) {
             if (!region.mirror->writable) continue;
             Require(end <= region.end, "write-back range exceeds its GPU owner");
-            // The shadow is what the GPU started from; it then takes the mirror's bytes so the next
-            // refresh does not mistake the GPU's results for a guest change.
             auto& mirror = *region.mirror;
             const auto offset = static_cast<std::size_t>(begin - mirror.base);
             const auto served = std::min(end, servedEnd(region));
@@ -490,21 +478,13 @@ void GuestBufferMemory::WriteBack() {
         if (region.gpuCopy) {
             Require(region.buffer != nullptr && end <= region.end, "write-back range exceeds its GPU owner");
             if (region.copiedBack) {
-                // The GPU copied the written sub-range back into the import; page write watching
-                // did not see it.
                 StorageTexture::StampKeepingNewerResults(begin, static_cast<std::size_t>(end - begin), directWritesGeneration, [&] { return GuestMemory::MarkPossiblyWritten(begin, static_cast<std::size_t>(end - begin)); });
                 continue;
             }
             static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
             if (region.deviceLocal) {
-                // A staged region's use recorded no copy-back (it threw before RecordCopyBacks):
-                // the results stay in the shadow, which has no mapping to store from; counted
-                // once, when the build is destroyed or reused.
                 continue;
             }
-            // No copy-back was recorded (a synchronous draw): the staging bytes of the written
-            // sub-range are stored whole, which is what the copy-back would have done. There is no
-            // reference copy to diff against (the copy in never passed through the CPU).
             GuestMemory::Write(begin, region.buffer->Bytes().subspan(static_cast<std::size_t>(begin - region.begin), static_cast<std::size_t>(end - begin)));
             if (profile) Copies().stagingStores.fetch_add(1, std::memory_order_relaxed);
             continue;

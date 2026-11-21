@@ -1352,7 +1352,6 @@ bool ReadSingleDerObjectFromBio(LibreSsl::Bio* bio, std::vector<unsigned char>& 
 template<typename T> void ReplaceOutput(T** output, T* decoded, void (APS5_VABI* freeValue)(T*)) {
     if (!output) return;
     if (*output) freeValue(*output);
-    *output = decoded;
 }
 
 bool CopyGuestIn(void* destination, const void* source, std::size_t bytes) {
@@ -1430,7 +1429,6 @@ LibreSsl3EvpPkey* APS5_VABI d2i_PUBKEY_nid_postfix(
     auto* key = DecodeSpki(remaining);
     if (!key) return nullptr;
     ReplaceOutput(output, key, EVP_PKEY_free_nid_disambig1_nid_postfix);
-    *input += static_cast<std::size_t>(length) - remaining.size();
     return key;
 }
 
@@ -1445,7 +1443,6 @@ LibreSsl3Rsa* APS5_VABI d2i_RSA_PUBKEY_nid_disambig1_nid_postfix(
     EVP_PKEY_free_nid_disambig1_nid_postfix(key);
     if (!rsa) return nullptr;
     ReplaceOutput(output, rsa, RSA_free_nid_disambig1_nid_postfix);
-    *input = cursor;
     return rsa;
 }
 
@@ -1459,7 +1456,6 @@ LibreSsl3Pkcs8PrivKeyInfo* APS5_VABI d2i_PKCS8_PRIV_KEY_INFO_nid_postfix(
     auto* info = DecodePkcs8(remaining);
     if (!info) return nullptr;
     ReplaceOutput(output, info, PKCS8_PRIV_KEY_INFO_free_nid_postfix);
-    *input += static_cast<std::size_t>(length) - remaining.size();
     return info;
 }
 

@@ -86,9 +86,6 @@ void PopulateInitialLoginEvents() {
 }
 
 
-// Per-user keyboard settings. Nothing in AnyPS5 stores a keyboard type or input variant, so every known user reports
-// the keyboard type of the configured system language and 0 for the input variants (see
-// docs/dev/debt/libSceUserService.md).
 static int32_t KeyboardTypeForSystemLanguage() {
  constexpr int param_id_lang = 1;
  constexpr int32_t fallback = 20;

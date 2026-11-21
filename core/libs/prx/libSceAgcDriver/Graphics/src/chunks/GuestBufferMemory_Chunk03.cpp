@@ -247,10 +247,6 @@ void decideImportWatch(const Context& context, HostImports& state) {
     state.dmaBufSelected = false;
     if (context.hostImportAlignment == 0) return;
     if (!GuestMemory::WriteWatched()) {
-        // Without a write watch the write-protection probes cannot measure, but the dma-buf
-        // coherence probe still runs: its stale measurement is a plain CPU read after a GPU
-        // fill. Leaving it unmeasured kept dmaBufImportsCoherent at its default and skipped
-        // the dma-buf fallback, which forced the copy path on these devices.
         if (context.dmaBufImport) {
             const auto dmaBuf = ProbeDmaBufImportWriteProtection(context);
             if (dmaBuf.failure != nullptr) {

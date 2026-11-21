@@ -977,7 +977,6 @@ if(BUILD_TESTING)
         set_tests_properties(guest_icu_invariant_chars PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
-# --- small-size libraries split from LegacyExports.cpp ---
 add_library(libSceIcu_LegacyExports_Chunk01 STATIC chunks/LegacyExports_Chunk01.cpp)
 add_library(libSceIcu_LegacyExports_Chunk02 STATIC chunks/LegacyExports_Chunk02.cpp)
 add_library(libSceIcu_LegacyExports_Chunk03 STATIC chunks/LegacyExports_Chunk03.cpp)

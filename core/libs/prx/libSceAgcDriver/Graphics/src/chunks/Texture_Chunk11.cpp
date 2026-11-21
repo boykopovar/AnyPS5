@@ -22,7 +22,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
-// For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -223,8 +222,6 @@ bool StorageTexture::storesWhole() const {
     return std::any_of(live.textures.begin(), live.textures.end(), [this](const StorageTexture* texture) { return texture != this && texture->overlapsLive(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)); });
 }
 
-// Whether a pending unit of the image lies inside the range (writeBack's own selection): an image
-// listed by FlushPending without one stored nothing and only cost the GPU mutex.
 bool StorageTexture::pendingUnitInside(std::uint64_t address, std::size_t bytes) const {
     static const bool pretest = std::getenv("APS5_NO_FLUSH_PRETEST") == nullptr;
     if (!pretest) return true;
@@ -323,8 +320,6 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
             drawnHold = std::unique_lock(GuestMemory::GpuMutex());
         }
     }
-    // The images stay alive across the scan: their last owner may be a batch's kept list, which
-    // another thread releases outside the GPU mutex once the batch completed.
     std::vector<std::shared_ptr<StorageTexture>> flush;
     std::vector<std::uint64_t> ownNotes;
     {
@@ -366,7 +361,6 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
             }
         }
 #endif
-        // Still pending for the adjacency rule of writeBack until each one is stored.
         for (const auto& texture : flush) pending.flushing.push_back(texture.get());
         pending.flushingCount.store(pending.flushing.size(), std::memory_order_release);
         if (!flush.empty()) BumpPendingSerial();
@@ -378,8 +372,6 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     if (flush.empty()) {
         if (drawnHold.owns_lock()) drawnHold.unlock();
         const bool stored = WaitForFlushing(address, bytes, except);
-        // Units shadowed over the range (another image's results retiled into the import's unit
-        // shadow, or an earlier flush's) still reach the import as the scope asks.
         const bool units = PublishShadowsOnly(address, bytes, scope, reason, waited || stored);
         if (published != nullptr) *published = units;
         return stored;
@@ -394,7 +386,6 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
             BumpPendingSerial();
         }
     } unregister{flush};
-    // Debug aid: APS5_TRACE_FLUSH names what forces pending results to guest memory.
     static const bool trace = std::getenv("APS5_TRACE_FLUSH") != nullptr;
     if (trace) {
         for (const auto& texture : flush) std::fprintf(stderr, "[flush] image 0x%llx+0x%llx for %s 0x%llx+0x%zx\n", static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes), reason, static_cast<unsigned long long>(address), bytes);
@@ -480,8 +471,6 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     const auto previousReason = std::exchange(flushReason, reason);
     for (const auto& texture : flush) {
         try {
-            // Only the pending layers the access overlaps are stored; the others stay pending (the
-            // store re-registers the image for them).
             texture->writeBack(address, bytes);
         } catch (...) {
             if (!failure) failure = std::current_exception();
@@ -489,8 +478,6 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     }
     flushReason = previousReason;
     if (failure) std::rethrow_exception(failure);
-    // The stores above went into the unit shadows where slabs took them: the consumer reads the
-    // import, so they are published under the same hold, after every store.
     if (scope != PublishScope::None) {
         const auto units = PublishShadow(address, bytes, scope, PublishReasonFor(reason), waited);
         if (units != 0 || !flush.empty()) waitForIdlePublish(reason);

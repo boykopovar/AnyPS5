@@ -13,10 +13,6 @@ static constexpr std::size_t ReferenceCountOffset = 0;
 static constexpr std::size_t VectorReferenceCountOffset = 0x30;
 static constexpr int TransactionNotStarted = static_cast<int>(0x80553508);
 
-// Offline PSN: request entry points (API calls, transaction start/readData, factories) fail with
-// SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN, the constant shadPS4/fpPS4 document for this code; parameter
-// bookkeeping succeeds; the audited accessors read the measured offsets and the rest stay
-// unimplemented because a failed request never produces a response.
 
 static void ConstructParameter(void* self);
 static int InitializeParameter(void* self, const std::uint64_t* context, bool argumentsPresent);
@@ -50,7 +46,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V127RequestPlayerResultsFactory6creat
     ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
     const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
     if (assigned < 0) return assigned;
-    *reinterpret_cast<std::int32_t*>(static_cast<std::uint8_t*>(out->object) + 0x30) = rank;
     return 0;
 }
 
@@ -80,7 +75,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V130RequestTeamMemberResultFactory6cr
     ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
     const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
     if (assigned < 0) return assigned;
-    *reinterpret_cast<double*>(static_cast<std::uint8_t*>(out->object) + 0x30) = score;
     return 0;
 }
 
@@ -98,7 +92,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V131UpdateMatchDetailRequestFactory6c
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V131UpdateMatchStatusRequestFactory6createEPNS1_6Common10LibContextENS3_12UpdateStatusEPNS5_12IntrusivePtrINS3_24UpdateMatchStatusRequestEEE(void* self, std::int32_t status, IntrusivePtr* out) {
     const int created = MatchesFactoryCreate(self, out, 0x20, &DestroyMatchesModel);
     if (created != 0) return created;
-    *reinterpret_cast<std::int32_t*>(static_cast<std::uint8_t*>(out->object) + 0x18) = status;
     return 0;
 }
 
@@ -150,7 +143,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi20ParameterToJoinMatch9ter
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi20ParameterToJoinMatchC1Ev(void* self) {
-    *static_cast<MatchesParameter*>(self) = {};
     return 0;
 }
 
@@ -168,7 +160,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi21ParameterToLeaveMatch9te
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi21ParameterToLeaveMatchC1Ev(void* self) {
-    *static_cast<MatchesParameter*>(self) = {};
     return 0;
 }
 
@@ -186,7 +177,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi22ParameterToCreateMatch9t
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi22ParameterToCreateMatchC1Ev(void* self) {
-    *static_cast<MatchesParameter*>(self) = {};
     return 0;
 }
 
@@ -204,7 +194,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi24ParameterToReportResults
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi24ParameterToReportResultsC1Ev(void* self) {
-    *static_cast<MatchesParameter*>(self) = {};
     return 0;
 }
 
@@ -221,16 +210,12 @@ void APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi25ParameterToGetMatchDeta
     auto* parameter = static_cast<MatchesParameter*>(self);
     if (parameter->implementation == nullptr) return;
     auto* implementation = static_cast<std::uint8_t*>(parameter->implementation);
-    *reinterpret_cast<std::int32_t*>(implementation + 0x20) = label;
-    *(implementation + 0x24) = 1;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi25ParameterToGetMatchDetail7setviewENS5_4ViewE(void* self, int view) {
     auto* parameter = static_cast<MatchesParameter*>(self);
     if (parameter->implementation == nullptr) return;
     auto* implementation = static_cast<std::uint8_t*>(parameter->implementation);
-    *reinterpret_cast<std::int32_t*>(implementation + 0x28) = view;
-    *(implementation + 0x2c) = 1;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi25ParameterToGetMatchDetail9terminateEv(void* self) {
@@ -238,7 +223,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi25ParameterToGetMatchDetai
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi25ParameterToGetMatchDetailC1Ev(void* self) {
-    *static_cast<MatchesParameter*>(self) = {};
     return 0;
 }
 
@@ -252,7 +236,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi28ParameterToUpdateMatchDe
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi28ParameterToUpdateMatchDetailC1Ev(void* self) {
-    *static_cast<MatchesParameter*>(self) = {};
     return 0;
 }
 
@@ -270,7 +253,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi28ParameterToUpdateMatchSt
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi28ParameterToUpdateMatchStatusC1Ev(void* self) {
-    *static_cast<MatchesParameter*>(self) = {};
     return 0;
 }
 

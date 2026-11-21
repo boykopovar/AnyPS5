@@ -34,11 +34,7 @@ struct CaptureProfile {
     std::atomic<std::uint64_t> captures{0};
     std::atomic<std::uint64_t> reads{0};
     std::atomic<std::uint64_t> pages{0};
-    // The whole CaptureResources call: the plan lookup and the materialization are one call.
     std::atomic<std::uint64_t> captureNanoseconds{0};
-    // Pages read word by word because recorded GPU work writes them, and the word reads of those
-    // pages that waited (a read taking longer than WordWaitNanoseconds went through a hook sync),
-    // were read raw on the driver's evidence, or were read both ways (verify) and differed.
     std::atomic<std::uint64_t> pagesWordwise{0};
     std::atomic<std::uint64_t> wordWaits{0};
     std::atomic<std::uint64_t> branchReadsRefused{0};
@@ -47,24 +43,15 @@ struct CaptureProfile {
     std::atomic<std::uint64_t> wordsRaw{0};
     std::atomic<std::uint64_t> wordsVerified{0};
     std::atomic<std::uint64_t> wordMismatches{0};
-    // Words served from the driver's known values (never profile-gated: the [copy] line reads them).
     std::atomic<std::uint64_t> tablesKept{0};
     std::atomic<std::uint64_t> wordsKnown{0};
     std::atomic<std::uint64_t> wordsKnownVerified{0};
     std::atomic<std::uint64_t> wordsKnownMismatches{0};
-    // Hook reads not reported to the observer because no GPU wait happened across them.
     std::atomic<std::uint64_t> observationsSkipped{0};
-    // Sub-phases of a capture: the source lookup (the stage inputs, the recompiler's key over the
-    // code and the plan, timed by CaptureResources itself: ResourceCapture::sourceNanoseconds),
-    // whole-page fetches, per-word fetches (their hook waits included) and the GPU waits the flush
-    // hook made anywhere inside the capture (Recorder::ThreadWaitedMs). The walk itself is what
-    // remains of the capture time after the lookup, the fetches and the specialization
-    // (ResourceMaterializer).
     std::atomic<std::uint64_t> resolveNanoseconds{0};
     std::atomic<std::uint64_t> pageReadNanoseconds{0};
     std::atomic<std::uint64_t> wordReadNanoseconds{0};
     std::atomic<std::uint64_t> hookWaitNanoseconds{0};
-    // The driver's per-shader source handle memo: captures served from it, and resolves it made.
     std::atomic<std::uint64_t> handleHits{0};
     std::atomic<std::uint64_t> handleMisses{0};
     std::atomic<std::uint64_t> suppliedShared{0};
@@ -346,8 +333,6 @@ ShaderMemory::Page& ShaderMemory::page(std::uint64_t base) {
 }
 
 void ShaderMemory::preparePage(Page& page, std::uint64_t base) {
-    // A page is either mapped whole or read word by word where the guest mapped less than a page,
-    // or where recorded GPU work writes into it (a whole-page read would wait for that work).
     if (GuestMemory::Accessible(reinterpret_cast<const void*>(base), PageBytes)) {
         if (WordwisePages() && pendingSpan != nullptr && pendingSpan(base, PageBytes, {}) != PendingWrite::None) {
             page.wordwise = true;
@@ -422,7 +407,6 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
                 if (policy != PendingWrite::None && policy != PendingWrite::Sync && !GuestMemory::Accessible(reinterpret_cast<const void*>(address), sizeof(word))) policy = PendingWrite::Sync;
             }
         }
-        // A read is evidence only when the hook waited for unfinished GPU work across it.
         const auto hookWaits = [&] { return self.hookWaits != nullptr ? self.hookWaits() : 0; };
         const auto report = [&](std::uint64_t waitsBefore, bool unchanged) {
             if (self.hookWaits == nullptr || self.hookWaits() != waitsBefore) self.observe(address, unchanged);
@@ -431,7 +415,6 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
         const auto fetchStarted = CaptureProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         bool waited = false;
         if (policy == PendingWrite::KnownValue || policy == PendingWrite::VerifyKnownValue) {
-            // The query stored the known dword in `word`.
             ++CaptureTotals().wordsKnown;
             if (policy == PendingWrite::VerifyKnownValue) {
                 std::uint32_t verifiedWord = 0;
@@ -462,7 +445,6 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
             if (CaptureProfiled()) ++CaptureTotals().branchReadsRefused;
             return false;
         } else {
-            // On a word-wise page the bytes before the hook's wait are kept for the observer.
             const bool observed = page.wordwise && policy == PendingWrite::Sync && self.observe != nullptr && GuestMemory::Accessible(reinterpret_cast<const void*>(address), sizeof(word));
             std::uint32_t before = 0;
             if (observed) std::memcpy(&before, reinterpret_cast<const void*>(address), sizeof(before));
@@ -494,7 +476,6 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
     }
     page.read.Set(index);
     page.recent.Set(index);
-    *value = page.words[index];
     return true;
 }
 

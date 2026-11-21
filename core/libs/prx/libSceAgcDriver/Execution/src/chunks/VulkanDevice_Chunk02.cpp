@@ -143,8 +143,6 @@ void VulkanDevice::PrepareForReplacement() {
     Graphics::PublishAllShadows(state->context, Graphics::PublishReason::Teardown);
     WaitIdle();
     Graphics::DestroyShadows(state->device);
-    // The replacement's draws never find this device's pipelines (the store keys on the device), and
-    // the device lives on until the driver stops: destroy them now rather than then.
     Graphics::ClearCachedPipelines(state->device);
     std::lock_guard pipelines(state->computePipelinesMutex);
     state->computePipelines.clear();
@@ -155,8 +153,6 @@ void VulkanDevice::WaitIdle() {
     static_cast<void>(Graphics::StorageTexture::StoreDrawnLinear("wait idle"));
     RetirePresents(0);
     if (state->recorder) {
-        // Announced with this call's return address: the [recorder] site table then names the
-        // driver site that drains (suspend point, label fallback, fill fallback, device replacement).
         if (!state->recorder->Idle()) Graphics::Recorder::CountSync(0, __builtin_return_address(0));
         state->recorder->Sync();
     }
@@ -191,11 +187,6 @@ void VulkanDevice::StoreIdleResults(bool reapFirst, const std::function<bool()>&
 
 void VulkanDevice::SubmitRecorded(bool reapFirst) {
     if (!state->recorder) return;
-    // Finished batches are retired first (a non-blocking fence status check on the front of the
-    // in-flight list), so PendingWriteOverlaps/HasCompletions scans stay short and a label recorded
-    // after a completing batch already finished can go to the GPU instead of behind a completion.
-    // Not for cross-queue submitters: a retired batch's write-back may sync a later batch under the
-    // mutex (see the header), which a poller or compute worker must never do for queue 0.
     if (reapFirst && OpportunisticReap()) state->recorder->Reap();
     state->recorder->Submit();
 }
@@ -224,8 +215,6 @@ bool VulkanDevice::WaitRecordedFor(std::uint64_t serial, std::uint64_t timeoutNa
 
 void VulkanDevice::ReapRecorded(std::uint64_t serial) {
     if (!state->recorder) return;
-    // The drain's site in the [recorder] table is this call's caller (Driver::execute's drain,
-    // PrepareDispatch's presync), not this wrapper; FinishUpTo consumes the announcement.
     Graphics::Recorder::AnnounceSyncSite(__builtin_return_address(0));
     state->recorder->FinishUpTo(serial);
 }
@@ -267,12 +256,6 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     Graphics::StorageTexture::StoreReadbackBeforeLabel("readback before label", state->device);
     if (!state->recorder || bytes.empty() || bytes.size() > 65536 || address % 4 != 0 || bytes.size() % 4 != 0) return 4;
     auto& recorder = *state->recorder;
-    // Batches that already finished are retired before the checks: their completions ran, so they
-    // neither keep the recorder busy nor force this label behind a completion. Only for the
-    // graphics worker: a reap runs completions (copied write-backs, whose guest stores can re-enter
-    // the flush hook and sync a later batch) under the mutex, which a compute worker must never do
-    // against queue 0; its label goes behind a completion instead (reason 5, still no wait).
-    // Debug aid: APS5_LABEL_REAP_ALL_QUEUES=1 reaps on every queue as before.
     static const bool reapAllQueues = std::getenv("APS5_LABEL_REAP_ALL_QUEUES") != nullptr;
     if (reapFirst && (queue == 0 || reapAllQueues) && OpportunisticReap()) recorder.Reap();
     if (recorder.Idle()) return 1;
@@ -284,76 +267,28 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     const auto unregistered = import == nullptr && !listed && !storesPending ? Graphics::UnregisteredHostImport(context, address, bytes.size()) : nullptr;
     if (unregistered != nullptr) import = unregistered.get();
     if (import == nullptr) return 3;
-    // A unit shadow's results in the label's unit reach the import before the store lands over
-    // part of it (the store's stamp then makes the unit stale); the deferred label paths call no
-    // FlushPending of their own.
     if (Graphics::AnyShadowedOverlaps(address, bytes.size())) Graphics::PublishShadow(address, bytes.size(), Graphics::PublishScope::PartialUnits, Graphics::PublishReason::Label);
-    // The store on the GPU, into the open batch: everything recorded so far completes before it,
-    // and it is visible to the host after. The barriers belong to the recorder's store run: one
-    // pair for a whole group of labels recorded back to back (Recorder::RecordStore orders the
-    // stores of a run against each other and against the work before and after, the queued DCC
-    // key stores included).
     const auto recordStore = [&] {
         recorder.RecordStore(import->buffer, Graphics::HostImportOffset(*import, address), bytes, address);
         if (unregistered != nullptr) recorder.Keep(unregistered);
     };
-    // On the console every store a queue made before a label is in memory once the label is
-    // visible. A listed copied writer (a dispatch or draw whose written buffer the device holds as a
-    // CPU copy) is written back by the CPU when its batch is reaped, after the GPU already ran any
-    // store recorded here, so a title polling the label could rewrite the written region and have
-    // the late write-back land over its bytes (a title that rebuilds its command buffer there sees
-    // a stale packet). While one is listed, a label of 8 bytes or less (every RELEASE_MEM, the fence
-    // WRITE_DATAs) is therefore not recorded on the GPU at all: a completion action of the open (or
-    // newest in-flight) batch stores it when that batch is reaped. Completions run in push order and
-    // batches finish front-first, so it lands after every earlier write-back, whatever range that
-    // one wrote. The GPU store plus completion re-store below would not do: its GPU store is
-    // visible before the write-back, and its re-store runs only over a write-back that overlapped
-    // the label. While such a completion store is pending (PendingCompletionStores: no end-of-pipe
-    // delivery and no write-back counts there), later small labels follow it even after every
-    // writer was written back, or a GPU store would become visible before the earlier completion
-    // store lands (#1458), or land under it at the reap when both are at one address. Larger stores
-    // (DUMP_CONST_RAM, COPY_DATA and DMA_DATA payloads that later GPU work reads through the import)
-    // stay on the GPU and follow only a pending completion store over their own range. Readers of a
-    // range stored this way sync through its batch first (the label is a pending write of its batch
-    // and counted in PendingCompletionLabels). Debug aid: APS5_DRAIN_COMPLETION_LABELS=1 drains
-    // (reason 2) instead and stores the label on the CPU.
     if (drain) {
         if (listed) return 2;
     } else if (bytes.size() <= 8 ? (listed || storesPending) : (storesPending && recorder.CompletionLabelIn(address, bytes.size()))) {
         recorder.AfterCompletions(address, bytes, stamp, queue, false);
         return 5;
     }
-    // A larger store over a listed copied writer's range (as FillBuffer tests it) goes behind the
-    // completions too, below; any other one stores on the GPU. Debug aid: APS5_LABEL_GATE_ALL=1
-    // gates on any completion, as before (a completion label there registered its own completion,
-    // so every later label followed).
     static const bool gateAll = std::getenv("APS5_LABEL_GATE_ALL") != nullptr;
     if (gateAll ? recorder.HasCompletions() : state->CopiedWriterOverlaps(address, bytes.size())) {
-        // A copied buffer's write-back is still to run: the store must land after it. It is stored
-        // by a completion action of the batch (a CPU memcpy when the batch is reaped) instead of
-        // draining the device here. The same bytes are also recorded on the GPU into the open batch
-        // first, so GPU work recorded after this point that reads the range through the host import
-        // (a shader binding constants a DUMP_CONST_RAM dumped, a dispatch consuming a COPY_DATA or
-        // DMA_DATA fill) sees them in order; the completion memcpy stores identical bytes again
-        // after any write-back that overwrote them, so either order of the two stores is correct.
-        // CPU readers are covered by the pending-write note (the flush hook syncs) and waits by the
-        // label table. Debug aid: APS5_DRAIN_COMPLETION_LABELS=1 drains as before; try it first when
-        // a title misbehaves with this path.
         if (drain) return 2;
         recordStore();
-        // Commands() opened the batch the store went into, so the completion is appended to that
-        // batch and runs at its reap, after the write-backs of every batch before it.
         recorder.AfterCompletions(address, bytes, stamp, queue, true);
         GuestMemory::MarkWritten(address, bytes.size());
         return 5;
     }
     recordStore();
-    // The table entry and the label's own pending-write note (Recorder::NoteLabel).
     recorder.NoteLabel(address, bytes, stamp, queue);
     GuestMemory::MarkWritten(address, bytes.size());
-    // No submit per label: the batch goes out at the queue worker's next non-label packet, at a
-    // wait on its range, after APS5_LABEL_FLUSH_US, or at the submission's end (Driver.cpp).
-    // Debug aid: APS5_LABEL_SUBMIT_NOW=1 submits every label at once, as before.
     static const bool submitNow = std::getenv("APS5_LABEL_SUBMIT_NOW") != nullptr;
     if (submitNow) recorder.Submit();
     return 0;
@@ -393,55 +328,25 @@ bool VulkanDevice::DumpSamplesOnGpu(std::uint64_t address) {
 bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::span<const std::uint32_t, 4> pattern) {
     if (!state->recorder || bytes == 0 || bytes % 16 != 0 || address % 16 != 0) return false;
     auto& recorder = *state->recorder;
-    // Finished batches are retired first (one fence status check, as WriteLabelOnGpu does): their
-    // completion labels landed and their copied writers are delisted, so a batch the idle GPU already
-    // finished does not force a wait below. Before the import lookup: a completion may refresh the
-    // import table. Debug aid: APS5_NO_OPPORTUNISTIC_REAP=1 skips it.
     if (OpportunisticReap()) recorder.Reap();
     const auto context = graphicsContext();
     const Graphics::HostImport* import = Graphics::HostImportFor(context, address, bytes);
     if (import == nullptr) return false;
-    // Earlier recorded work that stores into the range must land before the fill, or it would
-    // overwrite the fill later. Stores the GPU makes (direct dispatch writes, GPU labels, earlier
-    // fills, GPU-direct write-backs) are ordered by the fill's own barrier below (ALL_COMMANDS ->
-    // TRANSFER), so only the stores the CPU makes when a batch is reaped need a wait: a recorded
-    // dispatch whose copied buffer overlaps the range (state->copiedWriters, listed until its
-    // write-back ran; per object over all its written V# ranges, as DispatchIndirect tests it) and a
-    // completion-deferred label (Recorder::AfterCompletions) over the range. The label table has no
-    // range query and a fill spans MiBs, so a small range is looked up per dword (a GPU label there
-    // counts too: a harmless extra wait) and a larger one waits whenever any completion label is
-    // pending at all. Batches recorded after the last such store keep running (SyncThrough).
-    // Debug aid: APS5_FILL_SYNC=1 waits for every recorded store over the range, as before.
     static const bool alwaysSync = std::getenv("APS5_FILL_SYNC") != nullptr;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    // APS5_PROFILE_DRAW: the fills' outcomes, cumulative, every 10 s (under the GpuMutex like the
-    // rest) on a [fill-sync] line; Driver.cpp's [fill] line counts the fills and their bytes.
-    // `labelSynced` counts syncs taken because a completion label was pending: over the range for
-    // a small fill, anywhere at all for a larger one.
     static std::uint64_t fills = 0, synced = 0, ordered = 0;
     static double syncedMs = 0;
-    // The [fill-sync] line's phases (APS5_PROFILE_DRAW): decide (the reap, the import lookup and
-    // the pending-write tests up to the record), record (barriers and the fill or its doubling
-    // chain), notes (the pending-write note and the write stamp); fills by uniform dword vs
-    // 16-byte pattern, with the pattern fills' doubling steps.
     static double decideMs = 0, recordMs = 0, notesMs = 0;
     static std::uint64_t uniformFills = 0, patternFills = 0, doublingSteps = 0, patternBuffersReused = 0, patternBuffersMade = 0, elidedFills = 0, elidedBytes = 0;
     static auto lastReport = std::chrono::steady_clock::now();
-    // A 16-byte pattern is copied from a device-local buffer holding it repeated (filled once by a
-    // doubling chain in device memory, cached per pattern), one transfer into the import per fill.
-    // Debug aid: APS5_FILL_CHAIN=1 seeds and doubles the pattern in place in the import, as before.
     static const bool chainInPlace = std::getenv("APS5_FILL_CHAIN") != nullptr;
     constexpr std::size_t PatternBufferBytes = 16u << 20u;
     constexpr std::size_t PatternBuffersKept = 8;
     const auto fillStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     ++fills;
     if (recorder.PendingWriteOverlaps(address, bytes)) {
-        // Recorded draws with copied writes keep their own registry (Graphics::DrawCopiedWriters):
-        // their CPU write-back would land after a fill recorded on the GPU, so they count too.
         bool sync = alwaysSync || state->CopiedWriterOverlaps(address, bytes);
         if (!sync && Graphics::Recorder::PendingCompletionLabels() != 0) {
-            // A label the CPU will store after a completion must not be overwritten by the fill:
-            // only a label inside the filled range matters, whatever the range's size.
             sync = recorder.CompletionLabelIn(address, bytes);
             if (sync) ++fillCompletionSyncs;
         }
@@ -451,8 +356,6 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
             Graphics::Recorder::CountSync(4);
             recorder.SyncThrough(address, bytes);
             syncedMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - syncStart).count();
-            // The sync ran completions, whose write-backs can refresh the import table and retire
-            // the import looked up above; the caller stores the fill itself when it is gone.
             import = Graphics::HostImportFor(context, address, bytes);
             if (import == nullptr) return false;
         } else {
@@ -475,7 +378,6 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
     };
     phase(decideMs);
     using CommandClass = Graphics::Recorder::CommandClass;
-    // A queued DCC key store over the range must land before the fill.
     recorder.FlushKeyStoresOverlapping(address, bytes);
     const bool uniform = pattern[0] == pattern[1] && pattern[1] == pattern[2] && pattern[2] == pattern[3];
     const std::array<std::uint32_t, 4> patternWords{pattern[0], pattern[1], pattern[2], pattern[3]};
@@ -519,10 +421,8 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
             buffers.emplace_back(patternWords, patternBuffer);
             ++patternBuffersMade;
         }
-        // The buffer outlives its use in this batch even when evicted from the cache meanwhile.
         recorder.Keep(patternBuffer);
     }
-    // A queued label store over the range lands before the fill (program order).
     recorder.FlushStoresOverlapping(address, bytes);
     VkAccessFlags covered = 0;
     const auto commands = recorder.Commands(&covered);
@@ -531,9 +431,6 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
         const std::pair<std::uint64_t, std::uint64_t> range{address, address + bytes};
         recorder.NoteAccess(CommandClass::Fill, Graphics::Recorder::Access{{}, std::span(&range, 1), {}, VK_PIPELINE_STAGE_TRANSFER_BIT});
     }
-    // Every earlier recorded read or write of the range precedes the fill (WAR by the execution
-    // dependency, WAW by the writes made available), whichever stage made it; the previous
-    // command's trailing barrier already did that when it covered transfer writes.
     if ((covered & VK_ACCESS_TRANSFER_WRITE_BIT) != 0 && Graphics::Recorder::MergeBarriers()) {
         Graphics::Recorder::CountMerged(CommandClass::Fill);
     } else {
@@ -551,7 +448,6 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
         context.Resolved(&Graphics::DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(commands, patternBuffer->Handle(), import->buffer, static_cast<std::uint32_t>(copies.size()), copies.data());
     } else {
         ++patternFills;
-        // A 16-byte pattern is seeded once and doubled in place until the range is covered.
         auto seed = std::make_shared<Graphics::Buffer>(context, 16, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         std::memcpy(seed->Bytes().data(), pattern.data(), 16);
         recorder.Keep(seed);
@@ -568,10 +464,6 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
             ++doublingSteps;
         }
     }
-    // The filled bytes are visible to everything recorded after: shaders, transfers, the host, and
-    // an indirect dispatch reading its group counts in place (DispatchIndirect adds its own
-    // ALL_COMMANDS -> DRAW_INDIRECT barrier as well). A later GPU label store over the range is
-    // ordered behind the fill by its ALL_COMMANDS -> TRANSFER barrier (WriteLabelOnGpu).
     constexpr VkAccessFlags filledAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_HOST_READ_BIT;
     Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, filledAccess);
     Graphics::Recorder::CountBarriers(CommandClass::Fill);
@@ -595,10 +487,6 @@ namespace {
 std::atomic<std::uint64_t> copiesVerified{0}, copySourceChanged{0}, copyDestinationChanged{0}, copyReaderMissed{0};
 std::atomic<std::uint64_t> copiesAliased{0}, copyAliasCreated{0}, copyAliasNoSource{0}, copyAliasShape{0}, copyAliasRefused{0};
 
-// The copy as a device copy between the surfaces' storage images (StorageTexture::CopyFrom): the
-// source range must be exactly a live image's surface, and the destination range either exactly
-// a live image of the same shape or none (one is made from the source's descriptor rebased). Under
-// GuestMemory::GpuMutex. Debug aid: APS5_NO_COPY_ALIAS=1 keeps every such copy a transfer.
 }
 }
 }

@@ -16,7 +16,6 @@ void GuestRangeSet::Insert(std::uint64_t begin, std::uint64_t end) {
         ranges.insert(first, {begin, end});
         return;
     }
-    *first = {begin, end};
     ranges.erase(first + 1, last);
 }
 

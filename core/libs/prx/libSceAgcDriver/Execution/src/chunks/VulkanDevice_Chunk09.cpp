@@ -247,7 +247,6 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
     PerformanceTimer timing("Vulkan.Dispatch");
     if (recipeOut != nullptr) *recipeOut = nullptr;
-    // Group counts for the trace lines; an indirect dispatch does not know them.
     char groupsText[40];
     if (arguments != 0) std::snprintf(groupsText, sizeof(groupsText), "indirect");
     else std::snprintf(groupsText, sizeof(groupsText), "%ux%ux%u", x, y, z);
@@ -270,52 +269,31 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     }
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto& d = Dispatches();
-    // This call's phases (indexed by DispatchPhase), formatted only for a slow call or a new
-    // [indirect] maximum; the totals per phase across dispatches are reported every 1000 dispatches
-    // under APS5_PROFILE_DRAW.
     DispatchTimer timer(profile, arguments != 0, shader.spirv.size(), programAddress);
     DispatchTimer::countDispatch(profile);
     const auto lookupsBefore = Graphics::DeviceProcLookups();
     std::shared_ptr<Graphics::ShaderResources> resources;
     ResourceCache::Key contentKey;
     const bool cacheable = !htileClear.has_value() && ResourceCacheEnabled() && shader.PipelineVariantId() != 0;
-    // The object came from the resource cache: a compute template whose data buffers take this
-    // dispatch's words at the record (ShaderResources::RefreshData).
     bool fromCache = false;
     bool refusedMove = false;
     double revalidateMs = 0;
     std::shared_ptr<Graphics::ShaderResources::DrawBindings> overlay;
-    // The batches the pre-sync (PrepareDispatch) waited for are reaped first: their completions
-    // (CPU write-backs) land before stage B or a cached object's Revalidate reads, and the flush
-    // hook then finds nothing pending over their surfaces.
     if (prepared != nullptr && prepared->presyncSerial != 0) {
-        // Timed alone: the phase entry exists only when a reap ran, and measures just the reap.
         timer.restart();
         ReapRecorded(prepared->presyncSerial);
         timer.phase(PhaseReap);
     }
-    // The 'resources' phase below, split (APS5_PROFILE_DRAW) into what runs under the mutex: the
-    // sub-phases are extra rows named "resources: ..." in the [dispatch] totals and the [indirect]
-    // line, so the hold's biggest part (stage B's image lookups, the whole build of an address-based
-    // shader) is named, and "resources: hook waits" says how much of the build was the nested flush
-    // hook waiting for recorded work (a locked wait: it overlaps the other rows).
     const auto subPhaseStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const auto waitedBefore = profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
-    // The image lookups of this call by outcome (stage B, a Revalidate or a locked build), for the
-    // [indirect] line: reset here, read after the resources phase.
     if (profile && arguments != 0) Graphics::ThreadLookupOutcomes() = {};
     const auto noteRefusalBuild = [](bool inserted) {
         auto& moves = DispatchMoves();
         moves.rebuilt.fetch_add(1, std::memory_order_relaxed);
         if (inserted) moves.kept.fetch_add(1, std::memory_order_relaxed);
     };
-    // The resource cache insert evicts the oldest entry, destroying its ShaderResources here when the
-    // cache was the last owner: timed apart from the build.
     const auto insert = [&] {
         const auto insertStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        // The displaced entries go to the open batch: their destruction (descriptor sets, pooled
-        // buffers, texture references) then runs on the release thread once the batch completed,
-        // not here under the mutex. APS5_NO_DEFERRED_EVICTION=1 destroys them here as before.
         static const bool deferEviction = std::getenv("APS5_NO_DEFERRED_EVICTION") == nullptr;
         std::vector<std::shared_ptr<Graphics::ShaderResources>> evicted;
         state->resourceCache.Insert(contentKey, resources, deferEviction ? &evicted : nullptr);
@@ -329,11 +307,8 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
         }
     };
     if (prepared != nullptr && prepared->resources != nullptr) {
-        // Stage A ran without the mutex (PrepareDispatch); stage B completes the build here.
         resources = std::move(prepared->resources);
         contentKey = std::move(prepared->key);
-        // The build's own sub-phase totals before and after: the differences are stage B's parts
-        // (an address-based build also runs its stage A here, under the mutex: 'A locked').
         const auto before = profile ? resources->Timing() : Graphics::ShaderResources::BuildTiming{};
         const auto completeStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         resources->Complete();
@@ -352,8 +327,6 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
             timer.add(PhaseResourcesDescriptors, descriptors);
             timer.add(PhaseResourcesOther, std::max(0.0, stageB - images - upload - descriptors));
             timer.add(PhaseResourcesALocked, stageA);
-            // What Complete() spends outside both stages' totals: an address-based build's lease
-            // and mirror acquisition (prepareAddressBindings) before its locked stage A.
             timer.add(PhaseResourcesAddress, std::max(0.0, completeWall - stageA - stageB));
             timer.callMs[PhaseResourcesAUnlocked] += prepared->prepareMs;
             d.phaseTotals[PhaseResourcesAUnlocked] += prepared->prepareMs;
@@ -364,9 +337,6 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
             if (resources->Reusable()) insert();
         }
     } else if (cacheable) {
-        // PrepareDispatch made the key already when it found the cached object, and carries the
-        // object it found: revalidated as a map hit would be (an entry replaced meanwhile is left
-        // alone by the pointer-conditional Remove). APS5_NO_PREPARED_FIND=1 looks the key up again.
         static const bool preparedFind = std::getenv("APS5_NO_PREPARED_FIND") == nullptr;
         const bool exactEntry = prepared != nullptr && prepared->exact;
         contentKey = prepared != nullptr && !prepared->key.empty() ? std::move(prepared->key) : DispatchContentKey(shaders[0], context.device);
@@ -423,7 +393,6 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
             } else {
                 state->resourceCache.Remove(contentKey, cached.get());
                 ++d.cacheInvalidated;
-                // Off the mutex with its batch, as an evicted entry (insert()).
                 cached->KeepStorageImageBytes(*state->recorder);
                 state->recorder->Keep(std::move(cached));
             }
@@ -445,8 +414,6 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     }
     resources->PatchPushConstants(pushBytes);
     if (profile) timer.add(PhaseResourcesHookWaits, Graphics::Recorder::ThreadWaitedMs() - waitedBefore);
-    // The lookup outcomes of this call: rows with counts on the [indirect] line, and a summary for
-    // the longest call.
     if (profile && arguments != 0) {
         const auto& outcomes = Graphics::ThreadLookupOutcomes();
         for (std::size_t kind = 0; kind < Graphics::LookupOutcomes::Count; ++kind) {

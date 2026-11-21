@@ -135,7 +135,6 @@ Asn1String* NewString(int type, std::span<const unsigned char> content) {
         return nullptr;
     }
     if (!content.empty()) std::memcpy(data, content.data(), content.size());
-    *value = {static_cast<std::int32_t>(content.size()), type, data, 0};
     return value;
 }
 
@@ -176,7 +175,6 @@ Asn1String* NewBitString(std::span<const unsigned char> content) {
         std::memcpy(data, content.data() + 1, length);
         data[length - 1] &= static_cast<unsigned char>(0xffu << unusedBits);
     }
-    *value = {static_cast<std::int32_t>(length), BitStringType, data, BitsLeftFlag | unusedBits};
     return value;
 }
 
@@ -848,9 +846,7 @@ LibreSsl3X509Crl* APS5_VABI d2i_X509_CRL_nid_postfix(
     if (!crl) return nullptr;
     if (output) {
         X509_CRL_free_nid_postfix(*output);
-        *output = crl;
     }
-    *input += static_cast<std::size_t>(length) - remaining.size();
     return crl;
 }
 

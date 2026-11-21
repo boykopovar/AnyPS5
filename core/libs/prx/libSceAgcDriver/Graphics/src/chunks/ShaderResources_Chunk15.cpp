@@ -139,10 +139,6 @@ void ShaderResources::finishImageTables() {
 
 std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
     std::vector<PresyncSurface> surfaces;
-    // A surface's lookup reads guest memory on the CPU unless it is served GPU-direct from a host
-    // import: a storage image of imported memory uploads and refreshes from the import, and a
-    // sampled texture of one views that image (SampledFromStorageEligible), so neither waits for
-    // the producer.
     const auto consider = [&](std::uint32_t format, std::uint64_t address, std::uint64_t guestBytes, bool sampled) {
         const bool gpuDirect = sampled ? SampledFromStorageEligible(context, format, address, guestBytes) : HostImportCovers(context, address, static_cast<std::size_t>(guestBytes));
         if (!gpuDirect) surfaces.push_back({address, guestBytes, false});
@@ -153,13 +149,6 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
         if (keyRanges && dccAddress != 0 && keyBytes != 0) surfaces.push_back({dccAddress, keyBytes, true});
     };
     if (completed) {
-        // A cached object (the resource cache): Revalidate repeats the lookups of the objects the
-        // build made, which never change afterwards (a lookup returning another object fails the
-        // revalidation instead), so the surfaces come from the build's own record of them. A
-        // sampled texture viewing a storage image refreshes like that image; a snapshot texture
-        // over an eligible surface is replaced by a view without reading. Storage images are
-        // checked on their own surface (a mip chain can exceed the element's descriptor). Read
-        // without the device lock: these members are fixed once the build completed.
         std::size_t textureIndex = 0;
         for (const auto& range : describedRanges) {
             if (std::strcmp(range.kind, "texture") == 0 && textureIndex < textures.size()) {
@@ -185,7 +174,6 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
         }
         return surfaces;
     }
-    // Stage A has not run (an address-based build, or the pass is off): decoded from the shader.
     if (deferredCompute.program == nullptr) return surfaces;
     forEachImageElement(*deferredCompute.program, [&](const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t, std::span<const std::uint32_t> words) {
         if (IsNullTextureResource(words)) return;
@@ -237,7 +225,6 @@ std::shared_ptr<const TableDescriptors> ShaderResources::keptTable(std::size_t s
 }
 
 void ShaderResources::release() noexcept {
-    // A set from the cache's pool chain goes back to it; a dedicated pool dies with its set.
     std::shared_ptr<const std::vector<std::weak_ptr<Texture>>> held;
     if (cacheAllocation.pool && context.descriptorCache != nullptr) context.descriptorCache->Free(cacheAllocation, keptTable(0, held));
     if (pool) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);

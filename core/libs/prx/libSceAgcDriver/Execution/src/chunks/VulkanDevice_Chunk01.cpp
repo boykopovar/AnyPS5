@@ -342,10 +342,6 @@ bool CaptureComputePipeline(std::size_t words) {
     return words >= threshold;
 }
 
-// The ShaderResources content cache dispatches share with recorded draws: Graphics::ResourceCache,
-// one process-wide instance (see SharedResourceCache) that the State references so this file keeps
-// its Find/Insert/Remove/Clear calls; the device clears it at teardown before its descriptor caches
-// go. APS5_NO_RESOURCE_CACHE=1 builds every dispatch's resources as before.
 using ResourceCache = Graphics::ResourceCache;
 
 std::uint32_t DumpScale();
@@ -424,14 +420,11 @@ private:
     bool stopping = false;
 };
 
-// The [present] line's counters (see the header); mutated under State::presentMutex.
 VulkanDevice::PresentStatistics presentCounters{};
 std::atomic<std::uint64_t> upscaledPresents{0};
 
 }
 
-// A compute dispatch's Vulkan objects, shared by every dispatch of the same compiled variant and
-// kept by the recorder until the batches using them completed (a Recipe references them weakly).
 struct ComputePipelineObjects {
     VkDevice device = VK_NULL_HANDLE;
     PFN_vkDestroyShaderModule destroyModule = nullptr;
@@ -451,9 +444,6 @@ struct ComputePipelineObjects {
     }
 };
 
-// Pipelines are shared by dispatches of one module (the result's run-stable identity) with the
-// same push constant use; descriptor set layouts built from the same bindings are compatible, so
-// the pipeline layout of the first dispatch, or of the journal replay, serves them all.
 struct ComputePipelineKey {
     ShaderRecompiler::PipelineIdentity identity;
     bool pushConstants = false;
@@ -607,8 +597,6 @@ struct VulkanDevice::State {
     bool workgroupScopeFences = true;
     bool ldsLockFences = false;
     bool deviceAtomicWorkgroupMemoryBarriers = false;
-    // VK_EXT_descriptor_indexing with non-uniform image array indexing (bindless image tables in
-    // graphics stages, and compute workgroups wider than a wave).
     bool descriptorIndexing = false;
     bool storageBufferUpdateAfterBind = false;
     bool sampledImageUpdateAfterBind = false;
@@ -684,7 +672,6 @@ struct VulkanDevice::State {
     bool conservativeRasterization = false;
     bool provokingVertexLast = false;
     bool provokingVertexModePerPipeline = false;
-    // VK_KHR_timeline_semaphore enabled: the recorder's unlocked waits are available.
     bool timelineSemaphores = false;
     bool computeWave32 = false;
     bool meshWave32 = false;
@@ -693,22 +680,16 @@ struct VulkanDevice::State {
     bool spannedAnySubgroup = false;
     bool computeFullSubgroups = false;
     bool spannedWaves = false;
-    // Indirect draw features enabled (see Graphics::Context).
     bool drawIndirectFirstInstance = false;
     bool multiDrawIndirect = false;
     bool drawIndirectCount = false;
     bool indexedIndirectPatches = true;
-    // The device's resolved entry points (Graphics::DeviceFunctions) and the Graphics::Context
-    // built once after setup (see graphicsContext); the context's pool reference is dropped before
-    // the pool at teardown.
     Graphics::DeviceFunctions deviceFunctions;
     bool functionsReady = false;
     Graphics::Context context;
     bool contextReady = false;
     std::unique_ptr<Graphics::TextureDetiler> detiler;
     std::unique_ptr<Graphics::Recorder> recorder;
-    // Device-local buffers of a repeated 16-byte fill pattern (FillBuffer), most recently used
-    // last; each is filled once by a doubling chain in device memory.
     std::vector<std::pair<std::array<std::uint32_t, 4>, std::shared_ptr<Graphics::DeviceBuffer>>> patternBuffers;
     struct RepeatedFill {
         std::size_t bytes = 0;
@@ -723,13 +704,9 @@ struct VulkanDevice::State {
     std::mutex scratchPoolsMutex;
     std::map<ShaderRecompiler::PipelineIdentity, std::shared_ptr<ScratchPool>> scratchPools;
     std::uint64_t scratchPoolUses = 0;
-    // Compute pipeline objects by variant (and push-constant use), under their own mutex: the
-    // dispatch's find-or-insert and the verify switch's lookups touch the map, recipes hold weak
-    // references to its objects.
     AgcDriver::Mutex computePipelinesMutex;
     std::map<ComputePipelineKey, std::shared_ptr<ComputePipelineObjects>> computePipelines;
     std::map<ComputePipelineKey, std::shared_future<std::shared_ptr<ComputePipelineObjects>>> computePipelinesBuilding;
-    // The journal replay building this device's pipelines on its own threads; drained first at teardown.
     std::shared_ptr<Graphics::PipelineJournalReplay> journalReplay;
     std::atomic<bool> journalReplayPending{false};
     std::atomic<std::uint64_t> computePipelinesCreated{0};
@@ -746,11 +723,6 @@ struct VulkanDevice::State {
     Graphics::VertexBufferFormats vertexFormats;
     std::unique_ptr<Graphics::SamplerCache> samplerCache;
     Graphics::ResourceCache& resourceCache = Graphics::SharedResourceCache();
-    // Recorded dispatches that write a copied buffer (their results reach guest memory by a CPU
-    // write-back when the batch is reaped), listed until that write-back ran. An indirect dispatch
-    // whose arguments one of them writes must read them on the CPU (DispatchIndirect); GPU-direct
-    // writes into host imports need no entry. Under GuestMemory::GpuMutex; shared with the completion
-    // actions so they never outlive it.
     std::shared_ptr<std::vector<std::shared_ptr<Graphics::ShaderResources>>> copiedWriters = std::make_shared<std::vector<std::shared_ptr<Graphics::ShaderResources>>>();
     VkPhysicalDeviceMeshShaderPropertiesEXT meshLimits{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT};
     std::unique_ptr<PresentationScaler> scaler;
@@ -769,14 +741,8 @@ struct VulkanDevice::State {
     std::uint64_t metadataGeneration = 0;
     std::unique_ptr<PresentationScaler> hdrScaler;
     VkFormat hdrScalerSource = VK_FORMAT_UNDEFINED;
-    // The swapchain image AcquireImage took for the next present(), consumed by that present.
     bool imageAcquired = false;
     std::uint32_t acquiredIndex = 0;
-    // Presentations in flight (see the header): FlipInFlight() + 1 slots used round robin from
-    // `presentCursor` (the slot there is the oldest). A slot's kept resident image and its dump
-    // buffer (APS5_DUMP_FRAMES: the frame read back by the blit's submission) live until its fence
-    // signaled. `presentMutex` orders the presenter's unlocked RetirePresents against a WaitIdle
-    // from a queue worker; it is never taken before GuestMemory::GpuMutex on a thread.
     struct PresentSlot {
         VkFence fence = VK_NULL_HANDLE;
         VkCommandBuffer commands = VK_NULL_HANDLE;
@@ -792,31 +758,22 @@ struct VulkanDevice::State {
         int dumpIndex = 0;
         std::uint32_t imageIndex = 0;
         bool inFlight = false;
-        // The blit reads the single scaler source, staging or upload objects (not a direct blit
-        // from the resident image): the next use of those waits for this slot.
         bool shared = false;
-        // Recorder::Submissions() when the blit was submitted and the previous slot's: the batches
-        // in between ran ahead of this blit.
         std::uint64_t recorderSerial = 0;
         std::uint64_t previousSerial = 0;
         std::chrono::steady_clock::time_point submittedAt{};
-        // APS5_PROFILE_GPU: the blit's own two timestamps (the [gputime] present-blit class), read
-        // when the slot retires, and the swapchain bytes it wrote.
         VkQueryPool queries = VK_NULL_HANDLE;
         std::uint64_t blitBytes = 0;
     };
     std::vector<PresentSlot> presentSlots;
     std::size_t presentCursor = 0;
     std::uint64_t lastPresentSerial = 0;
-    // The batch ranges of retired slots whose GPU accounting waits for the batches' completion
-    // records (SettleRetired); under presentMutex.
     struct RetiredRange {
         std::uint64_t afterSerial;
         std::uint64_t throughSerial;
     };
     std::deque<RetiredRange> retiredRanges;
     AgcDriver::Mutex presentMutex;
-    // The presentation present() submitted and QueuePresent has not handed to the swapchain.
     bool queuePending = false;
     bool queueGuestFrame = false;
     bool presentingGuestFrame = false;
@@ -1021,8 +978,6 @@ struct VulkanDevice::State {
         return std::any_of(presentSlots.begin(), presentSlots.end(), [](const auto& slot) { return slot.inFlight && slot.shared; });
     }
 
-    // Whether a recorded dispatch's or draw's copied write-back (listed until it ran) stores into
-    // the range on the CPU; under GpuMutex.
     bool CopiedWriterOverlaps(std::uint64_t address, std::size_t bytes) const {
         const auto overlaps = [&](const auto& writer) { return writer->CopiedWritesOverlap(address, bytes); };
         return std::any_of(copiedWriters->begin(), copiedWriters->end(), overlaps) || std::any_of(Graphics::DrawCopiedWriters()->begin(), Graphics::DrawCopiedWriters()->end(), overlaps);
@@ -1041,8 +996,6 @@ struct VulkanDevice::State {
         retiredSwapchains.clear();
     }
 
-    // A presentation slot whose fence signaled: its frame dump is written, its kept image released
-    // and its statistics taken (under presentMutex).
     void RetireSlot(PresentSlot& slot) {
         slot.inFlight = false;
         if (presentation) presentation->Release(static_cast<std::size_t>(&slot - presentSlots.data()));
@@ -1068,11 +1021,6 @@ struct VulkanDevice::State {
         SettleRetired(false);
     }
 
-    // The GPU accounting of retired slots ([present] line, frame record): a batch's completion
-    // record is written when a queue worker finishes it, which can be well after the blit's fence
-    // signaled (compute queues never reap), so a range read at the retire was mostly unread. Each
-    // range waits until every serial in it has a record, or until the ring could have dropped its
-    // oldest one (`force`: at teardown). Under presentMutex.
     void SettleRetired(bool force) {
         const auto newest = recorder->NewestSubmitted();
         while (!retiredRanges.empty()) {
@@ -1131,8 +1079,6 @@ struct VulkanDevice::State {
         dumpWriter.Enqueue(index, width, height, false, std::move(pixels));
     }
 
-    // Blocks on the fence, or polls it every 50 us with APS5_PRESENT_POLL_FENCE=1 (the difference
-    // in the wait is the presenter's wake-up latency).
     void WaitPresentFence(VkFence fence) {
         static const bool poll = std::getenv("APS5_PRESENT_POLL_FENCE") != nullptr;
         if (!poll) {
@@ -1171,7 +1117,6 @@ struct VulkanDevice::State {
         if (device != VK_NULL_HANDLE) {
             const auto idle = reinterpret_cast<PFN_vkDeviceWaitIdle>(deviceProc(device, "vkDeviceWaitIdle"))(device);
             if (idle != VK_SUCCESS && idle != VK_ERROR_DEVICE_LOST) std::terminate();
-            // Resident images kept for unfinished presentations go before the caches they came from.
             {
                 std::lock_guard lock(presentMutex);
                 for (auto& slot : presentSlots) {
@@ -1183,8 +1128,6 @@ struct VulkanDevice::State {
                 slot.dumpBuffer.reset();
                 slot.dumpScaler.reset();
             }
-            // Results still in the unit shadows reach guest memory before the device goes; the
-            // slabs (kept by the publishing batch) are freed by the recorder's teardown.
             if (recorder) {
                 try {
                     Graphics::PublishAllShadows(context, Graphics::PublishReason::Teardown);
@@ -1195,8 +1138,6 @@ struct VulkanDevice::State {
             }
             Graphics::DestroyShadows(device);
             recorder.reset();
-            // Cached graphics pipelines (with their framebuffers, modules, render passes and layouts)
-            // belong to this device and must be destroyed while it lives.
             Graphics::ClearCachedPipelines(device);
             Graphics::ClearDepthSurfaces(device);
             Graphics::ClearMultisampleTargets(device);
@@ -1207,8 +1148,6 @@ struct VulkanDevice::State {
                 computePipelines.clear();
                 computePipelinesBuilding.clear();
             }
-            // Every ShaderResources (kept by the recorder or the resource cache) is gone now, so the
-            // sets and samplers they borrowed can go.
             copiedWriters->clear();
             resourceCache.Clear();
             Graphics::ClearRetainedSpaces(device);
@@ -1900,8 +1839,6 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         fifoLatestReady = fifoLatestReadyFeatures.presentModeFifoLatestReady == VK_TRUE;
         if (fifoLatestReady) deviceExtensions.push_back(fifoLatestReadyExtension);
     }
-    // Guest dispatches cover whole thread groups past the edge of small images; robust image access
-    // drops those writes instead of faulting the device.
     const bool imageRobustness = hasExtension(VK_EXT_IMAGE_ROBUSTNESS_EXTENSION_NAME);
     if (imageRobustness) deviceExtensions.push_back(VK_EXT_IMAGE_ROBUSTNESS_EXTENSION_NAME);
     if (hasExtension(VK_EXT_SAMPLER_FILTER_MINMAX_EXTENSION_NAME)) {
@@ -1920,13 +1857,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->conservativeRasterization = conservativeProperties.primitiveOverestimationSize <= 1.0f / 256.0f && conservativeProperties.degenerateTrianglesRasterized == VK_TRUE;
         if (state->conservativeRasterization) deviceExtensions.push_back(VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME);
     }
-    // Indirect draws with a GPU-side count (DRAW_INDIRECT_MULTI with count_indirect); a device
-    // without it resolves such draws on the CPU.
     state->drawIndirectCount = hasExtension(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
     if (state->drawIndirectCount) deviceExtensions.push_back(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
     state->memoryBudget = hasExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
-    // Guest memory is host memory: importing it lets address-based shaders use it in place instead of
-    // copying every registered allocation per draw.
     const bool importsAllowed = std::getenv("APS5_NO_HOST_IMPORT") == nullptr;
     VkPhysicalDeviceMaintenance3Properties maintenance3{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES};
     VkPhysicalDeviceDriverProperties driverProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES, &maintenance3};
@@ -1954,7 +1887,6 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         if (!compileOnly) Graphics::SetHostImportMaxBytes(maintenance3.maxMemoryAllocationSize);
         if (!compileOnly) Pm4::RequestImportableGds(state->hostPointerImport && state->properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU);
 #ifdef _WIN32
-        // Imported pages are locked; locking is bounded by the process working-set minimum.
         if (const char* value = std::getenv("APS5_WORKING_SET_MIB"); value != nullptr && !compileOnly) {
             const SIZE_T bytes = static_cast<SIZE_T>(std::strtoull(value, nullptr, 10)) << 20u;
             if (!SetProcessWorkingSetSizeEx(GetCurrentProcess(), bytes, bytes * 2, QUOTA_LIMITS_HARDWS_MIN_DISABLE | QUOTA_LIMITS_HARDWS_MAX_DISABLE)) std::fprintf(stderr, "[gpu] SetProcessWorkingSetSizeEx failed: %lu\n", GetLastError());
@@ -2160,8 +2092,6 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     enabled.textureCompressionBC = VK_TRUE;
     require(available.independentBlend, "device lacks independentBlend, required for color targets with different blend states");
     enabled.independentBlend = VK_TRUE;
-    // Guest shaders routinely read past descriptor ranges; robust access turns that into zeros
-    // instead of a GPU fault that loses the device.
     enabled.robustBufferAccess = available.robustBufferAccess;
     const auto plan = PlanDeviceQueues(queues, family, settles, available.sparseBinding == VK_TRUE, window != nullptr);
     const bool settleQueue = plan.settle;
@@ -2197,12 +2127,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->sparseResidencyAliased = enabled.sparseResidencyAliased == VK_TRUE;
     enabled.sparseResidencyImage2D = state->sparseBinding ? available.sparseResidencyImage2D : VK_FALSE;
     state->sparseResidencyImage2D = enabled.sparseResidencyImage2D == VK_TRUE;
-    // Indirect draw records with a non-zero first instance, and several records per call.
     enabled.drawIndirectFirstInstance = available.drawIndirectFirstInstance;
     enabled.multiDrawIndirect = available.multiDrawIndirect;
     state->drawIndirectFirstInstance = enabled.drawIndirectFirstInstance == VK_TRUE;
     state->multiDrawIndirect = enabled.multiDrawIndirect == VK_TRUE;
-    // PA_CL_CLIP_CNTL near/far clip disable maps to depth clamping.
     enabled.depthClamp = available.depthClamp;
     state->depthClamp = enabled.depthClamp == VK_TRUE;
     enabled.fillModeNonSolid = available.fillModeNonSolid;
@@ -2219,7 +2147,6 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->dualSrcBlend = enabled.dualSrcBlend == VK_TRUE;
     enabled.occlusionQueryPrecise = available.occlusionQueryPrecise;
     state->occlusionQueryPrecise = enabled.occlusionQueryPrecise == VK_TRUE;
-    // Recompiled storage-image access declares no format (the guest descriptor decides it).
     enabled.shaderStorageImageMultisample = available.shaderStorageImageMultisample;
     state->storageImageMultisample = enabled.shaderStorageImageMultisample == VK_TRUE;
     if (enabled.shaderStorageImageMultisample) {
@@ -2229,7 +2156,6 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     enabled.shaderStorageImageWriteWithoutFormat = available.shaderStorageImageWriteWithoutFormat;
     state->storageImageWriteWithoutFormat = enabled.shaderStorageImageWriteWithoutFormat == VK_TRUE;
     enabled.shaderStorageImageReadWithoutFormat = available.shaderStorageImageReadWithoutFormat;
-    // Gathers with non-constant offsets (ImageGatherExtended).
     enabled.shaderImageGatherExtended = available.shaderImageGatherExtended;
     if (enabled.shaderImageGatherExtended) state->capabilities.push_back(spv::CapabilityImageGatherExtended);
     enabled.shaderResourceMinLod = available.shaderResourceMinLod;
@@ -2256,7 +2182,6 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     if (enabled.shaderStorageImageWriteWithoutFormat) state->capabilities.push_back(spv::CapabilityStorageImageWriteWithoutFormat);
     if (enabled.shaderStorageImageReadWithoutFormat) state->capabilities.push_back(spv::CapabilityStorageImageReadWithoutFormat);
     state->storageImageWithoutFormat = enabled.shaderStorageImageWriteWithoutFormat == VK_TRUE && enabled.shaderStorageImageReadWithoutFormat == VK_TRUE;
-    // Bindless image tables index an image array with a wave-uniform runtime slot.
     enabled.shaderSampledImageArrayDynamicIndexing = available.shaderSampledImageArrayDynamicIndexing;
     enabled.shaderStorageImageArrayDynamicIndexing = available.shaderStorageImageArrayDynamicIndexing;
     if (enabled.shaderSampledImageArrayDynamicIndexing) state->capabilities.push_back(spv::CapabilitySampledImageArrayDynamicIndexing);
@@ -2407,9 +2332,6 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         drawParametersFeatures.pNext = byteFeatures.pNext;
         byteFeatures.pNext = &drawParametersFeatures;
     }
-    // Timeline semaphores let a queue worker wait for recorded batches without holding the GPU mutex
-    // (see Recorder::WaitSerial). The instance is 1.1, so the KHR extension is used even on 1.2+
-    // devices. Debug aid: APS5_NO_TIMELINE=1 leaves it off (drains wait under the mutex as before).
     VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timelineFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR};
     if (hasExtension(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME) && std::getenv("APS5_NO_TIMELINE") == nullptr) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timelineFeatures};
@@ -2748,8 +2670,6 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         check(state->InstanceFunction<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>("vkGetPhysicalDeviceSurfaceCapabilitiesKHR")(selected, state->surface, &surface), "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
         state->extent = {drawableWidth, drawableHeight};
         APS5_LOG_OUT("Surface capabilities drawable=%ux%u min=%ux%u max=%ux%u minImages=%u maxImages=%u usage=0x%x", drawableWidth, drawableHeight, surface.minImageExtent.width, surface.minImageExtent.height, surface.maxImageExtent.width, surface.maxImageExtent.height, surface.minImageCount, surface.maxImageCount, surface.supportedUsageFlags);
-        // A surface that reports its extent (a fullscreen transition can make it differ from the
-        // drawable size for a moment) wins: the swapchain must match the surface.
         if (surface.currentExtent.width != std::numeric_limits<std::uint32_t>::max() && surface.currentExtent.width != 0 && surface.currentExtent.height != 0) {
             drawableWidth = surface.currentExtent.width;
             drawableHeight = surface.currentExtent.height;
@@ -2855,9 +2775,6 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->float16HostNans = probe.mismatches == 0u;
         std::fprintf(stderr, "[float-controls] f16 NaN results with IEEE_MODE clear: %s (%u of %u probe results differ from the selected NaN, %.0f ms)\n", state->float16HostNans ? "host" : "selected", probe.mismatches, probe.compared, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count());
     }
-    // A device without a window is usually replaced by the window's device before the title draws
-    // (Driver::AttachWindow): its replay starts at its first draw or dispatch instead, so the
-    // journal is replayed once, on the device the title draws with.
     state->journalReplayPending.store(!compileOnly, std::memory_order_release);
     if (window != nullptr) startJournalReplay();
 }

@@ -280,8 +280,6 @@ bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
-    // Imports of a replaced device are not this device's; a stale registry only means an import
-    // may be dropped at the next reconcile, which the binding path handles.
     return state.device == context.device && peekImport(state, address, address + bytes) != nullptr;
 }
 
@@ -429,7 +427,6 @@ void GuestBufferMemory::AcquireRegistered() {
     };
     auto at = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const bool importable = context.hostImportAlignment != 0;
-    // APS5_NO_SORTED_SNAPSHOT_LOOKUP=1: AddSnapshot scans the regions as before instead of searching.
     static const bool sortedLookup = std::getenv("APS5_NO_SORTED_SNAPSHOT_LOOKUP") == nullptr;
     std::vector<RefreshBlock> blocks;
     buildingBlocks = &blocks;
@@ -437,8 +434,6 @@ void GuestBufferMemory::AcquireRegistered() {
     bool mirrored = false;
     bool served = false;
     auto& spaces = Spaces();
-    // Read before the lease below is acquired: a mutation ending in between leaves the space
-    // stale by its generation, never newer than it (see AddressSpace).
     const auto generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     if (addressSpaceCacheEnabled()) {
         auto current = spaces.current.load();
@@ -509,10 +504,6 @@ void GuestBufferMemory::AcquireRegistered() {
             for (const auto& range : space->copied) addCopiedRange(range);
             regionsSorted = sortedLookup;
             lap(timing.importsUs, at);
-            // Writable mirrors are compared with guest memory per build, as acquireMirror does for
-            // an existing mirror. The preparation may wait for recorded work, whose completions can
-            // retire an import the space's regions point at: UploadFinish re-checks the epoch
-            // before any of them is dereferenced.
             served = true;
             mirrored = space->mirrored;
             for (const auto index : space->writableMirrors) {
@@ -523,7 +514,6 @@ void GuestBufferMemory::AcquireRegistered() {
         }
     }
     if (space == nullptr) {
-        // Pending GPU results in these ranges are stored when Upload prepares each region.
         lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
         lap(timing.leaseUs, at);
         {
@@ -533,16 +523,9 @@ void GuestBufferMemory::AcquireRegistered() {
             if (importFloor == 0) importFloor = state.useCounter + 1;
             state.buildFloor = importFloor;
             if (importable) promoteGrowth(context, state, lease);
-            // Taken before the pass: the imports it takes are the registry's ones (just reconciled, so
-            // none is retired by a make below), and a mirror's preparation may sync the recorder, whose
-            // completions can retire an import already taken; that moves the epoch, and Upload then
-            // re-checks every pointer instead of trusting it.
             importsEpoch = state.epoch;
         }
         lap(timing.importsUs, at);
-        // One pass in the registry's (ascending) order, so the regions come out sorted for AddSnapshot.
-        // The import lock is taken per range: a mirror's preparation may wait for recorded work, which
-        // must not happen under it.
         regions.reserve(lease.size());
         static const std::uint64_t copyLimit = [] {
             const char* value = std::getenv("APS5_ADDRESS_COPY_MAX_MIB");
@@ -613,7 +596,6 @@ void GuestBufferMemory::AcquireRegistered() {
             }
             if (entry != nullptr) {
                 region.hostBacked = true;
-                // Reused by Upload while no import was dropped since (see importsEpoch).
                 region.direct = entry;
                 regions.push_back(std::move(region));
                 imported.emplace_back(range->address, range->address + range->bytes);
@@ -686,10 +668,6 @@ void GuestBufferMemory::AcquireRegistered() {
         }
         lap(timing.importsUs, at);
         if (addressSpaceCacheEnabled()) {
-            // Published only while the imports the regions point at stand: the table entries below
-            // read them, and a retire during the pass (a mirror preparation's sync) has already
-            // moved the epoch, in which case this build keeps the per-build form and Upload
-            // re-resolves every pointer as before.
             std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
             bool publish = true;
             {

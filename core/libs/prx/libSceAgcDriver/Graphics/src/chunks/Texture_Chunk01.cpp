@@ -22,7 +22,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
-// For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -89,7 +88,6 @@ std::atomic<std::uint64_t>& eightBitWrites() {
     return writes;
 }
 
-// APS5_PROFILE_DRAW: accumulate texture setup phases and report every 200 textures.
 struct TextureProfile {
     double allocate = 0, read = 0, gpu = 0, view = 0;
     std::uint64_t count = 0;
@@ -100,10 +98,7 @@ struct TextureProfile {
     std::uint64_t storageReused = 0;
     std::uint64_t storageDirectUploads = 0;
     std::uint64_t storageDirectWriteBacks = 0;
-    // Sampled-texture uploads recorded into the open batch instead of waited for.
     std::uint64_t recordedUploads = 0;
-    // GPU clears of fast-cleared storage images recorded into the open batch, and waited for in a
-    // batch of their own (APS5_NO_RECORDED_CLEAR=1, or no recorder).
     std::uint64_t storageRecordedClears = 0;
     std::uint64_t storageWaitedClears = 0;
     std::uint64_t layerRows = 0;
@@ -121,33 +116,12 @@ void keepStorageTexture(Recorder& recorder, std::shared_ptr<StorageTexture> text
     recorder.Keep(std::move(texture));
 }
 
-// APS5_PROFILE_DRAW, every 10 s on the [storage] line: storage image bytes uploaded by path
-// (recorded DCC clear, direct detile from the import, CPU) and written back by the reason of the
-// FlushPending that forced the write-back (the other callers name themselves: "refresh", "cache
-// eviction", "explicit"). `flushReason` is set by the caller around its writeBack calls.
 thread_local const char* flushReason = nullptr;
-// Likewise what made an upload necessary: "first" (a new image), "keys" (the DCC keys changed),
-// "cpu" (a CPU store stamped a changed unit), "flushed" (another image's results were stored over
-// the surface by this refresh), "store" (a driver store: a fill, a copy, a label, an earlier
-// write-back), "untracked" (no write stamps for the surface: every refresh re-uploads), "alias"
-// (units taken from an alias image on the device); set by the constructor and Refresh around
-// upload() and borrowUnits().
 thread_local const char* uploadReason = "first";
-// Block-unit traffic, per 10 s like the rest of the [storage] line: partial uploads and write-backs
-// (count and bytes), write-backs that stored nothing (every selected block CPU-written), partial
-// selections widened to every pending unit (the hysteresis in writeBack), units dropped as dead
-// (DiscardPendingInside) and units an alias's own results superseded (markLayersPending); relaxed,
-// reported only.
 std::atomic<std::uint64_t> singlePassMoves{0}, slabRetiles{0}, paddingSeedCopies{0}, linearImportRetiles{0};
 std::atomic<std::uint64_t> partialUploads{0}, partialUploadBytes{0}, partialWriteBacks{0}, partialWriteBackBytes{0}, emptyWriteBacks{0}, coalescedWriteBacks{0}, unitsDropped{0}, unitsSuperseded{0}, clearHandOvers{0}, creationHandOvers{0}, handedOverSuperseded{0};
-// FlushPending listings skipped because no pending unit of the image lay inside the range, images
-// whose selected pending units were dropped because their memory is no longer registered (see
-// writeBackLayers), and pending units a DCC clear -> uncompressed key flip kept as the texels
-// (Refresh).
 std::atomic<std::uint64_t> pretestSkipped{0}, unregisteredDropped{0}, keyFlipKept{0};
 std::atomic<std::uint64_t> queuedReadHeld{0};
-// Images stored by a FlushPending after a hook skip of theirs (AccessKeptByCpu), of which by the
-// hook for the read site of the last skip; images evictStale dropped (the [hooksync] and [storage] lines).
 std::atomic<std::uint64_t> flushedAfterSkip{0}, flushedAfterSkipSameSite{0}, staleEvicted{0};
 std::atomic<std::uint64_t> depthCopyTextures{0}, depthCopyRefreshes{0};
 std::atomic<std::uint64_t> reuseLookupsHeld{0}, reuseLookupsChanged{0};
@@ -261,8 +235,6 @@ void countStorageEviction(const char* reason) {
     ++traffic.evictions[reason];
 }
 
-// Every storage image alive, for the fill HLE's cover check (StorageTexture::ClassifyFill): the
-// storage cache indexes surfaces by key, not by address range. Its mutex is a leaf.
 struct LiveImages {
     MapImportGate::LeafMutex<AgcDriver::Mutex> mutex;
     std::vector<StorageTexture*> textures;
@@ -276,16 +248,11 @@ LiveImages& Live() {
     return live;
 }
 
-// Per-layer validity of array surfaces (see StorageTexture::layerBegin): a fill of one layer clears
-// it on the image and only that layer's guest bytes go stale, so the other layers' fills, uploads
-// and write-backs stay separate. APS5_NO_LAYER_CLEAR=1 tracks every surface as one layer, and a
-// one-layer FillClear then demands the rest of the surface unchanged, as before.
 bool LayerTrackingEnabled() {
     static const bool disabled = std::getenv("APS5_NO_LAYER_CLEAR") != nullptr;
     return !disabled;
 }
 
-// APS5_NO_BLOCK_TRACKING=1 tracks array layers (or the whole surface) instead of 64 KiB blocks.
 bool BlockTrackingEnabled() {
     static const bool disabled = std::getenv("APS5_NO_BLOCK_TRACKING") != nullptr;
     return !disabled;
@@ -321,7 +288,6 @@ VkImageViewType ViewTypeFor(TextureDimension dimension, [[maybe_unused]] std::ui
         case TextureDimension::k1D: return VK_IMAGE_VIEW_TYPE_1D;
         case TextureDimension::k2D: return VK_IMAGE_VIEW_TYPE_2D;
         case TextureDimension::k2DArray: return VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-        // Shaders address cube maps as 2D arrays of faces.
         case TextureDimension::kCube: return VK_IMAGE_VIEW_TYPE_2D_ARRAY;
         case TextureDimension::k3D: return VK_IMAGE_VIEW_TYPE_3D;
         case TextureDimension::k1DArray: return VK_IMAGE_VIEW_TYPE_1D_ARRAY;
@@ -684,9 +650,6 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             else ++Profile().recordedUploads;
             if (profile) Profile().gpu += timer.lap();
         } else {
-            // Debug aid: APS5_DUMP_TEXTURE=<hex addresses, comma separated> saves the detiled first mip
-            // of those sampled textures on their first 8 uploads as texture_<address>_<n>.raw (u32
-            // width, height, VkFormat, then tightly packed rows).
             static const std::string dumpList = [] { const char* text = std::getenv("APS5_DUMP_TEXTURE"); return text ? std::string(text) : std::string(); }();
             bool dumpWanted = false;
             if (!dumpList.empty()) {
@@ -694,7 +657,6 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
                 std::snprintf(address, sizeof(address), "%llx", static_cast<unsigned long long>(descriptor.baseAddress));
                 char extent[32];
                 std::snprintf(extent, sizeof(extent), "%ux%u", descriptor.width, descriptor.height);
-                // Entries may also be extents ("3840x2160"), since heap addresses change between runs.
                 dumpWanted = dumpList.find(address) != std::string::npos || dumpList.find(extent) != std::string::npos;
             }
             static const bool syncUploads = std::getenv("APS5_SYNC_TEXTURE_UPLOAD") != nullptr;
@@ -708,12 +670,6 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             if (profile) Profile().read += timer.lap();
 
             detiler.BeginBatch();
-            // The upload is recorded into the open batch, like a storage image's: the work that samples
-            // the texture is recorded after it, and a batch of its own (SubmitAndWait) was a full GPU
-            // drain under the device lock for every new texture. The buffers and the image live with
-            // the batch (the cache may drop the texture before it completes). The dump aid needs the
-            // linear bytes on the CPU, so it keeps the waiting batch, as does a build without a
-            // recorder (tests). APS5_SYNC_TEXTURE_UPLOAD=1 restores the waiting batch for every upload.
             std::unique_ptr<CommandBatch> batch;
             VkCommandBuffer commands = VK_NULL_HANDLE;
             std::shared_ptr<DeviceBuffer> tiled;

@@ -161,7 +161,6 @@ VkMemoryRequirements dmaBufBufferRequirements(const Context& context, const Host
     VkMemoryRequirements requirements{};
     context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
     if (kept != nullptr) {
-        *kept = buffer;
     } else {
         context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
     }
@@ -254,9 +253,6 @@ bool createSparseDmaBufImport(const Context& context, HostImport& entry, int fil
 #endif
 
 #ifndef _WIN32
-// The shared-backing resolver hands out a duplicated descriptor, so this function owns it on every
-// exit. Neither import path below consumes it: a udmabuf holds its own reference to the memfd, so
-// without closing the duplicate here every imported buffer leaks one descriptor.
 const char* createBackingImport(const Context& context, HostImport& entry, int file, const GuestArena::SharedBackingRun* runs, std::size_t count, VkResult& failure) {
     bool fits = false;
     VkResult chunkFailure = VK_SUCCESS;

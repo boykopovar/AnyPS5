@@ -827,7 +827,6 @@ double APS5_VABI nextafter_nid_postfix(double x, double y) {
     }
     return std::bit_cast<double>(next);
 }
-/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_nextafterl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_nextafterl.c */
 long double APS5_VABI nextafterl_nid_postfix(long double x, long double y) {
     const ExtendedParts ux = SplitExtended(x);
     const ExtendedParts uy = SplitExtended(y);
@@ -874,7 +873,6 @@ long double APS5_VABI nextafterl_nid_postfix(long double x, long double y) {
 long double APS5_VABI nexttowardl_nid_postfix(long double x, long double y) {
     return nextafterl_nid_postfix(x, y);
 }
-/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_nexttoward.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_nexttoward.c */
 double APS5_VABI nexttoward_nid_postfix(double x, long double y) {
     const std::uint64_t ux = std::bit_cast<std::uint64_t>(x);
     const ExtendedParts uy = SplitExtended(y);
@@ -901,7 +899,6 @@ double APS5_VABI nexttoward_nid_postfix(double x, long double y) {
     }
     return std::bit_cast<double>(next);
 }
-/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_nexttowardf.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_nexttowardf.c */
 float APS5_VABI nexttowardf_nid_postfix(float x, long double y) {
     const std::uint32_t ux = std::bit_cast<std::uint32_t>(x);
     const ExtendedParts uy = SplitExtended(y);
@@ -953,15 +950,12 @@ double APS5_VABI modf_nid_postfix(double x, double* integral) {
     const auto exponent = (bits >> 52u) & 0x7ffull;
     const auto zero = std::bit_cast<double>(bits & 0x8000000000000000ull);
     if (exponent < 1023u) {
-        *integral = zero;
         return x;
     }
     if (exponent >= 1075u) {
-        *integral = x;
         return exponent == 0x7ffu && (bits & 0xfffffffffffffull) != 0 ? x : zero;
     }
     const auto mask = (std::uint64_t{1} << (1075u - exponent)) - 1u;
-    *integral = std::bit_cast<double>(bits & ~mask);
     return (bits & mask) == 0 ? zero : x - *integral;
 }
 float APS5_VABI modff_nid_postfix(float x, float* integral) {
@@ -969,11 +963,9 @@ float APS5_VABI modff_nid_postfix(float x, float* integral) {
     const auto exponent = (bits >> 23u) & 0xffu;
     const auto zero = std::bit_cast<float>(bits & 0x80000000u);
     if (exponent < 127u) {
-        *integral = zero;
         return x;
     }
     if (exponent >= 150u) {
-        *integral = x;
         if (exponent == 0xffu && (bits & 0x7fffffu) != 0) {
             GuestCpu::RaiseInvalidForSignalingNan(x);
             return x;
@@ -981,7 +973,6 @@ float APS5_VABI modff_nid_postfix(float x, float* integral) {
         return zero;
     }
     const auto mask = (std::uint32_t{1} << (150u - exponent)) - 1u;
-    *integral = std::bit_cast<float>(bits & ~mask);
     return (bits & mask) == 0 ? zero : x - *integral;
 }
 double APS5_VABI tanh_nid_postfix(double x) {

@@ -77,14 +77,8 @@ ReplayCounters& replayCounters() {
     return counters;
 }
 
-// Builds the journal's pipelines for one device on a pool: the first thread loads the file, every
-// thread then takes the next entry. A pipeline the store already holds counts as present; an entry
-// whose modules are missing or whose set layouts differ from what its modules describe is rejected.
 class Replay : public PipelineJournalReplay {
 public:
-    // The context keeps the device's buffer pool: a store entry is alive for a draw only while its
-    // pool is the draw's (the pool tells device instances apart), so the entries built here must
-    // name it. The pool is released with the replay, before the device's teardown resets it.
     Replay(Context context, PipelineJournalHooks hooks, unsigned threads) : context(std::move(context)), hooks(std::move(hooks)), active(threads) {
         started = std::chrono::steady_clock::now();
         replayCounters().threads.store(threads, std::memory_order_relaxed);

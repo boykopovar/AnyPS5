@@ -68,7 +68,6 @@ std::uint32_t read(const Registers& registers, std::uint32_t offset, RegisterBan
     return it->second;
 }
 
-// A register that may be absent (the decoders' find/contains), through the facade.
 Registers::const_iterator find(const Registers& registers, std::uint32_t offset, RegisterBank bank = RegisterBank::Context) {
     NoteRegisterRead(bank, offset);
     return registers.find(offset);
@@ -196,8 +195,6 @@ VkConservativeRasterizationModeEXT decodeConservativeRasterization(const QueueSt
     return VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT;
 }
 
-// The register rules DecodeState and DrawRejection share (the precheck must reject exactly what
-// DecodeState would): the masks whose set bits are unsupported, and the depth-control verdict.
 constexpr std::uint32_t LayerExports = (1u << 18u) | (1u << 19u) | (1u << 21u) | (1u << 24u);
 constexpr std::uint32_t ClipCullExports = 0xffffu | (1u << 22u) | (1u << 23u);
 
@@ -256,8 +253,6 @@ void decodePointSize(const QueueState& queue, State& result) {
 }
 
 constexpr std::uint32_t DepthControlMask = ~0x007007f0u;
-// EXEC_ON_HIER_FAIL / EXEC_ON_NOOP / EXEC_IF_OVERLAPPED (bits 9, 10, 17) only force the pixel shader
-// to run, which it always does here.
 constexpr std::uint32_t ShaderControlMask = ~(0x0000f870u | 0x00020600u | 0x00010000u);
 constexpr std::uint32_t PixelStageRunsMask = 0x000207c7u;
 constexpr std::uint32_t AlphaToCoverageMask = ~0x0001ff00u;
@@ -310,8 +305,6 @@ constexpr std::uint32_t PixelShaderIteratesSamples = 0x10000u;
 constexpr std::uint32_t PixelSampleCoverageInput = 0x4000u;
 constexpr std::uint32_t PixelSampleRateInputs = 0x2011u;
 constexpr std::uint32_t ScreenOffsetMask = ~0x01ff01ffu;
-// Bits 26/27 (ZCLIP_NEAR/FAR_DISABLE) become depth clamping; bit 19 selects the [0, 1] clip space;
-// bit 16 disables clipping.
 constexpr std::uint32_t ClipControlMask = ~(0x10000u | 0x80000u | 0x01000000u | 0x0c000000u);
 
 bool zFormatSupported(std::uint32_t format) {
@@ -330,9 +323,6 @@ std::uint32_t shaderControlMask(std::uint32_t zFormat) {
     return mask;
 }
 
-// Debug aid: APS5_IGNORE_DEPTH_TEST=1 renders depth- and stencil-tested draws without a depth
-// target as if their tests always passed (wrong occlusion, but the draws run), so stages that
-// depth-test everything can exercise the draw paths before depth targets exist.
 bool IgnoreDepthTest() {
     static const bool ignore = std::getenv("APS5_IGNORE_DEPTH_TEST") != nullptr;
     return ignore;

@@ -79,18 +79,11 @@ std::optional<DepthSampleLocations> passDepthLocations(const Context& context, c
     return locations;
 }
 
-// Debug aid: APS5_DUMP_TARGETS=<n> saves the first n renders of every color target as a raw file
-// (u32 width, u32 height, u32 VkFormat, then tightly packed rows).
 int DumpTargetLimit() {
     static const int dumpLimit = [] { const char* text = std::getenv("APS5_DUMP_TARGETS"); return text ? std::atoi(text) : 0; }();
     return dumpLimit;
 }
 
-// A draw whose targets are all resident is recorded into the device's open batch like a dispatch:
-// the CPU does not wait for it, and the drain before it goes away (queue order and the barriers
-// keep it behind earlier recorded work); see `recorded` in Draw for the buffers that still need a
-// synchronous draw. Other draws keep their own synchronous batch. Debug aid: APS5_SYNC_DRAWS=1
-// makes every draw synchronous.
 bool RecordDraws() {
     static const bool recordDraws = std::getenv("APS5_SYNC_DRAWS") == nullptr;
     return recordDraws;

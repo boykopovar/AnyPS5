@@ -22,7 +22,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
-// For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -80,7 +79,6 @@ VkImageView StorageTexture::createView(std::uint32_t mip, bool firstLayer, VkFor
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     viewInfo.pNext = format == storageFormat && !packed ? nullptr : &usage;
     viewInfo.image = image;
-    // Storage views address one mip; cube faces are written as array layers.
     viewInfo.viewType = firstLayer ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k1D ? VK_IMAGE_VIEW_TYPE_1D : descriptor.dimension == TextureDimension::k2D ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k3D ? VK_IMAGE_VIEW_TYPE_3D : descriptor.dimension == TextureDimension::k1DArray ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
     viewInfo.format = format;
     viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
@@ -398,17 +396,8 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         const StorageTexture* previous;
         ~Exempt() { Refreshing::Set(previous); }
     } exempt{Refreshing::Get()};
-    // This image's own pending results stay on the GPU, where the next dispatch wants them (the
-    // flush below and the compare through the hook skip it).
     Refreshing::Set(this);
     NoteProved();
-    // Results of other images pending in this memory must reach it first, except an alias's: its
-    // units are taken on the device below (borrowUnits), so it stays pending. The keys read for
-    // that decision are read again after the flush, which may store keys itself. The exemption
-    // holds only when every pending unit of the alias is borrowable (tracked, unstamped since its
-    // generation, no results of this image's own there) or dead to its own write-back (tracked and
-    // stamped); an untracked unit is stored whole by that write-back, and a unit pending in both
-    // images takes the old order (store, then this image re-uploads it).
     auto alias = scoped ? std::shared_ptr<StorageTexture>{} : pendingAlias();
     if (alias != nullptr && !(ProvedClearKeys(descriptor, guestBytes, keyProof) == DccKeys::Uncompressed && HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr)) alias = nullptr;
     if (alias != nullptr) {
@@ -424,7 +413,6 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     }
     const auto scopeBegin = scoped ? layerBegin(firstLayer) : descriptor.baseAddress;
     const auto scopeBytes = scoped ? static_cast<std::size_t>(layerBegin(lastLayer - 1) + layerBytes(lastLayer - 1) - scopeBegin) : static_cast<std::size_t>(guestBytes);
-    // No publish: the upload below reads the stored units from the unit shadow itself.
     handedOver.clear();
     handedUnits.clear();
     const auto handOverKeys = alias == nullptr && !scoped ? clearHandOver() : std::nullopt;
@@ -452,9 +440,6 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     if (orderedSkipped) orderedRefreshSkips.fetch_add(1, std::memory_order_relaxed);
     pruneAdoptedSources();
     if (profile && flushed) start = LookupOutcomes::Add(LookupOutcomes::PendingFlush, start);
-    // `original` holds the guest bytes the image was last uploaded from or written back as; while the
-    // guest memory and the DCC keys still match, the image content is current. Pages nobody wrote
-    // since `generation` need no comparison.
     const auto current = GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     const auto scopedCurrent = current != 0 || !scoped ? current : GuestMemory::CollectWrites(scopeBegin, scopeBytes);
     std::vector<std::uint64_t> collected;
@@ -466,15 +451,11 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         if (scoped && (layer < firstLayer || layer >= lastLayer)) return current;
         return scopedCurrent != 0 ? scopedCurrent : collected[layer];
     };
-    // Per tracked layer: changed since its generation (a keys change makes every layer stale).
     std::vector<bool> changed(trackedLayers, false);
-    // Per 64 KiB block of the surface (blockGenerations): stamped since its layer's generation, and
-    // by a CPU store; scanned once when anything changed.
     std::vector<std::uint64_t> generations;
     std::vector<std::uint8_t> stampedBlocks, cpuBlocks;
     std::vector<bool> rewatchCompared(trackedLayers, false);
     std::vector<bool> outside;
-    // Units taken from the alias's image instead of guest memory.
     std::vector<bool> borrowed;
     bool anyBorrowed = false;
     bool unchanged = true;
@@ -489,7 +470,6 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     DccKeys keys = uploadedKeys;
     {
         const auto equalsOriginal = [&] {
-            // Named for the [hooksync] attribution: the compare goes through the flush hook.
             const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureCompare);
             if (scoped) return GuestMemory::EqualsCommitted(scopeBegin, std::span<const std::byte>(original).subspan(static_cast<std::size_t>(scopeBegin - descriptor.baseAddress), scopeBytes));
             return GuestMemory::EqualsCommitted(descriptor.baseAddress, original);
@@ -547,12 +527,9 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
             changed.assign(trackedLayers, true);
             unchanged = false;
             keysChanged = true;
-            // Which units the CPU stamped still decides what the drop rule below may drop.
             if (blockUnits) scanBlocks();
         } else if (blockUnits) {
             if (!GuestMemory::UnchangedSince(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), generation)) {
-                // One stamp scan for every unit (each is one stamp block); the unchanged units move
-                // to the current generation, so the whole-surface check answers next time.
                 scanBlocks();
                 for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
                     if (stampedBlocks[unit] == 0) {
@@ -577,8 +554,6 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
             }
             if (!unchanged) scanBlocks();
         }
-        // "cpu" names a CPU store in both models; a block without a generation (untracked) says
-        // nothing about who wrote it.
         if (compared && !keysChanged) {
             for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
                 const auto first = layerBegin(layer) / 65536 - descriptor.baseAddress / 65536;
@@ -599,9 +574,6 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         for (std::size_t k = 0; k < cpuBlocks.size(); ++k) {
             if (cpuBlocks[k] != 0 && (compared || (tracked && generations[k] != 0))) cpuWrote = true;
         }
-        // Unchanged bytes rescue an upload only when nothing else moved: with the keys changed
-        // the same bytes read differently, and a changed unit holding pending results must take
-        // the drop rule below (the image holds the results, `original` what the CPU wrote back).
         bool pendingChanged = false;
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
             if (changed[layer] && layerPending[layer]) pendingChanged = true;
@@ -613,10 +585,6 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         }
         direct = keys == DccKeys::Uncompressed && (HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr || (blockUnits && !importSegments().empty()));
         if (alias != nullptr && direct) {
-            // The alias's pending units that nothing stamped since its generation (a CPU store or a
-            // driver store there wins over its results, as at its own write-back) are taken from
-            // its image: every one of them, since its write-back would have stamped them all. Units
-            // already holding them at the same alias version stay as they are.
             const bool sameBorrow = borrowedFrom.lock() == alias && borrowedVersion == alias->version && borrowedUnits.size() == trackedLayers;
             std::vector<std::uint8_t> aliasStamped(trackedLayers);
             const bool aliasTracked = GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), alias->layerGeneration, aliasStamped);
@@ -656,27 +624,15 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         return true;
     }
     CaptureTrace::Log("refresh image=%llx bytes=%llu generation=%llu dirty=%d keysChanged=%d cpuWrote=%d", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), static_cast<unsigned long long>(generation), dirty, keysChanged, cpuWrote);
-    // Debug aid: APS5_TRACE_UPLOAD names why a storage image is uploaded again.
     static const bool traceUpload = std::getenv("APS5_TRACE_UPLOAD") != nullptr;
     if (traceUpload) {
         const auto keys = TextureClearKeys(descriptor, guestBytes);
         std::fprintf(stderr, "[upload] 0x%llx+0x%llx %ux%u mips %u: %s (keys %s -> %s, originalValid %d, dirty %d)\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), descriptor.width, descriptor.height, descriptor.mipCount, keys != uploadedKeys ? "DCC keys changed" : "guest memory changed", DccKeysName(uploadedKeys), DccKeysName(keys), originalHolds(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) ? 1 : 0, dirty ? 1 : 0);
     }
-    // Changed layers with results pending: the CPU wrote this memory while GPU results were
-    // pending, so as with an immediate write-back followed by the CPU write, its blocks win and the
-    // results land everywhere else in those layers; the unchanged pending layers keep their
-    // results on the GPU when the direct path leaves them alone, and are stored otherwise. The
-    // image stays registered throughout (the store clears what it stored).
     std::vector<bool> stored(trackedLayers, false);
     bool pendingResults = false;
     bool anyStored = false;
     bool dropped = false;
-    // A unit is one 64 KiB block, which the CPU's bytes win whole once a store stamped it:
-    // nothing of its results is stored, and the unit re-uploads from memory below. A keys change
-    // alone (the title marking the surface uncompressed behind a pass) leaves unstamped units
-    // with their results, which are stored first, as the layer model does; new keys that are a
-    // clear code make every result dead on hardware too. Without a generation (no tracking) a
-    // unit's stamps say nothing, so it is stored.
     const auto droppable = [&](std::uint32_t unit) {
         if (keysChanged && IsDccClear(keys)) return true;
         if ((unitCompared.empty() ? compared : unitCompared[unit]) || (unit < rewatchCompared.size() && rewatchCompared[unit])) return stampedBlocks.at(unit) == GuestMemory::BlockWritten;
@@ -686,10 +642,6 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         const bool edge = begin % 65536 != 0 || bytes != 65536;
         return !edge || GuestMemory::StoredOver(begin, static_cast<std::size_t>(bytes), layerGeneration[unit]);
     };
-    // A clear code -> uncompressed flip on an image with results pending: an unstamped pending
-    // unit's results ARE the uncompressed texels (nothing wrote its memory since), so it keeps
-    // them instead of being dropped and re-read from stale guest bytes; a stamped one takes the
-    // drop rule. Debug aid: APS5_KEYFLIP_DROP=1 drops as before.
     static const bool keyFlipDrop = std::getenv("APS5_KEYFLIP_DROP") != nullptr;
     static const bool traceKeys = std::getenv("APS5_TRACE_DCC_KEYS") != nullptr;
     const bool keyFlip = keysChanged && blockUnits && !keyFlipDrop && (IsDccClear(uploadedKeys) || uploadedKeys == DccKeys::ClearSingle) && keys == DccKeys::Uncompressed && stampedBlocks.size() >= trackedLayers;

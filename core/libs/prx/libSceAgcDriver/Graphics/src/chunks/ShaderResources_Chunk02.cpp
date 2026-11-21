@@ -174,10 +174,6 @@ std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
     return budget;
 }
 
-// A snapshot over memory outside the write watch is compared with guest memory again only when this
-// key changed: a write-watch mark in the range, a driver store, a mapping change or a recorded GPU
-// write (as StorageTexture::compareUntracked). Taken before the snapshot is read or compared, so a
-// CPU store racing with that leaves a mark for the next key. Zero when the range has no hint.
 std::array<std::uint64_t, 4> untrackedKey(std::uint64_t address, std::size_t bytes) {
     if (GuestMemory::CollectEpoch() == 0) return {};
     const auto hint = GuestMemory::UntrackedHint(address, bytes);
@@ -318,7 +314,6 @@ PendingLookup pendingLookupSource(const Context& context, const GuestTextureReso
     return lookup;
 }
 
-// `guestBytes` is the surface size when the caller described the surface already (0: described here).
 std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& requested, VkComponentMapping components, std::uint64_t guestBytes = 0, bool depthCompare = false, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D, bool layerRows = false) {
     Require(!layerRows || (requested.dimension == TextureDimension::k1DArray && !depthCompare), "only a sampled 1D array is laid out as rows of a 2D image");
     const auto resource = layerRows ? requested : ArrayLayerWindow(requested, context.limits.maxImageArrayLayers);
@@ -415,9 +410,6 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     const auto address = resource.baseAddress;
     const auto bytes = static_cast<std::size_t>(guestBytes);
     static_cast<void>(FlushDepthPlanes(address, bytes));
-    // A storage image whose results for this surface (or for a mip chain containing it) are still on
-    // the GPU supplies the texture by a view of it; anything else needs those results in guest
-    // memory first.
     auto lookup = pendingLookupSource(context, resource, guestBytes, depthCompare, layerRows);
     const bool depthCopy = lookup.depthCopy;
     const bool srgbExpand = lookup.srgbExpand;
@@ -443,11 +435,6 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     if (source != nullptr && resource.dccAddress != 0 && (keys.has_value() ? *keys : scanKeys()) == DccKeys::ClearSingle) source.reset();
     if (source != nullptr && resource.dccAddress != 0 && source->Descriptor().dccAddress != resource.dccAddress && (keys.has_value() ? IsDccClear(*keys) : IsDccClear(scanKeys()))) source.reset();
 
-    // Otherwise a surface in host-imported memory is viewed through its cached storage image (made
-    // here when there is none): its refresh after a CPU or GPU write is a GPU-direct detile from the
-    // import, recorded behind the producer, so no bytes are read or compared on the CPU and nothing
-    // waits for the producer. A fast-cleared surface (keys) is viewed only through an image whose own
-    // descriptor carries the DCC address (below); it stays a snapshot otherwise, its texels not read.
     if ((!depthCompare || depthCopy) && !layerRows && source == nullptr && !clearThroughKeys && SampledFromStorageEligible(context, resource, guestBytes)) {
 
         keys = scanKeys();
@@ -456,36 +443,20 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             if (source != nullptr && depthCompare && !Texture::CanDepthCopyFrom(*source, resource)) source.reset();
             if (source != nullptr && srgbExpand && !Texture::CanSrgbExpandFrom(context, *source, resource)) source.reset();
         } else if (!depthCompare && ClearedViewEnabled() && StorageClearAvailable(context, resource.format, *keys)) {
-            // A fast-cleared surface is viewed as well, through its image cleared on the GPU (the
-            // lookup's Refresh, see StorageTexture::upload), when the image's own descriptor names
-            // the same DCC metadata so the refresh sees the keys. A snapshot of the clear texels
-            // (filled and uploaded on the CPU, then replaced by a view once results are pending: two
-            // 4K uploads per clear at the movie stage) serves the surface otherwise, as before.
             auto candidate = sampledStorageSource(context, resource, guestBytes);
             if (candidate != nullptr && candidate->Descriptor().dccAddress == resource.dccAddress) source = std::move(candidate);
         }
         scanned.reset();
-        // The lookup's Refresh may have flushed another image's results over the memory (which
-        // marks the keys uncompressed): a surface that stays a snapshot re-reads them behind that
-        // flush, as it does behind its own. APS5_NO_KEYS_RESCAN=1 keeps the keys scanned above.
         if (source != nullptr && IsRepackedTextureFormat(resource.format) && !Texture::CanRepackCopyFrom(*source, resource)) source.reset();
         if (source != nullptr && !depthCompare && !srgbExpand && !IsRepackedTextureFormat(resource.format) && !Texture::CanCopyFrom(*source, resource)) source.reset();
         static const bool rescan = std::getenv("APS5_NO_KEYS_RESCAN") == nullptr;
         if (rescan && source == nullptr) keys.reset();
     }
-    // Pages of the surface written since they were last collected are stamped now, before any
-    // UnchangedSince (here and on a cache hit) looks at them: the checks only compare stamped blocks,
-    // so a write the game made since the last walk is invisible until a collect stamps its page. The
-    // walk is memoized per packet, so a texture viewed from a storage image repeats it for free.
     auto generation = GuestMemory::CollectWrites(address, bytes);
     if (source != nullptr && !GuestMemory::UnchangedSince(address, bytes, source->GenerationFor(address, bytes))) {
-        // The CPU wrote the memory while results were pending: Refresh merges them the usual way.
         refreshForView(*source, resource);
         scanned.reset();
     }
-    // Results stored to guest memory just now are stamped newer than `generation`; a snapshot read
-    // after them is current at the generation of a second (memoized) collect. The store marks the
-    // surface's DCC keys uncompressed, so the keys are read after it.
     const auto flushStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const bool stagedClear = source != nullptr && source->AnyLayerPending() && resource.dccAddress != 0 && source->Descriptor().dccAddress == resource.dccAddress && [&] {
         const auto observedKeys = keys.has_value() ? *keys : scanKeys();
@@ -556,9 +527,6 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     std::vector<std::byte> recycled;
     if (auto it = findTexture(cache, key); it != cache.entries.end()) {
         if (it->source != nullptr) {
-            // The view follows the storage image, whatever the GPU wrote to it since; guest memory
-            // written meanwhile is taken in by refreshing the image. A fast clear the image cannot
-            // see (keys, and no pending results to prefer) ends the view: a snapshot holds the clear.
             if (!stagedFlushed && (source == nullptr || source == it->source) && (source != nullptr || *keys == DccKeys::Uncompressed) && StorageImageServesKeys(*it->source, resource.dccAddress)) {
                 if (!GuestMemory::UnchangedSince(address, bytes, it->source->GenerationFor(address, bytes))) refreshForView(*it->source, resource);
                 if (it->texture->IsDepthCopy()) it->texture->RefreshDepthCopy();
@@ -570,9 +538,6 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
                 return it->texture;
             }
         } else if (source == nullptr && it->surfaceBytes == guestBytes && it->keys == *keys && it->slabs == slabs && stillCommitted(slabs, it->slabs)) {
-            // Unwritten pages need no comparison; partially resident textures compare only committed
-            // pages. The compare goes through the flush hook: it waits for recorded work over the
-            // surface (counted, and named for the [hooksync] line).
             const auto equalsCommitted = [&] {
                 if (it->slabs.has_value() ? it->bytes.size() != snapshotBytes(it->slabs, bytes) : it->bytes.empty()) return false;
                 if (Recorder::SnapshotWriteOverlaps(address, bytes)) counters.pendingReads.fetch_add(1, std::memory_order_relaxed);
@@ -652,7 +617,6 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         entry.accounted = entry.texture->AllocationBytes();
         counters.imported.fetch_add(1, std::memory_order_relaxed);
     } else {
-        // Snapshot before the upload so a write racing with it is caught by the next comparison.
         const bool pending = *keys == DccKeys::Uncompressed && Recorder::SnapshotWriteOverlaps(address, bytes);
         if (pending) counters.pendingReads.fetch_add(1, std::memory_order_relaxed);
         if (entry.slabs.has_value()) reportCommittedSlabs(resource, *entry.slabs, guestBytes);
@@ -713,8 +677,6 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     return texture;
 }
 
-// Storage images stay on the GPU between dispatches: while guest memory still holds what an image was
-// last uploaded from or written back as, its next use skips the upload and detile.
 struct StorageKey {
     VkDevice device;
     std::array<std::uint32_t, 8> words;
@@ -734,7 +696,6 @@ struct CachedStorageTexture {
     std::uint64_t accounted = 0;
 };
 
-// As TextureCache: use order with a hash index by key, plus one by image for StorageImageCached.
 struct StorageTextureCache {
     AgcDriver::Mutex mutex;
     std::list<CachedStorageTexture> entries;

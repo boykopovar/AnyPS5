@@ -218,7 +218,6 @@ LibreSsl3EvpPkey* APS5_VABI PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(Li
             ret = EVP_PKCS82PKEY_nid_postfix(p8inf);
             if (key != nullptr) {
                 EVP_PKEY_free_nid_disambig1_nid_postfix(*key);
-                *key = ret;
             }
             PKCS8_PRIV_KEY_INFO_free_nid_postfix(p8inf);
         }

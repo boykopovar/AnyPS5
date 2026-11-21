@@ -560,14 +560,11 @@ void GuestAddress(const sockaddr_storage& native, void* output, std::uint32_t* l
     }
     const auto copied = std::min<std::uint32_t>(*length, bytes[0]);
     std::memcpy(output, bytes, copied);
-    *length = copied;
 }
 }
 
 extern "C" bool KernelLookupSocketNative_nid_no_patch(int descriptor, std::shared_ptr<void>* owner, std::uintptr_t* native) {
     if (auto socket = Find(descriptor)) {
-        *native = static_cast<std::uintptr_t>(socket->value);
-        *owner = std::static_pointer_cast<KernelSocketPoll::NativeOwner>(std::move(socket));
         return true;
     }
     return KernelFindSocketNative_nid_no_patch(descriptor, owner, native);
@@ -577,7 +574,6 @@ extern "C" bool KernelDescribeSocket_nid_no_patch(int descriptor, KernelSocketPo
     const auto socket = Find(descriptor);
     if (!socket) return false;
     std::lock_guard lock(socket->modeMutex);
-    *description = {socket, static_cast<std::uintptr_t>(socket->value), socket->family, socket->type, socket->options.nonblocking};
     return true;
 }
 
@@ -597,7 +593,6 @@ extern "C" int KernelBorrowSocketNative_nid_no_patch(std::uintptr_t native, int 
         socket->externalPeer = true;
         const int number = Install(socket);
         if (number < 0) return -*__error_nid_postfix();
-        *owner = std::static_pointer_cast<KernelSocketPoll::NativeOwner>(std::move(socket));
         return number;
     } catch (const std::bad_alloc&) {
         return -12;
@@ -675,7 +670,7 @@ int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...) {
         else closeOnExecDescriptors.erase(descriptor);
         return 0;
     }
-    if (command == 3) return 2 | (socket->options.nonblocking ? 4 : 0); // F_GETFL, O_RDWR
+    if (command == 3) return 2 | (socket->options.nonblocking ? 4 : 0);
     if (command == 4) {
         const int flags = static_cast<int>(argument);
         if ((flags & ~7) != 0) return Fail(45);
@@ -838,7 +833,6 @@ int APS5_VABI socketpair_nid_postfix(int family, int type, int protocol, int* de
                     } catch (...) {
                     }
                 }
-                *__error_nid_postfix() = error;
             }
         } installedPair{firstDescriptor, secondDescriptor};
         const int installed[2] = {firstDescriptor, secondDescriptor};

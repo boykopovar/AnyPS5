@@ -530,7 +530,6 @@ float APS5_VABI copysignf_nid_postfix(float x, float y) {
 }
 int APS5_VABI abs_nid_postfix(int x) { return x < 0 ? static_cast<int>(0u - static_cast<unsigned>(x)) : x; }
 extern "C++" {
-/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_floor.c, s_ceil.c, s_floorf.c and s_ceilf.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_floor.c */
 template<typename TFloat, typename TBits, int FractionBits>
 static TFloat RoundToward(TFloat x, bool up, TFloat huge) {
     constexpr int ExponentBits = static_cast<int>(sizeof(TBits) * 8) - 1 - FractionBits;

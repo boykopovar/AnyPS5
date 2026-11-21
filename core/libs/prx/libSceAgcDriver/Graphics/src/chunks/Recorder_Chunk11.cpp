@@ -75,9 +75,6 @@ std::uint64_t Recorder::OpenBatchSerial() {
 
 namespace {
 
-// One thread's registration as a timeline waiter (see `unlockedWaiters`): constructed while the
-// caller still holds the mutex (or the device), so a teardown that starts after the mutex is
-// released sees it and keeps the semaphore until the wait returned.
 struct UnlockedWaiter {
     std::atomic<int>& count;
     explicit UnlockedWaiter(std::uint64_t recorderId) : count(WaitersOf(recorderId)) { count.fetch_add(1, std::memory_order_acq_rel); }
@@ -86,16 +83,11 @@ struct UnlockedWaiter {
     UnlockedWaiter& operator=(const UnlockedWaiter&) = delete;
 };
 
-// Restores the thread's active sync-site entry on every exit path (a Check throw on a lost device
-// included), so the next sync on the thread is not attributed to this one's site.
 struct RestoreSyncSite {
     std::size_t site;
     ~RestoreSyncSite() { activeSyncSite = site; }
 };
 
-// The timeline wait itself, on handles copied out of the recorder: the caller holds no mutex, and
-// the recorder may be torn down meanwhile (its destructor waits for the registered waiters to
-// leave after completing every batch, so the handles stay valid until this returns).
 VkResult WaitTimeline(VkDevice device, VkSemaphore timeline, PFN_vkWaitSemaphoresKHR waitSemaphores, std::uint64_t serial) {
     VkSemaphoreWaitInfoKHR wait{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO_KHR};
     wait.semaphoreCount = 1;
@@ -103,7 +95,6 @@ VkResult WaitTimeline(VkDevice device, VkSemaphore timeline, PFN_vkWaitSemaphore
     wait.pValues = &serial;
     auto result = waitSemaphores(device, &wait, 5'000'000'000ull);
     for (int waited = 5; result == VK_TIMEOUT; waited += 5) {
-        // As for the fence wait in finish(): a hung batch is reported every 5 s.
         std::fprintf(stderr, "[gpu] recorded batch %llu still running on the GPU after %d s (timeline wait)\n", static_cast<unsigned long long>(serial), waited);
         result = waitSemaphores(device, &wait, 5'000'000'000ull);
     }
@@ -141,9 +132,6 @@ bool Recorder::WaitSerialFor(std::uint64_t serial, std::uint64_t timeoutNanos) {
 }
 
 void Recorder::FinishUpTo(std::uint64_t serial) {
-    // A drain: the wait already happened (unlocked), the fences are signaled, so the source-0 wait
-    // recorded here is the bookkeeping only (a caller that did not wait first, WaitForLeases, shows
-    // up in the site table by its own address).
     ++syncCounts[0];
     announcedSource = 4;
     const void* site = std::exchange(announcedSite, nullptr);
@@ -161,8 +149,6 @@ void Recorder::Sync() {
     const auto source = std::exchange(announcedSource, 4);
     const void* site = std::exchange(announcedSite, nullptr);
     Submit();
-    // Counted only when something is waited for: an idle recorder's Sync is free and would only
-    // swamp the site table with the callers that check nothing first.
     const auto previousSite = inFlight.empty() ? activeSyncSite : BeginSyncSite(source, site != nullptr ? site : __builtin_return_address(0));
     while (!inFlight.empty()) {
         auto batch = std::move(inFlight.front());
@@ -181,16 +167,6 @@ void Recorder::SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUn
     if (bytes == 0) return;
     const auto end = address + bytes;
     if (completionDepth() != 0 && !CompletionStoreSyncs()) {
-        // A store made by a completion action (a copied buffer's write-back, GuestBufferMemory::
-        // WriteBack) reached the flush hook, and a batch still in flight notes the range. Every
-        // batch in flight now was recorded after the completing one (finish runs front to back),
-        // so in program order this store precedes their writes: landing it before them is the
-        // order the hardware gives; waiting for them first (what the hook would do) lands the
-        // completing batch's bytes over the later batch's, which is wrong, and does so under the
-        // hold of whoever reaped (the [hooksync] 'store' entries, up to tens of ms per reap). The
-        // later batch's own ordering against this write-back is its recorder's business at record
-        // time (FillBuffer and DispatchIndirect consult copiedWriters; a later copied writer's
-        // write-back runs after this one in finish order; a label behind completions lands after).
         announcedSource = 4;
         announcedSite = nullptr;
         ++holdCounters.completionSyncsSkipped;
@@ -205,17 +181,13 @@ void Recorder::SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUn
         }
     } completionWait{completionWaitStart};
     if (waitUnlocked) {
-        // The hook's wait without the mutex: its own acquisition is the outermost on this thread.
         const auto source = announcedSource;
         const void* site = announcedSite != nullptr ? announcedSite : __builtin_return_address(0);
         if (syncThroughUnlocked(address, end, source, site)) return;
-        // A completion-store wait (kill switch above) is already counted as 'waited'.
         if (completionDepth() == 0) ++holdCounters.hookLockedWaits;
     }
     if (!SyncThroughEnabled() || (open != nullptr && overlaps(*open, address, end))) {
-        // The announced site (or this call's caller) names the sync, not this function.
         if (announcedSite == nullptr) announcedSite = __builtin_return_address(0);
-        // The open batch's work has not run; without one the newest in flight is the target.
         if (open != nullptr || (!inFlight.empty() && unsignaled(inFlight.back()->serial))) ++hookRealWaits;
         Sync();
         return;
@@ -233,9 +205,6 @@ void Recorder::SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUn
     if (unsignaled(targetSerial)) ++hookRealWaits;
     targetedSyncs.fetch_add(1, std::memory_order_relaxed);
     const RestoreSyncSite restoreSite{BeginSyncSite(source, site != nullptr ? site : __builtin_return_address(0))};
-    // Batches are in flight in serial order. A completion's own guest access can sync re-entrantly
-    // and finish the target first (and a new batch may reuse its allocation, so the serial, not the
-    // pointer, identifies it); the loop stops then, and later batches stay in flight either way.
     while (!inFlight.empty() && inFlight.front()->serial <= targetSerial) {
         auto batch = std::move(inFlight.front());
         inFlight.pop_front();
@@ -246,25 +215,17 @@ void Recorder::SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUn
 
 namespace {
 
-// What the unlocked hook waits waited for, per read site (the [syncwait] line every 10 s under
-// APS5_PROFILE_DRAW): the batches up to the target, how many of them the GPU had not finished when
-// the wait began, and whether the target was the newest submission. APS5_TRACE_CAPSYNC=1 prints
-// every such wait ([capsync] sync lines).
 struct SyncWaitSite {
     std::uint64_t count = 0;
     std::uint64_t batchesToTarget = 0;
     std::uint64_t unsignaledAtStart = 0;
     std::uint64_t newest = 0;
     double waitedMs = 0;
-    // The target batch's submit -> wait-end latency: what the wait's length is made of when the
-    // batches ahead of it carry little GPU work (submission latency, not throughput).
     double targetAgeMs = 0;
 };
 
 struct SyncWaitStats {
     std::array<SyncWaitSite, static_cast<std::size_t>(GuestMemory::ReadSite::Count)> bySite{};
-    // Batches up to the targets, by the queue that opened them: whether a wait for one queue's
-    // producer is really a wait for the other queues' batches ahead of it on the one timeline.
     std::map<std::uint32_t, std::uint64_t> aheadByQueue;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
@@ -302,13 +263,7 @@ void ReportSyncWaits(SyncWaitStats& stats) {
 }
 
 bool Recorder::syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int source, const void* site) {
-    // Only for the outermost acquisition: a nested hook (inside a dispatch's hold) must not give
-    // up the caller's mutex, and a thread that waits here holds nothing the relock could invert
-    // (the hook took the mutex from a depth of 0 with the same locks held).
     if (HookLockedWait() || timeline == VK_NULL_HANDLE || GuestMemory::GpuMutex().DepthOnThisThread() != 1) return false;
-    // The target as SyncThrough chooses it: the open batch (submitted here, so the GPU can reach
-    // it) makes everything the target, else the newest overlapping in-flight batch; with
-    // SyncThrough disabled everything is the target as well.
     std::uint64_t targetSerial = 0;
     if (!SyncThroughEnabled() || (open != nullptr && overlaps(*open, address, end))) {
         Submit();
@@ -325,17 +280,10 @@ bool Recorder::syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int
     announcedSite = nullptr;
     if (targetSerial == 0) return true;
     if (unsignaled(targetSerial)) ++hookRealWaits;
-    // Everything the wait needs is copied out: the recorder may be torn down while the mutex is
-    // released (its destructor completes every batch and waits for the semaphore to be left, see
-    // WaitTimeline), after which `this` must not be touched. The id re-check below relies on the
-    // teardown running under the GpuMutex (the driver's drain and failure paths reset the device
-    // under it; a worker dropping its last device reference outside its lock would not).
     const auto myId = id;
     const auto device = context.device;
     const auto semaphore = timeline;
     const auto waitSemaphores = context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR");
-    // The site entry is taken under the mutex (the table is only touched under it; entries are
-    // appended, never removed, so the index stays valid across the release).
     const RestoreSyncSite restoreSite{BeginSyncSite(source, site)};
     const bool profile = DrawProfiled();
     const bool trace = TraceCapSync();
@@ -368,21 +316,15 @@ bool Recorder::syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int
     auto& mutex = GuestMemory::GpuMutex();
     VkResult result = VK_SUCCESS;
     {
-        // Registered before the release: a teardown can only start once the mutex is free.
         const UnlockedWaiter waiter{myId};
         mutex.unlock();
         result = WaitTimeline(device, semaphore, waitSemaphores, targetSerial);
-        // Read before the relock: the GPU wait, not the wait for the mutex behind it.
         if (profile || trace) waited = std::chrono::steady_clock::now();
     }
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Hook);
     mutex.lock();
     const auto ms = std::chrono::duration<double, std::milli>(waited - start).count();
     if (profile) {
-        // The GPU wait is charged like a locked wait, so the per-source, per-thread and per-site
-        // totals of the [recorder] line keep their meaning; the unlocked count says how many were
-        // not held. The relock's wait for the mutex is kept apart (the [lock] line also counts it
-        // under 'hook' waits, for a cross-check).
         syncWaitedMs[source] += ms;
         CountThreadSync(source, ms);
         CountSiteWait(ms);
@@ -412,15 +354,11 @@ bool Recorder::syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int
         }
     }
     if (!RecorderAlive(myId)) {
-        // Torn down meanwhile: its destructor's Sync() ran every completion, nothing is pending.
         ++holdCounters.hookUnlockedTornDown;
         Check(result, "vkWaitSemaphoresKHR recorder");
         return true;
     }
     Check(result, "vkWaitSemaphoresKHR recorder");
-    // The completions up to the target, under the mutex again; the fences are signaled, so the
-    // waits inside finish() return at once (charged to the same site entry). Another thread may
-    // have finished some meanwhile.
     targetedSyncs.fetch_add(1, std::memory_order_relaxed);
     while (!inFlight.empty() && inFlight.front()->serial <= targetSerial) {
         auto batch = std::move(inFlight.front());
@@ -455,20 +393,15 @@ bool Recorder::Reap() {
 
 void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool releaseNow) {
     inFlightKeptBytes -= batch->keptBytes;
-    // The batch's writes stay published until its completions ran, on every exit path.
     struct Finishing {
         Recorder& recorder;
         const Batch* batch;
         ~Finishing() {
             auto& list = recorder.finishing;
             list.erase(std::remove(list.begin(), list.end(), batch), list.end());
-            // The batch's completion labels have landed, or never will (fence failure below).
             if (batch->completionLabelCount != 0) completionLabels.fetch_sub(batch->completionLabelCount, std::memory_order_acq_rel);
             if (batch->completionStoreCount != 0) completionStores.fetch_sub(batch->completionStoreCount, std::memory_order_acq_rel);
             if (batch->writeBackCompletionCount != 0) writeBackCompletions.fetch_sub(batch->writeBackCompletionCount, std::memory_order_acq_rel);
-            // This also runs while the fence-failure throw unwinds: an allocation failure in the
-            // rebuild keeps the previous snapshot, which is a superset (a stale entry only causes a
-            // false hit, never a miss) rather than terminating.
             try {
                 recorder.publishPendingWrites();
             } catch (...) {
@@ -481,14 +414,11 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
     } finishingScope{*this, batch.get()};
     finishing.push_back(batch.get());
     if (wait) {
-        // APS5_PROFILE_DRAW: how long the CPU waits for recorded GPU work, reported every 10 s.
         static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
         static double waitedMs = 0;
         static std::uint64_t waits = 0;
         static auto lastReport = std::chrono::steady_clock::now();
         const auto waitStart = std::chrono::steady_clock::now();
-        // A fence still unsignaled here makes this a real GPU wait under the mutex (finish runs
-        // under it): the [lock] line's 'locked GPU waits'.
         const bool signaledAtStart = !profile || context.Function<PFN_vkGetFenceStatus>("vkGetFenceStatus")(context.device, batch->fence) == VK_SUCCESS;
         struct Report {
             bool enabled;
@@ -520,7 +450,6 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
         const auto waitFences = function(waitForFences, "vkWaitForFences");
         auto result = waitFences(context.device, 1, &batch->fence, VK_TRUE, 5'000'000'000ull);
         for (int waited = 5; result == VK_TIMEOUT; waited += 5) {
-            // A batch still running after 5 s is reported (every 5 s) so a GPU-side hang is visible.
             std::fprintf(stderr, "[gpu] recorded batch still running on the GPU after %d s\n", waited);
             result = waitFences(context.device, 1, &batch->fence, VK_TRUE, 5'000'000'000ull);
         }
@@ -549,9 +478,6 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
             entry.reads = notedReads(*batch);
         }
     }
-    // Completions store GPU results to guest memory; a failing one is reported, the rest still run.
-    // Timed (APS5_PROFILE_DRAW) with the release of the kept objects: both run under whichever hold
-    // reaped or synced the batch. Inside them the flush hook makes no pending-write wait (SyncThrough).
     const bool profile = DrawProfiled();
     const auto completionStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     {
@@ -580,16 +506,10 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
     if (!batch->completions.empty()) KernelWakeSleepers_nid_no_patch();
     if (profile) holdCounters.completions += batch->completions.size();
     const auto keptStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    // Deferred only from inside a hold: the unlock that releases the list is this thread's own, and
-    // a caller finishing batches without the mutex (a test) might never make one.
     if (releaseNow || ReleaseUnderLock() || !GuestMemory::GpuMutex().HeldByThisThread()) {
         batch->completions.clear();
         batch->kept.clear();
     } else {
-        // To this thread's unlock (see ReleaseDeferredKeeps); the completions go with the objects,
-        // their captures hold the same ones. The push comes first: a failed one (the list's growth)
-        // destroys the batch's objects here, under the mutex, counts nothing the destructor would
-        // wait for and must not escape (the rest of finish() releases the fence and command buffer).
         try {
             DeferredBatches().push_back({std::move(batch->kept), std::move(batch->completions)});
             deferredPending.fetch_add(1, std::memory_order_acq_rel);
@@ -604,8 +524,6 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
         holdCounters.keptReleaseMs += std::chrono::duration<double, std::milli>(now - keptStart).count();
         holdCounters.completionMs += std::chrono::duration<double, std::milli>(now - completionStart).count();
     }
-    // The batch's label entries leave the table (a later label to the same dword already replaced
-    // its entry and belongs to another batch). Correctness never depended on this removal.
     removeLabels(*batch);
     release(*batch);
 }

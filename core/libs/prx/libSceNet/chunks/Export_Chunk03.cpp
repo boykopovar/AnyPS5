@@ -63,7 +63,6 @@ extern "C" {
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "src/ResolverTestHooks.hpp"
 
-// Guest socket descriptors retain PS5 semantics while their transport is backed by host sockets.
 
 static_assert(sizeof(NetDhcpOptionInfo) == 24);
 static_assert(offsetof(NetDhcpOptionInfo, capacity) == 4);
@@ -106,7 +105,6 @@ static_assert(sizeof(NetDns6Info) == 32);
 static_assert(sizeof(NetIpv6InterfaceAddress) == 20);
 
 namespace {
-// FreeBSD errno numbers as reported through sceNetErrnoLoc (SCE_NET_ERROR_* is 0x80410100 + errno).
 constexpr int NET_ENOENT = 2;
 constexpr int NET_EINTR = 4;
 constexpr int NET_EBADF = 9;
@@ -314,7 +312,6 @@ bool guest_to_native_address(const void* address, std::uint32_t length,
 bool native_to_guest_address(const sockaddr_storage& native, void* address, std::uint32_t* length) {
     if (!address || !length) return false;
     if (native.ss_family == AF_UNSPEC) {
-        *length = 0;
         return true;
     }
     std::uint8_t bytes[28]{};
@@ -337,7 +334,6 @@ bool native_to_guest_address(const sockaddr_storage& native, void* address, std:
     }
     const auto copied = std::min<std::uint32_t>(*length, bytes[0]);
     std::memcpy(address, bytes, copied);
-    *length = copied;
     return true;
 }
 
@@ -470,8 +466,6 @@ bool IsZeroAddress(const NetIpv6Address& address) {
 }
 
 void set_errno(int err) {
-    *errno_slot() = err;
-    *__error_nid_postfix() = err;
 }
 
 int fail(int err) {
@@ -1002,7 +996,7 @@ std::optional<std::uint32_t> InterfaceIdOfHostIndex(std::uint32_t index) {
     return std::nullopt;
 }
 
-}  // namespace
+}
 
 void GuestSceNetTest::SetResolverLookupForTests_nid_no_patch(ResolverLookup lookup) noexcept {
     g_resolverLookupForTests.store(lookup);
@@ -1083,7 +1077,6 @@ int64_t APS5_VABI sceNetRecvmsg(int s, NetMsghdr* msg, int flags) {
         header.flags = 0;
         if (header.name) header.name_length = 0;
         header.control_length = 0;
-        *msg = header;
         return 0;
     }
 #endif
@@ -1122,7 +1115,6 @@ int64_t APS5_VABI sceNetRecvmsg(int s, NetMsghdr* msg, int flags) {
     }
     if (header.name && !native_to_guest_address(peer, header.name, &header.name_length)) header.name_length = 0;
     header.control_length = 0;
-    *msg = header;
     return received;
 }
 
@@ -1315,12 +1307,10 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         const GuestArena::HostWrite lengthOutput(optlen, sizeof(*optlen));
         if (!destination.Open() || !lengthOutput.Open()) return fail(NET_EFAULT);
         if (count != 0) std::memcpy(optval, &value, count);
-        *optlen = count;
         return 0;
     }
     if (level == NET_SOL_SOCKET && (optname == NET_SO_TYPE || optname == NET_SO_ACCEPTCONN)) {
         const int value = optname == NET_SO_TYPE ? socket.type : socket.listening ? NET_SO_ACCEPTCONN : 0;
-        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
         std::memcpy(optval, &value, *optlen);
         return 0;
     }
@@ -1334,14 +1324,12 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
             enabled = socket.oobInline;
         }
         const int value = enabled != 0 ? NET_SO_OOBINLINE : 0;
-        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
         std::memcpy(optval, &value, *optlen);
         return 0;
     }
     if (level == NET_SOL_SOCKET && optname == NET_SO_PROTOCOL) {
         if (socket.type == NET_SOCK_RAW && socket.protocol == 0) NotImplemented_nid_no_patch(__func__);
         const int protocol = socket.type == NET_SOCK_RAW && !RawProtocolEntry(socket.family, socket.protocol) ? 0 : socket.protocol;
-        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(protocol)));
         std::memcpy(optval, &protocol, *optlen);
         return 0;
     }
@@ -1356,7 +1344,6 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
     if (level == NET_SOL_SOCKET && (optname == NET_SO_RCVTIMEO || optname == NET_SO_SNDTIMEO)) {
         const int microseconds = optname == NET_SO_RCVTIMEO ? socket.native->receiveTimeout.load() : socket.native->sendTimeout.load();
         const KernelTimeval timeout{microseconds / 1000000, microseconds % 1000000};
-        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(timeout)));
         std::memcpy(optval, &timeout, *optlen);
         return 0;
     }
@@ -1368,7 +1355,6 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
                 return fail(native_error());
         }
         const int value = enabled != 0 ? NET_SO_KEEPALIVE : 0;
-        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
         std::memcpy(optval, &value, *optlen);
         return 0;
     }
@@ -1379,7 +1365,6 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         if (::getsockopt(socket.native->value, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<char*>(&enabled), &size) != 0)
             return fail(native_error());
         const int value = enabled != 0 ? NET_TF_NODELAY : 0;
-        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
         std::memcpy(optval, &value, *optlen);
         return 0;
     }
@@ -1389,7 +1374,6 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
             : optname == NET_TCP_KEEPIDLE ? (socket.tcpKeepIdle != 0 ? socket.tcpKeepIdle : NET_TCP_DEFAULT_KEEPIDLE)
             : optname == NET_TCP_KEEPINTVL ? (socket.tcpKeepInterval != 0 ? socket.tcpKeepInterval : NET_TCP_DEFAULT_KEEPINTVL)
             : (socket.tcpKeepCount != 0 ? socket.tcpKeepCount : NET_TCP_DEFAULT_KEEPCNT);
-        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
         std::memcpy(optval, &value, *optlen);
         return 0;
     }
@@ -1441,7 +1425,6 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         }
         default: return fail(NET_EOPNOTSUPP);
     }
-    *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
     std::memcpy(optval, &value, *optlen);
     return 0;
 }

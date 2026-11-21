@@ -22,7 +22,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
-// For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -120,8 +119,6 @@ std::shared_ptr<StorageTexture> StorageTexture::pendingAlias() const {
     for (const auto& candidate : candidates) {
         const auto& mine = descriptor;
         const auto& theirs = candidate->descriptor;
-        // The same texels under another format of the same size: the device copy moves them bit
-        // for bit, as the guest bytes would.
         const auto oneSlice = [](const GuestTextureResource& resource) { return resource.dimension == TextureDimension::k2D || (resource.dimension == TextureDimension::k2DArray && resource.depthOrLastArray == 0); };
         const bool sameDimension = mine.dimension == theirs.dimension || (oneSlice(mine) && oneSlice(theirs));
         const bool sameShape = mine.width == theirs.width && mine.height == theirs.height && mine.depthOrLastArray == theirs.depthOrLastArray && mine.baseArray == theirs.baseArray && mine.mipCount == theirs.mipCount && mine.tileMode == theirs.tileMode && sameDimension && BytesPerElement(mine.format) == BytesPerElement(theirs.format) && geometry.imageLayers == candidate->geometry.imageLayers && geometry.imageDepth == candidate->geometry.imageDepth && trackedLayers == candidate->trackedLayers;
@@ -251,21 +248,11 @@ void StorageTexture::writeBack(std::uint64_t address, std::size_t bytes) {
         address = descriptor.baseAddress;
         bytes = static_cast<std::size_t>(guestBytes);
     }
-    // Block units are stored per access; an image whose units keep being asked for in pieces (a
-    // consumer touching it through many small ranges, each piece re-arming the pending memos of
-    // the next dispatch) stores every pending unit once more than `pieces` partial stores fall
-    // within `window` presents, and keeps doing so for another window. Off by default: the title's
-    // aliased images are stored in pieces by design (every piece is another image's hand-over) and
-    // widening them stored whole images again (movie stage: 39 vs 35 ms of GPU per present, 188 vs
-    // 214 presents per 10 s); APS5_BLOCK_WRITEBACK_WIDEN=1 enables the widening, and
-    // APS5_BLOCK_WRITEBACK_EACH=1 stores the touched units only, every time.
     const bool each = BlockWriteBackEach();
     static const std::uint32_t pieces = [] { const char* text = std::getenv("APS5_BLOCK_WRITEBACK_PIECES"); return text != nullptr ? static_cast<std::uint32_t>(std::strtoul(text, nullptr, 10)) : 4u; }();
     static const std::uint64_t window = [] { const char* text = std::getenv("APS5_BLOCK_WRITEBACK_FRAMES"); return text != nullptr ? std::strtoull(text, nullptr, 10) : 8ull; }();
     std::vector<bool> layers(trackedLayers, false);
     std::size_t selected = 0, pendingCount = 0;
-    // Under a clear code the texels outside the stored units would read as the clear while the
-    // keys, marked uncompressed for the whole surface, say texels: such an image stores whole.
     const bool whole = storesWhole();
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
         if (!layerPending[layer]) continue;
@@ -325,16 +312,11 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         PhaseTimer& timer;
         ~Account() { if (enabled) Profile().storageWriteBack += timer.lap(); }
     } account{profile, timer};
-    // Whatever the outcome, the registration follows the pending flags (a throw leaves the
-    // layers pending).
     struct Reconcile {
         StorageTexture& texture;
         ~Reconcile() { texture.reconcilePending(); }
     } reconcile{*this};
     const auto elementBytes = BytesPerElement(descriptor.format);
-    // 64 KiB blocks the CPU wrote since the layer was last in sync keep the CPU's bytes: the game
-    // may have reused the memory for something else entirely (see layerGeneration). A generation of
-    // zero means no tracking, and the layer is stored whole.
     std::vector<std::pair<std::uint64_t, std::uint64_t>> keep;
     std::vector<std::pair<std::uint64_t, std::uint32_t>> keptBlocks;
     std::vector<bool> skippedLayer(trackedLayers, false);
@@ -355,10 +337,6 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     constexpr std::uint64_t block = 65536;
     const auto spanBegin = firstStored & ~(block - 1);
     const auto spanBlocks = static_cast<std::size_t>((lastStored - spanBegin + block - 1) / block);
-    // The keep-blocks decision must see every CPU write to the stored span up to now, so it
-    // bypasses the per-packet collect memo (a Refresh collect earlier in the same packet would
-    // satisfy it); the unselected layers keep their own generations and are collected by their
-    // own refreshes. One tracker lock then reads the span's stamps against the layers' generations.
     GuestMemory::CollectWritesUncached(firstStored, static_cast<std::size_t>(lastStored - firstStored));
     std::vector<std::uint64_t> generations(spanBlocks, 0);
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
@@ -442,7 +420,6 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         if (layers[layer]) forgetKeptAtUnwatch(layer);
     }
     for (const auto& [from, layer] : keptBlocks) keptAtUnwatch.emplace(from, layerGeneration[layer]);
-    // Debug aid: APS5_TRACE_FLUSH also names the blocks a write-back leaves to the CPU.
     static const bool traceKept = std::getenv("APS5_TRACE_FLUSH") != nullptr;
     if (traceKept && skippedAny) {
         const auto first = keep.empty() ? descriptor.baseAddress + guestBytes : keep.front().first;
@@ -453,17 +430,9 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     const auto& stores = drawn.rect ? spans : keep;
     const auto stampBegin = drawn.rect && !stores.empty() ? stores.front().first : firstStored;
     const auto stampEnd = drawn.rect && !stores.empty() ? stores.back().second : lastStored;
-    // Taken before this write-back stamps anything (see advanceAdjacent), with the 64 KiB block span
-    // its stamps cover.
     const auto firstBlock = stampBegin / block;
     const auto lastBlock = (stampEnd - 1) / block;
     const auto adjacent = adjacentPendingUnchanged(firstBlock, lastBlock);
-    // After the store: the stored layers are in sync at a fresh generation unless blocks were kept
-    // for the CPU (then the layer is stale there, keeps its old generation and re-uploads at its
-    // next use); their results are no longer pending either way. The collect covers the stored
-    // span, which holds every stored layer's pages. Pieces retiled into the import's unit shadow
-    // (`shadowed`, with its import) are fresh at the generation taken after this write-back's
-    // own stamps, so every later import writer stamps newer.
     std::vector<ShadowedRange> shadowed;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imported;
     std::vector<ImportSegment> segments;
@@ -502,9 +471,6 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         if (!shadowed.empty()) markShadowed(now);
     };
     if (stores.empty()) {
-        // Every selected block was written by the CPU since the layer's generation: nothing to
-        // store, the keys stay as they are, and the image is stale there (re-uploaded at its next
-        // use, never from a matching `original`).
         emptyWriteBacks.fetch_add(1, std::memory_order_relaxed);
         forgetStored();
         settle(true);
@@ -515,11 +481,9 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     if (flushReason != nullptr && std::strcmp(flushReason, "idle") == 0 && GuestMemory::Watched(firstStored, static_cast<std::size_t>(lastStored - firstStored))) segments.clear();
     if (!segments.empty()) {
         Require(!unsavedOutsideWatch, unsavedCause);
-        // Outside the write watch the stored bytes are what the next store compares with.
         const auto saveUnits = GuestMemory::Watched(firstStored, static_cast<std::size_t>(lastStored - firstStored)) ? std::vector<std::uint32_t>{} : prepareStoredSave(layers, skippedLayer);
         if (blockUnits) {
             if (guestBytes <= SmallStoreBytes) PublishShadow(firstStored, static_cast<std::size_t>(lastStored - firstStored), PublishScope::PartialUnits, PublishReason::Upload);
-            // The kept blocks alone pass through the retiler (windows of their slices).
             const auto storedBytes = writeBackWindows(segments, keep, firstStored, lastStored, shadowed, imported, saveUnits.empty() ? nullptr : savedBytes.get());
             countStorageWriteBack(storedBytes, true);
             if (profile) Profile().storageGpu += timer.lap();
@@ -551,13 +515,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             ++Profile().storageDirectWriteBacks;
             return;
         }
-        // The whole-layer copies below overwrite the interior units of the span; the edge units
-        // keep a neighbour's shadowed results in the rest of their bytes, which reach the import
-        // first (this write-back's stamps then make those units stale).
         PublishShadow(firstStored, static_cast<std::size_t>(lastStored - firstStored), PublishScope::PartialUnits, PublishReason::Upload);
-        // The surface lives in host-imported memory: the retiler writes into device scratch and the
-        // untouched blocks are copied into the imported bytes in place, recorded behind the work that
-        // produced the image; nothing crosses to the CPU.
         auto linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(sliceLinearBytes * arrayLayers), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         std::vector<CopiedBytes> copied;
         for (const auto& [from, to] : keep) copied.push_back({from - descriptor.baseAddress, to - descriptor.baseAddress, from - descriptor.baseAddress});
@@ -600,7 +558,6 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             if (linear) recorder->Keep(linear, linear->Size());
             if (tiledScratch) recorder->Keep(tiledScratch, tiledScratch->Size());
             for (const auto& slab : padding.slabs) recorder->Keep(slab);
-            // The image itself must outlive the recorded retile: the cache may evict it right after.
             if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
             Recorder::CountBarriers(Recorder::CommandClass::StorageWriteBack, (padding.copies.empty() ? 4 : 5) - (directImport != nullptr ? 1 : 0));
             if (Recorder::BarrierValidate()) {
@@ -611,8 +568,6 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             batch = std::make_unique<CommandBatch>(context);
             commands = batch->Handle();
         }
-        // The tracked layers are the array layers when there are several; one tracked layer means
-        // the whole surface.
         const auto* storedLayers = trackedLayers == arrayLayers && trackedLayers > 1 ? &layers : nullptr;
         VkImageMemoryBarrier toSource{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
         toSource.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -625,9 +580,6 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         toSource.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, VK_REMAINING_ARRAY_LAYERS};
         context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toSource);
         if (!padding.copies.empty()) {
-            // The current bytes of the copied ranges no element holds go under the retile (every
-            // earlier writer of the import, host stores included, first; the import-ready barrier
-            // below orders the scratch writes).
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
             for (const auto& [source, copies] : padding.copies) {
                 context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, source, tiledScratch->Handle(), static_cast<std::uint32_t>(copies.size()), copies.data());
@@ -686,28 +638,17 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         }
         countStorageWriteBack(storedBytes, true, drawn.drawn);
         if (profile) Profile().storageGpu += timer.lap();
-        // The guest bytes now differ from `original`; other caches of the range see the write.
         forgetStored();
-        // The keys go the same way as the texels: a fill recorded behind the retile when the
-        // metadata is host-imported (no CPU wait for the title's key-writing kernels), else a CPU
-        // store (APS5_CPU_DCC_KEYS=1 keeps the CPU store; see DccMetadata.hpp).
         traceKeyStore("layer write-back", descriptor, guestBytes);
         if (!IsDccClear(filledKeys) && uploadedKeys != DccKeys::Uncompressed && !keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
         uploadedKeys = DccKeys::Uncompressed;
         for (const auto& [from, to] : keep) GuestMemory::MarkWritten(from, static_cast<std::size_t>(to - from));
-        // The walk covers this surface's pages only: an adjacent image's later CPU write is stamped
-        // newer than this value when its own range is collected. No CPU wrote the pages here
-        // (MarkWritten made the only stamps), so the memoized collect is exact.
         settle(true);
         commitStoredSave(saveUnits);
         ++Profile().storageDirectWriteBacks;
         return;
     }
     releaseReadTraps(true);
-    // A surface whose memory is no longer registered (freed, or re-registered under another
-    // allocation: no readable registered range contains it) has nothing to receive its results;
-    // the round trip through the CPU below would store stale texels over whatever the memory
-    // holds now. Its selected units are dropped instead. APS5_NO_UNREGISTERED_DROP=1 stores.
     static const bool unregisteredDrop = std::getenv("APS5_NO_UNREGISTERED_DROP") == nullptr;
     bool overhang = false;
     if (unregisteredDrop && !RegisteredReadableCovers(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) {
@@ -738,10 +679,6 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         return;
     }
     original.resize(static_cast<std::size_t>(guestBytes));
-    // The store below compares against the guest bytes, read now when `original` does not hold
-    // them (a GPU clear, a dropped or kept unit). Reading them says nothing about the image: a
-    // stale unit (dropped, or kept for the CPU) still differs from them, so `original` vouches for
-    // the content again only where it did before, or once every unit is stored.
     Require(!unsavedOutsideWatch, unsavedCause);
     std::vector<bool> unsaved = layerOriginal;
     unsaved.flip();
@@ -760,7 +697,6 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     DeviceBuffer tiled(context, original.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     Buffer host(context, original.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     if (profile) Profile().storageAlloc += timer.lap();
-    // Start from the uploaded bytes so padding and untouched texels keep their guest values.
     std::memcpy(host.Bytes().data(), original.data(), original.size());
     if (profile) Profile().storageHostCopy += timer.lap();
     detiler.BeginBatch();
@@ -825,8 +761,6 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             std::fclose(file);
         }
     }
-    // Store only the kept ranges' blocks that changed, so concurrent CPU writes to untouched texels
-    // survive; `original` follows for the stored layers (the others' guest bytes are unchanged).
     const auto current = host.Bytes();
     for (const auto& [from, to] : stores) {
         const auto offset = static_cast<std::size_t>(from - descriptor.baseAddress);
@@ -834,22 +768,14 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         GuestMemory::WriteChangedCommitted(from, current.subspan(offset, length), std::span<const std::byte>(original).subspan(offset, length));
         std::memcpy(original.data() + offset, current.data() + offset, length);
     }
-    // The texels now hold the whole image, so later reads must see them rather than a fast clear
-    // (the keys may be host-imported although the texels were not: then a recorded fill, else a CPU store).
     traceKeyStore("cpu write-back", descriptor, guestBytes);
     if (!IsDccClear(filledKeys) && uploadedKeys != DccKeys::Uncompressed && !keysReplacedByClear()) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
     uploadedKeys = DccKeys::Uncompressed;
-    // The store above is the only write to these pages, so `original` is current at a fresh
-    // generation, unless blocks were kept for the CPU: then the image is stale there.
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
         if (!layers[layer]) continue;
         layerOriginal[layer] = !skippedLayer[layer];
         cancelStoredSave(layer);
     }
-    // As in the GPU-direct path, but the store's memcpy dirtied this surface's pages in the write
-    // watch: a memoized collect would leave them for the next walk to stamp newer than this value
-    // (the shared edge block included, undoing the advance), so the walk is made here and
-    // consumes them.
     settle(false);
     if (profile) Profile().storageStore += timer.lap();
 }

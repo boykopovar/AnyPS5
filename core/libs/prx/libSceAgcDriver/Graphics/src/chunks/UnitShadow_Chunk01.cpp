@@ -57,7 +57,6 @@ std::uint32_t SlabUnits() {
     return units;
 }
 
-// APS5_TRACE_SHADOW=<n>: the first n publishes, the first 64 seeds, every evict and retire.
 std::atomic<std::int64_t> tracePublishesLeft{[] {
     const char* text = std::getenv("APS5_TRACE_SHADOW");
     return text != nullptr ? static_cast<std::int64_t>(std::strtoll(text, nullptr, 10)) : std::int64_t{0};
@@ -83,19 +82,13 @@ Statistics& Stats() {
 
 struct UnitShadow {
     Context context;
-    // The import's range, buffer and lead (taken at creation: a publish under the import table's
-    // mutex must not look them up), and the unit base (the import's base rounded down to a unit).
     std::uint64_t importBase = 0;
     std::uint64_t importBytes = 0;
     VkBuffer importBuffer = VK_NULL_HANDLE;
     std::uint64_t importLead = 0;
     std::uint64_t base = 0;
-    // Per unit: 0 = never shadowed, else the tracker generation the slab bytes are current at;
-    // whether a slab -> import copy was recorded at that generation.
     std::vector<std::uint64_t> generation;
     std::vector<std::uint8_t> published;
-    // Slab k covers units [k * SlabUnits(), (k + 1) * SlabUnits()), made on demand; a failed
-    // allocation is not retried before the noted present.
     std::vector<std::shared_ptr<ShadowSlab>> slabs;
     std::vector<std::uint64_t> slabFailedUntil;
     std::uint32_t liveUnits = 0;
@@ -104,7 +97,6 @@ struct UnitShadow {
     std::uint64_t UnitBegin(std::uint64_t unit) const { return base + unit * UnitBytes; }
     std::uint64_t UnitOf(std::uint64_t address) const { return (address - base) / UnitBytes; }
     std::uint64_t ImportEnd() const { return importBase + importBytes; }
-    // The unit's bytes inside the import.
     std::pair<std::uint64_t, std::uint64_t> UnitRange(std::uint64_t unit) const { return {std::max(UnitBegin(unit), importBase), std::min(UnitBegin(unit + 1), ImportEnd())}; }
     bool Live(std::uint64_t unit) const { return generation[unit] != 0 && published[unit] == 0; }
     void Recount() {
@@ -120,7 +112,6 @@ struct Shadows {
     std::uint64_t liveBytes = 0;
     std::uint64_t peakBytes = 0;
     std::uint32_t liveSlabs = 0;
-    // Counted for the [storage] segment: shadows retired and the slab bytes they returned.
     std::uint64_t retired = 0;
 };
 
@@ -145,7 +136,6 @@ VkDeviceSize SlabBytes(const ShadowSlab& slab) {
     return static_cast<VkDeviceSize>(slab.units) * UnitBytes;
 }
 
-// The shadows overlapping [address, end): imports never overlap, so at most a few.
 template<typename TVisit>
 bool anyOverlapping(const Shadows& registry, std::uint64_t address, std::uint64_t end, TVisit&& visit) {
     if (end <= address || registry.byBase.empty()) return false;
@@ -176,8 +166,6 @@ std::shared_ptr<UnitShadow> find(const Shadows& registry, const HostImport& impo
 
 std::shared_ptr<UnitShadow> findOrCreate(Shadows& registry, const Context& context, const HostImport& import) {
     if (auto shadow = find(registry, import); shadow != nullptr && shadow->context.device == context.device) return shadow;
-    // A stale entry (an import replaced without a retire, a replaced device): dropped; its slabs
-    // live on wherever a batch kept them.
     if (const auto found = registry.byBase.find(import.base); found != registry.byBase.end()) {
         for (const auto& slab : found->second->slabs) {
             if (slab == nullptr) continue;
@@ -204,9 +192,6 @@ std::shared_ptr<UnitShadow> findOrCreate(Shadows& registry, const Context& conte
     return shadow;
 }
 
-// One tracker query over units [first, last]: `changed[k]` (k = unit - first) whether a block
-// stamp exceeds the unit's generation (a generation of 0 reads as changed), `cpu[k]` whether a
-// collect made it (a CPU store).
 void changedUnits(const UnitShadow& shadow, std::uint64_t first, std::uint64_t last, std::vector<std::uint8_t>& changed, std::vector<std::uint8_t>& cpu) {
     const auto count = static_cast<std::size_t>(last - first + 1);
     changed.assign(count, 1);
@@ -306,8 +291,6 @@ bool recordCopiesOnCpu(const UnitShadow& shadow, const std::vector<SlabCopies>& 
     return true;
 }
 
-// Records the copies as one command group into the active recorder's open batch (a waited batch
-// without one). `ranges` are the guest ranges copied, for the note and the hazard tracker.
 void recordCopies(const UnitShadow& shadow, const std::vector<SlabCopies>& copies, const std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, std::uint64_t bytes) {
     const auto& context = shadow.context;
     using CommandClass = Recorder::CommandClass;
@@ -324,8 +307,6 @@ void recordCopies(const UnitShadow& shadow, const std::vector<SlabCopies>& copie
         batch = std::make_unique<CommandBatch>(context);
         commands = batch->Handle();
     }
-    // The retile that filled the slab (its trailing barrier covers transfer reads and writes) and
-    // every earlier import writer precede the copies; the CopyBuffer merge rule.
     constexpr VkAccessFlags transferAccess = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
     if (recorder != nullptr && (covered & transferAccess) == transferAccess && Recorder::MergeBarriers()) {
         Recorder::CountMerged(CommandClass::ShadowPublish);
@@ -335,7 +316,6 @@ void recordCopies(const UnitShadow& shadow, const std::vector<SlabCopies>& copie
     }
     const auto copyBuffer = context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
     for (const auto& entry : copies) copyBuffer(commands, entry.slab->buffer, shadow.importBuffer, static_cast<std::uint32_t>(entry.regions.size()), entry.regions.data());
-    // The published bytes are visible to everything recorded after and to the host, as after a fill.
     constexpr VkAccessFlags publishedAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_HOST_READ_BIT;
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, publishedAccess);
     Recorder::CountBarriers(CommandClass::ShadowPublish);
@@ -346,11 +326,9 @@ void recordCopies(const UnitShadow& shadow, const std::vector<SlabCopies>& copie
     recorder->EndGpuTiming(timing, bytes);
     recorder->MarkCovered(publishedAccess);
     for (const auto& entry : copies) recorder->Keep(entry.slab);
-    // CPU readers reach the import's bytes only after the hook's SyncThrough waits by this note.
     recorder->NoteStampedWrites(ranges);
 }
 
-// APS5_SHADOW_VERIFY=1: the published bytes read back from the slabs equal the guest bytes.
 void verifyPublished(const UnitShadow& shadow, const std::vector<SlabCopies>& copies) {
     const auto& context = shadow.context;
     if (auto* recorder = Recorder::Active()) {
@@ -386,7 +364,6 @@ public:
     PublishInProgress& operator=(const PublishInProgress&) = delete;
 };
 
-// The publish of one shadow: `selected[k]` (k = unit - first) names the units the scope chose.
 std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_t first, std::uint64_t last, const std::vector<std::uint8_t>& selected, PublishReason reason) {
     const PublishInProgress inProgress;
     auto& registry = Registry();
@@ -396,9 +373,6 @@ std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_
     std::size_t units = 0;
     const auto checked = GuestMemory::TrackerGeneration();
     {
-        // The stamps judged below see every CPU store into the live selected units up to now: a
-        // store no collect walked yet would read as fresh and the copy would land over it. Every
-        // caller holds the GpuMutex, so the live set is stable across the walk.
         std::uint64_t walkFirst = last + 1, walkLast = first;
         {
             std::lock_guard lock(registry.mutex);
@@ -422,7 +396,6 @@ std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_
             const auto k = static_cast<std::size_t>(unit - first);
             if (!selected[k] || !shadow->Live(unit)) continue;
             if (changed[k] == GuestMemory::BlockWritten) {
-                // Newer bytes reached the import since the retile: the slab's are dead.
                 shadow->generation[unit] = 0;
                 ++ended;
                 (cpu[k] != 0 ? Stats().staleDroppedCpu : Stats().staleDroppedDriver).fetch_add(1, std::memory_order_relaxed);
@@ -486,9 +459,6 @@ std::size_t publishRange(const std::shared_ptr<UnitShadow>& shadow, std::uint64_
     return any ? publishUnits(shadow, first, last, selected, reason) : 0;
 }
 
-// Frees the least recently used unpinned slab of any shadow after publishing its fresh units; false
-// when nothing can be freed (a pinned slab is a destination of the write-back in progress: its
-// copies are recorded into it after this decision).
 bool evictOne(Shadows& registry) {
     std::shared_ptr<UnitShadow> victim;
     std::size_t victimSlab = 0;
@@ -514,7 +484,6 @@ bool evictOne(Shadows& registry) {
     auto& slab = victim->slabs[victimSlab];
     if (slab == nullptr) return true;
     if (TraceEnabled()) std::fprintf(stderr, "[shadow] evict slab %zu of import 0x%llx (%.1f MiB, %zu units published)\n", victimSlab, static_cast<unsigned long long>(victim->importBase), SlabBytes(*slab) / 1048576.0, published);
-    // Its units read from the import from now on (the publish put their bytes there).
     for (auto unit = firstUnit; unit <= lastUnit; ++unit) {
         victim->generation[unit] = 0;
         victim->published[unit] = 0;

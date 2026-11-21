@@ -22,7 +22,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
-// For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -162,12 +161,8 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         arrayLayers = geometry.layers;
         const auto elementBytes = BytesPerElement(descriptor.format);
         guestBytes = geometry.guestBytes;
-        // Storage images in heaps the guest commits on demand only read and store committed pages.
         Require(!GuestMemory::CommittedRanges(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), true).empty(), "storage texture has no committed guest pages");
-        // Write stamps are per 64 KiB block, so only 64 KiB-aligned layer slices can be told apart.
         const bool layered = geometry.layers >= 2 && !geometry.thick && geometry.imageDepth == 1 && geometry.layers == geometry.imageLayers && geometry.layerBytes * geometry.layers == guestBytes && geometry.layerBytes % 65536 == 0 && descriptor.baseAddress % 65536 == 0;
-        // Tile blocks divide the stamp blocks, so at an aligned base every unit is whole tile blocks
-        // of its (layer, mip) slices (sliceWindows).
         blockUnits = StorageBlockUnits(descriptor, geometry);
         trackedLayers = blockUnits ? static_cast<std::uint32_t>((guestBytes + 65535) / 65536) : layered && LayerTrackingEnabled() ? geometry.layers : 1u;
         trackedLayerBytes = blockUnits ? 65536 : guestBytes / trackedLayers;
@@ -184,7 +179,6 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         const auto linearBytes = sliceLinearBytes * arrayLayers;
 
         VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-        // Sampled views of other same-size formats (sRGB, reinterpretations) read the image directly.
         imageInfo.flags = (descriptor.dimension == TextureDimension::kCube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u) | (descriptor.dimension == TextureDimension::k3D ? VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT : 0u) | VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
         imageInfo.imageType = ImageTypeFor(descriptor.dimension);
         imageInfo.format = imageFormat;
@@ -293,11 +287,9 @@ private:
     AtomicSharedPtr<const Snapshot> published;
 };
 
-// Storage images whose results have not reached guest memory yet.
 struct PendingWrites {
     MapImportGate::LeafMutex<SlimMutex> mutex;
     PendingList textures;
-    // Images taken out of `textures` by a FlushPending still storing them (see adjacentPendingUnchanged).
     std::vector<StorageTexture*> flushing;
     std::atomic<std::size_t> flushingCount{0};
     struct Drawn {
@@ -328,11 +320,8 @@ DrawnPending drawnPending() {
     return result;
 }
 
-// See StorageTexture::PendingSerial: bumped after every mutation of the registry above.
 std::atomic<std::uint64_t> pendingSerial{0};
 
-// The texel layout a clear value is built from (FillClearColor): channels in memory order with
-// their bit offset and width inside the element and the clear component they feed (R, G, B, A).
 enum class ClearKind { Unorm, Snorm, Uint, Sint, Float, UFloat };
 
 struct ClearChannel {
@@ -403,8 +392,6 @@ bool ClearLayoutFor(VkFormat format, ClearLayout& layout) {
     }
 }
 
-// A float of `bits` (16: IEEE half; 11 and 10: the unsigned 5-bit-exponent floats of
-// B10G11R11) as a float32, or nullopt for a NaN, a denormal or (unsigned) an infinity.
 std::optional<float> SmallFloat(std::uint32_t code, std::uint32_t bits, bool denormals = false) {
     const std::uint32_t mantissaBits = bits == 16 ? 10u : bits - 5u;
     const bool negative = bits == 16 && (code >> 15u) != 0;
@@ -423,12 +410,6 @@ std::optional<float> SmallFloat(std::uint32_t code, std::uint32_t bits, bool den
     return negative ? -value : value;
 }
 
-// One texel of `format` (`elementBytes` wide) taken from a 16-byte fill pattern as the clear value
-// that stores exactly those bits, when the pattern is that texel repeated: integer formats take the
-// codes as they are, normalized ones the code over the channel's maximum (the conversion back rounds
-// to the same code), float ones the decoded value. Codes a clear might store differently are
-// refused: NaNs and denormals (an implementation may canonicalize or flush them) and the most
-// negative SNORM code (stored as its neighbour, the same -1.0).
 bool FillClearColor(VkFormat format, std::uint32_t elementBytes, std::span<const std::uint32_t, 4> pattern, VkClearColorValue& clear, bool denormals = false) {
     ClearLayout layout{};
     if (elementBytes == 0 || elementBytes > 16 || 16 % elementBytes != 0 || !ClearLayoutFor(format, layout)) return false;
@@ -481,8 +462,6 @@ bool FillClearColor(VkFormat format, std::uint32_t elementBytes, std::span<const
     return true;
 }
 
-// The image being validated by Refresh: its own pending results are what the next dispatch wants,
-// so the comparison with guest memory must not flush them.
 struct RefreshingTag;
 using Refreshing = HostThreadSlot<const StorageTexture*, RefreshingTag>;
 
@@ -490,14 +469,6 @@ void FlushHook(std::uint64_t address, std::size_t bytes) {
     StorageTexture::FlushPending(address, bytes);
 }
 
-// Write stamps are per 64 KiB block (GuestMemory::UnchangedSince), so a write-back's own MarkWritten
-// stamps the blocks its surface shares with an adjacent surface (video planes packed back to back:
-// the luma plane's last block is the chroma plane's first). A pending image of that adjacent surface
-// would take the stamp for a CPU write since its generation and, at its own write-back, keep the
-// guest bytes of the shared block in place of its results (a stale band at the plane's start, zero
-// chroma on a fresh buffer). So a write-back first finds the adjacent pending images unchanged since
-// their generation and, once its stamps are made, advances them past the stamps: nothing of theirs
-// changed. APS5_NO_ADJACENT_GENERATION=1 leaves them at their generation, as before.
 bool AdjacentGenerationEnabled() {
     static const bool disabled = std::getenv("APS5_NO_ADJACENT_GENERATION") != nullptr;
     return !disabled;

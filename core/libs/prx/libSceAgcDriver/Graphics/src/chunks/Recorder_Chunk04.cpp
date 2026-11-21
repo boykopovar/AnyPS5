@@ -189,9 +189,6 @@ std::uint64_t Recorder::ReapsWithWork() {
 VkCommandBuffer Recorder::Commands(VkAccessFlags* coveredAccess) {
     ensureOpen();
     flushDeferredDispatch();
-    // Work recorded after a draw's render pass or an inline store run must see their writes: the
-    // pass's end and the run's trailing barrier go in first (a per-batch run waits for Submit, or
-    // for a caller whose ranges overlap a queued store: FlushStores).
     if (open->renderPass.open) endOpenRenderPass(PassBreak::Command);
     if (open->run.open && !LabelRunsPerBatch()) closeStoreRun();
     if (coveredAccess != nullptr) *coveredAccess = open->coveredAccess;
@@ -255,8 +252,6 @@ void Recorder::endOpenRenderPass(PassBreak by, bool barrier) {
     auto& pass = open->renderPass;
     if (open->segmentActive) endSegment(*open);
     EndRenderPass(context, open->commands);
-    // The pass's attachment and shader writes are visible to everything recorded after it (the
-    // host sees them at the batch's fence).
     if (barrier) {
         recordBarrier(open->commands, PassEndBarrier.srcStage, PassEndBarrier.dstStage, PassEndBarrier.srcAccess, PassEndBarrier.dstAccess);
         CountBarriers(CommandClass::Draw);
@@ -272,12 +267,9 @@ void Recorder::endOpenRenderPass(PassBreak by, bool barrier) {
 
 void Recorder::QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize last, std::shared_ptr<void> seed, std::uint64_t begin, std::uint64_t end) {
     ensureOpen();
-    // A queued label store over the keys lands first (program order: the key store is later).
     FlushStoresOverlapping(begin, static_cast<std::size_t>(end - begin));
     keyStoreCount.fetch_add(1, std::memory_order_relaxed);
     if (seed != nullptr) open->kept.push_back(seed);
-    // The same range queued twice lands once: nothing wrote over it in between, or the writer
-    // would have recorded the first store first.
     for (const auto& store : open->keyStores) {
         if (store.buffer == buffer && store.first == first && store.last == last) {
             keyStoresJoined.fetch_add(1, std::memory_order_relaxed);
@@ -310,8 +302,6 @@ void Recorder::recordKeyStores(bool forWriter) {
     if (stores.empty()) return;
     const auto commands = Commands();
     const auto timing = beginTiming(ClassKey(CommandClass::DccKeyStore));
-    // Ordered behind every earlier recorded read or write of the ranges (the title's DCC clear or
-    // decompress kernel storing keys through a V#), and visible to the work after and to the host.
     recordBarrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
     const auto fill = context.Resolved(&DeviceFunctions::cmdFillBuffer, "vkCmdFillBuffer");
     const auto copy = context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
@@ -380,8 +370,6 @@ void Recorder::ensureOpen() {
             open->traceId = traceIds.fetch_add(1, std::memory_order_relaxed) + 1;
         }
         TraceBatchTag = open->traceId;
-        // The whole-batch range: its start stamp waits for the previous batches like any
-        // bottom-of-pipe stamp, so it marks when this batch's execution began.
         if (BatchStampsEnabled()) open->batchTiming = beginTiming(BatchTimingKey);
     }
 }
@@ -394,9 +382,6 @@ void Recorder::RecordStore(VkBuffer buffer, VkDeviceSize offset, std::span<const
     const VkDeviceSize end = offset + bytes.size();
     storeCount.fetch_add(1, std::memory_order_relaxed);
     if (LabelRunsPerBatch()) {
-        // Queued for the batch's run: a store inside the last queued one replaces its bytes, a
-        // contiguous one joins it (a joined range overlapping an earlier queued store takes the
-        // WAW barrier when the run is recorded, so no join is refused).
         if (run.queued.empty()) storeRuns.fetch_add(1, std::memory_order_relaxed);
         else if (auto& last = run.queued.back(); last.buffer == buffer) {
             const VkDeviceSize lastEnd = last.offset + last.bytes.size();
@@ -414,18 +399,13 @@ void Recorder::RecordStore(VkBuffer buffer, VkDeviceSize offset, std::span<const
         run.queued.push_back({buffer, offset, std::vector<std::byte>(bytes.begin(), bytes.end()), address});
         return;
     }
-    // A label says the work before it is done: the queued key stores (results of that work) land
-    // ahead of every store of the run.
     if (!open->keyStores.empty()) recordKeyStores(true);
     if (open->renderPass.open) endOpenRenderPass(PassBreak::Label);
     open->coveredAccess = 0;
-    // Two transfers to the same bytes have no order of their own within the run.
     const auto overlapsRecorded = [&] { return std::any_of(run.recorded.begin(), run.recorded.end(), [&](const auto& store) { return std::get<0>(store) == buffer && offset < std::get<2>(store) && std::get<1>(store) < end; }); };
     if (!run.open) {
         run.timing = beginTiming(ClassKey(CommandClass::LabelRun));
         run.storedBytes = 0;
-        // The run's leading barrier: every earlier write of the range (a shader's, a transfer's, a
-        // color attachment's) lands before the stores of the run.
         recordBarrier(open->commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
         CountBarriers(CommandClass::LabelRun);
         run.open = true;
@@ -438,8 +418,6 @@ void Recorder::RecordStore(VkBuffer buffer, VkDeviceSize offset, std::span<const
             return;
         }
         if (offset == pendingEnd && run.bytes.size() + bytes.size() <= 65536) {
-            // A joined store shares the pending vkCmdUpdateBuffer, which no barrier precedes: one
-            // that overlaps a store the run already recorded takes the WAW barrier below instead.
             if (!JoinWawCheck() || !overlapsRecorded()) {
                 run.bytes.insert(run.bytes.end(), bytes.begin(), bytes.end());
                 storesJoined.fetch_add(1, std::memory_order_relaxed);

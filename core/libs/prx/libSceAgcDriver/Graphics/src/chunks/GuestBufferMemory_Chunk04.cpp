@@ -323,9 +323,6 @@ struct AddressCopyLease {
     }
 };
 
-// Pinned imports count against the driver's system memory heap, which imports, type-3 mirrors, buffers and textures
-// placed in host memory share; past it ordinary host allocations fail. The budget is APS5_HOST_IMPORT_MIB, else
-// HostImportBudget.
 std::uint64_t configuredBudget() {
     if (const auto set = budgetOverride.load(std::memory_order_relaxed); set != 0) return set;
     static const std::uint64_t configured = []() -> std::uint64_t {
@@ -402,9 +399,6 @@ std::string budgetSource(const Context& context, const HostImports& state, std::
 std::atomic<std::uint64_t> rangeImportWindow{64ull << 20u};
 std::atomic<std::uint64_t> importMaxBytes{0};
 
-// The import of an access to a registered range larger than the range window: the cells the access touches, grown to
-// the union of the range's imports it overlaps, so accesses across neighbouring cell edges share one import instead of
-// replacing each other's.
 std::optional<std::pair<std::uint64_t, std::uint64_t>> importWindowBounds(const GuestAllocations::Range& range, std::uint64_t begin, std::uint64_t end, std::uint64_t alignment) {
     const auto window = rangeImportWindow.load(std::memory_order_relaxed);
     if (window == 0 || alignment == 0 || window % alignment != 0 || range.bytes <= window || begin < range.address || end > range.address + range.bytes || end <= begin) return std::nullopt;
@@ -507,9 +501,6 @@ void coverGrowth(HostImports& state, std::uint64_t base, std::uint64_t bytes) {
     resetGrowthFloor(state);
 }
 
-// The bytes retireLeastRecent could free outside [begin, end). Before two frames have ended the imports age by lookups as they
-// did before frames existed. After that readyHeld is 0 when an import a build still holds is already two frames old: it becomes
-// evictable as soon as that build's floor rises, which ends a remembered refusal.
 std::uint64_t evictableBytes(const HostImports& state, std::uint64_t begin, std::uint64_t end, std::uint64_t& ready, std::uint64_t& readyHeld) {
     std::uint64_t bytes = 0;
     for (const auto& [base, entry] : state.imports) {
@@ -575,8 +566,6 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
         return nullptr;
     }
     const auto bounds = importRunBounds(lease, address, largest, budget);
-    // Without an end the caller views the whole run through the import (AcquireRegistered): a window that holds the
-    // first byte is shorter than that, so only an import of the whole run is a hit; a window is replaced below.
     if (fresh && end == 0) {
         if (const auto* current = findImport(state, address, bounds.found ? lease[bounds.last]->address + lease[bounds.last]->bytes : address + 1)) return current;
     }

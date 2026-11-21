@@ -35,8 +35,6 @@ void RetireShadow(VkDevice device, const HostImport& import, const std::function
         std::lock_guard lock(registry.mutex);
         shadow = find(registry, import);
         if (shadow == nullptr) return;
-        // The memory the title took back holds its bytes now: only a unit still inside a readable
-        // registered range receives its results.
         selected.assign(static_cast<std::size_t>(shadow->Units()), 0);
         for (std::uint64_t unit = 0; unit < shadow->Units(); ++unit) {
             if (!shadow->Live(unit)) continue;

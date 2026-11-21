@@ -166,9 +166,6 @@ const char* heapCopyReason(bool overBudget, bool watched) {
     return watched ? "heap mirror refused" : "heap not fully write-watched";
 }
 
-// The mirror for a leased image range: the existing one, or a new one when none exists or the
-// registered Range object changed (a protection change). Null when the range cannot be mirrored. An
-// existing writable mirror's blocks are appended to `blocks` for the caller's one compare of every
 std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::shared_ptr<const GuestAllocations::Range>& range, std::vector<RefreshBlock>& blocks, bool heap, std::uint64_t begin = 0, std::uint64_t bytes = 0, bool joinedHeap = false) {
     auto selected = *range;
     if (bytes != 0) {
@@ -304,8 +301,6 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
         state.failed.insert(selected.address);
         return nullptr;
     }
-    // Read stores GPU results pending in the range first (write-backs of earlier copies of it);
-    // named for the [hooksync] attribution like the refresh's flush.
     {
         const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::MirrorRefresh);
         const auto target = mirror->buffer->Bytes().first(static_cast<std::size_t>(mirror->bytes));
@@ -324,7 +319,6 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
     std::lock_guard lock(state.mutex);
     ++state.rebuilds;
     mirror->serial = (1ull << 63u) | ++state.serials;
-    // A replaced mirror lives on in the regions of recorded work that bound it.
     if (const auto found = state.entries.find(selected.address); found != state.entries.end() && found->second->heap) unlistMirror(state, *found->second);
     mirror->listed = heap;
     state.entries[selected.address] = mirror;

@@ -93,9 +93,6 @@ VkComponentMapping ViewComponents(const GuestTextureResource& resource) {
     return {channel(resource.dstSelX), channel(resource.dstSelY), channel(resource.dstSelZ), channel(resource.dstSelW)};
 }
 
-// Sampled textures are reused across draws and dispatches while their guest bytes are unchanged; a
-// byte copy of the guest surface validates each reuse, so CPU or GPU writes to it force a re-upload.
-// The key is everything a lookup matches: the device, the eight descriptor words and the swizzle.
 struct AllocationIdentity {
     std::uint64_t rangeAddress = 0;
     std::uint64_t rangeBytes = 0;
@@ -183,27 +180,18 @@ struct CachedTexture {
     std::uint64_t address;
     std::vector<std::byte> bytes;
     std::shared_ptr<Texture> texture;
-    // A fast-cleared surface is cached as its clear texels; it stays valid while the keys are unchanged.
     DccKeys keys = DccKeys::Uncompressed;
-    // Write generation the snapshot is known current at (see GuestMemory::CollectWrites).
     std::uint64_t generation = 0;
-    // A texture viewing a storage image on the GPU has no snapshot; it stays valid while that image
-    // is still its surface's cached image and nothing wrote the guest memory since it matched.
     std::shared_ptr<StorageTexture> source;
     std::uint64_t sourceVersion = 0;
     std::uint64_t accounted = 0;
     std::uint64_t present = 0;
     std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> committed;
-    // The untrackedKey the snapshot was last read or compared equal at, for a surface outside the
-    // write watch; zero when none was taken.
     std::array<std::uint64_t, 4> untracked{};
     std::uint64_t surfaceBytes = 0;
     std::optional<CommittedSlabs> slabs;
 };
 
-// Entries in use order (front = most recent) with a hash index by key: a lookup is O(1) and the
-// eviction takes the back. APS5_NO_TEXTURE_HASH=1 finds entries by scanning the list (the index is
-// still kept), the linear lookup of before.
 struct TextureCache {
     AgcDriver::Mutex mutex;
     std::list<CachedTexture> entries;
@@ -344,7 +332,6 @@ void dropUncachedViews(TextureCache& cache) {
     }
 }
 
-// Moves an entry to the front (most recently used).
 void touchTexture(TextureCache& cache, std::list<CachedTexture>::iterator it) {
     cache.entries.splice(cache.entries.begin(), cache.entries, it);
     it->present = Recorder::Presents();
@@ -502,11 +489,6 @@ std::list<CachedTexture>::iterator findSampledEntry(TextureCache& cache, VkDevic
     return it;
 }
 
-// APS5_PROFILE_DRAW: what the sampled-texture and storage-image lookups did, printed as [textures]
-// every 10 s (cumulative). Storage-sourced sampled textures need no CPU read; snapshots do, and a
-// pending read is a snapshot compare or read made while recorded work still wrote the surface (the
-// flush hook may find that work already signaled, so this bounds the hook syncs from above; the
-// [hooksync] line attributes the actual waits).
 struct TextureCounters {
     std::atomic<std::uint64_t> fromStorage{0};
     std::atomic<std::uint64_t> snapshots{0};
@@ -519,8 +501,6 @@ struct TextureCounters {
     std::atomic<std::uint64_t> fastMisses{0};
     std::atomic<std::uint64_t> storageHits{0};
     std::atomic<std::uint64_t> storageCreated{0};
-    // Storage images a Revalidate refreshed directly instead of through the lookups (T1, see
-    // ShaderResources::refreshOwnObjects).
     std::atomic<std::uint64_t> ownRefreshes{0};
     std::atomic<std::uint64_t> tablesReused{0};
     std::atomic<std::uint64_t> tablesReplayed{0};
@@ -531,8 +511,6 @@ struct TextureCounters {
     std::atomic<std::uint64_t> variantSubstituted{0};
     std::atomic<std::uint64_t> variantRejected{0};
     std::atomic<std::uint64_t> arrayViewsShared{0};
-    // Snapshot hits over memory outside the write watch: kept by an unchanged UntrackedHint key, or
-    // by a byte compare.
     std::atomic<std::uint64_t> untrackedKept{0};
     std::atomic<std::uint64_t> untrackedCompared{0};
     std::atomic<std::int64_t> lastReport{0};
@@ -561,11 +539,6 @@ void reportTextureCounters() {
     AgcDriver::ProfilePrint_nid_no_patch("[textures] sampled created: %llu from storage images, %llu cleared on the GPU, %llu uploaded on the GPU from host imports, %llu snapshots (%llu snapshot reads over recorded writes inside cachedTexture, %llu storage-path fallbacks); stage-A records %llu: %llu fast hits, %llu full lookups; storage images %llu hits, %llu created, %llu own-object refreshes; image tables %llu reused, %llu resolved; dynamic-resolution variants: %llu surfaces, %llu entries substituted, %llu entries rejected; %llu one-layer 2D array entries bound to the 2D texture of their surface; untracked snapshots %llu kept by the write-watch hint, %llu compared\n", count(counters.fromStorage), count(counters.cleared), count(counters.imported), count(counters.snapshots), count(counters.pendingReads), count(counters.storageFallbacks), count(counters.records), count(counters.fastHits), count(counters.fastMisses), count(counters.storageHits), count(counters.storageCreated), count(counters.ownRefreshes), count(counters.tablesReused), count(counters.tablesResolved), count(counters.variantSurfaces), count(counters.variantSubstituted), count(counters.variantRejected), count(counters.arrayViewsShared), count(counters.untrackedKept), count(counters.untrackedCompared));
 }
 
-// What the sampled-texture lookups on this thread proved their returned objects current against,
-// taken by object into the ShaderResources being built or revalidated (captureValidation), which
-// then repeats the proof from write stamps on its next Revalidate. The lookups run inside one build
-// on one thread; records nobody takes (a build that threw, a resident target looked up outside a
-// build, a thread that never captures) are dropped by the next capture or by the bound below.
 struct LookupRecord {
     const void* object;
     GuestTextureResource resource;
@@ -634,12 +607,6 @@ bool MetadataMoved(const StorageTexture& image, const GuestTextureResource& reso
     return resource.dccAddress != 0 && image.Descriptor().dccAddress != resource.dccAddress && !image.ServesKeysAt(resource.dccAddress);
 }
 
-// Whether a sampled texture over `resource` can be a view of the surface's cached storage image
-// instead of a CPU snapshot (see cachedTexture): the format has a storage form and is not block
-// compressed, and the surface lives in host-imported memory, where the image uploads and refreshes
-// GPU-direct (a snapshot of such a surface reads and compares its bytes on the CPU, waiting for
-// the recorded work that wrote them). APS5_NO_SAMPLED_FROM_STORAGE=1 keeps every sampled texture a
-// snapshot as before.
 std::atomic<bool> sampledFromStorageForTest{true};
 
 bool SampledFromStorageEligible(const Context& context, std::uint32_t format, std::uint64_t address, std::uint64_t guestBytes) {
@@ -652,8 +619,6 @@ bool SampledFromStorageEligible(const Context& context, const GuestTextureResour
     return SampledFromStorageEligible(context, resource.format, resource.baseAddress, guestBytes);
 }
 
-// Whether a sampled texture over a fast-cleared, storage-eligible surface views the cleared storage
-// image (see cachedTexture). APS5_NO_CLEARED_VIEW=1 keeps such surfaces snapshots, as before.
 bool ClearedViewEnabled() {
     static const bool disabled = std::getenv("APS5_NO_CLEARED_VIEW") != nullptr;
     return !disabled;
@@ -679,11 +644,6 @@ std::uint64_t DepthCopyMinBytes() {
     return bytes;
 }
 
-// Surfaces whose storage image could not be made (no writable committed pages, say): remembered
-// so the sampled lookup does not throw and fall back on every use. A failure is keyed by the surface
-// (address and size: the heap reuses addresses) and holds only while the guest mappings are what
-// they were when it failed (the allocation generation): pages committed later, or another surface
-// at the address, get a fresh attempt.
 struct StorageFailures {
     AgcDriver::Mutex mutex;
     std::map<std::pair<std::uint64_t, std::uint64_t>, std::uint64_t> generations;
@@ -694,8 +654,6 @@ StorageFailures& StorageFailed() {
     return failures;
 }
 
-// The cached storage image for a sampled descriptor, or null when it cannot be made (then the
-// snapshot path serves the descriptor, as before). Every null return counts as a fallback.
 std::shared_ptr<StorageTexture> sampledStorageSource(const Context& context, const GuestTextureResource& resource, std::uint64_t guestBytes) {
     auto& counters = TextureCounts();
     auto& failures = StorageFailed();

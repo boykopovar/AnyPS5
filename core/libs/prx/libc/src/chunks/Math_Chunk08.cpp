@@ -751,39 +751,25 @@ void APS5_VABI sincos_nid_postfix(double x, double* sinp, double* cosp) {
     const std::int32_t ix = HighWord(x) & 0x7fffffff;
     if (ix <= 0x3fe921fb) {
         if (ix < 0x3e400000 && static_cast<int>(x) == 0) {
-            *sinp = x;
-            *cosp = 1;
             return;
         }
-        *sinp = KernelSin(x, 0, 0);
-        *cosp = KernelCos(x, 0);
         return;
     }
     if (ix >= 0x7ff00000) {
         if (ix == 0x7ff00000) {
             errno = EDOM;
         }
-        *sinp = x - x;
-        *cosp = x - x;
         return;
     }
     double y[2];
     switch (RemPio2(x, y) & 3) {
         case 0:
-            *sinp = KernelSin(y[0], y[1], 1);
-            *cosp = KernelCos(y[0], y[1]);
             break;
         case 1:
-            *sinp = KernelCos(y[0], y[1]);
-            *cosp = -KernelSin(y[0], y[1], 1);
             break;
         case 2:
-            *sinp = -KernelSin(y[0], y[1], 1);
-            *cosp = -KernelCos(y[0], y[1]);
             break;
         default:
-            *sinp = -KernelCos(y[0], y[1]);
-            *cosp = KernelSin(y[0], y[1], 1);
     }
 }
 

@@ -379,7 +379,6 @@ EcGroup* DecodeGroup(const unsigned char** in, std::int64_t length) {
         PutError(D2iEcpkParametersFailure);
         return nullptr;
     }
-    *in += parameters->consumed;
     EcGroup* group = nullptr;
     if (parameters->namedCurve) {
         if ((group = NamedCurveGroup(parameters->object)) == nullptr) PutError(GroupNewByNameFailure);
@@ -428,7 +427,6 @@ EcKey* APS5_VABI o2i_ECPublicKey_nid_postfix(EcKey** key, const unsigned char** 
         return nullptr;
     }
     result->conversionForm = (*in)[0] & ~1;
-    *in += length;
     return result;
 }
 

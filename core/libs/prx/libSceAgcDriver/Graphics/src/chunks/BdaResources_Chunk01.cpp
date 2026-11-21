@@ -91,8 +91,6 @@ bool sameRanges(const std::vector<ShaderRecompiler::BdaAbi::Range>& left, const 
     return left.size() == right.size() && (left.empty() || std::memcmp(left.data(), right.data(), left.size() * sizeof(left.front())) == 0);
 }
 
-// A 64-bit mix of the table's words: a table is ~1200 ranges of four words, and comparing the bytes
-// against every held table would cost as much as building it.
 std::uint64_t hashRanges(const std::vector<ShaderRecompiler::BdaAbi::Range>& ranges) {
     static_assert(sizeof(ShaderRecompiler::BdaAbi::Range) % sizeof(std::uint64_t) == 0);
     std::uint64_t hash = 0x9e3779b97f4a7c15ull ^ ranges.size();
@@ -351,7 +349,6 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
     std::uint64_t hash = 0;
     if (tableCacheEnabled()) {
         std::lock_guard lock(cache.mutex);
-        // Another device's tables are not this one's (their buffers are dead or foreign).
         if (cache.device != context.device) {
             cache.entries.clear();
             cache.device = context.device;
@@ -359,9 +356,6 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
         hash = hashRanges(ranges);
         classifyFirstEntry(cache, hash, ranges);
         for (auto it = cache.entries.begin(); it != cache.entries.end();) {
-            // Compare the hash before taking a strong reference: locking a non-matching entry's
-            // buffer could make this thread its last owner (a concurrent reap releasing it) and
-            // run the pool release under the cache mutex; expired() takes no reference.
             if (it->hash != hash) {
                 if (it->buffer.expired()) {
                     it = cache.entries.erase(it);
@@ -372,7 +366,6 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
             }
             auto shared = it->buffer.lock();
             if (shared == nullptr) {
-                // Every build that owned the table is gone, and its buffer with it.
                 it = cache.entries.erase(it);
                 continue;
             }

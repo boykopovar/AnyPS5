@@ -398,21 +398,14 @@ void Recorder::CloseLabelGroup(std::uint64_t trackerGeneration) {
     if (labelTableOwner == nullptr) return;
     auto& recorded = labelTableOwner->labels;
     for (const auto& [dword, stamp] : group) {
-        // Only an entry still ours (stamps are unique): a later note of the dword has its own group.
-        // And only while its batch is unsubmitted: a submitted one (a drain or APS5_LABEL_SUBMIT_NOW
-        // inside the group) may have landed the value already, and a CPU store between that and
-        // this close is not newer than the generation.
         const auto found = recorded.find(dword);
         if (found != recorded.end() && found->second.stamp == stamp && found->second.batch != nullptr && !found->second.batch->submitted) found->second.generation = trackerGeneration;
     }
-    // A poller that refused the group as unclosed re-consults the table on the next generation.
     writeGeneration.fetch_add(1, std::memory_order_release);
 }
 
 void Recorder::NoteQueuedLabel(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue) {
     if (bytes.size() < 4 || address % 4 != 0) return;
-    // The range before the table: the hook covers the group whether or not a table exists to
-    // enter it in (no owner: the callback records it outright, by a CPU store when need be).
     QueuedLabelRanges().emplace_back(address, address + bytes.size());
     QueuedLabelsOnThread::Set(true);
     queuedLabelsNoted.fetch_add(1, std::memory_order_relaxed);

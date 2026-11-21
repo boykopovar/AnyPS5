@@ -241,7 +241,6 @@ bool sameRange(const std::weak_ptr<const GuestAllocations::Range>& mirrored, con
     return !mirrored.owner_before(range) && !range.owner_before(mirrored);
 }
 
-// One 64 KiB (or shorter, at a range's ends) block of a writable mirror to compare with guest memory.
 struct RefreshBlock {
     ImageMirror* mirror;
     std::uint64_t address;
@@ -254,7 +253,6 @@ struct RefreshBlock {
 constexpr std::uint8_t SparseCopy = 1;
 constexpr std::uint8_t SparseZero = 2;
 
-// Compares a block's guest bytes with the mirror's shadow and copies a changed block into the device
 bool compareBlock(const RefreshBlock& block) {
     const auto offset = static_cast<std::size_t>(block.address - block.mirror->base);
     const auto* guest = reinterpret_cast<const std::byte*>(block.address);
@@ -305,15 +303,12 @@ public:
         delete std::exchange(instance, nullptr);
     }
 
-    // Compares `blocks` and returns how many were copied.
     std::uint64_t Run(std::span<const RefreshBlock> blocks) {
-        // Small jobs are not worth waking the helpers (a sub-range refresh at Upload is a few blocks).
         if (helpers == 0 || blocks.size() < 8) {
             std::uint64_t copied = 0;
             for (const auto& block : blocks) copied += compareBlock(block) ? 1 : 0;
             return copied;
         }
-        // Every caller holds the device lock today; the pool serializes its jobs regardless.
         std::lock_guard running(runMutex);
         {
             std::lock_guard lock(mutex);
@@ -346,7 +341,6 @@ private:
         }
     }
 
-    // Takes blocks until none is left.
     void work(std::span<const RefreshBlock> blocks) {
         std::uint64_t copied = 0;
         for (auto index = next.fetch_add(1, std::memory_order_relaxed); index < blocks.size(); index = next.fetch_add(1, std::memory_order_relaxed)) copied += compareBlock(blocks[index]) ? 1 : 0;
@@ -386,15 +380,7 @@ private:
     std::vector<std::jthread> threads;
 };
 
-// The device-lock work before [address, address + bytes) of a writable mirror can be compared with
-// guest memory: recorded GPU work that writes the range (a descriptor dispatch bound to a sub-range)
-// completes first, so its results reach the guest and the shadow before the compare and no batch
-// writes a block being replaced; GPU reads of the mirror by earlier recorded work (an address-based
-// dispatch whose lease is released at completion) see the newer bytes, as they would on hardware.
 void syncRange(std::uint64_t address, std::uint64_t bytes) {
-    // Named for the [hooksync] attribution: the flush goes through the hook, which waits when
-    // recorded work notes a write inside the range (a descriptor written inside a writable exe
-    // range; the lease itself maps the range read-only). The access is the whole range.
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::MirrorRefresh);
     GuestMemory::FlushGpuWrites(address, static_cast<std::size_t>(bytes));
     auto& state = Mirrors();
@@ -427,7 +413,6 @@ void appendBlocks(std::vector<RefreshBlock>& blocks, ImageMirror& mirror, std::u
     }
 }
 
-// Compares the gathered blocks (of one or many mirrors) and counts them.
 void bindHeapBlocks(std::span<const RefreshBlock> blocks) {
     std::vector<std::pair<ImageMirror*, GuestRuns>> wanted;
     for (const auto& block : blocks) {
@@ -460,7 +445,6 @@ void compareBlocks(std::span<const RefreshBlock> blocks) {
     state.blocksCopied += copied;
 }
 
-// Brings [address, address + bytes) of a writable mirror up to date with guest memory.
 void refreshMirror(ImageMirror& mirror, std::uint64_t address, std::uint64_t bytes) {
     if (!prepareRefresh(mirror, address, bytes)) return;
     std::vector<RefreshBlock> blocks;

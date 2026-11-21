@@ -63,7 +63,6 @@ extern "C" {
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "src/ResolverTestHooks.hpp"
 
-// Guest socket descriptors retain PS5 semantics while their transport is backed by host sockets.
 
 static_assert(sizeof(NetDhcpOptionInfo) == 24);
 static_assert(offsetof(NetDhcpOptionInfo, capacity) == 4);
@@ -106,7 +105,6 @@ static_assert(sizeof(NetDns6Info) == 32);
 static_assert(sizeof(NetIpv6InterfaceAddress) == 20);
 
 namespace {
-// FreeBSD errno numbers as reported through sceNetErrnoLoc (SCE_NET_ERROR_* is 0x80410100 + errno).
 constexpr int NET_ENOENT = 2;
 constexpr int NET_EINTR = 4;
 constexpr int NET_EBADF = 9;
@@ -314,7 +312,6 @@ bool guest_to_native_address(const void* address, std::uint32_t length,
 bool native_to_guest_address(const sockaddr_storage& native, void* address, std::uint32_t* length) {
     if (!address || !length) return false;
     if (native.ss_family == AF_UNSPEC) {
-        *length = 0;
         return true;
     }
     std::uint8_t bytes[28]{};
@@ -337,7 +334,6 @@ bool native_to_guest_address(const sockaddr_storage& native, void* address, std:
     }
     const auto copied = std::min<std::uint32_t>(*length, bytes[0]);
     std::memcpy(address, bytes, copied);
-    *length = copied;
     return true;
 }
 
@@ -470,8 +466,6 @@ bool IsZeroAddress(const NetIpv6Address& address) {
 }
 
 void set_errno(int err) {
-    *errno_slot() = err;
-    *__error_nid_postfix() = err;
 }
 
 int fail(int err) {
@@ -1002,7 +996,7 @@ std::optional<std::uint32_t> InterfaceIdOfHostIndex(std::uint32_t index) {
     return std::nullopt;
 }
 
-}  // namespace
+}
 
 void GuestSceNetTest::SetResolverLookupForTests_nid_no_patch(ResolverLookup lookup) noexcept {
     g_resolverLookupForTests.store(lookup);
@@ -1211,7 +1205,6 @@ int APS5_VABI sceNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int
     }
 }
 
-// Byte order and text conversion.
 uint32_t APS5_VABI sceNetHtonl_nid_postfix(uint32_t host32) { return swap32(host32); }
 uint16_t APS5_VABI sceNetHtons_nid_postfix(uint16_t host16) { return swap16(host16); }
 uint64_t APS5_VABI sceNetHtonll(std::uint64_t host64) { return swap64(host64); }
@@ -1236,7 +1229,7 @@ int APS5_VABI sceNetInetPton(int af, const char* src, void* dst) {
                 if (text[i] == '0' && (i == 0 || text[i - 1] == '.') && text[i + 1] >= '0' && text[i + 1] <= '9') return 0;
             }
         }
-#endif // __APPLE__
+#endif
 #ifdef _WIN32
         return InetPtonA(family, text.c_str(), address);
 #else
@@ -1352,13 +1345,11 @@ int APS5_VABI sceNetGetMacAddress(NetEtherAddr* addr, int flags) {
     if (addr == nullptr || flags != 0) {
         return fail(NET_EINVAL);
     }
-    // Keep guest identity stable without exposing the host adapter address.
     const std::uint8_t mac[6] = {0x02, 0x50, 0x53, 0x35, 0x00, 0x01};
     if (!GuestCopyOut_nid_no_patch(addr, mac, sizeof(mac))) return fail(NET_EFAULT);
     return 0;
 }
 
-// Resolver results use the guest IPv4 address format while delegating lookup to host DNS.
 int APS5_VABI sceNetResolverCreate(const char* name, int memid, int flags) {
     (void)name;
     (void)memid;

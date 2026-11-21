@@ -22,7 +22,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
-// For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -188,7 +187,6 @@ bool StorageTexture::ServesKeysAt(std::uint64_t dccAddress) const {
         auto slot = std::find_if(foreignKeyProofs.begin(), foreignKeyProofs.end(), [&](const ForeignKeyProof& entry) { return entry.dccAddress == dccAddress; });
         if (slot == foreignKeyProofs.end()) {
             slot = foreignKeyProofs.begin() + nextForeignKeyProof++ % foreignKeyProofs.size();
-            *slot = ForeignKeyProof{dccAddress, {}};
         }
         return ProvedClearKeys(named, guestBytes, slot->proof);
     };
@@ -197,8 +195,6 @@ bool StorageTexture::ServesKeysAt(std::uint64_t dccAddress) const {
 
 namespace {
 
-// Debug aid (APS5_TRACE_DCC_KEYS=1): who stores uncompressed keys over a surface (recommendation
-// 2's tracer): the write-back path, the surface and its key range.
 void traceKeyStore(const char* path, const GuestTextureResource& descriptor, std::uint64_t guestBytes) {
     static const bool trace = std::getenv("APS5_TRACE_DCC_KEYS") != nullptr;
     if (!trace || descriptor.dccAddress == 0) return;

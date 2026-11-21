@@ -3489,7 +3489,6 @@ foreach(libkernelTestFragment IN LISTS libkernelTestFragments)
     include(${libkernelTestFragment})
 endforeach()
 
-# --- small-size libraries split from Udp.cpp ---
 add_library(libkernel_Udp_Chunk01 STATIC Socket/src/chunks/Udp_Chunk01.cpp)
 add_library(libkernel_Udp_Chunk02 STATIC Socket/src/chunks/Udp_Chunk02.cpp)
 add_library(libkernel_Udp_Chunk03 STATIC Socket/src/chunks/Udp_Chunk03.cpp)

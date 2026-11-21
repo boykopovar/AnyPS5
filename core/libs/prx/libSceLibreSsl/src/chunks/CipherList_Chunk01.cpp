@@ -700,7 +700,6 @@ void LinkAppendTail(CipherOrder** head, CipherOrder* current, CipherOrder** tail
     (*tail)->next = current;
     current->prev = *tail;
     current->next = nullptr;
-    *tail = current;
 }
 
 void LinkAppendHead(CipherOrder** head, CipherOrder* current, CipherOrder** tail) {
@@ -711,7 +710,6 @@ void LinkAppendHead(CipherOrder** head, CipherOrder* current, CipherOrder** tail
     (*head)->prev = current;
     current->next = *head;
     current->prev = nullptr;
-    *head = current;
 }
 
 DisabledMasks GetDisabled() {
@@ -780,8 +778,6 @@ void CollectCiphers(int numberOfCiphers, const DisabledMasks& disabled, std::vec
 
         coList[coListNum - 1].next = nullptr;
 
-        *headOut = &coList[0];
-        *tailOut = &coList[coListNum - 1];
     }
 }
 
@@ -904,8 +900,6 @@ void ApplyRule(std::uint64_t keyExchange, std::uint64_t authentication, std::uin
         }
     }
 
-    *headOut = head;
-    *tailOut = tail;
 }
 
 int StrengthSort(CipherOrder** headOut, CipherOrder** tailOut) {
@@ -1218,9 +1212,7 @@ LibreSslStack* LibreSslCreateCipherList_nid_no_patch(LibreSslStack** cipherList,
         return nullptr;
     }
     StackFree(*cipherList);
-    *cipherList = cipherStack;
     StackFree(*cipherListById);
-    *cipherListById = tmpCipherList;
     StackSetCompare(*cipherListById, CipherPointerIdCompare);
 
     StackSort(*cipherListById);

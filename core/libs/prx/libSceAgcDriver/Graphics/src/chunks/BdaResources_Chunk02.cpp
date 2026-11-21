@@ -65,7 +65,6 @@ void BdaResources::checkFault(const BdaResources& record) const {
     Require(report.state == ShaderRecompiler::BdaAbi::FaultState::Ready && (report.claim & ~(ShaderRecompiler::BdaAbi::FaultClaimed | ShaderRecompiler::BdaAbi::FaultClaimOtherFaults)) == 0, "incomplete or invalid BDA fault record");
     Require(report.reason != ShaderRecompiler::BdaAbi::FaultReason::InvalidRectangle, "rect-list requires finite nondegenerate axis-aligned positions with equal positive W");
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::LoopLimit) {
-        // APS5_LOOP_GUARD: the shader left a loop that ran past the guard; the dispatch result is kept.
         loopGuardTripped.store(true, std::memory_order_relaxed);
         std::fprintf(stderr, "[gpu] loop guard: the loop exit at pc 0x%x of shader 0x%llx ran past %u evaluations\n", report.instruction, static_cast<unsigned long long>(report.address), report.bytes);
         std::memset(record.faultBytes().data(), 0, record.faultBytes().size());

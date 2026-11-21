@@ -13,10 +13,6 @@ static constexpr std::size_t ReferenceCountOffset = 0;
 static constexpr std::size_t VectorReferenceCountOffset = 0x30;
 static constexpr int TransactionNotStarted = static_cast<int>(0x80553508);
 
-// Offline PSN: request entry points (API calls, transaction start/readData, factories) fail with
-// SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN, the constant shadPS4/fpPS4 document for this code; parameter
-// bookkeeping succeeds; the audited accessors read the measured offsets and the rest stay
-// unimplemented because a failed request never produces a response.
 
 static void ConstructParameter(void* self);
 static int InitializeParameter(void* self, const std::uint64_t* context, bool argumentsPresent);
@@ -289,16 +285,13 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_12Le
     return HostIteratorNotEqual(self, other);
 }
 
-// Shared vector bodies. A Vector handle is an IntrusivePtr whose object is a body;
-// bodies adopted from a title through the pointer/deleter constructor keep their
-// 32-bit reference count at 0x30, so bodies created here do the same.
 static constexpr std::uint64_t VectorBodyMagic = 0x434e507056656342ULL;
 struct VectorBody {
     std::uint64_t magic;
     void* libContext;
     std::uint8_t reserved[0x20];
     std::int32_t referenceCount;
-    std::int32_t elementKind;  // 1 = IntrusivePtr elements, 2 = String elements
+    std::int32_t elementKind;
     void* elements;
     std::uint64_t size;
     std::uint64_t capacity;
@@ -344,7 +337,6 @@ static VectorBody* VectorBodyFor(IntrusivePtr* self, const std::int32_t elementK
         return body;
     }
     if (body->magic != VectorBodyMagic || body->elementKind != elementKind) {
-        // appending to a title-provided body needs its element layout, which is unknown
         NotImplemented_nid_no_patch(function);
         return nullptr;
     }

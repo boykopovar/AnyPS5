@@ -560,7 +560,6 @@ void GuestAddress(const sockaddr_storage& native, void* output, std::uint32_t* l
     }
     const auto copied = std::min<std::uint32_t>(*length, bytes[0]);
     std::memcpy(output, bytes, copied);
-    *length = copied;
 }
 }
 
@@ -1178,7 +1177,6 @@ bool DatagramQueued(const Socket& socket) {
 #endif
 int UnnamedAddress(void* address, std::uint32_t* length) {
     const unsigned char bytes[16] = {16, GuestUnix};
-    *length = std::min<std::uint32_t>(*length, sizeof(bytes));
     std::memcpy(address, bytes, *length);
     return 0;
 }
@@ -1213,7 +1211,6 @@ int GuestSockets::Stat(int descriptor, FileStat* status) {
     int sendBuffer = 0;
     socklen_t length = sizeof(sendBuffer);
     if (getsockopt(socket->value, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<char*>(&sendBuffer), &length) != 0) sendBuffer = 0;
-    *status = FileStat{};
     if (socket->family == GuestUnix) {
         status->st_dev = NoDevice;
         status->st_ino = inode;
@@ -1253,8 +1250,6 @@ bool GuestSockets::Ready(int descriptor, bool write, std::int64_t* data, bool* e
         socket = found->second;
     }
     if (!write && ReceiveShut(*socket) && !Listening(*socket)) {
-        *data = 0;
-        *eof = true;
         return true;
     }
 #ifdef _WIN32
@@ -1272,8 +1267,6 @@ bool GuestSockets::Ready(int descriptor, bool write, std::int64_t* data, bool* e
     if (::poll(&entry, 1, 0) <= 0) return false;
     if (!write && (entry.revents & POLLRDHUP)) entry.revents |= POLLHUP;
 #endif
-    *eof = (entry.revents & (POLLHUP | POLLERR)) != 0;
-    *data = 0;
     if (write) {
         int size = 0;
         socklen_t length = sizeof(size);
@@ -1283,7 +1276,6 @@ bool GuestSockets::Ready(int descriptor, bool write, std::int64_t* data, bool* e
         if (*data > 0 && ::ioctl(socket->value, SIOCOUTQ, &queued) == 0) *data = std::max<std::int64_t>(0, *data - queued);
 #endif
     } else if (Listening(*socket)) {
-        *data = ListenQueueLength(socket->value);
     } else {
 #ifdef _WIN32
         unsigned long available = 0;
@@ -1301,16 +1293,12 @@ bool GuestSockets::PipeReadState(int descriptor, std::int64_t* data, bool* eof) 
     ACCESS_MASK access = 0;
     PipeLocalInformation pipe{};
     if (!QueryPipe(descriptor, "kevent", access, pipe) || !(access & FILE_READ_DATA)) return false;
-    *data = pipe.readDataAvailable;
-    *eof = pipe.state == PipeClosingState;
 #else
     if (!IsPipe(descriptor, 0) || (::fcntl(descriptor, F_GETFL) & O_ACCMODE) == O_WRONLY) return false;
     pollfd entry{descriptor, POLLIN, 0};
     int available = 0;
     if (::poll(&entry, 1, 0) < 0 || ::ioctl(descriptor, FIONREAD, &available) != 0)
         throw std::runtime_error("kevent: querying pipe descriptor " + std::to_string(descriptor) + " failed");
-    *data = available;
-    *eof = (entry.revents & POLLHUP) != 0;
 #endif
     return true;
 }
@@ -1320,9 +1308,6 @@ bool GuestSockets::PipeWriteState(int descriptor, std::int64_t* data, bool* eof,
     ACCESS_MASK access = 0;
     PipeLocalInformation pipe{};
     if (!QueryPipe(descriptor, "kevent", access, pipe) || !(access & FILE_WRITE_DATA)) return false;
-    *eof = pipe.state == PipeClosingState;
-    *writable = pipe.writeQuotaAvailable >= PipeAtomicBytes;
-    *data = *eof ? 0 : pipe.writeQuotaAvailable;
 #elif defined(__linux__)
     if (!IsPipe(descriptor, 0) || (::fcntl(descriptor, F_GETFL) & O_ACCMODE) == O_RDONLY) return false;
     pollfd entry{descriptor, POLLOUT, 0};
@@ -1330,9 +1315,6 @@ bool GuestSockets::PipeWriteState(int descriptor, std::int64_t* data, bool* eof,
     const int capacity = ::fcntl(descriptor, F_GETPIPE_SZ);
     if (::poll(&entry, 1, 0) < 0 || ::ioctl(descriptor, FIONREAD, &queued) != 0 || capacity < 0)
         throw std::runtime_error("kevent: querying pipe descriptor " + std::to_string(descriptor) + " failed");
-    *eof = (entry.revents & POLLERR) != 0;
-    *writable = (entry.revents & POLLOUT) != 0;
-    *data = *eof ? 0 : std::max<std::int64_t>(0, capacity - queued);
 #elif defined(__APPLE__)
     if (!IsPipe(descriptor, 0) || (::fcntl(descriptor, F_GETFL) & O_ACCMODE) == O_RDONLY) return false;
     char path[MAXPATHLEN];
@@ -1359,9 +1341,6 @@ bool GuestSockets::PipeWriteState(int descriptor, std::int64_t* data, bool* eof,
         const int error = count < 0 ? errno : static_cast<int>(ready.data);
         throw std::runtime_error("kevent: querying pipe descriptor " + std::to_string(descriptor) + " failed, host errno " + std::to_string(error));
     }
-    *eof = count > 0 && (ready.flags & EV_EOF) != 0;
-    *writable = count > 0 && !*eof;
-    *data = *writable ? ready.data : 0;
 #else
     if (!IsPipe(descriptor, 0) || (::fcntl(descriptor, F_GETFL) & O_ACCMODE) == O_RDONLY) return false;
     NotImplemented_nid_no_patch("kevent: EVFILT_WRITE on a pipe on macOS");

@@ -157,7 +157,6 @@ void VulkanDevice::PresentPixels(std::uint32_t width, std::uint32_t height, std:
     APS5_LOG_OUT("PresentPixels width=%u height=%u pixels=%zu expected=%llu", width, height, pixels.size(), static_cast<unsigned long long>(width) * height * 4u);
     require(width != 0 && height != 0 && width <= 16384 && height <= 16384, "invalid display image extent");
     require(pixels.size() == static_cast<std::uint64_t>(width) * height * 4, "invalid display pixel buffer size");
-    // Debug aid: APS5_DUMP_FRAMES=<n> saves the first n presented frames as frame_<index>.bmp.
     static const int dumpLimit = [] {
         const char* value = std::getenv("APS5_DUMP_FRAMES");
         return value ? std::atoi(value) : 0;
@@ -168,7 +167,6 @@ void VulkanDevice::PresentPixels(std::uint32_t width, std::uint32_t height, std:
         std::snprintf(name, sizeof(name), "frame_%03d.bmp", dumped++);
         frameDumpOutput.Write_nid_no_patch(name, width, height, pixels);
     }
-    // Tests and tools present pixels synchronously; the game path splits the steps (see Driver::Present).
     state->presentingGuestFrame = false;
     if (!present(width, height, true, pixels)) return;
     FinishPresent();
@@ -177,8 +175,6 @@ void VulkanDevice::PresentPixels(std::uint32_t width, std::uint32_t height, std:
 
 namespace {
 
-// APS5_DUMP_SCALE=<n> (default 4) keeps every n-th pixel in each direction, so long runs of 4K
-// frames stay small.
 std::uint32_t DumpScale() {
     static const std::uint32_t scale = [] {
         const char* value = std::getenv("APS5_DUMP_SCALE");
@@ -282,17 +278,11 @@ std::vector<std::byte> DisplayPixels(const DisplayBuffer& buffer, const std::opt
     return pixels;
 }
 
-// Debug aid: APS5_NO_RESIDENT_PRESENT=1 always presents through guest memory.
 bool NoResidentPresent() {
     static const bool no = std::getenv("APS5_NO_RESIDENT_PRESENT") != nullptr;
     return no;
 }
 
-// 64 KiB blocks the CPU wrote since the image last matched guest memory would be shown stale (the
-// write-back keeps the CPU's bytes for them): Refresh merges them into the image first, as a sampled
-// texture of the image would (see cachedTexture). The uncached walk: the collect memo is per worker
-// packet, so on this thread a memoized answer could miss a CPU write that landed after a worker's
-// walk of the same range.
 bool RefreshPresented(Graphics::StorageTexture& resident, const DisplayBuffer& buffer, std::uint32_t layer) {
     static const bool noAdopt = std::getenv("APS5_NO_PRESENT_EPOCH") != nullptr;
     const auto bytes = DisplayBufferSize(buffer);
@@ -338,9 +328,6 @@ PlaneSource OverlayPlaneSource(const Graphics::Context& context, const DisplayBu
     return source;
 }
 
-// Debug aid: APS5_DUMP_FRAMES=<n> saves the first n presented display buffers as frame_<index>.bmp,
-// read back by the blit's own submission and written after its fence (RetireSlot), or with
-// APS5_NO_GPU_DUMP=1 decoded from the tiled guest buffer on the CPU, as before.
 struct FrameDumps {
     int limit;
     bool cpu;
@@ -410,10 +397,6 @@ bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer, const Displ
         return true;
     }
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    // The display buffer is usually a resident render target whose results are still on the GPU: it
-    // is blitted from that image, which skips the write-back retile, the 33 MB read of guest memory,
-    // the upload and the detile dispatch. The deferred write-back stays pending as for any storage
-    // image.
     static std::uint64_t residentPresents = 0, refreshedPresents = 0, notPending = 0, unsuitable = 0, gpuDumps = 0;
     static auto lastReport = std::chrono::steady_clock::now();
     const auto bytes = DisplayBufferSize(buffer);
@@ -468,7 +451,6 @@ bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer, const Displ
     }
     const auto decoded = buffer.tilingMode != DisplayTilingGcn || resident != nullptr ? std::vector<std::byte>{} : passthrough ? ReadDisplayBufferTexels(buffer) : ReadDisplayBuffer(buffer);
     if (!present(buffer.width, buffer.height, true, decoded, cleared || !decoded.empty() ? nullptr : &buffer, resident, filter, dumpFrame || (screenshot && !cpuScreenshot), convert, cleared ? &uniform : nullptr, layer, passthrough, plane)) {
-        // A dropped frame (swapchain out of date) keeps the dump numbering contiguous.
         if (dumpFrame) --dumps.dumped;
         if (screenshot) Screenshot::Request();
         return false;
@@ -493,7 +475,6 @@ bool VulkanDevice::AcquireImage() {
     APS5_LOG_CHARS_OUT_DEBUG("acquire fence reset");
     std::uint32_t index = 0;
     timing.Mark("fence_reset");
-    // An out-of-date swapchain (the window changed) drops this frame; the next Resize recreates it.
     const auto acquired = state->DeviceFunction<PFN_vkAcquireNextImageKHR>("vkAcquireNextImageKHR")(state->device, state->swapchain, AgcDriver::SwapchainAcquireTimeoutNs, VK_NULL_HANDLE, state->acquireFence, &index);
     if (acquired == VK_ERROR_OUT_OF_DATE_KHR) {
         state->extent = {0, 0};

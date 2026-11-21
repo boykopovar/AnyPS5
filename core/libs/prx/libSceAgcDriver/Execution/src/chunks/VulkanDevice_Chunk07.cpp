@@ -117,8 +117,6 @@ void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParamete
         require(shader.program != nullptr, "missing compiled shader");
         ShaderRecompiler::RuntimeAbi::RequireVersion(shader.program->runtimeAbiVersion);
     }
-    // Two stdout lines per draw cost ~1.3 ms per frame of the queue-0 worker (part of it under the
-    // GPU mutex); APS5_TRACE_DRAWS=1 restores them.
     static const bool traceDraws = std::getenv("APS5_TRACE_DRAWS") != nullptr;
     if (traceDraws) APS5_LOG_OUT("VulkanDevice::Draw indices=%u instances=%u indexSize=%u address=0x%llx shaders=%zu colorTarget=%u", draw.indexCount, draw.instanceCount, draw.indexSize, static_cast<unsigned long long>(draw.indexAddress), shaders.size(), static_cast<unsigned>(graphics.hasColorTarget));
     const auto context = graphicsContext();
@@ -132,18 +130,12 @@ bool VulkanDevice::DrawInputsInPlace() const {
 
 namespace {
 
-// The resource cache serves dispatches unless disabled; Revalidate proves a hit by texture identity,
-// which needs the texture caches: without them every lookup makes a fresh object, so a hit could
-// never validate and would only upload everything twice.
 bool ResourceCacheEnabled() {
     static const bool noResourceCache = std::getenv("APS5_NO_RESOURCE_CACHE") != nullptr;
     static const bool noTextureCache = std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
     return !noResourceCache && !noTextureCache;
 }
 
-// Compute templates serve dispatches whose ShaderData/FlattenedSrt words differ (the words leave
-// the key; a hit refreshes the template's data buffers with the dispatch's words at the record,
-// ShaderResources::RefreshData). APS5_NO_TEMPLATE_DATA_REFRESH=1 keys the words as before.
 bool TemplateDataRefresh() {
     static const bool enabled = std::getenv("APS5_NO_TEMPLATE_DATA_REFRESH") == nullptr;
     return enabled;
@@ -162,9 +154,6 @@ std::size_t DispatchMoveBytes() {
     return bytes;
 }
 
-// The content key of a compute stage, naming the device: the cache is process-wide and the driver
-// replaces the headless device with the windowed one while workers may still use the old one, so
-// the key names the device that built the entry (its descriptor set and pooled buffers belong to it).
 ResourceCache::Key DispatchContentKey(const Graphics::CompiledShader& shader, VkDevice device, bool movable = true) {
     auto key = Graphics::ShaderResources::ContentKey(shader, !TemplateDataRefresh(), movable && DispatchMove());
     const auto deviceHandle = reinterpret_cast<std::uint64_t>(device);
@@ -173,8 +162,6 @@ ResourceCache::Key DispatchContentKey(const Graphics::CompiledShader& shader, Vk
     return key;
 }
 
-// The phases of VulkanDevice::dispatch (APS5_PROFILE_DRAW), followed by one row per image lookup
-// outcome (Graphics::LookupOutcomes) on the [indirect] line.
 enum DispatchPhase : std::size_t { PhaseReap, PhaseResources, PhaseResourcesInsert, PhaseResourcesComplete, PhaseResourcesImages, PhaseResourcesUpload, PhaseResourcesDescriptors, PhaseResourcesOther, PhaseResourcesALocked, PhaseResourcesAddress, PhaseResourcesAUnlocked, PhaseResourcesRevalidate, PhaseResourcesFullBuild, PhaseResourcesHookWaits, PhaseProof, PhasePipeline, PhaseDecide, PhaseArgumentRead, PhaseRecordCommands, PhaseRecordKeeps, PhaseRecordDataRefresh, PhaseRecordBind, PhaseRecordMarks, PhaseRecordCompletion, PhaseRecord, PhaseSync, DispatchPhaseCount };
 constexpr std::array<const char*, DispatchPhaseCount> DispatchPhaseNames{"reap", "resources", "resources: cache insert", "resources: complete (wall)", "resources: B images", "resources: B upload", "resources: B descriptors", "resources: B bda+other", "resources: A locked (bda)", "resources: address bindings (bda)", "resources A (unlocked)", "resources: revalidate", "resources: full build (locked)", "resources: hook waits", "proof", "pipeline", "decide", "argument read", "record: commands", "record: keeps", "record: data refresh", "record: bind+dispatch", "record: marks", "record: completion", "record", "sync"};
 constexpr std::size_t DispatchRows = static_cast<std::size_t>(DispatchPhaseCount) + static_cast<std::size_t>(Graphics::LookupOutcomes::Count);
@@ -192,20 +179,14 @@ const char* DispatchRowName(std::size_t row) {
 }
 
 struct PreparedDispatch {
-    // Stage A done; stage B (Complete) runs in the dispatch under the mutex. Null when the resource
-    // cache held the key's object at prepare time: the dispatch revalidates `cached` instead.
     std::shared_ptr<Graphics::ShaderResources> resources;
     std::shared_ptr<Graphics::ShaderResources> cached;
     ResourceCache::Key key;
     bool exact = false;
-    // APS5_PROFILE_DRAW: stage A's time, added to the [dispatch] phase totals by the dispatch, and
-    // the prepare's parts for the driver's 'prepare:' rows (PreparePhase order).
     double prepareMs = 0;
     std::uint64_t dispatchThreads = 0;
     enum PreparePhase : std::size_t { PrepareKey, PrepareFind, PreparePrecollect, PreparePresync, PrepareStageA, PreparePhaseCount };
     std::array<double, PreparePhaseCount> phaseMs{};
-    // The stage-A pre-sync (see PrepareDispatch): the newest recorder serial waited for without the
-    // mutex, whose batches the dispatch reaps under it before stage B (0: nothing waited for).
     std::uint64_t presyncSerial = 0;
     std::shared_ptr<ComputePipelineObjects> objects;
     std::vector<std::uint32_t> describedLayoutKey;
@@ -213,19 +194,15 @@ struct PreparedDispatch {
 
 struct RecipeHit {
     std::shared_ptr<const Recipe> recipe;
-    // The recipe's template and pipeline objects, locked by the pre-check.
     std::shared_ptr<Graphics::ShaderResources> resources;
     std::shared_ptr<ComputePipelineObjects> objects;
-    // The pre-sync's serial (0: nothing waited for), reaped by DispatchRecipe.
     std::uint64_t presyncSerial = 0;
     bool indirect = false;
-    // APS5_PROFILE_DRAW: the pre-check's time (the driver's 'recipe pre-check' row).
     double precheckMs = 0;
 };
 
 namespace {
 
-// APS5_PROFILE_DRAW: the pre-syncs made and the time they waited (unlocked), as [presync] every 10 s.
 struct PresyncCounters {
     std::atomic<std::uint64_t> checked{0};
     std::atomic<std::uint64_t> presyncs{0};
@@ -240,27 +217,21 @@ PresyncCounters& Presyncs() {
     return counters;
 }
 
-// A cached object's Revalidate collects the write watch over its surfaces under the mutex; the
-// walk is made before the lock instead, so those collects are memo hits (as stage A's precollect
-// does for a build). APS5_NO_CACHED_PRECOLLECT=1 leaves the walks under the lock.
 bool CachedPrecollect() {
     static const bool cachedPrecollect = std::getenv("APS5_NO_CACHED_PRECOLLECT") == nullptr;
     return cachedPrecollect;
 }
 
-// APS5_NO_PRESYNC=1 disables the stage-A pre-sync.
 bool NoPresync() {
     static const bool noPresync = std::getenv("APS5_NO_PRESYNC") != nullptr;
     return noPresync;
 }
 
-// Debug aid: APS5_SYNC_DISPATCH=1 waits for every dispatch, as before batching.
 bool SyncEachDispatch() {
     static const bool syncEachDispatch = std::getenv("APS5_SYNC_DISPATCH") != nullptr;
     return syncEachDispatch;
 }
 
-// Debug aid: APS5_TRACE_DISPATCH_IO prints every dispatch's resources (after write-back when synced).
 bool TraceDispatchIo() {
     static const bool traceIo = std::getenv("APS5_TRACE_DISPATCH_IO") != nullptr;
     return traceIo;
@@ -328,18 +299,12 @@ void WatchMemory(std::uint64_t programAddress) {
     std::fprintf(stderr, "[watch] loop guard tripped: %zu contents written (watch_*.bin, oldest first)\n", history.size());
 }
 
-// The [dispatch] phases for indirect dispatches alone, every 10 s on an [indirect] line: what the
-// 'indirect' GpuMutex hold ([lock] line) spends its time on inside the device call (the label
-// record before it is timed in the driver, [labels] line), with the longest hold seen and the
-// copied-writer lists the indirect decision scans. All under the mutex, like the rest.
 struct IndirectHold {
     std::array<double, DispatchRows> phaseMs{};
-    // Rows with a count (the cache insert's evictions, the image lookups by outcome).
     std::array<std::uint64_t, DispatchRows> phaseCounts{};
     std::uint64_t count = 0;
     double totalMs = 0;
     double maxMs = 0;
-    // The phases and lookup outcomes of the longest call, so the maximum is named.
     std::string maxPhases;
     std::uint64_t writersScanned = 0;
     std::uint64_t drawWritersScanned = 0;
@@ -347,10 +312,6 @@ struct IndirectHold {
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
 
-// The running totals of the device call (APS5_PROFILE_DRAW), shared by dispatch, DispatchRecipe
-// and recordDispatch; mutated under GuestMemory::GpuMutex like the calls themselves. The
-// [rescache] and [vk] counters: template hits by outcome, vkGetDeviceProcAddr lookups made inside
-// the device call (this thread's), the pre-dispatch barriers recorded or skipped (Recorder::Commands).
 struct DispatchCounters {
     std::array<double, DispatchRows> phaseTotals{};
     std::uint64_t profiledDispatches = 0;
@@ -366,12 +327,8 @@ DispatchCounters& Dispatches() {
     return counters;
 }
 
-// The [recipe] line (APS5_PROFILE_DRAW, every 10 s), dispatch and indirect rows apart. The
-// pre-check runs without the mutex, so the counters are atomic.
 enum RecipeMiss : std::size_t { MissNoRecipe, MissDevice, MissTemplateGone, MissObjectsGone, MissNotRecordable, RecipeMissCount };
 constexpr std::array<const char*, RecipeMissCount> RecipeMissNames{"no recipe", "device", "template gone", "objects gone", "not recordable"};
-// The draw rows name the miss reasons of DrawWithRecipe (a target or a pipeline gone is the
-// objects-gone slot).
 constexpr std::array<const char*, RecipeMissCount> DrawRecipeMissNames{"no recipe", "device", "template gone", "targets gone", "not recordable"};
 constexpr std::array<const char*, static_cast<std::size_t>(Graphics::ShaderResources::ProofPath::Count)> ProofPathNames{"fast", "T1 refreshed", "full"};
 constexpr std::array<const char*, static_cast<std::size_t>(Graphics::ShaderResources::ProofFailure::Count)> ProofFailureNames{"none", "imports", "evicted", "pending", "changed", "keys", "other"};
@@ -487,9 +444,6 @@ void reportRecipes() {
     }
 }
 
-// The phases of one device call (APS5_PROFILE_DRAW): this call's rows (formatted only for a slow
-// call or a new [indirect] maximum) and the running totals of Dispatches(); `indirect` charges the
-// [indirect] rows too (cleared when a CPU-resolved indirect dispatch continues as a direct one).
 struct DispatchTimer {
     bool profile;
     bool indirect;
@@ -512,11 +466,9 @@ struct DispatchTimer {
         const auto ms = std::chrono::duration<double, std::milli>(now - phaseStart).count();
         add(which, ms);
         phaseStart = now;
-        // Slow phases are reported as they finish, so a dispatch that never completes shows where it is.
         if (ms > 1000) AgcDriver::ProfilePrint_nid_no_patch("[dispatch] %s took %.0f ms (%zu words, program 0x%llx)\n", DispatchRowName(which), ms, spirvWords, static_cast<unsigned long long>(programAddress));
     }
     void restart() { phaseStart = std::chrono::steady_clock::now(); }
-    // The call's phases as text, only when wanted: a slow call, or a new [indirect] maximum.
     std::string formatCall() const {
         std::string text;
         char row[96];
@@ -527,7 +479,6 @@ struct DispatchTimer {
         }
         return text;
     }
-    // Every 1000 profiled dispatches: the totals per phase.
     static void countDispatch(bool profile) {
         if (!profile) return;
         auto& d = Dispatches();
@@ -538,8 +489,6 @@ struct DispatchTimer {
         }
         AgcDriver::ProfilePrint_nid_no_patch("[dispatch] %llu dispatches, phase totals:%s\n", static_cast<unsigned long long>(d.profiledDispatches), report.c_str());
     }
-    // The call's end: the proc lookups it made, the slow-call report, the [indirect] hold
-    // accounting (`indirectHold`: the call was an indirect dispatch, CPU-resolved or not) and line.
     void finish(std::uint64_t lookupsBefore, const char* groupsText, bool indirectHold) const {
         if (!profile) return;
         auto& d = Dispatches();
@@ -588,21 +537,15 @@ struct RecordedDispatch {
     VkShaderStageFlags pushStages;
     const std::array<std::byte, Graphics::PipelinePushConstantBytes>* pushBytes;
     std::uint32_t x, y, z;
-    // The DISPATCH_INDIRECT arguments (0: direct) and their host import when the GPU reads them.
     std::uint64_t arguments;
     const Graphics::HostImport* argumentImport;
     std::uint64_t programAddress;
-    // What decides the template's data refresh: None (the object was built by this call), Words
-    // (a template hit: RefreshData compares every buffer's words), Hash (a recipe: the template's
-    // DataWordsHash against the recipe's, RefreshData only when they differ).
     enum class DataRefresh { None, Words, Hash };
     DataRefresh dataRefresh;
     std::uint64_t dataWordsHash;
-    // A template hit's revalidate time, charged to the [rescache] refresh accounting.
     double revalidateMs;
     DispatchTimer* timer;
     std::optional<std::pair<std::uint64_t, std::size_t>> htileClear;
-    // Whether the data refresh recorded anything.
     bool refreshed = false;
     bool resourceKeyMatched = false;
     std::shared_ptr<Graphics::ShaderResources::DrawBindings> bindings{};
@@ -684,8 +627,6 @@ RecipeOutcome VulkanDevice::DrawFromRecipe(const Graphics::State& graphics, cons
     PerformanceTimer timing("Vulkan.DrawFromRecipe");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto& counters = Recipes().kinds[static_cast<std::size_t>(RecipeKind::Draw)];
-    // R10: the recipe names the device it was built on (the driver may have replaced the device
-    // between the hit and the lock).
     if (recipe->device != state->device) {
         counters.rebuildDevice.fetch_add(1, std::memory_order_relaxed);
         return RecipeOutcome::Rebuild;
@@ -725,8 +666,6 @@ std::uint64_t VulkanDevice::presync(std::span<const Graphics::PresyncSurface> su
     std::uint64_t serial = 0;
     bool texelsPending = false;
     if (overlaps) {
-        // No reap here (SubmitAndEpoch's would run completions, which a compute worker must not do
-        // on queue 0's behalf, see SubmitRecorded): the dispatch reaps after the wait.
         std::lock_guard lock(GuestMemory::GpuMutex());
         if (state->recorder) {
             bool open = false;
@@ -767,7 +706,6 @@ VulkanDevice::PresyncStatistics VulkanDevice::PresyncCounts() {
 
 std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t dispatchThreads, std::uint64_t programAddress, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear, const std::vector<ShaderRecompiler::RegisteredImageView>* registeredImageViews) {
     ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
-    // APS5_LOCKED_BUILD=1: the whole build under the mutex, as before the split.
     static const bool lockedBuild = std::getenv("APS5_LOCKED_BUILD") != nullptr;
     if (lockedBuild || shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) return nullptr;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -776,9 +714,6 @@ std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderReco
     const auto context = graphicsContext();
     auto prepared = std::make_shared<PreparedDispatch>();
     prepared->dispatchThreads = dispatchThreads;
-    // A cached build (the map locks itself) is revalidated under the mutex by the dispatch, which
-    // looks it up again by the key made here; the object stays local, only its surfaces matter
-    // below. Anything inserted between here and the dispatch is simply replaced by this build.
     std::shared_ptr<Graphics::ShaderResources> cached;
     auto phaseStart = start;
     const auto phase = [&](PreparedDispatch::PreparePhase which) {
@@ -811,16 +746,6 @@ std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderReco
         cached->PrecollectSurfaces();
         phase(PreparedDispatch::PreparePrecollect);
     }
-    // The pre-sync. Stage B's image lookups that read guest memory on the CPU (PresyncSurfaces)
-    // wait, through the flush hook and under the mutex, for the recorded work writing those
-    // surfaces: every other worker queues behind that wait. So the wait is made here instead,
-    // without the mutex: the lock-free pending-write snapshot says whether any recorded batch
-    // writes a surface; if so the mutex is taken only long enough to learn the newest such batch
-    // (submitting the open one when it is that batch), the timeline wait runs unlocked, and the
-    // dispatch reaps those batches at its own lock so the hook then finds nothing pending. Work
-    // noted in between falls back to the locked wait as before. A cached object's Revalidate
-    // repeats the same lookups when its stamps fail, so it gets the same pre-sync. Needs timeline
-    // semaphores.
     if (!NoPresync() && CanWaitUnlocked()) {
         Presyncs().checked.fetch_add(1, std::memory_order_relaxed);
         const auto surfaces = cached != nullptr ? cached->PresyncSurfaces() : prepared->resources->PresyncSurfaces();

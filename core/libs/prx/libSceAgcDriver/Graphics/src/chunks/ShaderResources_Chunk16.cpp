@@ -210,7 +210,6 @@ void ShaderResources::Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoi
 }
 
 namespace {
-// Debug aid: APS5_GPU_NO_WRITEBACK=1 keeps GPU results out of guest memory.
 bool SkipWriteBack() {
     static const bool skip = std::getenv("APS5_GPU_NO_WRITEBACK") != nullptr;
     return skip;
@@ -237,9 +236,6 @@ void ShaderResources::WriteBack() {
 
 void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     if (bda != nullptr && recorder.Device() == context.device) bda->NoteUse(recorder.OpenSerial());
-    // The ranges this use reads in place through their host imports (read-only and written elements
-    // alike, and an address-based build's whole leased heaps), before the writes: a CPU store into
-    // one of them (the copy HLE) must not land before the recorded work read it.
     static const bool readOnlyLeaseSkip = std::getenv("APS5_NO_READ_ONLY_LEASE_SKIP") == nullptr;
     const auto kind = !guestMemory.HoldsLease() ? Recorder::ReadKind::DispatchElement : readOnlyLeaseSkip && usesBda && bdaReadOnly ? Recorder::ReadKind::AddressBasedReadOnly : Recorder::ReadKind::AddressBased;
     if (auto split = guestMemory.SplitInPlaceReads()) {
@@ -255,17 +251,12 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
         storageTextures[index]->MarkDirty();
         static_cast<void>(DepthSurfaceStoreBack(context, *storageTextures[index]));
     }
-    // Written sub-ranges of buffers the GPU copied out of a host import go back into it by the GPU,
-    // recorded here after the work: those regions then need no CPU write-back (HasCopiedWrites),
-    // and the note and mark below cover them like direct writes.
     if (inRun != nullptr && recorder.RunOpen() && guestMemory.HasGpuCopies()) {
         recorder.AfterRun([inRun](Recorder& after) { inRun->guestMemory.RecordCopyBacks(after); });
         guestMemory.MarkStagedWrites();
     } else {
         guestMemory.RecordCopyBacks(recorder);
     }
-    // Only the written elements' ranges (AddWritable): a read-only element is neither noted here
-    // nor marked as a direct write, so CPU reads of its memory never wait for this work.
     recorder.NotePendingWrites(guestMemory.Writes());
     if (usesBda && !bdaReadOnly) {
         std::vector<std::pair<std::uint64_t, std::uint64_t>> reachable;
@@ -276,8 +267,6 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     guestMemory.NoteCarriedShadows(recorder);
     if (!BuildProfiled()) return;
     auto& counters = BufferWrites();
-    // Recorded uses only (dispatches and recorded draws): a synchronous draw writes back in
-    // WriteBack() and publishes no pending writes, so it has no notes to skip.
     counters.notesSkipped.fetch_add(readOnlyBuffers, std::memory_order_relaxed);
     const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     auto last = counters.lastReport.load();

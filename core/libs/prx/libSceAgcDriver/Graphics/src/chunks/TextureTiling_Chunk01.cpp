@@ -238,7 +238,6 @@ void FillTiledMipLayout(std::span<TileMipLayout> mips, TextureTileMode tileMode,
         mip.blocksPerRow = paddedWidth / block.blockWidth;
         mip.pitchBytes = paddedWidth * bytesPerElement;
         mip.tiledSize = static_cast<std::uint64_t>(paddedWidth) * paddedHeight * bytesPerElement;
-        // The detiler writes linear rows at pitchBytes, so the region spans whole padded rows.
         mip.linearSize = static_cast<std::uint64_t>(mip.pitchBytes) * mip.height;
         mip.tail = false;
         mip.tailX = 0;
@@ -267,7 +266,6 @@ void FillTiledMipLayout(std::span<TileMipLayout> mips, TextureTileMode tileMode,
         mips[level].linearOffset = offset;
         offset += mips[level].tiledSize;
     }
-    // Tail mips share one tiled block but each needs its own linear region, placed after the chain.
     std::uint64_t linearCursor = 0;
     for (auto level = std::uint32_t{0}; level < firstTailLevel; ++level) linearCursor = std::max(linearCursor, mips[level].linearOffset + mips[level].linearSize);
     linearCursor = std::max(linearCursor, offset);
@@ -324,7 +322,6 @@ std::span<const TileMipLayout> ComputeMipLayoutInto(MipLayoutStorage& storage, T
 }
 
 std::array<std::uint32_t, 3> ThickBlockExtent(TextureTileMode tileMode, std::uint32_t bytesPerElement) {
-    // addrlib Block4K_Log2_3d / Block64K_Log2_3d.
     constexpr std::uint8_t thick4KB[5][3] = {{4, 4, 4}, {3, 4, 4}, {3, 4, 3}, {3, 3, 3}, {2, 3, 3}};
     constexpr std::uint8_t thick64KB[5][3] = {{6, 5, 5}, {5, 5, 5}, {5, 5, 4}, {5, 4, 4}, {4, 4, 4}};
     Require(std::has_single_bit(bytesPerElement) && bytesPerElement <= 16u, "unsupported bytes per element for thick texture geometry");

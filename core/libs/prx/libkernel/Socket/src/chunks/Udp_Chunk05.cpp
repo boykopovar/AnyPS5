@@ -560,7 +560,6 @@ void GuestAddress(const sockaddr_storage& native, void* output, std::uint32_t* l
     }
     const auto copied = std::min<std::uint32_t>(*length, bytes[0]);
     std::memcpy(output, bytes, copied);
-    *length = copied;
 }
 }
 

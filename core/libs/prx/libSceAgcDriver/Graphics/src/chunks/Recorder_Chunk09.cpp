@@ -98,10 +98,7 @@ bool Recorder::noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel
     open->writeValues.push_back(static_cast<std::int16_t>(value));
     open->writeWords.push_back(word);
     if (!ownLabel) markOverwritten(address, end);
-    // A poller waiting on this range learns that the open batch may now hold its producer.
     if (activeRecorder == this) writeGeneration.fetch_add(1, std::memory_order_release);
-    // Consecutive dispatches write the same output buffers: a range the snapshot already contains
-    // leaves the published union unchanged, so the O(N log N) rebuild is skipped.
     if (SnapshotCovers(address, end)) {
         ++snapshotCovered;
         return false;
@@ -119,9 +116,6 @@ void Recorder::noteWriteOn(Batch& batch, std::uint64_t address, std::size_t byte
         std::atomic_thread_fence(std::memory_order_seq_cst);
         return;
     }
-    // An in-flight batch: its range joins the snapshot at once (the completion that stores it runs
-    // when the batch finishes, and the hook must sync for a CPU read until then). The generation
-    // moves as well, so a poller re-consults the label table for a completion label.
     batch.writes.emplace_back(address, address + bytes);
     batch.writeNotes.push_back(++writeNoteCount);
     if (published != nullptr && !SnapshotCovers(published.get(), address, address + bytes)) published = nullptr;
@@ -139,7 +133,6 @@ void Recorder::noteWriteOn(Batch& batch, std::uint64_t address, std::size_t byte
 void Recorder::markOverwritten(std::uint64_t address, std::uint64_t end) {
     if (recordedLabels.load(std::memory_order_relaxed) == 0 && recordedWideLabels.load(std::memory_order_relaxed) == 0) return;
     std::lock_guard tableLock(labelTableMutex);
-    // A dword overlaps the range when it starts before the end and ends after the start.
     for (auto it = labels.lower_bound(address >= 3 ? address - 3 : 0); it != labels.end() && it->first < end; ++it) it->second.overwritten = true;
     for (auto it = wideLabels.lower_bound(address >= wideLabelBytes ? address - wideLabelBytes + 1 : 0); it != wideLabels.end() && it->first < end; ++it) {
         if (it->second.end > address) it->second.overwritten = true;
@@ -150,8 +143,6 @@ void Recorder::NotePendingWrite(std::uint64_t address, std::size_t bytes) {
     if (!noteWrite(address, bytes)) return;
     const std::array ranges{std::pair{address, address + bytes}};
     publishPendingWrites(ranges);
-    // The note precedes this thread's vkQueueSubmit and the label another queue polls for; the
-    // fence makes that order hold without relying on x86 store ordering.
     std::atomic_thread_fence(std::memory_order_seq_cst);
 }
 

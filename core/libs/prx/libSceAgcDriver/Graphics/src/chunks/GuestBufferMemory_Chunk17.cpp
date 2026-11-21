@@ -113,16 +113,10 @@ std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> GuestBufferM
     std::lock_guard lock(state.mutex);
     const bool sameDevice = state.device == context.device;
     for (const auto& region : regions) {
-        // A read-only mirror is as fixed as an import: its bytes and VkBuffer never change while its
-        // A staged region is keyed by its import like one bound in place: the import is the source
-        // of its copy-in and the destination of its copy-back, both recorded per use.
         const bool fixedMirror = region.mirror != nullptr && !region.mirror->writable && !region.mirror->heap;
         const bool staged = region.gpuCopy && region.deviceLocal;
         if (region.direct == nullptr && !fixedMirror && !staged) return std::nullopt;
         if (staged) {
-            // A later use copies from `copySource` again, so it must still be the import serving
-            // the range (the flush before the copy-in can retire and remake imports): the serial
-            // the caller records names the current import, and its buffer must be that one.
             const auto* entry = sameDevice ? findImport(state, region.begin, region.end) : nullptr;
             if (entry == nullptr || entry->buffer != region.copySource) return std::nullopt;
         }
@@ -226,10 +220,6 @@ void GuestBufferMemory::RecordStagingCopies(Recorder& recorder) {
     if (std::any_of(regions.begin(), regions.end(), [](const Region& region) { return region.gpuCopy && region.deviceLocal && !region.copiedBack; })) recorder.CloseRunOwing(this);
     for (auto& region : regions) {
         if (!region.gpuCopy || !region.deviceLocal) continue;
-        // The previous use's copy-back was recorded by its MarkGpuWrites (or never, when that use
-        // threw first: counted); this use records its own after its work, from the shadow this
-        // copy-in refills. The import is the one the region was taken from (the caller checked its
-        // serial), so the copy source still stands.
         if (!region.copiedBack && profile) Copies().stagedLost.fetch_add(1, std::memory_order_relaxed);
         region.copiedBack = false;
         copies.push_back(&region);
@@ -242,7 +232,6 @@ void GuestBufferMemory::RecordStagingCopies(Recorder& recorder) {
 
 std::uint64_t ImageMirrorSerial(const Context& context, std::uint64_t address, std::size_t bytes) {
     if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address || !mirrorsEnabled()) return 0;
-    // A replaced Range expires the mirror (findMirror), and a replacement mirror has a new serial.
     const auto mirror = findMirror(context, address, address + bytes);
     return mirror != nullptr && !mirror->writable ? mirror->serial : 0;
 }
@@ -251,16 +240,12 @@ std::uint64_t HostImportSerial(const Context& context, std::uint64_t address, st
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return 0;
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
-    // An import whose registered range changed must not be reused: reconcile first, as an upload
-    // does (the walk only runs when the registry changed since the last one).
     if (reconcile && GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration) static_cast<void>(refreshImports(context, state, GuestAllocations::GuestAllocationsAcquire_nid_postfix()));
     auto found = state.imports.upper_bound(address);
     if (found == state.imports.begin()) return 0;
     --found;
     auto& entry = found->second;
     if (address < entry.base || address + bytes > entry.base + entry.bytes) return 0;
-    // Serials are handed out on first use: a fresh import starts at 0, so one made after an earlier
-    // import of the same range was dropped can never repeat that import's serial.
     static std::uint64_t serials = 0;
     if (entry.serial == 0) entry.serial = ++serials;
     return entry.serial;

@@ -148,10 +148,6 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
         std::lock_guard lock(state.mutex);
         state.buildFloor = importFloor != 0 ? importFloor : state.useCounter + 1;
     }
-    // Registered ranges to import from. Address-based shaders hold their lease until write-back;
-    // descriptor-only uploads acquire one only when the registry changed or an import must be made
-    // (a lease copies every registered range's shared_ptr under the registry lock), so the guest can
-    // keep managing memory.
     GuestAllocations::Lease acquired;
     const auto importRanges = [&]() -> const GuestAllocations::Lease& {
         if (!lease.empty()) return lease;
@@ -159,11 +155,6 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
         if (acquired.empty()) acquired = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
         return acquired;
     };
-    // Sub-range mirrors were found by UploadPrepare, possibly long before this lock was taken: one
-    // whose Range went meanwhile (the guest reprotected its image) is dropped as findMirror would
-    // have dropped it, and the region takes the import or copy path below instead; a confirmed one
-    // serves the region, so its snapshot goes. (Lease mirrors need no check: the lease pins their
-    // Range.)
     for (auto& region : regions) {
         if (region.mirror == nullptr || !region.subrangeMirror) continue;
         if (region.mirror->range.expired()) {
@@ -189,10 +180,6 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
         }
     }
     if (space != nullptr && context.hostImportAlignment != 0) {
-        // The space's regions were confirmed against the imports when it was built; one check that
-        // none was retired since (a mirror refresh or a flush between the stages can reconcile
-        // them). If one was, every region takes the per-build path below, which re-resolves each
-        // pointer instead of trusting it.
         auto& state = Imports();
         std::lock_guard lock(state.mutex);
         if (importsStale(context, state)) refreshImports(context, state, importRanges());
@@ -202,12 +189,8 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
             dissolveSpace(true);
         }
     }
-    // Regions the GPU copies out of their import (see Region::gpuCopy), recorded together below.
-    // No recorder (tests) keeps them on the CPU path.
     auto* recorder = Recorder::Active();
     std::vector<Region*> gpuCopies;
-    // One clock pair around the loop (an address-based build has ~1200 regions): the [buffers]
-    // 'import lookup' is the loop less the mirror refreshes and the CPU copies, timed apart.
     const auto loopStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     std::uint64_t refreshUs = 0;
     std::uint64_t copyUs = 0;
@@ -222,9 +205,6 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
         region.pending = false;
         const auto bytes = region.end - region.begin;
         if (region.mirror != nullptr) {
-            // A writable sub-range mirror: refreshed here, where waiting for recorded work is allowed.
-            // Read-only mirrors are never written back; a writable one is diffed for this sub-range
-            // at write-back.
             const auto refreshStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
             refreshMirror(*region.mirror, region.begin, bytes);
             if (profile) refreshUs += microsecondsSince(refreshStart);
@@ -234,13 +214,10 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
         if (context.hostImportAlignment != 0) {
             auto& state = Imports();
             std::lock_guard lock(state.mutex);
-            // Imports are made on demand for the registered range around each region.
             if (!importsRefreshed) {
                 if (importsStale(context, state)) refreshImports(context, state, importRanges());
                 importsRefreshed = true;
             }
-            // An import taken by UploadPrepare (or at the lease) is still the registry's unless one
-            // was dropped since.
             const HostImport* entry = region.direct != nullptr && state.epoch == importsEpoch ? region.direct : nullptr;
             region.direct = nullptr;
             if (entry == nullptr) entry = findImport(state, region.begin, region.end);
@@ -273,22 +250,14 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
                 if (!covers(entry)) entry = nullptr;
                 runImport = entry != nullptr;
             }
-            // A staged region (see stagingEligible) is copied out of the import even when aligned;
-            // without a recorder to record the copies it binds in place like any other.
             const bool staged = recorder != nullptr && stagingEligible(region, addressable);
             if (entry != nullptr && !staged && bindableInPlace(HostImportOffset(*entry, region.begin), addressable)) {
                 region.direct = entry;
                 region.runCut = runImport;
                 region.snapshot.clear();
-                // A buffer UploadPrepare made for a GPU copy is not needed: the import serves the
-                // region in place (Descriptor prefers `direct`), and a kept buffer would count as copied.
                 region.buffer.reset();
                 region.deviceLocal = false;
             } else if (entry != nullptr && recorder != nullptr && (staged || gpuCopyEligible(region))) {
-                // Misaligned in the import (or staged): the GPU copies the sub-range out of it. The
-                // handle and base are taken now, under the import lock: a reconcile by the flush
-                // below could retire the entry (the batch opened below keeps a retired import's
-                // buffer alive).
                 copyOnGpu = true;
                 region.deviceLocal = staged;
                 region.copySource = entry->buffer;
@@ -298,10 +267,6 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
             }
         }
         if (region.direct != nullptr) {
-            // The GPU reads this range in place, so storage results pending in it must be stored first
-            // (outside the import lock: the store may import memory itself). The whole registered heaps
-            // an address-based shader maps are exempt (they hold every pending image, and such shaders
-            // do not read texture memory through pointers); APS5_BDA_FLUSH=1 flushes for them too.
             static const bool bdaFlush = std::getenv("APS5_BDA_FLUSH") != nullptr;
             if (!(addressable && region.hostBacked) || bdaFlush) {
                 StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(bytes), nullptr, "imported buffer region");
@@ -312,11 +277,6 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
             continue;
         }
         if (copyOnGpu) {
-            // As for a direct region, storage results pending in the range reach the import before
-            // the copy reads it: the flush is recorded (GPU-direct into the import) ahead of the copy
-            // in the same batch. The batch is opened first so that an import the flush's own
-            // reconcile retires is handed to it (retireImport keeps nothing while the recorder is
-            // idle) and outlives the copy.
             recorder->OpenBatch();
             StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(bytes), nullptr, "copied buffer region");
             region.gpuCopy = true;
@@ -330,8 +290,6 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
             if (bound) continue;
         }
         if (region.deviceLocal) {
-            // The staging shadow UploadPrepare made cannot take the CPU copy (no host mapping): the
-            // region falls back to a host buffer of its own.
             region.buffer.reset();
             region.deviceLocal = false;
         }
@@ -365,7 +323,6 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
         }
         AgcDriver::ProfilePrint_nid_no_patch("[resources] guest upload of %zu regions, %.1f MiB (largest %.1f MiB, copied %.1f MiB, addressable %d) took %.0f ms to finish\n", regions.size(), total / 1048576.0, largest / 1048576.0, copied / 1048576.0, addressable ? 1 : 0, ms);
     }
-    // Debug aid: APS5_TRACE_BIGBUF lists every copied region of at least 1 MiB.
     static const bool traceBig = std::getenv("APS5_TRACE_BIGBUF") != nullptr;
     if (traceBig) {
         for (const auto& region : regions) {
@@ -429,23 +386,18 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
     } else if (written) {
         forgetUploaded(context, region.begin, static_cast<std::size_t>(allocated), usage);
     }
-    // A buffer made by UploadPrepare for a GPU copy that fell back here (its import went) is kept.
     const bool shared = region.buffer == nullptr && !region.hostBacked && !region.writable && !region.sparse && region.bufferEnd == 0 && region.snapshot.size() == bytes;
     if (shared) region.buffer = snapshotCopy(context, region.begin, region.snapshot, usage);
     else if (region.buffer == nullptr) region.buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(allocated), usage);
     const auto readStart = std::chrono::steady_clock::now();
     if (profile) allocateUs.fetch_add(microsecondsSince(allocateStart), std::memory_order_relaxed);
-    // Named for the [hooksync] attribution: the reads below go through the flush hook.
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::BufferUpload);
     if (region.hostBacked || region.writable) {
-        // Only ranges a descriptor may write need the copy the write-back diffs against; the
-        // registered ranges of an address-based shader are read-only to it (AddressRanges).
         if (!region.sparse) {
             GuestMemory::Read(region.begin, region.buffer->Bytes());
             readBytes += region.buffer->Bytes().size();
             if (written) region.uploaded.assign(region.buffer->Bytes().begin(), region.buffer->Bytes().end());
         } else {
-            // `uploaded` holds the backed pieces back to back.
             const auto target = region.buffer->Bytes().first(static_cast<std::size_t>(allocated));
             std::size_t cursor = 0;
             for (const auto& [first, last] : region.backed) {

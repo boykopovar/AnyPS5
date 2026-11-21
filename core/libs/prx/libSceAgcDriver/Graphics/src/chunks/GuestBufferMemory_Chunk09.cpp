@@ -121,26 +121,10 @@ void reportMirrors() {
 #endif
 }
 
-// Deferred lease release. The lease an address-based build takes (AcquireRegistered) is dropped by its
-// write-back, which runs as a completion action when the batch that recorded the work finished; the
-// work is no longer synced as soon as it is recorded (that sync was ~30000 waits per 200 s). A guest
-// thread that unmaps, mprotects or frees a leased allocation finds it pinned in the registry and calls
-// this waiter (with the registry lock released, see GuestAllocationsRequireUnpinned): under the device
-// lock it submits the recorder and finishes its batches up to the newest one that was recorded with a
-// lease (CountLeaseOutcome notes that serial); the completions release the leases, later batches stay
-// in flight, and the registry rescans. A lease held by a build in progress belongs to a worker holding
-// the device lock, so the waiter waits for that worker first; once it holds the lock every lease of
-// recorded work is in a batch. A lease whose batch was not noted (the record threw between the keep
-// and the note) is covered by draining the recorder when the noted serial is already finished. The
-// waiter yields instead when its own thread holds the device lock (a driver thread mutating the
-// registry mid-packet, as the plain spin did) and reports whether it finished any work.
 struct LeaseState {
     AgcDriver::Mutex mutex;
     LeaseStats stats;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
-    // Under GuestMemory::GpuMutex: the recorder whose batches hold leases (serials restart with a
-    // replaced device's recorder), the serial of its newest batch recorded with a lease, and the
-    // newest one a waiter finished.
     const Recorder* leaseRecorder = nullptr;
     std::uint64_t newestLeaseSerial = 0;
     std::uint64_t finishedLeaseSerial = 0;
@@ -154,9 +138,6 @@ LeaseState& Leases() {
     return state;
 }
 
-// APS5_PROFILE_DRAW: AddSnapshot's consistency compares of a captured region against the region
-// serving it, made and skipped (see AddSnapshot); printed in the [address-sync] line. Atomic: the
-// unlocked stage A of descriptor builds adds snapshots too.
 struct SnapshotStats {
     std::atomic<std::uint64_t> checked{0};
     std::atomic<std::uint64_t> skipped{0};
@@ -174,10 +155,6 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
     bool drained = false;
     bool retiredImport = false;
     bool droppedAddressSpace = false;
-    // A range pinned only by the cached address space is released by dropping the cache's
-    // reference: no GPU wait, no device lock (the mutating thread may be a driver thread holding
-    // it). The registry rescans; a range still pinned by a build or a batch holding the space comes
-    // back here and finishes lease batches below.
     if (auto dropped = Spaces().current.exchange(nullptr); dropped != nullptr) {
         Spaces().droppedByWaiter.store(true, std::memory_order_relaxed);
         Spaces().waiterDrops.fetch_add(1, std::memory_order_relaxed);
@@ -344,8 +321,6 @@ void CountLeaseOutcome(bool synced, std::uint64_t batchSerial, bool writes) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto& state = Leases();
     if (!synced) {
-        // Serials grow with the submissions, so the newest noted one covers every earlier lease batch
-        // of the same recorder.
         GuestMemory::AssertGpuLockHeld("CountLeaseOutcome");
         if (const auto* recorder = Recorder::Active(); recorder != state.leaseRecorder) {
             state.leaseRecorder = recorder;
@@ -363,9 +338,6 @@ void CountLeaseOutcome(bool synced, std::uint64_t batchSerial, bool writes) {
     ++(synced ? state.stats.synced : state.stats.deferred);
     if (writes) ++state.stats.writing;
     if (!profile) return;
-    // APS5_PROFILE_DRAW: the leases (dispatches and draws) deferred and synced, the guest's
-    // pin-contention waits and the BDA table cache, every 10 s (cumulative counts, like the
-    // [recorder] line's), printed by whichever path counts a lease.
     const auto now = std::chrono::steady_clock::now();
     if (now - state.lastReport < std::chrono::seconds(10)) return;
     state.lastReport = now;
@@ -625,7 +597,6 @@ void runImportProbe(const Context& context, std::uint64_t base, std::uint64_t by
         if (!collect(probe.writtenAfterSecondSubmit)) return "the collect after the second submission";
         if (const char* step = execute(commands[1])) return step;
         if (!collect(probe.writtenAfterFill)) return "the collect after the fill";
-        *reinterpret_cast<volatile std::uint8_t*>(base) = 2;
         if (!collect(probe.writtenByCpu)) return "the collect after a CPU store";
         for (std::uint64_t offset = 0; offset < bytes; offset += 4096) reinterpret_cast<volatile std::uint8_t*>(base)[offset] = 4;
         if (const char* step = execute(commands[2])) return step;

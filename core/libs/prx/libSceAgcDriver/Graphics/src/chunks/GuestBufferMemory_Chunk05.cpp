@@ -211,9 +211,6 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     auto first = state.imports.lower_bound(base);
     if (first != state.imports.begin() && std::prev(first)->second.base + std::prev(first)->second.bytes > base) --first;
     std::uint64_t replaced = 0;
-    // A join may replace imports this build already looked up: it runs before any region confirms an import
-    // (UploadFinish's pre-pass re-resolves every pointer after it), and a retired import stays alive through the
-    // hold (KeepThroughHold). Refusing it there would keep the run copied for good.
     const auto held = [&](const HostImport& entry) {
         if (joined || !pointerHeld(state, entry)) return false;
         const bool expandedWindow = run.ranges.size() == 1 && entry.ranges.size() == 1 && entry.range == run.ranges.front() && base <= entry.base && base + bytes >= entry.base + entry.bytes && bytes > entry.bytes;
@@ -233,7 +230,6 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     auto readyHeld = std::numeric_limits<std::uint64_t>::max();
     const auto evictable = evict && live + bytes > budget ? evictableBytes(state, base, base + bytes, ready, readyHeld) * (immediate ? 1 : 0) : 0;
     if (live + bytes > budget + evictable) {
-        // A refused import turns every later use of the range into CPU copies, so say so.
         static auto lastReport = std::chrono::steady_clock::now() - std::chrono::seconds(60);
         ++counts.refused;
         counts.refusedBytes += bytes;
@@ -282,7 +278,6 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         return nullptr;
     };
 #ifdef _WIN32
-    // Drivers pin imported pages, so every page must be committed and accessible.
     const GuestArena::HostImportAccess importAccess(reinterpret_cast<void*>(base), static_cast<std::size_t>(bytes));
     const auto pages = importPages(base, bytes);
     if (!pages.committed) return failedImport();
@@ -479,6 +474,5 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     return &placed->second;
 }
 
-// The readable registered range containing [begin, end), or null.
 }
 }

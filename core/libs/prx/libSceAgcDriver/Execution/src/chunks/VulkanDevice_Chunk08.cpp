@@ -131,9 +131,6 @@ std::shared_ptr<RecipeHit> VulkanDevice::PrepareRecipe(const std::shared_ptr<con
     hit->objects = recipe->objects.lock();
     if (hit->objects == nullptr) return miss(MissObjectsGone);
     if (CachedPrecollect()) hit->resources->PrecollectSurfaces();
-    // The pre-sync as PrepareDispatch makes it, over the recipe's surface list while the import
-    // table still has the identity the list was computed under (a surface is CPU-read only while
-    // its memory has no import), else over the template's current list.
     if (!NoPresync() && CanWaitUnlocked()) {
         Presyncs().checked.fetch_add(1, std::memory_order_relaxed);
         if (Graphics::HostImportsUnchanged(graphicsContext(), recipe->presyncProof)) {
@@ -167,17 +164,6 @@ void VulkanDevice::decideIndirect(RecordedDispatch& record, IndirectOutcome& out
     const auto& context = *record.context;
     const auto arguments = record.arguments;
     const bool threadDimensions = record.threadGroup != std::array<std::uint32_t, 3>{};
-    // Decided here, after the resource build (which may retire imports and wait for recorded
-    // work) and before the dispatch itself is recorded, so the import cannot be dropped before
-    // the record. The build already recorded the copy-ins of its misaligned and staged regions
-    // (GuestBufferMemory::recordGpuCopies), so the CPU fallback's sync below drains them in one
-    // batch and records the dispatch with its copy-backs in the next; the completions the reap
-    // between them runs store to the CPU outside host imports (copied regions' write-backs) or
-    // onto label dwords, so none lands inside a copied range for the copy-back to roll back.
-    // A label over the argument dwords (a completion-deferred one lands by a CPU store the GPU
-    // read would miss; a GPU one is ordered but rare enough to share the fallback). Only those
-    // dwords: a global "any completion label pending" test would send most indirect dispatches
-    // to the CPU, as ~5 such labels are pending per frame. Stamp 0 matches every live entry.
     const auto labelPending = [&] {
         for (std::uint64_t dword = arguments; dword < arguments + 12; dword += 4) {
             if (recorder.PendingLabel(dword, 4, 0).has_value()) return true;
@@ -185,7 +171,6 @@ void VulkanDevice::decideIndirect(RecordedDispatch& record, IndirectOutcome& out
         return false;
     };
     if (Graphics::StorageTexture::FlushPending(arguments, 12, nullptr, "indirect dispatch arguments")) {
-        // As the flush hook does: the stores were only recorded and the CPU is about to read them.
         outcome.cpuReason = 1;
         Graphics::Recorder::CountSync(2);
         recorder.Sync();
@@ -195,8 +180,6 @@ void VulkanDevice::decideIndirect(RecordedDispatch& record, IndirectOutcome& out
         outcome.cpuReason = 2;
     } else if ((record.argumentImport = Graphics::HostImportFor(context, arguments, 12)) == nullptr || (threadDimensions && record.argumentImport->address == 0)) {
         record.argumentImport = nullptr;
-        // Valid until the next refreshImports, which only runs under GuestMemory::GpuMutex (held
-        // here, by every Dispatch caller) and Keeps a retired VkBuffer while the recorder is busy.
         outcome.cpuReason = 3;
     }
     if (timer.profile) {
@@ -221,9 +204,7 @@ void VulkanDevice::decideIndirect(RecordedDispatch& record, IndirectOutcome& out
     record.z = groups[2];
     record.cpuArguments = arguments;
     record.cpuReason = outcome.cpuReason;
-    // Timed before `arguments` is cleared, so the read counts as an indirect phase.
     timer.phase(PhaseArgumentRead);
-    // From here on the phases of a CPU-resolved indirect dispatch are charged as direct ones.
     record.arguments = 0;
     timer.indirect = false;
     std::snprintf(groupsText, 40, "%ux%ux%u", record.x, record.y, record.z);
@@ -245,9 +226,6 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         std::snprintf(text, sizeof(text), "Vulkan dispatch: workgroup count %ux%ux%u%s exceeds device limits %ux%ux%u and a split aliases the device-memory LDS slots, whose base is computed from gl_NumWorkGroups of a single chunk", record.x, record.y, record.z, counted, limit[0], limit[1], limit[2]);
         throw std::runtime_error(text);
     }
-    // The record phase split (APS5_PROFILE_DRAW, rows "record: ..." of the [dispatch] totals):
-    // opening the batch, the keeps, the data refresh, the barriers with the bind and the dispatch
-    // itself, the pending-write notes and marks (MarkGpuWrites), and the completion registration.
     auto recordFrom = timer.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const auto recordStep = [&](DispatchPhase which) {
         if (!timer.profile) return;
@@ -255,16 +233,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         timer.add(which, std::chrono::duration<double, std::milli>(now - recordFrom).count());
         recordFrom = now;
     };
-    // Whether the last command recorded into the batch left every earlier write visible to this
-    // dispatch's reads and writes (a closed label-store run, the previous dispatch's own trailing
-    // barrier, a fill's or copy's): the pre-dispatch barrier below then adds nothing and is
-    // skipped. APS5_NO_BARRIER_ELISION=1 or APS5_FULL_BARRIERS=1 records it every time.
     const bool barrierElision = Graphics::Recorder::MergeBarriers();
-    // A queued DCC key store over memory this dispatch writes or reads in place (unknown for an
-    // address-based build), or over its indirect arguments, must land before it: the title's clear
-    // kernels store keys through V#s, its decompress kernels read them. A queued label store over
-    // such memory likewise (the dispatch would read a stale dword, or its write would lose to
-    // the label).
     const auto touches = [&](std::uint64_t begin, std::uint64_t end) {
         const auto bytes = static_cast<std::size_t>(end - begin);
         return resources.WritesOverlap(begin, bytes) || resources.ReadsOverlap(begin, bytes) || (argumentImport != nullptr && begin < arguments + 12 && arguments < end);
@@ -301,10 +270,6 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     }
     recordStep(PhaseRecordKeeps);
     if (record.dataRefresh != RecordedDispatch::DataRefresh::None) {
-        // The template's data buffers take this dispatch's words: a transfer write the pre-dispatch
-        // barrier makes visible (so it is recorded whatever the previous command covered), ordered
-        // after an earlier dispatch's reads of the buffers by that dispatch's trailing barrier. A
-        // recipe compares the two 64-bit hashes first: equal hashes mean the buffers hold the words.
         const bool differs = record.dataRefresh == RecordedDispatch::DataRefresh::Words || resources.DataWordsHash() != record.dataWordsHash;
         if (timer.profile && record.shader->program != nullptr && record.shader->program->bindings.size() != resources.BindingCount()) ++d.templateByNumber;
         if (differs && (record.resourceKeyMatched ? resources.refreshData(commands, *record.shader, &recorder) : resources.RefreshData(commands, *record.shader, &recorder))) {
@@ -346,15 +311,12 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         recorder.NoteAccess(CommandClass::DispatchLeading, Graphics::Recorder::Access{reads, resources.GpuWrites(), images, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, resources.HoldsLease()});
     }
     if (argumentImport != nullptr) {
-        // The group counts were stored by earlier recorded work (a dispatch in place, a fill) or the
-        // host; the indirect read follows all of it.
         const auto timing = recorder.BeginGpuTiming(CommandClass::IndirectArguments);
         Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
         Graphics::Recorder::CountBarriers(CommandClass::IndirectArguments);
         recorder.EndGpuTiming(timing, 12);
         recorder.NotePendingRead(arguments, 12, Graphics::Recorder::ReadKind::Indirect);
     }
-    // Results of earlier recorded work are visible to this dispatch, its own to everything after.
     constexpr VkAccessFlags shaderAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
     if (overlapped) {
         if (record.refreshed) {
@@ -504,8 +466,6 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         recorder.NotePendingWrite(record.htileClear->first, record.htileClear->second);
     }
     recordStep(PhaseRecordMarks);
-    // Only copied written buffers (and BDA fault checks) need work once the GPU is done; without them
-    // the batch can signal its labels from the GPU.
     const bool completionNeeded = resources.NeedsCompletion() || record.htileClear.has_value();
     if (completionNeeded && resources.Reusable()) {
         auto kept = record.resources;
@@ -514,24 +474,18 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
             if (htileClear.has_value()) Graphics::CompleteHtileDepthClear(htileClear->first, htileClear->second);
         });
     } else if (completionNeeded) {
-        // Listed for DispatchIndirect until the write-back ran (a non-reusable object, so once).
         auto writers = state->copiedWriters;
         auto kept = record.resources;
         recorder.OnComplete([kept, writers, htileClear = record.htileClear] {
-            // Delisted before the write-back: one that fails must not keep indirect dispatches on the CPU.
             writers->erase(std::remove(writers->begin(), writers->end(), kept), writers->end());
             kept->WriteBackBuffers();
             if (htileClear.has_value()) Graphics::CompleteHtileDepthClear(htileClear->first, htileClear->second);
         });
-        // Listed after the registration: a throw there leaves nothing that would pin the CPU path forever.
         if (resources.HasCopiedWrites()) writers->push_back(kept);
     }
     recordStep(PhaseRecordCompletion);
 }
 
-// The module, pipeline layout and pipeline of a compute result over `setLayout` (the set layout
-// its bindings describe): what a dispatch or its preparation builds at the first use of a module,
-// and what the journal replay builds on its own threads before that use.
 }
 }
 }

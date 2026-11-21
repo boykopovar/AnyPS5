@@ -22,7 +22,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
-// For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -177,9 +176,6 @@ bool StorageTexture::keptForCpu(std::uint32_t unit) const {
 }
 
 void StorageTexture::forgetSavedOver(std::uint64_t address, std::size_t bytes) {
-    // Only these units' bytes changed under the saved copy. Units outside keep it: results still
-    // pending there (the flush before the fill or copy stored only the units it overlaps) are
-    // compared with it at their store when the memory is outside the write watch.
     for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
         if (layerBegin(unit) < address + bytes && address < layerBegin(unit) + layerBytes(unit)) {
             layerOriginal[unit] = false;
@@ -201,8 +197,6 @@ void StorageTexture::saveBeforeUnwatch(std::uint64_t address, std::size_t bytes)
     for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
         if (!units[unit]) continue;
         if (layerGeneration[unit] == 0) {
-            // Without a write generation the watch stores the unit whole: the bytes before this
-            // moment are the ones its results replace.
             layerOriginal[unit] = true;
             cancelStoredSave(unit);
             continue;

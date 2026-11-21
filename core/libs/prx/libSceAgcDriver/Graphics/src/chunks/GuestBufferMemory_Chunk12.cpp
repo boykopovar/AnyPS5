@@ -103,9 +103,6 @@ void GuestBufferMemory::validate(std::uint64_t address, std::size_t bytes) const
 void GuestBufferMemory::addCopiedRange(const CopiedRange& range) {
     validate(range.begin, range.end - range.begin);
     Region region{range.begin, range.end, range.writable, {}, nullptr};
-    // Read-only ranges are read from live guest memory at Upload: the lease pins them and the guest
-    // cannot write them, so that equals a snapshot taken now without the extra copy. Reserved heaps
-    // are registered whole while the guest commits pages on demand: committed pages only.
     region.hostBacked = !range.writable;
     auto committed = GuestMemory::DescribeCommitted(range.begin, range.end - range.begin);
     if (!committed.whole) {
@@ -227,8 +224,6 @@ void GuestBufferMemory::addDescriptorRegion(std::uint64_t address, std::size_t b
         case BaseOverlap::None:
             break;
     }
-    // `writable` here means the bytes come from live guest memory (not a snapshot), whether or not
-    // the shader stores to them; what is written back is decided by Writes() alone.
     Region region{begin, end, true, {}, nullptr};
     region.atomic = atomic;
     region.swept = swept;
@@ -236,7 +231,6 @@ void GuestBufferMemory::addDescriptorRegion(std::uint64_t address, std::size_t b
     region.overlay = overlay;
     auto committed = GuestMemory::DescribeCommitted(begin, static_cast<std::size_t>(end - begin));
     if (!committed.whole) {
-        // A GPU heap bound whole while the guest commits its pages on demand, or a descriptor left
         region.sparse = true;
         region.sparseHeap = true;
         region.backed = std::move(committed.ranges);
@@ -321,9 +315,6 @@ void GuestBufferMemory::AddWritable(std::uint64_t address, std::size_t bytes, bo
 }
 
 void GuestBufferMemory::AddReadable(std::uint64_t address, std::size_t bytes) {
-    // Not in `writes`: no reference copy (copyRegion), no write-back, no pending-write note, no
-    // direct-write mark, and UploadPrepare copies it without the device lock. A written descriptor
-    // overlapping the range still covers it through its own Writes() entry.
     addDescriptorRegion(address, bytes, false, false, true);
     reads.emplace_back(address, address + bytes);
 }

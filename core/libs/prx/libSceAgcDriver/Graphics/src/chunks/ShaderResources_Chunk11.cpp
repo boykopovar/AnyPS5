@@ -153,9 +153,6 @@ void ResourceCache::noteMiss(const Key& key) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     static const bool trace = std::getenv("APS5_TRACE_RESOURCE_KEY_MISSES") != nullptr;
     if ((!profile && !trace) || key.size() < 5) return;
-    // The variant(s) the key belongs to: a compute key starts with the data-words flag, the stage
-    // and its variant, a draw key with a marker, the device and its stages' keys (Draw.cpp
-    // DrawResourceKey).
     const bool draw = key[0] == 0xffffffffu;
     std::uint64_t variants = 0;
     if (draw) {

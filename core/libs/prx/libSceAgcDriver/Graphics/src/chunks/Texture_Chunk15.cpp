@@ -22,7 +22,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
-// For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -118,12 +117,7 @@ bool StorageTexture::CopyFrom(StorageTexture& source, const char*& refusal) {
     refusal = CopyRefusal(context, this, source, descriptor.baseAddress);
     if (refusal != nullptr) return false;
     auto* recorder = Recorder::Active();
-    // The source image must hold the surface: a stale one uploads first (and other images'
-    // results pending over its memory land first, as the transfer's flush would have them).
     source.Refresh();
-    // Results pending over the destination range from before the copy are dead inside it and land
-    // first around it; other images over the range hold content the copy supersedes (they
-    // re-upload at their next use, behind this image's write-back).
     static_cast<void>(DiscardPendingInside(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)));
     FlushPending(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), this, "buffer copy destination", PublishScope::PartialUnits);
     {
@@ -183,9 +177,6 @@ bool StorageTexture::CopyFrom(StorageTexture& source, const char*& refusal) {
 }
 
 void StorageTexture::MarkWholeWritten() {
-    // As after a clear: the image holds the surface, guest memory follows at the write-back (which
-    // keeps the 64 KiB blocks the CPU writes from now on; the collect is uncached for the reason
-    // given in FillClear).
     if (GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) {
         layerOriginal.assign(trackedLayers, false);
         cancelStoredSaves();
@@ -234,7 +225,6 @@ void StorageTexture::MarkUnitsWritten(const std::vector<bool>& units) {
     }
 }
 
-// See AdjacentGenerationEnabled above.
 std::vector<StorageTexture::Adjacent> StorageTexture::adjacentPendingUnchanged(std::uint64_t firstBlock, std::uint64_t lastBlock) const {
     std::vector<Adjacent> adjacent;
     if (!AdjacentGenerationEnabled() || guestBytes == 0) return adjacent;
@@ -248,8 +238,6 @@ std::vector<StorageTexture::Adjacent> StorageTexture::adjacentPendingUnchanged(s
             const auto neighbourFirst = begin / block;
             const auto neighbourLast = (begin + texture->guestBytes - 1) / block;
             if (neighbourFirst > lastBlock || neighbourLast < firstBlock) return;
-            // Surfaces that do not overlap share at most one block: the neighbour's tracked layer
-            // holding it is what the stamps touch.
             const auto shared = std::max(neighbourFirst, firstBlock);
             const auto layer = static_cast<std::uint32_t>((std::max(shared * block, begin) - begin) / texture->trackedLayerBytes);
             if (auto alive = texture->weak_from_this().lock()) adjacent.push_back({std::move(alive), layer, texture->layerGeneration[layer]});
@@ -257,8 +245,6 @@ std::vector<StorageTexture::Adjacent> StorageTexture::adjacentPendingUnchanged(s
         for (auto* texture : pending.textures) consider(texture);
         for (auto* texture : pending.flushing) consider(texture);
     }
-    // Only a layer whose memory has not changed since its generation can be advanced: the collect
-    // stamps the CPU's writes so far, and a later one lands at a newer generation either way.
     std::erase_if(adjacent, [](const Adjacent& entry) {
         const auto& texture = entry.texture;
         const auto begin = texture->layerBegin(entry.layer);
@@ -273,14 +259,7 @@ void StorageTexture::advanceAdjacent(const std::vector<Adjacent>& adjacent, std:
     static const bool trace = std::getenv("APS5_TRACE_FLUSH") != nullptr;
     constexpr std::uint64_t block = 65536;
     for (const auto& [texture, layer, seen] : adjacent) {
-        // A layer stored or refreshed meanwhile set its own generation (an old one on purpose when
-        // it kept blocks for the CPU): only the value seen at the check is advanced.
         if (texture->layerGeneration[layer] != seen || now <= seen) continue;
-        // A CPU write to the neighbour landing since the check may have been stamped by another
-        // thread's walk of its range at a value in (seen, now]; the advance would hide it. Its blocks
-        // outside this write-back's span carry no stamp of ours, so they are re-checked against the
-        // seen generation (a stamp scan, no walk). A write inside the shared block itself in that
-        // window is indistinguishable from this write-back's stamp, as it is for the block rule.
         const auto begin = texture->layerBegin(layer);
         const auto end = begin + texture->layerBytes(layer);
         const auto beforeEnd = std::min(end, firstBlock * block);

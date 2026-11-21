@@ -248,7 +248,6 @@ LibreSsl3X509Extension* BuildExtension(int nid, bool critical, const std::vector
         return nullptr;
     }
     if (!der.empty()) std::memcpy(data, der.data(), der.size());
-    *value = {static_cast<std::int32_t>(der.size()), OctetStringType, data, 0};
     auto* extension =
         static_cast<LibreSsl3X509Extension*>(calloc_nid_postfix(1, sizeof(LibreSsl3X509Extension)));
     if (!extension) {

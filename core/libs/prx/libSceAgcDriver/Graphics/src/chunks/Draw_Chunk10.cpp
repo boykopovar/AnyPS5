@@ -203,12 +203,6 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
         result.recorded = true;
         return result;
     }
-    // The resident-target proof on the stored images (design_cpu_final 3.7): while an image is
-    // still the storage cache's for its surface (StorageImageCached: the cache entry, removed under
-    // the cache mutex before an eviction's flush, and the LRU touch a lookup would make), it is
-    // what the lookup would return, and Refresh brings it up to date exactly as the lookup's does
-    // (FlushPending, the whole-surface collect and UnchangedSince, the key scan). An image gone
-    // from the cache is a miss: the ordinary path looks up anew.
     auto& memo = ThreadTargetMemo();
     if (ownsTargetMemo(memo) && (memo.colors.valid || memo.depth.valid)) noteTargetMemo(TargetMemoEvent::RecipeInvalidated);
     memo.Invalidate();
@@ -235,9 +229,6 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
         if (recipe.targetViews.back() != depthView) return miss(DrawRecipeMiss::TargetGone);
     }
     timer.phase(PhasePrepare);
-    // The template's proof (rules R6/R7): ProveCurrent, T1 included, the alias checks the trimmed
-    // key leaves to a hit repeated; a failure removes the template from the cache (the batch keeps
-    // it) and the caller rebuilds.
     auto resources = recipe.templateRef.lock();
     if (resources == nullptr) return miss(DrawRecipeMiss::TemplateGone);
     Require(resources->Reusable(), "draw recipe over a non-reusable template");
@@ -261,10 +252,6 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     timer.phase(PhaseLookup);
     outcome.completion = resources->ChecksFaults();
     outcome.recorded = true;
-    // The pipeline is the recipe's while the pipeline store still holds it (its device's teardown
-    // or its eviction bound drops it: a miss). The framebuffer is the recipe's while the pipeline's
-    // list holds it: the views are the stored targets' (stable while they live, and they are the
-    // same objects), so AcquireFramebuffer only runs when the list evicted it.
     auto pipeline = recipe.pipeline.lock();
     if (pipeline == nullptr) return miss(DrawRecipeMiss::ObjectsGone);
     auto framebuffer = recipe.framebuffer.lock();

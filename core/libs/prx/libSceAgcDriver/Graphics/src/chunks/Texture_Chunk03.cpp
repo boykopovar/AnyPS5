@@ -22,7 +22,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
-// For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -126,8 +125,6 @@ Texture::ReuseLookupCounts Texture::TakeReuseLookupCounts() {
 bool Texture::CanCopyFrom(const StorageTexture& source, const GuestTextureResource& descriptor) {
     const auto& from = source.Descriptor();
     if (IsBlockCompressed(descriptor.format) || IsBlockCompressed(from.format)) return false;
-    // Same memory, same layout, same texel size: the GPU copy reinterprets the texels exactly as a
-    // guest read through the sampled descriptor would.
     if (IsRepackedTextureFormat(descriptor.format)) return false;
     return descriptor.baseAddress == from.baseAddress && descriptor.pipeBankXor == from.pipeBankXor && descriptor.width == from.width && descriptor.height == from.height && descriptor.linearPitch == from.linearPitch && ArrayLayersServeView(from, descriptor) && descriptor.tileMode == from.tileMode && descriptor.mipCount <= from.mipCount && BytesPerElement(descriptor.format) == BytesPerElement(from.format) && BlockWidth(descriptor.format) == BlockWidth(from.format);
 }
@@ -142,7 +139,6 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
 #ifdef APS5_DEBUG_LOG
         AGC_LOG_DEFERRED(stdout, "Texture address=0x%llx %ux%u mips=%u viewed from storage image (vk=%d)", static_cast<unsigned long long>(descriptor.baseAddress), descriptor.width, descriptor.height, descriptor.mipCount, static_cast<int>(vkFormat));
 #endif
-        // Storage images stay in the general layout; the view samples them there.
         layout = VK_IMAGE_LAYOUT_GENERAL;
         const auto viewLevelCount = std::min(descriptor.lastLevel, descriptor.mipCount - 1u) - descriptor.baseLevel + 1u;
         const auto viewLayerCount = std::min(geometry.imageLayers, source->ImageLayers()) - descriptor.baseArray;
@@ -316,7 +312,6 @@ void Texture::release() noexcept {
         if (srgbView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, srgbView, nullptr);
         srgbView = VK_NULL_HANDLE;
     }
-    // The image and its memory go with the last holder: this texture, or the batch still uploading it.
     owned.reset();
     image = VK_NULL_HANDLE;
     SampledMemoryCounter().fetch_sub(std::exchange(countedBytes, 0), std::memory_order_relaxed);
@@ -353,18 +348,12 @@ VkFormat PackedStorageViewFormat(VkFormat format) {
     }
 }
 
-// Storage images cannot use sRGB formats; the shader works on the raw encoded values either way.
-// The answer is a property of the physical device, so it is computed once per format (every storage
-// image lookup asks: a live vkGetPhysicalDeviceFormatProperties call each time was measurable) and
-// remembered as VK_FORMAT_UNDEFINED when the format has no storage form.
 VkFormat StorageFormatOrUndefined(const Context& context, VkFormat format) {
     struct Table {
         AgcDriver::Mutex mutex;
         std::unordered_map<std::uint64_t, VkFormat> formats;
     };
     static Table table;
-    // The key names the physical device: the headless and the windowed device share one GPU, but a
-    // second GPU would answer differently.
     const auto key = (static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(context.physical)) << 20u) ^ static_cast<std::uint64_t>(format);
     {
         std::lock_guard lock(table.mutex);
@@ -427,7 +416,6 @@ bool StorageFormatAvailable(const Context& context, std::uint32_t guestFormat) {
     try {
         return StorageFormatOrUndefined(context, ResolveTextureFormat(guestFormat)) != VK_FORMAT_UNDEFINED;
     } catch (const std::exception&) {
-        // An unknown guest format: the sampled texture path reports it when it gets there.
         return false;
     }
 }

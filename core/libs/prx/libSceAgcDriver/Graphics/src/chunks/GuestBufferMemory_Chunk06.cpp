@@ -133,8 +133,6 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> changedSpans(std::vector<Re
     return spans;
 }
 
-// Drops imports whose registered range changed or disappeared: their pages may no longer back the
-// guest addresses. Walks the imports only when the registry changed since the last walk.
 void refreshImports(const Context& context, HostImports& state, const GuestAllocations::Lease& lease) {
     if (state.device != context.device) {
 #ifdef _WIN32
@@ -317,22 +315,16 @@ const HostImport* importAccess(const Context& context, HostImports& state, std::
     return entry != nullptr && findImport(state, begin, end) == entry ? entry : nullptr;
 }
 
-// Whether the imports need reconciling before a lookup: the registry changed since the last walk.
 bool importsStale(const Context& context, const HostImports& state) {
     return state.device != context.device || GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration;
 }
 
-// The mirror registry: by range base. The map is protected by `mutex` (findMirror runs in a build's
-// unlocked stage A, UploadPrepare); the mirrors' contents (fills, refreshes, sweeps) change under
-// GuestMemory::GpuMutex only (every completion and every stage B holds it). APS5_NO_LEASE_MIRROR=1
-// restores copies.
 struct ImageMirrors {
     AgcDriver::Mutex mutex;
     VkDevice device = VK_NULL_HANDLE;
     std::map<std::uint64_t, std::shared_ptr<ImageMirror>> entries;
     std::set<std::uint64_t> failed;
     std::uint64_t heapBytes = 0;
-    // APS5_PROFILE_DRAW counters, reported every 10 s as [buffers] image mirrors.
     std::uint64_t builds = 0;
     std::uint64_t heapRefills = 0;
     std::uint64_t heapUnwatched = 0;
@@ -344,7 +336,6 @@ struct ImageMirrors {
     std::uint64_t refreshes = 0;
     std::uint64_t blocksCompared = 0;
     std::uint64_t blocksCopied = 0;
-    // Refreshes that had to wait for recorded work writing the range.
     std::uint64_t syncs = 0;
     std::uint64_t serials = 0;
     std::uint64_t version = 0;
@@ -357,9 +348,6 @@ struct ImageMirrors {
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
 
-// APS5_PROFILE_DRAW: the parts of one address-based build (see GuestBufferMemory::CountAddressBuild),
-// timed on the building thread by AcquireRegistered, summed into the totals with the caller's
-// snapshot compares and printed as the [address] line every 10 s.
 struct AddressBuildTiming {
     double leaseUs = 0;
     double importsUs = 0;

@@ -22,7 +22,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
-// For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -97,12 +96,6 @@ bool StorageTexture::overlapsLive(std::uint64_t address, std::size_t bytes) cons
     return !released && guestBytes != 0 && overlaps(address, bytes);
 }
 
-// A fill of this image's DCC keys starts at the dccAddress and is at least one key per 256 guest
-// bytes. While any live image overlaps the fill (`overlapped`), it must also stay inside the key extent
-// (DccKeyCount, the pipe-aligned count, at least guestBytes / 256): the bytes past the keys may be
-// memory the overlapping image owns, so a longer fill is not a key fill. The bound is inferred, not
-// measured (docs/dev/TechnicalDebt.md). With nothing overlapping, the length rule alone decides, as
-// it did before the bound.
 bool StorageTexture::keysFillMatches(std::uint64_t address, std::size_t bytes, bool overlapped) const {
     constexpr std::uint64_t keyBytes = 256;
     if (released || descriptor.dccAddress != address || guestBytes / keyBytes == 0 || bytes < guestBytes / keyBytes) return false;
@@ -308,9 +301,6 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     }
     const auto pendingSince = GuestMemory::TrackerGeneration();
     StampUnkeptUnits(keptAtUnwatch, {descriptor.baseAddress, trackedLayerBytes, guestBytes}, layerGeneration, layerPendingSince, first, count, pendingSince);
-    // Results of this image now cover the alias's results borrowed into these units: this image
-    // stores them, the alias no longer has to (its results, unchanged since the borrow, are in
-    // this image's content). An alias written since keeps its own newer results pending.
     if (auto source = borrowedUnits.size() == trackedLayers && borrowedUnits.AnyIn(first, count) ? borrowedFrom.lock() : nullptr; source != nullptr) {
         bool superseded = false;
         for (std::uint32_t unit = first; unit < first + count; ++unit) {
@@ -335,8 +325,6 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
         pendingFromOthers = true;
         if (drawnListed) drawnWhole = true;
     }
-    // The active recorder installs a hook that also waits for recorded work; without one (tests),
-    // pending storage results alone are flushed.
     if (Recorder::Active() == nullptr) {
         static const bool hooked = [] {
             GuestMemory::SetFlushHook(&FlushHook);

@@ -13,10 +13,6 @@ static constexpr std::size_t ReferenceCountOffset = 0;
 static constexpr std::size_t VectorReferenceCountOffset = 0x30;
 static constexpr int TransactionNotStarted = static_cast<int>(0x80553508);
 
-// Offline PSN: request entry points (API calls, transaction start/readData, factories) fail with
-// SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN, the constant shadPS4/fpPS4 document for this code; parameter
-// bookkeeping succeeds; the audited accessors read the measured offsets and the rest stay
-// unimplemented because a failed request never produces a response.
 
 static void ConstructParameter(void* self);
 static int InitializeParameter(void* self, const std::uint64_t* context, bool argumentsPresent);
@@ -384,15 +380,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11
     return 0;
 }
 
-// ---------------------------------------------------------------------------
-// SessionManager::V1::PlayerSessionsApi::getFriendsPlayerSessions family.
-// Layouts measured in the titles' bundled libSceNpCppWebApi (build J03341606): Friend has
-// accountId at +0x10, accountIdIsSet at +0x18, IntrusivePtr<Vector<FriendJoined
-// PlayerSession>> at +0x30 and playerSessionsIsSet at +0x48; FriendJoined
-// PlayerSession has String sessionId at +0x10 and sessionIdIsSet at +0x30.
-// The vector is the real inline Vector<IntrusivePtr<T>> layout: begin at +0x18,
-// end at +0x28, refcount at +0x30 and 0x18-byte elements.
-// ---------------------------------------------------------------------------
 
 static_assert(sizeof(CommonConstIterator) == 0x10 && offsetof(CommonConstIterator, element) == 0x8);
 static constexpr std::size_t FriendVectorBegin = 0x18;
@@ -486,11 +473,9 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_14
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V114PersonalDetailEEC1Ev(IntrusivePtr* self) {
-    *self = {};
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEEC1Ev(IntrusivePtr* self) {
-    *self = {};
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEED1Ev(IntrusivePtr* self) {
