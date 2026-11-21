@@ -731,30 +731,79 @@ int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
     }
 }
 
+static int SetHostRealtime(std::int64_t seconds, std::int64_t nanoseconds) {
+#ifdef _WIN32
+    constexpr std::int64_t WindowsMaxSeconds = 91283438400LL;
+    if (seconds > WindowsMaxSeconds) return GUEST_EPERM;
+    const ULONGLONG ticks = 116444736000000000ULL + static_cast<ULONGLONG>(seconds) * 10000000ULL +
+        static_cast<ULONGLONG>(nanoseconds / 100);
+    const FILETIME fileTime{static_cast<DWORD>(ticks & 0xFFFFFFFFULL), static_cast<DWORD>(ticks >> 32)};
+    SYSTEMTIME systemTime{};
+    if (FileTimeToSystemTime(&fileTime, &systemTime) == 0 || SetSystemTime(&systemTime) == 0) return GUEST_EPERM;
+    return 0;
+#else
+    const struct timespec native{seconds, nanoseconds};
+    if (::clock_settime(CLOCK_REALTIME, &native) != 0) {
+        return errno == EINVAL ? GUEST_EINVAL : GUEST_EPERM;
+    }
+    return 0;
+#endif
+}
+
 int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp) {
+    if (tp == nullptr) {
+        *__error_nid_postfix() = GUEST_EINVAL;
+        return -1;
+    }
     KernelTimespec time{};
-    if (tp == nullptr || !ReadGuestTime(&time, tp, sizeof(time))) {
+    if (!ReadGuestTime(&time, tp, sizeof(time))) {
         *__error_nid_postfix() = GUEST_EFAULT;
         return -1;
     }
-    static_cast<void>(clockId);
-    *__error_nid_postfix() = GUEST_EPERM;
-    return -1;
+    if (time.tv_sec < 0 || time.tv_nsec < 0 || time.tv_nsec >= 1000000000LL) {
+        *__error_nid_postfix() = GUEST_EINVAL;
+        return -1;
+    }
+    if (clockId == 16 || clockId == 17) return 0;
+    if (clockId != 0) {
+        *__error_nid_postfix() = GUEST_EINVAL;
+        return -1;
+    }
+    const int failure = SetHostRealtime(time.tv_sec, time.tv_nsec);
+    if (failure != 0) {
+        *__error_nid_postfix() = failure;
+        return -1;
+    }
+    return 0;
 }
 
 int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz) {
+    if (tv == nullptr && tz == nullptr) return 0;
     KernelTimeval time{};
-    KernelTimezone zone{};
     if (tv != nullptr && !ReadGuestTime(&time, tv, sizeof(time))) {
         *__error_nid_postfix() = GUEST_EFAULT;
         return -1;
     }
-    if (tz != nullptr && !ReadGuestTime(&zone, tz, sizeof(zone))) {
-        *__error_nid_postfix() = GUEST_EFAULT;
+    if (tz != nullptr) {
+        KernelTimezone zone{};
+        if (!ReadGuestTime(&zone, tz, sizeof(zone))) {
+            *__error_nid_postfix() = GUEST_EFAULT;
+            return -1;
+        }
+        static_cast<void>(zone);
+        *__error_nid_postfix() = GUEST_EPERM;
         return -1;
     }
-    *__error_nid_postfix() = GUEST_EPERM;
-    return -1;
+    if (time.tv_sec < 0 || time.tv_usec < 0 || time.tv_usec >= 1000000LL) {
+        *__error_nid_postfix() = GUEST_EINVAL;
+        return -1;
+    }
+    const int failure = SetHostRealtime(time.tv_sec, time.tv_usec * 1000);
+    if (failure != 0) {
+        *__error_nid_postfix() = failure;
+        return -1;
+    }
+    return 0;
 }
 
 // ---------------------------------------------------------------------------

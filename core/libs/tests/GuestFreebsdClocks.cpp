@@ -317,23 +317,61 @@ static void RequireSettimeError(int clockId, const KernelTimespec* time, int err
     Require(clock_settime_nid_postfix(clockId, time) == -1 && *__error_nid_postfix() == error);
 }
 
-static void SettimeIsRefusedLikeAJailedProcess() {
-    const KernelTimespec valid{1767225600, 5};
-    RequireSettimeError(GUEST_CLOCK_REALTIME, nullptr, 14);
-    RequireSettimeError(GUEST_CLOCK_MONOTONIC, nullptr, 14);
+extern "C" int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz);
+
+static void SettimeFollowsTheMeasuredConsoleModel() {
+    RequireSettimeError(GUEST_CLOCK_REALTIME, nullptr, 22);
+    RequireSettimeError(GUEST_CLOCK_MONOTONIC, nullptr, 22);
     for (const std::uintptr_t bad : {std::uintptr_t{1}, std::uintptr_t{0x10}}) {
         RequireSettimeError(GUEST_CLOCK_REALTIME, reinterpret_cast<const KernelTimespec*>(bad), 14);
         RequireSettimeError(GUEST_CLOCK_MONOTONIC, reinterpret_cast<const KernelTimespec*>(bad), 14);
     }
+    KernelTimespec stamp{};
+    Require(clock_gettime_nid_postfix(GUEST_CLOCK_REALTIME, &stamp) == 0 && stamp.tv_sec > 0);
     const KernelTimespec negativeNanoseconds{0, -1};
     const KernelTimespec wholeSecondOfNanoseconds{0, NANOS_PER_SECOND};
     const KernelTimespec negativeSeconds{-1, 0};
-    for (const int clockId : {GUEST_CLOCK_REALTIME, GUEST_CLOCK_VIRTUAL, GUEST_CLOCK_PROF, GUEST_CLOCK_MONOTONIC, GUEST_CLOCK_REALTIME_PRECISE,
-             GUEST_CLOCK_SECOND, GUEST_CLOCK_THREAD_CPUTIME_ID, GUEST_CLOCK_PROCESS_CPUTIME_ID, -1, 16})
-        for (const KernelTimespec* time : {&valid, &negativeNanoseconds, &wholeSecondOfNanoseconds, &negativeSeconds})
-            RequireSettimeError(clockId, time, 1);
+    for (const int clockId : {GUEST_CLOCK_REALTIME, GUEST_CLOCK_MONOTONIC, 16})
+        for (const KernelTimespec* time : {&negativeNanoseconds, &wholeSecondOfNanoseconds, &negativeSeconds})
+            RequireSettimeError(clockId, time, 22);
+    for (const int clockId : {GUEST_CLOCK_VIRTUAL, GUEST_CLOCK_PROF, 3, GUEST_CLOCK_MONOTONIC, GUEST_CLOCK_UPTIME, GUEST_CLOCK_UPTIME_PRECISE,
+             GUEST_CLOCK_UPTIME_FAST, GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_REALTIME_FAST, GUEST_CLOCK_MONOTONIC_PRECISE,
+             GUEST_CLOCK_MONOTONIC_FAST, GUEST_CLOCK_SECOND, GUEST_CLOCK_THREAD_CPUTIME_ID, GUEST_CLOCK_PROCESS_CPUTIME_ID, 18, 19, 20, 21, -1})
+        RequireSettimeError(clockId, &stamp, 22);
+    for (const int clockId : {16, 17}) {
+        *__error_nid_postfix() = 0;
+        Require(clock_settime_nid_postfix(clockId, &stamp) == 0 && *__error_nid_postfix() == 0);
+    }
+    *__error_nid_postfix() = 0;
+    const int accepted = clock_settime_nid_postfix(GUEST_CLOCK_REALTIME, &stamp);
+    Require(accepted == 0 || (accepted == -1 && *__error_nid_postfix() == 1));
+    KernelTimespec after{};
+    Require(clock_gettime_nid_postfix(GUEST_CLOCK_REALTIME, &after) == 0);
+    const std::int64_t drift = after.tv_sec > stamp.tv_sec ? after.tv_sec - stamp.tv_sec : stamp.tv_sec - after.tv_sec;
+    Require(drift <= 10);
+}
+
+static void SettimeofdayFollowsTheMeasuredConsoleModel() {
+    Require(SetTimeOfDay_nid_no_patch(nullptr, nullptr) == 0);
+    auto* const bad = reinterpret_cast<const KernelTimeval*>(static_cast<std::uintptr_t>(0x10));
+    *__error_nid_postfix() = 0;
+    Require(SetTimeOfDay_nid_no_patch(bad, nullptr) == -1 && *__error_nid_postfix() == 14);
+    const KernelTimeval negativeSeconds{-1, 0};
+    const KernelTimeval wholeSecondOfMicroseconds{0, 1000000};
+    for (const KernelTimeval* time : {&negativeSeconds, &wholeSecondOfMicroseconds}) {
+        *__error_nid_postfix() = 0;
+        Require(SetTimeOfDay_nid_no_patch(time, nullptr) == -1 && *__error_nid_postfix() == 22);
+    }
+    const KernelTimezone zone{0, 0};
+    *__error_nid_postfix() = 0;
+    Require(SetTimeOfDay_nid_no_patch(nullptr, &zone) == -1 && *__error_nid_postfix() == 1);
     KernelTimespec now{};
-    Require(clock_gettime_nid_postfix(GUEST_CLOCK_REALTIME, &now) == 0 && now.tv_sec > 0 && now.tv_sec != valid.tv_sec);
+    Require(clock_gettime_nid_postfix(GUEST_CLOCK_REALTIME, &now) == 0 && now.tv_sec > 0);
+    const KernelTimeval stamp{now.tv_sec, 0};
+    *__error_nid_postfix() = 0;
+    const int accepted = SetTimeOfDay_nid_no_patch(&stamp, nullptr);
+    Require(accepted == 0 || (accepted == -1 && *__error_nid_postfix() == 1));
+    Require(clock_gettime_nid_postfix(GUEST_CLOCK_REALTIME, &now) == 0 && now.tv_sec > 0);
 }
 
 static std::int32_t RuntimeDaylight(std::int32_t daylight) {
@@ -447,7 +485,8 @@ int main() {
     InvalidClockIdFailsGettime();
     ClockIoErrorIds();
     Clock20UsesScaledMonotonicTime();
-    SettimeIsRefusedLikeAJailedProcess();
+    SettimeFollowsTheMeasuredConsoleModel();
+    SettimeofdayFollowsTheMeasuredConsoleModel();
     CalendarConversionsInitializeTheirState();
     CalendarConversionsFollowTheHostZone();
 #ifdef _WIN32
