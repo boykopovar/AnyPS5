@@ -4,6 +4,7 @@
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -14,6 +15,16 @@ class Page : public ObjectOf<ObjectType::Page> {
 public:
     bool canGoBack = false;
     bool canGoForward = false;
+    bool isSuspended = false;
+    bool isControlledByAutomation = false;
+    bool mediaCaptureEnabled = true;
+    bool isContentEditable = false;
+    bool selectionIsRange = false;
+    bool isPlayingAudio = false;
+    Retained<Frame> mainFrame;
+    float intrinsicBackingScaleFactor = 1.0f;
+    std::optional<float> customBackingScaleFactor;
+    double pageScaleFactor = 1.0;
     mutable Retained<Inspector> inspector;
     bool suppressScrollbarAnimations = false;
     bool hasHorizontalScrollbar = false;
@@ -52,6 +63,12 @@ public:
     std::optional<std::u16string> customTextEncodingName;
     bool backgroundExtendsBeyondPage = false;
 };
+inline Page* MutablePage(const void* pageRef, const char* function) {
+    auto* page = Cast<Page>(pageRef, function);
+    if (page->isSuspended) throw std::logic_error(std::string(function) + ": WKPageRef API called on a suspended page");
+    return page;
+}
+
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
