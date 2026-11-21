@@ -397,6 +397,7 @@ struct SpirvTarget {
     bool float16NarrowNans = false;
     bool float16HostNans = false;
     bool meshInlineFunctions = false;
+    bool spannedShuffleThroughMemory = false;
 };
 
 struct BindingLayout {
