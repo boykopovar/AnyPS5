@@ -95,11 +95,37 @@ void CheckSplitPrograms() {
     CheckSplitModule(RecompileSplit(programs.resume, userData, 0x730000u), "resume");
 }
 
+struct Interpolation {
+    std::string_view name;
+    std::vector<std::uint32_t> code;
+};
+
+void CheckInterpolationAfterCallReadsM0() {
+    const std::vector<TableCallee> callees{{0x1000u, {0xbefc0380u, 0xbe80200eu}}};
+    const std::vector<Interpolation> interpolations{
+        {"v_interp_mov_f32 v1, p20, attr0.x", {0xc8060001u}},
+        {"v_interp_mov_f32_e64 v1, p20, attr0.x", {0xd6020001u, 0x02000200u}},
+        {"v_interp_p1ll_f16 v1, v0, attr0.x", {0xd7420001u, 0x00020000u}},
+    };
+    for (const auto& interpolation : interpolations) {
+        auto caller = WaterfallCaller();
+        caller.insert(caller.end() - 1, interpolation.code.begin(), interpolation.code.end());
+        const auto program = RdnaInstructionDecoder{}.Decode(caller);
+        const auto calls = FindTableCalls(program, SwappcInfo{false, 0u, 16u});
+        Check(calls.size() == 1u, std::string(interpolation.name) + ": the waterfall caller holds no table call");
+        std::string refusal;
+        const auto split = SplitTableCall(program, calls[0], callees, 32u, refusal);
+        Check(!split.has_value(), std::string(interpolation.name) + " after the table call reads the m0 a callee writes, but the caller split");
+        Check(refusal.find("a callee writes m0") != std::string::npos, std::string(interpolation.name) + ": refused for another reason: " + refusal);
+    }
+}
+
 }
 
 int main() {
     try {
         CheckSplitPrograms();
+        CheckInterpolationAfterCallReadsM0();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "split table call: %s\n", error.what());
         return 1;
