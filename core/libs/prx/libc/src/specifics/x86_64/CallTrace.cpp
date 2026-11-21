@@ -28,6 +28,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -35,6 +36,7 @@
 #include <fstream>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -52,7 +54,31 @@ struct ImportRecord {
     void* target = nullptr;
     std::string name;
     std::string library;
+    std::string providerModule;
+    std::uint64_t providerOffset = 0;
+    bool providerResolved = false;
     mutable std::atomic<std::uint64_t> calls{0};
+};
+
+struct CallSiteRecord {
+    std::atomic<unsigned char> state{0};
+    const ImportRecord* import = nullptr;
+    std::uint64_t returnAddress = 0;
+    std::string consumerModule;
+    std::uint64_t consumerOffset = 0;
+    bool consumerResolved = false;
+    std::atomic<std::uint64_t> calls{0};
+};
+
+struct ImageLocation {
+    std::string module;
+    std::uint64_t offset = 0;
+    bool resolved = false;
+};
+
+struct TracedTarget {
+    const ImportRecord* record = nullptr;
+    void* thunk = nullptr;
 };
 
 struct RingSlot {
@@ -63,18 +89,49 @@ struct RingSlot {
 };
 
 constexpr std::size_t RingCapacity = 65536;
+constexpr std::size_t CallSiteCapacity = 65536;
+constexpr std::size_t CallSiteProbeLimit = 256;
 constexpr std::size_t ThunkBytes = 24;
 constexpr std::size_t ThunkAreaBytes = 1024 * 1024;
 constexpr std::size_t RecordCapacity = ThunkAreaBytes / ThunkBytes;
 
 std::mutex g_mutex;
-std::unordered_map<void*, void*> g_thunkByTarget;
+std::unordered_map<void*, std::vector<TracedTarget>> g_thunksByTarget;
 std::atomic<ImportRecord*> g_records{nullptr};
 std::atomic<std::size_t> g_recordCount{0};
 std::atomic<RingSlot*> g_ring{nullptr};
+std::atomic<CallSiteRecord*> g_callSites{nullptr};
+std::atomic<std::uint64_t> g_callSiteCount{0};
+std::atomic<std::uint64_t> g_callSiteOverflow{0};
 std::atomic<std::uint64_t> g_sequence{0};
 std::uint8_t* g_writable = nullptr;
 std::uint8_t* g_executable = nullptr;
+
+ImageLocation LocateImage(const void* address) {
+    if (address == nullptr) return {};
+#ifdef _WIN32
+    MEMORY_BASIC_INFORMATION memory{};
+    if (VirtualQuery(address, &memory, sizeof(memory)) != sizeof(memory) || memory.AllocationBase == nullptr) return {};
+    std::wstring path(32768, L'\0');
+    const auto length = GetModuleFileNameW(static_cast<HMODULE>(memory.AllocationBase), path.data(), static_cast<DWORD>(path.size()));
+    if (length == 0 || length >= path.size()) return {};
+    path.resize(length);
+    const auto filename = std::filesystem::path(path).filename().u8string();
+    ImageLocation image;
+    image.module.assign(reinterpret_cast<const char*>(filename.data()), filename.size());
+    image.offset = reinterpret_cast<std::uintptr_t>(address) - reinterpret_cast<std::uintptr_t>(memory.AllocationBase);
+    image.resolved = true;
+    return image;
+#else
+    Dl_info info{};
+    if (::dladdr(address, &info) == 0 || info.dli_fname == nullptr || info.dli_fbase == nullptr) return {};
+    const auto filename = std::filesystem::path(info.dli_fname).filename().string();
+    const auto base = reinterpret_cast<std::uintptr_t>(info.dli_fbase);
+    const auto value = reinterpret_cast<std::uintptr_t>(address);
+    if (value < base) return {};
+    return {filename, value - base, true};
+#endif
+}
 
 bool Selected(std::string_view library) {
     const char* value = std::getenv("APS5_TRACE_CALLS");
@@ -89,6 +146,16 @@ bool Selected(std::string_view library) {
         if (token == "all" || token == library) return true;
     }
     return false;
+}
+
+bool CallGraphRequested() {
+#ifdef _WIN32
+    const wchar_t* value = _wgetenv(L"APS5_TRACE_CALLS_GRAPH_FILE");
+    return value != nullptr && *value != L'\0';
+#else
+    const char* value = std::getenv("APS5_TRACE_CALLS_GRAPH_FILE");
+    return value != nullptr && *value != '\0';
+#endif
 }
 
 std::string DefiningLibrary(const void* target) {
@@ -123,20 +190,104 @@ bool WriteCallCounts(const std::filesystem::path& path) {
     return static_cast<bool>(file);
 }
 
+std::string HexValue(const std::uint64_t value) {
+    char buffer[16];
+    const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value, 16);
+    return "0x" + std::string(buffer, result.ptr);
+}
+
+void WriteJsonString(std::ostream& output, std::string_view value) {
+    constexpr char digits[] = "0123456789abcdef";
+    output.put('"');
+    for (const unsigned char character : value) {
+        if (character == '"' || character == '\\') {
+            output.put('\\');
+            output.put(static_cast<char>(character));
+        } else if (character < 0x20) {
+            output << "\\u00" << digits[character >> 4] << digits[character & 0xf];
+        } else {
+            output.put(static_cast<char>(character));
+        }
+    }
+    output.put('"');
+}
+
+bool WriteCallGraph(const std::filesystem::path& path) {
+    const auto* sites = g_callSites.load(std::memory_order_acquire);
+    if (sites == nullptr) return false;
+    struct Entry {
+        std::uint64_t calls;
+        const ImportRecord* imported;
+        std::uint64_t returnAddress;
+        const CallSiteRecord* site;
+    };
+    std::vector<Entry> entries;
+    entries.reserve(static_cast<std::size_t>(std::min<std::uint64_t>(g_callSiteCount.load(std::memory_order_acquire), CallSiteCapacity)));
+    for (std::size_t index = 0; index < CallSiteCapacity; ++index) {
+        const auto& site = sites[index];
+        if (site.state.load(std::memory_order_acquire) != 2) continue;
+        const auto calls = site.calls.load(std::memory_order_relaxed);
+        if (calls != 0) entries.push_back({calls, site.import, site.returnAddress, &site});
+    }
+    std::stable_sort(entries.begin(), entries.end(), [](const Entry& left, const Entry& right) {
+        if (left.calls != right.calls) return left.calls > right.calls;
+        if (left.site->consumerModule != right.site->consumerModule) return left.site->consumerModule < right.site->consumerModule;
+        if (left.site->consumerOffset != right.site->consumerOffset) return left.site->consumerOffset < right.site->consumerOffset;
+        if (left.imported->library != right.imported->library) return left.imported->library < right.imported->library;
+        return left.imported->name < right.imported->name;
+    });
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    file << "{\n  \"version\": 1,\n  \"total_calls\": " << g_sequence.load(std::memory_order_acquire)
+         << ",\n  \"dropped_callsite_events\": " << g_callSiteOverflow.load(std::memory_order_relaxed)
+         << ",\n  \"edges\": [";
+    for (std::size_t index = 0; index < entries.size(); ++index) {
+        const auto& entry = entries[index];
+        const auto& site = *entry.site;
+        const auto& imported = *entry.imported;
+        file << (index == 0 ? "\n" : ",\n") << "    {\"calls\": " << entry.calls << ", \"consumer\": {\"module\": ";
+        if (site.consumerResolved) WriteJsonString(file, site.consumerModule); else file << "null";
+        file << ", \"offset\": ";
+        if (site.consumerResolved) WriteJsonString(file, HexValue(site.consumerOffset)); else file << "null";
+        file << ", \"address\": ";
+        WriteJsonString(file, HexValue(entry.returnAddress));
+        file << "}, \"import\": {\"library\": ";
+        WriteJsonString(file, imported.library);
+        file << ", \"name\": ";
+        WriteJsonString(file, imported.name);
+        file << "}, \"provider\": {\"module\": ";
+        if (imported.providerResolved) WriteJsonString(file, imported.providerModule); else file << "null";
+        file << ", \"offset\": ";
+        if (imported.providerResolved) WriteJsonString(file, HexValue(imported.providerOffset)); else file << "null";
+        file << ", \"address\": ";
+        WriteJsonString(file, HexValue(reinterpret_cast<std::uintptr_t>(imported.target)));
+        file << "}}";
+    }
+    if (!entries.empty()) file << '\n';
+    file << "  ]\n}\n";
+    file.flush();
+    return static_cast<bool>(file);
+}
+
 void StartCallCountWriter() {
+    std::filesystem::path countsPath;
+    std::optional<std::filesystem::path> graphPath;
 #ifdef _WIN32
     const wchar_t* value = _wgetenv(L"APS5_TRACE_CALLS_FILE");
-    if (value == nullptr || *value == L'\0') return;
-    std::filesystem::path path(value);
+    if (value != nullptr && *value != L'\0') countsPath = value;
+    const wchar_t* graph = _wgetenv(L"APS5_TRACE_CALLS_GRAPH_FILE");
+    if (graph != nullptr && *graph != L'\0') graphPath = std::filesystem::path(graph);
 #else
     const char* value = std::getenv("APS5_TRACE_CALLS_FILE");
-    if (value == nullptr || *value == '\0') return;
-    std::filesystem::path path(value);
+    if (value != nullptr && *value != '\0') countsPath = value;
+    const char* graph = std::getenv("APS5_TRACE_CALLS_GRAPH_FILE");
+    if (graph != nullptr && *graph != '\0') graphPath = std::filesystem::path(graph);
 #endif
-    std::thread([path = std::move(path)] {
+    if (countsPath.empty() && !graphPath) return;
+    std::thread([countsPath = std::move(countsPath), graphPath = std::move(graphPath)] {
         for (;;) {
             std::this_thread::sleep_for(std::chrono::seconds(10));
-            WriteCallCounts(path);
+            if (!countsPath.empty()) WriteCallCounts(countsPath);
+            if (graphPath) WriteCallGraph(*graphPath);
         }
     }).detach();
 }
@@ -430,6 +581,58 @@ void* WriteThunk(const ImportRecord& record, const std::size_t index) {
     return g_executable + offset;
 }
 
+std::size_t CallSiteIndex(const ImportRecord* record, const std::uint64_t returnAddress) {
+    std::uint64_t value = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(record) >> 4) ^
+        (returnAddress + 0x9e3779b97f4a7c15ull + (returnAddress << 6) + (returnAddress >> 2));
+    value ^= value >> 30;
+    value *= 0xbf58476d1ce4e5b9ull;
+    value ^= value >> 27;
+    value *= 0x94d049bb133111ebull;
+    value ^= value >> 31;
+    return static_cast<std::size_t>(value) & (CallSiteCapacity - 1);
+}
+
+void RecordCallSite(const ImportRecord* record, const std::uint64_t returnAddress) {
+    CallSiteRecord* sites = g_callSites.load(std::memory_order_acquire);
+    if (sites == nullptr) return;
+    const auto begin = CallSiteIndex(record, returnAddress);
+    for (std::size_t probe = 0; probe < CallSiteProbeLimit; ++probe) {
+        CallSiteRecord& site = sites[(begin + probe) & (CallSiteCapacity - 1)];
+        unsigned char state = site.state.load(std::memory_order_acquire);
+        if (state == 2) {
+            if (site.import == record && site.returnAddress == returnAddress) {
+                site.calls.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            continue;
+        }
+        if (state == 1) {
+            while (state == 1) {
+                std::this_thread::yield();
+                state = site.state.load(std::memory_order_acquire);
+            }
+            if (state == 2 && site.import == record && site.returnAddress == returnAddress) {
+                site.calls.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            if (state != 0) continue;
+        }
+        unsigned char empty = 0;
+        if (!site.state.compare_exchange_strong(empty, 1, std::memory_order_acq_rel)) continue;
+        site.import = record;
+        site.returnAddress = returnAddress;
+        const auto consumer = LocateImage(reinterpret_cast<const void*>(returnAddress));
+        site.consumerModule = consumer.module;
+        site.consumerOffset = consumer.offset;
+        site.consumerResolved = consumer.resolved;
+        site.calls.store(1, std::memory_order_relaxed);
+        g_callSiteCount.fetch_add(1, std::memory_order_relaxed);
+        site.state.store(2, std::memory_order_release);
+        return;
+    }
+    g_callSiteOverflow.fetch_add(1, std::memory_order_relaxed);
+}
+
 }
 
 static_assert(offsetof(ImportRecord, target) == 0);
@@ -437,7 +640,9 @@ static_assert(offsetof(ImportRecord, target) == 0);
 extern "C" {
 
 void APS5_VABI CallTraceRecord_nid_no_patch(const void* record, std::uint64_t returnAddress) {
-    static_cast<const ImportRecord*>(record)->calls.fetch_add(1, std::memory_order_relaxed);
+    const auto* imported = static_cast<const ImportRecord*>(record);
+    imported->calls.fetch_add(1, std::memory_order_relaxed);
+    RecordCallSite(imported, returnAddress);
     const std::uint64_t sequence = g_sequence.fetch_add(1, std::memory_order_relaxed) + 1;
     RingSlot& slot = g_ring.load(std::memory_order_relaxed)[sequence % RingCapacity];
     slot.sequence.store(0, std::memory_order_release);
@@ -462,6 +667,7 @@ void* TraceImport_nid_no_patch(void* target, const char* name, const char* libra
         MapThunkArea();
         g_records.store(new ImportRecord[RecordCapacity], std::memory_order_release);
         g_ring.store(new RingSlot[RingCapacity], std::memory_order_release);
+        if (CallGraphRequested()) g_callSites.store(new CallSiteRecord[CallSiteCapacity], std::memory_order_release);
 #if defined(__linux__) || defined(__APPLE__)
         InstallAbortReport();
 #endif
@@ -470,15 +676,22 @@ void* TraceImport_nid_no_patch(void* target, const char* name, const char* libra
 #if defined(__linux__) || defined(__APPLE__)
     SnapshotModules();
 #endif
-    if (const auto existing = g_thunkByTarget.find(target); existing != g_thunkByTarget.end()) return existing->second;
+    auto& targetThunks = g_thunksByTarget[target];
+    for (const auto& existing : targetThunks) {
+        if (existing.record->name == name && existing.record->library == library) return existing.thunk;
+    }
     const std::size_t index = g_recordCount.load(std::memory_order_relaxed);
     if (index == RecordCapacity) throw std::runtime_error("call trace: thunk area exhausted");
     ImportRecord& record = g_records.load(std::memory_order_relaxed)[index];
     record.target = target;
     record.name = name;
     record.library = library;
+    const auto provider = LocateImage(target);
+    record.providerModule = provider.module;
+    record.providerOffset = provider.offset;
+    record.providerResolved = provider.resolved;
     void* thunk = WriteThunk(record, index);
-    g_thunkByTarget.emplace(target, thunk);
+    targetThunks.push_back({&record, thunk});
     g_recordCount.store(index + 1, std::memory_order_release);
     return thunk;
 }
@@ -521,6 +734,11 @@ std::size_t CopyThreadCallTrace_nid_no_patch(std::uint64_t thread, CallTraceEntr
 bool WriteCallCounts_nid_no_patch(const char* path) {
     if (path == nullptr || *path == '\0') return false;
     return WriteCallCounts(std::filesystem::path(reinterpret_cast<const char8_t*>(path)));
+}
+
+bool WriteCallGraph_nid_no_patch(const char* path) {
+    if (path == nullptr || *path == '\0') return false;
+    return WriteCallGraph(std::filesystem::path(reinterpret_cast<const char8_t*>(path)));
 }
 
 std::size_t CopyCallCounts_nid_no_patch(CallTraceCount* entries, std::size_t capacity, std::uint64_t* total) {

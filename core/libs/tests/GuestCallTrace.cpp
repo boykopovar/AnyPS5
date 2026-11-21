@@ -105,6 +105,14 @@ int main(int argc, char** argv) {
 #else
     Require(setenv("APS5_TRACE_CALLS", "libTraced,libOther.prx", 1) == 0);
 #endif
+    const auto graphPath = std::filesystem::temp_directory_path() / ("guest_call_trace_graph_" + std::to_string(CurrentThread()) + ".json");
+    const auto graphUtf8 = graphPath.u8string();
+#ifdef _WIN32
+    const auto graphWide = graphPath.wstring();
+    Require(_wputenv_s(L"APS5_TRACE_CALLS_GRAPH_FILE", graphWide.c_str()) == 0);
+#else
+    Require(setenv("APS5_TRACE_CALLS_GRAPH_FILE", reinterpret_cast<const char*>(graphUtf8.c_str()), 1) == 0);
+#endif
     if (argc > 1 && (std::strcmp(argv[1], "abort") == 0 || std::strcmp(argv[1], "abort-race") == 0)) {
 #ifndef _WIN32
         Require(std::signal(SIGABRT, [](int) { _exit(3); }) != SIG_ERR);
@@ -149,8 +157,9 @@ int main(int argc, char** argv) {
     const auto mixed = Traced(&Mixed, "Mixed", "libOther.prx");
     const auto variadic = Traced(&Variadic, "Variadic", "libOther");
     const auto blocks = Traced(&Blocks, "Blocks", "libTraced.prx");
+    const auto alias = Traced(&Integers, "Alias", "libOther.prx");
     Require(integers != &Integers && doubles != &Doubles && mixed != &Mixed && variadic != &Variadic && blocks != &Blocks);
-    Require(Traced(&Integers, "Alias", "libOther.prx") == integers);
+    Require(alias != integers);
 
     Require(integers(1, 2, 3, 4, 5, 6, 7, 8) == Integers(1, 2, 3, 4, 5, 6, 7, 8));
     Require(doubles(1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5) == Doubles(1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5));
@@ -230,6 +239,8 @@ int main(int argc, char** argv) {
     Require(!WriteCallCounts_nid_no_patch(nullptr) && !WriteCallCounts_nid_no_patch(""));
     std::filesystem::remove(path);
 
+    Require(alias(1, 2, 3, 4, 5, 6, 7, 8) == Integers(1, 2, 3, 4, 5, 6, 7, 8));
+
     Require(Traced(&Unlabeled, "Unlabeled", "") == &Unlabeled);
     const auto executable = std::filesystem::path(argv[0]).filename().string();
 #ifdef _WIN32
@@ -240,14 +251,35 @@ int main(int argc, char** argv) {
     const auto unlabeled = Traced(&Unlabeled, "Unlabeled", "");
     Require(unlabeled != &Unlabeled && unlabeled(39) == 42);
     const auto tracedCount = CopyCallCounts_nid_no_patch(counts, 8, &total);
-    Require(tracedCount == 6 && total == 9 + Workers * Calls);
+    Require(tracedCount == 7 && total == 10 + Workers * Calls);
     bool inferred = false;
+    bool aliasCounted = false;
     for (std::size_t index = 0; index < tracedCount; ++index) {
         const auto& count = counts[index];
         if (count.name != nullptr && std::strcmp(count.name, "Unlabeled") == 0) {
             Require(count.calls == 1 && executable == count.library);
             inferred = true;
         }
+        if (count.name != nullptr && std::strcmp(count.name, "Alias") == 0) {
+            Require(count.calls == 1 && std::strcmp(count.library, "libOther.prx") == 0);
+            aliasCounted = true;
+        }
     }
-    Require(inferred);
+    Require(inferred && aliasCounted);
+
+    Require(WriteCallGraph_nid_no_patch(reinterpret_cast<const char*>(graphUtf8.c_str())));
+    std::ifstream graphFile(graphPath, std::ios::binary);
+    const std::string graph{std::istreambuf_iterator<char>(graphFile), std::istreambuf_iterator<char>()};
+    graphFile.close();
+    const auto executableName = std::filesystem::path(argv[0]).filename().string();
+    Require(graph.find("\"version\": 1") != std::string::npos);
+    Require(graph.find("\"dropped_callsite_events\": 0") != std::string::npos);
+    Require(graph.find("\"calls\": 80000") != std::string::npos);
+    Require(graph.find("\"library\": \"libOther.prx\", \"name\": \"Alias\"") != std::string::npos);
+    Require(graph.find("\"consumer\": {\"module\": \"" + executableName + "\"") != std::string::npos);
+    Require(graph.find("\"provider\": {\"module\": \"" + executableName + "\"") != std::string::npos);
+    Require(!WriteCallGraph_nid_no_patch(nullptr) && !WriteCallGraph_nid_no_patch(""));
+    const auto graphUnwritable = (graphPath / "file").u8string();
+    Require(!WriteCallGraph_nid_no_patch(reinterpret_cast<const char*>(graphUnwritable.c_str())));
+    std::filesystem::remove(graphPath);
 }
