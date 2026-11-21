@@ -44,7 +44,7 @@ hb_blob_t* ReferenceTable(hb_face_t* face, hb_tag_t tag, void* opaque) {
 extern "C" {
 
 hb_blob_t* APS5_VABI hb_blob_create_nid_postfix(const char* data, unsigned length, std::uint32_t mode, void* userData, HarfBuzz::Destroy destroy) {
-    if (mode > HB_MEMORY_MODE_READONLY_MAY_MAKE_WRITABLE || (!data && length && length < (1u << 31))) NotImplemented_nid_no_patch(__func__);
+    if (mode > HB_MEMORY_MODE_READONLY_MAY_MAKE_WRITABLE || (!data && length && length < (1u << 31))) GuestFault_nid_no_patch(__func__);
     if (!destroy) return hb_blob_create(data, length, static_cast<hb_memory_mode_t>(mode), userData, nullptr);
     auto owner = std::make_unique<DestroyData>(userData, destroy);
     return hb_blob_create(data, length, static_cast<hb_memory_mode_t>(mode), owner.release(), DestroyUserData);

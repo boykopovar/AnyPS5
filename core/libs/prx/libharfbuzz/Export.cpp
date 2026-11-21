@@ -45,29 +45,29 @@ void APS5_VABI FinalizeCachedFace(void* object) {
 extern "C" {
 
 hb_face_t* APS5_VABI hb_ft_face_create_cached_nid_postfix(FreeType::GuestFaceRec* face) {
-    if (!face) NotImplemented_nid_no_patch(__func__);
+    if (!face) GuestFault_nid_no_patch(__func__);
     FreeType::GuestFaceRec guestFace{};
-    if (!GuestCopyInPreservingErrno(guestFace, face)) NotImplemented_nid_no_patch(__func__);
+    if (!GuestCopyInPreservingErrno(guestFace, face)) GuestFault_nid_no_patch(__func__);
     const auto* owner = static_cast<const FreeType::GuestFace*>(guestFace.internal);
-    if (!owner || &owner->rec != face) NotImplemented_nid_no_patch(__func__);
+    if (!owner || &owner->rec != face) GuestFault_nid_no_patch(__func__);
     FT_Face host = nullptr;
     bool finalized = true;
     if (!GuestCopyInPreservingErrno(host, &owner->host) ||
         !GuestCopyInPreservingErrno(finalized, &owner->finalized) ||
         !host || finalized) {
-        NotImplemented_nid_no_patch(__func__);
+        GuestFault_nid_no_patch(__func__);
     }
 
     auto generic = guestFace.generic;
     if (!generic.data || generic.finalizer != FinalizeCachedFace) {
         if (!GuestWritablePreservingErrno(&face->generic, sizeof(face->generic))) {
-            NotImplemented_nid_no_patch(__func__);
+            GuestFault_nid_no_patch(__func__);
         }
         if (generic.finalizer) generic.finalizer(face);
         generic = {hb_ft_face_create(host, nullptr), FinalizeCachedFace};
         if (!GuestCopyOutPreservingErrno(&face->generic, generic)) {
             hb_face_destroy(static_cast<hb_face_t*>(generic.data));
-            NotImplemented_nid_no_patch(__func__);
+            GuestFault_nid_no_patch(__func__);
         }
     }
     return hb_face_reference(static_cast<hb_face_t*>(generic.data));

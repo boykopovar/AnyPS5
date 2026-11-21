@@ -4,6 +4,7 @@ AnyPS5 relinks PS5 executables into native Linux or Windows programs that run ag
 
 - No comments in code, except `#endif`, namespace ends, and the licence and copyright notice of code adapted from an upstream source (for example ICU or WebRTC). That notice stays verbatim at the top of the file, with a link to the pinned upstream commit. Attribution facts and known gaps still go in `docs/dev/debt/<library>.md`.
 - An export you cannot implement calls `NotImplemented_nid_no_patch(__func__)`; never return a made-up success.
+- An input on which the console module faults or asserts, or where upstream behaviour is undefined, calls `GuestFault_nid_no_patch(__func__)` instead; name the reason in the pull request or the library's debt entry.
 - Implement the function for every input. Never special-case a value, ID or path seen in one title's trace; if the general behaviour is unknown, throw and record it in `docs/dev/debt/<library>.md`.
 - New third-party code is a submodule at `3rdparty/<name>`: add its `.gitmodules` entry (`git submodule add <url> 3rdparty/<name>`) and build it from source with CMake. Never `find_package` or copy sources in.
 - Known gaps go in `docs/dev/debt/<library>.md`, added, changed or removed through a fragment in `docs/dev/debt/changes/` ([format](docs/dev/TechnicalDebt.md#fragments)); notes, reports and logs go in the pull request. Add no other files.
