@@ -26,6 +26,7 @@ constexpr int LockUnlock = 8;
 constexpr DWORD LockByteLow = 0xFFFFFFFE;
 constexpr DWORD GateByteLow = 0xFFFFFFFD;
 constexpr DWORD WaiterByteLow = 0xFFFFFFFC;
+constexpr DWORD ReaderByteLow = 0xFFFFFFFB;
 constexpr DWORD LockByteHigh = 0x7FFFFFFF;
 
 using DirectoryKey = std::pair<DWORD, std::uint64_t>;
@@ -104,41 +105,97 @@ bool Failure(DWORD error) {
 }
 
 bool AcquireShared(HANDLE handle, int& held, bool nonblocking) {
+    const DWORD flags = nonblocking ? LOCKFILE_FAIL_IMMEDIATELY : 0;
+    if (!LockByte(handle, ReaderByteLow, flags)) return false;
     if (held == LockExclusive) {
         if (!LockByte(handle, LockByteLow, LOCKFILE_FAIL_IMMEDIATELY) || !UnlockByte(handle, LockByteLow)) {
-            throw std::runtime_error("flock: downgrade failed, error=" + std::to_string(::GetLastError()));
+            const DWORD error = ::GetLastError();
+            UnlockByte(handle, ReaderByteLow);
+            throw std::runtime_error("flock: downgrade failed, error=" + std::to_string(error));
         }
-    } else if (!LockByte(handle, LockByteLow, nonblocking ? LOCKFILE_FAIL_IMMEDIATELY : 0)) {
-        return false;
+    } else if (!LockByte(handle, LockByteLow, flags)) {
+        const DWORD error = ::GetLastError();
+        if (!UnlockByte(handle, ReaderByteLow)) throw std::runtime_error("flock: reader rollback failed, error=" + std::to_string(::GetLastError()));
+        return Failure(error);
     }
     held = LockShared;
     return true;
 }
 
 bool AcquireExclusive(HANDLE handle, int& held, bool nonblocking) {
-    if (!LockByte(handle, GateByteLow, LOCKFILE_EXCLUSIVE_LOCK)) return false;
-    bool lost = false;
+    const DWORD gateFlags = LOCKFILE_EXCLUSIVE_LOCK | (nonblocking ? LOCKFILE_FAIL_IMMEDIATELY : 0);
+    if (!LockByte(handle, GateByteLow, gateFlags)) return false;
     bool wait = false;
-    const DWORD error = [&]() -> DWORD {
+    DWORD error = ERROR_SUCCESS;
+    try {
+        error = [&]() -> DWORD {
         if (held == LockShared) {
-            if (!LockByte(handle, WaiterByteLow, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY)) {
-                const DWORD waiting = ::GetLastError();
-                if (waiting != ERROR_LOCK_VIOLATION || nonblocking) return waiting;
-            } else if (!UnlockByte(handle, WaiterByteLow)) {
-                return ::GetLastError();
+            if (!UnlockByte(handle, ReaderByteLow)) return ::GetLastError();
+            if (LockByte(handle, ReaderByteLow, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY)) {
+                if (nonblocking) {
+                    if (!LockByte(handle, WaiterByteLow, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY)) {
+                        const DWORD waiter = ::GetLastError();
+                        if (!UnlockByte(handle, ReaderByteLow)) throw std::runtime_error("flock: reader gate unlock failed, error=" + std::to_string(::GetLastError()));
+                        if (!LockByte(handle, ReaderByteLow, LOCKFILE_FAIL_IMMEDIATELY)) throw std::runtime_error("flock: reader restore failed, error=" + std::to_string(::GetLastError()));
+                        return waiter;
+                    }
+                }
+                if (!UnlockByte(handle, LockByteLow)) {
+                    const DWORD unlock = ::GetLastError();
+                    if (nonblocking) UnlockByte(handle, WaiterByteLow);
+                    if (!UnlockByte(handle, ReaderByteLow)) throw std::runtime_error("flock: reader gate unlock failed, error=" + std::to_string(::GetLastError()));
+                    if (!LockByte(handle, ReaderByteLow, LOCKFILE_FAIL_IMMEDIATELY)) throw std::runtime_error("flock: reader restore failed, error=" + std::to_string(::GetLastError()));
+                    return unlock;
+                }
+                held = 0;
+                if (!nonblocking && !LockByte(handle, WaiterByteLow, LOCKFILE_EXCLUSIVE_LOCK)) {
+                    const DWORD waiter = ::GetLastError();
+                    if (!UnlockByte(handle, ReaderByteLow)) throw std::runtime_error("flock: reader gate unlock failed, error=" + std::to_string(::GetLastError()));
+                    return waiter;
+                }
+                if (LockByte(handle, LockByteLow, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY)) {
+                    held = LockExclusive;
+                    if (!UnlockByte(handle, WaiterByteLow)) {
+                        const DWORD waiter = ::GetLastError();
+                        UnlockByte(handle, ReaderByteLow);
+                        throw std::runtime_error("flock: waiter unlock failed, error=" + std::to_string(waiter));
+                    }
+                    if (!UnlockByte(handle, ReaderByteLow)) throw std::runtime_error("flock: reader gate unlock failed, error=" + std::to_string(::GetLastError()));
+                    return ERROR_SUCCESS;
+                }
+                const DWORD conflict = ::GetLastError();
+                if (nonblocking) {
+                    if (!LockByte(handle, LockByteLow, LOCKFILE_FAIL_IMMEDIATELY)) {
+                        const DWORD restore = ::GetLastError();
+                        UnlockByte(handle, WaiterByteLow);
+                        UnlockByte(handle, ReaderByteLow);
+                        throw std::runtime_error("flock: lost the shared lock of a failed upgrade, error=" + std::to_string(restore));
+                    }
+                    held = LockShared;
+                }
+                if (!UnlockByte(handle, WaiterByteLow)) {
+                    const DWORD waiter = ::GetLastError();
+                    UnlockByte(handle, ReaderByteLow);
+                    throw std::runtime_error("flock: waiter unlock failed, error=" + std::to_string(waiter));
+                }
+                if (!UnlockByte(handle, ReaderByteLow)) throw std::runtime_error("flock: reader gate unlock failed, error=" + std::to_string(::GetLastError()));
+                if (nonblocking) {
+                    if (!LockByte(handle, ReaderByteLow, LOCKFILE_FAIL_IMMEDIATELY)) {
+                        throw std::runtime_error("flock: reader restore failed, error=" + std::to_string(::GetLastError()));
+                    }
+                    return conflict;
+                }
+                if (conflict != ERROR_LOCK_VIOLATION) return conflict;
+            } else {
+                const DWORD readers = ::GetLastError();
+                if (!LockByte(handle, ReaderByteLow, LOCKFILE_FAIL_IMMEDIATELY)) {
+                    throw std::runtime_error("flock: reader restore failed, error=" + std::to_string(::GetLastError()));
+                }
+                if (readers != ERROR_LOCK_VIOLATION || nonblocking) return readers;
+                if (!UnlockByte(handle, LockByteLow)) return ::GetLastError();
+                held = 0;
+                if (!UnlockByte(handle, ReaderByteLow)) throw std::runtime_error("flock: reader unlock failed, error=" + std::to_string(::GetLastError()));
             }
-            if (!UnlockByte(handle, LockByteLow)) return ::GetLastError();
-            held = 0;
-            if (LockByte(handle, LockByteLow, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY)) {
-                held = LockExclusive;
-                return ERROR_SUCCESS;
-            }
-            const DWORD conflict = ::GetLastError();
-            if (conflict == ERROR_LOCK_VIOLATION && nonblocking) {
-                lost = !LockByte(handle, LockByteLow, LOCKFILE_FAIL_IMMEDIATELY);
-                if (!lost) held = LockShared;
-            }
-            if (conflict != ERROR_LOCK_VIOLATION || nonblocking) return conflict;
         } else if (LockByte(handle, LockByteLow, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY)) {
             held = LockExclusive;
             return ERROR_SUCCESS;
@@ -148,21 +205,51 @@ bool AcquireExclusive(HANDLE handle, int& held, bool nonblocking) {
         if (!LockByte(handle, WaiterByteLow, LOCKFILE_FAIL_IMMEDIATELY)) return ::GetLastError();
         wait = true;
         return ERROR_SUCCESS;
-    }();
+        }();
+    } catch (...) {
+        UnlockByte(handle, GateByteLow);
+        throw;
+    }
     if (!UnlockByte(handle, GateByteLow)) {
         const DWORD gate = ::GetLastError();
         if (wait) UnlockByte(handle, WaiterByteLow);
         throw std::runtime_error("flock: gate unlock failed, error=" + std::to_string(gate));
     }
-    if (lost) throw std::runtime_error("flock: lost the shared lock of a failed upgrade");
     if (error != ERROR_SUCCESS) return Failure(error);
     if (!wait) return true;
-    const bool acquired = LockByte(handle, LockByteLow, LOCKFILE_EXCLUSIVE_LOCK);
-    const DWORD waited = ::GetLastError();
-    if (acquired) held = LockExclusive;
-    if (!UnlockByte(handle, WaiterByteLow)) throw std::runtime_error("flock: waiter unlock failed, error=" + std::to_string(::GetLastError()));
-    if (!acquired) return Failure(waited);
-    return true;
+    for (;;) {
+        const bool acquired = LockByte(handle, LockByteLow, LOCKFILE_EXCLUSIVE_LOCK);
+        const DWORD waited = ::GetLastError();
+        if (!acquired) {
+            if (!UnlockByte(handle, WaiterByteLow)) throw std::runtime_error("flock: waiter unlock failed, error=" + std::to_string(::GetLastError()));
+            return Failure(waited);
+        }
+        if (LockByte(handle, GateByteLow, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY)) {
+            held = LockExclusive;
+            if (!UnlockByte(handle, WaiterByteLow)) {
+                const DWORD waiter = ::GetLastError();
+                UnlockByte(handle, GateByteLow);
+                throw std::runtime_error("flock: waiter unlock failed, error=" + std::to_string(waiter));
+            }
+            if (!UnlockByte(handle, GateByteLow)) throw std::runtime_error("flock: gate unlock failed, error=" + std::to_string(::GetLastError()));
+            return true;
+        }
+        const DWORD gate = ::GetLastError();
+        if (!UnlockByte(handle, LockByteLow)) throw std::runtime_error("flock: yielded lock unlock failed, error=" + std::to_string(::GetLastError()));
+        if (!UnlockByte(handle, WaiterByteLow)) throw std::runtime_error("flock: waiter unlock failed, error=" + std::to_string(::GetLastError()));
+        if (gate != ERROR_LOCK_VIOLATION) return Failure(gate);
+        if (!LockByte(handle, GateByteLow, LOCKFILE_EXCLUSIVE_LOCK)) return false;
+        if (!LockByte(handle, WaiterByteLow, LOCKFILE_FAIL_IMMEDIATELY)) {
+            const DWORD requeue = ::GetLastError();
+            if (!UnlockByte(handle, GateByteLow)) throw std::runtime_error("flock: gate unlock failed, error=" + std::to_string(::GetLastError()));
+            return Failure(requeue);
+        }
+        if (!UnlockByte(handle, GateByteLow)) {
+            const DWORD gateUnlock = ::GetLastError();
+            UnlockByte(handle, WaiterByteLow);
+            throw std::runtime_error("flock: gate unlock failed, error=" + std::to_string(gateUnlock));
+        }
+    }
 }
 
 struct LockState {
@@ -219,7 +306,13 @@ int GuestFileLock_nid_no_patch(int fd, int operation) {
     }
     if (state->directory) return SetDirectoryLock(*state->directory, state->mode, mode, (operation & LockNonblocking) != 0) ? 0 : -1;
     if (mode == LockUnlock) {
-        if (state->mode != 0 && !UnlockByte(state->locker != nullptr ? state->locker : handle, LockByteLow)) return -1;
+        const auto target = state->locker != nullptr ? state->locker : handle;
+        if (state->mode == LockShared) {
+            if (!UnlockByte(target, LockByteLow)) return -1;
+            if (!UnlockByte(target, ReaderByteLow)) throw std::runtime_error("flock: reader unlock failed, error=" + std::to_string(::GetLastError()));
+        } else if (state->mode == LockExclusive && !UnlockByte(target, LockByteLow)) {
+            return -1;
+        }
         state->mode = 0;
         return 0;
     }

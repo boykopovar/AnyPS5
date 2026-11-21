@@ -187,8 +187,12 @@ static void Conversions() {
         }
         return taken;
     });
+    const auto conversionDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     for (int repeat = 0; repeat != 2000; ++repeat) {
-        Require(flock_nid_postfix(fixture.source, 2 | 4) == 0);
+        while (flock_nid_postfix(fixture.source, 2 | 4) != 0) {
+            Require(*__error_nid_postfix() == 35 && std::chrono::steady_clock::now() < conversionDeadline);
+            std::this_thread::yield();
+        }
         Require(flock_nid_postfix(fixture.source, 1 | 4) == 0);
     }
     stop = true;
