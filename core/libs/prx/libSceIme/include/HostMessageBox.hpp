@@ -8,7 +8,7 @@
 
 #include "prx/libSceIme/include/ModalDialog.hpp"
 
-namespace MsgDialog {
+namespace HostBox {
 
 inline bool HostMessageBoxEnabled(const char* value, bool apple) {
     return !apple && value != nullptr && std::string_view(value) == "1";
@@ -30,8 +30,10 @@ struct HostBoxAnswer {
     std::optional<std::size_t> chosen;
 };
 
-std::optional<HostBoxAnswer> ShowHostMessageBox(std::string_view message, const ModalDialogRequest& request);
-
 }
+
+// Called from the other libraries, so it has C linkage and the _nid_postfix name that the NID patcher keeps.
+// A C++ name is dropped from the patched libSceIme.prx, and the importing library then fails to load with error 127.
+extern "C" bool ShowHostMessageBox_nid_postfix(std::string_view message, const ModalDialogRequest& request, HostBox::HostBoxAnswer& answer);
 
 #endif
