@@ -63,6 +63,10 @@ int main() {
     Expect(pattern, "%{?family{yes}{%{unknown|bad}}}", "yes");
     Expect(pattern, "%{[]family,style{%{family} (%{style})\\n}}", "DejaVu Sans (Book)\nOther ()\n");
     Expect(pattern, "%{[]missing{unused}}end", "end");
+    Expect(pattern, "%{[]missing}end", "end");
+    Expect(pattern, "%4294967298{{x}}|%-4294967298{{x}}|%4294967296{{x}}", " x|x |x");
+    Expect(pattern, "a%{[]missing,absent}b%{[]missing}c", "abc");
+    Expect(pattern, "%{family[4294967296]}|%{family[4294967297]}|%{family[4294967298]}", "DejaVu Sans|Other|");
     Expect(pattern, "%{+family,style{%{family}/%{style}/%{weight}}}", "DejaVu Sans,Other/Book/");
     Expect(pattern, "%{-family,style{%{family}/%{style}/%{weight}}}", "//80");
     Expect(pattern, "%{family}", "DejaVu Sans,Other");
@@ -76,6 +80,12 @@ int main() {
     Expect(nullptr, "%{missing:-file|dirname}", ".");
     Expect(nullptr, "%{missing:-/file|dirname}", "");
     Expect(nullptr, "%{missing:-/dir/|basename}", "");
+    Expect(nullptr, "%{missing:-a\\\\b.ttf|basename}|%{missing:-a\\\\b.ttf|dirname}", "a\\b.ttf|.");
+    auto* backslashes = FcPatternCreate();
+    CHECK(backslashes);
+    CHECK(FcPatternAddString(backslashes, "file", Text("/fonts\\a/b\\c.ttf")));
+    Expect(backslashes, "%{file|basename}|%{file|dirname}", "b\\c.ttf|/fonts\\a");
+    FcPatternDestroy_nid_postfix(backslashes);
     Expect(pattern, "%{family|downcase|delete( )}", "dejavusans,other");
     Expect(pattern, "%{family|translate(aeiou,X)}", "DXjXVX SXns,OthXr");
     Expect(pattern, "%{family|escape(_ )}", "DejaVu_ Sans,Other");
@@ -111,7 +121,8 @@ int main() {
     for (const auto* invalid : {"%", "%{", "%{}", "%{family[-1]}", "%{family[1}", "%{family", "%{#}",
             "%{family:-}", "%{family:x}", "%{family|unknown}", "%{=unknown}", "%{family|delete()}",
             "%{family|translate(a,)}", "%{family|translate(,b)}", "%{family|escape()}",
-            "%{?family{a}", "%{+family{a}", "%{-family{a}", "%{[]family{a}", "%{{a}", "%{[]family a}"}) {
+            "%{?family{a}", "%{+family{a}", "%{-family{a}", "%{[]family{a}", "%{{a}", "%{[]family a}", "%{[]family}", "%{[]family}end",
+            "%{family[2147483648]}", "%{family[4294967295]}", "%{family[9223372036854775807]}", "%{family[99999999999999999999]}"}) {
         auto* result = FcPatternFormat(pattern, Text(invalid));
         if (result) {
             std::fprintf(stderr, "malformed format accepted: %s\n", invalid);
@@ -140,7 +151,7 @@ int main() {
     CHECK(FcPatternAddString(escaped, "family", Text("a-b:c,d\\e")));
     CHECK(FcPatternAddString(escaped, "style", Text("s=t_u:v,w\\x")));
     Expect(escaped, "%{=unparse}", "a\\-b\\:c\\,d\\\\e:style=s\\=t\\_u\\:v\\,w\\\\x");
-    FcPatternDestroy(escaped);
-    FcPatternDestroy(pattern);
+    FcPatternDestroy_nid_postfix(escaped);
+    FcPatternDestroy_nid_postfix(pattern);
     std::puts("Fontconfig format checks passed");
 }

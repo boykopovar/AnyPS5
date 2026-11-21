@@ -5,6 +5,7 @@
 #include <cstring>
 #include <filesystem>
 #include <limits>
+#include <stdexcept>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -45,6 +46,16 @@ void* APS5_VABI TestRealloc(FreeType::GuestMemoryRec* memory, std::int64_t curre
     return grown;
 }
 
+}
+
+template <typename TCall>
+static bool Throws(TCall call) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
 }
 
 static void Require(bool condition, int line) {
@@ -219,6 +230,37 @@ int main(int count, char** arguments) {
     Check(resize(&memory, 0, 32, &block) == kOutOfMemory && block == nullptr);
     Check(qResize(&memory, 0, 32, &block) == kOutOfMemory && block == nullptr);
     g_failAllocation = false;
+
+    {
+        auto* const unmappedMemory = reinterpret_cast<FreeType::GuestMemoryRec*>(std::uintptr_t{0x10});
+        auto** const unmappedBlock = reinterpret_cast<void**>(std::uintptr_t{0x10});
+        static void* const readOnlyBlock = reinterpret_cast<void*>(0x12345678);
+        auto** const readOnly = const_cast<void**>(&readOnlyBlock);
+        const int allocations = g_allocations;
+        const int reallocations = g_reallocations;
+        const int frees = g_frees;
+        for (const auto allocate : {alloc, qAlloc}) {
+            block = reinterpret_cast<void*>(0x12345678);
+            Check(Throws([&] { allocate(unmappedMemory, 32, &block); }) && block == reinterpret_cast<void*>(0x12345678));
+            Check(Throws([&] { allocate(&memory, 32, unmappedBlock); }));
+            Check(Throws([&] { allocate(&memory, 32, readOnly); }));
+        }
+        for (const auto reallocate : {resize, qResize}) {
+            block = nullptr;
+            Check(Throws([&] { reallocate(unmappedMemory, 0, 32, &block); }) && block == nullptr);
+            Check(Throws([&] { reallocate(&memory, 0, 32, unmappedBlock); }));
+            Check(Throws([&] { reallocate(&memory, 0, 32, readOnly); }));
+        }
+        Check(qAlloc(&memory, 16, &block) == 0 && block != nullptr);
+        void* const owned = block;
+        Check(Throws([&] { release(unmappedMemory, &block); }) && block == owned);
+        Check(Throws([&] { release(&memory, unmappedBlock); }));
+        Check(Throws([&] { release(&memory, readOnly); }));
+        Check(readOnlyBlock == reinterpret_cast<void*>(0x12345678));
+        Check(g_allocations == allocations + 1 && g_reallocations == reallocations && g_frees == frees);
+        release(&memory, &block);
+        Check(block == nullptr && g_frees == frees + 1);
+    }
 
 #ifdef _WIN32
     Check(FreeLibrary(module) != 0);

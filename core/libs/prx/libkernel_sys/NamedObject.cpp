@@ -16,6 +16,7 @@ constexpr int GuestEagain = 35;
 constexpr std::size_t NameCapacity = 32;
 constexpr std::uint32_t FirstId = 1;
 constexpr std::uint32_t LastId = 0xFFFF;
+constexpr std::uint16_t TypeTag = 0x1000;
 
 std::mutex namedObjectMutex;
 std::unordered_map<std::uint32_t, std::uint16_t> namedObjectTypes;
@@ -31,7 +32,7 @@ int Fail(int error) {
 
 extern "C" {
 
-int APS5_VABI __sys_namedobj_create_nid_postfix(const char* name, void* object, std::uint32_t type) {
+int GuestNamedObjectCreate_nid_no_patch(const char* name, void* object, std::uint32_t type) {
     static_cast<void>(object);
     if (name == nullptr) return Fail(GuestEinval);
     std::string copy;
@@ -46,14 +47,22 @@ int APS5_VABI __sys_namedobj_create_nid_postfix(const char* name, void* object, 
     return static_cast<int>(id);
 }
 
-int APS5_VABI __sys_namedobj_delete_nid_postfix(std::uint32_t id, std::uint32_t type) {
+int APS5_VABI __sys_namedobj_create_nid_postfix(const char* name, void* object, std::uint32_t type) {
+    return GuestNamedObjectCreate_nid_no_patch(name, object, type);
+}
+
+int GuestNamedObjectDelete_nid_no_patch(std::uint32_t id, std::uint32_t type) {
     std::lock_guard lock(namedObjectMutex);
     const auto found = namedObjectTypes.find(id);
     if (found == namedObjectTypes.end()) return Fail(GuestEsrch);
-    if (found->second != static_cast<std::uint16_t>(type)) NotImplemented_nid_no_patch("__sys_namedobj_delete: a type other than the object's");
+    if ((found->second | TypeTag) != (static_cast<std::uint16_t>(type) | TypeTag)) return Fail(GuestEsrch);
     releasedIds.insert(id);
     namedObjectTypes.erase(found);
     return 0;
+}
+
+int APS5_VABI __sys_namedobj_delete_nid_postfix(std::uint32_t id, std::uint32_t type) {
+    return GuestNamedObjectDelete_nid_no_patch(id, type);
 }
 
 }

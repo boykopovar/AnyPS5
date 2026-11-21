@@ -5,8 +5,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
-#include <string>
 
 namespace {
 
@@ -21,17 +19,6 @@ void Require(bool condition, const char* message) {
     if (condition) return;
     std::fprintf(stderr, "NpRemotePlaySessionSignaling: %s\n", message);
     std::abort();
-}
-
-template <typename TCall>
-void RequireNotImplemented(TCall call, const std::string& name) {
-    try {
-        call();
-    } catch (const std::runtime_error& error) {
-        Require(std::string(error.what()) == name + " not implemented", "a placeholder export threw another error");
-        return;
-    }
-    Require(false, "a placeholder export returned");
 }
 
 void CheckBeforeInitialize() {
@@ -62,6 +49,10 @@ void CheckBeforeInitialize() {
     Require(sceNpRemotePlaySessionSignalingJoinSession("session", &mode, &group, &connection) == NotInitialized,
         "JoinSession before Initialize");
     Require(group == Stale && connection == Stale, "CreateJoinSession and JoinSession: a failed call writes nothing");
+    Require(sceNpRemotePlaySessionSignalingManualUdpCreateJoinSession(nullptr, nullptr, nullptr) == NotInitialized, "ManualUdpCreateJoinSession before Initialize");
+    Require(sceNpRemotePlaySessionSignalingManualUdpJoinSession(nullptr, nullptr, nullptr, nullptr) == NotInitialized, "ManualUdpJoinSession before Initialize");
+    Require(sceNpRemotePlaySessionSignalingEstablishConnection(1, 0) == NotInitialized, "EstablishConnection before Initialize");
+    Require(sceNpRemotePlaySessionSignalingAbortConnection(1) == NotInitialized, "AbortConnection before Initialize");
 }
 
 void CheckInitialized() {
@@ -106,6 +97,13 @@ void CheckInitialized() {
     Require(property == Stale, "GetCustomProperty: a failed call writes nothing");
     Require(sceNpRemotePlaySessionSignalingSetCustomProperty(999, nullptr, nullptr) == InvalidArgument, "SetCustomProperty");
     Require(sceNpRemotePlaySessionSignalingLeaveSession(999) == ContextNotFound, "LeaveSession");
+    const unsigned char manualParam[16] = {};
+    std::uint32_t manualId = Stale;
+    Require(sceNpRemotePlaySessionSignalingManualUdpCreateJoinSession(nullptr, &manualId, nullptr) == InvalidArgument, "ManualUdpCreateJoinSession: null parameter");
+    Require(sceNpRemotePlaySessionSignalingManualUdpJoinSession(manualParam, "", &manualId, nullptr) == InvalidArgument, "ManualUdpJoinSession: empty name");
+    Require(manualId == Stale, "ManualUdp: a failed call writes nothing");
+    Require(sceNpRemotePlaySessionSignalingEstablishConnection(999, 0) == ContextNotFound, "EstablishConnection: unknown context");
+    Require(sceNpRemotePlaySessionSignalingAbortConnection(999) == ContextNotFound, "AbortConnection: unknown context");
 
     std::uint32_t group = Stale;
     std::uint32_t connection = Stale;
@@ -139,19 +137,11 @@ void CheckInitialized() {
     Require(sceNpSessionSignalingGetMemoryInfo(&memory) == NotInitialized, "the session signaling library is terminated");
 }
 
-void CheckManualUdpPlaceholders() {
-    RequireNotImplemented([] { sceNpRemotePlaySessionSignalingAbortConnection(); }, "sceNpRemotePlaySessionSignalingAbortConnection");
-    RequireNotImplemented([] { sceNpRemotePlaySessionSignalingEstablishConnection(); }, "sceNpRemotePlaySessionSignalingEstablishConnection");
-    RequireNotImplemented([] { sceNpRemotePlaySessionSignalingManualUdpCreateJoinSession(); }, "sceNpRemotePlaySessionSignalingManualUdpCreateJoinSession");
-    RequireNotImplemented([] { sceNpRemotePlaySessionSignalingManualUdpJoinSession(); }, "sceNpRemotePlaySessionSignalingManualUdpJoinSession");
-}
-
 }
 
 int main() {
     CheckBeforeInitialize();
     CheckInitialized();
-    CheckManualUdpPlaceholders();
     std::puts("NpRemotePlaySessionSignaling tests passed");
     return 0;
 }

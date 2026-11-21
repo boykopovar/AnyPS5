@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_multibyte_state_handoff_tests ${LIBS_INCLUDE_DIR}/tests/GuestMultibyteStateHandoff.cpp)
+    target_include_directories(guest_multibyte_state_handoff_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_multibyte_state_handoff_tests PRIVATE libc)
+    configure_windows_unwind(guest_multibyte_state_handoff_tests)
+    add_test(NAME guest_multibyte_state_handoff COMMAND guest_multibyte_state_handoff_tests)
+    set_tests_properties(guest_multibyte_state_handoff PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_multibyte_state_handoff PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

@@ -1,3 +1,4 @@
+import collections
 import contextlib
 import io
 import os
@@ -7,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import rebase_verify
@@ -26,8 +28,9 @@ class RebaseVerifyTests(unittest.TestCase):
         cls.addClassCleanup(directory.cleanup)
         cls.template = Path(directory.name)
         git = lambda *arguments: run_git(cls.template, *arguments)
-        write = lambda name, text: (cls.template / name).write_text(text, encoding="utf-8")
+        write = lambda name, text: (cls.template / name).write_bytes(text.encode("utf-8"))
         git("init", "-q", "-b", "main")
+        git("config", "core.autocrlf", "false")
         git("config", "core.filemode", "false")
         write("f.txt", "a\nb\nc\n")
         git("add", "f.txt")
@@ -56,7 +59,7 @@ class RebaseVerifyTests(unittest.TestCase):
         return run_git(self.root, *arguments)
 
     def write(self, name, text):
-        (self.root / name).write_text(text, encoding="utf-8")
+        (self.root / name).write_bytes(text.encode("utf-8"))
 
     def verify(self):
         return rebase_verify.verify(self.root, "old", "new", "main")[3]
@@ -67,6 +70,25 @@ class RebaseVerifyTests(unittest.TestCase):
 
     def test_a_clean_rebase_keeps_every_line_author_and_commit(self):
         self.assertEqual(self.verify(), [])
+
+    def test_rebase_reports_a_crlf_line_changed_to_lf(self):
+        path = "windows.txt"
+        self.git("checkout", "-q", "old")
+        self.write(path, "first\r\nsecond\r\n")
+        self.git("add", "--", path)
+        self.git("commit", "-q", "-m", "feat(tools): add a Windows fixture")
+        self.git("checkout", "-q", "new")
+        self.git("cherry-pick", "old")
+        self.assertEqual(self.verify(), [])
+
+        self.write(path, "first\r\nsecond\n")
+        self.git("commit", "-q", "-a", "--amend", "--no-edit")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            status = rebase_verify.main(["old", "new", "--onto", "main", "--repo", str(self.root)])
+        self.assertEqual(status, 1, output.getvalue())
+        self.assertIn(f"error: {path}: an added line is missing (1x): second\\r\n", output.getvalue())
+        self.assertIn(f"error: {path}: a line is added that the branch did not add (1x): second\n", output.getvalue())
 
     def test_relative_diff_cannot_hide_lost_lines_from_a_subdirectory(self):
         nested = self.root / "nested"
@@ -143,6 +165,27 @@ class RebaseVerifyTests(unittest.TestCase):
             self.amend_mode(path, executable)
         self.assertEqual(self.verify(), ["new script.sh: file mode 100644, expected 100755"])
 
+    def test_paths_with_spaces_have_no_trailing_tab(self):
+        path = "spaced file.txt"
+        self.git("checkout", "-q", "old")
+        self.write(path, "old line\n")
+        self.git("add", "--", path)
+        self.git("commit", "-q", "--amend", "--no-edit")
+        self.git("checkout", "-q", "new")
+        self.write(path, "other line\n")
+        self.git("add", "--", path)
+        self.git("commit", "-q", "--amend", "--no-edit")
+        added, _ = rebase_verify.changed_lines(self.root, self.base, "old")
+        self.assertIn(path, added)
+        self.assertNotIn(path + "\t", added)
+        _, deleted = rebase_verify.changed_lines(self.root, "old", self.base)
+        self.assertIn(path, deleted)
+        self.assertNotIn(path + "\t", deleted)
+        self.assertEqual(self.verify(), [
+            f"{path}: an added line is missing (1x): old line",
+            f"{path}: a line is added that the branch did not add (1x): other line",
+        ])
+
     def test_a_line_the_branch_added_that_is_missing_is_reported(self):
         self.write("f.txt", "a\nb\nc\ntail\n")
         self.git("commit", "-q", "-a", "--amend", "--no-edit")
@@ -161,6 +204,47 @@ class RebaseVerifyTests(unittest.TestCase):
         self.git("commit", "-q", "-a", "--amend", "--no-edit")
         problems = self.verify()
         self.assertTrue(any("a line is added that the branch did not add" in problem for problem in problems), problems)
+
+    def amend_bytes(self, branch, data):
+        self.git("checkout", "-q", branch)
+        (self.root / "n.txt").write_bytes(data)
+        self.git("-c", "core.autocrlf=false", "add", "n.txt")
+        self.git("commit", "-q", "--amend", "--no-edit")
+
+    def test_a_dropped_final_newline_is_reported(self):
+        self.amend_bytes("old", b"first\nlast\n")
+        self.amend_bytes("new", b"first\nlast")
+        self.assertEqual(self.verify(), [
+            "n.txt: an added line is missing (1x): last",
+            "n.txt: a line is added that the branch did not add (1x): last (no newline at end of file)",
+        ])
+        self.amend_bytes("new", b"first\nlast\n")
+        self.assertEqual(self.verify(), [])
+
+    def commit_bytes(self, data, message):
+        (self.root / "n.txt").write_bytes(data)
+        self.git("-c", "core.autocrlf=false", "add", "n.txt")
+        self.git("commit", "-q", "-m", message)
+
+    def check_deletion_across_upstream_newline_change(self, base, upstream):
+        self.git("checkout", "-q", "main")
+        self.commit_bytes(base, "docs(tools): add n")
+        self.git("checkout", "-q", "-B", "old", "main")
+        self.commit_bytes(b"keep\n", "fix(tools): drop the last line")
+        self.git("checkout", "-q", "main")
+        self.commit_bytes(upstream, "docs(tools): change the end of n")
+        self.git("checkout", "-q", "-B", "new", "main")
+        self.commit_bytes(b"keep\n", "fix(tools): drop the last line")
+        self.assertEqual(self.verify(), [])
+        self.git("reset", "-q", "--hard", "main")
+        self.git("commit", "-q", "--allow-empty", "-m", "fix(tools): drop the last line")
+        self.assertEqual(self.verify(), ["n.txt: a deleted line is missing (1x): last"])
+
+    def test_a_deletion_is_checked_after_main_adds_the_final_newline(self):
+        self.check_deletion_across_upstream_newline_change(b"keep\nlast", b"keep\nlast\n")
+
+    def test_a_deletion_is_checked_after_main_drops_the_final_newline(self):
+        self.check_deletion_across_upstream_newline_change(b"keep\nlast\n", b"keep\nlast")
 
     def test_a_rebase_that_substitutes_a_different_deleted_line_is_reported(self):
         self.git("checkout", "-q", "old")
@@ -262,7 +346,7 @@ class RebaseDiffTextTests(unittest.TestCase):
     def changes(self, text, sign="+"):
         from unittest.mock import patch
         diff = "diff --git a/f.cpp b/f.cpp\n--- a/f.cpp\n+++ b/f.cpp\n@@ -1 +1 @@\n" + sign + text + "\n"
-        with patch.object(rebase_verify, "git", return_value=diff):
+        with patch.object(rebase_verify, "git", return_value=diff.encode("utf-8")):
             return rebase_verify.changed_lines(Path("."), "base", "head")
 
     def test_unicode_separators_cannot_hide_changed_added_text(self):
@@ -292,6 +376,97 @@ class RebaseDiffTextTests(unittest.TestCase):
         old, _ = self.changes("before")
         new, _ = self.changes("after")
         self.assertEqual(len(rebase_verify.differences(old, new)), 2)
+
+    def test_only_an_added_line_without_a_final_newline_differs_from_the_terminated_line(self):
+        marker = "\n" + rebase_verify.NO_NEWLINE
+        old, _ = self.changes("tail")
+        new, _ = self.changes("tail" + marker)
+        self.assertEqual(new["f.cpp"], {"tail" + marker: 1})
+        self.assertEqual(rebase_verify.differences(old, new), [
+            "f.cpp: an added line is missing (1x): tail",
+            "f.cpp: a line is added that the branch did not add (1x): tail (no newline at end of file)",
+        ])
+        _, deleted = self.changes("tail" + marker, "-")
+        self.assertEqual(deleted["f.cpp"], {"tail": 1})
+        spoofed, _ = self.changes("tail\n\\literal")
+        self.assertEqual(spoofed["f.cpp"], {"tail": 1})
+
+
+class CountHelperTests(unittest.TestCase):
+    def test_default_onto_returns_an_explicit_name_without_asking_git(self):
+        self.assertEqual(rebase_verify.default_onto(Path("."), "origin/main"), "origin/main")
+
+    def test_commits_and_people_count_the_commits_between_two_refs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init", "-q")
+            run_git(root, "-c", "user.name=Base", "-c", "user.email=base@example.invalid",
+                    "commit", "-q", "--allow-empty", "-m", "base")
+            base = run_git(root, "rev-parse", "HEAD").strip()
+            for name, email in (("Alice", "alice@example.invalid"), ("Bob", "bob@example.invalid"),
+                                ("Alice", "alice@example.invalid")):
+                run_git(root, "-c", f"user.name={name}", "-c", f"user.email={email}",
+                        "commit", "-q", "--allow-empty", "-m", f"change by {name}")
+            tip = run_git(root, "rev-parse", "HEAD").strip()
+            self.assertEqual(rebase_verify.commits(root, base, tip), 3)
+            self.assertEqual(rebase_verify.people(root, base, tip), collections.Counter({
+                "Alice <alice@example.invalid>\x1fchange by Alice": 2,
+                "Bob <bob@example.invalid>\x1fchange by Bob": 1}))
+class ChangedModeTests(unittest.TestCase):
+    def commit(self, root, message):
+        run_git(root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", message)
+        return run_git(root, "rev-parse", "HEAD")
+
+    def test_changed_modes_reports_a_file_whose_executable_bit_changed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init", "-q")
+            (root / "f.txt").write_text("x\n", encoding="utf-8")
+            run_git(root, "add", "f.txt")
+            base = self.commit(root, "base")
+            run_git(root, "update-index", "--chmod=+x", "--", "f.txt")
+            tip = self.commit(root, "make executable")
+            self.assertEqual(rebase_verify.changed_modes(root, base, tip), {b"f.txt": ("100644", "100755")})
+
+    def test_changed_modes_is_empty_for_a_content_only_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init", "-q")
+            (root / "f.txt").write_text("x\n", encoding="utf-8")
+            run_git(root, "add", "f.txt")
+            base = self.commit(root, "base")
+            (root / "f.txt").write_text("y\n", encoding="utf-8")
+            run_git(root, "add", "f.txt")
+            tip = self.commit(root, "edit")
+            self.assertEqual(rebase_verify.changed_modes(root, base, tip), {})
+
+
+class ModeDifferencesTests(unittest.TestCase):
+    def differences(self, table):
+        with patch.object(rebase_verify, "changed_modes", side_effect=lambda root, base, ref: table.get((base, ref), {})):
+            return rebase_verify.mode_differences("root", table["old_base"], "old", table["new_base"], "new")
+
+    def test_preserved_mode_changes_have_no_problems(self):
+        change = {b"a": ("100644", "100755")}
+        table = {"old_base": "b", "new_base": "b", ("b", "old"): change, ("b", "new"): change}
+        self.assertEqual(self.differences(table), [])
+
+    def test_lost_mode_change_is_reported(self):
+        table = {"old_base": "b", "new_base": "b", ("b", "old"): {b"a": ("100644", "100755")}}
+        self.assertEqual(self.differences(table), ["a: file mode 100644, expected 100755"])
+
+    def test_mode_already_applied_by_the_new_base_is_accepted(self):
+        change = {b"a": ("100644", "100755")}
+        table = {"old_base": "b0", "new_base": "b1", ("b0", "old"): change, ("b0", "b1"): change}
+        self.assertEqual(self.differences(table), [])
+
+    def test_mode_change_only_in_the_new_branch_is_reported(self):
+        table = {"old_base": "b", "new_base": "b", ("b", "new"): {b"c": ("100755", "100644")}}
+        self.assertEqual(self.differences(table), ["c: file mode 100644, expected 100755"])
+
+    def test_non_utf8_paths_are_escaped(self):
+        table = {"old_base": "b", "new_base": "b", ("b", "old"): {b"\xff": ("100644", "100755")}}
+        self.assertEqual(self.differences(table), ["\\xff: file mode 100644, expected 100755"])
 
 
 if __name__ == "__main__":
