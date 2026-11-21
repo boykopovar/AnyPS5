@@ -37,8 +37,8 @@ int APS5_VABI sceAjmBatchJobEncode(AjmBatchInfo* info, uint32_t instance, const 
 const char* APS5_VABI sceAjmStrError(int error);
 int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(WVorbisHeaderPacketParameter* param);
 int APS5_VABI sceAjmDecWVorbisCreateSetupPacket(WVorbisSetupPacketParameter* parameter);
-int APS5_VABI sceAjmBatchGetLog();
-int APS5_VABI sceAjmInstanceAvailable();
+int APS5_VABI sceAjmBatchGetLog(uint32_t context, uint32_t size, void* buffer, void* out);
+int APS5_VABI sceAjmInstanceAvailable(uint32_t context, uint32_t codec, uint64_t flags);
 uint32_t APS5_VABI sceAjmInstanceCodecType(uint32_t instanceId);
 int APS5_VABI sceAjmInstanceExtend(uint32_t context, uint32_t codec, uint64_t flags, uint32_t instance);
 int APS5_VABI sceAjmInstanceSwitch(uint32_t context, uint32_t codec, uint64_t flags, uint32_t instance);
