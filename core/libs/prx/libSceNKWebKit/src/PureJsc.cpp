@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
@@ -25,8 +26,8 @@ void APS5_VABI _ZN3JSC16clearArrayMemsetEPdj(double* base, unsigned int count) {
     std::memcpy(&pnanValue, &pnanBits, sizeof(double));
     double chunk[512];
     std::fill(std::begin(chunk), std::end(chunk), pnanValue);
-    for (unsigned int offset = 0; offset < count; offset += std::size(chunk)) {
-        const unsigned int length = std::min<unsigned int>(std::size(chunk), count - offset);
+    for (std::size_t offset = 0; offset < count; offset += std::size(chunk)) {
+        const std::size_t length = std::min<std::size_t>(std::size(chunk), count - offset);
         if (!GuestCopyOut_nid_no_patch(base + offset, chunk, length * sizeof(double))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
 }
