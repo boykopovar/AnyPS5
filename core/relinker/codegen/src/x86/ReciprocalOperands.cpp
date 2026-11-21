@@ -1,5 +1,6 @@
 #include <codegen/x86/ReciprocalOperands.hpp>
 #include <codegen/x86/X64OpcodeConstants.hpp>
+#include <vector>
 
 namespace Codegen {
 
@@ -12,39 +13,49 @@ constexpr std::uint8_t kOpcodeRcpps = 0x53;
 constexpr std::uint8_t kScalarPrefix = 0xF3;
 constexpr std::uint8_t kVexScalarPrefix = 0x02;
 
+bool _addressPrefix(const std::uint8_t byte) {
+    using namespace X64OpcodeConstants;
+    return byte == PrefixSegEs || byte == PrefixSegCs || byte == PrefixSegSs || byte == PrefixSegDs || byte == PrefixAddressSize;
 }
 
-std::optional<ReciprocalOperands> DecodeReciprocal(const std::uint8_t* data, std::size_t length) {
+}
+
+std::optional<ReciprocalOperands> DecodeReciprocal(const std::uint8_t* data, const std::size_t length) {
     using namespace X64OpcodeConstants;
-    const bool legacyScalar = length != 0 && data[0] == kScalarPrefix;
-    if (legacyScalar) {
-        ++data;
-        --length;
+    std::vector<std::uint8_t> prefixes;
+    bool legacyScalar = false;
+    std::size_t start = 0;
+    for (; start < length; ++start) {
+        if (data[start] == kScalarPrefix)
+            legacyScalar = true;
+        else if (_addressPrefix(data[start]))
+            prefixes.push_back(data[start]);
+        else
+            break;
     }
-    if (length < 3)
+    const auto* const code = data + start;
+    const auto remaining = length - start;
+    if (remaining < 3)
         return std::nullopt;
-    bool registerExtension = false;
-    bool rmExtension = false;
+    std::uint8_t rex = 0;
     std::uint8_t payload = 0;
     std::size_t opcodeOffset = 0;
     bool vex = true;
-    if (!legacyScalar && data[0] == OneByteVex2 && length == 4) {
-        registerExtension = (data[1] & 0x80) == 0;
-        payload = data[1];
+    if (!legacyScalar && code[0] == OneByteVex2 && remaining >= 4) {
+        rex = (code[1] & 0x80) == 0 ? 0x04 : 0;
+        payload = code[1];
         opcodeOffset = 2;
-    } else if (!legacyScalar && data[0] == OneByteVex3 && length == 5) {
-        if ((data[1] & Vex3MapMask) != kVexMap0F)
+    } else if (!legacyScalar && code[0] == OneByteVex3 && remaining >= 5) {
+        if ((code[1] & Vex3MapMask) != kVexMap0F)
             return std::nullopt;
-        registerExtension = (data[1] & 0x80) == 0;
-        rmExtension = (data[1] & 0x20) == 0;
-        payload = data[2];
+        rex = static_cast<std::uint8_t>((~code[1] >> 5) & 0x07);
+        payload = code[2];
         opcodeOffset = 3;
-    } else if (data[0] == TwoByteOpcodeEscape && length == 3) {
+    } else if (code[0] == TwoByteOpcodeEscape) {
         opcodeOffset = 1;
         vex = false;
-    } else if (data[0] >= RexMin && data[0] <= RexMax && length == 4 && data[1] == TwoByteOpcodeEscape) {
-        registerExtension = (data[0] & 0x04) != 0;
-        rmExtension = (data[0] & 0x01) != 0;
+    } else if (code[0] >= RexMin && code[0] <= RexMax && remaining >= 4 && code[1] == TwoByteOpcodeEscape) {
+        rex = static_cast<std::uint8_t>(code[0] & 0x07);
         opcodeOffset = 2;
         vex = false;
     } else {
@@ -54,21 +65,32 @@ std::optional<ReciprocalOperands> DecodeReciprocal(const std::uint8_t* data, std
     const bool wide = (payload & 0x04) != 0;
     const auto pp = static_cast<std::uint8_t>(payload & 0x03);
     const bool vexScalar = vex && pp == kVexScalarPrefix;
-    if (vex && !vexScalar && (vvvv != kVexUnusedRegister || wide || pp != 0))
+    if (vex && !vexScalar && (vvvv != kVexUnusedRegister || pp != 0))
         return std::nullopt;
-    const auto opcode = data[opcodeOffset];
+    const auto opcode = code[opcodeOffset];
     if (opcode != kOpcodeRsqrtps && opcode != kOpcodeRcpps)
         return std::nullopt;
-    const auto modrm = data[opcodeOffset + 1];
-    if (((modrm >> ModRmModShift) & ModRmModMask) != ModRmModRegister)
-        return std::nullopt;
+    const auto modRmOffset = start + opcodeOffset + 1;
+    const auto modrm = data[modRmOffset];
+    const bool registerForm = ((modrm >> ModRmModShift) & ModRmModMask) == ModRmModRegister;
+    std::optional<MemoryOperand> memory;
+    if (registerForm) {
+        if (modRmOffset + 1 != length)
+            return std::nullopt;
+    } else {
+        memory = DecodeMemoryOperand(data, length, modRmOffset, static_cast<std::uint8_t>(rex & 0x03), prefixes);
+        if (modRmOffset + memory->EncodedSize != length)
+            return std::nullopt;
+    }
     ReciprocalOperands operands{};
     operands.Operation = opcode == kOpcodeRsqrtps ? ReciprocalOperation::ReciprocalSquareRoot : ReciprocalOperation::Reciprocal;
-    operands.Destination = static_cast<std::uint8_t>(((modrm >> ModRmRegShift) & ModRmRegMask) | (registerExtension ? 8 : 0));
-    operands.Source = static_cast<std::uint8_t>((modrm & ModRmRmMask) | (rmExtension ? 8 : 0));
+    operands.Destination = static_cast<std::uint8_t>(((modrm >> ModRmRegShift) & ModRmRegMask) | ((rex & 0x04) != 0 ? 8 : 0));
+    operands.Source = registerForm ? static_cast<std::uint8_t>((modrm & ModRmRmMask) | ((rex & 0x01) != 0 ? 8 : 0)) : operands.Destination;
     operands.Vex = vex;
     operands.Scalar = legacyScalar || vexScalar;
     operands.Upper = vexScalar ? static_cast<std::uint8_t>(~vvvv & 0x0F) : operands.Destination;
+    operands.Wide = vex && !vexScalar && wide;
+    operands.Memory = std::move(memory);
     return operands;
 }
 

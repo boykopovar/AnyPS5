@@ -30,6 +30,7 @@ struct StubRelocation {
     std::size_t InstructionEnd;
     std::int64_t SiteTarget;
     bool AddressSize32 = false;
+    bool SharedData = false;
 };
 
 struct Amd64OnlyMatch {

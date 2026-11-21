@@ -2,7 +2,10 @@
 #include <elfpatcher/windows/WindowsPeFormat.hpp>
 #include <elfpatcher/windows/WindowsTrampolineBuilder.hpp>
 #include <codegen/CodegenTypes.hpp>
+#include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
+#include <codegen/x86/SharedStubData.hpp>
 #include <domain/Types.hpp>
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -83,6 +86,23 @@ void run() {
     require(sections.size() == 3 && sections.back().Name == ".amdstub" && sections.back().Rva == endRva, "Stub section was not appended");
     require(nextRva == AlignRva(static_cast<std::uint64_t>(endRva) + sections.back().Data.size()), "Next RVA does not follow the stub section");
     require(sections[0].Data[2] == 0xE9 && sections[0].Data[7] == 0x90 && sections[0].Data[0x10] == 0xE9 && sections[0].Data[0x15] == 0x90, "Sites were not replaced by jumps");
+    require(sections.back().Data.size() < Codegen::SharedStubData().size(), "Shared stub data was placed for stubs that do not use it");
+
+    auto sharedSections = image.BuildSections();
+    auto sharedRva = endRva;
+    auto shared = site(0x1002);
+    shared.Body = {0x48, 0x8D, 0x05, 0x00, 0x00, 0x00, 0x00, 0xE9, 0x00, 0x00, 0x00, 0x00};
+    shared.ReturnBranchOffset = 7;
+    const auto constant = Codegen::SharedConstantOffset(Codegen::SharedConstant::Infinity);
+    shared.Relocations = {{3, 7, static_cast<std::int64_t>(constant), false, true}};
+    WindowsTrampolineBuilder().Build({shared, site(0x1010)}, image, sharedSections, sharedRva);
+    const auto& stubs = sharedSections.back().Data;
+    const auto data = Codegen::SharedStubData();
+    require(stubs.size() > data.size() && std::equal(data.begin(), data.end(), stubs.begin()), "Shared stub data does not start the stub section");
+    const auto stubOffset = (data.size() + Codegen::Amd64OnlySubstitutionTable::kStubAlignment - 1) / Codegen::Amd64OnlySubstitutionTable::kStubAlignment * Codegen::Amd64OnlySubstitutionTable::kStubAlignment;
+    std::int32_t displacement = 0;
+    std::memcpy(&displacement, stubs.data() + stubOffset + 3, sizeof(displacement));
+    require(static_cast<std::int64_t>(stubOffset) + 7 + displacement == static_cast<std::int64_t>(constant), "Shared stub relocation does not point at its constant");
 
     const auto fresh = image.BuildSections();
     requireRejected(image, {site(0x1002), site(0x1004)}, fresh, endRva, "Overlapping AMD-only trampoline sites");
