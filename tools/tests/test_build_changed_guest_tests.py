@@ -101,6 +101,16 @@ class GuestTestTargets(unittest.TestCase):
         build = self.fixture([guest, unrelated, fixture])
         self.assertEqual(self.selections(build, [fixture_source]), ["guest_jxr_tests"])
 
+    def test_a_test_linked_to_a_static_product_library_without_guest_libc_is_selected(self):
+        test_source = "core/libs/prx/libSceAjm.native/tests/Atrac9Gradient.c"
+        guest = self.target("atrac9_gradient_tests", source=test_source, fragment="lib/libatrac9.a")
+        library = self.target("atrac9", target_type="STATIC_LIBRARY", source="core/libs/prx/libSceAjm.native/src/Atrac9.c")
+        library["artifacts"] = [{"path": "lib/libatrac9.a"}]
+        host = self.target("host_tests", source="core/libs/tests/Host.cpp")
+        build = self.fixture([guest, library, host])
+        self.assertEqual(self.selections(build, None), ["atrac9_gradient_tests"])
+        self.assertEqual(self.selections(build, [test_source]), ["atrac9_gradient_tests"])
+
     def test_a_header_change_selects_every_guest_test(self):
         guest_a = self.target("guest_a_tests", source="core/libs/tests/GuestA.cpp", fragment="libc.prx")
         guest_b = self.target("guest_b_tests", source="core/libs/tests/GuestB.cpp", fragment="libc.prx")

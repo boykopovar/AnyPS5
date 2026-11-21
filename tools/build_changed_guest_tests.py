@@ -105,7 +105,7 @@ def guest_test_targets(source_root, targets, changed_paths=None):
         sources = [source_root / source["path"] for source in target.get("sources", []) if not source.get("isGenerated")]
         if not any(host_only.is_core_libs_test_source(source, source_root / "core" / "libs") for source in sources):
             continue
-        if not host_only.links_guest_libc(target):
+        if not host_only.links_product_library(target, targets, source_root):
             continue
         selected.append(target)
     if changed_paths is None:
