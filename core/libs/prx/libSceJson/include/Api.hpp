@@ -125,14 +125,14 @@ static_assert(offsetof(InputStream, character) == 0x10 && offsetof(InputStream, 
 
 extern "C" {
 
-extern const std::int64_t _ZN3sce4Json5Value13s_nullintegerE;
-extern const std::uint64_t _ZN3sce4Json5Value14s_nulluintegerE;
-extern const double _ZN3sce4Json5Value10s_nullrealE;
-extern const bool _ZN3sce4Json5Value10s_nullboolE;
-extern SceJson::String* _ZN3sce4Json5Value12s_nullstringE;
-extern SceJson::Array* _ZN3sce4Json5Value11s_nullarrayE;
-extern SceJson::Object* _ZN3sce4Json5Value12s_nullobjectE;
-extern SceJson::InitParameter* _ZN3sce4Json11s_initparamE;
+extern const std::int64_t _ZN3sce4Json5Value13s_nullintegerE_nid_no_patch;
+extern const std::uint64_t _ZN3sce4Json5Value14s_nulluintegerE_nid_no_patch;
+extern const double _ZN3sce4Json5Value10s_nullrealE_nid_no_patch;
+extern const bool _ZN3sce4Json5Value10s_nullboolE_nid_no_patch;
+extern SceJson::String* _ZN3sce4Json5Value12s_nullstringE_nid_no_patch;
+extern SceJson::Array* _ZN3sce4Json5Value11s_nullarrayE_nid_no_patch;
+extern SceJson::Object* _ZN3sce4Json5Value12s_nullobjectE_nid_no_patch;
+extern SceJson::InitParameter* _ZN3sce4Json11s_initparamE_nid_no_patch;
 
 void* APS5_VABI _ZN3sce4Json6MallocEm_nid_no_patch(std::size_t size);
 void APS5_VABI _ZN3sce4Json4FreeEPv_nid_no_patch(void* pointer);
