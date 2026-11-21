@@ -471,11 +471,11 @@ void RunInstallNull() {
 
 int main(int argc, char** argv) {
     RegisterTrackingHeap();
+    const std::string mode = argc > 1 ? argv[1] : "default";
     const auto directory = std::filesystem::temp_directory_path() /
-        ("anyps5-wtf-data-log-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        ("anyps5-wtf-data-log-" + mode + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(directory), "temporary directory");
     AddPathAlias_nid_no_patch("/wtf-data-log", directory.string().c_str());
-    const std::string mode = argc > 1 ? argv[1] : "default";
     if (mode == "default") {
         RunDefault(directory);
     } else if (mode == "install-first") {
