@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
@@ -9,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -28,6 +30,15 @@ alignas(256) constexpr std::array<std::uint32_t, 28> Code{
     0xd5648010, 0x02020d06, 0xd5650112, 0x3a020d06, 0xd5640014, 0x0201ff06, 0x40080000, 0xd5980016,
     0x22010106, 0xd54c0018, 0x13e1e506, 0xe0781000, 0x80010a03, 0xe0781010, 0x80010e03, 0xe0781020,
     0x80011203, 0xe0781030, 0x80011603, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 46> IntegerModifierCode{
+    0x34020084u, 0x34060086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0xd583000au, 0x00000106u, 0xd583000bu,
+    0x08000106u, 0xd583000cu, 0x10000106u, 0xd583000du, 0x18000106u, 0xd583800eu, 0x00000106u, 0xd583800fu,
+    0x08000106u, 0xd5838010u, 0x10000106u, 0xd5838011u, 0x18000106u, 0xd5950012u, 0x00000106u, 0xd5950013u,
+    0x08000106u, 0xd5950014u, 0x10000106u, 0xd5950015u, 0x18000106u, 0xd5958016u, 0x00000106u, 0xd5958017u,
+    0x08000106u, 0xd5958018u, 0x10000106u, 0xd5958019u, 0x18000106u, 0xe0781000u, 0x80010a03u, 0xe0781010u,
+    0x80010e03u, 0xe0781020u, 0x80011203u, 0xe0781030u, 0x80011603u, 0xbf810000u,
 };
 
 constexpr std::uint32_t Rows[32][4] = {
@@ -115,11 +126,11 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
+void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const std::string& name) {
     Require(actual == expected, std::string("f64 conversions: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, ShaderRecompiler::ShaderFloatMode mode) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
@@ -127,7 +138,6 @@ void Run(AgcDriver::VulkanDevice& device) {
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
-    const std::span<const std::uint32_t> code(Code);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -137,7 +147,7 @@ void Run(AgcDriver::VulkanDevice& device) {
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false};
+    request.context.floatMode = mode;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -151,6 +161,26 @@ void Check() {
     }
 }
 
+void CheckIntegerModifiers() {
+    for (std::uint32_t output = 0; output < Results; ++output) {
+        const auto inst = ShaderRecompiler::DecodeRdnaInstruction(0u, IntegerModifierCode, 5u + 2u * output);
+        Require(inst.destination.clamp == ((output & 4u) != 0u), "f64-to-integer conversion lost its inexact control bit");
+        Require(inst.destination.omod == 0u, "f64-to-integer conversion retained output scaling");
+    }
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const auto bits = (static_cast<std::uint64_t>(Rows[tid][3]) << 32u) | Rows[tid][2];
+        const double input = std::bit_cast<double>(bits);
+        const double value = std::isnan(input) ? 0.0 : input;
+        const auto signedResult = static_cast<std::uint32_t>(static_cast<std::int32_t>(std::clamp(value, -2147483648.0, 2147483647.0)));
+        const auto unsignedResult = static_cast<std::uint32_t>(std::clamp(value, 0.0, 4294967295.0));
+        for (std::uint32_t form = 0; form < 8; ++form) {
+            const std::string modifiers = " omod=" + std::to_string(form & 3u) + " clamp=" + std::to_string(form >> 2u);
+            Expect(tid, Output[tid * Results + form], signedResult, "v_cvt_i32_f64" + modifiers);
+            Expect(tid, Output[tid * Results + 8u + form], unsignedResult, "v_cvt_u32_f64" + modifiers);
+        }
+    }
+}
+
 }
 
 int main() {
@@ -161,8 +191,12 @@ int main() {
             std::puts("skipped, the device has no shaderFloat64");
             return VulkanTestSkipped;
         }
-        Run(*device);
+        Run(*device, Code, {0xf0u, true, true, false});
         Check();
+        for (const bool ieee : {false, true}) {
+            Run(*device, IntegerModifierCode, {0xc0u, true, ieee, false});
+            CheckIntegerModifiers();
+        }
         std::puts("f64 conversions tests passed");
         return 0;
     } catch (const std::exception& error) {
