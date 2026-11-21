@@ -14,7 +14,7 @@ std::string SafeName(const IBackend& backend) {
     return rawName != nullptr ? std::string(rawName) : std::string("host-performance");
 }
 
-void EmitLogQuietly(const Log& log, const IBackend& backend, const char* detail) {
+void EmitLogQuietly(const Session::Log& log, const IBackend& backend, const char* detail) {
     if (!log) return;
     try {
         std::string message = SafeName(backend) + ": release failed";
