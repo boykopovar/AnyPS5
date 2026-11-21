@@ -8105,8 +8105,8 @@ bool hookClearAccessTests(const Device& device, Recorder& recorder) {
     const auto decided = PrepareImportWatch(base);
 #ifndef _WIN32
     const auto probe = ProbeImportWriteProtection(base);
-    if (probe.failure != nullptr || probe.writtenAtImport != 0 || probe.writtenAfterSubmit != 0) {
-        std::cout << "skipped, the device reports watched host memory written when it imports or reads it\n";
+    if (probe.failure != nullptr || probe.writtenAtImport != 0 || probe.writtenAfterSubmit != 0 || probe.writtenAfterFill != 0) {
+        std::cout << "skipped, the device reports watched host memory written when it imports, reads or writes it\n";
         return false;
     }
     if (device.Properties().deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) {
