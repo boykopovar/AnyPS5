@@ -141,6 +141,9 @@ struct Socket : KernelSocketPoll::NativeOwner {
     bool connecting = false;
     int connectFailure = 0;
 #endif
+#ifdef __linux__
+    bool connectPending = false;
+#endif
     std::uint32_t inode = 0;
     std::weak_ptr<Socket> peer;
     bool externalPeer = false;
@@ -1017,6 +1020,13 @@ int UnsupportedLevelError(const Socket& socket, int level, int option, bool set)
 bool SendBeforeConnect(Socket& socket) {
     if (socket.type != 1) return false;
     std::lock_guard lock(socket.modeMutex);
+#ifdef __linux__
+    if (socket.connectPending) {
+        pollfd entry{socket.value, POLLOUT, 0};
+        if (::poll(&entry, 1, 0) == 0) return true;
+        socket.connectPending = false;
+    }
+#endif
     return !socket.connectStarted;
 }
 bool LocalDatagram(const Socket& socket) {
@@ -1483,6 +1493,31 @@ extern "C" bool KernelLookupSocketNative_nid_no_patch(int descriptor, std::share
     return KernelFindSocketNative_nid_no_patch(descriptor, owner, native);
 }
 
+int APS5_VABI sockatmark_nid_postfix(int descriptor) {
+    std::shared_ptr<void> owner;
+    std::uintptr_t native = 0;
+    if (!KernelLookupSocketNative_nid_no_patch(descriptor, &owner, &native))
+        return Fail(descriptor >= 0 && DescriptorIsOpen_nid_no_patch(descriptor) ? 38 : 9);
+    const auto socket = static_cast<NativeSocket>(native);
+    int type = 0;
+#ifdef _WIN32
+    int length = sizeof(type);
+    if (::getsockopt(socket, SOL_SOCKET, SO_TYPE, reinterpret_cast<char*>(&type), &length) != 0) return Fail(NativeError());
+#else
+    socklen_t length = sizeof(type);
+    if (::getsockopt(socket, SOL_SOCKET, SO_TYPE, &type, &length) != 0) return Fail(NativeError());
+#endif
+    if (type == SOCK_DGRAM) return 0;
+#ifdef _WIN32
+    unsigned long atmark = 0;
+    if (::ioctlsocket(socket, SIOCATMARK, &atmark) != 0) return Fail(NativeError());
+#else
+    int atmark = 0;
+    if (::ioctl(socket, SIOCATMARK, &atmark) != 0) return Fail(NativeError());
+#endif
+    return atmark != 0;
+}
+
 extern "C" bool KernelDescribeSocket_nid_no_patch(int descriptor, KernelSocketPoll::Description* description) {
     const auto socket = Find(descriptor);
     if (!socket) return false;
@@ -1833,17 +1868,36 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
     std::unique_lock lock(socket->modeMutex);
     socket->options.reportedError = 0;
     socket->connectStarted = true;
+#ifdef __linux__
+    if (socket->type == 1) socket->connectPending = true;
+#endif
     if (socket->type != 2) lock.unlock();
     if (::connect(socket->value, reinterpret_cast<sockaddr*>(&native), size)) {
 #ifdef _WIN32
         if (socket->type == 1) return Fail(NoteConnectError(*socket));
 #endif
+#ifdef __linux__
+        const int host = errno;
+        const int error = ConnectError();
+        if (socket->type == 1 && host != EINPROGRESS && host != EALREADY && host != EINTR) {
+            std::lock_guard failed(socket->modeMutex);
+            socket->connectPending = false;
+        }
+        return Fail(error);
+#else
         return Fail(ConnectError());
+#endif
     }
 #ifdef _WIN32
     if (socket->type == 1) {
         std::lock_guard connected(socket->modeMutex);
         socket->connecting = false;
+    }
+#endif
+#ifdef __linux__
+    if (socket->type == 1) {
+        std::lock_guard connected(socket->modeMutex);
+        socket->connectPending = false;
     }
 #endif
     if (socket->type == 2) socket->localAddressCleared = false;
@@ -1948,6 +2002,9 @@ std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std:
     if (socket->type == 1 && PairPeerGone(*socket)) return Fail(32);
 #endif
     if (const int waited = WaitForTransfer(*socket, true, flags)) return Fail(waited);
+#ifdef _WIN32
+    if (SourceFaults(buffer, length)) return Fail(14);
+#endif
     const auto result = ::send(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), SocketSendFlags(*socket, flags));
     return result < 0 ? Fail(SendError(*socket)) : result;
 }
@@ -1973,10 +2030,21 @@ std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint6
 #endif
     if (const int waited = WaitForTransfer(*socket, false, flags, descriptor)) return Fail(waited);
     if (ReceiveShut(*socket)) return 0;
-    const auto result = ::recv(socket->value, static_cast<char*>(buffer), static_cast<int>(length),
+    std::uint64_t limit = length;
+#ifdef _WIN32
+    if (length != 0 && (limit = GuestPrefix(buffer, length, WritableProtection)) < length) {
+        int error = 0;
+        if (!PendingFits(*socket, buffer, limit, flags, error)) {
+            DropDatagram(*socket, flags);
+            return Fail(14);
+        }
+        if (error) return Fail(error);
+    }
+#endif
+    const auto result = ::recv(socket->value, static_cast<char*>(buffer), static_cast<int>(limit),
         NativeReceiveFlags(flags, socket->type));
 #ifdef _WIN32
-    if (result < 0 && socket->type == 2 && WSAGetLastError() == WSAEMSGSIZE) return static_cast<std::int64_t>(length);
+    if (result < 0 && socket->type == 2 && WSAGetLastError() == WSAEMSGSIZE) return static_cast<std::int64_t>(limit);
 #endif
     return result < 0 ? Fail(NativeError()) : result;
 }
