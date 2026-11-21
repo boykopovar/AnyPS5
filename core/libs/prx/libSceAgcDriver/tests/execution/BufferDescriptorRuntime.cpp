@@ -227,12 +227,99 @@ void ScalarReads(AgcDriver::VulkanDevice& device) {
     GuestAllocations::Mutation().Remove(Input.data());
 }
 
+void DisabledLdsLoads(AgcDriver::VulkanDevice& device) {
+    alignas(256) constexpr std::array<std::uint32_t, 5> code{0x34020082u, 0xbefc0380u, 0xe0311000u, 0x80000001u, 0xbf810000u};
+    std::array<std::uint32_t, 4> userData{};
+    auto request = Request(userData, device.ComputeTarget(Lanes), {});
+    request.context.compute->ldsSizeDwords = Lanes;
+    request.shader.code = code;
+    request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(code.data());
+    request.useCache = false;
+    for (const auto word3 : {0x31016facu, 0x91016facu, 0xd1016facu}) {
+        auto source = BufferDescriptor(Input.data(), InputBytes);
+        source[3] = word3;
+        std::copy(source.begin(), source.end(), userData.begin());
+        bool refused = false;
+        try {
+            const auto result = ShaderRecompiler::Recompile(request);
+            Require(word3 == 0x31016facu, "TYPE 2 or 3 MUBUF LDS was accepted");
+            device.Dispatch(result, 1u, 1u, 1u);
+            device.WaitIdle();
+        } catch (const std::runtime_error& error) {
+            Require(word3 != 0x31016facu && std::string(error.what()).find("buffer-load preservation with MUBUF LDS is not implemented") != std::string::npos, "MUBUF LDS failed for another reason: " + std::string(error.what()));
+            refused = true;
+        }
+        Require(refused == (word3 != 0x31016facu), "MUBUF LDS refusal differs from its descriptor type");
+    }
+}
+
+void DisabledMultiwordLoads(AgcDriver::VulkanDevice& device) {
+    alignas(256) std::array<std::uint32_t, Lanes * 4u> input{};
+    alignas(256) std::array<std::uint32_t, Lanes * 4u> output{};
+    constexpr std::array<std::uint32_t, 4> previous{0xa1a2a3a4u, 0xb1b2b3b4u, 0xc1c2c3c4u, 0xd1d2d3d4u};
+    for (std::uint32_t i = 0u; i < input.size(); ++i) input[i] = 0x13579bdfu ^ (i * 0x10203u);
+    constexpr std::array<std::uint32_t, 4> loads{0xe0301000u, 0xe0341000u, 0xe03c1000u, 0xe0381000u};
+    for (std::uint32_t width = 1u; width <= loads.size(); ++width) {
+        alignas(256) std::array<std::uint32_t, 15> code{
+            0x34020084u, 0x7e0802ffu, previous[0], 0x7e0a02ffu, previous[1], 0x7e0c02ffu, previous[2],
+            0x7e0e02ffu, previous[3], loads[width - 1u], 0x80000401u, 0xbf8c3f70u, 0xe0781000u, 0x80010401u, 0xbf810000u,
+        };
+        std::array<std::uint32_t, 8> userData{};
+        const auto destination = BufferDescriptor(output.data(), sizeof(output));
+        std::copy(destination.begin(), destination.end(), userData.begin() + 4u);
+        auto request = Request(userData, device.ComputeTarget(Lanes), {});
+        request.useCache = false;
+        request.shader.code = code;
+        request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(code.data());
+        const auto refuses = [&](std::uint32_t opcode, std::uint32_t word3) {
+            const auto original = code[9];
+            code[9] = opcode;
+            auto source = BufferDescriptor(input.data(), sizeof(input));
+            source[3] = word3;
+            std::copy(source.begin(), source.end(), userData.begin());
+            bool refused = false;
+            try {
+                (void)ShaderRecompiler::Recompile(request);
+            } catch (const std::runtime_error& error) {
+                Require(std::string(error.what()).find("buffer descriptor uses an unsupported type") != std::string::npos, "multiword buffer refusal failed for another reason: " + std::string(error.what()));
+                refused = true;
+            }
+            code[9] = original;
+            Require(refused, "unmeasured buffer load or TYPE 1 was accepted");
+        };
+        refuses(loads[width - 1u], 0x71016facu);
+        for (const auto word3 : {0x91016facu, 0xd1016facu}) {
+            refuses(0xe2002000u, word3);
+            refuses(0xe2082000u, word3);
+            refuses(0xe0042000u, word3);
+        }
+        for (const auto word3 : {0x31016facu, 0x91016facu, 0xd1016facu, 0x31016facu}) {
+            auto source = BufferDescriptor(input.data(), sizeof(input));
+            source[3] = word3;
+            std::copy(source.begin(), source.end(), userData.begin());
+            output.fill(Fill);
+            const auto result = ShaderRecompiler::Recompile(request);
+            device.Dispatch(result, 1u, 1u, 1u);
+            device.WaitIdle();
+            for (std::uint32_t lane = 0u; lane < Lanes; ++lane) {
+                for (std::uint32_t component = 0u; component < 4u; ++component) {
+                    const auto offset = lane * 4u + component;
+                    const auto expected = word3 == 0x31016facu && component < width ? input[offset] : previous[component];
+                    Require(output[offset] == expected, "multiword TYPE V# load width " + std::to_string(width) + " word3 " + Hex(word3) + " lane " + std::to_string(lane) + " component " + std::to_string(component) + " returned " + Hex(output[offset]) + ", expected " + Hex(expected));
+                }
+            }
+        }
+    }
+}
+
 void DisabledDescriptors(AgcDriver::VulkanDevice& device) {
     constexpr std::uint32_t Value = 0x12345678u;
     alignas(256) static constexpr std::array<std::uint32_t, 5> formattedStore{0x7e0202ffu, Value, 0xe0102000u, 0x80000100u, 0xbf810000u};
     alignas(256) static constexpr std::array<std::uint32_t, 6> rawStore{0x34020082u, 0x7e0402ffu, Value, 0xe0701000u, 0x80000201u, 0xbf810000u};
     alignas(256) static constexpr std::array<std::uint32_t, 7> formattedLoad{0x34020082u, 0xe0002000u, 0x80000200u, 0xbf8c3f70u, 0xe0701000u, 0x80010201u, 0xbf810000u};
     alignas(256) static constexpr std::array<std::uint32_t, 4> atomicAdd{0x34020082u, 0xe0c81000u, 0x80000201u, 0xbf810000u};
+    alignas(256) static constexpr std::array<std::uint32_t, 8> keptRawLoad{0x34020082u, 0x7e040301u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0xe0701000u, 0x80010201u, 0xbf810000u};
+    alignas(256) static constexpr std::array<std::uint32_t, 8> keptFormattedLoad{0x34020082u, 0x7e040301u, 0xe0002000u, 0x80000200u, 0xbf8c3f70u, 0xe0701000u, 0x80010201u, 0xbf810000u};
     std::array<std::uint32_t, 8> userData{};
     auto request = Request(userData, device.ComputeTarget(Lanes), {});
     request.useCache = false;
@@ -281,6 +368,18 @@ void DisabledDescriptors(AgcDriver::VulkanDevice& device) {
     }
     dispatch(formattedStore, {0x02100b00u, 0xc3c00000u, 0x010dc1dfu, 0x91b00facu});
     Require(all(Fill), "store through an image T# read as a V# wrote memory");
+    std::array<std::uint32_t, Lanes> laneOffsets{};
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) laneOffsets[lane] = lane * 4u;
+    dispatch(keptRawLoad, raw(Input.data(), InputBytes, 0x31016facu));
+    Require(Output == input, "raw load through a TYPE 0 V# after a register move did not read the buffer");
+    dispatch(keptFormattedLoad, strided(Input.data(), 0x31014facu));
+    Require(Output == input, "formatted load through a TYPE 0 V# after a register move did not read the buffer");
+    for (const auto word3 : {0x91000facu, 0x91016facu, 0xd1000facu, 0xd1016facu}) {
+        dispatch(keptRawLoad, raw(Input.data(), InputBytes, word3));
+        Require(Output == laneOffsets, "raw load through V# word 3 " + Hex(word3) + " did not keep its destination");
+        dispatch(keptFormattedLoad, strided(Input.data(), word3));
+        Require(Output == laneOffsets, "formatted load through V# word 3 " + Hex(word3) + " did not keep its destination");
+    }
     const auto rejects = [&](std::span<const std::uint32_t> code, std::uint32_t word3, const char* access) {
         bool rejected = false;
         try {
@@ -312,6 +411,8 @@ int main() {
         Run(*device, true, true);
         ScalarReads(*device);
         DisabledDescriptors(*device);
+        DisabledMultiwordLoads(*device);
+        DisabledLdsLoads(*device);
         std::puts("buffer descriptor runtime tests passed");
         return 0;
     } catch (const std::exception& error) {

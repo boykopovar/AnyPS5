@@ -68,6 +68,7 @@ bool TranslationContext::bufferLoad(const RdnaInstruction& inst) {
     const BufferAddress address = readBufferAddress(inst);
     IrValue& exec = ir.GetExec();
     if (inst.lds) {
+        if (typedBufferLoads) throw std::runtime_error("TYPE 2 or 3 buffer-load preservation with MUBUF LDS is not implemented");
         if (bufferLdsBytes == 0u) throw std::runtime_error("MUBUF LDS load requires a workgroup LDS allocation");
         RdnaOperand m0{};
         m0.kind = RdnaOperandKind::M0;
@@ -87,13 +88,22 @@ bool TranslationContext::bufferLoad(const RdnaInstruction& inst) {
         return true;
     }
     IrValue& loaded = ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &exec}, addMemoryInfo(memory, inst.programCounter));
+    IrValue* keeps = typedBufferLoads ? &ir.Emit(IrOpcode::BufferKeepsDestination, IrType::U1, {resource}, addMemoryInfo(memory, inst.programCounter)) : nullptr;
+    const auto write = [&](const RdnaOperand& target, IrValue& value) {
+        if (keeps == nullptr) {
+            writeOperand(target, &value);
+            return;
+        }
+        IrValue& previous = readRawU32(plainOperand(target)).Value();
+        writeOperand(target, &ir.Select(*keeps, previous, value));
+    };
     if (memory.dataBits != 32u) {
-        writeOperand(inst.destination, &widenSubdword(&loaded, memory.dataBits, memory.dataSigned).Value());
+        write(inst.destination, widenSubdword(&loaded, memory.dataBits, memory.dataSigned).Value());
     } else if (memory.dataDwords == 1u) {
-        writeOperand(inst.destination, &loaded);
+        write(inst.destination, loaded);
     } else {
         for (std::uint32_t component = 0u; component < memory.dataDwords; ++component) {
-            writeOperand(offsetOperand(inst.destination, component), &ir.CompositeExtract(loaded, component));
+            write(offsetOperand(inst.destination, component), ir.CompositeExtract(loaded, component));
         }
     }
     return true;

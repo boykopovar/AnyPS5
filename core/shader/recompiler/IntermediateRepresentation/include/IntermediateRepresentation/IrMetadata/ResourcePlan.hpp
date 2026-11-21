@@ -166,6 +166,7 @@ struct ResourceSnapshot {
     UniformFill uniformFill;
     std::vector<SrtReadPoison> srtPoison;
     std::uint32_t nullRootReads = 0;
+    std::vector<std::uint8_t> keepsDestination;
     ImageTableSnapshot tables;
     std::vector<RegisteredImageView> registeredImages;
     std::uint64_t imageAllocationGeneration = 0;
