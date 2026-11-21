@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
+#include <initializer_list>
 #include <stdexcept>
 #include <typeinfo>
 #include <string>
@@ -96,6 +97,12 @@ void TestEmpty() {
             Require(Subdivide(&result, &input, strategy) == &result);
             Require(result.buffer == nullptr && result.capacity == 0 && result.size == 0);
         }
+    }
+    for (const std::uint32_t strategy : std::initializer_list<std::uint32_t>{2, 0xFFFFFFFFu}) {
+        const MarkedTextVector input{nullptr, 0, 0};
+        MarkedTextVector result{reinterpret_cast<MarkedText*>(std::uintptr_t{0x1234}), 77, 99};
+        Require(Subdivide(&result, &input, strategy) == &result);
+        Require(result.buffer == nullptr && result.capacity == 0 && result.size == 0);
     }
 }
 
