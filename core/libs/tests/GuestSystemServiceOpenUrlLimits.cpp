@@ -114,6 +114,69 @@ void CheckDeclineCooldown() {
     Require(gate.Run(OpenUrlMode::Ask, "https://example.com/b", launcher, confirmation) == OpenUrlGateOutcome::Launched);
 }
 
+class AdvancingConfirmation final : public IUrlConfirmation {
+public:
+    AdvancingConfirmation(FakeClock& clock, std::chrono::seconds delay, bool answer)
+        : clock(clock), delay(delay), answer(answer) {}
+
+    bool Confirm(const std::string&) override {
+        ++calls;
+        clock.Advance(delay);
+        return answer;
+    }
+
+    FakeClock& clock;
+    std::chrono::seconds delay;
+    bool answer;
+    std::size_t calls = 0;
+};
+
+void CheckPostDialogDeclineCooldown() {
+    FakeClock clock;
+    OpenUrlGate gate(clock);
+    CountingLauncher launcher;
+    AdvancingConfirmation confirmation(clock, OPEN_URL_DECLINE_COOLDOWN, false);
+
+    Require(gate.Run(OpenUrlMode::Ask, "https://example.com/a", launcher, confirmation) == OpenUrlGateOutcome::Declined);
+    Require(confirmation.calls == 1 && launcher.Count() == 0);
+
+    Require(gate.Run(OpenUrlMode::Ask, "https://example.com/a", launcher, confirmation) == OpenUrlGateOutcome::Suppressed);
+    Require(confirmation.calls == 1 && launcher.Count() == 0);
+
+    clock.Advance(OPEN_URL_DECLINE_COOLDOWN - std::chrono::seconds(1));
+    Require(gate.Run(OpenUrlMode::Ask, "https://example.com/a", launcher, confirmation) == OpenUrlGateOutcome::Suppressed);
+    Require(confirmation.calls == 1 && launcher.Count() == 0);
+
+    clock.Advance(std::chrono::seconds(1));
+    confirmation.delay = std::chrono::seconds(0);
+    confirmation.answer = true;
+    Require(gate.Run(OpenUrlMode::Ask, "https://example.com/a", launcher, confirmation) == OpenUrlGateOutcome::Launched);
+    Require(confirmation.calls == 2 && launcher.Count() == 1);
+
+    FakeClock partialClock;
+    OpenUrlGate partialGate(partialClock);
+    CountingLauncher partialLauncher;
+    const auto halfCooldown = OPEN_URL_DECLINE_COOLDOWN / 2;
+    AdvancingConfirmation partialConfirmation(partialClock, halfCooldown, false);
+
+    Require(partialGate.Run(OpenUrlMode::Ask, "https://example.com/a", partialLauncher, partialConfirmation) == OpenUrlGateOutcome::Declined);
+    Require(partialConfirmation.calls == 1 && partialLauncher.Count() == 0);
+
+    partialClock.Advance(halfCooldown);
+    Require(partialGate.Run(OpenUrlMode::Ask, "https://example.com/a", partialLauncher, partialConfirmation) == OpenUrlGateOutcome::Suppressed);
+    Require(partialConfirmation.calls == 1 && partialLauncher.Count() == 0);
+
+    partialClock.Advance(OPEN_URL_DECLINE_COOLDOWN - halfCooldown - std::chrono::seconds(1));
+    Require(partialGate.Run(OpenUrlMode::Ask, "https://example.com/a", partialLauncher, partialConfirmation) == OpenUrlGateOutcome::Suppressed);
+    Require(partialConfirmation.calls == 1 && partialLauncher.Count() == 0);
+
+    partialClock.Advance(std::chrono::seconds(1));
+    partialConfirmation.delay = std::chrono::seconds(0);
+    partialConfirmation.answer = true;
+    Require(partialGate.Run(OpenUrlMode::Ask, "https://example.com/a", partialLauncher, partialConfirmation) == OpenUrlGateOutcome::Launched);
+    Require(partialConfirmation.calls == 2 && partialLauncher.Count() == 1);
+}
+
 void CheckRepeatedCancel() {
     FakeClock clock;
     OpenUrlGate gate(clock);
@@ -159,6 +222,7 @@ int main() {
     CheckRateCap();
     CheckRejectedAndFailedCount();
     CheckDeclineCooldown();
+    CheckPostDialogDeclineCooldown();
     CheckRepeatedCancel();
     CheckSuppressedDoesNotUseAttempts();
     return 0;
