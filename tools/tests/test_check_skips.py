@@ -710,7 +710,49 @@ class NotRunTests(unittest.TestCase):
                     self.assertNotIn("Traceback", checked.stderr)
 
 
+class LimitationTests(unittest.TestCase):
+    def test_environment_loader_retention_needs_exactly_the_known_reason(self):
+        self.assertTrue(check_skips.environment_loader_retention(check_skips.ENVIRONMENT_LOADER_RETENTION))
+        self.assertFalse(check_skips.environment_loader_retention('skipped: other reason'))
 
+    def test_symlink_privilege_limitation_applies_only_to_the_symlink_tests(self):
+        message = 'SKIP: Windows symbolic-link privileges unavailable\n'
+        self.assertTrue(check_skips.symlink_privilege_limitation('guest_kernel_sys_paths_symlinkat', message))
+        self.assertFalse(check_skips.symlink_privilege_limitation('other_test', message))
+        self.assertFalse(check_skips.symlink_privilege_limitation('guest_kernel_sys_paths_symlinkat', 'SKIP: something else\n'))
+class JUnitRefusalTests(unittest.TestCase):
+    def write(self, text):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / 'report.xml'
+        path.write_text(text, encoding='utf-8')
+        return path
+
+    def test_skips_refuses_a_root_that_is_not_a_testsuite(self):
+        with self.assertRaisesRegex(ValueError, 'expected a JUnit testsuite'):
+            list(check_skips.skips(self.write('<other/>')))
+
+    def test_skips_refuses_a_test_name_listed_twice(self):
+        xml = '<testsuite><testcase name="a"/><testcase name="a"/></testsuite>'
+        with self.assertRaisesRegex(ValueError, 'listed more than once'):
+            list(check_skips.skips(self.write(xml)))
+class DeviceLimitTests(unittest.TestCase):
+    def test_device_limitations_needs_every_skip_to_match_a_pattern(self):
+        self.assertTrue(check_skips.device_limitations('skipped, no display here', [check_skips.NO_DISPLAY]))
+        self.assertFalse(check_skips.device_limitations('skipped, other', [check_skips.NO_DISPLAY]))
+        self.assertFalse(check_skips.device_limitations('no skip line here', [check_skips.NO_DISPLAY]))
+
+    def test_high_refresh_limitation_matches_only_the_refresh_message(self):
+        self.assertTrue(check_skips.high_refresh_limitation('test: skipped, current display does not provide 120 Hz\n'))
+        self.assertFalse(check_skips.high_refresh_limitation('test: skipped, other reason\n'))
+class RequiredTestsTests(unittest.TestCase):
+    def test_skips_refuses_an_empty_report_when_tests_are_required(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'report.xml'
+            path.write_text('<testsuite></testsuite>', encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'no testcases'):
+                list(check_skips.skips(path, require_tests=True))
+            self.assertEqual(list(check_skips.skips(path)), [])
 
 
 class DeviceLimitationsTests(unittest.TestCase):

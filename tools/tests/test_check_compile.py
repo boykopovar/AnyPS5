@@ -1349,6 +1349,12 @@ class CheckCompileValidateArgumentsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             check_compile.validate_arguments(["cc", 1])
 
+    def test_validate_arguments_requires_a_nonempty_string_list(self):
+        check_compile.validate_arguments(["cc", "-c", "a.cpp"])
+        for bad in ([], ["", "x"], "cc -c a.cpp", [1, "x"]):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                check_compile.validate_arguments(bad)
+
 
 class CheckCompileWindowsResponseTextTests(unittest.TestCase):
     def test_decodes_utf16_with_either_byte_order_mark(self):
@@ -1443,6 +1449,13 @@ class CheckCompileEntryKeyTests(unittest.TestCase):
             outside = Path(other) / "c.cpp"
             entry = {"directory": name, "file": str(outside)}
             self.assertEqual(check_compile.entry_key(entry, Path(name)), check_compile.real(outside).as_posix())
+    def test_entry_key_is_relative_to_root_or_absolute(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            inside = {"directory": str(root / "build"), "file": "../src/a.cpp"}
+            self.assertEqual(check_compile.entry_key(inside, root), "src/a.cpp")
+            outside = {"directory": str(root), "file": "/elsewhere/b.cpp"}
+            self.assertEqual(check_compile.entry_key(outside, root), "/elsewhere/b.cpp")
 
 
 class CheckCompileResolveSourceTests(unittest.TestCase):
@@ -1468,6 +1481,18 @@ class CheckCompileResolveSourceTests(unittest.TestCase):
             file = Path(other) / "x.cpp"
             _, key = check_compile.resolve_source(file, Path(name))
             self.assertEqual(key, check_compile.real(file).as_posix())
+
+
+
+class CheckCompileCommandArgumentsTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "the POSIX command splitter is used off Windows")
+    def test_command_arguments_splits_quoted_words(self):
+        self.assertEqual(check_compile.command_arguments("cc -c 'a b.cpp' -o x.o"), ["cc", "-c", "a b.cpp", "-o", "x.o"])
+class EntriesTests(unittest.TestCase):
+    def test_entries_rejects_a_build_that_is_not_a_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                check_compile.entries(Path(directory) / "missing-build")
 
 
 if __name__ == "__main__":
