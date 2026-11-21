@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/InlineList.hpp"
 #include <cstdio>
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
@@ -1680,15 +1681,15 @@ static std::uint32_t NormalizedChannelMask(VkFormat format) {
 
 namespace {
 
-std::vector<std::uint32_t> ColorExportSlots(std::uint32_t shaderMask) {
-    std::vector<std::uint32_t> slots;
+InlineList<std::uint32_t, 8> ColorExportSlots(std::uint32_t shaderMask) {
+    InlineList<std::uint32_t, 8> slots;
     for (std::uint32_t slot = 0; slot < 8; ++slot) {
-        if (((shaderMask >> (4u * slot)) & 0xfu) != 0) slots.push_back(slot);
+        if (((shaderMask >> (4u * slot)) & 0xfu) != 0) slots.EmplaceBack(slot);
     }
     return slots;
 }
 
-std::uint32_t ColorExportCount(const Registers& context, std::uint32_t written, const std::vector<std::uint32_t>& slots) {
+std::uint32_t ColorExportCount(const Registers& context, std::uint32_t written, std::span<const std::uint32_t> slots) {
     const auto formatEntry = find(context, 0x1c5);
     const auto format = formatEntry == context.end() ? 0u : formatEntry->second;
     std::uint32_t count = 0;
@@ -1865,7 +1866,8 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     APS5_LOG_OUT_DEBUG("CB_TARGET_MASK=0x%x CB_SHADER_MASK=0x%x", targetMask, shaderMask);
     const auto exportFormatEntry = find(cx, 0x1c5);
     const auto exportFormat = exportFormatEntry == cx.end() ? 0u : exportFormatEntry->second;
-    const auto exportSlots = ColorExportSlots(shaderMask);
+    const auto exportStorage = ColorExportSlots(shaderMask);
+    const auto exportSlots = exportStorage.Span();
     const auto exportCount = ColorExportCount(cx, targetMask, exportSlots);
     result.hasColorTarget = exportCount != 0;
     APS5_LOG_OUT_DEBUG("hasColorTarget=%u exports=%u", result.hasColorTarget ? 1u : 0u, exportCount);
@@ -2832,8 +2834,9 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
         if (fmaskDecompress) {
             Require(target.samples > 1, "CB metadata pass over a single-sample target");
             Require(target.cmaskAddress != 0, "FMASK decompress of a target without a CMASK address");
-        } else {
-            Require(target.samples == 1, "CB metadata pass over a multisampled color target, whose texels are on the host, is unsupported (only a CB resolve is modeled)");
+        } else if (target.samples != 1) {
+            Require(pass.mode == ColorMetadataPass::Mode::EliminateFastClear, "CB DCC decompress over a multisampled color target, whose texels are on the host, is unsupported");
+            Require(target.cmaskAddress != 0, "fast-clear eliminate of a multisampled target without a CMASK address");
         }
         Require((read(cx, 0x31c + slot * 0xfu) & 0x10000000u) == 0 || target.dccAddress != 0, "CB metadata pass over a mipmapped DCC color target, whose keys are not modeled");
         if (target.dccAddress != 0 || (target.cmaskAddress != 0 && pass.mode != ColorMetadataPass::Mode::EliminateFastClear)) requireCovered(target);
@@ -2976,7 +2979,7 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     std::uint32_t targetMask = 0, shaderMask = 0;
     if (value(cx, 0x8e, targetMask) && value(cx, 0x8f, shaderMask) && value(cx, 0x202, word)) {
         const auto slots = ColorExportSlots(shaderMask);
-        if (!colorControlSupported(word, ColorExportCount(cx, ColorWriteMask(cx), slots) != 0)) return colorControlMessage(word);
+        if (!colorControlSupported(word, ColorExportCount(cx, ColorWriteMask(cx), slots.Span()) != 0)) return colorControlMessage(word);
     }
     if (auto reason = nonzero(cx, 0x1c4, zFormatSupported(zFormat) ? 0u : ~0u, "depth or sample-mask export"); !reason.empty()) return reason;
     if (PixelProgramSkipped(queue)) return NullPixelProgramRejection(queue);

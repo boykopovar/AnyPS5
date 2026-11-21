@@ -4764,7 +4764,7 @@ void multisampleTests() {
     queue.context[0x2f8] = 0;
     queue.context[0x0] = 0;
     queue.context[0x202] = 0xcc0020;
-    expectFailure([&] { DecodeColorMetadataPass(queue); }, "multisampled color target");
+    expectFailure([&] { DecodeColorMetadataPass(queue); }, "fast-clear eliminate of a multisampled target without a CMASK address");
     queue.context[0x31c] |= 0x10000000u;
     queue.context[0x325] = 0;
     expectFailure([&] { DecodeColorMetadataPass(queue); }, "multisampled DCC targets require pipe-aligned single-layer SW_64KB_R_X");
@@ -4785,6 +4785,15 @@ void multisampleTests() {
     Require(fmaskPass->targets[0].dccControl == 0x00100038u, "FMASK decompress lost its DCC control");
     queue.context[0x31e] |= 0x80u;
     Require(DecodeColorMetadataPass(queue)->targets[0].dccControl == 0x001000b8u, "FMASK decompress hid an unsupported DCC control from the importer");
+    queue.context[0x318] = static_cast<std::uint32_t>(resolvedAddress >> 8u);
+    queue.context[0x390] = static_cast<std::uint32_t>(resolvedAddress >> 40u);
+    queue.context[0x31e] = 0x00100038u;
+    queue.context[0x3b8] = 0x4dc6c000u;
+    queue.context[0x202] = 0x00cc0020;
+    const auto eliminatePass = DecodeColorMetadataPass(queue);
+    Require(eliminatePass.has_value() && eliminatePass->mode == ColorMetadataPass::Mode::EliminateFastClear && eliminatePass->targets.size() == 1 && eliminatePass->targets[0].samples == 4 && eliminatePass->targets[0].cmaskAddress == cmaskAddress && eliminatePass->targets[0].cmaskFastClear && eliminatePass->targets[0].dccAddress != 0, "a fast-clear eliminate of a 4x multisampled target with CMASK and DCC did not decode");
+    queue.context[0x202] = 0x00cc0060;
+    expectFailure([&] { DecodeColorMetadataPass(queue); }, "CB DCC decompress over a multisampled color target");
     queue = makeState();
     queue.context[0x0] = 0;
     queue.context[0x202] = 0x00cc0050;
@@ -10289,6 +10298,12 @@ void framebufferOwnerTests() {
         auto first = pipeline.AcquireFramebuffer(views, owners, {4, 4});
         auto repeated = pipeline.AcquireFramebuffer(views, owners, {4, 4});
         Require(first == repeated, "a live framebuffer owner did not reuse its framebuffer");
+        auto aliasOwner = std::shared_ptr<void>(std::make_shared<int>(3), owners[0].get());
+        owners[0].swap(aliasOwner);
+        auto aliased = pipeline.AcquireFramebuffer(views, owners, {4, 4});
+        Require(aliased != first, "the same pointer with a different owner reused a framebuffer");
+        owners[0].swap(aliasOwner);
+        aliasOwner.reset();
         auto retainedOwner = owners[0];
         owners[0] = std::make_shared<int>(2);
         auto distinct = pipeline.AcquireFramebuffer(views, owners, {4, 4});
@@ -13723,6 +13738,11 @@ void meshArgumentTests() {
     Require(same(ResolveMeshArguments(record(200, 3, 150), rules(triangles, 300)), {2, 3, 1, 150, 150}), "count clamped to the index buffer");
     Require(same(ResolveMeshArguments(record(9, 1, 300), rules(triangles, 300)), {0, 0, 0, 0, 300}), "first index past the index buffer draws nothing");
     Require(same(ResolveMeshArguments(record(2, 1, 0), rules(triangles, 300)), {0, 0, 0, 2, 0}), "no complete triangle draws nothing");
+    const auto autoRules = [&](const ShaderRecompiler::MeshConfiguration& mesh) { return AgcDriver::Graphics::MeshArgumentRulesFor(context, mesh, AgcDriver::Pm4::DrawParameters{0, 0, 0, 1, 0, false}); };
+    Require(same(ResolveMeshArguments(record(99, 2, 0), autoRules(triangles)), {2, 2, 1, 99, 0}), "a non-indexed record keeps its vertex count");
+    Require(same(ResolveMeshArguments(record(99, 2, 0xfffffff0u), autoRules(triangles)), {2, 2, 1, 99, 0}), "a non-indexed record's start vertex neither clamps nor offsets it");
+    Require(same(ResolveMeshArguments(record(2, 1, 5), autoRules(triangles)), {0, 0, 0, 2, 0}), "a non-indexed record with no complete triangle draws nothing");
+    Require(same(ResolveMeshArguments(record(200, 3, 150), AgcDriver::Graphics::MeshArgumentRulesFor(context, triangles, AgcDriver::Pm4::DrawParameters{0, 300, 2, 1, 0, true})), {2, 3, 1, 150, 150}), "an indexed draw keeps its index buffer clamp");
     Require(same(ResolveMeshArguments(record(10, 1, 0), rules(strip, 64)), {1, 1, 1, 10, 0}), "eight strip triangles are one group");
     Require(same(ResolveMeshArguments(record(11, 1, 0), rules(strip, 64)), {2, 1, 1, 11, 0}), "a ninth strip triangle starts a group");
     Require(same(ResolveMeshArguments(record(10, 1, 0), rules(fan, 64)), {1, 1, 1, 10, 0}), "eight fan triangles are one group");
@@ -15041,6 +15061,149 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
     Require(mock.live == 0, "the pipeline journal test leaked Vulkan objects");
 }
 
+VkBuffer retentionIndex = VK_NULL_HANDLE;
+VkBuffer retentionVertex = VK_NULL_HANDLE;
+std::set<VkBuffer> retentionDestroyed;
+
+VKAPI_ATTR void VKAPI_CALL retentionDestroyBuffer(VkDevice device, VkBuffer buffer, const VkAllocationCallbacks* allocator) {
+    retentionDestroyed.insert(buffer);
+    mockDestroyBuffer(device, buffer, allocator);
+}
+VKAPI_ATTR void VKAPI_CALL retentionBindIndex(VkCommandBuffer, VkBuffer buffer, VkDeviceSize, VkIndexType) { retentionIndex = buffer; }
+VKAPI_ATTR void VKAPI_CALL retentionBindVertex(VkCommandBuffer, std::uint32_t, std::uint32_t count, const VkBuffer* buffers, const VkDeviceSize*) {
+    Require(count == 1, "retention test expected one vertex binding");
+    retentionVertex = buffers[0];
+}
+VKAPI_ATTR void VKAPI_CALL retentionDrawIndexed(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t, std::int32_t, std::uint32_t) {}
+std::vector<VkFence> retentionFences;
+VKAPI_ATTR VkResult VKAPI_CALL retentionQueueSubmit(VkQueue queue, std::uint32_t count, const VkSubmitInfo* submits, VkFence fence) {
+    if (fence != VK_NULL_HANDLE) retentionFences.push_back(fence);
+    return mockQueueSubmit(queue, count, submits, fence);
+}
+
+PFN_vkVoidFunction VKAPI_CALL retentionProc(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkQueueSubmit") == 0) return reinterpret_cast<PFN_vkVoidFunction>(retentionQueueSubmit);
+    if (std::strcmp(name, "vkDestroyBuffer") == 0) return reinterpret_cast<PFN_vkVoidFunction>(retentionDestroyBuffer);
+    if (std::strcmp(name, "vkCmdBindIndexBuffer") == 0) return reinterpret_cast<PFN_vkVoidFunction>(retentionBindIndex);
+    if (std::strcmp(name, "vkCmdBindVertexBuffers") == 0) return reinterpret_cast<PFN_vkVoidFunction>(retentionBindVertex);
+    if (std::strcmp(name, "vkCmdDrawIndexed") == 0) return reinterpret_cast<PFN_vkVoidFunction>(retentionDrawIndexed);
+    return depthOrderProc(device, name);
+}
+
+void recordedDrawRetentionTests() {
+    using namespace AgcDriver::Graphics;
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.deviceProc = retentionProc;
+    context.formatProperties = [](VkPhysicalDevice, VkFormat, VkFormatProperties* properties) {
+        *properties = {};
+        properties->bufferFeatures = VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT;
+    };
+    context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    context.limits.maxFramebufferLayers = 1;
+    context.limits.maxViewports = 1;
+    context.limits.maxViewportDimensions[0] = context.limits.maxViewportDimensions[1] = 64;
+    context.limits.viewportBoundsRange[0] = -64;
+    context.limits.viewportBoundsRange[1] = 64;
+    context.limits.maxPushConstantsSize = PipelinePushConstantBytes;
+    context.limits.maxFramebufferWidth = context.limits.maxFramebufferHeight = 64;
+    Recorder recorder(context);
+    context.recorder = &recorder;
+    recorder.Activate();
+    DescriptorCache descriptors(context);
+    context.descriptorCache = &descriptors;
+    State state{};
+    state.stages.path = ShaderPath::Vertex;
+    state.rasterizerDiscard = true;
+    state.renderExtent = {16, 16};
+    state.scissor = {{0, 0}, {16, 16}};
+    state.viewport = {0, 0, 16, 16, 0, 1};
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.spirv = makeModule({.vertexInput = true});
+    fragment.spirv = makeModule({.fragment = true});
+    vertex.variantId = 5001;
+    fragment.variantId = 5002;
+    const std::array shaders{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}};
+    std::array<std::uint16_t, 3> indices{0, 1, 2};
+    std::array<float, 12> vertices{};
+    const auto vertexAddress = reinterpret_cast<std::uint64_t>(vertices.data());
+    vertex.vertexAttributes = {{0, 4, {{static_cast<std::uint32_t>(vertexAddress), static_cast<std::uint32_t>(vertexAddress >> 32u) | (16u << 16u), 3u, 77u << 12u}}, 0}};
+    context.limits.maxVertexInputBindings = context.limits.maxVertexInputAttributes = 16;
+    context.limits.maxVertexInputBindingStride = 2048;
+    context.limits.maxVertexInputAttributeOffset = 2048;
+    context.limits.maxDrawIndexedIndexValue = std::numeric_limits<std::uint32_t>::max();
+    const AgcDriver::Pm4::DrawParameters draw{reinterpret_cast<std::uint64_t>(indices.data()), 3, 2, 1, 0, true};
+    retentionDestroyed.clear();
+    retentionIndex = retentionVertex = VK_NULL_HANDLE;
+    std::shared_ptr<const AgcDriver::DrawRecipe> recipe;
+    Draw(context, state, draw, shaders, {}, &recipe);
+    Require(recipe != nullptr, "retention draw did not produce a recipe");
+    Require(retentionIndex != VK_NULL_HANDLE && retentionVertex != VK_NULL_HANDLE, "retention draw did not bind copied inputs");
+    auto replacement = std::make_shared<Buffer>(context, sizeof(vertices), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    recorder.KeepDrawSnapshot(draw.indexAddress, sizeof(indices), 1, 0, replacement, Recorder::SnapshotUse::Index16);
+    recorder.KeepDrawSnapshot(vertexAddress, sizeof(vertices), 1, 0, replacement, Recorder::SnapshotUse::Vertex);
+    const auto indexUsage = mock.bufferUsage.at(retentionIndex);
+    const auto vertexUsage = mock.bufferUsage.at(retentionVertex);
+    Require((indexUsage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT) != 0, "retention probe would look for indices in a non-index buffer");
+    Require((vertexUsage & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) != 0, "retention probe would look for vertices in a non-vertex buffer");
+    const auto available = [&](VkBuffer buffer, std::size_t bytes, VkBufferUsageFlags usage) {
+        if (retentionDestroyed.contains(buffer)) return true;
+        auto pool = GetBufferPool(context);
+        auto allocation = pool->Take(bytes, usage);
+        const bool returned = allocation && allocation->buffer == buffer;
+        if (allocation) pool->Put(*allocation);
+        return returned;
+    };
+    Require(!available(retentionIndex, sizeof(indices), indexUsage), "recorded indices were recycled before completion");
+    Require(!available(retentionVertex, sizeof(vertices), vertexUsage), "recorded vertices were recycled before completion");
+    auto pipeline = recipe->pipeline.lock();
+    Require(pipeline != nullptr, "recorded pipeline expired");
+    for (std::uint32_t size = 17; size < 30; ++size) pipeline->AcquireFramebuffer({}, {}, {size, size});
+    Require(!recipe->framebuffer.expired(), "recorded framebuffer was evicted before completion");
+    pipeline.reset();
+    ClearCachedPipelines(context.device);
+    SharedResourceCache().Clear();
+    Require(!recipe->pipeline.expired(), "recorded pipeline was released before completion");
+    Require(!recipe->templateRef.expired(), "recorded resources were released before completion");
+    recorder.OnComplete([&] {
+        Require(!recipe->pipeline.expired() && !recipe->framebuffer.expired() && !recipe->templateRef.expired(), "recorded owners expired before a completion action");
+        throw std::runtime_error("retention completion failure");
+    });
+    recorder.Sync();
+    Require(available(retentionIndex, sizeof(indices), indexUsage), "recorded indices survived completion");
+    Require(available(retentionVertex, sizeof(vertices), vertexUsage), "recorded vertices survived completion");
+    Require(recipe->pipeline.expired() && recipe->framebuffer.expired() && recipe->templateRef.expired(), "recorded owners survived completion");
+
+    mock.deferFences = true;
+    retentionFences.clear();
+    std::shared_ptr<const AgcDriver::DrawRecipe> replayed;
+    Draw(context, state, draw, shaders, {}, &replayed);
+    Require(replayed != nullptr, "retention replay draw did not produce a recipe");
+    const auto owned = [&] { return !replayed->pipeline.expired() && !replayed->framebuffer.expired() && !replayed->templateRef.expired(); };
+    const auto released = [&] { return replayed->pipeline.expired() && replayed->framebuffer.expired() && replayed->templateRef.expired(); };
+    auto replayedPipeline = replayed->pipeline.lock();
+    Require(replayedPipeline != nullptr, "retention replay pipeline expired");
+    for (std::uint32_t size = 17; size < 30; ++size) replayedPipeline->AcquireFramebuffer({}, {}, {size, size});
+    replayedPipeline.reset();
+    ClearCachedPipelines(context.device);
+    SharedResourceCache().Clear();
+    Require(owned(), "recorded owners were released with their cache entries before completion");
+    recorder.Submit();
+    Require(retentionFences.size() == 1, "the first replay batch was not submitted");
+    const auto hit = DrawWithRecipe(context, state, draw, shaders, {}, *replayed);
+    Require(hit.recorded, "the replay draw did not record from its recipe");
+    Require(owned(), "recorded owners expired after a recipe hit in the next batch");
+    mock.signaled.at(retentionFences.front()) = true;
+    Require(recorder.Reap(), "the first replay batch was not retired");
+    Require(owned(), "recorded owners were released with the first batch while the second still used them");
+    recorder.Submit();
+    Require(retentionFences.size() == 2, "the second replay batch was not submitted");
+    Require(!recorder.Reap() && owned(), "recorded owners were released before the last batch that used them completed");
+    mock.signaled.at(retentionFences.back()) = true;
+    Require(recorder.Reap(), "the second replay batch was not retired");
+    Require(released(), "recorded owners survived the completion of the last batch that used them");
+}
+
 void faultOnlyTemplateRecordTests() {
     const bool keep = std::getenv("APS5_KEEP_TEMPLATE_RECORDS") != nullptr;
     const bool guarded = std::getenv("APS5_LOOP_GUARD") != nullptr;
@@ -15507,6 +15670,10 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--push-constant-assembly") {
             pushConstantTests();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--recorded-draw-retention") {
+            recordedDrawRetentionTests();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--stencil-ref-export") {

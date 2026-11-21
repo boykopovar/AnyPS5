@@ -1,5 +1,8 @@
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <stdexcept>
+#include <vector>
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -1002,13 +1005,29 @@ APS5_EXPORT("mDIHE-aaRaI", libSceLibcInternalInventory_244_nid_no_patch);
 }
 APS5_EXPORT("pDFe-IgbTPg", libSceLibcInternalInventory_245_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_252_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+std::size_t APS5_VABI libSceLibcInternalInventory_252_nid_no_patch(char* first1, char* last1, const char* first2, const char* last2, const void* collvec) {
+    (void)collvec;
+    if ((first1 == nullptr) != (last1 == nullptr) || last1 < first1 || (first2 == nullptr) != (last2 == nullptr) || last2 < first2)
+        throw std::invalid_argument("_LStrxfrm<char>: invalid character range");
+    const auto length = static_cast<std::size_t>(last2 - first2);
+    if (length == 0 || length > static_cast<std::size_t>(last1 - first1)) return length;
+    std::vector<char> copy(length);
+    if (!GuestCopyIn_nid_no_patch(copy.data(), first2, length)) throw std::invalid_argument("_LStrxfrm<char>: unreadable source");
+    if (!GuestCopyOut_nid_no_patch(first1, copy.data(), length)) throw std::invalid_argument("_LStrxfrm<char>: unwritable buffer");
+    return length;
 }
 APS5_EXPORT("V62E2Q8bJVY", libSceLibcInternalInventory_252_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_253_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+std::size_t APS5_VABI libSceLibcInternalInventory_253_nid_no_patch(char16_t* first1, char16_t* last1, const char16_t* first2, const char16_t* last2, const void* collvec) {
+    (void)collvec;
+    if ((first1 == nullptr) != (last1 == nullptr) || last1 < first1 || (first2 == nullptr) != (last2 == nullptr) || last2 < first2)
+        throw std::invalid_argument("_LStrxfrm<wchar_t>: invalid character range");
+    const auto length = static_cast<std::size_t>(last2 - first2);
+    if (length == 0 || length > static_cast<std::size_t>(last1 - first1)) return length;
+    std::vector<char16_t> copy(length);
+    if (!GuestCopyIn_nid_no_patch(copy.data(), first2, length * sizeof(char16_t))) throw std::invalid_argument("_LStrxfrm<wchar_t>: unreadable source");
+    if (!GuestCopyOut_nid_no_patch(first1, copy.data(), length * sizeof(char16_t))) throw std::invalid_argument("_LStrxfrm<wchar_t>: unwritable buffer");
+    return length;
 }
 APS5_EXPORT("BloPUt1HCH0", libSceLibcInternalInventory_253_nid_no_patch);
 

@@ -2020,7 +2020,6 @@ int APS5_VABI _ZN7WebCore14ScrollableAreaD0Ev();
 int APS5_VABI _ZN7WebCore14ScrollableAreaD1Ev();
 int APS5_VABI _ZN7WebCore14ScrollableAreaD2Ev();
 int APS5_VABI _ZN7WebCore14ScrollbarTheme5themeEv();
-int APS5_VABI _ZN7WebCore14SecurityOrigin16createFromStringERKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore14SecurityPolicy27resetOriginAccessAllowlistsEv();
 int APS5_VABI _ZN7WebCore14SecurityPolicy29addOriginAccessAllowlistEntryERKNS_14SecurityOriginERKN3WTF6StringES7_b();
 int APS5_VABI _ZN7WebCore14SecurityPolicy32removeOriginAccessAllowlistEntryERKNS_14SecurityOriginERKN3WTF6StringES7_b();
