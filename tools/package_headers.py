@@ -1,3 +1,5 @@
+import datetime
+import gzip
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -41,8 +43,12 @@ def public_headers(root):
     pending = [path / (path.name + ".hpp") for path in directories]
     visited = set()
     while pending:
-        header = resolved_path(pending.pop())
-        if not header.is_relative_to(libs):
+        source = pending.pop()
+        header = Path(os.path.abspath(source))
+        target = resolved_path(source)
+        if resolved_path(header) != target:
+            raise RuntimeError(f"Public header path changes when normalized: {source}")
+        if not header.is_relative_to(libs) or not target.is_relative_to(libs):
             raise RuntimeError(f"Public header is outside core/libs: {header}")
         if header in visited:
             continue
@@ -62,24 +68,64 @@ def public_headers(root):
             if "\\" in name or ":" in name or PurePosixPath(name).is_absolute() or "3rdparty" in PurePosixPath(name).parts:
                 raise RuntimeError(f"Forbidden public include in {header}: {name}")
             search = (header.parent / name, libs / name) if quoted else (libs / name,)
-            candidates = set()
+            candidates = {}
             for path in search:
-                if path.is_symlink():
-                    candidates.add(resolved_path(path))
-                elif path.is_file():
-                    candidates.add(resolved_path(path))
+                if path.is_symlink() or path.is_file():
+                    candidates.setdefault(resolved_path(path), path)
             if len(candidates) > 1:
                 raise RuntimeError(f"Ambiguous public include in {header}: {name}")
             if candidates:
-                pending.append(candidates.pop())
+                pending.append(next(iter(candidates.values())))
             elif quoted or name not in SYSTEM_HEADERS:
                 raise RuntimeError(f"Missing project or unsupported external include in {header}: {name}")
     return sorted(visited)
 
 
+def source_date_epoch():
+    text = os.environ.get("SOURCE_DATE_EPOCH")
+    if text is None:
+        return None
+    if not re.fullmatch(r"[0-9]+", text):
+        raise ValueError("SOURCE_DATE_EPOCH must be an ASCII decimal integer between 0 and 4294967295")
+    digits = text.lstrip("0") or "0"
+    if len(digits) > 10 or int(digits) > 4294967295:
+        raise ValueError("SOURCE_DATE_EPOCH must be an ASCII decimal integer between 0 and 4294967295")
+    return int(digits)
+
+
+def write_header_archives(entries, staging, names, epoch):
+    with zipfile.ZipFile(staging / names[0], "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as archive:
+        for source, destination in entries:
+            if epoch is None:
+                archive.write(source, destination)
+            else:
+                timestamp = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc) + datetime.timedelta(seconds=max(epoch, 315532800))
+                info = zipfile.ZipInfo(destination, timestamp.timetuple()[:6])
+                info.create_system = 3
+                info.external_attr = (stat.S_IFREG | 0o644) << 16
+                archive.writestr(info, source.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+    if epoch is None:
+        with tarfile.open(staging / names[1], "w:gz", dereference=True) as archive:
+            for source, destination in entries:
+                archive.add(source, destination)
+    else:
+        with (staging / names[1]).open("wb") as target, gzip.GzipFile(filename="", mode="wb", fileobj=target, mtime=epoch, compresslevel=9) as compressed:
+            with tarfile.open(mode="w", fileobj=compressed, dereference=True) as archive:
+                for source, destination in entries:
+                    info = archive.gettarinfo(source, arcname=destination)
+                    info.uid = info.gid = 0
+                    info.uname = info.gname = ""
+                    info.mode = 0o644
+                    info.mtime = epoch
+                    info.pax_headers = {}
+                    with source.open("rb") as content:
+                        archive.addfile(info, content)
+
+
 def package(root, output, version):
     if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z._-]*", version) or version.endswith("."):
         raise ValueError(f"Invalid release tag for asset filenames: {version}")
+    epoch = source_date_epoch()
     libs = resolved_path(root / "core/libs")
     headers = public_headers(root)
     license_file = root / "LICENSE"
@@ -100,12 +146,7 @@ def package(root, output, version):
     staging = Path(tempfile.mkdtemp(prefix=".headers-", dir=output))
     preserve_staging = False
     try:
-        with zipfile.ZipFile(staging / names[0], "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as archive:
-            for source, destination in entries:
-                archive.write(source, destination)
-        with tarfile.open(staging / names[1], "w:gz", dereference=True) as archive:
-            for source, destination in entries:
-                archive.add(source, destination)
+        write_header_archives(entries, staging, names, epoch)
         previous = staging / "previous"
         previous.mkdir()
         try:

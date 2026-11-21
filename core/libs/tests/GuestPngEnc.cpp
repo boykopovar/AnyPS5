@@ -4,11 +4,17 @@
 #include "Decoder/Png.hpp"
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
+#include <source_location>
 #include <utility>
 #include <vector>
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, std::source_location location = std::source_location::current()) {
+    if (value) return;
+    std::fprintf(stderr, "%s:%u: PNG encoder assertion failed\n", location.file_name(), location.line());
+    std::abort();
+}
 
 int main() {
     constexpr int invalidAddr = static_cast<int>(0x80690101);
@@ -140,6 +146,27 @@ int main() {
     for (const auto& [filterType, filters] : filterSets) Require(encodeWith(filterType) == Encode(rows, 16, 6, 4, {6, static_cast<std::uint8_t>(filters | FILTER_NONE)}));
     const std::vector<std::uint8_t> unfiltered = Encode(rows, 16, 6, 4, {6, FILTER_NONE});
     Require(encodeWith(0) == unfiltered);
+    for (std::uint16_t level = 0; level <= 9; ++level) {
+        filtered.compression_level = level;
+        const auto encoded = encodeWith(0);
+        if (level == 0) {
+            bool imageData = false;
+            for (std::size_t offset = 8; offset + 12 <= encoded.size();) {
+                const std::size_t length = static_cast<std::size_t>(encoded[offset]) << 24 | static_cast<std::size_t>(encoded[offset + 1]) << 16
+                    | static_cast<std::size_t>(encoded[offset + 2]) << 8 | encoded[offset + 3];
+                Require(length <= encoded.size() - offset - 12);
+                if (std::equal(encoded.begin() + offset + 4, encoded.begin() + offset + 8, "IDAT")) {
+                    Require(length >= 3 && (encoded[offset + 10] & 6) == 0);
+                    imageData = true;
+                    break;
+                }
+                offset += length + 12;
+            }
+            Require(imageData);
+        }
+        const auto decoded = Decode(encoded);
+        Require(decoded && decoded->width == 16 && decoded->height == 6 && decoded->pixels == rows);
+    }
 
     encode.png_mem_size = 20;
     PngEncOutputInfo info{1, 1};

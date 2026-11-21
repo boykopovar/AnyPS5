@@ -1,4 +1,5 @@
 import contextlib
+import ctypes
 import copy
 import io
 import json
@@ -181,6 +182,33 @@ class TimelineTests(unittest.TestCase):
                     pad_timeline.queue_timeline(path, "wrong\n")
             self.assertEqual(path.read_bytes(), b"new\n")
             self.assertEqual(list(Path(directory).iterdir()), [path])
+
+    @unittest.skipUnless(os.name == "nt", "Windows command-file sharing")
+    def test_both_tools_queue_while_runtime_reader_is_open(self):
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
+                                       ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+        kernel.CreateFileW.restype = ctypes.c_void_p
+        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            command = root / "input.cmd"
+            timeline = root / "timeline.json"
+            timeline.write_text(json.dumps({"version": 1, "events": [
+                {"at_ms": 0, "hold_ms": 300, "buttons": ["cross"]}]}), encoding="utf-8")
+            for script, arguments in (("pad_input.py", [command, "cross"]),
+                                      ("pad_timeline.py", [timeline, command])):
+                previous = b"1 0 50\n"
+                command.write_bytes(previous)
+                reader = kernel.CreateFileW(str(command), 0x80000000, 7, None, 3, 0x80, None)
+                self.assertNotEqual(reader, ctypes.c_void_p(-1).value)
+                try:
+                    result = subprocess.run([sys.executable, str(Path(pad_input.__file__).with_name(script)),
+                                             *map(str, arguments)], capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertNotEqual(command.read_bytes(), previous)
+                finally:
+                    kernel.CloseHandle(reader)
 
     def run_cli(self, timeline, output, *arguments):
         env = dict(os.environ, PYTHONIOENCODING="utf-8")
@@ -365,6 +393,27 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(output.read_text(encoding="utf-8").startswith("APS5_PAD_TIMELINE 1 "))
             self.assertIn("\\udcff", result.stdout)
+
+
+class IntegerRangeTests(unittest.TestCase):
+    def test_integer_accepts_in_range_integers_and_refuses_others(self):
+        self.assertEqual(pad_timeline.integer(5, 'x', 1, 10), 5)
+        for value in (True, 2.0, 0, 11):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'x must be an integer between 1 and 10'):
+                pad_timeline.integer(value, 'x', 1, 10)
+class TimelineLoadTests(unittest.TestCase):
+    def test_load_timeline_reads_a_json_document(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'timeline.json'
+            path.write_text('{"version": 1, "events": []}', encoding='utf-8')
+            self.assertEqual(pad_timeline.load_timeline(path), {'version': 1, 'events': []})
+
+    def test_load_timeline_refuses_a_duplicate_field(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'timeline.json'
+            path.write_text('{"version": 1, "version": 2}', encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'duplicate timeline field'):
+                pad_timeline.load_timeline(path)
 
 
 if __name__ == "__main__":

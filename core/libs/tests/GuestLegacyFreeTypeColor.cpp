@@ -120,6 +120,11 @@ int main() {
     Require(FT_Get_Color_Glyph_Layer_nid_postfix(guest, 1, &glyph, &color, nullptr) == 0);
     Require(FT_Get_Color_Glyph_Layer_nid_postfix(guest, 1, nullptr, &color, &iterator) == 0 && !iterator.p);
     Require(FT_Get_Color_Glyph_Layer_nid_postfix(nullptr, 1, &glyph, &color, &iterator) == 0);
+    errno = 71;
+    Require(FT_Get_Color_Glyph_Layer_nid_postfix(guest, 1, reinterpret_cast<std::uint32_t*>(0x10), &color, &iterator) == 0);
+    Require(FT_Get_Color_Glyph_Layer_nid_postfix(guest, 1, &glyph, reinterpret_cast<std::uint32_t*>(0x10), &iterator) == 0);
+    Require(FT_Get_Color_Glyph_Layer_nid_postfix(guest, 1, &glyph, &color, reinterpret_cast<LegacyFreeType::GuestLayerIterator*>(0x10)) == 0);
+    Require(errno == 71);
 
     Require(FT_Done_Face_nid_postfix(guest) == 0 && FT_Done_Face(native) == 0);
     Require(FT_Done_FreeType_nid_postfix(guestLibrary) == 0 && FT_Done_FreeType(nativeLibrary) == 0);

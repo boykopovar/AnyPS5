@@ -105,7 +105,7 @@ private:
         }
         if (value->Opcode() == IrOpcode::Void) return fail();
         const auto mask = contexts[context].mask;
-        if (mask != nullptr && IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3 && ActiveMaskImplies(mask, value->Argument(0))) return compile(value->Argument(1), context, depth + 1);
+        if (mask != nullptr && IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3 && ActiveMaskImplies(plan, mask, value->Argument(0))) return compile(value->Argument(1), context, depth + 1);
         const auto key = std::make_pair(static_cast<const IrValue*>(value), context);
         if (const auto found = built.find(key); found != built.end()) return found->second == Building ? fail() : found->second;
         built.emplace(key, Building);
@@ -417,7 +417,7 @@ bool SrtTape::compute(Frame& frame, const Node& node, std::uint64_t& result) con
         case Op::ShaderBase: result = frame.runtime.shaderBase; return true;
         case Op::Read:
         case Op::ReadConstBuffer: {
-            const auto base = ((b << 32u) | static_cast<std::uint32_t>(a)) & AddressMask;
+            const auto base = node.op == Op::ReadConstBuffer ? ConstBufferBase(a, b) : ((b << 32u) | static_cast<std::uint32_t>(a)) & AddressMask;
             const auto immediate = static_cast<std::int64_t>(node.immediate);
             std::uint64_t address = 0;
             if (node.op == Op::ReadConstBuffer) {
