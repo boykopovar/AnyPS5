@@ -40,6 +40,11 @@ void decoding() {
             }
         }
     }
+    const Bytes prefixed{0x4D, 0x67, 0x48, 0x0F, 0x38, 0xF0, 0x01};
+    const auto load = Codegen::DecodeMovbe(prefixed.data(), prefixed.size());
+    require(load && !load->Store && load->Width == 64 && load->Register == 0 &&
+            load->Memory.RexIndexBase == 0 && load->Memory.Prefixes == Bytes{0x67},
+            "MOVBE did not use only the REX prefix adjacent to the opcode");
     const Bytes memory{0x64, 0x67, 0x4F, 0x0F, 0x38, 0xF1, 0x8C, 0xAC, 0x10, 0, 0, 0};
     const auto operands = Codegen::DecodeMovbe(memory.data(), memory.size());
     require(operands && operands->Store && operands->Width == 64 && operands->Register == 9 && operands->Memory.RexIndexBase == 3 && operands->Memory.Prefixes == Bytes{0x64, 0x67}, "MOVBE memory extensions or prefixes were lost");
