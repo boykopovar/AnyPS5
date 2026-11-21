@@ -12,6 +12,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `ANYPS5_LOADEXEC_PARENT` | string | `core/libs/tests/GuestLoadExecHost.cpp` |  | variable the Windows entry stub reads; its wide name is built in `core/relinker/elfpatcher/src/windows/WindowsEntryStubBuilder.cpp` |
 | `ANYPS5_KERNEL_SYS_EXEC_MODE` | string | `core/libs/tests/GuestExecHost.cpp` |  | selects `_execve` (`ve`) or `_execvpe` (`vpe`) in the exec replacement test fixture; unset tests libkernel `execve` |
 | `ANYPS5_LOADEXEC_TEST_ROOT` | string | `core/libs/tests/GuestLoadExecHost.cpp` |  | directory the load-exec host test reads its guest executable from |
+| `ANYPS5_NID_PATCHER` | presence | `core/libs/nid/tests/test_symbol_versions.py` |  | path of the `nid_patcher` executable the NID symbol-version test runs; read after a `nid_patcher` argument and before `NID_PATCHER` and the build directory |
 | `ANYPS5_POSIX_SPAWN_ROLE` | string | `core/libs/tests/GuestPosixSpawn.cpp` |  | role of the test's own copy spawned as a `posix_spawn` child, which exits or sleeps on it and otherwise fails |
 | `ANYPS5_TEST_QUOTED_ARGV0` | presence | `core/libs/tests/GuestLoadExecHost.cpp` |  | makes the load-exec test's first argument one with quotes, a backslash and non-ASCII text |
 | `APS5_EBOOT` | string | `core/libs/prx/libSceSystemService/Export.cpp` |  | host path of the executable launched for /app0/eboot.bin; unset or empty means the running executable |
@@ -836,3 +837,8 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_TRACE_TIMERS` | presence | `core/libs/prx/libkernel/Time/Time.cpp` |  | on Windows, runs a timed-wait selftest at startup and prints mean, p50 and max latencies |
 | `APS5_TRACE_USLEEP` | presence | `core/libs/prx/libkernel/Time/Time.cpp` |  | reports every 2000 `sceKernelUsleep` calls the call sites that sleep most, including calls through `sceNetUsleep` and the `APS5_TRACE_TIMERS` measurement on Windows; guest `usleep` calls are not counted |
 | `APS5_TRACE_WAITS` | presence | `core/libs/prx/libkernel/Time/Time.cpp` |  | aggregates blocking waits per guest call site and prints the longest-waiting sites every 3 s |
+### tools
+
+| Name | Kind | Source | Default | Description |
+|------|------|--------|---------|-------------|
+| `ANYPS5_NID_DB` | string | `tools/nid_names.py` | (unset: `aerolib.csv` in `anyps5-nid-db` under the system temp directory, downloaded when missing) | NID database CSV that `tools/nid_names.py` reads when `--db` is not given; see its `--db` help |
