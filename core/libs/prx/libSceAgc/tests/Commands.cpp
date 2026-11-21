@@ -299,6 +299,14 @@ void testJumpTargetPatch() {
     expectFailure([&] { sceAgcJumpPatchSetTarget(packet, target(0x3000u), 1); });
     packet[0] = before[0];
     check(storage.words == before, "a refused jump target patch modified the packet");
+    const auto unmapped = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
+    expectFailure([&] { sceAgcJumpPatchSetTarget(unmapped, target(0x3000u), 1); });
+    expectFailure([&] { sceAgcJumpPatchSetTarget_0300(unmapped, 0, target(0x3000u), 1); });
+    static const std::uint32_t readOnly[4] = {0xc0023f00u, 0, 0, 0};
+    auto* readOnlyPacket = const_cast<std::uint32_t*>(readOnly);
+    expectFailure([&] { sceAgcJumpPatchSetTarget(readOnlyPacket, target(0x3000u), 1); });
+    expectFailure([&] { sceAgcJumpPatchSetTarget_0300(readOnlyPacket, 1, target(0x3000u), 1); });
+    check(readOnly[1] == 0 && readOnly[2] == 0 && readOnly[3] == 0, "a jump target patch of a read-only packet changed it");
 }
 
 void testMarkers() {
