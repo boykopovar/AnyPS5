@@ -146,6 +146,11 @@ if(BUILD_TESTING)
         set_tests_properties(guest_font_graphics PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>")
     endif()
+    add_test_executable(font_fixed_rounding_tests ${LIBS_INCLUDE_DIR}/tests/FontFixedRounding.cpp)
+    target_include_directories(font_fixed_rounding_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(font_fixed_rounding_tests PRIVATE freetype)
+    configure_host_test_executable(font_fixed_rounding_tests)
+    add_test(NAME font_fixed_rounding COMMAND font_fixed_rounding_tests)
     add_test_executable(font_face_lifetime_tests ${LIBS_INCLUDE_DIR}/tests/FontFaceLifetime.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/State.cpp)
     target_include_directories(font_face_lifetime_tests PRIVATE ${LIBS_INCLUDE_DIR})
