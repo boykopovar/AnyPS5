@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "prx/libSceLibcInternal/include/RecoveredInventory.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -166,25 +167,36 @@ int InitWithOverride(PthreadMutex* mutex, int type, const char* name) {
 
 void CheckErrno() {
     int* const slot = _Geterrno_nid_postfix();
-    Require(slot != nullptr && slot == __error_nid_postfix(), "_Geterrno returns the libc errno slot");
+    int* const libcSlot = __error_nid_postfix();
+    Require(slot != nullptr && libcSlot != nullptr && slot != libcSlot, "_Geterrno returns a distinct thread slot from libc __error");
     Require(_Geterrno_nid_postfix() == slot, "_Geterrno returns the same slot on one thread");
-    *__error_nid_postfix() = 34;
-    Require(*_Geterrno_nid_postfix() == 34, "_Geterrno reads what libc stored");
-    *_Geterrno_nid_postfix() = 22;
-    Require(*__error_nid_postfix() == 22, "libc reads what was stored through _Geterrno");
+    *libcSlot = 34;
+    *slot = 22;
+    Require(*slot == 22, "_Geterrno retains its own value");
+    Require(*libcSlot == 34, "libc __error retains its own value");
+    double testValue[3] = {1.0, 0, 0};
+    int mathError = 0;
+    *slot = 0;
+    *libcSlot = 0;
+    _Dtento_nid_postfix(testValue, -5000, &mathError);
+    Require(*slot == 34 && *libcSlot == 0, "_Dtento reports range error through _Geterrno while leaving __error untouched");
     int* other = nullptr;
+    int* otherLibc = nullptr;
     int otherValue = -1;
-    bool otherMatches = false;
+    int otherLibcValue = -1;
     std::thread worker([&] {
         other = _Geterrno_nid_postfix();
-        otherMatches = other == __error_nid_postfix();
+        otherLibc = __error_nid_postfix();
         *other = 5;
-        otherValue = *__error_nid_postfix();
+        *otherLibc = 7;
+        otherValue = *other;
+        otherLibcValue = *otherLibc;
     });
     worker.join();
-    Require(other != nullptr && other != slot && otherMatches && otherValue == 5, "_Geterrno gives each thread its own slot");
-    Require(*_Geterrno_nid_postfix() == 22, "another thread's store leaves this thread's errno alone");
+    Require(other != nullptr && other != slot && other != libcSlot && other != otherLibc && otherValue == 5 && otherLibcValue == 7, "_Geterrno gives each thread its own slot");
+    Require(*slot == 34 && *libcSlot == 0, "another thread's store leaves this thread's errno alone");
     *slot = 0;
+    *libcSlot = 0;
 }
 
 void CheckMutex() {

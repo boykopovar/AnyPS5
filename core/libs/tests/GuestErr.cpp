@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
@@ -155,6 +156,15 @@ void CheckInternalErrno() {
     Require(*kernelErrno == guestEbadf, "close failure sets kernel errno to EBADF");
     Require(*internalErrno == internalMarker, "close failure does not modify internal errno");
 
+    double mathValue[3] = {1.0, 0, 0};
+    int mathError = 0;
+    *internalErrno = 0;
+    *kernelErrno = 0;
+    _Dtento_nid_postfix(mathValue, -5000, &mathError);
+    Require(*internalErrno == 34, "libSceLibcInternal range error updates _Geterrno");
+    Require(*kernelErrno == 0, "libSceLibcInternal range error leaves kernel errno untouched");
+    *internalErrno = internalMarker;
+
     bool workerPointerIsDistinct = false;
     bool workerValueIsIsolated = false;
 
@@ -186,14 +196,17 @@ int main() {
     {
         Capture capture;
         *__error_nid_postfix() = 2;
+        *_Geterrno_nid_postfix() = 2;
         warn_nid_postfix("open %s", "a.txt");
 
         Require(capture.Take() == "prog: open a.txt: " + noEntry + "\n", "warn");
         *__error_nid_postfix() = 2;
+        *_Geterrno_nid_postfix() = 2;
         warn_nid_postfix(nullptr);
 
         Require(capture.Take() == "prog: " + noEntry + "\n", "warn without format");
         *__error_nid_postfix() = 13;
+        *_Geterrno_nid_postfix() = 13;
         _warn_nid_postfix("open %s", "b.txt");
 
         Require(capture.Take() == "prog: open b.txt: " + denied + "\n", "_warn");
@@ -213,19 +226,24 @@ int main() {
         Require(ExitStatus([] { errc_nid_postfix(4, 13, "c"); }) == 4, "errc status");
         Require(capture.Take() == "prog: c: " + denied + "\n", "errc text");
         *__error_nid_postfix() = 2;
+        *_Geterrno_nid_postfix() = 2;
         Require(ExitStatus([] { err_nid_postfix(5, "e"); }) == 5, "err status");
         Require(capture.Take() == "prog: e: " + noEntry + "\n", "err text");
         *__error_nid_postfix() = 13;
+        *_Geterrno_nid_postfix() = 13;
         Require(ExitStatus([] { _err_nid_postfix(7, "%s %d", "f", 8); }) == 7 && g_hookStatus == 7, "_err status");
         Require(capture.Take() == "prog: f 8: " + denied + "\n", "_err text");
         *__error_nid_postfix() = 2;
+        *_Geterrno_nid_postfix() = 2;
         Require(ExitStatus([] { _warn_nid_postfix(nullptr); }) == -1 && g_hookStatus == 7, "_warn does not exit");
         Require(capture.Take() == "prog: " + noEntry + "\n", "_warn without format");
 
         *__error_nid_postfix() = 2;
+        *_Geterrno_nid_postfix() = 2;
         CallVariant(Variant::Warn, 0, 0, "open %s", "a.txt");
         Require(capture.Take() == "prog: open a.txt: " + noEntry + "\n", "vwarn");
         *__error_nid_postfix() = 2;
+        *_Geterrno_nid_postfix() = 2;
         CallVariant(Variant::Warnc, 0, 13, "%d-%s", 7, "x");
         Require(capture.Take() == "prog: 7-x: " + denied + "\n", "vwarnc uses its code");
         CallVariant(Variant::Warnc, 0, 13, nullptr);
@@ -235,9 +253,11 @@ int main() {
         CallVariant(Variant::WarnxSkipping, 0, 0, "after %d", 1, 2);
         Require(capture.Take() == "prog: after 2\n", "vwarnx continues an advanced list");
         *__error_nid_postfix() = 16;
+        *_Geterrno_nid_postfix() = 16;
         Require(ExitStatus([] { CallVariant(Variant::Err, 6, 0, nullptr); }) == 6, "verr status");
         Require(capture.Take() == "prog: " + std::string(strerror_nid_postfix(16)) + "\n", "verr without format");
         *__error_nid_postfix() = 2;
+        *_Geterrno_nid_postfix() = 2;
         Require(ExitStatus([] { CallVariant(Variant::Errc, 4, 13, "c%s", "!"); }) == 4, "verrc status");
         Require(capture.Take() == "prog: c!: " + denied + "\n", "verrc text");
         Require(ExitStatus([] { CallVariant(Variant::Errx, 0, 0, nullptr); }) == 0, "verrx status 0");

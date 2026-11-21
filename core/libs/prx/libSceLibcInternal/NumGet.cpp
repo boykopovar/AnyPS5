@@ -4,6 +4,7 @@
 // Copyright (c) Microsoft Corporation.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/ErrExports.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include "prx/libc/GuestStringStorage.hpp"
@@ -385,7 +386,7 @@ GuestLocale::InputIterator DoGetBoundedUnsigned(GuestLocale::InputIterator first
         const char* digits = minus ? ac + 1 : ac;
         char* ep = nullptr;
         int err = 0;
-        int& guestErrno = *__error_nid_postfix();
+        int& guestErrno = *_Geterrno_nid_postfix();
         const int savedErrno = guestErrno;
         const std::uint64_t tmp = _Stoulx_nid_postfix(digits, &ep, parsed.base, &err);
         guestErrno = savedErrno;
@@ -414,7 +415,7 @@ GuestLocale::InputIterator DoGetFullInt(GuestLocale::InputIterator first, GuestL
     } else {
         char* ep = nullptr;
         int err = 0;
-        int& guestErrno = *__error_nid_postfix();
+        int& guestErrno = *_Geterrno_nid_postfix();
         const int savedErrno = guestErrno;
         *value = static_cast<TInt>(parse(ac, &ep, parsed.base, &err));
         guestErrno = savedErrno;
@@ -670,7 +671,7 @@ GuestLocale::InputIterator DoGetFloat(GuestLocale::InputIterator first, GuestLoc
     } else {
         int err = 0;
         char* ep = nullptr;
-        int& guestErrno = *__error_nid_postfix();
+        int& guestErrno = *_Geterrno_nid_postfix();
         const int savedErrno = guestErrno;
         const TFloat result = parse(ac, &ep, 0, &err);
         guestErrno = savedErrno;
@@ -735,7 +736,7 @@ GuestLocale::InputIterator APS5_VABI CharNumGetBool(const GuestLocale::Facet*, G
         } else {
             char* end = nullptr;
             int error = 0;
-            int& guestErrno = *__error_nid_postfix();
+            int& guestErrno = *_Geterrno_nid_postfix();
             const int savedErrno = guestErrno;
             const std::int64_t parsedValue = _Stolx_nid_postfix(digits, &end, parsed.base, &error);
             guestErrno = savedErrno;

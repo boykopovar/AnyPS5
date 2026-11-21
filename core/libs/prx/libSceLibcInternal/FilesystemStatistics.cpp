@@ -7,20 +7,28 @@
 #include <cstring>
 
 extern "C" int APS5_VABI fstatvfs_nid_postfix(int descriptor, LibcStatvfs* output) {
-    int* const error = __error_nid_postfix();
+    int* const error = _Geterrno_nid_postfix();
+    int* const kernelError = __error_nid_postfix();
     const int saved = *error;
+    const int savedKernel = *kernelError;
     KernelStatfs volume{};
     const int status = _fstatfs_nid_postfix(descriptor, &volume);
-    if (status != 0) return status;
+    if (status != 0) {
+        *error = *kernelError;
+        return status;
+    }
     if (output == nullptr) {
         *error = 14;
+        *kernelError = 14;
         return -1;
     }
     const LibcStatvfs result = StatvfsFromStatfs(volume);
     if (!GuestCopyOut_nid_no_patch(output, &result, sizeof(result))) {
         *error = 14;
+        *kernelError = 14;
         return -1;
     }
     *error = saved;
+    *kernelError = savedKernel;
     return 0;
 }

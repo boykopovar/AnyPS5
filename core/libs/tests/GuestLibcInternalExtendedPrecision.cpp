@@ -1,3 +1,4 @@
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "prx/libc/include/Api.hpp"
 
@@ -336,29 +337,29 @@ float FloatDtento(float x, std::int64_t power, int* error) {
 
 void CheckDtento() {
     int error = 0;
-    *__error_nid_postfix() = 0;
+    *_Geterrno_nid_postfix() = 0;
     Require(FloatDtento(1.5f, 3, &error) == 1500.0f, "_FDtento scales up by a power of ten");
     Require(FloatDtento(7.0f, 0, &error) == 7.0f, "_FDtento by ten to the zero reads the value back");
     Require(FloatDtento(0.0f, 30, &error) == 0.0f, "_FDtento leaves zero alone");
     Require(FloatDtento(1.0f, 10, &error) == 1e10f, "_FDtento gives ten to the tenth");
     Require(FloatDtento(1.0f, -1, &error) == 0.1f, "_FDtento gives one tenth");
     Require(FloatDtento(3.0f, -5, &error) == 3e-5f, "_FDtento scales down by a power of ten");
-    Require(error == 0 && *__error_nid_postfix() == 0, "_FDtento in range reports no error");
+    Require(error == 0 && *_Geterrno_nid_postfix() == 0, "_FDtento in range reports no error");
     Require(std::isinf(FloatDtento(1.0f, 39, &error)), "_FDtento overflows to infinity");
-    Require(error == 1 && *__error_nid_postfix() == RangeError, "_FDtento reports overflow as a range error");
+    Require(error == 1 && *_Geterrno_nid_postfix() == RangeError, "_FDtento reports overflow as a range error");
     error = 4;
-    *__error_nid_postfix() = 0;
+    *_Geterrno_nid_postfix() = 0;
     Require(FloatDtento(1.0f, -60, &error) == 0.0f, "_FDtento underflows to zero");
-    Require(error == 5 && *__error_nid_postfix() == RangeError, "_FDtento sets the low error bit on underflow");
-    *__error_nid_postfix() = 0;
+    Require(error == 5 && *_Geterrno_nid_postfix() == RangeError, "_FDtento sets the low error bit on underflow");
+    *_Geterrno_nid_postfix() = 0;
     Require(FloatDtento(1.0f, -60, nullptr) == 0.0f, "_FDtento accepts a null error pointer");
-    Require(*__error_nid_postfix() == RangeError, "_FDtento without an error pointer still sets errno");
-    *__error_nid_postfix() = 0;
+    Require(*_Geterrno_nid_postfix() == RangeError, "_FDtento without an error pointer still sets errno");
+    *_Geterrno_nid_postfix() = 0;
     Require(FloatDtento(1.0f, std::numeric_limits<std::int64_t>::min(), &error) == 0.0f,
             "_FDtento by the most negative power underflows");
 
     error = 0;
-    *__error_nid_postfix() = 0;
+    *_Geterrno_nid_postfix() = 0;
     double d[3] = {1.5, 0, 0};
     Require(_Dtento_nid_postfix(d, 3, &error) == 1500.0, "_Dtento scales up by a power of ten");
     for (int power = -22; power <= 22; ++power) {
@@ -366,12 +367,12 @@ void CheckDtento() {
         const double expected = power >= 0 ? std::pow(10.0, power) : 1.0 / std::pow(10.0, -power);
         Require(_Dtento_nid_postfix(v, power, &error) == expected, "_Dtento gives the rounded power of ten");
     }
-    Require(error == 0 && *__error_nid_postfix() == 0, "_Dtento in range reports no error");
+    Require(error == 0 && *_Geterrno_nid_postfix() == 0, "_Dtento in range reports no error");
     double big[3] = {1.0, 0, 0};
     Require(std::isinf(_Dtento_nid_postfix(big, 309, &error)) && error == 1, "_Dtento overflows to infinity");
 
     error = 0;
-    *__error_nid_postfix() = 0;
+    *_Geterrno_nid_postfix() = 0;
     long double l[3] = {1.5L, 0, 0};
     Require(_LDtento_nid_postfix(l, 3, &error) == 1500.0L, "_LDtento scales up by a power of ten");
     for (int power = 0; power <= 27; ++power) {
@@ -382,7 +383,7 @@ void CheckDtento() {
     }
     long double tenth[3] = {1.0L, 0, 0};
     Require(_LDtento_nid_postfix(tenth, -1, &error) == 0.1L, "_LDtento gives one tenth");
-    Require(error == 0 && *__error_nid_postfix() == 0, "_LDtento in range reports no error");
+    Require(error == 0 && *_Geterrno_nid_postfix() == 0, "_LDtento in range reports no error");
     float floatTenth[3] = {1.0f, 0, 0};
     _FDtento_nid_postfix(floatTenth, -1, &error);
     Require(floatTenth[0] == 0x1.998p-4f && floatTenth[1] == 0x1.998p-16f && floatTenth[2] == 0x1.99p-28f,
@@ -398,7 +399,7 @@ void CheckDtento() {
     Require(error == 0, "reading one tenth back reports no error");
     long double tiny[3] = {1.0L, 0, 0};
     Require(_LDtento_nid_postfix(tiny, -5000, &error) == 0.0L && error == 1, "_LDtento underflows to zero");
-    Require(*__error_nid_postfix() == RangeError, "_LDtento reports underflow as a range error");
+    Require(*_Geterrno_nid_postfix() == RangeError, "_LDtento reports underflow as a range error");
 }
 
 void CheckLongDouble() {

@@ -1,3 +1,4 @@
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "prx/libc/include/Api.hpp"
 
@@ -449,7 +450,7 @@ T Dtento(T* value, std::int64_t power, int* error) {
     for (; steps > 0 && value[0] != T(0) && std::isfinite(value[0]); --steps) Mulx(value, AccumulatorSize, factor, words);
     const T result = Getw(value, AccumulatorSize);
     if (result == T(0) || std::isinf(result)) {
-        *__error_nid_postfix() = RangeError;
+        *_Geterrno_nid_postfix() = RangeError;
         if (error != nullptr) *error |= 1;
     }
     return result;

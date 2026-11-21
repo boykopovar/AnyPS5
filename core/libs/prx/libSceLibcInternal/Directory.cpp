@@ -10,11 +10,16 @@
 extern "C" void* APS5_VABI fdopendir_nid_postfix(int fd) {
     constexpr int SetDescriptorFlags = 2;
     constexpr int CloseOnExec = 1;
-    if (fcntl_nid_postfix(fd, SetDescriptorFlags, CloseOnExec) == -1) return nullptr;
+    if (fcntl_nid_postfix(fd, SetDescriptorFlags, CloseOnExec) == -1) {
+        *_Geterrno_nid_postfix() = *__error_nid_postfix();
+        return nullptr;
+    }
     int error = 0;
     const char* path = GetDirectoryDescriptorPath_nid_no_patch(fd, &error);
     if (path == nullptr) {
-        *__error_nid_postfix() = error == EBADF ? 9 : 20;
+        const int code = error == EBADF ? 9 : 20;
+        *_Geterrno_nid_postfix() = code;
+        *__error_nid_postfix() = code;
         return nullptr;
     }
     const bool virtualDirectory = IsDirectoryDescriptor_nid_no_patch(fd) != 0;
