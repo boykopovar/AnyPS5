@@ -200,18 +200,15 @@ void TestCommitterFlushesPastFutureQueuedRead() {
 }
 
 void TestMultisampledSingleClearDrainsDrawPipeline() {
+#if defined(_WIN32) || defined(MAP_FIXED_NOREPLACE)
     constexpr std::uintptr_t FixedBase = 0x20f7f0000ull;
     constexpr std::size_t FixedBytes = 65536;
 #ifdef _WIN32
     auto* mapped = static_cast<std::uint8_t*>(VirtualAlloc(reinterpret_cast<void*>(FixedBase), FixedBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
     if (mapped == nullptr) return;
 #else
-#ifdef MAP_FIXED_NOREPLACE
     auto* mapped = static_cast<std::uint8_t*>(mmap(reinterpret_cast<void*>(FixedBase), FixedBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0));
     if (mapped == MAP_FAILED) return;
-#else
-    return;
-#endif
 #endif
     struct FixedGuard {
         std::uint8_t* base;
@@ -265,6 +262,7 @@ void TestMultisampledSingleClearDrainsDrawPipeline() {
     submitted.get();
     AgcDriverWaitIdle_nid_postfix();
     Require(drained, "pipelined flush read order: multisampled comp-to-single clear bypassed DrawPipeline::Queue0().Drain");
+#endif
 }
 
 }
