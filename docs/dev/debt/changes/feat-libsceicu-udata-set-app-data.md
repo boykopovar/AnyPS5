@@ -1,0 +1,6 @@
+# libSceIcu
+
+## add Functional
+
+- [udata_setAppData](../../../core/libs/prx/libSceIcu/DataOpen.cpp) (libSceIcu) - not compared with the console. It calls ICU 78.1 [udata_setAppData](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/udata.cpp#L906-L923) and keeps the guest's package in place, as ICU does. ICU 68.2 gave the same statuses for every call of the test and for 4 500 generated packages, and served the same items except where `udata_open` reads outside a corrupted package. Where ICU 68.2 crashes, it throws `std::invalid_argument`: a null name with a package ICU accepts, and a status ICU must read or write but cannot. A package or name that cannot be read is still read directly, as in ICU.
+- [udata_setAppData package names](../../../core/libs/prx/libSceIcu/DataOpen.cpp) (libSceIcu) - a package ICU accepts throws `NotImplemented_nid_no_patch` when its base name is `icudt68l`, which ICU 68.2 serves under the path `icudt68l` and, unless it has already looked for a missing ICU data item, as ICU data, or `icudt78l`, which would become the host ICU's data; and, on a host that separates paths with `\`, when its name contains `\`, which ICU 68.2 keeps in the base name.

@@ -34,4 +34,5 @@ UDataMemory* APS5_VABI udata_open_nid_postfix(const char* path, const char* type
 UDataMemory* APS5_VABI udata_openChoice_nid_postfix(const char* path, const char* type, const char* name,
                                                   Icu::DataMemoryIsAcceptable callback, void* context,
                                                   std::int32_t* status);
+void APS5_VABI udata_setAppData_nid_postfix(const char* packageName, const void* data, std::int32_t* status);
 }
