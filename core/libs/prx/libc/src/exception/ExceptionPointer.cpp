@@ -21,10 +21,12 @@ void APS5_VABI _ZNSt13__future_base12_Result_baseD2Ev_nid_postfix(std::__future_
 }
 
 void APS5_VABI _ZNSt15__exception_ptr13exception_ptr9_M_addrefEv_nid_postfix(std::exception_ptr* self) noexcept {
+    if (!self) return;
     ExceptionPointerAddref(self);
 }
 
 void APS5_VABI _ZNSt15__exception_ptr13exception_ptr10_M_releaseEv_nid_postfix(std::exception_ptr* self) noexcept {
+    if (!self) return;
     ExceptionPointerRelease(self);
 }
 
@@ -102,11 +104,13 @@ const type_info* exception_ptr::__cxa_exception_type() const noexcept {
 
 extern "C" {
 void APS5_VABI _ZNSt15__exception_ptr13exception_ptr9_M_addrefEv_nid_postfix(GuestExceptionPointer* self) noexcept {
+    if (!self) return;
     __cxa_increment_exception_refcount_nid_postfix(self->object);
 
 }
 
 void APS5_VABI _ZNSt15__exception_ptr13exception_ptr10_M_releaseEv_nid_postfix(GuestExceptionPointer* self) noexcept {
+    if (!self) return;
     __cxa_decrement_exception_refcount_nid_postfix(self->object);
 
     self->object = nullptr;
