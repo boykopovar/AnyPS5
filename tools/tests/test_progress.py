@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -893,6 +894,25 @@ class ProgressTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, 2)
             self.assertIn(str(blocked), stderr.getvalue())
             self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_non_file_site_destination_preserves_existing_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "source"
+            (root / "core/libs/prx").mkdir(parents=True)
+            opcodes = root / progress.OPCODES.relative_to(progress.ROOT)
+            opcodes.parent.mkdir(parents=True)
+            opcodes.write_text("enum class RdnaOpcode {\n    SEndpgm,\n};\n", encoding="utf-8")
+            output = Path(directory) / "site"
+            blocked = output / "progress.html"
+            blocked.mkdir(parents=True)
+            previous = output / "progress.json"
+            previous.write_bytes(b"previous JSON report")
+            completed = subprocess.run([sys.executable, str(Path(progress.__file__)), "--root", str(root), str(output)],
+                                       capture_output=True, text=True, timeout=10)
+            self.assertEqual(completed.returncode, 2, completed.stderr)
+            self.assertEqual(previous.read_bytes(), b"previous JSON report")
+            self.assertIn(f"{blocked}: report destination must be a regular file", completed.stderr)
+            self.assertEqual(set(output.iterdir()), {blocked, previous})
 
     def test_aliased_reports_are_refused_and_left_unchanged(self):
         libraries, shaders = self.library_snapshot()
