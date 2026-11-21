@@ -6,6 +6,7 @@
 #include <algorithm>
 #include "prx/libSceJxr/src/EncoderMetadata.hpp"
 #include <array>
+#include <cerrno>
 #include <vector>
 #include <utility>
 #include <cstddef>
@@ -466,6 +467,12 @@ void TestAlignedAllocation() {
         void* out = nullptr;
         PKAllocAligned_nid_postfix(&out, 16, maximum - 8);
     });
+    static void* const readOnlyOut = reinterpret_cast<void*>(std::uintptr_t{0x1234});
+    errno = 71;
+    RequireThrows([] { PKAllocAligned_nid_postfix(reinterpret_cast<void**>(0x10), 32, 16); });
+    Require(errno == 71);
+    RequireThrows([] { PKAllocAligned_nid_postfix(const_cast<void**>(&readOnlyOut), 32, 16); });
+    Require(errno == 71 && readOnlyOut == reinterpret_cast<void*>(std::uintptr_t{0x1234}));
 }
 
 std::int64_t APS5_VABI PreserveConvert(JxrGuestFormatConverter*, const void*, std::uint8_t*, std::uint32_t) {

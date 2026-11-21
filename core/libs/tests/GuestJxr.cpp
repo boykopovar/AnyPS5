@@ -1149,6 +1149,9 @@ void TestDecodeRelease() {
     RequireThrows([&] { PKImageDecode_Release_nid_postfix(nullptr); });
     void* nullDecoder = nullptr;
     RequireThrows([&] { PKImageDecode_Release_nid_postfix(&nullDecoder); });
+    errno = 71;
+    RequireThrows([&] { PKImageDecode_Release_nid_postfix(reinterpret_cast<void**>(0x10)); });
+    Require(errno == 71);
 
     Jxr::Stream closable{};
     closable.close = &MockClose;
