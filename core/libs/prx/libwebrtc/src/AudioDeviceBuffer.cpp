@@ -87,32 +87,36 @@ std::int32_t APS5_VABI _ZN6webrtc17AudioDeviceBuffer21RegisterAudioCallbackEPNS_
     return 0;
 }
 
-void APS5_VABI _ZN6webrtc17AudioDeviceBuffer12StartPlayoutEv_nid_postfix(WebRtcAudioDeviceBuffer* buffer) {
+std::int32_t APS5_VABI _ZN6webrtc17AudioDeviceBuffer12StartPlayoutEv_nid_postfix(WebRtcAudioDeviceBuffer* buffer) {
     WebRtcAudioDeviceBuffer& device = RequireBuffer(buffer, "AudioDeviceBuffer::StartPlayout");
     if (device.playing)
-        return;
+        return 0;
     device.playing = true;
+    return 0;
 }
 
-void APS5_VABI _ZN6webrtc17AudioDeviceBuffer11StopPlayoutEv_nid_postfix(WebRtcAudioDeviceBuffer* buffer) {
+std::int32_t APS5_VABI _ZN6webrtc17AudioDeviceBuffer11StopPlayoutEv_nid_postfix(WebRtcAudioDeviceBuffer* buffer) {
     WebRtcAudioDeviceBuffer& device = RequireBuffer(buffer, "AudioDeviceBuffer::StopPlayout");
     if (!device.playing)
-        return;
+        return 0;
     device.playing = false;
+    return 0;
 }
 
-void APS5_VABI _ZN6webrtc17AudioDeviceBuffer14StartRecordingEv_nid_postfix(WebRtcAudioDeviceBuffer* buffer) {
+std::int32_t APS5_VABI _ZN6webrtc17AudioDeviceBuffer14StartRecordingEv_nid_postfix(WebRtcAudioDeviceBuffer* buffer) {
     WebRtcAudioDeviceBuffer& device = RequireBuffer(buffer, "AudioDeviceBuffer::StartRecording");
     if (device.recording)
-        return;
+        return 0;
     device.recording = true;
+    return 0;
 }
 
-void APS5_VABI _ZN6webrtc17AudioDeviceBuffer13StopRecordingEv_nid_postfix(WebRtcAudioDeviceBuffer* buffer) {
+std::int32_t APS5_VABI _ZN6webrtc17AudioDeviceBuffer13StopRecordingEv_nid_postfix(WebRtcAudioDeviceBuffer* buffer) {
     WebRtcAudioDeviceBuffer& device = RequireBuffer(buffer, "AudioDeviceBuffer::StopRecording");
     if (!device.recording)
-        return;
+        return 0;
     device.recording = false;
+    return 0;
 }
 
 }
