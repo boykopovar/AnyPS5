@@ -486,4 +486,10 @@ public:
     std::map<std::u16string, Retained<Object>> filters;
 };
 
+class FormSubmissionListener final : public ObjectOf<ObjectType::FormSubmissionListener> {
+public:
+    std::function<void()> completionHandler;
+    bool continued = false;
+};
+
 }  // namespace NKWebKit

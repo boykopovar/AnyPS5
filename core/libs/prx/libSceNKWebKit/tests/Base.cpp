@@ -2730,6 +2730,33 @@ static void TestAuthentication() {
     Require(threw);
 }
 
+static void TestFormSubmissionListener() {
+    Require(WKFormSubmissionListenerGetTypeID() == 54);
+    auto listener = NKWebKit::Make<NKWebKit::FormSubmissionListener>();
+    int callCount = 0;
+    listener->completionHandler = [&callCount]() {
+        callCount++;
+    };
+    const void* ref = listener.Get();
+    Require(!listener->continued);
+    Require(callCount == 0);
+
+    WKFormSubmissionListenerContinue(ref);
+    Require(listener->continued);
+    Require(callCount == 1);
+
+    WKFormSubmissionListenerContinue(ref);
+    Require(callCount == 1);
+
+    bool threw = false;
+    try {
+        WKFormSubmissionListenerContinue(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static int s_runLoopCallCount = 0;
 static void* s_runLoopReceivedContext = nullptr;
 
@@ -3266,6 +3293,7 @@ int main() {
     }
 
     TestInspector();
+    TestFormSubmissionListener();
     TestContext();
     TestSessionState();
     TestSerializedScriptValue();
