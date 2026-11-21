@@ -988,8 +988,11 @@ char* APS5_VABI curl_pushheader_byname_nid_postfix(struct curl_pushheaders* h, c
 
 std::int32_t APS5_VABI curl_formadd_nid_postfix(struct guest_curl_httppost** httppost, struct guest_curl_httppost** last_post, ...) {
     if (!httppost || !last_post) NotImplemented_nid_no_patch(__func__);
+    guest_curl_httppost* last = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&last, last_post, sizeof(last))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     std::vector<curl_forms> options;
     bool nullArray = false;
+    bool unreadableArray = false;
     CURL_ARGS_START(last_post);
     for (;;) {
         const auto option = static_cast<CURLformoption>(CURL_ARG(int));
@@ -1000,8 +1003,15 @@ std::int32_t APS5_VABI curl_formadd_nid_postfix(struct guest_curl_httppost** htt
                 nullArray = true;
                 break;
             }
-            for (; forms->option != CURLFORM_END; ++forms)
-                AddFormOption(options, static_cast<CURLformoption>(forms->option), forms->value);
+            for (guest_curl_forms entry{};; ++forms) {
+                if (!GuestCopyIn_nid_no_patch(&entry, forms, sizeof(entry))) {
+                    unreadableArray = true;
+                    break;
+                }
+                if (entry.option == CURLFORM_END) break;
+                AddFormOption(options, static_cast<CURLformoption>(entry.option), entry.value);
+            }
+            if (unreadableArray) break;
             continue;
         }
         if (IsFormLengthOption(option) || option == CURLFORM_CONTENTLEN) {
@@ -1014,6 +1024,7 @@ std::int32_t APS5_VABI curl_formadd_nid_postfix(struct guest_curl_httppost** htt
         }
     }
     CURL_ARGS_END();
+    if (unreadableArray) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     options.push_back({CURLFORM_END, nullptr});
 
     curl_httppost* hostHead = nullptr;
@@ -1024,17 +1035,19 @@ std::int32_t APS5_VABI curl_formadd_nid_postfix(struct guest_curl_httppost** htt
         return result == CURL_FORMADD_OK ? CURL_FORMADD_NULL : result;
     }
     if (!hostHead) return result;
+    guest_curl_httppost** const link = last ? &last->next : httppost;
+    if (!GuestWritable_nid_no_patch(link, sizeof(*link)) || !GuestWritable_nid_no_patch(last_post, sizeof(*last_post))) {
+        ::curl_formfree(hostHead);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     auto* const guest = GuestFormFromHost(hostHead);
     if (!guest) {
         ::curl_formfree(hostHead);
         return CURL_FORMADD_MEMORY;
     }
     FreeHostFormNodes(hostHead);
-    if (*last_post)
-        (*last_post)->next = guest;
-    else
-        *httppost = guest;
-    *last_post = guest;
+    if (!GuestCopyOut_nid_no_patch(link, &guest, sizeof(guest)) || !GuestCopyOut_nid_no_patch(last_post, &guest, sizeof(guest)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return result;
 }
 
