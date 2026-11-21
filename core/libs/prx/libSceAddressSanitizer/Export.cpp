@@ -1196,36 +1196,6 @@ int APS5_VABI __sanitizer_symbolize_pc() {
     return 0;
 }
 
-int APS5_VABI __sanitizer_unaligned_load16() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __sanitizer_unaligned_load32() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __sanitizer_unaligned_load64() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __sanitizer_unaligned_store16() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __sanitizer_unaligned_store32() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __sanitizer_unaligned_store64() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI __sanitizer_verify_contiguous_container() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1246,47 +1216,7 @@ int APS5_VABI __ubsan_current_error_report_size() {
     return 0;
 }
 
-int APS5_VABI __ubsan_default_options() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI __ubsan_get_current_report_data() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_add_overflow() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_add_overflow_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_alignment_assumption() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_alignment_assumption_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_builtin_unreachable() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_divrem_overflow() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_divrem_overflow_abort() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1297,16 +1227,6 @@ int APS5_VABI __ubsan_handle_dynamic_type_cache_miss() {
 }
 
 int APS5_VABI __ubsan_handle_dynamic_type_cache_miss_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_float_cast_overflow() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_float_cast_overflow_abort() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1331,71 +1251,6 @@ int APS5_VABI __ubsan_handle_function_type_mismatch_v1_abort() {
     return 0;
 }
 
-int APS5_VABI __ubsan_handle_implicit_conversion() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_implicit_conversion_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_invalid_builtin() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_invalid_builtin_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_load_invalid_value() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_load_invalid_value_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_missing_return() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_mul_overflow() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_mul_overflow_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_negate_overflow() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_negate_overflow_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_nonnull_arg() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_nonnull_arg_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI __ubsan_handle_nonnull_return() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1406,102 +1261,12 @@ int APS5_VABI __ubsan_handle_nonnull_return_abort() {
     return 0;
 }
 
-int APS5_VABI __ubsan_handle_nonnull_return_v1() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_nonnull_return_v1_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_nullability_arg() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_nullability_arg_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_nullability_return_v1() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_nullability_return_v1_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_out_of_bounds() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_out_of_bounds_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_pointer_overflow() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_pointer_overflow_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_shift_out_of_bounds() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_shift_out_of_bounds_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_sub_overflow() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_sub_overflow_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI __ubsan_handle_type_mismatch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI __ubsan_handle_type_mismatch_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_type_mismatch_v1() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_type_mismatch_v1_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_vla_bound_not_positive() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __ubsan_handle_vla_bound_not_positive_abort() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
