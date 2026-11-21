@@ -94,6 +94,12 @@ int main() {
     Require(sceFontGetFontMetrics(plain, 7, &untouched) == SCE_FONT_OK);
     Require(untouched.form == 7 && untouched.ascender == 5.0f && untouched.descender == 6.0f && untouched.lineGap == 7.0f);
     Require(untouched.maxAdvance == 50.0f && untouched.verticalDescender == 0.0f && untouched.verticalAscender == 0.0f);
+    untouched.ascender = -15.0f;
+    untouched.descender = -26.0f;
+    untouched.lineGap = -37.0f;
+    Require(sceFontGetFontMetrics(plain, 0, &untouched) == SCE_FONT_OK);
+    Require(untouched.form == 0 && untouched.ascender == -15.0f && untouched.descender == -26.0f && untouched.lineGap == -37.0f);
+    Require(untouched.maxAdvance == 50.0f && untouched.verticalDescender == 0.0f && untouched.verticalAscender == 0.0f);
 
     const auto typoData = BuildFont(1, {{"OS/2", Os2Table()}, {"vhea", VerticalHeader(0x11)}, {"vmtx", Words({1000, 40})}});
     FontHandle typo = Open(library, typoData);
