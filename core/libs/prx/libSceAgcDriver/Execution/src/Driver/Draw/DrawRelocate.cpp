@@ -129,6 +129,8 @@ void Driver::tagUserValueWords(DispatchVariant& variant, const DrawProgram& prog
         if (!readOnly || target.guestDescriptor[word + 1] != program.userData[index + 1] || target.guestDescriptor[word + 2] != program.userData[index + 2] || readThrough(target.guestDescriptor.data() + word)) continue;
         variant.valueWords |= std::uint64_t {1} << index;
         variant.valueSlots.push_back({index, binding, word});
+        variant.valueWords |= std::uint64_t {1} << (index + 1);
+        variant.valueSlots.push_back({index + 1, binding, word + 1});
         const auto records = program.userData[index + 2];
         if (records != 0 && !taken(index + 2) && !upperHalf(index + 2) && bound(records) == 1 && !elsewhere(index + 2, records)) {
             variant.valueWords |= std::uint64_t {1} << (index + 2);
