@@ -421,19 +421,9 @@ int APS5_VABI _ZN3sce2np8WorkItemD0Ev(void) {
     return 0;
 }
 
-int APS5_VABI _sceNpAllocatorMalloc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 bool APS5_VABI _ZN3sce2np13RingBufMemory6IsInitEv(void* self) {
     std::uintptr_t buffer = 0;
     return ReadNpObjectField(self, 0x8, buffer) && buffer != 0;
-}
-
-int APS5_VABI _sceNpHeapMalloc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI _ZN3sce2np12HttpTemplate7DestroyEv(void) {
