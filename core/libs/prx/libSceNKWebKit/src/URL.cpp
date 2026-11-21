@@ -1,5 +1,7 @@
 #include "prx/libSceNKWebKit/src/Types.hpp"
+#include "prx/libSceNKWebKit/include/PublicSuffixExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include <string>
 #include <string_view>
 #include <vector>
@@ -301,6 +303,33 @@ const void* APS5_VABI WKURLCreateWithBaseURL(const void* baseURLRef, const char*
     const auto* base = NKWebKit::Cast<NKWebKit::URL>(baseURLRef, __func__);
     const std::string rel = relativeURL ? relativeURL : "";
     return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::URL>(ResolveURL(base->text, rel)));
+}
+
+const void* APS5_VABI WKRegistrableDomainCreate(const void* urlRef) {
+    const auto* url = NKWebKit::Cast<NKWebKit::URL>(urlRef, __func__);
+    const std::string canonical = CanonicalizeURL(url->text);
+    const auto host = ExtractHost(canonical);
+    if (host.empty()) {
+        return MakeWKString("nullOrigin");
+    }
+    const auto decodedHost = NKWebKit::DecodeUtf8(host.data(), host.size()).value_or(std::u16string());
+    const auto hostString = _ZN3WTF10StringImpl20create8BitIfPossibleEPKDsj(decodedHost.data(), static_cast<unsigned>(decodedHost.size()));
+    const auto domain = _ZN7WebCore28topPrivatelyControlledDomainERKN3WTF6StringE(&hostString);
+    if (domain.impl && domain.impl->length) {
+        const auto view = NKWebKit::WtfAbi::ViewOf(domain.impl);
+        if (view.is8Bit) {
+            const auto* bytes = reinterpret_cast<const unsigned char*>(view.data);
+            std::u16string result16;
+            result16.reserve(view.length);
+            for (unsigned i = 0; i < view.length; ++i) {
+                result16.push_back(static_cast<char16_t>(bytes[i]));
+            }
+            return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(std::move(result16)));
+        }
+        std::u16string_view u16(reinterpret_cast<const char16_t*>(view.data), view.length);
+        return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(std::u16string(u16)));
+    }
+    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(decodedHost));
 }
 
 }
