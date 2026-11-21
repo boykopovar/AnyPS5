@@ -976,6 +976,15 @@ _Unwind_Reason_Code APS5_VABI _Unwind_RaiseException_nid_postfix(_Unwind_Excepti
 }
 
 [[noreturn]] void APS5_VABI _Unwind_Resume_nid_postfix(_Unwind_Exception* exception) {
+#ifdef __APPLE__
+    if (!LibcException::Native(exception->exception_class) && !exception->private_1) {
+        using Resume = void (*)(_Unwind_Exception*);
+        static void* const systemLibrary = dlopen("/usr/lib/libSystem.B.dylib", RTLD_LAZY | RTLD_NOLOAD);
+        const auto resume = reinterpret_cast<Resume>(systemLibrary ? dlsym(systemLibrary, "_Unwind_Resume") : nullptr);
+        if (!resume || resume == &_Unwind_Resume_nid_postfix) std::abort();
+        resume(exception);
+    }
+#endif
 #if defined(__linux__)
     if (!LibcException::Native(exception->exception_class) && !exception->private_1) {
         using Resume = void (*)(_Unwind_Exception*);

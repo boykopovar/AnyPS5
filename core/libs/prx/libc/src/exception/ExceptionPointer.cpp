@@ -129,6 +129,9 @@ void APS5_VABI _ZNSt15__exception_ptr13exception_ptrC2EPv_nid_postfix(GuestExcep
 
 const std::type_info* APS5_VABI _ZNKSt15__exception_ptr13exception_ptr20__cxa_exception_typeEv_nid_postfix(const GuestExceptionPointer* self) noexcept {
     if (!self || !self->object) return nullptr;
+#ifdef __APPLE__
+    if (LibcException::HostPrimary(self->object)) return LibcException::HostPrimaryType(self->object);
+#endif
     return LibcException::FromObject(self->object)->type;
 }
 
