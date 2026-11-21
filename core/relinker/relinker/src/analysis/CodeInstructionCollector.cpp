@@ -565,7 +565,32 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
     for (const auto& [begin, end] : functions) functionBytes += end - begin;
     std::uint64_t decodedBytes = 0;
     report(1000);
+    const auto insideEnclosingInstruction = [&](std::uint64_t begin, std::uint64_t end) {
+        for (auto outer = functions.lower_bound(begin); outer != functions.begin();) {
+            --outer;
+            const auto [outerBegin, outerEnd] = *outer;
+            if (outerEnd <= begin || end > outerEnd) continue;
+            const auto offset = fileOffset(outerBegin, outerEnd - outerBegin);
+            for (auto address = outerBegin; address < begin;) {
+                try {
+                    const auto length = decoder.DecodeInstruction(bytes.data() + offset + address - outerBegin, outerEnd - address).Length;
+                    if (length == 0 || length > outerEnd - address) break;
+                    address += length;
+                } catch (const Codegen::CodegenException&) {
+                    break;
+                }
+                if (address > begin) return true;
+            }
+        }
+        return false;
+    };
+    std::uint64_t decodedEnd = 0;
     for (const auto& [begin, end] : functions) {
+        if (begin < decodedEnd && insideEnclosingInstruction(begin, end)) {
+            roots.erase(begin);
+            continue;
+        }
+        decodedEnd = std::max(decodedEnd, end);
         const auto offset = fileOffset(begin, end - begin);
         for (auto address = begin; address < end;) {
             Codegen::DecodedInstructionInfo info;
