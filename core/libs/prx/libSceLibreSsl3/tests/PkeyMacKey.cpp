@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <source_location>
 #include <string>
 
@@ -37,6 +38,9 @@ static_assert(offsetof(Octets, flags) == 16);
 
 constexpr int HmacType = 855;
 constexpr int RsaType = 6;
+constexpr std::uint64_t CommandNotSupported = 0x06fff093;
+constexpr std::uint64_t OperationNotSupported = 0x06fff096;
+constexpr std::uint64_t UnsupportedAlgorithm = 0x06fff09c;
 constexpr int OctetStringType = 4;
 constexpr int MaxDigestSize = 64;
 
@@ -109,6 +113,8 @@ int main(int argc, char** argv) {
     auto newMacKey = Resolve<Pkey* (*)(int, void*, const unsigned char*, int)>(module, "m0bTFPN3yzk");
     auto keySize = Resolve<int (*)(Pkey*)>(module, "uoC6WmyO4Dg");
     auto compareKeys = Resolve<int (*)(Pkey*, Pkey*)>(module, "vLuIwBfrxrk");
+    auto getError = Resolve<std::uint64_t (*)()>(module, "DJg+qWX1rwY", false);
+    auto clearErrors = Resolve<void (*)()>(module, "sieQ--PINWg", false);
 
     const unsigned char secret[4] = {1, 2, 3, 4};
     Pkey* key = newMacKey(HmacType, nullptr, secret, sizeof(secret));
@@ -163,11 +169,28 @@ int main(int argc, char** argv) {
     release(ownedKey);
     Require(outstanding == baseline);
 
-    Require(newMacKey(RsaType, nullptr, secret, sizeof(secret)) == nullptr);
-    Require(newMacKey(12345, nullptr, secret, sizeof(secret)) == nullptr);
+    clearErrors();
+    const struct {
+        int type;
+        std::uint64_t error;
+    } rejected[] = {{RsaType, CommandNotSupported}, {28, CommandNotSupported}, {116, CommandNotSupported},
+        {408, CommandNotSupported}, {912, CommandNotSupported}, {950, CommandNotSupported}, {952, CommandNotSupported},
+        {1022, OperationNotSupported}, {1055, OperationNotSupported}, {0, UnsupportedAlgorithm},
+        {1, UnsupportedAlgorithm}, {-2, UnsupportedAlgorithm}, {19, UnsupportedAlgorithm}, {815, UnsupportedAlgorithm},
+        {12345, UnsupportedAlgorithm}, {894, 0}, {-1, 0}};
+    for (const auto& entry : rejected) {
+        for (const int length : {-3, 0, static_cast<int>(sizeof(secret))}) {
+            for (const unsigned char* material : {static_cast<const unsigned char*>(nullptr), secret}) {
+                Require(newMacKey(entry.type, nullptr, material, length) == nullptr);
+                Require(getError() == entry.error);
+                Require(getError() == 0);
+            }
+        }
+    }
     Require(newMacKey(HmacType, nullptr, nullptr, 5) == nullptr);
     Require(newMacKey(HmacType, nullptr, secret, -2) == nullptr);
     Require(newMacKey(HmacType, nullptr, nullptr, -1) == nullptr);
+    Require(getError() == 0);
     Require(outstanding == 0);
 
     for (int failure = 1; failure <= 3; ++failure) {
