@@ -195,13 +195,19 @@ std::uint32_t StoredD16Component(const Format& format, std::uint32_t tid, std::u
     return Saturate(SignExtend(half, 16u), format.bits);
 }
 
-std::vector<std::uint8_t> Expected(const Format& format, std::span<const Write> writes, bool d16 = false) {
+std::uint32_t StoredPackedComponent(const Format& format, std::uint32_t tid, std::uint32_t component) {
+    const auto shift = component * format.bits;
+    const auto mask = format.bits == 32u ? 0xffffffffu : (1u << format.bits) - 1u;
+    return (Value(tid, shift / 32u) >> (shift % 32u)) & mask;
+}
+
+std::vector<std::uint8_t> Expected(const Format& format, std::span<const Write> writes, bool d16 = false, bool packed = false) {
     auto bytes = Initial();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         for (const auto& write : writes) {
             auto* texel = bytes.data() + TexelOffset(format, tid, write.row);
             for (std::uint32_t component = 0; component < format.components; ++component) {
-                const auto value = d16 ? StoredD16Component(format, tid, write.dmask, component) : StoredComponent(format, tid, write.dmask, component);
+                const auto value = packed ? StoredPackedComponent(format, tid, component) : d16 ? StoredD16Component(format, tid, write.dmask, component) : StoredComponent(format, tid, write.dmask, component);
                 std::memcpy(texel + component * format.bits / 8u, &value, format.bits / 8u);
             }
         }
@@ -258,8 +264,8 @@ void Store(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<cons
     Dispatch(device, texels, code, format, swizzle, BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)));
 }
 
-void CheckTexels(const std::uint8_t* texels, const Format& format, std::span<const Write> writes, const std::string& what, bool d16 = false) {
-    const auto expected = Expected(format, writes, d16);
+void CheckTexels(const std::uint8_t* texels, const Format& format, std::span<const Write> writes, const std::string& what, bool d16 = false, bool packed = false) {
+    const auto expected = Expected(format, writes, d16, packed);
     for (std::uint32_t y = 0; y < Height; ++y) {
         for (std::uint32_t x = 0; x < Width; ++x) {
             const auto offset = TexelOffset(format, x, y);
@@ -315,12 +321,16 @@ int main() {
             Store(*device, texels, D16Code, format.format, SwizzleOf(format));
             CheckTexels(texels, format, StoreWrites, "image_store d16", true);
         }
-        RequireRefused(*device, texels, PackedCode, 12u, "storage image descriptor uses an unsupported format", "image_store_pck of 16_SINT");
+        RequireRefused(*device, texels, PackedCode, 61u, "storage image descriptor uses an unsupported format", "image_store_pck of 8_8_8_8_SINT");
         RequireRefused(*device, texels, AtomicCode, 12u, "atomic image descriptor uses an unsupported format 12", "image_atomic_add of 16_SINT");
         RequireRefused(*device, texels, StoreCode, 73u, "storage image descriptor uses an unsupported format", "image_store of 32_32_32_SINT");
         for (const auto index : {2u, 5u, 7u}) {
             Store(*device, texels, PackedWideCode, Formats[index].format, SwizzleOf(Formats[index]));
             CheckTexels(texels, Formats[index], PackedWideWrites, "image_store_pck dmask:0x3");
+        }
+        for (const auto index : {0u, 1u, 3u}) {
+            Store(*device, texels, PackedWideCode, Formats[index].format, SwizzleOf(Formats[index]));
+            CheckTexels(texels, Formats[index], PackedWideWrites, "image_store_pck dmask:0x3", false, true);
         }
         Store(*device, texels, AtomicD16Code, Formats[2].format, IdentitySwizzle);
         CheckTexels(texels, Formats[2], TitleWrites, "image_store d16 after image_atomic_add", true);
