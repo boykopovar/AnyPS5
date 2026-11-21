@@ -2387,6 +2387,16 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
         set_tests_properties(guest_udp PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_sockopt_rcvbuf_sndbuf_type_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestSockoptRcvbufSndbufTypeBounds.cpp)
+    target_include_directories(guest_sockopt_rcvbuf_sndbuf_type_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sockopt_rcvbuf_sndbuf_type_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_sockopt_rcvbuf_sndbuf_type_bounds_tests)
+    add_test(NAME guest_sockopt_rcvbuf_sndbuf_type_bounds COMMAND guest_sockopt_rcvbuf_sndbuf_type_bounds_tests)
+    set_tests_properties(guest_sockopt_rcvbuf_sndbuf_type_bounds PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_sockopt_rcvbuf_sndbuf_type_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_socket_address_length_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketAddressLength.cpp)
     target_include_directories(guest_socket_address_length_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_socket_address_length_tests PRIVATE libkernel libc)
