@@ -416,6 +416,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_import_audit.py)
         add_test(NAME guest_pointer_audit COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_guest_pointer_audit.py)
+        add_test(NAME tools_shebang_executable COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_shebang_executable.py)
         if(Python3_VERSION VERSION_GREATER_EQUAL 3.11)
             add_test(NAME tools_catalog_json COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_catalog_json.py)
