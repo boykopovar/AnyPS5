@@ -3,11 +3,19 @@
 #include "SceTypes.hpp"
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 extern "C" {
 
@@ -135,6 +143,71 @@ static void RequireCancelOrDeleteReleasesEveryWaiter(bool cancel) {
     if (cancel) Require(sceKernelDeleteEventFlag(flag) == SCE_OK);
 }
 
+class ReadOnlyTimeout {
+public:
+    explicit ReadOnlyTimeout(KernelUseconds value) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        memory = VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(memory != nullptr);
+        std::memcpy(memory, &value, sizeof(value));
+        DWORD previous = 0;
+        Require(VirtualProtect(memory, size, PAGE_READONLY, &previous) != 0);
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0);
+        size = static_cast<std::size_t>(page);
+        memory = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(memory != MAP_FAILED);
+        std::memcpy(memory, &value, sizeof(value));
+        Require(mprotect(memory, size, PROT_READ) == 0);
+#endif
+    }
+
+    ~ReadOnlyTimeout() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, size);
+#endif
+    }
+
+    ReadOnlyTimeout(const ReadOnlyTimeout&) = delete;
+    ReadOnlyTimeout& operator=(const ReadOnlyTimeout&) = delete;
+
+    KernelUseconds* Get() const { return static_cast<KernelUseconds*>(memory); }
+
+private:
+    void* memory = nullptr;
+    std::size_t size = 0;
+};
+
+static void RequireUnusableOutputsFault() {
+    KernelEventFlag flag = nullptr;
+    Require(sceKernelCreateEventFlag(&flag, "guest_copies", EVF_ATTR_MULTI, 0x5, nullptr) == SCE_OK);
+    auto* const unwritable = reinterpret_cast<std::uint64_t*>(0x10);
+    auto* const unreadable = reinterpret_cast<KernelUseconds*>(0x10);
+    errno = 71;
+    Require(sceKernelPollEventFlag(flag, 0x1, EVF_WAITMODE_OR, unwritable) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
+    Require(sceKernelPollEventFlag(flag, 0x2, EVF_WAITMODE_OR, unwritable) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
+    Require(sceKernelWaitEventFlag(flag, 0x4, EVF_WAITMODE_OR, unwritable, nullptr) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
+    std::uint64_t pattern = 0;
+    Require(sceKernelWaitEventFlag(flag, 0x2, EVF_WAITMODE_OR, &pattern, unreadable) == SCE_KERNEL_ERROR_EFAULT && errno == 71 && pattern == 0);
+    Require(APS5_Test_GetEventFlagWaiterCount(flag) == 0);
+    KernelUseconds timeout = 1000;
+    Require(sceKernelWaitEventFlag(flag, 0x2, EVF_WAITMODE_OR, &pattern, &timeout) == SCE_KERNEL_ERROR_ETIMEDOUT && pattern == 0x5 && timeout == 0);
+    const ReadOnlyTimeout readOnly(1000);
+    pattern = 0;
+    errno = 71;
+    Require(sceKernelWaitEventFlag(flag, 0x2, EVF_WAITMODE_OR, &pattern, readOnly.Get()) == SCE_KERNEL_ERROR_EFAULT && errno == 71 && pattern == 0x5 && *readOnly.Get() == 1000);
+    Require(APS5_Test_GetEventFlagWaiterCount(flag) == 0);
+    Require(sceKernelPollEventFlag(flag, 0x4, EVF_WAITMODE_OR | EVF_WAITMODE_CLEAR_PAT, &pattern) == SCE_OK && pattern == 0x5);
+    Require(sceKernelPollEventFlag(flag, 0x4, EVF_WAITMODE_OR, &pattern) == SCE_KERNEL_ERROR_EBUSY && pattern == 0x1);
+    Require(sceKernelDeleteEventFlag(flag) == SCE_OK);
+}
+
 int main() {
     for (int round = 0; round < 20; ++round) {
         RequireEachSetReleasesOnlyItsWaiter();
@@ -142,6 +215,7 @@ int main() {
         RequireTimeoutLeavesOtherWaiters();
         RequireCancelOrDeleteReleasesEveryWaiter(true);
         RequireCancelOrDeleteReleasesEveryWaiter(false);
+        RequireUnusableOutputsFault();
     }
     return 0;
 }

@@ -216,15 +216,24 @@ int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) {
 int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char*) {
     if (!mutex)
         throw std::invalid_argument("Mutex pointer is null");
-    if (attr && *attr && ((*attr)->type < MutexType::ErrorCheck || (*attr)->type > MutexType::Adaptive))
+    PthreadMutexattr handle = nullptr;
+    if (attr && !GuestCopyIn_nid_no_patch(&handle, attr, sizeof(handle)))
+        return SCE_KERNEL_ERROR_EFAULT;
+    PthreadMutexattrPrivate attributes{};
+    if (handle && !GuestCopyIn_nid_no_patch(&attributes, handle, sizeof(attributes)))
+        return SCE_KERNEL_ERROR_EFAULT;
+    if (handle && (attributes.type < MutexType::ErrorCheck || attributes.type > MutexType::Adaptive))
         return SCE_KERNEL_ERROR_EINVAL;
     auto replacement = std::make_unique<PthreadMutexPrivate>();
-    if (attr && *attr) {
-        replacement->SetType((*attr)->type);
-        replacement->_protocol = (*attr)->protocol;
-        replacement->_ceiling = (*attr)->ceiling;
+    if (handle) {
+        replacement->SetType(attributes.type);
+        replacement->_protocol = attributes.protocol;
+        replacement->_ceiling = attributes.ceiling;
     }
     std::lock_guard lock(InitializationMutex());
+    PthreadMutex current = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&current, mutex, sizeof(current)) || !GuestCopyOut_nid_no_patch(mutex, &current, sizeof(current)))
+        return SCE_KERNEL_ERROR_EFAULT;
     std::atomic_ref<PthreadMutex>(*mutex).store(replacement.release(), std::memory_order_release);
     return 0;
 }
