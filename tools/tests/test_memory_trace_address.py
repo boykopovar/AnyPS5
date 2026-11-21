@@ -150,6 +150,18 @@ class CliTests(FeatureRequired):
             self.assertNotIn("protect", result.stdout)
             self.assertNotIn("allocate physical", result.stdout)
 
+    def test_cli_ignores_empty_ranges_when_limiting_matches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.log"
+            path.write_text("[memory] map anon 0x2000+0x1000 prot=0x3 flags=0x0\n"
+                            "[memory] protect 0x2100+0x0 prot=0x1\n"
+                            "[memory] unmap 0x2200+0x0\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), str(path), "--address", "0x1000",
+                                     "--length", "0x2000", "--limit", "1"],
+                                    capture_output=True, text=True, encoding="utf-8", timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.splitlines()[1:], ["line 1: map anon 0x2000+0x1000 prot=0x3 flags=0x0"])
+
     def test_cli_reads_a_first_line_event_after_a_utf8_bom(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "run.log"
@@ -159,6 +171,17 @@ class CliTests(FeatureRequired):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("line 1: map anon 0x1000+0x1000", result.stdout)
             self.assertNotIn("No traced mapping operations", result.stdout)
+
+    def test_cli_reads_a_first_line_event_in_a_utf16_trace(self):
+        line = "[memory] map anon 0x1000+0x1000 prot=0x3\r\n"
+        for encoding, bom in (("utf-16-le", b"\xff\xfe"), ("utf-16-be", b"\xfe\xff")):
+            with self.subTest(encoding=encoding), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "run.log"
+                path.write_bytes(bom + line.encode(encoding))
+                result = subprocess.run([sys.executable, str(TOOL), str(path), "--address", "0x1800"],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("line 1: map anon 0x1000+0x1000", result.stdout)
 
     def test_cli_reports_a_non_ascii_trace_path_as_utf8(self):
         with tempfile.TemporaryDirectory() as directory:
