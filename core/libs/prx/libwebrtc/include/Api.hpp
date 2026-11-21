@@ -37,6 +37,7 @@
 #include "prx/libwebrtc/include/RtcpReceiverReport.hpp"
 #include "prx/libwebrtc/include/Opus.hpp"
 #include "prx/libwebrtc/include/RecursiveCriticalSection.hpp"
+#include "prx/libwebrtc/include/NullSocketServer.hpp"
 #include "prx/libwebrtc/include/CpuFeatures.hpp"
 #include "prx/libwebrtc/include/RnnVad.hpp"
 #include "prx/libwebrtc/include/RnnVadFeaturesExtractor.hpp"
@@ -283,7 +284,7 @@ int APS5_VABI _ZN3rtc6Thread19PostDelayedTaskImplEN4absl12AnyInvocableIFvvOEEEN6
 int APS5_VABI _ZN3rtc6Thread8GetDelayEv_nid_postfix(void);
 bool APS5_VABI _ZNK3rtc6Thread9IsCurrentEv_nid_postfix(const void* thread);
 int APS5_VABI libwebrtcUnknown32(void);
-int APS5_VABI _ZN3rtc16NullSocketServerC1Ev_nid_postfix(void);
+void APS5_VABI _ZN3rtc16NullSocketServerC1Ev_nid_postfix(WebRtcNullSocketServer* server);
 int APS5_VABI _ZN3rtc6Thread5StartEv_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown33(void);
 int APS5_VABI _ZN3rtc6Thread3RunEv_nid_postfix(void);

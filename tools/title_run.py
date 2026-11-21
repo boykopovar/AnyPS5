@@ -1282,7 +1282,10 @@ def run_cli(argv, capture_resources):
         validate_layout(args, found, ids, titles, source, platform, packages=packages)
     except (OSError, RuntimeError, ValueError) as error:
         parser.error(f"unsafe title-run layout: {error}")
-    locks = {title_id: lock_work(args.out.resolve() / "work" / f"{title_id}.lock") for title_id in ids}
+    locks = {}
+    for title_id in ids:
+        handle = lock_work(args.out.resolve() / "work" / f"{title_id}.lock")
+        locks[title_id] = capture_resources.enter_context(handle) if handle is not None else None
     busy = [title_id for title_id, handle in locks.items() if handle is None]
     if busy:
         raise SystemExit(f"already running in {args.out.resolve() / 'work'}: {', '.join(busy)}")

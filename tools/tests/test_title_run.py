@@ -646,6 +646,84 @@ class PreparationTests(unittest.TestCase):
         self.assertIsNotNone(again)
         again.close()
 
+    def test_work_lock_is_released_with_a_retained_failure_traceback(self):
+        title_id = "PPSA00001"
+        package(self.root / "games" / title_id, title_id)
+        out = self.root / "out"
+        lock = out / "work" / f"{title_id}.lock"
+        failure = SystemExit("git failed")
+
+        def fail(*args):
+            self.assertIsNone(title_run.lock_work(lock))
+            raise failure
+
+        try:
+            with patch.object(title_run, "git", side_effect=fail):
+                try:
+                    title_run.main(["--games", str(self.root / "games"), "--out", str(out), title_id])
+                except SystemExit as error:
+                    self.assertIs(error, failure)
+                else:
+                    self.fail("the Git failure was not propagated")
+            self.assertIsNotNone(failure.__traceback__)
+            again = title_run.lock_work(lock)
+            if again is not None:
+                again.close()
+            self.assertIsNotNone(again)
+        finally:
+            failure.__traceback__ = None
+
+    def test_busy_title_releases_the_other_work_locks(self):
+        first, second = "PPSA00001", "PPSA00002"
+        for title_id in (first, second):
+            package(self.root / "games" / title_id, title_id)
+        out = self.root / "out"
+        failure = None
+        with title_run.lock_work(out / "work" / f"{second}.lock"):
+            try:
+                try:
+                    title_run.main(["--games", str(self.root / "games"), "--out", str(out), first, second])
+                except SystemExit as error:
+                    failure = error
+                self.assertIsNotNone(failure)
+                self.assertIn(f": {second}", str(failure))
+                again = title_run.lock_work(out / "work" / f"{first}.lock")
+                if again is not None:
+                    again.close()
+                self.assertIsNotNone(again)
+                self.assertIsNone(title_run.lock_work(out / "work" / f"{second}.lock"))
+            finally:
+                if failure is not None:
+                    failure.__traceback__ = None
+
+    def test_lock_acquisition_error_releases_the_earlier_work_lock(self):
+        first, second = "PPSA00001", "PPSA00002"
+        for title_id in (first, second):
+            package(self.root / "games" / title_id, title_id)
+        out = self.root / "out"
+        lock_work = title_run.lock_work
+        failure = OSError("cannot open the second lock")
+
+        def acquire(path):
+            if path.stem == second:
+                raise failure
+            return lock_work(path)
+
+        try:
+            with patch.object(title_run, "lock_work", side_effect=acquire):
+                try:
+                    title_run.main(["--games", str(self.root / "games"), "--out", str(out), first, second])
+                except OSError as error:
+                    self.assertIs(error, failure)
+                else:
+                    self.fail("the lock acquisition error was not propagated")
+            again = lock_work(out / "work" / f"{first}.lock")
+            if again is not None:
+                again.close()
+            self.assertIsNotNone(again)
+        finally:
+            failure.__traceback__ = None
+
     def test_unreadable_catalog_and_comparison_files_are_reported_without_a_traceback(self):
         import contextlib
         import io
