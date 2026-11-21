@@ -58,6 +58,7 @@
 #include "prx/libSceNKWebKit/include/WtfFastBitVector.hpp"
 #include "prx/libSceNKWebKit/include/WtfDataFileExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfPlatformDefaultsExports.hpp"
+#include "prx/libSceNKWebKit/include/WebCoreSwitchExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfTimeDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfThreadingExports.hpp"
 #include "prx/libSceNKWebKit/include/SerializedCryptoKeyWrapExports.hpp"
