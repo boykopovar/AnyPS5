@@ -129,16 +129,38 @@ void ScalarReads(AgcDriver::VulkanDevice& device) {
     for (const auto code : {std::span<const std::uint32_t>(Code), std::span<const std::uint32_t>(mixedCode)}) {
         request.shader.code = code;
         request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(code.data());
+        request.useCache = false;
+        auto input = BufferDescriptor(Input.data(), InputBytes);
+        input[3] = 0x40000000u | 0x02acu;
+        std::copy(input.begin(), input.end(), userData.begin());
+        bool rejected = false;
         try {
             static_cast<void>(ShaderRecompiler::Recompile(request));
         } catch (const std::runtime_error& error) {
-            Require(std::string(error.what()).find("buffer descriptor uses an unsupported type") != std::string::npos, "vector buffer descriptor failed for another reason");
+            Require(std::string(error.what()).find("buffer descriptor uses an unsupported type") != std::string::npos, "a type-1 buffer descriptor failed for another reason");
             char words[64];
             std::snprintf(words, sizeof(words), "(buffer 0 V# %08x %08x %08x %08x)", userData[0], userData[1], userData[2], userData[3]);
             Require(std::string(error.what()).find(words) != std::string::npos, std::string("unsupported buffer descriptor error does not name ") + words + ": " + error.what());
-            continue;
+            rejected = true;
         }
-        throw std::runtime_error("a vector or mixed buffer access accepted a non-buffer descriptor type");
+        Require(rejected, "a vector or mixed buffer access accepted a type-1 descriptor");
+    }
+    for (const std::uint32_t type : {0u, 2u, 3u}) {
+        request.shader.code = Code;
+        request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(Code.data());
+        request.useCache = false;
+        auto input = BufferDescriptor(Input.data(), InputBytes);
+        if (type != 0u) input[3] = (type << 30u) | (0x16u << 12u) | 0x02acu;
+        std::copy(input.begin(), input.end(), userData.begin());
+        Output.fill(Fill);
+        const auto result = ShaderRecompiler::Recompile(request);
+        device.Dispatch(result, 1, 1, 1);
+        device.WaitIdle();
+        for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+            std::uint32_t expected = 0;
+            if (type == 0u) std::memcpy(&expected, Input.data() + lane * 4u, sizeof(expected));
+            Require(Output[lane] == expected, "buffer load through a type-" + std::to_string(type) + " V# returned " + Hex(Output[lane]) + " at lane " + std::to_string(lane) + ", expected " + Hex(expected));
+        }
     }
     for (const auto code : {std::span<const std::uint32_t>(Code), std::span<const std::uint32_t>(mixedCode)}) {
         request.shader.code = code;
@@ -293,7 +315,7 @@ void DisabledDescriptors(AgcDriver::VulkanDevice& device) {
         Require(rejected, std::string(access) + " accepted V# word 3 " + Hex(word3));
     };
     for (const auto word3 : {0x71000facu, 0x71016facu, 0xb107ffacu, 0xf107ffacu}) {
-        rejects(Code, word3, "a raw load");
+        if (((word3 >> 30u) & 3u) <= 1u) rejects(Code, word3, "a raw load");
         rejects(rawStore, word3, "a raw store");
         rejects(formattedStore, word3, "a formatted store");
     }

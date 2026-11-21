@@ -154,6 +154,7 @@ private:
     bool sScratchLoad(const RdnaInstruction& inst);
     bool bufferLoad(const RdnaInstruction& inst);
     bool bufferLoadFormatD16(const RdnaInstruction& inst);
+    IrValue* bufferPreviousValue(const RdnaInstruction& inst, const MemoryInfo& memory);
     bool bufferStoreFormatD16(const RdnaInstruction& inst);
     bool bufferStore(const RdnaInstruction& inst);
     bool bufferAtomic(const RdnaInstruction& inst, IrOpcode opcode);

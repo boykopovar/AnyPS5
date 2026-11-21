@@ -136,7 +136,7 @@ struct Hull {
     }
 
     void readRing(IrValue& offset, IrValue& predicate) {
-        auto& loaded = builder.Emit(IrOpcode::LoadBufferU32, IrType::U32, {&ringResource(), &builder.Constant(0u), &offset, &offChip(), &predicate}, MemoryFlags{RingMemory, RingReadPc});
+        auto& loaded = builder.Emit(IrOpcode::LoadBufferU32, IrType::U32, {&ringResource(), &builder.Constant(0u), &offset, &offChip(), &builder.Constant(0u), &predicate}, MemoryFlags{RingMemory, RingReadPc});
         static_cast<void>(builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&loaded}));
     }
 
