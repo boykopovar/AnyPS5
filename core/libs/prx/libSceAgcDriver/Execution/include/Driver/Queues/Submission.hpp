@@ -61,6 +61,8 @@ struct Submission {
         const std::uint32_t* target;
         std::size_t words;
         std::shared_ptr<const PreparedWaits> waits{};
+        std::uint64_t copiedAt = 0;
+        bool copiedUnderWrite = false;
     };
     std::vector<IndirectSegment> indirectSegments;
 };

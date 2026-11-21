@@ -106,6 +106,10 @@ def check_structure(name, data):
         check(segment["vmaddr"] == expected and segment["vmaddr"] % PAGE == 0 and segment["vmsize"] % PAGE == 0, f"{name}: {segment['name']} is not contiguous and page aligned")
         check(segment["fileoff"] + segment["filesize"] <= len(data), f"{name}: {segment['name']} runs past the end of the file")
         expected += segment["vmsize"]
+    for segment in macho.segments:
+        guest_load = segment["name"].startswith("__ELF") and segment["initprot"] != 0
+        expected_max = 7 if guest_load else segment["initprot"]
+        check(segment["maxprot"] == expected_max, f"{name}: {segment['name']} maxprot {segment['maxprot']} is not {expected_max}, so a guest mprotect of its own load fails with EACCES")
     linkedit = macho.segment("__LINKEDIT")
     check(linkedit["initprot"] == 1 and linkedit["fileoff"] + linkedit["filesize"] == len(data), f"{name}: __LINKEDIT does not end the file")
     check(macho.entryoff is not None and any(lo <= macho.entryoff < hi for lo, hi in macho.executable_ranges()), f"{name}: entry point is outside the executable segments")

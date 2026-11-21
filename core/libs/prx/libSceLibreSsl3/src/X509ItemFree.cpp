@@ -39,9 +39,4 @@ void APS5_VABI AUTHORITY_KEYID_free_nid_postfix(void* authorityKeyId) {
     free_nid_postfix(authorityKeyId);
 }
 
-void APS5_VABI PKCS7_free_nid_postfix(void* pkcs7) {
-    if (!pkcs7) return;
-    NotImplemented_nid_no_patch(__func__);
-}
-
 }
