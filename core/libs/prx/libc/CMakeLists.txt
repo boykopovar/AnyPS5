@@ -218,8 +218,8 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/JumpBuffer.cpp
         
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ScanWideField.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/FormattingWide.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/ScanningWide.cpp
+        
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/RuntimeSupport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/IntegerBuiltins.cpp
         
@@ -2886,4 +2886,18 @@ target_link_libraries(libc PUBLIC libc_GuestArena_Chunk01)
 get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
 if(libc_incdirs)
     target_include_directories(libc_GuestArena_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_FormattingWide_Chunk01 STATIC src/chunks/FormattingWide_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_FormattingWide_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_FormattingWide_Chunk01 PRIVATE ${libc_incdirs})
+endif()
+
+add_library(libc_ScanningWide_Chunk01 STATIC src/chunks/ScanningWide_Chunk01.cpp)
+target_link_libraries(libc PUBLIC libc_ScanningWide_Chunk01)
+get_target_property(libc_incdirs libc INCLUDE_DIRECTORIES)
+if(libc_incdirs)
+    target_include_directories(libc_ScanningWide_Chunk01 PRIVATE ${libc_incdirs})
 endif()
