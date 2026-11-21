@@ -3,6 +3,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceNet/include/Net.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libSceLibreSsl/include/SslInternal.hpp"
 #include <cerrno>
 #include <climits>
 #include <cstdio>
@@ -252,7 +253,7 @@ int APS5_VABI SocketDestroy(Bio* bio) {
 }
 
 const BioMethod FileMethod{0x402, "FILE pointer", FileWrite, FileRead, FilePuts, FileGets, FileControl, nullptr, FileDestroy, nullptr};
-const BioMethod SocketMethod{0x405, "socket", SocketWrite, SocketRead, SocketPuts, nullptr, SocketControl, nullptr, SocketDestroy, nullptr};
+const BioMethod SocketMethod{SslLayout::BioTypeSocket, "socket", SocketWrite, SocketRead, SocketPuts, nullptr, SocketControl, nullptr, SocketDestroy, nullptr};
 
 }  // namespace
 
@@ -270,6 +271,10 @@ LibreSsl::Bio* APS5_VABI BIO_new_fp_nid_postfix(void* value, int closeFlag) {
     bio->shutdown = closeFlag & BioClose;
     bio->initialized = 1;
     return bio;
+}
+
+const LibreSsl::BioMethod* LibreSslSocketMethod_nid_no_patch() {
+    return &SocketMethod;
 }
 
 LibreSsl::Bio* APS5_VABI BIO_new_socket_nid_postfix(int socket, int closeFlag) {

@@ -520,6 +520,11 @@ void RequireSocketBio(const LibreSslSsl* ssl, int descriptor) {
     const auto* bio = static_cast<const LibreSsl::Bio*>(SSL_get_rbio_nid_postfix(ssl));
     Require(bio != nullptr && bio == SSL_get_wbio_nid_postfix(ssl));
     Require(bio->method != nullptr && bio->method->type == BioTypeSocket && std::strcmp(bio->method->name, "socket") == 0);
+    Require(bio->method == LibreSslSocketMethod_nid_no_patch());
+    auto* mutableBio = const_cast<LibreSsl::Bio*>(bio);
+    int queried = 0;
+    Require(bio->method->control(mutableBio, 105, 0, &queried) == descriptor && queried == descriptor);
+    Require(bio->method->control(mutableBio, 8, 0, nullptr) == 0);
     Require(bio->initialized == 1 && bio->shutdown == 0 && bio->number == descriptor && bio->references == 1);
     Require(bio->flags == 0 && bio->retryReason == 0 && bio->callback == nullptr && bio->next == nullptr && bio->previous == nullptr);
     Require(bio->bytesRead == 0 && bio->bytesWritten == 0 && bio->extraData == nullptr && bio->data == nullptr);
@@ -546,6 +551,10 @@ void TestDescriptors() {
     const auto* bio = static_cast<const LibreSsl::Bio*>(SSL_get_rbio_nid_postfix(ssl));
     Require(bio != nullptr && bio->initialized == 1 && bio->number == -1);
     Require(SSL_get_fd_nid_postfix(ssl) == -1);
+    auto* closed = const_cast<LibreSsl::Bio*>(bio);
+    char byte = 0;
+    Require(bio->method->read(closed, &byte, 1) == -1 && bio->method->write(closed, "x", 1) == -1 && bio->method->puts(closed, "x") == -1);
+    Require(bio->method->control(closed, 9, 1, nullptr) == 1 && bio->method->control(closed, 8, 0, nullptr) == 1);
     Require(SSL_set_fd_nid_postfix(ssl, -5) == 1);
     Require(SSL_get_fd_nid_postfix(ssl) == -5);
 

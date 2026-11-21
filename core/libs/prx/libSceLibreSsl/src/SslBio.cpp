@@ -1,7 +1,7 @@
 // Adapted from the LibreSSL 2.5.4 release tarball (libressl-2.5.4.tar.gz, sha256 107a5b522fbb8318d4c3be668075e5e607296f0a9255d71674caa94571336efa),
 // the version identified in docs/dev/debt/libSceLibreSsl.md, which corresponds to the openbsd
 // mirror commit 2e2c612066aa993717528a0249c15c51128d61cb. Source files used:
-//   crypto/bio/bss_sock.c - BIO_s_socket, sock_free
+//   crypto/bio/bss_sock.c - the BIO_C_GET_FD case of sock_ctrl
 //   crypto/bio/bio_lib.c - BIO_free_all
 // The original copyright and licence notices of those files follow unchanged.
 /* $OpenBSD: bss_sock.c,v 1.23 2014/07/11 08:44:47 jsing Exp $ */
@@ -122,68 +122,17 @@
 #include "prx/libSceLibreSsl/include/SslInternal.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
-#include <cstdint>
 
 namespace {
 
 using LibreSsl::Bio;
-using LibreSsl::BioMethod;
-
-int APS5_VABI SocketWrite_nid_no_patch(Bio*, const char*, int) {
-    NotImplemented_nid_no_patch("BIO_s_socket write callback");
-}
-
-int APS5_VABI SocketRead_nid_no_patch(Bio*, char*, int) {
-    NotImplemented_nid_no_patch("BIO_s_socket read callback");
-}
-
-int APS5_VABI SocketPuts_nid_no_patch(Bio*, const char*) {
-    NotImplemented_nid_no_patch("BIO_s_socket puts callback");
-}
-
-std::int64_t APS5_VABI SocketControl_nid_no_patch(Bio*, int, std::int64_t, void*) {
-    NotImplemented_nid_no_patch("BIO_s_socket control callback");
-}
-
-int APS5_VABI SocketCreate_nid_no_patch(Bio*) {
-    NotImplemented_nid_no_patch("BIO_s_socket create callback");
-}
-
-int APS5_VABI SocketDestroy_nid_no_patch(Bio* bio) {
-    if (!bio) return 0;
-    if (bio->shutdown) {
-        if (bio->initialized) NotImplemented_nid_no_patch("BIO_s_socket destroy callback: closing the descriptor");
-        bio->initialized = 0;
-        bio->flags = 0;
-    }
-    return 1;
-}
-
-const BioMethod socketMethod{
-    SslLayout::BioTypeSocket,
-    "socket",
-    SocketWrite_nid_no_patch,
-    SocketRead_nid_no_patch,
-    SocketPuts_nid_no_patch,
-    nullptr,
-    SocketControl_nid_no_patch,
-    SocketCreate_nid_no_patch,
-    SocketDestroy_nid_no_patch,
-    nullptr};
 
 }
 
 extern "C" {
 
 LibreSsl::Bio* LibreSslNewSocketBio_nid_no_patch(int descriptor) {
-    auto* bio = static_cast<Bio*>(calloc_nid_postfix(1, sizeof(Bio)));
-    if (!bio) return nullptr;
-    bio->method = &socketMethod;
-    bio->references = 1;
-    bio->initialized = 1;
-    bio->shutdown = 0;
-    bio->number = descriptor;
-    return bio;
+    return BIO_new_socket_nid_postfix(descriptor, 0);
 }
 
 void LibreSslFreeBioChain_nid_no_patch(LibreSsl::Bio* bio) {
@@ -199,14 +148,14 @@ void LibreSslFreeBioChain_nid_no_patch(LibreSsl::Bio* bio) {
 int LibreSslBioDescriptor_nid_no_patch(const LibreSsl::Bio* bio) {
     for (const Bio* current = bio; current; current = current->next) {
         if (!current->method || !(current->method->type & SslLayout::BioTypeDescriptor)) continue;
-        if (current->method != &socketMethod) NotImplemented_nid_no_patch("BIO_get_fd: BIO type other than a socket");
+        if (current->method != LibreSslSocketMethod_nid_no_patch()) NotImplemented_nid_no_patch("BIO_get_fd: BIO type other than a socket");
         return current->initialized ? current->number : -1;
     }
     return -1;
 }
 
 bool LibreSslIsSocketBio_nid_no_patch(const LibreSsl::Bio* bio) {
-    return bio && bio->method == &socketMethod;
+    return bio && bio->method == LibreSslSocketMethod_nid_no_patch();
 }
 
 }

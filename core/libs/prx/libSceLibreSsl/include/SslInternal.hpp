@@ -157,6 +157,7 @@ LibreSsl::Bio* LibreSslNewSocketBio_nid_no_patch(int descriptor);
 void LibreSslFreeBioChain_nid_no_patch(LibreSsl::Bio* bio);
 int LibreSslBioDescriptor_nid_no_patch(const LibreSsl::Bio* bio);
 bool LibreSslIsSocketBio_nid_no_patch(const LibreSsl::Bio* bio);
+const LibreSsl::BioMethod* LibreSslSocketMethod_nid_no_patch();
 
 void LibreSslClear_nid_no_patch(LibreSslSsl* ssl);
 void LibreSslReleaseConnection_nid_no_patch(const LibreSslSsl* ssl);
