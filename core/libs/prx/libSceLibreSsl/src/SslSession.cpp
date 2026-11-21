@@ -1,15 +1,18 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/SslInternal.hpp"
 #include <atomic>
 #include <climits>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include "prx/libc/include/General.hpp"
 
 static_assert(sizeof(LibreSslCertKey) == 24);
 static_assert(offsetof(LibreSslCertKey, privatekey) == 8);
 static_assert(sizeof(LibreSslCert) == 256);
 static_assert(sizeof(LibreSslSession) == 232);
+static_assert(offsetof(LibreSslSession, verifyResult) == 136);
 static_assert(offsetof(LibreSslSession, references) == 160);
 static_assert(offsetof(LibreSslSession, cipher) == 168);
 
@@ -22,6 +25,48 @@ const LibreSslSsl& Connection(const LibreSslSsl* ssl, const char* function) {
 
 LibreSslSession* Session(const LibreSslSsl* ssl, const char* function) {
     return static_cast<LibreSslSession*>(Connection(ssl, function).session);
+}
+
+void Retain(LibreSslSession& session, const char* function) {
+    auto references = std::atomic_ref<int>(session.references);
+    int count = references.load(std::memory_order_relaxed);
+    do {
+        if (count == INT_MAX) throw std::overflow_error(std::string(function) + ": session reference count overflow");
+    } while (!references.compare_exchange_weak(count, count + 1, std::memory_order_relaxed));
+}
+
+const LibreSslMethodInternal& MethodInternal(const void* method, const char* function) {
+    const auto* value = static_cast<const LibreSslMethod*>(method);
+    if (!value || !value->internal) throw std::invalid_argument(std::string(function) + ": null method");
+    return *value->internal;
+}
+
+bool SetMethod(LibreSslSsl& ssl, const LibreSslMethod* method, const char* function) {
+    if (ssl.method == method) return true;
+    const LibreSslMethodInternal& current = MethodInternal(ssl.method, function);
+    const LibreSslMethodInternal& next = MethodInternal(method, function);
+    if (!ssl.internal) throw std::invalid_argument(std::string(function) + ": null internal state");
+    void*& handshake = ssl.internal->handshakeFunc;
+    const int connecting = handshake ? handshake == reinterpret_cast<void*>(current.sslConnect) : -1;
+    if (current.version != next.version) {
+        const void* previous = ssl.method;
+        void* state = ssl.s3;
+        ssl.s3 = nullptr;
+        ssl.method = method;
+        if (!next.sslNew(&ssl)) {
+            ssl.s3 = state;
+            ssl.method = previous;
+            return false;
+        }
+        std::swap(state, ssl.s3);
+        ssl.method = previous;
+        current.sslFree(&ssl);
+        ssl.s3 = state;
+    }
+    ssl.method = method;
+    if (connecting == 1) handshake = reinterpret_cast<void*>(next.sslConnect);
+    if (connecting == 0) handshake = reinterpret_cast<void*>(next.sslAccept);
+    return true;
 }
 
 const LibreSslCertKey* CurrentKey(const LibreSslSsl* ssl, const char* function) {
@@ -41,12 +86,7 @@ LibreSslSession* APS5_VABI SSL_get_session_nid_postfix(const LibreSslSsl* ssl) {
 
 void* APS5_VABI SSL_get1_session_nid_postfix(LibreSslSsl* ssl) {
     LibreSslSession* session = Session(ssl, __func__);
-    if (!session) return nullptr;
-    auto references = std::atomic_ref<int>(session->references);
-    int count = references.load(std::memory_order_relaxed);
-    do {
-        if (count == INT_MAX) throw std::overflow_error(std::string(__func__) + ": session reference count overflow");
-    } while (!references.compare_exchange_weak(count, count + 1, std::memory_order_relaxed));
+    if (session) Retain(*session, __func__);
     return session;
 }
 
@@ -58,6 +98,38 @@ void APS5_VABI SSL_SESSION_free_nid_postfix(void* value) {
         if (count <= 0) throw std::invalid_argument(std::string(__func__) + ": session without references");
         if (count == 1) NotImplemented_nid_no_patch(__func__);
     } while (!references.compare_exchange_weak(count, count - 1, std::memory_order_acq_rel, std::memory_order_relaxed));
+}
+
+int APS5_VABI SSL_set_session_nid_postfix(LibreSslSsl* ssl, void* value) {
+    if (!ssl) throw std::invalid_argument(std::string(__func__) + ": null connection");
+    const auto* ctx = static_cast<const LibreSslCtx*>(ssl->ctx);
+    if (!ctx) throw std::invalid_argument(std::string(__func__) + ": null context");
+    auto* session = static_cast<LibreSslSession*>(value);
+    auto* current = static_cast<LibreSslSession*>(ssl->session);
+    if (!session) {
+        SSL_SESSION_free_nid_postfix(current);
+        ssl->session = nullptr;
+        return SetMethod(*ssl, static_cast<const LibreSslMethod*>(ctx->method), __func__);
+    }
+    const LibreSslMethod* method = MethodInternal(ctx->method, __func__).getSslMethod(session->sslVersion);
+    if (!method) method = MethodInternal(ssl->method, __func__).getSslMethod(session->sslVersion);
+    if (!method) {
+        LibreSslPutSslError_nid_no_patch(ssl, SslLayout::ReasonUnableToFindSslMethod);
+        return 0;
+    }
+    if (!SetMethod(*ssl, method, __func__)) return 0;
+    if (current != session) {
+        Retain(*session, __func__);
+        try {
+            SSL_SESSION_free_nid_postfix(current);
+        } catch (...) {
+            std::atomic_ref<int>(session->references).fetch_sub(1);
+            throw;
+        }
+    }
+    ssl->session = session;
+    ssl->verifyResult = session->verifyResult;
+    return 1;
 }
 
 const void* APS5_VABI SSL_get_current_cipher_nid_postfix(const LibreSslSsl* ssl) {

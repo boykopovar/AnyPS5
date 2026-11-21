@@ -487,9 +487,10 @@ int APS5_VABI WriteBytesUnavailable_nid_no_patch(LibreSslSsl*, int, const void*,
     NotImplemented_nid_no_patch("SSL_METHOD ssl_write_bytes");
 }
 
-const LibreSslMethod* APS5_VABI GetMethodUnavailable_nid_no_patch(int) {
-    NotImplemented_nid_no_patch("SSL_METHOD get_ssl_method");
-}
+const LibreSslMethod* APS5_VABI TlsGetClientMethod_nid_no_patch(int version);
+const LibreSslMethod* APS5_VABI TlsGetServerMethod_nid_no_patch(int version);
+const LibreSslMethod* APS5_VABI DtlsGetClientMethod_nid_no_patch(int version);
+const LibreSslMethod* APS5_VABI DtlsGetServerMethod_nid_no_patch(int version);
 
 int APS5_VABI EncUnavailable_nid_no_patch(LibreSslSsl*, int) {
     NotImplemented_nid_no_patch("SSL3_ENC_METHOD enc");
@@ -516,6 +517,8 @@ int APS5_VABI PutCipherByCharUnavailable_nid_no_patch(const void*, unsigned char
 }
 
 const LibreSslEncMethod tlsEnc{reinterpret_cast<void*>(EncUnavailable_nid_no_patch), EncFlagExplicitIv | EncFlagSigalgs | EncFlagSha256Prf | EncFlagTls1_2Ciphers};
+const LibreSslEncMethod tls1Enc{reinterpret_cast<void*>(EncUnavailable_nid_no_patch), 0};
+const LibreSslEncMethod tls1_1Enc{reinterpret_cast<void*>(EncUnavailable_nid_no_patch), EncFlagExplicitIv};
 const LibreSslEncMethod dtlsEnc{reinterpret_cast<void*>(EncUnavailable_nid_no_patch), EncFlagExplicitIv};
 
 const LibreSslMethodInternal tlsClientInternal{
@@ -525,7 +528,7 @@ const LibreSslMethodInternal tlsClientInternal{
     LibreSslRead_nid_no_patch, LibreSslPeek_nid_no_patch, LibreSslWrite_nid_no_patch, LibreSslShutdown_nid_no_patch,
     UndefinedFunction_nid_no_patch, AlwaysOk_nid_no_patch,
     GetMessageUnavailable_nid_no_patch, ReadBytesUnavailable_nid_no_patch, WriteBytesUnavailable_nid_no_patch,
-    LibreSslPending_nid_no_patch, GetMethodUnavailable_nid_no_patch, TlsDefaultTimeout_nid_no_patch, UndefinedVoidFunction_nid_no_patch, &tlsEnc};
+    LibreSslPending_nid_no_patch, TlsGetClientMethod_nid_no_patch, TlsDefaultTimeout_nid_no_patch, UndefinedVoidFunction_nid_no_patch, &tlsEnc};
 
 const LibreSslMethodInternal tlsServerInternal{
     Tls1_2Version, Tls1Version, Tls1_2Version,
@@ -534,7 +537,7 @@ const LibreSslMethodInternal tlsServerInternal{
     LibreSslRead_nid_no_patch, LibreSslPeek_nid_no_patch, LibreSslWrite_nid_no_patch, LibreSslShutdown_nid_no_patch,
     UndefinedFunction_nid_no_patch, AlwaysOk_nid_no_patch,
     GetMessageUnavailable_nid_no_patch, ReadBytesUnavailable_nid_no_patch, WriteBytesUnavailable_nid_no_patch,
-    LibreSslPending_nid_no_patch, GetMethodUnavailable_nid_no_patch, TlsDefaultTimeout_nid_no_patch, UndefinedVoidFunction_nid_no_patch, &tlsEnc};
+    LibreSslPending_nid_no_patch, TlsGetServerMethod_nid_no_patch, TlsDefaultTimeout_nid_no_patch, UndefinedVoidFunction_nid_no_patch, &tlsEnc};
 
 const LibreSslMethodInternal dtlsClientInternal{
     Dtls1Version, Dtls1Version, Dtls1Version,
@@ -543,7 +546,7 @@ const LibreSslMethodInternal dtlsClientInternal{
     ReadUnavailable_nid_no_patch, PeekUnavailable_nid_no_patch, WriteUnavailable_nid_no_patch, ShutdownUnavailable_nid_no_patch,
     RenegotiateUnavailable_nid_no_patch, RenegotiateCheckUnavailable_nid_no_patch,
     GetMessageUnavailable_nid_no_patch, ReadBytesUnavailable_nid_no_patch, WriteBytesUnavailable_nid_no_patch,
-    PendingUnavailable_nid_no_patch, GetMethodUnavailable_nid_no_patch, TlsDefaultTimeout_nid_no_patch, UndefinedVoidFunction_nid_no_patch, &dtlsEnc};
+    PendingUnavailable_nid_no_patch, DtlsGetClientMethod_nid_no_patch, TlsDefaultTimeout_nid_no_patch, UndefinedVoidFunction_nid_no_patch, &dtlsEnc};
 
 const LibreSslMethodInternal dtlsServerInternal{
     Dtls1Version, Dtls1Version, Dtls1Version,
@@ -552,7 +555,36 @@ const LibreSslMethodInternal dtlsServerInternal{
     ReadUnavailable_nid_no_patch, PeekUnavailable_nid_no_patch, WriteUnavailable_nid_no_patch, ShutdownUnavailable_nid_no_patch,
     RenegotiateUnavailable_nid_no_patch, RenegotiateCheckUnavailable_nid_no_patch,
     GetMessageUnavailable_nid_no_patch, ReadBytesUnavailable_nid_no_patch, WriteBytesUnavailable_nid_no_patch,
-    PendingUnavailable_nid_no_patch, GetMethodUnavailable_nid_no_patch, TlsDefaultTimeout_nid_no_patch, UndefinedVoidFunction_nid_no_patch, &dtlsEnc};
+    PendingUnavailable_nid_no_patch, DtlsGetServerMethod_nid_no_patch, TlsDefaultTimeout_nid_no_patch, UndefinedVoidFunction_nid_no_patch, &dtlsEnc};
+
+constexpr LibreSslMethodInternal TlsVersionInternal(int version, SslStateFunction accept, SslStateFunction connect, SslGetMethodFunction getMethod, const LibreSslEncMethod* enc) {
+    return {version, static_cast<std::uint16_t>(version), static_cast<std::uint16_t>(version),
+        TlsNew_nid_no_patch, TlsClear_nid_no_patch, TlsFree_nid_no_patch,
+        accept, connect,
+        LibreSslRead_nid_no_patch, LibreSslPeek_nid_no_patch, LibreSslWrite_nid_no_patch, LibreSslShutdown_nid_no_patch,
+        RenegotiateUnavailable_nid_no_patch, RenegotiateCheckUnavailable_nid_no_patch,
+        GetMessageUnavailable_nid_no_patch, ReadBytesUnavailable_nid_no_patch, WriteBytesUnavailable_nid_no_patch,
+        LibreSslPending_nid_no_patch, getMethod, TlsDefaultTimeout_nid_no_patch, UndefinedVoidFunction_nid_no_patch, enc};
+}
+
+const LibreSslMethodInternal tls1ClientInternal = TlsVersionInternal(Tls1Version, UndefinedFunction_nid_no_patch, LibreSslConnect_nid_no_patch, TlsGetClientMethod_nid_no_patch, &tls1Enc);
+const LibreSslMethodInternal tls1_1ClientInternal = TlsVersionInternal(Tls1_1Version, UndefinedFunction_nid_no_patch, LibreSslConnect_nid_no_patch, TlsGetClientMethod_nid_no_patch, &tls1_1Enc);
+const LibreSslMethodInternal tls1_2ClientInternal = TlsVersionInternal(Tls1_2Version, UndefinedFunction_nid_no_patch, LibreSslConnect_nid_no_patch, TlsGetClientMethod_nid_no_patch, &tlsEnc);
+const LibreSslMethodInternal tls1ServerInternal = TlsVersionInternal(Tls1Version, LibreSslAccept_nid_no_patch, UndefinedFunction_nid_no_patch, TlsGetServerMethod_nid_no_patch, &tls1Enc);
+const LibreSslMethodInternal tls1_1ServerInternal = TlsVersionInternal(Tls1_1Version, LibreSslAccept_nid_no_patch, UndefinedFunction_nid_no_patch, TlsGetServerMethod_nid_no_patch, &tls1_1Enc);
+const LibreSslMethodInternal tls1_2ServerInternal = TlsVersionInternal(Tls1_2Version, LibreSslAccept_nid_no_patch, UndefinedFunction_nid_no_patch, TlsGetServerMethod_nid_no_patch, &tlsEnc);
+
+constexpr LibreSslMethod MethodWith(const LibreSslMethodInternal* internal) {
+    return {DispatchAlertUnavailable_nid_no_patch, NumCiphersUnavailable_nid_no_patch, GetCipherUnavailable_nid_no_patch,
+        GetCipherByCharUnavailable_nid_no_patch, PutCipherByCharUnavailable_nid_no_patch, internal};
+}
+
+const LibreSslMethod tls1ClientMethod = MethodWith(&tls1ClientInternal);
+const LibreSslMethod tls1_1ClientMethod = MethodWith(&tls1_1ClientInternal);
+const LibreSslMethod tls1_2ClientMethod = MethodWith(&tls1_2ClientInternal);
+const LibreSslMethod tls1ServerMethod = MethodWith(&tls1ServerInternal);
+const LibreSslMethod tls1_1ServerMethod = MethodWith(&tls1_1ServerInternal);
+const LibreSslMethod tls1_2ServerMethod = MethodWith(&tls1_2ServerInternal);
 
 const LibreSslMethod tlsClientMethod{
     DispatchAlertUnavailable_nid_no_patch, NumCiphersUnavailable_nid_no_patch, GetCipherUnavailable_nid_no_patch,
@@ -569,6 +601,28 @@ const LibreSslMethod dtlsClientMethod{
 const LibreSslMethod dtlsServerMethod{
     DispatchAlertUnavailable_nid_no_patch, NumCiphersUnavailable_nid_no_patch, GetCipherUnavailable_nid_no_patch,
     GetCipherByCharUnavailable_nid_no_patch, PutCipherByCharUnavailable_nid_no_patch, &dtlsServerInternal};
+
+const LibreSslMethod* APS5_VABI TlsGetClientMethod_nid_no_patch(int version) {
+    if (version == Tls1_2Version) return &tls1_2ClientMethod;
+    if (version == Tls1_1Version) return &tls1_1ClientMethod;
+    if (version == Tls1Version) return &tls1ClientMethod;
+    return nullptr;
+}
+
+const LibreSslMethod* APS5_VABI TlsGetServerMethod_nid_no_patch(int version) {
+    if (version == Tls1_2Version) return &tls1_2ServerMethod;
+    if (version == Tls1_1Version) return &tls1_1ServerMethod;
+    if (version == Tls1Version) return &tls1ServerMethod;
+    return nullptr;
+}
+
+const LibreSslMethod* APS5_VABI DtlsGetClientMethod_nid_no_patch(int version) {
+    return version == Dtls1Version ? &dtlsClientMethod : nullptr;
+}
+
+const LibreSslMethod* APS5_VABI DtlsGetServerMethod_nid_no_patch(int version) {
+    return version == Dtls1Version ? &dtlsServerMethod : nullptr;
+}
 
 }
 

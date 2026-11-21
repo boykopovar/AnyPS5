@@ -23,6 +23,7 @@ inline constexpr int ReasonNullSslCtx = 195;
 inline constexpr int ReasonNullSslMethodPassed = 196;
 inline constexpr int ReasonSslCtxHasNoDefaultSslVersion = 228;
 inline constexpr int ReasonProtocolIsShutdown = 207;
+inline constexpr int ReasonUnableToFindSslMethod = 240;
 inline constexpr int ReasonUninitialized = 276;
 inline constexpr int ReasonServerNameInvalid = 319;
 inline constexpr int ReasonServerNameTypeInvalid = 320;
