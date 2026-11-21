@@ -221,10 +221,6 @@ int APS5_VABI _ZN7WebCore4Page26setRemoteInspectionAllowedEb() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore5Color23colorSpaceAndComponentsEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList8FillRectD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
