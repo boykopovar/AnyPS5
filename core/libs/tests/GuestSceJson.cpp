@@ -236,6 +236,18 @@ static void Errors() {
     Require(*_ZNK3sce4Json5Value11getUIntegerEv_nid_no_patch(&value) == 1);
     Require(Parse(value, "true false") == 0);
     Require(*_ZNK3sce4Json5Value10getBooleanEv_nid_no_patch(&value));
+    Require(Parse(value, "1e") == 0);
+    Require(_ZNK3sce4Json5Value7getTypeEv_nid_no_patch(&value) == TypeReal);
+    Require(*_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&value) == 1.0);
+    Require(Parse(value, "1e+") == 0);
+    Require(*_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&value) == 1.0);
+    Require(Parse(value, "1.2.3") == 0);
+    Require(*_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&value) == 1.2);
+    Require(Parse(value, "1-2") == 0);
+    Require(*_ZNK3sce4Json5Value7getRealEv_nid_no_patch(&value) == 1.0);
+    Require(Parse(value, "-") == 0);
+    Require(_ZNK3sce4Json5Value7getTypeEv_nid_no_patch(&value) == TypeInteger);
+    Require(*_ZNK3sce4Json5Value10getIntegerEv_nid_no_patch(&value) == 0);
     int remaining = 3;
     Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5__nid_no_patch(&value, FailingRead, &remaining) == -5);
     Require(Parse(value, "[1, [2, 3], 4]") == 0);
