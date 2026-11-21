@@ -32,6 +32,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace AgcDriver {
@@ -76,6 +77,7 @@ constexpr std::size_t GuestDepthBitsOffset = 0x480000;
 constexpr std::size_t FrameCopiesOffset = 0x520000;
 constexpr std::size_t ReloadOffset = 0x700000;
 constexpr std::uint32_t TailLastArray = 255;
+constexpr std::uint32_t GapCommittedSlice = 5;
 constexpr float DrawnDepth = 0.25f;
 constexpr float DrawnD16Depth = 0.2f;
 constexpr std::uint32_t DrawnD16Bits = 13107;
@@ -106,10 +108,14 @@ alignas(256) std::array<std::byte, 320 * 320 * 4> Pixels{};
 
 class GuestBlock {
 public:
-    explicit GuestBlock(std::size_t committed = BlockBytes, std::size_t reserved = BlockBytes) : committed(committed), reserved(reserved) {
+    using Range = std::pair<std::size_t, std::size_t>;
+
+    explicit GuestBlock(std::vector<Range> committed = {{0, BlockBytes}}, std::size_t reserved = BlockBytes) : committed(std::move(committed)), reserved(reserved) {
 #ifdef _WIN32
         block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(reserved, 65536));
-        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, committed, PAGE_READWRITE, committed);
+        if (block != nullptr) {
+            for (const auto& [offset, bytes] : this->committed) GuestArena::GuestArenaCommit_nid_postfix(block + offset, bytes, PAGE_READWRITE, bytes);
+        }
 #else
         constexpr std::uintptr_t alignment = 65536;
         void* mapped = mmap(nullptr, reserved + alignment, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
@@ -119,28 +125,31 @@ public:
             if (aligned != begin) munmap(mapped, aligned - begin);
             if (aligned + reserved != begin + reserved + alignment) munmap(reinterpret_cast<void*>(aligned + reserved), begin + alignment - aligned);
             block = reinterpret_cast<std::uint8_t*>(aligned);
-            if (mprotect(block, committed, PROT_READ | PROT_WRITE) != 0) {
+            const bool mapped = std::all_of(this->committed.begin(), this->committed.end(), [&](const Range& range) { return mprotect(block + range.first, range.second, PROT_READ | PROT_WRITE) == 0; });
+            if (!mapped) {
                 munmap(block, reserved);
                 block = nullptr;
             } else {
-                GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, committed);
+                for (const auto& [offset, bytes] : this->committed) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block + offset, bytes);
             }
         }
 #endif
         Require(block != nullptr, "depth plane sampling: cannot allocate the guest block");
-        std::memset(block, 0, committed);
-        GuestAllocations::Mutation().Add(block, committed, true, true, true);
-        AgcDriver::GuestMemory::CollectWritesUncached(reinterpret_cast<std::uintptr_t>(block), committed);
+        for (const auto& [offset, bytes] : this->committed) {
+            std::memset(block + offset, 0, bytes);
+            GuestAllocations::Mutation().Add(block + offset, bytes, true, true, true);
+            AgcDriver::GuestMemory::CollectWritesUncached(reinterpret_cast<std::uintptr_t>(block + offset), bytes);
+        }
     }
 
     ~GuestBlock() {
-        GuestAllocations::Mutation().Remove(block);
+        for (const auto& range : committed) GuestAllocations::Mutation().Remove(block + range.first);
 #ifdef _WIN32
-        GuestArena::GuestArenaReset_nid_postfix(block, committed);
+        for (const auto& [offset, bytes] : committed) GuestArena::GuestArenaReset_nid_postfix(block + offset, bytes);
         GuestArena::GuestArenaRelease_nid_postfix(block, reserved);
 #else
         munmap(block, reserved);
-        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, committed);
+        for (const auto& [offset, bytes] : committed) GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block + offset, bytes);
 #endif
     }
 
@@ -150,7 +159,7 @@ public:
     std::uint8_t* At(std::size_t offset) { return block + offset; }
 
 private:
-    std::size_t committed;
+    std::vector<Range> committed;
     std::size_t reserved;
     std::uint8_t* block = nullptr;
 };
@@ -520,6 +529,24 @@ void UnbackedTailCase(AgcDriver::VulkanDevice& device, GuestBlock& tail, std::sp
     Require(AgcDriver::Graphics::DepthPlaneCopyCount() == 1u && (sparse ? held < 16u * SliceBytes : held >= (TailLastArray + 1u) * SliceBytes), "a D32 2D array of 256 slices with 2 in committed guest memory holds " + std::to_string(held) + " bytes in " + std::to_string(AgcDriver::Graphics::DepthPlaneCopyCount()) + " depth plane copies, expected " + (sparse ? "memory for its 2 committed slices only" : "every slice"));
 }
 
+void CommittedAfterGapCase(AgcDriver::VulkanDevice& device, GuestBlock& gapped, std::span<std::uint32_t> output) {
+    auto* base = gapped.At(0);
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth);
+    FillSlice(base + SliceBytes, SliceBytes, Bits(0.5f), 4u);
+    FillSlice(base + GapCommittedSlice * SliceBytes, SliceBytes, Bits(0.625f), 4u);
+    const auto before = AgcDriver::Graphics::DepthPlaneCopyBytes();
+    const Shape shape{Format32Float, 128, 128, Type2DArray, TailLastArray, Swizzle64KbZX};
+    const std::array<std::pair<std::uint32_t, float>, 6> expected{{{0u, DrawnDepth}, {1u, 0.5f}, {2u, 0.0f}, {GapCommittedSlice - 1u, 0.0f}, {GapCommittedSlice, 0.625f}, {TailLastArray, 0.0f}}};
+    for (const auto& [slice, value] : expected) {
+        Load(device, base, shape, slice, output);
+        Expect(output, Bits(value), "D32 2D array of 256 slices with slice " + std::to_string(GapCommittedSlice) + " committed after uncommitted slices, slice " + std::to_string(slice));
+    }
+    const auto after = AgcDriver::Graphics::DepthPlaneCopyBytes();
+    const bool sparse = AgcDriver::Graphics::DepthPlaneCopyCanBeSparse(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), {128, 128}, VK_FORMAT_D32_SFLOAT, TailLastArray + 1u);
+    std::printf("depth plane copy with committed slices after a gap: %s, %zu bytes held after it\n", sparse ? "sparse" : "every slice bound", static_cast<std::size_t>(after));
+    Require(sparse ? after < before + 16u * SliceBytes : after >= (TailLastArray + 1u) * SliceBytes, "a D32 2D array of 256 slices committed up to slice " + std::to_string(GapCommittedSlice) + " grew the depth plane copies from " + std::to_string(before) + " to " + std::to_string(after) + " bytes, expected " + (sparse ? "memory for its first " + std::to_string(GapCommittedSlice + 1u) + " slices only" : "every slice"));
+}
+
 void ExpectRefusal(AgcDriver::VulkanDevice& device, GuestBlock& block, std::size_t offset, const Shape& shape, std::uint32_t baseArray, const std::string& expected, const std::string& what) {
     const auto words = TextureDescriptor(block.At(offset), shape);
     auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
@@ -544,7 +571,8 @@ int main(int argc, char** argv) {
     try {
         const bool evicting = argc > 1 && std::string(argv[1]) == "--evicting";
         GuestBlock block;
-        GuestBlock tail(2u * SliceBytes, (TailLastArray + 1u) * SliceBytes);
+        GuestBlock tail({{0, 2u * SliceBytes}}, (TailLastArray + 1u) * SliceBytes);
+        GuestBlock gapped({{0, 2u * SliceBytes}, {GapCommittedSlice * SliceBytes, SliceBytes}}, (TailLastArray + 1u) * SliceBytes);
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const std::span<std::uint32_t> output(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads);
@@ -554,6 +582,8 @@ int main(int argc, char** argv) {
             AgcDriver::Graphics::Recorder::CountPresent();
         };
         UnbackedTailCase(*device, tail, output);
+        present();
+        CommittedAfterGapCase(*device, gapped, output);
         present();
         ArrayCase(*device, block, output);
         present();
