@@ -528,15 +528,15 @@ RectListShaders BuildRectListShaders(const RecompileResult& vertex, const Recomp
     shaders.control.bdaAbiVersion = BdaAbi::Version;
     shaders.evaluation.spirv = evaluation.EmitEvaluation();
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    shaders.control.spirv = ValidateAndOptimizeSpirv(shaders.control.spirv, target.vulkanVersion, target.spirvVersion);
-    shaders.evaluation.spirv = ValidateAndOptimizeSpirv(shaders.evaluation.spirv, target.vulkanVersion, target.spirvVersion);
+    shaders.control.spirv = ValidateAndOptimizeSpirv(shaders.control.spirv.Words(), target.vulkanVersion, target.spirvVersion);
+    shaders.evaluation.spirv = ValidateAndOptimizeSpirv(shaders.evaluation.spirv.Words(), target.vulkanVersion, target.spirvVersion);
 #endif
     shaders.lastVertexControl = shaders.control;
     if (std::any_of(parameters.begin(), parameters.end(), [](const Parameter& parameter) { return parameter.flat && !parameter.missing; })) {
         RectListEmitter lastVertexControl(parameters, emulation, spv::ExecutionModelTessellationControl, target.spirvVersion, faultBinding, clipDistances);
         shaders.lastVertexControl.spirv = lastVertexControl.EmitControl(2u);
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-        shaders.lastVertexControl.spirv = ValidateAndOptimizeSpirv(shaders.lastVertexControl.spirv, target.vulkanVersion, target.spirvVersion);
+        shaders.lastVertexControl.spirv = ValidateAndOptimizeSpirv(shaders.lastVertexControl.spirv.Words(), target.vulkanVersion, target.spirvVersion);
 #endif
     }
     return shaders;

@@ -541,7 +541,8 @@ void CheckAliasedView(std::span<const std::uint32_t> words) {
 void CheckRequirements(AgcDriver::VulkanDevice& device) {
     auto code = OperationCode(Threads, false);
     const auto result = Compile(device, code, 32);
-    const std::span<const std::uint32_t> words(result.spirv.Words());
+    const auto leased = result.spirv.Words();
+    const std::span<const std::uint32_t> words(leased);
     CheckAliasedView(words);
     std::vector<std::uint32_t> widths(words[3]);
     std::vector<std::uint32_t> constants(words[3]);

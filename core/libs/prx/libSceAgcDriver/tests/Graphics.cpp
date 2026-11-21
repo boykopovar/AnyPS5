@@ -13282,10 +13282,11 @@ void validationTests() {
         pixel.spirv = ShaderRecompiler::SpecializeSpirv(makeModule({.fragment = true, .terminateInvocation = true}));
         std::size_t terminates = 0;
         std::size_t declarations = 0;
-        for (std::size_t at = 5; at < pixel.spirv.size(); at += pixel.spirv[at] >> 16u) {
-            const auto op = pixel.spirv[at] & 0xffffu;
+        const auto words = pixel.spirv.Words();
+        for (std::size_t at = 5; at < words.size(); at += words[at] >> 16u) {
+            const auto op = words[at] & 0xffffu;
             if (op == spv::OpTerminateInvocation) ++terminates;
-            if (op == spv::OpExtension && std::string_view(reinterpret_cast<const char*>(&pixel.spirv[at + 1])) == "SPV_KHR_terminate_invocation") ++declarations;
+            if (op == spv::OpExtension && std::string_view(reinterpret_cast<const char*>(&words[at + 1])) == "SPV_KHR_terminate_invocation") ++declarations;
         }
         Require(terminates == 1u && declarations == 1u, "specialization dropped OpTerminateInvocation or its extension declaration");
         validateTerminate(true);
@@ -14603,9 +14604,9 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         const auto& constFirst = first;
         auto copy = first;
         const auto& constCopy = copy;
-        Require(!constFirst.Identity().Empty() && constFirst.Identity() == constCopy.Identity() && constFirst.spirv.data() == constCopy.spirv.data(), "a copied result did not share its module and identity");
+        Require(!constFirst.Identity().Empty() && constFirst.Identity() == constCopy.Identity() && constFirst.spirv.Words().data() == constCopy.spirv.Words().data(), "a copied result did not share its module and identity");
         copy.spirv[8] = 99;
-        Require(!(constCopy.Identity() == constFirst.Identity()) && constCopy.spirv.data() != constFirst.spirv.data() && constFirst.Identity() == module(1).Identity(), "writing a copied module did not give it an identity of its own");
+        Require(!(constCopy.Identity() == constFirst.Identity()) && constCopy.spirv.Words().data() != constFirst.spirv.Words().data() && constFirst.Identity() == module(1).Identity(), "writing a copied module did not give it an identity of its own");
         auto specialized = module(1);
         specialized.specialization.push_back({3, 4});
         Require(!(specialized.Identity() == constFirst.Identity()), "specialization constants did not enter the identity");

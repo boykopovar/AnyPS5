@@ -366,7 +366,10 @@ void Registration(AgcDriver::VulkanDevice& device) {
     Require(!old.expired(), "in-flight submission released its snapshot early");
     submission.reset();
     Require(!old.expired() && registry->at(0x10000).size() == 2, "registration discarded an earlier header for shared code");
-    Require(invocation.Materialize(*capture)->spirv.data() == result->spirv.data(), "prepared handle did not retain its artifact");
+    const auto repeated = invocation.Materialize(*capture);
+    const auto repeatedWords = repeated->spirv.Words();
+    const auto resultWords = result->spirv.Words();
+    Require(repeatedWords.data() == resultWords.data(), "prepared handle did not retain its artifact");
     auto changed = makeSnapshot();
     changed->headerAddress = replacement->headerAddress;
     changed->code.Mutable()[0] ^= 1;

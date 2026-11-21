@@ -174,7 +174,11 @@ bool BlockContains(const std::uint8_t* block, std::size_t bytes, std::uint32_t v
 
 int main() {
     try {
+#ifdef _WIN32
+        _putenv_s("APS5_NO_LEASE_MIRROR", "1");
+#else
         setenv("APS5_NO_LEASE_MIRROR", "1", 1);
+#endif
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const bool watched = AgcDriver::GuestMemory::WriteWatched();

@@ -160,7 +160,7 @@ RecompileResult BuildTessellationCaptureGeometryShader(const MeshConfiguration& 
     RecompileResult result;
     result.spirv = emitter.Emit(geometry.esgsItemSize, geometry.primitivesPerGroup);
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    result.spirv = ValidateAndOptimizeSpirv(result.spirv, target.vulkanVersion, target.spirvVersion);
+    result.spirv = ValidateAndOptimizeSpirv(result.spirv.Words(), target.vulkanVersion, target.spirvVersion);
 #endif
     return result;
 }

@@ -434,7 +434,7 @@ RecompileResult BuildBarycentricGeometryShader(const RecompileResult& vertex, co
     RecompileResult result;
     result.spirv = emitter.Emit(emulated.passed, emulated.perVertex, emulated.layout);
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    result.spirv = ValidateAndOptimizeSpirv(result.spirv, target.vulkanVersion, target.spirvVersion);
+    result.spirv = ValidateAndOptimizeSpirv(result.spirv.Words(), target.vulkanVersion, target.spirvVersion);
 #endif
     return result;
 }
@@ -462,8 +462,8 @@ BarycentricTessellationShaders BuildBarycentricTessellationShaders(const Recompi
     shaders.control.spirv = BarycentricTessellationEmitter(target.spirvVersion, clipDistances).EmitControl(sources);
     shaders.evaluation.spirv = BarycentricTessellationEmitter(target.spirvVersion, clipDistances).EmitEvaluation(sources, emulated.passed, emulated.passedFlat, emulated.perVertex, emulated.layout, provokingVertex);
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    shaders.control.spirv = ValidateAndOptimizeSpirv(shaders.control.spirv, target.vulkanVersion, target.spirvVersion);
-    shaders.evaluation.spirv = ValidateAndOptimizeSpirv(shaders.evaluation.spirv, target.vulkanVersion, target.spirvVersion);
+    shaders.control.spirv = ValidateAndOptimizeSpirv(shaders.control.spirv.Words(), target.vulkanVersion, target.spirvVersion);
+    shaders.evaluation.spirv = ValidateAndOptimizeSpirv(shaders.evaluation.spirv.Words(), target.vulkanVersion, target.spirvVersion);
 #endif
     return shaders;
 }
