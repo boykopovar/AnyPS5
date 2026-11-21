@@ -54,6 +54,7 @@ struct ClearOnExit {
 namespace {
 thread_local bool finisherThread = false;
 thread_local bool finisherProducer = false;
+thread_local DrawPipeline* committerPipeline = nullptr;
 }
 
 DrawFinisher& DrawFinisher::Get() {
@@ -275,6 +276,10 @@ std::size_t DrawPipeline::Depth() {
     return depth;
 }
 
+std::size_t DrawPipeline::ResumeDepth() {
+    return Depth() / 2;
+}
+
 std::size_t DrawPipeline::QueuedItems() {
     auto& pipeline = Queue0();
     std::lock_guard lock(pipeline.mutex);
@@ -383,14 +388,14 @@ void DrawPipeline::enqueue(Item item) {
         item.commit();
         return;
     }
-    if (items.size() >= Depth()) {
+    if (Depth() != 0 && items.size() >= Depth()) {
         if (GuestMemory::GpuMutex().HeldByThisThread()) throw std::runtime_error("draw pipeline full while the enqueuing thread holds the GPU lock");
         const auto start = std::chrono::steady_clock::now();
-        resumeAt = Depth() - 1;
-        ++idleWaiters;
-        idle.wait(lock, [&] { return items.size() <= resumeAt; });
-        --idleWaiters;
-        resumeAt = 0;
+        while (items.size() >= Depth()) {
+            ++producersWaiting;
+            producerWaits.fetch_add(1, std::memory_order_release);
+            idle.wait(lock);
+        }
         fullWaitNs += elapsedNs(start);
         rethrowFailure();
     }
@@ -463,6 +468,10 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
 
 void DrawPipeline::run() {
     NameDriverThread("draw-commit");
+    struct CommitterScope {
+        explicit CommitterScope(DrawPipeline* self) { committerPipeline = self; }
+        ~CommitterScope() { committerPipeline = nullptr; }
+    } const committerScope{this};
     PerformanceTrace::BindThread("draw committer");
     ReserveCommitterCore();
     StartCommitterSampler();
@@ -513,7 +522,11 @@ void DrawPipeline::run() {
         if (failed) ++commitErrors;
         if (fatal != nullptr && failure == nullptr) failure = fatal;
         outstanding.fetch_sub(1, std::memory_order_release);
-        if (idleWaiters != 0 && (items.empty() || items.size() <= resumeAt)) idle.notify_all();
+        if ((producersWaiting != 0 && items.size() <= ResumeDepth()) || (drainersWaiting != 0 && items.empty())) {
+            producersWaiting = 0;
+            drainersWaiting = 0;
+            idle.notify_all();
+        }
     }
     runningCommitters.fetch_sub(1, std::memory_order_acq_rel);
 }
@@ -548,9 +561,11 @@ void DrawPipeline::Drain(DrainReason reason, std::uint32_t opcode) {
     const auto start = std::chrono::steady_clock::now();
     SpinUntil(HandoffSpinWindow() * 2, [&] { return !Busy(); });
     std::unique_lock lock(mutex);
-    ++idleWaiters;
-    idle.wait(lock, [&] { return items.empty(); });
-    --idleWaiters;
+    while (!items.empty()) {
+        ++drainersWaiting;
+        drainWaits.fetch_add(1, std::memory_order_release);
+        idle.wait(lock);
+    }
     const auto index = static_cast<std::size_t>(reason);
     ++drains[index];
     ++drainOpcodes[std::min<std::uint32_t>(opcode, 0x100)];
@@ -569,12 +584,14 @@ bool DrawPipeline::HeldReads(std::uint64_t address, std::size_t bytes) {
     auto& pipeline = Queue0();
     std::lock_guard lock(pipeline.mutex);
     heldReadQueries.Add(1);
+    const bool runningOnCommitter = committerPipeline == &pipeline;
     for (const auto& item : pipeline.items) {
         for (const auto& [begin, limit] : item.reads) {
             if (address >= limit || begin >= end) continue;
             heldReadHits.Add(1);
             return true;
         }
+        if (runningOnCommitter) break;
     }
     return false;
 }

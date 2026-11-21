@@ -1744,7 +1744,7 @@ void DrawVertexInput(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics:
     userData[7] = 0x31016facu;
     ShaderRecompiler::ShaderVertexStageInfo info{};
     info.resourcesNum = 1u;
-    info.resources[0].fields = {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), stride == 0u ? 16u : 3u, 0x3104dfacu};
+    info.resources[0].fields = {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), stride == 0u ? 16u : 48u, 0x3104dfacu};
     info.resourcesDst[0] = {8, 4, 0, 0};
     info.fetchAttribReg = 8u;
     info.fetchBufferReg = 10u;
@@ -2318,6 +2318,13 @@ int main(int argc, char** argv) {
         StoreWords(expanded, colorBytes, FillOnes);
         std::fill_n(reinterpret_cast<std::uint32_t*>(expanded.data + BlockBytes), htileBytes / sizeof(std::uint32_t), 0xffffffffu);
         CheckUniform(LoadSamples(*device, CompressedDescriptor(expanded, TileZ64KBX, expanded.Address() + BlockBytes)), Ones, "from the uniform memory of a Z swizzle surface whose HTILE is all expanded");
+        Block replaced(2u * BlockBytes);
+        StoreWords(replaced, colorBytes, FillOnes);
+        const auto replacedHtile = replaced.Address() + BlockBytes;
+        CheckUniform(LoadSamples(*device, CompressedDescriptor(replaced, TileZ64KBX, replacedHtile)), {}, "from a Z swizzle surface whose HTILE is all cleared, before its HTILE alone is replaced");
+        AgcDriver::Graphics::RetireResidentImagesOver_nid_no_patch(replacedHtile, static_cast<std::size_t>(htileBytes));
+        std::fill_n(reinterpret_cast<std::uint32_t*>(replaced.data + BlockBytes), htileBytes / sizeof(std::uint32_t), 0xffffffffu);
+        CheckUniform(LoadSamples(*device, CompressedDescriptor(replaced, TileZ64KBX, replacedHtile)), Ones, "from a Z swizzle surface after its HTILE alone was replaced by expanded tiles");
         Block partial(2u * BlockBytes);
         StoreWords(partial, colorBytes, FillOnes);
         const std::uint32_t expandedTile = 0xfu;

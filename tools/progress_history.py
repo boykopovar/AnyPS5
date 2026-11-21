@@ -147,9 +147,11 @@ def load_cache(path, signature):
     if not path.exists():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=progress.unique_json_keys)
     except RecursionError as error:
         raise ValueError(f"{path}: history cache JSON is too deeply nested") from error
+    except ValueError as error:
+        raise ValueError(f"{path}: {error}") from error
     if not isinstance(data, dict) or type(data.get("schema_version")) is not int or data["schema_version"] != 2 or not isinstance(data.get("rules"), str) or not isinstance(data.get("commits"), dict):
         raise ValueError(f"{path}: invalid history cache")
     if data["rules"] != signature:
@@ -456,11 +458,15 @@ def main(argv=None):
         if args.csv:
             with (args.output / "history.csv").open("w", encoding="utf-8", newline="") as output:
                 writer = csv.writer(output)
+                fields = ("done", "total", "percent")
                 writer.writerow(["date", "commit"] + [f"{name}_{key}" for name in ("libraries", "shaders")
-                                                      for key in ("done", "total", "percent")] + ["shader_metric"])
-                writer.writerows([point["date"], point["commit"]] +
-                                 [point[name][key] for name in ("libraries", "shaders") for key in ("done", "total", "percent")] +
-                                 [shader_metric(point)] for point in points)
+                                                      for key in fields] + ["shader_metric"] +
+                                [f"gfx1013_{key}" for key in fields])
+                for point in points:
+                    gfx1013 = point.get("gfx1013", {})
+                    writer.writerow([point["date"], point["commit"]] +
+                                    [point[name][key] for name in ("libraries", "shaders") for key in fields] +
+                                    [shader_metric(point)] + [gfx1013.get(key) for key in fields])
     except OSError as error:
         parser.error(f"{error.filename or args.output}: {error.strerror or error}")
     print(f"{len(points)} days, {points[0]['date']} .. {points[-1]['date']}")

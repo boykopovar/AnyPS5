@@ -239,7 +239,84 @@ void CpuRewriteAfterSubmit(const GuestBlock& block, bool conditional) {
     AgcDriver::GuestMemory::FlushGpuWrites(marker, sizeof(std::uint32_t));
     const std::string kind = conditional ? "a COND_INDIRECT_BUFFER" : "an INDIRECT_BUFFER";
     Require(Load(block, LabelOffset) == 1, "the packet after " + kind + " the CPU rewrote after its submission did not run");
-    Require(Load(block, MarkerOffset) == 0, kind + " the CPU rewrote after its submission, with no GPU work before it writing the buffer, ran the rewritten commands instead of running as it was copied");
+    const bool tracked = AgcDriver::GuestMemory::WriteWatched() && AgcDriver::GuestMemory::Watched(commands, CommandWords * sizeof(std::uint32_t));
+    std::fprintf(stderr, "GPU-written indirect buffer: the command buffer is %s the write watch\n", tracked ? "in" : "outside");
+    if (tracked) {
+        Require(Load(block, MarkerOffset) == 0, kind + " the CPU rewrote after its submission, with no GPU work before it writing the buffer, ran the rewritten commands instead of running as it was copied");
+    } else {
+        Require(Load(block, MarkerOffset) == 1, kind + " the CPU rewrote after its submission ran as it was copied outside the write watch, where the driver cannot tell the rewrite from a GPU write and runs what memory holds");
+    }
+}
+
+void LandedWriteBeforeRun(const GuestBlock& block, std::uint32_t marker, bool conditional) {
+    std::array<std::uint32_t, CommandWords> fillers{};
+    fillers.fill(Filler);
+    std::memcpy(block.Bytes(CommandsOffset), fillers.data(), sizeof(fillers));
+    Store(block, MarkerOffset, 0);
+    Store(block, GateOffset, 0);
+    const auto commands = block.At(CommandsOffset);
+    const auto target = block.At(MarkerOffset);
+    const auto gate = block.At(GateOffset);
+    const auto writeData = Pm4(0x37, {0x500u, Low(target), High(target), marker});
+    auto words = Dispatching(block, writeData);
+    const auto wait = Pm4(0x3c, {0x13, Low(gate), High(gate), 1, 0xffffffffu, 0x19});
+    words.insert(words.end(), wait.begin(), wait.end());
+    const auto run = conditional ? Pm4(0x3f, {1, 0, 0, 0, 0, 0, 0, Low(commands), High(commands) & 0xffffu, CommandWords, 0, 0, 0}) : Pm4(0x3f, {Low(commands), High(commands) & 0xffffu, CommandWords});
+    words.insert(words.end(), run.begin(), run.end());
+    Packet dcb{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&dcb) == 0, "GPU-written indirect buffer: the submission of the landed write failed");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    for (;;) {
+        AgcDriver::GuestMemory::FlushGpuWrites(commands, CommandWords * sizeof(std::uint32_t));
+        if (std::memcmp(block.Bytes(CommandsOffset), writeData.data(), writeData.size() * sizeof(std::uint32_t)) == 0) break;
+        Require(std::chrono::steady_clock::now() < deadline, "GPU-written indirect buffer: the dispatch's write into the command buffer did not land within 10 s while the queue waited");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    Store(block, GateOffset, 1);
+    AgcDriverWaitIdle_nid_postfix();
+    AgcDriver::GuestMemory::FlushGpuWrites(target, sizeof(std::uint32_t));
+    const auto seen = Load(block, MarkerOffset);
+    const std::string kind = conditional ? "a COND_INDIRECT_BUFFER" : "an INDIRECT_BUFFER";
+    Require(seen == marker, kind + " whose command buffer a dispatch before it wrote, with the write landed before the queue reached it, ran the buffer as it was at submission: the marker is " + std::to_string(seen) + ", the WRITE_DATA the dispatch wrote stores " + std::to_string(marker));
+}
+
+void WriteBeforeCopyLandedBeforeRun(const GuestBlock& block, std::uint32_t marker) {
+    std::array<std::uint32_t, CommandWords> fillers{};
+    fillers.fill(Filler);
+    std::memcpy(block.Bytes(CommandsOffset), fillers.data(), sizeof(fillers));
+    Store(block, MarkerOffset, 0);
+    Store(block, GateOffset, 0);
+    const auto commands = block.At(CommandsOffset);
+    const auto target = block.At(MarkerOffset);
+    const auto gate = block.At(GateOffset);
+    const auto writeData = Pm4(0x37, {0x500u, Low(target), High(target), marker});
+    auto first = Dispatching(block, writeData);
+    const auto wait = Pm4(0x3c, {0x13, Low(gate), High(gate), 1, 0xffffffffu, 0x19});
+    first.insert(first.end(), wait.begin(), wait.end());
+    Packet firstDcb{first.data(), static_cast<std::uint32_t>(first.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&firstDcb) == 0, "GPU-written indirect buffer: the submission of the dispatch before the copy failed");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    for (bool blocked = false; !blocked;) {
+        std::array<AgcDriver::AwaitedWait, 8> waits{};
+        const auto count = AgcDriverAwaitedWaits_nid_postfix(waits.data(), waits.size());
+        blocked = std::any_of(waits.begin(), waits.begin() + static_cast<std::ptrdiff_t>(count), [&](const AgcDriver::AwaitedWait& awaited) { return awaited.address == gate && awaited.reference == 1; });
+        Require(blocked || std::chrono::steady_clock::now() < deadline, "GPU-written indirect buffer: the queue did not block on the gate after the dispatch within 10 s");
+        if (!blocked) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    auto second = Pm4(0x3f, {Low(commands), High(commands) & 0xffffu, CommandWords});
+    Packet secondDcb{second.data(), static_cast<std::uint32_t>(second.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&secondDcb) == 0, "GPU-written indirect buffer: the submission copied while the dispatch's write was recorded failed");
+    for (;;) {
+        AgcDriver::GuestMemory::FlushGpuWrites(commands, CommandWords * sizeof(std::uint32_t));
+        if (std::memcmp(block.Bytes(CommandsOffset), writeData.data(), writeData.size() * sizeof(std::uint32_t)) == 0) break;
+        Require(std::chrono::steady_clock::now() < deadline, "GPU-written indirect buffer: the dispatch's write into the command buffer did not land within 10 s while the queue waited");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    Store(block, GateOffset, 1);
+    AgcDriverWaitIdle_nid_postfix();
+    AgcDriver::GuestMemory::FlushGpuWrites(target, sizeof(std::uint32_t));
+    const auto seen = Load(block, MarkerOffset);
+    Require(seen == marker, "an INDIRECT_BUFFER copied while a recorded dispatch was still to write it, with the write landed before the queue reached it, ran the buffer as it was copied: the marker is " + std::to_string(seen) + ", the WRITE_DATA the dispatch wrote stores " + std::to_string(marker));
 }
 
 void Run(const GuestBlock& block, std::uint32_t marker, bool conditional) {
@@ -380,6 +457,9 @@ int main() {
         InvalidRewrite(block);
         CpuRewriteAfterSubmit(block, true);
         CpuRewriteAfterSubmit(block, false);
+        LandedWriteBeforeRun(block, 0x5eed0004u, true);
+        LandedWriteBeforeRun(block, 0x5eed0005u, false);
+        WriteBeforeCopyLandedBeforeRun(block, 0x5eed0006u);
         RewrittenWaitBeforeOwnFlip(block);
         AgcDriverShutdown_nid_postfix();
         std::puts("GPU-written indirect buffer: indirect buffers run what the dispatch before them wrote");

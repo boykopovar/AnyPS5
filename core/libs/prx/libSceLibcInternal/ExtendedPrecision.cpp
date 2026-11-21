@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <cfenv>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -14,6 +13,7 @@
 namespace {
 
 constexpr int RangeError = 34;
+constexpr int InvalidException = 0x01;
 constexpr int AccumulatorSize = 3;
 
 template <typename T>
@@ -302,7 +302,7 @@ T* Addh(T* p, int n, T x) {
     if (!std::isfinite(x)) {
         if (std::isnan(x) || std::isfinite(p[0])) return Special(p, n, x);
         if (std::isinf(p[0]) && std::signbit(p[0]) != std::signbit(x)) {
-            std::feraiseexcept(FE_INVALID);
+            _Feraise_nid_postfix(InvalidException);
             return Special(p, n, std::numeric_limits<T>::quiet_NaN());
         }
         return p;
@@ -340,7 +340,7 @@ T* Mulh(T* p, int n, T x) {
         return p;
     }
     if (!std::isfinite(leading)) {
-        if (std::isnan(leading)) std::feraiseexcept(FE_INVALID);
+        if (std::isnan(leading)) _Feraise_nid_postfix(InvalidException);
         return Special(p, n, leading);
     }
     Terms words;
@@ -415,7 +415,7 @@ T* Sqrtx(T* p, int n) {
     Gather(terms, p, n);
     const Exact value = Sum(terms);
     if (p[0] < T(0) || value.negative) {
-        std::feraiseexcept(FE_INVALID);
+        _Feraise_nid_postfix(InvalidException);
         return Special(p, n, std::numeric_limits<T>::quiet_NaN());
     }
     return Store(p, n, SquareRoot(value, Precision<T>(n)));
