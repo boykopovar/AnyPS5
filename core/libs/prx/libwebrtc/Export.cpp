@@ -113,16 +113,6 @@ int APS5_VABI _ZN7cricket5CodecD1Ev_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc18RtpTransceiverInitC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc18RtpTransceiverInitD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("RVMa2ePsZR8", libwebrtcUnknown04);
 int APS5_VABI libwebrtcUnknown04(void) {
     NotImplemented_nid_no_patch("RVMa2ePsZR8");
@@ -546,16 +536,6 @@ int APS5_VABI _ZN6webrtc4rtcp3PliC1Ev_nid_postfix(void) {
 }
 
 void APS5_VABI _ZN6webrtc4rtcp3PliD1Ev_nid_postfix(void*) {}
-
-int APS5_VABI _ZN6webrtc4rtcp4RembC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc4rtcp4RembD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI _ZN6webrtc9RtpPacket5ParseEPKhm_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
