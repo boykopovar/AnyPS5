@@ -258,6 +258,8 @@ void TestLoginStateTransitions() {
         int32_t vibration = 0;
         Require(sceUserServiceGetAccessibilityVibration(userId, &vibration) == USER_SERVICE_OK);
         Require(vibration == 1);
+
+        Require(sceUserServiceGetAccessibilityChatTranscription(userId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     }
 
     Require(sceUserServiceGetLoginUserIdList(&loginList) == USER_SERVICE_OK);
