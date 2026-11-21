@@ -3,12 +3,15 @@
 #include "prx/libSceNKWebKit/include/LegacyExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WtfMemoryTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <string>
 
 namespace NKWebKit {
 void* Allocate(std::size_t size, std::size_t alignment = 16);
@@ -18,6 +21,33 @@ void* TryReallocate(void* ptr, std::size_t newSize, std::size_t alignment = 16);
 void Deallocate(void* ptr);
 std::size_t AllocationSize(const void* ptr);
 }  // namespace NKWebKit
+
+namespace {
+
+void StoreTryMallocResult(WTF::TryMallocReturnValue* result, void* data, const char* func) {
+    if (GuestCopyOut_nid_no_patch(result, &data, sizeof(data))) return;
+    NKWebKit::Deallocate(data);
+    NotImplementedAt_nid_no_patch(func, __FILE__, __LINE__);
+}
+
+bool CopyGuestCString(const char* source, std::string& destination) {
+    const auto base = reinterpret_cast<std::uintptr_t>(source);
+    for (std::size_t offset = 0;;) {
+        if (offset > std::numeric_limits<std::uintptr_t>::max() - base) return false;
+        const auto current = base + offset;
+        const std::size_t chunk = std::min<std::size_t>(256, 4096 - current % 4096);
+        char buffer[256];
+        if (!GuestCopyIn_nid_no_patch(buffer, reinterpret_cast<const void*>(current), chunk)) return false;
+        if (const auto* end = static_cast<const char*>(std::memchr(buffer, 0, chunk))) {
+            destination.append(buffer, static_cast<std::size_t>(end - buffer));
+            return true;
+        }
+        destination.append(buffer, chunk);
+        offset += chunk;
+    }
+}
+
+}
 
 extern "C" {
 void* APS5_VABI _ZN3WTF10fastMallocEm(std::size_t size) {
@@ -121,7 +151,7 @@ void* APS5_VABI _ZN3WTF16fastZeroedMallocEm(std::size_t size) {
 }
 
 WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF13tryFastMallocEm(WTF::TryMallocReturnValue* result, std::size_t size) {
-    result->data = NKWebKit::TryAllocate(size);
+    StoreTryMallocResult(result, NKWebKit::TryAllocate(size), __func__);
     return result;
 }
 
@@ -130,13 +160,13 @@ WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF19tryFastZeroedMallocEm(WTF::TryMall
     if (ptr) {
         std::memset(ptr, 0, size);
     }
-    result->data = ptr;
+    StoreTryMallocResult(result, ptr, __func__);
     return result;
 }
 
 WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF13tryFastCallocEmm(WTF::TryMallocReturnValue* result, std::size_t count, std::size_t size) {
     if (count != 0 && size > std::numeric_limits<std::size_t>::max() / count) {
-        result->data = nullptr;
+        StoreTryMallocResult(result, nullptr, __func__);
         return result;
     }
     const std::size_t total = count * size;
@@ -144,12 +174,14 @@ WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF13tryFastCallocEmm(WTF::TryMallocRet
     if (ptr) {
         std::memset(ptr, 0, total);
     }
-    result->data = ptr;
+    StoreTryMallocResult(result, ptr, __func__);
     return result;
 }
 
 WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF14tryFastReallocEPvm(WTF::TryMallocReturnValue* result, void* ptr, std::size_t size) {
-    result->data = NKWebKit::TryReallocate(ptr, size);
+    if (!GuestWritable_nid_no_patch(result, sizeof(*result))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    void* data = NKWebKit::TryReallocate(ptr, size);
+    if (!GuestCopyOut_nid_no_patch(result, &data, sizeof(data))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return result;
 }
 
@@ -183,9 +215,10 @@ char* APS5_VABI _ZN3WTF10fastStrDupEPKc(const char* str) {
     if (!str) {
         return nullptr;
     }
-    const std::size_t len = std::strlen(str);
-    auto* dup = static_cast<char*>(NKWebKit::Allocate(len + 1));
-    std::memcpy(dup, str, len + 1);
+    std::string copy;
+    if (!CopyGuestCString(str, copy)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    auto* dup = static_cast<char*>(NKWebKit::Allocate(copy.size() + 1));
+    std::memcpy(dup, copy.c_str(), copy.size() + 1);
     return dup;
 }
 

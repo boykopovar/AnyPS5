@@ -1,5 +1,6 @@
 #include "prx/libSceNKWebKit/include/WtfFastBitVector.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -14,10 +15,16 @@ std::size_t WordCount(std::size_t bits) {
     return (bits + 31) / 32;
 }
 
-std::size_t CheckedWordCount(const WTF::FastBitVectorWordOwner* owner) {
+WTF::FastBitVectorWordOwner LoadOwner(const WTF::FastBitVectorWordOwner* owner, const char* func) {
     if (!owner) throw std::invalid_argument("FastBitVector: null word owner");
-    const auto count = WordCount(owner->numBits);
-    if (count && !owner->words) throw std::invalid_argument("FastBitVector: null nonempty word storage");
+    WTF::FastBitVectorWordOwner copy;
+    if (!GuestCopyIn_nid_no_patch(&copy, owner, sizeof(copy))) NotImplementedAt_nid_no_patch(func, __FILE__, __LINE__);
+    return copy;
+}
+
+std::size_t CheckedWordCount(const WTF::FastBitVectorWordOwner& owner) {
+    const auto count = WordCount(owner.numBits);
+    if (count && !owner.words) throw std::invalid_argument("FastBitVector: null nonempty word storage");
     return count;
 }
 
@@ -26,7 +33,8 @@ std::size_t CheckedWordCount(const WTF::FastBitVectorWordOwner* owner) {
 extern "C" void APS5_VABI _ZN3WTF13FastBitVector10clearRangeEmm(WTF::FastBitVector* vector,
     std::size_t begin, std::size_t end) {
     if (!vector) throw std::invalid_argument("FastBitVector::clearRange: null vector");
-    auto& storage = vector->storage;
+    WTF::FastBitVectorWordOwner storage;
+    if (!GuestCopyIn_nid_no_patch(&storage, &vector->storage, sizeof(storage))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     if (begin > end || end > storage.numBits)
         throw std::out_of_range("FastBitVector::clearRange: invalid bit range");
     if (begin == end) return;
@@ -48,23 +56,32 @@ extern "C" void APS5_VABI _ZN3WTF13FastBitVector10clearRangeEmm(WTF::FastBitVect
 
 extern "C" void APS5_VABI _ZN3WTF22FastBitVectorWordOwner10resizeSlowEm(WTF::FastBitVectorWordOwner* owner,
     std::size_t numBits) {
-    const auto oldCount = CheckedWordCount(owner);
+    const auto current = LoadOwner(owner, __func__);
+    const auto oldCount = CheckedWordCount(current);
     const auto newCount = WordCount(numBits);
     if (newCount < oldCount) throw std::invalid_argument("FastBitVector::resizeSlow: shrinking word storage");
     auto* words = static_cast<std::uint32_t*>(_ZN3WTF10fastMallocEm(newCount * sizeof(std::uint32_t)));
-    if (oldCount) std::memcpy(words, owner->words, oldCount * sizeof(std::uint32_t));
+    if (oldCount) std::memcpy(words, current.words, oldCount * sizeof(std::uint32_t));
     std::fill_n(words + oldCount, newCount - oldCount, std::uint32_t{0});
-    _ZN3WTF8fastFreeEPv(owner->words);
-    owner->words = words;
+    if (!GuestCopyOut_nid_no_patch(&owner->words, &words, sizeof(words))) {
+        _ZN3WTF8fastFreeEPv(words);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
+    _ZN3WTF8fastFreeEPv(current.words);
 }
 
 extern "C" void APS5_VABI _ZN3WTF22FastBitVectorWordOwner13setEqualsSlowERKS0_(WTF::FastBitVectorWordOwner* owner,
     const WTF::FastBitVectorWordOwner* other) {
-    CheckedWordCount(owner);
-    const auto count = CheckedWordCount(other);
+    const auto current = LoadOwner(owner, __func__);
+    CheckedWordCount(current);
+    const auto source = LoadOwner(other, __func__);
+    const auto count = CheckedWordCount(source);
     auto* words = static_cast<std::uint32_t*>(_ZN3WTF10fastMallocEm(count * sizeof(std::uint32_t)));
-    if (count) std::memcpy(words, other->words, count * sizeof(std::uint32_t));
-    _ZN3WTF8fastFreeEPv(owner->words);
-    owner->words = words;
-    owner->numBits = other->numBits;
+    if (count) std::memcpy(words, source.words, count * sizeof(std::uint32_t));
+    const WTF::FastBitVectorWordOwner result{words, source.numBits};
+    if (!GuestCopyOut_nid_no_patch(owner, &result, sizeof(result))) {
+        _ZN3WTF8fastFreeEPv(words);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
+    _ZN3WTF8fastFreeEPv(current.words);
 }
