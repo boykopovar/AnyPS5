@@ -69,6 +69,18 @@ size_t EqualUnits(const char16_t* s1, const char16_t* s2, size_t n) {
 int ByteDifference(const void* s1, const void* s2, size_t n, bool stopAtNul) {
     const auto* left = static_cast<const unsigned char*>(s1);
     const auto* right = static_cast<const unsigned char*>(s2);
+    if (!stopAtNul) {
+        while (n >= sizeof(std::uint64_t)) {
+            std::uint64_t leftWord;
+            std::uint64_t rightWord;
+            std::memcpy(&leftWord, left, sizeof(leftWord));
+            std::memcpy(&rightWord, right, sizeof(rightWord));
+            if (leftWord != rightWord) break;
+            left += sizeof(leftWord);
+            right += sizeof(rightWord);
+            n -= sizeof(leftWord);
+        }
+    }
     for (size_t index = 0; index < n; ++index) {
         if (left[index] != right[index]) return left[index] - right[index];
         if (stopAtNul && left[index] == 0) return 0;
