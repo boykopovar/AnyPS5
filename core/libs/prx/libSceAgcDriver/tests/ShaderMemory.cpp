@@ -10689,16 +10689,26 @@ void verifyUnnormalizedSamplers() {
         std::vector<std::uint32_t> exact;
         std::vector<std::uint32_t> sums;
         std::vector<std::uint32_t> coordinates;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> copies;
         for (std::size_t cursor = 5; cursor < words.size();) {
             const auto count = words[cursor] >> 16u;
             require(count != 0 && count <= words.size() - cursor, "unnormalized texel offsets: truncated SPIR-V instruction");
             const auto op = words[cursor] & 0xffffu;
             if (op == spv::OpDecorate && count == 3u && words[cursor + 2] == spv::DecorationNoContraction) exact.push_back(words[cursor + 1]);
+            if (op == spv::OpCopyObject && count == 4u) copies.emplace_back(words[cursor + 2], words[cursor + 3]);
             if (op == spv::OpFAdd) sums.push_back(words[cursor + 2]);
             if (op == spv::OpImageSampleExplicitLod) coordinates.push_back(words[cursor + 4]);
             cursor += count;
         }
-        return !coordinates.empty() && std::ranges::all_of(coordinates, [&](std::uint32_t id) { return std::ranges::count(sums, id) != 0 && std::ranges::count(exact, id) != 0; });
+        return !coordinates.empty() && std::ranges::all_of(coordinates, [&](std::uint32_t id) {
+            for (std::size_t step = 0; step <= copies.size(); ++step) {
+                if (std::ranges::count(sums, id) != 0 && std::ranges::count(exact, id) != 0) return true;
+                const auto copy = std::ranges::find(copies, id, &std::pair<std::uint32_t, std::uint32_t>::first);
+                if (copy == copies.end()) return false;
+                id = copy->second;
+            }
+            return false;
+        });
     };
     const auto sampleMasks = [](std::span<const std::uint32_t> words) {
         std::vector<std::uint32_t> masks;
@@ -12439,6 +12449,7 @@ public:
             if (op == spv::OpIEqual) comparisons.push_back({words[cursor + 3], words[cursor + 4]});
             if (op == spv::OpCompositeExtract) extracted[words[cursor + 2]] = words[cursor + 3];
             if (op == spv::OpConstant && length == 4u) constants[words[cursor + 2]] = words[cursor + 3];
+            if (op == spv::OpCopyObject) copies[words[cursor + 2]] = words[cursor + 3];
             if (op == spv::OpBitcast || op == spv::OpFSub || op == spv::OpISub || op == spv::OpConvertUToF || op == spv::OpConvertFToU) sources[words[cursor + 2]] = words[cursor + 3];
             for (std::size_t operand = 3; (op == spv::OpCompositeConstruct || op == spv::OpConstantComposite) && operand < length; ++operand) composites[words[cursor + 2]].push_back(words[cursor + operand]);
             if (length > 2u && op != spv::OpTypeVector && op != spv::OpTypeImage && op != spv::OpTypeSampledImage && op != spv::OpStore && op != spv::OpDecorate && op != spv::OpMemberDecorate && op != spv::OpName && op != spv::OpImageWrite) resultTypes[words[cursor + 2]] = words[cursor + 1];
@@ -12458,6 +12469,7 @@ public:
 
     std::uint32_t Root(std::uint32_t id) const {
         while (true) {
+            id = Original(id);
             if (const auto constant = constants.find(id); constant != constants.end()) return constant->second;
             const auto source = sources.find(id);
             if (source == sources.end()) return 0xffffffffu;
@@ -12466,6 +12478,7 @@ public:
     }
 
     std::vector<std::uint32_t> Components(std::uint32_t id) const {
+        id = Original(id);
         const auto composite = composites.find(id);
         if (composite == composites.end()) return {Root(id)};
         std::vector<std::uint32_t> roots;
@@ -12492,10 +12505,20 @@ public:
     std::vector<Write> writes;
 
 private:
+    std::uint32_t Original(std::uint32_t id) const {
+        for (std::size_t depth = 0; depth <= copies.size(); ++depth) {
+            const auto copy = copies.find(id);
+            if (copy == copies.end()) return id;
+            id = copy->second;
+        }
+        return 0xffffffffu;
+    }
+
     std::map<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>> images;
     std::map<std::uint32_t, std::uint32_t> sampledImages;
     std::map<std::uint32_t, std::uint32_t> resultTypes;
     std::map<std::uint32_t, std::uint32_t> constants;
+    std::map<std::uint32_t, std::uint32_t> copies;
     std::map<std::uint32_t, std::uint32_t> sources;
     std::map<std::uint32_t, std::uint32_t> extracted;
     std::map<std::uint32_t, std::vector<std::uint32_t>> composites;
