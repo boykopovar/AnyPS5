@@ -32,14 +32,19 @@ inline long double GuestLongDoubleLoad(const void* source) {
 
 inline void GuestLongDoubleStore(void* target, long double value) {
     if constexpr (std::numeric_limits<long double>::digits == 64) {
-        std::memcpy(target, &value, sizeof(value));
+        unsigned char bytes[GuestLongDoubleBytes] = {};
+        std::memcpy(bytes, &value, 10);
+        std::memcpy(target, bytes, sizeof(bytes));
     } else {
         std::uint64_t low;
         std::uint64_t high;
         std::memcpy(&low, &value, sizeof(low));
         std::memcpy(&high, reinterpret_cast<const unsigned char*>(&value) + 8, sizeof(high));
         const auto exponent = static_cast<std::uint16_t>((high >> 48) & 0x7FFF);
-        const std::uint64_t fraction = ((high & 0xFFFF'FFFF'FFFFull) << 15) | (low >> 49);
+        std::uint64_t fraction = ((high & 0xFFFF'FFFF'FFFFull) << 15) | (low >> 49);
+        if (exponent == 0x7FFF && fraction == 0 && (low & 0x0001'FFFF'FFFF'FFFFull) != 0) {
+            fraction = 0x4000'0000'0000'0000ull;
+        }
         const std::uint64_t mantissa = fraction | (exponent != 0 ? 0x8000'0000'0000'0000ull : 0);
         const auto signExponent = static_cast<std::uint16_t>(exponent | ((high >> 63) << 15));
         unsigned char bytes[GuestLongDoubleBytes] = {};
