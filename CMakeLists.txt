@@ -333,6 +333,9 @@ if(BUILD_TESTING)
         add_test(NAME patch_lib_atrac9 COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_patch_lib_atrac9.py ${CMAKE_COMMAND})
         set_tests_properties(patch_lib_atrac9 PROPERTIES TIMEOUT 60)
+        add_test(NAME subprocess_encoding COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_subprocess_encoding.py)
+        set_tests_properties(subprocess_encoding PROPERTIES TIMEOUT 60)
         add_test(NAME build_changed_guest_tests COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_changed_guest_tests.py)
         set_tests_properties(build_changed_guest_tests PROPERTIES TIMEOUT 30)

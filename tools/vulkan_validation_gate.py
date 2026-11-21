@@ -81,7 +81,7 @@ def positive(value):
 
 def git(source, *arguments):
     return subprocess.run(["git", "-C", str(source), *arguments], capture_output=True,
-                          text=True, check=True).stdout.strip()
+                          text=True, encoding="utf-8", errors="replace", check=True).stdout.strip()
 
 
 def identity(source, expected):
