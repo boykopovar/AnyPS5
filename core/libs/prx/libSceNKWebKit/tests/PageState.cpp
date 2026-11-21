@@ -54,7 +54,7 @@ int main() {
 
     Require(!WKPageIsClosed(pageRef));
     Require(WKPageGetEstimatedProgress(pageRef) == 0.0);
-    Require(!WKPageBackgroundExtendsBeyondPage(pageRef));
+    Require(WKPageBackgroundExtendsBeyondPage(pageRef));
     Require(WKPageCopyActiveURL(pageRef) == nullptr);
     Require(WKPageCopyProvisionalURL(pageRef) == nullptr);
     Require(WKPageCopyCommittedURL(pageRef) == nullptr);
@@ -105,6 +105,8 @@ int main() {
     Require(CopiedStringEquals(WKPageCopyApplicationNameForUserAgent, pageRef, ""));
     Require(CopiedStringEquals(WKPageCopyCustomTextEncodingName, pageRef, ""));
 
+    WKPageSetBackgroundExtendsBeyondPage(pageRef, false);
+    Require(!WKPageBackgroundExtendsBeyondPage(pageRef));
     WKPageSetBackgroundExtendsBeyondPage(pageRef, true);
     Require(WKPageBackgroundExtendsBeyondPage(pageRef));
     WKPageSetBackgroundExtendsBeyondPage(pageRef, false);

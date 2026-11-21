@@ -50,7 +50,7 @@ public:
     std::optional<std::u16string> applicationNameForUserAgent;
     std::optional<std::u16string> customUserAgent;
     std::optional<std::u16string> customTextEncodingName;
-    bool backgroundExtendsBeyondPage = false;
+    bool backgroundExtendsBeyondPage = true;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
