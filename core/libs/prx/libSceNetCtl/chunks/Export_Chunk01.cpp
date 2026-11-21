@@ -1,0 +1,642 @@
+extern "C" {
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceNetCtl/include/InventoryExports.hpp"
+#include "prx/libSceNetCtl/include/NetCtl.hpp"
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#else
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <net/route.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/ioctl.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#ifdef __linux__
+#include <netpacket/packet.h>
+#endif
+#ifdef __APPLE__
+#include <net/if_dl.h>
+#include <sys/sysctl.h>
+#endif
+#endif
+#include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
+#include <cstddef>
+#include <cstdio>
+#include <cstring>
+#include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostEntropy.hpp"
+#include <fstream>
+#include <memory>
+#include <mutex>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <vector>
+
+// Network-control state reflects host interface addressing, not PSN sign-in status.
+
+static constexpr int SCE_NET_CTL_ERROR_NOT_INITIALIZED = static_cast<int>(0x80412101);
+static constexpr int SCE_NET_CTL_ERROR_ID_NOT_FOUND = static_cast<int>(0x80412104);
+static constexpr int SCE_NET_CTL_ERROR_INVALID_SIZE = static_cast<int>(0x80412111);
+static constexpr int SCE_NET_CTL_ERROR_CALLBACK_MAX = static_cast<int>(0x80412103);
+static constexpr int SCE_NET_CTL_ERROR_INVALID_ID = static_cast<int>(0x80412105);
+static constexpr int SCE_NET_CTL_ERROR_INVALID_CODE = static_cast<int>(0x80412106);
+static constexpr int SCE_NET_CTL_ERROR_INVALID_ADDR = static_cast<int>(0x80412107);
+static constexpr int SCE_NET_CTL_ERROR_NOT_CONNECTED = static_cast<int>(0x80412108);
+static constexpr int SCE_NET_CTL_ERROR_RESULT_EVENT_REFUSED = static_cast<int>(0x8041210F);
+static constexpr int NET_CTL_STATE_DISCONNECTED = 0;
+static constexpr int NET_CTL_STATE_IPOBTAINED = 3;
+static constexpr int NET_CTL_EVENT_DISCONNECTED = 1;
+static constexpr int NET_CTL_EVENT_DISCONNECT_REQ_FINISHED = 2;
+static constexpr int NET_CTL_EVENT_IPOBTAINED = 3;
+static constexpr int NET_CTL_STUN_STATUS_FAILED = 1;
+static constexpr int NET_CTL_STUN_STATUS_OK = 2;
+static constexpr int NET_CTL_NAT_TYPE_NONE = 0;
+static constexpr int NET_CTL_NAT_TYPE_1 = 1;
+static constexpr int NET_CTL_NAT_TYPE_2 = 2;
+static constexpr int NET_CTL_NAT_TYPE_3 = 3;
+static constexpr std::uint16_t STUN_BINDING_REQUEST = 0x0001;
+static constexpr std::uint16_t STUN_BINDING_RESPONSE = 0x0101;
+static constexpr std::uint32_t STUN_MAGIC_COOKIE = 0x2112A442u;
+static constexpr std::uint16_t STUN_ATTR_MAPPED_ADDRESS = 0x0001;
+static constexpr std::uint16_t STUN_ATTR_CHANGED_ADDRESS = 0x0005;
+static constexpr std::uint16_t STUN_ATTR_XOR_MAPPED_ADDRESS = 0x0020;
+static constexpr std::uint16_t STUN_ATTR_XOR_MAPPED_ADDRESS_LEGACY = 0x8020;
+static constexpr std::uint16_t STUN_ATTR_OTHER_ADDRESS = 0x802c;
+static constexpr std::size_t STUN_HEADER_SIZE = 20;
+static constexpr std::size_t STUN_TRANSACTION_ID_SIZE = 12;
+static constexpr int STUN_DEFAULT_TIMEOUT_MS = 300;
+static constexpr int STUN_TOTAL_BUDGET_MS = 1000;
+static constexpr int STUN_CACHE_TTL_MS = 60000;
+static constexpr int NET_CTL_INFO_DEVICE = 1;
+static constexpr int NET_CTL_INFO_ETHER_ADDR = 2;
+static constexpr int NET_CTL_INFO_MTU = 3;
+static constexpr int NET_CTL_INFO_LINK = 4;
+static constexpr int NET_CTL_INFO_BSSID = 5;
+static constexpr int NET_CTL_INFO_SSID = 6;
+static constexpr int NET_CTL_INFO_WIFI_SECURITY = 7;
+static constexpr int NET_CTL_INFO_RSSI_DBM = 8;
+static constexpr int NET_CTL_INFO_RSSI_PERCENTAGE = 9;
+static constexpr int NET_CTL_INFO_CHANNEL = 10;
+static constexpr int NET_CTL_INFO_IP_CONFIG = 11;
+static constexpr int NET_CTL_INFO_DHCP_HOSTNAME = 12;
+static constexpr int NET_CTL_INFO_PPPOE_AUTH_NAME = 13;
+static constexpr int NET_CTL_INFO_IP_ADDRESS = 14;
+static constexpr int NET_CTL_INFO_NETMASK = 15;
+static constexpr int NET_CTL_INFO_DEFAULT_ROUTE = 16;
+static constexpr int NET_CTL_INFO_PRIMARY_DNS = 17;
+static constexpr int NET_CTL_INFO_SECONDARY_DNS = 18;
+static constexpr int NET_CTL_INFO_HTTP_PROXY_CONFIG = 19;
+static constexpr int NET_CTL_INFO_HTTP_PROXY_SERVER = 20;
+static constexpr int NET_CTL_INFO_HTTP_PROXY_PORT = 21;
+static constexpr int NET_CTL_INFO_V6_IP_ADDRESS = 1;
+static constexpr int NET_CTL_INFO_V6_LINK_LOCAL = 2;
+static constexpr int NET_CTL_INFO_V6_SECONDARY_DNS = 5;
+static constexpr std::uint32_t NET_CTL_DEVICE_WIRED = 0;
+static constexpr std::uint32_t NET_CTL_LINK_CONNECTED = 1;
+static constexpr std::uint32_t NET_CTL_IP_DHCP = 0;
+static constexpr std::uint32_t NET_CTL_HTTP_PROXY_OFF = 0;
+static constexpr std::uint8_t NET_CTL_ETHER_ADDR[6] = {0x02, 0x50, 0x53, 0x35, 0x00, 0x01};
+static constexpr std::size_t NET_CTL_IPV4_ADDR_STR_LEN = 16;
+static constexpr int MAX_CALLBACKS = 8;
+
+struct CallbackSlot {
+    NetCtlCallback func = nullptr;
+    void* arg = nullptr;
+    int lastEvent = 0;
+};
+
+static std::atomic_bool g_initialized{true};
+static std::mutex g_callbackLock;
+static CallbackSlot g_callbacks[MAX_CALLBACKS] = {};
+static CallbackSlot g_callbacksV6[MAX_CALLBACKS] = {};
+static CallbackSlot g_callbacksNpToolkit[MAX_CALLBACKS] = {};
+static CallbackSlot g_callbacksForLib[MAX_CALLBACKS] = {};
+
+static int RegisterCallback(CallbackSlot (&callbacks)[MAX_CALLBACKS], NetCtlCallback func, void* arg, int* cid) {
+    if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
+    if (!func || !cid) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    std::lock_guard lock(g_callbackLock);
+    for (int index = 0; index < MAX_CALLBACKS; ++index) {
+        if (!callbacks[index].func) {
+            const int savedErrno = errno;
+            const bool copied = GuestCopyOut_nid_no_patch(cid, &index, sizeof(index));
+            errno = savedErrno;
+            if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+            callbacks[index] = {func, arg, 0};
+            return 0;
+        }
+    }
+    return SCE_NET_CTL_ERROR_CALLBACK_MAX;
+}
+
+static int UnregisterCallback(CallbackSlot (&callbacks)[MAX_CALLBACKS], int cid) {
+    if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
+    if (cid < 0 || cid >= MAX_CALLBACKS) return SCE_NET_CTL_ERROR_INVALID_ID;
+    std::lock_guard lock(g_callbackLock);
+    if (!callbacks[cid].func) return SCE_NET_CTL_ERROR_ID_NOT_FOUND;
+    callbacks[cid] = {};
+    return 0;
+}
+
+static bool HasCallback(const CallbackSlot (&callbacks)[MAX_CALLBACKS]) {
+    std::lock_guard lock(g_callbackLock);
+    for (const auto& slot : callbacks) {
+        if (slot.func) return true;
+    }
+    return false;
+}
+
+static bool QueryHostHasAddress(int family) {
+#ifdef _WIN32
+    static const int socket_status = [] {
+        WSADATA data{};
+        return WSAStartup(MAKEWORD(2, 2), &data);
+    }();
+    if (socket_status != 0) return false;
+    ULONG size = 0;
+    const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    if (GetAdaptersAddresses(family, flags, nullptr, nullptr, &size) != ERROR_BUFFER_OVERFLOW) return false;
+    std::vector<std::uint8_t> storage(size);
+    auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(storage.data());
+    if (GetAdaptersAddresses(family, flags, nullptr, adapters, &size) != NO_ERROR) return false;
+    for (auto* adapter = adapters; adapter; adapter = adapter->Next) {
+        if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+        for (auto* address = adapter->FirstUnicastAddress; address; address = address->Next) {
+            if (!address->Address.lpSockaddr) continue;
+            if (address->Address.lpSockaddr->sa_family == AF_INET) {
+                const auto* v4 = reinterpret_cast<const sockaddr_in*>(address->Address.lpSockaddr);
+                const auto host = ntohl(v4->sin_addr.s_addr);
+                if (host != 0 && (host >> 24) != 127) return true;
+            } else if (address->Address.lpSockaddr->sa_family == AF_INET6) {
+                const auto* v6 = reinterpret_cast<const sockaddr_in6*>(address->Address.lpSockaddr);
+                if (!IN6_IS_ADDR_UNSPECIFIED(&v6->sin6_addr) && !IN6_IS_ADDR_LOOPBACK(&v6->sin6_addr)) return true;
+            }
+        }
+    }
+    return false;
+#else
+    ifaddrs* interfaces = nullptr;
+    if (getifaddrs(&interfaces) != 0) return false;
+    bool found = false;
+    for (auto* item = interfaces; item && !found; item = item->ifa_next) {
+        if (!item->ifa_addr || !(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK)) continue;
+        const int address_family = item->ifa_addr->sa_family;
+        if ((family == AF_UNSPEC || family == address_family) && address_family == AF_INET) {
+            const auto* v4 = reinterpret_cast<const sockaddr_in*>(item->ifa_addr);
+            const auto host = ntohl(v4->sin_addr.s_addr);
+            found = host != 0 && (host >> 24) != 127;
+        } else if ((family == AF_UNSPEC || family == address_family) && address_family == AF_INET6) {
+            const auto* v6 = reinterpret_cast<const sockaddr_in6*>(item->ifa_addr);
+            found = !IN6_IS_ADDR_UNSPECIFIED(&v6->sin6_addr) && !IN6_IS_ADDR_LOOPBACK(&v6->sin6_addr);
+        }
+    }
+    freeifaddrs(interfaces);
+    return found;
+#endif
+}
+
+struct HostIpv4Interface {
+    in_addr address{};
+    in_addr netmask{};
+    in_addr gateway{};
+    std::uint32_t mtu = 0;
+    std::vector<in_addr> dns;
+};
+
+#ifdef _WIN32
+namespace {
+
+struct HostAddressCache {
+    std::mutex lock;
+    bool registered = false;
+    bool tried = false;
+    std::atomic<std::uint64_t> generation{1};
+    std::uint64_t seen[3]{};
+    bool value[3]{};
+    std::uint64_t interfaceSeen = 0;
+    bool interfaceFound = false;
+    HostIpv4Interface interfaceValue;
+};
+
+HostAddressCache& AddressCache() {
+    static HostAddressCache cache;
+    return cache;
+}
+
+void CALLBACK HostAddressChanged(PVOID, PMIB_UNICASTIPADDRESS_ROW, MIB_NOTIFICATION_TYPE) {
+    AddressCache().generation.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void CALLBACK HostInterfaceChanged(PVOID, PMIB_IPINTERFACE_ROW, MIB_NOTIFICATION_TYPE) {
+    AddressCache().generation.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void CALLBACK HostRouteChanged(PVOID, PMIB_IPFORWARD_ROW2, MIB_NOTIFICATION_TYPE) {
+    AddressCache().generation.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void WatchHostAddresses(HostAddressCache& cache) {
+    if (cache.tried) return;
+    cache.tried = true;
+    HANDLE addresses = nullptr;
+    HANDLE interfaces = nullptr;
+    HANDLE routes = nullptr;
+    cache.registered = NotifyUnicastIpAddressChange(AF_UNSPEC, HostAddressChanged, nullptr, FALSE, &addresses) == NO_ERROR &&
+                       NotifyIpInterfaceChange(AF_UNSPEC, HostInterfaceChanged, nullptr, FALSE, &interfaces) == NO_ERROR &&
+                       NotifyRouteChange2(AF_UNSPEC, HostRouteChanged, nullptr, FALSE, &routes) == NO_ERROR;
+    if (!cache.registered) {
+        if (addresses != nullptr) CancelMibChangeNotify2(addresses);
+        if (interfaces != nullptr) CancelMibChangeNotify2(interfaces);
+        if (routes != nullptr) CancelMibChangeNotify2(routes);
+    }
+}
+
+}
+#endif
+
+static bool HostHasAddress(int family) {
+    if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) return false;
+#ifdef _WIN32
+    auto& cache = AddressCache();
+    const int slot = family == AF_INET ? 0 : family == AF_INET6 ? 1 : 2;
+    std::lock_guard guard(cache.lock);
+    WatchHostAddresses(cache);
+    const auto generation = cache.generation.load(std::memory_order_acquire);
+    if (cache.registered && cache.seen[slot] == generation) return cache.value[slot];
+    const bool value = QueryHostHasAddress(family);
+    cache.value[slot] = value;
+    cache.seen[slot] = generation;
+    return value;
+#else
+    return QueryHostHasAddress(family);
+#endif
+}
+
+static bool UsableIpv4(in_addr address) {
+    const auto host = ntohl(address.s_addr);
+    return host != 0 && (host >> 24) != 127;
+}
+
+#ifdef _WIN32
+static const sockaddr_in* Ipv4Of(const SOCKET_ADDRESS& address) {
+    if (!address.lpSockaddr || address.lpSockaddr->sa_family != AF_INET) return nullptr;
+    return reinterpret_cast<const sockaddr_in*>(address.lpSockaddr);
+}
+
+static std::uint32_t PrefixMask(unsigned length) {
+    if (length == 0) return 0;
+    return htonl(length >= 32 ? 0xFFFFFFFFu : 0xFFFFFFFFu << (32 - length));
+}
+#else
+struct HostDefaultRoute {
+    std::string name;
+    in_addr gateway{};
+    unsigned long metric = 0;
+};
+
+#ifdef __APPLE__
+struct NetCtlDefaultRoute {
+    char name[IF_NAMESIZE];
+    in_addr gateway;
+    std::uint32_t metric;
+};
+
+extern "C" std::size_t NetCtlDefaultRoutes_nid_no_patch(const char* table, std::size_t size, NetCtlDefaultRoute* routes, std::size_t capacity) {
+    std::size_t count = 0;
+    for (std::size_t offset = 0; offset + sizeof(rt_msghdr) <= size;) {
+        const auto* header = reinterpret_cast<const rt_msghdr*>(table + offset);
+        if (header->rtm_msglen < sizeof(rt_msghdr) || header->rtm_msglen > size - offset) break;
+        const sockaddr* addresses[RTAX_MAX] = {};
+        const std::size_t end = offset + header->rtm_msglen;
+        std::size_t field = offset + sizeof(rt_msghdr);
+        for (int index = 0; index < RTAX_MAX && field + sizeof(sockaddr) <= end; ++index) {
+            if (!(header->rtm_addrs & (1 << index))) continue;
+            const auto* address = reinterpret_cast<const sockaddr*>(table + field);
+            addresses[index] = address;
+            field += address->sa_len ? (address->sa_len + sizeof(std::uint32_t) - 1) & ~(sizeof(std::uint32_t) - 1) : sizeof(std::uint32_t);
+        }
+        offset = end;
+        const auto* destination = addresses[RTAX_DST];
+        const auto* gateway = addresses[RTAX_GATEWAY];
+        if (!destination || destination->sa_family != AF_INET || !gateway || gateway->sa_family != AF_INET) continue;
+        if (reinterpret_cast<const sockaddr_in*>(destination)->sin_addr.s_addr != 0) continue;
+        if (!(header->rtm_flags & RTF_UP) || (header->rtm_flags & (RTF_REJECT | RTF_HOST))) continue;
+        NetCtlDefaultRoute route{};
+        if (!if_indextoname(header->rtm_index, route.name)) continue;
+        route.gateway = reinterpret_cast<const sockaddr_in*>(gateway)->sin_addr;
+        route.metric = (header->rtm_flags & RTF_IFSCOPE) ? 1 : 0;
+        if (count < capacity) routes[count] = route;
+        ++count;
+    }
+    return count;
+}
+
+static std::vector<HostDefaultRoute> HostDefaultRoutes() {
+    int name[] = {CTL_NET, PF_ROUTE, 0, AF_INET, NET_RT_FLAGS, RTF_GATEWAY};
+    std::size_t size = 0;
+    if (sysctl(name, 6, nullptr, &size, nullptr, 0) != 0) throw std::runtime_error("sceNetCtlGetInfo: the host routing table is unavailable");
+    std::vector<char> table(size);
+    if (sysctl(name, 6, table.data(), &size, nullptr, 0) != 0) throw std::runtime_error("sceNetCtlGetInfo: the host routing table is unavailable");
+    std::vector<NetCtlDefaultRoute> found(NetCtlDefaultRoutes_nid_no_patch(table.data(), size, nullptr, 0));
+    found.resize(NetCtlDefaultRoutes_nid_no_patch(table.data(), size, found.data(), found.size()));
+    std::vector<HostDefaultRoute> routes;
+    for (const auto& entry : found) routes.push_back({entry.name, entry.gateway, entry.metric});
+    return routes;
+}
+#else
+static std::vector<HostDefaultRoute> HostDefaultRoutes() {
+    std::ifstream table("/proc/net/route");
+    if (!table) throw std::runtime_error("sceNetCtlGetInfo: the host routing table is unavailable");
+    std::vector<HostDefaultRoute> routes;
+    std::string line;
+    std::getline(table, line);
+    while (std::getline(table, line)) {
+        std::istringstream fields(line);
+        HostDefaultRoute route;
+        unsigned long destination = 0;
+        unsigned long gateway = 0;
+        unsigned long flags = 0;
+        unsigned long references = 0;
+        unsigned long uses = 0;
+        unsigned long mask = 0;
+        if (!(fields >> route.name >> std::hex >> destination >> gateway >> flags >> std::dec >> references >> uses >> route.metric >> std::hex >> mask)) continue;
+        if (destination != 0 || mask != 0 || !(flags & RTF_UP) || (flags & RTF_REJECT)) continue;
+        route.gateway.s_addr = static_cast<std::uint32_t>(gateway);
+        routes.push_back(route);
+    }
+    return routes;
+}
+#endif
+
+static std::uint32_t HostInterfaceMtu(const char* name) {
+    const int descriptor = socket(AF_INET, SOCK_DGRAM, 0);
+    if (descriptor < 0) throw std::runtime_error("sceNetCtlGetInfo: no socket to read the host interface MTU");
+    ifreq request{};
+    std::strncpy(request.ifr_name, name, IFNAMSIZ - 1);
+    const int result = ioctl(descriptor, SIOCGIFMTU, &request);
+    close(descriptor);
+    if (result != 0) throw std::runtime_error(std::string("sceNetCtlGetInfo: no MTU for host interface ") + name);
+    return static_cast<std::uint32_t>(request.ifr_mtu);
+}
+
+static std::vector<in_addr> HostDnsServers() {
+    std::ifstream config("/etc/resolv.conf");
+    std::vector<in_addr> servers;
+    std::string line;
+    while (std::getline(config, line)) {
+        std::istringstream fields(line);
+        std::string keyword;
+        std::string value;
+        in_addr server{};
+        if (fields >> keyword >> value && keyword == "nameserver" && inet_pton(AF_INET, value.c_str(), &server) == 1) servers.push_back(server);
+    }
+    return servers;
+}
+#endif
+
+static bool QueryHostIpv4Interface(HostIpv4Interface& found) {
+#ifdef _WIN32
+    ULONG size = 0;
+    const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_INCLUDE_GATEWAYS;
+    if (GetAdaptersAddresses(AF_INET, flags, nullptr, nullptr, &size) != ERROR_BUFFER_OVERFLOW) return false;
+    std::vector<std::uint8_t> storage(size);
+    auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(storage.data());
+    if (GetAdaptersAddresses(AF_INET, flags, nullptr, adapters, &size) != NO_ERROR) return false;
+    bool chosen = false;
+    bool chosenHasGateway = false;
+    ULONG chosenMetric = 0;
+    for (auto* adapter = adapters; adapter; adapter = adapter->Next) {
+        if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+        auto* unicast = adapter->FirstUnicastAddress;
+        while (unicast && !(Ipv4Of(unicast->Address) && UsableIpv4(Ipv4Of(unicast->Address)->sin_addr))) unicast = unicast->Next;
+        if (!unicast) continue;
+        auto* gateway = adapter->FirstGatewayAddress;
+        while (gateway && !Ipv4Of(gateway->Address)) gateway = gateway->Next;
+        if (chosen && !(gateway && (!chosenHasGateway || adapter->Ipv4Metric < chosenMetric))) continue;
+        HostIpv4Interface candidate;
+        candidate.address = Ipv4Of(unicast->Address)->sin_addr;
+        candidate.netmask.s_addr = PrefixMask(unicast->OnLinkPrefixLength);
+        if (gateway) candidate.gateway = Ipv4Of(gateway->Address)->sin_addr;
+        candidate.mtu = adapter->Mtu;
+        for (auto* server = adapter->FirstDnsServerAddress; server; server = server->Next) {
+            if (Ipv4Of(server->Address)) candidate.dns.push_back(Ipv4Of(server->Address)->sin_addr);
+        }
+        found = std::move(candidate);
+        chosen = true;
+        chosenHasGateway = gateway != nullptr;
+        chosenMetric = adapter->Ipv4Metric;
+    }
+    return chosen;
+#else
+    ifaddrs* list = nullptr;
+    if (getifaddrs(&list) != 0) return false;
+    const std::unique_ptr<ifaddrs, void (*)(ifaddrs*)> interfaces(list, freeifaddrs);
+    const auto routes = HostDefaultRoutes();
+    const ifaddrs* chosen = nullptr;
+    const HostDefaultRoute* chosenRoute = nullptr;
+    for (auto* item = list; item; item = item->ifa_next) {
+        if (!item->ifa_addr || item->ifa_addr->sa_family != AF_INET || !(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK)) continue;
+        if (!UsableIpv4(reinterpret_cast<const sockaddr_in*>(item->ifa_addr)->sin_addr)) continue;
+        const HostDefaultRoute* route = nullptr;
+        for (const auto& entry : routes) {
+            if (entry.name == item->ifa_name && (!route || entry.metric < route->metric)) route = &entry;
+        }
+        if (chosen && !(route && (!chosenRoute || route->metric < chosenRoute->metric))) continue;
+        chosen = item;
+        chosenRoute = route;
+    }
+    if (!chosen) return false;
+    found.address = reinterpret_cast<const sockaddr_in*>(chosen->ifa_addr)->sin_addr;
+    if (chosen->ifa_netmask) found.netmask = reinterpret_cast<const sockaddr_in*>(chosen->ifa_netmask)->sin_addr;
+    if (chosenRoute) found.gateway = chosenRoute->gateway;
+    found.mtu = HostInterfaceMtu(chosen->ifa_name);
+    found.dns = HostDnsServers();
+    return true;
+#endif
+}
+
+static bool FindHostIpv4Interface(HostIpv4Interface& found) {
+    if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) return false;
+#ifdef _WIN32
+    auto& cache = AddressCache();
+    std::lock_guard guard(cache.lock);
+    WatchHostAddresses(cache);
+    const auto generation = cache.generation.load(std::memory_order_acquire);
+    if (!cache.registered || cache.interfaceSeen != generation) {
+        HostIpv4Interface value;
+        cache.interfaceFound = QueryHostIpv4Interface(value);
+        cache.interfaceValue = std::move(value);
+        cache.interfaceSeen = generation;
+    }
+    if (cache.interfaceFound) found = cache.interfaceValue;
+    return cache.interfaceFound;
+#else
+    const int savedErrno = errno;
+    const bool queried = QueryHostIpv4Interface(found);
+    errno = savedErrno;
+    return queried;
+#endif
+}
+
+extern "C" std::size_t NetCtlHostDnsServers_nid_no_patch(std::uint32_t* servers, std::size_t capacity) {
+    HostIpv4Interface host;
+    if (!FindHostIpv4Interface(host)) return 0;
+    for (std::size_t index = 0; index < host.dns.size() && index < capacity; ++index) servers[index] = host.dns[index].s_addr;
+    return host.dns.size();
+}
+
+extern "C" bool NetCtlHostIpv4Gateway_nid_no_patch(std::uint32_t* gateway) {
+    HostIpv4Interface host;
+    if (!FindHostIpv4Interface(host) || host.gateway.s_addr == 0) return false;
+    *gateway = host.gateway.s_addr;
+    return true;
+}
+
+#ifdef _WIN32
+using StunSocket = SOCKET;
+static constexpr StunSocket INVALID_STUN_SOCKET = INVALID_SOCKET;
+static void CloseStunSocket(StunSocket descriptor) { closesocket(descriptor); }
+static bool EnsureSocketRuntime() {
+    static const int status = [] {
+        WSADATA data{};
+        return WSAStartup(MAKEWORD(2, 2), &data);
+    }();
+    return status == 0;
+}
+#else
+using StunSocket = int;
+static constexpr StunSocket INVALID_STUN_SOCKET = -1;
+static void CloseStunSocket(StunSocket descriptor) { close(descriptor); }
+static bool EnsureSocketRuntime() { return true; }
+#endif
+
+struct StunEndpoint {
+    std::uint32_t address = 0;
+    std::uint16_t port = 0;
+    bool valid = false;
+};
+
+struct StunProbeResponse {
+    StunEndpoint mapped;
+    StunEndpoint other;
+};
+
+struct StunConfig {
+    std::mutex lock;
+    bool overrideActive = false;
+    std::vector<sockaddr_in> overrideServers;
+    int overrideTimeoutMs = STUN_DEFAULT_TIMEOUT_MS;
+    std::uint64_t configGeneration = 1;
+    std::uint64_t cachedConfigGeneration = 0;
+    std::uint32_t cachedLocalAddr = 0;
+    std::chrono::steady_clock::time_point cachedUntil{};
+    bool hasCachedResult = false;
+    NetCtlNatInfo cachedResult{};
+};
+
+static StunConfig& GetStunConfig() {
+    static StunConfig config;
+    return config;
+}
+
+extern "C" void NetCtlSetStunServers_nid_no_patch(const sockaddr_in* servers, std::size_t count, int timeoutMs) {
+    auto& config = GetStunConfig();
+    std::lock_guard guard(config.lock);
+    ++config.configGeneration;
+    config.hasCachedResult = false;
+    config.overrideServers.clear();
+    if (!servers && count == 0 && timeoutMs <= 0) {
+        config.overrideActive = false;
+        config.overrideTimeoutMs = STUN_DEFAULT_TIMEOUT_MS;
+        return;
+    }
+    config.overrideActive = true;
+    config.overrideTimeoutMs = timeoutMs > 0 ? timeoutMs : STUN_DEFAULT_TIMEOUT_MS;
+    if (servers && count > 0) config.overrideServers.assign(servers, servers + count);
+}
+
+static void AppendUniqueStunServer(std::vector<sockaddr_in>& servers, const sockaddr_in& candidate) {
+    if (candidate.sin_family != AF_INET || candidate.sin_addr.s_addr == 0 || candidate.sin_port == 0) return;
+    for (const auto& existing : servers) {
+        if (existing.sin_addr.s_addr == candidate.sin_addr.s_addr && existing.sin_port == candidate.sin_port) return;
+    }
+    servers.push_back(candidate);
+}
+
+static std::vector<sockaddr_in> ResolveStunServers(int& timeoutMs, std::uint64_t& generationOut, std::chrono::steady_clock::time_point totalDeadline) {
+    auto& config = GetStunConfig();
+    {
+        std::lock_guard guard(config.lock);
+        generationOut = config.configGeneration;
+        if (config.overrideActive) {
+            timeoutMs = config.overrideTimeoutMs;
+            return config.overrideServers;
+        }
+    }
+    timeoutMs = STUN_DEFAULT_TIMEOUT_MS;
+    struct DefaultStunHost {
+        const char* host;
+        const char* port;
+    };
+    static constexpr DefaultStunHost kDefaultHosts[] = {
+        {"stun.playstation.net", "3478"},
+        {"stun.cloudflare.com", "3478"},
+        {"stun.l.google.com", "19302"},
+        {"stun1.l.google.com", "19302"},
+    };
+    struct DnsQueryState {
+        std::mutex lock;
+        std::condition_variable cv;
+        std::vector<sockaddr_in> servers;
+        bool done = false;
+    };
+    const auto now = std::chrono::steady_clock::now();
+    if (!EnsureSocketRuntime() || now >= totalDeadline) return {};
+    const auto dnsCap = now + std::chrono::milliseconds(STUN_DEFAULT_TIMEOUT_MS * 2);
+    const auto dnsDeadline = dnsCap < totalDeadline ? dnsCap : totalDeadline;
+    auto state = std::make_shared<DnsQueryState>();
+    std::thread([state, dnsDeadline] {
+        for (const auto& entry : kDefaultHosts) {
+            if (std::chrono::steady_clock::now() >= dnsDeadline) break;
+            addrinfo hints{};
+            hints.ai_family = AF_INET;
+            hints.ai_socktype = SOCK_DGRAM;
+            hints.ai_protocol = IPPROTO_UDP;
+            addrinfo* list = nullptr;
+            if (getaddrinfo(entry.host, entry.port, &hints, &list) != 0 || !list) continue;
+            {
+                std::lock_guard guard(state->lock);
+                for (auto* item = list; item; item = item->ai_next) {
+                    if (item->ai_addr && item->ai_addrlen >= sizeof(sockaddr_in) && item->ai_addr->sa_family == AF_INET) {
+                        AppendUniqueStunServer(state->servers, *reinterpret_cast<const sockaddr_in*>(item->ai_addr));
+                    }
+                }
+            }
+            freeaddrinfo(list);
+        }
+        {
+            std::lock_guard guard(state->lock);
+            state->done = true;
+        }
+        state->cv.notify_one();
+    }).detach();
+    std::unique_lock lock(state->lock);
+    state->cv.wait_until(lock, dnsDeadline, [&] { return state->done; });
+    return state->servers;
+}
+
+}

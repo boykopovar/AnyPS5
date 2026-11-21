@@ -64,3 +64,19 @@
 | `Unknown` | `on7RqSRy8pU` |
 | `Unknown` | `sngJX5nUjVM` |
 | `Unknown` | `wVXoAlD7Fsg` |
+
+
+### Silent stubs
+
+- [sceNetCtlTerm](../../../core/libs/prx/libSceNetCtl/chunks/Export_Chunk03.cpp) (libSceNetCtl) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [sceNetCtlApRpCheckCallback](../../../core/libs/prx/libSceNetCtl/chunks/Export_Chunk04.cpp) (libSceNetCtl) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [sceNetCtlApRpClearEvent](../../../core/libs/prx/libSceNetCtl/chunks/Export_Chunk04.cpp) (libSceNetCtl) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [sceNetCtlApRpRegisterCallback](../../../core/libs/prx/libSceNetCtl/chunks/Export_Chunk04.cpp) (libSceNetCtl) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [sceNetCtlApRpUnregisterCallback](../../../core/libs/prx/libSceNetCtl/chunks/Export_Chunk04.cpp) (libSceNetCtl) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [sceNetCtlApRpGetResult](../../../core/libs/prx/libSceNetCtl/chunks/Export_Chunk04.cpp) (libSceNetCtl) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [sceNetCtlApRpGetState](../../../core/libs/prx/libSceNetCtl/chunks/Export_Chunk04.cpp) (libSceNetCtl) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [sceNetCtlApRpGetInfo](../../../core/libs/prx/libSceNetCtl/chunks/Export_Chunk04.cpp) (libSceNetCtl) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [sceNetCtlApRpStart](../../../core/libs/prx/libSceNetCtl/chunks/Export_Chunk04.cpp) (libSceNetCtl) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [sceNetCtlApRpStartWithRetry](../../../core/libs/prx/libSceNetCtl/chunks/Export_Chunk04.cpp) (libSceNetCtl) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [sceNetCtlApRpStartConf](../../../core/libs/prx/libSceNetCtl/chunks/Export_Chunk04.cpp) (libSceNetCtl) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [sceNetCtlApRpStop](../../../core/libs/prx/libSceNetCtl/chunks/Export_Chunk04.cpp) (libSceNetCtl) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.

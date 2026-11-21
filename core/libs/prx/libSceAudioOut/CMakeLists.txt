@@ -1,8 +1,8 @@
 add_library(libSceAudioOut SHARED EXCLUDE_FROM_ALL
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOutSdl.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOutShutdown.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2Context.cpp
+        
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2Low.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2PadMix.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2Port.cpp
@@ -465,3 +465,18 @@ endif()
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+add_library(libSceAudioOut_AudioOut_Chunk01 STATIC src/chunks/AudioOut_Chunk01.cpp)
+add_library(libSceAudioOut_AudioOut_Chunk02 STATIC src/chunks/AudioOut_Chunk02.cpp)
+target_link_libraries(libSceAudioOut PUBLIC libSceAudioOut_AudioOut_Chunk01 libSceAudioOut_AudioOut_Chunk02)
+get_target_property(libSceAudioOut_incdirs libSceAudioOut INCLUDE_DIRECTORIES)
+if(libSceAudioOut_incdirs)
+    target_include_directories(libSceAudioOut_AudioOut_Chunk01 PRIVATE ${libSceAudioOut_incdirs})
+    target_include_directories(libSceAudioOut_AudioOut_Chunk02 PRIVATE ${libSceAudioOut_incdirs})
+endif()
+
+add_library(libSceAudioOut_AudioOut2Context_Chunk01 STATIC src/chunks/AudioOut2Context_Chunk01.cpp)
+target_link_libraries(libSceAudioOut PUBLIC libSceAudioOut_AudioOut2Context_Chunk01)
+get_target_property(libSceAudioOut_incdirs libSceAudioOut INCLUDE_DIRECTORIES)
+if(libSceAudioOut_incdirs)
+    target_include_directories(libSceAudioOut_AudioOut2Context_Chunk01 PRIVATE ${libSceAudioOut_incdirs})
+endif()

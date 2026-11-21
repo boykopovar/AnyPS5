@@ -1,4 +1,4 @@
-add_library(libSceAvSetting SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceAvSetting SHARED EXCLUDE_FROM_ALL )
 target_include_directories(libSceAvSetting PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceAvSetting)
 
@@ -39,4 +39,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_avsetting_guards PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvSetting>")
     endif()
+endif()
+
+add_library(libSceAvSetting_Export_Chunk01 STATIC chunks/Export_Chunk01.cpp)
+add_library(libSceAvSetting_Export_Chunk02 STATIC chunks/Export_Chunk02.cpp)
+target_link_libraries(libSceAvSetting PUBLIC libSceAvSetting_Export_Chunk01 libSceAvSetting_Export_Chunk02)
+get_target_property(libSceAvSetting_incdirs libSceAvSetting INCLUDE_DIRECTORIES)
+if(libSceAvSetting_incdirs)
+    target_include_directories(libSceAvSetting_Export_Chunk01 PRIVATE ${libSceAvSetting_incdirs})
+    target_include_directories(libSceAvSetting_Export_Chunk02 PRIVATE ${libSceAvSetting_incdirs})
 endif()

@@ -1,4 +1,4 @@
-add_library(libSceFsInternalForVsh SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceFsInternalForVsh SHARED EXCLUDE_FROM_ALL )
 target_include_directories(libSceFsInternalForVsh PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceFsInternalForVsh)
 
@@ -12,4 +12,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_fs_internal_for_vsh PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFsInternalForVsh>")
     endif()
+endif()
+
+add_library(libSceFsInternalForVsh_Export_Chunk01 STATIC chunks/Export_Chunk01.cpp)
+add_library(libSceFsInternalForVsh_Export_Chunk02 STATIC chunks/Export_Chunk02.cpp)
+target_link_libraries(libSceFsInternalForVsh PUBLIC libSceFsInternalForVsh_Export_Chunk01 libSceFsInternalForVsh_Export_Chunk02)
+get_target_property(libSceFsInternalForVsh_incdirs libSceFsInternalForVsh INCLUDE_DIRECTORIES)
+if(libSceFsInternalForVsh_incdirs)
+    target_include_directories(libSceFsInternalForVsh_Export_Chunk01 PRIVATE ${libSceFsInternalForVsh_incdirs})
+    target_include_directories(libSceFsInternalForVsh_Export_Chunk02 PRIVATE ${libSceFsInternalForVsh_incdirs})
 endif()
