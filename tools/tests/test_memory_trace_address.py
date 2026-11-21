@@ -38,6 +38,15 @@ class ParseTests(FeatureRequired):
             (6, "map anon", 0x140000000, 0x1000),
         ])
 
+    def test_selects_flexible_backing_by_guest_address(self):
+        events = trace.parse_events([
+            "[memory] allocate physical 0x4000+0x8000",
+            "[memory] flexible backing 0x4000+0x8000",
+            "[memory] release physical 0x4000+0x8000",
+        ])
+        self.assertEqual([event.line for event in trace.select_events(events, 0xbfff, 1)], [2])
+        self.assertEqual(trace.select_events(events, 0xc000, 1), [])
+
     def test_parses_every_operation_and_strips_line_endings(self):
         events = trace.parse_events([
             "[memory] remap fixed 0x10+0x20 prot=0x3\r\n",

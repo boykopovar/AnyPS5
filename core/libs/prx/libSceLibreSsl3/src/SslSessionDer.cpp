@@ -134,7 +134,8 @@ bool EncodeSession(const LibreSsl3SslSession& session, std::vector<unsigned char
     AppendInteger(content, SessionAsn1Version);
     AppendInteger(content, static_cast<std::uint64_t>(session.sslVersion));
 
-    const std::array<unsigned char, 2> cipherSuite{0, 0};
+    const std::array<unsigned char, 2> cipherSuite{static_cast<unsigned char>(session.cipherValue >> 8),
+        static_cast<unsigned char>(session.cipherValue)};
     AppendTlv(content, OctetStringTag, cipherSuite);
 
     AppendTlv(content, OctetStringTag,
@@ -275,6 +276,7 @@ bool DecodeSession(std::span<const unsigned char> input, std::span<const unsigne
     std::span<const unsigned char> cipherSuite;
     if (!ReadRequiredOctets(content, cipherSuite)) return false;
     if (cipherSuite.size() != 2) return false;
+    session.cipherValue = static_cast<std::uint16_t>(cipherSuite[0] << 8 | cipherSuite[1]);
 
     std::span<const unsigned char> sessionId;
     if (!ReadRequiredOctets(content, sessionId)) return false;
@@ -341,6 +343,7 @@ int APS5_VABI i2d_SSL_SESSION_nid_postfix(LibreSsl3SslSession* session, unsigned
     if (!session) return 0;
     LibreSsl3SslSession fields{};
     if (!CopyIn(&fields, session, sizeof(fields))) NotImplemented_nid_no_patch(__func__);
+    if (fields.cipherValue == 0) return 0;
 
     std::vector<unsigned char> encoded;
     if (!EncodeSession(fields, encoded)) return -1;
