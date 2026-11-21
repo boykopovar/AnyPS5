@@ -5358,7 +5358,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         while (pending.selectionExcluders != 0 && !GuestMemory::GpuMutex().HeldByThisThread()) {
             lock.unlock();
             GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
-            drawnHold = std::unique_lock(GuestMemory::GpuMutex());
+            selectionHold = std::unique_lock(GuestMemory::GpuMutex());
             lock.lock();
         }
         const auto* exempt = Refreshing::Get();
