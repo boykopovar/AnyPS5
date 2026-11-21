@@ -256,6 +256,17 @@ void CheckWidePutHelperEdges() {
     Require(result.failed && untouched[0] == 0 && untouched[1] == 0 && failedNext == reinterpret_cast<char*>(untouched) && failedStream.overflowCalls == 0, "_Put does not write through an already failed iterator");
     result = put(GuestLocale::OutputIterator{false, nullptr}, source, 2);
     Require(result.failed && result.buffer == nullptr, "_Put marks an iterator without a stream buffer failed");
+    std::uint16_t singleSlotStorage[2]{};
+    char* validSlot = reinterpret_cast<char*>(singleSlotStorage);
+    char* nullSlot = nullptr;
+    WideTestStreambuf nullEndValue{{&g_wideStreambufVtable, {}, &validSlot, {}, &nullSlot}, {}, 2, 0};
+    result = put(GuestLocale::OutputIterator{false, &nullEndValue.buffer}, source, 1);
+    Require(!result.failed && nullEndValue.overflowCalls == 1 && nullEndValue.overflowed.size() == 1 && nullEndValue.overflowed[0] == 0x0041,
+            "_Put falls back to overflow when only putEnd holds null");
+    WideTestStreambuf nullNextValue{{&g_wideStreambufVtable, {}, &nullSlot, {}, &validSlot}, {}, 2, 0};
+    result = put(GuestLocale::OutputIterator{false, &nullNextValue.buffer}, source, 1);
+    Require(!result.failed && nullNextValue.overflowCalls == 1 && nullNextValue.overflowed.size() == 1 && nullNextValue.overflowed[0] == 0x0041,
+            "_Put falls back to overflow when only putNext holds null");
     bool threw = false;
     try {
         put(GuestLocale::OutputIterator{false, &stream.buffer}, nullptr, 1);
