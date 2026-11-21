@@ -482,6 +482,48 @@ int main() {
             Draw(*device, PlainPixelCode, plain, equal(0xeeu));
             Check(odd, "killed columns keep the stencil");
         }
+        {
+            alignas(256) constexpr std::array<std::array<float, 4>, 9> stripRecordVertices{{
+                {-1.0f, -1.0f, 0.25f, 1.0f}, {3.0f, -1.0f, 0.25f, 1.0f}, {-1.0f, 3.0f, 0.25f, 1.0f}, {0.0f, 0.0f, 0.75f, 1.0f},
+                {0.0f, -1.0f, 0.75f, 1.0f}, {1.0f, -1.0f, 0.75f, 1.0f}, {0.0f, 1.0f, 0.75f, 1.0f}, {1.0f, 1.0f, 0.75f, 1.0f}, {0.0f, 0.0f, 0.75f, 1.0f},
+            }};
+            alignas(256) constexpr std::array<std::array<float, 4>, 10> stripIndexedVertices{{
+                {0.0f, 0.0f, 0.75f, 1.0f}, {-1.0f, -1.0f, 0.25f, 1.0f}, {3.0f, -1.0f, 0.25f, 1.0f}, {-1.0f, 3.0f, 0.25f, 1.0f}, {0.0f, 0.0f, 0.75f, 1.0f},
+                {0.0f, -1.0f, 0.75f, 1.0f}, {1.0f, -1.0f, 0.75f, 1.0f}, {0.0f, 1.0f, 0.75f, 1.0f}, {1.0f, 1.0f, 0.75f, 1.0f}, {0.0f, 0.0f, 0.75f, 1.0f},
+            }};
+            alignas(256) constexpr std::array<std::uint32_t, 9> stripIndices{7u, 7u, 0u, 1u, 2u, 3u, 4u, 5u, 6u};
+            alignas(256) const std::array<std::uint32_t, 8> stripRecords{3u, 1u, 0u, 0u, 4u, 1u, 4u, 0u};
+            alignas(256) const std::array<std::uint32_t, 10> stripIndexedRecords{3u, 1u, 2u, 1u, 0u, 4u, 1u, 5u, 2u, 0u};
+            const auto left = [](std::uint32_t x, std::uint32_t) { return x < Width / 2u; };
+            const auto right = [](std::uint32_t x, std::uint32_t) { return x >= Width / 2u; };
+            for (const bool indexed : {false, true}) {
+                for (const bool culledStrip : {false, true}) {
+                    if (culledStrip && !dynamicFace) continue;
+                    const std::string what = std::string(indexed ? "an indexed" : "a non-indexed") + (culledStrip ? " culled" : "") + " indirect triangle strip";
+                    Draw(*device, PlainPixelCode, plain, replace(0x33u));
+                    Draw(*device, ordered, exported, replace(), indexed ? static_cast<std::uint32_t>(stripIndices.size()) : 0u, 0u, false, [&](AgcDriver::Graphics::State& state) {
+                        state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+                        if (culledStrip) {
+                            state.cullMode = VK_CULL_MODE_BACK_BIT;
+                            state.frontFace = facing;
+                        }
+                    }, [&](AgcDriver::Pm4::DrawParameters& draw) {
+                        if (indexed) {
+                            draw.indexed = true;
+                            draw.indexAddress = reinterpret_cast<std::uintptr_t>(stripIndices.data());
+                            draw.indexSize = 4u;
+                            draw.indirect = indirectDraw(stripIndexedRecords.data(), 0x25u, 20u, 2u);
+                        } else {
+                            draw.indirect = indirectDraw(stripRecords.data(), 0x2cu, 16u, 2u);
+                        }
+                    }, indexed ? std::span<const std::array<float, 4>>(stripIndexedVertices) : std::span<const std::array<float, 4>>(stripRecordVertices));
+                    Draw(*device, PlainPixelCode, plain, equal(255u));
+                    Check(left, what + " keeps the first record's export where the second record does not draw");
+                    Draw(*device, PlainPixelCode, plain, equal(0u));
+                    Check(right, what + " restarts its triangle parity and first vertex at the second record");
+                }
+            }
+        }
         auto killed = std::vector<std::uint32_t>(alternating.begin(), alternating.end());
         killed.insert(std::find(killed.begin(), killed.end(), 0xf800180fu), 0x7c000000u | (0xd2u << 17u) | (3u << 9u) | 0x80u);
         Draw(*device, killed, exported, replace());
