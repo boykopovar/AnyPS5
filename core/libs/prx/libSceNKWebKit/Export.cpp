@@ -3324,10 +3324,6 @@ int APS5_VABI _ZN7WebCore18JSHTMLVideoElementC1EPN3JSC9StructureERNS_17JSDOMGlob
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore20TransformationMatrix5blendERKS0_d() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList8DrawLineC2ERKNS_10FloatPointES4_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -3390,10 +3386,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_NUOb_plus_z3WQ5A_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("NUOb+z3WQ5A", libSceNKWebKitLegacyUnknown_NUOb_plus_z3WQ5A_nid_no_patch);
-
-int APS5_VABI _ZN7WebCore20TransformationMatrix7scale3dEddd() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7WebCore29DeprecatedCSSOMPrimitiveValue14setStringValueEtRKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
@@ -4592,10 +4584,6 @@ int APS5_VABI _ZNK7WebCore21NetworkStorageSession18shouldBlockCookiesERKNS_15Res
 }
 
 int APS5_VABI _ZNK7WebCore24RotateTransformOperation19isRepresentableIn2DEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore20TransformationMatrix6blend2ERKS0_d() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -6740,10 +6728,6 @@ int APS5_VABI _ZN7WebCore11DisplayList22BeginTransparencyLayerC1Ef() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore20TransformationMatrix7inverseEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList8DrawPathD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -7197,10 +7181,6 @@ int APS5_VABI _ZNK7WebCore5Frame13ownerRendererEv() {
 }
 
 int APS5_VABI _ZN7WebCore8Settings24setStorageBlockingPolicyENS_14SecurityOrigin21StorageBlockingPolicyE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore20TransformationMatrix8rotate3dEdddd() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -7871,10 +7851,6 @@ int APS5_VABI _ZN7WebCore11DisplayList10DrawGlyphsD2Ev() {
 }
 
 int APS5_VABI _ZNK7WebCore16HTMLMediaElement19isVisibleInViewportEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore20TransformationMatrix6blend4ERKS0_d() {
     NotImplemented_nid_no_patch(__func__);
 }
 
