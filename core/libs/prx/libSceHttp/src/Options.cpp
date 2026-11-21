@@ -22,6 +22,8 @@ std::uint32_t CompiledSdkVersion() {
 }
 
 constexpr std::uint32_t PrivateSslFlags = 0x2dffu;
+constexpr std::uint32_t ResolveTimeoutMinimumSdkVersion = 0x01700000u;
+constexpr std::uint32_t MaximumRejectedResolveTimeoutUs = 999999u;
 
 std::mutex g_optionsMutex;
 std::unordered_map<int, bool> g_contextAcceptEncodingGzip;
@@ -59,10 +61,12 @@ void AddHttpTemplate(int templateId, int contextId) {
     g_objectOptions[templateId] = options;
 }
 
-void AddHttpChild(int id, int parentId) {
+void AddHttpChild(int id, int parentId, bool request) {
     std::lock_guard lock(g_optionsMutex);
     const auto parent = g_objectOptions.find(parentId);
-    g_objectOptions[id] = parent != g_objectOptions.end() ? parent->second : HttpOptions{};
+    HttpOptions options = parent != g_objectOptions.end() ? parent->second : HttpOptions{};
+    options.request = request;
+    g_objectOptions[id] = options;
 }
 
 void RemoveHttpObject(int id) {
@@ -82,6 +86,27 @@ bool SetHttpOption(int id, bool HttpOptions::*option, bool enable) {
     const auto found = g_objectOptions.find(id);
     if (found == g_objectOptions.end()) return false;
     found->second.*option = enable;
+    return true;
+}
+
+template <class T>
+bool SetHttpValue(int id, T HttpOptions::*option, T value) {
+    std::lock_guard lock(g_optionsMutex);
+    const auto found = g_objectOptions.find(id);
+    if (found == g_objectOptions.end()) return false;
+    found->second.*option = value;
+    return true;
+}
+
+template bool SetHttpValue<std::uint32_t>(int, std::uint32_t HttpOptions::*, std::uint32_t);
+template bool SetHttpValue<std::uint64_t>(int, std::uint64_t HttpOptions::*, std::uint64_t);
+template bool SetHttpValue<int>(int, int HttpOptions::*, int);
+
+bool SetHttpRequestContentLength(int id, std::uint64_t length) {
+    std::lock_guard lock(g_optionsMutex);
+    const auto found = g_objectOptions.find(id);
+    if (found == g_objectOptions.end() || !found->second.request) return false;
+    found->second.requestContentLength = length;
     return true;
 }
 
@@ -154,6 +179,43 @@ int APS5_VABI sceHttpGetAcceptEncodingGZIPEnabled(int id, int* enable) {
 int APS5_VABI sceHttpSetAcceptEncodingGZIPEnabled(int id, int enable) {
     if (!HttpInitialised()) return ERROR_BEFORE_INIT;
     return SetHttpOption(id, &HttpOptions::acceptEncodingGzip, enable != 0) ? 0 : ERROR_INVALID_ID;
+}
+
+int APS5_VABI sceHttpSetSendTimeOut(int id, std::uint32_t usec) {
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    return SetHttpValue(id, &HttpOptions::sendTimeoutUs, usec) ? 0 : ERROR_INVALID_ID;
+}
+
+int APS5_VABI sceHttpSetRecvTimeOut(int id, std::uint32_t usec) {
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    return SetHttpValue(id, &HttpOptions::recvTimeoutUs, usec) ? 0 : ERROR_INVALID_ID;
+}
+
+int APS5_VABI sceHttpSetResolveTimeOut(int id, std::uint32_t usec) {
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    if (CompiledSdkVersion() >= ResolveTimeoutMinimumSdkVersion && usec <= MaximumRejectedResolveTimeoutUs) return ERROR_INVALID_VALUE;
+    return SetHttpValue(id, &HttpOptions::resolveTimeoutUs, usec) ? 0 : ERROR_INVALID_ID;
+}
+
+int APS5_VABI sceHttpSetResolveRetry(int id, std::int32_t retry) {
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    if (retry < 0) return ERROR_INVALID_VALUE;
+    return SetHttpValue(id, &HttpOptions::resolveRetry, retry) ? 0 : ERROR_INVALID_ID;
+}
+
+int APS5_VABI sceHttpSetRecvBlockSize(int id, std::uint32_t blockSize) {
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    return SetHttpValue(id, &HttpOptions::recvBlockSize, blockSize) ? 0 : ERROR_INVALID_ID;
+}
+
+int APS5_VABI sceHttpSetResponseHeaderMaxSize(int id, std::uint64_t headerSize) {
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    return SetHttpValue(id, &HttpOptions::responseHeaderMaxSize, headerSize) ? 0 : ERROR_INVALID_ID;
+}
+
+int APS5_VABI sceHttpSetRequestContentLength(int id, std::uint64_t contentLength) {
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    return SetHttpRequestContentLength(id, contentLength) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttpGetEpoll(int id, HttpEpollHandle* epoll, void** argument) {
