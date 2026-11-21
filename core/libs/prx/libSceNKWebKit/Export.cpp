@@ -20380,10 +20380,6 @@ int APS5_VABI _ZN7WebCore24distanceBetweenPositionsERKNS_15VisiblePositionES2_()
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore24passesAccessControlCheckERKNS_16ResourceResponseENS_23StoredCredentialsPolicyERKNS_14SecurityOriginEPKNS_37CrossOriginAccessControlCheckDisablerE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore24previousSentencePositionERKNS_15VisiblePositionE() {
     NotImplemented_nid_no_patch(__func__);
 }
