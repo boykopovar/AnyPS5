@@ -293,8 +293,6 @@ int APS5_VABI WKPageLoadURLRequest();
 int APS5_VABI WKPageLoadURLRequestWithUserData();
 int APS5_VABI WKPageLoadURLWithShouldOpenExternalURLsPolicy();
 int APS5_VABI WKPageLoadURLWithUserData();
-int APS5_VABI WKPageLoadWebArchiveData();
-int APS5_VABI WKPageLoadWebArchiveDataWithUserData();
 int APS5_VABI WKPageLoadedSubresourceDomains();
 int APS5_VABI WKPageLookUpFrameFromHandle();
 int APS5_VABI WKPagePostMessageToInjectedBundle();
