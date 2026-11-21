@@ -28,6 +28,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
+#include "prx/libSceVideoOut/include/Telemetry.hpp"
 #if APS5_ENABLE_TIMING_LOG
 #include "prx/libSceVideoOut/include/FrameTimingLog.hpp"
 #endif
@@ -710,7 +711,7 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
         OnMainThread([&] { window.UpdateTitle(); });
         timing.Mark("window_title");
     }
-    std::lock_guard lock(req.cfg->mutex);
+    std::unique_lock lock(req.cfg->mutex);
     timing.Mark("completion_mutex_wait");
     req.cfg->CheckAlive();
     if (req.cfg->Closed()) {
@@ -722,7 +723,9 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
     require(req.cfg->flipStatus.count != std::numeric_limits<uint64_t>::max(), "flip counter overflow");
     triggerEvents(*req.cfg, VIDEO_OUT_EVENT_FLIP, reinterpret_cast<void*>(req.flipArg));
     ++req.cfg->flipStatus.count;
-    req.cfg->flipStatus.processTime = sceKernelGetProcessTime();
+    const auto sequence = req.cfg->flipStatus.count;
+    const auto processTimeUs = sceKernelGetProcessTime();
+    req.cfg->flipStatus.processTime = processTimeUs;
     req.cfg->flipStatus.processTimeCounter = sceKernelGetProcessTimeCounter();
     req.cfg->flipStatus.flipArg = req.flipArg;
     const auto previous = req.cfg->flipStatus.currentBuffer;
@@ -743,6 +746,13 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
     req.cfg->vblankCond.notify_all();
     KernelWakeSleepers_nid_no_patch();
     timing.Mark("notify_game");
+    const bool mainOutput = req.cfg->busType == VIDEO_OUT_BUS_TYPE_MAIN;
+    lock.unlock();
+    if (mainOutput) {
+        if (auto* telemetry = VideoOutTelemetry::Instance()) {
+            telemetry->EmitCompletedFlip(req.generation, sequence, processTimeUs);
+        }
+    }
 }
 
 std::optional<AgcDriver::DisplayBuffer> VideoOutDriver::overlayPlane() {
@@ -818,9 +828,12 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 while (SDL_PollEvent(&event)) {
                     if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE) windowCloseSeen = true;
                     if (event.type == SDL_QUIT) return true;
+                    const bool padOwnedMouse = padInput->MouseModeEnabled();
                     padInput->HandleEvent(event, window);
                     if (window.Handle() != nullptr) {
+                        mouseInput->SetPadOwnsMouse(padOwnedMouse || padInput->MouseModeEnabled());
                         mouseInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
+                        mouseInput->SetPadOwnsMouse(padInput->MouseModeEnabled());
                         keyboardInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
                         imeTextInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
                         dialogInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));

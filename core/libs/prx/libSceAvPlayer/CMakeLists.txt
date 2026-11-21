@@ -14,6 +14,14 @@ if(BUILD_TESTING)
     target_include_directories(guest_avplayer_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_avplayer_tests PRIVATE libSceAvPlayer libc)
     configure_windows_unwind(guest_avplayer_tests)
+    add_test_executable(guest_avplayer_trick_speed_tests ${LIBS_INCLUDE_DIR}/tests/GuestAvPlayerTrickSpeed.cpp)
+    target_include_directories(guest_avplayer_trick_speed_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_avplayer_trick_speed_tests PRIVATE libSceAvPlayer libc)
+    configure_windows_unwind(guest_avplayer_trick_speed_tests)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_trick_speed)
+    add_test(NAME guest_avplayer_trick_speed COMMAND guest_avplayer_trick_speed_tests)
+    set_tests_properties(guest_avplayer_trick_speed PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_trick_speed TIMEOUT 30)
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer)
     add_test(NAME guest_avplayer COMMAND guest_avplayer_tests)
     add_test(NAME guest_avplayer_callback_close COMMAND guest_avplayer_tests --callback-close)
@@ -100,6 +108,8 @@ if(BUILD_TESTING)
         set_tests_properties(guest_avplayer PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvPlayer>")
         set_tests_properties(guest_avplayer_paused_first_video PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvPlayer>")
+        set_tests_properties(guest_avplayer_trick_speed PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvPlayer>")
         set_tests_properties(guest_avplayer_callback_close PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvPlayer>")

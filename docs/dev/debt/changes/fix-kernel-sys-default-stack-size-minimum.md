@@ -1,0 +1,5 @@
+# libkernel_sys
+
+## change [pthread_set_defaultstacksize_np and scePthreadSetDefaultstacksize]
+
+- [pthread_set_defaultstacksize_np and scePthreadSetDefaultstacksize](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) set the stack size that `scePthreadAttrInit` and a thread created without attributes use, as [fpPS4's `pthread_set_defaultstacksize_np`](https://github.com/red-prig/fpPS4/blob/04cefd4/kernel/ps4_pthread_attr.pas#L89-L102) does: a size below 16384 bytes fails with `EINVAL` (`0x80020016` from the sce form) and there is no upper limit, so a default the host cannot allocate fails only when a thread is created. Attributes initialised earlier keep their size. A PS5 payload process (firmware 11.60, probe `libkernel_sys_defaultstacksize`, build `2342e46b5599`) accepted 16384 and 16385 (the `pthread_set_defaultstacksize_np` form was measured only with these two), refused 16383 and 0 through `scePthreadSetDefaultstacksize` and accepted 0x40000000 and 0xfffffffffffff000, as here; its fresh attributes report 0x10000, where this library starts at 1 MiB

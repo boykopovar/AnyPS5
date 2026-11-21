@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
+#include <climits>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
@@ -37,6 +38,8 @@ int main() {
     const GuestResourceUsage pattern = untouched;
     RequireFailure(2, &untouched, 22);
     RequireFailure(-2, &untouched, 22);
+    RequireFailure(INT_MIN, &untouched, 22);
+    RequireFailure(INT_MAX, &untouched, 22);
     Require(std::memcmp(&untouched, &pattern, sizeof(untouched)) == 0);
     RequireFailure(7, nullptr, 22);
     RequireFailure(0, nullptr, 14);

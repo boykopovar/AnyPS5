@@ -1224,7 +1224,15 @@ void depthFallbackInvalidatesColor(AgcDriver::VulkanDevice& device) {
 #endif
 }
 
+struct HeldOutsideTheWatch {
+    HeldOutsideTheWatch() { SetHostImportDeferredSettles(false); }
+    ~HeldOutsideTheWatch() { SetHostImportDeferredSettles(true); }
+    HeldOutsideTheWatch(const HeldOutsideTheWatch&) = delete;
+    HeldOutsideTheWatch& operator=(const HeldOutsideTheWatch&) = delete;
+};
+
 void validRefreshBaselines(AgcDriver::VulkanDevice& device) {
+    const HeldOutsideTheWatch outsideWatch;
     auto color = colorTarget();
     auto* memory = allocateWatched(PlaneBytes);
     color.address = color.surfaceAddress = address(memory);
@@ -1255,6 +1263,7 @@ void validRefreshBaselines(AgcDriver::VulkanDevice& device) {
 }
 
 void heldBaselineUnits(AgcDriver::VulkanDevice& device) {
+    const HeldOutsideTheWatch outsideWatch;
     auto color = colorTarget();
     auto* memory = allocateWatched(2 * PlaneBytes);
     color.address = color.surfaceAddress = color.arrayAddress = address(memory);
@@ -1671,6 +1680,7 @@ int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
         Require(_putenv_s("APS5_TEXTURE_CACHE_MIB", "16") == 0, "cannot set the test cache budget");
+        Require(_putenv_s("APS5_NO_REWATCH_UNDER_IMAGES", "1") == 0, "cannot keep settled imports under live images outside the write watch");
 #else
         Require(setenv("APS5_TEXTURE_CACHE_MIB", "16", 1) == 0, "cannot set the test cache budget");
 #endif
