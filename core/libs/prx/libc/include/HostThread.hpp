@@ -29,11 +29,15 @@ std::thread StartHostThread(Function&& function, Arguments&&... arguments) {
     });
 }
 
-template<class Function>
-std::jthread StartHostJThread(Function&& function) {
-    return std::jthread([task = std::decay_t<Function>(std::forward<Function>(function))](std::stop_token token) mutable {
+template<class Function, class... Arguments>
+std::jthread StartHostJThread(Function&& function, Arguments&&... arguments) {
+    return std::jthread([task = std::decay_t<Function>(std::forward<Function>(function)), values = std::tuple<std::decay_t<Arguments>...>(std::forward<Arguments>(arguments)...)](std::stop_token token) mutable {
         SetHostMxcsr();
-        std::invoke(task, token);
+        if constexpr (std::is_invocable_v<std::decay_t<Function>, std::stop_token, std::decay_t<Arguments>...>) {
+            std::apply(std::move(task), std::tuple_cat(std::tuple<std::stop_token>(std::move(token)), std::move(values)));
+        } else {
+            std::apply(std::move(task), std::move(values));
+        }
     });
 }
 

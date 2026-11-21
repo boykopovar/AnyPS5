@@ -1,9 +1,11 @@
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceLibcInternal/libSceLibcInternal.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Spawn.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -11,8 +13,11 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <stdexcept>
+#include <stop_token>
 #include <thread>
+#include <utility>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -164,6 +169,95 @@ void CheckPosixSpawnSignalAttributes() {
     if (createdDirectory) std::filesystem::remove("app0", error);
 }
 
+void CheckStartHostJThread() {
+    bool nullaryRan = false;
+#ifdef ANYPS5_HOST_HAS_MXCSR
+    unsigned int observedMxcsr = 0;
+    {
+        auto thread = Libc::StartHostJThread([&] {
+            observedMxcsr = _mm_getcsr();
+            nullaryRan = true;
+        });
+    }
+    Require(nullaryRan, "nullary StartHostJThread callable must run");
+    Require(observedMxcsr == 0x1f80u, "StartHostJThread must initialize host MXCSR to 0x1f80u");
+#else
+    {
+        auto thread = Libc::StartHostJThread([&] {
+            nullaryRan = true;
+        });
+    }
+    Require(nullaryRan, "nullary StartHostJThread callable must run");
+#endif
+
+    int forwardedValueWithoutToken = 0;
+    {
+        auto thread = Libc::StartHostJThread(
+            [&](std::unique_ptr<int> payload, int offset) {
+                if (payload) {
+                    forwardedValueWithoutToken = *payload + offset;
+                }
+            },
+            std::make_unique<int>(40),
+            2);
+    }
+    Require(forwardedValueWithoutToken == 42, "StartHostJThread without stop_token must forward move-only and value arguments");
+
+    std::atomic<bool> workerEntered{false};
+    bool observedStopRequested = false;
+    int forwardedValueWithToken = 0;
+    {
+        auto thread = Libc::StartHostJThread(
+            [&](std::stop_token token, std::unique_ptr<int> payload, int scale) {
+                workerEntered.store(true, std::memory_order_release);
+                while (!token.stop_requested()) {
+                    std::this_thread::yield();
+                }
+                observedStopRequested = token.stop_requested();
+                if (payload) {
+                    forwardedValueWithToken = *payload * scale;
+                }
+            },
+            std::make_unique<int>(7),
+            6);
+        while (!workerEntered.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        thread.request_stop();
+    }
+    Require(observedStopRequested, "StartHostJThread must propagate stop_requested() to stop_token callable");
+    Require(forwardedValueWithToken == 42, "StartHostJThread with stop_token must forward move-only and value arguments");
+
+    struct RvalueMoveOnlyTask {
+        std::unique_ptr<int> payload;
+        bool* ran;
+        bool* stopSeen;
+
+        RvalueMoveOnlyTask(std::unique_ptr<int> value, bool* ranFlag, bool* stopFlag)
+            : payload(std::move(value)), ran(ranFlag), stopSeen(stopFlag) {}
+
+        RvalueMoveOnlyTask(RvalueMoveOnlyTask&&) = default;
+        RvalueMoveOnlyTask& operator=(RvalueMoveOnlyTask&&) = default;
+        RvalueMoveOnlyTask(const RvalueMoveOnlyTask&) = delete;
+        RvalueMoveOnlyTask& operator=(const RvalueMoveOnlyTask&) = delete;
+
+        void operator()(std::stop_token token) && {
+            *stopSeen = token.stop_requested();
+            *ran = payload && *payload == 99;
+        }
+    };
+
+    bool rvalueRan = false;
+    bool rvalueStopSeen = true;
+    {
+        auto thread = Libc::StartHostJThread(
+            RvalueMoveOnlyTask(std::make_unique<int>(99), &rvalueRan, &rvalueStopSeen));
+        thread.join();
+    }
+    Require(rvalueRan, "StartHostJThread must invoke rvalue-qualified move-only functor");
+    Require(!rvalueStopSeen, "StartHostJThread must pass an unstopped token when joined before destruction");
+}
+
 } // namespace
 
 int main(int count, char** arguments) {
@@ -178,5 +272,6 @@ int main(int count, char** arguments) {
     CheckCap();
     CheckExpiry();
     CheckPosixSpawnSignalAttributes();
+    CheckStartHostJThread();
     return 0;
 }
