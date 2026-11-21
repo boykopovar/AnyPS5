@@ -1,4 +1,5 @@
 #include "prx/libSceShare/include/Api.hpp"
+#include "prx/libSceShare/include/InventoryExports.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
@@ -23,6 +24,27 @@ int main() {
     Require(sceShareFeaturePermit(1) == 0);
     Require(sceShareFeatureProhibit(0) == 0);
     Require(sceShareFeatureProhibit(1) == 0);
+    Require(sceShareFeatureExPermit(0) == 0);
+    Require(sceShareFeatureExPermit(1) == 0);
+    Require(sceShareFeatureExProhibit(0) == 0);
+    Require(sceShareFeatureExProhibit(1) == 0);
+    {
+        constexpr std::int32_t invalid = static_cast<std::int32_t>(0x81960002);
+        int first = 0;
+        int second = 0;
+        int data = 0;
+        Require(sceShareRegisterUploadCallback(nullptr, &data) == invalid);
+        Require(sceShareUnregisterUploadCallback(nullptr) == invalid);
+        Require(sceShareUnregisterUploadCallback(&first) == invalid);
+        Require(sceShareRegisterUploadCallback(&first, nullptr) == 0);
+        Require(sceShareRegisterUploadCallback(&first, &data) == invalid);
+        Require(sceShareRegisterUploadCallback(&second, &data) == 0);
+        Require(sceShareUnregisterUploadCallback(&first) == 0);
+        Require(sceShareUnregisterUploadCallback(&first) == invalid);
+        Require(sceShareRegisterUploadCallback(&first, &data) == 0);
+        Require(sceShareUnregisterUploadCallback(&first) == 0);
+        Require(sceShareUnregisterUploadCallback(&second) == 0);
+    }
     Require(sceShareRegisterContentEventCallback(nullptr, nullptr) == 0);
     Require(sceShareUnregisterContentEventCallback(nullptr) == 0);
     Require(sceShareSetCaptureSource(0, nullptr) == 0);
