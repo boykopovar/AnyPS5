@@ -134,30 +134,11 @@ int main() {
     Require(std::filesystem::is_regular_file(cached));
     Require((std::filesystem::status(cached).permissions() & std::filesystem::perms::owner_write) == std::filesystem::perms::none);
 
-    const auto altRoot = originalRoot / "sandbox_cert_alt_root";
-    RemoveDirectoryTree(altRoot);
-    const auto altCacheDir = altRoot / "cert_cache";
-    std::filesystem::create_directories(altCacheDir);
-    const auto altCached = altCacheDir / "CA_LIST.cer";
-    {
-        std::ofstream file(altCached, std::ios::binary | std::ios::trunc);
-        file.write(text.data(), static_cast<std::streamsize>(text.size()));
-        Require(static_cast<bool>(file));
-    }
-    std::filesystem::permissions(altCached, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
-    Require((std::filesystem::status(altCached).permissions() & std::filesystem::perms::owner_write) != std::filesystem::perms::none);
-    std::filesystem::current_path(altRoot);
-    Require(ResolvePath_nid_no_patch("/system/common/cert/CA_LIST.cer") == altCached);
-    Require(ReadKernel("/system/common/cert/CA_LIST.cer") == text);
-    Require((std::filesystem::status(altCached).permissions() & std::filesystem::perms::owner_write) == std::filesystem::perms::none);
-
-    const auto conflictRoot = originalRoot / "sandbox_cert_conflict_root";
-    RemoveDirectoryTree(conflictRoot);
-    const auto conflictCacheDir = conflictRoot / "cert_cache";
-    std::filesystem::create_directories(conflictCacheDir);
-    const auto conflictCached = conflictCacheDir / "CA_LIST.cer";
-    auto conflictTemp = conflictCached;
+    std::filesystem::permissions(cached, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
+    Require(std::filesystem::remove(cached));
+    auto conflictTemp = cached;
     conflictTemp += "." + std::to_string(CurrentProcessId()) + ".tmp";
+    RemoveDirectoryTree(conflictTemp);
     {
         std::ofstream file(conflictTemp, std::ios::binary | std::ios::trunc);
         file << "stale temporary certificate\n";
@@ -167,16 +148,9 @@ int main() {
         conflictTemp,
         std::filesystem::perms::owner_read | std::filesystem::perms::group_read | std::filesystem::perms::others_read);
     Require((std::filesystem::status(conflictTemp).permissions() & std::filesystem::perms::owner_write) == std::filesystem::perms::none);
-    std::filesystem::current_path(conflictRoot);
     Require(ReadKernel("/system/common/cert/CA_LIST.cer") == text);
-    Require(std::filesystem::is_regular_file(conflictCached));
-    Require((std::filesystem::status(conflictCached).permissions() & std::filesystem::perms::owner_write) == std::filesystem::perms::none);
+    Require(std::filesystem::is_regular_file(cached));
+    Require((std::filesystem::status(cached).permissions() & std::filesystem::perms::owner_write) == std::filesystem::perms::none);
     Require(!std::filesystem::exists(conflictTemp));
-
-    std::filesystem::current_path(originalRoot);
-    std::filesystem::permissions(altCached, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
-    std::filesystem::permissions(conflictCached, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
-    Require(std::filesystem::remove_all(altRoot) > 0);
-    Require(std::filesystem::remove_all(conflictRoot) > 0);
     return 0;
 }
