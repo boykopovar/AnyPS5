@@ -1,4 +1,5 @@
 #include "Translation/TranslationContext.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -495,6 +496,115 @@ void TranslationContext::vPermlane16B32(const RdnaInstruction& inst, bool x16) {
     const PermlaneFlags flags{x16, inst.destination.opSel, inst.destination.opSelHi};
     const IrU32 result(ir.Emit(IrOpcode::Permlane16U32, IrType::U32, {&value.Value(), &selectLow.Value(), &selectHigh.Value(), &ir.GetExec(), &previous.Value()}, flags));
     writeRawU32(inst.destination, result);
+}
+
+void TranslationContext::TranslateSplitState(const SplitStateAbi::Plan& plan, const SplitStateAbi::Point& point) {
+    using namespace SplitStateAbi;
+    const auto base = AreaBase(point.area, plan.vectorCount);
+    const auto target = TargetSlot(plan.vectorCount);
+    IrValue& always = ir.ConstantBool(true);
+    const auto store = [&](std::uint32_t slot, IrValue& value, IrValue& enabled) { (void)ir.Emit(IrOpcode::StoreSplitState, IrType::Void, {&ir.Constant(slot), &value, &enabled}); };
+    const auto load = [&](std::uint32_t slot) -> IrValue& { return ir.Emit(IrOpcode::LoadSplitState, IrType::U32, {&ir.Constant(slot)}); };
+    const auto saveVectors = [&](IrValue& enabled) {
+        for (std::uint32_t slot = 0; slot < plan.vectorCount; ++slot) store(base + slot, ir.GetVectorReg(static_cast<VectorReg>(plan.registers[slot])), enabled);
+    };
+    switch (point.action) {
+    case Action::ClearTarget:
+        store(target, ir.Constant(0u), always);
+        store(target + 1u, ir.Constant(0u), always);
+        return;
+    case Action::StoreTarget:
+        store(target, ir.GetScalarReg(static_cast<ScalarReg>(plan.targetRegister)), always);
+        store(target + 1u, ir.GetScalarReg(static_cast<ScalarReg>(plan.targetRegister + 1u)), always);
+        return;
+    case Action::SaveTarget: {
+        IrValue& exec = ir.GetExec();
+        store(target, ir.GetScalarReg(static_cast<ScalarReg>(plan.targetRegister)), exec);
+        store(target + 1u, ir.GetScalarReg(static_cast<ScalarReg>(plan.targetRegister + 1u)), exec);
+        return;
+    }
+    case Action::SaveSelected: {
+        IrValue& low = ir.IEqual(load(target), ir.Constant(static_cast<std::uint32_t>(plan.selectedTarget)));
+        IrValue& high = ir.IEqual(load(target + 1u), ir.Constant(static_cast<std::uint32_t>(plan.selectedTarget >> 32u)));
+        saveVectors(ir.LogicalAnd(low, high));
+        return;
+    }
+    case Action::Save:
+        saveVectors(always);
+        return;
+    case Action::Load:
+        for (std::uint32_t slot = 0; slot < plan.vectorCount; ++slot) ir.SetVectorReg(static_cast<VectorReg>(plan.registers[slot]), load(base + slot));
+        return;
+    case Action::SaveState: {
+        store(target, ir.GetScalarReg(static_cast<ScalarReg>(plan.targetRegister)), always);
+        store(target + 1u, ir.GetScalarReg(static_cast<ScalarReg>(plan.targetRegister + 1u)), always);
+        const auto bit = [&](IrValue& value) -> IrValue& { return ir.Select(value, ir.Constant(1u), ir.Constant(0u)); };
+        auto slot = base;
+        for (const auto reg : plan.registers) {
+            if (reg < VectorRegisters) {
+                store(slot, ir.GetVectorReg(static_cast<VectorReg>(reg)), always);
+            } else if (reg < ExecRegister) {
+                const auto scalar = static_cast<ScalarReg>(reg - ScalarBase);
+                store(slot, ir.GetScalarReg(scalar), always);
+                store(slot + 1u, ir.BitwiseOr(bit(ir.GetThreadBitScalarReg(scalar)), ir.ShiftLeftLogical(bit(ir.GetScalarMaskTag(scalar)), ir.Constant(1u))), always);
+            } else if (reg == ExecRegister) {
+                store(slot, bit(ir.GetExec()), always);
+                store(slot + 1u, ir.GetExecLo(), always);
+                store(slot + 2u, ir.GetExecHi(), always);
+            } else if (reg == VccRegister) {
+                store(slot, bit(ir.GetVcc()), always);
+                store(slot + 1u, ir.GetVccLo(), always);
+                store(slot + 2u, ir.GetVccHi(), always);
+            } else if (reg == SccRegister) {
+                store(slot, bit(ir.GetScc()), always);
+            } else {
+                store(slot, ir.GetM0(), always);
+            }
+            slot += RegisterSlots(reg);
+        }
+        return;
+    }
+    case Action::LoadTarget:
+        ir.SetScalarReg(static_cast<ScalarReg>(plan.targetRegister), load(target));
+        ir.SetScalarReg(static_cast<ScalarReg>(plan.targetRegister + 1u), load(target + 1u));
+        return;
+    case Action::LoadState: {
+        const auto set = [&](std::uint32_t slot, std::uint32_t mask) -> IrValue& { return ir.INotEqual(ir.BitwiseAnd(load(slot), ir.Constant(mask)), ir.Constant(0u)); };
+        auto slot = base;
+        for (const auto reg : plan.registers) {
+            if (reg < VectorRegisters) {
+                ir.SetVectorReg(static_cast<VectorReg>(reg), load(slot));
+            } else if (reg < ExecRegister) {
+                const auto scalar = static_cast<ScalarReg>(reg - ScalarBase);
+                if (std::ranges::find(plan.assumed, reg) != plan.assumed.end()) {
+                    IrValue& saved = load(slot);
+                    IrValue& current = ir.GetScalarReg(scalar);
+                    (void)ir.Emit(IrOpcode::SplitStateGuard, IrType::Void, {&ir.INotEqual(saved, current), &saved, &current, &ir.Constant(reg - ScalarBase)});
+                    slot += RegisterSlots(reg);
+                    continue;
+                }
+                ir.SetScalarReg(scalar, load(slot));
+                ir.SetThreadBitScalarReg(scalar, set(slot + 1u, 1u));
+                ir.SetScalarMaskTag(scalar, set(slot + 1u, 2u));
+            } else if (reg == ExecRegister) {
+                ir.SetExec(set(slot, 1u));
+                ir.SetExecLo(load(slot + 1u));
+                ir.SetExecHi(load(slot + 2u));
+            } else if (reg == VccRegister) {
+                ir.SetVcc(set(slot, 1u));
+                ir.SetVccLo(load(slot + 1u));
+                ir.SetVccHi(load(slot + 2u));
+            } else if (reg == SccRegister) {
+                ir.SetScc(set(slot, 1u));
+            } else {
+                ir.SetM0(load(slot));
+            }
+            slot += RegisterSlots(reg);
+        }
+        return;
+    }
+    }
+    throw std::invalid_argument("unknown split state action");
 }
 
 }

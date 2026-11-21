@@ -74,9 +74,10 @@ class Build:
         return found
 
     def walk(self, roots):
+        built = {line.rpartition(": ")[0] for line in self.run("-t", "targets", "all").splitlines()}
         nodes, todo = {}, list(roots)
         while todo:
-            batch = sorted({t for t in todo if t not in nodes})
+            batch = sorted({t for t in todo if t not in nodes and t in built})
             if not batch:
                 break
             nodes.update(self.query(batch))
@@ -99,7 +100,7 @@ class Build:
 
     def tests(self, *arguments):
         listing = json.loads(subprocess.run(["ctest", "--test-dir", self.path, "--show-only=json-v1", *arguments],
-                                            capture_output=True, text=True, check=True).stdout)
+                                            capture_output=True, text=True, encoding="utf-8", check=True).stdout)
         missing = {test["name"] for test in listing["tests"] if not test.get("command")}
         if missing:
             commands = self.test_commands(missing)
@@ -374,6 +375,9 @@ def main(argv=None):
     e = sub.add_parser("explain", help="explain saved-graph selections without a configured build; CTest may add fixtures")
     e.add_argument("graph", type=Path)
     e.add_argument("changed", type=Path, help="file with newline-separated or Git -z NUL-separated changed paths")
+    t = sub.add_parser("targets", help="print the build outputs that the tests matching a ctest regular expression, and the fixtures ctest adds to them, run")
+    t.add_argument("build")
+    t.add_argument("regex", help="ctest -R regular expression")
     c = sub.add_parser("ctest", help="run ctest on a tree, limited to the selected tests if select wrote any")
     c.add_argument("build")
     c.add_argument("arguments", nargs=argparse.REMAINDER, help="ctest arguments")
@@ -405,6 +409,14 @@ def main(argv=None):
         build = Build(args.build)
     except (OSError, KeyError) as error:
         parser.error(f"{args.build}: not a configured CMake build directory ({error})")
+    if args.command == "targets":
+        _, listed = build.tests("-R", args.regex)
+        if not listed:
+            parser.error(f"no test matches {args.regex}")
+        wanted = {build.output(path) for test in listed for path in paths(test.get("command") or [])} - {None}
+        for target in build.outputs(sorted(wanted)):
+            print(target)
+        return 0
     if args.command == "dump":
         dump(build, args.graph)
         return 0
