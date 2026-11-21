@@ -79,6 +79,7 @@ constexpr SystemInteger SystemIntegers[] = {
     {{1, 8}, "kern.argmax", 262144},
     {{1, 18}, "kern.ngroups", 1023},
     {{1, 24}, "kern.osreldate", 900000},
+    {{1, 46}, "kern.sdk_version", 0x01000000},
 };
 
 const SystemString* FindSystemString(const int* name) {
@@ -507,6 +508,10 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             *__error_nid_postfix() = 22;
             return -1;
         }
+        if (oldValue == nullptr) {
+            constexpr std::size_t EstimatedExtraProcesses = 5;
+            return CopyOut(nullptr, (EstimatedExtraProcesses + 1) * sizeof(GuestKinfoProc), nullptr, oldLength);
+        }
         const GuestKinfoProc process = GuestProcessRecord();
         return CopyOut(&process, sizeof(process), oldValue, oldLength);
     }
@@ -598,7 +603,10 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
         return 0;
     }
     if (nameLength == 2 && name[0] == 1 && name[1] == 50) {
-        if (newValue != nullptr) throw std::runtime_error(std::string(__func__) + ": writing kern.rng_pseudo is unverified");
+        if (newValue != nullptr) {
+            *__error_nid_postfix() = 1;
+            return -1;
+        }
         std::array<std::uint8_t, 64> bytes{};
         if (oldValue != nullptr && oldLength != nullptr) {
             static std::random_device device;
@@ -669,15 +677,8 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
         return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
     }
     if (std::strcmp(name, "kern.rng_pseudo") == 0) {
-        if (newValue != nullptr) {
-            *__error_nid_postfix() = 1;
-            return -1;
-        }
-        static std::random_device device;
-        std::uint8_t block[64]{};
-        if (oldValue != nullptr && oldLength != nullptr)
-            for (auto& byte : block) byte = static_cast<std::uint8_t>(device());
-        return CopyOut(block, sizeof(block), oldValue, oldLength);
+        static constexpr int mib[] = {1, 50};
+        return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
     }
     if (std::strcmp(name, "vm.overcommit") == 0) {
         if (newValue != nullptr) {
@@ -686,14 +687,6 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
         }
         static constexpr int overcommit = 0;
         return CopyOut(&overcommit, sizeof(overcommit), oldValue, oldLength);
-    }
-    if (std::strcmp(name, "kern.sdk_version") == 0) {
-        if (newValue != nullptr) {
-            *__error_nid_postfix() = 1;
-            return -1;
-        }
-        static constexpr std::uint32_t sdkVersion = 0x01000000;
-        return CopyOut(&sdkVersion, sizeof(sdkVersion), oldValue, oldLength);
     }
     if (std::strcmp(name, "machdep.tsc_freq") == 0) {
         if (newValue != nullptr) {

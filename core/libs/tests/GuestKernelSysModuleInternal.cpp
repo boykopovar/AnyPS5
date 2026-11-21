@@ -1,4 +1,5 @@
 #include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel_sys/include/AdditionalExports.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -62,6 +63,32 @@ static void CheckMatchesAddressLookup() {
     Require(std::memcmp(byHandle.name, byAddress.name, sizeof(ModuleInfoEx) - offsetof(ModuleInfoEx, name)) == 0);
 }
 
+static void CheckModuleCodeSpan() {
+    ModuleInfoEx info{};
+    info.st_size = sizeof(info);
+    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(&sceKernelGetModuleInfo), 1, &info) == 0);
+    Require(libkernel_sysUnknown_2xg4JXvaJ6k_nid_no_patch(info.id, nullptr) == 0);
+    bool checkedCode = false;
+    bool checkedData = false;
+    for (std::uint32_t index = 0; index < info.segment_count; ++index) {
+        const auto& segment = info.segments[index];
+        if (segment.size == 0) continue;
+        const auto* first = reinterpret_cast<const void*>(segment.address);
+        const auto* last = reinterpret_cast<const void*>(segment.address + segment.size - 1);
+        const int expected = (segment.prot & 4) != 0 ? 1 : 0;
+        Require(libkernel_sysUnknown_2xg4JXvaJ6k_nid_no_patch(info.id, first) == expected);
+        Require(libkernel_sysUnknown_2xg4JXvaJ6k_nid_no_patch(info.id, last) == expected);
+        if (expected == 1) {
+            const auto* end = reinterpret_cast<const void*>(segment.address + segment.size);
+            Require(libkernel_sysUnknown_2xg4JXvaJ6k_nid_no_patch(info.id, end) == 0);
+        }
+        Require(libkernel_sysUnknown_2xg4JXvaJ6k_nid_no_patch(-1, first) == 0);
+        checkedCode |= expected == 1;
+        checkedData |= expected == 0;
+    }
+    Require(checkedCode && checkedData);
+}
+
 static void CheckRefusals() {
     const auto handle = List(sceKernelGetModuleListInternal).front();
     for (const std::uint64_t size : {0x160, 0x1a4, 0x1b0, 0}) {
@@ -122,6 +149,7 @@ int main() {
     CheckList();
     CheckEachModule();
     CheckMatchesAddressLookup();
+    CheckModuleCodeSpan();
     CheckRefusals();
     CheckLoadStartSysmodule();
     CheckIsModuleLoaded();

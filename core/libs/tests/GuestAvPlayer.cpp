@@ -1024,7 +1024,7 @@ void TestPlayback() {
         return frames >= 2 && sounds >= 2;
     }), "playback stalled");
     Check(sceAvPlayerCurrentTime(player) > 0, "clock not running");
-    Check(sceAvPlayerSetTrickSpeed(player, 0) == InvalidParams, "zero trick speed accepted");
+    Check(sceAvPlayerSetTrickSpeed(player, 0) == AvPlayer::SCE_AVPLAYER_ERROR_NOT_SUPPORTED, "zero trick speed did not return NOT_SUPPORTED");
     Check(sceAvPlayerSetTrickSpeed(player, 100) == 0, "normal trick speed rejected");
 
     Check(sceAvPlayerPause(player) == 0, "pause failed");
@@ -1054,8 +1054,8 @@ void TestPlayback() {
 
     events.Clear();
     const auto forward = sceAvPlayerCurrentTime(player);
-    Check(sceAvPlayerSetTrickSpeed(player, -100) == 0, "reverse trick speed rejected");
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    Check(sceAvPlayerSetTrickSpeed(player, -400) == 0, "reverse trick speed rejected");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     Check(!sceAvPlayerGetVideoDataEx(player, &frame) && !sceAvPlayerGetAudioData(player, &sound), "data delivered in reverse");
     const auto rewound = sceAvPlayerCurrentTime(player);
     Check(rewound + 150 <= forward, "clock did not run backwards: " + std::to_string(forward) + " to " + std::to_string(rewound));
@@ -2508,6 +2508,36 @@ void TestHttpSources(const std::string& base) {
     Check(allocations.blocks.empty(), "HTTP playback allocations leaked");
 }
 
+void TestSourceTypePaths() {
+    HostFile file;
+    auto init = InitData(nullptr);
+    init.file_replacement = {&file, OpenFile, CloseFile, ReadFile, FileSize};
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "source-type test init failed");
+    for (const auto* path : {
+        "https://media.example.test/live.m3u8/segment",
+        "https://media.example.test/clip.mp4/noext",
+        "https://origin.m3u8/path",
+        "https://origin.m3u8?token=123",
+        "app0/live.m3u8/segment",
+    }) {
+        Check(sceAvPlayerAddSource(player, path) == OperationFailed, std::string("parent path was misidentified as HLS: ") + path);
+    }
+    for (const auto* path : {
+        "https://media.example.test/live.M3U8?token=123",
+        "https://media.example.test/clip.mp4/segment.m3u8#part",
+    }) {
+        bool rejected = false;
+        try { sceAvPlayerAddSource(player, path); }
+        catch (const std::runtime_error&) { rejected = true; }
+        Check(rejected, std::string("HLS filename was not rejected: ") + path);
+    }
+    Check(sceAvPlayerAddSource(player, "/app0/replaced.mp4") == 0, "MP4 source was not accepted after rejected paths");
+    Check(sceAvPlayerClose(player) == 0, "source-type test close failed");
+    std::lock_guard lock(allocations.mutex);
+    Check(allocations.blocks.empty(), "source-type test allocations leaked");
+}
+
 }
 
 #ifdef _WIN32
@@ -2698,6 +2728,7 @@ int main(int argc, char** argv) {
         }
         Check(argc == 1, "unknown AvPlayer test arguments");
         WriteMovie();
+        TestSourceTypePaths();
         TestLoopWarningAtPlayback();
         TestAudioLoopWarningAtPlayback();
         TestLoopWarningSharedByStreams();

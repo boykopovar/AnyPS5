@@ -37,6 +37,32 @@ def load_tool():
     return TOOL
 
 
+def is_app_execution_alias(program):
+    return getattr(os.lstat(program), "st_reparse_tag", 0) == getattr(stat, "IO_REPARSE_TAG_APPEXECLINK", None)
+
+
+def launcher_interpreter():
+    launcher = shutil.which("py")
+    if launcher is None:
+        return None
+    result = subprocess.run([launcher, "-X", "utf8", "-c", "import sys; print(sys.executable)"], capture_output=True, encoding="utf-8", timeout=30)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def copyable_executable():
+    for program in (getattr(sys, "_base_executable", sys.executable), launcher_interpreter()):
+        if program and Path(program).is_file() and not is_app_execution_alias(program):
+            return program
+    return None
+
+
+def copy_executable(program, target):
+    shutil.copy2(program, target)
+    for pattern in ("python*.dll", "vcruntime*.dll"):
+        for library in Path(program).parent.glob(pattern):
+            shutil.copy2(library, target.parent / library.name)
+
+
 def frozen_datetime(instant):
     class FrozenDateTime(REAL_DATETIME):
         @classmethod
@@ -162,9 +188,12 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         self.assertEqual(snapshot(self.root), before, result.stdout + result.stderr)
 
     def fake_relinker(self):
+        program = copyable_executable()
+        if program is None:
+            self.skipTest("no interpreter to copy as the relinker: sys.executable is an App Execution Alias and py is unavailable")
         target = self.build / "core/relinker" / ("relinker.exe" if os.name == "nt" else "relinker")
         target.parent.mkdir(parents=True)
-        shutil.copy2(sys.executable, target)
+        copy_executable(program, target)
         self.build_from_source()
         return target
 
@@ -175,6 +204,12 @@ runpy.run_path(sys.argv[0], run_name="__main__")
     def reports(self, output=None):
         output = output or self.out
         return sorted(path for path in output.iterdir() if path.is_dir() and not path.is_symlink() and path.name != "work")
+
+    def test_fake_relinker_starts_outside_the_interpreter_directory(self):
+        relinker = self.fake_relinker()
+        result = subprocess.run([str(relinker), "--version"], capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, f"{result.returncode:#x} {result.stderr}")
+        self.assertIn("Python", result.stdout + result.stderr)
 
     def test_package_equals_work_directory(self):
         self.package(self.out / "work" / TITLE)
@@ -423,6 +458,80 @@ runpy.run_path(sys.argv[0], run_name="__main__")
                 self.titles.write_text(json.dumps({TITLE: {"executables": [executable]}}), encoding="utf-8")
                 self.refuse()
 
+    def test_auxiliary_library_alias_targets_are_protected(self):
+        self.package(self.root / "games" / TITLE)
+        target = self.stale_work() / "original-runtime"
+        target.write_bytes(b"original auxiliary runtime")
+        for name in ("libmimalloc.so", "mimalloc.dll", "mimalloc-redirect.dll", "libTracyClient.so.0.14.1"):
+            with self.subTest(name=name):
+                alias = self.build / "core/libs/libs" / name
+                self.symlink(target, alias)
+                self.refuse()
+                alias.unlink()
+
+    def test_invalid_enabled_tracy_preserves_work_before_cleanup(self):
+        self.package(self.root / "games" / TITLE)
+        self.fake_relinker()
+        with (self.build / "CMakeCache.txt").open("a", encoding="utf-8") as cache:
+            cache.write("APS5_ENABLE_TRACY:BOOL=ON\n")
+        libraries = self.build / "core/libs/libs"
+        libraries.mkdir(parents=True)
+        for names in ((), ("libTracyClient.so.0.13.1", "libTracyClient.so.0.14.1")):
+            with self.subTest(clients=names):
+                self.stale_work()
+                for name in names:
+                    (libraries / name).write_bytes(b"client")
+                self.refuse()
+
+    def test_configured_windows_compiler_runtime_alias_is_protected(self):
+        package = self.package(self.root / "games" / TITLE)
+        target = self.stale_work() / "original-compiler-runtime.dll"
+        target.write_bytes(b"original compiler runtime")
+        compiler = self.root / "toolchain/bin"
+        self.symlink(target, compiler / "libstdc++-6.dll")
+        self.build.mkdir()
+        (self.build / "CMakeCache.txt").write_text(
+            "CMAKE_CXX_COMPILER:FILEPATH=" + (compiler / "g++.exe").as_posix() + "\n", encoding="utf-8")
+        from types import SimpleNamespace
+        args = SimpleNamespace(build=self.build, out=self.out, titles=self.titles, compare=None)
+        before = snapshot(self.root)
+        with self.assertRaisesRegex(ValueError, "overlaps"):
+            load_tool().validate_layout(args, {TITLE: {"package": package}}, [TITLE], {}, self.source, "windows")
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_unusable_enabled_tracy_preserves_work_before_cleanup(self):
+        package = self.package(self.root / "games" / TITLE)
+        self.fake_relinker()
+        with (self.build / "CMakeCache.txt").open("a", encoding="utf-8") as cache:
+            cache.write("APS5_ENABLE_TRACY:BOOL=ON\n")
+        libraries = self.build / "core/libs/libs"
+        libraries.mkdir(parents=True)
+        (libraries / "libmimalloc.so").write_bytes(b"allocator")
+        client = libraries / "libTracyClient.so.0.14.1"
+        from types import SimpleNamespace
+        args = SimpleNamespace(build=self.build, out=self.out, titles=self.titles, compare=None)
+        for kind in ("dangling-symlink", "directory", "empty-file"):
+            work = self.stale_work()
+            if kind == "dangling-symlink":
+                self.symlink(self.root / "missing-client", client)
+            elif kind == "directory":
+                client.mkdir()
+            else:
+                client.touch()
+            before = snapshot(self.root)
+            with self.subTest(kind=kind, consumer="layout"), self.assertRaisesRegex(RuntimeError, "Tracy"):
+                load_tool().validate_layout(args, {TITLE: {"package": package}}, [TITLE], {}, self.source, "linux")
+            with self.subTest(kind=kind, consumer="CLI"):
+                result = self.run_cli()
+                self.assertTrue((work / "previous-run.bin").is_file(), result.stdout + result.stderr)
+                self.assertEqual(snapshot(self.root), before, result.stdout + result.stderr)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("Tracy", result.stderr)
+            if kind == "directory":
+                client.rmdir()
+            else:
+                client.unlink()
+
     def test_disjoint_run_preserves_dump_and_cleans_previous_work(self):
         package = self.package(self.root / "games" / TITLE)
         self.fake_relinker()
@@ -632,5 +741,5 @@ runpy.run_path(sys.argv[0], run_name="__main__")
 
 
 if __name__ == "__main__":
-    faulthandler.dump_traceback_later(20, exit=True)
+    faulthandler.dump_traceback_later(280, exit=True)
     unittest.main()
