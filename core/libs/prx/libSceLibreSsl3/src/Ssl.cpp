@@ -253,9 +253,9 @@ std::size_t APS5_VABI SSL_get_client_random_nid_postfix(const LibreSsl3Ssl* ssl,
     const auto* state = ReadField(ssl, &LibreSsl3Ssl::s3, __func__);
     if (!state)
         throw std::invalid_argument("SSL_get_client_random requires SSL3 state");
-    unsigned char random[randomSize];
-    CopyGuestBytesIn(random, state->clientRandom, randomSize, __func__);
-    CopyGuestBytesOut(out, random, length, __func__);
+    std::array<unsigned char, randomSize> random;
+    CopyGuestBytesIn(random.data(), state->clientRandom, random.size(), __func__);
+    CopyGuestBytesOut(out, random.data(), length, __func__);
     return length;
 }
 

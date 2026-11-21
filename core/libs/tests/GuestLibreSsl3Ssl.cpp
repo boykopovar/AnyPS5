@@ -457,6 +457,17 @@ void CheckClientRandom() {
             Require(out[index] == (index < copied ? stateBytes[40 + index] : 0xEE), "client random bytes or untouched tail");
     }
     Require(std::memcmp(&state, stateBytes.data(), sizeof(state)) == 0, "SSL3 state unchanged");
+    FencedPage fenced;
+    unsigned char* const fencedOut = fenced.data + fenced.bytes - 32;
+    const std::size_t hugeLimits[] = {33, fenced.bytes, std::numeric_limits<std::size_t>::max() / 2,
+                                      std::numeric_limits<std::size_t>::max()};
+    for (std::size_t limit : hugeLimits) {
+        std::memset(fenced.data, 0xEE, fenced.bytes);
+        Require(SSL_get_client_random_nid_postfix(&ssl, fencedOut, limit) == 32, "huge limit copies the 32-byte random");
+        Require(std::memcmp(fencedOut, stateBytes.data() + 40, 32) == 0, "huge limit client random bytes");
+        Require(std::all_of(fenced.data, fencedOut, [](unsigned char value) { return value == 0xEE; }),
+                "huge limit wrote before the output");
+    }
     ssl.s3 = nullptr;
     std::array<unsigned char, 4> out{};
     Require(SSL_get_client_random_nid_postfix(&ssl, out.data(), 0) == 0, "an empty copy does not read SSL3 state");
