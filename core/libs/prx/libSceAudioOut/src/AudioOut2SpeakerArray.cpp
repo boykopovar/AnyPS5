@@ -149,10 +149,11 @@ int APS5_VABI sceAudioOut2GetSpeakerArrayCoefficients(AudioOut2SpeakerArrayHandl
     (void)height_aware;
     (void)downmix_spread_radius;
     const SpeakerArray& array = Array(handle);
-    if (coefficients == nullptr || num_coefficients != array.numSpeakers) APS5_INVALID_ARG_EX;
-    std::fill_n(coefficients, array.numSpeakers, 0.0f);
-    if (array.numSpeakers > 0) coefficients[0] = 1.0f;
-    if (array.numSpeakers > 1) coefficients[1] = 1.0f;
+    if (coefficients == nullptr || num_coefficients != array.numSpeakers || array.numSpeakers > MaxSpeakers) APS5_INVALID_ARG_EX;
+    std::array<float, MaxSpeakers> local{};
+    if (array.numSpeakers > 0) local[0] = 1.0f;
+    if (array.numSpeakers > 1) local[1] = 1.0f;
+    if (!WriteGuest(coefficients, local.data(), array.numSpeakers * sizeof(float))) APS5_INVALID_ARG_EX;
     return 0;
 }
 

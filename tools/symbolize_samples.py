@@ -168,6 +168,10 @@ class PeModule:
         return result
 
     def export_symbols(self, data, rva, size):
+        if size < 40:
+            raise ValueError("PE export directory is smaller than its header")
+        if rva + size > 0x100000000:
+            raise ValueError("PE export directory exceeds address space")
         directory = self.read_bytes(data, rva, 40)
         functions, names, function_rva, name_rva, ordinal_rva = struct.unpack_from("<IIIII", directory, 20)
         if not names:
@@ -365,6 +369,8 @@ def load(path, thread=None):
         frames, _, count = line.rpartition(" ")
         if not frames or not is_ascii_digits(count):
             raise ValueError(f"{path}:{number}: expected 'frame;...;frame count', 'module offset self inclusive' or 'thread <id> samples <n>'")
+        if any(not frame.strip() for frame in frames.split(";")):
+            raise ValueError(f"{path}:{number}: collapsed stack contains an empty frame")
         record_format("collapsed", number)
         if thread is not None:
             raise ValueError(f"{path}:{number}: thread filtering requires an address capture; collapsed stacks have no thread IDs")

@@ -1,0 +1,5 @@
+# libSceSystemService
+
+## add Functional
+
+- [sceLncUtilLaunchApp](../../../core/libs/prx/libSceSystemService/PendingExports.cpp) (libSceSystemService) - throws once firmware 13.60 checks its initialization; the host has no `SceLncService`. Before that it returns `0x80940005` for a null title id, a title id that is not 9 characters, or a null `LncLaunchParam`. The module then returns `0x80940001` before `sceLncUtilInitialize` and `0x80940005` for `argv` strings over 0x1000 bytes with their terminators, and sends method 0x30000 with the args size, the title id, the args and the 0x28-byte `LncLaunchParam`, which it copies without reading. The service answers, among others, `0x80940008` when `eboot.bin` is missing and `0x80940009` when `param.sfo` and `param.json` are, in `mountWorkspace`; `0x80940033` when an `original_path` query finds an app that is not a package; and `0x80940006` for internal failures such as `createChildSandbox`. Read from disassembly, not measured on a console. Closes when: the host can launch another app.

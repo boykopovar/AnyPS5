@@ -1,0 +1,5 @@
+# libSceAppInstUtil
+
+## change [sceAppInstUtilInstallByPackage]
+
+- [sceAppInstUtilInstallByPackage](../../../core/libs/prx/libSceAppInstUtil/Export.cpp) (libSceAppInstUtil) - throws where firmware 13.60 sends the install request; the host has no install service. Before that it returns what the module returns: `0x80A30003` for a null argument, a null URI at MetaInfo+0x00, or a MetaInfo string too long (0x00, 0x08 and 0x28 up to 0x3ffe characters, 0x10 up to 2, 0x18 up to 0x2f, 0x20 up to 0x7f), and `0x80A31000` before `sceAppInstUtilInitialize`. The module then sends MetaInfo, the u32 at +0x30, the byte at +0x34 and 0x2708 bytes of PlayGo info to `SceAppInst` method 0x20058. The service writes the 0x38-byte pkg_info, and the module polls method 0x2005a every 100 ms with no timeout. On success it copies the content id (0x30 bytes) and the type and platform (u32 at +0x30 and +0x34) back into pkg_info. It makes no URI check. Read from disassembly, not measured on a console. Closes when: an install service exists on the host.
