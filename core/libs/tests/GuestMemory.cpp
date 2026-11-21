@@ -4681,6 +4681,49 @@ static void CheckMunmapOverUnmappedPages() {
     Require(munmap_nid_postfix(memory, page * 3) == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory), page * 3) == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory), 0) == SCE_KERNEL_ERROR_EINVAL);
+    for (const auto& [offset, length, pages] : {std::array<std::size_t, 3>{0, 1, 1}, {0, page + 1, 2},
+                                               {1, 1, 1}, {1, page, 2}, {page - 1, 2, 2}}) {
+        raw = mmap_nid_postfix(nullptr, page * 4, 3, 0x1002, -1, 0);
+        Require(raw != failed);
+        memory = static_cast<unsigned char*>(raw);
+        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory + page + offset), length) == 0);
+        for (std::size_t slot = 0; slot < 4; ++slot) {
+            const int expected = slot > 0 && slot <= pages ? SCE_KERNEL_ERROR_EACCES : 0;
+            Require(sceKernelVirtualQuery(memory + slot * page, 0, &info, sizeof(info)) == expected);
+        }
+        Require(munmap_nid_postfix(memory, page * 4) == 0);
+    }
+    constexpr std::size_t top = std::numeric_limits<std::size_t>::max();
+    for (const auto& [offset, length, result, pages] : {std::array<std::size_t, 4>{0, top, 0, 0}, {0, top - page + 2, 0, 0},
+                                                       {1, top, 0, 0}, {1, top - page + 1, 0, 0}, {2, top, 0, 1},
+                                                       {page - 1, top - page + 3, 0, 1},
+                                                       {0, top - page + 1, static_cast<std::size_t>(SCE_KERNEL_ERROR_EINVAL), 0}}) {
+        raw = mmap_nid_postfix(nullptr, page * 3, 3, 0x1002, -1, 0);
+        Require(raw != failed);
+        memory = static_cast<unsigned char*>(raw);
+        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory + page + offset), length) == static_cast<int>(result));
+        for (std::size_t slot = 0; slot < 3; ++slot) {
+            const int expected = slot == 1 && pages == 1 ? SCE_KERNEL_ERROR_EACCES : 0;
+            Require(sceKernelVirtualQuery(memory + slot * page, 0, &info, sizeof(info)) == expected);
+        }
+        Require(munmap_nid_postfix(memory, page * 3) == 0);
+    }
+    for (const auto& [address, length] : {std::array<std::uint64_t, 2>{0, page}, {1, 1}, {1, top}, {0x800000000000, page},
+                                          {0x800000000001, 1}, {0xffff800000000000, page}, {0xffffffffffffc000, page},
+                                          {0xffffffffffffc001, 1}, {0x7fffffffc000, page * 2}, {0x7fffffffffff, 2},
+                                          {0x800000004001, top - page + 1}})
+        Require(sceKernelMunmap(address, length) == SCE_KERNEL_ERROR_EINVAL);
+    for (const std::uint64_t address : {0x4001ull, 0x7fffffffc001ull, 0x800000000001ull})
+        Require(sceKernelMunmap(address, top - page + 1) == 0);
+    std::size_t before = 0;
+    std::size_t available = 0;
+    Require(sceKernelAvailableFlexibleMemorySize(&before) == 0);
+    void* flexible = nullptr;
+    Require(sceKernelMapFlexibleMemory(&flexible, page * 4, 3, 0) == 0 && flexible != nullptr);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(flexible) + page + 1, page) == 0);
+    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before - page * 2);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(flexible), page * 4) == 0);
+    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
 }
 
 static void CheckMemoryPoolBlockStats() {

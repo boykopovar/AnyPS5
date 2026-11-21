@@ -254,15 +254,8 @@ int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept {
         SetError(error);
         return -1;
     };
-    std::size_t rounded;
-    const auto offset = reinterpret_cast<std::uintptr_t>(address) & (PS5_PAGE_SIZE - 1);
-    const auto start = reinterpret_cast<std::uintptr_t>(address) - offset;
-    if (length == 0 || length > std::numeric_limits<std::size_t>::max() - offset ||
-        !RoundLength(length + offset, rounded) || start == 0 ||
-        rounded > std::numeric_limits<std::uintptr_t>::max() - start)
-        return failed(GuestInvalid);
     try {
-        if (sceKernelMunmap(start, rounded) != 0) return failed(GuestInvalid);
+        if (sceKernelMunmap(reinterpret_cast<std::uintptr_t>(address), length) != 0) return failed(GuestInvalid);
         return 0;
     } catch (const std::bad_alloc&) {
         return failed(GuestNoMemory);

@@ -410,12 +410,20 @@ int APS5_VABI sceKernelMprotect(const void* addr, size_t len, int prot) {
 }
 
 int APS5_VABI sceKernelMunmap(uint64_t vaddr, size_t len) {
+ constexpr uint64_t mask = PS5_PAGE_SIZE - 1;
+ if (len == 0) return SCE_KERNEL_ERROR_EINVAL;
+ const auto offset = vaddr & mask;
+ vaddr -= offset;
+ len = (len + offset + mask) & ~mask;
+ const auto end = vaddr + len;
+ if (end < vaddr || vaddr < PS5_PAGE_SIZE || end > 0x800000000000) return SCE_KERNEL_ERROR_EINVAL;
+ if (len == 0) return 0;
  const int result = DoMunmap(reinterpret_cast<void*>(vaddr), len);
  if (result == 0) {
   _releaseFlexible(static_cast<uintptr_t>(vaddr), len);
-  ForgetLockedRange(static_cast<uintptr_t>(vaddr), static_cast<uintptr_t>(vaddr) + len);
+  ForgetLockedRange(static_cast<uintptr_t>(vaddr), end);
   std::lock_guard lock(g_rangeNameLock);
-  EraseRangeNames(static_cast<uintptr_t>(vaddr), static_cast<uintptr_t>(vaddr) + len);
+  EraseRangeNames(static_cast<uintptr_t>(vaddr), end);
  }
  return result;
 }
