@@ -9038,33 +9038,6 @@ int APS5_VABI WKPageSetMediaCaptureEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetPageContextMenuClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetPageDiagnosticLoggingClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetPageFindClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetPageFindMatchesClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetPageFormClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetPageInjectedBundleClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetPageStateClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKPageSetScaleFactor() {
     NotImplemented_nid_no_patch(__func__);

@@ -108,6 +108,13 @@ public:
     std::optional<PageClientRegistration> navigationClient;
     std::optional<PageClientRegistration> policyClient;
     std::optional<PageClientRegistration> uiClient;
+    std::optional<PageClientRegistration> contextMenuClient;
+    std::optional<PageClientRegistration> diagnosticLoggingClient;
+    std::optional<PageClientRegistration> findClient;
+    std::optional<PageClientRegistration> findMatchesClient;
+    std::optional<PageClientRegistration> formClient;
+    std::optional<PageClientRegistration> injectedBundleClient;
+    std::optional<PageClientRegistration> stateClient;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};

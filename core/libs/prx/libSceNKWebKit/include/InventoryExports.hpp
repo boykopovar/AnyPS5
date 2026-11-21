@@ -318,13 +318,7 @@ int APS5_VABI WKPageSetCustomBackingScaleFactor();
 int APS5_VABI WKPageSetIgnoresViewportScaleLimits();
 int APS5_VABI WKPageSetMaintainsInactiveSelection();
 int APS5_VABI WKPageSetMediaCaptureEnabled();
-int APS5_VABI WKPageSetPageContextMenuClient();
-int APS5_VABI WKPageSetPageDiagnosticLoggingClient();
-int APS5_VABI WKPageSetPageFindClient();
-int APS5_VABI WKPageSetPageFindMatchesClient();
-int APS5_VABI WKPageSetPageFormClient();
-int APS5_VABI WKPageSetPageInjectedBundleClient();
-int APS5_VABI WKPageSetPageStateClient();
+
 int APS5_VABI WKPageSetScaleFactor();
 int APS5_VABI WKPageStopLoading();
 int APS5_VABI WKPageSupportsTextEncoding();
