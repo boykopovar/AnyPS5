@@ -59,7 +59,6 @@ int main() {
     WKIconDatabaseSetIconDatabaseClient();
     WKIconDatabaseSetIconURLForPageURL();
     WKPreferencesSetAccelerated2DCanvasEnabled();
-    WKPreferencesSetQTKitEnabled();
     WKWebsiteDataStoreClearAllDeviceOrientationPermissions();
     WKWebsiteDataStoreReinitializeAppBoundDomains();
     WKWebsiteDataStoreSetAppBoundDomainsForTesting();

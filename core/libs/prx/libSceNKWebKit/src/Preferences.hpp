@@ -210,6 +210,7 @@ bool APS5_VABI WKPreferencesGetPrimaryPlugInSnapshotDetectionEnabled(const void*
 bool APS5_VABI WKPreferencesGetPrivateBrowsingEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetProcessSwapOnNavigationEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetPunchOutWhiteBackgroundsInDarkMode(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetQTKitEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetReferrerPolicyAttributeEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetRemotePlaybackEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetRequestAnimationFrameEnabled(const void* preferencesRef);
@@ -423,6 +424,7 @@ void APS5_VABI WKPreferencesSetPrimaryPlugInSnapshotDetectionEnabled(const void*
 void APS5_VABI WKPreferencesSetPrivateBrowsingEnabled(const void* preferencesRef, bool value);
 void APS5_VABI WKPreferencesSetProcessSwapOnNavigationEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetPunchOutWhiteBackgroundsInDarkMode(const void* preferencesRef, bool flag);
+void APS5_VABI WKPreferencesSetQTKitEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetReferrerPolicyAttributeEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetRemotePlaybackEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetRequestAnimationFrameEnabled(const void* preferencesRef, bool value);
