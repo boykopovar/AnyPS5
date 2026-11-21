@@ -202,6 +202,23 @@ void TestPlain() {
     CheckValue(Conf(83, "critical,digitalSignature"), 83, 1, {0x03, 0x02, 0x07, 0x80});
 }
 
+void TestPlainLineBreaks() {
+    CheckValue(Conf(83, "digitalSignature,\ncRLSign"), 83, 0, {0x03, 0x02, 0x01, 0x82});
+    CheckValue(Conf(83, "digitalSignature,\n cRLSign \r\n"), 83, 0, {0x03, 0x02, 0x01, 0x82});
+    CheckValue(Conf(83, "\ndigitalSignature"), 83, 0, {0x03, 0x02, 0x07, 0x80});
+    CheckValue(Conf(83, "keyCertSign:\nx"), 83, 0, {0x03, 0x02, 0x02, 0x04});
+    CheckValue(Conf(71, "client,\r\nserver"), 71, 0, {0x03, 0x02, 0x06, 0xc0});
+    CheckValue(Conf(126, "serverAuth,\nclientAuth"), 126, 0,
+        {0x30, 0x14, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01,
+            0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x02});
+    Require(Conf(83, "digitalSignature\r\nbogus") == nullptr);
+    Require(Conf(83, "digitalSignature,\ncRLSign:x") == nullptr);
+    Require(Conf(83, "digitalSignature,\n") == nullptr);
+    Require(Conf(126, "serverAuth\nclientAuth") == nullptr);
+    Require(Conf(126, "serverAuth,\nclientAuth,codeSigning") == nullptr);
+    Require(allocations.empty());
+}
+
 void TestPlainFailures() {
     Require(Conf(83, "") == nullptr);
     Require(Conf(83, "bogus") == nullptr);
@@ -243,6 +260,7 @@ int main() {
     TestMalformed();
     TestUnknownNid();
     TestPlain();
+    TestPlainLineBreaks();
     TestPlainFailures();
     TestAllocationFailures();
     Require(allocations.empty());

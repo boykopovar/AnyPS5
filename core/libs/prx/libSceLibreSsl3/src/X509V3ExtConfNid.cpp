@@ -391,12 +391,11 @@ bool StripSpaces(std::string_view text, std::string& result) {
 bool ParseList(std::string_view text, std::vector<ListEntry>& entries) {
     std::size_t limit = 0;
     while (limit < text.size() && text[limit] != '\r' && text[limit] != '\n') ++limit;
-    text = text.substr(0, limit);
     std::string name;
     std::string value;
     bool inValue = false;
     std::size_t start = 0;
-    for (std::size_t position = 0; position < text.size(); ++position) {
+    for (std::size_t position = 0; position < limit; ++position) {
         const char current = text[position];
         if (!inValue) {
             if (current != ':' && current != ',') continue;
