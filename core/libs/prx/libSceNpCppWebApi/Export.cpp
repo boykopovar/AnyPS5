@@ -1848,17 +1848,25 @@ static const VectorBody* ResolveVectorBody(const void* self) {
     return static_cast<const VectorBody*>(static_cast<const IntrusivePtr*>(self)->object);
 }
 
-static std::uint64_t HostVectorSize(const void* self, const char* function) {
-    const auto* body = ResolveVectorBody(self);
-    if (body == nullptr) return 0;
-    if (body->magic != VectorBodyMagic) NotImplemented_nid_no_patch(function);
-    return body->size;
+
+static std::uint64_t HostVectorSize(const void* self, const std::size_t elementSize, const char* function) {
+    if (const auto* body = HostVectorBody(self, 0, function)) return body->size;
+    if (self == nullptr) return 0;
+    std::uintptr_t first = 0;
+    std::memcpy(&first, self, sizeof(first));
+    if (first == 0) return 0;
+    std::uintptr_t last = 0;
+    std::memcpy(&last, static_cast<const std::uint8_t*>(self) + 0x10, sizeof(last));
+    return (last - first) / elementSize;
 }
 
 static IntrusivePtr* HostVectorElement(void* self, const std::uint64_t index, const char* function) {
-    auto* body = const_cast<VectorBody*>(ResolveVectorBody(self));
-    if (body == nullptr || body->magic != VectorBodyMagic || body->elementKind != 1) NotImplemented_nid_no_patch(function);
-    return static_cast<IntrusivePtr*>(body->elements) + index;
+    if (const auto* body = HostVectorBody(self, 1, function)) return static_cast<IntrusivePtr*>(body->elements) + index;
+    if (self == nullptr) NotImplemented_nid_no_patch(function);
+    IntrusivePtr* first = nullptr;
+    std::memcpy(&first, self, sizeof(first));
+    if (first == nullptr) NotImplemented_nid_no_patch(function);
+    return first + index;
 }
 
 static int VectorPushBackIntrusivePtr(IntrusivePtr* self, const IntrusivePtr* element) {
@@ -1940,7 +1948,7 @@ static const VectorBody* HostVectorBody(const void* self, const std::int32_t ele
             body = static_cast<const VectorBody*>(value.object);
         }
     }
-    if (body != nullptr && body->elementKind != elementKind) NotImplemented_nid_no_patch(function);
+    if (body != nullptr && elementKind != 0 && body->elementKind != elementKind) NotImplemented_nid_no_patch(function);
     return body;
 }
 
@@ -2804,7 +2812,7 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGa
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V59ContainerEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V57ProductEEEE5beginEv(void* out, void* self) {
@@ -2816,15 +2824,15 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGa
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V53SkuEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V119AdditionalStatisticEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V122RequestPlayerStatisticEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_17TitleCloudStorage2V110DataStatusEEEE5beginEv(CommonIterator* iterator, const IntrusivePtr* self) {
@@ -3867,7 +3875,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V1
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V120PlayerSessionForReadEEEE5emptyEv(const void* self) {
-    return HostVectorSize(self, __func__) == 0;
+    return HostVectorSize(self, 24, __func__) == 0;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V150PostPlayerSessionsSessionIdInvitationsResponseBodyEEC1Ev(IntrusivePtr* self) {
@@ -3956,7 +3964,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorImE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 8, __func__);
 }
 
 std::int64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V129GetPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5getIdEv() {
@@ -4077,7 +4085,7 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorImEneERKS4_(const void* self
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_14SessionManager2V120PlayerSessionForReadEEEEEED1Ev(IntrusivePtr* self) {
@@ -5080,7 +5088,7 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_13In
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V57ProductEEEE5emptyEv(const void* self) {
-    return HostVectorSize(self, __func__) == 0;
+    return HostVectorSize(self, 24, __func__) == 0;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_13InGameCatalog2V59ContainerEEEEneERKS9_(const void* self, const void* other) {
@@ -5151,7 +5159,7 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_13In
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V59ContainerEEEE5emptyEv(const void* self) {
-    return HostVectorSize(self, __func__) == 0;
+    return HostVectorSize(self, 24, __func__) == 0;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V59ContainerEEEEEEaSERKSA_(IntrusivePtr* self, const IntrusivePtr* source) {
@@ -7229,35 +7237,35 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_15DefaultRespons
 
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V57ProductEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V118GameSessionForReadEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V120PlayerSessionForReadEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V113RequestMemberEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V118RequestMatchPlayerEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V120RequestTeamStatisticEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 
@@ -7403,7 +7411,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6String
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEED1Ev(IntrusivePtr* self) {
@@ -7597,7 +7605,7 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_
 }
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V136GetFriendsPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE(void* self, const std::uint64_t* context) {
@@ -8530,7 +8538,7 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V131JoinedPlayerSessionWithPlatformEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V119PlayerSessionPlayerEEEEdeEv(const void* self) {
@@ -8984,11 +8992,11 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V118GameSessionForReadEEEE5emptyEv(const void* self) {
-    return HostVectorSize(self, __func__) == 0;
+    return HostVectorSize(self, 24, __func__) == 0;
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V131ResponsePlayerSessionInvitationEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V111GameSessionEEEEdeEv(const void* self) {
@@ -9179,7 +9187,7 @@ CommonConstIterator APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12Intrusiv
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V16AvatarEEEE4sizeEv(const void* self) {
-    return HostVectorSize(self, __func__);
+    return HostVectorSize(self, 24, __func__);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11UserProfile2V16AvatarEEEEdeEv(const void* self) {
