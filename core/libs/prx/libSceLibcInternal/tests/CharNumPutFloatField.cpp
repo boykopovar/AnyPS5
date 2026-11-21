@@ -13,6 +13,7 @@
 
 extern "C" {
 extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
+extern std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix;
 }
 
@@ -117,19 +118,42 @@ void CheckFormatting() {
 
 void CheckPunctuation() {
     const std::uint64_t savedId = _ZNSt8numpunctIcE2idE_nid_postfix;
+    const std::uint64_t savedCtypeId = _ZNSt5ctypeIcE2idE_nid_postfix;
     if (_ZNSt8numpunctIcE2idE_nid_postfix == 0) _ZNSt8numpunctIcE2idE_nid_postfix = 1;
+    if (_ZNSt5ctypeIcE2idE_nid_postfix == 0 || _ZNSt5ctypeIcE2idE_nid_postfix == _ZNSt8numpunctIcE2idE_nid_postfix) {
+        _ZNSt5ctypeIcE2idE_nid_postfix = _ZNSt8numpunctIcE2idE_nid_postfix + 1;
+    }
     const std::uint64_t id = _ZNSt8numpunctIcE2idE_nid_postfix;
+    const std::uint64_t ctypeId = _ZNSt5ctypeIcE2idE_nid_postfix;
+    const auto widenChar = [](const GuestLocale::Facet*, char ch) APS5_VABI -> char {
+        return ch == '.' ? ':' : ch;
+    };
+    const auto widenRange = [](const GuestLocale::Facet*, const char* first, const char* last, char* dst) APS5_VABI -> const char* {
+        for (; first != last; ++first, ++dst) *dst = (*first == '.' ? ':' : *first);
+        return last;
+    };
+    const GuestLocale::CtypeVtable ctypeVtable{
+        {nullptr, nullptr, nullptr, nullptr},
+        {nullptr, nullptr, nullptr, nullptr},
+        +widenChar,
+        +widenRange,
+        nullptr,
+        nullptr
+    };
+    GuestLocale::Facet ctypeFacet{&ctypeVtable.facet, 1, 0};
     GuestLocale::NumpunctFacet punct{{&g_groupVtable.facet, 1, 0}, nullptr, ',', '\'', nullptr, nullptr};
-    std::vector<GuestLocale::Facet*> facets(id + 1, nullptr);
+    std::vector<GuestLocale::Facet*> facets(std::max(id, ctypeId) + 1, nullptr);
     facets[id] = &punct.base;
+    facets[ctypeId] = &ctypeFacet;
     GuestLocale::Implementation implementation{{nullptr, 1, 0}, facets.data(), facets.size(), 0, false, "C"};
     GuestLocale::Implementation* locale = &implementation;
     g_grouping = "\3";
-    Require(PutFloat(&locale, 0, 0, "12345.67") == "12'345,67", "char _Fput replaces decimal point and groups integer part");
+    Require(PutFloat(&locale, 0, 0, "12345.67") == "12'345,67", "char _Fput replaces widened decimal point and groups integer part");
     Require(PutFloat(&locale, 0, 0, "-1234e+05") == "-1'234e+05", "char _Fput stops grouping at exponent");
     Require(PutFloat(&locale, 0, 0, "inf") == "inf", "char _Fput does not group inf");
     g_grouping = "";
     _ZNSt8numpunctIcE2idE_nid_postfix = savedId;
+    _ZNSt5ctypeIcE2idE_nid_postfix = savedCtypeId;
 }
 
 void CheckErrors() {
