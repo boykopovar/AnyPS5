@@ -140,7 +140,7 @@ static_assert(sizeof(LibreSslX509PublicKey) == 24 && offsetof(LibreSslX509Public
 static_assert(sizeof(LibreSslX509Extension) == 24 && offsetof(LibreSslX509Extension, critical) == 8 && offsetof(LibreSslX509Extension, value) == 16);
 static_assert(sizeof(LibreSslAsn1Encoding) == 24 && offsetof(LibreSslAsn1Encoding, len) == 8 && offsetof(LibreSslAsn1Encoding, modified) == 16);
 static_assert(sizeof(LibreSslX509CertInfo) == 104 && offsetof(LibreSslX509CertInfo, serialNumber) == 8 && offsetof(LibreSslX509CertInfo, issuer) == 24
-    && offsetof(LibreSslX509CertInfo, subject) == 40 && offsetof(LibreSslX509CertInfo, extensions) == 72 && offsetof(LibreSslX509CertInfo, encoding) == 80);
+    && offsetof(LibreSslX509CertInfo, subject) == 40 && offsetof(LibreSslX509CertInfo, extensions) == 72 && offsetof(LibreSslX509CertInfo, enc) == 80);
 static_assert(sizeof(LibreSslX509) == 176 && offsetof(LibreSslX509, references) == 28 && offsetof(LibreSslX509, name) == 32);
 static_assert(offsetof(LibreSslX509, exData) == 40 && offsetof(LibreSslX509, pathLength) == 48 && offsetof(LibreSslX509, extensionFlags) == 64);
 static_assert(offsetof(LibreSslX509, subjectKeyId) == 96 && offsetof(LibreSslX509, nameConstraints) == 136 && offsetof(LibreSslX509, sha1Hash) == 144 && offsetof(LibreSslX509, auxiliary) == 168);
@@ -1840,7 +1840,7 @@ const Template CertificateInfoTemplates[] = {
     {ExplicitTag | ContextClass | SequenceOf | Optional, 3, offsetof(LibreSslX509CertInfo, extensions), &ExtensionItem},
 };
 const Item CertificateInfoItem{.kind = Kind::Sequence, .type = Sequence, .templates = CertificateInfoTemplates, .count = 10,
-    .size = sizeof(LibreSslX509CertInfo), .encodingOffset = offsetof(LibreSslX509CertInfo, encoding)};
+    .size = sizeof(LibreSslX509CertInfo), .encodingOffset = offsetof(LibreSslX509CertInfo, enc)};
 
 const Template CertificateTemplates[] = {
     {0, 0, offsetof(LibreSslX509, certificateInfo), &CertificateInfoItem},
