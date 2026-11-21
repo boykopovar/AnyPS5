@@ -13,7 +13,8 @@ void APS5_VABI udata_setCommonData_nid_postfix(const void* data, std::int32_t* s
 
 void APS5_VABI udata_setFileAccess_nid_postfix(std::int32_t access, std::int32_t* status) {
     if (status && !GuestWritable_nid_no_patch(status, sizeof(*status))) return;
-    udata_setFileAccess(static_cast<UDataFileAccess>(access), nullptr);
+    UErrorCode nativeStatus = U_ZERO_ERROR;
+    udata_setFileAccess(static_cast<UDataFileAccess>(access), &nativeStatus);
 }
 
 }
