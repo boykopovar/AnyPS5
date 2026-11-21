@@ -30,6 +30,14 @@ std::int64_t JxrWmpReferenceEncode(const void* parameters, std::int32_t alpha, s
                                    std::size_t capacity, std::size_t* written);
 std::int64_t JxrWmpReferenceDecode(const std::uint8_t* data, std::size_t size, std::uint8_t* pixels,
                                    std::uint32_t stride, std::int32_t* width, std::int32_t* height);
+std::size_t JxrWmpReferenceEncoderTailOffset();
+std::size_t JxrWmpReferenceDecoderTailOffset();
+std::int64_t JxrWmpReferenceEncodeOriented(const void* parameters, std::uint32_t width, std::uint32_t height,
+                                           const std::uint8_t* pixels, std::uint32_t stride, std::int32_t banded,
+                                           std::int32_t orientation, std::uint8_t* output, std::size_t capacity,
+                                           std::size_t* written);
+void JxrWmpReferenceDecodeRewind(const std::uint8_t* data, std::size_t size, std::uint8_t* pixels, std::uint32_t stride,
+                                 std::int64_t* results);
 std::int64_t JxrWmpReferenceTranscode(const std::uint8_t* data, std::size_t size, const void* encodeParameters,
                                       const void* transcodeParameters, std::uint8_t* output, std::size_t capacity,
                                       std::size_t* written);
@@ -404,6 +412,89 @@ void TestTranscode(std::vector<std::uint8_t> encoded, std::uint8_t alphaMode) {
     Require(liveBlocks == blocksBefore);
 }
 
+constexpr std::size_t GuestOrientationOffset = 40;
+constexpr std::size_t GuestIgnoreOverlapOffset = 40;
+
+void TestEncoderOrientation(std::int32_t banded) {
+    constexpr std::int32_t orientation = 2;
+    const auto pixels = Pixels(3);
+    const auto stride = Width * 3;
+    auto parameters = Parameters(0, 0);
+    std::vector<std::uint8_t> expected(Capacity);
+    std::size_t expectedSize = 0;
+    Require(JxrWmpReferenceEncodeOriented(parameters.data(), Width, Height, pixels.data(), stride, banded, orientation,
+                                          expected.data(), expected.size(), &expectedSize) == 0);
+    Require(expectedSize > 0);
+    Require(expected != Encode(0, banded, false));
+
+    const auto blocksBefore = liveBlocks;
+    std::vector<std::uint8_t> output(Capacity);
+    auto* stream = MemoryStream(output, output.size());
+    auto* encoder = CreateEncoder();
+    Require(encoder->initialize(encoder, stream, parameters.data(), parameters.size()) == 0);
+    Require(encoder->setPixelFormat(encoder, JxrGuest_GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
+    Require(encoder->setSize(encoder, Width, Height) == 0);
+    auto* slot = reinterpret_cast<std::byte*>(encoder) + JxrWmpReferenceEncoderTailOffset() + GuestOrientationOffset;
+    Require(JxrWmpReferenceEncoderTailOffset() + GuestOrientationOffset + sizeof(orientation) <= sizeof(Jxr::ImageEncode));
+    std::memcpy(slot, &orientation, sizeof(orientation));
+    auto* writable = const_cast<std::uint8_t*>(pixels.data());
+    if (banded) {
+        Require(encoder->writePixelsBandedBegin(encoder, nullptr) == 0);
+        Require(encoder->writePixelsBanded(encoder, 16, writable, stride, 0) == 0);
+        Require(encoder->writePixelsBanded(encoder, Height - 16, writable + 16 * stride, stride, 1) == 0);
+        Require(encoder->writePixelsBandedEnd(encoder) == 0);
+    } else {
+        Require(encoder->writePixels(encoder, Height, writable, stride) == 0);
+    }
+    std::int32_t kept = 0;
+    std::memcpy(&kept, slot, sizeof(kept));
+    Require(kept == orientation);
+    std::size_t written = 0;
+    Require(stream->getPosition(stream, &written) == 0);
+    Require(encoder->terminate(encoder) == 0);
+    Require(encoder->release(&encoder) == 0 && encoder == nullptr);
+    Require(liveBlocks == blocksBefore);
+    Require(written == expectedSize);
+    Require(output == expected);
+}
+
+void TestDecoderIgnoreOverlap(std::vector<std::uint8_t> encoded) {
+    const auto stride = Width * 3;
+    std::vector<std::uint8_t> expected(stride * Height);
+    std::array<std::int64_t, 3> expectedResults{};
+    JxrWmpReferenceDecodeRewind(encoded.data(), encoded.size(), expected.data(), stride, expectedResults.data());
+    Require(expectedResults[0] == 0 && expectedResults[1] == 0 && expectedResults[2] == 0);
+
+    const auto blocksBefore = liveBlocks;
+    auto* stream = MemoryStream(encoded, encoded.size());
+    auto* decoder = CreateDecoder();
+    Require(decoder->initialize(decoder, stream) == 0);
+    JxrWmpReferenceConfigureDecoder(decoder);
+    auto* slot = reinterpret_cast<std::byte*>(decoder) + JxrWmpReferenceDecoderTailOffset() + GuestIgnoreOverlapOffset;
+    const auto store = [&](std::int32_t value) { std::memcpy(slot, &value, sizeof(value)); };
+    const auto load = [&] {
+        std::int32_t value = -1;
+        std::memcpy(&value, slot, sizeof(value));
+        return value;
+    };
+    std::vector<std::uint8_t> pixels(stride * Height);
+    Rect rect{0, 0, static_cast<std::int32_t>(Width), 16};
+    store(1);
+    Require(decoder->copy(decoder, &rect, pixels.data(), stride) == expectedResults[0]);
+    Require(load() == 1);
+    store(0);
+    Require(decoder->copy(decoder, &rect, pixels.data(), stride) == expectedResults[1]);
+    Require(load() == 0);
+    store(1);
+    rect.y = 16;
+    Require(decoder->copy(decoder, &rect, pixels.data() + 16 * stride, stride) == expectedResults[2]);
+    Require(load() == 1);
+    Require(pixels == expected);
+    Require(decoder->release(&decoder) == 0 && decoder == nullptr);
+    Require(stream->close(&stream) == 0 && stream == nullptr);
+    Require(liveBlocks == blocksBefore);
+}
+
 void TestRefusals() {
     const auto blocksBefore = liveBlocks;
     auto parameters = Parameters(0, 0);
@@ -465,6 +556,9 @@ int main() {
     Encode(1, 1, false);
     TestTranscode(plain, 0);
     TestTranscode(alpha, 2);
+    TestEncoderOrientation(0);
+    TestEncoderOrientation(1);
+    TestDecoderIgnoreOverlap(plain);
     TestRefusals();
     Require(liveBlocks == 0);
     return 0;
