@@ -13729,6 +13729,11 @@ void meshArgumentTests() {
     Require(same(ResolveMeshArguments(record(200, 3, 150), rules(triangles, 300)), {2, 3, 1, 150, 150}), "count clamped to the index buffer");
     Require(same(ResolveMeshArguments(record(9, 1, 300), rules(triangles, 300)), {0, 0, 0, 0, 300}), "first index past the index buffer draws nothing");
     Require(same(ResolveMeshArguments(record(2, 1, 0), rules(triangles, 300)), {0, 0, 0, 2, 0}), "no complete triangle draws nothing");
+    const auto autoRules = [&](const ShaderRecompiler::MeshConfiguration& mesh) { return AgcDriver::Graphics::MeshArgumentRulesFor(context, mesh, AgcDriver::Pm4::DrawParameters{0, 0, 0, 1, 0, false}); };
+    Require(same(ResolveMeshArguments(record(99, 2, 0), autoRules(triangles)), {2, 2, 1, 99, 0}), "a non-indexed record keeps its vertex count");
+    Require(same(ResolveMeshArguments(record(99, 2, 0xfffffff0u), autoRules(triangles)), {2, 2, 1, 99, 0}), "a non-indexed record's start vertex neither clamps nor offsets it");
+    Require(same(ResolveMeshArguments(record(2, 1, 5), autoRules(triangles)), {0, 0, 0, 2, 0}), "a non-indexed record with no complete triangle draws nothing");
+    Require(same(ResolveMeshArguments(record(200, 3, 150), AgcDriver::Graphics::MeshArgumentRulesFor(context, triangles, AgcDriver::Pm4::DrawParameters{0, 300, 2, 1, 0, true})), {2, 3, 1, 150, 150}), "an indexed draw keeps its index buffer clamp");
     Require(same(ResolveMeshArguments(record(10, 1, 0), rules(strip, 64)), {1, 1, 1, 10, 0}), "eight strip triangles are one group");
     Require(same(ResolveMeshArguments(record(11, 1, 0), rules(strip, 64)), {2, 1, 1, 11, 0}), "a ninth strip triangle starts a group");
     Require(same(ResolveMeshArguments(record(10, 1, 0), rules(fan, 64)), {1, 1, 1, 10, 0}), "eight fan triangles are one group");
