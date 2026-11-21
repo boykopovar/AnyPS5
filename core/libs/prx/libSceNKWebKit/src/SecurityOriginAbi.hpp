@@ -87,6 +87,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
+#include <utility>
 
 namespace NKWebKit::WebCoreAbi {
 
@@ -122,6 +123,10 @@ union SecurityOriginDataStorage {
 struct SecurityOriginData {
     SecurityOriginDataStorage storage;
     std::uint32_t index;
+
+    SecurityOriginData() = default;
+    SecurityOriginData(const SecurityOriginData&);
+    SecurityOriginData(SecurityOriginData&&) noexcept;
 };
 
 struct SecurityOrigin {
@@ -143,6 +148,26 @@ struct SecurityOrigin {
 
 constexpr std::uint32_t kSecurityOriginTupleIndex = 0;
 constexpr std::uint32_t kSecurityOriginOpaqueIndex = 1;
+
+inline SecurityOriginData::SecurityOriginData(const SecurityOriginData& other) {
+    if (other.index == kSecurityOriginTupleIndex) {
+        new (&storage.tuple) SecurityOriginTuple{other.storage.tuple};
+        index = kSecurityOriginTupleIndex;
+    } else {
+        storage.opaque = other.storage.opaque;
+        index = other.index;
+    }
+}
+
+inline SecurityOriginData::SecurityOriginData(SecurityOriginData&& other) noexcept {
+    if (other.index == kSecurityOriginTupleIndex) {
+        new (&storage.tuple) SecurityOriginTuple{std::move(other.storage.tuple)};
+        index = kSecurityOriginTupleIndex;
+    } else {
+        storage.opaque = other.storage.opaque;
+        index = other.index;
+    }
+}
 
 static_assert(sizeof(OptionalPort) == 4);
 static_assert(alignof(OptionalPort) == 2);
