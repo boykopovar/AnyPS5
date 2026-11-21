@@ -191,6 +191,16 @@ void LookupRenderer() {
     }
     Require(OracleCount(oracle, FT_GLYPH_FORMAT_OUTLINE) > 1);
     const auto outline = Renderers(library, FT_GLYPH_FORMAT_OUTLINE);
+    for (const std::uint32_t format : {0x80000000u, 0xffffffffu}) {
+        Require(!FT_Lookup_Renderer_nid_postfix(library, format, nullptr));
+        Require(!FT_Get_Renderer_nid_postfix(library, format));
+        Require(Renderers(library, format).empty());
+        node = nullptr;
+        Require(FT_Lookup_Renderer_nid_postfix(library, FT_GLYPH_FORMAT_OUTLINE, &node) && node);
+        Require(!FT_Lookup_Renderer_nid_postfix(library, format, &node) && !node);
+        node = sentinel;
+        Require(Throws([&] { FT_Lookup_Renderer_nid_postfix(library, format, &node); }));
+    }
     Require(FT_Set_Renderer_nid_postfix(library, outline.back(), 0, nullptr) == 0);
     Require(FT_Lookup_Renderer_nid_postfix(library, FT_GLYPH_FORMAT_OUTLINE, nullptr) == outline.back());
     node = sentinel;

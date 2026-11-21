@@ -62,6 +62,13 @@ void WriteNode(void** node, FT_ListNode value) {
 extern "C" void* APS5_VABI FT_Lookup_Renderer_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t format, void** node) {
     if (!library) return nullptr;
     const FT_Library host = ReadLibrary(library);
+    if (!FreeType::InGlyphFormatRange(format)) {
+        if (node) {
+            ReadNode(host, node);
+            WriteNode(node, nullptr);
+        }
+        return nullptr;
+    }
     const auto glyphFormat = static_cast<FT_Glyph_Format>(format);
     if (!node) return FT_Lookup_Renderer(host, glyphFormat, nullptr);
     FT_ListNode current = ReadNode(host, node);
