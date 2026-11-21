@@ -66,6 +66,22 @@ void ConstructFrom(void* self, const GuestLocale::LocinfoStorage* locinfo, const
     Construct(self, vtable, references, function);
 }
 
+std::size_t Getcat(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale, const GuestLocale::FacetVtable* vtable, const char* function) {
+    if (facet != nullptr && *facet == nullptr) {
+        if (locale == nullptr || *locale == nullptr) throw std::invalid_argument(std::string(function) + ": null locale");
+        struct FacetGuard {
+            void* pointer;
+            ~FacetGuard() {
+                if (pointer != nullptr) _ZdlPv_nid_postfix(pointer);
+            }
+        } guard{_Znwm_nid_postfix(sizeof(GuestLocale::Facet))};
+        ConstructNamed(guard.pointer, (*locale)->name, vtable, 0, function);
+        *facet = static_cast<GuestLocale::Facet*>(guard.pointer);
+        guard.pointer = nullptr;
+    }
+    return 6;
+}
+
 }
 
 extern "C" {
@@ -116,6 +132,14 @@ void APS5_VABI _ZNSt8messagesIwEC2EPKcm_nid_postfix(void* self, const char* loca
 
 void APS5_VABI _ZNSt8messagesIwEC2ERKSt8_Locinfom_nid_postfix(void* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references) {
     ConstructFrom(self, locinfo, &g_wideMessagesVtable.facet, references, "messages<wchar_t>::messages");
+}
+
+std::size_t APS5_VABI _ZNSt8messagesIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
+    return Getcat(facet, locale, NarrowVtable(), "messages<char>::_Getcat");
+}
+
+std::size_t APS5_VABI _ZNSt8messagesIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
+    return Getcat(facet, locale, &g_wideMessagesVtable.facet, "messages<wchar_t>::_Getcat");
 }
 
 }
