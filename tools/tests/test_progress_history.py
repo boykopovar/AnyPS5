@@ -149,6 +149,26 @@ class HistoryCsvTests(unittest.TestCase):
                     progress_history.main([str(output), "--csv", "--cache", str(output / "history.csv")])
                 self.assertEqual((output / "history.csv").read_bytes(), original)
 
+    def test_csv_includes_optional_gfx1013_counts(self):
+        import csv
+        metric = {"done": 1, "total": 2, "percent": 50.0}
+        points = [
+            {"date": "2026-01-01", "commit": "a" * 40, "libraries": metric, "shaders": metric},
+            {"date": "2026-01-02", "commit": "b" * 40, "libraries": metric, "shaders": metric,
+             "gfx1013": {"done": 0, "total": 8, "percent": 0.0}},
+            {"date": "2026-01-03", "commit": "c" * 40, "libraries": metric, "shaders": metric,
+             "gfx1013": {"done": 5, "total": 8, "percent": 62.5}},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(progress_history, "collect", return_value=points), contextlib.redirect_stdout(io.StringIO()):
+                progress_history.main([directory, "--csv"])
+            with (Path(directory) / "history.csv").open(newline="", encoding="utf-8") as stream:
+                reader = csv.DictReader(stream)
+                columns = ["gfx1013_done", "gfx1013_total", "gfx1013_percent"]
+                self.assertEqual(reader.fieldnames[-4:], ["shader_metric", *columns])
+                self.assertEqual([[row[column] for column in columns] for row in reader],
+                                 [["", "", ""], ["0", "8", "0.0"], ["5", "8", "62.5"]])
+
 
 class HistoryReportOutputTests(unittest.TestCase):
     def test_report_output_errors_are_usage_errors_and_allow_retry(self):
@@ -854,6 +874,54 @@ class ProgressHistoryTests(unittest.TestCase):
             self.assertEqual(cache.read_bytes(), original)
 
 
+class LocationAndSeriesTests(unittest.TestCase):
+    def test_used_shader_metrics_lists_only_series_with_counts(self):
+        points = [{"shaders": 3}, {"shader_metric": "legacy", "shaders": 4}]
+        self.assertEqual(progress_history.used_shader_metrics(points), ["decoded", "legacy"])
+
+    def test_same_location_compares_real_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            file = Path(directory) / "history.json"
+            file.write_text("{}", encoding="utf-8")
+            self.assertTrue(progress_history.same_location(file, Path(directory) / "." / "history.json"))
+            self.assertFalse(progress_history.same_location(file, Path(directory) / "other.json"))
+
+
+class UtcDayTests(unittest.TestCase):
+    def test_utc_day_accepts_valid_dates_only(self):
+        import argparse
+        import progress_history
+        self.assertEqual(progress_history.utc_day("2026-11-16"), "2026-11-16")
+        for value in ("2026-02-30", "16-11-2026", "2026-11-16T00:00"):
+            with self.assertRaises(argparse.ArgumentTypeError, msg=value):
+                progress_history.utc_day(value)
+
+
+class SpreadTests(unittest.TestCase):
+    def test_spread_pushes_close_values_apart(self):
+        import progress_history
+        self.assertEqual(progress_history.spread([0, 5, 100], gap=15), [0, 15, 100])
+        self.assertEqual(progress_history.spread([10, 10, 10], gap=5), [10, 15, 20])
+class LabelledTests(unittest.TestCase):
+    def test_labelled_depends_on_span_and_weekday(self):
+        import datetime
+        import progress_history
+        day = datetime.date(2026, 1, 5)
+        self.assertEqual(day.weekday(), 0)
+        self.assertEqual(progress_history.labelled(day, 10), "Jan 5")
+        self.assertEqual(progress_history.labelled(day, 100), "Jan 5")
+        self.assertEqual(progress_history.labelled(day, 200), "Jan 2026")
+        self.assertEqual(progress_history.labelled(datetime.date(2026, 1, 12), 200), "")
+
+
+class ShaderCountsTests(unittest.TestCase):
+    def test_shader_counts_follow_the_point_metric(self):
+        import progress_history
+        point = {"shaders": 3, "shader_metric": "decoded", "gfx1013": 7}
+        self.assertEqual(progress_history.shader_metric({}), "decoded")
+        self.assertEqual(progress_history.shader_counts(point, "decoded"), 3)
+        self.assertIsNone(progress_history.shader_counts(point, "other"))
+        self.assertEqual(progress_history.shader_counts(point, "gfx1013"), 7)
 
 
 if __name__ == "__main__":

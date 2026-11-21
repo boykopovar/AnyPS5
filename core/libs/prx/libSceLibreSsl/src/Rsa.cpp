@@ -196,10 +196,10 @@ struct Cursor {
     NotImplemented_nid_no_patch((std::string(function) + ": BER " + what).c_str());
 }
 
-bool ReadHeader(const unsigned char* start, long available, Element& element) {
+bool ReadHeader(const unsigned char* start, std::int64_t available, Element& element) {
     if (available <= 0) return false;
     const unsigned char* data = start;
-    long remaining = available;
+    std::int64_t remaining = available;
     const bool constructed = *data & 0x20;
     const int tagClass = *data & 0xC0;
     int tag = *data & 0x1F;
@@ -248,7 +248,7 @@ bool ReadHeader(const unsigned char* start, long available, Element& element) {
     return true;
 }
 
-bool ReadTop(const unsigned char* data, long length, int tag, Element& element) {
+bool ReadTop(const unsigned char* data, std::int64_t length, int tag, Element& element) {
     return ReadHeader(data, length, element) && element.tag == tag && element.tagClass == 0;
 }
 
@@ -767,7 +767,10 @@ int VerifyDigestInfo(int type, const unsigned char* digest, unsigned int digestL
     Algorithm algorithm;
     Element hash;
     if (!ReadAlgorithm(fields, algorithm, function) || !ReadPrimitive(fields, 4, hash, function) || fields.length) return 0;
-    if (sequence.end != data + length) return 0;
+    if (sequence.end != data + length) {
+        LibreSslPutError_nid_no_patch(4, 0xfff, 104, __FILE__, __LINE__);
+        return 0;
+    }
     if (algorithm.parameter && !algorithm.nullParameter) {
         LibreSslPutError_nid_no_patch(4, 0xfff, 104, __FILE__, __LINE__);
         return 0;
@@ -1370,7 +1373,7 @@ int APS5_VABI RSA_verify_nid_postfix(int type, const unsigned char* digest, unsi
     return 0;
 }
 
-LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsigned char** input, long length) {
+LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsigned char** input, std::int64_t length) {
     if (!input) throw std::invalid_argument(std::string(__func__) + ": null input pointer");
     const unsigned char* data = *input;
     if (length <= 0) return nullptr;
