@@ -12,6 +12,7 @@ OPERATIONS = (
     "remap fixed",
     "map direct",
     "map anon",
+    "flexible backing",
     "map file",
     "map shared",
     "protect",
