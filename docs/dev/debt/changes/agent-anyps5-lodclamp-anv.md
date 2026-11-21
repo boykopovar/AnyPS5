@@ -1,0 +1,5 @@
+# shader
+
+## change [T# MIN_LOD on a device with the extension]
+
+- [T# MIN_LOD on a device with the extension](../../../core/shader/recompiler/SpirvBackend/src/SpirvImageEmitter.cpp) - the startup probe moves a device whose view clamp changes `image_sample_d_cl` (Mesa ANV) to the shader lane above, where fragment registration modules read the clamp from the T# words instead of a specialization constant. Only direct images take that lane: an image table entry keeps the view clamp, since the extension stays enabled, so on ANV an `image_sample_d_cl` of a table entry with a clamp still loses its gradient LOD and a size or level query of it reads 0. The shader lane adds a `MinLod` operand to a derivative sample only where the clamp is not 0 (a branch on the specialization constant, or on the T# words in registration modules), because ANV lowers `Grad` with `MinLod` to an explicit-LOD sample even at 0. ANV also adds an S# bias to a gradient LOD after the clamp operand, in both lanes, and nothing corrects it.
