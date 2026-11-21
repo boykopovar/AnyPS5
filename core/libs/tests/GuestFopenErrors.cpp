@@ -46,6 +46,7 @@ constexpr int GuestEloop = 62;
 constexpr int GuestEnametoolong = 63;
 
 const std::string LongName(300, 'n');
+bool linksAvailable = true;
 
 std::filesystem::path EnterFreshRoot() {
     const auto root = std::filesystem::temp_directory_path() /
@@ -55,10 +56,8 @@ std::filesystem::path EnterFreshRoot() {
 #ifdef _WIN32
     if (CreateSymbolicLinkW(L"loop", L"loop", SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) == 0) {
         Check(GetLastError() == ERROR_PRIVILEGE_NOT_HELD);
-        std::fprintf(stderr, "fopen error checks skipped: creating symbolic links needs Developer Mode or administrator rights\n");
-        std::filesystem::current_path(root.parent_path());
-        std::filesystem::remove_all(root);
-        std::exit(77);
+        std::fprintf(stderr, "fopen symlink-loop checks skipped: creating symbolic links needs Developer Mode or administrator rights\n");
+        linksAvailable = false;
     }
 #else
     Check(::symlink("loop", "loop") == 0);
@@ -75,9 +74,11 @@ bool OpenFails(const char* name, const char* mode, int error) {
 }
 
 void Open() {
-    Check(OpenFails("loop", "r", GuestEloop));
-    Check(OpenFails("loop", "w", GuestEloop));
-    Check(OpenFails("loop/inside", "r", GuestEloop));
+    if (linksAvailable) {
+        Check(OpenFails("loop", "r", GuestEloop));
+        Check(OpenFails("loop", "w", GuestEloop));
+        Check(OpenFails("loop/inside", "r", GuestEloop));
+    }
     Check(OpenFails(LongName.c_str(), "r", GuestEnametoolong));
     Check(OpenFails(LongName.c_str(), "w", GuestEnametoolong));
     Check(OpenFails((LongName + "/inside").c_str(), "a", GuestEnametoolong));
@@ -97,8 +98,10 @@ bool ReopenFails(const char* name, const char* mode, int error) {
 }
 
 void Reopen() {
-    Check(ReopenFails("loop", "r", GuestEloop));
-    Check(ReopenFails("loop/inside", "w", GuestEloop));
+    if (linksAvailable) {
+        Check(ReopenFails("loop", "r", GuestEloop));
+        Check(ReopenFails("loop/inside", "w", GuestEloop));
+    }
     Check(ReopenFails(LongName.c_str(), "r", GuestEnametoolong));
     Check(ReopenFails(LongName.c_str(), "w", GuestEnametoolong));
     Check(ReopenFails("missing.txt", "r", GuestEnoent));
@@ -110,7 +113,7 @@ void Reopen() {
 
 void CheckedOpen() {
     FileStream* stream = reinterpret_cast<FileStream*>(1);
-    Check(fopen_s_nid_postfix(&stream, "loop", "r") == GuestEloop && stream == nullptr);
+    if (linksAvailable) Check(fopen_s_nid_postfix(&stream, "loop", "r") == GuestEloop && stream == nullptr);
     Check(fopen_s_nid_postfix(&stream, LongName.c_str(), "w") == GuestEnametoolong && stream == nullptr);
     Check(fopen_s_nid_postfix(&stream, "folder", "w") == GuestEisdir && stream == nullptr);
     Check(fopen_s_nid_postfix(&stream, "plain.txt", "z") == GuestEinval && stream == nullptr);
@@ -144,10 +147,12 @@ void CheckedReopen() {
     Check(freopen_s_nid_postfix(&result, "plain.txt", "z", stream) == GuestEinval && result == nullptr);
     Check(freopen_s_nid_postfix(&result, "reopened.txt", "w", stream) == 0 && result == stream);
     Check(fclose_nid_postfix(stream) == 0 && std::filesystem::exists("reopened.txt"));
-    stream = fopen_nid_postfix("plain.txt", "r");
-    Check(stream != nullptr);
-    result = sentinel;
-    Check(freopen_s_nid_postfix(&result, "loop", "r", stream) == GuestEloop && result == nullptr);
+    if (linksAvailable) {
+        stream = fopen_nid_postfix("plain.txt", "r");
+        Check(stream != nullptr);
+        result = sentinel;
+        Check(freopen_s_nid_postfix(&result, "loop", "r", stream) == GuestEloop && result == nullptr);
+    }
     stream = fopen_nid_postfix("plain.txt", "r");
     Check(stream != nullptr);
     result = sentinel;

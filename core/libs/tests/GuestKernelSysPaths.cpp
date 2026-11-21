@@ -202,12 +202,32 @@ int main(int argc, char** argv) {
     } else if (test == "readlink_limits" || test == "readlinkat_limits") {
         const auto read = LoadFunction<std::int64_t (APS5_VABI*)(const char*, char*, std::size_t)>(sys, "readlink", patched);
         const auto readAt = LoadFunction<std::int64_t (APS5_VABI*)(int, const char*, char*, std::size_t)>(sys, "readlinkat", patched);
+        const auto call = [&](int variant, const std::string& suffix, char* output, std::size_t size) {
+            const auto relative = (root / suffix).generic_string();
+            switch (variant) {
+            case 0: return read(relative.c_str(), output, size);
+            case 1: return readAt(base, suffix.c_str(), output, size);
+            case 2: return readAt(-100, relative.c_str(), output, size);
+            default: return readAt(-1, ("/" + relative).c_str(), output, size);
+            }
+        };
+        const int firstVariant = test == "readlinkat_limits" ? 1 : 0;
+        const int endVariant = test == "readlinkat_limits" ? 4 : 1;
+        std::array<char, 64> output{};
+        for (int variant = firstVariant; variant < endVariant; ++variant) {
+            output.fill('z');
+            Require(call(variant, "missing", output.data(), output.size()) == -1 && *error() == 2);
+            Require(call(variant, "data", output.data(), output.size()) == -1 && *error() == 22);
+            Require(call(variant, "data", nullptr, 0) == -1 && *error() == 22);
+            for (const auto value : output) Require(value == 'z');
+        }
+        Require(read(nullptr, output.data(), output.size()) == -1 && *error() == 14);
+        Require(readAt(base, nullptr, output.data(), output.size()) == -1 && *error() == 14);
         Require(std::filesystem::create_directory(root / "end"));
         const std::error_code setupError = MakeLink("end", root / "p33", true);
 #ifdef _WIN32
         if (setupError.value() == ERROR_PRIVILEGE_NOT_HELD || setupError == std::errc::permission_denied) {
-            std::fputs("SKIP: Windows symbolic-link privileges unavailable\n", stderr);
-            skipped = true;
+            std::fputs("readlink link checks skipped: Windows symbolic-link privileges unavailable\n", stderr);
         } else
 #endif
         {
@@ -217,17 +237,7 @@ int main(int argc, char** argv) {
             constexpr char target[] = "target-not-followed";
             Require(!MakeLink(target, root / "end" / "leaf", false));
             Require(!MakeLink("cycle", root / "end" / "cycle", false));
-            const auto call = [&](int variant, const std::string& suffix, char* output, std::size_t size) {
-                const auto relative = (root / suffix).generic_string();
-                switch (variant) {
-                case 0: return read(relative.c_str(), output, size);
-                case 1: return readAt(base, suffix.c_str(), output, size);
-                case 2: return readAt(-100, relative.c_str(), output, size);
-                default: return readAt(-1, ("/" + relative).c_str(), output, size);
-                }
-            };
-            std::array<char, 64> output{};
-            for (int variant = test == "readlinkat_limits" ? 1 : 0; variant < (test == "readlinkat_limits" ? 4 : 1); ++variant) {
+            for (int variant = firstVariant; variant < endVariant; ++variant) {
                 for (const auto* prefix : {"p3/", "p2/"}) {
                     output.fill('z');
                     Require(call(variant, std::string(prefix) + "leaf", output.data(), output.size()) == sizeof(target) - 1);

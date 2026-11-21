@@ -388,8 +388,33 @@ class UnicodePathTests(unittest.TestCase):
                 os.chdir(previous)
 
 
+WINDOWS_LAUNCHER = """import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+fake, script, *argv = sys.argv[1:]
+sys.path.insert(0, str(Path(script).parent))
+import pr_overlap
+
+original = subprocess.run
+
+
+def run(command, *args, **kwargs):
+    if command and command[0] == "gh":
+        found = shutil.which("gh", path=fake)
+        if found is None:
+            raise SystemExit("gh stand-in not found in " + fake)
+        command = [found, *command[1:]]
+    return original(command, *args, **kwargs)
+
+
+subprocess.run = run
+raise SystemExit(pr_overlap.main(argv))
+"""
+
+
 class SubdirectoryTests(unittest.TestCase):
-    @unittest.skipIf(os.name == "nt", "fake gh is a shell script")
     def test_branch_report_from_a_subdirectory_matches_the_root(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve() / "repo"
@@ -420,15 +445,23 @@ class SubdirectoryTests(unittest.TestCase):
                 heads[branch] = git("rev-parse", "HEAD")
             pulls = [{"number": 7, "user": {"login": "someone"}, "head": {"sha": heads["theirs"]}, "body": "Depends on: none"}]
             (fake / "pulls.json").write_text(json.dumps(pulls), encoding="utf-8")
-            (fake / "gh").write_text(f"#!/bin/sh\ncat '{fake / 'pulls.json'}'\n", encoding="utf-8")
-            (fake / "gh").chmod(0o755)
+            if os.name == "nt":
+                (fake / "gh.cmd").write_text(f'@echo off\r\ntype "{fake / "pulls.json"}"\r\nexit 0\r\n', encoding="utf-8")
+                (fake / "launcher.py").write_text(WINDOWS_LAUNCHER, encoding="utf-8")
+            else:
+                (fake / "gh").write_text(f"#!/bin/sh\ncat '{fake / 'pulls.json'}'\n", encoding="utf-8")
+                (fake / "gh").chmod(0o755)
             environment = {**os.environ, "PATH": f"{fake}{os.pathsep}{os.environ['PATH']}", "GIT_CONFIG_COUNT": "1",
                            "GIT_CONFIG_KEY_0": f"url.{root.as_uri()}.insteadOf", "GIT_CONFIG_VALUE_0": "https://github.com/owner/project.git"}
             environment.pop("GITHUB_REPOSITORY", None)
             script = Path(pr_overlap.__file__).resolve()
+            if os.name == "nt":
+                entry = [sys.executable, str(fake / "launcher.py"), str(fake), str(script)]
+            else:
+                entry = [sys.executable, str(script)]
             outputs = {}
             for subdirectory in (".", "tools", "core/libs/prx"):
-                result = subprocess.run([sys.executable, str(script), "--repo", "owner/project", "--branch", "mine"],
+                result = subprocess.run([*entry, "--repo", "owner/project", "--branch", "mine"],
                                         cwd=root / subdirectory, env=environment, capture_output=True, text=True,
                                         encoding="utf-8", timeout=60)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -437,7 +470,7 @@ class SubdirectoryTests(unittest.TestCase):
             self.assertIn("| `sceExample` |", outputs["."])
             self.assertEqual(outputs["tools"], outputs["."])
             self.assertEqual(outputs["core/libs/prx"], outputs["."])
-            result = subprocess.run([sys.executable, str(script), "--repo", "owner/project", "--out", "reports"],
+            result = subprocess.run([*entry, "--repo", "owner/project", "--out", "reports"],
                                     cwd=root / "tools", env=environment, capture_output=True, text=True,
                                     encoding="utf-8", timeout=60)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -563,10 +596,20 @@ class ReportSizeCapTests(unittest.TestCase):
         self.assertRegex(report, r"_Report truncated: \d+ more lines omitted\._\n\Z")
 
 
+def posix_bash():
+    entries = [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry]
+    if os.name == "nt":
+        system = Path(os.environ.get("SystemRoot", "C:/Windows")).resolve()
+        entries = [entry for entry in entries
+                   if not Path(entry).resolve().is_relative_to(system) and "WindowsApps" not in Path(entry).parts]
+    return shutil.which("bash", path=os.pathsep.join(entries))
+
+
 class CommentStateTests(unittest.TestCase):
     def setUp(self):
-        if os.name == "nt" or not all(shutil.which(tool) for tool in ("bash", "jq", "sed", "sha256sum")):
-            self.skipTest("the workflow step runs in bash with jq, sed and sha256sum on Linux")
+        self.bash = posix_bash()
+        if not self.bash or not all(shutil.which(tool) for tool in ("jq", "sed", "sha256sum")):
+            self.skipTest("the workflow step runs in bash with jq, sed and sha256sum")
         lines = (Path(__file__).resolve().parents[2] / ".github/workflows/pr-overlap.yml").read_text(encoding="utf-8").splitlines()
         start = next(index for index, line in enumerate(lines) if "tools/pr_overlap.py" in line)
         indent = len(lines[start]) - len(lines[start].lstrip())
@@ -602,7 +645,7 @@ class CommentStateTests(unittest.TestCase):
         ])
         (self.root / "step.sh").write_bytes(script.encode("utf-8"))
         environment = dict(os.environ, RUNNER_TEMP=str(self.root), GH_REPO="owner/project")
-        result = subprocess.run(["bash", "step.sh"], cwd=self.root, env=environment, capture_output=True, text=True, timeout=20)
+        result = subprocess.run([self.bash, "step.sh"], cwd=self.root, env=environment, capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return [call.split(" ")[:3] for call in calls.read_text(encoding="utf-8").splitlines()]
 
