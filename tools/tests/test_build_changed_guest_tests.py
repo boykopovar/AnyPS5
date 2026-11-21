@@ -81,6 +81,13 @@ class GuestTestTargets(unittest.TestCase):
         guest_b = self.target("guest_b_tests", source="core/libs/tests/GuestB.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest_a, guest_b]), ["core/libs/tests/GuestB.cpp"]), ["guest_b_tests"])
 
+    def test_tests_in_checkout_path_do_not_make_a_production_tool_a_guest_test(self):
+        root = Path(self.temporary.name).resolve() / "tests" / "AnyPS5"
+        guest = self.target("guest_clock_tests", fragment="libc.prx")
+        helper = self.target("helper", source="core/libs/prx/libc/Helper.cpp", fragment="libc.prx")
+        targets = {target["id"]: target for target in (guest, helper)}
+        self.assertEqual(build_changed_guest_tests.guest_test_targets(root, targets), ["guest_clock_tests"])
+
     def test_a_production_source_change_selects_no_test_but_reaches_the_run(self):
         guest = self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest]), ["core/libs/prx/libc/src/FloatBuiltins.cpp"]), [])
