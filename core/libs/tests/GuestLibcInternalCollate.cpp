@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
@@ -270,6 +271,24 @@ void CheckConstructorsAndLifetime() {
     CheckConstructedOperations(FacetPtr(s4));
     CheckConstructedLayout(s4, 2);
 
+    FacetStorage s5 = FilledStorage();
+    _ZNSt7collateIcEC2Em_nid_postfix(FacetPtr(s5), 3);
+    CheckConstructedOperations(FacetPtr(s5));
+    CheckConstructedLayout(s5, 3);
+
+    FacetStorage s6 = FilledStorage();
+    _ZNSt7collateIcEC2ERKSt8_Locinfom_nid_postfix(FacetPtr(s6), &locinfo, wideRefs);
+    CheckConstructedOperations(FacetPtr(s6));
+    CheckConstructedLayout(s6, wideRefs);
+    Require(std::memcmp(&locinfo, &locinfoSnapshot, sizeof(locinfo)) == 0, "the base _Locinfo constructor does not mutate borrowed _Locinfo");
+
+    auto* deleting = static_cast<GuestLocale::CollateFacet*>(_Znwm_nid_postfix(sizeof(GuestLocale::CollateFacet)));
+    _ZNSt7collateIcEC2Em_nid_postfix(deleting, 0);
+    const long freesBeforeDeleting = totalFrees;
+    _ZNSt7collateIcED0Ev_nid_postfix(deleting);
+    Require(totalFrees == freesBeforeDeleting + 1 && liveAllocations == beforeAll, "the deleting destructor frees the facet");
+    Reject([] { _ZNSt7collateIcED0Ev_nid_postfix(nullptr); }, "the deleting destructor rejects a null facet");
+
     const long freesBeforeDestroy = totalFrees;
     FacetPtr(s3)->base.vtable->destroy(&FacetPtr(s3)->base);
     Require(totalFrees == freesBeforeDestroy && liveAllocations == beforeAll, "destroy on stack facet frees nothing");
@@ -305,6 +324,8 @@ void CheckErrorBranches() {
     Reject([] { _ZNSt7collateIcEC1EPKcm_nid_postfix(nullptr, "C", 0); }, "C1(const char*, size_t) rejects null this");
     Reject([&] { _ZNSt7collateIcEC1ERKSt8_Locinfom_nid_postfix(nullptr, &locinfo, 0); }, "C1(const _Locinfo&, size_t) rejects null this");
     Reject([] { _ZNSt7collateIcEC2EPKcm_nid_postfix(nullptr, "C", 0); }, "C2(const char*, size_t) rejects null this");
+    Reject([] { _ZNSt7collateIcEC2Em_nid_postfix(nullptr, 0); }, "C2(size_t) rejects null this");
+    Reject([&] { _ZNSt7collateIcEC2ERKSt8_Locinfom_nid_postfix(nullptr, &locinfo, 0); }, "C2(const _Locinfo&, size_t) rejects null this");
 
     FacetStorage sentinel = FilledStorage();
     Reject([&] { _ZNSt7collateIcEC1ERKSt8_Locinfom_nid_postfix(FacetPtr(sentinel), nullptr, 1); }, "C1(const _Locinfo&, size_t) rejects null _Locinfo");
@@ -419,6 +440,29 @@ void CheckLibraryDispatch(const char* libraryPath, bool patchedNids) {
     Require(liveAllocations == before, "library dispatch frees all allocations");
 }
 
+void CheckLStrcoll() {
+    static_assert(std::is_same_v<decltype(&_ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix),
+                                 int (APS5_VABI*)(const char*, const char*, const char*, const char*, const void*)>);
+    const char empty[] = "";
+    const char alpha[] = "alpha";
+    const char beta[] = "beta";
+    const char embeddedLeft[] = {'a', '\0', 'b'};
+    const char embeddedRight[] = {'a', '\0', 'c'};
+    const unsigned char highByte[] = {0x80};
+    const char asciiByte[] = {'a'};
+    Require(_ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(empty, empty, empty, empty, nullptr) == 0, "_LStrcoll<char> empty ranges are equal");
+    Require(_ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(alpha, alpha + 5, alpha, alpha + 5, nullptr) == 0, "_LStrcoll<char> equal ranges return zero");
+    Require(_ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(alpha, alpha + 5, beta, beta + 4, nullptr) == -1, "_LStrcoll<char> orders alpha before beta");
+    Require(_ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(beta, beta + 4, alpha, alpha + 5, nullptr) == 1, "_LStrcoll<char> orders beta after alpha");
+    Require(_ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(alpha, alpha + 2, alpha, alpha + 3, &alpha) == -1, "_LStrcoll<char> orders shorter prefix before longer string");
+    Require(_ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(alpha, alpha + 3, alpha, alpha + 2, &alpha) == 1, "_LStrcoll<char> orders longer string after shorter prefix");
+    Require(_ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(embeddedLeft, embeddedLeft + 3, embeddedRight, embeddedRight + 3, nullptr) == -1, "_LStrcoll<char> compares past embedded nul bytes");
+    Require(_ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(reinterpret_cast<const char*>(highByte), reinterpret_cast<const char*>(highByte) + 1, asciiByte, asciiByte + 1, nullptr) == 1, "_LStrcoll<char> compares bytes unsigned");
+    Reject([&] { (void)_ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(nullptr, alpha, alpha, alpha + 5, nullptr); }, "_LStrcoll<char> rejects null first1");
+    Reject([&] { (void)_ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(alpha + 2, alpha, alpha, alpha + 5, nullptr); }, "_LStrcoll<char> rejects inverted first range");
+    Reject([&] { (void)_ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(alpha, alpha + 5, beta + 2, beta, nullptr); }, "_LStrcoll<char> rejects inverted second range");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -437,6 +481,7 @@ int main(int argc, char** argv) {
     CheckDerivedFacet();
     CheckConstructorsAndLifetime();
     CheckErrorBranches();
+    CheckLStrcoll();
     if (argc >= 2) CheckLibraryDispatch(argv[1], argc >= 3 && std::strcmp(argv[2], "patched") == 0);
 
     std::puts("libc internal collate<char> member and constructor checks passed");

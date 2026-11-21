@@ -93,18 +93,10 @@ Icu::Normalizer2* APS5_VABI unorm2_openFiltered_nid_postfix(const Icu::Normalize
     }
     if (!normalizer) APS5_INVALID_ARG_EX;
 
-    const auto count = uset_getItemCount_nid_postfix(filter);
-    std::unique_ptr<icu::UnicodeSet> nativeSet(new icu::UnicodeSet);
+    std::unique_ptr<icu::UnicodeSet> nativeSet(new icu::UnicodeSet(*icu::UnicodeSet::fromUSet(Icu::NativeSet(filter))));
     if (!nativeSet) {
         status = U_MEMORY_ALLOCATION_ERROR;
         return nullptr;
-    }
-    for (std::int32_t index = 0; index < count; ++index) {
-        std::int32_t start = 0;
-        std::int32_t end = 0;
-        uset_getItem_nid_postfix(filter, index, &start, &end, nullptr, 0, error);
-        if (U_FAILURE(status)) return nullptr;
-        nativeSet->add(start, end);
     }
     nativeSet->freeze();
     if (nativeSet->isBogus()) {

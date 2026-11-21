@@ -95,6 +95,25 @@ void WriteExtents(CairoContext* context, double* x1, double* y1, double* x2, dou
     if (y2) WriteGuest(y2, ly2, caller);
 }
 
+template <typename Fn>
+void TransformCoordinates(CairoContext* context, double* x, double* y, Fn transform, const char* caller) {
+    if (x == y) {
+        double value = ReadGuest(x, caller);
+        RequireWritable(x, sizeof(value), caller);
+        transform(Backend(context), &value, &value);
+        WriteGuest(x, value, caller);
+        return;
+    }
+
+    double localX = ReadGuest(x, caller);
+    double localY = ReadGuest(y, caller);
+    RequireWritable(x, sizeof(localX), caller);
+    RequireWritable(y, sizeof(localY), caller);
+    transform(Backend(context), &localX, &localY);
+    WriteGuest(x, localX, caller);
+    WriteGuest(y, localY, caller);
+}
+
 }
 
 extern "C" {
@@ -157,19 +176,19 @@ void APS5_VABI cairo_identity_matrix(CairoContext* context) {
 }
 
 void APS5_VABI cairo_user_to_device(CairoContext* context, double* x, double* y) {
-    aps5_cairo_user_to_device(Backend(context), x, y);
+    TransformCoordinates(context, x, y, aps5_cairo_user_to_device, __func__);
 }
 
 void APS5_VABI cairo_user_to_device_distance(CairoContext* context, double* dx, double* dy) {
-    aps5_cairo_user_to_device_distance(Backend(context), dx, dy);
+    TransformCoordinates(context, dx, dy, aps5_cairo_user_to_device_distance, __func__);
 }
 
 void APS5_VABI cairo_device_to_user(CairoContext* context, double* x, double* y) {
-    aps5_cairo_device_to_user(Backend(context), x, y);
+    TransformCoordinates(context, x, y, aps5_cairo_device_to_user, __func__);
 }
 
 void APS5_VABI cairo_device_to_user_distance(CairoContext* context, double* dx, double* dy) {
-    aps5_cairo_device_to_user_distance(Backend(context), dx, dy);
+    TransformCoordinates(context, dx, dy, aps5_cairo_device_to_user_distance, __func__);
 }
 
 void APS5_VABI cairo_set_antialias(CairoContext* context, int antialias) {

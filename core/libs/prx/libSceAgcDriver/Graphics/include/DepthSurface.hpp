@@ -28,6 +28,7 @@ DepthSampleLocations DepthSurfaceSampleLocations(const Context& context, const D
 enum class DepthPlaneScope { Overlapped, Whole };
 std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint64_t address, std::size_t bytes, DepthPlaneScope scope = DepthPlaneScope::Overlapped);
 bool DepthPlanesStale();
+bool DepthSurfacePendingResultsOverlap(std::uint64_t address, std::size_t bytes);
 struct DepthPlaneStoreStatistics {
     std::uint64_t stores = 0;
     std::uint64_t units = 0;
@@ -51,11 +52,19 @@ std::uint64_t MultisampledDepthBytes_nid_no_patch(VkExtent2D extent, std::uint32
 enum class DepthReadCause { Access, Reuse };
 void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t bytes, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear = std::nullopt, bool allowPublication = true, DepthReadCause cause = DepthReadCause::Access);
 void AppendHostWrittenDepthRanges(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
+void AppendStaleDepthPlanes(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
 enum class DepthPublicationStage { ReadCaptured, GuestCopied, BeforeCommit, PlaneCommitted, StencilPlaneRead };
 void SetDepthPublicationHookForTest(void (*hook)(DepthPublicationStage));
 bool HasResidentDepthGuards_nid_no_patch();
 bool ResidentDepthGuardOverlaps_nid_no_patch(std::uint64_t address, std::size_t bytes);
 void RetireUnmappedDepth_nid_no_patch(std::uintptr_t address, std::size_t bytes);
+struct RetiredDepth {
+    std::size_t owners = 0;
+    std::size_t surfaces = 0;
+    std::size_t planes = 0;
+};
+RetiredDepth RetireReplacedDepth_nid_no_patch(std::uintptr_t address, std::size_t bytes);
+std::size_t ResidentDepthOwnersOver(std::uint64_t address, std::size_t bytes, bool gpuOnly);
 void RequireNoNativeDepthFeedback_nid_no_patch(const Context& context, const DepthTarget& target, std::span<const std::shared_ptr<Texture>> sampled);
 void ClearDepthSurfaces(VkDevice device);
 void RetireDepthSurfaces(VkDevice device, std::uint64_t address, std::uint64_t bytes);

@@ -304,8 +304,8 @@ bool APS5_VABI _ZNK3WTF10StringImpl10startsWithEPKcj(const NKWebKit::WtfAbi::Str
 std::size_t APS5_VABI _ZNK3WTF10StringImpl11sizeInBytesEv(const NKWebKit::WtfAbi::StringImpl* self);
 unsigned APS5_VABI _ZNK3WTF10StringImpl12hashSlowCaseEv(const NKWebKit::WtfAbi::StringImpl* self);
 unsigned APS5_VABI _ZNK3WTF10StringImpl14concurrentHashEv(const NKWebKit::WtfAbi::StringImpl* self);
-NKWebKit::WtfAbi::CString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE(const char16_t* characters, unsigned length, unsigned mode);
-NKWebKit::WtfAbi::CString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKhj(const unsigned char* characters, unsigned length);
+NKWebKit::WtfAbi::ExpectedCString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE(const char16_t* characters, unsigned length, unsigned mode);
+NKWebKit::WtfAbi::ExpectedCString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKhj(const unsigned char* characters, unsigned length);
 NKWebKit::WtfAbi::CString APS5_VABI _ZNK3WTF10StringImpl4utf8ENS_14ConversionModeE(const NKWebKit::WtfAbi::StringImpl* self, unsigned mode);
 bool APS5_VABI _ZNK3WTF10StringImpl8endsWithEDs(const NKWebKit::WtfAbi::StringImpl* self, char16_t value);
 bool APS5_VABI _ZNK3WTF10StringImpl8endsWithEPKcj(const NKWebKit::WtfAbi::StringImpl* self, const char* data, unsigned length);
