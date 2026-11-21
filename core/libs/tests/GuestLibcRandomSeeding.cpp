@@ -1,10 +1,13 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/HostEntropy.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -44,6 +47,36 @@ struct StateCase {
     std::vector<std::int64_t> values;
     const char* firstStateWord;
 };
+
+static void CheckHostEntropy() {
+    HostEntropy_nid_no_patch(nullptr, 0);
+
+    bool threwInvalidArgument = false;
+    try {
+        HostEntropy_nid_no_patch(nullptr, 16);
+    } catch (const std::invalid_argument&) {
+        threwInvalidArgument = true;
+    } catch (...) {
+    }
+    Require(threwInvalidArgument, "HostEntropy(nullptr, 16) must throw std::invalid_argument");
+
+    constexpr unsigned char Canary = 0xA5;
+    constexpr std::size_t GuardBytes = 16;
+    for (const std::size_t length : {1, 3, 4, 5, 15, 256, 257, 300}) {
+        std::vector<unsigned char> buf(length + GuardBytes * 2, Canary);
+        HostEntropy_nid_no_patch(buf.data() + GuardBytes, length);
+        for (std::size_t i = 0; i < GuardBytes; ++i) {
+            Require(buf[i] == Canary, "HostEntropy must not write before the output buffer");
+            Require(buf[GuardBytes + length + i] == Canary, "HostEntropy must not write past the output buffer");
+        }
+    }
+
+    std::vector<unsigned char> sample(32, 0);
+    HostEntropy_nid_no_patch(sample.data(), sample.size());
+    Require(std::any_of(sample.begin() + 1, sample.end(), [&](unsigned char byte) {
+        return byte != sample[0];
+    }), "HostEntropy must populate non-constant bytes");
+}
 
 int main() {
     RequireSequence(Draw(5), {1804289383, 846930886, 1681692777, 1714636915, 1957747793},
@@ -107,6 +140,8 @@ int main() {
     char* const replaced = initstate_nid_postfix(5, last.data(), 128);
     Require(replaced != nullptr, "initstate must not return null from 8 bytes up");
     Require(setstate_nid_postfix(replaced) != nullptr, "setstate of the state initstate returned must not return null");
+
+    CheckHostEntropy();
 
     return failures == 0 ? 0 : 1;
 }
