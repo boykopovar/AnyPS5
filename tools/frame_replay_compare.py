@@ -52,7 +52,7 @@ def _environment(value, shared=False):
             raise ValueError(f"invalid environment value: {key}")
         if key in FORCED or key == "ANYPS5_SHADER_CACHE_DIR" or key.startswith("APS5_FRAME_CAPTURE"):
             raise ValueError(f"environment key is controlled by the runner: {key}")
-        if not shared and (key.startswith("VK_") or key == "ANYPS5_GPU"):
+        if not shared and (key.startswith("VK_") or key in ("ANYPS5_GPU", "ANYPS5_GPU_INDEX")):
             raise ValueError(f"device selection must be shared by both arms: {key}")
     return value
 

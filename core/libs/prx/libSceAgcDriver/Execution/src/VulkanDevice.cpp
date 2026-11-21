@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CompileBudget.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GpuIndex.hpp"
 #include "BdaAbi.hpp"
 #include "SplitStateAbi.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
@@ -1538,6 +1539,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     int selectedRank = -1;
     const char* requestedName = std::getenv("ANYPS5_GPU");
     if (requestedName != nullptr && *requestedName == '\0') requestedName = nullptr;
+    const auto requestedIndex = RequestedGpuIndex();
+    const bool explicitRequest = requestedName != nullptr || requestedIndex.has_value();
     const auto matchesRequest = [&](const char* deviceName) {
         const std::string_view name(deviceName);
         const std::string_view request(requestedName);
@@ -1563,7 +1566,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         }
     };
     const std::array<const char*, 1> presentationExtensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
-    for (auto physical : devices) {
+    for (std::size_t deviceIndex = 0; deviceIndex < devices.size(); ++deviceIndex) {
+        const auto physical = devices[deviceIndex];
         VkPhysicalDeviceProperties properties{};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(physical, &properties);
         APS5_LOG_OUT("Physical device candidate=%p name=%s api=0x%x type=%d", reinterpret_cast<void*>(physical), properties.deviceName, properties.apiVersion, static_cast<int>(properties.deviceType));
@@ -1573,8 +1577,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         if (properties.apiVersion < VK_API_VERSION_1_1) {
             continue;
         }
+        if (requestedIndex.has_value() && deviceIndex != *requestedIndex) continue;
         if (requestedName != nullptr && !matchesRequest(properties.deviceName)) continue;
-        const int rank = requestedName != nullptr ? 4 : rankDeviceType(properties.deviceType);
+        const int rank = explicitRequest ? 4 : rankDeviceType(properties.deviceType);
         if (rank <= selectedRank) {
             continue;
         }
@@ -1612,11 +1617,16 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
                 break;
             }
         }
-        if (window != nullptr && requestedName == nullptr && rank >= 2 && rank > rejectedHardwareRank && graphicsCompute && !presentable) {
+        if (window != nullptr && !explicitRequest && rank >= 2 && rank > rejectedHardwareRank && graphicsCompute && !presentable) {
             rejectedHardwareName = properties.deviceName;
             rejectedHardwareReason = swapchain ? PresentationRejection::NoSurfaceQueue : PresentationRejection::MissingSwapchain;
             rejectedHardwareRank = rank;
         }
+    }
+    if (selected == VK_NULL_HANDLE && requestedIndex.has_value()) {
+        std::string request = "at ANYPS5_GPU_INDEX=" + std::to_string(*requestedIndex);
+        if (requestedName != nullptr) request += std::string(" whose name contains ANYPS5_GPU=\"") + requestedName + "\"";
+        throw std::runtime_error("Vulkan: no usable device " + request + "; devices: " + candidateNames);
     }
     if (selected == VK_NULL_HANDLE && requestedName != nullptr) {
         throw std::runtime_error(std::string("Vulkan: no usable device whose name contains ANYPS5_GPU=\"") + requestedName + "\"; devices: " + candidateNames);
@@ -1631,7 +1641,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->properties = properties.properties;
     state->physical = selected;
     if (window != nullptr) {
-        const auto warning = SoftwareFallbackWarning(state->properties.deviceType, state->properties.deviceName, rejectedHardwareName, rejectedHardwareReason, requestedName != nullptr);
+        const auto warning = SoftwareFallbackWarning(state->properties.deviceType, state->properties.deviceName, rejectedHardwareName, rejectedHardwareReason, explicitRequest);
         if (!warning.empty()) std::fprintf(stderr, "%s\n", warning.c_str());
     }
     state->srgbDecodeFormats = Graphics::SrgbDecodeFormats(state->InstanceFunction<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties"), selected);

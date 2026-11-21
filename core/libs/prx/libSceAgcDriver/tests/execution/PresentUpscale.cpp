@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GpuIndex.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
@@ -123,6 +124,7 @@ struct Candidate {
     std::string name;
     VkPhysicalDeviceType type;
     bool headless;
+    std::size_t index;
 };
 
 std::vector<Candidate> candidates(PFN_vkGetInstanceProcAddr resolve) {
@@ -146,7 +148,8 @@ std::vector<Candidate> candidates(PFN_vkGetInstanceProcAddr resolve) {
     Require(enumerate(instance, &count, devices.data()) == VK_SUCCESS, "vkEnumeratePhysicalDevices failed");
     devices.resize(count);
     std::vector<Candidate> found;
-    for (const auto physical : devices) {
+    for (std::size_t index = 0; index < devices.size(); ++index) {
+        const auto physical = devices[index];
         VkPhysicalDeviceProperties device{};
         properties(physical, &device);
         if (device.apiVersion < VK_API_VERSION_1_1) continue;
@@ -158,7 +161,7 @@ std::vector<Candidate> candidates(PFN_vkGetInstanceProcAddr resolve) {
             properties2(physical, &queried);
             headless = headlessDriver(driver.driverID);
         }
-        found.push_back({device.deviceName, device.deviceType, headless});
+        found.push_back({device.deviceName, device.deviceType, headless, index});
     }
     return found;
 }
@@ -176,6 +179,11 @@ std::string headlessDevice(PFN_vkGetInstanceProcAddr resolve) {
     const auto found = candidates(resolve);
     const char* requested = std::getenv("ANYPS5_GPU");
     std::string name = requested != nullptr ? requested : "";
+    if (const auto requestedIndex = AgcDriver::RequestedGpuIndex()) {
+        const auto indexed = std::find_if(found.begin(), found.end(), [&](const Candidate& candidate) { return candidate.index == *requestedIndex; });
+        if (indexed == found.end() || !indexed->headless || (!name.empty() && !namesDevice(indexed->name, name))) return std::string();
+        return indexed->name;
+    }
     if (name.empty()) {
         int best = -1;
         for (const auto& candidate : found) {
