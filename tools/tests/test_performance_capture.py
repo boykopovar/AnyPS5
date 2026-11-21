@@ -1,3 +1,4 @@
+import codecs
 import copy
 import gzip
 import hashlib
@@ -294,6 +295,40 @@ class LossEvidence(CaptureFixture):
                     expected = {"events": "unknown", "totals": "unknown"}
                 self.assertEqual(result["completeness"], expected)
                 self.assertTrue(result["warnings"])
+
+
+class StrictJson(unittest.TestCase):
+    def test_accepts_bom_and_plain(self):
+        self.assertEqual(performance_capture.strict_json(codecs.BOM_UTF8 + b'{"a": [1, 2.5]}', "x"), {"a": [1, 2.5]})
+
+    def test_rejects_nonfinite_nested(self):
+        for raw in (b'{"a": [NaN]}', b'{"a": {"b": Infinity}}', b'[-Infinity]'):
+            with self.subTest(raw=raw):
+                with self.assertRaisesRegex(ValueError, "non-finite"):
+                    performance_capture.strict_json(raw, "label")
+
+    def test_rejects_duplicate_keys(self):
+        with self.assertRaises(ValueError):
+            performance_capture.strict_json(b'{"a": 1, "a": 2}', "label")
+
+
+class InstrumentationName(unittest.TestCase):
+    def test_case_folded_match(self):
+        prefix = next(iter(performance_capture.INSTRUMENTATION_PREFIXES))
+        self.assertTrue(performance_capture.instrumentation_name(prefix.lower() + "x"))
+        self.assertFalse(performance_capture.instrumentation_name("HOME"))
+
+
+class ReadRegular(unittest.TestCase):
+    def test_limit_boundary_and_digest(self):
+        with tempfile.TemporaryDirectory() as name:
+            path = Path(name) / "f.bin"
+            path.write_bytes(b"abcd")
+            raw, meta = performance_capture.read_regular(path, 4)
+            self.assertEqual(raw, b"abcd")
+            self.assertEqual(meta, {"path": "f.bin", "bytes": 4, "sha256": hashlib.sha256(b"abcd").hexdigest()})
+            with self.assertRaisesRegex(ValueError, "byte limit"):
+                performance_capture.read_regular(path, 3)
 
 
 if __name__ == "__main__":
