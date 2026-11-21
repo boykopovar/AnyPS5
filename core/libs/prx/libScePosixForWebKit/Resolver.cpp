@@ -203,6 +203,27 @@ int GuestError(int error) {
 }
 
 template<typename TLookupTag>
+GuestResolver::HostEntry* StoreHost(const hostent* native, bool numeric) {
+    auto& lookup = HostThreadLocal<HostLookup, TLookupTag>();
+    lookup.name.assign(native->h_name, numeric ? strnlen(native->h_name, MaxDomainNameSize) : std::strlen(native->h_name));
+    lookup.aliasNames.clear();
+    lookup.aliases.clear();
+    lookup.addressBytes.clear();
+    lookup.addresses.clear();
+    for (auto** alias = native->h_aliases; *alias; ++alias) lookup.aliasNames.emplace_back(*alias);
+    for (auto& alias : lookup.aliasNames) lookup.aliases.push_back(alias.data());
+    lookup.aliases.push_back(nullptr);
+    for (auto** address = native->h_addr_list; *address; ++address)
+        lookup.addressBytes.emplace_back(*address, native->h_length);
+    for (auto& address : lookup.addressBytes) lookup.addresses.push_back(address.data());
+    lookup.addresses.push_back(nullptr);
+    lookup.entry = {lookup.name.data(), lookup.aliases.data(), native->h_addrtype == AF_INET6 ? 28 : 2,
+        native->h_length, lookup.addresses.data()};
+    if (numeric) *sceNetErrnoLoc() = 0;
+    return &lookup.entry;
+}
+
+template<typename TLookupTag>
 GuestResolver::HostEntry* ResolveHost(const char* name) {
     if (!name || !Ready()) { *sceNetErrnoLoc() = 3; return nullptr; }
     try {
@@ -245,23 +266,83 @@ GuestResolver::HostEntry* ResolveHost(const char* name) {
             return nullptr;
         }
 #endif
-        auto& lookup = HostThreadLocal<HostLookup, TLookupTag>();
-        lookup.name.assign(native->h_name, numeric ? strnlen(native->h_name, MaxDomainNameSize) : std::strlen(native->h_name));
-        lookup.aliasNames.clear();
-        lookup.aliases.clear();
-        lookup.addressBytes.clear();
-        lookup.addresses.clear();
-        for (auto** alias = native->h_aliases; *alias; ++alias) lookup.aliasNames.emplace_back(*alias);
-        for (auto& alias : lookup.aliasNames) lookup.aliases.push_back(alias.data());
-        lookup.aliases.push_back(nullptr);
-        for (auto** address = native->h_addr_list; *address; ++address)
-            lookup.addressBytes.emplace_back(*address, native->h_length);
-        for (auto& address : lookup.addressBytes) lookup.addresses.push_back(address.data());
-        lookup.addresses.push_back(nullptr);
-        lookup.entry = {lookup.name.data(), lookup.aliases.data(), native->h_addrtype == AF_INET6 ? 28 : 2,
-            native->h_length, lookup.addresses.data()};
-        if (numeric) *sceNetErrnoLoc() = 0;
-        return &lookup.entry;
+        return StoreHost<TLookupTag>(native, numeric);
+    } catch (const std::bad_alloc&) {
+        *sceNetErrnoLoc() = -1;
+        errno = ENOMEM;
+        return nullptr;
+    }
+}
+
+template<typename TLookupTag>
+GuestResolver::HostEntry* ResolveAddress(const void* guestAddress, std::uint32_t length, int family) {
+    if (family != 2 && family != 28) {
+        errno = 47;
+        *sceNetErrnoLoc() = -1;
+        return nullptr;
+    }
+    if (length != (family == 2 ? 4u : 16u)) {
+        errno = 22;
+        *sceNetErrnoLoc() = -1;
+        return nullptr;
+    }
+    if (!Ready()) {
+        *sceNetErrnoLoc() = 3;
+        return nullptr;
+    }
+    if (!guestAddress) APS5_INVALID_ARG_EX;
+    std::array<unsigned char, 16> address{};
+    if (!GuestCopyIn_nid_no_patch(address.data(), guestAddress, length)) APS5_INVALID_ARG_EX;
+    int nativeFamily = family == 2 ? AF_INET : AF_INET6;
+    const unsigned char* nativeAddress = address.data();
+    if (family == 28) {
+        if (address[0] == 0xfe && (address[1] & 0xc0) == 0x80) {
+            *sceNetErrnoLoc() = 1;
+            return nullptr;
+        }
+        const bool zeroPrefix = std::all_of(address.begin(), address.begin() + 10,
+            [](unsigned char byte) { return byte == 0; });
+        const bool mapped = zeroPrefix && address[10] == 0xff && address[11] == 0xff;
+        const bool compatible = zeroPrefix && address[10] == 0 && address[11] == 0 &&
+            (address[12] || address[13] || address[14] || address[15] > 1);
+        if (mapped || compatible) {
+            nativeFamily = AF_INET;
+            nativeAddress = address.data() + 12;
+            length = 4;
+        }
+    }
+    try {
+        hostent nativeEntry{};
+        hostent* native = nullptr;
+#ifdef _WIN32
+        native = ::gethostbyaddr(reinterpret_cast<const char*>(nativeAddress), static_cast<int>(length), nativeFamily);
+        if (!native) {
+            const auto error = WSAGetLastError();
+            *sceNetErrnoLoc() = error == WSAHOST_NOT_FOUND ? 1 : error == WSATRY_AGAIN ? 2 : error == WSANO_DATA ? 4 : 3;
+            return nullptr;
+        }
+#else
+        int hostError = 0;
+        int error = 0;
+#ifdef __APPLE__
+        native = ::gethostbyaddr(reinterpret_cast<const char*>(nativeAddress), length, nativeFamily);
+        if (!native) {
+            hostError = h_errno;
+            error = hostError == TRY_AGAIN ? EAGAIN : 0;
+        }
+#else
+        std::vector<char> buffer(1024);
+        while ((error = ::gethostbyaddr_r(nativeAddress, length, nativeFamily, &nativeEntry,
+            buffer.data(), buffer.size(), &native, &hostError)) == ERANGE)
+            buffer.resize(buffer.size() * 2);
+#endif
+        if (error != 0 || !native) {
+            *sceNetErrnoLoc() = hostError != 0 ? hostError : 3;
+            if (hostError == -1) SetGuestSystemError(error ? error : errno);
+            return nullptr;
+        }
+#endif
+        return StoreHost<TLookupTag>(native, false);
     } catch (const std::bad_alloc&) {
         *sceNetErrnoLoc() = -1;
         errno = ENOMEM;
@@ -324,6 +405,11 @@ extern "C" {
 GuestResolver::HostEntry* APS5_VABI gethostbyname_nid_postfix(const char* name) {
     struct LookupTag {};
     return ResolveHost<LookupTag>(name);
+}
+
+GuestResolver::HostEntry* APS5_VABI gethostbyaddr_nid_postfix(const void* address, std::uint32_t length, int family) {
+    struct LookupTag {};
+    return ResolveAddress<LookupTag>(address, length, family);
 }
 
 int APS5_VABI scePosixForWebKit_gethostbyname_r(const char* name, GuestResolver::HostEntry* entry, char* buffer,

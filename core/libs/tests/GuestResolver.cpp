@@ -34,6 +34,54 @@ int main() {
     Require(legacy->addresses && legacy->addresses[0]);
     Require(std::memcmp(legacy->addresses[0], loopback.data(), loopback.size()) == 0);
     Require(legacy->addresses[1] == nullptr && legacy->aliases && legacy->aliases[0] == nullptr);
+    auto* reverse = gethostbyaddr_nid_postfix(loopback.data(), loopback.size(), 2);
+    const auto* nativeReverse = ::gethostbyaddr(reinterpret_cast<const char*>(loopback.data()), loopback.size(), AF_INET);
+    Require((reverse == nullptr) == (nativeReverse == nullptr));
+    if (reverse) {
+        Require(std::strcmp(reverse->name, nativeReverse->h_name) == 0);
+        Require(reverse->family == 2 && reverse->length == 4);
+        Require(reverse->addresses && reverse->addresses[0]);
+        Require(nativeReverse->h_addr_list && nativeReverse->h_addr_list[0]);
+        Require(std::memcmp(reverse->addresses[0], nativeReverse->h_addr_list[0], loopback.size()) == 0);
+    }
+    std::array<unsigned char, 16> mapped{};
+    mapped[10] = mapped[11] = 0xff;
+    std::copy(loopback.begin(), loopback.end(), mapped.begin() + 12);
+    auto* mappedResult = gethostbyaddr_nid_postfix(mapped.data(), mapped.size(), 28);
+    Require((mappedResult == nullptr) == (reverse == nullptr));
+    if (mappedResult) {
+        Require(mappedResult->family == 2 && mappedResult->length == 4);
+        Require(std::memcmp(mappedResult->addresses[0], loopback.data(), loopback.size()) == 0);
+    }
+    std::array<unsigned char, 16> ipv6Loopback{};
+    ipv6Loopback[15] = 1;
+    auto* reverseV6 = gethostbyaddr_nid_postfix(ipv6Loopback.data(), ipv6Loopback.size(), 28);
+    const auto* nativeV6 = ::gethostbyaddr(reinterpret_cast<const char*>(ipv6Loopback.data()), ipv6Loopback.size(), AF_INET6);
+    Require((reverseV6 == nullptr) == (nativeV6 == nullptr));
+    if (reverseV6) {
+        Require(reverseV6->family == 28 && reverseV6->length == 16);
+        Require(nativeV6->h_addr_list && nativeV6->h_addr_list[0]);
+        Require(std::memcmp(reverseV6->addresses[0], nativeV6->h_addr_list[0], ipv6Loopback.size()) == 0);
+    }
+    std::array<unsigned char, 16> linkLocal{};
+    linkLocal[0] = 0xfe;
+    linkLocal[1] = 0x80;
+    linkLocal[15] = 1;
+    Require(gethostbyaddr_nid_postfix(linkLocal.data(), linkLocal.size(), 28) == nullptr);
+    Require(*sceNetErrnoLoc() == 1);
+    errno = 0;
+    Require(gethostbyaddr_nid_postfix(loopback.data(), 3, 2) == nullptr);
+    Require(*sceNetErrnoLoc() == -1 && errno == 22);
+    errno = 0;
+    Require(gethostbyaddr_nid_postfix(loopback.data(), loopback.size(), 99) == nullptr);
+    Require(*sceNetErrnoLoc() == -1 && errno == 47);
+    bool rejectedAddress = false;
+    try {
+        gethostbyaddr_nid_postfix(nullptr, loopback.size(), 2);
+    } catch (const std::invalid_argument&) {
+        rejectedAddress = true;
+    }
+    Require(rejectedAddress);
     struct NumericCase {
         const char* name;
         std::array<unsigned char, 4> address;
