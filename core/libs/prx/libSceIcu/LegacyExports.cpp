@@ -559,9 +559,6 @@ int APS5_VABI _ZN6icu_6824ICUResourceBundleFactoryD2Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucurr_getPluralName_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN6icu_686Locale15getISOLanguagesEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -637,9 +634,6 @@ int APS5_VABI sceIcuLegacyUnknown_2REynpmGn9U_nid_no_patch() {
 }
 APS5_EXPORT("2REynpmGn9U", sceIcuLegacyUnknown_2REynpmGn9U_nid_no_patch);
 
-int APS5_VABI ucurr_isAvailable_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI sceIcuLegacyUnknown_2WP_plus_PRN_plus_Tm8_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -2118,9 +2112,6 @@ int APS5_VABI sceIcuLegacyUnknown_C2lC51ZWaIc_nid_no_patch() {
 }
 APS5_EXPORT("C2lC51ZWaIc", sceIcuLegacyUnknown_C2lC51ZWaIc_nid_no_patch);
 
-int APS5_VABI ucurr_forLocale_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN6icu_6817StringTrieBuilder10equalNodesEPKvS2__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -2339,9 +2330,6 @@ int APS5_VABI sceIcuLegacyUnknown_DCVdYpWxC1I_nid_no_patch() {
 }
 APS5_EXPORT("DCVdYpWxC1I", sceIcuLegacyUnknown_DCVdYpWxC1I_nid_no_patch);
 
-int APS5_VABI ucurr_unregister_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN6icu_6811SymbolTableD0Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -2386,9 +2374,6 @@ int APS5_VABI utext_openReplaceable_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucurr_getRoundingIncrementForUsage_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN6icu_6813LocaleBuilder14setLanguageTagENS_11StringPieceE_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -3682,9 +3667,6 @@ int APS5_VABI sceIcuLegacyUnknown_M7ZBa60MsrQ_nid_no_patch() {
 }
 APS5_EXPORT("M7ZBa60MsrQ", sceIcuLegacyUnknown_M7ZBa60MsrQ_nid_no_patch);
 
-int APS5_VABI ucurr_getDefaultFractionDigitsForUsage_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI sceIcuLegacyUnknown_M7gBQBYsxjA_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -4492,9 +4474,6 @@ int APS5_VABI sceIcuLegacyUnknown_RcrMekJ6rHg_nid_no_patch() {
 }
 APS5_EXPORT("RcrMekJ6rHg", sceIcuLegacyUnknown_RcrMekJ6rHg_nid_no_patch);
 
-int APS5_VABI ucurr_register_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI sceIcuLegacyUnknown_RfrqmtAotx4_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -5536,9 +5515,6 @@ int APS5_VABI _ZN6icu_686LocaleC1EOS0__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucurr_getDefaultFractionDigits_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZNK6icu_6813SimpleFactory16updateVisibleIDsERNS_9HashtableER10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -6050,17 +6026,11 @@ int APS5_VABI _ZNK6icu_689LocaleKey15canonicalLocaleERNS_6LocaleE_nid_postfix() 
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucurr_getNumericCode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN6icu_6810UnicodeSetD2Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucurr_getRoundingIncrement_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN6icu_6813UnicodeString9doReverseEii_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -8053,9 +8023,6 @@ int APS5_VABI _ZNK6icu_6813UnicodeString11countChar32Eii_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucurr_forLocaleAndDate_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN6icu_6823StringCharacterIteratorD2Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -8086,9 +8053,6 @@ int APS5_VABI _ZN6icu_6817CharacterIteratorD2Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucurr_getKeywordValuesForLocale_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN6icu_6810UnicodeSetaSERKS0__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -8821,9 +8785,6 @@ int APS5_VABI _ZN6icu_689UVector3217removeAllElementsEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucurr_countCurrencies_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI sceIcuLegacyUnknown_uqaePRcFldE_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
