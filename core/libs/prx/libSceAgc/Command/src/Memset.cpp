@@ -5,6 +5,7 @@
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -75,7 +76,7 @@ extern "C" std::uint32_t* APS5_VABI sceAgcCbMemsetExclusive(CommandBuffer* buffe
         static_cast<std::uint32_t>(size >> 4u), 0x4bfacu, 0u, 0u, 0u, 0u,
         static_cast<std::uint32_t>((size + 0xffffu) >> 16u)
     };
-    std::memcpy(data.data() + 4, pattern, 16);
+    Agc::Command::Require(GuestCopyIn_nid_no_patch(data.data() + 4, pattern, 16), function, "pattern is not readable");
     sceAgcCbSetShRegisterRangeDirect(buffer, 0x240u, data.data(), static_cast<std::uint32_t>(data.size()));
     const auto mask = (static_cast<std::uint32_t>(sceKernelGetMainSocId()) & ~0x1fu) == 0x840fc0u ? 0x00ff00ffu : 0x0003fcffu;
     Agc::Command::Emit(buffer, 0x76u, {0x216u, mask}, function);
