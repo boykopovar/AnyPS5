@@ -472,9 +472,11 @@ void TouchUserKnote(KernelEqueueEvent& event, KernelEvent& change) {
     }
 }
 
+int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change);
+
 int ModifyTimerKnote(const KernelEqueueRef& queue, KernelEvent& change) {
-    if ((change.flags & ~(EV_ADD | EV_ONESHOT)) != 0) {
-        NotImplemented_nid_no_patch("kevent: re-adding an EVFILT_TIMER with flags other than EV_ONESHOT");
+    if ((change.flags & ~(EV_ADD | EV_ONESHOT | EV_ENABLE | EV_DISABLE)) != 0) {
+        NotImplemented_nid_no_patch("kevent: changing an EVFILT_TIMER with flags other than EV_ADD, EV_ONESHOT, EV_ENABLE and EV_DISABLE");
     }
     const auto periodNs = TimerPeriodNanos(change.data, change.fflags);
     if (change.data <= 0 || (change.fflags & ~NOTE_TIMER_PRECMASK) != 0 || !periodNs) {
@@ -507,7 +509,12 @@ int ModifyTimerKnote(const KernelEqueueRef& queue, KernelEvent& change) {
     }
     change.fflags = 0;
     change.data = 0;
-    return error;
+    if (error != 0 || (change.flags & (EV_ENABLE | EV_DISABLE)) == 0) {
+        return error;
+    }
+    KernelEvent toggle = change;
+    toggle.flags = static_cast<std::uint16_t>(change.flags & (EV_ENABLE | EV_DISABLE));
+    return ModifyKnote(queue, toggle);
 }
 
 int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
@@ -626,7 +633,7 @@ int Register(const KernelEqueueRef& queue, int kqueueDescriptor, KernelEvent& ch
     if ((change.flags & EV_DELETE) != 0) {
         return GuestErrno(queue->DeleteEvent(change.ident, change.filter));
     }
-    if (change.filter == EVFILT_TIMER && (change.flags & EV_ADD) != 0) {
+    if (change.filter == EVFILT_TIMER && ((change.flags & EV_ADD) != 0 || change.data != 0 || change.fflags != 0)) {
         return ModifyTimerKnote(queue, change);
     }
     return ModifyKnote(queue, change);

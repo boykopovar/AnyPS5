@@ -1221,7 +1221,20 @@ def last_line(text):
 
 
 def write_summary(output, summary):
-    (output / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+    text = json.dumps(summary, indent=2, default=str)
+    target = output / "summary.json"
+    try:
+        metadata = target.lstat()
+    except FileNotFoundError:
+        mode = None
+    else:
+        mode = stat.S_IMODE(metadata.st_mode) if stat.S_ISREG(metadata.st_mode) else None
+    with tempfile.TemporaryDirectory(prefix=".summary-", dir=output) as directory:
+        staged = Path(directory) / "summary.json"
+        staged.write_text(text, encoding="utf-8")
+        if mode is not None:
+            staged.chmod(mode)
+        staged.replace(target)
 
 
 def run_cli(argv, capture_resources):
@@ -1282,7 +1295,10 @@ def run_cli(argv, capture_resources):
         validate_layout(args, found, ids, titles, source, platform, packages=packages)
     except (OSError, RuntimeError, ValueError) as error:
         parser.error(f"unsafe title-run layout: {error}")
-    locks = {title_id: lock_work(args.out.resolve() / "work" / f"{title_id}.lock") for title_id in ids}
+    locks = {}
+    for title_id in ids:
+        handle = lock_work(args.out.resolve() / "work" / f"{title_id}.lock")
+        locks[title_id] = capture_resources.enter_context(handle) if handle is not None else None
     busy = [title_id for title_id, handle in locks.items() if handle is None]
     if busy:
         raise SystemExit(f"already running in {args.out.resolve() / 'work'}: {', '.join(busy)}")

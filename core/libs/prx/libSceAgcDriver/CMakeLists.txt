@@ -570,6 +570,7 @@ target_link_libraries(libSceAgcDriver PRIVATE
         SDL2-static
         libc
         libkernel
+        anyps5_thermal_reader
         jpeg_turbo
         libzstd_static
         ${CMAKE_DL_LIBS}
