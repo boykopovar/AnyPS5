@@ -655,7 +655,8 @@ bool EcPubDecode(void* pkey, LibreSslX509PublicKey* key) {
         const std::int64_t length = key->publicKey->length;
         if (length < 0) throw std::invalid_argument("X509_get_pubkey: negative public key bit length");
         if (!data && length != 0) throw std::invalid_argument("X509_get_pubkey: public key bits without content");
-        if (EC_POINT_oct2point_nid_postfix(curve, point, data, static_cast<std::size_t>(length), nullptr) != 1) {
+        if (length == 0 || !data ||
+            EC_POINT_oct2point_nid_postfix(curve, point, data, static_cast<std::size_t>(length), nullptr) != 1) {
             EC_POINT_free_nid_postfix(point);
             EC_KEY_free_nid_postfix(ecKey);
             Queue(EcLibrary, EcLibraryError);

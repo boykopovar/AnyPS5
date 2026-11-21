@@ -740,7 +740,8 @@ void PubkeyErrors() {
     offCurve[1] = static_cast<unsigned char>(offCurve[1] ^ 0x01);
     const Bytes explicitCurves = Tlv(0x30, Cat({Tlv(0x06, CurvePrime256), Tlv(0x02, {0x01, 0x01})}));
     const Bytes compressedPoint = Cat({Bytes{0x03}, Bytes(EcPoint.begin() + 1, EcPoint.begin() + 33)});
-    const std::array<EcFailure, 5> ecFailures{{
+    const std::array<EcFailure, 6> ecFailures{{
+        {curve, Bytes{}, {Code(EcLibrary, EcLibraryError), Code(EcLibrary, EcDecodeError), Code(X509Library, PublicKeyDecodeError)}},
         {curve, shortPoint, {Code(EcLibrary, EcLibraryError), Code(EcLibrary, EcDecodeError), Code(X509Library, PublicKeyDecodeError)}},
         {curve, offCurve, {Code(EcLibrary, EcLibraryError), Code(EcLibrary, EcDecodeError), Code(X509Library, PublicKeyDecodeError)}},
         {Tlv(0x05, {}), EcPoint, {Code(EcLibrary, EcDecodeError), Code(EcLibrary, EcLibraryError), Code(X509Library, PublicKeyDecodeError)}},
