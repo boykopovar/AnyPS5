@@ -122,7 +122,7 @@ static FormData* CreateEmptyForm() {
 
 static void FreeForm(FormData* form) {
     _ZN7WebCore8FormDataD1Ev(form);
-    _ZdlPv_nid_postfix(form);
+    _ZN3WTF8fastFreeEPv(form);
 }
 
 static std::string BodyBytes(const FormDataElement& element) {
@@ -190,9 +190,16 @@ static void SetURLField(NKWebKit::WtfAbi::URL& field, StringImpl& impl, unsigned
 
 static void TestSetHTTPBody() {
     auto request = MakeRequest();
+    auto witness = Make("witness");
+    String witnessText(&witness);
+    witness.refCount += 2;
     auto* firstForm = CreateForm("abc", 3);
     auto* secondForm = CreateForm("def", 3);
     Require(firstForm->refCount == 1 && secondForm->refCount == 1);
+    Require(guestAllocations.empty());
+    Require(_ZN3WTF14fastMallocSizeEPKv(firstForm) == 72);
+    PushFile(firstForm, witnessText, 0, 1);
+    Require(witness.refCount == 6);
 
     auto* body = firstForm;
     _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(&request, &body);
@@ -208,7 +215,7 @@ static void TestSetHTTPBody() {
     Require(request.httpBody == secondForm);
     Require(secondForm->refCount == 1);
     Require(body == nullptr);
-    Require(guestAllocations.count(firstForm) == 0);
+    Require(witness.refCount == 4);
 
     secondForm->ref();
     body = secondForm;
@@ -288,22 +295,41 @@ static void TestClearPurposeAndReferrer() {
     Require(purpose.refCount == 4 && referrer.refCount == 4);
 }
 
+static std::optional<std::string> PartitionOf(const char* text) {
+    StringImpl impl{3, static_cast<unsigned>(std::strlen(text)), text, 4};
+    const String domain(&impl);
+    std::optional<std::string> partition;
+    {
+        const String name = _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(&domain);
+        Require(name.impl != nullptr);
+        Require(name.impl->length != 0 || name.impl == EmptyStringImpl());
+        const auto view = NKWebKit::WtfAbi::ViewOf(name.impl);
+        partition.emplace();
+        for (unsigned i = 0; i < view.length; ++i) partition->push_back(static_cast<char>(NKWebKit::WtfAbi::CodeUnitAt(view, i)));
+    }
+    Require(impl.refCount == 3 && impl.data == text);
+    return partition;
+}
+
 static void TestPartitionName() {
     StringImpl* shared = EmptyStringImpl();
     String null;
-    String result = _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(&null);
-    Require(result.impl == shared);
-    Require(result.impl->length == 0);
+    {
+        String result = _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(&null);
+        Require(result.impl == shared);
+        Require(result.impl->length == 0);
+    }
 
-    auto domain = Make("example.com");
-    String domainText(&domain);
-    domain.refCount += 2;
-    String other = _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(&domainText);
-    Require(other.impl == shared);
-    Require(domain.refCount == 4);
-    String third = _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(nullptr);
-    Require(third.impl == shared);
-    Require(third.impl->length == 0);
+    Require(PartitionOf("example.com") == "example.com");
+    Require(PartitionOf("www.example.com") == "example.com");
+    Require(PartitionOf("a.b.example.co.uk") == "example.co.uk");
+    Require(PartitionOf("WWW.Example.CO.UK") == "example.co.uk");
+    Require(PartitionOf("a.user.github.io") == "user.github.io");
+    Require(PartitionOf("..www.example.com") == "example.com");
+    Require(PartitionOf("localhost") == "localhost");
+    Require(PartitionOf("192.168.0.1") == "192.168.0.1");
+    for (const char* none : {"", "com", "co.uk", "github.io", "..."}) Require(PartitionOf(none) == "");
+    Require(Throws([] { _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(nullptr); }));
 }
 
 static void TestSetCachePartition() {
@@ -520,6 +546,9 @@ static void TestEqual() {
     _ZN7WebCore19ResourceRequestBase18setHTTPHeaderFieldERKN3WTF6StringES4_(&right, &customText, &leftValueText);
     Require(_ZN7WebCore19ResourceRequestBase5equalERKNS_15ResourceRequestES3_(&left, &right));
 
+    auto witness = Make("witness");
+    String witnessText(&witness);
+    witness.refCount += 2;
     auto* bodyLeft = CreateForm("ab", 2);
     auto* bodyRight = CreateForm("ab", 2);
     left.httpBody = bodyLeft;
@@ -529,14 +558,18 @@ static void TestEqual() {
     _ZN7WebCore8FormData10appendDataEPKvm(bodyRight, "c", 1);
     Require(!_ZN7WebCore19ResourceRequestBase5equalERKNS_15ResourceRequestES3_(&left, &right));
     right.httpBody = bodyLeft;
+    PushFile(bodyRight, witnessText, 0, 1);
+    Require(witness.refCount == 6);
     bodyRight->deref();
-    Require(guestAllocations.count(bodyRight) == 0);
+    Require(witness.refCount == 4);
     Require(_ZN7WebCore19ResourceRequestBase5equalERKNS_15ResourceRequestES3_(&left, &right));
     right.httpBody = nullptr;
     Require(!_ZN7WebCore19ResourceRequestBase5equalERKNS_15ResourceRequestES3_(&left, &right));
     left.httpBody = nullptr;
+    PushFile(bodyLeft, witnessText, 0, 1);
+    Require(witness.refCount == 6);
     bodyLeft->deref();
-    Require(guestAllocations.count(bodyLeft) == 0);
+    Require(witness.refCount == 4);
 
     {
         auto file = Make("file.bin");

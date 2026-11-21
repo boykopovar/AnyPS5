@@ -74,7 +74,7 @@ def host_text():
     )
 
 
-def make_bundle(report, out, *, home, user, host, log=None, input_config=None, settings=None):
+def make_bundle(report, out, *, home, user, host, log=None, input_config=None, environ=None):
     report = Path(report)
     out = Path(out)
     if out.exists():
@@ -86,8 +86,8 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None, s
         members["anyps5.log"] = redact(Path(log).read_text(encoding="utf-8", errors="replace"), **identity)
     if input_config is not None and Path(input_config).is_file():
         members["anyps5-input.ini"] = redact(Path(input_config).read_text(encoding="utf-8", errors="replace"), **identity)
-    if settings is not None:
-        members["anyps5-settings.txt"] = redact(settings, **identity)
+    if environ is not None:
+        members["anyps5-settings.txt"] = settings_text(environ, identity)
     members["host.txt"] = host_text()
     members["README.txt"] = README
     with zipfile.ZipFile(out, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
@@ -116,8 +116,7 @@ def main(argv=None):
         print(f"bug_report: no run report at {args.report}", file=sys.stderr)
         return 1
     try:
-        ident = identities()
-        names = make_bundle(args.report, args.out, log=args.log, input_config=args.input_config, settings=settings_text(os.environ, ident), **ident)
+        names = make_bundle(args.report, args.out, log=args.log, input_config=args.input_config, environ=os.environ, **identities())
     except (OSError, ValueError, RecursionError) as error:
         print(f"bug_report: {error}", file=sys.stderr)
         return 1
