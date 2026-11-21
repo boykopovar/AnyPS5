@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestWindow.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -113,6 +114,34 @@ int ToInt(std::size_t result) {
     return result == Invalid || result == Incomplete ? -1 : static_cast<int>(result);
 }
 
+struct GuestShiftState {
+    std::uint64_t value;
+    std::int8_t pending;
+};
+
+GuestShiftState ReadShiftState(const void* state, const char* message) {
+    std::array<unsigned char, PendingOffset + 1> bytes;
+    GuestCopyInOrThrow(bytes.data(), state, bytes.size(), message);
+    GuestShiftState result{};
+    std::memcpy(&result.value, bytes.data(), sizeof(result.value));
+    result.pending = static_cast<std::int8_t>(bytes[PendingOffset]);
+    return result;
+}
+
+void WriteShiftValue(void* state, std::uint64_t value, const char* message) {
+    GuestCopyOutOrThrow(state, &value, sizeof(value), message);
+}
+
+void WriteShiftPending(void* state, std::int8_t pending, const char* message) {
+    const auto stored = static_cast<std::int16_t>(pending);
+    GuestCopyOutOrThrow(static_cast<unsigned char*>(state) + PendingOffset, &stored, sizeof(stored), message);
+}
+
+template<typename TValue>
+void WriteDestination(TValue* destination, TValue value, const char* message) {
+    if (destination) GuestCopyOutOrThrow(destination, &value, sizeof(value), message);
+}
+
 }
 
 extern "C" {
@@ -209,50 +238,46 @@ std::size_t APS5_VABI c16rtomb_nid_postfix(char* destination, std::uint16_t unit
 
 std::size_t APS5_VABI mbrtoc32_nid_postfix(std::uint32_t* destination, const char* source, std::size_t count, void* state) {
     if (!state) throw std::invalid_argument("mbrtoc32: null conversion state");
-    auto* const bytes = static_cast<unsigned char*>(state);
     if (!source) {
         destination = nullptr;
         source = "";
         count = 1;
     }
-    std::uint64_t value = 0;
-    std::memcpy(&value, bytes, sizeof(value));
-    auto pending = static_cast<std::int8_t>(bytes[PendingOffset]);
+    auto [value, pending] = ReadShiftState(state, "mbrtoc32: unreadable conversion state");
+    GuestSourceWindow<char, 8> input(source, count, "mbrtoc32: unreadable source");
     for (std::size_t consumed = 0; consumed < count;) {
-        const auto byte = static_cast<unsigned char>(source[consumed++]);
+        const auto byte = static_cast<unsigned char>(input[consumed++]);
         if (!DecodeUtf8Byte(byte, value, pending)) {
             errno = 86;
             return static_cast<std::size_t>(-1);
         }
         if (pending == 0) {
-            if (destination) *destination = static_cast<std::uint32_t>(value);
-            StorePending(bytes, 0);
+            WriteDestination(destination, static_cast<std::uint32_t>(value), "mbrtoc32: unwritable destination");
+            WriteShiftPending(state, 0, "mbrtoc32: unwritable conversion state");
             return value == 0 ? 0 : consumed;
         }
     }
-    std::memcpy(bytes, &value, sizeof(value));
-    StorePending(bytes, pending);
+    WriteShiftValue(state, value, "mbrtoc32: unwritable conversion state");
+    WriteShiftPending(state, pending, "mbrtoc32: unwritable conversion state");
     return static_cast<std::size_t>(-2);
 }
 
 std::size_t APS5_VABI mbrtoc16_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void* state) {
     if (!state) throw std::invalid_argument("mbrtoc16: null conversion state");
-    auto* const bytes = static_cast<unsigned char*>(state);
     if (!source) {
         destination = nullptr;
         source = "";
         count = 1;
     }
-    std::uint64_t value = 0;
-    std::memcpy(&value, bytes, sizeof(value));
-    auto pending = static_cast<std::int8_t>(bytes[PendingOffset]);
+    auto [value, pending] = ReadShiftState(state, "mbrtoc16: unreadable conversion state");
     if (pending == LowSurrogatePending) {
-        if (destination) *destination = static_cast<std::uint16_t>((value & 0x3ff) | 0xdc00);
-        StorePending(bytes, 0);
+        WriteDestination(destination, static_cast<std::uint16_t>((value & 0x3ff) | 0xdc00), "mbrtoc16: unwritable destination");
+        WriteShiftPending(state, 0, "mbrtoc16: unwritable conversion state");
         return static_cast<std::size_t>(-3);
     }
+    GuestSourceWindow<char, 8> input(source, count, "mbrtoc16: unreadable source");
     for (std::size_t consumed = 0; consumed < count;) {
-        const auto byte = static_cast<unsigned char>(source[consumed++]);
+        const auto byte = static_cast<unsigned char>(input[consumed++]);
         if (!DecodeUtf8Byte(byte, value, pending)) {
             errno = 86;
             return static_cast<std::size_t>(-1);
@@ -263,34 +288,42 @@ std::size_t APS5_VABI mbrtoc16_nid_postfix(std::uint16_t* destination, const cha
             return static_cast<std::size_t>(-1);
         }
         if (value >= 0x10000) {
-            if (destination) *destination = static_cast<std::uint16_t>(((value >> 10) + 0x3fc0) | 0xd800);
-            StorePending(bytes, LowSurrogatePending);
+            WriteDestination(destination, static_cast<std::uint16_t>(((value >> 10) + 0x3fc0) | 0xd800), "mbrtoc16: unwritable destination");
+            WriteShiftPending(state, LowSurrogatePending, "mbrtoc16: unwritable conversion state");
             return consumed;
         }
-        if (destination) *destination = static_cast<std::uint16_t>(value);
-        StorePending(bytes, 0);
+        WriteDestination(destination, static_cast<std::uint16_t>(value), "mbrtoc16: unwritable destination");
+        WriteShiftPending(state, 0, "mbrtoc16: unwritable conversion state");
         return value == 0 ? 0 : consumed;
     }
-    std::memcpy(bytes, &value, sizeof(value));
-    StorePending(bytes, pending);
+    WriteShiftValue(state, value, "mbrtoc16: unwritable conversion state");
+    WriteShiftPending(state, pending, "mbrtoc16: unwritable conversion state");
     return static_cast<std::size_t>(-2);
 }
 
 std::size_t APS5_VABI wcsrtombs_nid_postfix(char* destination, const std::uint16_t** source, std::size_t capacity, void*) {
-    const auto* wide = *source;
+    const std::uint16_t* wide = nullptr;
+    GuestCopyInOrThrow(&wide, source, sizeof(wide), "wcsrtombs: unreadable source pointer");
+    GuestSourceWindow<std::uint16_t> input(wide, SIZE_MAX, "wcsrtombs: unreadable source");
+    GuestDestinationWindow<char> output(destination, "wcsrtombs: unwritable destination");
+    const auto store = [&](const std::uint16_t* next) {
+        output.Flush();
+        GuestCopyOutOrThrow(source, &next, sizeof(next), "wcsrtombs: unwritable source pointer");
+    };
     std::size_t written = 0;
-    for (;; ++wide) {
+    for (std::size_t index = 0;; ++index) {
+        const std::uint16_t unit = input[index];
         char bytes[LocaleMaxLength];
-        const std::size_t length = EncodeUtf8(bytes, *wide);
+        const std::size_t length = EncodeUtf8(bytes, unit);
         if (destination) {
             if (length > capacity - written) {
-                *source = wide;
+                store(wide + index);
                 return written;
             }
-            std::memcpy(destination + written, bytes, length);
+            for (std::size_t byte = 0; byte < length; ++byte) output.Put(bytes[byte]);
         }
-        if (*wide == 0) {
-            if (destination) *source = nullptr;
+        if (unit == 0) {
+            if (destination) store(nullptr);
             return written;
         }
         written += length;

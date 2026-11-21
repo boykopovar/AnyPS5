@@ -1,5 +1,6 @@
 #include "prx/libc/include/CodecvtUtf.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -627,9 +628,201 @@ void CheckUtf32Length() {
     RequireInvalid([&] { Length32(plain.Get(), guardState, guardEnd, guardStart, 1); }, "char32 do_length rejects reversed range");
 }
 
+template<typename TCall>
+void RequireGuestFailure(TCall call, const char* text) {
+    bool threw = false;
+    errno = 71;
+    try {
+        call();
+    } catch (const std::invalid_argument& error) {
+        threw = std::strstr(error.what(), text) != nullptr;
+    }
+    Require(threw && errno == 71, "invalid guest memory reports the expected failure without changing errno");
+}
+
+class GuardedPages {
+public:
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        memory = static_cast<std::byte*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr, "guarded allocation succeeds");
+        DWORD previous = 0;
+        Require(VirtualProtect(memory + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0, "guard page protection succeeds");
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0, "host page size is available");
+        pageSize = static_cast<std::size_t>(size);
+        void* allocation = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(allocation != MAP_FAILED, "guarded allocation succeeds");
+        memory = static_cast<std::byte*>(allocation);
+        Require(mprotect(memory + pageSize, pageSize, PROT_NONE) == 0, "guard page protection succeeds");
+#endif
+    }
+
+    ~GuardedPages() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, pageSize * 2);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    template<typename TElement>
+    TElement* Last(std::size_t count) { return reinterpret_cast<TElement*>(memory + pageSize) - count; }
+
+    void ReadOnly() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(memory, pageSize, PAGE_READONLY, &previous) != 0, "read-only protection succeeds");
+#else
+        Require(mprotect(memory, pageSize, PROT_READ) == 0, "read-only protection succeeds");
+#endif
+    }
+
+private:
+    std::byte* memory = nullptr;
+    std::size_t pageSize = 0;
+};
+
+constexpr std::size_t Oversized = std::size_t{1} << 40;
+
+
+void CheckGuardedSources() {
+    const TestFacet facet16(In16, Utf16Maxcode, 0);
+    const TestFacet facet32(In32, Utf32Maxcode, 0);
+    GuardedPages pages;
+    char* bytes = pages.Last<char>(3);
+    std::memcpy(bytes, "A\xc3\xa9", 3);
+    std::array<char16_t, 4> wide{};
+    std::array<char32_t, 4> wider{};
+    std::uint64_t state[2] = {};
+    const char* mid1 = nullptr;
+    char16_t* mid2 = nullptr;
+    char32_t* mid32 = nullptr;
+    Require(In16(facet16.Get(), state, bytes, bytes + 3, &mid1, wide.data(), wide.data() + wide.size(), &mid2) == Ok && mid1 == bytes + 3 && mid2 == wide.data() + 2 && wide[0] == 0x41 && wide[1] == 0xe9, "char16 do_in reads a source that ends at a guard page");
+    Require(In32(facet32.Get(), state, bytes, bytes + 3, &mid1, wider.data(), wider.data() + wider.size(), &mid32) == Ok && mid32 == wider.data() + 2 && wider[1] == 0xe9, "char32 do_in reads a source that ends at a guard page");
+    RequireGuestFailure([&] { In16(facet16.Get(), state, bytes, bytes + 5, &mid1, wide.data(), wide.data() + wide.size(), &mid2); }, "source range");
+    RequireGuestFailure([&] { In32(facet32.Get(), state, bytes, bytes + Oversized, &mid1, wider.data(), wider.data() + wider.size(), &mid32); }, "source range");
+
+    GuardedPages unitPages;
+    char32_t* units = unitPages.Last<char32_t>(1);
+    *units = 0xe9;
+    std::array<char, 8> narrow{};
+    const char32_t* in32 = nullptr;
+    char* out = nullptr;
+    Require(Out32(facet32.Get(), state, units, units + 1, &in32, narrow.data(), narrow.data() + narrow.size(), &out) == Ok && in32 == units + 1 && out == narrow.data() + 2, "char32 do_out reads a source that ends at a guard page");
+    RequireGuestFailure([&] { Out32(facet32.Get(), state, units, units + Oversized, &in32, narrow.data(), narrow.data() + narrow.size(), &out); }, "source range");
+    char16_t* words = unitPages.Last<char16_t>(1);
+    *words = 0x41;
+    const char16_t* in16 = nullptr;
+    Require(Out16(facet16.Get(), state, words, words + 1, &in16, narrow.data(), narrow.data() + narrow.size(), &out) == Ok && in16 == words + 1 && out == narrow.data() + 1, "char16 do_out reads a source that ends at a guard page");
+    RequireGuestFailure([&] { Out16(facet16.Get(), state, words, words + 2, &in16, narrow.data(), narrow.data() + narrow.size(), &out); }, "source range");
+}
+
+void CheckGuardedDestinations() {
+    const TestFacet facet16(In16, Utf16Maxcode, 0);
+    const TestFacet facet32(In32, Utf32Maxcode, 0);
+    const std::string bytes = "ABC";
+    std::uint64_t state[2] = {};
+    GuardedPages pages;
+    const char* mid1 = nullptr;
+    char16_t* wide = pages.Last<char16_t>(2);
+    char16_t* mid2 = nullptr;
+    Require(In16(facet16.Get(), state, bytes.data(), bytes.data() + 2, &mid1, wide, wide + Oversized, &mid2) == Ok && mid2 == wide + 2 && wide[0] == 'A' && wide[1] == 'B', "char16 do_in fills an oversized destination only as far as it converts");
+    RequireGuestFailure([&] { In16(facet16.Get(), state, bytes.data(), bytes.data() + 3, &mid1, wide, wide + 3, &mid2); }, "destination range");
+    char32_t* wider = pages.Last<char32_t>(2);
+    char32_t* mid32 = nullptr;
+    Require(In32(facet32.Get(), state, bytes.data(), bytes.data() + 2, &mid1, wider, wider + Oversized, &mid32) == Ok && mid32 == wider + 2 && wider[1] == 'B', "char32 do_in fills an oversized destination only as far as it converts");
+
+    const std::u32string text32 = U"é";
+    const std::u16string text16 = u"€";
+    char* narrow = pages.Last<char>(3);
+    const char32_t* in32 = nullptr;
+    const char16_t* in16 = nullptr;
+    char* out = nullptr;
+    Require(Out32(facet32.Get(), state, text32.data(), text32.data() + 1, &in32, narrow + 1, narrow + 1 + Oversized, &out) == Ok && out == narrow + 3, "char32 do_out writes up to a guard page");
+    Require(Out16(facet16.Get(), state, text16.data(), text16.data() + 1, &in16, narrow, narrow + Oversized, &out) == Ok && out == narrow + 3 && std::memcmp(narrow, "\xe2\x82\xac", 3) == 0, "char16 do_out writes up to a guard page");
+    RequireGuestFailure([&] { Out32(facet32.Get(), state, text32.data(), text32.data() + 1, &in32, narrow + 2, narrow + 6, &out); }, "destination range");
+}
+
+void CheckGuardedArguments() {
+    const InFunction<char16_t> in = In16;
+    const OutFunction<char16_t> out16 = Out16;
+    const TestFacet facet(In16, Utf16Maxcode, 0);
+    const std::string bytes = "AB";
+    std::array<char16_t, 4> wide{};
+    std::uint64_t state[2] = {1, 0};
+    const char* mid1 = nullptr;
+    char16_t* mid2 = nullptr;
+    void* inaccessible = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    const auto run = [&](const void* self, void* shift, std::size_t length, const char** next1, char16_t** next2) {
+        return in(self, shift, bytes.data(), bytes.data() + length, next1, wide.data(), wide.data() + wide.size(), next2);
+    };
+    Require(run(inaccessible, inaccessible, 0, &mid1, &mid2) == Partial && mid1 == bytes.data() && mid2 == wide.data(), "an empty conversion reads neither the facet nor the state");
+    RequireGuestFailure([&] { run(inaccessible, state, 2, &mid1, &mid2); }, "facet maximum code");
+    std::array<char, 4> narrow{};
+    const char16_t* in16 = nullptr;
+    char* out = nullptr;
+    RequireGuestFailure([&] { out16(inaccessible, state, u"A", u"A" + 1, &in16, narrow.data(), narrow.data() + narrow.size(), &out); }, "facet mode");
+    RequireGuestFailure([&] { run(facet.Get(), inaccessible, 2, &mid1, &mid2); }, "shift state");
+    RequireGuestFailure([&] { run(facet.Get(), state, 2, static_cast<const char**>(inaccessible), &mid2); }, "next pointer");
+    RequireGuestFailure([&] { run(facet.Get(), state, 2, &mid1, static_cast<char16_t**>(inaccessible)); }, "next pointer");
+    RequireGuestFailure([&] { In16(facet.Get(), state, bytes.data() + 2, bytes.data(), &mid1, wide.data(), wide.data() + wide.size(), &mid2); }, "range ends before it starts");
+
+    const Facet broken{reinterpret_cast<const std::uintptr_t*>(inaccessible), 1, 0, Utf16Maxcode, ConsumeHeader, 0};
+    std::uint64_t fresh[2] = {};
+    const std::string marked = Bytes({0xef, 0xbb, 0xbf, 0x41});
+    RequireGuestFailure([&] { in(&broken, fresh, marked.data(), marked.data() + marked.size(), &mid1, wide.data(), wide.data() + wide.size(), &mid2); }, "facet vtable");
+
+    GuardedPages statePages;
+    auto* kept = statePages.Last<std::uint64_t>(2);
+    kept[0] = 1;
+    statePages.ReadOnly();
+    Require(run(facet.Get(), kept, 2, &mid1, &mid2) == Ok && mid2 == wide.data() + 2, "an unchanged shift state may be read-only");
+    GuardedPages startPages;
+    auto* initial = startPages.Last<std::uint64_t>(2);
+    startPages.ReadOnly();
+    RequireGuestFailure([&] { run(facet.Get(), initial, 2, &mid1, &mid2); }, "shift state");
+}
+
+void CheckLongRanges() {
+    const TestFacet facet16(In16, Utf16Maxcode, 0);
+    const TestFacet facet32(In32, Utf32Maxcode, 0);
+    std::string bytes;
+    std::u16string units;
+    for (int index = 0; index < 3000; ++index) {
+        bytes += Bytes({0x41, 0xc3, 0xa9, 0xe2, 0x82, 0xac});
+        units += std::u16string{0x41, 0xe9, 0x20ac};
+    }
+    std::uint64_t state[2] = {};
+    const auto in = RunIn(In16, facet16, state, bytes, units.size());
+    Require(in.result == Ok && in.consumed == static_cast<std::ptrdiff_t>(bytes.size()) && in.produced == units, "char16 do_in converts ranges longer than its buffers");
+    const auto out = RunOut(Out16, facet16, state, units, bytes.size());
+    Require(out.result == Ok && out.consumed == static_cast<std::ptrdiff_t>(units.size()) && out.produced == bytes, "char16 do_out converts ranges longer than its buffers");
+    const std::u32string wide(units.begin(), units.end());
+    const auto in32 = RunIn(In32, facet32, state, bytes, wide.size() - 1);
+    Require(in32.result == Ok && in32.consumed == static_cast<std::ptrdiff_t>(bytes.size() - 3) && in32.produced == wide.substr(0, wide.size() - 1), "char32 do_in stops at the end of a long output range");
+    const auto out32 = RunOut(Out32, facet32, state, wide, bytes.size() - 1);
+    Require(out32.result == Ok && out32.consumed == static_cast<std::ptrdiff_t>(wide.size() - 1) && out32.produced == bytes.substr(0, bytes.size() - 3), "char32 do_out stops at the end of a long output range");
+}
+
+void WarmUpHostExceptionRuntime() {
+    try {
+        throw std::runtime_error("warm-up");
+    } catch (const std::runtime_error&) {
+    }
+}
+
 }
 
 int main() {
+    WarmUpHostExceptionRuntime();
     CheckUtf16InSequences();
     CheckUtf16InSurrogates();
     CheckUtf16InErrors();
@@ -654,5 +847,9 @@ int main() {
     CheckUtf32OutHeader();
     CheckUtf16Length();
     CheckUtf32Length();
+    CheckLongRanges();
+    CheckGuardedSources();
+    CheckGuardedDestinations();
+    CheckGuardedArguments();
     return 0;
 }

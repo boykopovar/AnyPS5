@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_multibyte_guest_memory_tests ${LIBS_INCLUDE_DIR}/tests/GuestMultibyteGuestMemory.cpp)
+    target_include_directories(guest_multibyte_guest_memory_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_multibyte_guest_memory_tests PRIVATE libc)
+    configure_windows_unwind(guest_multibyte_guest_memory_tests)
+    add_test(NAME guest_multibyte_guest_memory COMMAND guest_multibyte_guest_memory_tests)
+    set_tests_properties(guest_multibyte_guest_memory PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_multibyte_guest_memory PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
