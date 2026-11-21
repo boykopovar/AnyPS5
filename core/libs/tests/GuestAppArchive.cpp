@@ -1,6 +1,7 @@
 #include "AppArchiveFixture.hpp"
 #include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/exceptions/Unwind.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -175,6 +176,136 @@ void Invalid(const std::filesystem::path& root) {
     Require(thrown, "an invalid app0.zar was not reported");
 }
 
+void UnwindBounds() {
+    const LibcUnwind::Byte cieAsFde[36] = {
+        0x20, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x01, 0x78,
+        0x10
+    };
+    {
+        LibcUnwind::Frame frame{};
+        LibcUnwind::Lookup query{0x1000, cieAsFde};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(!LibcUnwind::DecodeRange(frame, query, p, augmentation, lsdaEncoding), "DecodeRange accepted a CIE record with cieOffset == 0");
+    }
+
+    const LibcUnwind::Byte zeroCieLength[48] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x01, 0x78,
+        0x10, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x18, 0x00, 0x00, 0x00,
+        0x18, 0x00, 0x00, 0x00
+    };
+    {
+        LibcUnwind::Frame frame{};
+        LibcUnwind::Lookup query{0x1000, &zeroCieLength[20]};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(!LibcUnwind::DecodeRange(frame, query, p, augmentation, lsdaEncoding), "DecodeRange accepted a CIE with cieLength == 0");
+    }
+
+    const LibcUnwind::Byte shortFdeLength[44] = {
+        0x0c, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x01, 0x78,
+        0x10, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00,
+        0x14, 0x00, 0x00, 0x00
+    };
+    {
+        LibcUnwind::Frame frame{};
+        LibcUnwind::Lookup query{0x1000, &shortFdeLength[16]};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(!LibcUnwind::DecodeRange(frame, query, p, augmentation, lsdaEncoding), "DecodeRange accepted an FDE with length < 4");
+    }
+
+    const LibcUnwind::Byte badAugSize[40] = {
+        0x10, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 'z', 'R', 0x00,
+        0x01, 0x78, 0x10, 0x0a,
+        0x03, 0x00, 0x00, 0x00,
+        0x0c, 0x00, 0x00, 0x00,
+        0x18, 0x00, 0x00, 0x00,
+        0x00, 0x10, 0x00, 0x00,
+        0x10, 0x00, 0x00, 0x00
+    };
+    {
+        LibcUnwind::Frame frame{};
+        LibcUnwind::Lookup query{0x1000, &badAugSize[20]};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(!LibcUnwind::DecodeRange(frame, query, p, augmentation, lsdaEncoding), "DecodeRange accepted a 'z' augmentation size exceeding cieEnd");
+    }
+
+    {
+        LibcUnwind::Frame frame{};
+        frame.start = 0x1000;
+        frame.codeAlign = 1;
+        frame.dataAlign = -8;
+        LibcUnwind::Rules initial{};
+
+        const LibcUnwind::Byte truncDefCfaExpr[8] = {0x0f, 0x05};
+        LibcUnwind::Rules s1 = initial;
+        Require(!LibcUnwind::Instructions(truncDefCfaExpr, truncDefCfaExpr + 2, frame, 0x1000, s1, initial), "Instructions accepted truncated DW_CFA_def_cfa_expression");
+
+        const LibcUnwind::Byte truncExpr[8] = {0x10, 0x03, 0x04};
+        LibcUnwind::Rules s2 = initial;
+        Require(!LibcUnwind::Instructions(truncExpr, truncExpr + 3, frame, 0x1000, s2, initial), "Instructions accepted truncated DW_CFA_expression");
+
+        const LibcUnwind::Byte truncValExpr[8] = {0x16, 0x06, 0x04};
+        LibcUnwind::Rules s3 = initial;
+        Require(!LibcUnwind::Instructions(truncValExpr, truncValExpr + 3, frame, 0x1000, s3, initial), "Instructions accepted truncated DW_CFA_val_expression");
+
+        const LibcUnwind::Byte truncAdvanceLoc4[8] = {0x04, 0x01};
+        LibcUnwind::Rules s4 = initial;
+        Require(!LibcUnwind::Instructions(truncAdvanceLoc4, truncAdvanceLoc4 + 2, frame, 0x1000, s4, initial), "Instructions accepted truncated DW_CFA_advance_loc4");
+    }
+
+    const LibcUnwind::Byte validEhFrame[44] = {
+        0x10, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 'z', 'R', 0x00,
+        0x01, 0x78, 0x10, 0x01,
+        0x03, 0x0c, 0x07, 0x08,
+        0x14, 0x00, 0x00, 0x00,
+        0x18, 0x00, 0x00, 0x00,
+        0x00, 0x10, 0x00, 0x00,
+        0x40, 0x00, 0x00, 0x00,
+        0x44, 0x0e, 0x10, 0x86,
+        0x02, 0x90, 0x01, 0x00
+    };
+    {
+        LibcUnwind::Frame frame{};
+        LibcUnwind::Lookup query{0x1010, &validEhFrame[20]};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(LibcUnwind::DecodeRange(frame, query, p, augmentation, lsdaEncoding), "valid CIE/FDE failed DecodeRange");
+        Require(frame.start == 0x1000 && frame.length == 0x40, "valid FDE decoded unexpected range");
+        Require(frame.codeAlign == 1 && frame.dataAlign == -8 && frame.returnRegister == 16, "valid CIE decoded unexpected alignment or return register");
+        Require(std::strcmp(augmentation, "zR") == 0 && lsdaEncoding == 255, "valid CIE decoded unexpected augmentation");
+        LibcUnwind::Rules initial{};
+        Require(LibcUnwind::Instructions(frame.cieBegin, frame.cieEnd, frame, frame.start, initial, initial), "valid CIE instructions failed");
+        Require(initial.cfaRegister == 7 && initial.cfaOffset == 8, "valid CIE instructions computed unexpected initial CFA");
+        LibcUnwind::Rules state = initial;
+        Require(LibcUnwind::Instructions(p, frame.end, frame, 0x1010, state, initial), "valid FDE instructions failed");
+        Require(state.cfaRegister == 7 && state.cfaOffset == 16, "valid FDE instructions computed unexpected CFA");
+        Require(state.registers[6].kind == 1 && state.registers[6].value == -16, "valid FDE instructions computed unexpected r6 rule");
+        Require(state.registers[16].kind == 1 && state.registers[16].value == -8, "valid FDE instructions computed unexpected r16 rule");
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -189,6 +320,7 @@ int main(int argc, char** argv) {
     else if (mode == "damaged") Damaged(root);
     else if (mode == "invalid") Invalid(root);
     else return 2;
+    UnwindBounds();
     std::error_code error;
     std::filesystem::current_path(std::filesystem::temp_directory_path(), error);
     std::filesystem::remove_all(root, error);
