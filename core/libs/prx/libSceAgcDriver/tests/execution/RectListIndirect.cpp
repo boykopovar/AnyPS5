@@ -173,9 +173,11 @@ void DrawnOnTheGpu(bool indexedOnTheGpu) {
         cpu += std::to_string(counts[path]) + " " + AgcDriver::Graphics::IndirectDrawPathName(static_cast<AgcDriver::Graphics::IndirectDrawPath>(path));
     }
 #ifdef ANYPS5_SETTLED_RECORDS
-    static_cast<void>(indexedOnTheGpu);
     const auto settled = counts[static_cast<std::size_t>(AgcDriver::Graphics::IndirectDrawPath::Settled)];
-    Require(counts[0] == 0 && settled == 4, "the indirect rect-list draws whose records no batch writes took the GPU-side path " + std::to_string(counts[0]) + " times and read their records on the CPU as: " + cpu + ", expected 4 settled reads");
+    const auto gap = counts[static_cast<std::size_t>(AgcDriver::Graphics::IndirectDrawPath::FeatureGap)];
+    const std::uint64_t expectedSettled = indexedOnTheGpu ? 4u : 3u;
+    const std::uint64_t expectedGap = indexedOnTheGpu ? 0u : 1u;
+    Require(counts[0] == 0 && settled == expectedSettled && gap == expectedGap, "the indirect rect-list draws whose records no batch writes took the GPU-side path " + std::to_string(counts[0]) + " times and read their records on the CPU as: " + cpu + ", expected " + std::to_string(expectedSettled) + " settled reads and " + std::to_string(expectedGap) + " feature gap");
 #else
     const std::string expectedCpu = indexedOnTheGpu ? "" : "1 " + std::string(AgcDriver::Graphics::IndirectDrawPathName(AgcDriver::Graphics::IndirectDrawPath::FeatureGap));
     Require(cpu == expectedCpu, "indirect rect-list draws read their records on the CPU: " + cpu + (expectedCpu.empty() ? std::string() : ", expected only the indexed draw (" + expectedCpu + ")"));
