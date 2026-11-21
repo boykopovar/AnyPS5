@@ -28,6 +28,7 @@ namespace {
 struct GuestExport {
     std::size_t Provider;
     std::uint8_t Type;
+    bool HostInvisible;
 };
 
 std::vector<std::string> ReadNeededNames(const Domain::SysVDynamicSection& dynamic) {
@@ -158,7 +159,9 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             if (symbol.Section == 0 || symbol.Section == AbsoluteSection || (symbol.Info >> 4) == 0 || symbol.Visibility == 1 || symbol.Visibility == 2) continue;
             auto& providers = exports[symbol.Name];
             const bool repeated = !providers.empty() && providers.back().Provider == images.size();
-            if (!repeated) providers.push_back({images.size(), static_cast<std::uint8_t>(symbol.Info & 15)});
+            const auto type = static_cast<std::uint8_t>(symbol.Info & 15);
+            const bool hostInvisible = !windows && !macos && symbol.Value == 0 && type != 6 && (type != 2 || symbol.Section >= 0xff00);
+            if (!repeated) providers.push_back({images.size(), type, hostInvisible});
             if (!windows && providers.size() > 1)
                 for (const auto& provider : providers) sharedExports[symbol.Name].insert(provider.Provider);
         }
@@ -219,6 +222,11 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         if (windows || macos || !sharedExports.contains(name)) return name;
         return name + "#module" + std::to_string(provider);
     };
+    const auto rejectHostInvisible = [&](const GuestExport& provider, const std::string& name, const std::string& importer) {
+        if (!provider.HostInvisible) return;
+        throw Domain::RelinkerException("Guest import " + name + " in " + importer + " binds to an export at address 0 in " +
+                                        Io::Utf8Path(images[provider.Provider].SourcePath) + " that the Linux loader skips");
+    };
     const auto declaresHost = [&](const std::string& library) { return !windows && !library.empty() && findGuest(library) == guestNames.end(); };
     if (dynamic.DynSymData.size() % 24 != 0) throw Domain::RelinkerException("Invalid executable symbol table");
     std::vector<std::string> executableModules(dynamic.DynSymData.size() / 24);
@@ -274,6 +282,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             }
             rename(dynamic.DynSymData, dynamic.DynStrData, offset / 24, declaredProvider != nullptr ? bindingName(name, declared->second) : name);
             if (executableReferences[offset / 24]) {
+                if (declaredProvider != nullptr) rejectHostInvisible(*declaredProvider, name, Io::Utf8Path(inputPath));
+                else if (found->second.size() == 1) rejectHostInvisible(found->second.front(), name, Io::Utf8Path(inputPath));
                 if (!macos && declaredProvider != nullptr) executableProviders.insert(declared->second);
                 else if (found->second.size() == 1) executableProviders.insert(found->second.front().Provider);
             }
@@ -322,6 +332,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             if (provider != nullptr) {
                 if ((symbol.Info & 15) != 0 && (symbol.Info & 15) != provider->Type) throw Domain::RelinkerException("Guest import/export type mismatch: " + symbol.Name);
                 if (provider->Type == 6 && (symbol.Info & 15) == 0 && referencedSymbols.contains(symbolIndex)) throw Domain::RelinkerException("Non-TLS relocation against guest TLS export: " + symbol.Name);
+                if (referencedSymbols.contains(symbolIndex)) rejectHostInvisible(*provider, symbol.Name, Io::Utf8Path(images[index].SourcePath));
                 if (provider->Provider != index && referencedSymbols.contains(symbolIndex)) dependencies[index].insert(provider->Provider);
                 if (!windows && !macos && declared != guestNames.end() && sharedExports.contains(symbol.Name))
                     importBindings[index].emplace(symbolIndex, bindingName(symbol.Name, provider->Provider));
