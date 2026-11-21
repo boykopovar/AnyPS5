@@ -8,6 +8,18 @@
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -260,6 +272,107 @@ void CheckSqrtx() {
     RequireInvalid([&] { _Xp_sqrtx_nid_postfix(words.data(), -1, scratch.data()); }, "_Xp_sqrtx rejects a negative count");
 }
 
+class ReadOnlyPage {
+public:
+    explicit ReadOnlyPage(const Words& words) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        page = VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(page != nullptr, "allocate a page");
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        Require(pageSize > 0, "query the page size");
+        size = static_cast<std::size_t>(pageSize);
+        page = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(page != MAP_FAILED, "allocate a page");
+#endif
+        *static_cast<Words*>(page) = words;
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(page, size, PAGE_READONLY, &previous) != 0, "protect a page");
+#else
+        Require(mprotect(page, size, PROT_READ) == 0, "protect a page");
+#endif
+    }
+    ReadOnlyPage(const ReadOnlyPage&) = delete;
+    ReadOnlyPage& operator=(const ReadOnlyPage&) = delete;
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(page, 0, MEM_RELEASE);
+#else
+        munmap(page, size);
+#endif
+    }
+    double* Data() const { return static_cast<double*>(page); }
+    const Words& Value() const { return *static_cast<const Words*>(page); }
+
+private:
+    void* page = nullptr;
+    std::size_t size = 0;
+};
+
+template<typename TCall>
+void RequireUnsafeRejected(TCall call, const char* message) {
+    *__error_nid_postfix() = 71;
+    RequireInvalid(call, message);
+    Require(*__error_nid_postfix() == 71, message);
+}
+
+void CheckGuestPointers() {
+    auto* unmapped = reinterpret_cast<double*>(std::uintptr_t{0x10});
+    const Words value{1.0, Power(-30), 0.0, 0.0};
+    Words words = value;
+    std::array<double, 16> scratch{};
+    RequireUnsafeRejected([&] { _Xp_getw_nid_postfix(unmapped, 4); }, "_Xp_getw rejects unmapped words");
+    RequireUnsafeRejected([&] { _Xp_setw_nid_postfix(unmapped, 4, 1.0); }, "_Xp_setw rejects unmapped words");
+    RequireUnsafeRejected([&] { _Xp_setn_nid_postfix(unmapped, 4, 3); }, "_Xp_setn rejects unmapped words");
+    RequireUnsafeRejected([&] { _Xp_addh_nid_postfix(unmapped, 4, 1.0); }, "_Xp_addh rejects unmapped words");
+    RequireUnsafeRejected([&] { _Xp_mulh_nid_postfix(unmapped, 4, 3.0); }, "_Xp_mulh rejects unmapped words");
+    RequireUnsafeRejected([&] { _Xp_ldexpx_nid_postfix(unmapped, 4, 1); }, "_Xp_ldexpx rejects unmapped words");
+    RequireUnsafeRejected([&] { _Xp_movx_nid_postfix(unmapped, 4, value.data()); }, "_Xp_movx rejects an unmapped destination");
+    RequireUnsafeRejected([&] { _Xp_movx_nid_postfix(words.data(), 4, unmapped); }, "_Xp_movx rejects an unmapped source");
+    RequireUnsafeRejected([&] { _Xp_addx_nid_postfix(words.data(), 4, unmapped, 4); }, "_Xp_addx rejects unmapped addend words");
+    RequireUnsafeRejected([&] { _Xp_subx_nid_postfix(unmapped, 4, value.data(), 4); }, "_Xp_subx rejects unmapped words");
+    RequireUnsafeRejected([&] { _Xp_mulx_nid_postfix(words.data(), 4, unmapped, 4, scratch.data()); }, "_Xp_mulx rejects unmapped factor words");
+    RequireUnsafeRejected([&] { _Xp_mulx_nid_postfix(words.data(), 4, value.data(), 4, unmapped); }, "_Xp_mulx rejects unmapped scratch words");
+    RequireUnsafeRejected([&] { _Xp_invx_nid_postfix(unmapped, 4, scratch.data()); }, "_Xp_invx rejects unmapped words");
+    RequireUnsafeRejected([&] { _Xp_invx_nid_postfix(words.data(), 4, unmapped); }, "_Xp_invx rejects unmapped scratch words");
+    RequireUnsafeRejected([&] { _Xp_sqrtx_nid_postfix(words.data(), 4, unmapped); }, "_Xp_sqrtx rejects unmapped scratch words");
+    Require(Same(words, value), "rejected calls leave the words alone");
+
+    const double single[] = {5.0};
+    _Xp_mulx_nid_postfix(words.data(), 4, single, 1, unmapped);
+    Require(Same(words, Words{5.0, 5.0 * Power(-30), 0.0, 0.0}), "_Xp_mulx by one word reads no scratch");
+    words = Zeroes();
+    _Xp_invx_nid_postfix(words.data(), 4, unmapped);
+    Require(words[0] == std::numeric_limits<double>::infinity(), "_Xp_invx of zero reads no scratch");
+    words = Words{std::numeric_limits<double>::infinity(), 0.0, 0.0, 0.0};
+    _Xp_sqrtx_nid_postfix(words.data(), 4, unmapped);
+    Require(words[0] == std::numeric_limits<double>::infinity(), "_Xp_sqrtx of infinity reads no scratch");
+    _Xp_addh_nid_postfix(unmapped, 0, 1.0);
+    _Xp_mulh_nid_postfix(unmapped, 0, 1.0);
+    _Xp_setw_nid_postfix(unmapped, 0, 1.0);
+    Require(_Xp_getw_nid_postfix(unmapped, 0) == 0.0, "no words reads nothing");
+
+    const ReadOnlyPage page(Words{std::numeric_limits<double>::infinity(), Sentinel, 0.0, 0.0});
+    Require(_Xp_getw_nid_postfix(page.Data(), 4) == std::numeric_limits<double>::infinity(), "_Xp_getw reads read-only words");
+    RequireUnsafeRejected([&] { _Xp_addh_nid_postfix(page.Data(), 4, -std::numeric_limits<double>::infinity()); },
+        "_Xp_addh rejects read-only words before raising invalid");
+    RequireUnsafeRejected([&] { _Xp_ldexpx_nid_postfix(page.Data(), 4, 1); }, "_Xp_ldexpx rejects read-only words");
+    Require(page.Value()[1] == Sentinel, "rejected calls leave read-only words alone");
+}
+
+void CheckAliasedWords() {
+    Words words{1.0, Power(-30), Power(-60), 0.0};
+    _Xp_subx_nid_postfix(words.data(), 4, words.data(), 4);
+    Require(Same(words, Words{Power(-30), 0.0, 0.0, 0.0}), "_Xp_subx reads aliased words as they change");
+    std::array<double, 5> shifted{1.0, Power(-30), Power(-60), 0.0, 0.0};
+    _Xp_addx_nid_postfix(shifted.data(), 4, shifted.data() + 1, 4);
+    Require(shifted[0] == 1.0 && shifted[1] == Power(-29) && shifted[2] == Power(-59) && shifted[3] == 0.0, "_Xp_addx reads overlapping words as they change");
+}
+
 }
 
 int main() {
@@ -273,5 +386,7 @@ int main() {
     CheckMulx();
     CheckInvx();
     CheckSqrtx();
+    CheckAliasedWords();
+    CheckGuestPointers();
     return 0;
 }

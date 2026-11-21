@@ -1,6 +1,8 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
+#include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -11,6 +13,13 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
@@ -420,6 +429,63 @@ void TestDisplayName() {
     std::printf("WTF language display name: returns the retained argument and null for null\n");
 }
 
+template<class Function>
+bool Rejected(Function function) {
+    errno = 71;
+    bool rejected = false;
+    try {
+        function();
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    return rejected && errno == 71;
+}
+
+unsigned char* MapReadOnlyPage(const void* contents, std::size_t size) {
+#ifdef _WIN32
+    auto* page = static_cast<unsigned char*>(VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(page != nullptr);
+    std::memcpy(page, contents, size);
+    DWORD previous = 0;
+    Require(VirtualProtect(page, 4096, PAGE_READONLY, &previous) != 0);
+#else
+    void* mapped = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Require(mapped != MAP_FAILED);
+    auto* page = static_cast<unsigned char*>(mapped);
+    std::memcpy(page, contents, size);
+    Require(mprotect(page, 4096, PROT_READ) == 0);
+#endif
+    return page;
+}
+
+void UnmapPage(unsigned char* page) {
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(page, 4096) == 0);
+#endif
+}
+
+void TestDisplayNameGuestPointers() {
+    Require(Rejected([] { _ZN3WTF28displayNameForLanguageLocaleERKNS_6StringE(reinterpret_cast<const String*>(std::uintptr_t{0x10})); }));
+    {
+        String unmapped(reinterpret_cast<StringImpl*>(std::uintptr_t{0x10}));
+        Require(Rejected([&] { _ZN3WTF28displayNameForLanguageLocaleERKNS_6StringE(&unmapped); }));
+        unmapped.impl = nullptr;
+    }
+    {
+        const StringImpl name = Make(Text8("en-US"));
+        unsigned char* page = MapReadOnlyPage(&name, sizeof(name));
+        auto* readOnly = reinterpret_cast<StringImpl*>(page);
+        String value(readOnly);
+        Require(Rejected([&] { _ZN3WTF28displayNameForLanguageLocaleERKNS_6StringE(&value); }));
+        Require(readOnly->refCount == 2);
+        value.impl = nullptr;
+        UnmapPage(page);
+    }
+    std::printf("WTF language display name: unreadable strings and read-only implementations throw and keep errno\n");
+}
+
 void TestNullPointers() {
     StringVector list;
     String language;
@@ -449,5 +515,6 @@ int main() {
     TestOverride();
     TestBestMatch();
     TestDisplayName();
+    TestDisplayNameGuestPointers();
     TestNullPointers();
 }
