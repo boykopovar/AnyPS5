@@ -403,6 +403,9 @@ bool APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypeleERKS0_(const WTF::TimeWithDyn
 bool APS5_VABI _ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(const WTF::TimeWithDynamicClockType& time) {
     WTF::TimeWithDynamicClockType deadline;
     if (!loadTime(deadline, &time)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!(deadline.m_value > 0.0)) {
+        return true;
+    }
     if (std::isinf(deadline.m_value)) {
         return false;
     }
@@ -457,9 +460,6 @@ double APS5_VABI _ZNK3WTF7CPUTime23percentageCPUUsageSinceERKS0_(const WTF::CPUT
     if (!loadTime(current, self) || !loadTime(base, &reference)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     double cpuUsageDelta = (current.systemTime.m_value + current.userTime.m_value) - (base.systemTime.m_value + base.userTime.m_value);
     double cpuTimeDelta = current.cpuTime.m_value - base.cpuTime.m_value;
-    if (cpuTimeDelta <= 0.0) {
-        return 0.0;
-    }
     return cpuUsageDelta * 100.0 / cpuTimeDelta;
 }
 
