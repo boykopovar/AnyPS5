@@ -1,13 +1,18 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
-#include <vector>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <source_location>
 #include <stdexcept>
+#include <vector>
+
+static std::size_t g_heapsortCompareCalls = 0;
 
 static void Require(bool value, std::source_location location = std::source_location::current()) {
     if (!value) {
@@ -20,6 +25,21 @@ static int APS5_VABI Compare(const void* key, const void* record) {
     const auto left = *static_cast<const unsigned char*>(key);
     const auto right = *static_cast<const unsigned char*>(record);
     return (left > right) - (left < right);
+}
+
+static int APS5_VABI CountingNonDereferencingCompare(const void* left, const void* right) {
+    ++g_heapsortCompareCalls;
+    const auto a = reinterpret_cast<std::uintptr_t>(left);
+    const auto b = reinterpret_cast<std::uintptr_t>(right);
+    return (a > b) - (a < b);
+}
+
+static int APS5_VABI CompareUint32(const void* left, const void* right) {
+    std::uint32_t a = 0;
+    std::uint32_t b = 0;
+    std::memcpy(&a, left, sizeof(a));
+    std::memcpy(&b, right, sizeof(b));
+    return (a > b) - (a < b);
 }
 
 int main() {
@@ -66,4 +86,35 @@ int main() {
         overflowed = true;
     }
     Require(overflowed);
+
+    g_heapsortCompareCalls = 0;
+    bool heapsortOverflowed = false;
+    try {
+        heapsort_nid_postfix(reinterpret_cast<void*>(UINTPTR_MAX - 3), 2, 4, CountingNonDereferencingCompare);
+    } catch (const std::overflow_error&) {
+        heapsortOverflowed = true;
+    }
+    Require(heapsortOverflowed);
+    Require(g_heapsortCompareCalls == 0);
+
+    *__error_nid_postfix() = 1234;
+    g_heapsortCompareCalls = 0;
+    bool heapsortRejectedUnmapped = false;
+    try {
+        heapsort_nid_postfix(reinterpret_cast<void*>(0x10), 2, 4, CountingNonDereferencingCompare);
+    } catch (const std::invalid_argument&) {
+        heapsortRejectedUnmapped = true;
+    }
+    Require(heapsortRejectedUnmapped);
+    Require(g_heapsortCompareCalls == 0);
+    Require(*__error_nid_postfix() == 1234);
+
+    std::array<std::uint32_t, 2> zeroSizeInput{9, 1};
+    *__error_nid_postfix() = 0;
+    Require(heapsort_nid_postfix(zeroSizeInput.data(), 2, 0, CompareUint32) == -1);
+    Require(*__error_nid_postfix() == 22);
+
+    std::array<std::uint32_t, 7> sortValues{42, 7, 99, 7, 0, 123456, 15};
+    Require(heapsort_nid_postfix(sortValues.data(), sortValues.size(), sizeof(std::uint32_t), CompareUint32) == 0);
+    Require((sortValues == std::array<std::uint32_t, 7>{0, 7, 7, 15, 42, 99, 123456}));
 }
