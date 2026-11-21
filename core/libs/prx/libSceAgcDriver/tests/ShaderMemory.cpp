@@ -6436,6 +6436,13 @@ void verifyStoreTables() {
     const auto& holderStores = holderCompiled.result->storeTables;
     require(holderStores.fallback == StoreTableFallback::None && holderStores.tables.size() == 1u && holderStores.tables[0].size == sizeof(holder) && holderStores.tables[0].keys == 4u, "store table holder buffer: the holder size did not bound the records");
 
+    constexpr auto cutBytes = static_cast<std::uint32_t>(sizeof(holder)) - 8u;
+    const auto cutHolderV = TableV(holder.data(), 0u, cutBytes);
+    std::copy(cutHolderV.begin(), cutHolderV.end(), root.begin());
+    const auto cutCompiled = CompileTable(request(holderCode));
+    const auto& cutStores = cutCompiled.result->storeTables;
+    require(cutStores.fallback == StoreTableFallback::None && cutStores.tables.size() == 1u && cutStores.tables[0].size == cutBytes && cutStores.tables[0].keys == 4u, "store table cut holder: the record the holder cuts was not kept for evaluation");
+
     root.fill(0u);
     const auto wideHolderV = TableV(wideHolder.data(), 0u, static_cast<std::uint32_t>(sizeof(wideHolder)));
     std::copy(wideHolderV.begin(), wideHolderV.end(), root.begin());
@@ -6463,7 +6470,7 @@ void verifyStoreTables() {
     const auto& laneStores = laneCompiled.result->storeTables;
     require(laneStores.fallback == StoreTableFallback::Unmatched && laneStores.tables.empty(), "store table lane key: the dispatch did not fall back to the whole reach");
     require(laneStores.miss == StoreTableMiss::UnboundedKey && laneStores.missPc == lanePlan->storeMissPc && laneStores.shader != 0u, "store table lane key: the dispatch did not carry the miss and its program");
-    std::cout << "store tables: bit field 32 records, selected key records 1 and 3, counted loop 3 records, holder 4 records, wide holder too many, planned atomic direct, unbounded lane key falls back at its store\n";
+    std::cout << "store tables: bit field 32 records, selected key records 1 and 3, counted loop 3 records, holder 4 records, cut holder 4 records, wide holder too many, planned atomic direct, unbounded lane key falls back at its store\n";
 }
 
 void verifyPointerTableUnwrittenReuse() {

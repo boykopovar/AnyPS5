@@ -38,8 +38,11 @@ constexpr std::uint32_t OutputBytes = Lanes * 4u;
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t TableOffset = 48;
 constexpr std::uint32_t TableRecords = 32;
+constexpr std::uint32_t HolderRecords = 4;
+constexpr std::uint32_t HolderBytes = (HolderRecords - 1u) * 16u + 8u;
 
 alignas(256) constexpr std::array<std::uint32_t, 12> StoreCode{0x7e080500u, 0x9385ff04u, 0x00050010u, 0x9885b005u, 0xf4080200u, 0x0a000000u, 0x34020082u, 0xbf8cc07fu, 0xe0701000u, 0x80020001u, 0xbf810000u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 12> HolderCode{0xf4080100u, 0xfa000000u, 0x8f0d8402u, 0x34020082u, 0xbf8cc07fu, 0xf4280202u, 0x1a000000u, 0xbf8cc07fu, 0xe0701000u, 0x80020001u, 0xbf810000u, 0xbf810000u};
 
 struct Header {
     Shader shader{};
@@ -47,6 +50,18 @@ struct Header {
 };
 
 alignas(8) Header StoreHeader{};
+alignas(8) Header HolderHeader{};
+
+void Register(Header& header, const std::array<std::uint32_t, 12>& code) {
+    header.shader.file_header = 0x34333231u;
+    header.shader.version = 0x18u;
+    header.shader.header_size = sizeof(Header);
+    header.shader.shader_size = static_cast<std::uint32_t>(sizeof(code));
+    header.shader.code = code.data();
+    header.shader.type = 0;
+    header.shader.user_data = nullptr;
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+}
 
 class GuestBlock {
 public:
@@ -196,15 +211,33 @@ struct Pending {
     bool beside = false;
 };
 
-Pending HeldStore(const GuestBlock& table, const GuestBlock& output, const GuestBlock& beside) {
-    const auto stored = RawDescriptor(output.At(0), OutputBytes);
-    for (std::uint32_t record = 0; record < TableRecords; ++record) std::memcpy(table.Bytes(TableOffset + record * 16u), stored.data(), sizeof(stored));
+void WriteRecord(const GuestBlock& table, std::size_t offset, const std::array<std::uint32_t, 4>& descriptor) {
+    std::memcpy(table.Bytes(offset), descriptor.data(), sizeof(descriptor));
+}
+
+void RequireLanes(const GuestBlock& output) {
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+        if (*output.Words(lane * 4u) != lane) throw std::runtime_error("store windows: lane " + std::to_string(lane) + " stored 0x" + std::to_string(*output.Words(lane * 4u)) + " through the table's V#");
+    }
+}
+
+bool Untouched(const GuestBlock& block) {
+    for (std::uint32_t byte = 0; byte < OutputBytes; ++byte) {
+        if (*block.Bytes(byte) != 0u) return false;
+    }
+    return true;
+}
+
+Pending HeldDispatch(const std::array<std::uint32_t, 12>& program, std::initializer_list<std::uint32_t> user, const GuestBlock& table, const GuestBlock& output, const GuestBlock& beside) {
     std::vector<std::uint32_t> commands;
-    const auto code = reinterpret_cast<std::uintptr_t>(StoreCode.data());
+    const auto code = reinterpret_cast<std::uintptr_t>(program.data());
     Append(commands, 0x76, {0x20c, static_cast<std::uint32_t>(code >> 8u), static_cast<std::uint32_t>(code >> 40u)});
     Append(commands, 0x76, {0x207, Lanes, 1u, 1u});
-    Append(commands, 0x76, {0x213, 2u << 1u});
-    Append(commands, 0x76, {0x240, static_cast<std::uint32_t>(table.At(0)), static_cast<std::uint32_t>(table.At(0) >> 32u)});
+    Append(commands, 0x76, {0x213, static_cast<std::uint32_t>(user.size()) << 1u});
+    std::vector<std::uint32_t> registers{0x240};
+    registers.insert(registers.end(), user);
+    commands.push_back(0xc0000000u | (static_cast<std::uint32_t>(registers.size() - 1) << 16u) | (0x76u << 8u));
+    commands.insert(commands.end(), registers.begin(), registers.end());
     Append(commands, 0x15, {1u, 1u, 1u, 0x8041u});
     SubmitHold hold;
     hold.Arm();
@@ -222,10 +255,43 @@ Pending HeldStore(const GuestBlock& table, const GuestBlock& output, const Guest
     hold.Finish();
     AgcDriverWaitIdle_nid_postfix();
     AgcDriver::GuestMemory::FlushGpuWrites(static_cast<std::uintptr_t>(output.At(0)), OutputBytes);
-    for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
-        if (*output.Words(lane * 4u) != lane) throw std::runtime_error("store windows: lane " + std::to_string(lane) + " stored 0x" + std::to_string(*output.Words(lane * 4u)) + " through the table's V#");
-    }
+    AgcDriver::GuestMemory::FlushGpuWrites(static_cast<std::uintptr_t>(beside.At(0)), OutputBytes);
     return pending;
+}
+
+void RequireOutputPending(const Pending& pending, const char* name) {
+    if (!pending.output) throw std::runtime_error(std::string("store windows: ") + name + " left its V#'s range unpending");
+}
+
+void RequireUnreachedUnpending(const Pending& pending, const char* name) {
+    if (pending.beside || pending.table) throw std::runtime_error(std::string("store windows: ") + name + " noted memory its table's V#s cannot reach (" + (pending.table ? "the table" : "an unrelated block") + ")");
+}
+
+void PointerTable(const GuestBlock& table, const GuestBlock& output, const GuestBlock& beside, bool whole) {
+    for (std::uint32_t record = 0; record < TableRecords; ++record) WriteRecord(table, TableOffset + record * 16u, RawDescriptor(output.At(0), OutputBytes));
+    const auto pending = HeldDispatch(StoreCode, {static_cast<std::uint32_t>(table.At(0)), static_cast<std::uint32_t>(table.At(0) >> 32u)}, table, output, beside);
+    RequireLanes(output);
+    RequireOutputPending(pending, "the pointer-table store");
+    if (whole && !pending.beside) throw std::runtime_error("store windows: with APS5_NO_STORE_WINDOWS the pointer-table store did not note the whole writable reach");
+    if (!whole) RequireUnreachedUnpending(pending, "the pointer-table store");
+}
+
+void CutHolder(const GuestBlock& table, const GuestBlock& output, const GuestBlock& beside, bool whole) {
+    std::memset(table.Bytes(0), 0, BlockBytes);
+    std::memset(output.Bytes(0), 0, OutputBytes);
+    std::memset(beside.Bytes(0), 0, OutputBytes);
+    WriteRecord(table, 0, RawDescriptor(table.At(TableOffset), HolderBytes));
+    for (std::uint32_t record = 0; record + 1u < HolderRecords; ++record) WriteRecord(table, TableOffset + record * 16u, RawDescriptor(output.At(0), OutputBytes));
+    WriteRecord(table, TableOffset + (HolderRecords - 1u) * 16u, RawDescriptor(beside.At(0), OutputBytes));
+    const auto first = HeldDispatch(HolderCode, {static_cast<std::uint32_t>(table.At(0)), static_cast<std::uint32_t>(table.At(0) >> 32u), 0u}, table, output, beside);
+    RequireLanes(output);
+    RequireOutputPending(first, "the holder-table store");
+    if (!whole) RequireUnreachedUnpending(first, "the holder-table store");
+    std::memset(output.Bytes(0), 0, OutputBytes);
+    const auto cut = HeldDispatch(HolderCode, {static_cast<std::uint32_t>(table.At(0)), static_cast<std::uint32_t>(table.At(0) >> 32u), HolderRecords - 1u}, table, output, beside);
+    if (!Untouched(beside)) throw std::runtime_error("store windows: a store through the holder's cut last record reached the V# stored past the holder");
+    if (!Untouched(output)) throw std::runtime_error("store windows: a store through the holder's cut last record wrote the other records' range");
+    if (!whole) RequireUnreachedUnpending(cut, "the holder's cut last record");
 }
 
 }
@@ -237,21 +303,13 @@ int main(int argc, char** argv) {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
         }
-        StoreHeader.shader.file_header = 0x34333231u;
-        StoreHeader.shader.version = 0x18u;
-        StoreHeader.shader.header_size = sizeof(Header);
-        StoreHeader.shader.shader_size = static_cast<std::uint32_t>(sizeof(StoreCode));
-        StoreHeader.shader.code = StoreCode.data();
-        StoreHeader.shader.type = 0;
-        StoreHeader.shader.user_data = nullptr;
-        AgcDriverRegisterShader_nid_postfix(&StoreHeader.shader);
+        Register(StoreHeader, StoreCode);
+        Register(HolderHeader, HolderCode);
         GuestBlock table, output, beside;
-        const auto pending = HeldStore(table, output, beside);
+        PointerTable(table, output, beside, whole);
+        CutHolder(table, output, beside, whole);
         AgcDriverShutdown_nid_postfix();
-        if (!pending.output) throw std::runtime_error("store windows: the held store left its V#'s range unpending");
-        if (whole && !pending.beside) throw std::runtime_error("store windows: with APS5_NO_STORE_WINDOWS the held store did not note the whole writable reach");
-        if (!whole && (pending.beside || pending.table)) throw std::runtime_error(std::string("store windows: the held store noted memory its table's V#s cannot reach (") + (pending.table ? "the table" : "an unrelated block") + ")");
-        std::puts(whole ? "store windows: the kill switch notes the whole writable reach" : "store windows: a store through a table's V# leaves only that V#'s range pending");
+        std::puts(whole ? "store windows: the kill switch notes the whole writable reach, and the holder's cut last record stores nothing" : "store windows: a store through a pointer table's or a holder table's V# leaves only that V#'s range pending, and the holder's cut last record stores nothing and notes nothing");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
