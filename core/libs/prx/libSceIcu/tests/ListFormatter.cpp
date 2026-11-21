@@ -57,9 +57,20 @@ void Run() {
     RequireNoThrow([] { ulistfmt_closeResult_nid_postfix(nullptr); });
 
     const auto storage = Filler();
-    RequireThrows([&] { ulistfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedList*>(const_cast<std::uint32_t*>(storage.data()))); });
+    RequireNoThrow([&] { ulistfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedList*>(const_cast<std::uint32_t*>(storage.data()))); });
     Require(Unchanged(storage));
-    RequireThrows([&] { ulistfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedList*>(std::uintptr_t{1})); });
+    RequireNoThrow([&] { ulistfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedList*>(std::uintptr_t{1})); });
+
+    std::int32_t status = 0;
+    auto* result = ulistfmt_openResult_nid_postfix(&status);
+    Require(result != nullptr && status == 0);
+    ulistfmt_closeResult_nid_postfix(result);
+    RequireNoThrow([&] { ulistfmt_closeResult_nid_postfix(result); });
+
+    auto* foreign = unumf_openResult_nid_postfix(&status);
+    Require(foreign != nullptr && status == 0);
+    RequireNoThrow([&] { ulistfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedList*>(foreign)); });
+    unumf_closeResult_nid_postfix(foreign);
 }
 
 } // namespace UlistfmtCloseResult
@@ -277,9 +288,18 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { ulistfmt_openResult_nid_postfix(&status); });
+        auto* result = ulistfmt_openResult_nid_postfix(&status);
+        Require(result != nullptr);
         Require(status == incoming);
+        ulistfmt_closeResult_nid_postfix(result);
     }
+
+    std::int32_t status = 0;
+    auto* first = ulistfmt_openResult_nid_postfix(&status);
+    auto* second = ulistfmt_openResult_nid_postfix(&status);
+    Require(status == 0 && first != nullptr && second != nullptr && first != second);
+    ulistfmt_closeResult_nid_postfix(first);
+    ulistfmt_closeResult_nid_postfix(second);
 
     RequireThrows([&] { ulistfmt_openResult_nid_postfix(nullptr); });
 }

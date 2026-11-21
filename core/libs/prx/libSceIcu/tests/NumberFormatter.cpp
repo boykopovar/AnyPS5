@@ -45,9 +45,20 @@ void Run() {
     RequireNoThrow([] { unumf_closeResult_nid_postfix(nullptr); });
 
     const auto storage = Filler();
-    RequireThrows([&] { unumf_closeResult_nid_postfix(reinterpret_cast<UFormattedNumber*>(const_cast<std::uint32_t*>(storage.data()))); });
+    RequireNoThrow([&] { unumf_closeResult_nid_postfix(reinterpret_cast<UFormattedNumber*>(const_cast<std::uint32_t*>(storage.data()))); });
     Require(Unchanged(storage));
-    RequireThrows([&] { unumf_closeResult_nid_postfix(reinterpret_cast<UFormattedNumber*>(std::uintptr_t{1})); });
+    RequireNoThrow([&] { unumf_closeResult_nid_postfix(reinterpret_cast<UFormattedNumber*>(std::uintptr_t{1})); });
+
+    std::int32_t status = 0;
+    auto* result = unumf_openResult_nid_postfix(&status);
+    Require(result != nullptr && status == 0);
+    unumf_closeResult_nid_postfix(result);
+    RequireNoThrow([&] { unumf_closeResult_nid_postfix(result); });
+
+    auto* foreign = udtitvfmt_openResult_nid_postfix(&status);
+    Require(foreign != nullptr && status == 0);
+    RequireNoThrow([&] { unumf_closeResult_nid_postfix(reinterpret_cast<UFormattedNumber*>(foreign)); });
+    udtitvfmt_closeResult_nid_postfix(foreign);
 }
 
 } // namespace UnumfCloseResult
@@ -73,9 +84,18 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { unumf_openResult_nid_postfix(&status); });
+        auto* result = unumf_openResult_nid_postfix(&status);
+        Require(result != nullptr);
         Require(status == incoming);
+        unumf_closeResult_nid_postfix(result);
     }
+
+    std::int32_t status = 0;
+    auto* first = unumf_openResult_nid_postfix(&status);
+    auto* second = unumf_openResult_nid_postfix(&status);
+    Require(status == 0 && first != nullptr && second != nullptr && first != second);
+    unumf_closeResult_nid_postfix(first);
+    unumf_closeResult_nid_postfix(second);
 
     RequireThrows([&] { unumf_openResult_nid_postfix(nullptr); });
 }
