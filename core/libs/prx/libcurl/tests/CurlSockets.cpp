@@ -12,6 +12,7 @@
 #include <ws2tcpip.h>
 #else
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
@@ -28,6 +29,7 @@
 #include <mutex>
 #include <set>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -491,12 +493,36 @@ static void ErrorsAndExtraDescriptors() {
     ready = 0;
     Require(curl_multi_wait_nid_postfix(multi, &invalid, 1, 100, &ready) == CURLM_OK && ready == 1 && invalid.revents == 0);
 #ifndef _WIN32
+#ifdef __APPLE__
+    std::vector<int> fillers;
+    for (int index = 0; index < 1100; ++index) {
+        const auto descriptor = ::open("/dev/null", O_RDONLY);
+        Require(descriptor >= 0);
+        fillers.push_back(descriptor);
+    }
+#endif
     int pipe[2];
     Require(pipe_nid_postfix(pipe) == 0);
     Require(write_nid_postfix(pipe[1], "p", 1) == 1);
     guest_curl_waitfd pipeWait{pipe[0], CURL_WAIT_POLLIN, 0};
     Require(curl_multi_poll_nid_postfix(multi, &pipeWait, 1, 100, &ready) == CURLM_OK && ready == 1 && (pipeWait.revents & CURL_WAIT_POLLIN));
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+#ifdef __APPLE__
+    for (const auto descriptor : fillers) Require(::close(descriptor) == 0);
+#endif
+#endif
+#ifdef __APPLE__
+    const int device = ::open("/dev/null", O_RDONLY);
+    Require(device >= 0);
+    guest_curl_waitfd deviceWait{device, CURL_WAIT_POLLIN, 0};
+    bool threw = false;
+    try {
+        curl_multi_poll_nid_postfix(multi, &deviceWait, 1, 100, &ready);
+    } catch (const std::runtime_error& error) {
+        threw = std::strcmp(error.what(), "Wait_nid_no_patch not implemented") == 0;
+    }
+    Require(threw);
+    Require(::close(device) == 0);
 #endif
     Require(curl_multi_cleanup_nid_postfix(multi) == CURLM_OK);
     {
@@ -730,9 +756,15 @@ static void ReceivePauseReplay() {
     Require(Descriptors() == before);
 }
 
-int main() {
+int main(int argc, char** argv) {
     ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     Require(curl_global_init_nid_postfix(CURL_GLOBAL_DEFAULT) == CURLE_OK);
+    if (argc == 2) {
+        Require(std::strcmp(argv[1], "ErrorsAndExtraDescriptors") == 0);
+        ErrorsAndExtraDescriptors();
+        curl_global_cleanup_nid_postfix();
+        return 0;
+    }
     BorrowedLeaseIdentity();
 #ifndef _WIN32
     BorrowedUnixReadiness();

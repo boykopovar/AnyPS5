@@ -58,6 +58,9 @@ endforeach()
 if(CMAKE_TOOLCHAIN_FILE)
     list(APPEND curlBackendOptions -DCMAKE_TOOLCHAIN_FILE:FILEPATH=${CMAKE_TOOLCHAIN_FILE})
 endif()
+if(APPLE)
+    list(APPEND curlBackendOptions -DCMAKE_OSX_ARCHITECTURES:STRING=${CMAKE_OSX_ARCHITECTURES} -DHAVE_POLL_FINE:BOOL=ON)
+endif()
 
 ExternalProject_Add(anyps5_curl_build
     SOURCE_DIR ${curlSourceDir}
