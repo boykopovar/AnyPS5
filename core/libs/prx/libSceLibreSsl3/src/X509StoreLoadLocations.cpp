@@ -28,6 +28,7 @@ constexpr int Asn1Library = 13;
 constexpr int X509Library = 11;
 constexpr int AnyFunction = 0xfff;
 constexpr int MallocFailure = 65;
+constexpr int ExplicitLengthMismatch = 119;
 constexpr int FieldMissing = 121;
 constexpr int HeaderTooLong = 123;
 constexpr int MissingEndOfContents = 137;
@@ -551,7 +552,7 @@ std::span<const unsigned char> ExplicitContent(const Tlv& wrapper) {
 
 int ExplicitTrailer(const Tlv& wrapper, std::span<const unsigned char> rest) {
     if (wrapper.indefinite) return rest.size() == 2 ? 0 : MissingEndOfContents;
-    return rest.empty() ? 0 : SequenceLengthMismatch;
+    return rest.empty() ? 0 : ExplicitLengthMismatch;
 }
 
 int CollectString(std::span<const unsigned char>& input, bool indefinite, int depth, std::vector<unsigned char>& output) {
@@ -1274,14 +1275,17 @@ LibreSsl3CertificateInfo* DecodeCertificateInfo(const Tlv& tbs) {
         }
         Tlv extensions;
         std::span<const unsigned char> wrapperBody = ExplicitContent(wrapper);
-        if (!ReadElement(wrapperBody, extensions) || !HasTag(extensions, SequenceTag) ||
-            ExplicitTrailer(wrapper, wrapperBody)) {
-            if (wrapperBody.empty()) PutAsn1Error(SequenceLengthMismatch);
+        if (!ReadElement(wrapperBody, extensions) || !HasTag(extensions, SequenceTag)) {
             FreeCertificateInfo(info);
             return nullptr;
         }
         info->extensions = DecodeExtensions(extensions.content);
         if (!info->extensions) {
+            FreeCertificateInfo(info);
+            return nullptr;
+        }
+        if (const int reason = ExplicitTrailer(wrapper, wrapperBody)) {
+            PutAsn1Error(reason);
             FreeCertificateInfo(info);
             return nullptr;
         }
