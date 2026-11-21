@@ -159,17 +159,11 @@ int APS5_VABI sceSharePlayStartStreaming(void) {
 }
 
 int APS5_VABI sceSharePlayStopStandby(void) {
-    std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSharePlayStopStreaming(void) {
-    std::lock_guard lock(g_mutex);
-    if (!g_initialized) return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_SHARE_PLAY_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceSharePlaySetShareScreenStatus() {

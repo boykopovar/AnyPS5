@@ -407,6 +407,26 @@ int main() {
     numLock.led = 1;
     numLock.key_code[0] = 89;
     Require(sceConvertKeycodeGetCharacterFromKeyboardData(&numLock, 0, 0, 4, &kbdChar) == 0 && kbdChar == u'1');
+    for (const auto layout : {1u, 2u, 3u, 4u, 9u, 10u, 12u, 24u, 30u}) {
+        for (const auto modifier : {0u, 2u, 32u}) {
+            for (const auto led : {0u, 1u, 2u, 3u}) {
+                KeyboardData packet{};
+                packet.length = 3;
+                packet.modifier_key = modifier;
+                packet.led = led;
+                packet.key_code[0] = 4;
+                packet.key_code[1] = 29;
+                packet.key_code[2] = 89;
+                for (int index = 0; index < packet.length; ++index) {
+                    char16_t direct = u'?', fromPacket = u'!';
+                    const auto state = (modifier << 8) | (led << 16);
+                    Require(sceConvertKeycodeGetCharacter(packet.key_code[index], state, layout, &direct) == 0);
+                    Require(sceConvertKeycodeGetCharacterFromKeyboardData(&packet, index, 0, layout, &fromPacket) == 0);
+                    Require(fromPacket == direct);
+                }
+            }
+        }
+    }
     KeyboardData full = keyData;
     full.length = 16;
     full.key_code[15] = 5;
