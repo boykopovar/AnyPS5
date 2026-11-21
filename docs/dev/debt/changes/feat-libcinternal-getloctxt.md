@@ -1,0 +1,3 @@
+# libSceLibcInternal
+
+## remove [_ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT0_S5_mPKT_]

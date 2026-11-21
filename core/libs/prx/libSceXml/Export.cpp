@@ -18,6 +18,7 @@
 #include <cstring>
 #include <atomic>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -489,8 +490,8 @@ int APS5_VABI _ZN3sce3Xml3Dom8Document11removeChildENS1_6NodeIdES3_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document11resetStatusEv() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom8Document11resetStatusEv(XmlHandle* self) {
+    XmlDom::DocumentResetStatus(self);
 }
 
 int APS5_VABI _ZN3sce3Xml3Dom8Document11setWritableEv() {
@@ -1053,8 +1054,19 @@ XmlNodeId APS5_VABI _ZNK3sce3Xml3Dom8NodeListixEj(const XmlHandle* self, std::ui
     return XmlDom::NodeListItem(self, index);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
+XmlNodeId APS5_VABI _ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE(const XmlHandle* self, const XmlString* name) {
+    XmlHandle list{};
+    if (self == nullptr || !CopyInGuest(list, self)) throw std::invalid_argument("sce::Xml::Dom::NodeList::findItem: null or unreadable object");
+    if (list.impl == nullptr) return XmlNodeId{nullptr, nullptr, 0};
+    XmlString string{};
+    if (name == nullptr || !CopyInGuest(string, name)) throw std::invalid_argument("sce::Xml::Dom::NodeList::findItem: null or unreadable name");
+    char first = 0;
+    if (string.buffer == nullptr || !CopyInGuest(first, string.buffer)) throw std::invalid_argument("sce::Xml::Dom::NodeList::findItem: comparing an unreadable name faults in the module");
+    const std::size_t length = GuestStringLength(string.buffer);
+    if (length == 0 && first != '\0') throw std::invalid_argument("sce::Xml::Dom::NodeList::findItem: comparing an unreadable name faults in the module");
+    std::string wanted(length, '\0');
+    if (!wanted.empty() && !GuestCopyIn_nid_no_patch(wanted.data(), string.buffer, wanted.size())) throw std::logic_error("sce::Xml::Dom::NodeList::findItem: the name changed while it was read");
+    return XmlDom::NodeListFindByName(self, wanted);
 }
 
 bool APS5_VABI _ZNK3sce3Xml3Dom8NodeList11isAvailableEv(const XmlHandle* self) {

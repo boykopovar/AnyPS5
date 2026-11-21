@@ -130,6 +130,7 @@ void CompareAesKeys() {
             int mineResult = 0;
             const auto error = Attempt([&] { mineResult = decrypt ? AES_set_decrypt_key_nid_postfix(userKey.data(), bits, &mine) : AES_set_encrypt_key_nid_postfix(userKey.data(), bits, &mine); });
             const int theirResult = decrypt ? LibreSslReference::AesSetDecryptKey(userKey.data(), bits, &theirs) : LibreSslReference::AesSetEncryptKey(userKey.data(), bits, &theirs);
+            for (auto& word : theirs.roundKeys) word = word >> 24 | (word >> 8 & 0xff00) | (word << 8 & 0xff0000) | word << 24;
             Record(decrypt ? "AES_set_decrypt_key" : "AES_set_encrypt_key", error.empty() && mineResult == theirResult && std::memcmp(&mine, &theirs, sizeof mine) == 0,
                 [&] { return "bits " + std::to_string(bits) + ": " + (error.empty() ? std::to_string(mineResult) : error) + " vs " + std::to_string(theirResult); });
         }
@@ -559,7 +560,7 @@ std::string Describe(const LibreSslX509* certificate) {
         const auto* extension = reinterpret_cast<const LibreSslX509Extension*>(info->extensions->data[index]);
         text += ",E(" + Describe(extension->object) + "," + std::to_string(extension->critical) + "," + Describe(extension->value) + ")";
     }
-    text += "," + std::to_string(info->encoding.len) + "," + std::to_string(info->encoding.modified) + "," + Hex(info->encoding.enc, static_cast<std::size_t>(info->encoding.len));
+    text += "," + std::to_string(info->enc.len) + "," + std::to_string(info->enc.modified) + "," + Hex(info->enc.enc, static_cast<std::size_t>(info->enc.len));
     text += "," + Describe(certificate->signatureAlgorithm) + "," + Describe(certificate->signature) + "," + std::to_string(certificate->valid) + "," + std::to_string(certificate->references) +
         "," + Quoted(certificate->name) + "," + (certificate->exData.stack ? "exdata" : "noexdata") + "," + std::to_string(certificate->pathLength) + "," + std::to_string(certificate->proxyPathLength) +
         "," + std::to_string(certificate->extensionFlags) + "," + std::to_string(certificate->keyUsage) + "," + std::to_string(certificate->extendedKeyUsage) + "," +
