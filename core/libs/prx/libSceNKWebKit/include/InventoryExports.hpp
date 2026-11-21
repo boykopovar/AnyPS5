@@ -230,8 +230,6 @@ int APS5_VABI WKFrameGetMainResourceData();
 int APS5_VABI WKFrameGetPage();
 int APS5_VABI WKFrameGetResourceData();
 int APS5_VABI WKFrameGetWebArchive();
-int APS5_VABI WKFrameInfoCreateFrameHandleRef();
-
 int APS5_VABI WKFrameStopLoading();
 int APS5_VABI WKGeolocationManagerProviderDidChangePosition();
 int APS5_VABI WKGeolocationManagerProviderDidFailToDeterminePosition();
