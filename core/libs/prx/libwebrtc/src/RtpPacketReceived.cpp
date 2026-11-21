@@ -48,6 +48,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cerrno>
 #include <cstring>
 #include <stdexcept>
 
@@ -58,6 +59,11 @@ constexpr std::size_t DefaultPacketSize = 1500;
 constexpr std::uint8_t RtpVersion = 2;
 constexpr std::size_t DeletingDestructorSlot = 1;
 constexpr std::size_t RefCountOffset = 8;
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
 
 using DeletingDestructor = void(APS5_VABI*)(void*);
 
@@ -73,9 +79,14 @@ void APS5_VABI _ZN6webrtc17RtpPacketReceivedC1EPKNS_21RtpHeaderExtensionMapENS_9
     WebRtcRtpPacketReceived* packet, const WebRtcRtpHeaderExtensionMap* extensions, std::int64_t arrivalTimeUs) {
     if (!packet)
         throw std::invalid_argument("RtpPacketReceived constructor requires an object");
+    WebRtcRtpHeaderExtensionMap hostExtensions{};
+    if (extensions) {
+        ErrnoGuard guard;
+        if (!GuestCopyIn_nid_no_patch(&hostExtensions, extensions, sizeof(hostExtensions)))
+            throw std::invalid_argument("RtpPacketReceived constructor requires a readable guest extensions pointer");
+    }
     WebRtcRtpPacketReceived staged{};
-    if (extensions)
-        staged.extensions = *extensions;
+    staged.extensions = hostExtensions;
     staged.payloadOffset = FixedHeaderSize;
     staged.arrivalTimeUs = arrivalTimeUs;
     _ZN3rtc17CopyOnWriteBufferC1Emm_nid_postfix(&staged.buffer, FixedHeaderSize, DefaultPacketSize);

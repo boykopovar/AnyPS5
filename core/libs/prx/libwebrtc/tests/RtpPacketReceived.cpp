@@ -2,6 +2,7 @@
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -86,6 +87,27 @@ void TestConstructor() {
     Require(threw);
 }
 
+void TestInvalidExtensionsPointers() {
+    WebRtcRtpPacketReceived packet;
+    WebRtcRtpHeaderExtensionMap map{};
+    map.ids[3] = 5;
+    map.extmapAllowMixed = true;
+    std::memset(&packet, 0x5A, sizeof(packet));
+    errno = 77;
+    bool threw = false;
+    try {
+        _ZN6webrtc17RtpPacketReceivedC1EPKNS_21RtpHeaderExtensionMapENS_9TimestampE_nid_postfix(
+            &packet, reinterpret_cast<const WebRtcRtpHeaderExtensionMap*>(static_cast<std::uintptr_t>(0x10)), 1);
+    } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && errno == 77);
+    for (std::size_t i = 0; i < sizeof(packet); ++i) Require(reinterpret_cast<unsigned char*>(&packet)[i] == 0x5A);
+    WebRtcRtpPacketReceived staged{};
+    std::memset(&staged, 0x5A, sizeof(staged));
+    _ZN6webrtc17RtpPacketReceivedC1EPKNS_21RtpHeaderExtensionMapENS_9TimestampE_nid_postfix(&staged, &map, 9);
+    Require(staged.extensions.ids[3] == 5 && staged.extensions.extmapAllowMixed && staged.arrivalTimeUs == 9);
+    _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(&staged);
+}
+
 void TestCopy() {
     WebRtcRtpPacketReceived packet;
     _ZN6webrtc17RtpPacketReceivedC1EPKNS_21RtpHeaderExtensionMapENS_9TimestampE_nid_postfix(&packet, nullptr, 77);
@@ -139,6 +161,7 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(api);
     try {
         TestConstructor();
+        TestInvalidExtensionsPointers();
         TestCopy();
         Require(allocations.empty());
     } catch (const std::exception& error) {
