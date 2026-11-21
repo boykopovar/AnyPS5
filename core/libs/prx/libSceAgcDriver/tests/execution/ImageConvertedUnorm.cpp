@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
@@ -876,18 +877,27 @@ bool SameDepth24(std::uint32_t bits, std::uint32_t depth) {
 }
 
 void CheckDepth24(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
+    const bool usesFloatFallback = AgcDriver::Graphics::SampledTextureFormat(device.graphicsContext(), 141u) == VK_FORMAT_R32_SFLOAT;
+    const auto depthTexel = [](std::uint32_t index) {
+        constexpr auto firstPower = LoadWidth / 2u;
+        return index >= firstPower && index < firstPower + 24u ? 1u << (index - firstPower) : LoadTexel(index);
+    };
     for (std::uint32_t index = 0; index < LoadWidth; ++index) {
-        const auto texel = LoadTexel(index);
+        const auto texel = depthTexel(index);
         std::memcpy(texels + index * 4u, &texel, 4u);
     }
     Run(device, LoadXyzw, TextureDescriptor(texels, 141u, SwizzleXYZW, LoadWidth), {}, LoadGroups);
     for (std::uint32_t index = 0; index < LoadWidth; ++index) {
-        const auto depth = LoadTexel(index) & 0xffffffu;
-        Require(SameDepth24(Output[index * 4u], depth), "image_load of 8_24_UNORM reads the wrong depth for format 141: " + Hex(Output[index * 4u]) + " for texel " + Hex(LoadTexel(index)));
+        const auto depth = depthTexel(index) & 0xffffffu;
+        if (usesFloatFallback) {
+            const auto expected = static_cast<float>(static_cast<double>(depth) / 16777215.0);
+            Require(Output[index * 4u] == std::bit_cast<std::uint32_t>(expected), "R32_SFLOAT fallback rounded depth incorrectly for " + Hex(depth));
+        }
+        Require(SameDepth24(Output[index * 4u], depth), "image_load of 8_24_UNORM reads the wrong depth for format 141: " + Hex(Output[index * 4u]) + " for texel " + Hex(depthTexel(index)));
         Require(Output[index * 4u + 1u] == 0u && Output[index * 4u + 2u] == 0u && Output[index * 4u + 3u] == 0x3f800000u, "image_load of 8_24_UNORM must give G=0 B=0 A=1 for format 141");
     }
     Run(device, SampleLz, TextureDescriptor(texels, 141u, SwizzleXYZW, LoadWidth), PointSampler, 1);
-    const auto depth = LoadTexel(0) & 0xffffffu;
+    const auto depth = depthTexel(0) & 0xffffffu;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         Require(SameDepth24(Output[tid * 4u], depth), "image_sample_lz of 8_24_UNORM reads the wrong depth for format 141");
         Require(Output[tid * 4u + 1u] == 0u && Output[tid * 4u + 2u] == 0u && Output[tid * 4u + 3u] == 0x3f800000u, "image_sample_lz of 8_24_UNORM must give G=0 B=0 A=1 for format 141");
