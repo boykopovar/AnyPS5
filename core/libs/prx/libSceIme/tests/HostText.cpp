@@ -80,6 +80,35 @@ void bounds_huge_clipboards() {
     const std::u16string converted = clip(pairs);
     check(converted.size() % 2 == 0 && converted.size() <= MaxClipboardBytes, "the cut never leaves half a pair");
     check(BoundedUtf8Size(pairs.data(), pairs.size()) % 4 == 0, "a four-byte cut stays on a boundary");
+
+    const std::string strayRun(MaxClipboardBytes + 4, '\x80');
+    check(BoundedUtf8Size(strayRun.data(), strayRun.size()) == MaxClipboardBytes, "stray continuation bytes keep the 64 KiB bound");
+    check(clip(strayRun) == std::u16string(MaxClipboardBytes, u'\uFFFD'), "stray continuation bytes decode to U+FFFD rather than dropping");
+
+    struct BoundaryCase {
+        std::size_t prefixBytes;
+        const char* tail;
+        std::size_t expectedBound;
+        const char16_t* expectedSuffix;
+    };
+    const BoundaryCase cases[] = {
+        {MaxClipboardBytes - 2, "\xc3\xa9\x80", MaxClipboardBytes, u"\u00E9"},
+        {MaxClipboardBytes - 3, "\xe3\x81\x82\x80", MaxClipboardBytes, u"\u3042"},
+        {MaxClipboardBytes - 4, "\xf0\x9f\x98\x80\x80", MaxClipboardBytes, u"\U0001F600"},
+        {MaxClipboardBytes - 1, "\xc3\xa9", MaxClipboardBytes - 1, u""},
+        {MaxClipboardBytes - 1, "\xe3\x81\x82", MaxClipboardBytes - 1, u""},
+        {MaxClipboardBytes - 2, "\xe3\x81\x82", MaxClipboardBytes - 2, u""},
+        {MaxClipboardBytes - 1, "\xf0\x9f\x98\x80", MaxClipboardBytes - 1, u""},
+        {MaxClipboardBytes - 2, "\xf0\x9f\x98\x80", MaxClipboardBytes - 2, u""},
+        {MaxClipboardBytes - 3, "\xf0\x9f\x98\x80", MaxClipboardBytes - 3, u""},
+    };
+    for (const auto& entry : cases) {
+        const std::string buf = std::string(entry.prefixBytes, 'a') + entry.tail;
+        check(BoundedUtf8Size(buf.data(), buf.size()) == entry.expectedBound, "UTF-8 boundary matches expected cut");
+        const std::u16string units = clip(buf);
+        check(units == std::u16string(entry.prefixBytes, u'a') + entry.expectedSuffix, "UTF-8 boundary retains complete characters without U+FFFD");
+        check(units.find(u'\uFFFD') == std::u16string::npos, "UTF-8 boundary emits zero U+FFFD");
+    }
 }
 
 }

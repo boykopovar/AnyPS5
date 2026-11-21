@@ -11,9 +11,19 @@ inline constexpr std::size_t MaxClipboardBytes = 65536;
 
 inline std::size_t BoundedUtf8Size(const char* text, std::size_t size) {
     if (size <= MaxClipboardBytes) return size;
-    std::size_t end = MaxClipboardBytes;
-    while (end > 0 && (static_cast<unsigned char>(text[end]) & 0xc0) == 0x80) --end;
-    return end;
+    if ((static_cast<unsigned char>(text[MaxClipboardBytes]) & 0xc0) != 0x80) {
+        return MaxClipboardBytes;
+    }
+    std::size_t pos = MaxClipboardBytes - 1;
+    while (pos > 0 && MaxClipboardBytes - pos < 3 && (static_cast<unsigned char>(text[pos]) & 0xc0) == 0x80) {
+        --pos;
+    }
+    const auto lead = static_cast<unsigned char>(text[pos]);
+    std::size_t sequenceBytes = 0;
+    if (lead >= 0xc2 && lead <= 0xdf) sequenceBytes = 2;
+    else if ((lead & 0xf0) == 0xe0) sequenceBytes = 3;
+    else if (lead >= 0xf0 && lead <= 0xf4) sequenceBytes = 4;
+    return pos + sequenceBytes > MaxClipboardBytes ? pos : MaxClipboardBytes;
 }
 
 inline std::u32string DecodeUtf8Lenient(const char* text, std::size_t size, bool dropIncompleteTail) {
