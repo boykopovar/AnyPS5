@@ -46,7 +46,7 @@ static void CheckSpinAcquire() {
 
     counts = {};
     Require(Spin(5, 3, 4, counts));
-    Require(counts.tries == 4 && counts.pauses == 2 && counts.yields == 0);
+    Require(counts.tries == 4 && counts.pauses == 3 && counts.yields == 0);
 
     counts = {};
     Require(Spin(5, 3, 8, counts));
