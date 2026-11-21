@@ -116,6 +116,8 @@ cookies.txt
 
 .env
 .env.local
+
+.fake
 .env.*
 *.pem
 *.key

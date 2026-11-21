@@ -1,0 +1,41 @@
+name: anyps5-launcher
+services:
+  web:
+    build:
+      context: .
+      dockerfile: tools/launcher/web/Dockerfile
+    ports:
+      - "127.0.0.1:${ANYPS5_WEB_PORT:-8766}:8765"
+    environment:
+      ANYPS5_WEB_ORIGINS: "http://127.0.0.1:${ANYPS5_WEB_PORT:-8766},http://localhost:${ANYPS5_WEB_PORT:-8766}"
+      ANYPS5_WEB_STATE: /state
+      ANYPS5_WEB_TOKEN_FILE: /run/secrets/auth.token
+    volumes:
+      - type: bind
+        source: ${ANYPS5_WEB_STATE_DIR:-./.local/launcher-web}/backend
+        target: /state
+      - type: bind
+        source: ${ANYPS5_WEB_STATE_DIR:-./.local/launcher-web}/auth.token
+        target: /run/secrets/auth.token
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"

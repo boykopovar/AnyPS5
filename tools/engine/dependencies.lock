@@ -1,0 +1,278 @@
+{
+  "format": 1,
+  "submodules": [
+    {
+      "path": "3rdparty/LibAtrac9",
+      "url": "https://github.com/shadps4-emu/ext-LibAtrac9.git",
+      "commit": "946e05a9212976626a9f5e52f29c0a7202871f29"
+    },
+    {
+      "path": "3rdparty/SDL2",
+      "url": "https://github.com/libsdl-org/SDL.git",
+      "commit": "74be4c2836da0940f0144d0d97852606f9ab11e9"
+    },
+    {
+      "path": "3rdparty/SPIRV-Headers",
+      "url": "https://github.com/KhronosGroup/SPIRV-Headers.git",
+      "commit": "b824a462d4256d720bebb40e78b9eb8f78bbb305"
+    },
+    {
+      "path": "3rdparty/SPIRV-Tools",
+      "url": "https://github.com/KhronosGroup/SPIRV-Tools.git",
+      "commit": "262bdab48146c937467f826699a40da0fdfc0f1a"
+    },
+    {
+      "path": "3rdparty/Vulkan-Headers",
+      "url": "https://github.com/KhronosGroup/Vulkan-Headers.git",
+      "commit": "2fa203425eb4af9dfc6b03f97ef72b0b5bcb8350"
+    },
+    {
+      "path": "3rdparty/VulkanMemoryAllocator",
+      "url": "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git",
+      "commit": "a1d434708c217b2a6c7b365f1fe41fa03a562e59"
+    },
+    {
+      "path": "3rdparty/ZArchive",
+      "url": "https://github.com/Exzap/ZArchive.git",
+      "commit": "965b66c8d67b6b7e30fd63b3b75aa91a99ff303b"
+    },
+    {
+      "path": "3rdparty/cairo",
+      "url": "https://gitlab.freedesktop.org/cairo/cairo.git",
+      "commit": "3909090108bb2db55330e3eb148aebe664735363"
+    },
+    {
+      "path": "3rdparty/curl",
+      "url": "https://github.com/curl/curl.git",
+      "commit": "801bd5138ce31aa0d906fa4e2eabfc599d74e793"
+    },
+    {
+      "path": "3rdparty/ffmpeg-core",
+      "url": "https://github.com/KytyPS5/ext-ffmpeg-core.git",
+      "commit": "9ac4cfd195f192ed8b08566f49c28dbb48d08341"
+    },
+    {
+      "path": "3rdparty/fontconfig",
+      "url": "https://github.com/fontconfig/fontconfig.git",
+      "commit": "72b9a48f57de6204d99ce1c217b5609ee92ece9b"
+    },
+    {
+      "path": "3rdparty/freetype",
+      "url": "https://github.com/freetype/freetype.git",
+      "commit": "37515cf56ba3349656049edbed89ffc6f6466f2d"
+    },
+    {
+      "path": "3rdparty/freetype/subprojects/dlg",
+      "url": "https://github.com/nyorain/dlg.git",
+      "commit": "395ccad2c1e0daae535c4d20bb0a3f2424648e17"
+    },
+    {
+      "path": "3rdparty/glslang",
+      "url": "https://github.com/KhronosGroup/glslang.git",
+      "commit": "ba1640446f3826a518721d1f083f3a8cca1120c3"
+    },
+    {
+      "path": "3rdparty/harfbuzz",
+      "url": "https://github.com/harfbuzz/harfbuzz.git",
+      "commit": "a1d9bfe62818ef0fa9cf63b6e6d51436b1c93cbc"
+    },
+    {
+      "path": "3rdparty/icu",
+      "url": "https://github.com/unicode-org/icu.git",
+      "commit": "049e0d6a420629ac7db77256987d083a563287b5"
+    },
+    {
+      "path": "3rdparty/jxrlib",
+      "url": "https://github.com/4creators/jxrlib.git",
+      "commit": "f7521879862b9085318e814c6157490dd9dbbdb4"
+    },
+    {
+      "path": "3rdparty/libfvad",
+      "url": "https://github.com/dpirch/libfvad.git",
+      "commit": "532ab666c20d3cfda38bca63abbb0f152706c369"
+    },
+    {
+      "path": "3rdparty/libjpeg-turbo",
+      "url": "https://github.com/libjpeg-turbo/libjpeg-turbo.git",
+      "commit": "c85e6b905bf237038faa936dab160ebfc5da0344"
+    },
+    {
+      "path": "3rdparty/libpng",
+      "url": "https://github.com/pnggroup/libpng.git",
+      "commit": "cd952f49f95bb27154ae77dbb103032d95f6e580"
+    },
+    {
+      "path": "3rdparty/libpsl",
+      "url": "https://github.com/rockdaboot/libpsl.git",
+      "commit": "ba4c49a205408845834b1648ad23c15ee09f722b"
+    },
+    {
+      "path": "3rdparty/libpsl/list",
+      "url": "https://github.com/publicsuffix/list",
+      "commit": "5db9b65997e3c9230ac4353b01994c2ae9667cb9"
+    },
+    {
+      "path": "3rdparty/libressl-openbsd",
+      "url": "https://github.com/libressl/openbsd.git",
+      "commit": "078b3d1df8ca2011c1605cd40418c58fa0f5b143"
+    },
+    {
+      "path": "3rdparty/libusb-cmake",
+      "url": "https://github.com/libusb/libusb-cmake.git",
+      "commit": "bea6567b63796ab27c1c33257d230284fb2d8316"
+    },
+    {
+      "path": "3rdparty/libwpe",
+      "url": "https://github.com/WebPlatformForEmbedded/libwpe.git",
+      "commit": "b90a8396864c9824a43838a5879f6ab01420c69e"
+    },
+    {
+      "path": "3rdparty/libxml2",
+      "url": "https://github.com/GNOME/libxml2.git",
+      "commit": "7846b0a677f8d3ce72486125fa281e92ac9970e8"
+    },
+    {
+      "path": "3rdparty/mbedtls",
+      "url": "https://github.com/Mbed-TLS/mbedtls.git",
+      "commit": "068ff080b369adfac81509f9b57b2afabaf82dc5"
+    },
+    {
+      "path": "3rdparty/mbedtls/framework",
+      "url": "https://github.com/Mbed-TLS/mbedtls-framework",
+      "commit": "dde0c4a0e448a0552f18817dcea633bb851fd288"
+    },
+    {
+      "path": "3rdparty/mimalloc",
+      "url": "https://github.com/microsoft/mimalloc.git",
+      "commit": "f8401befa675adb13b98decababd7fdc59572477"
+    },
+    {
+      "path": "3rdparty/nghttp2",
+      "url": "https://github.com/nghttp2/nghttp2.git",
+      "commit": "85e300c79fb6dbcfa9c1013215c8710c1c2cd3d2"
+    },
+    {
+      "path": "3rdparty/nghttp2/tests/munit",
+      "url": "https://github.com/ngtcp2/munit",
+      "commit": "114805e1bab0222574b5eb3a92461ad5216647ed"
+    },
+    {
+      "path": "3rdparty/nghttp2/third-party/mruby",
+      "url": "https://github.com/mruby/mruby",
+      "commit": "831da26b9021de0369d17b71b5667e2941a1a32d"
+    },
+    {
+      "path": "3rdparty/nghttp2/third-party/neverbleed",
+      "url": "https://github.com/tatsuhiro-t/neverbleed.git",
+      "commit": "68f65c7b05f68e6fd93631668d4f469875946656"
+    },
+    {
+      "path": "3rdparty/nghttp2/third-party/urlparse",
+      "url": "https://github.com/ngtcp2/urlparse",
+      "commit": "59b068a7618a256c6823b0b9801b61d1d04677a3"
+    },
+    {
+      "path": "3rdparty/nghttp2/third-party/urlparse/http-parser",
+      "url": "https://github.com/nodejs/http-parser",
+      "commit": "ec8b5ee63f0e51191ea43bb0c6eac7bfbff3141d"
+    },
+    {
+      "path": "3rdparty/nghttp2/third-party/urlparse/munit",
+      "url": "https://github.com/ngtcp2/munit",
+      "commit": "3cf9c79f3a76f313d560dedd5b47c0416a0fbb6e"
+    },
+    {
+      "path": "3rdparty/ogg",
+      "url": "https://github.com/xiph/ogg.git",
+      "commit": "be05b13e98b048f0b5a0f5fa8ce514d56db5f822"
+    },
+    {
+      "path": "3rdparty/opus",
+      "url": "https://github.com/xiph/opus.git",
+      "commit": "22244de5a79bd1d6d623c32e72bf1954b56235be"
+    },
+    {
+      "path": "3rdparty/pixman",
+      "url": "https://gitlab.freedesktop.org/pixman/pixman.git",
+      "commit": "37216a32839f59e8dcaa4c3951b3fcfc3f07852c"
+    },
+    {
+      "path": "3rdparty/quickjs",
+      "url": "https://github.com/quickjs-ng/quickjs.git",
+      "commit": "6d46d07d04041b40f4f49eaa7fdebe44c314c699"
+    },
+    {
+      "path": "3rdparty/quickjs/test262",
+      "url": "https://github.com/tc39/test262",
+      "commit": "5ef1e5723be95296f36afb0386676fed0205869c"
+    },
+    {
+      "path": "3rdparty/sqlite",
+      "url": "https://github.com/sqlite/sqlite.git",
+      "commit": "57520227c95396ce39ba6ecaac8d475b78dd3964"
+    },
+    {
+      "path": "3rdparty/stb",
+      "url": "https://github.com/nothings/stb.git",
+      "commit": "2c980bb59875b0d32144a71867fbdebb2f77cd20"
+    },
+    {
+      "path": "3rdparty/tracy",
+      "url": "https://github.com/wolfpld/tracy.git",
+      "commit": "30997d5ca6bb632cc10807a1da8a6d3de0aeeb3c"
+    },
+    {
+      "path": "3rdparty/vgmstream",
+      "url": "https://github.com/vgmstream/vgmstream.git",
+      "commit": "7c520e8f9b078dfde2f84f1b5bcbad0c6c415806"
+    },
+    {
+      "path": "3rdparty/vorbis",
+      "url": "https://github.com/xiph/vorbis.git",
+      "commit": "c2aa86b05e981c96bf381fc6aa11cdd03eccc2fb"
+    },
+    {
+      "path": "3rdparty/zlib",
+      "url": "https://github.com/madler/zlib.git",
+      "commit": "da607da739fa6047df13e66a2af6b8bec7c2a498"
+    },
+    {
+      "path": "3rdparty/zstd",
+      "url": "https://github.com/facebook/zstd.git",
+      "commit": "f8745da6ff1ad1e7bab384bd1f9d742439278e99"
+    }
+  ],
+  "downloads": [
+    {
+      "name": "winlibs",
+      "url": "https://github.com/brechtsanders/winlibs_mingw/releases/download/15.2.0posix-14.0.0-ucrt-r7/winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.zip",
+      "sha256": "cb2fbad6162540cdf5e1facdce08d4dac359e8cf64f7f696a99274291763b815"
+    },
+    {
+      "name": "python",
+      "url": "https://www.python.org/ftp/python/3.13.3/python-3.13.3-embed-amd64.zip",
+      "sha256": "59ff76e16e6597de47474fb22be69e7191a89116910d728ab735079b078e52db"
+    },
+    {
+      "name": "ffmpeg",
+      "url": "https://github.com/KytyPS5/ext-ffmpeg-core/releases/download/9ac4cfd195f1/ffmpeg-mingw-x64.zip",
+      "sha256": "e4be9938b321da5f53e248d8ae947c984390e09d0f59fb6855644a972126e26b"
+    },
+    {
+      "name": "cmake",
+      "url": "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-windows-x86_64.zip",
+      "sha256": "d163cd3ab4959b0a53fa8988f2ddbd2e6c501658201e6a154386bad9dbe4f836"
+    },
+    {
+      "name": "ninja",
+      "url": "https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip",
+      "sha256": "f550fec705b6d6ff58f2db3c374c2277a37691678d6aba463adcbb129108467a"
+    }
+  ],
+  "environment": {
+    "base_image": "ubuntu:24.04@sha256:73b999393d07f2bf65a40373778a44dc9a6d54ad7718d29247d8ff9413c4d6a8",
+    "certificate_image": "python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90",
+    "ubuntu_snapshot": "20261118T000000Z",
+    "wine": "9.0~repack-4build3"
+  }
+}

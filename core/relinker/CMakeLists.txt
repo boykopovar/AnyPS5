@@ -242,7 +242,7 @@ set_target_properties(relinker PROPERTIES CXX_EXTENSIONS OFF)
 find_package(Git QUIET)
 set(relinkerRevisionHeader ${CMAKE_CURRENT_BINARY_DIR}/RelinkerRevision.hpp)
 add_custom_target(relinker_revision
-    COMMAND ${CMAKE_COMMAND} -DGIT=${GIT_EXECUTABLE} -DSOURCE=${CMAKE_SOURCE_DIR} -DOUTPUT=${relinkerRevisionHeader} -P ${CMAKE_CURRENT_SOURCE_DIR}/revision.cmake
+    COMMAND ${CMAKE_COMMAND} -DGIT=${GIT_EXECUTABLE} -DSOURCE=${CMAKE_SOURCE_DIR} -DOUTPUT=${relinkerRevisionHeader} -DREVISION_OVERRIDE=${ANYPS5_ENGINE_REVISION} -P ${CMAKE_CURRENT_SOURCE_DIR}/revision.cmake
     BYPRODUCTS ${relinkerRevisionHeader}
     VERBATIM)
 add_dependencies(relinker relinker_revision)
