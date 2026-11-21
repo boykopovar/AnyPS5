@@ -17,3 +17,7 @@ inline int Retain_nid_no_patch(std::int32_t& references) {
             return previous > 0;
     }
 }
+
+inline void Release_nid_no_patch(std::int32_t& references) {
+    std::atomic_ref<std::int32_t>(references).fetch_sub(1, std::memory_order_acq_rel);
+}
