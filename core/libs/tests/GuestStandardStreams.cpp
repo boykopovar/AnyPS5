@@ -833,6 +833,10 @@ static int CheckUpdateStandardOutput() {
     Require(printf_s_nid_postfix("%s", "D") == -1 && *__error_nid_postfix() == 9);
     *__error_nid_postfix() = 0;
     Require(wprintf_nid_postfix(u"E") == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(printf_nid_postfix("%p", nullptr) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(PrintStandard("%f", 1.0) == -1 && *__error_nid_postfix() == 9);
     Require(ferror_nid_postfix(stream) != 0 && fclose_nid_postfix(stream) == 0);
     Require(CheckFileBytes(filename, "0123456789A\nBCDE", "a+b", true));
     Require(std::filesystem::remove(filename));

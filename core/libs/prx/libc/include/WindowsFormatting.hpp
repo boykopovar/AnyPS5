@@ -813,9 +813,7 @@ inline int PrintWindows(const char* format, const void* args) {
     if (!output) return -1;
     std::string buffer;
     const int size = FormatWindows(nullptr, 0, format, args, &buffer);
-    if (std::fwrite(buffer.data(), 1, static_cast<size_t>(size), output) != static_cast<size_t>(size))
-        throw std::runtime_error("Formatted output write failed");
-    return size;
+    return std::fwrite(buffer.data(), 1, static_cast<size_t>(size), output) == static_cast<size_t>(size) ? size : -1;
 }
 
 }
