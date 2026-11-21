@@ -93,11 +93,25 @@ struct RestoreErrno {
     ~RestoreErrno() { errno = value; }
 };
 
+#ifdef _WIN32
+bool OnHostStack(std::uintptr_t start, std::size_t bytes) {
+    const auto* tib = reinterpret_cast<const NT_TIB*>(NtCurrentTeb());
+    const auto low = reinterpret_cast<std::uintptr_t>(tib->StackLimit);
+    const auto high = reinterpret_cast<std::uintptr_t>(tib->StackBase);
+    if (start < low || start >= high || bytes > high - start) return false;
+    return !GuestArena::GuestArenaContains_nid_postfix(reinterpret_cast<const void*>(start), bytes) || GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(start, bytes);
+}
+#endif
+
 bool CopyGuestBytes(void* destination, const void* source, std::size_t bytes, bool prepare = true) {
     const RestoreErrno restore;
     if (prepare) GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
 #ifdef _WIN32
     if (GuestArena::GuestArenaCopyOwned_nid_no_patch(reinterpret_cast<std::uintptr_t>(source), destination, bytes)) return true;
+    if (OnHostStack(reinterpret_cast<std::uintptr_t>(source), bytes)) {
+        std::memcpy(destination, source, bytes);
+        return true;
+    }
     SIZE_T copied = 0;
     return ReadProcessMemory(GetCurrentProcess(), source, destination, bytes, &copied) != 0 && copied == bytes;
 #elif defined(__linux__)
@@ -916,6 +930,9 @@ extern "C" bool GuestWritable_nid_no_patch(void* destination, std::size_t bytes)
     if (bytes == 0) return true;
     const auto start = reinterpret_cast<std::uintptr_t>(destination);
     if (start == 0 || bytes > UINTPTR_MAX - start) return false;
+#ifdef _WIN32
+    if (OnHostStack(start, bytes)) return true;
+#endif
     for (auto address = start; address < start + bytes;) {
 #ifdef _WIN32
         MEMORY_BASIC_INFORMATION memory{};
@@ -954,6 +971,10 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
     if (!guard.Open()) return false;
 #ifdef _WIN32
     if (GuestArena::GuestArenaStoreOwned_nid_no_patch(start, source, bytes)) return true;
+    if (OnHostStack(start, bytes)) {
+        std::memcpy(destination, source, bytes);
+        return true;
+    }
     for (auto address = start; address < start + bytes;) {
         MEMORY_BASIC_INFORMATION memory{};
         if (VirtualQuery(reinterpret_cast<LPCVOID>(address), &memory, sizeof(memory)) != sizeof(memory) || memory.State != MEM_COMMIT ||
