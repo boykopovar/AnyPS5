@@ -8,14 +8,67 @@
 #include <limits>
 #include <set>
 #include <span>
+#include <utility>
+#include <vector>
 
 namespace Elfpatcher {
+
+namespace {
+
+void validateRelroCoverage(
+    const std::vector<Domain::ProgramHeader>& inputHeaders,
+    const Domain::ProgramHeader& relro
+) {
+    if (relro.FileSize > relro.MemorySize)
+        throw Domain::RelinkerException("PT_GNU_RELRO file size exceeds memory size", relro.MappedAddress);
+    if (relro.MemorySize == 0)
+        return;
+    if (relro.MemorySize > std::numeric_limits<std::uint64_t>::max() - relro.MappedAddress)
+        throw Domain::RelinkerException("PT_GNU_RELRO virtual address overflow", relro.MappedAddress);
+    constexpr std::uint64_t pageMask = kDefaultLoadAlignment - 1;
+    const auto relroStart = relro.MappedAddress & ~pageMask;
+    const auto relroEnd = (relro.MappedAddress + relro.MemorySize) & ~pageMask;
+    if (relroStart == relroEnd) return;
+
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> mappedRanges;
+    for (const auto& header : inputHeaders) {
+        if (header.Type != PT_LOAD || header.MemorySize == 0 || header.Flags == 0) continue;
+        const auto size = std::max(header.FileSize, header.MemorySize);
+        if (size > std::numeric_limits<std::uint64_t>::max() - header.MappedAddress) continue;
+        const auto start = header.MappedAddress & ~pageMask;
+        const auto endBytes = header.MappedAddress + size;
+        if (endBytes > std::numeric_limits<std::uint64_t>::max() - pageMask) continue;
+        const auto end = (endBytes + pageMask) & ~pageMask;
+        if (start < end)
+            mappedRanges.emplace_back(start, end);
+    }
+    std::sort(mappedRanges.begin(), mappedRanges.end());
+    auto coveredUntil = relroStart;
+    for (const auto& [start, end] : mappedRanges) {
+        if (start > coveredUntil) break;
+        if (end > coveredUntil) coveredUntil = end;
+        if (coveredUntil >= relroEnd) return;
+    }
+    throw Domain::RelinkerException("PT_GNU_RELRO is not covered by PT_LOAD pages", relro.MappedAddress);
+}
+
+}
 
 std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestImage& image, const std::vector<std::string>& dependencies, const std::string& runPath, const bool deferInitialization) const {
     auto bytes = image.Bytes;
     std::vector<Domain::ProgramHeader> headers;
     std::uint64_t end = 0;
+    bool hasRelro = false;
     for (auto header : image.Headers) {
+        if (header.Type == PT_GNU_RELRO) {
+            validateRelroCoverage(image.Headers, header);
+            if (header.MemorySize == 0) continue;
+            if (hasRelro)
+                throw Domain::RelinkerException("Multiple RELRO ranges are not supported on Linux output: the loader only protects one PT_GNU_RELRO segment", header.MappedAddress);
+            hasRelro = true;
+            headers.push_back(header);
+            continue;
+        }
         if (header.Type != 1 && header.Type != 7 && header.Type != 0x6474e550 && header.Type != PT_GNU_STACK) continue;
         if (header.Type == 1) {
             end = std::max(end, header.MappedAddress + header.MemorySize);
