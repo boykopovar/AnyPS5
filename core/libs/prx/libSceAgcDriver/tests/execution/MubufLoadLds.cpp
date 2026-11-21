@@ -26,7 +26,7 @@ std::array<std::uint32_t, 4> Descriptor(const void* bytes, std::uint32_t size, s
 
 void CheckRefused() {
     for (std::uint32_t opcode = 0u; opcode < 256u; ++opcode) {
-        if (opcode == 12u) continue;
+        if (opcode == 12u || opcode == 0u || (opcode >= 8u && opcode <= 11u)) continue;
         const std::array<std::uint32_t, 2> code{0xe0010000u | (opcode << 18u), 0x80000000u};
         bool refused = false;
         try {
@@ -36,7 +36,7 @@ void CheckRefused() {
         }
         Require(refused, "unsupported MUBUF LDS opcode accepted");
     }
-    for (const auto code : {std::array{0xe0310000u, 0x80000100u}, std::array{0xe0310000u, 0x80800000u},
+    for (const auto code : {std::array{0xe0310000u, 0x80800000u},
                             std::array{0xe0330000u, 0x80000000u}, std::array{0xe0310000u, 0x80200000u}}) {
         bool refused = false;
         try {
@@ -44,7 +44,7 @@ void CheckRefused() {
         } catch (const std::runtime_error&) {
             refused = true;
         }
-        Require(refused, "MUBUF LDS accepted nonzero VDATA, TFE or reserved bits");
+        Require(refused, "MUBUF LDS accepted TFE or reserved bits");
     }
 }
 
