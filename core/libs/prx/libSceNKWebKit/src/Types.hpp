@@ -249,7 +249,7 @@ public:
     std::uint64_t id = 0;
     Retained<Data> resumeData;
     Retained<Array> redirectChain;
-    bool wasUserInitiated = false;
+    bool wasUserInitiated = true;
     bool isCancelled = false;
 };
 
