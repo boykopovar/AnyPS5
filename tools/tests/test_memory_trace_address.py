@@ -38,6 +38,15 @@ class ParseTests(FeatureRequired):
             (6, "map anon", 0x140000000, 0x1000),
         ])
 
+    def test_selects_flexible_backing_by_guest_address(self):
+        events = trace.parse_events([
+            "[memory] allocate physical 0x4000+0x8000",
+            "[memory] flexible backing 0x4000+0x8000",
+            "[memory] release physical 0x4000+0x8000",
+        ])
+        self.assertEqual([event.line for event in trace.select_events(events, 0xbfff, 1)], [2])
+        self.assertEqual(trace.select_events(events, 0xc000, 1), [])
+
     def test_parses_every_operation_and_strips_line_endings(self):
         events = trace.parse_events([
             "[memory] remap fixed 0x10+0x20 prot=0x3\r\n",
@@ -82,6 +91,7 @@ class RangeTests(FeatureRequired):
     def test_accepts_decimal_and_hex_ranges(self):
         self.assertEqual(trace.parse_range("4096", "32"), (4096, 32))
         self.assertEqual(trace.parse_range("0x1000", "0x20"), (0x1000, 0x20))
+        self.assertEqual(trace.parse_range("0004096", "0032"), (4096, 32))
 
     def test_rejects_invalid_or_overflowing_ranges(self):
         for address, size in (("bad", "1"), ("-1", "1"), ("0", "0"),
@@ -150,6 +160,16 @@ class CliTests(FeatureRequired):
             self.assertNotIn("protect", result.stdout)
             self.assertNotIn("allocate physical", result.stdout)
 
+    def test_cli_accepts_zero_padded_decimal_range(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.log"
+            path.write_text("[memory] protect 0x1000+0x10 prot=0x1\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), str(path), "--address", "0004096",
+                                     "--length", "0016"], capture_output=True, text=True,
+                                    encoding="utf-8", timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("line 1: protect 0x1000+0x10", result.stdout)
+
     def test_cli_ignores_empty_ranges_when_limiting_matches(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "run.log"
@@ -171,6 +191,17 @@ class CliTests(FeatureRequired):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("line 1: map anon 0x1000+0x1000", result.stdout)
             self.assertNotIn("No traced mapping operations", result.stdout)
+
+    def test_cli_reads_a_first_line_event_in_a_utf16_trace(self):
+        line = "[memory] map anon 0x1000+0x1000 prot=0x3\r\n"
+        for encoding, bom in (("utf-16-le", b"\xff\xfe"), ("utf-16-be", b"\xfe\xff")):
+            with self.subTest(encoding=encoding), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "run.log"
+                path.write_bytes(bom + line.encode(encoding))
+                result = subprocess.run([sys.executable, str(TOOL), str(path), "--address", "0x1800"],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("line 1: map anon 0x1000+0x1000", result.stdout)
 
     def test_cli_reports_a_non_ascii_trace_path_as_utf8(self):
         with tempfile.TemporaryDirectory() as directory:

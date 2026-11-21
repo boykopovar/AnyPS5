@@ -173,6 +173,32 @@ void CheckB2AdditionalCtorsAndGetcat(bool hasLibrary) {
     }
 
     {
+        auto* heapCharGet = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(sizeof(GuestLocale::Facet)));
+        std::memset(heapCharGet, 0, sizeof(*heapCharGet));
+        const std::size_t freesBefore = g_freeCount;
+        g_lastFreed = nullptr;
+        libSceLibcInternalInventory_183_nid_no_patch(heapCharGet);
+        Require(g_freeCount == freesBefore + 1 && g_lastFreed == heapCharGet, "char time_get D0 frees object");
+
+        GuestLocale::Facet charFacet{};
+        charFacet.references = 3;
+        const std::size_t freesBeforeD1 = g_freeCount;
+        libSceLibcInternalInventory_184_nid_no_patch(&charFacet);
+        Require(charFacet.vtable == nullptr && charFacet.references == 3 && charFacet.reserved == 0 && g_freeCount == freesBeforeD1, "char time_get D1 leaves the facet and frees nothing");
+
+        WideTimeGetStorage wideStorage{};
+        wideStorage.untouchedSuffix.fill(std::byte{0x6b});
+        const auto expectedSuffix = wideStorage.untouchedSuffix;
+        _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1Em_nid_postfix(&wideStorage.base, 4);
+        const void* const wideVtable = wideStorage.base.vtable;
+        const char16_t* const wideDays = wideStorage.days;
+        libSceLibcInternalInventory_192_nid_no_patch(&wideStorage.base);
+        Require(wideStorage.base.vtable == wideVtable && wideStorage.base.references == 4 && wideStorage.days == wideDays && wideStorage.untouchedSuffix == expectedSuffix
+                && g_freeCount == freesBeforeD1,
+            "wide time_get D1 leaves the facet and frees nothing");
+    }
+
+    {
         GuestLocale::Implementation classicLoc{{nullptr, 1, 0}, nullptr, 0, 5, false, "C"};
         GuestLocale::Implementation* classicPtr = &classicLoc;
         GuestLocale::Facet* catFacet = nullptr;
@@ -222,6 +248,9 @@ void CheckB2AdditionalCtorsAndGetcat(bool hasLibrary) {
     Require(Throws([&] { _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1ERKSt8_Locinfom_nid_postfix(&tmpWide.base, nullptr, 0); }), "wide time_get C1Locinfo null locinfo throws");
     Require(Throws([&] { _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix(&tmpWide.base, nullptr, 0); }), "wide time_get C2Locinfo null locinfo throws");
     Require(Throws([] { _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEED0Ev_nid_postfix(nullptr); }), "wide time_get D0 null throws");
+    Require(Throws([] { libSceLibcInternalInventory_183_nid_no_patch(nullptr); }), "char time_get D0 null throws");
+    Require(Throws([] { libSceLibcInternalInventory_184_nid_no_patch(nullptr); }), "char time_get D1 null throws");
+    Require(Throws([] { libSceLibcInternalInventory_192_nid_no_patch(nullptr); }), "wide time_get D1 null throws");
     GuestLocale::Facet* nullCat = nullptr;
     Require(Throws([&] { _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(&nullCat, nullptr); }), "wide time_get _Getcat null locale throws");
     Require(Throws([] { _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC1Em_nid_postfix(nullptr, 0); }), "char time_put C1Em null throws");

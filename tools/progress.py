@@ -1188,6 +1188,8 @@ def require_distinct_reports(output):
     for index, path in enumerate(paths):
         if not path.exists():
             continue
+        if not path.is_file():
+            raise ValueError(f"{path}: report destination must be a regular file")
         for other in paths[index + 1:]:
             if other.exists() and path.samefile(other):
                 raise ValueError(f"{path.name} and {other.name} in {output} are the same file")

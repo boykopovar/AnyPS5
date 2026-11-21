@@ -11,7 +11,7 @@ import pr_overlap
 
 
 def pull(number):
-    return {"number": number, "head": {"sha": f"{number:040x}"}, "user": {"login": "someone"}, "body": ""}
+    return {"number": number, "head": {"sha": f"{number:040x}", "ref": f"branch{number}"}, "user": {"login": "someone"}, "body": ""}
 
 
 class ProgressTests(unittest.TestCase):

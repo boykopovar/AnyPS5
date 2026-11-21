@@ -370,14 +370,23 @@ std::filesystem::path HostPath(WorkingDirectory& state, const std::vector<std::s
 void RequireHostDirectory(WorkingDirectory& state, const std::vector<std::string>& names) {
     const auto host = HostPath(state, names);
     std::error_code error;
+#ifdef _WIN32
+    const auto hostStatus = [](const std::filesystem::path& path, std::error_code& failure) {
+        std::error_code verbatimError;
+        const auto verbatim = NativeVerbatimPath_nid_no_patch(path, verbatimError);
+        return std::filesystem::status(verbatimError ? path : verbatim, failure);
+    };
+    const auto status = hostStatus(host, error);
+#else
     const auto status = std::filesystem::status(host, error);
+#endif
     if (std::filesystem::is_directory(status)) return;
     if (!error) error = std::make_error_code(std::filesystem::exists(status) ? std::errc::not_a_directory : std::errc::no_such_file_or_directory);
 #ifdef _WIN32
     if (error == std::errc::no_such_file_or_directory) {
         for (auto prefix = host.parent_path(); prefix.has_relative_path(); prefix = prefix.parent_path()) {
             std::error_code prefixError;
-            const auto prefixStatus = std::filesystem::status(prefix, prefixError);
+            const auto prefixStatus = hostStatus(prefix, prefixError);
             if (!std::filesystem::exists(prefixStatus)) continue;
             if (!std::filesystem::is_directory(prefixStatus)) error = std::make_error_code(std::errc::not_a_directory);
             break;
@@ -597,6 +606,12 @@ int SetWorkingDirectory(WorkingDirectory& state, const std::filesystem::path& re
     if (!std::filesystem::is_directory(canonical, error)) return error ? DirectoryFailure(error) : 20;
     auto relative = canonical.lexically_relative(state.root);
 #ifdef _WIN32
+    if (relative.empty() || *relative.begin() == "..") {
+        bool notDirectory = false;
+        const auto target = FinalDirectoryPath(canonical, notDirectory);
+        const auto root = FinalDirectoryPath(state.root, notDirectory);
+        if (target && root) relative = target->lexically_relative(*root);
+    }
     if (relative.empty() || *relative.begin() == "..") {
         auto ancestor = canonical;
         while (!std::filesystem::equivalent(ancestor, state.root, error)) {
