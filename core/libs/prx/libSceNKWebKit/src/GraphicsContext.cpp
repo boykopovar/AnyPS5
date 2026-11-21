@@ -134,7 +134,7 @@ void ApplyAntialias(Context& context) {
     CairoSetAntialias_nid_no_patch(cr, (context.state.flags & AntialiasFlag) ? 0 : 1);
 }
 
-int CairoOperator(const std::uint8_t compositeOperator) {
+int CairoCompositeOperator(const std::uint8_t compositeOperator) {
     if (compositeOperator <= 5) return compositeOperator;
     if (compositeOperator <= 10) return compositeOperator + 1;
     switch (compositeOperator) {
@@ -149,10 +149,52 @@ int CairoOperator(const std::uint8_t compositeOperator) {
     }
 }
 
+int CairoOperator(const std::uint8_t compositeOperator, const std::uint8_t blendMode) {
+    switch (blendMode) {
+    case 1:
+        return CairoCompositeOperator(compositeOperator);
+    case 2:
+        return 14;
+    case 3:
+        return 15;
+    case 4:
+        return 17;
+    case 5:
+        return 18;
+    case 6:
+        return 16;
+    case 7:
+        return 19;
+    case 8:
+        return 20;
+    case 9:
+        return 21;
+    case 10:
+        return 22;
+    case 11:
+        return 23;
+    case 12:
+        return 24;
+    case 13:
+        return 25;
+    case 14:
+        return 26;
+    case 15:
+        return 27;
+    case 16:
+        return 28;
+    case 17:
+    case 18:
+        return 2;
+    default:
+        throw std::invalid_argument("unsupported BlendMode");
+    }
+}
+
 void ApplyOperator(Context& context) {
     CairoContext* cr = Cairo(context);
     if (!cr) return;
-    CairoSetOperator_nid_no_patch(cr, CairoOperator(context.state.compositeOperator));
+    CairoSetOperator_nid_no_patch(cr, CairoOperator(context.state.compositeOperator, context.state.blendMode));
 }
 
 WebCore::Color MultiplyAlpha(const WebCore::Color& color, float shade) {
@@ -391,12 +433,11 @@ void APS5_VABI _ZN7WebCore15GraphicsContext15drawNativeImageERKN3WTF6RefPtrI14_c
     if (!cr || !surface) return;
     if (destination->width() <= 0 || destination->height() <= 0 || source->width() <= 0 || source->height() <= 0) return;
     if (options->orientation != 1) throw std::invalid_argument("only the default ImageOrientation is supported");
-    if (options->blendMode != 1) throw std::invalid_argument("only BlendMode::Normal is supported");
     if (options->interpolationQuality != 0) throw std::invalid_argument("only the default interpolation quality is supported");
     const double scaleX = destination->width() / source->width();
     const double scaleY = destination->height() / source->height();
     CairoSave_nid_no_patch(cr);
-    CairoSetOperator_nid_no_patch(cr, CairoOperator(options->compositeOperator));
+    CairoSetOperator_nid_no_patch(cr, CairoOperator(options->compositeOperator, options->blendMode));
     CairoTranslate_nid_no_patch(cr, destination->x() - source->x() * scaleX, destination->y() - source->y() * scaleY);
     CairoScale_nid_no_patch(cr, scaleX, scaleY);
     CairoSetSourceSurface_nid_no_patch(cr, surface, 0.0, 0.0);
@@ -459,11 +500,10 @@ void APS5_VABI _ZN7WebCore15GraphicsContext11clearShadowEv(Context* self) {
 
 void APS5_VABI _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(Context* self, std::uint8_t compositeOperator, std::uint8_t blendMode) {
     auto& context = Checked(self, "WebCore::GraphicsContext::setCompositeOperation");
-    if (blendMode != 1) throw std::invalid_argument("only BlendMode::Normal is supported");
-    CairoOperator(compositeOperator);
+    CairoOperator(compositeOperator, blendMode);
     context.state.compositeOperator = compositeOperator;
     context.state.blendMode = blendMode;
-    if (CairoContext* cr = Cairo(context)) CairoSetOperator_nid_no_patch(cr, CairoOperator(compositeOperator));
+    if (CairoContext* cr = Cairo(context)) CairoSetOperator_nid_no_patch(cr, CairoOperator(compositeOperator, blendMode));
 }
 
 void APS5_VABI _ZN7WebCore15GraphicsContext22beginTransparencyLayerEf(Context* self, float opacity) {

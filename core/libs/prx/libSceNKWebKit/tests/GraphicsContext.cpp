@@ -243,14 +243,20 @@ void TestStrokeRectAndImage() {
     Require(surface.Pixel(7, 7) == 0xFFFF0000U);
 
     const NKWebKit::GraphicsContextAbi::ImagePaintingOptions multiplied{2, 2, 0, 0, 1, 0, {0, 0, 0}};
+    const WebCore::FloatRect multiplyRegion{{0, 4}, {4, 4}};
+    const WebCore::Color green = Green;
+    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &multiplyRegion, &green);
+    _ZN7WebCore15GraphicsContext15drawNativeImageERKN3WTF6RefPtrI14_cairo_surfaceNS1_13DumbPtrTraitsIS3_EEEERKNS_9FloatSizeERKNS_9FloatRectESE_RKNS_20ImagePaintingOptionsE(&context, &imageSurface, &imageSize, &multiplyRegion, &source, &multiplied);
+    Require(surface.Pixel(1, 5) == 0xFF000000U);
+
+    const NKWebKit::GraphicsContextAbi::ImagePaintingOptions unsupportedBlend{2, 255, 0, 0, 1, 0, {0, 0, 0}};
     bool threw = false;
     try {
-        _ZN7WebCore15GraphicsContext15drawNativeImageERKN3WTF6RefPtrI14_cairo_surfaceNS1_13DumbPtrTraitsIS3_EEEERKNS_9FloatSizeERKNS_9FloatRectESE_RKNS_20ImagePaintingOptionsE(&context, &imageSurface, &imageSize, &destination, &source, &multiplied);
+        _ZN7WebCore15GraphicsContext15drawNativeImageERKN3WTF6RefPtrI14_cairo_surfaceNS1_13DumbPtrTraitsIS3_EEEERKNS_9FloatSizeERKNS_9FloatRectESE_RKNS_20ImagePaintingOptionsE(&context, &imageSurface, &imageSize, &destination, &source, &unsupportedBlend);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
     Require(threw);
-    const WebCore::Color green = Green;
     const WebCore::FloatRect leftRegion{{0, 0}, {4, 4}};
     _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &leftRegion, &green);
     const NKWebKit::GraphicsContextAbi::ImagePaintingOptions destinationOver{6, 1, 0, 0, 1, 0, {0, 0, 0}};
@@ -289,9 +295,20 @@ void TestCompositeAndTransparency() {
     _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &full, &red);
     Require(surface.Pixel(1, 1) == 0);
 
+    _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(&context, 2, 1);
+    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &full, &green);
+    _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(&context, 2, 2);
+    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &full, &red);
+    Require(surface.Pixel(1, 1) == 0xFF000000U);
+    _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(&context, 2, 1);
+    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &full, &green);
+    _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(&context, 2, 3);
+    _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5ColorE(&context, &full, &red);
+    Require(surface.Pixel(1, 1) == 0xFFFFFF00U);
+
     bool threw = false;
     try {
-        _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(&context, 2, 2);
+        _ZN7WebCore15GraphicsContext21setCompositeOperationENS_17CompositeOperatorENS_9BlendModeE(&context, 2, 255);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
