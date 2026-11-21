@@ -1446,9 +1446,12 @@ Iso2022State iso2022Start(const void* profile) {
 }
 
 int iso2022Designation(const void* profile, Iso2022State& state, const uint8_t* iso, uint32_t isoMax, uint32_t& length) {
-    if (isoMax < 2) return CES_ERROR_SRC_BUFFER_END;
-    if (iso[1] != 0x28 && iso[1] != 0x24) return CES_ERROR_INVALID_ENCODE;
     if (isoMax < 3) return CES_ERROR_SRC_BUFFER_END;
+    if (iso[1] == 0x26 && iso[2] == 0x40) {
+        length = 3;
+        return 0;
+    }
+    if (iso[1] != 0x28 && iso[1] != 0x24) return CES_ERROR_INVALID_ENCODE;
     const bool multibyte = iso[1] == 0x24;
     uint8_t final = iso[2];
     length = 3;

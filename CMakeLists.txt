@@ -8,7 +8,6 @@ project(Relinker CXX)
 set(ANYPS5_TEST_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 if(MINGW)
     enable_language(RC)
-    configure_file(cmake/WindowsManifest.rc.in WindowsManifest.rc @ONLY)
     function(add_test_executable_manifests_test)
         if(NOT BUILD_TESTING)
             return()
@@ -258,7 +257,8 @@ endif()
 
 if(MINGW)
     add_library(anyps5_windows_test_exit OBJECT cmake/WindowsTestExit.cpp)
-    add_library(anyps5_windows_test_manifest OBJECT "${CMAKE_BINARY_DIR}/WindowsManifest.rc")
+    add_library(anyps5_windows_test_manifest OBJECT cmake/WindowsManifest.rc)
+    set_source_files_properties(cmake/WindowsManifest.rc PROPERTIES OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/WindowsManifest.manifest)
 endif()
 
 if(BUILD_TESTING)
@@ -934,6 +934,9 @@ if(BUILD_TESTING)
         add_test(NAME title_run_paths COMMAND ${Python3_EXECUTABLE} -u
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_paths.py -v)
         set_tests_properties(title_run_paths PROPERTIES TIMEOUT 300)
+        add_test(NAME title_run_summary_atomic COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_summary_atomic.py)
+        set_tests_properties(title_run_summary_atomic PROPERTIES TIMEOUT 30)
         add_test(NAME title_run_identity COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_identity.py)
         set_tests_properties(title_run_identity PROPERTIES TIMEOUT 30)

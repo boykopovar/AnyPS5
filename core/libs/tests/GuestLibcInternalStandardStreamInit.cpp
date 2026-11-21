@@ -41,11 +41,11 @@ void CheckBeforeInit(Member destroy, const std::filesystem::path& outPath, const
 void CheckDualRelease(Member construct, Member firstDestroy, Member secondDestroy,
     const std::filesystem::path& outPath, const std::filesystem::path& errPath,
     const char* outText, const char* errText, std::string& outExpected, std::string& errExpected,
-    const char* pendingOut = "", const char* pendingErr = "") {
+    const char* pendingOut = "", const char* pendingErr = "", Member secondConstruct = nullptr) {
     char first = 0;
     char second = 0;
     construct(&first);
-    construct(&second);
+    (secondConstruct ? secondConstruct : construct)(&second);
     WriteStandardStreams(outText, errText);
     firstDestroy(&first);
     Require(FileText(outPath) == outExpected && FileText(errPath) == errExpected,
@@ -79,6 +79,9 @@ int main() {
     CheckBeforeInit(libSceLibcInternalInventory_145_nid_no_patch, outPath, errPath, "narrow-pre-out|", "narrow-pre-err|", outExpected, errExpected);
     CheckDualRelease(libSceLibcInternalInventory_144_nid_no_patch, libSceLibcInternalInventory_145_nid_no_patch, libSceLibcInternalInventory_145_nid_no_patch,
         outPath, errPath, "narrow-out|", "narrow-err|", outExpected, errExpected, "narrow-pre-out|", "narrow-pre-err|");
+    CheckDualRelease(sceLibcInternalUnknown6_080_bTQcNwRc8hE_nid_no_patch, libSceLibcInternalInventory_145_nid_no_patch,
+        libSceLibcInternalInventory_145_nid_no_patch, outPath, errPath, "narrow-c1-c2-out|", "narrow-c1-c2-err|", outExpected, errExpected,
+        "", "", libSceLibcInternalInventory_144_nid_no_patch);
 
     CheckBeforeInit(_ZNSt6_WinitD1Ev_nid_postfix, outPath, errPath, "wide-d1-pre-out|", "wide-d1-pre-err|", outExpected, errExpected);
     CheckDualRelease(libSceLibcInternalInventory_071_nid_no_patch, _ZNSt6_WinitD1Ev_nid_postfix, _ZNSt6_WinitD2Ev_nid_postfix,
@@ -90,6 +93,9 @@ int main() {
 
     CheckDualRelease(libSceLibcInternalInventory_071_nid_no_patch, _ZNSt6_WinitD2Ev_nid_postfix, _ZNSt6_WinitD2Ev_nid_postfix,
         outPath, errPath, "wide-d2-d2-out|", "wide-d2-d2-err|", outExpected, errExpected);
+    CheckDualRelease(libSceLibcInternalInventory_072_nid_no_patch, _ZNSt6_WinitD1Ev_nid_postfix, _ZNSt6_WinitD2Ev_nid_postfix,
+        outPath, errPath, "wide-c1-c2-out|", "wide-c1-c2-err|", outExpected, errExpected,
+        "", "", libSceLibcInternalInventory_071_nid_no_patch);
 
     char single = 0;
     libSceLibcInternalInventory_071_nid_no_patch(&single);

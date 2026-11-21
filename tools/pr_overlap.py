@@ -297,6 +297,12 @@ def exports(diff, prefix="+"):
     return found
 
 
+def unquote_path(path):
+    if path.startswith('"') and path.endswith('"'):
+        return codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", errors="replace")
+    return path
+
+
 def changed_source(diff, prefix):
     files, current, path = [], [], None
     in_hunk = False
@@ -311,9 +317,7 @@ def changed_source(diff, prefix):
         elif line.startswith("@@"):
             in_hunk = True
         elif not in_hunk and line.startswith("--- " if prefix == "-" else "+++ "):
-            path = line[4:]
-            if path.startswith('"') and path.endswith('"'):
-                path = codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", errors="replace")
+            path = unquote_path(line[4:])
             if path == "/dev/null":
                 path = None
             elif path.startswith(("a/", "b/")):
@@ -328,6 +332,32 @@ def changed_source(diff, prefix):
 def library_for_path(path):
     parts = Path(path).parts
     return "/".join(parts[:4]) if len(parts) > 3 and parts[:3] == ("core", "libs", "prx") else ""
+
+
+def production_source(path):
+    path = Path(path)
+    return path.suffix == ".cpp" and not any(part.lower() in {"test", "tests"} for part in path.parts[2:-1])
+
+
+def export_diff(old, new):
+    diff = git("diff", "-U0", "--no-color", old, new, "--", *EXPORT_PATHS)
+    source, in_hunk, relocated = None, False, set()
+    for line in diff.split("\n"):
+        line = line.removesuffix("\r")
+        if line.startswith("diff --git "):
+            source, in_hunk = None, False
+        elif line.startswith("@@"):
+            in_hunk = True
+        elif not in_hunk and line.startswith("rename from "):
+            source = unquote_path(line[12:])
+        elif not in_hunk and source is not None and line.startswith("rename to "):
+            destination = unquote_path(line[10:])
+            if library_for_path(source) != library_for_path(destination):
+                relocated.update(path for path in (source, destination) if library_for_path(path) and production_source(path))
+    if relocated:
+        diff += "\n" + git("diff", "--no-renames", "-U0", "--no-color", old, new, "--",
+                           *(f":(literal){path}" for path in sorted(relocated)), *EXPORT_PATHS[1:])
+    return diff
 
 
 def source_exports(text, library=""):
@@ -393,8 +423,7 @@ def base_sources(root, ref):
         info, name = entry.split("\t", 1)
         mode, kind, blob = info.split()
         path = Path(name)
-        if kind != "blob" or mode == "120000" or path.suffix != ".cpp" or any(
-                part.lower() in {"test", "tests"} for part in path.parts[2:-1]):
+        if kind != "blob" or mode == "120000" or not production_source(path):
             continue
         sources.append((blob, name))
     return sources
@@ -455,7 +484,7 @@ def scan(pr):
         pr["files"].add(path)
         if status == "A":
             pr["added"].add(path)
-    diff = git("diff", "-U0", "--no-color", old, new, "--", *EXPORT_PATHS)
+    diff = export_diff(old, new)
     pr["exports"] = exports(diff)
     pr["added_exports"] = source_changed_exports(diff, "+")
     pr["removed_exports"] = source_changed_exports(diff, "-")
@@ -471,7 +500,7 @@ def probe(pr):
             existing.add(path)
     if not any(path.startswith("core/libs/prx/") and path.endswith(".cpp") for path in files):
         return files, (set(), {}), existing
-    diff = git("diff", "-U0", "--no-color", base, pr["ref"], "--", *EXPORT_PATHS)
+    diff = export_diff(base, pr["ref"])
     return files, (exports(diff), source_changed_exports(diff, "+")), existing
 
 
@@ -818,7 +847,11 @@ def main_status(names, ref):
 
 
 def lookup_report(names, found, status, prs, blob):
-    lines = []
+    lines = [
+        "PS5 exports only. Internal functions and instruction opcodes are not checked.",
+        "Inspect candidate pull requests and run --branch <branch> to check file and line overlaps.",
+        "",
+    ]
     for requested in names:
         name = canonical(requested)
         lines.append(name)
@@ -826,12 +859,12 @@ def lookup_report(names, found, status, prs, blob):
         if libraries:
             lines.extend(f"  main: {library} ({state})" for library, state in sorted(libraries.items()))
         else:
-            lines.append("  main: not declared")
+            lines.append("  main: no matching PS5 export")
         numbers = sorted(found.get(name, ()))
         if numbers:
             lines.extend(f"  open: {pull(blob, number)} by {prs[number]['author']}: {prs[number].get('title', '')}" for number in numbers)
         else:
-            lines.append("  open: none")
+            lines.append("  open: no matching PS5 export changes")
     return "\n".join(lines) + "\n"
 
 
