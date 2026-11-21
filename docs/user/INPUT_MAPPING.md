@@ -248,7 +248,7 @@ The [input mapper](../../tools/input-mapper/index.html) edits keyboard, mouse, w
 
 For an emulator action such as `ToggleFullscreen`, add a binding, choose `PAD` as the input type and select one or more controller buttons in the binding value. Open an imported `PAD:` binding the same way to edit its buttons.
 
-On the Configuration page, enter the game's exact title ID to download a [per-game profile](#per-game-profiles), such as `anyps5-input.PPSA00001.ini`. Leave the field blank to download the shared `anyps5-input.ini`.
+On the Configuration page, enter the game's exact title ID to download a [per-game profile](#per-game-profiles), such as `anyps5-input.PPSA00001.ini`. Leave the field blank to download the shared `anyps5-input.ini`. Importing `anyps5-input.<TITLEID>.ini` fills the field from the filename. Importing `anyps5-input.ini` clears it.
 
 Add settings, such as `MouseSensitivity` or `ToggleActions`, and `SDLButton:` lines by hand. The configurator validates them on import and preserves them in the INI preview, in copied text and in the downloaded file. Invalid or duplicate settings and controller entries are reported with their line number.
 

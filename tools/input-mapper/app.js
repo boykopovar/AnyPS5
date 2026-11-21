@@ -1,4 +1,4 @@
-import {actions, actionsForInput, chordButtons, defaults, groups, inputFilename, mouseValues, typesForAction, wheelValues} from './mapping.js';
+import {actions, actionsForInput, chordButtons, defaults, groups, inputFilename, inputTitleId, mouseValues, typesForAction, wheelValues} from './mapping.js';
 import {exportableKeys} from './keys.js';
 import {captureKey} from './capture.js';
 import {parseIni, serialize, validate} from './validation.js';
@@ -437,6 +437,8 @@ byId('file').addEventListener('change', async event => {
         if (!await confirmReplacement()) return;
         importReport = result;
         renderImportReport();
+        const titleId = inputTitleId(file.name);
+        if (titleId !== undefined) byId('profile-title-id').value = titleId;
         entries = result.entries;
         settings = result.settings;
         controllerRemaps = result.controllerRemaps;
