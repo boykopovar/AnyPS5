@@ -85,9 +85,13 @@ void Run(std::uint32_t format, bool batch, int volume) {
             Require(played[frame * deviceChannels + channel] == expected, "vibration PCM or gain leaked into a speaker channel");
         }
     }
+    integers.fill(0);
+    floats.fill(0.0f);
+    Require((batch ? sceAudioOutOutputs(outputs, 1) : sceAudioOutOutput(handle, data)) == static_cast<int>(frames), "silent vibration output failed");
+    Require(queued == before + 2 && std::all_of(played.begin(), played.end(), [](float sample) { return sample == 0.0f; }), "vibration output reused samples from the prior submission");
     std::uint64_t time = 0;
     Require(sceAudioOutGetLastOutputTime(handle, &time) == 0 && time != 0, "vibration acceptance time was not recorded");
-    Require(sceAudioOutOutput(handle, nullptr) == static_cast<int>(frames) && queued == before + 1, "draining vibration queued samples");
+    Require(sceAudioOutOutput(handle, nullptr) == static_cast<int>(frames) && queued == before + 2, "draining vibration queued samples");
     std::uint64_t after = 0;
     Require(sceAudioOutGetLastOutputTime(handle, &after) == 0 && after == time, "a drain changed the last data time");
     Require(sceAudioOutClose(handle) == 0, "native vibration close failed");
