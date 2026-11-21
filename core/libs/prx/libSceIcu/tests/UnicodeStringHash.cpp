@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <source_location>
 #include <stdexcept>
 #include <string>
@@ -158,4 +159,10 @@ int main() {
     const std::int32_t minusOne = -1;
     std::memcpy(negative.raw + 12, &minusOne, sizeof(minusOne));
     RequireThrows([&] { uhash_hashUnicodeString_nid_postfix(Key(&negative)); });
+    auto huge = Heap(u"abc", true);
+    const std::int32_t maxLength = std::numeric_limits<std::int32_t>::max();
+    std::memcpy(huge.raw + 12, &maxLength, sizeof(maxLength));
+    std::memcpy(huge.raw + 24, &bad, sizeof(bad));
+    RequireThrows([&] { uhash_hashUnicodeString_nid_postfix(Key(&huge)); });
+    RequireThrows([&] { uhash_compareCaselessUnicodeString_nid_postfix(Key(&hello), Key(&huge)); });
 }

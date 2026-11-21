@@ -6,7 +6,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <vector>
 
 namespace {
 
@@ -19,6 +18,7 @@ constexpr std::int32_t StackBufferCapacity = 27;
 constexpr std::int16_t IsBogus = 1;
 constexpr std::int16_t UsingStackBuffer = 2;
 constexpr int LengthShift = 5;
+constexpr std::int32_t ChunkSize = 256;
 
 bool CopyIn(void* destination, const void* source, std::size_t bytes) {
     const int savedErrno = errno;
@@ -41,16 +41,21 @@ icu::UnicodeString ReadGuest(const void* object, const char* caller) {
     if (flags < 0) std::memcpy(&length, raw + LongLengthOffset, sizeof(length));
     if (length < 0) NotImplemented_nid_no_patch(caller);
     if (length == 0) return result;
-    std::vector<char16_t> chars(static_cast<std::size_t>(length));
     if (flags & UsingStackBuffer) {
         if (length > StackBufferCapacity) NotImplemented_nid_no_patch(caller);
-        std::memcpy(chars.data(), raw + StackBufferOffset, chars.size() * sizeof(char16_t));
-    } else {
-        const char16_t* array = nullptr;
-        std::memcpy(&array, raw + ArrayOffset, sizeof(array));
-        if (!CopyIn(chars.data(), array, chars.size() * sizeof(char16_t))) NotImplemented_nid_no_patch(caller);
+        char16_t chars[StackBufferCapacity];
+        std::memcpy(chars, raw + StackBufferOffset, static_cast<std::size_t>(length) * sizeof(char16_t));
+        result.setTo(chars, length);
+        return result;
     }
-    result.setTo(chars.data(), length);
+    const char16_t* array = nullptr;
+    std::memcpy(&array, raw + ArrayOffset, sizeof(array));
+    char16_t chunk[ChunkSize];
+    for (std::int32_t offset = 0; offset < length; offset += ChunkSize) {
+        const std::int32_t count = length - offset < ChunkSize ? length - offset : ChunkSize;
+        if (!CopyIn(chunk, array + offset, static_cast<std::size_t>(count) * sizeof(char16_t))) NotImplemented_nid_no_patch(caller);
+        result.append(chunk, count);
+    }
     return result;
 }
 
