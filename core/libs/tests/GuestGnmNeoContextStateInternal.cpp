@@ -50,10 +50,12 @@ int main() {
     static std::array<std::byte, 64> process{};
     Require(ProcessParametersFixture::Install(process.data(), process.size()), "the process parameters could not be installed");
 
-    for (const std::uint32_t sdkVersion : {0x03500000u, 0x03ffffffu}) {
+    for (const std::uint32_t sdkVersion : {0x00000000u, 0x03500000u, 0x03ffffffu}) {
         std::memcpy(process.data() + 0x10, &sdkVersion, sizeof(sdkVersion));
+        const int internalSize = sceGnmDrawInitToDefaultContextStateInternalSize();
+        Require(internalSize == 0x20, "internal context state size before SDK 0x04000000 is not 0x20");
         Buffer words = Fresh();
-        Require(sceGnmDrawInitToDefaultContextStateInternalCommand(words.data(), 0x20) == 0x20, "size 0x20 was not taken before SDK 0x04000000");
+        Require(sceGnmDrawInitToDefaultContextStateInternalCommand(words.data(), static_cast<std::uint32_t>(internalSize)) == 0x20, "size 0x20 was not taken before SDK 0x04000000");
         for (std::size_t index = 0; index < BufferWords; ++index)
             Require(words[index] == (index < ContextStateBefore400.size() ? ContextStateBefore400[index] : Untouched), "the words before SDK 0x04000000 differ from firmware 13.42's");
         for (const std::uint32_t size : {0u, 0x1fu, 0x21u, 0xffu, 0x100u, 0x101u}) {
@@ -62,16 +64,18 @@ int main() {
         }
     }
 
-    for (const std::uint32_t sdkVersion : {0x04000000u, 0x09000000u}) {
+    for (const std::uint32_t sdkVersion : {0x04000000u, 0x05500000u, 0x09000000u}) {
         std::memcpy(process.data() + 0x10, &sdkVersion, sizeof(sdkVersion));
+        const int internalSize = sceGnmDrawInitToDefaultContextStateInternalSize();
+        Require(internalSize == 0x100, "internal context state size from SDK 0x04000000 is not 0x100");
         Buffer words = Fresh();
-        Require(sceGnmDrawInitToDefaultContextStateInternalCommand(words.data(), 0x100) == 0x100, "size 0x100 was not taken from SDK 0x04000000");
+        Require(sceGnmDrawInitToDefaultContextStateInternalCommand(words.data(), static_cast<std::uint32_t>(internalSize)) == 0x100, "size 0x100 was not taken from SDK 0x04000000");
         std::size_t written = 0;
         while (written < BufferWords && words[written] != Untouched) ++written;
         Require(written == 102, "size 0x100 did not write 102 words from SDK 0x04000000");
         for (const std::uint32_t size : {0u, 0x20u, 0xffu, 0x100u, 0x101u}) CheckSize(sdkVersion, sceGnmDrawInitToDefaultContextState400, size);
     }
 
-    std::puts("GnmNeo InternalCommand tests passed");
+    std::puts("GnmNeo ContextStateInternal tests passed");
     return 0;
 }

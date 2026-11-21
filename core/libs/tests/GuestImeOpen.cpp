@@ -3,6 +3,7 @@
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -217,7 +218,18 @@ void RequireCaretSteps(const std::vector<Recorded>& events, uint32_t direction, 
 void CheckValidation() {
     Buffers buffers;
     Require(sceImeOpen_nid_postfix(nullptr, nullptr) == InvalidAddress, "null param");
-    Require(sceImeUpdate(nullptr) == InvalidHandler, "null handler");
+    errno = 71;
+    Require(sceImeOpen_nid_postfix(reinterpret_cast<const Param*>(0x10), nullptr) == InvalidAddress, "unmapped param");
+    Require(errno == 71, "preserve errno on unmapped param");
+    Param validParam = MakeParam(buffers, 16);
+    errno = 71;
+    Require(sceImeOpen_nid_postfix(&validParam, reinterpret_cast<const ExtendedParam*>(0x10)) == InvalidAddress, "unmapped extended param");
+    Require(errno == 71, "preserve errno on unmapped extended param");
+    validParam.input_text_buffer = reinterpret_cast<char16_t*>(0x10);
+    errno = 71;
+    Require(sceImeOpen_nid_postfix(&validParam, nullptr) == InvalidAddress, "unmapped input text buffer");
+    Require(errno == 71, "preserve errno on unmapped input text buffer");
+    Require(sceImeUpdate(nullptr) == NotOpened, "null handler with nothing open");
     auto expect = [&](auto change, int error, const char* message) {
         Param param = MakeParam(buffers, 16);
         change(param);
@@ -278,7 +290,7 @@ void CheckEditing() {
     std::memcpy(buffers.text, u"ab", sizeof(u"ab"));
     Param param = MakeParam(buffers, 8);
     Require(!ImeCapturesKeyboard_nid_postfix(), "keyboard captured before open");
-    Require(sceImeUpdate(Record) == 0 && g_events.empty(), "update before open");
+    Require(sceImeUpdate(Record) == NotOpened && g_events.empty(), "update before open");
     Require(sceImeOpen_nid_postfix(&param, nullptr) == 0, "open");
     Require(sceImeOpen_nid_postfix(&param, nullptr) == Busy, "second open");
     Require(ImeCapturesKeyboard_nid_postfix(), "keyboard not captured");
@@ -350,6 +362,9 @@ void CheckEditing() {
     Caret caret{};
     caret.index = 6;
     Require(sceImeSetCaret(nullptr) == InvalidAddress, "null caret");
+    errno = 71;
+    Require(sceImeSetCaret(reinterpret_cast<const Caret*>(0x10)) == InvalidAddress, "unmapped caret");
+    Require(errno == 71, "preserve errno on unmapped caret");
     Require(sceImeSetCaret(&caret) == InvalidParam, "caret past the text");
     caret.index = 1;
     Require(sceImeSetCaret(&caret) == 0, "set caret");
@@ -390,6 +405,34 @@ void CheckMultiline() {
     RequireText(events[2], EventUpdateText, u"a\nb\nc", 5, 2, 3);
     Require(sceImeSetText(u"x\ny", 3) == 0, "multiline set text");
     Require(sceImeClose_nid_postfix() == 0, "multiline close");
+}
+
+void CheckCaretSurrogateBoundary() {
+    Buffers buffers;
+    Param param = MakeParam(buffers, 16);
+    Require(sceImeOpen_nid_postfix(&param, nullptr) == 0, "surrogate caret open");
+    Drain();
+
+    Require(sceImeSetText(u"A\U0001F600B", 4) == 0, "set text with a surrogate pair");
+    Caret caret{};
+    caret.index = 2;
+    Require(sceImeSetCaret(&caret) == 0, "set caret within a surrogate pair");
+    Publish(ImeHostInputKind::Text, "X");
+    auto events = Drain();
+    Require(events.size() == 1, "caret edit event count");
+    RequireText(events[0], EventUpdateText, u"A\U0001F600XB", 4, 3, 1);
+    Require(std::u16string(buffers.text) == u"A\U0001F600XB", "caret edit preserves the surrogate pair");
+
+    Require(sceImeSetText(u"a", 1) == 0, "set short text before a surrogate pair");
+    caret.index = 1;
+    Require(sceImeSetCaret(&caret) == 0, "set caret at the short text end");
+    Require(sceImeSetText(u"\U0001F600", 2) == 0, "replace text around the existing caret");
+    Publish(ImeHostInputKind::Text, "Y");
+    events = Drain();
+    Require(events.size() == 1, "replacement edit event count");
+    RequireText(events[0], EventUpdateText, u"\U0001F600Y", 3, 2, 1);
+    Require(std::u16string(buffers.text) == u"\U0001F600Y", "replacement edit preserves the surrogate pair");
+    Require(sceImeClose_nid_postfix() == 0, "surrogate caret close");
 }
 
 void CheckTextFilter() {
@@ -563,12 +606,43 @@ void CheckHostEvents() {
     Require(sceImeClose_nid_postfix() == 0, "host events close");
 }
 
+void CheckMalformedHostText() {
+    Buffers buffers;
+    Param param = MakeParam(buffers, 16);
+    Require(sceImeOpen_nid_postfix(&param, nullptr) == 0, "malformed text open");
+    Drain();
+
+    Publish(ImeHostInputKind::Text, "\xc0\x80");
+    auto events = Drain();
+    Require(events.size() == 1, "overlong text event");
+    RequireText(events[0], EventUpdateText, u"\ufffd\ufffd", 2, 0, 2);
+
+    Publish(ImeHostInputKind::Text, "\xed\xa0\x80");
+    events = Drain();
+    Require(events.size() == 1, "surrogate text event");
+    RequireText(events[0], EventUpdateText, u"\ufffd\ufffd\ufffd", 3, 2, 1);
+
+    Publish(ImeHostInputKind::Text, "\xf4\x90\x80\x80");
+    events = Drain();
+    Require(events.size() == 1, "out-of-range text event");
+    RequireText(events[0], EventUpdateText, u"\ufffd\ufffd\ufffd\ufffd", 4, 3, 1);
+
+    Publish(ImeHostInputKind::Text, "\xe3\x81");
+    events = Drain();
+    Require(events.size() == 1, "truncated text event");
+    RequireText(events[0], EventUpdateText, u"\ufffd\ufffd\ufffd\ufffd\ufffd", 5, 4, 1);
+    Require(std::u16string(buffers.text) == u"\ufffd\ufffd\ufffd\ufffd\ufffd", "malformed text buffer");
+    Require(sceImeClose_nid_postfix() == 0, "malformed text close");
+}
+
 }
 
 int main() {
     CheckValidation();
     CheckEditing();
     CheckMultiline();
+    CheckCaretSurrogateBoundary();
     CheckTextFilter();
     CheckHostEvents();
+    CheckMalformedHostText();
 }

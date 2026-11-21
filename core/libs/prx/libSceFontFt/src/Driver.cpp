@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <limits>
 #ifdef _WIN32
+#include "prx/libc/include/PreciseWait.hpp"
 #include <windows.h>
 #endif
 
@@ -42,7 +43,7 @@ struct FtLibraryContext {
 };
 
 void* FtAlloc(FT_Memory memory, long size) {
-    if (!memory || size <= 0) return nullptr;
+    if (!memory || size <= 0 || !FontFt::FitsGuestSize(size)) return nullptr;
     auto* ctx = static_cast<FtLibraryContext*>(memory->user);
     if (!ctx || !ctx->iface || !ctx->iface->alloc) return nullptr;
     return ctx->iface->alloc(ctx->allocCtx, static_cast<std::uint32_t>(size));
@@ -59,6 +60,7 @@ void* FtRealloc(FT_Memory memory, long currentSize, long newSize, void* block) {
     if (!memory) return nullptr;
     auto* ctx = static_cast<FtLibraryContext*>(memory->user);
     if (!ctx || !ctx->iface) return nullptr;
+    if (newSize > 0 && !FontFt::FitsGuestSize(newSize)) return nullptr;
     if (ctx->iface->realloc_fn) return ctx->iface->realloc_fn(ctx->allocCtx, block, static_cast<std::uint32_t>(newSize));
     if (newSize <= 0) {
         FtFree(memory, block);
@@ -954,7 +956,8 @@ const Font::RendererSelection* FontFt::RendererTable() {
     return &rendererTable;
 }
 
-int FontFt::SupportFormats(FontLibrary library, std::initializer_list<const char*> modules) {
+template <typename F>
+static int WithLockedLibrary(FontLibrary library, F&& action) {
     auto* native = static_cast<Font::FontLibNative*>(library);
     if (!native) return SCE_FONT_ERROR_INVALID_LIBRARY;
     auto lockWord = std::atomic_ref<std::uint32_t>(native->lock_word);
@@ -962,7 +965,11 @@ int FontFt::SupportFormats(FontLibrary library, std::initializer_list<const char
     for (;;) {
         if (native->magic != Font::LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_LIBRARY;
         if ((previous & Font::LOCK_BIT) == 0 && lockWord.compare_exchange_weak(previous, previous | Font::LOCK_BIT, std::memory_order_acq_rel)) break;
+#ifdef _WIN32
+        PreciseSleepUs(30);
+#else
         std::this_thread::sleep_for(std::chrono::microseconds(30));
+#endif
         previous = lockWord.load(std::memory_order_acquire);
     }
     const auto unlock = [previous](Font::FontLibNative* locked) {
@@ -972,8 +979,26 @@ int FontFt::SupportFormats(FontLibrary library, std::initializer_list<const char
     if (native->sys_driver != &driverTable) throw std::runtime_error("FontFt: unsupported library driver");
     const auto* context = static_cast<const FtLibraryContext*>(native->fontset_registry);
     if (!context || !context->library) return SCE_FONT_ERROR_INVALID_LIBRARY;
-    for (const char* module : modules) {
-        if (!FT_Get_Module(context->library, module)) return SCE_FONT_ERROR_NO_SUPPORT_FORMAT;
-    }
-    return SCE_FONT_OK;
+    return action(context);
+}
+
+int FontFt::SupportFormats(FontLibrary library, std::initializer_list<const char*> modules) {
+    return WithLockedLibrary(library, [&](const FtLibraryContext* context) {
+        for (const char* module : modules) {
+            if (!FT_Get_Module(context->library, module)) return SCE_FONT_ERROR_NO_SUPPORT_FORMAT;
+        }
+        return SCE_FONT_OK;
+    });
+}
+
+int FontFt::SupportFontFormats(FontLibrary library, std::uint32_t formats) {
+    return WithLockedLibrary(library, [&](const FtLibraryContext* context) {
+        if ((formats & ~0xFFu) != 0) return SCE_FONT_ERROR_NO_SUPPORT_FORMAT;
+        if ((formats & 0xC3u) != 0 && !FT_Get_Module(context->library, "truetype")) return SCE_FONT_ERROR_NO_SUPPORT_FORMAT;
+        if ((formats & 0x50u) != 0 && !FT_Get_Module(context->library, "cff")) return SCE_FONT_ERROR_NO_SUPPORT_FORMAT;
+        if ((formats & 0x20u) != 0 && !FT_Get_Module(context->library, "type1")) return SCE_FONT_ERROR_NO_SUPPORT_FORMAT;
+        if ((formats & 0x04u) != 0 && !FT_Get_Module(context->library, "type42")) return SCE_FONT_ERROR_NO_SUPPORT_FORMAT;
+        if ((formats & 0x08u) != 0 && !FT_Get_Module(context->library, "t1cid")) return SCE_FONT_ERROR_NO_SUPPORT_FORMAT;
+        return SCE_FONT_OK;
+    });
 }

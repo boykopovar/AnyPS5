@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
+#include <vector>
 #include <thread>
 #ifdef _WIN32
 #include <windows.h>
@@ -25,6 +26,7 @@ constexpr int Cancelled = static_cast<int>(0x80770014u);
 constexpr int InvalidVport = static_cast<int>(0x80770015u);
 constexpr int WouldBlock = static_cast<int>(0x80770016u);
 constexpr int VportInUse = static_cast<int>(0x80770017u);
+constexpr int VportExhausted = static_cast<int>(0x80770018u);
 constexpr int AlreadyBound = static_cast<int>(0x8077001Du);
 constexpr int InProgress = static_cast<int>(0x80770021u);
 constexpr int NoEventHandler = static_cast<int>(0x80770022u);
@@ -113,6 +115,26 @@ void CheckSocketRecords(ListenFn listen) {
     Require(BindResult(11, 1000, 1) == 0 && BindResult(11, 0x2711, 2) == 0, "sceRudpProcessEvents did not free a terminated listening context's socket");
 }
 
+void CheckVportWrap() {
+    const int kept = Bound(20, 0, 2);
+    for (unsigned vport = 0x2712; vport <= 0xFFFF; ++vport) {
+        if (BindResult(20, 0, 2) != 0) Require(false, "an automatic vport below 0xFFFF failed");
+    }
+    Require(BindResult(20, 0xFFFF, 2) == 0, "0xFFFF was still bound after its probe left");
+    const int wrapped = Bound(20, 0, 2);
+    Require(BindResult(20, 0x2710, 2) == VportInUse, "vport 0 did not hand out 0x2710 after 0xFFFF");
+    const int next = Bound(20, 0, 2);
+    Require(BindResult(20, 0x2712, 2) == VportInUse, "vport 0 did not skip 0x2711, still bound, after wrapping");
+    Terminate({kept, wrapped, next});
+
+    std::vector<int> all;
+    all.reserve(0x10000 - 0x2710);
+    for (unsigned vport = 0x2710; vport <= 0xFFFF; ++vport) all.push_back(Bound(21, static_cast<std::uint16_t>(vport), 2));
+    Require(BindResult(21, 0, 2) == VportExhausted, "vport 0 with every vport from 0x2710 to 0xFFFF bound did not return 0x80770018");
+    for (const int context : all) Require(sceRudpTerminate(context) == 0, "sceRudpTerminate failed");
+    Require(BindResult(21, 0, 2) == 0, "vport 0 failed after the socket's contexts left");
+}
+
 }
 
 int main() {
@@ -177,6 +199,7 @@ int main() {
     waiter.join();
     Require(blockedResult == Cancelled && accepted == -1, "a blocking accept was not cancelled by sceRudpTerminate");
     CheckSocketRecords(listen);
+    CheckVportWrap();
 
     Require(sceRudpEnd() == 0, "sceRudpEnd failed");
     Require(sceRudpInit_nid_postfix(pool.data(), static_cast<int>(pool.size())) == 0, "sceRudpInit after sceRudpEnd failed");

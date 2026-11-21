@@ -5,17 +5,22 @@
 
 inline constexpr int LibreSslObjectCount = 956;
 inline constexpr int LibreSslObjectOrderCount = 890;
+inline constexpr int LibreSslObjectShortNameOrderCount = 949;
 
 extern "C" {
 
 extern const LibreSslAsn1Object LibreSslObjects_nid_no_patch[LibreSslObjectCount];
 extern const unsigned short LibreSslObjectOrder_nid_no_patch[LibreSslObjectOrderCount];
+extern const unsigned short LibreSslObjectShortNameOrder_nid_no_patch[LibreSslObjectShortNameOrderCount];
 
 int LibreSslObjectNid_nid_no_patch(const LibreSslAsn1Object* object);
 const char* LibreSslObjectShortName_nid_no_patch(int nid);
 const char* LibreSslObjectLongName_nid_no_patch(int nid);
 int LibreSslAddedObjectNid_nid_no_patch(const LibreSslAsn1Object* object);
+bool LibreSslAddedObjectsExist_nid_no_patch();
+const LibreSslAsn1Object* LibreSslAddedObjectByNid_nid_no_patch(int nid);
 const char* LibreSslAddedObjectName_nid_no_patch(int nid, bool longName);
+int LibreSslAddedObjectShortNameNid_nid_no_patch(const char* name);
 
 }
 

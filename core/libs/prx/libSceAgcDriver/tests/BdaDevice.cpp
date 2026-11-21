@@ -1,3 +1,4 @@
+#include "PortabilitySubset.hpp"
 #include "BdaShader.hpp"
 #include "ColorTransferTests.hpp"
 #include "HostImportFailure.hpp"
@@ -168,8 +169,9 @@ public:
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
             device.queueCreateInfoCount = 1;
             device.pQueueCreateInfos = &queue;
-            device.enabledExtensionCount = static_cast<std::uint32_t>(extensionsEnabled.size());
-            device.ppEnabledExtensionNames = extensionsEnabled.data();
+            AgcDriver::Tests::PortabilitySubset subset;
+            subset.Enable(context.physical, function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties"),
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), extensionsEnabled, device);
             device.pEnabledFeatures = &enabled;
             Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &device, nullptr, &context.device), "vkCreateDevice");
             context.deviceProc = function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
@@ -265,6 +267,8 @@ int main(int argc, char** argv) {
         }
         RunBdaStoreExecutionTests(device->GetContext());
         std::cout << "BDA store boundary tests passed\n";
+        RunBdaFaultSlotExecutionTests(device->GetContext());
+        std::cout << "BDA report-only fault slot tests passed\n";
         RunColorTransferTests(device->GetContext());
         std::cout << "Vulkan BDA allocation and execution tests passed\n";
         return 0;

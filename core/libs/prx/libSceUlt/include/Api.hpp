@@ -61,6 +61,13 @@ int APS5_VABI _sceUltQueueCreate(void* queue, const char* name, std::uint64_t da
 int APS5_VABI _sceUltUlthreadRuntimeOptParamInitialize(UltUlthreadRuntimeOptParam* optParam, std::uint32_t buildVersion);
 int APS5_VABI _sceUltUlthreadRuntimeCreate(void* runtime, const char* name, std::uint32_t maxNumUlthread, std::uint32_t numWorkerThread, void* workArea, const void* optParam);
 int APS5_VABI _sceUltUlthreadCreate(void* ulthread, const char* name, UltUlthreadEntry entry, std::uint64_t arg, void* context, std::uint64_t sizeContext, void* runtime, const void* optParam);
+int APS5_VABI _sceUltWaitingQueueResourcePoolOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion);
+int APS5_VABI _sceUltSemaphoreOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion);
+int APS5_VABI _sceUltQueueDataResourcePoolOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion);
+int APS5_VABI _sceUltQueueOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion);
+int APS5_VABI _sceUltUlthreadOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion);
+int APS5_VABI _sceUltReaderWriterLockOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion);
+int APS5_VABI _sceUltReaderWriterLockCreate(void* rwlock, const char* name, void* waitingQueueResourcePool, const UltOptParam* optParam, std::uint32_t buildVersion);
 int APS5_VABI sceUltConditionVariableSignalAll(void* conditionVariable);
 int APS5_VABI sceUltGetConditionVariableInfo(void* object, UltConditionVariableInfo* info, UltWaitingThreadInfo* waitingThreads, std::uint32_t capacity);
 int APS5_VABI sceUltGetMutexInfo(void* object, UltMutexInfo* info, UltWaitingThreadInfo* waitingThreads, std::uint32_t capacity);

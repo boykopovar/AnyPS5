@@ -4,13 +4,13 @@
 
 extern "C" {
 
-int APS5_VABI npTcsLegacyUnknown__minus_Bbx0u2xR4Q_nid_no_patch();
-int APS5_VABI npTcsLegacyUnknown_3ruFwEv4KQg_nid_no_patch();
-int APS5_VABI npTcsLegacyUnknown_Mlt9z_minus_KrFc4_nid_no_patch();
-int APS5_VABI npTcsLegacyUnknown_ORvFvy4FTvs_nid_no_patch();
-int APS5_VABI npTcsLegacyUnknown_Qx4CWBw5quY_nid_no_patch();
-int APS5_VABI npTcsLegacyUnknown_YTUqdMJrU6Q_nid_no_patch();
-int APS5_VABI npTcsLegacyUnknown_ik_minus_uhY6YvWk_nid_no_patch();
-int APS5_VABI npTcsLegacyUnknown_xSse4lLrSNA_nid_no_patch();
+int APS5_VABI sceNpTcsIntUploadDataToNewSlot();
+int APS5_VABI sceNpTcsIntCreateContext();
+int APS5_VABI sceNpTcsIntUploadDataToNewSlotEnd();
+int APS5_VABI sceNpTcsIntDestroyContext();
+int APS5_VABI sceNpTcsIntAbortRequest();
+int APS5_VABI sceNpTcsIntDestroyRequest();
+int APS5_VABI sceNpTcsIntUploadDataToNewSlotWrite();
+int APS5_VABI sceNpTcsIntCreateRequest();
 
 }

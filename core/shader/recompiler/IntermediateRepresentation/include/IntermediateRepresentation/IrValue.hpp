@@ -224,6 +224,34 @@ inline auto IrValue::Uses() const {
     return std::views::transform(operandUses, [](const IrUse& use) { return use.user; });
 }
 
+inline std::uint32_t IrValue::Id() const {
+    return id;
+}
+
+inline const IrOperands& IrValue::Arguments() const {
+    return arguments;
+}
+
+inline IrBlock* IrValue::Parent() const {
+    return parent;
+}
+
+inline std::uint32_t IrValue::ImmediateU32() const {
+    return static_cast<std::uint32_t>(immediateBits);
+}
+
+inline bool IrValue::IsPhi() const {
+    return opcode == IrOpcode::Phi;
+}
+
+inline bool IrValue::HasUses() const {
+    return !operandUses.empty();
+}
+
+inline std::size_t IrValue::UseCount() const {
+    return operandUses.size();
+}
+
 inline IrOpcode IrValue::Opcode() const {
     return opcode;
 }

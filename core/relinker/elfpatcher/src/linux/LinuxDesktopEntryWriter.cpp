@@ -1,6 +1,7 @@
 #include <elfpatcher/linux/LinuxDesktopEntryWriter.hpp>
 #include <domain/Types.hpp>
 #include <io/NativePath.hpp>
+#include <io/PngValidation.hpp>
 #include "prx/libkernel/AppMetadata/include/ParamJsonParser.hpp"
 #include <algorithm>
 #include <array>
@@ -26,8 +27,11 @@ std::vector<std::uint8_t> readPng(const std::filesystem::path& path) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream) throw Domain::RelinkerException("Cannot open icon '" + Io::Utf8Path(path) + "'");
     std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
-    constexpr std::array<std::uint8_t, 16> header{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52};
-    if (bytes.size() < 33 || !std::equal(header.begin(), header.end(), bytes.begin())) throw Domain::RelinkerException("Invalid icon PNG '" + Io::Utf8Path(path) + "': missing PNG signature or IHDR");
+    try {
+        Io::Png::Validate(bytes);
+    } catch (const std::invalid_argument& error) {
+        throw Domain::RelinkerException("Invalid icon PNG '" + Io::Utf8Path(path) + "': " + error.what());
+    }
     return bytes;
 }
 

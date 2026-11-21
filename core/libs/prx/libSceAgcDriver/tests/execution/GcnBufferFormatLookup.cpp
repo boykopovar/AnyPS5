@@ -40,6 +40,10 @@ alignas(256) constexpr std::array<std::uint32_t, 4> PixelCode{
     0x7e0e02f2u, 0xf800180fu, 0x07070707u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 9> PixelLoadCode{
+    0xe0300000u, 0x80010100u, 0xbf8c0f70u, 0xe0700000u, 0x80020100u, 0x7e0e02f2u, 0xf800180fu, 0x07070707u, 0xbf810000u,
+};
+
 class LowBlock {
 public:
     LowBlock() : block(static_cast<std::uint32_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, BlockBytes))) {
@@ -95,14 +99,28 @@ ShaderRecompiler::RecompileRequest VertexRequest(std::span<const std::uint32_t> 
     return request;
 }
 
-std::uint32_t PrivateStores(std::span<const std::uint32_t> words) {
+ShaderRecompiler::ShaderPixelStageInfo PixelInfo() {
+    ShaderRecompiler::ShaderPixelStageInfo pixel{};
+    pixel.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
+    pixel.posX = true;
+    pixel.posY = true;
+    pixel.targetOutputMode[0] = 9;
+    pixel.targetExportMapping.fill(0xe4u);
+    return pixel;
+}
+
+std::uint32_t PrivateArrayStores(std::span<const std::uint32_t> words) {
+    std::set<std::uint32_t> arrays;
+    std::set<std::uint32_t> privateArrayPointers;
     std::set<std::uint32_t> privateMemory;
     std::uint32_t stores = 0;
     for (std::size_t offset = 5; offset < words.size();) {
         const auto count = words[offset] >> spv::WordCountShift;
         Require(count != 0 && count <= words.size() - offset, "GCN buffer format lookup: malformed SPIR-V instruction");
         const auto opcode = words[offset] & spv::OpCodeMask;
-        if (opcode == spv::OpVariable && count >= 4 && words[offset + 3] == spv::StorageClassPrivate) privateMemory.insert(words[offset + 2]);
+        if (opcode == spv::OpTypeArray && count >= 4) arrays.insert(words[offset + 1]);
+        if (opcode == spv::OpTypePointer && count >= 4 && words[offset + 2] == spv::StorageClassPrivate && arrays.contains(words[offset + 3])) privateArrayPointers.insert(words[offset + 1]);
+        if (opcode == spv::OpVariable && count >= 4 && words[offset + 3] == spv::StorageClassPrivate && privateArrayPointers.contains(words[offset + 1])) privateMemory.insert(words[offset + 2]);
         if ((opcode == spv::OpAccessChain || opcode == spv::OpInBoundsAccessChain) && count >= 4 && privateMemory.contains(words[offset + 3])) privateMemory.insert(words[offset + 2]);
         if (opcode == spv::OpStore && count >= 3 && privateMemory.contains(words[offset + 1])) ++stores;
         offset += count;
@@ -110,17 +128,25 @@ std::uint32_t PrivateStores(std::span<const std::uint32_t> words) {
     return stores;
 }
 
-void CheckModule(const AgcDriver::VulkanDevice& device, const LowBlock& block, std::span<const ShaderRecompiler::MemoryRegion> memory) {
+void CheckModule(const AgcDriver::VulkanDevice& device, const LowBlock& block) {
     auto target = device.Target();
     target.registrationModules = true;
     const auto userData = UserData(block, 4u, 4u);
-    const auto result = ShaderRecompiler::Recompile(VertexRequest(userData, target, memory));
-    Require(result.registrationModule, "GCN buffer format lookup: the vertex shader was not emitted in registration form");
-    const auto stores = PrivateStores(result.spirv.Words());
-    Require(stores == 0u, "GCN buffer format lookup: the registration module stores " + std::to_string(stores) + " times into private memory to translate DATA_FORMAT and NUM_FORMAT, which drivers keep in per-invocation scratch");
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(PixelLoadCode.data()), std::as_bytes(std::span(PixelLoadCode))}}};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelLoadCode.data()), PixelLoadCode, 0, {}},
+        {64u, 0, userData, std::nullopt, PixelInfo(), std::nullopt, memory},
+        target,
+        PixelPushLayout(0u, target)
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    Require(result.registrationModule, "GCN buffer format lookup: the pixel shader was not emitted in registration form");
+    const auto stores = PrivateArrayStores(result.spirv.Words());
+    Require(stores == 0u, "GCN buffer format lookup: the registration module stores " + std::to_string(stores) + " times into a private array to translate DATA_FORMAT and NUM_FORMAT, which drivers keep in per-invocation scratch");
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const LowBlock& block, std::uint32_t dataFormat, std::uint32_t numberFormat, std::span<const ShaderRecompiler::MemoryRegion> vertexMemory, const ShaderRecompiler::RecompileResult& pixelResult, std::uint32_t vertexPush, std::vector<std::uint32_t>& registrationModule) {
+void Draw(AgcDriver::VulkanDevice& device, const LowBlock& block, std::uint32_t dataFormat, std::uint32_t numberFormat, std::span<const ShaderRecompiler::MemoryRegion> vertexMemory, const ShaderRecompiler::RecompileResult& pixelResult, std::uint32_t vertexPush) {
     Pixels.fill(std::byte{0x40});
     std::copy(InputWords.begin(), InputWords.end(), block.Input().begin());
     std::fill(block.Output().begin(), block.Output().end(), Fill);
@@ -128,10 +154,7 @@ void Draw(AgcDriver::VulkanDevice& device, const LowBlock& block, std::uint32_t 
     const auto vertexResult = ShaderRecompiler::Recompile(VertexRequest(userData, device.Target(), vertexMemory));
     const auto what = "DATA_FORMAT " + std::to_string(dataFormat) + " NUM_FORMAT " + std::to_string(numberFormat);
     Require(static_cast<std::uint32_t>(vertexResult.pushConstants.size()) == vertexPush, "GCN buffer format lookup, " + what + ": the vertex push constants changed size");
-    if (device.Target().registrationModules) {
-        if (registrationModule.empty()) registrationModule = vertexResult.spirv.Copy();
-        Require(std::ranges::equal(vertexResult.spirv.Words(), registrationModule), "GCN buffer format lookup, " + what + ": registration modules: the V# specialized the vertex module");
-    }
+    if (device.Target().registrationModules) Require(!vertexResult.registrationModule, "GCN buffer format lookup, " + what + ": registration modules: the vertex module was emitted in registration form");
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &vertexResult, 0},
         {ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, device.Target())}
@@ -176,28 +199,21 @@ int main() {
             return VulkanTestSkipped;
         }
         const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
-        CheckModule(*device, block, vertexMemory);
+        CheckModule(*device, block);
         const auto firstUserData = UserData(block, 4u, 4u);
         const auto vertexPush = static_cast<std::uint32_t>(ShaderRecompiler::Recompile(VertexRequest(firstUserData, device->Target(), vertexMemory)).pushConstants.size());
-        ShaderRecompiler::ShaderPixelStageInfo pixel{};
-        pixel.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
-        pixel.posX = true;
-        pixel.posY = true;
-        pixel.targetOutputMode[0] = 9;
-        pixel.targetExportMapping.fill(0xe4u);
         const std::vector<std::uint32_t> pixelUserData(8, 0u);
         const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::as_bytes(std::span(PixelCode))}}};
         ShaderRecompiler::RecompileRequest fragment{
             {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}},
-            {64u, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
+            {64u, 0, pixelUserData, std::nullopt, PixelInfo(), std::nullopt, pixelMemory},
             device->Target(),
             PixelPushLayout(vertexPush, device->Target())
         };
         fragment.useCache = false;
         const auto pixelResult = ShaderRecompiler::Recompile(fragment);
-        std::vector<std::uint32_t> registrationModule;
         for (std::uint32_t dataFormat = 0; dataFormat < 16u; ++dataFormat) {
-            for (std::uint32_t numberFormat = 0; numberFormat < 8u; ++numberFormat) Draw(*device, block, dataFormat, numberFormat, vertexMemory, pixelResult, vertexPush, registrationModule);
+            for (std::uint32_t numberFormat = 0; numberFormat < 8u; ++numberFormat) Draw(*device, block, dataFormat, numberFormat, vertexMemory, pixelResult, vertexPush);
         }
         std::puts("GCN buffer format lookup tests passed");
         return 0;

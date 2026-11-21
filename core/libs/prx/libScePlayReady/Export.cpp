@@ -1,4 +1,6 @@
 #include "prx/libScePlayReady/include/Api.hpp"
+#include <array>
+#include <cerrno>
 #include <charconv>
 #include <cstdint>
 #include <cstddef>
@@ -10,6 +12,7 @@
 namespace {
 
 constexpr int PlayReadyInvalidArgument = static_cast<int>(0x80070057);
+constexpr int PlayReadyNotStarted = static_cast<int>(0x8004c002);
 constexpr std::size_t BufferSize = 0x18;
 constexpr std::size_t InitParamsSize = 0x138;
 constexpr uint32_t InitParamsMagic = 0x50524459;
@@ -20,10 +23,12 @@ char versionText[32];
 
 void InitializeInitParams(void* params) {
     if (params == nullptr) return;
-    auto* bytes = static_cast<unsigned char*>(params);
-    std::memset(bytes, 0, InitParamsSize);
-    std::memcpy(bytes, &InitParamsMagic, sizeof(InitParamsMagic));
-    std::memcpy(bytes + sizeof(InitParamsMagic), &InitParamsVersion, sizeof(InitParamsVersion));
+    std::array<unsigned char, InitParamsSize> bytes{};
+    std::memcpy(bytes.data(), &InitParamsMagic, sizeof(InitParamsMagic));
+    std::memcpy(bytes.data() + sizeof(InitParamsMagic), &InitParamsVersion, sizeof(InitParamsVersion));
+    const auto savedErrno = errno;
+    GuestCopyOut_nid_no_patch(params, bytes.data(), bytes.size());
+    errno = savedErrno;
 }
 
 } // namespace
@@ -46,7 +51,11 @@ int APS5_VABI sceBufferFree() {
 }
 
 void APS5_VABI sceBufferInit(void* buffer) {
-    if (buffer != nullptr) std::memset(buffer, 0, BufferSize);
+    if (buffer == nullptr) return;
+    const std::array<unsigned char, BufferSize> zeros{};
+    const auto savedErrno = errno;
+    GuestCopyOut_nid_no_patch(buffer, zeros.data(), zeros.size());
+    errno = savedErrno;
 }
 
 int APS5_VABI sceBufferRealloc() {
@@ -59,7 +68,6 @@ void APS5_VABI scePlayReadyApiInitializeInitParams(void* params) {
 }
 
 int APS5_VABI scePlayReadyApiIsStarted() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -69,13 +77,17 @@ int APS5_VABI scePlayReadyApiStart() {
 }
 
 int APS5_VABI scePlayReadyApiStop() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyApiVersion(uint32_t index, uint64_t* version) {
     if (index >= std::size(ApiVersions) || version == nullptr) return PlayReadyInvalidArgument;
-    std::memcpy(version, ApiVersions[index], sizeof(ApiVersions[index]));
+    const auto savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(version, ApiVersions[index], sizeof(ApiVersions[index]))) {
+        errno = savedErrno;
+        return PlayReadyInvalidArgument;
+    }
+    errno = savedErrno;
     return 0;
 }
 
@@ -102,7 +114,13 @@ int APS5_VABI scePlayReadyBufferFree() {
 
 int APS5_VABI scePlayReadyBufferInit(void* buffer) {
     if (buffer == nullptr) return PlayReadyInvalidArgument;
-    std::memset(buffer, 0, BufferSize);
+    const std::array<unsigned char, BufferSize> zeros{};
+    const auto savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(buffer, zeros.data(), zeros.size())) {
+        errno = savedErrno;
+        return PlayReadyInvalidArgument;
+    }
+    errno = savedErrno;
     return 0;
 }
 
@@ -117,53 +135,43 @@ int APS5_VABI scePlayReadyBufferRealloc() {
 }
 
 int APS5_VABI scePlayReadyContentGetProperty() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyContentSetProperty() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyDomainCertEnumFini() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyDomainCertEnumInit() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyDomainCertEnumNext() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyDomainCertFind() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyDomainJoinGenerateChallenge() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyDomainJoinProcessResponse() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyDomainLeaveGenerateChallenge() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyDomainLeaveProcessResponse() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyEnvelopeClose() {
@@ -197,8 +205,7 @@ int APS5_VABI scePlayReadyEnvelopeSeek() {
 }
 
 int APS5_VABI scePlayReadyFinalize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyFreeDecryptContext() {
@@ -215,9 +222,9 @@ void APS5_VABI scePlayReadyInitializeInitParams(void* params) {
     InitializeInitParams(params);
 }
 
-int APS5_VABI scePlayReadyLicenseAcqGenerateAck() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePlayReadyLicenseAcqGenerateAck(void* argument1, const void* argument2, void* argument3) {
+    if (argument2 == nullptr || argument3 == nullptr) return PlayReadyInvalidArgument;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyLicenseAcqGenerateChallenge() {
@@ -226,18 +233,17 @@ int APS5_VABI scePlayReadyLicenseAcqGenerateChallenge() {
 }
 
 int APS5_VABI scePlayReadyLicenseAcqGetAdditionalResponseData() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
-int APS5_VABI scePlayReadyLicenseAcqProcessAckResponse() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePlayReadyLicenseAcqProcessAckResponse(void* argument1, const void* argument2) {
+    if (argument2 == nullptr) return PlayReadyInvalidArgument;
+    return PlayReadyNotStarted;
 }
 
-int APS5_VABI scePlayReadyLicenseAcqProcessResponse() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePlayReadyLicenseAcqProcessResponse(void* argument1, std::uint32_t argument2, const void* argument3, void* argument4) {
+    if (argument3 == nullptr || argument4 == nullptr) return PlayReadyInvalidArgument;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyMemAlloc() {
@@ -265,28 +271,23 @@ int APS5_VABI scePlayReadyNewDecryptContext() {
 }
 
 int APS5_VABI scePlayReadyReaderBind() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyReaderCommit() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyReaderDecrypt() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyReset() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
 int APS5_VABI scePlayReadyStoreCleanup() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PlayReadyNotStarted;
 }
 
 }

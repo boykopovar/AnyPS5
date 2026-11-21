@@ -65,6 +65,22 @@ int main() {
     Check(pthread_attr_destroy_nid_postfix(&attr) == 0);
     int afterDestroy = -1;
     Check(pthread_attr_getdetachstate_nid_postfix(&attr, &afterDestroy) == GuestEinval);
+    PthreadAttr unset = nullptr;
+    std::size_t guard = 7;
+    std::size_t stack = 13;
+    KernelSchedParam sched{.sched_priority = 13};
+    afterDestroy = -1;
+    for (PthreadAttr* invalid : {static_cast<PthreadAttr*>(nullptr), &unset, &attr}) {
+        Check(pthread_attr_getdetachstate_nid_postfix(invalid, &afterDestroy) == GuestEinval && afterDestroy == -1);
+        Check(pthread_attr_setdetachstate_nid_postfix(invalid, 0) == GuestEinval);
+        Check(pthread_attr_getguardsize_nid_postfix(invalid, &guard) == GuestEinval && guard == 7);
+        Check(pthread_attr_setguardsize_nid_postfix(invalid, 4096) == GuestEinval);
+        Check(pthread_attr_getstacksize_nid_postfix(invalid, &stack) == GuestEinval && stack == 13);
+        Check(pthread_attr_setstacksize_nid_postfix(invalid, std::size_t{1} << 20) == GuestEinval);
+        Check(pthread_attr_getschedparam_nid_postfix(invalid, &sched) == GuestEinval && sched.sched_priority == 13);
+        Check(pthread_attr_setschedparam_nid_postfix(invalid, &sched) == GuestEinval);
+        Check(pthread_attr_destroy_nid_postfix(invalid) == GuestEinval);
+    }
     Check(pthread_attr_init_nid_postfix(nullptr) == GuestEinval);
     Check(pthread_attr_destroy_nid_postfix(nullptr) == GuestEinval);
 

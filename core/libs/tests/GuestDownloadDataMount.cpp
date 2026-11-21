@@ -1,4 +1,5 @@
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "prx/libc/include/General.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -23,6 +24,11 @@ static void WriteParamSfo(const std::filesystem::path& path) {
 int main(int argc, char** argv) {
     Require(argc == 2);
     const std::string_view mode = argv[1];
+    if (mode == "blocked") {
+        Require(std::filesystem::is_regular_file("download0") && std::filesystem::is_regular_file("data"));
+        Require(std::strcmp(GetAppTitleId_nid_postfix().value, "PPSA00000") == 0);
+        return 0;
+    }
     Require(std::filesystem::is_directory("download0") == (mode == "declared" || mode == "sfo-child"));
     const bool data = std::filesystem::is_directory("data");
     std::filesystem::remove_all("data");
@@ -51,6 +57,12 @@ int main(int argc, char** argv) {
         Require(rejected);
         return 0;
     }
-    Require(std::strcmp(GetAppTitleId_nid_postfix().value, mode == "sfo-child" ? "CUSA00000" : "PPSA00000") == 0);
+    const std::string titleId = GetAppTitleId_nid_postfix().value;
+    Require(std::strcmp(titleId.c_str(), mode == "sfo-child" ? "CUSA00000" : "PPSA00000") == 0);
+    const std::string sandboxApp0 = std::string("/mnt/sandbox/") + titleId + "_000/app0";
+    Require(ResolvePath_nid_no_patch(sandboxApp0.c_str()) == (std::filesystem::current_path() / "app0").make_preferred());
+    const std::string metadataFile = mode == "sfo-child" ? "param.sfo" : "param.json";
+    Require(ResolvePath_nid_no_patch((sandboxApp0 + "/sce_sys/" + metadataFile).c_str()) ==
+            (std::filesystem::current_path() / "app0" / "sce_sys" / metadataFile).make_preferred());
     std::filesystem::remove_all("download0");
 }

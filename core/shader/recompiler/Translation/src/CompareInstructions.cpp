@@ -1,4 +1,3 @@
-#include "Translation/CompareInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <array>
 #include <cstdint>
@@ -75,10 +74,6 @@ OrderedRelation orderedRelationOf(IrOpcode opcode) {
 
 }
 
-void TranslateCompareInstruction(IrBuilder& builder, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateCompareInstruction not implemented");
-}
-
 void TranslationContext::emitCompareResult(const RdnaInstruction& inst, IrU1 value, bool scalar, bool cmpx) {
     if (scalar) {
         ir.SetScc(value.Value());
@@ -86,7 +81,8 @@ void TranslationContext::emitCompareResult(const RdnaInstruction& inst, IrU1 val
     }
     IrValue& masked = ir.LogicalAnd(ir.GetExec(), value.Value());
     if (cmpx) {
-        const std::array<IrU32, 2> mask = ballotMask(IrU1(masked));
+        const bool writesDestination = inst.destination2.kind != RdnaOperandKind::Unknown && inst.destination2.kind != RdnaOperandKind::Null;
+        const std::array<IrU32, 2> mask = writesDestination ? writeMask(inst.destination2, IrU1(masked)) : ballotMask(IrU1(masked));
         ir.SetExec(masked);
         ir.SetExecLo(mask[0].Value());
         ir.SetExecHi(mask[1].Value());
@@ -284,10 +280,6 @@ void TranslationContext::emitFloat64ClassCompare(const RdnaInstruction& inst, bo
     IrValue& index = ir.Select(ir.IEqual(exponent, ir.Constant(0x7ff00000u)), exponentMax, finite);
     IrValue& selected = ir.BitwiseAnd(ir.ShiftRightLogical(mask.Value(), index), ir.Constant(1u));
     emitCompareResult(inst, IrU1(ir.INotEqual(selected, zero)), false, cmpx);
-}
-
-void TranslateCompareInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateCompareInstruction not implemented");
 }
 
 }

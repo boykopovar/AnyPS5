@@ -1,0 +1,27 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(binding = 0, r32ui) uniform restrict readonly uimage2DMS staged;
+layout(binding = 1, r16ui) uniform restrict uimage2DMS target;
+
+layout(push_constant) uniform Merge {
+    uvec2 origin;
+    uvec2 end;
+    uint mask;
+    uint samples;
+} merge;
+
+const uint unwritten = 0xffffffffu;
+
+void main() {
+    const uvec2 pixel = merge.origin + gl_GlobalInvocationID.xy;
+    if (pixel.x >= merge.end.x || pixel.y >= merge.end.y) return;
+    const ivec2 at = ivec2(pixel);
+    for (uint index = 0u; index < merge.samples; ++index) {
+        const uint word = imageLoad(staged, at, int(index)).x;
+        if (word == unwritten) continue;
+        const uint kept = imageLoad(target, at, int(index)).x & ~merge.mask;
+        imageStore(target, at, int(index), uvec4(kept | (word & merge.mask)));
+    }
+}

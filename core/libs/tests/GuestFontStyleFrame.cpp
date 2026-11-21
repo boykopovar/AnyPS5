@@ -1,6 +1,7 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 #include <cmath>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -25,6 +26,13 @@ int main() {
     Require(sceFontStyleFrameSetScalePixel(&frame, 32.0f, 16.0f) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontStyleFrameGetScalePixel(&frame, &w, &h) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontStyleFrameUnsetScale(&frame) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontStyleFrameSetResolutionDpi(&frame, 96, 96) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontStyleFrameSetEffectSlant(&frame, 0.5f) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontStyleFrameUnsetEffectSlant(&frame) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontStyleFrameUnsetEffectWeight(&frame) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontStyleFrameGetScalePoint(&frame, &w, &h) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontStyleFrameGetEffectSlant(&frame, &w) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontStyleFrameGetEffectWeight(&frame, &w, &h, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(w == -1.0f && h == -1.0f);
 
     Require(sceFontStyleFrameInit(&frame) == SCE_FONT_OK);
@@ -32,15 +40,38 @@ int main() {
     std::uint32_t vDpi = 0;
     Require(sceFontStyleFrameGetResolutionDpi(&frame, &hDpi, &vDpi) == SCE_FONT_OK && hDpi == 72 && vDpi == 72);
     Require(sceFontStyleFrameGetResolutionDpi(&frame, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontStyleFrameGetResolutionDpi(&frame, reinterpret_cast<std::uint32_t*>(0x10), &vDpi) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontStyleFrameGetResolutionDpi(&frame, &hDpi, reinterpret_cast<std::uint32_t*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontStyleFrameGetScalePixel(&frame, &w, &h) == SCE_FONT_ERROR_UNSET_PARAMETER);
     Require(sceFontStyleFrameGetScalePoint(&frame, &w, &h) == SCE_FONT_ERROR_UNSET_PARAMETER);
 
     Require(sceFontStyleFrameSetScalePixel(&frame, 32.0f, 16.0f) == SCE_FONT_OK);
     Require(sceFontStyleFrameGetScalePixel(&frame, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontStyleFrameGetScalePixel(&frame, reinterpret_cast<float*>(0x10), &h) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontStyleFrameGetScalePixel(&frame, &w, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontStyleFrameGetScalePixel(&frame, &w, &h) == SCE_FONT_OK && Near(w, 32.0f) && Near(h, 16.0f));
     Require(sceFontStyleFrameGetScalePoint(&frame, &w, &h) == SCE_FONT_OK && Near(w, 32.0f) && Near(h, 16.0f));
+    Require(sceFontStyleFrameGetScalePoint(&frame, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontStyleFrameGetScalePoint(&frame, reinterpret_cast<float*>(0x10), &h) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontStyleFrameGetScalePoint(&frame, &w, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontStyleFrameSetResolutionDpi(&frame, 144, 0) == SCE_FONT_OK);
     Require(sceFontStyleFrameGetResolutionDpi(&frame, &hDpi, &vDpi) == SCE_FONT_OK && hDpi == 144 && vDpi == 72);
+    hDpi = 0;
+    vDpi = 0;
+    Require(sceFontStyleFrameGetResolutionDpi(&frame, &hDpi, nullptr) == SCE_FONT_OK && hDpi == 144);
+    Require(sceFontStyleFrameGetResolutionDpi(&frame, nullptr, &vDpi) == SCE_FONT_OK && vDpi == 72);
     Require(sceFontStyleFrameGetScalePoint(&frame, &w, &h) == SCE_FONT_OK && Near(w, 16.0f) && Near(h, 16.0f));
     Require(sceFontStyleFrameSetScalePoint(&frame, 12.0f, 10.0f) == SCE_FONT_OK);
     Require(sceFontStyleFrameGetScalePixel(&frame, &w, nullptr) == SCE_FONT_OK && Near(w, 24.0f));
@@ -52,7 +83,12 @@ int main() {
     Require(sceFontStyleFrameGetEffectSlant(&frame, &slant) == SCE_FONT_ERROR_UNSET_PARAMETER);
     Require(sceFontStyleFrameSetEffectSlant(&frame, 2.0f) == SCE_FONT_OK);
     Require(sceFontStyleFrameGetEffectSlant(&frame, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontStyleFrameGetEffectSlant(&frame, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontStyleFrameGetEffectSlant(&frame, &slant) == SCE_FONT_OK && Near(slant, 1.0f));
+    Require(sceFontStyleFrameSetEffectSlant(&frame, -3.0f) == SCE_FONT_OK);
+    Require(sceFontStyleFrameGetEffectSlant(&frame, &slant) == SCE_FONT_OK && Near(slant, -1.0f));
     Require(sceFontStyleFrameSetEffectSlant(&frame, -0.25f) == SCE_FONT_OK);
     Require(sceFontStyleFrameGetEffectSlant(&frame, &slant) == SCE_FONT_OK && Near(slant, -0.25f));
     Require(sceFontStyleFrameUnsetEffectSlant(&frame) == SCE_FONT_OK);
@@ -66,10 +102,39 @@ int main() {
     Require(sceFontStyleFrameGetEffectWeight(&frame, &weightX, &weightY, &mode) == SCE_FONT_ERROR_UNSET_PARAMETER);
     Require(sceFontStyleFrameSetEffectWeight(&frame, 1.5f, 0.5f, 0) == SCE_FONT_OK);
     Require(sceFontStyleFrameGetEffectWeight(&frame, nullptr, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontStyleFrameGetEffectWeight(&frame, reinterpret_cast<float*>(0x10), &weightY, &mode) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontStyleFrameGetEffectWeight(&frame, &weightX, reinterpret_cast<float*>(0x10), &mode) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontStyleFrameGetEffectWeight(&frame, &weightX, &weightY, reinterpret_cast<std::uint32_t*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontStyleFrameGetEffectWeight(&frame, &weightX, &weightY, &mode) == SCE_FONT_OK && Near(weightX, 1.04f) && Near(weightY, 0.96f) && mode == 0);
     Require(sceFontStyleFrameSetEffectWeight(&frame, 1.02f, 0.99f, 0) == SCE_FONT_OK);
     Require(sceFontStyleFrameGetEffectWeight(&frame, &weightX, nullptr, nullptr) == SCE_FONT_OK && Near(weightX, 1.02f));
     Require(sceFontStyleFrameUnsetEffectWeight(&frame) == SCE_FONT_OK);
+    Require(sceFontStyleFrameGetEffectWeight(&frame, &weightX, &weightY, &mode) == SCE_FONT_ERROR_UNSET_PARAMETER);
+
+    Require(sceFontStyleFrameSetScalePixel(&frame, 8.0f, 6.0f) == SCE_FONT_OK);
+    Require(sceFontStyleFrameSetEffectSlant(&frame, 0.5f) == SCE_FONT_OK);
+    Require(sceFontStyleFrameSetEffectWeight(&frame, 1.01f, 1.01f, 0) == SCE_FONT_OK);
+    Require(sceFontStyleFrameUnsetEffectSlant(&frame) == SCE_FONT_OK);
+    Require(sceFontStyleFrameGetScalePixel(&frame, &w, &h) == SCE_FONT_OK && Near(w, 8.0f) && Near(h, 6.0f));
+    Require(sceFontStyleFrameGetEffectWeight(&frame, &weightX, nullptr, nullptr) == SCE_FONT_OK && Near(weightX, 1.01f));
+    Require(sceFontStyleFrameSetEffectSlant(&frame, 0.5f) == SCE_FONT_OK);
+    Require(sceFontStyleFrameUnsetEffectWeight(&frame) == SCE_FONT_OK);
+    Require(sceFontStyleFrameGetEffectSlant(&frame, &slant) == SCE_FONT_OK && Near(slant, 0.5f));
+    Require(sceFontStyleFrameGetScalePixel(&frame, &w, nullptr) == SCE_FONT_OK && Near(w, 8.0f));
+    Require(sceFontStyleFrameUnsetScale(&frame) == SCE_FONT_OK);
+    Require(sceFontStyleFrameGetEffectSlant(&frame, &slant) == SCE_FONT_OK && Near(slant, 0.5f));
+
+    Require(sceFontStyleFrameSetScalePoint(&frame, 8.0f, 6.0f) == SCE_FONT_OK);
+    Require(sceFontStyleFrameSetEffectWeight(&frame, 1.01f, 1.01f, 0) == SCE_FONT_OK);
+    Require(sceFontStyleFrameInit(&frame) == SCE_FONT_OK);
+    Require(sceFontStyleFrameGetScalePixel(&frame, &w, &h) == SCE_FONT_ERROR_UNSET_PARAMETER);
+    Require(sceFontStyleFrameGetEffectSlant(&frame, &slant) == SCE_FONT_ERROR_UNSET_PARAMETER);
     Require(sceFontStyleFrameGetEffectWeight(&frame, &weightX, &weightY, &mode) == SCE_FONT_ERROR_UNSET_PARAMETER);
     return 0;
 }

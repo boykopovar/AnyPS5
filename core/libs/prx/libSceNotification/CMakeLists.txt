@@ -1,0 +1,16 @@
+add_library(libSceNotification SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceNotification PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceNotification PRIVATE libc)
+configure_windows_unwind(libSceNotification)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_notification_tests ${LIBS_INCLUDE_DIR}/tests/GuestNotification.cpp)
+    target_include_directories(guest_notification_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_notification_tests PRIVATE libSceNotification libc)
+    configure_windows_unwind(guest_notification_tests)
+    add_test(NAME guest_notification COMMAND guest_notification_tests)
+    if(WIN32)
+        set_tests_properties(guest_notification PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNotification>")
+    endif()
+endif()

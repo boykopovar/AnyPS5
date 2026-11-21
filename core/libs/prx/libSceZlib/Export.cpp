@@ -1,7 +1,13 @@
 #include "prx/libSceZlib/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "zlib.h"
+#include <algorithm>
+#include <array>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <limits>
@@ -66,23 +72,104 @@ std::int32_t APS5_VABI sceZlibInflate(const void* source, std::uint32_t sourceLe
     if (reinterpret_cast<std::uintptr_t>(destination) % 2048 != 0)
         throw std::runtime_error("sceZlibInflate: unaligned destination driver behavior is not implemented");
     if (nextId == std::numeric_limits<std::uint64_t>::max()) throw std::runtime_error("sceZlibInflate: request IDs exhausted");
+    const auto sourceAddress = reinterpret_cast<std::uintptr_t>(source);
+    if (sourceLength > std::numeric_limits<std::uintptr_t>::max() - sourceAddress) return INVALID_ARGUMENT;
+    std::array<Bytef, 16384> inputBuffer{};
+    std::array<Bytef, 65536> outputBuffer{};
     z_stream stream{};
-    stream.next_in = const_cast<Bytef*>(static_cast<const Bytef*>(source));
-    stream.avail_in = sourceLength;
-    stream.next_out = static_cast<Bytef*>(destination);
+    stream.next_out = outputBuffer.data();
     stream.avail_out = destinationLength;
     if (inflateInit(&stream) != Z_OK) throw std::runtime_error("sceZlibInflate: decoder initialization failed");
-    const int decoded = inflate(&stream, Z_FINISH);
+    std::uint32_t supplied = 0;
+    bool invalidInput = false;
+    int decoded = Z_BUF_ERROR;
+    for (;;) {
+        if (stream.avail_in == 0 && supplied < sourceLength) {
+            const auto chunk = std::min<std::uint32_t>(sourceLength - supplied, inputBuffer.size());
+            const int savedErrno = errno;
+            const bool copied = GuestCopyIn_nid_no_patch(inputBuffer.data(),
+                reinterpret_cast<const void*>(sourceAddress + supplied), chunk);
+            errno = savedErrno;
+            if (!copied) {
+                invalidInput = true;
+                break;
+            }
+            stream.next_in = inputBuffer.data();
+            stream.avail_in = chunk;
+            supplied += chunk;
+        }
+        const auto previousInput = stream.total_in;
+        const auto previousOutput = stream.total_out;
+        const int flush = (supplied == sourceLength) ? Z_FINISH : Z_NO_FLUSH;
+        decoded = inflate(&stream, flush);
+        if (decoded == Z_STREAM_END) break;
+        if (decoded != Z_OK && decoded != Z_BUF_ERROR) break;
+        if (stream.avail_out == 0) break;
+        if (stream.total_in == previousInput && stream.total_out == previousOutput) break;
+    }
     const auto produced = static_cast<std::uint32_t>(stream.total_out);
-    const std::int32_t status = decoded == Z_STREAM_END ? 0 :
-        (decoded == Z_BUF_ERROR && stream.avail_out == 0 && stream.avail_in != 0 ? NO_SPACE : FATAL);
+    std::int32_t status;
+    if (decoded == Z_STREAM_END) {
+        status = 0;
+    } else if ((decoded == Z_OK || decoded == Z_BUF_ERROR) && stream.avail_out == 0) {
+        Bytef scratch = 0;
+        stream.next_out = &scratch;
+        stream.avail_out = 1;
+        status = FATAL;
+        for (;;) {
+            const auto previousProbeIn = stream.total_in;
+            const int probeDecoded = inflate(&stream, supplied == sourceLength ? Z_FINISH : Z_NO_FLUSH);
+            if (stream.avail_out == 0) { status = NO_SPACE; break; }
+            if (probeDecoded == Z_STREAM_END) { status = 0; break; }
+            if (probeDecoded != Z_OK && probeDecoded != Z_BUF_ERROR) break;
+            if (stream.avail_in == 0 && supplied < sourceLength) {
+                const auto chunk = std::min<std::uint32_t>(sourceLength - supplied, inputBuffer.size());
+                const int savedErrno = errno;
+                const bool copied = GuestCopyIn_nid_no_patch(inputBuffer.data(),
+                    reinterpret_cast<const void*>(sourceAddress + supplied), chunk);
+                errno = savedErrno;
+                if (!copied) { invalidInput = true; break; }
+                stream.next_in = inputBuffer.data();
+                stream.avail_in = chunk;
+                supplied += chunk;
+            } else if (stream.total_in == previousProbeIn) {
+                break;
+            }
+        }
+    } else {
+        status = FATAL;
+    }
     const int ended = inflateEnd(&stream);
     if (ended != Z_OK) throw std::runtime_error("sceZlibInflate: decoder cleanup failed");
-    const std::uint64_t id = nextId++;
-    results[id] = InflateResult{produced, status};
-    completed.push_back(id);
+    if (invalidInput) return INVALID_ARGUMENT;
+    const auto idAddress = reinterpret_cast<std::uintptr_t>(requestId);
+    if (sizeof(*requestId) > std::numeric_limits<std::uintptr_t>::max() - idAddress) return INVALID_ARGUMENT;
+    const int savedErrno = errno;
+    const GuestArena::HostWrite guardId(requestId, sizeof(*requestId));
+    const bool writableId = guardId.Open() && GuestWritable_nid_no_patch(requestId, sizeof(*requestId));
+    errno = savedErrno;
+    if (!writableId) return INVALID_ARGUMENT;
+    const bool copiedOutput = GuestCopyOut_nid_no_patch(destination, outputBuffer.data(), produced);
+    errno = savedErrno;
+    if (!copiedOutput) return INVALID_ARGUMENT;
+    const std::uint64_t id = nextId;
+    results.emplace(id, InflateResult{produced, status});
+    try {
+        completed.push_back(id);
+    } catch (...) {
+        results.erase(id);
+        throw;
+    }
+    const int savedIdErrno = errno;
+    const bool copiedId = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
+    errno = savedIdErrno;
+    if (!copiedId) {
+        completed.pop_back();
+        results.erase(id);
+        return INVALID_ARGUMENT;
+    }
+    ++nextId;
     completion.NotifyOne();
-    *requestId = id;
     return 0;
 }
 
@@ -90,12 +177,25 @@ std::int32_t APS5_VABI sceZlibWaitForDone(std::uint64_t* requestId, std::uint32_
     std::unique_lock lock(serviceMutex);
     if (!initialized) return NOT_INITIALIZED;
     if (!requestId) return INVALID_ARGUMENT;
+    std::uint32_t timeoutMicros = 0;
+    if (timeout) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&timeoutMicros, timeout, sizeof(timeoutMicros));
+        errno = savedErrno;
+        if (!copied) return INVALID_ARGUMENT;
+    }
     const std::uint64_t waitSession = session;
     const auto finished = [waitSession] { return !completed.empty() || session != waitSession; };
     if (!timeout) completion.Wait(lock, finished);
-    else if (!completion.WaitUntil(lock, TimedWait::DeadlineNanos(*timeout), finished)) return TIMED_OUT;
+    else if (!completion.WaitUntil(lock, TimedWait::DeadlineNanos(timeoutMicros), finished)) return TIMED_OUT;
     if (session != waitSession) throw std::runtime_error("sceZlibWaitForDone: finalization during a wait semantics unknown");
-    *requestId = completed.front();
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(requestId, &completed.front(), sizeof(*requestId));
+    errno = savedErrno;
+    if (!copied) {
+        completion.NotifyOne();
+        return INVALID_ARGUMENT;
+    }
     completed.pop_front();
     return 0;
 }
@@ -106,8 +206,19 @@ std::int32_t APS5_VABI sceZlibGetResult(std::uint64_t requestId, std::uint32_t* 
     if (!destinationLength || !status) return INVALID_ARGUMENT;
     const auto found = results.find(requestId);
     if (found == results.end()) return NOT_FOUND;
-    *destinationLength = found->second.produced;
-    *status = found->second.status;
+    const int savedErrno = errno;
+    const GuestArena::HostWrite guardLength(destinationLength, sizeof(found->second.produced));
+    const GuestArena::HostWrite guardStatus(status, sizeof(found->second.status));
+    if (!guardLength.Open() || !guardStatus.Open() ||
+        !GuestWritable_nid_no_patch(destinationLength, sizeof(found->second.produced)) ||
+        !GuestWritable_nid_no_patch(status, sizeof(found->second.status))) {
+        errno = savedErrno;
+        return INVALID_ARGUMENT;
+    }
+    const bool copiedLength = GuestCopyOut_nid_no_patch(destinationLength, &found->second.produced, sizeof(found->second.produced));
+    const bool copiedStatus = GuestCopyOut_nid_no_patch(status, &found->second.status, sizeof(found->second.status));
+    errno = savedErrno;
+    if (!copiedLength || !copiedStatus) return INVALID_ARGUMENT;
     return 0;
 }
 

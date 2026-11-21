@@ -121,6 +121,59 @@ constexpr const char* Names[16] = {
     "mul_f16 BYTE_2/DWORD -> BYTE_1",
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 27> ClampCode{
+    0x34020084, 0x34060086, 0xe0381000, 0x80000401, 0xbf8c3f70, 0x64140ef9, 0x04052006, 0x66160cf9,
+    0x04022505, 0x68180cf9, 0x03042607, 0x7e1a0305, 0x6a1a0ef9, 0x05043306, 0x741c0ef9, 0x06012405,
+    0x721e0af9, 0x00062606, 0x64200ef9, 0x05002a05, 0x6a220ef9, 0x06252106, 0xe0781000, 0x80010a03,
+    0xe0781010, 0x80010e03, 0xbf810000,
+};
+
+constexpr std::uint32_t ClampExpected[32][8] = {
+    {0x00000000u, 0x00000000u, 0x00003c00u, 0x00000000u, 0x00000000u, 0x00003c00u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x3c000000u, 0x00001db6u, 0x00000000u, 0x00000000u, 0x0000009du, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x0000003cu, 0x00004700u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00470000u, 0x00000000u, 0x00470047u, 0x00000000u, 0x00000047u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00003c00u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x3c000000u, 0x00003c00u, 0x001fba34u, 0x00000000u, 0x00000034u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x3c000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000047u, 0x00000000u, 0x00008800u},
+    {0x00000000u, 0x30980000u, 0x00003c00u, 0xb3808080u, 0x00000000u, 0x00000080u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000042u, 0xc0000000u, 0x00000000u, 0x000002c0u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x1464a58eu, 0x000000a5u, 0x00002714u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x0000007cu, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000068u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00003c00u, 0x00000000u, 0x00001100u},
+    {0x00000000u, 0x3c000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00003c00u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x01000000u, 0x00000000u, 0x00000100u, 0x001c0000u, 0x0000ca00u},
+    {0x00000000u, 0x00800000u, 0x0000249du, 0x00800080u, 0x00000000u, 0x00000080u, 0x00000000u, 0x00000000u},
+    {0x00000046u, 0x3c000000u, 0x00000000u, 0x0000bc00u, 0x000000bcu, 0x00000000u, 0xffe60000u, 0x00005100u},
+    {0x00000000u, 0x00000000u, 0x00003c00u, 0x00470047u, 0x00000000u, 0x00003c00u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00800080u, 0x00000000u, 0x0000068bu, 0x00000000u, 0x0000f400u},
+    {0x00000003u, 0x3c000000u, 0x00000000u, 0x00800080u, 0x00000000u, 0x00000080u, 0x00000000u, 0x0000e500u},
+    {0x00000000u, 0x3c000000u, 0x00000000u, 0x00ff00ffu, 0x00000000u, 0x000000ffu, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00ff0000u, 0x00000000u, 0x00ff00ffu, 0x00000000u, 0x000000ffu, 0xfffe0000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00ff00ffu, 0x00000000u, 0x00003c00u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x3c000000u, 0x00000052u, 0x00000100u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x3c000000u, 0x00003c00u, 0x002f8e4au, 0x00000000u, 0x0000004au, 0x004a0000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x000000e7u, 0x00d8e2bcu, 0x00000000u, 0x00003c00u, 0x00000000u, 0x00000000u},
+    {0x00000080u, 0x00000000u, 0x00000000u, 0xf033ad9cu, 0x00000000u, 0x0000009cu, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x0ed30000u, 0x00000000u, 0x00f70eabu, 0x0000000eu, 0x000000abu, 0xfff10000u, 0x00000000u},
+    {0x00000000u, 0x00300000u, 0x00000000u, 0x00778095u, 0x00000080u, 0x00000095u, 0x00000000u, 0x00000000u},
+    {0x0000004fu, 0x3c000000u, 0x00000000u, 0x00119b05u, 0x0000009bu, 0x00000005u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00003c00u, 0x00000000u, 0x00000000u}
+};
+constexpr std::uint32_t ClampChecked[32] = {0xffu, 0x93u, 0xfbu, 0xddu, 0xffu, 0xdfu, 0x97u, 0xdfu, 0xd3u, 0x6eu, 0x44u, 0x37u, 0xffu, 0xd5u, 0x57u, 0xd9u, 0xefu, 0xffu, 0xffu, 0xdfu, 0xdfu, 0x1cu, 0xffu, 0xd5u, 0xfbu, 0x9fu, 0xfbu, 0xd6u, 0x0cu, 0x45u, 0xcfu, 0x22u};
+constexpr const char* ClampNames[8] = {
+    "add_f16 WORD_1/WORD_0 -> BYTE_0 clamp",
+    "sub_f16 BYTE_2/WORD_0 -> WORD_1 clamp",
+    "subrev_f16 WORD_0/BYTE_3 -> DWORD clamp",
+    "mul_f16 WORD_0/WORD_1 -> BYTE_3 preserve clamp",
+    "min_f16 BYTE_1/DWORD -> WORD_0 clamp",
+    "max_f16 DWORD/BYTE_0 -> DWORD clamp",
+    "add_f16 BYTE_0/WORD_1 -> BYTE_2 sext clamp",
+    "mul_f16 |WORD_1|/DWORD -> BYTE_1 clamp",
+};
+
 void Fill(std::uint32_t tid, std::uint32_t* words) {
     std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), words);
 }
@@ -158,34 +211,12 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
     return ShaderRecompiler::Recompile(request);
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
-    const std::span<const std::uint32_t> code(Code);
     const auto result = Compile(device, code);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
-}
-
-void CheckByteSelectorClampRefused(AgcDriver::VulkanDevice& device) {
-    constexpr std::array<std::array<std::uint32_t, 2>, 6> forms{{
-        {0x640a0cf9u, 0x04052004u},
-        {0x660a0cf9u, 0x04022504u},
-        {0x680a0cf9u, 0x03042604u},
-        {0x6a0a0cf9u, 0x05043304u},
-        {0x740a0cf9u, 0x06012404u},
-        {0x720a0cf9u, 0x00062604u},
-    }};
-    for (const auto& form : forms) {
-        alignas(256) const std::array<std::uint32_t, 3> code{form[0], form[1], 0xbf810000u};
-        std::string refusal;
-        try {
-            static_cast<void>(Compile(device, code));
-        } catch (const std::exception& error) {
-            refusal = error.what();
-        }
-        Require(refusal.find("VOP2 SDWA clamp with byte selectors is not implemented") != std::string::npos, "f16 SDWA form " + Hex(form[0]) + " " + Hex(form[1]) + " with clamp was not refused");
-    }
 }
 
 void Check() {
@@ -200,15 +231,27 @@ void Check() {
     }
 }
 
+void CheckClamp() {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const std::uint32_t* out = &Output[tid * Results];
+        for (std::uint32_t i = 0; i < 8; ++i) {
+            if ((ClampChecked[tid] >> i) & 1u) {
+                Expect(tid, out[i], ClampExpected[tid][i], ClampNames[i]);
+            }
+        }
+    }
+}
+
 }
 
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device);
+        Run(*device, Code);
         Check();
-        CheckByteSelectorClampRefused(*device);
+        Run(*device, ClampCode);
+        CheckClamp();
         std::puts("sdwa float selectors tests passed");
         return 0;
     } catch (const std::exception& error) {

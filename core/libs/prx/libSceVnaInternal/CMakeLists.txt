@@ -1,0 +1,15 @@
+add_library(libSceVnaInternal SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceVnaInternal PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceVnaInternal)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_vna_internal_tests ${LIBS_INCLUDE_DIR}/tests/GuestVnaInternal.cpp)
+    target_include_directories(guest_vna_internal_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_vna_internal_tests PRIVATE libSceVnaInternal libc)
+    configure_windows_unwind(guest_vna_internal_tests)
+    add_test(NAME guest_vna_internal COMMAND guest_vna_internal_tests)
+    if(WIN32)
+        set_tests_properties(guest_vna_internal PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVnaInternal>")
+    endif()
+endif()

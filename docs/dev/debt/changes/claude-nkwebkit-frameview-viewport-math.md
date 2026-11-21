@@ -1,0 +1,5 @@
+# libSceNKWebKit
+
+## add Unknown function info
+
+- [FrameView viewport and fixed-position math](../../../core/libs/prx/libSceNKWebKit/src/WebCoreFrameView.cpp) (libSceNKWebKit) - not compared with a console module. The five static `FrameView` exports follow the pin's `LocalFrameView` ([lines 1664-1757](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/page/LocalFrameView.cpp#L1664-L1757), [1943-1996](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/page/LocalFrameView.cpp#L1943-L1996)) with 1/64 `LayoutUnit` arithmetic (`static_assert` layouts); negating `INT_MIN`, undefined upstream, wraps. `LayoutViewportConstraint` is the one the 3.20 name carries, the 32-bit enum nested in [FrameView.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/page/FrameView.h#L321) where `ConstrainedToDocumentRect` is 0; the pin reversed it. Closes when: compared with a console module.

@@ -1,0 +1,1 @@
+target_include_directories(agc_driver_eqaa_color_target_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)

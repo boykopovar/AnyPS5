@@ -88,10 +88,144 @@ static void CheckStream(int family) {
     Require(close_nid_postfix(client) == 0 && close_nid_postfix(listener) == 0, "close");
 }
 
+static void CheckUnspecified(int type) {
+    const int server = socket_nid_postfix(28, type, 0);
+    if (server < 0 && *__error_nid_postfix() == 47) return;
+    Require(server >= 0, "server");
+    auto address = Loopback(28, 28);
+    const int bound = bind_nid_postfix(server, address.data(), 28);
+    if (bound < 0 && *__error_nid_postfix() == 49) {
+        Require(close_nid_postfix(server) == 0, "close");
+        return;
+    }
+    Require(bound == 0, "bind server");
+    if (type == 1) Require(listen_nid_postfix(server, 1) == 0, "listen");
+    std::uint32_t length = address.size();
+    Require(getsockname_nid_postfix(server, address.data(), &length) == 0, "server name");
+    auto unspecified = address;
+    std::memset(unspecified.data() + 8, 0, 16);
+    const int client = socket_nid_postfix(28, type, 0);
+    Require(client >= 0, "client");
+    Address any{};
+    any[0] = 28;
+    any[1] = 28;
+    Require(connect_nid_postfix(client, any.data(), 28) == -1 && *__error_nid_postfix() == 49,
+        "connect to port 0 of the unspecified AF_INET6 address must fail with EADDRNOTAVAIL (49)");
+    Require(connect_nid_postfix(client, unspecified.data(), 28) == 0,
+        "connect to the unspecified AF_INET6 address must reach ::1 on the same port");
+    Address peer{};
+    length = peer.size();
+    Require(getpeername_nid_postfix(client, peer.data(), &length) == 0 && length == 28 && peer[1] == 28
+            && std::memcmp(peer.data() + 2, address.data() + 2, 2) == 0 && std::memcmp(peer.data() + 8, address.data() + 8, 16) == 0,
+        "the peer of a connect to the unspecified AF_INET6 address must be ::1 on the same port");
+    if (type == 1) {
+        const int accepted = accept_nid_postfix(server, nullptr, nullptr);
+        Require(accepted >= 0, "accept");
+        Require(send_nid_postfix(client, "x", 1, 0) == 1, "send");
+        char byte = 0;
+        Require(recv_nid_postfix(accepted, &byte, 1, 0) == 1 && byte == 'x', "receive on the accepted socket");
+        Require(close_nid_postfix(accepted) == 0, "close");
+    } else {
+        Require(send_nid_postfix(client, "y", 1, 0) == 1, "send");
+        char byte = 0;
+        Require(recv_nid_postfix(server, &byte, 1, 0) == 1 && byte == 'y', "receive on ::1");
+    }
+    Require(close_nid_postfix(client) == 0 && close_nid_postfix(server) == 0, "close");
+}
+
+static void CheckUnspecifiedInet(int type) {
+    const int server = socket_nid_postfix(2, type, 0);
+    Require(server >= 0, "server");
+    auto address = Loopback(2, 16);
+    Require(bind_nid_postfix(server, address.data(), 16) == 0, "bind server");
+    if (type == 1) Require(listen_nid_postfix(server, 1) == 0, "listen");
+    std::uint32_t length = address.size();
+    Require(getsockname_nid_postfix(server, address.data(), &length) == 0, "server name");
+    auto unspecified = address;
+    std::memset(unspecified.data() + 4, 0, 4);
+    const int client = socket_nid_postfix(2, type, 0);
+    Require(client >= 0, "client");
+    Require(connect_nid_postfix(client, unspecified.data(), 16) == 0,
+        "connect to INADDR_ANY must reach 127.0.0.1 on the same port");
+    Address peer{};
+    length = peer.size();
+    Require(getpeername_nid_postfix(client, peer.data(), &length) == 0 && length == 16 && peer[1] == 2
+            && std::memcmp(peer.data() + 2, address.data() + 2, 6) == 0,
+        "the peer of a connect to INADDR_ANY must be 127.0.0.1 on the same port");
+    char byte = 0;
+    if (type == 1) {
+        const int accepted = accept_nid_postfix(server, nullptr, nullptr);
+        Require(accepted >= 0, "accept");
+        Require(send_nid_postfix(client, "x", 1, 0) == 1, "send");
+        Require(recv_nid_postfix(accepted, &byte, 1, 0) == 1 && byte == 'x', "receive on the accepted socket");
+        Require(close_nid_postfix(accepted) == 0, "close");
+    } else {
+        Require(send_nid_postfix(client, "y", 1, 0) == 1, "send");
+        Require(recv_nid_postfix(server, &byte, 1, 0) == 1 && byte == 'y', "receive on 127.0.0.1");
+        const int sender = socket_nid_postfix(2, 2, 0);
+        Require(sender >= 0, "sender");
+        Require(sendto_nid_postfix(sender, "z", 1, 0, unspecified.data(), 16) == 1, "sendto INADDR_ANY must reach 127.0.0.1");
+        Require(recv_nid_postfix(server, &byte, 1, 0) == 1 && byte == 'z', "receive a datagram sent to INADDR_ANY");
+        Require(close_nid_postfix(sender) == 0, "close");
+        const int dual = socket_nid_postfix(28, 2, 0);
+        if (dual >= 0) {
+            const int off = 0;
+            Require(setsockopt_nid_postfix(dual, 41, 27, &off, sizeof(off)) == 0, "clear IPV6_V6ONLY");
+            Address mapped{};
+            mapped[0] = 28;
+            mapped[1] = 28;
+            std::memcpy(mapped.data() + 2, address.data() + 2, 2);
+            mapped[18] = 0xff;
+            mapped[19] = 0xff;
+            Require(sendto_nid_postfix(dual, "m", 1, 0, mapped.data(), 28) == 1, "sendto ::ffff:0.0.0.0 must reach 127.0.0.1");
+            Require(recv_nid_postfix(server, &byte, 1, 0) == 1 && byte == 'm', "receive a datagram sent to ::ffff:0.0.0.0");
+            Require(connect_nid_postfix(dual, mapped.data(), 28) == 0, "connect to ::ffff:0.0.0.0 must reach 127.0.0.1");
+            Require(send_nid_postfix(dual, "n", 1, 0) == 1, "send on the mapped connection");
+            Require(recv_nid_postfix(server, &byte, 1, 0) == 1 && byte == 'n', "receive on the mapped connection");
+            Require(close_nid_postfix(dual) == 0, "close");
+        } else {
+            Require(*__error_nid_postfix() == 47, "dual-stack socket");
+        }
+    }
+    Require(close_nid_postfix(client) == 0 && close_nid_postfix(server) == 0, "close");
+}
+
+static void CheckUnboundListen(int family) {
+    const std::uint32_t size = family == 2 ? 16 : 28;
+    const int listener = socket_nid_postfix(family, 1, 0);
+    if (listener < 0 && family == 28 && *__error_nid_postfix() == 47) return;
+    Require(listener >= 0, "unbound listener");
+    Require(listen_nid_postfix(listener, 1) == 0, "listen on an unbound stream socket binds it to an ephemeral port");
+    Address name{};
+    std::uint32_t length = name.size();
+    Require(getsockname_nid_postfix(listener, name.data(), &length) == 0 && length == size, "unbound listener name");
+    Require(name[1] == family && (name[2] != 0 || name[3] != 0), "the implicit bind chooses a nonzero port");
+    auto target = Loopback(family, size);
+    target[2] = name[2];
+    target[3] = name[3];
+    const int client = socket_nid_postfix(family, 1, 0);
+    Require(client >= 0, "client");
+    const int connected = connect_nid_postfix(client, target.data(), size);
+    if (connected < 0 && family == 28 && *__error_nid_postfix() == 49) {
+        Require(close_nid_postfix(client) == 0 && close_nid_postfix(listener) == 0, "close");
+        return;
+    }
+    Require(connected == 0, "connect to the implicitly bound listener");
+    const int accepted = accept_nid_postfix(listener, nullptr, nullptr);
+    Require(accepted >= 0, "accept on the implicitly bound listener");
+    Require(close_nid_postfix(accepted) == 0 && close_nid_postfix(client) == 0 && close_nid_postfix(listener) == 0, "close");
+}
+
 int main() {
     CheckDatagram(2);
     CheckDatagram(28);
     CheckStream(2);
     CheckStream(28);
+    CheckUnboundListen(2);
+    CheckUnboundListen(28);
+    CheckUnspecified(1);
+    CheckUnspecified(2);
+    CheckUnspecifiedInet(1);
+    CheckUnspecifiedInet(2);
     return 0;
 }

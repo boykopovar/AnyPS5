@@ -117,10 +117,55 @@ void verify(std::uint32_t waveSize, std::uint32_t limit, bool int64Atomics) {
     require(result.bdaAbiVersion == 1u, "a 64-bit LDS atomic did not get the fault buffer for a misaligned address at limit " + std::to_string(limit));
 }
 
+alignas(256) std::array<std::uint8_t, 32768> Texture{};
+
+void verifySpecializedImageWithoutBuffers() {
+    alignas(256) static constexpr std::array<std::uint32_t, 18> code{
+        0x7e020280u, 0x7e080218u, 0x343c0885u, 0x4a3c3d00u, 0x34063c84u, 0x2c3e3c87u, 0x363c3cffu, 0x0000007fu,
+        0x7e140280u, 0x7e160280u, 0x7e180280u, 0x7e1a0280u, 0xf0001f08u, 0x00010a1eu,
+        0xbf8c3f70u, 0xd8340000u, 0x00000a01u, 0xbf810000u
+    };
+    static constexpr std::array<std::uint32_t, 4> capabilities{spv::CapabilityShader, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle};
+    const auto textureAddress = reinterpret_cast<std::uintptr_t>(Texture.data());
+    std::array<std::uint32_t, 12> userData{};
+    userData[4] = static_cast<std::uint32_t>(textureAddress >> 8u);
+    userData[5] = static_cast<std::uint32_t>((textureAddress >> 40u) & 0xffu) | (6u << 20u) | (3u << 30u);
+    userData[6] = 31u | (127u << 14u);
+    userData[7] = 0x24cu | (9u << 28u);
+    const std::array<MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(std::span(code))}}};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}};
+    request.context.waveSize = 32u;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 16u, {true, false, false}, false, 1u};
+    request.context.memory = memory;
+    request.target.vulkanVersion = 0x00403000u;
+    request.target.spirvVersion = 0x00010600u;
+    request.target.subgroupSize = 32;
+    request.target.supportedCapabilities = capabilities;
+    request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+    request.target.maxWorkgroupInvocations = 1024;
+    request.target.maxWorkgroupSharedMemoryBytes = 64u;
+    request.layout = {0, 0, 0, 128};
+    request.useCache = false;
+    const auto result = Recompile(request);
+    require(!result.spirv.empty(), "image program with device-memory LDS did not compile");
+    require(result.workgroupMemoryDwords == 18u, "image program did not place its LDS in device memory");
+    require(result.specializationId != 0u, "image program was not specialized");
+}
+
 }
 
 int main() {
     unsigned failures = 0;
+    try {
+        verifySpecializedImageWithoutBuffers();
+        std::cout << "LDS lock budget: specialized image program without buffers passed\n";
+    } catch (const std::exception& error) {
+        ++failures;
+        const std::string message(error.what());
+        std::cerr << "LDS lock budget: specialized image program without buffers: " << message.substr(0, message.find("RecompileRequest:")) << '\n';
+    }
     for (const auto waveSize : {32u, 64u}) {
         for (const auto limit : {64u, 68u, 72u}) {
             for (const bool int64Atomics : {false, true}) {

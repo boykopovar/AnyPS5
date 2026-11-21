@@ -1,0 +1,8 @@
+add_test_executable(agc_raster_order_group_tests EXCLUDE_FROM_ALL tests/RasterOrderGroup.cpp)
+target_include_directories(agc_raster_order_group_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+set_target_properties(agc_raster_order_group_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_raster_order_group_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_raster_order_group_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_raster_order_group COMMAND agc_raster_order_group_tests)
+endif()

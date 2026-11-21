@@ -174,7 +174,7 @@ void CheckLongAncillaryForwarding() {
     IrValue* forwarded = &ancillary;
     for (std::uint32_t link = 0; link < 20000u; ++link) forwarded = &builder.Emit(IrOpcode::SelectU32, IrType::U32, {&condition, &zero, forwarded});
     auto& field = builder.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {forwarded, &builder.Constant(8u), &builder.Constant(4u)});
-    builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&field});
+    static_cast<void>(builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&field}));
     struct Run {
         IrProgram& program;
         std::string error;

@@ -1,6 +1,9 @@
 #include "prx/libSceUlt/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -8,6 +11,7 @@
 #include <chrono>
 #include <thread>
 #include <stdexcept>
+#include <semaphore>
 
 struct UltConditionVariableInfo;
 struct UltWaitingThreadInfo;
@@ -45,6 +49,85 @@ static std::int32_t APS5_VABI Immediate(std::uint64_t arg) {
 
 struct alignas(8) Runtime { std::uint8_t bytes[4096]{}; };
 struct alignas(8) Thread { std::uint8_t bytes[512]{}; };
+
+static std::binary_semaphore gTargetStarted{0};
+static std::binary_semaphore gTargetRelease{0};
+static std::binary_semaphore gJoinStart{0};
+
+static std::int32_t APS5_VABI GatedTarget(std::uint64_t argument) {
+    gTargetStarted.release();
+    CHECK(gTargetRelease.try_acquire_for(std::chrono::seconds(4)));
+    return static_cast<std::int32_t>(argument);
+}
+
+static void* APS5_VABI JoinTarget(void* argument) {
+    CHECK(gJoinStart.try_acquire_for(std::chrono::seconds(4)));
+    std::int32_t status = -1;
+    CHECK(sceUltUlthreadJoin(argument, &status) == Ok && status == 91);
+    return nullptr;
+}
+
+static void AwaitJoinWait(Pthread caller) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    for (;;) {
+        {
+            std::lock_guard lock(caller->cancelLock);
+            if (caller->cancelWait != nullptr) return;
+        }
+        CHECK(std::chrono::steady_clock::now() < deadline);
+        std::this_thread::yield();
+    }
+}
+
+static void CanceledJoin(bool pending) {
+    Runtime runtime;
+    Thread thread;
+    CHECK(sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltUlthreadCreate(&thread, "target", GatedTarget, 91, nullptr, 0, &runtime, nullptr, 0) == Ok);
+    CHECK(gTargetStarted.try_acquire_for(std::chrono::seconds(2)));
+    Pthread caller = nullptr;
+    CHECK(scePthreadCreate(&caller, nullptr, JoinTarget, &thread, "joiner") == 0);
+    if (!pending) {
+        gJoinStart.release();
+        AwaitJoinWait(caller);
+    }
+    CHECK(scePthreadCancel(caller) == 0);
+    if (pending) gJoinStart.release();
+    void* canceled = nullptr;
+    CHECK(scePthreadJoin(caller, &canceled) == 0);
+    CHECK(canceled == reinterpret_cast<void*>(std::uintptr_t{1}));
+    Pthread replacement = nullptr;
+    CHECK(scePthreadCreate(&replacement, nullptr, JoinTarget, &thread, "replacement") == 0);
+    gJoinStart.release();
+    AwaitJoinWait(replacement);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == State);
+    CHECK(sceUltFinalize() == Busy);
+    gTargetRelease.release();
+    CHECK(scePthreadJoin(replacement, nullptr) == 0);
+    CHECK(sceUltUlthreadJoin(&thread, nullptr) == State);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Ok);
+    CHECK(sceUltFinalize() == Ok);
+}
+
+static std::int32_t APS5_VABI SelfJoin(std::uint64_t) {
+    void* self = nullptr;
+    CHECK(sceUltUlthreadGetSelf(&self) == Ok);
+    std::int32_t status = -1;
+    CHECK(sceUltUlthreadJoin(self, &status) == State && status == -1);
+    CHECK(sceUltUlthreadTryJoin(self, &status) == Again && status == -1);
+    return 91;
+}
+
+static void SelfJoin() {
+    Runtime runtime;
+    Thread thread;
+    CHECK(sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltUlthreadCreate(&thread, "self", SelfJoin, 0, nullptr, 0, &runtime, nullptr, 0) == Ok);
+    std::int32_t status = -1;
+    CHECK(sceUltUlthreadJoin(&thread, &status) == Ok && status == 91);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Ok);
+    CHECK(sceUltFinalize() == Ok);
+}
 
 static void Outstanding() {
     Runtime runtime;
@@ -99,8 +182,10 @@ static void TryJoin() {
     std::uint8_t optParam[128];
     std::memset(optParam, 0xff, sizeof(optParam));
     CHECK(_sceUltUlthreadRuntimeOptParamInitialize(nullptr, 0) == Null);
-    CHECK(_sceUltUlthreadRuntimeOptParamInitialize(reinterpret_cast<UltUlthreadRuntimeOptParam*>(optParam), 0) == Ok && optParam[0] == 0);
-    CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr) == Ok);
+    std::uint8_t zeroOptParam[128] = {};
+    CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, zeroOptParam) == Invalid);
+    CHECK(_sceUltUlthreadRuntimeOptParamInitialize(reinterpret_cast<UltUlthreadRuntimeOptParam*>(optParam), 0) == Ok && optParam[0] == 0x75);
+    CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, optParam) == Ok);
     CHECK(_sceUltUlthreadCreate(&thread, "parked", Parked, 0x3C, nullptr, 0, &runtime, nullptr) == Ok);
     while (!gStarted.load(std::memory_order_acquire)) std::this_thread::yield();
 
@@ -124,6 +209,12 @@ static void Destroy() {
     CHECK(sceUltUlthreadRuntimeDestroy(nullptr) == Null);
     CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == State);
     CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr) == Ok);
+    runtime.bytes[0] = 0x5A;
+    CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "again", 2, 2, nullptr, nullptr) == State);
+    CHECK(runtime.bytes[0] == 0x5A);
+    UltUlthreadRuntimeInfo runtimeInfo{};
+    CHECK(sceUltGetUlthreadRuntimeInfo(&runtime, &runtimeInfo, nullptr, 0, nullptr, 0) == Ok);
+    CHECK(std::strcmp(runtimeInfo.name, "runtime") == 0 && runtimeInfo.maxUlthreads == 1 && runtimeInfo.workerThreads == 1);
     CHECK(_sceUltUlthreadRuntimeCreate(&other, "other", 1, 1, nullptr, nullptr) == Ok);
     CHECK(_sceUltUlthreadCreate(&thread, "thread", Immediate, 0x11, nullptr, 0, &runtime, nullptr) == Ok);
     CHECK(sceUltUlthreadRuntimeDestroy(&other) == Ok);
@@ -152,6 +243,12 @@ static void UnderscoredCreate() {
     CHECK(_sceUltWaitingQueueResourcePoolCreate(pool, "pool", 1, 1, workArea, commonOptions) == Invalid);
     commonOptions[31] = 0;
     CHECK(_sceUltWaitingQueueResourcePoolCreate(pool, "pool", 1, 1, workArea, commonOptions) == Ok);
+    pool[0] = 0x5A;
+    CHECK(_sceUltWaitingQueueResourcePoolCreate(pool, "again", 2, 2, workArea, nullptr) == State);
+    CHECK(pool[0] == 0x5A);
+    UltWaitingQueueResourcePoolInfo poolInfo{};
+    CHECK(sceUltGetWaitingQueueResourcePoolInfo(pool, &poolInfo) == Ok);
+    CHECK(std::strcmp(poolInfo.name, "pool") == 0 && poolInfo.maxThreads == 1 && poolInfo.maxSyncObjects == 1);
     CHECK(_sceUltSemaphoreCreate(nullptr, "semaphore", 1, pool, nullptr) == Null);
     CHECK(_sceUltSemaphoreCreate(semaphore, "semaphore", UINT32_MAX, pool, nullptr) == Ok);
     CHECK(sceUltSemaphoreTryAcquire(semaphore, 1) == Again);
@@ -261,6 +358,34 @@ static void UnderscoredCreate() {
     CHECK(sceUltQueueDataResourcePoolDestroy(dataPool) == Ok);
 }
 
+static void UnwritableStatus() {
+    Runtime runtime;
+    Thread thread;
+    auto* unwritable = reinterpret_cast<std::int32_t*>(0x10);
+    std::int32_t status = 0;
+    CHECK(sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltUlthreadCreate(&thread, "thread", Immediate, 0x27, nullptr, 0, &runtime, nullptr, 0) == Ok);
+    errno = 71;
+    CHECK(sceUltUlthreadJoin(&thread, unwritable) == Null);
+    CHECK(errno == 71);
+    CHECK(sceUltUlthreadJoin(&thread, &status) == State);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Ok);
+
+    CHECK(sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltUlthreadCreate(&thread, "thread", Immediate, 0x27, nullptr, 0, &runtime, nullptr, 0) == Ok);
+    int joined;
+    do {
+        errno = 71;
+        joined = sceUltUlthreadTryJoin(&thread, unwritable);
+        if (joined == Again) std::this_thread::yield();
+    } while (joined == Again);
+    CHECK(joined == Null);
+    CHECK(errno == 71);
+    CHECK(sceUltUlthreadTryJoin(&thread, &status) == State);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Ok);
+    CHECK(sceUltFinalize() == Ok);
+}
+
 int main(int argc, char** argv) {
     CHECK(argc == 2);
     CHECK(sceUltInitialize() == Ok);
@@ -269,5 +394,9 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "tryjoin") == 0) TryJoin();
     else if (std::strcmp(argv[1], "destroy") == 0) Destroy();
     else if (std::strcmp(argv[1], "underscoredcreate") == 0) UnderscoredCreate();
+    else if (std::strcmp(argv[1], "cancel-blocked") == 0) CanceledJoin(false);
+    else if (std::strcmp(argv[1], "cancel-pending") == 0) CanceledJoin(true);
+    else if (std::strcmp(argv[1], "self-join") == 0) SelfJoin();
+    else if (std::strcmp(argv[1], "unwritable-status") == 0) UnwritableStatus();
     else CHECK(false);
 }

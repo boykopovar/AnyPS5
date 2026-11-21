@@ -18,7 +18,7 @@ public:
     void IncludeFile(std::string_view path) {
         const auto separator = path.find_last_of("/\\");
         const auto name = path.substr(separator == std::string_view::npos ? 0 : separator + 1);
-        nameWidth = std::max(nameWidth, textWidth(name));
+        nameWidth = std::max(nameWidth, textWidth(displayName(name)));
     }
 
     void Report(const Domain::ProgressEvent& event) override {
@@ -36,7 +36,7 @@ public:
             default: throw std::logic_error("Unknown progress stage");
         }
         const auto separator = event.Input.find_last_of("/\\");
-        const auto name = event.Input.substr(separator == std::string::npos ? 0 : separator + 1);
+        const auto name = displayName(event.Input.substr(separator == std::string::npos ? 0 : separator + 1));
         if (event.Stage == Domain::ProgressStage::Executable) {
             if (event.Completed == 0) Message("Converting " + name + "\n");
             else Finish();
@@ -53,9 +53,11 @@ public:
         }
         const auto percent = event.Total == 0 ? 100u : static_cast<unsigned>(100.0L * event.Completed / event.Total);
         const bool changed = lastStage != event.Stage || lastInput != event.Input;
+        const bool countChanged = event.Stage == Domain::ProgressStage::Modules &&
+            (lastCompleted != event.Completed || lastTotal != event.Total);
         const bool complete = event.Completed == event.Total;
         const auto now = std::chrono::steady_clock::now();
-        if (!changed && lastPercent == percent && event.Completed != 0) return;
+        if (!changed && !countChanged && lastPercent == percent && event.Completed != 0) return;
         if (!changed && !complete && now - lastUpdate < std::chrono::milliseconds(80)) return;
         if (changed || messages) Finish();
         std::ostringstream line;
@@ -72,6 +74,8 @@ public:
         lastStage = event.Stage;
         lastInput = event.Input;
         lastPercent = percent;
+        lastCompleted = event.Completed;
+        lastTotal = event.Total;
         lastUpdate = now;
         if (complete) Finish();
     }
@@ -92,6 +96,19 @@ public:
     }
 
 private:
+    static std::string displayName(std::string_view name) {
+        constexpr char hex[] = "0123456789ABCDEF";
+        std::string result;
+        for (const unsigned char character : name) {
+            if (character < 0x20 || character == 0x7f) {
+                result += "\\x";
+                result += hex[character >> 4];
+                result += hex[character & 15];
+            } else result += static_cast<char>(character);
+        }
+        return result;
+    }
+
     static std::size_t textWidth(std::string_view text) {
         return static_cast<std::size_t>(std::count_if(text.begin(), text.end(), [](unsigned char character) { return (character & 0xc0) != 0x80; }));
     }
@@ -101,6 +118,8 @@ private:
     Domain::ProgressStage lastStage = Domain::ProgressStage::Write;
     std::string lastInput;
     unsigned lastPercent = 101;
+    std::uint64_t lastCompleted = 0;
+    std::uint64_t lastTotal = 0;
     std::size_t lineWidth = 0;
     bool active = false;
     bool messages = false;

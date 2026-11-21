@@ -12,6 +12,7 @@
 namespace {
 
 constexpr unsigned Window = 7;
+constexpr int InitialUserId = 0x10000000;
 
 void Require(bool value, const char* what) {
     if (value) return;
@@ -43,7 +44,7 @@ void OpenDialog() {
 int main() {
     KeyboardData data[16]{};
     Require(sceKeyboardInit() == KEYBOARD_OK, "init failed");
-    Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_HANDLE, "open failed");
+    Require(sceKeyboardOpen(InitialUserId, 0, 0, nullptr) == KEYBOARD_HANDLE, "open failed");
     Require(Read(data) == 1, "the open state was not queued");
     KeyboardInput input;
     ModalDialogSetPresenter_nid_postfix(true);

@@ -2,9 +2,11 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #endif
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -12,6 +14,7 @@
 #include <mutex>
 #include <set>
 #include <stdexcept>
+#include <string_view>
 
 namespace {
 
@@ -121,9 +124,73 @@ private:
     std::byte* data = nullptr;
 };
 
+#ifdef _WIN32
+void PartialResidentAliasRefused(const Context& context, bool left) {
+    constexpr std::size_t allocationBytes = 4 * Alignment;
+    auto* data = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(allocationBytes, 0x200000));
+    Require(data != nullptr, "cannot reserve the partial resident alias fixture");
+    struct Cleanup {
+        std::byte* data;
+        VkDevice device;
+        HANDLE section = nullptr;
+        void* registered = nullptr;
+        ~Cleanup() {
+            ClearHostImports(device);
+            if (registered != nullptr) GuestAllocations::Mutation().Remove(registered);
+            GuestArena::GuestArenaReset_nid_postfix(data, allocationBytes);
+            GuestArena::GuestArenaRelease_nid_postfix(data, allocationBytes);
+            if (section != nullptr) {
+                GuestArena::GuestArenaForgetSection_nid_postfix(section);
+                CloseHandle(section);
+            }
+        }
+    } cleanup{data, context.device};
+    cleanup.section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, allocationBytes, nullptr);
+    Require(cleanup.section != nullptr, "cannot reserve the partial resident alias backing");
+    ClearHostImports(context.device);
+    const auto sharedOffset = left ? 3 * Alignment : 0;
+    const auto residentOffset = left ? 0 : Alignment;
+    GuestArena::GuestArenaMap_nid_postfix(data + sharedOffset, Alignment, cleanup.section, sharedOffset, PAGE_READWRITE);
+    GuestArena::GuestArenaMapDirect_nid_postfix(data + residentOffset, 3 * Alignment, cleanup.section, residentOffset, PAGE_READWRITE);
+    std::memset(data, 0x37, allocationBytes);
+    auto* requested = data + (left ? Alignment : 0);
+    const auto address = reinterpret_cast<std::uintptr_t>(requested);
+    bool refused = false;
+    try {
+        auto* alias = GuestArena::GuestArenaMapAlias_nid_postfix(address, 3 * Alignment);
+        GuestArena::GuestArenaUnmapAlias_nid_postfix(alias);
+    } catch (const std::runtime_error& error) {
+        refused = std::string_view(error.what()).find("a resident run of direct memory extends outside the range") != std::string_view::npos;
+    }
+    Require(refused, "partial resident fixture did not reproduce the alias bounds refusal");
+    GuestAllocations::Mutation().Add(requested, 3 * Alignment, true, true, true);
+    cleanup.registered = requested;
+    Require(HostImportFor(context, address, Bytes) == nullptr, "partial resident alias did not fall back");
+    Require(HostImportFor(context, address, Bytes) == nullptr && HostImportLiveBytes() == 0, "partial resident alias refusal left a live import");
+    std::uintptr_t begin = 0;
+    std::uintptr_t end = 0;
+    Require(GuestArena::GuestArenaResidentSpan_nid_postfix(address, 3 * Alignment, &begin, &end) && begin == reinterpret_cast<std::uintptr_t>(data + residentOffset) && end == begin + 3 * Alignment, "refused alias changed the resident run");
+    GuestAllocations::Mutation().Remove(requested);
+    cleanup.registered = nullptr;
+    GuestAllocations::Mutation().Add(data, allocationBytes, true, true, true);
+    cleanup.registered = data;
+    const auto* complete = HostImportFor(context, reinterpret_cast<std::uintptr_t>(data), Bytes);
+    Require(complete != nullptr && complete->alias != nullptr && complete->bytes == allocationBytes, "a complete resident run did not import after the partial refusal");
+    Require(std::all_of(data, data + allocationBytes, [](std::byte value) { return value == std::byte{0x37}; }), "alias refusal or retry changed guest bytes");
+    std::printf("partial resident alias %s: refused without a live import, complete run imported, guest bytes preserved\n", left ? "left" : "right");
+}
+#endif
+
 }
 
 void AgcDriver::Tests::RunHostImportFailureTests(const Graphics::Context& original, bool native) {
+#ifdef _WIN32
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        ClearHostImports(original.device);
+        for (const bool left : {false, true}) PartialResidentAliasRefused(original, left);
+    }
+#endif
     unsigned failures = 0;
     for (const auto step : {Step::Create, Step::Allocate, Step::Bind}) {
         for (const auto result : {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY}) {

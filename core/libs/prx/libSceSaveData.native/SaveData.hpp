@@ -26,6 +26,8 @@ constexpr std::uint32_t SAVE_DATA_MOUNT_MODE_RDONLY = 1;
 constexpr std::uint32_t SAVE_DATA_MOUNT_MODE_RDWR = 2;
 constexpr std::uint32_t SAVE_DATA_MOUNT_MODE_CREATE = 4;
 constexpr std::uint32_t SAVE_DATA_MOUNT_MODE_CREATE2 = 32;
+constexpr std::uint32_t SAVE_DATA_UMOUNT_MODE_BACKUP = 0x10000;
+constexpr std::uint32_t SAVE_DATA_UMOUNT_MODE_BACKUP_FORCE = 0x1;
 
 constexpr std::uint64_t SAVE_DATA_BLOCKS_MIN2 = 96;
 constexpr std::uint64_t SAVE_DATA_BLOCKS_MAX = 16384;
@@ -48,6 +50,7 @@ constexpr std::size_t SAVE_DATA_MOUNT_SLOTS = 16;
 
 struct MountSlot {
     bool used = false;
+    std::int32_t user_id = 0;
     std::string mount_point;
     std::string real_path;
 };
@@ -56,6 +59,9 @@ inline std::array<MountSlot, SAVE_DATA_MOUNT_SLOTS> g_slots;
 inline std::mutex g_slots_mutex;
 
 inline int find_slot_by_mount_point(const char* mount_point) {
+    if (mount_point == nullptr) {
+        return -1;
+    }
     for (int i = 0; i < static_cast<int>(SAVE_DATA_MOUNT_SLOTS); i++) {
         if (g_slots[i].used && g_slots[i].mount_point == mount_point) {
             return i;

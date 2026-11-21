@@ -44,6 +44,11 @@ static void TestContextConfiguration() {
     Require(!WKContextConfigurationProcessSwapsOnNavigation(config));
     WKContextConfigurationSetProcessSwapsOnNavigation(config, true);
     Require(WKContextConfigurationProcessSwapsOnNavigation(config));
+    Require(!WKContextConfigurationProcessSwapsOnWindowOpenWithOpener(config));
+    WKContextConfigurationSetProcessSwapsOnWindowOpenWithOpener(config, true);
+    Require(WKContextConfigurationProcessSwapsOnWindowOpenWithOpener(config));
+    WKContextConfigurationSetProcessSwapsOnWindowOpenWithOpener(config, false);
+    Require(!WKContextConfigurationProcessSwapsOnWindowOpenWithOpener(config));
 
     Require(!WKContextConfigurationUsesWebProcessCache(config));
     WKContextConfigurationSetUsesWebProcessCache(config, true);
@@ -122,6 +127,14 @@ static void TestContextConfiguration() {
     Require(static_cast<const NKWebKit::String*>(copiedNet)->Utf8() == "/system/netprocess.elf");
     WKRelease(netStr);
     WKRelease(copiedNet);
+
+    const void* cookieStr = NKWebKit::ToRef(NKWebKit::String::FromUtf8("/data/cookies.db"));
+    WKContextConfigurationSetCookieStoragePath(config, cookieStr);
+    const void* copiedCookie = WKContextConfigurationCopyCookieStoragePath(config);
+    Require(copiedCookie != nullptr);
+    Require(static_cast<const NKWebKit::String*>(copiedCookie)->Utf8() == "/data/cookies.db");
+    WKRelease(cookieStr);
+    WKRelease(copiedCookie);
 
     WKRelease(config);
 
@@ -258,6 +271,31 @@ static void TestWebsitePolicies() {
     WKWebsitePoliciesSetPopUpPolicy(policies, 1);
     Require(WKWebsitePoliciesGetPopUpPolicy(policies) == 1);
 
+    WKWebsitePoliciesSetAllowedAutoplayQuirks(policies, 0xFFFFFFF5u);
+    Require(WKWebsitePoliciesGetAllowedAutoplayQuirks(policies) == 5);
+    WKWebsitePoliciesSetAllowedAutoplayQuirks(policies, 0x10u);
+    Require(WKWebsitePoliciesGetAllowedAutoplayQuirks(policies) == 0);
+    WKWebsitePoliciesSetAllowedAutoplayQuirks(policies, 0xFu);
+    Require(WKWebsitePoliciesGetAllowedAutoplayQuirks(policies) == 0xF);
+
+    for (const std::uint32_t outOfRange : {4u, 5u, 0x100u, 0xFFFFFFFFu}) {
+        WKWebsitePoliciesSetAutoplayPolicy(policies, outOfRange);
+        Require(WKWebsitePoliciesGetAutoplayPolicy(policies) == 2);
+    }
+    for (const std::uint32_t inRange : {3u, 1u, 0u, 2u}) {
+        WKWebsitePoliciesSetAutoplayPolicy(policies, inRange);
+        Require(WKWebsitePoliciesGetAutoplayPolicy(policies) == inRange);
+    }
+
+    for (const std::uint32_t outOfRange : {3u, 4u, 0x100u, 0xFFFFFFFFu}) {
+        WKWebsitePoliciesSetPopUpPolicy(policies, outOfRange);
+        Require(WKWebsitePoliciesGetPopUpPolicy(policies) == 1);
+    }
+    for (const std::uint32_t inRange : {2u, 0u, 1u}) {
+        WKWebsitePoliciesSetPopUpPolicy(policies, inRange);
+        Require(WKWebsitePoliciesGetPopUpPolicy(policies) == inRange);
+    }
+
     Require(WKWebsitePoliciesGetDataStore(policies) == nullptr);
     Require(WKWebsitePoliciesCopyCustomHeaderFields(policies) == nullptr);
     WKWebsitePoliciesSetCustomHeaderFields(policies, nullptr);
@@ -277,6 +315,17 @@ static void TestUserScript() {
 
     Require(WKUserScriptGetInjectionTime(script) == 1);
     Require(WKUserScriptGetMainFrameOnly(script) == true);
+
+    const void* atStart = WKUserScriptCreateWithSource(src, 0, false);
+    Require(WKUserScriptGetInjectionTime(atStart) == 0);
+    Require(WKUserScriptGetMainFrameOnly(atStart) == false);
+    WKRelease(atStart);
+    for (const std::uint32_t outOfRange : {2u, 3u, 0x100u, 0x80000001u, 0xFFFFFFFFu}) {
+        const void* other = WKUserScriptCreateWithSource(src, outOfRange, true);
+        Require(WKUserScriptGetInjectionTime(other) == 0);
+        Require(WKUserScriptGetMainFrameOnly(other) == true);
+        WKRelease(other);
+    }
 
     WKRelease(src);
     WKRelease(script);
@@ -394,6 +443,46 @@ static void TestStringCopiesFollowWebKit() {
     bool threw = false;
     try {
         WKContextConfigurationSetInjectedBundlePath(config, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    const void* unsetCookie = WKContextConfigurationCopyCookieStoragePath(config);
+    Require(unsetCookie != nullptr);
+    Require(!static_cast<const NKWebKit::String*>(unsetCookie)->null);
+    Require(static_cast<const NKWebKit::String*>(unsetCookie)->characters.empty());
+    WKRelease(unsetCookie);
+    threw = false;
+    try {
+        WKContextConfigurationSetCookieStoragePath(config, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    threw = false;
+    try {
+        WKContextConfigurationCopyCookieStoragePath(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    threw = false;
+    try {
+        WKContextConfigurationSetCookieStoragePath(nullptr, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    threw = false;
+    try {
+        WKContextConfigurationProcessSwapsOnWindowOpenWithOpener(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    threw = false;
+    try {
+        WKContextConfigurationSetProcessSwapsOnWindowOpenWithOpener(nullptr, true);
     } catch (const std::invalid_argument&) {
         threw = true;
     }

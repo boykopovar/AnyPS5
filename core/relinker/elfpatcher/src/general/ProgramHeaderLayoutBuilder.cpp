@@ -141,10 +141,13 @@ std::uint64_t ProgramHeaderLayoutBuilder::ComputeExtraBlockVaddr(
 }
 
 std::vector<Domain::ProgramHeader> ProgramHeaderLayoutBuilder::_keptHeaders(const std::vector<Domain::ProgramHeader>& originalHeaders) const {
+    const auto lastStack = std::find_if(originalHeaders.rbegin(), originalHeaders.rend(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_STACK; });
+    const auto lastStackPtr = lastStack != originalHeaders.rend() ? &(*lastStack) : nullptr;
     std::vector<Domain::ProgramHeader> kept;
     for (const auto& ph : originalHeaders) {
         if (_segmentFilter->ShouldSkip(ph)) continue;
         if (ph.Type == PT_GNU_RELRO && !hasWritableLoadCoverage(originalHeaders, ph)) continue;
+        if (ph.Type == PT_GNU_STACK && &ph != lastStackPtr) continue;
         kept.push_back(ph);
     }
     return kept;
@@ -152,6 +155,8 @@ std::vector<Domain::ProgramHeader> ProgramHeaderLayoutBuilder::_keptHeaders(cons
 
 std::vector<Domain::ProgramHeader> ProgramHeaderLayoutBuilder::_outputHeaders(const std::vector<Domain::ProgramHeader>& originalHeaders) const {
     auto kept = _keptHeaders(originalHeaders);
+    if (std::count_if(kept.begin(), kept.end(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_RELRO; }) > 1)
+        throw Domain::RelinkerException("Multiple RELRO ranges are not supported on Linux output: the loader only protects one PT_GNU_RELRO segment");
     if (std::none_of(kept.begin(), kept.end(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_STACK; }))
         kept.push_back(Domain::ProgramHeader{PT_GNU_STACK, PF_R | PF_W, 0, 0, 0, 0, 0, 16});
     if (kept.size() >= kExtendedProgramHeaderCount - kSyntheticProgramHeaderCount)
@@ -215,6 +220,8 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     };
     if (request.PhEntSize < 56)
         throw Domain::RelinkerException("Program header entry is too small");
+    if (request.PhOff < kElfHeaderSize)
+        throw Domain::RelinkerException("Program header table overlaps the ELF header");
     const std::uint64_t tableEnd = checkedEnd(request.PhOff, static_cast<std::uint64_t>(neededPh) * request.PhEntSize);
     if (tableEnd > buf.size())
         throw Domain::RelinkerException("Program header table exceeds the output file");
@@ -229,6 +236,8 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     if (request.ExtraBlockOffset > buf.size() || request.ExtraBlockSize > buf.size() - request.ExtraBlockOffset)
         throw Domain::RelinkerException("Extra block exceeds the output file");
     std::uint64_t headerBlockAlign = kDefaultLoadAlignment;
+    if (request.MovedLoadAlignment > headerBlockAlign && (request.MovedLoadAlignment & (request.MovedLoadAlignment - 1)) == 0)
+        headerBlockAlign = request.MovedLoadAlignment;
     for (const auto& ph : request.OriginalHeaders) {
         if (ph.Type == PT_LOAD && !_segmentFilter->ShouldSkip(ph) && ph.Alignment > headerBlockAlign && (ph.Alignment & (ph.Alignment - 1)) == 0)
             headerBlockAlign = ph.Alignment;

@@ -95,7 +95,7 @@ static void RequireAll(std::uint32_t code, const void* profile, int expected, co
     }
 }
 
-static std::uint32_t SweepCodes(const void* profile) {
+static std::uint32_t SweepCodes(const void* profile, bool eucCnProfile = false) {
     constexpr std::uint32_t supplementary[] = {0x10000, 0x1F600, 0x10FFFF};
     std::uint32_t mapped = 0;
     for (std::uint32_t code = 0; code < 0x10000; ++code) {
@@ -107,8 +107,10 @@ static std::uint32_t SweepCodes(const void* profile) {
         if (result == 0 && size > 0) {
             std::uint32_t consumed = 0;
             std::uint32_t back = 0;
-            Require(sceCesMbcToUtf32(profile, bytes, size, &consumed, &back) == 0 && consumed == size);
-            if (back == code) ++mapped;
+            const int decoded = sceCesMbcToUtf32(profile, bytes, size, &consumed, &back);
+            const bool leftOut = eucCnProfile && decoded == unassignedCode && size == 2 && (bytes[0] == 0xA2 || bytes[0] == 0xA6 || bytes[0] == 0xA8);
+            Require((decoded == 0 && consumed == size) || leftOut);
+            if (decoded == 0 && back == code) ++mapped;
         }
         RequireAll(code, profile, result, bytes, size);
     }
@@ -413,15 +415,26 @@ int main() {
     std::memcpy(&wide, "\x00\x00\x30\x42", 4);
     Require(sceCesUtf32beToMbc(&wide, sjis, mbc, sizeof(mbc), &produced) == 0 && produced == 2 && std::memcmp(mbc, "\x82\xA0", 2) == 0);
     Require(sceCesUtf32beToMbc(nullptr, sjis, mbc, sizeof(mbc), &produced) == invalidSrcBuffer);
+    Require(sceCesUtf32beToMbc(&wide, nullptr, mbc, sizeof(mbc), &produced) == invalidParameter);
+    Require(sceCesUtf32beToMbc(&wide, sjis, nullptr, sizeof(mbc), &produced) == invalidDstBuffer);
+    Require(sceCesUtf32beToMbc(&wide, sjis, mbc, 1, &produced) == dstBufferEnd);
     Require(sceCesUtf32leToMbc(nullptr, sjis, mbc, sizeof(mbc), &produced) == invalidSrcBuffer);
+    Require(sceCesUtf32leToMbc(&wide, nullptr, mbc, sizeof(mbc), &produced) == invalidParameter);
     Require(sceCesUtf32leToMbc(&wide, sjis, mbc, sizeof(mbc), &produced) == invalidEncode);
     std::uint16_t narrow = 0;
     std::memcpy(&narrow, "\xD8\x00", 2);
     Require(sceCesUtf16leToMbc(&narrow, 1, &consumed, cp1252, mbc, sizeof(mbc), &produced) == 0 && consumed == 1 && produced == 1 && mbc[0] == 0xD8);
     Require(sceCesUtf16leToMbc(nullptr, 1, &consumed, cp1252, mbc, sizeof(mbc), &produced) == invalidSrcBuffer);
+    Require(sceCesUtf16leToMbc(&narrow, 1, &consumed, nullptr, mbc, sizeof(mbc), &produced) == invalidParameter);
+    Require(sceCesUtf16leToMbc(&narrow, 1, &consumed, cp1252, nullptr, sizeof(mbc), &produced) == invalidDstBuffer);
     Require(sceCesUtf16beToMbc(nullptr, 1, &consumed, cp1252, mbc, sizeof(mbc), &produced) == invalidSrcBuffer);
+    Require(sceCesUtf16beToMbc(&narrow, 1, &consumed, nullptr, mbc, sizeof(mbc), &produced) == invalidParameter);
+    Require(sceCesUtf16beToMbc(&narrow, 1, &consumed, cp1252, nullptr, sizeof(mbc), &produced) == invalidDstBuffer);
     Require(sceCesUtf16beToMbc(&narrow, 1, &consumed, cp1252, mbc, sizeof(mbc), &produced) == srcBufferEnd);
     Require(sceCesUtf8ToMbc(Bytes("A\xE4\xB8\xAD"), 4, &consumed, gbk, mbc, sizeof(mbc), &produced) == 0 && consumed == 1 && produced == 1 && mbc[0] == 'A');
+    Require(sceCesUtf8ToMbc(nullptr, 4, &consumed, gbk, mbc, sizeof(mbc), &produced) == invalidSrcBuffer);
+    Require(sceCesUtf8ToMbc(Bytes("A"), 1, &consumed, nullptr, mbc, sizeof(mbc), &produced) == invalidParameter);
+    Require(sceCesUtf8ToMbc(Bytes("A"), 1, &consumed, gbk, nullptr, sizeof(mbc), &produced) == invalidDstBuffer);
 
     const void* singleByte[] = {cp1252, cp1251, cp1250};
     constexpr std::uint32_t singleByteMapped[] = {251, 255, 251};
@@ -431,7 +444,7 @@ int main() {
         RequireInvalid(singleByte[index]);
     }
     for (const void* profile : multiByte) {
-        const std::uint32_t mapped = SweepCodes(profile);
+        const std::uint32_t mapped = SweepCodes(profile, profile == eucCn);
         Require(mapped > 256 && SweepBytes(profile) == mapped);
         RequireInvalid(profile);
     }

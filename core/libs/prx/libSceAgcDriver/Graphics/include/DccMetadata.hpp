@@ -64,12 +64,15 @@ bool DccAlphaOnMsb(VkFormat format, std::uint32_t componentSwap);
 // The keys of a texture's DCC surface when they fast-clear it to a value encodable here, else
 // Uncompressed (the texels are read as stored; other keys are reported once).
 DccKeys TextureClearKeys(const GuestTextureResource& resource, std::uint64_t guestBytes);
+DccKeys ScannedDccKeys(std::uint64_t metaAddress, std::size_t keyCount);
 // The last stable key scan of one surface's metadata (ProvedClearKeys): the keys read and the write
 // generation the key range was collected at before the scan. Held by the image or texture of the
 // surface, read and written under GuestMemory::GpuMutex only.
 struct DccKeyProof {
     DccKeys keys = DccKeys::Uncompressed;
     std::uint64_t generation = 0;
+    std::uint64_t pendingNote = 0;
+    std::uint64_t pendingRecorder = 0;
 };
 // TextureClearKeys with the scan skipped while the key range is unchanged since `proof` was taken
 // (CollectWrites over the keys, then UnchangedSince its generation), so a surface's keys are scanned
@@ -80,6 +83,8 @@ struct DccKeyProof {
 // their record), which makes the proof exactly as sound as UnchangedSince over the texels.
 // APS5_NO_KEY_FAST_PATH=1 scans on every call and stores nothing.
 DccKeys ProvedClearKeys(const GuestTextureResource& resource, std::uint64_t guestBytes, DccKeyProof& proof);
+DccKeyProof PendingKeyProof(const GuestTextureResource& resource, std::uint64_t guestBytes, DccKeys keys);
+bool PendingKeyProofHolds(const GuestTextureResource& resource, std::uint64_t guestBytes, const DccKeyProof& proof);
 bool KeyFastPath();
 bool SingleKeysReadable(const GuestTextureResource& resource);
 bool ReadSingleElement(const GuestTextureResource& resource, std::span<std::byte> element);

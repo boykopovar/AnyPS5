@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 
-from test_guest_intel_trampolines import main_fixture
+from test_guest_intel_trampolines import main_fixture, pe_sections
 from test_guest_module_args import args_module, load_and_record
 from test_guest_module_dir import pe_export_names
 from test_guest_module_directories import module_with_symbol, needed_libraries
@@ -27,6 +27,45 @@ def page_aligned(image):
             header[7] = 0x1000
         struct.pack_into("<IIQQQQQQ", aligned, offset, *header)
     return aligned
+
+
+def deferred_dependencies(data):
+    header, = struct.unpack_from("<I", data, 0x3C)
+    export_rva, = struct.unpack_from("<I", data, header + 24 + 112)
+
+    def offset(rva):
+        for _, start, size, raw, _ in pe_sections(data):
+            if start <= rva < start + size:
+                return raw + rva - start
+        raise AssertionError(f"Unmapped RVA: {rva:#x}")
+
+    directory = offset(export_rva)
+    names = offset(struct.unpack_from("<I", data, directory + 32)[0])
+    ordinals = offset(struct.unpack_from("<I", data, directory + 36)[0])
+    functions = offset(struct.unpack_from("<I", data, directory + 28)[0])
+    count, = struct.unpack_from("<I", data, directory + 24)
+    for index in range(count):
+        start = offset(struct.unpack_from("<I", data, names + index * 4)[0])
+        if data[start:data.index(0, start)] != b"__aps5_guest_initialize":
+            continue
+        ordinal, = struct.unpack_from("<H", data, ordinals + index * 2)
+        address, = struct.unpack_from("<I", data, functions + ordinal * 4)
+        if any(start <= address < start + 0x1000 and raw_size == 0 for _, start, raw_size, _, _ in pe_sections(data)):
+            return []
+        table = offset(address)
+        initializers, = struct.unpack_from("<I", data, table + 4)
+        position = table + 8 + initializers * 4
+        magic, listed = struct.unpack_from("<II", data, position)
+        if magic != 0x44504541:
+            return []
+        position += 8
+        result = []
+        for _ in range(listed):
+            end = data.index(0, position)
+            result.append(data[position:end].decode())
+            position = end + 1
+        return result
+    raise AssertionError("no __aps5_guest_initialize export")
 
 
 def importing_main(root):
@@ -123,6 +162,16 @@ def main():
             for name in ("plugin", "consumer", "provider"):
                 exports = pe_export_names((windows / "app0" / "Media" / "Plugins" / f"{name}.prx.guest.prx").read_bytes())
                 assert ("__aps5_guest_initialize" in exports) == (root != "bundled"), (root, name, exports)
+            modules = {name: (windows / "app0" / "Media" / "Plugins" / f"{name}.prx.guest.prx").read_bytes() for name in ("plugin", "consumer", "provider")}
+            started_later = {name: "__aps5_guest_initialize" in pe_export_names(data) for name, data in modules.items()}
+            for name, dependency in (("plugin", "consumer"), ("consumer", "provider"), ("provider", None)):
+                if not started_later[name]:
+                    continue
+                expected = [f"{dependency}.prx.guest.prx"] if dependency and started_later[dependency] else []
+                listed = deferred_dependencies(modules[name])
+                assert listed == expected, (root, name, listed, expected)
+            if root != "bundled":
+                assert deferred_dependencies(modules["plugin"]) == ["consumer.prx.guest.prx"], root
             if sys.platform == "linux" and os.uname().machine == "x86_64":
                 libraries = case / "libs"
                 libraries.mkdir()

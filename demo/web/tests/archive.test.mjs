@@ -150,7 +150,7 @@ console.log("Multiple app packages append under separate roots in a single ZIP")
 
 for (const [entries, error] of [
   [[["one", executable], ["two", executable]], /exactly one/u],
-  [[["readme", new Uint8Array([1])]], /exactly one/u],
+  [[["readme", new Uint8Array([1])]], /doesn't look like a PS5 app/u],
   [[["eboot.bin", new Uint8Array([79, 21, 61, 29])]], /SELF container/u],
   [[["eboot.bin", new Uint8Array([84, 20, 245, 238])]], /SELF container/u],
   [[["app", executable], ["..\/escape", resource]], /Unsafe ZIP/u],
@@ -210,10 +210,10 @@ globalThis.self = { postMessage: message => workerMessages.push(message) };
 const worker = await import(site("worker.mjs"));
 const libraryArchive = await zip([["libs/system.prx", new Uint8Array([1, 2, 3])]]);
 const libraryBytes = new Uint8Array(await libraryArchive.arrayBuffer());
-const libraryPath = "libraries/windows-acde1234.zip";
 const librarySha256 = [...new Uint8Array(await crypto.subtle.digest("SHA-256", libraryBytes))]
   .map(byte => byte.toString(16).padStart(2, "0"))
   .join("");
+const libraryPath = `libraries/windows-${librarySha256}.zip`;
 const release = {
   tag: "v1",
   platforms: {

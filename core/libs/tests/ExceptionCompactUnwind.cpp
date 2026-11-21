@@ -1,4 +1,6 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/CompactUnwind.hpp"
+#include "prx/libc/include/exceptions/Unwind.hpp"
 
 #include <cstdio>
 #include <cstdint>
@@ -160,11 +162,30 @@ void CheckPersonality() {
         Require(LibcUnwind::MatchCompactPersonality(name) == CompactPersonality::Unknown, name);
 }
 
+void CheckPersonalityNullContext() {
+    Require(__gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, 0, nullptr, nullptr) == _URC_CONTINUE_UNWIND, "a null gxx context continues the unwind");
+    Require(__gcc_personality_v0_nid_postfix(1, _UA_CLEANUP_PHASE, 0, nullptr, nullptr) == _URC_CONTINUE_UNWIND, "a null gcc context continues the cleanup");
+    Require(__gxx_personality_v0_nid_postfix(2, _UA_SEARCH_PHASE, 0, nullptr, nullptr) == _URC_FATAL_PHASE1_ERROR, "the gxx version check precedes the null context guard");
+    Require(__gcc_personality_v0_nid_postfix(2, _UA_CLEANUP_PHASE, 0, nullptr, nullptr) == _URC_FATAL_PHASE1_ERROR, "the gcc version check precedes the null context guard");
+}
+
+void CheckNativeCatch() {
+    bool caught = false;
+    try {
+        _ZSt6_ThrowRKSt20bad_array_new_length_nid_postfix(nullptr);
+    } catch (...) {
+        caught = true;
+    }
+    Require(caught, "a native catch did not take an exception the guest runtime threw");
+}
+
 }
 
 int main() {
     CheckIndex(SampleUnwind());
     CheckRules();
     CheckPersonality();
+    CheckPersonalityNullContext();
+    CheckNativeCatch();
     return 0;
 }

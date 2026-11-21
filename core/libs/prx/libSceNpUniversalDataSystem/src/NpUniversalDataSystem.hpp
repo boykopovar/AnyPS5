@@ -14,6 +14,8 @@
 
 static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_OK = 0;
 static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT = -2141900542;
+static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_PARAM_SIZE = -2141900526;
+static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_ALREADY_INITIALIZED = -2141900520;
 static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_EVENT = -2141900522;
 static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_EVENT_NAME = -2141900531;
 static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_KEY = -2141900524;
@@ -48,6 +50,17 @@ public:
     bool Contains(const TValue* value) {
         std::lock_guard lock(mutex);
         return values.contains(value);
+    }
+
+    template <typename F>
+    void ForEach(F&& visit) {
+        std::lock_guard lock(mutex);
+        for (const auto& [pointer, value] : values) visit(pointer);
+    }
+
+    void Clear() {
+        std::lock_guard lock(mutex);
+        values.clear();
     }
 
 private:

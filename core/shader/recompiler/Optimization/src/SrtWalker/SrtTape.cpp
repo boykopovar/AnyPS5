@@ -1,4 +1,5 @@
 #include "Optimization/SrtWalker/SrtTape.hpp"
+#include "Optimization/SrtWalker/SrtDescriptorEvaluation.hpp"
 #include "Optimization/SrtWalker/SrtAddressArithmetic.hpp"
 #include "Optimization/SrtWalker/SrtInstructionPredicates.hpp"
 #include "IntermediateRepresentation/IrBuilder.hpp"
@@ -104,7 +105,7 @@ private:
         }
         if (value->Opcode() == IrOpcode::Void) return fail();
         const auto mask = contexts[context].mask;
-        if (mask != nullptr && IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3 && ActiveMaskImplies(mask, value->Argument(0))) return compile(value->Argument(1), context, depth + 1);
+        if (mask != nullptr && IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3 && ActiveMaskImplies(plan, mask, value->Argument(0))) return compile(value->Argument(1), context, depth + 1);
         const auto key = std::make_pair(static_cast<const IrValue*>(value), context);
         if (const auto found = built.find(key); found != built.end()) return found->second == Building ? fail() : found->second;
         built.emplace(key, Building);
@@ -416,7 +417,7 @@ bool SrtTape::compute(Frame& frame, const Node& node, std::uint64_t& result) con
         case Op::ShaderBase: result = frame.runtime.shaderBase; return true;
         case Op::Read:
         case Op::ReadConstBuffer: {
-            const auto base = ((b << 32u) | static_cast<std::uint32_t>(a)) & AddressMask;
+            const auto base = node.op == Op::ReadConstBuffer ? ConstBufferBase(a, b) : ((b << 32u) | static_cast<std::uint32_t>(a)) & AddressMask;
             const auto immediate = static_cast<std::int64_t>(node.immediate);
             std::uint64_t address = 0;
             if (node.op == Op::ReadConstBuffer) {
@@ -639,7 +640,11 @@ bool SrtTape::Run(const IrResourcePlan& plan, const SrtRuntime& runtime, std::ve
             for (const auto image : block.images) active[imageBase + image] = 1u;
             for (const auto slot : block.flatSlots) activeFlat[slot] = 1u;
             std::uint64_t condition = 0;
-            const bool cleanEvaluable = block.condition != nullptr && runtime.readSpecializationMemory != nullptr && conditionRoots[index] != NoNode && evaluate(frame, conditionRoots[index], condition);
+            bool cleanEvaluable = false;
+            {
+                const SrtBranchScope branch;
+                cleanEvaluable = block.condition != nullptr && runtime.readSpecializationMemory != nullptr && conditionRoots[index] != NoNode && evaluate(frame, conditionRoots[index], condition);
+            }
             if (frame.nullRoot) return refuse();
             if (cleanEvaluable) {
                 if (block.successors.size() < 2) return refuse();
@@ -649,6 +654,7 @@ bool SrtTape::Run(const IrResourcePlan& plan, const SrtRuntime& runtime, std::ve
             }
         }
     }
+    if (!plan.controlFlow.empty() && !ApplySourceBlockGuards(plan, scratch.visited, active)) return refuse();
     auto& evaluated = scratch.evaluated;
     evaluated.clear();
     evaluated.reserve(plan.materializationSources.size());

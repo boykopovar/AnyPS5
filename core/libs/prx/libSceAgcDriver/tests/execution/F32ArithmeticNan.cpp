@@ -185,15 +185,14 @@ bool IsNan16(std::uint32_t value) {
     return (value & 0x7fffu) > 0x7c00u;
 }
 
-void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode) {
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
+void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode, std::span<const std::uint32_t> code = Code, std::optional<std::uint32_t> uniformRow = std::nullopt) {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(uniformRow.value_or(tid), &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
-    const std::span<const std::uint32_t> code(Code);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -210,12 +209,12 @@ void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::
     device.WaitIdle();
 }
 
-void Check(const std::uint32_t (&expected)[32][16], const char* mode) {
+void Check(const std::uint32_t (&expected)[32][16], const char* mode, std::optional<std::uint32_t> uniformRow = std::nullopt) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t* out = &Output[tid * Results];
         for (std::uint32_t i = 0; i < 16; ++i) {
             const std::string name = std::string(mode) + " " + Names[i];
-            Expect(tid, out[i], expected[tid][i], name.c_str());
+            Expect(tid, out[i], expected[uniformRow.value_or(tid)][i], name.c_str());
         }
     }
 }
@@ -235,6 +234,35 @@ int main() {
             Check(ExpectedNoIeee, "IEEE=0");
             Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, true, false});
             Check(ExpectedIeee, "IEEE=1");
+            for (const std::uint32_t row : {6u, 12u, 26u}) {
+                for (const bool ieee : {false, true}) {
+                    Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, ieee, false}, Code, row);
+                    Check(ieee ? ExpectedIeee : ExpectedNoIeee, "uniform repair region", row);
+                }
+            }
+            for (const std::uint32_t factor : {0x40000000u, 0x3f000000u, 0u, 0x7f800000u}) {
+                std::vector<std::uint32_t> code(Code.begin(), Code.end());
+                code[24] = (code[24] & ~0x1ffu) | 0xffu;
+                code.insert(code.begin() + 25, factor);
+                code.insert(code.begin() + 26, 0x101a1af4u);
+                for (const bool ieee : {false, true}) {
+                    Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, ieee, false}, code);
+                    for (std::uint32_t tid = 0u; tid < Threads; ++tid) {
+                        const std::uint32_t source = Rows[tid][1];
+                        std::uint32_t expected = source;
+                        if (IsNan32(source)) {
+                            if (ieee) expected |= 0x00400000u;
+                        } else {
+                            const std::uint32_t input = (source & 0x7fffffffu) < 0x00800000u ? source & 0x80000000u : source;
+                            const std::uint32_t product = std::bit_cast<std::uint32_t>(std::bit_cast<float>(factor) * std::bit_cast<float>(input));
+                            expected = IsNan32(product) ? 0xffc00000u : product;
+                            if ((expected & 0x7fffffffu) < 0x00800000u) expected &= 0x80000000u;
+                        }
+                        if (!IsNan32(expected)) expected = std::bit_cast<std::uint32_t>(std::bit_cast<float>(expected) * 2.0f);
+                        Expect(tid, Output[tid * Results + 3u], expected, "literal multiplication chain");
+                    }
+                }
+            }
         }
         std::puts("f32 arithmetic nan tests passed");
         return 0;

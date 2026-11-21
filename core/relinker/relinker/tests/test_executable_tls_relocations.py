@@ -243,6 +243,17 @@ def main():
             assert result.returncode == 2 and error in result.stderr, (name, result.returncode, result.stderr)
             assert not output.exists(), name
 
+        undefined = "FAIL: TLS relocation names an undefined symbol that is not STT_TLS (offset 0x4700)"
+        for kind in (DTPMOD64, DTPOFF64, TPOFF64):
+            for info, symbol_name in ((0x10, IMPORT_NAME), (0x11, IMPORT_NAME), (0x12, IMPORT_NAME), (0x13, IMPORT_NAME), (0x1a, IMPORT_NAME), (0x1e, IMPORT_NAME), (0x03, 0)):
+                for flags, target in TARGETS.items():
+                    name = f"{target}-undefined-{kind}-{info:x}"
+                    data = image([(0x1000, kind, IMPORTED, 0)])
+                    struct.pack_into("<IB", data, 0x4900 + IMPORTED * 24, symbol_name, info)
+                    result, output = relink(relinker, directory, name, data, *flags)
+                    assert result.returncode == 2 and undefined in result.stderr, (name, result.returncode, result.stderr)
+                    assert not output.exists(), name
+
         empty_tls = "FAIL: TLS relocation in an executable without a non-empty PT_TLS segment (offset 0x4700)"
         for kind, addend in ((TPOFF64, 4), (DTPOFF64, 4), (DTPMOD64, 0)):
             for symbol in (NULL, TLS_SYMBOL):

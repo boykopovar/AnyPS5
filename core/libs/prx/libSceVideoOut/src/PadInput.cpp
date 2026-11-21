@@ -1,15 +1,23 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string_view>
+#include <filesystem>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
 #include "SDL.h"
 #include "prx/libSceVideoOut/include/PadInput.hpp"
+#include "prx/libSceVideoOut/include/DualSenseStatus.hpp"
+#include "prx/libScePad/include/PadTriggerEffect.hpp"
 #include "prx/libSceVideoOut/include/PadStatusSdl.hpp"
+#include "prx/libSceVideoOut/include/DualSenseHaptics.hpp"
+#include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
@@ -25,15 +33,66 @@
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include "prx/libSceVideoOut/include/HostVolumeInput.hpp"
 #include "prx/libScePad/include/HostVolumeSettings.hpp"
+#include "prx/libScePad/include/HostVolumeControl.hpp"
+#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 
-PadInput::PadInput() : PadInput(Pad::LoadInputMapping()) {
+namespace {
+
+constexpr auto DefaultControllerButtons = [] {
+    using Pad::PadButton;
+    std::array<PadButton, SDL_CONTROLLER_BUTTON_MAX> buttons{};
+    buttons[SDL_CONTROLLER_BUTTON_A] = PadButton::Cross;
+    buttons[SDL_CONTROLLER_BUTTON_B] = PadButton::Circle;
+    buttons[SDL_CONTROLLER_BUTTON_X] = PadButton::Square;
+    buttons[SDL_CONTROLLER_BUTTON_Y] = PadButton::Triangle;
+    buttons[SDL_CONTROLLER_BUTTON_BACK] = PadButton::TouchPad;
+    buttons[SDL_CONTROLLER_BUTTON_START] = PadButton::Options;
+    buttons[SDL_CONTROLLER_BUTTON_LEFTSTICK] = PadButton::L3;
+    buttons[SDL_CONTROLLER_BUTTON_RIGHTSTICK] = PadButton::R3;
+    buttons[SDL_CONTROLLER_BUTTON_LEFTSHOULDER] = PadButton::L1;
+    buttons[SDL_CONTROLLER_BUTTON_RIGHTSHOULDER] = PadButton::R1;
+    buttons[SDL_CONTROLLER_BUTTON_DPAD_UP] = PadButton::Up;
+    buttons[SDL_CONTROLLER_BUTTON_DPAD_RIGHT] = PadButton::Right;
+    buttons[SDL_CONTROLLER_BUTTON_DPAD_DOWN] = PadButton::Down;
+    buttons[SDL_CONTROLLER_BUTTON_DPAD_LEFT] = PadButton::Left;
+    buttons[SDL_CONTROLLER_BUTTON_TOUCHPAD] = PadButton::TouchPad;
+    return buttons;
+}();
+
+void stopRumble(SDL_GameController* controller) {
+    SDL_GameControllerRumble(controller, 0, 0, 0);
+    if (SDL_GameControllerHasRumbleTriggers(controller) == SDL_TRUE) SDL_GameControllerRumbleTriggers(controller, 0, 0, 0);
+}
+
+bool publishInputMapping(Pad::InputMappingStore& mappings, const std::string& titleId) {
+    Pad::InputConfiguration configuration;
+    std::string error;
+    if (!Pad::TryLoadInputMapping(titleId, configuration, error)) {
+        APS5_LOG_ERR("Pad: input mapping reload rejected, the previous mapping stays active: %s", error.c_str());
+        return false;
+    }
+    mappings.Publish(std::move(configuration));
+    return true;
+}
+
+std::string appTitleId() {
+    if (!std::filesystem::exists(ResolvePath_nid_no_patch("/app0/sce_sys/param.json")) && !std::filesystem::exists(ResolvePath_nid_no_patch("/app0/sce_sys/param.sfo"))) return {};
+    const auto titleId = GetAppTitleId_nid_postfix();
+    return std::string(titleId.value, std::find(titleId.value, titleId.value + sizeof(titleId.value), '\0'));
+}
+
+}
+
+PadInput::PadInput() : PadInput(Pad::LoadInputMapping(appTitleId())) {
     HostVolumeConfigureFromEnvironment_nid_no_patch();
+    startInputMappingWatch();
 }
 
 static_assert(PAD_MAX_CONTROLLERS == AgcDriver::PadStatusSlots, "the pad status panel lists one line per controller slot");
 
-PadInput::PadInput(Pad::InputConfiguration configuration) : keyboardMouse(std::move(configuration)), statusProvider{[this] { return statusSnapshot(); }}, port0Mode(Port0Presence::ConfiguredMode()), port0(port0Mode, false) {
+PadInput::PadInput(Pad::InputConfiguration configuration) : mappings(std::move(configuration)), appliedMapping(mappings.Snapshot()), keyboardMouse(*appliedMapping), statusProvider{[this] { return statusSnapshot(); }}, port0Mode(PadScriptActive_nid_postfix() ? Port0Presence::Mode::Default : Port0Presence::ConfiguredMode()), port0(port0Mode, false) {
     static_cast<void>(Pad::RumblePercent());
+    static_cast<void>(Pad::RumblePausesOnFocusLoss());
     identifyMode = Pad::IdentifyModeFromEnvironment();
     openAvailableControllers();
     port0 = Port0Presence::Presence(port0Mode, slots[0].controller != nullptr);
@@ -41,6 +100,8 @@ PadInput::PadInput(Pad::InputConfiguration configuration) : keyboardMouse(std::m
 }
 
 PadInput::~PadInput() {
+    mappingWatchStop = true;
+    if (mappingWatchThread.joinable()) mappingWatchThread.join();
     for (int i = 0; i < PAD_MAX_CONTROLLERS; ++i) {
         closeController(i);
     }
@@ -86,9 +147,11 @@ void PadInput::openController(int deviceIndex) {
     slots[slot].outputSequence = 0;
     slots[slot].outputState = {};
     slots[slot].outputPending = true;
+    slots[slot].rumbleLive = false;
     slots[slot].nextRumbleRefresh = {};
     slots[slot].lightBar.Reset();
     slots[slot].triggerEffect.Reset();
+    openStatus(slot);
     slots[slot].identify = Pad::IdentifyScheduler{};
     const char* name = SDL_GameControllerName(gc);
     slots[slot].kind = PadKindFromSdl(SDL_GameControllerGetType(gc));
@@ -109,6 +172,7 @@ void PadInput::openController(int deviceIndex) {
         PadSetPortConnected_nid_postfix(slot, true);
         UserServiceSetUserConnected_nid_postfix(slot, true);
     }
+    if (slot == 0) openHaptics(gc);
 }
 
 void PadInput::enableSensors(int slot) {
@@ -120,8 +184,106 @@ void PadInput::enableSensors(int slot) {
     if (SDL_GameControllerHasSensor(controller, SDL_SENSOR_GYRO) == SDL_TRUE) SDL_GameControllerSetSensorEnabled(controller, SDL_SENSOR_GYRO, wanted);
 }
 
+void PadInput::openStatus(int slot) {
+    if (slot < 0 || slot >= PAD_MAX_CONTROLLERS) return;
+    PadClearTriggerStatus_nid_postfix(slot);
+    SDL_GameController* controller = slots[slot].controller;
+    if (controller == nullptr || SDL_GameControllerGetType(controller) != SDL_CONTROLLER_TYPE_PS5) return;
+    const char* path = SDL_GameControllerPath(controller);
+    if (path == nullptr) return;
+    slots[slot].statusHid = SDL_hid_open_path(path, 0);
+    if (slots[slot].statusHid == nullptr) {
+        APS5_LOG_ERR("Pad: could not open the DualSense trigger state report (slot %d): %s", slot, SDL_GetError());
+    }
+}
+
+void PadInput::pollStatus(int slot) {
+    if (slot < 0 || slot >= PAD_MAX_CONTROLLERS || slots[slot].statusHid == nullptr) return;
+    std::array<std::uint8_t, 78> report{};
+    while (true) {
+        const int read = SDL_hid_read_timeout(slots[slot].statusHid, report.data(), report.size(), 0);
+        if (read == 0) return;
+        if (read < 0) {
+            APS5_LOG_ERR("Pad: could not read the DualSense trigger state report (slot %d): %s", slot, SDL_GetError());
+            closeStatus(slot);
+            return;
+        }
+        DualSenseStatus::TriggerStatus status;
+        if (!DualSenseStatus::Parse(report.data(), static_cast<std::size_t>(read), status)) continue;
+        PadPublishTriggerStatus_nid_postfix(slot, status.leftEffect, status.leftStatus, status.rightEffect, status.rightStatus);
+    }
+}
+
+void PadInput::closeStatus(int slot) {
+    if (slot < 0 || slot >= PAD_MAX_CONTROLLERS) return;
+    PadClearTriggerStatus_nid_postfix(slot);
+    if (slots[slot].statusHid == nullptr) return;
+    SDL_hid_close(slots[slot].statusHid);
+    slots[slot].statusHid = nullptr;
+}
+
+void PadInput::openHaptics(SDL_GameController* controller) {
+    if (controller == nullptr || SDL_GameControllerGetType(controller) != SDL_CONTROLLER_TYPE_PS5) return;
+    const char* path = SDL_GameControllerPath(controller);
+    if (path == nullptr) return;
+    bool bluetooth = false;
+    SDL_hid_device_info* devices = SDL_hid_enumerate(0x054c, 0);
+    for (auto* device = devices; device != nullptr; device = device->next) {
+        if (device->path != nullptr && std::strcmp(device->path, path) == 0) bluetooth = device->interface_number == -1;
+    }
+    SDL_hid_free_enumeration(devices);
+    if (!bluetooth) return;
+    haptics = SDL_hid_open_path(path, 0);
+    if (haptics == nullptr) {
+        APS5_LOG_ERR("Pad: could not open the Bluetooth DualSense for haptics: %s", SDL_GetError());
+        return;
+    }
+    hapticsRunning = true;
+    PadSetHapticStreamOpen_nid_postfix(true);
+    hapticsThread = std::thread([this] { streamHaptics(); });
+    APS5_LOG_CHARS_OUT("Pad: vibration ports play on the Bluetooth DualSense as haptics reports");
+}
+
+void PadInput::streamHaptics() {
+    std::uint8_t sequence = 0;
+    std::uint8_t counter = 0;
+    const auto write = [this](std::span<const std::uint8_t> report) {
+        if (SDL_hid_write(haptics, report.data(), report.size()) >= 0) return true;
+        APS5_LOG_ERR("Pad: a Bluetooth DualSense haptics report failed (%s); haptics stop until the controller reconnects", SDL_GetError());
+        hapticsRunning = false;
+        return false;
+    };
+    if (!write(DualSenseHaptics::PowerReport(sequence++))) return;
+    auto next = std::chrono::steady_clock::now() - DualSenseHaptics::ReportInterval;
+    while (hapticsRunning) {
+        std::array<std::int8_t, DualSenseHaptics::SamplesBytes> samples{};
+        if (!PadWaitTakeHapticBlock_nid_postfix(samples.data(), 50)) continue;
+        if (std::all_of(samples.begin(), samples.end(), [](std::int8_t sample) { return sample == 0; })) continue;
+        next = DualSenseHaptics::NextReport(next, std::chrono::steady_clock::now());
+        PreciseSleepUntil(next);
+        if (const auto due = hapticsReconfigureAt.load(); due != 0 && std::chrono::steady_clock::now().time_since_epoch().count() >= due) {
+            hapticsReconfigureAt = 0;
+            if (!write(DualSenseHaptics::PowerReport(sequence++))) return;
+        }
+        if (!write(DualSenseHaptics::Report(sequence++, counter++, samples))) return;
+    }
+}
+
+void PadInput::closeHaptics() {
+    if (haptics == nullptr) return;
+    PadSetHapticStreamOpen_nid_postfix(false);
+    hapticsRunning = false;
+    if (hapticsThread.joinable()) hapticsThread.join();
+    SDL_hid_close(haptics);
+    haptics = nullptr;
+    hapticsRumbled = false;
+    hapticsReconfigureAt = 0;
+}
+
 void PadInput::closeController(int slot) {
     if (slot < 0 || slot >= PAD_MAX_CONTROLLERS) return;
+    closeStatus(slot);
+    if (slot == 0) closeHaptics();
     if (slots[slot].controller == nullptr) return;
     SDL_GameControllerClose(slots[slot].controller);
     slots[slot].controller = nullptr;
@@ -184,6 +346,10 @@ void PadInput::applyOutput() {
         const auto triggers = Pad::MakeRumbleCommand(slots[slot].outputState.trigger[0].fallback, slots[slot].outputState.trigger[1].fallback, rumblePercent, 2000);
         const bool rumbling = motors.Active();
         const bool triggerRumble = triggers.Active();
+        const bool triggerTouched = slots[slot].outputState.triggerTouched[0] || slots[slot].outputState.triggerTouched[1];
+        TriggerEffectCache::Effect effect{};
+        if (isPs5 && triggerTouched) effect = PadTriggerEffect::Build(slots[slot].outputState);
+        const bool effectPending = isPs5 && triggerTouched && slots[slot].triggerEffect.NeedsSend(effect);
         if (SDL_GameControllerHasLED(controller) == SDL_TRUE) {
             struct PlayerLedColor { Uint8 r, g, b; };
             static constexpr PlayerLedColor defaultColors[4] = {
@@ -198,30 +364,75 @@ void PadInput::applyOutput() {
                 : LightBarPacer::Color{def.r, def.g, def.b};
             if (slots[slot].lightBar.Due(color, now)) slots[slot].lightBar.Result(color, now, SDL_GameControllerSetLED(controller, color[0], color[1], color[2]) == 0);
         }
-        const bool titleActive = slots[slot].outputPending || rumbling || triggerRumble;
+        const bool suppressed = Pad::RumbleSuppressed(Pad::RumblePausesOnFocusLoss(), HostVolumeFocused_nid_no_patch());
+        if (suppressed && slots[slot].rumbleLive) {
+            stopRumble(controller);
+            slots[slot].rumbleLive = false;
+        }
+        const bool titleActive = suppressed || slots[slot].outputPending || rumbling || triggerRumble;
         if (slots[slot].identify.Tick(now, titleActive, rumblePercent, [controller](std::uint16_t low, std::uint16_t high, std::uint32_t durationMs) {
                 SDL_GameControllerRumble(controller, low, high, durationMs);
             })) continue;
         if (!slots[slot].outputPending) {
-            if ((rumbling || (triggerRumble && !isPs5)) && now >= slots[slot].nextRumbleRefresh) slots[slot].outputPending = true;
+            if (effectPending || ((rumbling || (triggerRumble && !isPs5)) && now >= slots[slot].nextRumbleRefresh)) slots[slot].outputPending = true;
             else continue;
         }
-        slots[slot].outputPending = false;
-        slots[slot].nextRumbleRefresh = now + std::chrono::milliseconds(700);
-        SDL_GameControllerRumble(controller, motors.low, motors.high, motors.durationMs);
-        if (slots[slot].outputState.triggerTouched) {
+        if (!suppressed) {
+            slots[slot].outputPending = false;
+            slots[slot].nextRumbleRefresh = now + std::chrono::milliseconds(700);
+            SDL_GameControllerRumble(controller, motors.low, motors.high, motors.durationMs);
+            slots[slot].rumbleLive = rumbling || triggerRumble;
+        }
+        if (slot == 0 && haptics != nullptr) {
+            if (hapticsRumbled && !rumbling) hapticsReconfigureAt = (now + DualSenseHaptics::RumbleSettle).time_since_epoch().count();
+            hapticsRumbled = rumbling;
+        }
+        if (triggerTouched) {
             if (isPs5) {
-                TriggerEffectCache::Effect effect{};
-                effect[0] = 0x04 | 0x08;
-                std::memcpy(effect.data() + 10, slots[slot].outputState.trigger[1].effect, 11);
-                std::memcpy(effect.data() + 21, slots[slot].outputState.trigger[0].effect, 11);
                 if (slots[slot].triggerEffect.NeedsSend(effect)) {
                     slots[slot].triggerEffect.Result(effect, SDL_GameControllerSendEffect(controller, effect.data(), static_cast<int>(effect.size())) == 0);
                 }
-            } else if (SDL_GameControllerHasRumbleTriggers(controller) == SDL_TRUE) {
+            } else if (!suppressed && SDL_GameControllerHasRumbleTriggers(controller) == SDL_TRUE) {
                 SDL_GameControllerRumbleTriggers(controller, triggers.low, triggers.high, triggers.durationMs);
             }
         }
+    }
+}
+
+void PadInput::applyMappingSnapshot() {
+    auto snapshot = mappings.Snapshot();
+    if (snapshot == appliedMapping) return;
+    appliedMapping = snapshot;
+    keyboardMouse.Replace(*snapshot);
+    for (int slot = 0; slot < PAD_MAX_CONTROLLERS; ++slot) {
+        if (slots[slot].controller != nullptr) slots[slot].state = sampleController(slot);
+    }
+    static_cast<void>(keyboardMouse.PadChordRequests(slots[0].state.buttons));
+}
+
+void PadInput::reloadInputMapping() {
+    if (!publishInputMapping(mappings, appTitleId())) return;
+    applyMappingSnapshot();
+    APS5_LOG_CHARS_OUT("Pad: input mapping reloaded");
+}
+
+void PadInput::startInputMappingWatch() {
+    const char* enabled = std::getenv("ANYPS5_INPUT_WATCH");
+    if (enabled == nullptr || std::string_view(enabled) != "1") return;
+    auto titleId = appTitleId();
+    auto watch = Pad::InputMappingWatch(Pad::InputMappingFileStamp(titleId));
+    mappingWatchThread = std::thread([this, titleId = std::move(titleId), watch = std::move(watch)]() mutable {
+        watchInputMapping(titleId, std::move(watch));
+    });
+    APS5_LOG_CHARS_OUT("Pad: watching the input mapping for changes (ANYPS5_INPUT_WATCH=1)");
+}
+
+void PadInput::watchInputMapping(std::string titleId, Pad::InputMappingWatch watch) {
+    while (!mappingWatchStop) {
+        for (int slice = 0; slice < 10 && !mappingWatchStop; ++slice) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (mappingWatchStop) return;
+        if (!watch.Poll(Pad::InputMappingFileStamp(titleId))) continue;
+        if (publishInputMapping(mappings, titleId)) APS5_LOG_CHARS_OUT("Pad: input mapping reloaded from a file change");
     }
 }
 
@@ -237,36 +448,27 @@ PadInputState PadInput::sampleController(int slot) const {
     if (slot < 0 || slot >= PAD_MAX_CONTROLLERS) return result;
     SDL_GameController* controller = slots[slot].controller;
     if (controller == nullptr) return result;
-    const auto readButton = [controller](SDL_GameControllerButton button) {
-        return SDL_GameControllerGetButton(controller, button) != 0;
-    };
-    const auto addButton = [&result, &readButton](SDL_GameControllerButton source, Pad::PadButton button) {
-        if (readButton(source)) result.buttons |= static_cast<std::uint32_t>(button);
-    };
-    addButton(SDL_CONTROLLER_BUTTON_A, Pad::PadButton::Cross);
-    addButton(SDL_CONTROLLER_BUTTON_B, Pad::PadButton::Circle);
-    addButton(SDL_CONTROLLER_BUTTON_X, Pad::PadButton::Square);
-    addButton(SDL_CONTROLLER_BUTTON_Y, Pad::PadButton::Triangle);
-    addButton(SDL_CONTROLLER_BUTTON_LEFTSHOULDER, Pad::PadButton::L1);
-    addButton(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, Pad::PadButton::R1);
     const auto type = SDL_GameControllerGetType(controller);
-    const bool viewPressed = type != SDL_CONTROLLER_TYPE_PS4 && type != SDL_CONTROLLER_TYPE_PS5 && readButton(SDL_CONTROLLER_BUTTON_BACK);
-    if (viewPressed) result.buttons |= static_cast<std::uint32_t>(Pad::PadButton::TouchPad);
-    addButton(SDL_CONTROLLER_BUTTON_START, Pad::PadButton::Options);
-    addButton(SDL_CONTROLLER_BUTTON_LEFTSTICK, Pad::PadButton::L3);
-    addButton(SDL_CONTROLLER_BUTTON_RIGHTSTICK, Pad::PadButton::R3);
-    addButton(SDL_CONTROLLER_BUTTON_DPAD_UP, Pad::PadButton::Up);
-    addButton(SDL_CONTROLLER_BUTTON_DPAD_RIGHT, Pad::PadButton::Right);
-    addButton(SDL_CONTROLLER_BUTTON_DPAD_DOWN, Pad::PadButton::Down);
-    addButton(SDL_CONTROLLER_BUTTON_DPAD_LEFT, Pad::PadButton::Left);
-    addButton(SDL_CONTROLLER_BUTTON_TOUCHPAD, Pad::PadButton::TouchPad);
+    const bool hasPlayStationLayout = type == SDL_CONTROLLER_TYPE_PS4 || type == SDL_CONTROLLER_TYPE_PS5;
+    bool touchpadButtonPressed = false;
+    for (std::size_t index = 0; index < DefaultControllerButtons.size(); ++index) {
+        const auto source = static_cast<SDL_GameControllerButton>(index);
+        const auto defaultButton = source == SDL_CONTROLLER_BUTTON_BACK && hasPlayStationLayout
+            ? Pad::PadButton::None : DefaultControllerButtons[index];
+        const auto button = appliedMapping->controllerButtons[index].value_or(defaultButton);
+        if (button == Pad::PadButton::None || SDL_GameControllerGetButton(controller, source) == 0) continue;
+        result.buttons |= static_cast<std::uint32_t>(button);
+        touchpadButtonPressed |= button == Pad::PadButton::TouchPad && source != SDL_CONTROLLER_BUTTON_TOUCHPAD;
+    }
 
     const auto triggerValue = [controller](SDL_GameControllerAxis axis) {
         const auto value = std::clamp<int>(SDL_GameControllerGetAxis(controller, axis), 0, 32767);
         return static_cast<std::uint8_t>((value * 255 + 16383) / 32767);
     };
-    result.analogButtonsL2 = triggerValue(SDL_CONTROLLER_AXIS_TRIGGERLEFT);
-    result.analogButtonsR2 = triggerValue(SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+    result.analogButtonsL2 = (result.buttons & static_cast<std::uint32_t>(Pad::PadButton::L2)) != 0
+        ? 255 : triggerValue(SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+    result.analogButtonsR2 = (result.buttons & static_cast<std::uint32_t>(Pad::PadButton::R2)) != 0
+        ? 255 : triggerValue(SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
     if (result.analogButtonsL2 != 0) result.buttons |= static_cast<std::uint32_t>(Pad::PadButton::L2);
     if (result.analogButtonsR2 != 0) result.buttons |= static_cast<std::uint32_t>(Pad::PadButton::R2);
 
@@ -276,7 +478,7 @@ PadInputState PadInput::sampleController(int slot) const {
     const auto left = stick(SDL_CONTROLLER_AXIS_LEFTX, SDL_CONTROLLER_AXIS_LEFTY, keyboardMouse.Configuration().settings.leftStickDeadzonePercent);
     const auto right = stick(SDL_CONTROLLER_AXIS_RIGHTX, SDL_CONTROLLER_AXIS_RIGHTY, keyboardMouse.Configuration().settings.rightStickDeadzonePercent);
     result.sticks = {left[0], left[1], right[0], right[1]};
-    switch (SDL_GameControllerGetType(controller)) {
+    switch (type) {
         case SDL_CONTROLLER_TYPE_PS5: result.deviceKind = 1; break;
         case SDL_CONTROLLER_TYPE_PS4: result.deviceKind = 2; break;
         default: result.deviceKind = 3; break;
@@ -301,13 +503,14 @@ PadInputState PadInput::sampleController(int slot) const {
             result.touch[finger].y = static_cast<std::uint16_t>(std::clamp(y, 0.0f, 1.0f) * (kTouchPadHeight - 1));
         }
     }
-    if (viewPressed && !result.touch[0].active && !result.touch[1].active) {
+    if (touchpadButtonPressed && !result.touch[0].active && !result.touch[1].active) {
         result.touch[0] = {true, kTouchPadWidth / 2, kTouchPadHeight / 2, 0};
     }
     return result;
 }
 
 void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
+    applyMappingSnapshot();
     if (event.type == SDL_CONTROLLERDEVICEADDED) {
         openController(event.cdevice.which);
         return;
@@ -331,6 +534,7 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
         for (int slot = 0; slot < PAD_MAX_CONTROLLERS; ++slot) {
             if (slots[slot].controller != nullptr && slots[slot].instanceId == which) {
                 slots[slot].state = sampleController(slot);
+                if (slot == 0 && (event.type == SDL_CONTROLLERBUTTONDOWN || event.type == SDL_CONTROLLERBUTTONUP)) dispatchPadChords(window);
                 publish(window.FrameNumber(), slot);
                 return;
             }
@@ -353,23 +557,45 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     if (event.type == SDL_KEYDOWN && ImeCapturesKeyboard_nid_postfix()) return;
     if (event.type != SDL_KEYUP && event.type != SDL_MOUSEBUTTONUP && ModalDialogCapturesInput_nid_postfix()) return;
     keyboardMouse.SetTitleReadsMouse(MouseIsOpen_nid_no_patch());
+    static const bool mouseTouchpad = std::getenv("ANYPS5_MOUSE_TOUCHPAD") != nullptr && std::string_view(std::getenv("ANYPS5_MOUSE_TOUCHPAD")) == "1";
+    keyboardMouse.SetMouseTouchpad(mouseTouchpad);
+    static const bool mouseGyro = std::getenv("ANYPS5_MOUSE_GYRO") != nullptr && std::string_view(std::getenv("ANYPS5_MOUSE_GYRO")) == "1";
+    keyboardMouse.SetMouseGyro(mouseGyro);
+    int viewportWidth = 0;
+    int viewportHeight = 0;
+    if (window.Handle() != nullptr) SDL_GetWindowSize(window.Handle(), &viewportWidth, &viewportHeight);
+    keyboardMouse.SetViewport(viewportWidth, viewportHeight);
     const auto requests = keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now());
-    if (requests.toggleFullscreen && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) window.ToggleFullscreen();
-    if (requests.togglePerformanceOverlay && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) AgcDriverTogglePerformanceOverlay_nid_postfix();
-    if (requests.screenshot && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) AgcDriverRequestScreenshot_nid_postfix();
-    if (requests.showPadStatus && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) {
-        AgcDriverPadStatusShow_nid_postfix();
-        reportStatus();
-    }
-    if (window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) {
-        HostVolume volume;
-        if (ApplyHostVolumeRequests(requests, &volume)) APS5_LOG_ERR("%s", HostVolumeMessage(volume).c_str());
-    }
+    const bool targetsWindow = window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle());
+    applyRequests(requests, targetsWindow, window);
     if (requests.toggleMouse) setMouseMode(!keyboardMouse.MouseMode());
     if (event.type != SDL_MOUSEMOTION) publish(window.FrameNumber(), 0);
 }
 
+void PadInput::dispatchPadChords(DisplayWindow& window) {
+    if (ImeCapturesPad_nid_postfix() || ModalDialogCapturesInput_nid_postfix()) return;
+    const auto requests = keyboardMouse.PadChordRequests(slots[0].state.buttons);
+    const bool focused = window.Handle() != nullptr && SDL_GetKeyboardFocus() == window.Handle();
+    applyRequests(requests, focused, window);
+}
+
+void PadInput::applyRequests(const Pad::InputRequests& requests, bool windowFocused, DisplayWindow& window) {
+    if (requests.reloadInputMapping) reloadInputMapping();
+    if (requests.toggleFullscreen && windowFocused) window.ToggleFullscreen();
+    if (requests.togglePerformanceOverlay && windowFocused) AgcDriverTogglePerformanceOverlay_nid_postfix();
+    if (requests.screenshot && windowFocused) AgcDriverRequestScreenshot_nid_postfix();
+    if (requests.showPadStatus && windowFocused) {
+        AgcDriverPadStatusShow_nid_postfix();
+        reportStatus();
+    }
+    if (windowFocused) {
+        HostVolume volume;
+        if (ApplyHostVolumeRequests(requests, &volume)) APS5_LOG_ERR("%s", HostVolumeMessage(volume).c_str());
+    }
+}
+
 void PadInput::Update(const DisplayWindow& window) {
+    applyMappingSnapshot();
     if (!hostFocusSynced && window.Handle() != nullptr) {
         hostFocusSynced = true;
         HostVolume volume;
@@ -383,6 +609,9 @@ void PadInput::Update(const DisplayWindow& window) {
         }
     }
     if (anyController) SDL_GameControllerUpdate();
+    for (int slot = 0; slot < PAD_MAX_CONTROLLERS; ++slot) {
+        if (slots[slot].controller != nullptr) pollStatus(slot);
+    }
     updatePort0();
     reportStatus();
     applyOutput();
