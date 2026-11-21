@@ -469,7 +469,11 @@ void APS5_VABI _ZNSt3__111this_thread9sleep_forERKNS_6chrono8durationIxNS_5ratio
         for (;;) {
             const auto now = std::chrono::steady_clock::now();
             if (now >= deadline) break;
+#ifdef _WIN32
+            PreciseSleepHundredNanos(static_cast<unsigned long long>(std::chrono::ceil<PreciseHundredNanos>(deadline - now).count()));
+#else
             std::this_thread::sleep_for(deadline - now);
+#endif
         }
         remaining -= chunk;
     }
