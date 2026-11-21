@@ -90,15 +90,17 @@ inline bool CurrentGet(char* target) {
     return found;
 }
 
-inline char* ReadDir(char* target, void* handle, int* type) {
+inline char* ReadDir(char* target, void* handle, int* type, int* error = nullptr) {
     *type = TypeUnknown;
     GuestDirectoryEntry entry{};
     GuestDirectoryEntry* result = nullptr;
-    while (readdir_r_nid_postfix(handle, &entry, &result) == 0 && result) {
+    int status;
+    while ((status = readdir_r_nid_postfix(handle, &entry, &result)) == 0 && result) {
         if (IsDotEntry(entry.name)) continue;
         CopyName(target, entry.name);
         return target;
     }
+    if (error) *error = status;
     target[0] = '\0';
     return target;
 }
@@ -111,7 +113,7 @@ inline void* OpenDir(char* target, const char* path, int* error, int* type) {
         return nullptr;
     }
     *error = 0;
-    ReadDir(target, handle, type);
+    ReadDir(target, handle, type, error);
     if (target[0] != '\0') return handle;
     closedir_nid_postfix(handle);
     return nullptr;
