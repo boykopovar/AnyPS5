@@ -38,6 +38,7 @@ constexpr std::uint32_t AudioChunkSamples = 1024;
 constexpr std::uint32_t AudioMaxChannels = 8;
 constexpr std::uint32_t VideoDecodeAheadFrames = 4;
 constexpr std::uint32_t UnsyncedVideoDecodeAheadFrames = 12;
+constexpr std::uint32_t VideoHeldFrames = 4;
 constexpr std::size_t VideoPacketLimit = 30;
 constexpr std::size_t AudioPacketLimit = 8;
 constexpr std::size_t AudioOnlyPacketLimit = 30;
@@ -155,7 +156,7 @@ struct Decoder {
     std::deque<PacketItem> packets;
     std::uint64_t queuedBytes = 0;
     std::deque<Frame> frames;
-    std::vector<std::uint8_t*> free;
+    std::deque<std::uint8_t*> free;
     std::vector<std::uint8_t*> allocated;
     std::optional<Frame> current;
     std::deque<std::uint8_t*> handedOut;
@@ -297,7 +298,7 @@ public:
                 return result;
             }
         }
-        addVideoDecodeAheadBuffers();
+        addOptionalVideoBuffers();
         const auto start = startTime != 0 ? startTime : startOffset;
         startOffset = 0;
         seek(start);
@@ -709,10 +710,14 @@ private:
         return SCE_OK;
     }
 
-    void addVideoDecodeAheadBuffers() {
+    void addOptionalVideoBuffers() {
         if (video.stream < 0) return;
-        if (syncMode != SyncModeDefault && addVideoBuffers(UnsyncedVideoDecodeAheadFrames)) return;
-        addVideoBuffers(VideoDecodeAheadFrames);
+        if (syncMode != SyncModeDefault && addVideoBuffers(UnsyncedVideoDecodeAheadFrames)) {
+            if (addVideoBuffers(VideoHeldFrames)) video.retained = std::max<std::size_t>(video.retained, VideoHeldFrames);
+            return;
+        }
+        if (!addVideoBuffers(VideoDecodeAheadFrames)) return;
+        if (addVideoBuffers(VideoHeldFrames)) video.retained = std::max<std::size_t>(video.retained, VideoHeldFrames);
     }
 
     bool addVideoBuffers(std::uint32_t count) {
@@ -1008,8 +1013,8 @@ private:
         }
         if (stopping) return Acquire::Stopping;
         if (epoch < minEpoch) return Acquire::Stale;
-        buffer = decoder.free.back();
-        decoder.free.pop_back();
+        buffer = decoder.free.front();
+        decoder.free.pop_front();
         return Acquire::Buffer;
     }
 

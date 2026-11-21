@@ -1330,10 +1330,16 @@ void TestOptionalVideoBuffersRespectMemoryLimit() {
     run(2, 2, false);
     run(5, 2, false);
     run(6, 6, false);
-    run(14, 6, false);
+    run(9, 6, false);
+    run(10, 10, false);
+    run(14, 10, false);
     run(5, 2, true);
-    run(13, 6, true);
+    run(9, 6, true);
+    run(10, 10, true);
+    run(13, 10, true);
     run(14, 14, true);
+    run(17, 14, true);
+    run(18, 18, true);
     SetTextureLimit(std::nullopt);
 }
 
@@ -1351,11 +1357,9 @@ void TestFileReplacementAutoStart() {
     Check(!file.stream.is_open(), "replaced file left open");
 }
 
-void TestHandedOutFramesStayIntact() {
-    constexpr int Buffers = 6;
-    constexpr int Retained = Buffers - 2;
+void CheckHandedOutFramesStayIntact(int buffers, std::size_t retained) {
     AvPlayerInitData init = InitData(nullptr);
-    init.num_output_video_framebuffers = Buffers;
+    init.num_output_video_framebuffers = buffers;
     auto* player = sceAvPlayerInit(&init);
     Check(player != nullptr, "init failed");
     Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync mode rejected");
@@ -1370,15 +1374,20 @@ void TestHandedOutFramesStayIntact() {
         Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame for round " + std::to_string(round));
         CheckVideoFrame(frame);
         taken.push_back({static_cast<const std::uint8_t*>(frame.p_data), FrameIndex(frame.timestamp)});
-        if (taken.size() > Retained) taken.pop_front();
+        if (taken.size() > retained) taken.pop_front();
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
         for (std::size_t k = 0; k < taken.size(); ++k) {
-            for (std::size_t other = k + 1; other < taken.size(); ++other) Check(taken[k].luma != taken[other].luma, "one buffer handed out twice among the last " + std::to_string(Retained) + " frames");
+            for (std::size_t other = k + 1; other < taken.size(); ++other) Check(taken[k].luma != taken[other].luma, "one buffer handed out twice among the last " + std::to_string(retained) + " frames");
             const int index = taken[k].index;
             Check(std::abs(taken[k].luma[30 * Pitch + 10] - LumaFor(index)) <= 6, "frame " + std::to_string(index) + " was overwritten " + std::to_string(taken.size() - 1 - k) + " frames after it was handed out");
         }
     }
     Check(sceAvPlayerClose(player) == 0, "close failed");
+}
+
+void TestHandedOutFramesStayIntact() {
+    CheckHandedOutFramesStayIntact(6, 5);
+    CheckHandedOutFramesStayIntact(2, 5);
 }
 
 void TestPs5ExtendedInitLayout() {
@@ -1388,6 +1397,7 @@ void TestPs5ExtendedInitLayout() {
     constexpr std::size_t Ps5VideoFrameBuffers = 0x228;
     constexpr std::int32_t Buffers = 3;
     constexpr int DecodeAheadBuffers = 4;
+    constexpr int HeldFrameBuffers = 4;
     static_assert(offsetof(AvPlayerInitDataEx, audio_decoder_priority) == Ps5AutoStart);
     const auto run = [&](bool autoStart) {
         Events events;
@@ -1428,7 +1438,7 @@ void TestPs5ExtendedInitLayout() {
             Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video after the PS5 extended init failed");
             Check(sceAvPlayerStart(player) == 0, "start after the PS5 extended init failed");
         }
-        Check(WaitFor([&] { return TextureCount() == Buffers + DecodeAheadBuffers; }), "video frame buffer count at 0x228 of the PS5 extended init not used");
+        Check(WaitFor([&] { return TextureCount() == Buffers + DecodeAheadBuffers + HeldFrameBuffers; }), "video frame buffer count at 0x228 of the PS5 extended init not used");
         AvPlayerFrameInfoEx videoFrame{};
         Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &videoFrame) != 0; }), "PS5 playback did not deliver video");
         std::memcpy(&frameRate, reinterpret_cast<const std::uint8_t*>(&videoFrame) + 0x48, sizeof(frameRate));
