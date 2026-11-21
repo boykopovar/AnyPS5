@@ -65,6 +65,7 @@ struct ColorTarget {
     std::uint64_t cmaskAddress = 0;
     std::size_t cmaskBytes = 0;
     bool cmaskFastClear = false;
+    bool cmaskLinear = false;
     std::uint32_t eqaaFragments = 0;
     std::uint64_t surfaceAddress = 0;
     VkExtent2D surfaceExtent{};
@@ -100,7 +101,7 @@ struct ColorTarget {
             bytes == other.bytes && componentMapping == other.componentMapping && tileMode == other.tileMode && elementBytes == other.elementBytes &&
             packing == other.packing && dccAddress == other.dccAddress && chainDccAddress == other.chainDccAddress &&
             dccAlphaOnMsb == other.dccAlphaOnMsb && dccPipeAligned == other.dccPipeAligned && cmaskAddress == other.cmaskAddress &&
-            cmaskBytes == other.cmaskBytes && cmaskFastClear == other.cmaskFastClear && eqaaFragments == other.eqaaFragments &&
+            cmaskBytes == other.cmaskBytes && cmaskFastClear == other.cmaskFastClear && cmaskLinear == other.cmaskLinear && eqaaFragments == other.eqaaFragments &&
             surfaceAddress == other.surfaceAddress && surfaceExtent.width == other.surfaceExtent.width &&
             surfaceExtent.height == other.surfaceExtent.height && mipCount == other.mipCount && mip == other.mip && mipTail == other.mipTail &&
             clearWords == other.clearWords && slot == other.slot && depth == other.depth && depthSlice == other.depthSlice &&
