@@ -256,6 +256,22 @@ std::optional<std::uint32_t> FindGuestTextureFormat(VkFormat format, std::uint32
     return std::nullopt;
 }
 
+static std::uint32_t repeatedChannels(std::uint32_t guestFormat) {
+    if (IsConvertedTextureFormat(guestFormat)) return 4u;
+    switch (findFormatEntry(guestFormat).vkFormat) {
+        case VK_FORMAT_R8_UNORM: case VK_FORMAT_R8_SNORM: case VK_FORMAT_R8_USCALED: case VK_FORMAT_R8_SSCALED: case VK_FORMAT_R8_UINT: case VK_FORMAT_R8_SINT: case VK_FORMAT_R8_SRGB:
+        case VK_FORMAT_R16_UNORM: case VK_FORMAT_R16_SNORM: case VK_FORMAT_R16_USCALED: case VK_FORMAT_R16_SSCALED: case VK_FORMAT_R16_UINT: case VK_FORMAT_R16_SINT: case VK_FORMAT_R16_SFLOAT:
+        case VK_FORMAT_R32_UINT: case VK_FORMAT_R32_SINT: case VK_FORMAT_R32_SFLOAT:
+            return 1u;
+        case VK_FORMAT_R8G8_UNORM: case VK_FORMAT_R8G8_SNORM: case VK_FORMAT_R8G8_USCALED: case VK_FORMAT_R8G8_SSCALED: case VK_FORMAT_R8G8_UINT: case VK_FORMAT_R8G8_SINT: case VK_FORMAT_R8G8_SRGB:
+        case VK_FORMAT_R16G16_UNORM: case VK_FORMAT_R16G16_SNORM: case VK_FORMAT_R16G16_USCALED: case VK_FORMAT_R16G16_SSCALED: case VK_FORMAT_R16G16_UINT: case VK_FORMAT_R16G16_SINT: case VK_FORMAT_R16G16_SFLOAT:
+        case VK_FORMAT_R32G32_UINT: case VK_FORMAT_R32G32_SINT: case VK_FORMAT_R32G32_SFLOAT:
+            return 2u;
+        default:
+            return 4u;
+    }
+}
+
 VkComponentSwizzle TextureComponentChannel(std::uint32_t guestFormat, VkComponentSwizzle component) {
     if (component < VK_COMPONENT_SWIZZLE_R || component > VK_COMPONENT_SWIZZLE_A) return component;
     const auto index = static_cast<std::size_t>(component - VK_COMPONENT_SWIZZLE_R);
@@ -271,7 +287,10 @@ VkComponentSwizzle TextureComponentChannel(std::uint32_t guestFormat, VkComponen
         case 136: return argb[index];
         case 137: return grba[index];
         case 43: return bgra[index];
-        default: return component;
+        default: {
+            const auto channels = repeatedChannels(guestFormat);
+            return index < channels ? component : static_cast<VkComponentSwizzle>(VK_COMPONENT_SWIZZLE_R + index % channels);
+        }
     }
 }
 
