@@ -249,7 +249,8 @@ int main() {
     Require(sceNpMatching2GetUserInfoListA() == NotInitialized, "sceNpMatching2GetUserInfoListA", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2GrantRoomOwner() == NotInitialized, "sceNpMatching2GrantRoomOwner", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2JoinLobby() == NotInitialized, "sceNpMatching2JoinLobby", "a call before initialization did not return NOT_INITIALIZED");
-    Require(sceNpMatching2JoinRoomA() == NotInitialized, "sceNpMatching2JoinRoomA", "a call before initialization did not return NOT_INITIALIZED");
+    std::uint32_t joinRoomARequestId = 77;
+    Require(sceNpMatching2JoinRoomA(1, nullptr, nullptr, &joinRoomARequestId) == NotInitialized && joinRoomARequestId == 77, "sceNpMatching2JoinRoomA", "a null request before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2LeaveLobby() == NotInitialized, "sceNpMatching2LeaveLobby", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2RegisterManualUdpSignalingCallback() == NotInitialized, "sceNpMatching2RegisterManualUdpSignalingCallback", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2SendLobbyChatMessage() == NotInitialized, "sceNpMatching2SendLobbyChatMessage", "a call before initialization did not return NOT_INITIALIZED");
