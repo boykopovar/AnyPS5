@@ -100,6 +100,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     next.memoryOffsetDword = static_cast<std::uint32_t>(next.userDataRegisters.size());
     next.memoryOffsetCount = static_cast<std::uint32_t>(info.buffers.size());
     next.dispatchThreadLimit = info.dispatchThreadLimit;
+    next.dispatchGroupCount = info.dispatchGroupCount;
     if (info.buffers.size() > RuntimeAbi::BufferCapacity || info.images.size() > RuntimeAbi::ImageCapacity || info.samplers.size() > RuntimeAbi::SamplerHeapCapacity) fail("shader binding layout exceeds runtime metadata capacity");
     if (std::ranges::any_of(next.userDataRegisters, [](auto reg) { return reg >= RuntimeAbi::UserDataCapacity; })) fail("shader user data exceeds runtime ABI capacity");
     if (registrationModules) next.runtimeImageCount = static_cast<std::uint32_t>(info.images.size());
@@ -115,7 +116,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     }
     const auto pushSize = layout.pushConstantSizeBytes / 4u;
     const auto dataSize = stencilReplay && pushSize != 0u ? pushSize - 1u : pushSize;
-    next.pushDataStartDword = next.runtimeImageCount == 0u && next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= dataSize ? layout.pushConstantOffsetBytes / 4u : PushData::NoStart;
+    next.pushDataStartDword = next.runtimeImageCount == 0u && !next.dispatchGroupCount && next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= dataSize ? layout.pushConstantOffsetBytes / 4u : PushData::NoStart;
     if (stencilReplay) {
         const auto offset = next.UsesPushData() ? next.ShaderDataDwords() : 0u;
         if (offset >= pushSize) fail("stencil replay requires an unused push constant dword");

@@ -220,6 +220,11 @@ void ValidateValueReferences(const IrProgram& program, ShaderStageInputInfo inpu
                                 return Fail("typed invocation builtin component is out of range");
                             }
                             break;
+                        case StageInputKind::DispatchGroupCount:
+                            if (program.Resources().stage != IrShaderStage::Compute || component >= 2u) {
+                                return Fail("typed dispatch group count builtin is invalid");
+                            }
+                            break;
                         case StageInputKind::Parameter:
                         default:
                             return Fail("typed builtin kind is invalid");
@@ -456,6 +461,9 @@ void CollectBuiltinInputs(const IrProgram& program, ShaderInfo& info) {
                     break;
                 case StageInputKind::DispatchThreadLimit:
                     info.dispatchThreadLimit = true;
+                    break;
+                case StageInputKind::DispatchGroupCount:
+                    info.dispatchGroupCount = true;
                     break;
                 case StageInputKind::RasterPrimitive:
                     info.rasterPrimitive = true;

@@ -91,7 +91,9 @@ bool LaneSource(const IrProgram& program, const IrValue& value) {
         return true;
     case IrOpcode::GetBuiltin: {
         const auto* kind = value.Argument(0)->Resolve();
-        return kind == nullptr || !kind->HasImmediate() || static_cast<StageInputKind>(kind->ImmediateU32()) != StageInputKind::WorkgroupId;
+        if (kind == nullptr || !kind->HasImmediate()) return true;
+        const auto input = static_cast<StageInputKind>(kind->ImmediateU32());
+        return input != StageInputKind::WorkgroupId && input != StageInputKind::DispatchGroupCount;
     }
     default:
         break;

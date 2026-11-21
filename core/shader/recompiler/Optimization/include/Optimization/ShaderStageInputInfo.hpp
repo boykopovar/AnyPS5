@@ -148,6 +148,7 @@ struct ShaderVertexInputInfo {
 struct ShaderComputeInputInfo: ShaderWorkgroupInputInfo {
     bool groupId[3] = {false, false, false};
     bool partialGroups = false;
+    bool groupFold = false;
     int threadIdsNum = 0;
     int workgroupRegister = 0;
     bool tgSizeEn = false;
