@@ -1170,13 +1170,16 @@ def report(base, head):
     lines = compare("System libraries", "Library", "functions", base["libraries"], head["libraries"])
     lines += library_report(base["libraries"], head["libraries"])
     lines += compare("GPU shader instructions", "Encoding", "instructions", base["shaders"], head["shaders"])
-    before = base.get("shader_source", {}).get("profiles", {}).get("gfx1013")
-    after = head.get("shader_source", {}).get("profiles", {}).get("gfx1013")
-    if after and (not before or before["instructions"] != after["instructions"] or before["dpp"] != after["dpp"]):
-        instructions = after["instructions"]
+    before = base.get("shader_source", {}).get("profiles", {}).get("gfx1013") or {}
+    after = head.get("shader_source", {}).get("profiles", {}).get("gfx1013") or {}
+    if any(before.get(field) != after.get(field) for field in ("instructions", "dpp")):
         previous = f'{before["instructions"]["decoded"]}/{before["instructions"]["total"]}' if before else "Not measured"
+        current = "Not measured"
+        if after:
+            instructions = after["instructions"]
+            current = f'{instructions["decoded"]}/{instructions["total"]} ({shader_source_percent(after)}%)'
         lines += ["#### gfx1013 reference shader forms", "", "| Before | After |", "| - | - |",
-                  f'| {previous} | {instructions["decoded"]}/{instructions["total"]} ({shader_source_percent(after)}%) |', ""]
+                  f"| {previous} | {current} |", ""]
     return "\n".join(lines)
 
 

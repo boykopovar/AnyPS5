@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -852,6 +853,24 @@ class ProgressTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, 2)
             self.assertIn("--compare does not combine with --module or --json", stderr.getvalue())
 
+
+    def test_compare_reports_when_gfx1013_measurement_disappears(self):
+        snapshot = self.report_snapshot()
+        profile = {"instructions": {"total": 5, "decoded": 3, "translated": 1},
+                   "dpp": {"total": 2, "decoded": 1}}
+        measured = {**snapshot, "shader_source": {"profiles": {"gfx1013": profile}}}
+        with tempfile.TemporaryDirectory() as directory:
+            base, head = (Path(directory) / name for name in ("base.json", "head.json"))
+            base.write_text(json.dumps(measured), encoding="utf-8")
+            head.write_text(json.dumps(snapshot), encoding="utf-8")
+            command = [sys.executable, str(Path(progress.__file__)), "--compare"]
+            removed = subprocess.run([*command, str(base), str(head)], check=True, capture_output=True, text=True, timeout=10)
+            self.assertIn("#### gfx1013 reference shader forms", removed.stdout)
+            self.assertIn("| 3/5 | Not measured |", removed.stdout)
+            added = subprocess.run([*command, str(head), str(base)], check=True, capture_output=True, text=True, timeout=10)
+            self.assertIn("| Not measured | 3/5 (60.0%) |", added.stdout)
+            unchanged = subprocess.run([*command, str(base), str(base)], check=True, capture_output=True, text=True, timeout=10)
+            self.assertEqual(unchanged.stdout, "")
 
     def test_compare_names_a_snapshot_it_cannot_read(self):
         with tempfile.TemporaryDirectory() as directory:
