@@ -151,6 +151,18 @@ void PointsAndContours() {
     Require(FT_GlyphLoader_CheckPoints_nid_postfix(loader, 0xFFFFFFFF, 0) == 0x0A && loader->max_points == maxPoints, "CheckPoints rejects the largest point count");
     Require(FT_GlyphLoader_CheckPoints_nid_postfix(loader, 0, 0xFFFFFFFD) == 0x0A && loader->max_contours == 4, "CheckPoints rejects a contour count that wraps the total to zero");
     Require(FT_GlyphLoader_CheckPoints_nid_postfix(loader, 9, 0x7FFD) == 0x0A && loader->max_points == maxPoints && loader->max_contours == 4, "CheckPoints grows nothing when the contours are too large");
+    const std::uint16_t basePoints = loader->base.outline.n_points;
+    const std::uint16_t baseContours = loader->base.outline.n_contours;
+    loader->base.outline.n_points = 0x7FFF;
+    loader->current.outline.n_points = 0x7FFF;
+    Require(FT_GlyphLoader_CheckPoints_nid_postfix(loader, 0xFFFFFFFF, 0) == 0x0A && loader->max_points == maxPoints, "CheckPoints rejects two 0x7FFF point counts plus the largest request");
+    loader->base.outline.n_points = basePoints;
+    loader->current.outline.n_points = 0;
+    loader->base.outline.n_contours = 0x7FFF;
+    loader->current.outline.n_contours = 0x7FFF;
+    Require(FT_GlyphLoader_CheckPoints_nid_postfix(loader, 0, 0xFFFFFFFF) == 0x0A && loader->max_contours == 4, "CheckPoints rejects two 0x7FFF contour counts plus the largest request");
+    loader->base.outline.n_contours = baseContours;
+    loader->current.outline.n_contours = 0;
     Require(recorder.reallocs == pointReallocs && recorder.allocs == pointAllocs, "rejected point and contour counts do not allocate");
 
     recorder.fail = true;

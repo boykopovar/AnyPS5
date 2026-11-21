@@ -21,7 +21,7 @@ constexpr std::uint32_t OutlinePointsMax = 0x7FFF;
 constexpr std::uint32_t OutlineContoursMax = 0x7FFF;
 constexpr std::int64_t SubGlyphsMax = 0x7FFFFFFF / static_cast<std::int64_t>(sizeof(GuestSubGlyphRec));
 
-std::int32_t Count(std::uint16_t value) {
+std::int64_t Count(std::uint16_t value) {
     return static_cast<std::int16_t>(value);
 }
 
