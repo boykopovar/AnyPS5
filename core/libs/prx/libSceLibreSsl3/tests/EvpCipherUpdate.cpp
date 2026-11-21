@@ -155,9 +155,37 @@ void CheckInvalidState() {
     auto oddContext = Context(odd, 1);
     const auto plain = Plain(16);
     std::array<unsigned char, 32> out{};
-    int written = 77;
+    int written = 0x5a5a5a5a;
     Reset();
-    Require(EVP_EncryptUpdate_nid_disambig1_nid_postfix(&oddContext, out.data(), &written, plain.data(), 12) == 0 && written == 0 && record.calls == 0);
+    bool threw = false;
+    try {
+        EVP_EncryptUpdate_nid_disambig1_nid_postfix(&oddContext, out.data(), &written, plain.data(), 12);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && written == 0x5a5a5a5a && record.calls == 0);
+
+    const auto zero = Cipher(0, CipherModeCbc, BlockCipher);
+    auto zeroContext = Context(zero, 1);
+    written = 0x5a5a5a5a;
+    threw = false;
+    try {
+        EVP_CipherUpdate_nid_disambig1_nid_postfix(&zeroContext, out.data(), &written, plain.data(), 16);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && written == 0x5a5a5a5a && record.calls == 0);
+
+    const auto huge = Cipher(64, CipherModeCbc, BlockCipher);
+    auto hugeContext = Context(huge, 1);
+    written = 0x5a5a5a5a;
+    threw = false;
+    try {
+        EVP_DecryptUpdate_nid_disambig1_nid_postfix(&hugeContext, out.data(), &written, plain.data(), 16);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && written == 0x5a5a5a5a && record.calls == 0);
 
     const auto block = Cipher(16, CipherModeCbc, BlockCipher);
     auto corrupt = Context(block, 1);
@@ -167,7 +195,7 @@ void CheckInvalidState() {
     Require(EVP_EncryptUpdate_nid_disambig1_nid_postfix(&corrupt, out.data(), &written, plain.data(), 3) == 0 && written == 0 && record.calls == 0);
     Require(ERR_get_error_nid_postfix() == BadBlockLengthError && ERR_get_error_nid_postfix() == 0);
 
-    bool threw = false;
+    threw = false;
     try {
         EVP_EncryptUpdate_nid_disambig1_nid_postfix(nullptr, out.data(), &written, plain.data(), 1);
     } catch (const std::invalid_argument&) {
