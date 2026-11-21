@@ -62,6 +62,9 @@ void RequireNotices() {
     PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
     ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
     Require(sceNpSnsFacebookDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceNpSnsFacebookDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(!PsnNoticeShown());
     Require(sceNpSnsFacebookDialogOpen(&param) == 0);
     Require(PsnNoticeShown());
@@ -93,6 +96,9 @@ int main() {
     Require(sceNpSnsFacebookDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceNpSnsFacebookDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceNpSnsFacebookDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceNpSnsFacebookDialogGetResult(result) == kErrNotFinished);
 
     Require(sceNpSnsFacebookDialogOpen(&param) == 0);
