@@ -13,9 +13,6 @@ agcbuild_AcbDispatchIndirect_c	throw	AnyPS5 throws for arguments the console enc
 agcbuild_AcbDmaData_a	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
 agcbuild_AcbDmaData_b	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
 agcbuild_AcbDmaData_c	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
-agcbuild_AcbInitializeDefaultHardwareState_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbInitializeDefaultHardwareState_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbInitializeDefaultHardwareState_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbMemSemaphore_a	throw	the operation argument changes the control word; not modelled
 agcbuild_AcbMemSemaphore_b	throw	the operation argument changes the control word; not modelled
 agcbuild_AcbMemSemaphore_c	throw	the operation argument changes the control word; not modelled
@@ -25,7 +22,7 @@ agcbuild_AcbPopMarker_c	diff	the console writes a SET_UCONFIG_REG 0x342 tag wher
 agcbuild_AcbPrimeUtcl2_a	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
 agcbuild_AcbPrimeUtcl2_b	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
 agcbuild_AcbPrimeUtcl2_c	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
-agcbuild_AcbResetQueue_b	diff	the packet differs from the console's; not yet analysed
+agcbuild_AcbResetQueue_b	throw	the console returns a packet for instance 2; only the two bundled compatibility-module context descriptors are modelled, and retail instance bounds and state are unknown
 agcbuild_AcbSetFlip_a	diff	the console returns null and writes nothing for these arguments
 agcbuild_AcbSetFlip_b	diff	the console returns null and writes nothing for these arguments
 agcbuild_AcbSetFlip_c	diff	the console returns null and writes nothing for these arguments

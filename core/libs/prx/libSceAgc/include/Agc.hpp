@@ -14,6 +14,5 @@ std::uint32_t* APS5_VABI sceAgcDcbSetMarkerSpan(CommandBuffer* buffer, const cha
 int APS5_VABI sceAgcSetSemaphoreMemory(void* memory, std::uint64_t size);
 std::uint32_t* APS5_VABI sceAgcCbMemsetExclusive(CommandBuffer* buffer, void* destination, const void* pattern, std::uint64_t size);
 
-int APS5_VABI sceAgcAcbInitializeDefaultHardwareState();
 
 }
