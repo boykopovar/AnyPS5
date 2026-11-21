@@ -479,7 +479,6 @@ struct LeftOut {
 };
 
 constexpr LeftOut DirectedRoundingLeftOut[] = {
-    {0x381ffffff0000000ull, 0xffu},
     {0x47efffffe0000000ull, 0x44u},
 };
 

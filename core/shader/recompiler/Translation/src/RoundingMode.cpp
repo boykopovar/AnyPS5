@@ -147,7 +147,7 @@ RoundingUse RoundingUseOf(RdnaOpcode opcode) {
     case RdnaOpcode::VInterpP2F32:
         return {round32, RoundingUseKind::Unmodelled};
     case RdnaOpcode::VCvtF32F64:
-        return {round32 | denorm32Out, RoundingUseKind::Unmodelled};
+        return {round32 | denorm32Out | denorm1664In, RoundingUseKind::Directed32};
     case RdnaOpcode::VAddF16:
     case RdnaOpcode::VSubF16:
     case RdnaOpcode::VSubrevF16:
