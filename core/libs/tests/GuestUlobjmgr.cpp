@@ -1,4 +1,5 @@
 #include "prx/ulobjmgr/include/Api.hpp"
+#include "prx/ulobjmgr/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
@@ -6,7 +7,9 @@
 
 namespace {
 
+constexpr int enoent = 2;
 constexpr int efault = 14;
+constexpr int ebusy = 16;
 constexpr int einval = 22;
 
 void Require(bool value) { if (!value) std::abort(); }
@@ -57,4 +60,15 @@ int main() {
     Require(_sceUlobjmgrRegisterObject_nid_postfix(std::numeric_limits<std::uint64_t>::max(), std::numeric_limits<std::int32_t>::max(), nidPair) == 0);
     Require(nidPair[0] == 0 && nidPair[1] == 0x55555555u);
     Require(_sceUlobjmgrUnregisterObject_nid_postfix(nidPair[0]) == 0);
+
+    Require(ulobjmgrUnknown_HZ9Q2c_plus_4BU4_nid_no_patch() == enoent);
+    Require(ulobjmgrUnknown_SweJO7t3pkk_nid_no_patch(0) == einval);
+    Require(ulobjmgrUnknown_HZ9Q2c_plus_4BU4_nid_no_patch() == enoent);
+    Require(ulobjmgrUnknown_SweJO7t3pkk_nid_no_patch(0x1000) == 0);
+    Require(ulobjmgrUnknown_SweJO7t3pkk_nid_no_patch(0x2000) == ebusy);
+    Require(ulobjmgrUnknown_SweJO7t3pkk_nid_no_patch(0) == einval);
+    Require(ulobjmgrUnknown_HZ9Q2c_plus_4BU4_nid_no_patch() == 0);
+    Require(ulobjmgrUnknown_HZ9Q2c_plus_4BU4_nid_no_patch() == enoent);
+    Require(ulobjmgrUnknown_SweJO7t3pkk_nid_no_patch(std::numeric_limits<std::uint64_t>::max()) == 0);
+    Require(ulobjmgrUnknown_HZ9Q2c_plus_4BU4_nid_no_patch() == 0);
 }
