@@ -41,6 +41,7 @@
 #include "prx/libSceNKWebKit/include/SecurityOriginExports.hpp"
 #include "prx/libSceNKWebKit/include/SQLiteDatabaseTrackerExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
+#include "prx/libSceNKWebKit/include/WebCoreStaticStateExports.hpp"
 #include "prx/libSceNKWebKit/include/ColorSpaceExports.hpp"
 #include "prx/libSceNKWebKit/include/PalCryptoDigestExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreDumpExports.hpp"
