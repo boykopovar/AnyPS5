@@ -1,4 +1,5 @@
 #include "prx/libSceDiscMap/include/Api.hpp"
+#include "prx/libSceDiscMap/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdint>
@@ -33,6 +34,10 @@ int main() {
     Require(sceDiscMapUnknown_fJgP_plus_wqifno("/app0/data.bin", 0x8000, 0x10000, &location, &lba, &lbaCount) == noBitmapInfo, "fJgP+wqifno did not report the missing bitmap");
     Require(location == -1 && lba == -1 && lbaCount == -1, "fJgP+wqifno wrote an output");
     Require(sceDiscMapUnknown_fJgP_plus_wqifno(nullptr, -2, 0, nullptr, nullptr, nullptr) == noBitmapInfo, "fJgP+wqifno with null arguments did not report the missing bitmap");
+    std::int64_t requested = -1;
+    Require(libSceDiscMapUnknown_5_plus_vOlukvkfg_nid_no_patch(0x101, 0x8000, 0x10000, &requested) == noBitmapInfo, "5+vOlukvkfg did not report the missing bitmap");
+    Require(requested == -1, "5+vOlukvkfg wrote its output");
+    Require(libSceDiscMapUnknown_5_plus_vOlukvkfg_nid_no_patch(~0ull, -2, -1, nullptr) == noBitmapInfo, "5+vOlukvkfg with invalid arguments did not report the missing bitmap");
     std::uint64_t ret1 = 0x5a5a5a5a5a5a5a5aull;
     std::uint64_t ret2 = 0x5a5a5a5a5a5a5a5aull;
     Require(sceDiscMapGetPackageSize(0, &ret1, &ret2) == noBitmapInfo, "sceDiscMapGetPackageSize did not report missing bitmap");
