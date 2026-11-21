@@ -1,0 +1,9 @@
+# libSceNKWebKitRequirements
+
+## change 9 pending exports in
+
+- 7 pending exports in [Export.cpp](../../../core/libs/prx/libSceNKWebKitRequirements/Export.cpp) are present in the [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs) inventory. Their prototypes and behavior are unverified. They use the no-parameter import-resolution convention and throw through `NotImplemented_nid_no_patch`; these declarations make no ABI or behavior claim. The other two, `wpe_pasteboard_string_initialize` and `wpe_pasteboard_string_free`, are implemented from bundled libwpe in [Wpe.cpp](../../../core/libs/prx/libSceNKWebKitRequirements/Wpe.cpp); see Functional below.
+
+## add Functional
+
+- [WPE pasteboard string lifetime](../../../core/libs/prx/libSceNKWebKitRequirements/Wpe.cpp) - `wpe_pasteboard_string_initialize` and `wpe_pasteboard_string_free` follow the LP64 descriptor, allocate-once and clear-on-free contract of bundled libwpe 1.14.0 [pasteboard.h](https://github.com/WebPlatformForEmbedded/libwpe/blob/b90a8396864c9824a43838a5879f6ab01420c69e/include/wpe/pasteboard.h) and [pasteboard.c](https://github.com/WebPlatformForEmbedded/libwpe/blob/b90a8396864c9824a43838a5879f6ab01420c69e/src/pasteboard.c). The string data is allocated with the guest `calloc` and released with the guest `free`, and contents cross through checked guest copies with `errno` preserved. The console ABI, the allocator's failure behavior and the console's invalid-pointer behavior are unmeasured; an unreadable or unwritable descriptor or contents, and a failed allocation, throw instead. The console's `wpe_alloc_fail` aborts on allocation failure. `wpe_pasteboard_get_singleton`, `wpe_pasteboard_get_types`, `wpe_pasteboard_get_string`, `wpe_pasteboard_write` and `wpe_pasteboard_string_vector_free` still throw: they need a pasteboard backend and provider loading the host does not have. Closes when: compared with the console.

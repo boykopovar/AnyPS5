@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -98,6 +100,42 @@ int Check(const char* name, Function function, const Case* cases, std::size_t co
     return failures;
 }
 
+int CheckPasteboardString() {
+    NKWebKit::WpePasteboardString string{};
+    char contents[] = {'a', '\0', 'b'};
+    constexpr char expected[] = {'a', '\0', 'b'};
+    wpe_pasteboard_string_initialize(&string, contents, sizeof(contents));
+    char* allocation = string.data;
+    contents[0] = 'c';
+    wpe_pasteboard_string_initialize(&string, "d", 1);
+    const bool preserved = string.data && string.data != contents && string.data == allocation &&
+        string.length == sizeof(expected) && std::memcmp(string.data, expected, sizeof(expected)) == 0;
+    wpe_pasteboard_string_free(&string);
+    const bool cleared = !string.data && string.length == 0;
+    wpe_pasteboard_string_free(&string);
+    wpe_pasteboard_string_initialize(&string, nullptr, 0);
+    const bool empty = string.length == 0;
+    wpe_pasteboard_string_free(&string);
+    bool rejectedString = false;
+    try {
+        wpe_pasteboard_string_initialize(nullptr, "a", 1);
+    } catch (const std::invalid_argument&) {
+        rejectedString = true;
+    }
+    bool rejectedContents = false;
+    try {
+        wpe_pasteboard_string_initialize(&string, nullptr, 1);
+    } catch (const std::invalid_argument&) {
+        rejectedContents = true;
+    }
+    const bool untouched = !string.data && string.length == 0;
+    if (!preserved || !cleared || !empty || !untouched || !rejectedString || !rejectedContents) {
+        std::fprintf(stderr, "WPE pasteboard string lifecycle failed.\n");
+        return 1;
+    }
+    return 0;
+}
+
 } // namespace
 
 int main() {
@@ -105,6 +143,7 @@ int main() {
         sizeof(KeyCodeToUnicode) / sizeof(KeyCodeToUnicode[0]));
     failures += Check("wpe_unicode_to_key_code", wpe_unicode_to_key_code_nid_postfix, UnicodeToKeyCode,
         sizeof(UnicodeToKeyCode) / sizeof(UnicodeToKeyCode[0]));
+    failures += CheckPasteboardString();
     if (failures != 0) {
         std::fprintf(stderr, "%d WPE key code cases failed\n", failures);
         return EXIT_FAILURE;
