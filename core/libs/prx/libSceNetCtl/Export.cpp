@@ -1377,6 +1377,7 @@ int APS5_VABI sceNetCtlUnregisterCallbackV6IpcInt(int callbackId) {
 }
 
 int APS5_VABI sceNetCtlGetResultV6(int event_type, int* error_code) {
+    if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!error_code) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     if (event_type < NET_CTL_EVENT_DISCONNECTED || event_type > NET_CTL_EVENT_IPOBTAINED) {
         throw std::runtime_error("sceNetCtlGetResultV6: event type " + std::to_string(event_type) + " is not implemented");
