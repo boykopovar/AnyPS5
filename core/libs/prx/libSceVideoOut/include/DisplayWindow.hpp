@@ -4,11 +4,29 @@
 #include "prx/libSceVideoOut/include/HostFullscreen.hpp"
 #include <cstdint>
 #include <memory>
+#include <string>
 #include "SDL.h"
 
 inline constexpr std::uint32_t DisplayWindowMinimumWidth = 320;
 inline constexpr std::uint32_t DisplayWindowMinimumHeight = 180;
 inline constexpr std::uint32_t DisplayWindowInitialSizePercent = 60;
+
+namespace frame_watchdog {
+
+void Beat() noexcept;
+bool ParseHangSeconds(const char* text, std::uint32_t& seconds, std::string& error);
+
+struct HangState {
+    std::int64_t beat = 0;
+    bool reported = false;
+};
+
+bool HangReportDue(HangState& state, std::int64_t beat, std::int64_t now, std::int64_t thresholdNanoseconds);
+void Start(std::uint32_t seconds);
+void Stop() noexcept;
+void StartFromEnvironment();
+
+}
 
 class DisplayWindow {
 public:
