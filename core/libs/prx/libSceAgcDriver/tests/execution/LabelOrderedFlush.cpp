@@ -13,6 +13,7 @@
 #endif
 #include <windows.h>
 #else
+#include <cstdlib>
 #include <sys/mman.h>
 #endif
 #include <algorithm>
@@ -216,6 +217,9 @@ void RefreshAfterStore(const Surface& surface) {
 
 int main(int argc, char** argv) {
     try {
+#if defined(__APPLE__) || defined(__linux__)
+        Require(setenv("APS5_NO_LABEL_READ_TRAP", "1", 1) == 0, "label ordered flush: the label read traps could not be switched off");
+#endif
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;

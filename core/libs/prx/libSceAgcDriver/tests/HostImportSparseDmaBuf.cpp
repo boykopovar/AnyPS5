@@ -347,6 +347,11 @@ void ImportsASmallRangeForVertexAndIndexInput() {
     const auto usage = mock.usages.at(import->buffer);
     Expect((usage & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) != 0, "a chunked import cannot be bound as a vertex buffer");
     Expect((usage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT) != 0, "a chunked import cannot be bound as an index buffer");
+    constexpr std::uint64_t page = 4096;
+    auto noHostPointerTraps = context;
+    noHostPointerTraps.readTrapsOverHostPointerImports = false;
+    Expect(ReadTrappableHostImportCovers(noHostPointerTraps, range.Address() + 5 * page, 2 * page, page), "a range under a dma-buf import was not trappable on a driver whose host pointer imports cannot keep read traps");
+    Expect(!ReadTrappableHostImportCovers(noHostPointerTraps, range.Address() + bytes - page, 2 * page, page), "a range past its dma-buf import was trappable");
 }
 
 void ImportsALargeRangeAsOneSparseBuffer() {
