@@ -6,6 +6,8 @@ if(BUILD_TESTING AND WIN32)
     add_test(NAME agc_page_states COMMAND agc_page_state_tests)
     add_test(NAME agc_page_state_metadata COMMAND agc_page_state_tests --metadata)
     add_test(NAME agc_page_state_runs COMMAND agc_page_state_tests --runs)
-    set_tests_properties(agc_page_states agc_page_state_metadata agc_page_state_runs PROPERTIES
+    add_test(NAME agc_page_state_host_region COMMAND agc_page_state_tests --host-region)
+    set_tests_properties(agc_page_states agc_page_state_metadata agc_page_state_runs agc_page_state_host_region PROPERTIES
         TIMEOUT 30 ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    set_tests_properties(agc_page_state_host_region PROPERTIES SKIP_RETURN_CODE 77)
 endif()

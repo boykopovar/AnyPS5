@@ -233,11 +233,41 @@ void CheckRuns() {
     Require(!DescribeCommitted(edgeFirst, edgePages * page + Unit, true).whole && CommittedRanges(edgeFirst, edgePages * page + Unit, true) == edgeRun, "a run into an unallocated chunk was reported past its committed pages");
     std::puts("page-state block scans across 64-page, 512-page and sparse-chunk boundaries passed");
 }
+
+int CheckHostRegion() {
+    constexpr std::size_t page = 4096;
+    auto* block = static_cast<std::byte*>(HeapAlloc(GetProcessHeap(), 0, 4 * page));
+    Require(block != nullptr, "cannot allocate a host-region fixture");
+    auto* readable = reinterpret_cast<std::byte*>((reinterpret_cast<std::uintptr_t>(block) + page - 1) & ~static_cast<std::uintptr_t>(page - 1));
+    auto* reserved = readable + page;
+    if (!GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(reinterpret_cast<std::uintptr_t>(readable), 2 * page)) {
+        HeapFree(GetProcessHeap(), 0, block);
+        std::puts("the process heap is outside the guest arena's host regions");
+        return 77;
+    }
+    Require(VirtualFree(reserved, page, MEM_DECOMMIT) != FALSE, "cannot decommit the host-region fixture");
+    const bool accessible = Accessible(readable, page, true);
+    const bool decommitted = !Accessible(reserved, page);
+    Require(VirtualAlloc(reserved, page, MEM_COMMIT, PAGE_READWRITE) == reserved, "cannot commit the host-region fixture");
+    const bool committed = Accessible(reserved, page, true);
+    DWORD original = 0;
+    Require(VirtualProtect(readable, page, PAGE_NOACCESS, &original) != FALSE, "cannot protect the host-region fixture");
+    const bool hidden = !Accessible(readable, page);
+    Require(VirtualProtect(readable, page, original, &original) != FALSE, "cannot restore the host-region fixture");
+    HeapFree(GetProcessHeap(), 0, block);
+    Require(accessible, "a committed host-region page was inaccessible");
+    Require(decommitted, "a decommitted host-region page was accessible");
+    Require(committed, "a host-region page committed again kept its inaccessible state");
+    Require(hidden, "a host-region page made no-access kept its accessible state");
+    std::puts("page states of host regions in the guest arena follow protection changes");
+    return 0;
+}
 }
 
 int main(int argc, char** argv) {
     try {
         Require(GuestArena::GuestArenaAvailable_nid_postfix(), "page-state fixture needs the guest arena");
+        if (argc == 2 && std::string_view(argv[1]) == "--host-region") return CheckHostRegion();
         if (argc == 2 && std::string_view(argv[1]) == "--metadata") CheckMetadata();
         else if (argc == 2 && std::string_view(argv[1]) == "--runs") CheckRuns();
         else CheckBoundaries();
