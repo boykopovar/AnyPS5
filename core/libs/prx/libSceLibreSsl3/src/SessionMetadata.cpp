@@ -60,7 +60,7 @@ std::uint64_t APS5_VABI SSL_SESSION_get_master_key_nid_postfix(const void* sessi
         NotImplemented_nid_no_patch(__func__);
     }
     if (length > 48) length = 48;
-    if (out == nullptr) return length;
+    if (out == nullptr || outLength == 0) return length;
     const std::uint64_t copied = length > outLength ? outLength : length;
     if (copied != 0) {
         std::array<unsigned char, 48> key{};
