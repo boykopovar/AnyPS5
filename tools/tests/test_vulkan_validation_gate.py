@@ -418,6 +418,22 @@ class SetupTests(FixtureTests):
         self.assertEqual(code, 2, report)
         self.assertIn("overrides required environment", report["error"])
 
+    def test_mixed_case_environment_follows_host_semantics(self):
+        properties = 'ENVIRONMENT "anyps5_no_shader_cache=1;anyps5_require_vulkan=0"'
+        code, report = self.execute(self.source("base"), self.source("head", property_text=properties), "--repeat", "1")
+        self.assertEqual(code, 2 if os.name == "nt" else 0, report)
+        if os.name == "nt":
+            self.assertEqual(report["iterations"], [])
+            self.assertIn("overrides required environment ANYPS5_REQUIRE_VULKAN", report["error"])
+
+    def test_mixed_case_environment_modification_follows_host_semantics(self):
+        properties = 'ENVIRONMENT_MODIFICATION "aNyPs5_GpU=set:different"'
+        code, report = self.execute(self.source("base"), self.source("head", property_text=properties), "--repeat", "1")
+        self.assertEqual(code, 2 if os.name == "nt" else 0, report)
+        if os.name == "nt":
+            self.assertEqual(report["iterations"], [])
+            self.assertIn("overrides required environment ANYPS5_GPU", report["error"])
+
     def test_dirty_source_is_rejected_before_output_creation(self):
         baseline, candidate = self.source("base"), self.source("head")
         (candidate[0] / "untracked.txt").write_text("dirty")
@@ -507,27 +523,37 @@ class ContainmentTests(unittest.TestCase):
         self.kernel32.CloseHandle.restype = wintypes.BOOL
         self.kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
 
-    def kill_pid(self, pid):
+    def watch(self, pid):
         handle = self.kernel32.OpenProcess(0x00100001, False, pid)
-        if handle:
-            self.kernel32.TerminateProcess(handle, 1)
-            self.kernel32.WaitForSingleObject(handle, 2000)
-            self.kernel32.CloseHandle(handle)
-
-    def is_dead(self, pid, timeout):
-        handle = self.kernel32.OpenProcess(0x00100000, False, pid)
         if not handle:
-            return True
-        try:
-            return self.kernel32.WaitForSingleObject(handle, int(timeout * 1000)) == 0
-        finally:
-            self.kernel32.CloseHandle(handle)
+            raise self.ctypes.WinError(self.ctypes.get_last_error())
+        self.addCleanup(self.kernel32.CloseHandle, handle)
+        self.addCleanup(self.kill, handle)
+        return handle
+
+    def kill(self, handle):
+        self.kernel32.TerminateProcess(handle, 1)
+        self.kernel32.WaitForSingleObject(handle, 2000)
+
+    def is_dead(self, handle, timeout):
+        return self.kernel32.WaitForSingleObject(handle, int(timeout * 1000)) == 0
 
     def wait_for_file(self, path, timeout=10.0):
         deadline = time.monotonic() + timeout
         while not path.exists():
             if time.monotonic() >= deadline:
                 self.fail(f"timed out waiting for {path}")
+            time.sleep(0.01)
+
+    def read_pid(self, path, timeout=10.0):
+        deadline = time.monotonic() + timeout
+        while True:
+            with contextlib.suppress(OSError, ValueError):
+                text = path.read_text(encoding="utf-8")
+                if text.endswith("\n"):
+                    return int(text)
+            if time.monotonic() >= deadline:
+                self.fail(f"timed out reading {path}")
             time.sleep(0.01)
 
     def repo(self, name):
@@ -552,8 +578,7 @@ class ContainmentTests(unittest.TestCase):
         def popen(*args, **kwargs):
             process = real_popen(*args, **kwargs)
             if kwargs.get("creationflags") == gate.CREATE_SUSPENDED:
-                spawned.append(process.pid)
-                self.addCleanup(self.kill_pid, process.pid)
+                spawned.append(self.watch(process.pid))
             return process
 
         def win32(name, *arguments, **kwargs):
@@ -616,7 +641,7 @@ class ContainmentTests(unittest.TestCase):
         processes = []
 
         def cleanup_process(process):
-            self.kill_pid(process.pid)
+            self.kill(int(process._handle))
             with contextlib.suppress(OSError, subprocess.TimeoutExpired):
                 process.wait(timeout=2)
 
@@ -674,11 +699,11 @@ class ContainmentTests(unittest.TestCase):
                        f"import vulkan_validation_gate as gate; "
                        f"gate.run([sys.executable, '-c', {parent!r}], Path({str(self.root / 'killed-gate.log')!r}), os.environ, 30)")
         runner = subprocess.Popen([sys.executable, "-c", runner_code])
-        self.addCleanup(self.kill_pid, runner.pid)
+        self.watch(runner.pid)
         self.wait_for_file(ready)
         self.wait_for_file(pids)
         for pid in map(int, pids.read_text(encoding="utf-8").split()):
-            self.addCleanup(self.kill_pid, pid)
+            self.watch(pid)
         self.kernel32.TerminateProcess(int(runner._handle), 1)
         runner.wait(timeout=5)
         time.sleep(2.0)
@@ -688,11 +713,14 @@ class ContainmentTests(unittest.TestCase):
         tools_dir = str(Path(__file__).resolve().parents[1])
         script = self.root / "guard_probe.py"
         script.write_text(
-            "import os, sys\nfrom pathlib import Path\n"
+            "import os, sys, time\nfrom pathlib import Path\n"
             f"sys.path.insert(0, {tools_dir!r})\nimport vulkan_validation_gate as gate\n"
             "if sys.argv[1] == '0':\n    gate.guard = lambda: None\n"
             "def stop_before_job(pid):\n"
-            "    Path(sys.argv[2]).write_text(str(pid), encoding='utf-8')\n"
+            "    Path(sys.argv[2]).write_text(f'{pid}\\n', encoding='utf-8')\n"
+            "    deadline = time.monotonic() + 30\n"
+            "    while time.monotonic() < deadline and not Path(sys.argv[4]).exists():\n"
+            "        time.sleep(.01)\n"
             "    os._exit(1)\n"
             "gate.contain = stop_before_job\n"
             "gate.run([sys.executable, '-c', 'import time; time.sleep(60)'], Path(sys.argv[3]), os.environ, 30)\n",
@@ -700,16 +728,19 @@ class ContainmentTests(unittest.TestCase):
         for guarded in ("1", "0"):
             with self.subTest(guarded=guarded):
                 pid_file = self.root / f"guard-{guarded}.pid"
-                result = subprocess.run([sys.executable, str(script), guarded, str(pid_file), str(self.root / f"guard-{guarded}.log")])
-                self.assertEqual(result.returncode, 1)
-                pid = int(pid_file.read_text(encoding="utf-8"))
-                self.addCleanup(self.kill_pid, pid)
+                release = self.root / f"guard-{guarded}.release"
+                probe = subprocess.Popen([sys.executable, str(script), guarded, str(pid_file),
+                                          str(self.root / f"guard-{guarded}.log"), str(release)])
+                self.watch(probe.pid)
+                child = self.watch(self.read_pid(pid_file))
+                release.touch()
+                self.assertEqual(probe.wait(timeout=10), 1)
                 if guarded == "1":
-                    self.assertTrue(self.is_dead(pid, 2.0))
+                    self.assertTrue(self.is_dead(child, 2.0))
                 else:
-                    self.assertFalse(self.is_dead(pid, 0.3))
-                    self.kill_pid(pid)
-                    self.assertTrue(self.is_dead(pid, 2.0))
+                    self.assertFalse(self.is_dead(child, 0.3))
+                    self.kill(child)
+                    self.assertTrue(self.is_dead(child, 2.0))
 
     def test_unexpected_resume_suspend_count_fails_and_kills_child(self):
         spawned = []
@@ -719,8 +750,7 @@ class ContainmentTests(unittest.TestCase):
         def popen(*args, **kwargs):
             process = real_popen(*args, **kwargs)
             if kwargs.get("creationflags") == gate.CREATE_SUSPENDED:
-                spawned.append(process.pid)
-                self.addCleanup(self.kill_pid, process.pid)
+                spawned.append(self.watch(process.pid))
             return process
 
         def win32(name, *arguments, **kwargs):

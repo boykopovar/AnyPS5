@@ -64,6 +64,13 @@ class StubgenTests(unittest.TestCase):
             with self.subTest(spelling=spelling):
                 self.assertEqual(stubgen.generate(spelling, nids, {}), expected)
 
+    def test_strip_nid_token_drops_bom_comments_and_trailing_fields(self):
+        self.assertEqual(stubgen.strip_nid_token("\ufeffAAAAAAAAAAA\n"), "AAAAAAAAAAA")
+        self.assertEqual(stubgen.strip_nid_token("  BBBBBBBBBBB  # note"), "BBBBBBBBBBB")
+        self.assertEqual(stubgen.strip_nid_token("CCCCCCCCCCC name extra"), "CCCCCCCCCCC")
+        for blank in ("", "   ", "# whole line", "  # indented", "\ufeff"):
+            self.assertEqual(stubgen.strip_nid_token(blank), "")
+
 
 class StubGeneratorTests(unittest.TestCase):
     def test_long_output_names(self):

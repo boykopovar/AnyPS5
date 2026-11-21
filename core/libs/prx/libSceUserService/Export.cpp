@@ -1145,19 +1145,21 @@ int APS5_VABI sceUserServiceGetUserGroupName(int groupIndex, char* name, std::si
     if (!UserGroupSlotExists(groupIndex)) {
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
-    std::memset(name, 0, size);
+    char output[129]{};
     char path[64];
     std::snprintf(path, sizeof(path), "/system_data/priv/home/user_group_name.dat.%d", groupIndex);
     const int descriptor = sceKernelOpen(path, 0, 0);
     if (descriptor >= 0) {
-        const std::int64_t bytesRead = sceKernelRead(descriptor, name, 128);
+        const std::int64_t bytesRead = sceKernelRead(descriptor, output, 128);
         sceKernelClose(descriptor);
-        if (bytesRead > 0) {
-            return USER_SERVICE_OK;
-        }
+        if (bytesRead <= 0) std::snprintf(output, sizeof(output), "User Group %d", groupIndex + 1);
+    } else {
+        std::snprintf(output, sizeof(output), "User Group %d", groupIndex + 1);
     }
-    std::snprintf(name, size, "User Group %d", groupIndex + 1);
-    return USER_SERVICE_OK;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(name, output, sizeof(output));
+    errno = savedErrno;
+    return copied ? USER_SERVICE_OK : USER_SERVICE_ERROR_INVALID_ARGUMENT;
 }
 
 int APS5_VABI sceUserServiceSetAutoLoginEnabled(void) {
