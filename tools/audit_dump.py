@@ -150,7 +150,7 @@ def remaining(module_directories, extra, source):
     return kept, [relative for relative in extra if relative in names]
 
 
-RELINKER_FLAGS = ("--trap-sdk-syscall-stubs", "--function-symbol-roots")
+RELINKER_FLAGS = ("--trap-sdk-syscall-stubs", "--function-symbol-roots", "--to-intel")
 
 
 def convert(relinker, source, output, extra, windows, flags=()):
@@ -207,6 +207,7 @@ def main(argv=None):
     parser.add_argument("--windows", action="store_true", help="convert for Windows, as the title would be run there")
     parser.add_argument("--trap-sdk-syscall-stubs", action="store_true", help="pass relinker --trap-sdk-syscall-stubs, as a ps5-payload-dev SDK title is converted")
     parser.add_argument("--function-symbol-roots", action="store_true", help="pass relinker --function-symbol-roots, for modules whose function symbol sizes overrun their code")
+    parser.add_argument("--to-intel", action="store_true", help="convert AMD-only instructions for an Intel host, as relinker --to-intel does")
     parser.add_argument("--json", help="also write import_audit.py's JSON report to this file outside the input dump")
     args = parser.parse_args(argv)
     dump = Path(args.dump)
