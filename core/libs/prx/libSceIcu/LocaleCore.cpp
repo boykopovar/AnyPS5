@@ -14,9 +14,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -529,6 +531,63 @@ std::int32_t Write(std::string_view value, char* destination, std::int32_t capac
     return size;
 }
 
+bool CopyIn(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyOut(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+std::string ReadText(const char* source, const char* caller, const char* name) {
+    std::string text;
+    for (;;) {
+        char chunk[0x1000];
+        const auto address = reinterpret_cast<std::uintptr_t>(source + text.size());
+        const std::size_t count = sizeof(chunk) - address % sizeof(chunk);
+        if (!CopyIn(chunk, source + text.size(), count))
+            throw std::invalid_argument(std::string(caller) + ": unreadable " + name);
+        const auto* end = static_cast<const char*>(std::memchr(chunk, 0, count));
+        text.append(chunk, end ? static_cast<std::size_t>(end - chunk) : count);
+        if (end) return text;
+    }
+}
+
+std::int32_t ReadStatus(const std::int32_t* status, const char* caller) {
+    std::int32_t value = 0;
+    if (!CopyIn(&value, status, sizeof(value))) throw std::invalid_argument(std::string(caller) + ": unreadable status");
+    return value;
+}
+
+void WriteStatus(std::int32_t* status, std::int32_t incoming, std::int32_t outgoing, const char* caller) {
+    if (outgoing != incoming && !CopyOut(status, &outgoing, sizeof(outgoing)))
+        throw std::invalid_argument(std::string(caller) + ": unwritable status");
+}
+
+std::string ResultBuffer(const char* destination, std::int32_t capacity, std::size_t length) {
+    return std::string(destination && capacity > 0 ? std::min(static_cast<std::size_t>(capacity), length + 1) : 0, '\0');
+}
+
+void WriteResult(char* destination, const std::string& host, const char* caller) {
+    if (!host.empty() && !CopyOut(destination, host.data(), host.size()))
+        throw std::invalid_argument(std::string(caller) + ": unwritable result");
+}
+
+std::int32_t WriteGuest(std::string_view value, char* destination, std::int32_t capacity,
+                        std::int32_t* status, const char* caller) {
+    std::string host = ResultBuffer(destination, capacity, value.size());
+    const auto length = Write(value, destination ? host.data() : nullptr,
+                              host.empty() ? capacity : static_cast<std::int32_t>(host.size()), status, false);
+    if (*status != kIllegalArgument) WriteResult(destination, host, caller);
+    return length;
+}
+
 std::int32_t Component(const char* locale, char* result, std::int32_t capacity,
                        std::int32_t* status, int which) {
     if (!status || *status > 0) return 0;
@@ -596,20 +655,24 @@ std::int32_t APS5_VABI uloc_getBaseName(const char* locale, char* result,
     return Write(BaseName(Parse(id.c_str())), result, capacity, status, false);
 }
 
-std::int32_t APS5_VABI uloc_getKeywordValue(const char* locale, const char* keyword,
-                                           char* result, std::int32_t capacity,
-                                           std::int32_t* status) {
-    if (!status || *status > 0) return 0;
-    if (!locale || !keyword || !KeywordName(keyword)) {
+static std::int32_t KeywordValue(const char* guestLocale, const char* guestKeyword, char* result,
+                                 std::int32_t capacity, std::int32_t* status, const char* caller) {
+    if (!guestLocale || !guestKeyword) {
         *status = kIllegalArgument;
         return 0;
     }
+    const std::string keyword = ReadText(guestKeyword, caller, "keyword");
+    if (!KeywordName(keyword)) {
+        *status = kIllegalArgument;
+        return 0;
+    }
+    const std::string locale = ReadText(guestLocale, caller, "locale");
     const std::string requested = ChangeCase(keyword, false);
     std::string_view input(locale);
     std::string converted;
     if (input.find('@') == std::string_view::npos && ShortestSubtagIsOne(input)) {
         std::int32_t conversion = 0;
-        const std::int32_t length = uloc_forLanguageTag(locale, nullptr, 0, nullptr, &conversion);
+        const std::int32_t length = uloc_forLanguageTag(locale.c_str(), nullptr, 0, nullptr, &conversion);
         if (conversion > 0 && conversion != kBufferOverflow) {
             *status = conversion;
             return 0;
@@ -617,7 +680,7 @@ std::int32_t APS5_VABI uloc_getKeywordValue(const char* locale, const char* keyw
         if (length > 0) {
             converted.resize(static_cast<std::size_t>(length));
             conversion = 0;
-            uloc_forLanguageTag(locale, converted.data(), length, nullptr, &conversion);
+            uloc_forLanguageTag(locale.c_str(), converted.data(), length, nullptr, &conversion);
             input = converted;
         }
     }
@@ -637,10 +700,22 @@ std::int32_t APS5_VABI uloc_getKeywordValue(const char* locale, const char* keyw
                 *status = kIllegalArgument;
                 return 0;
             }
-            return Write(value, result, capacity, status, false);
+            return WriteGuest(value, result, capacity, status, caller);
         }
     }
-    return Write("", result, capacity, status, false);
+    return WriteGuest("", result, capacity, status, caller);
+}
+
+std::int32_t APS5_VABI uloc_getKeywordValue(const char* locale, const char* keyword,
+                                           char* result, std::int32_t capacity,
+                                           std::int32_t* status) {
+    if (!status) return 0;
+    const std::int32_t incoming = ReadStatus(status, __func__);
+    if (incoming > 0) return 0;
+    std::int32_t local = incoming;
+    const std::int32_t length = KeywordValue(locale, keyword, result, capacity, &local, __func__);
+    WriteStatus(status, incoming, local, __func__);
+    return length;
 }
 
 std::int32_t APS5_VABI uloc_canonicalize(const char* locale, char* result,
@@ -672,14 +747,17 @@ std::int32_t APS5_VABI uloc_canonicalize(const char* locale, char* result,
     return Write(canonical, result, capacity, status, false);
 }
 
-std::int32_t APS5_VABI uloc_getParent(const char* locale, char* result,
+std::int32_t APS5_VABI uloc_getParent(const char* guestLocale, char* result,
                                                   std::int32_t capacity, std::int32_t* status) {
-    if (!status || *status > 0) return 0;
-    if (!locale) locale = Icu::DefaultLocaleName();
+    if (!status) return 0;
+    const std::int32_t incoming = ReadStatus(status, __func__);
+    if (incoming > 0) return 0;
     if (capacity < 0 || (capacity > 0 && !result)) {
-        *status = kIllegalArgument;
+        WriteStatus(status, incoming, kIllegalArgument, __func__);
         return 0;
     }
+    const std::string text = guestLocale ? ReadText(guestLocale, __func__, "locale") : std::string(Icu::DefaultLocaleName());
+    const char* locale = text.c_str();
     const char* lastUnderscore = std::strrchr(locale, '_');
     std::int32_t length = lastUnderscore ? static_cast<std::int32_t>(lastUnderscore - locale) : 0;
     if (length > 0) {
@@ -692,13 +770,15 @@ std::int32_t APS5_VABI uloc_getParent(const char* locale, char* result,
         if (und) {
             locale += 3;
             length -= 3;
-            if (capacity > 0)
-                std::memmove(result, locale, static_cast<std::size_t>(std::min(length, capacity)));
-        } else if (result != locale && capacity > 0) {
-            std::memcpy(result, locale, static_cast<std::size_t>(std::min(length, capacity)));
         }
     }
-    return u_terminateChars_nid_postfix(result, capacity, length, status);
+    std::string host = ResultBuffer(result, capacity, static_cast<std::size_t>(length));
+    std::memcpy(host.data(), locale, std::min(host.size(), static_cast<std::size_t>(length)));
+    std::int32_t local = incoming;
+    const std::int32_t terminated = u_terminateChars_nid_postfix(host.data(), static_cast<std::int32_t>(host.size()), length, &local);
+    WriteResult(result, host, __func__);
+    WriteStatus(status, incoming, local, __func__);
+    return terminated;
 }
 
 const char* APS5_VABI uloc_getISO3Language(const char* locale) {
