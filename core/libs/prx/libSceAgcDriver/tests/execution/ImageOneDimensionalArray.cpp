@@ -35,19 +35,24 @@ alignas(256) constexpr std::array<std::uint32_t, 15> Code{
     0x34020085, 0xbf8c3f70, 0xe0781000, 0x80010601, 0xe0781010, 0x80010a01, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 15> LineCode{
+    0x34020084, 0xe0381000, 0x80000201, 0xbf8c3f70, 0xf09c0f00, 0x00820602, 0xf0001f00, 0x00020a04,
+    0x34020085, 0xbf8c3f70, 0xe0781000, 0x80010601, 0xe0781010, 0x80010a01, 0xbf810000,
+};
+
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-std::array<std::uint32_t, 8> TextureDescriptor() {
+std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t baseArray = 0u) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Texels.data()));
     return {
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (((Width - 1u) & 3u) << 30u),
         (Width - 1u) >> 2u,
         0xfacu | (Type1DArray << 28u),
-        Layers - 1u, 0u, 0u, 0u,
+        (Layers - 1u) | (baseArray << 16u), 0u, 0u, 0u,
     };
 }
 
@@ -88,18 +93,18 @@ void Expect(std::uint32_t tid, const char* name, const float* actual, const std:
     }
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t baseArray) {
+    const bool line = code.data() == LineCode.data();
     Output.fill(-1.0f);
     std::vector<std::uint32_t> userData(20, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
-    const auto texture = TextureDescriptor();
+    const auto texture = TextureDescriptor(baseArray);
     const auto sampler = SamplerDescriptor();
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     std::copy(texture.begin(), texture.end(), userData.begin() + 8);
     std::copy(sampler.begin(), sampler.end(), userData.begin() + 16);
-    const std::span<const std::uint32_t> code(Code);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -116,6 +121,12 @@ void Run(AgcDriver::VulkanDevice& device) {
         const float u = std::bit_cast<float>(Input[tid * 4u + 0u]);
         const float layer = std::clamp(std::nearbyint(std::bit_cast<float>(Input[tid * 4u + 1u])), 0.0f, static_cast<float>(Layers - 1u));
         const auto x = static_cast<std::uint32_t>(std::clamp(static_cast<int>(std::floor(u * static_cast<float>(Width))), 0, static_cast<int>(Width) - 1));
+        if (line) {
+            const auto name = " with DIM 1D at BASE_ARRAY " + std::to_string(baseArray);
+            Expect(tid, ("image_sample_lz on a 1D array" + name).c_str(), &Output[tid * 8u], Texel(x, baseArray));
+            Expect(tid, ("image_load on a 1D array" + name).c_str(), &Output[tid * 8u + 4u], Texel(Input[tid * 4u + 2u], baseArray));
+            continue;
+        }
         Expect(tid, "image_sample_lz on a 1D array", &Output[tid * 8u], Texel(x, static_cast<std::uint32_t>(layer)));
         Expect(tid, "image_load on a 1D array", &Output[tid * 8u + 4u], Texel(Input[tid * 4u + 2u], Input[tid * 4u + 3u]));
     }
@@ -129,7 +140,9 @@ int main() {
         if (!device) return VulkanTestSkipped;
         FillTexels();
         FillInput();
-        Run(*device);
+        Run(*device, Code, 0u);
+        Run(*device, LineCode, 0u);
+        Run(*device, LineCode, 2u);
         std::puts("image 1D array tests passed");
         return 0;
     } catch (const std::exception& error) {
