@@ -688,12 +688,12 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
     if (size == 0) throw std::runtime_error("frame capture: the guest arena is not reserved");
     std::vector<Range> result;
     for (const auto& allocation : GuestAllocations::GuestAllocationsAcquireAll_nid_postfix()) {
-        if (!allocation->readable) continue;
+        if (!allocation->readable && !allocation->gpu) continue;
         const auto first = allocation->address;
         const auto end = first + allocation->bytes;
         const auto firstRange = result.size();
         const bool host = first < base || end > base + size;
-        const auto access = FrameRangeAccess::Readable | (allocation->writable ? FrameRangeAccess::Writable : 0u) | (allocation->gpu ? FrameRangeAccess::Gpu : 0u);
+        const auto access = (allocation->readable ? FrameRangeAccess::Readable : 0u) | (allocation->writable ? FrameRangeAccess::Writable : 0u) | (allocation->gpu ? FrameRangeAccess::Gpu : 0u);
         for (auto address = first; address < end;) {
             MEMORY_BASIC_INFORMATION info{};
             if (VirtualQuery(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), &info, sizeof(info)) == 0) throw std::runtime_error("frame capture: VirtualQuery failed inside the guest arena");
@@ -724,12 +724,12 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
     if (size == 0) throw std::runtime_error("frame capture: the guest arena is not reserved");
     std::vector<Range> result;
     for (const auto& allocation : GuestAllocations::GuestAllocationsAcquireAll_nid_postfix()) {
-        if (!allocation->readable) continue;
+        if (!allocation->readable && !allocation->gpu) continue;
         const auto first = allocation->address;
         const auto end = first + allocation->bytes;
         const auto firstRange = result.size();
         const bool host = first < base || end > base + size;
-        const auto access = FrameRangeAccess::Readable | (allocation->writable ? FrameRangeAccess::Writable : 0u) | (allocation->gpu ? FrameRangeAccess::Gpu : 0u);
+        const auto access = (allocation->readable ? FrameRangeAccess::Readable : 0u) | (allocation->writable ? FrameRangeAccess::Writable : 0u) | (allocation->gpu ? FrameRangeAccess::Gpu : 0u);
         HostMapping::Walk(first, end, "frame capture", [&](const HostMapping::Mapping& mapping) {
             if (!mapping.readable && !mapping.writable && !mapping.executable) return;
             const auto add = [&](std::uint64_t address, std::uint64_t regionEnd, bool readable) {
