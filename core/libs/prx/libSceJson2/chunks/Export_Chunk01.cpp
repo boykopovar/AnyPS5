@@ -3039,4 +3039,3 @@ void APS5_VABI _ZN3sce4Json5Value3setEPKc(Value* self, const char* text) {
     SetType(NodeOf(*self), TypeString);
     if (self->type == TypeString) AssignText(*self->string, View(temporary.string), true);
 }
-}

@@ -511,5 +511,4 @@ Xtime APS5_VABI _ZNSt8__sce_v222_Timespec64_diff_to_tsEPK8timespec_nid_postfix(c
     nanos -= static_cast<std::uint64_t>(nowNanos);
     if (static_cast<std::int64_t>(seconds) < 0 || (seconds == 0 && static_cast<std::int64_t>(nanos) <= 0)) return {0, 0};
     return {static_cast<std::int64_t>(seconds), static_cast<std::int64_t>(nanos)};
-}
 

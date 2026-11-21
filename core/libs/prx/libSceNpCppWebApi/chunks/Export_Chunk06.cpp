@@ -478,4 +478,3 @@ int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGet
     return TerminateParameter(self);
 }
 
-}

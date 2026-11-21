@@ -2638,4 +2638,3 @@ void* APS5_VABI _ZNK3sce4Json14InitParameter211getUserDataEv(const InitParameter
 void* APS5_VABI _ZNK3sce4Json14InitParameter212getAllocatorEv(const InitParameter2* self) { return self->allocator; }
 std::size_t APS5_VABI _ZNK3sce4Json14InitParameter217getFileBufferSizeEv(const InitParameter2* self) { return self->fileBufferSize; }
 std::int32_t APS5_VABI _ZNK3sce4Json14InitParameter225getSpecialFloatFormatTypeEv(const InitParameter2* self) { return self->specialFloatFormatType; }
-}

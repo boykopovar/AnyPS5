@@ -2970,4 +2970,3 @@ void APS5_VABI _ZN3sce4Json6Object8iteratorC1Ev(ObjectIterator* self) {
     if (self->state) self->state->position = nullptr;
 }
 
-}
