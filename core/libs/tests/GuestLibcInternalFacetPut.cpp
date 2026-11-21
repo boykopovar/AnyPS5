@@ -546,18 +546,6 @@ std::u16string WideDoPut(const GuestTm& time, char format, char modifier) {
     return stream.accepted;
 }
 
-void RequireWideDoPutThrows(char format, char modifier) {
-    const GuestTm time = MakeWideDoPutTime();
-    auto stream = MakeWideStream(256);
-    try {
-        Export<WideTimePutExport>("Fr7j8dMsy4s")(nullptr, GuestLocale::OutputIterator{false, &stream.buffer}, nullptr, g_wideFill, &time, format, modifier);
-    } catch (const std::runtime_error& error) {
-        Require(std::string(error.what()).find("LibcWideTimePutDoPut") != std::string::npos && stream.accepted.empty(), "an unsettled do_put throws before writing");
-        return;
-    }
-    Require(false, "an unsettled do_put must throw");
-}
-
 void CheckWideTimePutDoPut() {
     const GuestTm time = MakeWideDoPutTime();
     Require(WideDoPut(time, 'Y', '\0') == u"2026", "do_put writes one conversion without its leading marker and reads neither the facet, the stream nor the fill");
@@ -570,9 +558,9 @@ void CheckWideTimePutDoPut() {
     stream.buffer.putEnd = &end;
     const GuestLocale::OutputIterator out = Export<WideTimePutExport>("Fr7j8dMsy4s")(nullptr, GuestLocale::OutputIterator{false, &stream.buffer}, nullptr, g_wideFill, &time, 'Y', '\0');
     Require(out.failed && area[0] == u'2' && area[1] == u'0' && stream.accepted == u"2" && stream.offered == std::vector<int>{'2', '6'}, "do_put writes through the put area and overflow, and a failed write marks the iterator");
-    RequireWideDoPutThrows('\xe9', '\0');
-    RequireWideDoPutThrows('d', '\x80');
-    RequireWideDoPutThrows('c', '\0');
+    Require(WideDoPut(time, '\xe9', '\0') == u"%\uffe9", "do_put sign-extends a negative specifier byte into the wide format");
+    Require(WideDoPut(time, 'd', '\x80') == u"%\uff80d", "do_put sign-extends a negative modifier byte into the wide format");
+    Require(WideDoPut(time, 'c', '\0').empty(), "do_put writes nothing when the conversion does not fit in the first buffer");
     const GuestLocale::WideTimePutVtable vtable{g_testFacet, Export<WideTimePutExport>("Fr7j8dMsy4s")};
     const GuestLocale::Facet facet{&vtable.facet, 1, 0};
     GuestLocale::IosBase ios{};
@@ -586,7 +574,7 @@ void CheckWideTimePutDoPut() {
     Require(setenv_nid_postfix("TZ", "ABCDEFGHIJKLMNO0", 1) == 0, "set a zone with a 15-letter name");
     Require(WideDoPut(time, 'Z', '\0') == u"ABCDEFGHIJKLMNO", "do_put retries with a larger buffer when the first leaves no room for the terminator");
     Require(setenv_nid_postfix("TZ", "ABCDEFGHIJKLMNOP0", 1) == 0, "set a zone with a 16-letter name");
-    RequireWideDoPutThrows('Z', '\0');
+    Require(WideDoPut(time, 'Z', '\0').empty(), "do_put writes nothing when a zone name does not fit in the first buffer");
 #endif
 }
 

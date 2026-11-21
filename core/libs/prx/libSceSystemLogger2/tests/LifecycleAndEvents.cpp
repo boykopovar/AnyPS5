@@ -55,10 +55,10 @@ int main() {
     std::uint32_t eventStatus = 0xDEADBEEF;
     std::uint64_t eventState = 0xDEADBEEFDEADBEEFull;
 
-    Require(sizeof(SceSystemLogger2Timestamp) == 0x20);
+    Require(sizeof(SceSystemLogger2Timestamp) == 0x30);
     Require(offsetof(SceSystemLogger2Timestamp, clockSource) == 8);
 
-    Require(sceSystemLogger2GetTimestamp(&timestamp) == kNotInitialized);
+    Require(sceSystemLogger2GetTimestamp(&timestamp) == 0);
     Require(sceSystemLogger2SetEventAsync(nullptr) == kNotInitialized);
     Require(sceSystemLogger2TerminateWithResourceRelease() == kNotInitialized);
 
@@ -69,10 +69,15 @@ int main() {
     std::memset(&timestamp, 0xAA, sizeof(timestamp));
     Require(sceSystemLogger2GetTimestamp(&timestamp) == 0);
     Require(timestamp.tick >= kUnixEpochTick);
-    Require(std::strcmp(timestamp.clockSource, "networkClock") == 0);
-    for (std::size_t index = std::strlen("networkClock") + 1; index < sizeof(timestamp.clockSource); ++index) {
+    Require(timestamp.tick % 1000000 == 0);
+    Require(std::strcmp(timestamp.clockSource, "secureClock") == 0);
+    for (std::size_t index = std::strlen("secureClock") + 1; index < sizeof(timestamp.clockSource); ++index) {
         Require(timestamp.clockSource[index] == 0);
     }
+
+    errno = 71;
+    Require(sceSystemLogger2GetTimestamp(reinterpret_cast<SceSystemLogger2Timestamp*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
 
     Require(sceSystemLogger2IsAvailableMonitor() == kNotAvailable);
 
@@ -86,6 +91,15 @@ int main() {
     Require(sceSystemLogger2GetEventStatus(nullptr, &eventState) == kInvalidArgument);
     Require(sceSystemLogger2GetEventStatus("name", nullptr) == kInvalidArgument);
 
+    errno = 71;
+    Require(sceSystemLogger2GetEventStatus(reinterpret_cast<const char*>(0x10), &eventState) == kInvalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    eventState = 0xDEADBEEFDEADBEEFull;
+    Require(sceSystemLogger2GetEventStatus("name", reinterpret_cast<std::uint64_t*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    Require(eventState == 0xDEADBEEFDEADBEEFull);
+
     Require(sceSystemLogger2SetEventAsyncInternal(nullptr, &eventStatus) == kInvalidArgument);
     Require(sceSystemLogger2SetEventAsyncInternal(record, nullptr) == kInvalidArgument);
     eventStatus = 0xDEADBEEF;
@@ -96,6 +110,10 @@ int main() {
     Require(sceSystemLogger2SetEventAsyncInternal(record, &eventStatus) == kNotAvailable);
     Require(eventStatus == 0);
     Require(sceSystemLogger2SetEventAsync(record) == kNotAvailable);
+
+    errno = 71;
+    Require(sceSystemLogger2SetEventAsyncInternal(record, reinterpret_cast<std::uint32_t*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
 
     char longName[0x82];
     FillName(longName, 0x81);
@@ -170,7 +188,6 @@ int main() {
     Require(sceSystemLogger2Terminate() == 0);
     Require(sceSystemLogger2GetTimestamp(&timestamp) == 0);
     Require(sceSystemLogger2TerminateWithResourceRelease() == 0);
-    Require(sceSystemLogger2GetTimestamp(&timestamp) == kNotInitialized);
     Require(sceSystemLogger2TerminateWithResourceRelease() == kNotInitialized);
 
     Require(sceSystemLogger2Initialize() == 0);

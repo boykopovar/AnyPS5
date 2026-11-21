@@ -2,7 +2,7 @@
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceAjmi/Export.cpp) - 20 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. The remaining 18 missing from that catalogue are named by NID hash; 17 share a `sceAjm` twin's 13.42 address. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Additional callable exports](../../../core/libs/prx/libSceAjmi/Export.cpp) - 18 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. The remaining 16 missing from that catalogue are named by NID hash; 17 of the original 18 share a `sceAjm` twin's 13.42 address. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
 
 | Name | NID |
 | --- | --- |
@@ -12,7 +12,6 @@
 | `sceAjmiBatchStartBuffer` | `9zA4YMlkR9M` |
 | `sceAjmiFinalize` | `BD002VBfhuE` |
 | `sceAjmiStrError` | `EYIibEpcHuw` |
-| `sceAjmiBatchJobControlBufferRa` | `J3UwQ5e6sNU` |
 | `sceAjmiInstanceSwitch` | `LESEGgm133w` |
 | `sceAjmiDecAt9ParseConfigData` | `MTdd8ApwO50` |
 | `sceAjmiInitialize` | `QhA7rTjJbro` |
@@ -25,7 +24,6 @@
 | `sceAjmiModuleRegister` | `dmwcwCeItmE` |
 | `sceAjmiInstanceCreate` | `ofRX8Vq0ss0` |
 | `sceAjmiInstanceExtend` | `pfPwiigOE3A` |
-| `sceAjmiBatchJobRunSplitBufferRa` | `r7NMFYcJi08` |
 
 ### Unknown function info
 
@@ -35,3 +33,4 @@
 ### Batch builder aliases
 
 - Direct-console operation and other firmware versions remain unverified for [`sceAjmiBatchJobInlineBuffer` and `sceAjmiBatchJobRunBufferRa`](../../../core/libs/prx/libSceAjmi/Export.cpp). Their signatures and forwarding follow the [13.42 symbol-table report](https://github.com/boykopovar/AnyPS5/pull/15495): each shares its entry address with the implemented `sceAjm*` export, at 0xb30 and 0xc50 in `libSceAjmi.sprx` (SHA-256 `ff0dc985c1f7a6b25a766904e3a535b55e44d0d4b8872329d2bd6c019491df0b`). The same-module routines were measured under an emulator, not on a console, as cited above. Invalid pointers and insufficient batch capacity remain unchecked by those builders, and `sceAjmiBatchJobInlineBuffer` inherits the oversize-data throw above.
+- Console behaviour and other firmware versions remain unverified for [`sceAjmiBatchJobControlBufferRa` and `sceAjmiBatchJobRunSplitBufferRa`](../../../core/libs/prx/libSceAjmi/Export.cpp). They forward to this module's `sceAjmBatchJobControlBufferRa` and `sceAjmBatchJobRunSplitBufferRa` builders, which match the 13.42 `libSceAjmi.sprx` routines at 0xb80 and 0xd20 byte for byte under an emulator ([control and split](https://github.com/boykopovar/AnyPS5/pull/12372#issuecomment-6482366782)). The signatures follow those twins. Each name hashes to its NID, but no published report gives these two symbols' own entry addresses; the forwarding rests on the 17-of-18 twin-address count above. They inherit the twins' checks: a null or wrapping batch position, or an unreadable buffer list, throws `std::runtime_error`; batch capacity is not checked.

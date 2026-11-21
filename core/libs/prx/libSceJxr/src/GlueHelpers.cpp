@@ -223,7 +223,8 @@ std::int32_t APS5_VABI allocateTileInfo_nid_postfix(void* codec) {
 
 void APS5_VABI freeTileInfo_nid_postfix(void* codec) {
     if (!codec) throw std::invalid_argument("freeTileInfo requires a codec");
-    if (!JxrFreeTileInfo_nid_no_patch(codec)) NotImplemented_nid_no_patch(__func__);
+    if (!JxrFreeTileInfo_nid_no_patch(codec))
+        throw std::invalid_argument("freeTileInfo: the codec has no tile table");
 }
 
 std::int32_t APS5_VABI allocateBitIOInfo_nid_postfix(void* codec) {
