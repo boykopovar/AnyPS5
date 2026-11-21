@@ -306,9 +306,9 @@ test("a late rejected release request does not affect an active replacement work
   } });
   get("file").files = [{ name: "old.zip" }];
   get("file").onchange();
-  await inspect(workers[0], 1);
-  get("cancel").onclick();
-  await setImmediate();
+  assert.equal(get("cancel").hidden, false);
+  await get("cancel").onclick();
+  assert.equal(workers[0].terminated, true);
   get("file").files = [{ name: "new.zip" }];
   get("file").onchange();
   const current = workers[1];
@@ -336,9 +336,9 @@ test("a late successful release request cannot hide a replacement request failur
   } });
   get("file").files = [{ name: "old.zip" }];
   get("file").onchange();
-  await inspect(workers[0], 1);
-  get("cancel").onclick();
-  await setImmediate();
+  assert.equal(get("cancel").hidden, false);
+  await get("cancel").onclick();
+  assert.equal(workers[0].terminated, true);
   get("file").files = [{ name: "new.zip" }];
   get("file").onchange();
   replacement.reject(new TypeError("replacement failure"));
