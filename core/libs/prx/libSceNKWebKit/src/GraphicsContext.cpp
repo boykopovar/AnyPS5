@@ -29,6 +29,8 @@
 #include "prx/libSceNKWebKit/include/GraphicsContextExports.hpp"
 #include "prx/libcairo/include/Bridge.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -151,6 +153,57 @@ void ApplyOperator(Context& context) {
     CairoContext* cr = Cairo(context);
     if (!cr) return;
     CairoSetOperator_nid_no_patch(cr, CairoOperator(context.state.compositeOperator));
+}
+
+WebCore::Color MultiplyAlpha(const WebCore::Color& color, float shade) {
+    if (IsOutOfLine(color)) throw std::invalid_argument("out-of-line WebCore::Color is not supported");
+    const auto alpha = static_cast<std::uint64_t>(std::lround(static_cast<double>(color.m_colorAndFlags & 0xFF) * shade));
+    return WebCore::Color{(color.m_colorAndFlags & ~0xFFULL) | alpha};
+}
+
+struct LineBounds {
+    WebCore::FloatRect m_rect;
+    WebCore::Color m_color;
+};
+
+LineBounds ComputeLineBounds(Context& context, const WebCore::FloatPoint& point, float width, bool printing, WebCore::Color color, float strokeThickness) {
+    WebCore::FloatPoint origin = point;
+    const float thickness = std::max(strokeThickness, 0.5f);
+    if (printing) return {{origin, {width, thickness}}, color};
+    CairoMatrix matrix{};
+    CairoGetMatrix_nid_no_patch(Cairo(context), &matrix);
+    const double scale = matrix.yx != 0.0 ? std::hypot(matrix.xx, matrix.yx) : matrix.xx;
+    if (scale < 1.0) color = MultiplyAlpha(color, static_cast<float>(std::max(scale, 0.4)));
+    const double deviceX = matrix.xx * point.m_x + matrix.xy * point.m_y + matrix.x0;
+    const double deviceY = matrix.yx * point.m_x + matrix.yy * point.m_y + matrix.y0;
+    const double deviceOriginX = std::round(deviceX);
+    const double deviceOriginY = std::ceil(deviceY);
+    const double determinant = matrix.xx * matrix.yy - matrix.yx * matrix.xy;
+    if (determinant != 0.0) {
+        const double inverseX = (matrix.yy * deviceOriginX - matrix.xy * deviceOriginY + matrix.xy * matrix.y0 - matrix.yy * matrix.x0) / determinant;
+        const double inverseY = (-matrix.yx * deviceOriginX + matrix.xx * deviceOriginY - matrix.xx * matrix.y0 + matrix.yx * matrix.x0) / determinant;
+        origin = {static_cast<float>(inverseX), static_cast<float>(inverseY)};
+    }
+    return {{origin, {width, thickness}}, color};
+}
+
+void DrawLinesForText(Context& context, const WebCore::FloatPoint& point, float thickness, const std::vector<double>& widths, bool printing, bool doubleUnderlines) {
+    CairoContext* cr = Cairo(context);
+    if (!cr || widths.empty() || widths.size() % 2) return;
+    const LineBounds bounds = ComputeLineBounds(context, point, static_cast<float>(widths.back()), printing, context.state.strokeColor, thickness);
+    ApplyOperator(context);
+    CairoSave_nid_no_patch(cr);
+    const auto fillDash = [&](double x, double width, double y) {
+        if (width <= 0.0) return;
+        SetSource(cr, bounds.m_color);
+        CairoNewPath_nid_no_patch(cr);
+        CairoRectangle_nid_no_patch(cr, bounds.m_rect.x() + x, bounds.m_rect.y() + y, width, bounds.m_rect.height());
+        CairoFill_nid_no_patch(cr);
+    };
+    for (std::size_t i = 0; i < widths.size(); i += 2) fillDash(widths[i], widths[i + 1] - widths[i], 0.0);
+    if (doubleUnderlines)
+        for (std::size_t i = 0; i < widths.size(); i += 2) fillDash(widths[i], widths[i + 1] - widths[i], 2.0 * bounds.m_rect.height());
+    CairoRestore_nid_no_patch(cr);
 }
 
 }  // namespace
@@ -432,6 +485,14 @@ void APS5_VABI _ZN7WebCore15GraphicsContext20endTransparencyLayerEv(Context* sel
     CairoPaintWithAlpha_nid_no_patch(data->cr, context.state.alpha);
     --context.transparencyCount;
     _ZN7WebCore15GraphicsContext7restoreEv(self);
+}
+
+void APS5_VABI _ZN7WebCore15GraphicsContext15drawLineForTextERKNS_9FloatRectEbbNS_11StrokeStyleE(Context* self, const WebCore::FloatRect* rect, bool printing, bool doubleUnderlines, std::uint8_t) {
+    auto& context = Checked(self, "WebCore::GraphicsContext::drawLineForText");
+    if (!rect) throw std::invalid_argument("WebCore::GraphicsContext::drawLineForText requires a rectangle");
+    if (!Cairo(context)) return;
+    const std::vector<double> widths{0.0, static_cast<double>(rect->width())};
+    DrawLinesForText(context, {rect->x(), rect->y()}, rect->height(), widths, printing, doubleUnderlines);
 }
 
 bool APS5_VABI _ZNK7WebCore15GraphicsContext18hasPlatformContextEv(const Context* self) {

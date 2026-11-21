@@ -14973,10 +14973,6 @@ int APS5_VABI _ZN7WebCore15GraphicsContext15drawImageBufferERNS_11ImageBufferERK
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore15GraphicsContext15drawLineForTextERKNS_9FloatRectEbbNS_11StrokeStyleE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore15GraphicsContext9drawImageERNS_5ImageERKNS_10FloatPointERKNS_20ImagePaintingOptionsE() {
     NotImplemented_nid_no_patch(__func__);
 }

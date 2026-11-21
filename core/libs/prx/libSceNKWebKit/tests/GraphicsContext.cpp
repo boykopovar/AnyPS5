@@ -308,6 +308,28 @@ void TestCompositeAndTransparency() {
     Require(surface.Pixel(6, 6) == 0);
 }
 
+void TestDrawLineForText() {
+    Surface surface;
+    OwnedContext owned(&surface.platform);
+    auto& context = *owned.context;
+    const WebCore::Color red = Red;
+    _ZN7WebCore15GraphicsContext14setStrokeColorERKNS_5ColorE(&context, &red);
+    const WebCore::FloatRect line{{1, 1}, {6, 2}};
+    _ZN7WebCore15GraphicsContext15drawLineForTextERKNS_9FloatRectEbbNS_11StrokeStyleE(&context, &line, false, false, 1);
+    Require(surface.Pixel(3, 1) == 0xFFFF0000U);
+    Require(surface.Pixel(3, 2) == 0xFFFF0000U);
+    Require(surface.Pixel(3, 3) == 0);
+
+    Surface doubled;
+    OwnedContext doubledContext(&doubled.platform);
+    _ZN7WebCore15GraphicsContext14setStrokeColorERKNS_5ColorE(doubledContext.context, &red);
+    _ZN7WebCore15GraphicsContext15drawLineForTextERKNS_9FloatRectEbbNS_11StrokeStyleE(doubledContext.context, &line, true, true, 1);
+    Require(doubled.Pixel(3, 1) == 0xFFFF0000U);
+    Require(doubled.Pixel(3, 3) == 0);
+    Require(doubled.Pixel(3, 5) == 0xFFFF0000U);
+    Require(doubled.Pixel(3, 7) == 0);
+}
+
 void TestShadowState() {
     Surface surface;
     OwnedContext owned(&surface.platform);
@@ -336,6 +358,7 @@ int main() {
         TestPlatformContext();
         TestStrokeRectAndImage();
         TestCompositeAndTransparency();
+        TestDrawLineForText();
         TestShadowState();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "GraphicsContext test failed: %s\n", error.what());
