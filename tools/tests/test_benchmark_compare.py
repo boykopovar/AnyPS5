@@ -383,6 +383,19 @@ class BenchmarkCompareTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             benchmark_compare.compare_benchmark_runs(self.write_series(runs))
 
+    def test_missing_inode_uses_capture_hashes(self):
+        runs = self.abba()[:2]
+        path = self.write_series(runs)
+        captures = [benchmark_compare.load_benchmark(self.root / run["capture"]) for run in runs]
+        for capture in captures:
+            capture["source"]["_identity"] = (1, 0)
+        with patch.object(benchmark_compare, "load_benchmark", side_effect=captures):
+            report = benchmark_compare.compare_benchmark_runs(path)
+        self.assertEqual(report["aggregate"]["complete_pairs"], 1)
+        with patch.object(benchmark_compare, "load_benchmark", side_effect=[captures[0]] * 2):
+            with self.assertRaisesRegex(ValueError, "duplicate capture evidence"):
+                benchmark_compare.compare_benchmark_runs(path)
+
     def test_expected_raw_hash_is_verified_and_retained(self):
         runs = self.abba()[:2]
         expected = hashlib.sha256((self.root / runs[0]["capture"]).read_bytes()).hexdigest()
@@ -632,6 +645,28 @@ class BenchmarkMetricsTests(unittest.TestCase):
         metrics = benchmark_compare.benchmark_metrics([interval])
         self.assertIsNone(metrics["fps"])
         self.assertEqual(metrics["zero_frames"], 1)
+
+
+class BenchmarkContextTests(unittest.TestCase):
+    def test_collects_identity_environment_and_selection(self):
+        summary = {
+            "metadata": {"gpu": "g", "driver": "d", "os": "o", "cpu": "c", "title_id": "T", "title": "t",
+                         "content_version": "1.0", "cpu_threads": 8, "memory_mib": 16000, "env": {"A": "1", "B": "2"}},
+            "intervals": [{"ordinal": 1, "resolution": "1080p"}, {"ordinal": 3, "resolution": "4k"}],
+        }
+        self.assertEqual(benchmark_compare.benchmark_context(summary), {
+            "gpu": "g", "driver": "d", "os": "o", "cpu": "c", "title_id": "T", "title": "t",
+            "content_version": "1.0", "cpu_threads": 8, "memory_mib": 16000,
+            "env.A": "1", "env.B": "2",
+            "selection.ordinals": [1, 3], "selection.resolutions": ["1080p", "4k"],
+        })
+
+    def test_missing_identity_fields_are_none(self):
+        context = benchmark_compare.benchmark_context({"metadata": {"env": {}}, "intervals": []})
+        self.assertIsNone(context["gpu"])
+        self.assertIsNone(context["memory_mib"])
+        self.assertEqual(context["selection.ordinals"], [])
+        self.assertFalse([key for key in context if key.startswith("env.")])
 
 
 if __name__ == "__main__":

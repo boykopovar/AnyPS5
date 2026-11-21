@@ -254,6 +254,10 @@ class SanitizerReportTests(unittest.TestCase):
                          "/src/Copy.cpp:35:16: runtime error: null pointer passed as argument 2")
         self.assertEqual(sanitizer_report.first_report("FAIL: plain assertion\n"), "")
 
+    def test_fatal_thread_sanitizer_startup_report(self):
+        line = 'FATAL: ThreadSanitizer: unexpected memory mapping 0x1000-0x2000'
+        self.assertEqual(sanitizer_report.first_report(line + '\n'), line)
+
     def test_first_report_keeps_source_paths_with_spaces(self):
         locations = (r"D:\build folder\src\value.cpp:12:3", "/build folder/src/value.cpp:12:3",
                      "/build \u03a9 folder/src/value.cpp:12:3")

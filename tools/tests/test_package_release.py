@@ -189,8 +189,64 @@ class PublicHeaderPackageTests(unittest.TestCase):
             self.skipTest(str(error))
         self.api.write_text('#include "Alias.hpp"\n', encoding="utf-8")
         with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "0"}):
-            self.assert_archive_bytes((self.umbrella, self.api, target, self.libs / "Common.hpp"))
+            self.assert_archive_bytes((self.umbrella, self.api, link, self.libs / "Common.hpp"))
         self.assertTrue(link.is_symlink())
+
+    def test_symlink_aliases_preserve_relative_includes_in_both_archive_modes(self):
+        directory = self.umbrella.parent
+        target = directory / "Target.hpp"
+        target.write_text('#include "Nested.hpp"\n', encoding="utf-8")
+        (directory / "Nested.hpp").write_text('struct Nested {};\n', encoding="utf-8")
+        aliases = [directory / "Alias.hpp", directory / "Other.hpp"]
+        try:
+            for alias in aliases:
+                alias.symlink_to(target.name)
+        except OSError as error:
+            self.skipTest(str(error))
+        self.api.write_text('#include "Alias.hpp"\n#include "Other.hpp"\n', encoding="utf-8")
+        for epoch in (None, "0"):
+            with self.subTest(epoch=epoch), patch.dict(os.environ, {}, clear=False):
+                if epoch is None:
+                    os.environ.pop("SOURCE_DATE_EPOCH", None)
+                else:
+                    os.environ["SOURCE_DATE_EPOCH"] = epoch
+                self.assert_archive_bytes((self.umbrella, self.api, *aliases, directory / "Nested.hpp", self.libs / "Common.hpp"))
+                with zipfile.ZipFile(self.output / "prx-headers-v1.zip") as archive:
+                    for alias in aliases:
+                        info = archive.getinfo("include/anyps5/" + alias.relative_to(self.libs).as_posix())
+                        self.assertTrue(stat.S_ISREG(info.external_attr >> 16))
+                with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
+                    for alias in aliases:
+                        info = archive.getmember("include/anyps5/" + alias.relative_to(self.libs).as_posix())
+                        self.assertTrue(info.isfile())
+
+
+    def test_same_target_search_paths_use_relative_alias(self):
+        alias = self.umbrella.with_name("Alias.hpp")
+        (self.libs / "Alias.hpp").write_text("struct Alias {};\n", encoding="utf-8")
+        try:
+            alias.symlink_to(self.libs / "Alias.hpp")
+        except OSError as error:
+            self.skipTest(str(error))
+        self.api.write_text('#include "Alias.hpp"\n', encoding="utf-8")
+        self.assert_archive_bytes((self.umbrella, self.api, alias, self.libs / "Common.hpp"))
+
+    def test_parent_after_symlink_directory_cannot_change_source(self):
+        directory = self.umbrella.parent
+        target = self.libs / "other" / "nested"
+        target.mkdir(parents=True)
+        (target.parent / "Dependency.hpp").write_text("struct Other {};\n", encoding="utf-8")
+        (directory / "Dependency.hpp").write_text("struct Local {};\n", encoding="utf-8")
+        try:
+            (directory / "Link").symlink_to(target, target_is_directory=True)
+        except OSError as error:
+            self.skipTest(str(error))
+        spelled = directory / "Link" / ".." / "Dependency.hpp"
+        if os.path.realpath(spelled) == os.path.realpath(os.path.abspath(spelled)):
+            self.skipTest("host resolves the symlink-parent path without changing its target")
+        self.api.write_text('#include "Link/../Dependency.hpp"\n', encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "changes when normalized"):
+            package_headers.package(self.source, self.output, "v1")
 
     def test_source_date_epoch_rejects_empty_header_set_and_missing_license(self):
         with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "0"}):

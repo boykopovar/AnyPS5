@@ -77,30 +77,44 @@ static std::unordered_map<int, Http2Handle> g_handles;
 static std::atomic<GuestSceHttp2Test::AsyncPublishHook> g_asyncPublishHook{nullptr};
 static std::atomic<void*> g_asyncPublishHookData{nullptr};
 
+static void PublishAsync(Http2AsyncState& state, const char* function, int req_id,
+    const Http2AsyncOption* option, int event_type, int result, std::exception_ptr failure) {
+    Http2AsyncCompletion completion{};
+    completion.result.event_type = event_type;
+    completion.result.req_id = req_id;
+    completion.result.result = result;
+    completion.failure = std::move(failure);
+    state.pending.push_back(std::move(completion));
+    if (const auto hook = g_asyncPublishHook.load(std::memory_order_acquire)) {
+        hook(g_asyncPublishHookData.load(std::memory_order_acquire));
+    }
+    if (option && sceKernelTriggerUserEvent(option->equeue, option->user_event_id, option->user_data) != 0 &&
+        !state.pending.back().failure) {
+        try {
+            NotImplemented_nid_no_patch(function);
+        } catch (...) {
+            state.pending.back().failure = std::current_exception();
+        }
+    }
+    state.changed.notify_all();
+}
+
 static void CompleteAsync(const std::shared_ptr<Http2AsyncState>& state, const char* function, int req_id,
     const Http2AsyncOption* option, int event_type, int result, std::exception_ptr failure) {
     std::lock_guard lock(state->mutex);
     const auto index = static_cast<std::size_t>(event_type);
     if (index < 2 && state->inFlight[index] != 0) --state->inFlight[index];
     if (state->deleted || state->retired) return;
-    Http2AsyncCompletion completion{};
-    completion.result.event_type = event_type;
-    completion.result.req_id = req_id;
-    completion.result.result = result;
-    completion.failure = std::move(failure);
-    state->pending.push_back(std::move(completion));
-    if (const auto hook = g_asyncPublishHook.load(std::memory_order_acquire)) {
-        hook(g_asyncPublishHookData.load(std::memory_order_acquire));
-    }
-    if (option && sceKernelTriggerUserEvent(option->equeue, option->user_event_id, option->user_data) != 0 &&
-        !state->pending.back().failure) {
-        try {
-            NotImplemented_nid_no_patch(function);
-        } catch (...) {
-            state->pending.back().failure = std::current_exception();
-        }
-    }
-    state->changed.notify_all();
+    PublishAsync(*state, function, req_id, option, event_type, result, std::move(failure));
+}
+
+static void CompleteAsyncRead(const std::shared_ptr<Http2AsyncState>& state, const char* function, int req_id,
+    const Http2AsyncOption* option, void* data, const std::vector<std::uint8_t>& staged, int result, std::exception_ptr failure) {
+    std::lock_guard lock(state->mutex);
+    if (state->inFlight[1] != 0) --state->inFlight[1];
+    if (state->deleted || state->retired) return;
+    if (result > 0) std::memcpy(data, staged.data(), static_cast<std::size_t>(result));
+    PublishAsync(*state, function, req_id, option, 1, result, std::move(failure));
 }
 
 static void RetireAsync(const std::shared_ptr<Http2AsyncState>& state) {
@@ -155,7 +169,7 @@ static Http2Handle* FindAnyHandle(int id) {
     return entry != g_handles.end() ? &entry->second : nullptr;
 }
 
-static void ReleaseOwnedHandles(int owner) {
+static void ReleaseOwnedHandles(int owner, bool terminated) {
     for (;;) {
         auto child = g_handles.end();
         for (auto entry = g_handles.begin(); entry != g_handles.end(); ++entry) {
@@ -163,10 +177,10 @@ static void ReleaseOwnedHandles(int owner) {
         }
         if (child == g_handles.end()) return;
         const int id = child->first;
-        ReleaseOwnedHandles(id);
+        ReleaseOwnedHandles(id, terminated);
         auto& handle = g_handles.at(id);
         RetireAsync(handle.async);
-        if (handle.transport) handle.transport->Stop();
+        if (handle.transport) handle.transport->Stop(terminated);
         g_handles.erase(id);
     }
 }
@@ -294,15 +308,15 @@ int APS5_VABI sceHttp2DeleteRequest(int req_id) {
         g_handles.erase(req_id);
     }
     DropAsync(async);
-    if (transport) transport->Stop();
     AbortAsync(async, req_id);
+    if (transport) transport->Stop(false);
     return 0;
 }
 
 int APS5_VABI sceHttp2DeleteTemplate(int tmpl_id) {
     std::lock_guard lock(g_handlesMutex);
     if (!FindHandle(tmpl_id, Http2Kind::Template)) return ERROR_INVALID_ID;
-    ReleaseOwnedHandles(tmpl_id);
+    ReleaseOwnedHandles(tmpl_id, false);
     g_handles.erase(tmpl_id);
     return 0;
 }
@@ -318,6 +332,12 @@ int APS5_VABI sceHttp2GetAllTrailingHeaders(int req_id, char** header, size_t* h
 }
 
 int APS5_VABI sceHttp2GetResponseContentLength(int req_id, int* result, uint64_t* content_length) {
+    {
+        std::lock_guard lock(g_handlesMutex);
+        const auto* handle = FindHandle(req_id, Http2Kind::Request);
+        if (!handle) return ERROR_INVALID_ID;
+        if (!handle->transport) return ERROR_NOT_CONNECTED;
+    }
     const auto request = Transport(req_id, false);
     return request ? request->ContentLength(result, content_length) : ERROR_INVALID_ID;
 }
@@ -359,14 +379,15 @@ int APS5_VABI sceHttp2ReadDataAsync(int req_id, void* data, size_t size, void* k
         ++state->inFlight[1];
     }
     std::thread([request, state, async, data, size, req_id] {
+        std::vector<std::uint8_t> staged(size);
         int result = 0;
         std::exception_ptr failure;
         try {
-            result = request->Read(data, size);
+            result = request->Read(size ? staged.data() : nullptr, size);
         } catch (...) {
             failure = std::current_exception();
         }
-        CompleteAsync(state, "sceHttp2ReadDataAsync", req_id, async ? &*async : nullptr, 1, result, std::move(failure));
+        CompleteAsyncRead(state, "sceHttp2ReadDataAsync", req_id, async ? &*async : nullptr, data, staged, result, std::move(failure));
     }).detach();
     return 0;
 }
@@ -518,7 +539,7 @@ int APS5_VABI sceHttp2SetMinSslVersion(int id, uint32_t ssl_version) {
 int APS5_VABI sceHttp2Term(int lib_http2_ctx_id) {
     std::lock_guard lock(g_handlesMutex);
     if (!FindHandle(lib_http2_ctx_id, Http2Kind::Context)) return ERROR_INVALID_ID;
-    ReleaseOwnedHandles(lib_http2_ctx_id);
+    ReleaseOwnedHandles(lib_http2_ctx_id, true);
     g_handles.erase(lib_http2_ctx_id);
     return 0;
 }

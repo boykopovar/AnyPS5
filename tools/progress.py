@@ -15,6 +15,7 @@ tokenizer_spec = importlib.util.spec_from_file_location("anyps5_cpp_tokenizer", 
 tokenizer = importlib.util.module_from_spec(tokenizer_spec)
 tokenizer_spec.loader.exec_module(tokenizer)
 CPP_TOKEN = tokenizer.CPP_TOKEN
+BRACE = re.compile(r"[{}]")
 
 scan_spec = importlib.util.spec_from_file_location("anyps5_shader_scan", Path(__file__).with_name("shader_scan.py"))
 shader_scan = importlib.util.module_from_spec(scan_spec)
@@ -33,6 +34,7 @@ ISA_FORMS = Path(__file__).resolve().parent / "rdna2_isa_forms.txt"
 ISA_GFX1013 = Path(__file__).resolve().parent / "gfx1013_isa_forms.txt"
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
+STATIC_DECLARATION = re.compile(r"\bstatic\b[^;{}]*\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?;")
 EXPORT = re.compile(r"\bAPS5_EXPORT\s*\(\s*LITERAL\s*,\s*(\w+)\s*\)")
 ASM_DEFINITION = re.compile(rf'\b(?:{"|".join(sorted(tokenizer.ASM_FUNCTION_MACROS))})\s*\(\s*"(\w+)"\s*\)')
 STUB = "NotImplemented_nid_no_patch"
@@ -120,14 +122,38 @@ def code(text):
 
 def body_end(text, start):
     depth = 0
-    for i in range(start, len(text)):
-        if text[i] == "{":
+    for brace in BRACE.finditer(text, start):
+        if brace.group() == "{":
             depth += 1
-        elif text[i] == "}":
+        else:
             depth -= 1
             if depth == 0:
-                return i
+                return brace.start()
     return len(text)
+
+
+def brace_spans(text, pattern):
+    return [(match.end() - 1, body_end(text, match.end() - 1)) for match in re.finditer(pattern, text)]
+
+
+class Linkage:
+    def __init__(self, text):
+        self.text = text
+        self.anonymous = brace_spans(text, r"\bnamespace\s*\{")
+        self.classes = brace_spans(text, r"\b(?:class|struct|union)\b[^;{}()]*\{")
+        self.declared = {match.group(1) for match in STATIC_DECLARATION.finditer(text)
+                         if self.namespace_scope(match.start())}
+
+    def namespace_scope(self, start):
+        return not any(open_brace < start < close for open_brace, close in self.classes)
+
+    def internal(self, name, start):
+        if any(open_brace < start < close for open_brace, close in self.anonymous):
+            return True
+        if not self.namespace_scope(start):
+            return False
+        boundary = max(self.text.rfind(character, 0, start) for character in ";{}")
+        return name in self.declared or bool(re.search(r"\bstatic\b", self.text[boundary + 1:start]))
 
 
 def stub_calls(text):
@@ -281,7 +307,7 @@ def parameter_type(declaration):
 
 class Definition:
     def __init__(self, name, text, match, follow_qualified):
-        self.name, self.follow_qualified = name, follow_qualified
+        self.name, self.follow_qualified, self.start = name, follow_qualified, match.start()
         start = match.end(1)
         opening = text.index("(", start)
         parameters = text[opening + 1:closing(text, opening)]
@@ -480,8 +506,8 @@ def inert_body(body, wrappers, signature):
     return True
 
 
-def inert_wrappers(text):
-    bodies = {m.group(1): (text[m.end() - 1:body_end(text, m.end() - 1)], m.group()) for m in STUB_WRAPPER.finditer(text)}
+def inert_wrappers(helpers):
+    bodies = {name: (group[-1].body, group[-1].signature) for name, group in helpers.items()}
     names = set()
     while True:
         found = {name for name, (body, signature) in bodies.items() if name not in names and inert_body(body, names, signature)}
@@ -520,13 +546,16 @@ def scan_library(path):
                 live.add(name)
     headers = [code(header.read_text(encoding="utf-8", errors="ignore")) for pattern in ("*.h", "*.hpp")
                for header in path.rglob(pattern) if "tests" not in flavor(str(header)).relative_to(path_flavored).parts]
-    for text, (_, definitions) in zip(texts, reaching_definitions(texts, headers, assembled)):
+    for text, (helpers, definitions) in zip(texts, reaching_definitions(texts, headers, assembled)):
         if not definitions:
             continue
-        wrappers = inert_wrappers(text)
+        wrappers = inert_wrappers(helpers)
+        linkage = Linkage(text)
         for definition in definitions:
             name = definition.name
             if name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) and name not in exported:
+                continue
+            if name not in exported and linkage.internal(name, definition.start):
                 continue
             if definition.reaches:
                 todo.add(name)
@@ -1159,6 +1188,8 @@ def require_distinct_reports(output):
     for index, path in enumerate(paths):
         if not path.exists():
             continue
+        if not path.is_file():
+            raise ValueError(f"{path}: report destination must be a regular file")
         for other in paths[index + 1:]:
             if other.exists() and path.samefile(other):
                 raise ValueError(f"{path.name} and {other.name} in {output} are the same file")

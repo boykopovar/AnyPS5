@@ -16,6 +16,12 @@ NO_VULKAN_DEVICE = re.compile(r"skipped,.*no usable Vulkan device", re.IGNORECAS
 NO_RAW_SOCKET = re.compile(r"skipped,.*cannot create a raw socket", re.IGNORECASE)
 
 HIGH_REFRESH_LIMITATION = re.compile(r"current display does not provide 120 Hz", re.IGNORECASE)
+DEVICE_LOG_SOURCE = re.compile(r"\[[^\]]*:\d+ [^\]]*\] ")
+DEVICE_LOG_SUBSYSTEM = re.compile(r"\[(?:float-controls|gpu|pipeline-cache|shader-disk-cache|time|write-watch)\] ")
+VULKAN_LOADER_LOG = re.compile(r"\[Vulkan Loader\] (?:(?:DEBUG|INFO|WARNING) \| )?(?:LAYER|DRIVER):(?:\s|$)")
+HDR_OUTPUT_STATUS = re.compile(
+    r"\[videoout\] HDR output (?:available: peak [0-9]+\.[0-9] nits, full frame [0-9]+\.[0-9] nits, black [0-9]+\.[0-9]{4} nits"
+    r"|unavailable \(display in HDR: (?:yes|no), surface offers HDR10: (?:yes|no)\))")
 CTEST_SKIP_STATUS = re.compile(r"SKIP_RETURN_CODE=\d+|SKIP_REGULAR_EXPRESSION_MATCHED", re.IGNORECASE)
 
 WINDOWS_PREFIX = "agc"
@@ -28,8 +34,11 @@ def device_limitations(output, patterns):
     return bool(reasons) and all(any(pattern.search(reason) for pattern in patterns) for reason in reasons)
 
 
+SYMLINK_PRIVILEGE_TESTS = tuple(f"guest_kernel_sys_paths_{case}{suffix}" for case in ("symlinkat", "readlink_limits", "readlinkat_limits") for suffix in ("", "_patched"))
+
+
 def symlink_privilege_limitation(name, output):
-    if name not in ("guest_kernel_sys_paths_symlinkat", "guest_kernel_sys_paths_symlinkat_patched"):
+    if name not in SYMLINK_PRIVILEGE_TESTS:
         return False
     reasons = [match.group(0).strip() for line in output.splitlines() if (match := re.search(r"(?:skipped,|SKIP:).*", line, re.IGNORECASE))]
     return bool(reasons) and all(reason == "SKIP: Windows symbolic-link privileges unavailable" for reason in reasons)
@@ -39,6 +48,12 @@ def high_refresh_limitation(output):
     reasons = []
     for line in output.splitlines():
         reason = line.strip()
+        if not reason:
+            continue
+        if HDR_OUTPUT_STATUS.fullmatch(reason):
+            continue
+        if (DEVICE_LOG_SOURCE.match(reason) or DEVICE_LOG_SUBSYSTEM.match(reason) or VULKAN_LOADER_LOG.match(reason)) and not re.search(r"skipped,", reason, re.IGNORECASE):
+            continue
         if match := re.search(r"skipped,", reason, re.IGNORECASE):
             reason = reason[match.end():].strip()
         if reason:
@@ -103,7 +118,7 @@ def main(argv=None):
         return 0
     if args.job == "windows":
         unexpected = [name for name, output in found if not name.startswith(WINDOWS_PREFIX) and not symlink_privilege_limitation(name, output) and not device_limitations(output, (NO_DISPLAY, NO_VULKAN_DEVICE, NO_RAW_SOCKET)) and not high_refresh_limitation(output)]
-        expected = f"any {WINDOWS_PREFIX}* test, which the runner has no Vulkan driver for, or a test that reports no display or Vulkan device, a display without a 120 Hz mode or no permission to create a raw socket, or the two symlink creation tests reporting unavailable Windows symbolic-link privileges"
+        expected = f"any {WINDOWS_PREFIX}* test, which the runner has no Vulkan driver for, or a test that reports no display or Vulkan device, a display without a 120 Hz mode or no permission to create a raw socket, or the symlink creation and readlink limit tests reporting unavailable Windows symbolic-link privileges"
     else:
         unexpected = [name for name, output in found if not device_limitations(output, (DEVICE_LIMITATION,)) and not high_refresh_limitation(output)
                       and not (name == "guest_environment_binding_unload" and environment_loader_retention(output))]

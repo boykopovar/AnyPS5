@@ -285,11 +285,11 @@ int APS5_VABI sceFontDestroyRenderer(FontRenderer* pRenderer) {
 }
 
 int APS5_VABI sceFontRendererGetOutlineBufferSize(FontRenderer fontRenderer, std::uint32_t* size) {
-    if (!size || !CopyOutGuest(size, std::uint32_t{0})) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (size && !CopyOutGuest(size, std::uint32_t{0})) return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* renderer = static_cast<RendererNative*>(fontRenderer);
     if (!renderer || renderer->magic != RENDERER_MAGIC) return SCE_FONT_ERROR_INVALID_RENDERER;
     const auto workspaceSize = static_cast<std::uint32_t>(renderer->workspace_size);
-    if (!CopyOutGuest(size, workspaceSize)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!size || !CopyOutGuest(size, workspaceSize)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 

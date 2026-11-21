@@ -1,4 +1,4 @@
-import {actions, actionsForInput, defaults, groups, inputFilename, mouseValues, typesForAction, wheelValues} from './mapping.js';
+import {actions, actionsForInput, chordButtons, defaults, groups, inputFilename, mouseValues, typesForAction, wheelValues} from './mapping.js';
 import {exportableKeys} from './keys.js';
 import {captureKey} from './capture.js';
 import {parseIni, serialize, validate} from './validation.js';
@@ -128,13 +128,8 @@ async function confirmReplacement() {
     });
 }
 
-function valueChoices(type, value = '') {
-    if (type === 'PAD') return value ? [value] : [];
+function valueChoices(type) {
     return type === 'KEY' ? exportableKeys : type === 'MOUSE' ? mouseValues : type === 'WHEEL' ? wheelValues : [];
-}
-
-function typeChoices(entry) {
-    return typesForAction(entry.action).filter(type => type !== 'PAD' || entry.type === 'PAD');
 }
 
 function dropdownText() {
@@ -187,13 +182,59 @@ function renderCategories() {
     });
 }
 
+function renderChordControl(entry, label) {
+    const control = element('details', undefined, 'chord-picker');
+    const summary = element('summary');
+    const options = element('div', undefined, 'chord-buttons');
+    const selection = new Set(entry.value.split('+'));
+    const checkboxes = chordButtons.map(name => {
+        const option = element('label');
+        const checkbox = element('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = name;
+        checkbox.checked = selection.has(name);
+        option.append(checkbox, name);
+        options.append(option);
+        return checkbox;
+    });
+    const updateSummary = () => {
+        summary.textContent = entry.value || t('select');
+        summary.setAttribute('aria-label', `${label} (${summary.textContent})`);
+    };
+    options.addEventListener('change', () => {
+        entry.value = checkboxes.filter(checkbox => checkbox.checked).map(checkbox => checkbox.value).join('+');
+        updateSummary();
+        updateOutput();
+    });
+    control.dir = 'ltr';
+    control.append(summary, options);
+    control.addEventListener('toggle', filterActions);
+    updateSummary();
+    return control;
+}
+
+function renderBindingValue(entry, label) {
+    if (entry.type === 'PAD') {
+        bindingControls.delete(entry);
+        return renderChordControl(entry, label);
+    }
+    const control = selectControl(label, valueChoices(entry.type), entry.value);
+    control.element.dir = 'ltr';
+    control.select.addEventListener('change', () => {
+        entry.value = control.select.value;
+        updateOutput();
+    });
+    bindingControls.set(entry, control);
+    return control.element;
+}
+
 function renderBinding(entry, position) {
     const row = element('div', undefined, 'binding');
     const label = t('bindingLabel', {action: entry.action, number: position + 1});
-    const type = selectControl(t('typeLabel', {binding: label}), typeChoices(entry), entry.type);
-    const value = selectControl(t('valueLabel', {binding: label}), valueChoices(entry.type, entry.value), entry.value);
+    const type = selectControl(t('typeLabel', {binding: label}), typesForAction(entry.action), entry.type);
+    const valueLabel = t('valueLabel', {binding: label});
+    let value = renderBindingValue(entry, valueLabel);
     type.element.dir = 'ltr';
-    value.element.dir = 'ltr';
     const capture = button(t('capture'), t('captureLabel', {binding: label}), () => {
         captureTarget = entry;
         captureButton = capture;
@@ -210,23 +251,20 @@ function renderBinding(entry, position) {
         (action.hidden ? byId('search') : remaining).focus();
     });
     type.select.addEventListener('change', () => {
+        if (entry.type === type.select.value) return;
         entry.type = type.select.value;
         entry.value = '';
-        value.setChoices([{value: '', label: t('select')}, ...valueChoices(entry.type)]);
-        value.setValue('');
+        const next = renderBindingValue(entry, valueLabel);
+        value.replaceWith(next);
+        value = next;
         capture.disabled = entry.type !== 'KEY';
         updateOutput();
     });
-    value.select.addEventListener('change', () => {
-        entry.value = value.select.value;
-        updateOutput();
-    });
-    row.append(type.element, value.element, capture, remove);
-    bindingControls.set(entry, value);
+    row.append(type.element, value, capture, remove);
     return row;
 }
 
-function render() {
+function render(focusEntry) {
     const container = byId('mappings');
     container.replaceChildren();
     for (const group of groups) {
@@ -238,10 +276,9 @@ function render() {
             article.dataset.action = action;
             const heading = element('div', undefined, 'action-heading');
             const add = button(t('add'), t('addLabel', {action}), () => {
-                entries.push({action, type: 'KEY', value: ''});
-                render();
-                const rows = document.querySelectorAll(`[data-action="${action}"] .binding`);
-                rows[rows.length - 1].querySelectorAll('.dropdown-trigger')[1].focus();
+                const entry = {action, type: 'KEY', value: ''};
+                entries.push(entry);
+                render(entry);
             });
             add.className = 'add-binding';
             const title = element('div', undefined, 'action-title');
@@ -263,14 +300,19 @@ function render() {
         }
         container.append(section);
     }
+    bindingControls.get(focusEntry)?.focus();
     updateOutput();
 }
 
 function filterActions() {
     const searchField = byId('search');
     const search = searchField.value.trim().toLowerCase();
-    const focusedAction = document.activeElement?.closest('.action');
+    const focused = document.activeElement;
+    const focusedAction = focused?.closest('.action');
     const inputActions = actionsForInput(search, entries);
+    if (focused?.closest('.binding')?.querySelector('[aria-invalid="true"]') || focused?.closest('.chord-picker')?.open) {
+        inputActions.add(focusedAction.dataset.action);
+    }
     if (activeView === 'controls') byId('group-title').textContent = search ? t('search') : groupLabel(selectedGroup);
     for (const category of byId('categories').children) {
         category.setAttribute('aria-pressed', String(!search && category.dataset.group === selectedGroup));
@@ -386,13 +428,15 @@ byId('file').addEventListener('change', async event => {
         const text = new TextDecoder('utf-8', {fatal: true}).decode(await file.arrayBuffer());
         const result = parseIni(text);
         const report = byId('import-report');
-        importReport = result;
-        renderImportReport();
         if (result.errors.length) {
+            importReport = result;
+            renderImportReport();
             report.focus();
             return;
         }
         if (!await confirmReplacement()) return;
+        importReport = result;
+        renderImportReport();
         entries = result.entries;
         settings = result.settings;
         controllerRemaps = result.controllerRemaps;
