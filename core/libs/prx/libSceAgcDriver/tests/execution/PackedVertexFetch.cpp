@@ -44,7 +44,7 @@ ShaderRecompiler::RecompileResult shader(std::span<const std::uint32_t> words, s
     return result;
 }
 
-void run(AgcDriver::VulkanDevice& device) {
+unsigned run(AgcDriver::VulkanDevice& device) {
     auto producerVertex = shader(PACKED_FETCH_COVER_VERT_SPV, 1u);
     auto producerPixel = shader(PACKED_FETCH_PACKEDVERTEXPRODUCER_FRAG_SPV, 2u);
     const std::array producerShaders{CompiledShader{ShaderStage::Vertex, &producerVertex, 0}, CompiledShader{ShaderStage::Fragment, &producerPixel, 0}};
@@ -74,7 +74,15 @@ void run(AgcDriver::VulkanDevice& device) {
     std::array<std::uint32_t, 12> userData{0x10000000u, 1u, 0u, 0u, static_cast<std::uint32_t>(captured),
         static_cast<std::uint32_t>(captured >> 32u), sizeof(output), 0x31016facu};
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(vertexCode.data()), std::as_bytes(std::span(vertexCode))}}};
-    for (unsigned format = 50u; format <= 55u; ++format) {
+    constexpr std::array formats{VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_FORMAT_A2B10G10R10_SNORM_PACK32,
+        VK_FORMAT_A2B10G10R10_USCALED_PACK32, VK_FORMAT_A2B10G10R10_SSCALED_PACK32,
+        VK_FORMAT_A2B10G10R10_UINT_PACK32, VK_FORMAT_A2B10G10R10_SINT_PACK32};
+    unsigned completed = 0;
+    for (unsigned format = 50u; format < 50u + formats.size(); ++format) {
+        if (!device.SupportsVertexBufferFormat(formats[format - 50u])) {
+            std::cout << "skipped packed vertex format " << format << ": vertex fetch unsupported\n";
+            continue;
+        }
         for (const bool gpuProducer : {false, true}) {
             ShaderRecompiler::ShaderVertexStageInfo info{};
             info.resourcesNum = 1;
@@ -115,7 +123,9 @@ void run(AgcDriver::VulkanDevice& device) {
                 }
             }
         }
+        ++completed;
     }
+    return completed;
 }
 }
 
@@ -124,8 +134,9 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (SkipWithoutSharedMemoryStores()) return VulkanTestSkipped;
-        run(*device);
-        std::cout << "packed vertex fetch tests passed\n";
+        const auto completed = run(*device);
+        if (completed == 0u) return VulkanTestSkipped;
+        std::cout << "packed vertex fetch tests passed for " << completed << " of 6 formats\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
