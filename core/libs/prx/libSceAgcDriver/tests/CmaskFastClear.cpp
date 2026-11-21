@@ -34,6 +34,7 @@ constexpr std::uint32_t Drawn = 0xffffffffu;
 alignas(4096) std::array<std::byte, 2 * 65536> SurfaceStorage{};
 const std::span<std::byte, 65536> Surface{reinterpret_cast<std::byte*>((reinterpret_cast<std::uintptr_t>(SurfaceStorage.data()) + 65535u) & ~std::uintptr_t{65535u}), 65536};
 alignas(4096) std::array<std::uint8_t, 4096> Cmask{};
+alignas(4096) std::array<std::uint8_t, 4096> Keys{};
 
 ColorTarget target(ColorTileMode mode) {
     const ColorTargetLayout layout(Width, Height, mode, 4);
@@ -165,6 +166,29 @@ void expectRefused(const std::function<void()>& action, const std::string& messa
     throw std::runtime_error(what + ": was not refused");
 }
 
+void dccTarget(AgcDriver::VulkanDevice& device) {
+    auto color = target(ColorTileMode::RenderTarget);
+    color.dccAddress = reinterpret_cast<std::uintptr_t>(Keys.data());
+    Keys.fill(0xffu);
+    prepare(color, [](std::uint32_t tileX, std::uint32_t tileY) { return tileX == 7 && tileY == 1; });
+    expectRefused([&] { eliminate(device, color); }, "CMASK fast clear of the DCC color target", "a DCC target with a fast-cleared CMASK tile");
+    expectRefused([&] { eliminate(device, color); }, "1 of 16 tiles cleared, DCC keys uncompressed", "a DCC target with a fast-cleared CMASK tile");
+    prepare(color, [](std::uint32_t, std::uint32_t) { return false; });
+    eliminate(device, color);
+    expect(device, color, [](std::uint32_t, std::uint32_t) { return Stale; }, "a DCC target with an expanded CMASK eliminated");
+    Keys.fill(0x00u);
+    prepare(color, [](std::uint32_t, std::uint32_t) { return true; });
+    expectRefused([&] { eliminate(device, color); }, "16 of 16 tiles cleared, DCC keys 0000, clear words 0x11223344", "a DCC 0000 clear under a CMASK clear of another color");
+    color.clearWords = {0, 0};
+    eliminate(device, color);
+    expect(device, color, [](std::uint32_t, std::uint32_t) { return 0u; }, "a DCC 0000 clear under a CMASK clear of the same color eliminated");
+    color.clearWords = {Clear, 0};
+    Keys.fill(0x20u);
+    prepare(color, [](std::uint32_t tileX, std::uint32_t) { return tileX < 3; });
+    eliminate(device, color);
+    expect(device, color, [](std::uint32_t, std::uint32_t) { return Clear; }, "a DCC register clear under a partial CMASK clear eliminated");
+}
+
 void oneFragment(AgcDriver::VulkanDevice& device) {
     auto color = target(ColorTileMode::RenderTarget);
     color.coverageSamples = 4;
@@ -197,11 +221,13 @@ int main() {
             GuestAllocations::Mutation mutation;
             mutation.Add(SurfaceStorage.data(), SurfaceStorage.size(), true, true, true);
             mutation.Add(Cmask.data(), Cmask.size(), true, true, true);
+            mutation.Add(Keys.data(), Keys.size(), true, true, true);
         }
         run(*device, ColorTileMode::Linear, "linear");
         run(*device, ColorTileMode::RenderTarget, "SW_64KB_R_X");
         unknownCode(*device);
         oneFragment(*device);
+        dccTarget(*device);
         device->WaitIdle();
         device.reset();
         {
