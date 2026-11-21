@@ -42,7 +42,7 @@ constexpr std::array<std::uint32_t, 9> Word3s{0x31016facu, 0x01016facu, 0x31000f
 
 class GuestBlock {
 public:
-    GuestBlock() {
+    explicit GuestBlock(std::uint32_t baseOffset = 0u) : baseOffset(baseOffset) {
 #ifdef _WIN32
         block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 #else
@@ -50,6 +50,11 @@ public:
 #endif
         Require(block != nullptr, "scalar buffer runtime word 3: cannot allocate the guest block");
         GuestAllocations::Mutation().Add(block, BlockBytes, true, false, true);
+        std::memset(block, 0, BlockBytes);
+        for (std::uint32_t i = 0; i < 64; ++i) {
+            const std::uint32_t value = 0xa0000000u | i;
+            std::memcpy(block + i * 4u, &value, sizeof(value));
+        }
     }
 
     ~GuestBlock() {
@@ -65,9 +70,11 @@ public:
     GuestBlock& operator=(const GuestBlock&) = delete;
 
     std::uint8_t* Data() { return block; }
+    std::uint8_t* DescriptorBase() const { return block + baseOffset; }
 
 private:
     std::uint8_t* block = nullptr;
+    const std::uint32_t baseOffset;
 };
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
@@ -87,7 +94,7 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t word3
     std::vector<std::uint32_t> userData(12, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
-    const auto data = BufferDescriptor(guest.Data(), Records);
+    const auto data = BufferDescriptor(guest.DescriptorBase(), Records);
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     std::copy(data.begin(), data.begin() + 3, userData.begin() + 8);
@@ -124,12 +131,12 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        GuestBlock guest;
-        std::memset(guest.Data(), 0, BlockBytes);
-        for (std::uint32_t i = 0; i < 64; ++i) {
-            const std::uint32_t value = 0xa0000000u | i;
-            std::memcpy(guest.Data() + i * 4u, &value, sizeof(value));
+        for (const auto offset : {1u, 2u, 3u}) {
+            GuestBlock guest(offset);
+            Run(*device, guest, Word3s.front());
+            Check(Word3s.front());
         }
+        GuestBlock guest;
         for (const auto word3 : Word3s) {
             Run(*device, guest, word3);
             Check(word3);
