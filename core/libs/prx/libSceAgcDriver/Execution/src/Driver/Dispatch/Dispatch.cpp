@@ -331,6 +331,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     const auto codeOffset = static_cast<std::size_t>((address - snapshot.codeAddress) / sizeof(std::uint32_t));
     std::array<std::uint32_t, 5> resolved{};
     ResolvedDispatch ahead;
+    std::uint64_t pipelinePrebuild = 0;
     bool fromAhead = false;
     auto& groupStats = groupCaptureStats();
     if (!resolving) {
@@ -591,6 +592,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         captured = std::move(ahead.captured);
         liveWords = std::move(ahead.liveWords);
         capture = std::move(ahead.capture);
+        pipelinePrebuild = ahead.pipelinePrebuild;
         dataHit = ahead.dataHit;
         cached = ahead.cached;
         validated = ahead.validated;
@@ -716,7 +718,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         ++groupStats.resolved;
         if (cached) ++groupStats.resolvedHits;
         if (!cached && compiledResult != nullptr && !localDevice->HasComputePipeline(*compiledResult)) {
-            SubmitComputePrebuild([localDevice, compiledResult, address] {
+            parked.pipelinePrebuild = SubmitComputePrebuild([localDevice, compiledResult, address] {
                 try { localDevice->PrebuildComputePipeline(*compiledResult, address); } catch (const std::exception&) {}
             });
         }
@@ -727,7 +729,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         const auto ahead = localDevice->ComputePipelineAhead(*compiledResult);
         if (ahead == VulkanDevice::PipelineAhead::Start) {
             try {
-                SubmitComputePrebuild([localDevice, compiledResult, address] {
+                pipelinePrebuild = SubmitComputePrebuild([localDevice, compiledResult, address] {
                     try { localDevice->PrebuildComputePipeline(*compiledResult, address); } catch (...) {}
                 });
             } catch (...) {
@@ -736,7 +738,8 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             }
         }
         if (ahead == VulkanDevice::PipelineAhead::Start || ahead == VulkanDevice::PipelineAhead::Building) {
-            AwaitLibraryPrebuilds();
+            if (pipelinePrebuild != 0) AwaitComputePrebuild(pipelinePrebuild);
+            else AwaitLibraryPrebuilds();
             if (profile && localDevice->HasComputePipeline(*compiledResult)) NotePipelineReady(address);
         } else if (profile) {
             NotePipelineReady(address);

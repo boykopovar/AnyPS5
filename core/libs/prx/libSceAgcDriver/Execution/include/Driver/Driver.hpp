@@ -366,7 +366,7 @@ private:
     static void notePendingWait(std::span<const std::uint32_t> packet, std::uint32_t queue, std::uint64_t received);
     void landPendingWaits(std::uint32_t queue);
     struct ResolvedDispatch {
-        std::uint64_t address = 0, key = 0, indirectArguments = 0, forgetAtCapture = 0;
+        std::uint64_t address = 0, key = 0, indirectArguments = 0, forgetAtCapture = 0, pipelinePrebuild = 0;
         std::array<std::uint32_t, 5> packet{};
         std::shared_ptr<const ShaderSnapshot> registeredShader;
         std::shared_ptr<const ShaderRecompiler::RecompileResult> compiledResult;
