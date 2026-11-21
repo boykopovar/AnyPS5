@@ -5878,6 +5878,13 @@ void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
         void* block;
         ~Release() { ReleaseWatched(block, bytes); }
     } release{block};
+    const auto decidedWatch = PrepareImportWatch(context);
+    SetImportWatch(context, ImportWatch::Watch);
+    struct RestoreWatch {
+        const Context& context;
+        ImportWatch decided;
+        ~RestoreWatch() { SetImportWatch(context, decided); }
+    } restoreWatch{context, decidedWatch};
     std::memset(block, 0x11, bytes);
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
@@ -5949,10 +5956,14 @@ void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
         const auto tail = resources.PrepareDrawBindings(snapshotRecorder);
         Require(tail != nullptr && tail->snapshots.size() == 1 && tail->snapshots[0].buffer != afterStore && tail->snapshots[0].buffer->Bytes()[elementBytes - 1] == std::byte{0x34}, "a draw snapshot outlived a store that changed its last byte");
         std::memset(reinterpret_cast<void*>(element), 0x33, elementBytes);
+        const auto restored = snapshot(std::byte{0x33});
+        Require(restored != tail->snapshots[0].buffer, "a draw snapshot outlived a store that restored its last byte");
         {
             GuestAllocations::Mutation mutation;
         }
-        Require(snapshot(std::byte{0x33}) != afterStore, "a draw snapshot outlived a registry mutation");
+        Require(snapshot(std::byte{0x33}) == restored, "a registry mutation that changed no range made the draw input copy again");
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(element, elementBytes);
+        Require(snapshot(std::byte{0x33}) != restored, "a draw snapshot outlived a decommit of its range");
         snapshotRecorder.Sync();
     }
     recorder.Activate();
@@ -6354,27 +6365,110 @@ void drawSnapshotEvictionTests(const Device& device) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     Recorder cache(device.GetContext());
     const auto buffer = std::make_shared<Buffer>(device.GetContext(), 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    const auto registry = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    const auto forgetSerial = ForgetSerial();
     const auto generation = CollectWrites(address, 4096);
     Require(generation != 0, "the watched block has no generation");
     constexpr auto cap = Recorder::DrawSnapshotEntries;
-    cache.KeepDrawSnapshot(address, 16, generation, registry, buffer, Recorder::SnapshotUse::Vertex);
-    for (std::size_t size = 1; size <= cap; ++size) cache.KeepDrawSnapshot(address, size, generation, registry, buffer);
+    cache.KeepDrawSnapshot(address, 16, generation, forgetSerial, buffer, Recorder::SnapshotUse::Vertex);
+    for (std::size_t size = 1; size <= cap; ++size) cache.KeepDrawSnapshot(address, size, generation, forgetSerial, buffer);
     Require(cache.ReusableDrawSnapshot(address, 1) == buffer, "a kept snapshot is not reusable");
-    cache.KeepDrawSnapshot(address, cap + 1, generation, registry, buffer);
+    cache.KeepDrawSnapshot(address, cap + 1, generation, forgetSerial, buffer);
     Require(cache.ReusableDrawSnapshot(address, 2) == nullptr, "the least recently used snapshot survived the cap");
     Require(cache.ReusableDrawSnapshot(address, 1) == buffer && cache.ReusableDrawSnapshot(address, 3) == buffer && cache.ReusableDrawSnapshot(address, cap + 1) == buffer, "eviction dropped a more recently used snapshot");
-    cache.KeepDrawSnapshot(address, cap + 2, generation, registry, buffer);
+    cache.KeepDrawSnapshot(address, cap + 2, generation, forgetSerial, buffer);
     Require(cache.ReusableDrawSnapshot(address, 4) == nullptr && cache.ReusableDrawSnapshot(address, 1) == buffer, "the second eviction did not take the next oldest");
     Require(cache.ReusableDrawSnapshot(address, 16, Recorder::SnapshotUse::Vertex) == buffer, "storage snapshots evicted a vertex snapshot");
-    cache.KeepDrawSnapshot(address, 1, generation, registry, buffer);
+    cache.KeepDrawSnapshot(address, 1, generation, forgetSerial, buffer);
     Require(cache.ReusableDrawSnapshot(address, 1) == buffer && cache.ReusableDrawSnapshot(address, 5) == buffer, "replacing a kept snapshot evicted another");
-    cache.KeepDrawSnapshot(address + 8192, Recorder::DrawSnapshotBudget, generation, registry, buffer);
+    cache.KeepDrawSnapshot(address + 8192, Recorder::DrawSnapshotBudget, generation, forgetSerial, buffer);
     Require(cache.ReusableDrawSnapshot(address, 1) == nullptr && cache.ReusableDrawSnapshot(address, 5) == nullptr, "the byte budget did not evict the older snapshots");
-    cache.KeepDrawSnapshot(address, 16, generation, registry, buffer);
+    cache.KeepDrawSnapshot(address, 16, generation, forgetSerial, buffer);
     std::memset(block, 0x5a, 16);
     CollectWrites(address, 16);
     Require(cache.ReusableDrawSnapshot(address, 16) == nullptr && cache.ReusableDrawSnapshot(address, 16) == nullptr, "a snapshot outlived a CPU store");
+}
+
+void drawSnapshotForgetTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    constexpr std::size_t block = 65536;
+    constexpr std::size_t bytes = 4 * block;
+    void* memory = WriteWatched() ? AllocateWatched(bytes, block) : nullptr;
+    if (memory == nullptr) {
+        std::cout << "write watching unavailable: draw snapshot forget stamps not tested\n";
+        return;
+    }
+    struct Release {
+        void* memory;
+        ~Release() { ReleaseWatched(memory, bytes); }
+    } release{memory};
+    const auto address = reinterpret_cast<std::uint64_t>(memory);
+    const auto nearAddress = address;
+    const auto farAddress = address + 3 * block;
+    auto* nearBlock = reinterpret_cast<void*>(nearAddress);
+    auto* otherBlock = reinterpret_cast<void*>(address + block);
+    struct Unregister {
+        std::vector<void*> added;
+        ~Unregister() {
+            GuestAllocations::Mutation mutation;
+            for (auto* at : added) mutation.Remove(at);
+        }
+    } unregister;
+    Recorder cache(device.GetContext());
+    const auto buffer = std::make_shared<Buffer>(device.GetContext(), 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const auto keep = [&](std::uint64_t at) {
+        const auto serial = ForgetSerial();
+        const auto generation = CollectWrites(at, 16);
+        Require(generation != 0, "the watched block has no generation");
+        cache.KeepDrawSnapshot(at, 16, generation, serial, buffer);
+        cache.KeepHighestIndex(at, 16, Recorder::SnapshotUse::Index16, generation, serial, 7);
+    };
+    const auto kept = [&](std::uint64_t at) {
+        std::optional<std::uint32_t> highest;
+        const bool snapshot = cache.ReusableDrawSnapshot(at, 16) == buffer;
+        const bool index = cache.KnownHighestIndex(at, 16, Recorder::SnapshotUse::Index16, highest) && highest == 7u;
+        Require(snapshot == index, "a draw snapshot and the highest index of the same range disagree");
+        return snapshot;
+    };
+    keep(nearAddress);
+    keep(farAddress);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(otherBlock, block, true, true, false);
+        unregister.added.push_back(otherBlock);
+    }
+    Require(kept(nearAddress) && kept(farAddress), "a registry change outside a draw snapshot's range dropped it");
+    {
+        GuestAllocations::Mutation mutation;
+    }
+    Require(kept(nearAddress) && kept(farAddress), "a registry mutation that changed no range dropped a draw snapshot");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(nearBlock, block, true, true, false);
+        unregister.added.push_back(nearBlock);
+    }
+    Require(!kept(nearAddress), "a draw snapshot outlived a registry change over its range");
+    Require(kept(farAddress), "a registry change over one block dropped a snapshot of another");
+    keep(nearAddress);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.RequireUnpinned(nearBlock, block);
+    }
+    Require(!kept(nearAddress), "a draw snapshot outlived a mutation that renewed the backing of its range");
+    Require(kept(farAddress), "renewing the backing of one block dropped a snapshot of another");
+    keep(nearAddress);
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(nearAddress, 16);
+    Require(!kept(nearAddress), "a draw snapshot outlived a decommit of its range");
+    const auto whole = std::make_shared<Buffer>(device.GetContext(), block, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const VkDeviceSize alignment = std::max<VkDeviceSize>(device.GetContext().limits.minStorageBufferOffsetAlignment, 4);
+    cache.KeepDrawSnapshot(farAddress, block, CollectWrites(farAddress, block), ForgetSerial(), whole);
+    VkDeviceSize offset = 1;
+    Require(cache.ReusableDrawSnapshot(farAddress + alignment, 16, Recorder::SnapshotUse::Storage, nullptr, 0, &offset) == whole && offset == alignment, "an unchanged range inside a kept snapshot was not taken from it");
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(farAddress + alignment, 16);
+    Require(cache.ReusableDrawSnapshot(farAddress + alignment, 16, Recorder::SnapshotUse::Storage, nullptr, 0, &offset) == nullptr, "a containing snapshot outlived a decommit of the range taken from it");
+    const auto during = ForgetSerial() | 1u;
+    cache.KeepDrawSnapshot(nearAddress, 16, CollectWrites(nearAddress, 16), during, buffer);
+    cache.KeepHighestIndex(nearAddress, 16, Recorder::SnapshotUse::Index16, CollectWrites(nearAddress, 16), during, 7);
+    Require(!kept(nearAddress), "a draw snapshot copied while a forget was being stored was reused");
 }
 
 void paddedVertexSnapshotTests(const Device& device) {
@@ -6440,10 +6534,10 @@ void containingSnapshotTests(const Device& device) {
     Recorder cache(device.GetContext());
     const auto whole = std::make_shared<Buffer>(device.GetContext(), bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     const auto exact = std::make_shared<Buffer>(device.GetContext(), 4096, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    const auto registry = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    const auto forgetSerial = ForgetSerial();
     const auto generation = CollectWrites(address, bytes);
     Require(generation != 0, "the watched block has no generation");
-    cache.KeepDrawSnapshot(address, bytes, generation, registry, whole);
+    cache.KeepDrawSnapshot(address, bytes, generation, forgetSerial, whole);
     const auto inner = address + 65536 + 16 * alignment;
     VkDeviceSize offset = 1;
     Require(cache.ReusableDrawSnapshot(inner, 4096) == nullptr, "a lookup without an offset took a containing snapshot");
@@ -6451,7 +6545,7 @@ void containingSnapshotTests(const Device& device) {
     Require(cache.ReusableDrawSnapshot(inner, address + bytes - inner + 4, Recorder::SnapshotUse::Storage, nullptr, 0, &offset) == nullptr, "a range past the end of a kept snapshot was taken from it");
     Require(cache.ReusableDrawSnapshot(inner + alignment / 2, 4096, Recorder::SnapshotUse::Storage, nullptr, 0, &offset) == nullptr, "a misaligned range was taken from a kept snapshot");
     Require(cache.ReusableDrawSnapshot(inner, 4096, Recorder::SnapshotUse::Vertex, nullptr, 0, &offset) == nullptr, "a vertex lookup took a storage snapshot");
-    cache.KeepDrawSnapshot(inner, 4096, generation, registry, exact);
+    cache.KeepDrawSnapshot(inner, 4096, generation, forgetSerial, exact);
     offset = 1;
     Require(cache.ReusableDrawSnapshot(inner, 4096, Recorder::SnapshotUse::Storage, nullptr, 0, &offset) == exact && offset == 0, "an exact snapshot lost to a containing one");
     std::memset(block, 0x5a, 16);
@@ -6872,7 +6966,7 @@ void drawInputMirrorTests(const Device& device) {
     const auto& context = device.GetContext();
     for (std::size_t i = 0; i < bytes; ++i) static_cast<std::uint8_t*>(block)[i] = static_cast<std::uint8_t>(i * 5u + 3u);
     const auto address = reinterpret_cast<std::uint64_t>(block);
-    const auto registry = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    const auto forgetSerial = ForgetSerial();
     const auto generation = CollectWrites(address, bytes);
     Require(generation != 0, "the watched block has no generation");
     const bool mirrors = Recorder::DrawInputMirrors();
@@ -6896,8 +6990,8 @@ void drawInputMirrorTests(const Device& device) {
     const auto fourth = address + 12288;
     const auto firstHost = snapshot(first);
     const auto secondHost = snapshot(second);
-    cache.KeepDrawSnapshot(first, half + 4096, generation, registry, firstHost, Use::Vertex);
-    cache.KeepDrawSnapshot(second, half, generation, registry, secondHost, Use::Vertex);
+    cache.KeepDrawSnapshot(first, half + 4096, generation, forgetSerial, firstHost, Use::Vertex);
+    cache.KeepDrawSnapshot(second, half, generation, forgetSerial, secondHost, Use::Vertex);
     const auto firstMirror = reuse(first);
     if (!mirrors) {
         Require(firstMirror == firstHost && reuse(second) == secondHost && use(2 * half + 4096, 0), "a draw input was mirrored with APS5_NO_INPUT_MIRRORS set");
@@ -6915,7 +7009,7 @@ void drawInputMirrorTests(const Device& device) {
     Require(cache.ReusableDrawSnapshot(first, held, Use::Vertex) == firstHost, "dropping a mirror dropped its snapshot");
     const auto filler = snapshot(third);
     const auto fill = Recorder::DrawInputBudget - (half + 4096);
-    cache.KeepDrawSnapshot(third, fill, generation, registry, filler, Use::Vertex);
+    cache.KeepDrawSnapshot(third, fill, generation, forgetSerial, filler, Use::Vertex);
     Require(reuse(second) == nullptr && use(Recorder::DrawInputBudget, 0), "the draw input budget did not evict the least recently used snapshot and its mirror");
     const auto firstAgain = reuse(first);
     Require(firstAgain != firstHost && !firstAgain->Mapped() && use(2 * half + 8192, half + 4096), "making a mirror did not evict the least recently used snapshot to stay within the draw input budget");
@@ -6934,8 +7028,8 @@ void drawInputMirrorTests(const Device& device) {
     const auto wideHost = std::make_shared<Buffer>(context, wide, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     std::memcpy(wideHost->Bytes().data(), reinterpret_cast<const void*>(wideAt), wide);
     const auto olderHost = snapshot(third);
-    narrow.KeepDrawSnapshot(third, Recorder::DrawInputBudget - wide - 4096, generation, registry, olderHost, Use::Vertex);
-    narrow.KeepDrawSnapshot(wideAt, wide, generation, registry, wideHost, Use::Vertex);
+    narrow.KeepDrawSnapshot(third, Recorder::DrawInputBudget - wide - 4096, generation, forgetSerial, olderHost, Use::Vertex);
+    narrow.KeepDrawSnapshot(wideAt, wide, generation, forgetSerial, wideHost, Use::Vertex);
     Require(narrow.ReusableDrawSnapshot(wideAt, wide, Use::Vertex, nullptr, 0, nullptr, 0, nullptr, true) == wideHost && narrow.DrawInputBytes() == std::pair<std::size_t, std::size_t>{Recorder::DrawInputBudget - 4096, 0}, "a mirror whose allocation the device-local headroom refuses was made");
     Require(narrow.ReusableDrawSnapshot(third, held, Use::Vertex) == olderHost, "a mirror the device-local headroom refused evicted an older snapshot");
     narrow.Sync();
@@ -6943,7 +7037,7 @@ void drawInputMirrorTests(const Device& device) {
     for (std::uint32_t heap = 0; heap < unified.memory.memoryHeapCount; ++heap) unified.memory.memoryHeaps[heap].flags |= VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
     Recorder shared(unified);
     const auto sharedHost = snapshot(fourth);
-    shared.KeepDrawSnapshot(fourth, held, generation, registry, sharedHost, Use::Vertex);
+    shared.KeepDrawSnapshot(fourth, held, generation, forgetSerial, sharedHost, Use::Vertex);
     Require(shared.ReusableDrawSnapshot(fourth, held, Use::Vertex, nullptr, 0, nullptr, 0, nullptr, true) == sharedHost && shared.DrawInputBytes().second == 0, "a draw input was mirrored on a device whose memory is all device-local");
 }
 
@@ -7013,7 +7107,9 @@ void drawInputReuseTests(const Device& device, Recorder& recorder) {
         GuestAllocations::Mutation mutation;
         mutation.Remove(other);
     }
-    Require(!CopyDrawInput(context, &recorder, address, size, 4, Use::Index32).reused, "a draw input outlived a registry mutation");
+    Require(CopyDrawInput(context, &recorder, address, size, 4, Use::Index32).reused, "a registry change outside a draw input made it copy again");
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, size);
+    Require(!CopyDrawInput(context, &recorder, address, size, 4, Use::Index32).reused, "a draw input outlived a decommit of its range");
     const auto pool = address + 8192;
     const auto whole = CopyDrawInput(context, &recorder, pool, 12288, 1, Use::Vertex);
     Require(!whole.reused && std::memcmp(whole.buffer->Bytes().data(), reinterpret_cast<const void*>(pool), 12288) == 0, "the vertex pool copy is wrong");
@@ -7080,7 +7176,7 @@ void drawInputReuseTests(const Device& device, Recorder& recorder) {
     Require(keptIndices.reused && keptIndices.derived == 9 && keptIndices.lowest == 7, "a kept index copy lost its lowest index");
     const auto rangeAddress = window + 28672;
     const auto rangeGeneration = CollectWrites(rangeAddress, 4096);
-    recorder.KeepHighestIndex(rangeAddress, 4096, Use::Index16, rangeGeneration, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), 9u, 4u);
+    recorder.KeepHighestIndex(rangeAddress, 4096, Use::Index16, rangeGeneration, ForgetSerial(), 9u, 4u);
     std::optional<std::uint32_t> rangeHighest;
     std::uint32_t rangeLowest = 0;
     Require(recorder.KnownHighestIndex(rangeAddress, 4096, Use::Index16, rangeHighest, &rangeLowest) && rangeHighest == 9u && rangeLowest == 4u, "a kept index range lost its lowest index");
@@ -18549,6 +18645,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-snapshot-cap-only") {
             drawSnapshotCapTests(device, recorder);
+            drawSnapshotForgetTests(device);
             containingSnapshotTests(device);
             unwrittenSnapshotTests(device);
             drawSnapshotUploadTests(device, recorder);
@@ -18621,6 +18718,7 @@ int main(int argc, char** argv) {
         imageTableFirstLayerRevalidateTests(device, recorder);
         drawSnapshotCapTests(device, recorder);
         drawSnapshotEvictionTests(device);
+        drawSnapshotForgetTests(device);
         paddedVertexSnapshotTests(device);
         containingSnapshotTests(device);
         unwrittenSnapshotTests(device);
