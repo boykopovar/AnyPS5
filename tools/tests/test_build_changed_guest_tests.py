@@ -426,6 +426,23 @@ class Main(unittest.TestCase):
         self.assertEqual(build_changed_guest_tests.registered_test_commands(build), {
             "a b": ["/x/a_tests", 'arg "q"'], "nid_one": ["/x/nid_one_tests"]})
 
+    def test_a_changed_python_wrapper_selects_the_executable_it_runs(self):
+        root = Path(self.temporary.name).resolve()
+        script = "core/libs/prx/libc/tests/GuestLibcxxVerboseAbort.py"
+        (root / script).parent.mkdir(parents=True)
+        (root / script).write_text("", encoding="utf-8")
+        build = root / "build"
+        build.mkdir()
+        (build / "CTestTestfile.cmake").write_text(
+            f'add_test([=[guest_libcxx_verbose_abort]=] "/usr/bin/python3" "{(root / script).as_posix()}" '
+            '"/b/guest_libcxx_verbose_abort_tests")\n'
+            'add_test([=[guest_pad]=] "/b/guest_pad_tests")\n', encoding="utf-8")
+        owners = {"guest_libcxx_verbose_abort_tests": "guest_libcxx_verbose_abort_tests", "guest_pad_tests": "guest_pad_tests"}
+        self.assertEqual(build_changed_guest_tests.changed_python_test_targets(build, root, [script], owners),
+                         {"guest_libcxx_verbose_abort_tests"})
+        self.assertEqual(build_changed_guest_tests.changed_python_test_targets(
+            build, root, ["core/libs/prx/libc/tests/Other.py", "core/libs/tests/Guest.cpp"], owners), set())
+
     def test_registered_commands_preserve_empty_arguments(self):
         build = Path(self.temporary.name)
         (build / "CTestTestfile.cmake").write_text(

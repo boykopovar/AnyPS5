@@ -148,6 +148,21 @@ def core_lib_test_targets(source_root, targets, changed_paths=None):
     return sorted(set(guest) | set(host), key=str.casefold)
 
 
+def changed_python_test_targets(build_dir, source_root, changed_paths, targets_by_name):
+    scripts = {(source_root / path).resolve() for path in changed_paths
+               if Path(path).as_posix().startswith("core/libs/") and Path(path).suffix == ".py"}
+    if not scripts:
+        return set()
+    owners = set()
+    for command in registered_test_commands(build_dir).values():
+        if any(Path(part).suffix == ".py" and Path(part).is_absolute() and Path(part).resolve() in scripts
+               for part in command[1:]):
+            owner = test_owner(command, targets_by_name)
+            if owner is not None:
+                owners.add(owner)
+    return owners
+
+
 def target_artifact_names(target):
     names = set()
     for artifact in target.get("artifacts", []):
@@ -289,17 +304,19 @@ def main(argv=None):
                 return 0
         source_root, targets = host_only.read_reply(Path(os.path.realpath(args.build_dir)))
         selected = core_lib_test_targets(source_root, targets, changed_paths)
-        if not selected:
-            print("No core/libs test sources changed")
-        else:
-            print("Core/libs tests:")
-            print("\n".join(selected))
         by_name = {target.get("name"): target for target in targets.values()}
         targets_by_name = {}
         for name, target in by_name.items():
             if target.get("type") == "EXECUTABLE":
                 targets_by_name.update(target_artifact_names(target))
                 targets_by_name[name.casefold()] = name
+        script_owners = changed_python_test_targets(args.build_dir, source_root, changed_paths or [], targets_by_name)
+        selected = sorted(set(selected) | script_owners, key=str.casefold)
+        if not selected:
+            print("No core/libs test sources changed")
+        else:
+            print("Core/libs tests:")
+            print("\n".join(selected))
         script_tests = script_test_patterns(changed_paths) if changed_paths is not None else None
         run(args.build_dir, selected, targets_by_name, args.output_log, script_tests)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as error:
