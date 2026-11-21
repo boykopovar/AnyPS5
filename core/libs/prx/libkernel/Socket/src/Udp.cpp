@@ -538,6 +538,16 @@ Forwarded ForwardsFor(int descriptor) {
     const int family = forwards == nullptr ? 0 : forwards->family(descriptor);
     return family == 0 ? Forwarded{} : Forwarded{forwards, family};
 }
+std::int64_t ForwardedReceiveFrom(const KernelSocketPoll::Forwards& forwards, int descriptor, void* buffer,
+    std::uint64_t length, int flags, void* address, std::uint32_t* addressLength, int* error) {
+    const ThreadCancel::NativeIo operation;
+    return forwards.recvfrom(descriptor, buffer, length, flags, address, addressLength, error);
+}
+std::int64_t ForwardedSendTo(const KernelSocketPoll::Forwards& forwards, int descriptor, const void* buffer,
+    std::uint64_t length, int flags, const void* address, std::uint32_t addressLength, int* error) {
+    const ThreadCancel::NativeIo operation;
+    return forwards.sendto(descriptor, buffer, length, flags, address, addressLength, error);
+}
 std::shared_ptr<Socket> Lookup(int descriptor) {
     std::lock_guard lock(socketsMutex);
     const auto found = sockets.find(descriptor);
@@ -951,6 +961,10 @@ extern "C" void KernelReleaseSocketNumber_nid_no_patch(int number) {
 extern "C" void KernelSetSocketForwards_nid_no_patch(const KernelSocketPoll::Forwards* forwards) {
     socketForwards.store(forwards, std::memory_order_release);
 }
+
+extern "C" bool KernelIoActive_nid_no_patch() { return ThreadCancel::IoActive(); }
+extern "C" bool KernelIoInterrupted_nid_no_patch() { return ThreadCancel::IoInterrupted(); }
+extern "C" void KernelIoNoRestart_nid_no_patch() { ThreadCancel::IoNoRestart(); }
 
 namespace {
 #ifdef _WIN32
@@ -2265,7 +2279,7 @@ static std::int64_t Send(int descriptor, const void* buffer, std::uint64_t lengt
         if (length > INT_MAX) return Fail(40);
         if (!buffer && length) return Fail(14);
         int error = 0;
-        const auto sent = forwards->sendto(descriptor, buffer, length, flags, nullptr, 0, &error);
+        const auto sent = ForwardedSendTo(*forwards, descriptor, buffer, length, flags, nullptr, 0, &error);
         return error == 0 ? sent : Fail(error);
     }
     const auto socket = Lookup(descriptor);
@@ -2292,7 +2306,7 @@ static std::int64_t Receive(int descriptor, void* buffer, std::uint64_t length, 
         if (length > INT_MAX) return Fail(40);
         if (!buffer && length) return Fail(14);
         int error = 0;
-        const auto received = forwards->recvfrom(descriptor, buffer, length, flags, nullptr, nullptr, &error);
+        const auto received = ForwardedReceiveFrom(*forwards, descriptor, buffer, length, flags, nullptr, nullptr, &error);
         return error == 0 ? received : Fail(error);
     }
     const auto socket = Lookup(descriptor);
@@ -2566,7 +2580,7 @@ static std::int64_t ReceiveFrom(int descriptor, void* buffer, std::uint64_t leng
         unsigned char name[28]{};
         std::uint32_t reported = std::min<std::uint32_t>(capacity, sizeof(name));
         int error = 0;
-        const auto received = forwards->recvfrom(descriptor, buffer, length, flags, address ? name : nullptr, address ? &reported : nullptr, &error);
+        const auto received = ForwardedReceiveFrom(*forwards, descriptor, buffer, length, flags, address ? name : nullptr, address ? &reported : nullptr, &error);
         if (error != 0) return Fail(error);
         if (!addressLength) return received;
         return ReportAddress(address, addressLength, name, address ? reported : capacity) ? received : Fail(14);
@@ -3512,7 +3526,7 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
                 socklen_t checkedSize;
                 if (address && !Address(family, address, addressLength, checked, checkedSize)) return -1;
                 int error = 0;
-                const auto sent = forwards->sendto(descriptor, buffer, length, flags, address, addressLength, &error);
+                const auto sent = ForwardedSendTo(*forwards, descriptor, buffer, length, flags, address, addressLength, &error);
                 return error == 0 ? sent : Fail(error);
             }
             const auto socket = Lookup(descriptor);
