@@ -1,11 +1,12 @@
 add_library(libSceVdecwrap SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceVdecwrap PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceVdecwrap PRIVATE libSceVdecCore)
 configure_windows_unwind(libSceVdecwrap)
 
 if(BUILD_TESTING)
     add_test_executable(guest_vdecwrap_argument_checks_tests ${LIBS_INCLUDE_DIR}/tests/GuestVdecwrapArgumentChecks.cpp)
     target_include_directories(guest_vdecwrap_argument_checks_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_vdecwrap_argument_checks_tests PRIVATE libSceVdecwrap libc)
+    target_link_libraries(guest_vdecwrap_argument_checks_tests PRIVATE libSceVdecwrap libSceVdecCore libc)
     configure_windows_unwind(guest_vdecwrap_argument_checks_tests)
     add_test(NAME guest_vdecwrap_argument_checks COMMAND guest_vdecwrap_argument_checks_tests)
     if(WIN32)
