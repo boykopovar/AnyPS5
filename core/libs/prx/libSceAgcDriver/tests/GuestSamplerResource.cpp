@@ -501,7 +501,9 @@ void RunGuestSamplerResourceTests() {
     }
     auto truncatedBlend = pack(unnormalizedBase);
     truncatedBlend[0] |= 1u << 19u;
-    reject([&] { DecodeSamplerResource(truncatedBlend, true); }, "unnormalized coordinates with MC_COORD_TRUNC");
+    requireUnnormalized(DecodeSamplerResource(truncatedBlend, true), "unnormalized MC_COORD_TRUNC sampler");
+    truncatedBlend[0] |= 1u << 29u;
+    reject([&] { DecodeSamplerResource(truncatedBlend, true); }, "unnormalized MC_COORD_TRUNC with a min or max reduction");
     rejectUnnormalized(base, "bound as unnormalized without FORCE_UNNORMALIZED");
 
     Fields forcedSrgb = base;
