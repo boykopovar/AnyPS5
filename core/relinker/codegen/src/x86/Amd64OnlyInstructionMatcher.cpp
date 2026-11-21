@@ -27,6 +27,9 @@
 #include <codegen/x86/MovbeLowering.hpp>
 #include <codegen/x86/Avx2TwinLowering.hpp>
 #include <codegen/x86/LaneSplitLowering.hpp>
+#include <codegen/x86/MoveMaskLowering.hpp>
+#include <codegen/x86/VariableShiftLowering.hpp>
+#include <codegen/x86/GatherLowering.hpp>
 #include <codegen/x86/PermuteLowering.hpp>
 #include <codegen/x86/WidenBroadcastLowering.hpp>
 #include <codegen/CodegenException.hpp>
@@ -329,6 +332,18 @@ const char* Amd64OnlyInstructionMatcher::_emitOutOfLine(StubBodyBuilder& body, c
         EmitWidenBroadcast(body, *widen);
         return widen->Name;
     }
+    if (const auto mask = _target == Amd64OnlyTarget::Avx ? DecodeMoveMask(instr.Data, instr.Length) : std::nullopt) {
+        EmitMoveMask(body, *mask);
+        return "VPMOVMSKB";
+    }
+    if (const auto shift = _target == Amd64OnlyTarget::Avx ? DecodeVariableShift(instr.Data, instr.Length) : std::nullopt) {
+        EmitVariableShift(body, *shift);
+        return shift->Name;
+    }
+    if (const auto gather = _target == Amd64OnlyTarget::Avx ? DecodeGather(instr.Data, instr.Length) : std::nullopt) {
+        EmitGather(body, *gather);
+        return gather->Name;
+    }
     if (instr.IsExtrq() || instr.IsInsertq()) {
         const auto operands = DecodeSse4a(instr.Data, instr.Length);
         _lowering.EmitOutOfLine(body, operands);
@@ -536,6 +551,15 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::Match(
 
     if (const auto widen = _target == Amd64OnlyTarget::Avx ? DecodeWidenBroadcast(data, length) : std::nullopt)
         return _trampoline(widen->Name, length, _outOfLine(length, trailing, [&](StubBodyBuilder& body) { EmitWidenBroadcast(body, *widen); }), false, true);
+
+    if (const auto mask = _target == Amd64OnlyTarget::Avx ? DecodeMoveMask(data, length) : std::nullopt)
+        return _trampoline("VPMOVMSKB", length, _outOfLine(length, trailing, [&](StubBodyBuilder& body) { EmitMoveMask(body, *mask); }), false, true);
+
+    if (const auto shift = _target == Amd64OnlyTarget::Avx ? DecodeVariableShift(data, length) : std::nullopt)
+        return _trampoline(shift->Name, length, _outOfLine(length, trailing, [&](StubBodyBuilder& body) { EmitVariableShift(body, *shift); }), false, true);
+
+    if (const auto gather = _target == Amd64OnlyTarget::Avx ? DecodeGather(data, length) : std::nullopt)
+        return _trampoline(gather->Name, length, _outOfLine(length, trailing, [&](StubBodyBuilder& body) { EmitGather(body, *gather); }), false, true);
 
     return _matchRosetta(instr, trailing, following);
 }

@@ -14,6 +14,7 @@ enum class LaneSplitShape : std::uint8_t {
     ShiftCount,
     Unary,
     UnaryImmediate,
+    BlendVariable,
 };
 
 struct LaneSplitOperands {
@@ -28,6 +29,7 @@ struct LaneSplitOperands {
     std::uint8_t Extension;
     std::optional<std::uint8_t> Immediate;
     std::optional<MemoryOperand> Memory;
+    std::uint8_t Mask = 0;
 };
 
 [[nodiscard]] std::optional<LaneSplitOperands> DecodeLaneSplit(const std::uint8_t* data, std::size_t length);

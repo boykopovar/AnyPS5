@@ -11,7 +11,7 @@ using namespace VexEncoding;
 
 namespace {
 
-constexpr std::int32_t kSaveSize = 96;
+constexpr std::int32_t kSaveSize = 128;
 constexpr std::int32_t kFrame = 128 + kSaveSize;
 constexpr const char* kName = "256-bit integer lowering";
 
@@ -19,7 +19,8 @@ bool _in(const std::uint8_t value, const std::uint8_t low, const std::uint8_t hi
     return value >= low && value <= high;
 }
 
-std::optional<LaneSplitShape> _shape(const std::uint8_t map, const std::uint8_t prefix, const std::uint8_t opcode, const std::uint8_t extension) {
+std::optional<LaneSplitShape> _shape(const std::uint8_t map, const std::uint8_t prefix, const bool wide, const std::uint8_t opcode, const std::uint8_t extension) {
+    if (map == Map0F3A && prefix == Prefix66 && opcode == 0x4C) return wide ? std::nullopt : std::optional{LaneSplitShape::BlendVariable};
     if (map == Map0F && opcode == 0x70 && (prefix == Prefix66 || prefix == PrefixF3 || prefix == PrefixF2))
         return LaneSplitShape::UnaryImmediate;
     if (prefix != Prefix66) return std::nullopt;
@@ -41,29 +42,38 @@ std::optional<LaneSplitShape> _shape(const std::uint8_t map, const std::uint8_t 
             return LaneSplitShape::Unary;
         return std::nullopt;
     }
-    if (map == Map0F3A && (opcode == 0x0E || opcode == 0x0F))
+    if (map == Map0F3A && (opcode == 0x0E || opcode == 0x0F || opcode == 0x42))
         return LaneSplitShape::BinaryImmediate;
     return std::nullopt;
 }
 
 bool _hasImmediate(const LaneSplitShape shape) {
-    return shape == LaneSplitShape::BinaryImmediate || shape == LaneSplitShape::ShiftImmediate || shape == LaneSplitShape::UnaryImmediate;
+    return shape == LaneSplitShape::BinaryImmediate || shape == LaneSplitShape::ShiftImmediate || shape == LaneSplitShape::UnaryImmediate || shape == LaneSplitShape::BlendVariable;
 }
 
-void _half(StubBodyBuilder& body, const LaneSplitOperands& operands, const std::uint8_t destination, const std::uint8_t first, const std::uint8_t second) {
+bool _laneImmediate(const LaneSplitOperands& operands) {
+    return operands.Map == Map0F3A && operands.Opcode == 0x42;
+}
+
+void _half(StubBodyBuilder& body, const LaneSplitOperands& operands, const std::uint8_t destination, const std::uint8_t first, const std::uint8_t second, const bool upper = false, const std::uint8_t mask = 0) {
     const Form form{operands.Map, operands.Prefix, operands.Wide, false, operands.Opcode};
+    auto immediate = operands.Immediate;
+    if (immediate && _laneImmediate(operands)) immediate = static_cast<std::uint8_t>(upper ? (*immediate >> 3) & 7 : *immediate & 7);
     switch (operands.Shape) {
+    case LaneSplitShape::BlendVariable:
+        Register(body, form, destination, first, second, static_cast<std::uint8_t>(mask << 4));
+        return;
     case LaneSplitShape::Binary:
     case LaneSplitShape::BinaryImmediate:
     case LaneSplitShape::ShiftCount:
-        Register(body, form, destination, first, second, operands.Immediate);
+        Register(body, form, destination, first, second, immediate);
         return;
     case LaneSplitShape::ShiftImmediate:
-        Register(body, form, operands.Extension, destination, first, operands.Immediate);
+        Register(body, form, operands.Extension, destination, first, immediate);
         return;
     case LaneSplitShape::Unary:
     case LaneSplitShape::UnaryImmediate:
-        Register(body, form, destination, 0, second, operands.Immediate);
+        Register(body, form, destination, 0, second, immediate);
         return;
     }
 }
@@ -85,7 +95,7 @@ std::optional<LaneSplitOperands> DecodeLaneSplit(const std::uint8_t* data, const
     const auto opcode = data[opcodeOffset];
     const auto modrm = data[opcodeOffset + 1];
     const auto extension = static_cast<std::uint8_t>((modrm >> 3) & 7);
-    const auto shape = _shape(map, static_cast<std::uint8_t>(payload & 3), opcode, extension);
+    const auto shape = _shape(map, static_cast<std::uint8_t>(payload & 3), threeByte && (payload & 0x80) != 0, opcode, extension);
     if (!shape) return std::nullopt;
     LaneSplitOperands operands{
         *shape, map, static_cast<std::uint8_t>(payload & 3), threeByte && (payload & 0x80) != 0, opcode,
@@ -106,6 +116,7 @@ std::optional<LaneSplitOperands> DecodeLaneSplit(const std::uint8_t* data, const
     if (_hasImmediate(*shape)) {
         if (end >= length) throw CodegenException("256-bit integer instruction is missing its immediate");
         operands.Immediate = data[end++];
+        if (*shape == LaneSplitShape::BlendVariable) operands.Mask = static_cast<std::uint8_t>(*operands.Immediate >> 4);
     }
     if (end != length) throw CodegenException("256-bit integer instruction has trailing bytes");
     return operands;
@@ -116,13 +127,15 @@ void EmitLaneSplit(StubBodyBuilder& body, const LaneSplitOperands& operands) {
     used[operands.Destination] = true;
     if (operands.Shape != LaneSplitShape::Unary && operands.Shape != LaneSplitShape::UnaryImmediate) used[operands.First] = true;
     if (!operands.Memory && operands.Shape != LaneSplitShape::ShiftImmediate) used[operands.Second] = true;
-    std::array<std::uint8_t, 3> scratch{};
+    if (operands.Shape == LaneSplitShape::BlendVariable) used[operands.Mask] = true;
+    std::array<std::uint8_t, 4> scratch{};
     std::size_t taken = 0;
     for (std::uint8_t reg = 15; taken < scratch.size(); --reg)
         if (!used[reg]) scratch[taken++] = reg;
     const auto high = scratch[0];
     const auto secondHigh = scratch[1];
     const auto loaded = scratch[2];
+    const auto maskHigh = scratch[3];
     StackSlot(body, 0x8D, true, Stack, -kFrame);
     for (std::size_t index = 0; index < scratch.size(); ++index)
         VexEncoding::StackOperand(body, MoveUnaligned256Store, scratch[index], 0, static_cast<std::int32_t>(index * 32));
@@ -132,11 +145,17 @@ void EmitLaneSplit(StubBodyBuilder& body, const LaneSplitOperands& operands) {
         second = loaded;
     }
     switch (operands.Shape) {
+    case LaneSplitShape::BlendVariable:
+        ExtractUpper(body, high, operands.First);
+        ExtractUpper(body, secondHigh, second);
+        ExtractUpper(body, maskHigh, operands.Mask);
+        _half(body, operands, high, high, secondHigh, true, maskHigh);
+        break;
     case LaneSplitShape::Binary:
     case LaneSplitShape::BinaryImmediate:
         ExtractUpper(body, high, operands.First);
         ExtractUpper(body, secondHigh, second);
-        _half(body, operands, high, high, secondHigh);
+        _half(body, operands, high, high, secondHigh, true);
         break;
     case LaneSplitShape::ShiftCount:
         ExtractUpper(body, high, operands.First);
@@ -152,7 +171,7 @@ void EmitLaneSplit(StubBodyBuilder& body, const LaneSplitOperands& operands) {
         _half(body, operands, high, 0, high);
         break;
     }
-    _half(body, operands, operands.Destination, operands.First, second);
+    _half(body, operands, operands.Destination, operands.First, second, false, operands.Mask);
     InsertUpper(body, operands.Destination, operands.Destination, high);
     for (std::size_t index = 0; index < scratch.size(); ++index)
         VexEncoding::StackOperand(body, MoveUnaligned256Load, scratch[index], 0, static_cast<std::int32_t>(index * 32));
