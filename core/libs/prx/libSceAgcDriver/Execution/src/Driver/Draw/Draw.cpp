@@ -204,7 +204,7 @@ void noteFinisherHandOff(bool handed) {
 
 namespace {
 
-enum class HeldReason : std::size_t { Known, NoDecode, Size, NullVertex, NullFragment, NullOther, Bda, Buffer, Storage, Count };
+enum class HeldReason : std::size_t { Known, NoDecode, Size, NullVertex, NullFragment, NullOther, Bda, Buffer, Storage, Gds, Count };
 std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(HeldReason::Count)> heldReasons{};
 
 void noteHeld(HeldReason reason) {
@@ -214,7 +214,7 @@ void noteHeld(HeldReason reason) {
     static std::atomic<std::uint64_t> total{0};
     const auto count = ++total;
     if (count % 262144u != 0u && (count > 262144u || (count & (count - 1u)) != 0u)) return;
-    constexpr std::array<const char*, static_cast<std::size_t>(HeldReason::Count)> names{"targets only", "no decode", "stage count", "no variant (vertex)", "no variant (fragment)", "no variant (other)", "BDA stores", "written buffer", "storage image"};
+    constexpr std::array<const char*, static_cast<std::size_t>(HeldReason::Count)> names{"targets only", "no decode", "stage count", "no variant (vertex)", "no variant (fragment)", "no variant (other)", "BDA stores", "written buffer", "storage image", "GDS"};
     std::string text;
     for (std::size_t i = 0; i < names.size(); ++i) {
         char item[64];
@@ -228,6 +228,7 @@ std::optional<HeldReason> writesBeyondTargets(const ShaderRecompiler::RecompileR
     using Role = ShaderRecompiler::DescriptorRole;
     for (const auto& binding : compiled.bindings) {
         if (binding.role == Role::BdaPagetable && Graphics::ShaderStoresThroughAddresses(compiled.spirv)) return HeldReason::Bda;
+        if (binding.role == Role::Gds) return HeldReason::Gds;
         if (binding.role == Role::GuestBuffers) {
             for (std::uint32_t element = 0; element < binding.count; ++element) {
                 if (element >= binding.bufferWritten.size() || binding.bufferWritten[element]) return HeldReason::Buffer;

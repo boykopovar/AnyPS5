@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
@@ -98,6 +99,7 @@ bool ExactDrawWrites() {
 std::vector<std::pair<std::uint64_t, std::uint64_t>> DrawWriteRanges(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> stages, bool exact) {
     constexpr std::uint64_t Slack = 64 * 1024;
     constexpr std::uint64_t UnknownBytes = 64ull * 1024 * 1024;
+    constexpr std::pair<std::uint64_t, std::uint64_t> AnyAddress{0, std::numeric_limits<std::uint64_t>::max()};
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     const auto add = [&](std::uint64_t begin, std::uint64_t bytes) {
         if (begin != 0) ranges.emplace_back(begin, begin + bytes);
@@ -106,10 +108,13 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DrawWriteRanges(const Graph
         if (stage.program == nullptr) continue;
         visitWrittenBuffers(*stage.program, [&](std::uint32_t, std::uint64_t begin, std::uint64_t end, bool) { ranges.emplace_back(begin, end); });
         for (const auto& binding : stage.program->bindings) {
+            if (binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable && (stage.program->bdaWrites || Graphics::ShaderStoresThroughAddresses(stage.program->spirv))) return {AnyAddress};
+            if (binding.role == ShaderRecompiler::DescriptorRole::Gds) add(Pm4::GdsAddress(), Pm4::GdsBytes);
             if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages || binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) continue;
             for (std::uint32_t element = 0; element < binding.count; ++element) {
                 const bool written = element >= binding.imageWritten.size() || binding.imageWritten[element];
-                if (!written || binding.guestDescriptor.size() < (static_cast<std::size_t>(element) + 1) * 8) continue;
+                if (!written) continue;
+                if (binding.guestDescriptor.size() < (static_cast<std::size_t>(element) + 1) * 8) return {AnyAddress};
                 const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8, 8);
                 if (Graphics::IsNullTextureResource(words)) continue;
                 const auto resource = Graphics::DecodeTextureResource(words);
