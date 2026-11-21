@@ -592,8 +592,11 @@ int APS5_VABI sceHttpGetLastErrno(int request_id, int* errno_out) {
     if (errno_out == nullptr) {
         return ERROR_INVALID_VALUE;
     }
-    *errno_out = 0;
-    return 0;
+    const int zero = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(errno_out, &zero, sizeof(zero));
+    errno = savedErrno;
+    return copied ? 0 : ERROR_INVALID_VALUE;
 }
 
 int APS5_VABI sceHttpsGetSslError(int id, int* err_num, uint32_t* detail) {
