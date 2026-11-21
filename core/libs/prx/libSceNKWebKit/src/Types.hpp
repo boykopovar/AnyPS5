@@ -356,6 +356,17 @@ public:
     bool clientConfigured = false;
 };
 
+class MessageListener final : public ObjectOf<ObjectType::MessageListener> {
+public:
+    bool replied = false;
+    Retained<Object> reply;
+
+    void SendReply(Retained<Object> replyObj) {
+        replied = true;
+        reply = std::move(replyObj);
+    }
+};
+
 class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
 public:
     bool decided = false;
