@@ -620,6 +620,15 @@ class PreparationTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
 
+    def test_reset_work_removes_a_read_only_file(self):
+        work = self.root / "work"
+        (work / "cert_cache").mkdir(parents=True)
+        cached = work / "cert_cache" / "CA_LIST.cer"
+        cached.write_bytes(b"list")
+        cached.chmod(stat.S_IREAD)
+        title_run.reset_work(work)
+        self.assertEqual(list(work.iterdir()), [])
+
     def test_a_running_title_is_left_alone(self):
         package(self.root / "games/PPSA00001", "PPSA00001")
         out = self.root / "out"
@@ -1725,6 +1734,16 @@ class CollectFramesTests(unittest.TestCase):
             destination = Path(directory) / "frames"
             self.assertEqual(title_run.collect_frames(Path(directory), destination), [])
             self.assertTrue(destination.is_dir())
+
+    def test_only_collects_numbered_bitmap_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            for name in ("frame_005.bmp", "frame_preview.bmp", "frame_5_preview.bmp"):
+                (work / name).write_bytes(b"x")
+            (work / "frame_006.bmp").mkdir()
+            self.assertEqual(title_run.collect_frames(work, work / "out"), ["frame_005.bmp"])
+            self.assertEqual(sorted(path.name for path in work.iterdir()),
+                             ["frame_006.bmp", "frame_5_preview.bmp", "frame_preview.bmp", "out"])
 
     def test_single_frame_is_kept(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -122,7 +122,7 @@ static FormData* CreateEmptyForm() {
 
 static void FreeForm(FormData* form) {
     _ZN7WebCore8FormDataD1Ev(form);
-    _ZdlPv_nid_postfix(form);
+    _ZN3WTF8fastFreeEPv(form);
 }
 
 static std::string BodyBytes(const FormDataElement& element) {
@@ -190,9 +190,16 @@ static void SetURLField(NKWebKit::WtfAbi::URL& field, StringImpl& impl, unsigned
 
 static void TestSetHTTPBody() {
     auto request = MakeRequest();
+    auto witness = Make("witness");
+    String witnessText(&witness);
+    witness.refCount += 2;
     auto* firstForm = CreateForm("abc", 3);
     auto* secondForm = CreateForm("def", 3);
     Require(firstForm->refCount == 1 && secondForm->refCount == 1);
+    Require(guestAllocations.empty());
+    Require(_ZN3WTF14fastMallocSizeEPKv(firstForm) == 72);
+    PushFile(firstForm, witnessText, 0, 1);
+    Require(witness.refCount == 6);
 
     auto* body = firstForm;
     _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(&request, &body);
@@ -208,7 +215,7 @@ static void TestSetHTTPBody() {
     Require(request.httpBody == secondForm);
     Require(secondForm->refCount == 1);
     Require(body == nullptr);
-    Require(guestAllocations.count(firstForm) == 0);
+    Require(witness.refCount == 4);
 
     secondForm->ref();
     body = secondForm;
@@ -520,6 +527,9 @@ static void TestEqual() {
     _ZN7WebCore19ResourceRequestBase18setHTTPHeaderFieldERKN3WTF6StringES4_(&right, &customText, &leftValueText);
     Require(_ZN7WebCore19ResourceRequestBase5equalERKNS_15ResourceRequestES3_(&left, &right));
 
+    auto witness = Make("witness");
+    String witnessText(&witness);
+    witness.refCount += 2;
     auto* bodyLeft = CreateForm("ab", 2);
     auto* bodyRight = CreateForm("ab", 2);
     left.httpBody = bodyLeft;
@@ -529,14 +539,18 @@ static void TestEqual() {
     _ZN7WebCore8FormData10appendDataEPKvm(bodyRight, "c", 1);
     Require(!_ZN7WebCore19ResourceRequestBase5equalERKNS_15ResourceRequestES3_(&left, &right));
     right.httpBody = bodyLeft;
+    PushFile(bodyRight, witnessText, 0, 1);
+    Require(witness.refCount == 6);
     bodyRight->deref();
-    Require(guestAllocations.count(bodyRight) == 0);
+    Require(witness.refCount == 4);
     Require(_ZN7WebCore19ResourceRequestBase5equalERKNS_15ResourceRequestES3_(&left, &right));
     right.httpBody = nullptr;
     Require(!_ZN7WebCore19ResourceRequestBase5equalERKNS_15ResourceRequestES3_(&left, &right));
     left.httpBody = nullptr;
+    PushFile(bodyLeft, witnessText, 0, 1);
+    Require(witness.refCount == 6);
     bodyLeft->deref();
-    Require(guestAllocations.count(bodyLeft) == 0);
+    Require(witness.refCount == 4);
 
     {
         auto file = Make("file.bin");

@@ -665,6 +665,39 @@ static void CheckHoistedTableCalls() {
     Require(between.size() == 1u && between[0].descriptorOffset == 0x10u);
 }
 
+static std::vector<std::uint32_t> LaneSpilledTableCaller(std::uint32_t restoredLane, bool clobber) {
+    std::vector<std::uint32_t> code{0xf4081800u, 0xfa000010u, 0xbf8cc07fu};
+    for (std::uint32_t offset = 0u; offset < 4u; ++offset) code.insert(code.end(), {0xd7610001u, (0x60u + offset) | ((0x80u + 20u + offset) << 9u)});
+    code.insert(code.end(), {0xbee00380u, 0xbee10380u, 0xbee20380u, 0xbee30380u, 0xbee5037eu});
+    const auto loop = code.size();
+    code.push_back(0xbee4037eu);
+    if (clobber) code.push_back(0x7e020280u);
+    for (std::uint32_t offset = 0u; offset < 4u; ++offset) code.insert(code.end(), {0xd7600060u + offset, 0x101u | ((0x80u + restoredLane + offset) << 9u)});
+    code.insert(code.end(), {0x7ed40500u, 0x7da4006au, 0x8f6a846au, 0xf4280430u, 0xd4000000u, 0xbf8cc07fu, 0xbe8e0310u, 0xbe8f0311u, 0xbe900312u, 0xbe910313u, 0xbe8e210eu, 0x897e7e64u});
+    code.push_back(0xbf890000u | ((static_cast<std::uint32_t>(loop) - static_cast<std::uint32_t>(code.size()) - 1u) & 0xffffu));
+    code.insert(code.end(), {0xbefe0365u, 0xbf810000u});
+    return code;
+}
+
+static void CheckLaneSpilledTableCall() {
+    const std::vector<std::vector<TableCallee>> callees{{{0x1122334455ull, std::vector<std::uint32_t>{0x4a0202c0u, 0xbe80200eu}}}};
+    for (const std::uint32_t waveSize : {32u, 64u}) {
+        SwappcInfo swappc{false, 0u, 16u, waveSize};
+        const auto code = LaneSpilledTableCaller(20u, false);
+        const auto program = RdnaInstructionDecoder{}.Decode(code);
+        const auto calls = FindTableCalls(program, swappc);
+        Require(calls.size() == 1u && calls[0].userDataRegister == 0u && calls[0].descriptorOffset == 0x10u && calls[0].entryOffset == 0u && calls[0].entryStride == 16u && !calls[0].constantPointer);
+        const auto linked = LinkCalls(program, {}, {}, calls, callees);
+        swappc.linkedCallFallbacks = linked.fallbacks;
+        static_cast<void>(TranslateCode(linked.code, swappc));
+        for (const auto& rejected : {LaneSpilledTableCaller(21u, false), LaneSpilledTableCaller(20u, true)}) {
+            SwappcInfo plain{false, 0u, 16u, waveSize};
+            Require(FindTableCalls(RdnaInstructionDecoder{}.Decode(rejected), plain).empty());
+            ExpectThrow("not statically resolvable", [&] { static_cast<void>(BuildCode(rejected, plain)); });
+        }
+    }
+}
+
 static void CheckRejections() {
     ExpectThrow("invalid instruction boundary", [] {
         Build({Call(0u, 8u, 16u), Sopp(4u, 1u)});
@@ -788,6 +821,7 @@ int main(int argc, char** argv) {
             CheckTableCallSplit();
             CheckTableCallSplitPrograms();
             CheckHoistedTableCalls();
+            CheckLaneSpilledTableCall();
             CheckImageSamplerField();
             CheckGuards("");
         } else {

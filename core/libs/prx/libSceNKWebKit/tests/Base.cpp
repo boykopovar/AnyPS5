@@ -733,6 +733,46 @@ static void TestURLRequestResponse() {
     WKRelease(request);
     WKRelease(url);
 
+    struct RequestCase {
+        const char* given;
+        const char* kept;
+    };
+    for (const RequestCase& item : {
+             RequestCase{"https://playstation.com", "https://playstation.com/"},
+             RequestCase{"HTTPS://PlayStation.COM:443/a/../b c?q r#f", "https://playstation.com/b%20c?q%20r#f"},
+             RequestCase{"http://example.com:80x/y", "http://example.com:80x/y"},
+             RequestCase{"not a url", "not a url"},
+             RequestCase{"", ""},
+             RequestCase{"about:blank", "about:blank"},
+             RequestCase{"file://localhost/tmp/x", "file:///tmp/x"},
+         }) {
+        auto* givenUrl = WKURLCreateWithUTF8CString(item.given);
+        auto* givenRequest = WKURLRequestCreateWithWKURL(givenUrl);
+        auto* keptUrl = WKURLRequestCopyURL(givenRequest);
+        Require(keptUrl != nullptr);
+        auto* keptText = WKURLCopyString(keptUrl);
+        Require(WKStringIsEqualToUTF8CString(keptText, item.kept));
+        auto* withBody = WKURLRequestCopySettingHTTPBody(givenRequest, nullptr);
+        auto* bodyUrl = WKURLRequestCopyURL(withBody);
+        auto* bodyText = WKURLCopyString(bodyUrl);
+        Require(WKStringIsEqualToUTF8CString(bodyText, item.kept));
+        auto* givenText = WKURLCopyString(givenUrl);
+        Require(WKStringIsEqualToUTF8CString(givenText, item.given));
+        WKRelease(givenText);
+        WKRelease(bodyText);
+        WKRelease(bodyUrl);
+        WKRelease(withBody);
+        WKRelease(keptText);
+        WKRelease(keptUrl);
+        WKRelease(givenRequest);
+        WKRelease(givenUrl);
+    }
+    auto* invalidUtf8Url = WKURLCreateWithUTF8CString("http://example.com/\xC3");
+    auto* invalidUtf8Request = WKURLRequestCreateWithWKURL(invalidUtf8Url);
+    Require(WKURLRequestCopyURL(invalidUtf8Request) == nullptr);
+    WKRelease(invalidUtf8Request);
+    WKRelease(invalidUtf8Url);
+
     auto responseObj = NKWebKit::Make<NKWebKit::URLResponse>(
         NKWebKit::Make<NKWebKit::URL>("https://example.com/test.png"),
         NKWebKit::String::FromUtf8("image/png"),
