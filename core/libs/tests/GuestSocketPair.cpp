@@ -34,16 +34,6 @@ void operator delete(void* pointer) noexcept { std::free(pointer); }
 void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
 #endif
 
-template<typename TFunction>
-static bool ThrowsRuntimeError(TFunction function) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
-
 constexpr int Unix = 1;
 constexpr int Stream = 1;
 constexpr int Datagram = 2;
@@ -293,7 +283,6 @@ static void CheckAddressOnPairEnd() {
     Require(FailsWith(sendto_nid_postfix(pair[0], "x", 1, NoSignal, inet, sizeof(inet)), 32));
     Require(close_nid_postfix(pair[0]) == 0);
 
-#ifndef __APPLE__
     Require(socketpair_nid_postfix(Unix, SequencedPacket, 0, pair) == 0);
     Require(FailsWith(connect_nid_postfix(pair[0], inet, sizeof(inet)), 56));
     Require(sendto_nid_postfix(pair[0], "to", 2, NoSignal, inet, sizeof(inet)) == 2 && Readable(pair[1]));
@@ -301,7 +290,6 @@ static void CheckAddressOnPairEnd() {
     Require(close_nid_postfix(pair[1]) == 0);
     Require(FailsWith(sendto_nid_postfix(pair[0], "x", 1, NoSignal, inet, sizeof(inet)), 32));
     Require(close_nid_postfix(pair[0]) == 0);
-#endif
 }
 
 #ifndef _WIN32
@@ -392,7 +380,6 @@ static void CheckStatBlockSize() {
     Require(udp >= 0 && BlockSize(udp, 9216) && close_nid_postfix(udp) == 0);
 }
 
-#ifndef __APPLE__
 static std::int64_t ReceiveWhileBlocked(int descriptor, std::atomic<bool>& done, const std::function<void()>& release) {
     std::int64_t result = -2;
     std::thread reader([&] {
@@ -499,7 +486,6 @@ static void CheckSequencedPacketFlow() {
     Require(recv_nid_postfix(pair[1], received, sizeof(received), 0) == RecordSize && received[0] == 'z' && received[RecordSize - 1] == 'z');
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
 }
-#endif
 
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "sendmsg-memory") == 0) {
@@ -641,9 +627,6 @@ int main(int argc, char** argv) {
     Require(recvmsg_nid_postfix(pair[1], &shut, 0) == 0 && shut.nameLength == 0);
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
 
-#ifdef __APPLE__
-    Require(ThrowsRuntimeError([&] { socketpair_nid_postfix(Unix, SequencedPacket, 0, pair); }));
-#else
     Require(socketpair_nid_postfix(Unix, SequencedPacket, 0, pair) == 0);
     Require(send_nid_postfix(pair[0], "a", 1, 0) == 1);
     Require(send_nid_postfix(pair[0], "bb", 2, 0) == 2);
@@ -666,16 +649,13 @@ int main(int argc, char** argv) {
     message.flags = -1;
     Require(recvmsg_nid_postfix(pair[1], &message, 0) == 4 && message.flags == 0 && std::memcmp(whole, "next", 4) == 0);
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
-#endif
     CheckReceiveMessageFaults();
     CheckAddressOnPairEnd();
     CheckStatBlockSize();
     CheckRecordOverSendBuffer(Datagram, 2048);
-#ifndef __APPLE__
     CheckRecordOverSendBuffer(SequencedPacket, 8192);
     CheckSequencedPacketEnds();
     CheckSequencedPacketFlow();
-#endif
 #ifndef _WIN32
     CheckFullDatagramReceiver(Datagram);
     CheckFullDatagramReceiver(Datagram | NonBlocking);

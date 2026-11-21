@@ -53,6 +53,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <thread>
 #include <climits>
 #include <cstdint>
 #include <cstring>
@@ -563,7 +564,7 @@ void GuestAddress(const sockaddr_storage& native, void* output, std::uint32_t* l
 }
 }
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
 namespace {
 void ReleaseSequencedEnd(std::shared_ptr<Socket> released);
 }
@@ -581,7 +582,7 @@ int GuestSockets::Close(int descriptor) {
     }
     EqueueDescriptorClosed(descriptor);
     ReleaseNumber(descriptor);
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     ReleaseSequencedEnd(std::move(released));
 #endif
     return 0;
@@ -598,7 +599,7 @@ void GuestSockets::Forget(int descriptor) {
         closeOnExecDescriptors.erase(descriptor);
     }
     EqueueDescriptorClosed(descriptor);
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     ReleaseSequencedEnd(std::move(released));
 #endif
 }
@@ -988,10 +989,19 @@ void WakeReadWatchers(int descriptor) {
     const auto [first, last] = readWatchers.equal_range(descriptor);
     for (auto entry = first; entry != last; ++entry) GuestSockets::Wake(entry->second);
 }
+#if defined(_WIN32) || defined(__APPLE__)
 #ifdef _WIN32
 constexpr int SequencedHostReceiveBuffer = 1 << 20;
-constexpr int GuestReceiveBuffer = 0x1002;
 constexpr std::uint64_t LongestLoopbackRecord = 65507;
+#else
+constexpr int SequencedHostBuffer = 8 << 20;
+constexpr int GuestSendBuffer = 0x1001;
+bool SequencedHostBuffers(int end) {
+    return ::setsockopt(end, SOL_SOCKET, SO_SNDBUF, &SequencedHostBuffer, sizeof(SequencedHostBuffer)) == 0 &&
+        ::setsockopt(end, SOL_SOCKET, SO_RCVBUF, &SequencedHostBuffer, sizeof(SequencedHostBuffer)) == 0;
+}
+#endif
+constexpr int GuestReceiveBuffer = 0x1002;
 bool DatagramQueued(const Socket& socket);
 bool SequencedPair(const Socket& socket) {
     return socket.family == GuestUnix && socket.type == 5 && !socket.externalPeer;
@@ -1039,18 +1049,27 @@ int SequencedRoom(Socket& socket, std::uint64_t length, int flags) {
             capacity = static_cast<std::uint64_t>(GuestSockets::SendBufferSize(socket.options, socket.family, socket.type));
         }
         if (!peer) return 32;
+#ifdef _WIN32
         if (length > LongestLoopbackRecord) throw std::runtime_error("send: a SOCK_SEQPACKET socketpair record over 65507 bytes is not supported on Windows");
         unsigned long queued = 0;
         if (ioctlsocket(peer->value, FIONREAD, &queued)) return NativeError();
-        if (queued < capacity) return 0;
+#else
+        int queued = 0;
+        if (::ioctl(peer->value, FIONREAD, &queued)) return NativeError();
+#endif
+        if (static_cast<std::uint64_t>(queued) < capacity) return 0;
         if (nonblocking || (timeout != 0 && std::chrono::steady_clock::now() >= deadline)) return 35;
+#ifdef _WIN32
         Sleep(1);
+#else
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+#endif
     }
 }
 #endif
 bool ReceiveEnded(Socket& socket) {
     if (ReceiveShut(socket)) return true;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     return SequencedPeerSendEnded(socket) && !DatagramQueued(socket);
 #else
     return false;
@@ -1131,6 +1150,8 @@ int WaitForTransfer(Socket& socket, bool send, int flags, int receiver = -1) {
     }
 #ifdef _WIN32
     const bool watched = receiver >= 0 && ReceiveWouldBlock(socket);
+#elif defined(__APPLE__)
+    const bool watched = receiver >= 0 && SequencedPair(socket);
 #else
     static_cast<void>(receiver);
     constexpr bool watched = false;
@@ -1161,8 +1182,19 @@ int WaitForTransfer(Socket& socket, bool send, int flags, int receiver = -1) {
         if (entries[1].revents != 0) DrainWaker(entries[1].fd);
 #else
         entries[0].events = static_cast<short>(send ? POLLOUT : POLLIN);
+#ifdef __APPLE__
+        if (watched) {
+            entries[1].fd = ThreadWaker().value;
+            entries[1].events = POLLIN;
+            if (milliseconds < 0 || milliseconds > SocketCloseCheckMilliseconds) milliseconds = SocketCloseCheckMilliseconds;
+        }
+        const int ready = ::poll(entries, watched ? 2 : 1, milliseconds);
+        if ((ready < 0 && errno != EINTR) || entries[0].revents != 0) return 0;
+        if (watched && entries[1].revents != 0) DrainWaker(entries[1].fd);
+#else
         const int ready = ::poll(entries, 1, milliseconds);
         if (ready > 0 || (ready < 0 && errno != EINTR)) return 0;
+#endif
 #endif
     }
 }
@@ -1229,11 +1261,20 @@ int NativePair(int type, NativeSocket (&pair)[2]) {
 #else
 int NativePair(int type, NativeSocket (&pair)[2]) {
 #ifdef __APPLE__
-    if (type == 5) throw std::runtime_error("socketpair: SOCK_SEQPACKET is not supported on macOS");
-#endif
+    const int nativeType = type == 1 ? SOCK_STREAM : SOCK_DGRAM;
+#else
     const int nativeType = type == 1 ? SOCK_STREAM : type == 2 ? SOCK_DGRAM : SOCK_SEQPACKET;
+#endif
     int native[2];
     if (::socketpair(AF_UNIX, nativeType, 0, native)) return NativeError();
+#ifdef __APPLE__
+    if (type == 5 && (!SequencedHostBuffers(native[0]) || !SequencedHostBuffers(native[1]))) {
+        const int error = NativeError();
+        ::close(native[0]);
+        ::close(native[1]);
+        return error;
+    }
+#endif
     pair[0] = native[0];
     pair[1] = native[1];
     return 0;
@@ -1262,6 +1303,11 @@ bool DatagramQueued(const Socket& socket) {
     FD_SET(socket.value, &readable);
     timeval none{};
     return ::select(0, &readable, nullptr, nullptr, &none) > 0;
+}
+#elif defined(__APPLE__)
+bool DatagramQueued(const Socket& socket) {
+    char byte;
+    return ::recv(socket.value, &byte, 1, MSG_PEEK | MSG_DONTWAIT) >= 0;
 }
 #endif
 int UnnamedAddress(void* address, std::uint32_t* length) {
@@ -1540,7 +1586,7 @@ int GuestSockets::Poll(KernelSocketPoll::Entry* entries, int count, int timeoutM
         if (events & NativeWritable) revents = static_cast<short>(revents | KernelSocketPoll::Writable);
         if (events & (POLLERR | POLLNVAL)) revents = static_cast<short>(revents | KernelSocketPoll::Error);
         if (events & POLLHUP) revents = static_cast<short>(revents | KernelSocketPoll::HangUp);
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
         if (SequencedPeerGone(*held[static_cast<std::size_t>(index)])) revents = static_cast<short>(revents | KernelSocketPoll::HangUp);
 #endif
         entries[index].revents = revents;
@@ -1712,6 +1758,9 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
 #ifdef _WIN32
     if (error == 0 && level == 0xffff && option == GuestReceiveBuffer && SequencedPair(*socket) &&
         setsockopt(socket->value, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&SequencedHostReceiveBuffer), sizeof(SequencedHostReceiveBuffer)))
+        return Fail(NativeError());
+#elif defined(__APPLE__)
+    if (error == 0 && level == 0xffff && (option == GuestReceiveBuffer || option == GuestSendBuffer) && SequencedPair(*socket) && !SequencedHostBuffers(socket->value))
         return Fail(NativeError());
 #endif
     return error == 0 ? 0 : Fail(error);
@@ -2015,6 +2064,8 @@ std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std:
 #ifdef _WIN32
     if (socket->type == 1 && PairPeerGone(*socket)) return Fail(32);
     if (const int refused = SequencedRoom(*socket, length, flags)) return Fail(refused);
+#elif defined(__APPLE__)
+    if (const int refused = SequencedRoom(*socket, length, flags)) return Fail(refused);
 #endif
     if (const int waited = WaitForTransfer(*socket, true, flags)) return Fail(waited);
     const auto result = ::send(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), SocketSendFlags(*socket, flags));
@@ -2121,7 +2172,7 @@ int APS5_VABI shutdown_nid_postfix(int descriptor, int how) {
             WakeReadWatchers(alias);
         }
     }
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     if (how != 0 && SequencedPair(*socket)) {
         if (const auto peer = socket->peer.lock()) WakeSequencedReaders(peer);
     }
@@ -2275,7 +2326,7 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
     }
     const bool paired = address && socket->family == GuestUnix && (socket->type != 2 || sendShut || !socket->peer.expired());
     if (paired && socket->type == 2 && !sendShut) return Fail(56);
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     if (const int refused = SequencedRoom(*socket, length, flags)) return Fail(refused);
 #endif
     if (const int waited = WaitForTransfer(*socket, true, flags)) return Fail(waited);
@@ -3061,7 +3112,7 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
                 receiveShut = socket->receiveShut;
                 sendShut = socket->sendShut;
             }
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
             const bool peerGone = SequencedPeerGone(*socket);
             receiveShut = receiveShut || peerGone || ReceiveEnded(*socket);
             sendShut = sendShut || peerGone;
