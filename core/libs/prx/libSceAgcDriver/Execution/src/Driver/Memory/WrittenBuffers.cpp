@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -17,13 +18,14 @@ namespace AgcDriver::DriverDetail {
 namespace {
 
 template<typename TVisit>
-void visitWrittenBuffers(const ShaderRecompiler::RecompileResult& compiled, TVisit&& visit) {
+void visitWrittenBuffers(const ShaderRecompiler::RecompileResult& compiled, TVisit&& visit, const ShaderRecompiler::StageSideWords* side = nullptr) {
     for (const auto& binding : compiled.bindings) {
         if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
         for (std::uint32_t element = 0; element < binding.count; ++element) {
+            const auto& guestWords = Graphics::DrawGuestWords(compiled, side, binding);
             const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
-            if (!written || binding.guestDescriptor.size() < (static_cast<std::size_t>(element) + 1) * 4) continue;
-            const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4, 4);
+            if (!written || guestWords.size() < (static_cast<std::size_t>(element) + 1) * 4) continue;
+            const auto words = std::span<const std::uint32_t>(guestWords).subspan(static_cast<std::size_t>(element) * 4, 4);
             const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
             const auto base = descriptor.Base48();
             const auto size = descriptor.GetSize();
@@ -84,9 +86,23 @@ void Driver::noteForeignWriter(std::uint64_t begin, std::uint64_t end, std::uint
     writtenBuffers.Push({0, begin, end, ++writtenBufferSerial, queue, false});
 }
 
+bool StagesMayWriteBuffers(std::span<const Graphics::CompiledShader> stages) {
+    for (const auto& stage : stages) {
+        if (stage.program == nullptr) return true;
+        for (const auto& binding : stage.program->bindings) {
+            if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
+            if (binding.count > binding.bufferWritten.size()) return true;
+            for (std::uint32_t element = 0; element < binding.count; ++element) {
+                if (binding.bufferWritten[element]) return true;
+            }
+        }
+    }
+    return false;
+}
+
 void Driver::noteDrawWriters(std::span<const Graphics::CompiledShader> stages, std::uint32_t queue) {
     for (const auto& stage : stages) {
-        forEachWrittenBuffer(*stage.program, [&](std::uint32_t, std::uint64_t begin, std::uint64_t end, bool) { noteForeignWriter(begin, end, queue); });
+        visitWrittenBuffers(*stage.program, [&](std::uint32_t, std::uint64_t begin, std::uint64_t end, bool) { noteForeignWriter(begin, end, queue); }, stage.side);
     }
 }
 
@@ -104,7 +120,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DrawWriteRanges(const Graph
     };
     for (const auto& stage : stages) {
         if (stage.program == nullptr) continue;
-        visitWrittenBuffers(*stage.program, [&](std::uint32_t, std::uint64_t begin, std::uint64_t end, bool) { ranges.emplace_back(begin, end); });
+        visitWrittenBuffers(*stage.program, [&](std::uint32_t, std::uint64_t begin, std::uint64_t end, bool) { ranges.emplace_back(begin, end); }, stage.side);
         for (const auto& binding : stage.program->bindings) {
             if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages || binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) continue;
             for (std::uint32_t element = 0; element < binding.count; ++element) {
@@ -160,6 +176,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> Driver::drawWriteRanges(con
 
 std::vector<std::pair<std::uint64_t, std::uint64_t>> QueuedDrawReadRanges(const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> stages) {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    ranges.reserve(16);
     const auto add = [&](std::uint64_t begin, std::uint64_t bytes) {
         if (begin == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - begin) return;
         ranges.emplace_back(begin, begin + bytes);
@@ -173,16 +190,18 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> QueuedDrawReadRanges(const 
     for (const auto& stage : stages) {
         if (stage.program == nullptr) continue;
         for (const auto& binding : stage.program->bindings) {
-            if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers || binding.guestDescriptor.size() < static_cast<std::size_t>(binding.count) * 4u) continue;
+            if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
+            const auto& guest = Graphics::DrawGuestWords(stage, binding);
+            if (guest.size() < static_cast<std::size_t>(binding.count) * 4u) continue;
             for (std::uint32_t element = 0; element < binding.count; ++element) {
-                const auto* words = binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u;
+                const auto* words = guest.data() + static_cast<std::size_t>(element) * 4u;
                 const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
                 add(descriptor.Base48(), descriptor.GetSize());
             }
         }
     }
     if (stages.empty() || stages.front().program == nullptr) return ranges;
-    for (const auto& attribute : stages.front().program->vertexAttributes) {
+    for (const auto& attribute : Graphics::DrawVertexAttributes(stages.front())) {
         if (Graphics::NullVertexDescriptor(attribute)) continue;
         const auto address = attribute.resource.fields[0] | (static_cast<std::uint64_t>(attribute.resource.fields[1] & 0xffffu) << 32u);
         std::uint64_t bytes = 0;

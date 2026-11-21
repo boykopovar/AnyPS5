@@ -19,6 +19,7 @@ struct SourceHandle;
 class PreparedShaderInvocation;
 struct SrtWriteStamp;
 struct SrtGuestWords;
+struct SrtRuntime;
 }
 
 namespace AgcDriver {
@@ -92,6 +93,7 @@ public:
     static VouchCounts Vouches();
     static bool Vouched(PendingWriteQuery pending, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp, bool uncached = false);
     static std::uint64_t descriptorScope(void* context, std::size_t bytes);
+    static void SetImageViewHooks(ShaderRecompiler::SrtRuntime& runtime);
 
 private:
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle, const ShaderRecompiler::PreparedShaderInvocation* invocation);

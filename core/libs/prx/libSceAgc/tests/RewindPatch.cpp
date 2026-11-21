@@ -1,5 +1,6 @@
 #include "prx/libSceAgc/DcbFlow/include/Control.hpp"
 #include "prx/libSceAgc/Patch/include/Rewind.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/LeanFront.hpp"
 
 #include <array>
 #include <cstdint>
@@ -35,12 +36,15 @@ void testRewind() {
 }
 
 void testRewindStatePatch() {
+    namespace LeanFront = AgcDriver::DriverDetail::LeanFront;
     Storage storage;
     auto* packet = sceAgcDcbRewind(&storage.buffer, 0);
+    const auto unwaited = LeanFront::Total(LeanFront::Counter::KicksWithoutWaiter);
     check(sceAgcRewindPatchSetRewindState(packet, 1) == 0 && packet[0] == 0xc0005900u && packet[1] == 0x80000000u, "the rewind state patch did not set bit 31");
     check(sceAgcRewindPatchSetRewindState(packet, 0) == 0 && packet[0] == 0xc0005900u && packet[1] == 0, "the rewind state patch did not clear bit 31");
     check(sceAgcAsyncRewindPatchSetRewindState(packet, 1) == 0 && packet[1] == 0x80000000u, "the asynchronous rewind state patch did not set bit 31");
     check(storage.words[2] == Sentinel, "a rewind state patch wrote past the packet");
+    check(LeanFront::Total(LeanFront::Counter::KicksWithoutWaiter) == unwaited + 2, "a rewind release did not kick the driver exactly once, or a clear kicked it");
 }
 
 }

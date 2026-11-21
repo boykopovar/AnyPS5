@@ -19,9 +19,11 @@ public:
     VulkanDevice* operator->() const;
     explicit operator bool() const;
     bool operator==(std::nullptr_t) const;
+    std::uint64_t Stores() const { return stores.load(std::memory_order_acquire); }
 
 private:
     AtomicSharedPtr<VulkanDevice> pointer;
+    std::atomic<std::uint64_t> stores{0};
 };
 
 class DeviceUseGate {

@@ -3,6 +3,7 @@ if(BUILD_TESTING)
             tests/CollectMemoGeneration.cpp
             Execution/src/GuestMemory.cpp
             Execution/src/PerformanceTraceThread.cpp
+            Graphics/src/RuntimeSwitches.cpp
     )
     target_include_directories(agc_collect_memo_generation_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(agc_collect_memo_generation_tests PRIVATE shader_recompiler_agc_driver libc)

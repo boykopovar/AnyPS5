@@ -547,6 +547,46 @@ bool SrtTape::compute(Frame& frame, const Node& node, std::uint64_t& result) con
     return false;
 }
 
+std::vector<SrtTape::AddressForward> SrtTape::AddressForwards(const IrResourcePlan& plan) const {
+    std::vector<AddressForward> forwards;
+    if (plan.uniformFill.fill.kind != UniformFillKind::None) return forwards;
+    const auto bit = [](std::uint64_t word) { return word < SrtUserDataUse::TrackedWords ? std::uint64_t {1} << word : ~std::uint64_t {0}; };
+    const auto wordOf = [&](std::uint32_t index) -> std::optional<std::uint64_t> {
+        if (index == NoNode || index >= nodes.size() || nodes[index].op != Op::UserData) return std::nullopt;
+        return nodes[index].immediate;
+    };
+    std::uint64_t impure = 0;
+    for (const auto& node : nodes) {
+        for (std::uint8_t argument = 0; argument < node.argumentCount; ++argument) {
+            const auto word = wordOf(node.arguments[argument]);
+            if (!word.has_value()) continue;
+            const bool base = argument == 0u && (node.op == Op::Read || node.op == Op::ReadConstBuffer) && node.baseWord >= 0 && static_cast<std::uint64_t>(node.baseWord) == *word;
+            if (!base) impure |= bit(*word);
+        }
+    }
+    for (const auto conditionRoot : conditionRoots) {
+        if (const auto word = wordOf(conditionRoot); word.has_value()) impure |= bit(*word);
+    }
+    for (std::size_t position = 0; position < plan.materializationSources.size(); ++position) {
+        const auto source = plan.materializationSources[position];
+        if (source >= sourceDwords.size()) return {};
+        for (std::size_t dword = 0; dword < sourceDwords[source].size(); ++dword) {
+            const auto word = wordOf(sourceDwords[source][dword]);
+            if (!word.has_value()) continue;
+            if (position < plan.info.buffers.size() && dword == 0u && *word < SrtUserDataUse::TrackedWords) forwards.push_back({static_cast<std::uint32_t>(*word), static_cast<std::uint32_t>(position), false});
+            else impure |= bit(*word);
+        }
+    }
+    for (std::size_t slot = 0; slot < flatRoots.size() && slot < plan.srtReads.size(); ++slot) {
+        const auto word = wordOf(flatRoots[slot]);
+        if (!word.has_value()) continue;
+        if (*word < SrtUserDataUse::TrackedWords) forwards.push_back({static_cast<std::uint32_t>(*word), plan.srtReads[slot].flatOffset, true});
+        else impure |= bit(*word);
+    }
+    std::erase_if(forwards, [&](const AddressForward& forward) { return (impure & bit(forward.word)) != 0u; });
+    return forwards;
+}
+
 bool SrtTape::Run(const IrResourcePlan& plan, const SrtRuntime& runtime, std::vector<DescriptorValue>& results, std::vector<std::uint32_t>& flat, std::vector<std::uint8_t>& activeSources) const {
     if (!plan.srtPlanComplete) return false;
     if (std::any_of(plan.cleanFlatSlots.begin(), plan.cleanFlatSlots.end(), [](std::uint8_t clean) { return clean != 0u; }) && runtime.readSpecializationMemory == nullptr) return false;

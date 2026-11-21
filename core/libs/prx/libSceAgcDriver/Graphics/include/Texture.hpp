@@ -576,6 +576,7 @@ public:
     // Generation (the write generation guest memory was last known to match the content at) it
     // validates textures copied from this image.
     std::uint64_t Version() const { return version; }
+    std::uint64_t UploadVersion() const { return uploads; }
     std::uint64_t Generation() const { return generation; }
     std::uint64_t GenerationFor(std::uint64_t address, std::uint64_t bytes) const;
     // The DCC keys the content was uploaded under and the last scan of the surface's keys
@@ -978,6 +979,7 @@ private:
     std::uint64_t writtenFlip = 0;
     std::atomic<bool> writtenOccasionally{false};
     std::uint64_t version = 0;
+    std::uint64_t uploads = 0;
     std::uint64_t writes = 0;
     std::uint64_t zeroForgetMarks = 0;
     std::uint64_t zeroForgetBegin = 0;

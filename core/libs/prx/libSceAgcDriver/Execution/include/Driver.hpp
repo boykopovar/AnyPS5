@@ -33,6 +33,7 @@ struct RetiredOwners {
 }
 
 extern "C" void AgcDriverPrepareCommandWrite_nid_no_patch(std::uint64_t address, std::size_t bytes);
+extern "C" void AgcDriverRewindKick_nid_no_patch(const std::uint32_t* control);
 extern "C" void AgcDriverFlushGuestMemory_nid_no_patch(std::uint64_t address, std::size_t bytes, std::exception_ptr* failure);
 extern "C" void AgcDriverGpuOwnedRanges_nid_no_patch(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, std::exception_ptr* failure);
 extern "C" void AgcDriverResidentOwnersOver_nid_no_patch(std::uint64_t address, std::size_t bytes, bool gpuOnly, std::size_t* owners, std::exception_ptr* failure);

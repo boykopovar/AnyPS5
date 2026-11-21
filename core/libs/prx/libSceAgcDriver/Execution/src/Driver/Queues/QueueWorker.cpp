@@ -2,6 +2,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/LeanFront.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/RewindKick.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/WorkerAffinity.hpp"
@@ -219,6 +221,17 @@ void Driver::run(std::uint32_t id) noexcept {
                     return changed.wait_for(lock, std::chrono::milliseconds(1), done);
 #endif
                 };
+                const auto idlePoll = [&] {
+#ifdef _WIN32
+                    if (id == 0 && frontLatch.Lean()) {
+                        lock.unlock();
+                        if (RewindKick::Get().SleepIdle(worker.queued)) LeanFront::AddOnWorker(LeanFront::Counter::IdleKickWakes);
+                        lock.lock();
+                        return ready();
+                    }
+#endif
+                    return poll(ready);
+                };
 
                 while (!ready()) {
                     if (!completionsPending() || (id != 0 && Graphics::Recorder::PendingCompletionLabels() == 0)) {
@@ -252,7 +265,7 @@ void Driver::run(std::uint32_t id) noexcept {
                         if (id == 0) queue0Dormant.store(false, std::memory_order_relaxed);
                         continue;
                     }
-                    if (poll(ready)) break;
+                    if (idlePoll()) break;
                     lock.unlock();
                     reapCompletionLabels();
                     lock.lock();

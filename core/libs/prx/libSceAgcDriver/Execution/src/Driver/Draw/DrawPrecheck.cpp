@@ -53,6 +53,56 @@ bool Driver::drawPrecheck() {
     return precheck;
 }
 
+LeanVerdict Driver::precheckVerdict(const QueueState& queue, bool indexed, std::uint32_t indexSize) {
+    using Graphics::RegisterBank;
+    using Graphics::NoteRegisterRead;
+    try {
+        if (Graphics::DecodeColorMetadataPass(queue)) return LeanVerdict::Fallback;
+        if (Graphics::DecodeDepthExpandPass(queue)) return LeanVerdict::Fallback;
+        if (Graphics::DecodeDepthCopyPass(queue)) return LeanVerdict::Fallback;
+        if (Graphics::DecodeDepthRenderControl(queue)) return LeanVerdict::Fallback;
+        if (Graphics::DepthResummarizeDrawsNothing(queue)) return LeanVerdict::Nothing;
+        if (!Graphics::DepthMaintenanceRejection(queue).empty()) return LeanVerdict::Fallback;
+        NoteRegisterRead(RegisterBank::Context, 0x202);
+        NoteRegisterRead(RegisterBank::Context, 0x8e);
+        NoteRegisterRead(RegisterBank::Context, 0x8f);
+        const auto colorControl = queue.context.find(0x202);
+        const bool colorDisabled = colorControl != queue.context.end() && ((colorControl->second >> 4u) & 7u) == 0u;
+        const auto targetMask = queue.context.find(0x8e);
+        const auto shaderMask = queue.context.find(0x8f);
+        const bool colorWrites = !colorDisabled && targetMask != queue.context.end() && shaderMask != queue.context.end() && Graphics::ColorWriteMask(queue.context) != 0;
+        NoteRegisterRead(RegisterBank::Shader, 0x8);
+        if (!colorWrites && !queue.shader.contains(0x8)) {
+            const auto word = [&](std::uint32_t offset) {
+                NoteRegisterRead(RegisterBank::Context, offset);
+                const auto it = queue.context.find(offset);
+                return it == queue.context.end() ? 0u : it->second;
+            };
+            if ((word(0x200) & 3u) == 0 || ((word(0x010) & 3u) == 0 && (word(0x011) & 1u) == 0)) return LeanVerdict::Nothing;
+        }
+        if (indexed) {
+            NoteRegisterRead(RegisterBank::UserConfig, 0x24b);
+            const auto restart = queue.userConfig.find(0x24b);
+            if (restart != queue.userConfig.end() && restart->second != 0) {
+                NoteRegisterRead(RegisterBank::Context, 0x103);
+                NoteRegisterRead(RegisterBank::UserConfig, 0x242);
+                const auto resetIndex = queue.context.find(0x103);
+                const auto primitive = queue.userConfig.find(0x242);
+                const std::uint32_t allOnes = indexSize == 2 ? 0xffffu : 0xffffffffu;
+                const auto type = primitive == queue.userConfig.end() ? 0u : primitive->second & 0x3fu;
+                const bool strip = type == 3 || type == 5 || type == 6 || type == 21;
+                const bool list = type == 1 || type == 2 || type == 4;
+                if (!strip && !list) return LeanVerdict::Fallback;
+                if (resetIndex == queue.context.end() || (resetIndex->second & allOnes) != allOnes) return LeanVerdict::Fallback;
+            }
+        }
+        if (drawPrecheck() && !Graphics::DrawRejection(queue, indexed).empty()) return LeanVerdict::Fallback;
+        return LeanVerdict::Normal;
+    } catch (const std::exception&) {
+        return LeanVerdict::Fallback;
+    }
+}
+
 std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const Submission& submission, std::size_t packetOffset, std::span<const std::uint32_t> packet, const Pm4::DrawParameters& drawParameters, std::string& rejected, bool& traceIndirect) {
     if (!drawParameters.indirect && !drawParameters.indexed && (drawParameters.indexCount == 0 || drawParameters.instanceCount == 0)) return DrawVerdict::Nothing;
     const auto metadata = Graphics::DecodeColorMetadataPass(queue);
