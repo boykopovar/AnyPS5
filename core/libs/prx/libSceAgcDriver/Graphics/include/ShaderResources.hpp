@@ -587,12 +587,14 @@ private:
         // Sampled elements: the keys read in stage A and the collect made BEFORE stage B's checks
         // (the generation the entry moves to when they pass).
         DccKeys keys = DccKeys::Uncompressed;
+        std::uint64_t mixedSignature = 0;
         std::uint64_t generation = 0;
         // The cache entry's object, storage source, keys and generation as of stage A (texture null:
         // no entry, the full lookup makes one).
         std::shared_ptr<Texture> texture;
         std::shared_ptr<StorageTexture> source;
         DccKeys entryKeys = DccKeys::Uncompressed;
+        std::uint64_t entryMixedSignature = 0;
         std::uint64_t entryGeneration = 0;
     };
     std::vector<ImageRecord> imageRecords;
@@ -629,6 +631,7 @@ private:
         std::uint64_t bytes = 0;
         // Keys read at the lookup (a snapshot texture holds its clear texels while they are unchanged).
         DccKeys keys = DccKeys::Uncompressed;
+        std::uint64_t mixedSignature = 0;
         // Snapshot textures: write generation the content was known current at, always from a
         // collect issued before the checks that proved it.
         std::uint64_t generation = 0;
