@@ -83,6 +83,7 @@
 #include "prx/libSceNKWebKit/include/UrlParserExports.hpp"
 #include "prx/libSceNKWebKit/include/URLDecompositionExports.hpp"
 
+#include "prx/libSceNKWebKit/include/TypedArrayModeDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
 
 #include "prx/libSceNKWebKit/include/AccessibilityObjectExports.hpp"
