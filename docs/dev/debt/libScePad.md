@@ -125,6 +125,6 @@
 
 ### Silent stubs
 
-- [scePadIsDS4Connected](../../../core/libs/prx/libScePad/chunks/Export_Chunk03.cpp:423) (libScePad) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
-- [scePadIsBlasterConnected](../../../core/libs/prx/libScePad/chunks/Export_Chunk03.cpp:428) (libScePad) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
-- [scePadIsMoveConnected](../../../core/libs/prx/libScePad/chunks/Export_Chunk03.cpp:433) (libScePad) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [scePadIsDS4Connected](../../../core/libs/prx/libScePad/chunks/Export_Chunk03.cpp) (libScePad) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [scePadIsBlasterConnected](../../../core/libs/prx/libScePad/chunks/Export_Chunk03.cpp) (libScePad) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [scePadIsMoveConnected](../../../core/libs/prx/libScePad/chunks/Export_Chunk03.cpp) (libScePad) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.

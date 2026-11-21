@@ -30,4 +30,4 @@
 
 ### Silent stubs
 
-- [sceUltInitialize](../../../core/libs/prx/libSceUlt/chunks/Export_Chunk01.cpp:272) (libSceUlt) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [sceUltInitialize](../../../core/libs/prx/libSceUlt/chunks/Export_Chunk01.cpp) (libSceUlt) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.

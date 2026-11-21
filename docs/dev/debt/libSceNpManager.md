@@ -268,5 +268,5 @@ All 33 named declarations were matched by recomputing candidate spellings agains
 
 ### Silent stubs
 
-- [sceNpInGameMessageCheckCallback](../../../core/libs/prx/libSceNpManager/chunks/Export_Chunk02.cpp:59) (libSceNpManager) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
-- [sceNpRegisterGamePresenceCallback](../../../core/libs/prx/libSceNpManager/chunks/Export_Chunk03.cpp:321) (libSceNpManager) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [sceNpInGameMessageCheckCallback](../../../core/libs/prx/libSceNpManager/chunks/Export_Chunk02.cpp) (libSceNpManager) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
+- [sceNpRegisterGamePresenceCallback](../../../core/libs/prx/libSceNpManager/chunks/Export_Chunk03.cpp) (libSceNpManager) - unimplemented export calling `NotImplemented_nid_no_patch(__func__)`; listed after the large export table was split into small-size libraries.
