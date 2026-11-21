@@ -290,6 +290,13 @@ static void APS5_VABI FaultInit() {
     ++gFaultInitCalls;
 }
 
+static OnceFaultPages* gFreezeDuringInitPages = nullptr;
+static int gFreezeDuringInitCalls = 0;
+static void APS5_VABI FreezeDuringInit() {
+    ++gFreezeDuringInitCalls;
+    gFreezeDuringInitPages->ProtectReadOnly();
+}
+
 static void TestFaultArguments() {
     OnceFaultPages pages;
     errno = 71;
@@ -317,6 +324,47 @@ static void TestFaultArguments() {
     Require(errno == 71);
     Require(gFaultInitCalls == 1);
     pages.ProtectReadWrite();
+
+    OnceFaultPages scePages;
+    gFaultInitCalls = 0;
+    errno = 71;
+    Require(scePthreadOnce(reinterpret_cast<int32_t*>(0x10), FaultInit) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+
+    errno = 71;
+    Require(scePthreadOnce(static_cast<int32_t*>(scePages.Unreadable()), FaultInit) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+
+    auto* const sceControl = static_cast<int32_t*>(scePages.ReadOnly());
+    errno = 71;
+    Require(scePthreadOnce(sceControl, FaultInit) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+    Require(gFaultInitCalls == 0);
+
+    scePages.ProtectReadWrite();
+    errno = 71;
+    Require(scePthreadOnce(sceControl, FaultInit) == 0);
+    Require(errno == 71);
+    Require(gFaultInitCalls == 1);
+    Require(*sceControl == 1);
+
+    scePages.ProtectReadOnly();
+    errno = 71;
+    Require(scePthreadOnce(sceControl, FaultInit) == 0);
+    Require(errno == 71);
+    Require(gFaultInitCalls == 1);
+
+    scePages.ProtectReadWrite();
+    *sceControl = 0;
+    gFreezeDuringInitPages = &scePages;
+    gFreezeDuringInitCalls = 0;
+    errno = 71;
+    Require(scePthreadOnce(sceControl, FreezeDuringInit) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+    Require(gFreezeDuringInitCalls == 1);
+    Require(*sceControl == 2);
+    gFreezeDuringInitPages = nullptr;
+    scePages.ProtectReadWrite();
 }
 
 int main() {
