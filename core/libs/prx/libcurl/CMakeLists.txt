@@ -86,6 +86,7 @@ endif()
 
 add_library(libcurl SHARED EXCLUDE_FROM_ALL
     Export.cpp
+    src/CurlFormat.cpp
     src/CurlSockets.cpp
     src/FormFree.cpp
 )
@@ -123,7 +124,7 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcurl>")
     endif()
 
-    set(curlTestTopics Utility Url SlistMime Options Handles Transfers MimeCallback Allocators Sockets)
+    set(curlTestTopics Utility Url SlistMime Options Handles Transfers MimeCallback Allocators Sockets Format)
     foreach(test_topic IN LISTS curlTestTopics)
         set(test_name guest_curl_${test_topic}_tests)
         string(TOLOWER "${test_topic}" test_slug)
