@@ -8,8 +8,6 @@ extern "C" {
 
 const NKWebKit::WtfAbi::String& APS5_VABI _ZNK7WebCore11HistoryItem9urlStringEv(const NKWebKit::WebCoreAbi::HistoryItem* self);
 const NKWebKit::WtfAbi::String& APS5_VABI _ZNK7WebCore11HistoryItem17originalURLStringEv(const NKWebKit::WebCoreAbi::HistoryItem* self);
-NKWebKit::WtfAbi::URL APS5_VABI _ZNK7WebCore11HistoryItem3urlEv(const NKWebKit::WebCoreAbi::HistoryItem* self);
-NKWebKit::WtfAbi::URL APS5_VABI _ZNK7WebCore11HistoryItem11originalURLEv(const NKWebKit::WebCoreAbi::HistoryItem* self);
 const NKWebKit::WtfAbi::String& APS5_VABI _ZNK7WebCore11HistoryItem5titleEv(const NKWebKit::WebCoreAbi::HistoryItem* self);
 const NKWebKit::WtfAbi::String& APS5_VABI _ZNK7WebCore11HistoryItem14alternateTitleEv(const NKWebKit::WebCoreAbi::HistoryItem* self);
 const NKWebKit::WtfAbi::String& APS5_VABI _ZNK7WebCore11HistoryItem8referrerEv(const NKWebKit::WebCoreAbi::HistoryItem* self);
