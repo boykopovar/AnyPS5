@@ -2440,6 +2440,7 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     ColorTarget color{};
     color.slot = slot;
     const auto info = read(cx, 0x31c + stride);
+    color.fmaskCompression = (info & 0x4000u) != 0u;
     const auto number = (info >> 8u) & 7u;
     const auto swap = (info >> 11u) & 3u;
     const auto decoded = DecodeColorFormat((info >> 2u) & 0x1fu, number, swap);
@@ -2521,6 +2522,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     ColorTarget color{};
     color.slot = slot;
     const auto info = read(cx, 0x31c + stride);
+    color.fmaskCompression = (info & 0x4000u) != 0u;
     const auto number = (info >> 8u) & 7u;
     const auto swap = (info >> 11u) & 3u;
     APS5_LOG_OUT_DEBUG("Color %u info=0x%x number=%u swap=%u", slot, info, number, swap);
