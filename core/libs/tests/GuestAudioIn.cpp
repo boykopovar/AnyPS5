@@ -60,11 +60,15 @@ void TestOpenEx() {
     Require(sceAudioInOpenEx(user, 0, 0, 7, 512, 48000, 2) == invalidSize);
     constexpr int invalidParam = static_cast<int>(0x80260106);
     Require(sceAudioInOpenEx(user, 0, 0, 7, 256, 44100, 2) == invalidFreq);
-    Require(sceAudioInOpenEx(user, 0, 0, 7, 256, 48000, 0) == invalidParam);
+    const int port0 = sceAudioInOpenEx(user, 0, 0, 7, 256, 48000, 0);
+    Require(port0 > 0 && sceAudioInClose(port0) == 0);
     Require(sceAudioInOpenEx(user, 0, 0, 7, 256, 48000, 3) == invalidParam);
+    Require(sceAudioInOpenEx(user, 0, 0, 7, 256, 48000, 4) == invalidParam);
     Require(sceAudioInHqOpenEx(user, 0, 0, 7, 128, 44100, 2) == invalidFreq);
-    Require(sceAudioInHqOpenEx(user, 0, 0, 7, 128, 48000, 0) == invalidParam);
+    const int hqPort0 = sceAudioInHqOpenEx(user, 0, 0, 7, 128, 48000, 0);
+    Require(hqPort0 > 0 && sceAudioInClose(hqPort0) == 0);
     Require(sceAudioInHqOpenEx(user, 0, 0, 7, 128, 48000, 3) == invalidParam);
+    Require(sceAudioInHqOpenEx(user, 0, 0, 7, 128, 48000, 4) == invalidParam);
     int port = sceAudioInOpenEx(user, 0, 0, 7, 256, 48000, 2);
     Require(port > 0 && sceAudioInClose(port) == 0);
     port = sceAudioInHqOpenEx(user, 0, 0, 7, 256, 16000, 2);
