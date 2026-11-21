@@ -2165,9 +2165,9 @@ bool isVop3F32InterpolationOpcode(RdnaOpcode opcode) {
 
 void decodeVop3F32Interpolation(RdnaInstruction& instruction, std::uint32_t vdst, std::uint32_t src0, std::uint32_t src1, std::uint32_t src2, std::uint32_t abs, std::uint32_t opSel, std::uint32_t clamp, std::uint32_t omod, std::uint32_t neg) {
     const bool moves = instruction.op == RdnaOpcode::VInterpMovF32;
-    const RdnaOperand thirdSource = DecodeRdnaScalarSource(src2, instruction.programCounter);
-    if (thirdSource.kind != RdnaOperandKind::IntegerInlineConstant || thirdSource.value != 0u) {
-        throw std::invalid_argument("VOP3 interpolation third source is not the inline constant 0");
+    constexpr std::uint32_t InlineZero = 128u;
+    if (src2 != 0u && src2 != InlineZero) {
+        throw std::invalid_argument("unsupported VOP3 interpolation SRC2 encoding");
     }
     if ((abs & 0x5u) != 0u || (neg & 0x5u) != 0u || opSel != 0u || (src0 >> 8u) != 0u || (moves && (abs | neg) != 0u)) {
         throw std::invalid_argument("VOP3 interpolation modifiers are not implemented");
