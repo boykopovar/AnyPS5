@@ -12,7 +12,7 @@
 namespace {
 
 constexpr int PROCESS_PRIVATE = 0;
-constexpr std::size_t MAX_BARRIER_NAME = 1024;
+constexpr std::size_t MAX_BARRIER_NAME = 32;
 
 }
 
@@ -118,12 +118,11 @@ int APS5_VABI pthread_barrier_setname_np_nid_postfix(PthreadBarrierPrivate** bar
     auto& value = *handle;
     std::lock_guard lock(value.mutex);
     if (value.named) return 35;
-    if (name) {
-        std::string copy;
-        if (const int error = CopyGuestString_nid_no_patch(name, MAX_BARRIER_NAME, copy)) return error;
-        value.name = std::move(copy);
-        value.named = true;
-    }
+    if (!name) return 22;
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(name, MAX_BARRIER_NAME, copy)) return error;
+    value.name = std::move(copy);
+    value.named = true;
     return 0;
 }
 
