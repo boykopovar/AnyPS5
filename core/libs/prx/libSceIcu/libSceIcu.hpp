@@ -21,6 +21,8 @@
 #include "prx/libSceIcu/include/Availability.hpp"
 #include "prx/libSceIcu/include/CollatorAvailability.hpp"
 #include "prx/libSceIcu/include/InvariantChars.hpp"
+#include "prx/libSceIcu/Platform.hpp"
+#include "prx/libSceIcu/Trace.hpp"
 #include "prx/libSceIcu/include/InventoryExports.hpp"
 #include "Space.hpp"
 #include "LocaleMap.hpp"
