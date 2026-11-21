@@ -294,6 +294,7 @@ void WaitForWord(std::uint64_t address, std::uint32_t value, const char* what) {
 }
 
 std::atomic<bool> GateOpen{true};
+bool DeviceIndirectCount = true;
 
 void GateUntilQueued() {
     AgcDriver::DriverDetail::DrawPipeline::Queue0().Enqueue([] {
@@ -369,13 +370,20 @@ void RunCase(bool countIndirect, const char* what) {
     Submit(ImageWrite(), what);
     AgcDriverWaitIdle_nid_postfix();
     Require(AgcDriver::Graphics::StorageTexture::AnyPending(), std::string("queued indirect read: ") + what + ": the image write left no pending result to order against");
-    GateOpen = false;
-    GateUntilQueued();
+    const bool readsOnCpu = countIndirect && !DeviceIndirectCount;
+    if (!readsOnCpu) {
+        GateOpen = false;
+        GateUntilQueued();
+    }
     std::fill_n(ColorMemory, ColorBytes, std::byte{0});
     Submit(IndirectDraw(countIndirect), what);
-    WaitForHeldRange(poolAddress + RecordOffset, 16, "indirect argument");
-    if (countIndirect) {
-        Require(AgcDriver::DriverDetail::DrawPipeline::HeldReads(poolAddress + CountOffset, 4), std::string("queued indirect read: ") + what + ": the queued draw holds no read of its count word");
+    if (readsOnCpu) {
+        std::printf("%s: the device has no indirect count draws, so the arguments are read on the CPU before the draw is queued; only its result is checked\n", what);
+    } else {
+        WaitForHeldRange(poolAddress + RecordOffset, 16, "indirect argument");
+        if (countIndirect) {
+            Require(AgcDriver::DriverDetail::DrawPipeline::HeldReads(poolAddress + CountOffset, 4), std::string("queued indirect read: ") + what + ": the queued draw holds no read of its count word");
+        }
     }
     WaitForCommits();
     AgcDriverWaitIdle_nid_postfix();
@@ -397,6 +405,7 @@ int main() {
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
+            DeviceIndirectCount = device->DrawIndirectSupport().count;
         }
         ColorMemory = AllocateWatched(2 * Block);
         Pool = AllocateWatched(PoolBytes);
