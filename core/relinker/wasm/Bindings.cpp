@@ -78,6 +78,7 @@ emscripten::val Convert(const emscripten::val& request, const emscripten::val& c
             if (text.size() > 1024 * 1024) throw std::invalid_argument("Patch TOML exceeds 1 MiB");
             options.TargetName = name;
             options.Patches = Relinker::GamePatch::ParsePatchFile(text).Entries;
+            if (options.Patches.empty()) throw std::invalid_argument("Patch TOML has no patch entries");
         }
         const auto moduleRoot = input.ModuleRoot;
         BrowserProgress progress(callback);

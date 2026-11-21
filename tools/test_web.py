@@ -39,7 +39,12 @@ def main(argv=None):
             address, expected = patch_site(executable)
             (fixture / "valid.toml").write_text(patch_text(address, expected, target="program.dat"), encoding="utf-8")
             (fixture / "mismatch.toml").write_text(patch_text(address, expected ^ 1, target="program.dat"), encoding="utf-8")
-            (fixture / "module.elf").write_bytes(module_with_symbol(True))
+            module = bytes(module_with_symbol(True))
+            (fixture / "module.elf").write_bytes(module)
+            address, expected = patch_site(module)
+            (fixture / "module.toml").write_text(
+                patch_text(address, expected, target="sce_module/library.prx.esbak"), encoding="utf-8"
+            )
             source = archive.read_text(encoding="utf-8-sig")
             match = re.search(r'from "(https://cdn.jsdelivr.net/[^"\n]+)"', source)
             if not match:

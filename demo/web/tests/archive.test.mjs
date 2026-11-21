@@ -69,10 +69,16 @@ for (const target of ["windows", "linux"]) {
     const patched = native.Convert({ ...input, patch }, () => {});
     assert.equal(patched.ok, true, patched.error);
     assert.notDeepEqual(patched.executable, converted.executable);
+    const modulePatch = await readPatch("module.toml");
+    const patchedModule = native.Convert({ ...input, patch: modulePatch }, () => {});
+    assert.equal(patchedModule.ok, true, patchedModule.error);
+    assert.equal(patchedModule.modules.length, 1);
+    assert.notDeepEqual(patchedModule.modules[0].bytes, converted.modules[0].bytes);
     const mismatch = await readPatch("mismatch.toml");
     for (const [badPatch, message] of [
       [mismatch, /expected [0-9a-f]+ found [0-9a-f]+/iu],
       [patch.replace("program.dat", "other.elf"), /unmatched patch target/iu],
+      ["format = 1", /no patch entries/iu],
       ["format = 2", /unsupported format/iu]
     ]) {
       const rejected = native.Convert({ ...input, patch: badPatch }, () => {});
