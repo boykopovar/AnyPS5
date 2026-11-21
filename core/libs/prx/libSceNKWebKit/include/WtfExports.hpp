@@ -283,6 +283,13 @@ void APS5_VABI _ZN7bmalloc3api23decommitAlignedPhysicalEPvmNS_8HeapKindE(void*, 
 void* APS5_VABI _ZN7bmalloc3api29tryLargeZeroedMemalignVirtualEmmNS_8HeapKindE(std::size_t alignment, std::size_t size, std::uint32_t);
 void APS5_VABI _ZN7bmalloc3api8scavengeEv();
 bool APS5_VABI _ZN7bmalloc3api9isEnabledENS_8HeapKindE(std::uint32_t);
+void APS5_VABI _ZN7bmalloc5Cache27deallocateSlowCaseNullCacheENS_8HeapKindEPv(std::uint32_t, void* object);
+void* APS5_VABI _ZN7bmalloc5Cache25allocateSlowCaseNullCacheENS_8HeapKindEm(std::uint32_t, std::size_t size);
+void* APS5_VABI _ZN7bmalloc5Cache25allocateSlowCaseNullCacheENS_8HeapKindEmm(std::uint32_t, std::size_t alignment, std::size_t size);
+void* APS5_VABI _ZN7bmalloc5Cache27reallocateSlowCaseNullCacheENS_8HeapKindEPvm(std::uint32_t, void* object, std::size_t newSize);
+void* APS5_VABI _ZN7bmalloc5Cache28tryAllocateSlowCaseNullCacheENS_8HeapKindEm(std::uint32_t, std::size_t size);
+void* APS5_VABI _ZN7bmalloc5Cache28tryAllocateSlowCaseNullCacheENS_8HeapKindEmm(std::uint32_t, std::size_t alignment, std::size_t size);
+void* APS5_VABI _ZN7bmalloc5Cache30tryReallocateSlowCaseNullCacheENS_8HeapKindEPvm(std::uint32_t, void* object, std::size_t newSize);
 void APS5_VABI _ZN7bmalloc8FreeList14initializeBumpEPcj(bmalloc::FreeList* self, char* payloadEnd, unsigned remaining);
 void APS5_VABI _ZN7bmalloc8FreeList14initializeListEPNS_8FreeCellEmj(bmalloc::FreeList* self, bmalloc::FreeCell* head, std::uintptr_t secret, unsigned bytes);
 void APS5_VABI _ZN7bmalloc8FreeList5clearEv(bmalloc::FreeList* self);
