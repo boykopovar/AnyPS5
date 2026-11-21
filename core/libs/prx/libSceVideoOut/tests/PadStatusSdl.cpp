@@ -1,9 +1,12 @@
+#include "prx/libSceVideoOut/include/MainThread.hpp"
 #include "prx/libSceVideoOut/include/PadStatusSdl.hpp"
 #include <array>
 #include <cstdio>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace {
@@ -53,11 +56,59 @@ void powerTests() {
     std::printf("pad status sdl: every SDL power level maps to its level\n");
 }
 
+void mainThreadTests() {
+    auto syncRunner = [](void (*fn)(void*), void* ctx) { fn(ctx); };
+
+    int value = 7;
+    int& ref = OnMainThreadUsing([&value]() -> int& { return value; }, syncRunner);
+    require(&ref == &value, "OnMainThreadUsing must preserve lvalue reference identity");
+    ref = 42;
+    require(value == 42, "mutating returned lvalue reference must mutate original target");
+
+    static_assert(std::is_same_v<decltype(OnMainThreadUsing([]() -> const std::string { return "ok"; }, syncRunner)), const std::string>);
+    const std::string constValue = OnMainThreadUsing([]() -> const std::string { return "ok"; }, syncRunner);
+    require(constValue == "ok", "OnMainThreadUsing must return const values");
+
+    auto ptr = OnMainThreadUsing([]() { return std::make_unique<int>(123); }, syncRunner);
+    require(ptr && *ptr == 123, "OnMainThreadUsing must return move-only values");
+
+    struct RvalueCallable {
+        int result;
+        int operator()() && {
+            return result;
+        }
+    };
+    require(OnMainThreadUsing(RvalueCallable{321}, syncRunner) == 321, "OnMainThreadUsing must forward rvalue-only callables");
+
+    bool voidRan = false;
+    OnMainThreadUsing([&voidRan]() { voidRan = true; }, syncRunner);
+    require(voidRan, "OnMainThreadUsing must execute void callables");
+
+    bool caught = false;
+    try {
+        OnMainThreadUsing([]() -> int { throw std::runtime_error("boom"); }, syncRunner);
+    } catch (const std::runtime_error& error) {
+        caught = std::string(error.what()) == "boom";
+    }
+    require(caught, "OnMainThreadUsing must rethrow exceptions from the callable");
+
+    bool noopThrew = false;
+    try {
+        OnMainThreadUsing([]() { return 5; }, [](void (*)(void*), void*) {});
+    } catch (const std::runtime_error&) {
+        noopThrew = true;
+    }
+    require(noopThrew, "OnMainThreadUsing must throw when the runner does not invoke the callback");
+
+    std::printf("pad status sdl: main thread dispatch handles references, cv-qualified values, and rvalues\n");
+}
+
 }
 
 int main() try {
     typeTests();
     powerTests();
+    mainThreadTests();
     std::printf("pad status sdl tests passed\n");
     return 0;
 } catch (const std::exception& error) {
