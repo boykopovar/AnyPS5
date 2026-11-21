@@ -155,15 +155,12 @@ const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uin
     const GuestLocale::Implementation* locale = *stream->locale;
     const GuestLocale::Facet* facet = index < locale->facetCount ? locale->facets[index] : nullptr;
     if (facet != nullptr || !locale->transparent) return facet;
-    const GuestLocale::Implementation* global = _ZNSt6locale16_GetgloballocaleEv_nid_postfix();
-    return global != nullptr && index < global->facetCount ? global->facets[index] : nullptr;
+    return LibcFindGlobalFacet_nid_no_patch(index);
 }
 
 const GuestLocale::Facet* FindGlobalFacet(std::uint64_t& id) {
     const std::uint64_t index = EnsureFacetId(id);
-    const GuestLocale::Implementation* global = _ZNSt6locale16_GetgloballocaleEv_nid_postfix();
-    if (global == nullptr) return nullptr;
-    return index < global->facetCount ? global->facets[index] : nullptr;
+    return LibcFindGlobalFacet_nid_no_patch(index);
 }
 
 template<typename TChar>
