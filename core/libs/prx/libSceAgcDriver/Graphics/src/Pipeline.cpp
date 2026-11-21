@@ -730,6 +730,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         libraries = libraryKeys(keys, context, state, vertexInput, resources, shaders, narrowLibraryKeys);
         std::vector<VkDynamicState> dynamicStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
         if (state.stencilReplayReference) dynamicStates.push_back(VK_DYNAMIC_STATE_STENCIL_REFERENCE);
+        if (state.stencilReplayReference && state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && state.cullMode != VK_CULL_MODE_NONE && context.graphicsPipelineLibrary) dynamicStates.push_back(VK_DYNAMIC_STATE_FRONT_FACE_EXT);
         if (depthBounds) dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BOUNDS);
         if (depthBias) dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BIAS);
         if (libraries) dynamicStates.assign(PipelineLibraryDynamicStates().begin(), PipelineLibraryDynamicStates().end());
