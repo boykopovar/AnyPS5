@@ -26,7 +26,7 @@ constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t Lanes = 2;
 constexpr std::uint32_t LaneBytes = 16;
 constexpr std::size_t OutputBytes = 128;
-constexpr std::size_t FirstByte = 33;
+constexpr std::array<std::size_t, 2> FirstBytes{33u, 32u};
 constexpr std::uint8_t Untouched = 0xa5;
 constexpr std::size_t MaxRuntimeWriteCalls = 3;
 
@@ -108,7 +108,7 @@ std::size_t RuntimeWriteCalls(const ShaderRecompiler::RecompileResult& shader, s
     return calls;
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t components, bool d16, std::uint32_t format = 0u) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t components, bool d16, std::size_t first, std::uint32_t format = 0u) {
     std::vector<std::uint32_t> code{
         0xe0340000u, 0x80010200u, 0x34020084u, 0xe0381000u, 0x80030401u, 0xbf8c3f70u, 0x7e140502u,
     };
@@ -117,7 +117,7 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, Guest
     code.insert(code.end(), {0xe0001000u | ((components + (d16 ? 0x83u : 3u)) << 18u), 0x80020401u, 0xbf810000u});
     std::array<std::uint32_t, 16> userData{};
     const auto descriptor = Descriptor(guest.Descriptor(), 8u);
-    const auto output = Descriptor(guest.Output(format != 0u).data() + FirstByte, 0u);
+    const auto output = Descriptor(guest.Output(format != 0u).data() + first, 0u);
     const auto input = Descriptor(guest.Input(), Lanes * LaneBytes);
     std::copy(descriptor.begin(), descriptor.end(), userData.begin() + 4u);
     std::copy(output.begin(), output.end(), userData.begin() + 8u);
@@ -136,19 +136,25 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, Guest
     return result;
 }
 
+void RunAt(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t components, bool d16, std::size_t first);
+
 void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t components, bool d16) {
     const std::array<std::uint32_t, 8> input = d16
         ? std::array<std::uint32_t, 8>{0xc0003e00u, 0x7e093800u, 0u, 0u, 0x3c00b800u, 0x0001fc00u, 0u, 0u}
         : std::array<std::uint32_t, 8>{0x3fc00000u, 0xc0000000u, 0x3f000000u, 0x7fc12345u, 0xbf000000u, 0x3f800000u, 0xff800000u, 0x00000001u};
     std::copy(input.begin(), input.end(), guest.Input());
-    const auto runtime = Compile(device, guest, components, d16);
+    for (const auto first : FirstBytes) RunAt(device, guest, components, d16, first);
+}
+
+void RunAt(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t components, bool d16, std::size_t first) {
+    const auto runtime = Compile(device, guest, components, d16, first);
     const auto writeCalls = RuntimeWriteCalls(runtime, components);
-    std::printf("runtime formatted store x%u%s: %zu SPIR-V words, %zu byte-write call sites\n", components, d16 ? " d16" : "", runtime.spirv.Words().size(), writeCalls);
+    std::printf("runtime formatted store x%u%s at byte %zu: %zu SPIR-V words, %zu byte-write call sites\n", components, d16 ? " d16" : "", first, runtime.spirv.Words().size(), writeCalls);
     std::fflush(stdout);
     Require(writeCalls != 0u && writeCalls <= MaxRuntimeWriteCalls, "runtime formatted store: expected one shared byte-write call site per 8/16/32-bit width");
     for (std::size_t index = (components - 1u) % 2u; index < Formats.size(); index += 2u) {
         const auto format = Formats[index];
-        const auto reference = Compile(device, guest, components, d16, format.value);
+        const auto reference = Compile(device, guest, components, d16, first, format.value);
         for (const auto records : {32u, 16u, format.bytes - 1u}) {
             guest.Descriptor()[0] = records;
             guest.Descriptor()[1] = 0x31000facu | (format.value << 12u);
@@ -158,6 +164,7 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t compo
             device.WaitIdle();
             device.Dispatch(reference, 1u, 1u, 1u);
             device.WaitIdle();
+            const bool aligned = first % std::min(format.bytes, 4u) == 0u;
             const auto context = "runtime formatted store: x" + std::to_string(components) + (d16 ? " d16" : " f32") + " format " + std::to_string(format.value) + " records " + std::to_string(records);
             for (std::size_t byte = 0; byte < OutputBytes; ++byte) {
                 const auto actual = guest.Output(false)[byte];
@@ -166,11 +173,11 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t compo
                 bool writable = false;
                 for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
                     const auto offset = lane * LaneBytes;
-                    writable = writable || (offset + format.bytes <= records && byte >= FirstByte + offset && byte < FirstByte + offset + format.bytes);
+                    writable = writable || (aligned && offset + format.bytes <= records && byte >= first + offset && byte < first + offset + format.bytes);
                 }
                 if (!writable) Require(actual == Untouched, context + " changed guard or out-of-bounds byte " + std::to_string(byte));
             }
-            if (records >= format.bytes) Require(guest.Output(true)[FirstByte] != Untouched, context + " reference store wrote no first byte");
+            if (aligned && records >= format.bytes) Require(guest.Output(true)[first] != Untouched, context + " reference store wrote no first byte");
         }
     }
 }
@@ -191,7 +198,7 @@ int main(int argc, char** argv) {
         if (!device) return VulkanTestSkipped;
         GuestBlock guest;
         Run(*device, guest, components, d16);
-        std::printf("runtime formatted store x%u%s: 9 formats, unaligned base, full/record/partial OOB and all output bytes match constant-format stores\n", components, d16 ? " d16" : "");
+        std::printf("runtime formatted store x%u%s: 9 formats, aligned and misaligned bases, full/record/partial OOB and all output bytes match constant-format stores\n", components, d16 ? " d16" : "");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

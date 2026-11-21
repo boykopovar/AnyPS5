@@ -29,7 +29,7 @@ struct Store {
     std::uint32_t offset;
 };
 
-constexpr std::array<Store, 8> Stores{{
+constexpr std::array<Store, 12> Stores{{
     {5, 1, 1, 1, 1},
     {11, 2, 1, 1, 3},
     {60, 1, 4, 4, 6},
@@ -38,6 +38,10 @@ constexpr std::array<Store, 8> Stores{{
     {27, 2, 2, 2, 26},
     {69, 2, 4, 4, 33},
     {18, 1, 2, 2, 45},
+    {11, 2, 1, 1, 48},
+    {60, 1, 4, 4, 52},
+    {18, 1, 2, 2, 58},
+    {27, 2, 2, 2, 60},
 }};
 
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
@@ -69,6 +73,7 @@ std::array<std::uint8_t, LaneBytes> Expected(std::uint32_t tid) {
     for (const auto& store : Stores) {
         const std::uint32_t width = store.width;
         const std::uint32_t limit = width == 1u ? 0xffu : 0xffffu;
+        if (store.offset % std::min(width * store.channels, 4u) != 0u) continue;
         for (std::uint32_t component = 0; component < store.channels; ++component) {
             const auto value = component < store.components ? std::min(Value(tid, component), limit) : 0u;
             for (std::uint32_t byte = 0; byte < width; ++byte) bytes[store.offset + component * width + byte] = static_cast<std::uint8_t>(value >> (8u * byte));
