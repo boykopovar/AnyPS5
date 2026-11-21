@@ -336,6 +336,7 @@ const void* APS5_VABI WKPageGetInspector(const void* pageRef);
 double APS5_VABI WKPageGetPageLength(const void* pageRef);
 double APS5_VABI WKPageGetPageZoomFactor(const void* pageRef);
 bool APS5_VABI WKPageGetPaginationBehavesLikeColumns(const void* pageRef);
+bool APS5_VABI WKPageGetPaginationLineGridEnabled(const void* pageRef);
 std::uint32_t APS5_VABI WKPageGetPaginationMode(const void* pageRef);
 std::uint32_t APS5_VABI WKPageGetScrollPinningBehavior(const void* pageRef);
 double APS5_VABI WKPageGetTextZoomFactor(const void* pageRef);

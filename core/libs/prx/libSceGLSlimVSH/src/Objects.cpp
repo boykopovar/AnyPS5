@@ -46,9 +46,26 @@ void CollectShaders(ShareGroup& share) {
 }
 
 void CopyString(const std::string& source, GLsizei size, GLsizei* length, GLchar* output) {
-    GLsizei count = size ? static_cast<GLsizei>(std::min<std::size_t>(source.size(), size - 1)) : 0;
-    if (size) { std::memcpy(output, source.data(), count); output[count] = 0; }
-    if (length) *length = count;
+    const GLsizei count = size ? static_cast<GLsizei>(std::min<std::size_t>(source.size(), size - 1)) : 0;
+    if (size) {
+        try {
+            std::vector<GLchar> local(source.begin(), source.begin() + count);
+            local.push_back(0);
+            const int savedErrno = errno;
+            const bool copied = GuestCopyOut_nid_no_patch(output, local.data(), local.size());
+            errno = savedErrno;
+            if (!copied) { Error_nid_no_patch(0x0501); return; }
+        } catch (const std::bad_alloc&) {
+            Error_nid_no_patch(0x0505);
+            return;
+        }
+    }
+    if (length) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(length, &count, sizeof(count));
+        errno = savedErrno;
+        if (!copied) Error_nid_no_patch(0x0501);
+    }
 }
 
 }

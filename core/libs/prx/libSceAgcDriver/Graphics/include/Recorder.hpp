@@ -54,6 +54,7 @@ public:
         ReferenceFront,
         ReferenceBack,
         ColorWriteMask,
+        DepthBiasEnable,
         SlotCount
     };
     static constexpr std::uint32_t Mask(Slot slot) { return 1u << slot; }
@@ -86,6 +87,7 @@ public:
     void SetStencilWriteMask(const Context& context, VkStencilFaceFlags faces, std::uint32_t mask);
     void SetStencilReference(const Context& context, VkStencilFaceFlags faces, std::uint32_t reference);
     void SetColorWriteMasks(const Context& context, std::span<const VkColorComponentFlags> masks);
+    void SetDepthBiasEnable(const Context& context, VkBool32 enable);
 
 private:
     struct StencilOps {
@@ -128,6 +130,7 @@ private:
     std::array<std::uint32_t, 2> writeMasks{};
     std::array<std::uint32_t, 2> references{};
     ColorWriteMasks colorWriteMasks{};
+    VkBool32 depthBiasEnable = 0;
 };
 
 // Accumulates GPU work across guest commands so the CPU does not wait for each one. Dispatches and the
@@ -347,6 +350,7 @@ public:
     // Ends and submits the open batch without waiting.
     void Submit();
     void HoldNextSubmit(VkSemaphore semaphore, std::uint64_t value);
+    bool SubmitHeld() const;
     // Submits the open batch and returns the serial of the newest submitted batch (0 when nothing was
     // ever submitted); WaitSerial(serial) then covers all recorded work.
     std::uint64_t SubmitAndEpoch();
@@ -373,7 +377,7 @@ public:
     };
     bool RecordBoundChangedCopy(VkCommandBuffer commands, BoundWords result, BoundWords snapshot, BoundWords target, std::uint32_t dwords, VkBuffer counter = VK_NULL_HANDLE);
     std::uint64_t SamplesTotal();
-    bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0);
+    bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0, std::uint32_t blocks = 0xffffu);
     void NoteSampledDraw(VkCommandBuffer commands);
     void NoteDrawTraceToken(std::uint64_t token) noexcept;
     void NoteFaultToken(AgcDriver::FaultToken token) noexcept;
@@ -834,6 +838,7 @@ private:
                 std::uint64_t address;
                 VkDeviceAddress dumpTarget = 0;
                 std::uint32_t dumpSegments = 0;
+                std::uint32_t dumpBlocks = 0;
                 std::uint64_t End() const;
             };
             std::vector<Queued> queued;
@@ -903,7 +908,7 @@ private:
     void readSamples(Batch& batch);
     bool gpuSampleCounter();
     void endSamples(Batch& batch);
-    void foldSamples(Batch& batch, VkDeviceAddress target);
+    void foldSamples(Batch& batch, VkDeviceAddress target, std::uint32_t blocks = 0xffffu);
     bool segmentMode() const;
     bool segmentSlotReady(const Batch& batch) const;
     void takeSegmentPool(Batch& batch);
@@ -1040,6 +1045,7 @@ private:
     mutable std::uint64_t reachedSerial = 0;
     VkSemaphore submitHold = VK_NULL_HANDLE;
     std::uint64_t submitHoldValue = 0;
+    std::uint64_t heldSerial = 0;
     struct ProgressWatcher;
     std::unique_ptr<ProgressWatcher> progressWatcher;
     // Identity for a thread that released the mutex around a wait (syncThroughUnlocked): the

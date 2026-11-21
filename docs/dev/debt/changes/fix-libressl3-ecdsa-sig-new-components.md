@@ -1,0 +1,5 @@
+# libSceLibreSsl3
+
+## change [ASN1_TYPE_free, ECDSA_SIG_new, ECDSA_SIG_set0 and ECDSA_SIG_free]
+
+- [ASN1_TYPE_free, ECDSA_SIG_new, ECDSA_SIG_set0 and ECDSA_SIG_free](../../../core/libs/prx/libSceLibreSsl3/src/EcdsaSig.cpp) - follow LibreSSL 4.0.0 `a_type.c`, `tasn_fre.c`, `tasn_new.c` and [`ecdsa.c`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/ecdsa/ecdsa.c): the type teardown frees object, string or nested values by type under the no-free and object dynamic flags; the constructor allocates a 16-byte object and a zero BIGNUM for each component, the setter frees replaced BIGNUMs through `BN_free`, and the destructor releases both components and the object. When a component allocation fails the constructor releases what it built, where `tasn_new.c` leaks it, and queues the two ASN.1 errors but not the `BN_new` one. A null signature throws and a null component returns 0 unchanged. The PS5 ABI and console behaviour are unverified. Closes when: compared with the console.
