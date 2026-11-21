@@ -7,8 +7,10 @@
 #include <cstring>
 #include <future>
 #include <thread>
+#include <vector>
 #include "prx/libSceNet/libSceNet.hpp"
 #include "prx/libkernel/libkernel.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #ifdef _WIN32
 #include <windows.h>
@@ -283,6 +285,90 @@ static void CheckStreamTransfer(bool net) {
     Require(Close(net, stream.accepted) == 0 && Close(net, stream.client) == 0 && Close(net, stream.listener) == 0);
 }
 
+struct ForwardedSend {
+    int descriptor;
+    bool addressedApi;
+    std::vector<char> buffer;
+    bool returned = false;
+    std::int64_t result = -1;
+    int error = 0;
+};
+
+static void* APS5_VABI RunForwardedSend(void* argument) {
+    auto& send = *static_cast<ForwardedSend*>(argument);
+    send.result = send.addressedApi
+        ? sendto_nid_postfix(send.descriptor, send.buffer.data(), send.buffer.size(), 0, nullptr, 0)
+        : send_nid_postfix(send.descriptor, send.buffer.data(), send.buffer.size(), 0);
+    send.error = *__error_nid_postfix();
+    send.returned = true;
+    return &send;
+}
+
+template <class TPredicate>
+static bool ObserveSend(TPredicate ready) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!ready()) {
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        std::this_thread::yield();
+    }
+    return true;
+}
+
+static void CheckForwardedSendInterruption(bool saturated, bool closeDescriptor = false) {
+    const auto stream = OpenStream(true);
+    const int capacity = 4096;
+    Require(sceNetSetsockopt(stream.client, 0xffff, 0x1001, &capacity, sizeof(capacity)) == 0);
+    Require(sceNetSetsockopt(stream.accepted, 0xffff, 0x1002, &capacity, sizeof(capacity)) == 0);
+    if (saturated) {
+        const std::array<char, 4096> fill{};
+        std::size_t sent = 0;
+        Require(ObserveSend([&] {
+            const auto result = send_nid_postfix(stream.client, fill.data(), fill.size(), 0x80);
+            if (result < 0) {
+                Require(*__error_nid_postfix() == 35 && sent > 0);
+                GuestPollDescriptor pending{stream.client, 0x0004, 0};
+                const auto ready = poll_nid_postfix(&pending, 1, 25);
+                Require(ready >= 0);
+                return ready == 0;
+            }
+            Require(result > 0);
+            sent += static_cast<std::size_t>(result);
+            Require(sent < 16 * 1024 * 1024);
+            return false;
+        }));
+    }
+    ForwardedSend send{stream.client, saturated, std::vector<char>(8 * 1024 * 1024, 'w')};
+    Pthread writer = nullptr;
+    Require(scePthreadCreate(&writer, nullptr, RunForwardedSend, &send, nullptr) == 0);
+    if (saturated) {
+        Require(ObserveSend([&] {
+            std::lock_guard lock(writer->cancelLock);
+            return writer->cancelIo != nullptr;
+        }));
+    } else {
+        Require(ObserveSend([&] {
+            int available = 0;
+            Require(sceNetIoctl(stream.accepted, 0x4004667f, &available) == 0);
+            return available > 0;
+        }));
+    }
+    if (closeDescriptor) Require(close_nid_postfix(stream.client) == 0);
+    else Require(scePthreadCancel(writer) == 0);
+    Require(ObserveSend([&] { return writer->_finished.load(); }));
+    void* result = nullptr;
+    Require(scePthreadJoin(writer, &result) == 0);
+    if (saturated && !send.returned) {
+        Require(result == GUEST_CANCELED);
+    } else {
+        const bool partial = send.returned && result == &send && send.result > 0 && static_cast<std::size_t>(send.result) < send.buffer.size();
+        if (!partial) std::fprintf(stderr, "expected a partial forwarded send, returned=%d, bytes=%lld, errno=%d\n",
+            send.returned, static_cast<long long>(send.result), send.error);
+        Require(partial);
+    }
+    if (!closeDescriptor) Require(Close(true, stream.client) == 0);
+    Require(Close(true, stream.accepted) == 0 && Close(true, stream.listener) == 0);
+}
+
 int main() {
     for (const bool net : {false, true}) {
         CheckDatagram(net);
@@ -295,5 +381,8 @@ int main() {
     }
     CheckFailedShutdown();
     CheckUnknownDescriptor();
+    CheckForwardedSendInterruption(false);
+    CheckForwardedSendInterruption(true);
+    CheckForwardedSendInterruption(false, true);
     return 0;
 }

@@ -795,9 +795,10 @@ bool message_flags_supported(int flags, int accepted) {
 }
 
 template <typename TOperation>
-auto native_transfer(const NativeSocketHandle& socket, int flags, bool send, TOperation operation, bool timed = true, int length = 0) {
+auto native_transfer(const NativeSocketHandle& socket, int flags, bool send, TOperation operation, bool timed = true, int length = 0, bool interruptSend = false) {
 #ifdef _WIN32
     using Result = decltype(operation(0));
+    const bool interruptible = (!send || interruptSend) && KernelIoActive_nid_no_patch();
     const bool nonblocking = (flags & NET_MSG_DONTWAIT) != 0 || socket.nonblock.load();
     const int completeLength = send && socket.stream && !nonblocking ? length : 0;
     const int timeout = timed ? (send ? socket.sendTimeout.load() : socket.receiveTimeout.load()) : 0;
@@ -805,6 +806,11 @@ auto native_transfer(const NativeSocketHandle& socket, int flags, bool send, TOp
         : std::chrono::steady_clock::time_point::max();
     int transferred = 0;
     for (;;) {
+        if (interruptible && KernelIoInterrupted_nid_no_patch()) {
+            if (transferred > 0) return static_cast<Result>(transferred);
+            WSASetLastError(WSAEINTR);
+            return static_cast<Result>(-1);
+        }
         const auto result = operation(transferred);
         if (result != static_cast<Result>(-1)) {
             if (completeLength == 0) return result;
@@ -834,6 +840,10 @@ auto native_transfer(const NativeSocketHandle& socket, int flags, bool send, TOp
     static_cast<void>(send);
     static_cast<void>(timed);
     static_cast<void>(length);
+    if (interruptSend && KernelIoInterrupted_nid_no_patch()) {
+        errno = EINTR;
+        return static_cast<decltype(operation(0))>(-1);
+    }
     return operation(0);
 #endif
 }
@@ -908,15 +918,23 @@ constexpr int RECEIVE_NOTHING = -1;
 
 int wait_for_datagram(const Sock& socket, std::chrono::steady_clock::time_point deadline) {
     if (deadline == std::chrono::steady_clock::time_point::max()) return 0;
-    const auto now = std::chrono::steady_clock::now();
-    if (now >= deadline) return NET_EAGAIN;
-    const auto remaining = std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
 #ifdef _WIN32
     WSAPOLLFD descriptor{};
     descriptor.fd = socket.native->value;
     descriptor.events = POLLRDNORM;
-    return WSAPoll(&descriptor, 1, static_cast<INT>(std::min<long long>(remaining, INT_MAX))) == 0 ? NET_EAGAIN : 0;
+    const bool interruptible = KernelIoActive_nid_no_patch();
+    for (;;) {
+        if (interruptible && KernelIoInterrupted_nid_no_patch()) return NET_EINTR;
+        const auto remaining = deadline - std::chrono::steady_clock::now();
+        if (remaining <= std::chrono::steady_clock::duration::zero()) return NET_EAGAIN;
+        const auto milliseconds = std::chrono::ceil<std::chrono::milliseconds>(remaining).count();
+        if (WSAPoll(&descriptor, 1, static_cast<INT>(std::min<long long>(milliseconds, interruptible ? 10 : INT_MAX))) != 0) return 0;
+        if (!interruptible) return NET_EAGAIN;
+    }
 #else
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= deadline) return NET_EAGAIN;
+    const auto remaining = std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
     pollfd descriptor{};
     descriptor.fd = socket.native->value;
     descriptor.events = POLLIN;
@@ -951,8 +969,10 @@ int wait_for_local_address(int s, const Sock& socket, bool empty, int flags) {
     const auto deadline = timeout > 0
         ? std::chrono::steady_clock::now() + std::chrono::microseconds(timeout)
         : std::chrono::steady_clock::time_point::max();
+    const bool interruptible = KernelIoActive_nid_no_patch();
     std::unique_lock lk(g_mutex);
     for (bool waited = false;; waited = true) {
+        if (interruptible && KernelIoInterrupted_nid_no_patch()) return NET_EINTR;
         const auto it = g_socks.find(s);
         if (it == g_socks.end() || it->second.native != socket.native || it->second.aborted) return 0;
         if (named || has_local_address(socket.native->value)) {
@@ -1156,6 +1176,8 @@ bool GetSocketOptionForKernel(int descriptor, int level, int option, void* value
 
 const bool g_socketOptionGetterRegistered = (KernelSetSocketOptionGetter_nid_no_patch(&GetSocketOptionForKernel), true);
 
+static std::int64_t NetSendTo(int s, const void* buf, std::size_t len, int flags, const void* to, std::uint32_t tolen, bool kernelSend);
+
 int FamilyOfSocket(int descriptor) {
     std::lock_guard lk(g_mutex);
     const auto it = g_socks.find(descriptor);
@@ -1175,6 +1197,7 @@ int ErrorOf(std::int64_t result) {
 constexpr int KernelWaitAll = 0x40;
 
 std::int64_t ReceiveForKernel(int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength) {
+    if (KernelIoInterrupted_nid_no_patch()) return fail(NET_EINTR);
     const int netFlags = flags & ~KernelWaitAll;
     const auto size = static_cast<size_t>(length);
     if (length == 0 && !IsStreamSocket(descriptor)) {
@@ -1206,7 +1229,7 @@ const KernelSocketPoll::Forwards g_socketForwards{
         return ErrorOf(sceNetGetsockname(descriptor, address, length));
     },
     [](int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength, int* error) {
-        const std::int64_t result = sceNetSendto(descriptor, buffer, static_cast<size_t>(length), flags, address, addressLength);
+        const std::int64_t result = NetSendTo(descriptor, buffer, static_cast<size_t>(length), flags, address, addressLength, true);
         *error = ErrorOf(result);
         return result;
     },
@@ -1403,7 +1426,6 @@ int APS5_VABI sceNetSocketClose(int s) {
         if (!GuestSocketIsOpen_nid_no_patch(s)) return fail(NET_EBADF);
         return close_nid_postfix(s) == 0 ? 0 : fail(*__error_nid_postfix());
     }
-    KernelReleaseSocketNumber_nid_no_patch(s);
     if (native) {
 #ifdef _WIN32
         ::shutdown(native->value, SD_BOTH);
@@ -1411,6 +1433,7 @@ int APS5_VABI sceNetSocketClose(int s) {
         ::shutdown(native->value, SHUT_RDWR);
 #endif
     }
+    KernelReleaseSocketNumber_nid_no_patch(s);
     g_cv.NotifyAll();
     return 0;
 }
@@ -1803,6 +1826,7 @@ static int64_t ReceiveFrom(int s, void* buf, size_t len, int flags, void* from, 
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
     }
+    if (socket.native->receiveTimeout.load() != 0) KernelIoNoRestart_nid_no_patch();
     std::uint32_t capacity = 0;
     if (from && (!GuestCopyIn_nid_no_patch(&capacity, fromlen, sizeof(capacity)) ||
         !GuestCopyOut_nid_no_patch(fromlen, &capacity, sizeof(capacity)))) return fail(NET_EFAULT);
@@ -1814,6 +1838,7 @@ static int64_t ReceiveFrom(int s, void* buf, size_t len, int flags, void* from, 
         return 0;
     }
 #endif
+    if (KernelIoInterrupted_nid_no_patch()) return fail(NET_EINTR);
     const bool returnAddress = from != nullptr && socket.type == NET_SOCK_DGRAM;
     const auto addressBytes = returnAddress ?
         std::min<std::uint32_t>(capacity, socket.family == NET_AF_INET ? 16u : 28u) : 0u;
@@ -1832,7 +1857,10 @@ static int64_t ReceiveFrom(int s, void* buf, size_t len, int flags, void* from, 
 #ifdef _WIN32
     if (result < 0 && socket.type == NET_SOCK_DGRAM && WSAGetLastError() == WSAEMSGSIZE) result = static_cast<int>(len);
 #endif
-    if (result < 0) return fail(native_error());
+    if (result < 0) {
+        const int error = native_error();
+        return fail(KernelIoInterrupted_nid_no_patch() ? NET_EINTR : error);
+    }
     if (from) {
         std::array<std::uint8_t, 28> bytes{};
         if (!returnAddress) capacity = 0;
@@ -1877,7 +1905,7 @@ int64_t APS5_VABI GuestNetSend_nid_no_patch(int s, const void* buf, size_t len, 
     return sceNetSend(s, buf, len, flags);
 }
 
-int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, const void* to, uint32_t tolen) {
+static std::int64_t NetSendTo(int s, const void* buf, std::size_t len, int flags, const void* to, std::uint32_t tolen, bool kernelSend) {
     if (!message_flags_supported(flags, NET_MSG_DONTWAIT | NET_MSG_NOSIGNAL)) return fail(NET_EOPNOTSUPP);
     if (!buf && len) return fail(NET_EINVAL);
     if (len > INT_MAX) return fail(NET_EMSGSIZE);
@@ -1888,22 +1916,41 @@ int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, co
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
     }
-    if (IsPeerSocket(socket)) NotImplemented_nid_no_patch(__func__);
+    if (IsPeerSocket(socket)) NotImplemented_nid_no_patch("sceNetSendto");
+    if (!to && tolen != 0) return fail(NET_EINVAL);
+    const bool interruptible = kernelSend && KernelIoActive_nid_no_patch();
+    if (interruptible && socket.native->sendTimeout.load() != 0) KernelIoNoRestart_nid_no_patch();
 #ifdef __APPLE__
     std::int64_t result;
 #else
+    int sendLimit = static_cast<int>(len);
+#ifdef _WIN32
+    if (interruptible && socket.native->stream && (flags & NET_MSG_DONTWAIT) == 0 && !socket.native->nonblock.load()) {
+        sendLimit = socket.snd_buffer;
+        if (sendLimit == 0) {
+            NativeLength size = sizeof(sendLimit);
+            if (::getsockopt(socket.native->value, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<char*>(&sendLimit), &size) != 0)
+                return fail(native_error());
+        }
+        sendLimit = std::max(1, sendLimit);
+    }
+#endif
     int result;
 #endif
     if (!to) {
-        if (tolen != 0) return fail(NET_EINVAL);
 #ifdef __APPLE__
         result = send_stream_in_chunks(*socket.native, flags, static_cast<const char*>(buf), len, [&](const char* data, std::size_t size) {
+            if (interruptible && KernelIoInterrupted_nid_no_patch()) {
+                errno = EINTR;
+                return static_cast<ssize_t>(-1);
+            }
             return ::send(socket.native->value, data, size, NATIVE_SEND_FLAGS | native_message_flags(flags));
         });
 #else
         result = native_transfer(*socket.native, flags, true, [&](int offset) {
-            return ::send(socket.native->value, offset ? static_cast<const char*>(buf) + offset : static_cast<const char*>(buf), static_cast<int>(len) - offset, NATIVE_SEND_FLAGS | native_message_flags(flags));
-        }, true, static_cast<int>(len));
+            return ::send(socket.native->value, offset ? static_cast<const char*>(buf) + offset : static_cast<const char*>(buf),
+                std::min(sendLimit, static_cast<int>(len) - offset), NATIVE_SEND_FLAGS | native_message_flags(flags));
+        }, true, static_cast<int>(len), interruptible);
 #endif
     } else {
         std::array<std::uint8_t, sizeof(sockaddr_storage)> address{};
@@ -1915,21 +1962,33 @@ int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, co
         if (destination.ss_family != (socket.family == NET_AF_INET ? AF_INET : AF_INET6)) return fail(NET_EAFNOSUPPORT);
 #ifdef __APPLE__
         result = send_stream_in_chunks(*socket.native, flags, static_cast<const char*>(buf), len, [&](const char* data, std::size_t size) {
+            if (interruptible && KernelIoInterrupted_nid_no_patch()) {
+                errno = EINTR;
+                return static_cast<ssize_t>(-1);
+            }
             return ::sendto(socket.native->value, data, size, NATIVE_SEND_FLAGS | native_message_flags(flags),
                 reinterpret_cast<const sockaddr*>(&destination), destination_length);
         });
 #else
         result = native_transfer(*socket.native, flags, true, [&](int offset) {
-            return ::sendto(socket.native->value, offset ? static_cast<const char*>(buf) + offset : static_cast<const char*>(buf), static_cast<int>(len) - offset, NATIVE_SEND_FLAGS | native_message_flags(flags),
+            return ::sendto(socket.native->value, offset ? static_cast<const char*>(buf) + offset : static_cast<const char*>(buf),
+                std::min(sendLimit, static_cast<int>(len) - offset), NATIVE_SEND_FLAGS | native_message_flags(flags),
                 reinterpret_cast<const sockaddr*>(&destination), destination_length);
-        }, true, static_cast<int>(len));
+        }, true, static_cast<int>(len), interruptible);
 #endif
     }
-    if (result < 0) return fail(native_error());
+    if (result < 0) {
+        const int error = native_error();
+        return fail(interruptible && KernelIoInterrupted_nid_no_patch() ? NET_EINTR : error);
+    }
 #if defined(_WIN32) || defined(__APPLE__)
     note_local_address(s, socket);
 #endif
     return result;
+}
+
+int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, const void* to, uint32_t tolen) {
+    return NetSendTo(s, buf, len, flags, to, tolen, false);
 }
 
 int64_t APS5_VABI sceNetSendmsg(int s, const NetMsghdr* msg, int flags) {
