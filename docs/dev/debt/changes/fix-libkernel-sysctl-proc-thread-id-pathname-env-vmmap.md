@@ -2,7 +2,7 @@
 
 ## change [kern.proc.env]
 
-- [kern.proc.env](../../../core/libs/prx/libkernel/System/src/SystemConfiguration.cpp) (libkernel) - which variables, if any, the console starts an application with is unverified; `sysctl` {`CTL_KERN`, `KERN_PROC`, `KERN_PROC_ENV`, pid} returns 0 bytes, the empty start-up environment `environ` and libc's `getenv` also begin with, as FreeBSD 11's [`sysctl_kern_proc_env`](https://github.com/freebsd/freebsd-src/blob/releng/11.0/sys/kern/kern_proc.c) copies a process's start-up strings, not later `setenv` changes. Other processes' pids and -1 fail with `ESRCH`; a write returns `EPERM`. PS5VR (PPSA99177) reads it for its own pid at start-up.
+- [kern.proc.env](../../../core/libs/prx/libkernel/System/src/SystemConfiguration.cpp) (libkernel) - which variables, if any, the console starts an application with is unverified. `sysctl` {`CTL_KERN`, `KERN_PROC`, `KERN_PROC_ENV`, pid} gives a size of 0 for the calling process, the empty start-up environment `environ` and libc's `getenv` also begin with, and a read into a buffer fails with `EINVAL` before the pid is looked up, as a payload process on a PS5 (firmware 11.60) [measured](https://github.com/boykopovar/AnyPS5/pull/22788#issuecomment-6974329255) for its own pid, pid 1, -1 and 0x7fffffff with 4096- and 24576-byte buffers. Other pids and -1 fail with `ESRCH` for the size, where that console gave 0 for pid 1; a write returns `EPERM`. PS5VR (PPSA99177) reads it for its own pid at start-up.
 
 ## change [kern.proc.vmmap]
 

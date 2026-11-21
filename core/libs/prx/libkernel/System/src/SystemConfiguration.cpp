@@ -552,7 +552,7 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             *__error_nid_postfix() = 1;
             return -1;
         }
-        if (nameLength != 4) {
+        if (nameLength != 4 || oldValue != nullptr) {
             *__error_nid_postfix() = 22;
             return -1;
         }
