@@ -967,6 +967,32 @@ class PreparationTests(unittest.TestCase):
         self.assertIn("| テスト | PPSA00001 |", stdout)
         self.assertIn(f"written to {out.resolve()}", stdout)
 
+    def test_repeated_title_ids_run_once_in_request_order(self):
+        first, second = "PPSA00002", "PPSA00001"
+        games = self.root / "games"
+        out = self.root / "out"
+        for title_id in (first, second):
+            package(games / title_id, title_id)
+
+        def prepare(title_id, found, entry, platform, build, work):
+            (work / "relink.log").write_text("", encoding="utf-8")
+            return work / title_id
+
+        with patch.object(title_run, "prepare", side_effect=prepare) as prepared, \
+                patch.object(title_run, "Session") as session, patch("sys.stdout"):
+            session.return_value.alive.return_value = False
+            session.return_value.exit_code.return_value = 0
+            result = title_run.main(["--games", str(games), "--out", str(out), "--runs", "2", first, second, first])
+
+        self.assertEqual(result, 0)
+        self.assertEqual([call.args[0] for call in prepared.call_args_list], [first, second])
+        self.assertEqual(session.call_count, 4)
+        [report] = out.glob("*/summary.json")
+        self.assertTrue(report.with_suffix(".md").is_file())
+        titles = json.loads(report.read_text(encoding="utf-8"))["titles"]
+        self.assertEqual({title_id: [run["cache"] for run in title["runs"]] for title_id, title in titles.items()},
+                         {first: ["cold", "warm"], second: ["cold", "warm"]})
+
     def test_json_comparison_is_the_only_output_on_stdout(self):
         package(self.root / "games/PPSA00001", "PPSA00001")
         titles = self.root / "titles.json"
@@ -1734,6 +1760,16 @@ class CollectFramesTests(unittest.TestCase):
             destination = Path(directory) / "frames"
             self.assertEqual(title_run.collect_frames(Path(directory), destination), [])
             self.assertTrue(destination.is_dir())
+
+    def test_only_collects_numbered_bitmap_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            for name in ("frame_005.bmp", "frame_preview.bmp", "frame_5_preview.bmp"):
+                (work / name).write_bytes(b"x")
+            (work / "frame_006.bmp").mkdir()
+            self.assertEqual(title_run.collect_frames(work, work / "out"), ["frame_005.bmp"])
+            self.assertEqual(sorted(path.name for path in work.iterdir()),
+                             ["frame_006.bmp", "frame_5_preview.bmp", "frame_preview.bmp", "out"])
 
     def test_single_frame_is_kept(self):
         with tempfile.TemporaryDirectory() as directory:
