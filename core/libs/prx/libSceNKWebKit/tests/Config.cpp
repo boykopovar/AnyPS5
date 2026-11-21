@@ -403,7 +403,32 @@ static void TestPageGroup() {
     Require(group != nullptr);
     Require(WKGetTypeID(group) == static_cast<std::uint32_t>(NKWebKit::ObjectType::PageGroup));
 
-    Require(WKPageGroupGetPreferences(group) == nullptr);
+    const void* prefs = WKPageGroupGetPreferences(group);
+    Require(prefs != nullptr);
+    Require(WKGetTypeID(prefs) == static_cast<std::uint32_t>(NKWebKit::ObjectType::Preferences));
+    Require(WKPageGroupGetPreferences(group) == prefs);
+    Require(WKPreferencesGetPluginsEnabled(prefs));
+    Require(WKPreferencesGetStorageBlockingPolicy(prefs) == kWKAllowAllStorage);
+    Require(WKPreferencesGetJavaScriptEnabled(prefs));
+    {
+        const void* other = WKPageGroupCreateWithIdentifier(nullptr);
+        const void* otherPrefs = WKPageGroupGetPreferences(other);
+        Require(otherPrefs != nullptr);
+        Require(otherPrefs != prefs);
+        Require(WKPreferencesGetPluginsEnabled(otherPrefs));
+        WKPreferencesSetPluginsEnabled(otherPrefs, false);
+        Require(!WKPreferencesGetPluginsEnabled(otherPrefs));
+        Require(WKPreferencesGetPluginsEnabled(prefs));
+        WKRelease(other);
+    }
+    {
+        const void* replacement = WKPreferencesCreate();
+        WKPreferencesSetJavaScriptEnabled(replacement, false);
+        WKPageGroupSetPreferences(group, replacement);
+        WKRelease(replacement);
+        Require(WKPageGroupGetPreferences(group) == replacement);
+        Require(!WKPreferencesGetJavaScriptEnabled(WKPageGroupGetPreferences(group)));
+    }
 
     const void* ucc = WKPageGroupGetUserContentController(group);
     Require(ucc != nullptr);
