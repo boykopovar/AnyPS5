@@ -102,6 +102,10 @@ void operator delete(void* allocation, std::size_t) noexcept {
     std::free(allocation);
 }
 
+void operator delete(void* allocation, const std::nothrow_t&) noexcept {
+    std::free(allocation);
+}
+
 namespace {
 
 ShaderRecompiler::SpirvTarget BufferTarget() {

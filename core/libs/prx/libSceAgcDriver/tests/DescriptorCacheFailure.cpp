@@ -25,6 +25,10 @@ void operator delete(void* memory) noexcept { std::free(memory); }
 void operator delete[](void* memory) noexcept { std::free(memory); }
 void operator delete(void* memory, std::size_t) noexcept { std::free(memory); }
 void operator delete[](void* memory, std::size_t) noexcept { std::free(memory); }
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept { return std::malloc(size == 0 ? 1 : size); }
+void* operator new[](std::size_t size, const std::nothrow_t&) noexcept { return std::malloc(size == 0 ? 1 : size); }
+void operator delete(void* memory, const std::nothrow_t&) noexcept { std::free(memory); }
+void operator delete[](void* memory, const std::nothrow_t&) noexcept { std::free(memory); }
 
 namespace {
 using namespace AgcDriver::Graphics;
