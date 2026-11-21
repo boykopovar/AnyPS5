@@ -12,6 +12,7 @@ import unittest
 import unittest.mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import vulkan_validation_gate as gate
 from test_check_compile import spawnable_python
 

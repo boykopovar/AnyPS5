@@ -356,6 +356,7 @@ async function selectInputs(inputs) {
 $("choose").onclick = () => { $("file").value = ""; $("file").click(); };
 $("change").onclick = () => {
   if (working) return;
+  const restoreFocus = document.activeElement === $("change");
   worker?.terminate();
   worker = null;
   if (downloadUrl) { URL.revokeObjectURL(downloadUrl); downloadUrl = null; }
@@ -369,6 +370,7 @@ $("change").onclick = () => {
   $("acknowledge").checked = false;
   $("drop").hidden = false;
   update();
+  if (restoreFocus) $("choose").focus();
 };
 $("choose-folder").onclick = () => { $("folder").value = ""; $("folder").click(); };
 $("folder").onchange = () => {

@@ -1430,7 +1430,6 @@ void CheckRawGetcwdErrors() {
     Require(unlinkat_nid_postfix(-100, directory.c_str(), 0x800) == 0);
 }
 
-#ifndef _WIN32
 void CheckRawGetcwdPathLimit() {
     std::array<char, 4096> previous{};
     Require(getcwd_nid_postfix(previous.data(), previous.size()) == previous.data());
@@ -1476,7 +1475,6 @@ void CheckRawGetcwdPathLimit() {
     Require(chdir_nid_postfix(previous.data()) == 0);
     Require(unlinkat_nid_postfix(-100, root.c_str(), 0x800) == 0);
 }
-#endif
 
 void CheckRawGetcwd() {
     std::array<char, 4096> expected{};
@@ -1597,9 +1595,7 @@ int main() {
     Require(sceKernelGetPhysPageSize() == 16384);
     CheckProcessQueries();
     CheckRawGetcwdErrors();
-#ifndef _WIN32
     CheckRawGetcwdPathLimit();
-#endif
     CheckRawGetcwd();
     CheckKqueueFromEqueue();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
@@ -1668,6 +1664,12 @@ int main() {
     CheckUnsupportedPathconf(fpathconf_nid_postfix, kqueueDescriptor);
     CheckUnsupportedPathconf(_fpathconf_nid_postfix, kqueueDescriptor);
     Require(close_nid_postfix(kqueueDescriptor) == 0);
+    std::intptr_t semaphore = -1;
+    Require(ksem_init_nid_postfix(&semaphore, 0) == 0 && semaphore >= 0);
+    CheckUnsupportedPathconf(fpathconf_nid_postfix, static_cast<int>(semaphore));
+    CheckUnsupportedPathconf(_fpathconf_nid_postfix, static_cast<int>(semaphore));
+    Require(fchdir_nid_postfix(static_cast<int>(semaphore)) == -1 && Error() == 22);
+    Require(ksem_destroy_nid_postfix(semaphore) == 0);
     const std::string namedSharedMemory = "/anyps5-kernel-sys-pathconf-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     const int sharedMemoryDescriptor = shm_open_nid_postfix(namedSharedMemory.c_str(), SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT, 0600);

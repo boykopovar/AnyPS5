@@ -55,8 +55,13 @@ def iter_events(lines):
 
 def parse_range(address, size):
     try:
-        start = int(address, 0)
-        length = int(size, 0)
+        def parse_number(value):
+            if re.fullmatch(r"[+-]?[0-9](?:_?[0-9])*", value.strip()):
+                return int(value, 10)
+            return int(value, 0)
+
+        start = parse_number(address)
+        length = parse_number(size)
     except ValueError as error:
         raise ValueError("address and byte count must be decimal or 0x-prefixed integers") from error
     if start < 0 or start >= 1 << 64:
