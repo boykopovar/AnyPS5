@@ -1,8 +1,10 @@
-# libkernel_sys
+# libkernel
 
 ## change [sceKernelTitleWorkaroundIsEnabled]
 
-- [sceKernelTitleWorkaroundIsEnabled](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) - the `{version, align, ids[2]}` layout and the bit test follow PS5 firmware 13.42 libkernel_sys and libkernel, read from disassembly, where bits 0 to 0x7F are accepted, the bit is compared unsigned; a PS5 payload process (firmware 11.60) accepted 0 to 0x78 and refused 0x79 to 0x7F (`EINVAL` was seen for 0x7F), the limit used here, and the misspelled export `sceKernelTitleWorkdaroundIsEnabled` runs the same code. Titles usually pass the `title_workaround` block of `sceKernelGetAppInfo`, which is written as zeros here; where `title_workaround` sits in the 0x58-byte structure is unmeasured, and with the shadPS4 offsets (0x30 to 0x48) it falls in the zeroed bytes, so its bits read 0; an unreadable workaround pointer or an unwritable output pointer returns `SCE_KERNEL_ERROR_EFAULT` (`0x8002000e`) as a host-safety fallback; console behaviour for unwritable memory has not been measured
+- [sceKernelTitleWorkaroundIsEnabled](../../../core/libs/prx/libkernel/SysExports.cpp) (libkernel and libkernel_sys) - AnyPS5 caps the unsigned bit at 0x78. An [11.60 PS5 payload](https://github.com/boykopovar/AnyPS5/pull/22365) accepted 0 through 0x78 and refused 0x79 through 0x7f (`EINVAL` at 0x7f). A [13.60 PS5 Pro payload](https://github.com/boykopovar/AnyPS5/pull/24656#issuecomment-7054016081) accepted sampled bits through 0x7f. The unsigned bound in disassembly is 0x57 in 4.03 `libkernel.sprx` (RVA `0x20500`) and 0x7f in 13.42 `libkernel` and `libkernel_sys`. `sceKernelTitleWorkdaroundIsEnabled` is an alias. `sceKernelGetAppInfo` returns zeros at shadPS4's offsets for `{version, align, ids[2]}` (0x30 to 0x48). The actual offset in the console's 0x58-byte app-info structure remains unmeasured. Unreadable input or unwritable output returns `SCE_KERNEL_ERROR_EFAULT` (`0x8002000e`) as a host fallback. Console behavior for unwritable memory is unmeasured.
+
+# libkernel_sys
 
 ## change [sceKernelTitleWorkaroundIsEnabled2]
 
