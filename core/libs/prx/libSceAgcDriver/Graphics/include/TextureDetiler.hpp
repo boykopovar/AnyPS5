@@ -45,6 +45,7 @@ namespace AgcDriver::Graphics {
         ~TextureDetiler();
         TextureDetiler(const TextureDetiler&) = delete;
         TextureDetiler& operator=(const TextureDetiler&) = delete;
+        void DispatchBc1Decode(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, const TileMipLayout& layout);
 
         // Detiles `source` (tiled) into `destination` (linear), or with `retile` writes linear `source`
         // into tiled `destination`; offsets always refer to the respective buffers, and `window`
@@ -81,6 +82,7 @@ namespace AgcDriver::Graphics {
         VkDescriptorSetLayout descriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         VkShaderModule module = VK_NULL_HANDLE;
+        VkPipeline bc1DecodePipeline = VK_NULL_HANDLE;
         std::vector<std::pair<std::uint32_t, VkPipeline>> pipelines;
         std::vector<std::pair<std::uint32_t, GcnTileGeometry>> gcnGeometries;
         std::uint32_t layerBankXor(TextureTileMode tileMode, std::uint32_t elementBytes, const TileMipLayout& layout, std::uint32_t layer);
