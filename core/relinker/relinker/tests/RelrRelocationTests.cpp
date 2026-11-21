@@ -166,6 +166,23 @@ int main() try {
         Io::WriteU32(crossBss.Bytes, 0x1ffc, 0x11223344);
         Require(crossBss.Read() == std::map<Domain::VirtualAddress, std::uint64_t>{{0x1ffc, 0x11223344}});
     }
+    {
+        Fixture wrappingTarget;
+        wrappingTarget.Headers[0].MemorySize = std::numeric_limits<std::uint64_t>::max();
+        wrappingTarget.SetWords({std::numeric_limits<std::uint64_t>::max() - 3});
+        try {
+            wrappingTarget.Read();
+            throw std::runtime_error("A RELR target range that wraps the address space was accepted");
+        } catch (const Domain::RelinkerException& error) {
+            Require(std::string_view(error.what()).find("RELR target exceeds load segment") != std::string_view::npos);
+        }
+    }
+    {
+        Fixture lastBoundary;
+        lastBoundary.Headers[0].MemorySize = std::numeric_limits<std::uint64_t>::max();
+        lastBoundary.SetWords({std::numeric_limits<std::uint64_t>::max() - 9});
+        Require(lastBoundary.Read() == std::map<Domain::VirtualAddress, std::uint64_t>{{std::numeric_limits<std::uint64_t>::max() - 9, 0}});
+    }
     std::cout << "RELR address, bitmap, bounds, addend and reachability tests passed\n";
 } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

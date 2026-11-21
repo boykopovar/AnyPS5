@@ -90,6 +90,8 @@ std::map<Domain::VirtualAddress, std::uint64_t> ReadRelrRelocations(
         if ((next != result.end() && next->first - target < 8)
             || (next != result.begin() && target - std::prev(next)->first < 8))
             throw Domain::RelinkerException("Overlapping RELR targets", target);
+        if (target > std::numeric_limits<std::uint64_t>::max() - 7)
+            throw Domain::RelinkerException("RELR target exceeds load segment", target);
         std::uint64_t addend = 0;
         for (std::size_t index = 0; index < 8; ++index) {
             const auto* segment = memorySegmentAt(target + index);
