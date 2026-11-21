@@ -34,13 +34,19 @@ int main() {
     const FontMemoryInterface iface{Allocate, Release, nullptr, nullptr, nullptr, nullptr};
     FontMemory memory{};
     Require(sceFontMemoryInit(&memory, nullptr, 0, &iface, nullptr, nullptr, nullptr) == SCE_FONT_OK);
+    auto* const unmappedLibrary = reinterpret_cast<FontLibrary*>(0x10);
+    errno = 71;
+    Require(sceFontCreateLibraryWithEdition(&memory, sceFontSelectLibraryFt(0), 0, unmappedLibrary) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontCreateLibrary(nullptr, sceFontSelectLibraryFt(0), unmappedLibrary) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     FontLibrary library = nullptr;
     Require(sceFontCreateLibrary(&memory, sceFontSelectLibraryFt(0), &library) == SCE_FONT_OK && library != nullptr);
     FontRenderer renderer = nullptr;
     Require(sceFontCreateRenderer(&memory, sceFontSelectRendererFt(0), &renderer) == SCE_FONT_OK && renderer != nullptr);
 
     auto* const unmappedCount = reinterpret_cast<std::uint32_t*>(0x10);
-    auto* const unmappedLibrary = reinterpret_cast<FontLibrary*>(0x10);
 
     errno = 71;
     Require(sceFontRendererGetOutlineBufferSize(renderer, unmappedCount) == SCE_FONT_ERROR_INVALID_PARAMETER);
@@ -64,11 +70,19 @@ int main() {
     Require(sceFontGetFontGlyphsCount(nullptr, unmappedCount) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
     Require(errno == 71);
 
+    std::uint32_t zeroProbe = 7;
+    Require(sceFontRendererGetOutlineBufferSize(nullptr, &zeroProbe) == SCE_FONT_ERROR_INVALID_RENDERER && zeroProbe == 0);
+    Require(sceFontRendererGetOutlineBufferSize(nullptr, nullptr) == SCE_FONT_ERROR_INVALID_RENDERER);
     Require(sceFontRendererGetOutlineBufferSize(renderer, nullptr) == sceFontRendererGetOutlineBufferSize(renderer, unmappedCount));
-    Require(sceFontRendererGetOutlineBufferSize(nullptr, nullptr) == sceFontRendererGetOutlineBufferSize(nullptr, unmappedCount));
+    zeroProbe = 7;
+    Require(sceFontGetPixelResolution(nullptr, &zeroProbe) == SCE_FONT_ERROR_INVALID_LIBRARY && zeroProbe == 0);
     Require(sceFontGetPixelResolution(library, nullptr) == sceFontGetPixelResolution(library, unmappedCount));
     Require(sceFontGetPixelResolution(nullptr, nullptr) == sceFontGetPixelResolution(nullptr, unmappedCount));
-    Require(sceFontGetLibrary(nullptr, nullptr) == sceFontGetLibrary(nullptr, unmappedLibrary));
+    FontLibrary libraryProbe = reinterpret_cast<FontLibrary>(0x1);
+    Require(sceFontGetLibrary(nullptr, &libraryProbe) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && libraryProbe == nullptr);
+    Require(sceFontGetLibrary(nullptr, nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    zeroProbe = 7;
+    Require(sceFontGetFontGlyphsCount(nullptr, &zeroProbe) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && zeroProbe == 0);
     Require(sceFontGetFontGlyphsCount(nullptr, nullptr) == sceFontGetFontGlyphsCount(nullptr, unmappedCount));
 
     std::uint32_t size = 7;

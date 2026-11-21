@@ -4,6 +4,7 @@
 #include "SDL_events.h"
 #include "SDL_keyboard.h"
 #include "SDL_mouse.h"
+#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -30,11 +31,12 @@ SDL_Event Key(SDL_Scancode scancode, unsigned window = Window, std::uint8_t repe
     return event;
 }
 
-SDL_Event Wheel(int y, unsigned window = Window) {
+SDL_Event Wheel(int y, unsigned window = Window, std::uint32_t direction = SDL_MOUSEWHEEL_NORMAL) {
     SDL_Event event{};
     event.type = SDL_MOUSEWHEEL;
     event.wheel.windowID = window;
     event.wheel.y = y;
+    event.wheel.direction = direction;
     return event;
 }
 
@@ -99,6 +101,18 @@ int main() {
     Require(Focus() == 0, "the wheel up did not focus the previous button");
     input.HandleEvent(Wheel(0), Window);
     Require(Focus() == 0, "a zero wheel step moved the focus");
+    input.HandleEvent(Wheel(1, Window, SDL_MOUSEWHEEL_FLIPPED), Window);
+    Require(Focus() == 1, "a flipped wheel up did not focus the next button");
+    input.HandleEvent(Wheel(-1, Window, SDL_MOUSEWHEEL_FLIPPED), Window);
+    Require(Focus() == 0, "a flipped wheel down did not focus the previous button");
+    input.HandleEvent(Wheel(1, Window, SDL_MOUSEWHEEL_FLIPPED), Window);
+    Require(Focus() == 1, "a flipped wheel up did not focus the next button before INT_MIN check");
+    input.HandleEvent(Wheel(INT_MIN, Window, SDL_MOUSEWHEEL_FLIPPED), Window);
+    Require(Focus() == 0, "a flipped INT_MIN wheel did not focus the previous button");
+    input.HandleEvent(Wheel(0, Window, SDL_MOUSEWHEEL_FLIPPED), Window);
+    Require(Focus() == 0, "a zero flipped wheel step moved the focus");
+    input.HandleEvent(Wheel(1, Window + 1, SDL_MOUSEWHEEL_FLIPPED), Window);
+    Require(Focus() == 0, "a flipped wheel event for another window moved the focus");
 
     input.HandleEvent(Key(SDL_SCANCODE_RIGHT, Window + 1), Window);
     input.HandleEvent(Wheel(-1, Window + 1), Window);

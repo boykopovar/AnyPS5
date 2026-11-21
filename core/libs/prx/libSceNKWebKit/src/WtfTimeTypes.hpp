@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace WTF {
@@ -50,6 +51,17 @@ struct GregorianDateTime {
     int m_utcOffsetInMinute{0};
     int m_isDST{0};
 };
+
+struct TimingScope {
+    MonotonicTime m_startTime;
+    const char* m_name;
+    unsigned m_logIterationInterval;
+};
+
+static_assert(sizeof(TimingScope) == 24);
+static_assert(offsetof(TimingScope, m_startTime) == 0);
+static_assert(offsetof(TimingScope, m_name) == 8);
+static_assert(offsetof(TimingScope, m_logIterationInterval) == 16);
 
 struct LocalTimeOffset {
     bool isDST{false};

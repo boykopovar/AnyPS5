@@ -27,19 +27,20 @@ def timestamp():
 
 def collect_open_prs(repo, root):
     pr_overlap.REPO = repo
-    pull_requests = pr_overlap.open_prs("main")
-    refspecs = [f"+refs/heads/main:{REFS}/base"]
-    for number, pr in sorted(pull_requests.items()):
-        pr["ref"] = f"{REFS}/{number}"
-        refspecs.append(f"+refs/pull/{number}/head:{pr['ref']}")
     remote = f"{REMOTE}/{repo}.git"
-    for start in range(0, len(refspecs), pr_overlap.FETCH_REFS):
-        git(root, "fetch", "--no-tags", "-q", remote, *refspecs[start:start + pr_overlap.FETCH_REFS])
-    changed = [number for number, pr in pull_requests.items()
-               if git(root, "rev-parse", pr["ref"]).stdout.strip() != pr["sha"]]
-    if changed:
-        raise RuntimeError(f"pull request heads changed during fetch: {', '.join(map(str, changed[:20]))}")
-    return pull_requests, git(root, "rev-parse", f"{REFS}/base").stdout.strip()
+    for _ in range(2):
+        pull_requests = pr_overlap.open_prs("main")
+        refspecs = [f"+refs/heads/main:{REFS}/base"]
+        for number, pr in sorted(pull_requests.items()):
+            pr["ref"] = f"{REFS}/{number}"
+            refspecs.append(f"+refs/pull/{number}/head:{pr['ref']}")
+        for start in range(0, len(refspecs), pr_overlap.FETCH_REFS):
+            git(root, "fetch", "--no-tags", "-q", remote, *refspecs[start:start + pr_overlap.FETCH_REFS])
+        changed = [number for number, pr in pull_requests.items()
+                   if git(root, "rev-parse", pr["ref"]).stdout.strip() != pr["sha"]]
+        if not changed:
+            return pull_requests, git(root, "rev-parse", f"{REFS}/base").stdout.strip()
+    raise RuntimeError(f"pull request heads changed during fetch: {', '.join(map(str, changed[:20]))}")
 
 
 def closed_dependency_status(repo, number):
@@ -58,6 +59,13 @@ def closed_dependency_status(repo, number):
     return data["merge_commit_sha"]
 
 
+def is_ancestor(root, ancestor, descendant):
+    result = git(root, "merge-base", "--is-ancestor", ancestor, descendant, check=False)
+    if result.returncode not in (0, 1):
+        raise RuntimeError(result.stderr.strip() or f"git merge-base --is-ancestor failed with {result.returncode}")
+    return result.returncode == 0
+
+
 def dependency_order(pull_requests, root, base_sha, repo):
     dependencies = {number: set(pr["depends"]) for number, pr in pull_requests.items()}
     excluded = {}
@@ -65,12 +73,12 @@ def dependency_order(pull_requests, root, base_sha, repo):
         missing = required - pull_requests.keys()
         for dependency in sorted(missing):
             merge_sha = closed_dependency_status(repo, dependency)
-            if not merge_sha or git(root, "merge-base", "--is-ancestor", merge_sha, base_sha, check=False).returncode:
+            if not merge_sha or not is_ancestor(root, merge_sha, base_sha):
                 excluded[number] = "unresolved_dependency"
                 break
             dependencies[number].discard(dependency)
     for number, pr in pull_requests.items():
-        if git(root, "merge-base", "--is-ancestor", pr["sha"], base_sha, check=False).returncode == 0:
+        if is_ancestor(root, pr["sha"], base_sha):
             excluded.pop(number, None)
             dependencies[number] = set()
     pending = set(pull_requests) - excluded.keys()
@@ -149,10 +157,16 @@ def estimate(repo, root):
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         return {"available": False, "generated_at": timestamp(), "reason": str(error)}
     finally:
-        refs = git(root, "for-each-ref", "--format=%(refname)", REFS, check=False)
-        if refs.returncode == 0:
-            for ref in refs.stdout.splitlines():
-                git(root, "update-ref", "-d", ref, check=False)
+        try:
+            refs = git(root, "for-each-ref", "--format=%(refname)", REFS, check=False)
+        except OSError:
+            refs = None
+        if refs is not None and refs.returncode == 0:
+            try:
+                for ref in refs.stdout.splitlines():
+                    git(root, "update-ref", "-d", ref, check=False)
+            except OSError:
+                pass
 
 
 def main(argv=None):

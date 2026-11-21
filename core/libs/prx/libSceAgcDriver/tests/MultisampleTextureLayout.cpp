@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <span>
 #include <vector>
 
@@ -139,6 +140,82 @@ void checkInverse(const ReferenceCase& reference) {
     }
 }
 
+void checkHoistedTile(const ReferenceCase& reference) {
+    const std::array<std::array<std::uint32_t, 4>, 4> shapes{{
+        {129u, 67u, 3u, 0xcf00u},
+        {1u, 1u, 1u, 0u},
+        {reference.blockWidth * 2u, reference.blockHeight * 2u, 2u, 0x8100u},
+        {reference.blockWidth + 1u, reference.blockHeight - 1u, 1u, 0x4000u},
+    }};
+    for (const auto& shape : shapes) {
+        MultisampleTextureLayout layout(reference.tileMode, reference.elementBytes, reference.fragments, shape[0], shape[1], shape[2], shape[3]);
+        std::vector<std::byte> source(layout.LinearBytes() + 32u, std::byte{0x3c});
+        auto linear = std::span(source).subspan(16u, layout.LinearBytes());
+        for (std::size_t n = 0; n < linear.size(); ++n) linear[n] = static_cast<std::byte>((n * 29u + n / 127u + 7u) & 255u);
+        const auto savedSource = source;
+        std::vector<std::byte> plain(layout.Bytes() + 32u), hoisted(layout.Bytes() + 32u);
+        for (std::size_t n = 0; n < plain.size(); ++n) plain[n] = hoisted[n] = static_cast<std::byte>((n * 5u + n / 253u + 1u) & 255u);
+        const auto background = plain;
+        layout.Tile(linear, std::span(plain).subspan(16u, layout.Bytes()));
+        layout.TileHoisted(linear, std::span(hoisted).subspan(16u, layout.Bytes()));
+        Require(source == savedSource, "the hoisted multisampled retile changed its source");
+        Require(plain != background, "the plain multisampled retile wrote nothing, so the comparison proves nothing");
+        Require(hoisted == plain, "the hoisted multisampled retile differs from the plain retile in element, padding or guard bytes");
+        std::vector<std::byte> restored(source.size(), std::byte{0x3c});
+        layout.Detile(std::span(hoisted).subspan(16u, layout.Bytes()), std::span(restored).subspan(16u, layout.LinearBytes()));
+        Require(restored == source, "detiling the hoisted multisampled retile does not give back its source");
+    }
+    MultisampleTextureLayout layout(reference.tileMode, reference.elementBytes, reference.fragments, 5u, 3u, 2u);
+    std::vector<std::byte> source(layout.Bytes(), std::byte{0xa5}), destination(layout.Bytes(), std::byte{0x5a});
+    const auto savedSource = source, savedDestination = destination;
+    requireRefusal([&] { layout.TileHoisted(std::span(source).first(layout.LinearBytes() - 1u), destination); });
+    requireRefusal([&] { layout.TileHoisted(source, std::span(destination).first(layout.Bytes() - 1u)); });
+    requireRefusal([&] { layout.TileHoisted(source, source); });
+    Require(source == savedSource && destination == savedDestination, "a refused hoisted multisampled retile changed a buffer");
+}
+
+void checkPagedSnapshot() {
+    constexpr std::size_t pageBytes = 4096u;
+    constexpr std::size_t repeated = std::numeric_limits<std::size_t>::max();
+    std::size_t storedPages = 0;
+    std::size_t repeatedPages = 0;
+    for (const std::size_t bytes : {std::size_t{1u}, std::size_t{3u}, std::size_t{4u}, std::size_t{5u}, std::size_t{4095u}, std::size_t{4096u}, std::size_t{4097u}, std::size_t{12288u}, std::size_t{12290u}, std::size_t{24573u}, std::size_t{28671u}}) {
+        for (const std::size_t phase : {std::size_t{0u}, std::size_t{1u}, std::size_t{2u}}) {
+            const auto pages = (bytes + pageBytes - 1u) / pageBytes;
+            std::vector<std::uint32_t> words(pages, 0u);
+            std::vector<std::size_t> starts(pages, repeated);
+            std::vector<std::byte> stored;
+            for (std::size_t back = 0; back < pages; ++back) {
+                const auto page = pages - 1u - back;
+                const auto length = std::min(pageBytes, bytes - page * pageBytes);
+                if ((page + phase) % 3u == 1u) {
+                    starts[page] = stored.size();
+                    for (std::size_t n = 0; n < length; ++n) stored.push_back(static_cast<std::byte>((page * 131u + n * 7u + n / 255u + 3u) & 255u));
+                    ++storedPages;
+                } else {
+                    words[page] = 0x04030201u + static_cast<std::uint32_t>(page) * 0x11213141u + static_cast<std::uint32_t>(phase) * 0x01000000u;
+                    ++repeatedPages;
+                }
+            }
+            std::vector<std::byte> expected(bytes);
+            for (std::size_t offset = 0; offset < bytes; ++offset) {
+                const auto page = offset / pageBytes;
+                expected[offset] = starts[page] != repeated ? stored[starts[page] + offset % pageBytes] : static_cast<std::byte>(words[page] >> (offset % 4u * 8u));
+            }
+            Require(ExpandPagedSnapshot(bytes, words, starts, stored, pageBytes, repeated) == expected, "a paged snapshot expanded page by page differs from its bytes taken one by one");
+        }
+    }
+    Require(storedPages != 0u && repeatedPages != 0u, "the paged snapshot cases cover no stored page or no repeated page");
+    Require(ExpandPagedSnapshot(0u, {}, {}, {}, pageBytes, repeated).empty(), "an empty paged snapshot expanded to bytes");
+    const std::vector<std::uint32_t> words(2u, 0x04030201u);
+    const std::vector<std::size_t> starts{repeated, 0u};
+    const std::vector<std::byte> stored(pageBytes, std::byte{0x7e});
+    requireRefusal([&] { ExpandPagedSnapshot(2u * pageBytes, words, starts, stored, 0u, repeated); });
+    requireRefusal([&] { ExpandPagedSnapshot(2u * pageBytes, words, starts, stored, 6u, repeated); });
+    requireRefusal([&] { ExpandPagedSnapshot(3u * pageBytes, words, starts, stored, pageBytes, repeated); });
+    requireRefusal([&] { ExpandPagedSnapshot(2u * pageBytes, words, starts, std::span(stored).first(pageBytes - 1u), pageBytes, repeated); });
+}
+
 void checkRefusals() {
     for (const auto& extent : {std::array{0u, 3u, 1u}, std::array{5u, 0u, 1u}, std::array{16385u, 3u, 1u}, std::array{5u, 16385u, 1u}, std::array{5u, 3u, 0u}, std::array{5u, 3u, 8193u}}) {
         requireRefusal([&] { MultisampleTextureLayout invalid(TextureTileMode::kR64KBX, 8u, 8u, extent[0], extent[1], extent[2]); });
@@ -171,7 +248,9 @@ int main() {
             checkReference(reference);
             checkTransfer(reference);
             checkInverse(reference);
+            checkHoistedTile(reference);
         }
+        checkPagedSnapshot();
         checkRefusals();
         std::cout << "Multisampled texture layout reference, fragment, layer, padding and refusal tests passed\n";
         return 0;

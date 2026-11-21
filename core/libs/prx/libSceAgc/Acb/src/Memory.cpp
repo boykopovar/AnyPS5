@@ -11,7 +11,7 @@
 extern "C" {
 
 std::uint32_t* APS5_VABI sceAgcAcbAcquireMem(CommandBuffer* buf, std::uint32_t gcrControl, const volatile void* base, std::uint64_t sizeBytes, std::uint32_t pollCycles) {
-    return sceAgcDcbAcquireMem(buf, 1, 0, gcrControl, base, sizeBytes, pollCycles);
+    return Agc::Command::WriteAcquireMem(buf, 0, 0, gcrControl, base, sizeBytes, pollCycles, __func__);
 }
 
 uint32_t APS5_VABI sceAgcAcbAcquireMemGetSize(void) {
@@ -34,8 +34,8 @@ std::uint32_t APS5_VABI sceAgcAcbDmaDataGetSize() {
     return 28;
 }
 
-std::uint32_t* APS5_VABI sceAgcAcbAtomicMem(CommandBuffer* buf, std::uint8_t atomicOp, std::uint8_t command, std::uint8_t cachePolicy, const volatile void* address, std::uint64_t srcData, std::uint64_t compareData, std::uint16_t loopInterval) {
-    return Agc::Command::WriteAtomicMem(buf, atomicOp, command, cachePolicy, address, srcData, compareData, loopInterval, __func__);
+std::uint32_t* APS5_VABI sceAgcAcbAtomicMem(CommandBuffer* buf, std::uint8_t atomicOp, std::uint8_t command, const volatile void* address, std::uint8_t cachePolicy, std::uint64_t srcData, std::uint64_t compareData, std::uint16_t loopInterval) {
+    return Agc::Command::WriteAtomicMem(buf, 0, atomicOp, command, cachePolicy, reinterpret_cast<std::uintptr_t>(address), srcData, compareData, loopInterval, __func__);
 }
 
 std::uint32_t APS5_VABI sceAgcAcbAtomicMemGetSize() {

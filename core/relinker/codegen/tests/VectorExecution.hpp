@@ -22,7 +22,7 @@ struct Machine {
 class Runner {
 public:
     explicit Runner(const Bytes& body) {
-        Bytes code;
+        Bytes code{0x48, 0x8B, 0x4F, 0x08, 0x48, 0x8B, 0x3F, 0x48, 0x89, 0xE2, 0x48, 0x89, 0xCC, 0x52};
         code.insert(code.end(), {0x48, 0x8D, 0x87});
         append32(code, 512);
         for (std::uint8_t reg = 0; reg < 16; ++reg) {
@@ -46,20 +46,33 @@ public:
             code.insert(code.end(), {0x48, 0x89, 0x8F});
             append32(code, 544 + slot * 8);
         }
-        code.insert(code.end(), {0xC5, 0xF8, 0x77, 0xC3});
-        if (code.size() > 8192) throw std::runtime_error("Vector execution code is too large");
-        page = static_cast<std::uint8_t*>(mmap(nullptr, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-        if (page == MAP_FAILED) throw std::runtime_error("Cannot allocate the vector execution page");
+        code.insert(code.end(), {0x5C, 0xC5, 0xF8, 0x77, 0xC3});
+        entry = LoweringExecution::AppendHostEntry(code);
+        if (code.size() > kPage) throw std::runtime_error("Vector execution code is too large");
+        page = LoweringExecution::AllocatePages(kPage);
+        if (!page) throw std::runtime_error("Cannot allocate the vector execution page");
         std::memcpy(page, code.data(), code.size());
-        if (mprotect(page, 8192, PROT_READ | PROT_EXEC) != 0) throw std::runtime_error("Cannot make the vector execution page executable");
+        if (!LoweringExecution::ProtectPages(page, kPage, true, false)) {
+            LoweringExecution::FreePages(page, kPage);
+            throw std::runtime_error("Cannot make the vector execution page executable");
+        }
     }
-    ~Runner() { munmap(page, 8192); }
+    ~Runner() { LoweringExecution::FreePages(page, kPage); }
     Runner(const Runner&) = delete;
     Runner& operator=(const Runner&) = delete;
-    void Run(Machine& machine) const { reinterpret_cast<void (*)(Machine*)>(page)(&machine); }
+    void Run(Machine& machine) const {
+        alignas(64) std::array<std::uint8_t, 8192> stack{};
+        struct {
+            Machine* Target;
+            std::uint8_t* Top;
+        } frame{&machine, stack.data() + stack.size()};
+        LoweringExecution::Call(page, entry, &frame);
+    }
 
 private:
+    static constexpr std::size_t kPage = 8192;
     std::uint8_t* page = nullptr;
+    std::size_t entry = 0;
     static void append32(Bytes& bytes, std::int32_t value) {
         for (unsigned shift = 0; shift < 32; shift += 8) bytes.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(value) >> shift));
     }

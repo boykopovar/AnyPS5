@@ -1,0 +1,16 @@
+add_library(libSceAudiodecCpu SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceAudiodecCpu PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceAudiodecCpu)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_audiodec_cpu_query_guest_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudiodecCpuQueryGuest.cpp)
+    target_include_directories(guest_audiodec_cpu_query_guest_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_audiodec_cpu_query_guest_tests PRIVATE libSceAudiodecCpu libc)
+    configure_windows_unwind(guest_audiodec_cpu_query_guest_tests)
+    add_test(NAME guest_audiodec_cpu_query_guest COMMAND guest_audiodec_cpu_query_guest_tests)
+    set_tests_properties(guest_audiodec_cpu_query_guest PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_audiodec_cpu_query_guest PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudiodecCpu>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

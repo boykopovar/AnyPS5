@@ -140,7 +140,7 @@ SystemGesturePrimitiveTouchEvent buildPrimitiveTouchEvent(const TrackedTouch& to
     event.current_position = touch.currentPosition;
     event.delta_vector = touch.deltaVector;
     event.delta_time = touch.deltaTime;
-    event.elapsed_time = touch.updatedTime - touch.pressedTime;
+    event.elapsed_time = touch.updatedTime >= touch.pressedTime ? touch.updatedTime - touch.pressedTime : 0;
     return event;
 }
 
@@ -162,6 +162,8 @@ int APS5_VABI sceSystemGestureClose(int32_t gestureHandle) {
     auto* context = findGestureContext(gestureHandle);
     if (!context) return SCE_SYSTEM_GESTURE_ERROR_INVALID_HANDLE;
     context->touches.clear();
+    context->touchArea = {};
+    context->touchAreaConfigured = false;
     context->handle = 0;
     return 0;
 }
@@ -348,6 +350,8 @@ int32_t APS5_VABI sceSystemGestureOpen(int32_t inputType, const void* param) {
         ++gestureGeneration;
         if (gestureGeneration == 0) gestureGeneration = 1;
         context.touches.clear();
+        context.touchArea = {};
+        context.touchAreaConfigured = false;
         context.handle = static_cast<std::int32_t>(1191182336u + (static_cast<std::uint32_t>(gestureGeneration) << 8) + index);
         return context.handle;
     }

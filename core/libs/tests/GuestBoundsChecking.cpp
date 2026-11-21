@@ -241,6 +241,13 @@ void CheckWideToMultibyte() {
     before = constraintCalls;
     Require(wctomb_s_nid_postfix(nullptr, bytes, sizeof(bytes), 'A') == 22, "wctomb_s accepted a null status");
     RequireViolation(before, "wctomb_s: bad argument", 22);
+    before = constraintCalls;
+    Require(wctomb_s_nid_postfix(reinterpret_cast<int*>(0x10), bytes, sizeof(bytes), 'A') == 22, "wctomb_s accepted an unwritable status");
+    RequireViolation(before, "wctomb_s: bad argument", 22);
+    status = 7;
+    before = constraintCalls;
+    Require(wctomb_s_nid_postfix(&status, reinterpret_cast<char*>(0x10), sizeof(bytes), 'A') == 22 && status == 7, "wctomb_s accepted an unwritable buffer");
+    RequireViolation(before, "wctomb_s: bad argument", 22);
 
     unsigned char state[128]{};
     std::size_t result = 7;
@@ -256,6 +263,13 @@ void CheckWideToMultibyte() {
     before = constraintCalls;
     bytes[0] = 'x';
     Require(wcrtomb_s_nid_postfix(&result, bytes, sizeof(bytes), 'B', nullptr) == 22 && result == failed && bytes[0] == 0, "wcrtomb_s accepted a null state");
+    RequireViolation(before, "wcrtomb_s: bad argument", 22);
+    before = constraintCalls;
+    Require(wcrtomb_s_nid_postfix(reinterpret_cast<std::size_t*>(0x10), bytes, sizeof(bytes), 'B', state) == 22, "wcrtomb_s accepted an unwritable result");
+    RequireViolation(before, "wcrtomb_s: bad argument", 22);
+    result = 7;
+    before = constraintCalls;
+    Require(wcrtomb_s_nid_postfix(&result, reinterpret_cast<char*>(0x10), sizeof(bytes), 'B', state) == 22 && result == failed, "wcrtomb_s accepted an unwritable buffer");
     RequireViolation(before, "wcrtomb_s: bad argument", 22);
     before = constraintCalls;
     bytes[0] = 'x';
@@ -277,10 +291,24 @@ void CheckMultibyteToWide() {
     wide[0] = 'x';
     Require(mbstowcs_s_nid_postfix(&result, wide, 5, "hello", 8) == 34 && result == failed && wide[0] == 0, "mbstowcs_s overflowed the buffer");
     RequireViolation(before, "mbstowcs_s: buffer overflow", 34);
+    Require(wide[1] == 'e' && wide[4] == 'o', "mbstowcs_s did not keep the converted characters after an overflow");
     before = constraintCalls;
     wide[0] = 'x';
     Require(mbstowcs_s_nid_postfix(&result, wide, 8, nullptr, 8) == 22 && result == failed && wide[0] == 0, "mbstowcs_s accepted a null source");
     RequireViolation(before, "mbstowcs_s: bad argument", 22);
+    before = constraintCalls;
+    Require(mbstowcs_s_nid_postfix(reinterpret_cast<std::size_t*>(0x10), wide, 8, "hello", 8) == 22, "mbstowcs_s accepted an unwritable result");
+    RequireViolation(before, "mbstowcs_s: bad argument", 22);
+    result = 7;
+    before = constraintCalls;
+    Require(mbstowcs_s_nid_postfix(&result, reinterpret_cast<std::uint16_t*>(0x10), 8, "hello", 8) == 22 && result == failed, "mbstowcs_s accepted an unwritable buffer");
+    RequireViolation(before, "mbstowcs_s: bad argument", 22);
+    std::uint16_t longWide[400];
+    std::memset(longWide, 0x5a, sizeof(longWide));
+    const std::string longText(300, 'x');
+    Require(mbstowcs_s_nid_postfix(&result, longWide, 400, longText.c_str(), 399) == 0 && result == 300 && longWide[0] == 'x' && longWide[299] == 'x' &&
+                longWide[300] == 0 && longWide[301] == 0x5a5a,
+        "mbstowcs_s did not convert a long string");
 
     unsigned char state[128]{};
     const char* source = "world";
@@ -297,6 +325,12 @@ void CheckMultibyteToWide() {
     Require(mbsrtowcs_s_nid_postfix(&result, wide, 3, &source, 8, state) == 34 && result == failed && wide[0] == 0 && source == text + 3,
         "mbsrtowcs_s overflowed the buffer");
     RequireViolation(before, "mbsrtowcs_s: buffer too small", 34);
+    Require(wide[1] == 'o' && wide[2] == 'r', "mbsrtowcs_s did not keep the converted characters after an overflow");
+    const char* longSource = longText.c_str();
+    std::memset(longWide, 0x5a, sizeof(longWide));
+    Require(mbsrtowcs_s_nid_postfix(&result, longWide, 400, &longSource, 399, state) == 0 && result == 300 && longSource == nullptr && longWide[299] == 'x' &&
+                longWide[300] == 0 && longWide[301] == 0x5a5a,
+        "mbsrtowcs_s did not convert a long string");
     before = constraintCalls;
     source = nullptr;
     Require(mbsrtowcs_s_nid_postfix(&result, wide, 8, &source, 8, state) == 22 && result == failed, "mbsrtowcs_s accepted a null source string");
@@ -304,6 +338,19 @@ void CheckMultibyteToWide() {
     before = constraintCalls;
     source = text;
     Require(mbsrtowcs_s_nid_postfix(&result, wide, tooLarge, &source, 8, state) == 22 && result == failed, "mbsrtowcs_s accepted an oversized buffer");
+    RequireViolation(before, "mbsrtowcs_s: bad argument", 22);
+    result = 7;
+    before = constraintCalls;
+    Require(mbsrtowcs_s_nid_postfix(&result, wide, 8, reinterpret_cast<const char**>(0x10), 8, state) == 22 && result == failed, "mbsrtowcs_s accepted an unreadable source pointer");
+    RequireViolation(before, "mbsrtowcs_s: bad argument", 22);
+    result = 7;
+    before = constraintCalls;
+    source = text;
+    Require(mbsrtowcs_s_nid_postfix(&result, reinterpret_cast<std::uint16_t*>(0x10), 8, &source, 8, state) == 22 && result == failed, "mbsrtowcs_s accepted an unwritable buffer");
+    RequireViolation(before, "mbsrtowcs_s: bad argument", 22);
+    before = constraintCalls;
+    source = text;
+    Require(mbsrtowcs_s_nid_postfix(reinterpret_cast<std::size_t*>(0x10), wide, 8, &source, 8, state) == 22, "mbsrtowcs_s accepted an unwritable result");
     RequireViolation(before, "mbsrtowcs_s: bad argument", 22);
 }
 

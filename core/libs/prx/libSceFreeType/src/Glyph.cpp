@@ -1,6 +1,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include FT_GLYPH_H
 
@@ -94,6 +95,35 @@ Glyph& Register(GuestLibrary* library, bool isBitmap, std::size_t pointCount) {
     return *glyphs.emplace(address, std::move(owner)).first->second;
 }
 
+}
+
+int FreeType::FreeTypeNewGlyph_nid_no_patch(GuestLibrary* library, std::uint32_t format, GuestGlyphRec** target) {
+    if (!library || !library->host || !target) return FT_Err_Invalid_Argument;
+    if (!InGlyphFormatRange(format)) return FT_Err_Invalid_Glyph_Format;
+    const auto nativeFormat = static_cast<FT_Glyph_Format>(format);
+    if (nativeFormat != FT_GLYPH_FORMAT_BITMAP && nativeFormat != FT_GLYPH_FORMAT_OUTLINE) {
+        FT_Glyph probe = nullptr;
+        const FT_Error error = FT_New_Glyph(library->host, nativeFormat, &probe);
+        if (error == FT_Err_Invalid_Glyph_Format || error == FT_Err_Invalid_Argument) return error;
+        if (probe) FT_Done_Glyph(probe);
+        NotImplemented_nid_no_patch(__func__);
+    }
+    GuestArena::HostWrite write(target, sizeof(*target));
+    if (!write.Open()) return FT_Err_Invalid_Argument;
+    *target = nullptr;
+    std::lock_guard lock(glyphMutex);
+    auto& owner = Register(library, nativeFormat == FT_GLYPH_FORMAT_BITMAP, 0);
+    auto* address = owner.Root();
+    FT_Glyph result = nullptr;
+    const FT_Error error = FT_New_Glyph(library->host, nativeFormat, &result);
+    if (error) {
+        glyphs.erase(address);
+        return error;
+    }
+    owner.host.reset(result);
+    owner.Publish({}, __func__);
+    *target = address;
+    return 0;
 }
 
 extern "C" {
@@ -219,17 +249,7 @@ void APS5_VABI FT_Glyph_Get_CBox_nid_postfix(GuestGlyphRec* glyph, std::uint32_t
 void APS5_VABI FT_Done_Glyph_nid_postfix(GuestGlyphRec* glyph) {
     if (!glyph) return;
     std::lock_guard lock(glyphMutex);
-    auto& owner = Find(glyph, __func__);
-    if (owner.isBitmap) {
-        if (owner.bitmap.bitmap.buffer != reinterpret_cast<FT_BitmapGlyph>(owner.host.get())->bitmap.buffer) NotImplemented_nid_no_patch(__func__);
-    } else {
-        const auto& outline = owner.outline.outline;
-        const auto& native = reinterpret_cast<FT_OutlineGlyph>(owner.host.get())->outline;
-        if (outline.points != (owner.points.empty() ? nullptr : owner.points.data()) ||
-            static_cast<const void*>(outline.tags) != static_cast<const void*>(native.tags) ||
-            static_cast<const void*>(outline.contours) != static_cast<const void*>(native.contours) ||
-            (outline.flags & FT_OUTLINE_OWNER) != (native.flags & FT_OUTLINE_OWNER)) NotImplemented_nid_no_patch(__func__);
-    }
+    Find(glyph, __func__);
     glyphs.erase(glyph);
 }
 

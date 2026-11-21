@@ -219,6 +219,9 @@ void CheckAttribute() {
     attribute->sizeThis = sizeof(CameraAttribute) - 4;
     Require(sceCameraGetAttribute(1, attribute) == ErrorParam && sceCameraSetAttribute(1, attribute) == ErrorParam, "an attribute of the wrong size must be rejected");
     Require(sceCameraGetAttribute(1, nullptr) == ErrorParam && sceCameraSetAttribute(1, nullptr) == ErrorParam, "a null attribute must be rejected");
+    errno = 71;
+    Require(sceCameraSetAttribute(1, reinterpret_cast<const CameraAttribute*>(0x10)) == ErrorParam, "unreadable attribute rejected");
+    Require(errno == 71, "errno preserved");
 }
 
 void CheckSetter(SetU32 set, std::uint32_t largestValue) {
@@ -251,6 +254,10 @@ void CheckSetters() {
     Require(sceCameraSetExposureGain(1, Channel0, nullptr, nullptr) == ErrorParam, "a null exposure must be rejected");
     Require(sceCameraSetWhiteBalance(1, Channel0, nullptr, nullptr) == ErrorParam, "a null white balance must be rejected");
     Require(sceCameraSetGamma(1, Channel0, nullptr, nullptr) == ErrorParam, "a null gamma must be rejected");
+    errno = 71;
+    Require(sceCameraSetExposureGain(1, Channel0, reinterpret_cast<const CameraExposureGain*>(0x10), nullptr) == ErrorParam && errno == 71, "an unmapped exposure must be rejected");
+    Require(sceCameraSetWhiteBalance(1, Channel0, reinterpret_cast<const CameraWhiteBalance*>(0x10), nullptr) == ErrorParam && errno == 71, "an unmapped white balance must be rejected");
+    Require(sceCameraSetGamma(1, Channel0, reinterpret_cast<const CameraGamma*>(0x10), nullptr) == ErrorParam && errno == 71, "an unmapped gamma must be rejected");
     CameraAutoExposureGainTarget target{sizeof(CameraAutoExposureGainTarget), 0x20};
     Require(sceCameraSetAutoExposureGain(1, Channel0, 1, &target) == ErrorNotConnected, "the largest exposure target must be accepted");
     Require(sceCameraSetAutoExposureGain(1, Channel0, 1, nullptr) == ErrorNotConnected, "automatic exposure without a target must be accepted");
@@ -264,6 +271,9 @@ void CheckSetters() {
     }
     target = {4, 0x10};
     Require(sceCameraSetAutoExposureGain(1, Channel0, 1, &target) == ErrorParam, "an exposure target of the wrong size must be rejected");
+    errno = 71;
+    Require(sceCameraSetAutoExposureGain(1, Channel0, 1, reinterpret_cast<const CameraAutoExposureGainTarget*>(0x10)) == ErrorParam, "an unmapped exposure target must be rejected");
+    Require(errno == 71, "errno must be preserved");
 }
 
 void CheckConfig() {

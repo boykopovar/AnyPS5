@@ -520,22 +520,6 @@ static int ParseWaveform(const RiffChunks& chunks, std::size_t size, Ngs2Wavefor
     return SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT;
 }
 
-template <typename T>
-static bool ReadGuest(const T* guest, T& local) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&local, guest, sizeof(local));
-    errno = savedErrno;
-    return copied;
-}
-
-template <typename T>
-static bool WriteGuest(T* guest, const T& local) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(guest, &local, sizeof(local));
-    errno = savedErrno;
-    return copied;
-}
-
 #pragma GCC visibility push(default)
 
 extern "C" {

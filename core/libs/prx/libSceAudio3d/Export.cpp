@@ -834,8 +834,19 @@ int APS5_VABI sceAudio3dReportRegisterHandler(uint32_t type, Audio3dReportHandle
             registered = reinterpret_cast<std::uintptr_t>(slot);
             result = 0;
         }
+        if (handle != nullptr) {
+            const int savedErrno = errno;
+            const bool copied = GuestCopyOut_nid_no_patch(handle, &registered, sizeof(registered));
+            errno = savedErrno;
+            if (!copied) {
+                if (result == 0) {
+                    *slot = Audio3dReportSlot{};
+                    if (type == AUDIO3D_REPORT_TYPE_CALL) --g_call_report_handlers;
+                }
+                throw std::runtime_error("sceAudio3dReportRegisterHandler: unwritable guest handle");
+            }
+        }
     }
-    if (handle != nullptr) *handle = registered;
     return result;
 }
 

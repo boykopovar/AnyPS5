@@ -622,7 +622,7 @@ int APS5_VABI sceSystemServiceGetDbgExecutablePath(char* path, std::uint64_t sel
 int APS5_VABI sceSystemServiceGetEventForDaemon(SystemServiceDaemonEvent* event);
 int APS5_VABI sceSystemServiceGetGpuLoadEmulationMode();
 int APS5_VABI sceSystemServiceGetLocalProcessStatusList(SystemServiceLocalProcessStatus* statuses, std::uint32_t capacity, std::uint32_t* count);
-int APS5_VABI sceSystemServiceGetMainAppTitleId();
+int APS5_VABI sceSystemServiceGetMainAppTitleId(char* titleId);
 int APS5_VABI sceSystemServiceGetPSButtonEvent(const SystemServiceEvent* event, SystemServicePSButtonEvent* buttonEvent);
 int APS5_VABI sceSystemServiceGetParentSocket();
 int APS5_VABI sceSystemServiceGetParentSocketForJvm();

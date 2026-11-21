@@ -117,8 +117,11 @@ int APS5_VABI sceScreenShotEnable() {
 
 int APS5_VABI sceScreenShotIsDisabled(int id, int* isDisabled) {
     if (id == -1 || !isDisabled) return ErrorArgument;
+    const int savedErrno = errno;
     const int value = disabled ? 1 : 0;
-    if (!GuestCopyOut_nid_no_patch(isDisabled, &value, sizeof(value))) return ErrorArgument;
+    const bool copied = GuestCopyOut_nid_no_patch(isDisabled, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return ErrorArgument;
     return 0;
 }
 
