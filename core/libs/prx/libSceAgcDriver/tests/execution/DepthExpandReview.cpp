@@ -759,12 +759,18 @@ int main(int argc, char** argv) {
             LiveSurfacePartlyCovered(reader);
             std::puts("depth expand review refusal test passed");
             std::fflush(stdout);
+#ifdef _WIN32
+            TerminateProcess(GetCurrentProcess(), 0);
+#endif
             std::_Exit(0);
         }
         if (argc > 1 && std::string_view(argv[1]) == "--live-stencil-plane") {
             LiveStencilPlaneOnly(reader);
             std::puts("depth expand review refusal test passed");
             std::fflush(stdout);
+#ifdef _WIN32
+            TerminateProcess(GetCurrentProcess(), 0);
+#endif
             std::_Exit(0);
         }
         DepthOnlySurface(reader);
