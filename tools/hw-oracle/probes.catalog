@@ -110,6 +110,35 @@
       ]
     },
     {
+      "id": "v-fract-f32-edges",
+      "instruction": "v_fract_f32",
+      "description": "Signed zeros, infinities, NaN, a tiny negative value and values next to one.",
+      "body": "v_fract_f32 v10, v4",
+      "output_registers": 1,
+      "wave_size": 32,
+      "floating_point_modes": {
+        "ieee": 0,
+        "denorm32": 0,
+        "denorm16": 3,
+        "dx10_clamp": 1,
+        "round32": 0,
+        "round16": 0,
+        "fp16_overflow": 0
+      },
+      "lds_bytes": 4096,
+      "memory": "fine",
+      "rows": [
+        {"name": "pos-zero", "input": ["0x00000000", 0, 0, 0]},
+        {"name": "neg-zero", "input": ["0x80000000", 0, 0, 0]},
+        {"name": "pos-inf", "input": ["0x7f800000", 0, 0, 0]},
+        {"name": "neg-inf", "input": ["0xff800000", 0, 0, 0]},
+        {"name": "nan", "input": ["0x7fc12345", 0, 0, 0]},
+        {"name": "tiny-negative", "input": ["0xb3800000", 0, 0, 0]},
+        {"name": "below-one", "input": ["0x3f7fffff", 0, 0, 0]},
+        {"name": "minus-one", "input": ["0xbf800000", 0, 0, 0]}
+      ]
+    },
+    {
       "id": "v-fma-f32-fused-rounding",
       "instruction": "v_fma_f32",
       "description": "A cancellation case that distinguishes fused from separately rounded multiply and add.",
