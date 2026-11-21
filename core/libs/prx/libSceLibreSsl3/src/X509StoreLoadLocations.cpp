@@ -36,6 +36,9 @@ constexpr int WrongTag = 168;
 constexpr int InvalidDirectory = 113;
 constexpr int InvalidObjectEncoding = 216;
 constexpr int InvalidBitStringBitsLeft = 220;
+constexpr int IllegalCharacters = 124;
+constexpr int InvalidBmpStringLength = 129;
+constexpr int InvalidUniversalStringLength = 133;
 constexpr int InvalidUtf8String = 134;
 constexpr int BmpStringWrongLength = 214;
 constexpr int UniversalStringWrongLength = 215;
@@ -799,7 +802,7 @@ void AppendUtf8(std::vector<unsigned char>& output, std::uint32_t code) {
     }
 }
 
-std::optional<std::vector<unsigned char>> ToUtf8(const std::vector<unsigned char>& bytes, int type, const char* function) {
+std::optional<std::vector<unsigned char>> ToUtf8(const std::vector<unsigned char>& bytes, int type) {
     if (type == Utf8StringType) {
         for (std::size_t index = 0; index < bytes.size();) {
             const std::size_t length = Utf8SequenceLength(std::span<const unsigned char>(bytes).subspan(index));
@@ -813,27 +816,19 @@ std::optional<std::vector<unsigned char>> ToUtf8(const std::vector<unsigned char
     }
     std::vector<unsigned char> converted;
     converted.reserve(bytes.size());
-    if (type == BmpStringType) {
-        if (bytes.size() % 2 != 0) throw std::invalid_argument(std::string(function) + ": odd BMPString length");
-        for (std::size_t index = 0; index + 1 < bytes.size(); index += 2) {
-            std::uint32_t code = (static_cast<std::uint32_t>(bytes[index]) << 8) | bytes[index + 1];
-            if (code >= 0xd800 && code <= 0xdbff && index + 3 < bytes.size()) {
-                const std::uint32_t low = (static_cast<std::uint32_t>(bytes[index + 2]) << 8) | bytes[index + 3];
-                if (low >= 0xdc00 && low <= 0xdfff) {
-                    code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
-                    index += 2;
-                }
-            }
-            AppendUtf8(converted, code);
+    if (type == BmpStringType || type == UniversalStringType) {
+        const std::size_t width = type == BmpStringType ? 2 : 4;
+        if (bytes.size() % width != 0) {
+            PutAsn1Error(width == 2 ? InvalidBmpStringLength : InvalidUniversalStringLength);
+            return std::nullopt;
         }
-        return converted;
-    }
-    if (type == UniversalStringType) {
-        if (bytes.size() % 4 != 0) throw std::invalid_argument(std::string(function) + ": odd UniversalString length");
-        for (std::size_t index = 0; index + 3 < bytes.size(); index += 4) {
-            const std::uint32_t code = (static_cast<std::uint32_t>(bytes[index]) << 24) |
-                                       (static_cast<std::uint32_t>(bytes[index + 1]) << 16) |
-                                       (static_cast<std::uint32_t>(bytes[index + 2]) << 8) | bytes[index + 3];
+        for (std::size_t index = 0; index < bytes.size(); index += width) {
+            std::uint32_t code = 0;
+            for (std::size_t byte = 0; byte < width; ++byte) code = (code << 8) | bytes[index + byte];
+            if (code > UnicodeMax || IsSurrogate(code)) {
+                PutAsn1Error(IllegalCharacters);
+                return std::nullopt;
+            }
             AppendUtf8(converted, code);
         }
         return converted;
@@ -847,7 +842,7 @@ std::optional<std::vector<unsigned char>> CanonicalStringContent(const Asn1Strin
     std::vector<unsigned char> bytes(static_cast<std::size_t>(value.length));
     ReadGuestBytes(bytes.data(), value.data, bytes.size(), function);
     if (!IsCanonicalizedType(value.type)) return bytes;
-    auto converted = ToUtf8(bytes, value.type, function);
+    auto converted = ToUtf8(bytes, value.type);
     if (!converted) return std::nullopt;
     bytes = std::move(*converted);
     std::size_t begin = 0;

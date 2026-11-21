@@ -3146,8 +3146,10 @@ static void TestView() {
     Require(view->drawsBackground);
 
     WKViewWillEnterFullScreen(ref);
-    Require(!WKViewIsFullScreen(ref));
+    Require(WKViewIsFullScreen(ref));
     WKViewDidEnterFullScreen(ref);
+    Require(WKViewIsFullScreen(ref));
+    WKViewRequestExitFullScreen(ref);
     Require(WKViewIsFullScreen(ref));
     WKViewWillExitFullScreen(ref);
     Require(WKViewIsFullScreen(ref));
@@ -3155,8 +3157,17 @@ static void TestView() {
     Require(!WKViewIsFullScreen(ref));
 
     WKViewDidEnterFullScreen(ref);
-    Require(WKViewIsFullScreen(ref));
+    Require(!WKViewIsFullScreen(ref));
     WKViewRequestExitFullScreen(ref);
+    Require(!WKViewIsFullScreen(ref));
+    WKViewWillExitFullScreen(ref);
+    Require(!WKViewIsFullScreen(ref));
+    WKViewDidExitFullScreen(ref);
+    Require(!WKViewIsFullScreen(ref));
+    WKViewWillEnterFullScreen(ref);
+    WKViewWillEnterFullScreen(ref);
+    Require(WKViewIsFullScreen(ref));
+    WKViewDidExitFullScreen(ref);
     Require(!WKViewIsFullScreen(ref));
 
     bool threw = false;

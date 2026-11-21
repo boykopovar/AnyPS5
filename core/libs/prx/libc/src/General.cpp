@@ -598,6 +598,12 @@ int SetWorkingDirectory(WorkingDirectory& state, const std::filesystem::path& re
     auto relative = canonical.lexically_relative(state.root);
 #ifdef _WIN32
     if (relative.empty() || *relative.begin() == "..") {
+        bool notDirectory = false;
+        const auto target = FinalDirectoryPath(canonical, notDirectory);
+        const auto root = FinalDirectoryPath(state.root, notDirectory);
+        if (target && root) relative = target->lexically_relative(*root);
+    }
+    if (relative.empty() || *relative.begin() == "..") {
         auto ancestor = canonical;
         while (!std::filesystem::equivalent(ancestor, state.root, error)) {
             if (error) return DirectoryFailure(error);
