@@ -1018,8 +1018,8 @@ bool FindEnd(const unsigned char** in, std::int64_t length, char indefinite) {
 
 bool CollectData(Buffer* buffer, const unsigned char** p, std::int64_t length) {
     if (buffer) {
-        const int used = static_cast<int>(buffer->length);
-        if (!Grow(buffer, static_cast<std::size_t>(used + length), true)) {
+        const std::size_t used = buffer->length;
+        if (!Grow(buffer, used + static_cast<std::size_t>(length), true)) {
             Asn1Error(MallocFailure);
             return false;
         }
