@@ -50,6 +50,16 @@ struct PlatformContext {
     void* cr;
 };
 
+struct ImagePaintingOptions {
+    std::uint8_t compositeOperator;
+    std::uint8_t blendMode;
+    std::uint8_t decodingMode;
+    unsigned char padding1;
+    int orientation;
+    std::uint8_t interpolationQuality;
+    unsigned char padding2[3];
+};
+
 static_assert(std::is_standard_layout_v<State>);
 static_assert(sizeof(State) == 96);
 static_assert(alignof(State) == 8);
@@ -86,6 +96,14 @@ static_assert(offsetof(Context, contentfulPaintDetected) == 136);
 static_assert(sizeof(PlatformContext) == 8);
 static_assert(offsetof(PlatformContext, cr) == 0);
 
+static_assert(std::is_standard_layout_v<ImagePaintingOptions>);
+static_assert(sizeof(ImagePaintingOptions) == 12);
+static_assert(offsetof(ImagePaintingOptions, compositeOperator) == 0);
+static_assert(offsetof(ImagePaintingOptions, blendMode) == 1);
+static_assert(offsetof(ImagePaintingOptions, decodingMode) == 2);
+static_assert(offsetof(ImagePaintingOptions, orientation) == 4);
+static_assert(offsetof(ImagePaintingOptions, interpolationQuality) == 8);
+
 }  // namespace NKWebKit::GraphicsContextAbi
 
 extern "C" {
@@ -111,6 +129,8 @@ void APS5_VABI _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectERKNS_5Color
 void APS5_VABI _ZN7WebCore15GraphicsContext9clearRectERKNS_9FloatRectE(NKWebKit::GraphicsContextAbi::Context* self, const WebCore::FloatRect* rect);
 void APS5_VABI _ZN7WebCore15GraphicsContext8fillPathERKNS_4PathE(NKWebKit::GraphicsContextAbi::Context* self, const void* path);
 void APS5_VABI _ZN7WebCore15GraphicsContext10strokePathERKNS_4PathE(NKWebKit::GraphicsContextAbi::Context* self, const void* path);
+void APS5_VABI _ZN7WebCore15GraphicsContext10strokeRectERKNS_9FloatRectEf(NKWebKit::GraphicsContextAbi::Context* self, const WebCore::FloatRect* rect, float thickness);
+void APS5_VABI _ZN7WebCore15GraphicsContext15drawNativeImageERKN3WTF6RefPtrI14_cairo_surfaceNS1_13DumbPtrTraitsIS3_EEEERKNS_9FloatSizeERKNS_9FloatRectESE_RKNS_20ImagePaintingOptionsE(NKWebKit::GraphicsContextAbi::Context* self, const void* image, const WebCore::FloatSize* imageSize, const WebCore::FloatRect* destination, const WebCore::FloatRect* source, const NKWebKit::GraphicsContextAbi::ImagePaintingOptions* options);
 void APS5_VABI _ZN7WebCore15GraphicsContext12setFillColorERKNS_5ColorE(NKWebKit::GraphicsContextAbi::Context* self, const WebCore::Color* color);
 void APS5_VABI _ZN7WebCore15GraphicsContext14setStrokeColorERKNS_5ColorE(NKWebKit::GraphicsContextAbi::Context* self, const WebCore::Color* color);
 void APS5_VABI _ZN7WebCore15GraphicsContext18setStrokeThicknessEf(NKWebKit::GraphicsContextAbi::Context* self, float thickness);

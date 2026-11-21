@@ -1,4 +1,4 @@
-﻿// Derived from Source/WebCore/platform/graphics/GraphicsContext.cpp and Source/WebCore/platform/graphics/cairo/GraphicsContextCairo.cpp@c55364d53f971f63a709976f168d932d558b8909
+// Derived from Source/WebCore/platform/graphics/GraphicsContext.cpp and Source/WebCore/platform/graphics/cairo/GraphicsContextCairo.cpp@c55364d53f971f63a709976f168d932d558b8909
 /*
  * Copyright (C) 2003-2020 Apple Inc. All rights reserved.
  * Copyright (C) 2008-2009 Torch Mobile, Inc.
@@ -40,6 +40,7 @@
 namespace {
 
 using NKWebKit::GraphicsContextAbi::Context;
+using NKWebKit::GraphicsContextAbi::ImagePaintingOptions;
 using NKWebKit::GraphicsContextAbi::PlatformContext;
 using NKWebKit::GraphicsContextAbi::State;
 
@@ -132,6 +133,13 @@ void ApplyAntialias(Context& context) {
     if (!cr) return;
     cairo_set_antialias(cr, (context.state.flags & AntialiasFlag) ? 0 : 1);
 }
+
+int CairoOperator(const std::uint8_t compositeOperator) {
+    if (compositeOperator <= 10) return compositeOperator;
+    throw std::invalid_argument("unsupported CompositeOperator");
+}
+
+
 
 }  // namespace
 
@@ -293,6 +301,41 @@ void APS5_VABI _ZN7WebCore15GraphicsContext10strokePathERKNS_4PathE(Context* sel
     cairo_stroke(cr);
 }
 
+void APS5_VABI _ZN7WebCore15GraphicsContext10strokeRectERKNS_9FloatRectEf(Context* self, const WebCore::FloatRect* rect, float thickness) {
+    auto& context = Checked(self, "WebCore::GraphicsContext::strokeRect");
+    if (!rect) throw std::invalid_argument("WebCore::GraphicsContext::strokeRect requires a rectangle");
+    CairoContext* cr = Cairo(context);
+    if (!cr) return;
+    SetSource(cr, context.state.strokeColor);
+    cairo_set_line_width(cr, thickness);
+    cairo_new_path(cr);
+    Rectangle(cr, *rect);
+    cairo_stroke(cr);
+}
+
+void APS5_VABI _ZN7WebCore15GraphicsContext15drawNativeImageERKN3WTF6RefPtrI14_cairo_surfaceNS1_13DumbPtrTraitsIS3_EEEERKNS_9FloatSizeERKNS_9FloatRectESE_RKNS_20ImagePaintingOptionsE(Context* self, const void* image, const WebCore::FloatSize*, const WebCore::FloatRect* destination, const WebCore::FloatRect* source, const ImagePaintingOptions* options) {
+    auto& context = Checked(self, "WebCore::GraphicsContext::drawNativeImage");
+    if (!image || !destination || !source || !options) throw std::invalid_argument("WebCore::GraphicsContext::drawNativeImage requires an image, rectangles and options");
+    auto* surface = *static_cast<CairoSurface* const*>(image);
+    CairoContext* cr = Cairo(context);
+    if (!cr || !surface) return;
+    if (destination->width() <= 0 || destination->height() <= 0 || source->width() <= 0 || source->height() <= 0) return;
+    if (options->orientation != 1) throw std::invalid_argument("only the default ImageOrientation is supported");
+    if (options->blendMode != 1) throw std::invalid_argument("only BlendMode::Normal is supported");
+    if (options->interpolationQuality != 0) throw std::invalid_argument("only the default interpolation quality is supported");
+    const double scaleX = destination->width() / source->width();
+    const double scaleY = destination->height() / source->height();
+    cairo_save(cr);
+    cairo_set_operator(cr, CairoOperator(options->compositeOperator));
+    cairo_translate(cr, destination->x() - source->x() * scaleX, destination->y() - source->y() * scaleY);
+    cairo_scale(cr, scaleX, scaleY);
+    cairo_set_source_surface(cr, surface, 0.0, 0.0);
+    cairo_new_path(cr);
+    Rectangle(cr, *source);
+    cairo_fill(cr);
+    cairo_restore(cr);
+}
+
 void APS5_VABI _ZN7WebCore15GraphicsContext12setFillColorERKNS_5ColorE(Context* self, const WebCore::Color* color) {
     auto& context = Checked(self, "WebCore::GraphicsContext::setFillColor");
     if (!color) throw std::invalid_argument("WebCore::GraphicsContext::setFillColor requires a color");
@@ -366,3 +409,4 @@ WebCore::AffineTransform APS5_VABI _ZNK7WebCore15GraphicsContext6getCTMENS0_18In
 }
 
 }
+

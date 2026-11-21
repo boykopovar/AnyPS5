@@ -216,6 +216,43 @@ void TestPlatformContext() {
     _ZN7WebCore15GraphicsContext8fillRectERKNS_9FloatRectE(nullContext.context, &rect);
 }
 
+void TestStrokeRectAndImage() {
+    Surface surface;
+    OwnedContext owned(&surface.platform);
+    auto& context = *owned.context;
+    const WebCore::Color red = Red;
+    _ZN7WebCore15GraphicsContext14setStrokeColorERKNS_5ColorE(&context, &red);
+    const WebCore::FloatRect rect{{1, 1}, {6, 6}};
+    _ZN7WebCore15GraphicsContext10strokeRectERKNS_9FloatRectEf(&context, &rect, 2.0f);
+    Require(surface.Pixel(3, 1) != 0);
+    Require(surface.Pixel(3, 3) == 0);
+
+    CairoSurface* imageSurface = cairo_image_surface_create(0, 2, 2);
+    CairoContext* imageContext = cairo_create(imageSurface);
+    cairo_set_source_rgb(imageContext, 1.0, 0.0, 0.0);
+    cairo_paint(imageContext);
+    cairo_destroy(imageContext);
+    cairo_surface_flush(imageSurface);
+
+    const WebCore::FloatSize imageSize{2.0f, 2.0f};
+    const WebCore::FloatRect destination{{4, 4}, {4, 4}};
+    const WebCore::FloatRect source{{0, 0}, {2, 2}};
+    const NKWebKit::GraphicsContextAbi::ImagePaintingOptions options{2, 1, 0, 0, 1, 0, {0, 0, 0}};
+    _ZN7WebCore15GraphicsContext15drawNativeImageERKN3WTF6RefPtrI14_cairo_surfaceNS1_13DumbPtrTraitsIS3_EEEERKNS_9FloatSizeERKNS_9FloatRectESE_RKNS_20ImagePaintingOptionsE(&context, &imageSurface, &imageSize, &destination, &source, &options);
+    Require(surface.Pixel(5, 5) == 0xFFFF0000U);
+    Require(surface.Pixel(7, 7) == 0xFFFF0000U);
+
+    const NKWebKit::GraphicsContextAbi::ImagePaintingOptions multiplied{2, 2, 0, 0, 1, 0, {0, 0, 0}};
+    bool threw = false;
+    try {
+        _ZN7WebCore15GraphicsContext15drawNativeImageERKN3WTF6RefPtrI14_cairo_surfaceNS1_13DumbPtrTraitsIS3_EEEERKNS_9FloatSizeERKNS_9FloatRectESE_RKNS_20ImagePaintingOptionsE(&context, &imageSurface, &imageSize, &destination, &source, &multiplied);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    cairo_surface_destroy(imageSurface);
+}
+
 void TestShadowState() {
     Surface surface;
     OwnedContext owned(&surface.platform);
@@ -242,6 +279,7 @@ int main() {
         TestClip();
         TestPaths();
         TestPlatformContext();
+        TestStrokeRectAndImage();
         TestShadowState();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "GraphicsContext test failed: %s\n", error.what());
