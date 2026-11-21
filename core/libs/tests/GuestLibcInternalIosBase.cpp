@@ -119,6 +119,8 @@ int main() {
     Require(flagged.stream.flags == 0xffff, "a full mask sets every format flag");
     Require(_ZSt11setiosflagsNSt5_IosbIiE9_FmtflagsE_nid_postfix(1).function == set.function, "every setiosflags result shares one function");
     Require(Throws([&] { set.function(nullptr, set.argument); }), "a null stream is rejected by setiosflags");
+    auto* const unmapped = reinterpret_cast<GuestLocale::IosBase*>(std::uintptr_t{0x10});
+    Require(Throws([&] { set.function(unmapped, set.argument); }), "an unmapped stream is rejected by setiosflags");
 
     const auto reset = sceLibcInternalResetiosflags_nid_no_patch(0x8040);
     flagged.stream.flags = 0x8241;
@@ -138,6 +140,7 @@ int main() {
     resetAll.function(&flagged.stream, resetAll.argument);
     Require(flagged.stream.flags == 0, "a full reset mask clears every flag");
     Require(Throws([&] { reset.function(nullptr, reset.argument); }), "a null stream is rejected by resetiosflags");
+    Require(Throws([&] { reset.function(unmapped, reset.argument); }), "an unmapped stream is rejected by resetiosflags");
 
     struct BaseCase { std::int32_t base; std::int32_t field; };
     for (const BaseCase check : {BaseCase{8, 0x20}, BaseCase{10, 0x10}, BaseCase{16, 0x40}, BaseCase{0, 0}, BaseCase{2, 0}, BaseCase{-8, 0}, BaseCase{36, 0}}) {
@@ -153,6 +156,7 @@ int main() {
     Require(flagged.before == 0x12345678 && flagged.after == 0x87654321, "the manipulators write only the stream");
     const auto decimal = sceLibcInternalSetbase_nid_no_patch(10);
     Require(Throws([&] { decimal.function(nullptr, decimal.argument); }), "a null stream is rejected by setbase");
+    Require(Throws([&] { decimal.function(unmapped, decimal.argument); }), "an unmapped stream is rejected by setbase");
 
     std::puts("libc internal ios_base checks passed");
     return 0;
