@@ -1,9 +1,24 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include <source_location>
 #include <stdexcept>
 #include <thread>
@@ -110,8 +125,70 @@ void TestLock() {
     Destroy(checker);
 }
 
+class ReadOnlyPage {
+public:
+    explicit ReadOnlyPage(const void* initial, std::size_t size) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        _size = info.dwPageSize != 0 ? info.dwPageSize : 4096u;
+        _page = VirtualAlloc(nullptr, _size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(_page != nullptr);
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(_page, _size, PAGE_READONLY, &oldProtect) != 0);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        _size = pageSize > 0 ? static_cast<std::size_t>(pageSize) : 4096u;
+        _page = mmap(nullptr, _size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(_page != MAP_FAILED);
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        Require(mprotect(_page, _size, PROT_READ) == 0);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+        if (!_page) return;
+#ifdef _WIN32
+        VirtualFree(_page, 0, MEM_RELEASE);
+#else
+        munmap(_page, _size);
+#endif
+    }
+
+    ReadOnlyPage(const ReadOnlyPage&) = delete;
+    ReadOnlyPage& operator=(const ReadOnlyPage&) = delete;
+
+    template<typename T> T* As() const { return static_cast<T*>(_page); }
+
+private:
+    void* _page = nullptr;
+    std::size_t _size = 0;
+};
+
 void TestNull() {
+    errno = EDOM;
     RequireInvalidArgument([] { _ZN6webrtc32webrtc_sequence_checker_internal19SequenceCheckerImplC2Eb_nid_postfix(nullptr, true); });
+    Require(errno == EDOM);
+}
+
+void TestUnwritable() {
+    errno = EDOM;
+    RequireInvalidArgument([] {
+        _ZN6webrtc32webrtc_sequence_checker_internal19SequenceCheckerImplC2Eb_nid_postfix(
+            reinterpret_cast<WebRtcSequenceCheckerImpl*>(std::uintptr_t{1}), true);
+    });
+    Require(errno == EDOM);
+
+    const WebRtcSequenceCheckerImpl sentinel = Filled();
+    const ReadOnlyPage page(&sentinel, sizeof(sentinel));
+    errno = EDOM;
+    RequireInvalidArgument([&] {
+        _ZN6webrtc32webrtc_sequence_checker_internal19SequenceCheckerImplC2Eb_nid_postfix(
+            page.As<WebRtcSequenceCheckerImpl>(), true);
+    });
+    Require(errno == EDOM);
+    Require(std::memcmp(page.As<void>(), &sentinel, sizeof(sentinel)) == 0);
 }
 
 }
@@ -123,6 +200,7 @@ int main() {
     TestConstructingThread();
     TestLock();
     TestNull();
+    TestUnwritable();
     std::puts("webrtc::webrtc_sequence_checker_internal::SequenceCheckerImpl tests passed");
     return 0;
 }
