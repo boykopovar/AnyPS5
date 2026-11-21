@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/LibcxxConditionForwards.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
 #include <atomic>
@@ -20,6 +21,28 @@ struct GuestUniqueLock {
     std::uint8_t padding[7]{};
 };
 static_assert(sizeof(GuestUniqueLock) == 16);
+
+std::atomic<int> forcedForwardError{22};
+
+int APS5_VABI FailingCondOp(PthreadCond*) {
+    return forcedForwardError.load(std::memory_order_acquire);
+}
+
+int APS5_VABI FailingCondTimedwait(PthreadCond*, PthreadMutex*, const KernelTimespec*) {
+    return forcedForwardError.load(std::memory_order_acquire);
+}
+
+int APS5_VABI FailingCondWait(PthreadCond*, PthreadMutex*) {
+    return forcedForwardError.load(std::memory_order_acquire);
+}
+
+struct LibcxxConditionForwardsGuard {
+    const LibcxxConditionForwards_nid_no_patch* restore;
+    explicit LibcxxConditionForwardsGuard(const LibcxxConditionForwards_nid_no_patch* fallback) : restore(fallback) {}
+    ~LibcxxConditionForwardsGuard() { RegisterLibcxxConditionForwards_nid_no_patch(restore); }
+    LibcxxConditionForwardsGuard(const LibcxxConditionForwardsGuard&) = delete;
+    LibcxxConditionForwardsGuard& operator=(const LibcxxConditionForwardsGuard&) = delete;
+};
 
 }
 
@@ -75,6 +98,69 @@ int main() {
     Require(rejected, "wait accepted a unique_lock without ownership");
 
     _ZNSt3__118condition_variableD1Ev_nid_postfix(&condition);
+
+    bool destroyedOperationsThrew = false;
+    try {
+        _ZNSt3__118condition_variable10notify_oneEv_nid_postfix(&condition);
+        _ZNSt3__118condition_variable10notify_allEv_nid_postfix(&condition);
+        _ZNSt3__118condition_variableD1Ev_nid_postfix(&condition);
+    } catch (...) {
+        destroyedOperationsThrew = true;
+    }
+    Require(!destroyedOperationsThrew, "noexcept condition_variable operations threw on a destroyed handle");
+
+    PthreadCond uninitialized = nullptr;
+    PthreadCond unused = nullptr;
+    bool defaultInitializedThrew = false;
+    try {
+        _ZNSt3__118condition_variable10notify_oneEv_nid_postfix(&uninitialized);
+        _ZNSt3__118condition_variable10notify_allEv_nid_postfix(&uninitialized);
+        _ZNSt3__118condition_variableD1Ev_nid_postfix(&uninitialized);
+        _ZNSt3__118condition_variableD1Ev_nid_postfix(&unused);
+    } catch (...) {
+        defaultInitializedThrew = true;
+    }
+    Require(!defaultInitializedThrew, "noexcept condition_variable operations threw on a default-initialized handle");
+
+    static const LibcxxConditionForwards_nid_no_patch libkernelForwards{
+        pthread_cond_destroy_nid_postfix,
+        pthread_cond_broadcast_nid_postfix,
+        pthread_cond_signal_nid_postfix,
+        pthread_cond_timedwait_nid_postfix,
+        pthread_cond_wait_nid_postfix,
+    };
+    static const LibcxxConditionForwards_nid_no_patch failingForwards{
+        FailingCondOp,
+        FailingCondOp,
+        FailingCondOp,
+        FailingCondTimedwait,
+        FailingCondWait,
+    };
+    {
+        LibcxxConditionForwardsGuard forwardsGuard(&libkernelForwards);
+        RegisterLibcxxConditionForwards_nid_no_patch(&failingForwards);
+        PthreadCond mocked = nullptr;
+        for (const int code : {22, 16}) {
+            forcedForwardError.store(code, std::memory_order_release);
+            bool noexceptThrew = false;
+            try {
+                _ZNSt3__118condition_variable10notify_oneEv_nid_postfix(&mocked);
+                _ZNSt3__118condition_variable10notify_allEv_nid_postfix(&mocked);
+                _ZNSt3__118condition_variableD1Ev_nid_postfix(&mocked);
+            } catch (...) {
+                noexceptThrew = true;
+            }
+            Require(!noexceptThrew, "noexcept condition_variable methods threw on failing libkernel forwards");
+        }
+        bool invalidRejected = false;
+        try {
+            _ZNSt3__118condition_variable10notify_oneEv_nid_postfix(nullptr);
+        } catch (const std::invalid_argument&) {
+            invalidRejected = true;
+        }
+        Require(invalidRejected, "notify_one accepted a null condition variable pointer");
+    }
+
     Require(pthread_mutex_destroy_nid_postfix(&mutex) == 0, "pthread mutex destroy failed");
     return 0;
 }

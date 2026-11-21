@@ -56,12 +56,12 @@ void RegisterLibcxxConditionForwards_nid_no_patch(const LibcxxConditionForwards_
 
 void APS5_VABI _ZNSt3__118condition_variable10notify_allEv_nid_postfix(PthreadCond* self) {
     auto& kernel = Kernel(__func__);
-    CheckError(kernel.broadcast(CheckedCondition(self, __func__)), __func__);
+    static_cast<void>(kernel.broadcast(CheckedCondition(self, __func__)));
 }
 
 void APS5_VABI _ZNSt3__118condition_variable10notify_oneEv_nid_postfix(PthreadCond* self) {
     auto& kernel = Kernel(__func__);
-    CheckError(kernel.signal(CheckedCondition(self, __func__)), __func__);
+    static_cast<void>(kernel.signal(CheckedCondition(self, __func__)));
 }
 
 void APS5_VABI _ZNSt3__118condition_variable4waitERNS_11unique_lockINS_5mutexEEE_nid_postfix(PthreadCond* self, const void* lock) {
@@ -85,7 +85,7 @@ void APS5_VABI _ZNSt3__118condition_variable15__do_timed_waitERNS_11unique_lockI
 
 void APS5_VABI _ZNSt3__118condition_variableD1Ev_nid_postfix(PthreadCond* self) {
     auto& kernel = Kernel(__func__);
-    CheckError(kernel.destroy(CheckedCondition(self, __func__)), __func__);
+    static_cast<void>(kernel.destroy(CheckedCondition(self, __func__)));
 }
 
 }
