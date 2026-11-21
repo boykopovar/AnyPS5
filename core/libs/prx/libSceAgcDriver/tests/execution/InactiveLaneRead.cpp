@@ -159,6 +159,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (device->Target().subgroupSize < 32) {
+            std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
+            return VulkanTestSkipped;
+        }
         Run(*device, 32, device->Target(), Wave32Code, "wave32");
         Run(*device, 64, device->Target(), Wave64Code, "wave64");
         Run(*device, 64, device->ComputeTarget(32), Wave64Code, "wave64 split");
