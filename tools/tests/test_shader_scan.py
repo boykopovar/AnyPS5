@@ -183,6 +183,16 @@ class IsaTests(unittest.TestCase):
 
 
 class Gfx1013ProfileTests(unittest.TestCase):
+    def test_gfx1013_reference_decoding_is_complete(self):
+        files = shader_scan.read_tree(Path(__file__).resolve().parents[2])
+        decoder = shader_scan.scan_decoder(files)
+        forms = progress.isa_profiles.load_gfx1013_forms()
+        missing = [row for row in forms if not shader_scan.decodes(decoder, *row)]
+        self.assertEqual(missing, [])
+        for name, encoding, form, opcode in progress.isa_profiles.llvm_gfx1013_additional_forms():
+            with self.subTest(name=name):
+                self.assertEqual(shader_scan.decodes(decoder, name, encoding, form, opcode), shader_scan.camel(name))
+
     def test_pinned_inventory_covers_missing_and_supported_target_forms(self):
         forms = progress.isa_profiles.load_gfx1013_forms()
         rows = set(forms)
