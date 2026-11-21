@@ -18,6 +18,11 @@ struct GuestImport {
     bool Weak = false;
 };
 
+struct RvaRange {
+    std::uint32_t Rva;
+    std::uint32_t Size;
+};
+
 struct GuestRuntime {
     std::string Path;
     std::vector<GuestImport> Imports;
@@ -32,6 +37,7 @@ struct GuestRuntime {
     bool DeferInitialization = false;
     std::vector<std::string> DeferredDependencies;
     std::vector<std::string> DeferredSweep;
+    std::vector<RvaRange> RelroRanges;
 };
 
 }
