@@ -27,6 +27,12 @@ int main() {
     std::uint64_t out2 = ~0ull;
     Require(sceDiscMapUnknown_ioKMruft1ek("/app0/data.bin", 0x8000, 0x10000, &flags, &out1, &out2) == noBitmapInfo, "ioKMruft1ek did not report the missing bitmap");
     Require(flags == ~0ull && out1 == ~0ull && out2 == ~0ull, "ioKMruft1ek wrote an output");
+    std::int64_t location = -1;
+    std::int64_t lba = -1;
+    std::int64_t lbaCount = -1;
+    Require(sceDiscMapUnknown_fJgP_plus_wqifno("/app0/data.bin", 0x8000, 0x10000, &location, &lba, &lbaCount) == noBitmapInfo, "fJgP+wqifno did not report the missing bitmap");
+    Require(location == -1 && lba == -1 && lbaCount == -1, "fJgP+wqifno wrote an output");
+    Require(sceDiscMapUnknown_fJgP_plus_wqifno(nullptr, -2, 0, nullptr, nullptr, nullptr) == noBitmapInfo, "fJgP+wqifno with null arguments did not report the missing bitmap");
     std::uint64_t ret1 = 0x5a5a5a5a5a5a5a5aull;
     std::uint64_t ret2 = 0x5a5a5a5a5a5a5a5aull;
     Require(sceDiscMapGetPackageSize(0, &ret1, &ret2) == noBitmapInfo, "sceDiscMapGetPackageSize did not report missing bitmap");

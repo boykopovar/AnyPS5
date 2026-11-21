@@ -97,6 +97,13 @@ def own(prs, sha):
     return {n: pr for n, pr in prs.items() if pr["sha"] not in ancestors}
 
 
+def without_own_pull_request(prs, name):
+    matching = [number for number, pr in prs.items() if pr.get("branch") == name]
+    if len(matching) == 1:
+        del prs[matching[0]]
+    return prs
+
+
 def gh(*args, attempts=3, delay=0.5):
     for attempt in range(attempts):
         try:
@@ -105,7 +112,8 @@ def gh(*args, attempts=3, delay=0.5):
             raise ValueError("GitHub CLI 'gh' is required on PATH") from error
         if result.returncode == 0:
             return result.stdout
-        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "TLS handshake"))
+        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "TLS handshake", "stream error:", "unexpected EOF",
+                                                          "A connection attempt failed because the connected party did not properly respond"))
         if attempt + 1 == attempts or not transient:
             raise subprocess.CalledProcessError(result.returncode, ["gh", *args], output=result.stdout, stderr=result.stderr)
         time.sleep(delay * (2 ** attempt))
@@ -227,6 +235,7 @@ def open_prs(base):
         prs[pr["number"]] = {
             "ref": f"refs/pr/{pr['number']}",
             "sha": pr["head"]["sha"],
+            "branch": pr["head"]["ref"],
             "author": pr["user"]["login"],
             "title": pr.get("title") or "",
             "depends": depends_on(pr["body"]),
@@ -297,37 +306,78 @@ def exports(diff, prefix="+"):
     return found
 
 
-def changed_source(diff, prefix):
-    files, current, path = [], [], None
+def unquote_path(path):
+    if path.startswith('"') and path.endswith('"'):
+        return codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", errors="replace")
+    return path
+
+
+def changed_hunks(diff, prefix):
+    files, hunks, current, path = [], [], [], None
     in_hunk = False
     for line in diff.split("\n"):
         line = line.removesuffix("\r")
         if line.startswith("diff --git "):
-            if current and path:
-                files.append((path, "\n".join(current)))
+            if current:
+                hunks.append("\n".join(current))
+            if hunks and path:
+                files.append((path, hunks))
             path = line.split(" b/", 1)[1] if " b/" in line else None
-            current = []
+            hunks, current = [], []
             in_hunk = False
         elif line.startswith("@@"):
+            if current:
+                hunks.append("\n".join(current))
+            current = []
             in_hunk = True
         elif not in_hunk and line.startswith("--- " if prefix == "-" else "+++ "):
-            path = line[4:]
-            if path.startswith('"') and path.endswith('"'):
-                path = codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", errors="replace")
+            path = unquote_path(line[4:])
             if path == "/dev/null":
                 path = None
             elif path.startswith(("a/", "b/")):
                 path = path[2:]
         elif line.startswith(prefix) and not line.startswith(prefix * 3):
             current.append(line[1:])
-    if current and path:
-        files.append((path, "\n".join(current)))
+    if current:
+        hunks.append("\n".join(current))
+    if hunks and path:
+        files.append((path, hunks))
     return files
+
+
+def changed_source(diff, prefix):
+    return [(path, "\n".join(hunks)) for path, hunks in changed_hunks(diff, prefix)]
 
 
 def library_for_path(path):
     parts = Path(path).parts
     return "/".join(parts[:4]) if len(parts) > 3 and parts[:3] == ("core", "libs", "prx") else ""
+
+
+def production_source(path):
+    path = Path(path)
+    return path.suffix == ".cpp" and not any(part.lower() in {"test", "tests"} for part in path.parts[2:-1])
+
+
+def export_diff(old, new):
+    diff = git("diff", "-U0", "--no-color", old, new, "--", *EXPORT_PATHS)
+    source, in_hunk, relocated = None, False, set()
+    for line in diff.split("\n"):
+        line = line.removesuffix("\r")
+        if line.startswith("diff --git "):
+            source, in_hunk = None, False
+        elif line.startswith("@@"):
+            in_hunk = True
+        elif not in_hunk and line.startswith("rename from "):
+            source = unquote_path(line[12:])
+        elif not in_hunk and source is not None and line.startswith("rename to "):
+            destination = unquote_path(line[10:])
+            if library_for_path(source) != library_for_path(destination):
+                relocated.update(path for path in (source, destination) if library_for_path(path) and production_source(path))
+    if relocated:
+        diff += "\n" + git("diff", "--no-renames", "-U0", "--no-color", old, new, "--",
+                           *(f":(literal){path}" for path in sorted(relocated)), *EXPORT_PATHS[1:])
+    return diff
 
 
 def source_exports(text, library=""):
@@ -347,14 +397,15 @@ def source_exports(text, library=""):
 
 def source_changed_exports(diff, prefix):
     found = {}
-    for path, text in changed_source(diff, prefix):
+    for path, hunks in changed_hunks(diff, prefix):
         library = library_for_path(path)
-        for key, names in source_exports(text, library).items():
+        for key, names in source_exports("\n".join(hunks), library).items():
             found.setdefault(key, set()).update(names)
-        file_diff = "\n".join(prefix + line for line in text.splitlines())
-        for name in exports(file_diff, prefix):
-            canonical = nid_names.strip_nid_postfix(name)
-            found.setdefault((library, nid_names.compute_nid(canonical)), set()).add(canonical)
+        for hunk in hunks:
+            hunk_diff = "\n".join(prefix + line for line in hunk.splitlines())
+            for name in exports(hunk_diff, prefix):
+                canonical = nid_names.strip_nid_postfix(name)
+                found.setdefault((library, nid_names.compute_nid(canonical)), set()).add(canonical)
     return found
 
 
@@ -393,8 +444,7 @@ def base_sources(root, ref):
         info, name = entry.split("\t", 1)
         mode, kind, blob = info.split()
         path = Path(name)
-        if kind != "blob" or mode == "120000" or path.suffix != ".cpp" or any(
-                part.lower() in {"test", "tests"} for part in path.parts[2:-1]):
+        if kind != "blob" or mode == "120000" or not production_source(path):
             continue
         sources.append((blob, name))
     return sources
@@ -455,7 +505,7 @@ def scan(pr):
         pr["files"].add(path)
         if status == "A":
             pr["added"].add(path)
-    diff = git("diff", "-U0", "--no-color", old, new, "--", *EXPORT_PATHS)
+    diff = export_diff(old, new)
     pr["exports"] = exports(diff)
     pr["added_exports"] = source_changed_exports(diff, "+")
     pr["removed_exports"] = source_changed_exports(diff, "-")
@@ -471,7 +521,7 @@ def probe(pr):
             existing.add(path)
     if not any(path.startswith("core/libs/prx/") and path.endswith(".cpp") for path in files):
         return files, (set(), {}), existing
-    diff = git("diff", "-U0", "--no-color", base, pr["ref"], "--", *EXPORT_PATHS)
+    diff = export_diff(base, pr["ref"])
     return files, (exports(diff), source_changed_exports(diff, "+")), existing
 
 
@@ -806,7 +856,8 @@ def main_status(names, ref):
         aliases = {canonical(item) for item in defined}
         for name in wanted & (aliases | ({nids[nid]} if nid in nids else set())):
             declared[name].setdefault(library, set()).update(aliases | {name})
-    scanned = {library: library_status(ref, library) for libraries in declared.values() for library in libraries if library}
+    libraries = {library for exports in declared.values() for library in exports if library}
+    scanned = {library: library_status(ref, library) for library in sorted(libraries)}
     status = {}
     for name, libraries in declared.items():
         status[name] = {}
@@ -817,7 +868,11 @@ def main_status(names, ref):
 
 
 def lookup_report(names, found, status, prs, blob):
-    lines = []
+    lines = [
+        "PS5 exports only. Internal functions and instruction opcodes are not checked.",
+        "Inspect candidate pull requests and run --branch <branch> to check file and line overlaps.",
+        "",
+    ]
     for requested in names:
         name = canonical(requested)
         lines.append(name)
@@ -825,12 +880,12 @@ def lookup_report(names, found, status, prs, blob):
         if libraries:
             lines.extend(f"  main: {library} ({state})" for library, state in sorted(libraries.items()))
         else:
-            lines.append("  main: not declared")
+            lines.append("  main: no matching PS5 export")
         numbers = sorted(found.get(name, ()))
         if numbers:
             lines.extend(f"  open: {pull(blob, number)} by {prs[number]['author']}: {prs[number].get('title', '')}" for number in numbers)
         else:
-            lines.append("  open: none")
+            lines.append("  open: no matching PS5 export changes")
     return "\n".join(lines) + "\n"
 
 
@@ -842,7 +897,7 @@ def describe_failure(error):
 
 def resolve_branch(name):
     try:
-        return git("rev-parse", "--verify", f"{name}^{{commit}}").strip()
+        return git("rev-parse", "--verify", f"{name}^0").strip()
     except subprocess.CalledProcessError:
         raise ValueError(f"no single branch or commit is named {name!r}; check `git branch --show-current`") from None
 
@@ -884,7 +939,7 @@ def main(argv=None):
             return 0
         if args.branch:
             sha = branch_sha
-            prs = own(prs, sha)
+            prs = without_own_pull_request(own(prs, sha), args.branch)
             prs[0] = {"ref": sha, "author": None, "depends": set()}
         scan_all(prs, args.jobs)
         current_exports = base_exports(BASE_REF)

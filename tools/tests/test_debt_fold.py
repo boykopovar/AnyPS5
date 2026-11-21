@@ -73,6 +73,15 @@ class FoldTests(unittest.TestCase):
                                                          f"- [sceExampleE]({LINK}) (libSceExample) - returns 1", "",
                                                          "### Unknown function info"])
 
+    def test_show_writes_a_debt_file_outside_the_ansi_code_page_as_utf8(self):
+        self.write(DEBT, BASE.replace("returns 0 without reading its argument", "returns ∞"))
+        stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+            code = debt_fold.main(["--root", str(self.root), "--show", "libSceExample"])
+            stdout.flush()
+        self.assertEqual(code, 0)
+        self.assertIn("returns ∞", stdout.buffer.getvalue().decode("utf-8"))
+
     def test_add_creates_a_missing_section(self):
         self.fragment("a", f"# libSceExample\n\n## add Pending exports\n\n- [sceExampleF]({LINK}) (libSceExample) - throws\n")
         self.run_fold()

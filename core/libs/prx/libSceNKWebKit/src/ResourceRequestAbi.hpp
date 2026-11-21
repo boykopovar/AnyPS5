@@ -47,8 +47,18 @@ struct ResourceRequestBase {
 
 enum SameSiteDisposition : std::uint8_t { Unspecified, SameSite, CrossSite };
 
+struct FormData;
+
+struct FormDataRefPtr {
+    FormData* ptr;
+    ~FormDataRefPtr();
+};
+
 static_assert(sizeof(HTTPHeaderMap) == 32);
 static_assert(sizeof(Vector) == 16);
+static_assert(sizeof(FormDataRefPtr) == 8);
+static_assert(alignof(FormDataRefPtr) == 8);
+static_assert(offsetof(FormDataRefPtr, ptr) == 0);
 static_assert(offsetof(ResourceRequestBase, url) == 0);
 static_assert(offsetof(ResourceRequestBase, firstPartyForCookies) == 40);
 static_assert(offsetof(ResourceRequestBase, timeoutInterval) == 80);

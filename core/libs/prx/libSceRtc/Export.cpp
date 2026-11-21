@@ -160,11 +160,14 @@ int setCurrentTick(std::size_t clock, const RtcTick* tick) {
 }
 
 bool hostLocalTime(std::time_t seconds, std::tm& local) {
+    const int savedErrno = errno;
 #ifdef _WIN32
-    return localtime_s(&local, &seconds) == 0;
+    const bool converted = localtime_s(&local, &seconds) == 0;
 #else
-    return localtime_r(&seconds, &local) != nullptr;
+    const bool converted = localtime_r(&seconds, &local) != nullptr;
 #endif
+    errno = savedErrno;
+    return converted;
 }
 
 std::int64_t localOffsetSeconds(std::uint64_t utcTick) {
@@ -851,10 +854,10 @@ int APS5_VABI sceRtcFormatRFC3339Precise(char* date_time, const RtcTick* utc, in
     const std::uint64_t shift = static_cast<std::uint64_t>(time_zone_minutes < 0 ? -time_zone_minutes : time_zone_minutes) * TICKS_PER_MINUTE;
     std::uint64_t localTick = 0;
     if (time_zone_minutes < 0) {
-        if (source.tick < shift) return SCE_RTC_ERROR_INVALID_VALUE;
+        if (source.tick < shift && rangeChecked()) return SCE_RTC_ERROR_INVALID_VALUE;
         localTick = source.tick - shift;
     } else {
-        if (source.tick > std::numeric_limits<std::uint64_t>::max() - shift) return SCE_RTC_ERROR_INVALID_VALUE;
+        if (source.tick > std::numeric_limits<std::uint64_t>::max() - shift && rangeChecked()) return SCE_RTC_ERROR_INVALID_VALUE;
         localTick = source.tick + shift;
     }
     const RtcDateTime time = fromTick(localTick);
