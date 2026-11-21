@@ -10,7 +10,9 @@ constexpr std::int32_t UnsupportedError = 16;
 bool Failed(const UEnumeration* enumeration, std::int32_t* status) {
     if (!enumeration) return true;
     if (!status) APS5_INVALID_ARG_EX;
-    return *status > 0;
+    std::int32_t value;
+    if (!GuestCopyIn_nid_no_patch(&value, status, sizeof(value))) NotImplemented_nid_no_patch(__func__);
+    return value > 0;
 }
 
 }
