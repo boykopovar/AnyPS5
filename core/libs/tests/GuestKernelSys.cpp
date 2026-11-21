@@ -1564,6 +1564,28 @@ static void LongDirectoryAtCalls(const std::filesystem::path& root) {
     for (auto level = levels.rbegin(); level != levels.rend(); ++level) Require(::RemoveDirectoryW(verbatim(*level).c_str()) != FALSE);
     longTree.clear();
 }
+
+static void LongDirectoryFchdir(const std::filesystem::path& root) {
+    std::vector<std::filesystem::path> levels{root / "long"};
+    for (int level = 0; level < 5; ++level) levels.push_back(levels.back() / std::string(60, 'd'));
+    longTree = levels;
+    const auto verbatim = [](const std::filesystem::path& path) { return LR"(\\?\)" + std::filesystem::absolute(path).wstring(); };
+    for (const auto& level : levels) Require(::CreateDirectoryW(verbatim(level).c_str(), nullptr) != FALSE);
+    const auto& path = levels.back();
+    Require(std::filesystem::absolute(path).native().size() > MAX_PATH);
+    const int directory = sceKernelOpen(path.generic_string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(directory >= 0);
+    char previous[4096];
+    Require(getcwd_nid_postfix(previous, sizeof(previous)) == previous);
+    const std::string expected = (std::strcmp(previous, "/") == 0 ? std::string() : std::string(previous)) + "/" + path.generic_string();
+    Require(fchdir_nid_postfix(directory) == 0);
+    char current[4096];
+    Require(getcwd_nid_postfix(current, sizeof(current)) == current && expected == current);
+    Require(chdir_nid_postfix(previous) == 0);
+    Require(sceKernelClose(directory) == 0);
+    for (auto level = levels.rbegin(); level != levels.rend(); ++level) Require(::RemoveDirectoryW(verbatim(*level).c_str()) != FALSE);
+    longTree.clear();
+}
 #endif
 
 int main() {
@@ -1607,6 +1629,7 @@ int main() {
     Require(std::filesystem::create_directory(root));
 #ifdef _WIN32
     LongDirectoryAtCalls(root);
+    LongDirectoryFchdir(root);
 #endif
     DirectoryRenameTests(root);
     OwnershipAndLinkTests(root);

@@ -274,7 +274,7 @@ int APS5_VABI _ZN6icu_687UVector11setComparerEPFa8UElementS1_E_nid_postfix();
 int APS5_VABI _ZN6icu_688ByteSink15GetAppendBufferEiiPciPi_nid_postfix();
 int APS5_VABI _ZN6icu_6810UStringSetD1Ev_nid_postfix();
 int APS5_VABI ures_getVersionNumberInternal_nid_postfix();
-int APS5_VABI uprv_deleteUObject_nid_postfix();
+void APS5_VABI uprv_deleteUObject_nid_postfix(void* object);
 int APS5_VABI sceIcuLegacyUnknown_5tc_plus_6cE9fAc_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown_5yoxeYXrdUE_nid_no_patch();
 int APS5_VABI utrie2_internalU8PrevIndex_nid_postfix();
@@ -1985,7 +1985,7 @@ int APS5_VABI _ZN6icu_6810UnicodeSet10complementERKNS_13UnicodeStringE_nid_postf
 int APS5_VABI _ZNK6icu_6810UnicodeSet17matchesIndexValueEh_nid_postfix();
 int APS5_VABI _ZN6icu_6811StringPieceC2EPKc_nid_postfix();
 int APS5_VABI utrace_exit_nid_postfix();
-int APS5_VABI ures_getFunctionalEquivalent_nid_postfix();
+std::int32_t APS5_VABI ures_getFunctionalEquivalent_nid_postfix(char* result, std::int32_t resultCapacity, const char* path, const char* resName, const char* keyword, const char* locid, std::int8_t* isAvailable, std::int8_t omitDefault, std::int32_t* status);
 int APS5_VABI uloc_getTableStringWithFallback_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_t1kRYepQFw0_nid_no_patch();
 int APS5_VABI _ZN6icu_6817CanonicalIterator11cleanPiecesEv_nid_postfix();
