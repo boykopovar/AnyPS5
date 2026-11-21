@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -354,7 +355,14 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetBinary(void* record, cons
     auto* array = FindArray(record);
     if (array == nullptr) return kNullArray;
     if (value == nullptr) return kNullValue;
-    Uds::Binary bytes(size);
+    Uds::Binary bytes;
+    try {
+        bytes.resize(size);
+    } catch (const std::bad_alloc&) {
+        return kOutOfMemory;
+    } catch (const std::length_error&) {
+        return kOutOfMemory;
+    }
     if (!GuestCopyIn_nid_no_patch(bytes.data(), value, size)) return kNullValue;
     array->Add(std::move(bytes));
     return 0;
@@ -507,7 +515,14 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetBinary(void* record, con
     if (const int copied = CopyKey(key, name, kInvalidKey); copied != 0) return copied;
     key = name.c_str();
     if (value == nullptr) return kNullValue;
-    Uds::Binary bytes(size);
+    Uds::Binary bytes;
+    try {
+        bytes.resize(size);
+    } catch (const std::bad_alloc&) {
+        return kOutOfMemory;
+    } catch (const std::length_error&) {
+        return kOutOfMemory;
+    }
     if (!GuestCopyIn_nid_no_patch(bytes.data(), value, size)) return kNullValue;
     object->Set(key, std::move(bytes));
     return 0;
