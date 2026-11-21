@@ -83,6 +83,7 @@ public:
     void SetTitleReadsMouse(bool reads);
     void Release();
     bool MouseMode() const;
+    const char* MouseModeShortcut(bool guestReadsMouse) const;
     PadInputState Compose(const PadInputState& controller) const;
     const InputConfiguration& Configuration() const;
 

@@ -170,6 +170,30 @@ void requestTests() {
     std::printf("pad status: a request shows the panel for 4 s in both modes\n");
 }
 
+void mouseModeTests() {
+    PadStatusDisplay display(PadStatusMode::Off);
+    require(!display.OverlayLines(at(0)), "an untouched mouse mode shows a notice");
+    display.ShowMouseMode(at(100), "F7", true);
+    const std::vector<std::string> enabled{"MOUSE AS STICK ON", "TOGGLE: F7"};
+    require(display.OverlayLines(at(4099)) == enabled, "the default mouse notice is wrong");
+    require(!display.Wants(at(100)), "a mouse notice starts controller polling");
+    require(!display.OverlayLines(at(4100)), "the mouse notice has not expired");
+
+    display.Request(at(5000));
+    display.ShowMouseMode(at(5100), "F4", false);
+    const std::vector<std::string> combined{"MOUSE AS STICK OFF", "TOGGLE: F4", "NO CONTROLLER"};
+    require(display.OverlayLines(at(5100)) == combined, "the rebound mouse notice hides the controller status");
+    display.ShowMouseMode(at(5200), nullptr, false);
+    require(display.OverlayLines(at(5200)) == std::vector<std::string>{"NO CONTROLLER"}, "clearing the notice changed controller status");
+
+    display.ShowMouseMode(at(10000), "", false);
+    require(display.OverlayLines(at(10000)) == std::vector<std::string>{"MOUSE AS STICK OFF", "TOGGLE INPUT UNAVAILABLE"}, "an unavailable toggle has a wrong hint");
+    display.ShowMouseMode(at(11000), std::string(64, 'x').c_str(), false);
+    const auto lines = display.OverlayLines(at(11000)).value();
+    require(lines.back().size() == AgcDriver::PadStatusMetrics::Columns, "a long shortcut does not fit the panel");
+    static_cast<void>(AgcDriver::LayOutPadStatus(lines, {640, 480}, AgcDriver::OverlayCorner::TopLeft));
+}
+
 void providerTests() {
     std::vector<PadStatusSnapshot> script{snapshot({}), snapshot({pad(PadKind::DualSense, PadPower::Wired)}), snapshot({pad(PadKind::DualSense, PadPower::Wired)}), snapshot({})};
     std::size_t step = 0;
@@ -473,6 +497,7 @@ int main(int argc, char** argv) try {
     batteryTests();
     replacementTests();
     requestTests();
+    mouseModeTests();
     providerTests();
     lineTests();
     nameTests();
