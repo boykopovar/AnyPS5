@@ -1,0 +1,277 @@
+#include "ControlFlow/GraphBuilder.hpp"
+#include "ControlFlow/Structurizer.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
+#include "Translation/InstructionTranslator.hpp"
+#include "Translation/ShaderInputInfoBuilder.hpp"
+#include "CacheKey.hpp"
+#include "Recompiler.hpp"
+#include "Optimization/ResourceProgram.hpp"
+#include <spirv/unified1/spirv.hpp>
+#include <array>
+#include <cstdio>
+#include <initializer_list>
+#include <cstdlib>
+#include <cstring>
+#include <exception>
+#include <span>
+#include <string>
+#include <vector>
+
+using namespace ShaderRecompiler;
+
+namespace {
+
+struct Shape {
+    std::size_t ballots = 0;
+    std::size_t blocks = 0;
+    std::uint32_t declines = 0;
+    std::uint32_t fastOps = 0;
+    bool flagsMaskedByExec = false;
+};
+
+bool MaskedByExec(const IrValue* value, unsigned depth) {
+    if (value == nullptr || depth == 0u) return false;
+    value = value->Resolve();
+    if (value->Opcode() == IrOpcode::LogicalAnd) {
+        for (std::size_t index = 0; index < value->ArgumentCount(); ++index) {
+            if (value->Argument(index)->Resolve()->Opcode() == IrOpcode::GetExec) return true;
+        }
+    }
+    for (std::size_t index = 0; index < value->ArgumentCount(); ++index) {
+        if (MaskedByExec(value->Argument(index), depth - 1u)) return true;
+    }
+    return false;
+}
+
+Shape Translated(ShaderStageKind stage, std::vector<std::uint32_t> code, std::uint64_t address = 0u) {
+    code.push_back(0xbf810000u);
+    const auto decoded = RdnaInstructionDecoder{}.Decode(code);
+    auto cfg = GraphBuilder{}.Build(decoded);
+    Structurizer{}.Structurize(cfg);
+    GuestContext context{};
+    context.waveSize = 32;
+    if (stage == ShaderStageKind::Compute) context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    if (stage == ShaderStageKind::Pixel) {
+        context.pixel = ShaderPixelStageInfo{};
+        context.pixel->wave32 = true;
+    }
+    TessellationConfiguration tessellation{};
+    tessellation.inputControlPoints = 3u;
+    tessellation.outputControlPoints = 3u;
+    tessellation.domain = 1u;
+    tessellation.partitioning = 0u;
+    tessellation.outputTopology = 2u;
+    tessellation.patchesPerGroup = 1u;
+    if (stage == ShaderStageKind::Local || stage == ShaderStageKind::TessellationControl || stage == ShaderStageKind::TessellationEvaluation) context.vertex = ShaderVertexStageInfo{};
+    TranslateOptions options{};
+    options.stage = stage;
+    options.shaderHash = address;
+    options.waveSize = 32;
+    options.userDataCount = 0;
+    options.inputInfo = BuildShaderStageInputInfo(stage, context, 32, nullptr, &tessellation);
+    const auto program = InstructionTranslator{}.Translate(decoded, cfg, options);
+    Shape shape;
+    shape.blocks = program.Blocks().size();
+    shape.declines = program.Metadata().nanSpeculationDeclines;
+    shape.fastOps = program.Metadata().nanSpeculationFastOps;
+    for (const auto& block : program.Blocks()) {
+        for (const auto* inst : block->Instructions()) {
+            shape.ballots += inst->Opcode() == IrOpcode::Ballot ? 1u : 0u;
+            if (inst->Opcode() == IrOpcode::Ballot && MaskedByExec(inst->Argument(0), 6u)) shape.flagsMaskedByExec = true;
+        }
+    }
+    return shape;
+}
+
+}
+
+int main() {
+#ifdef _WIN32
+    _putenv_s("ANYPS5_NO_SHADER_CACHE", "1");
+    _putenv_s("APS5_NAN_SPECULATION", "1");
+    _putenv_s("APS5_NAN_SPECULATION_MIN", "1");
+    _putenv_s("APS5_NAN_SPECULATION_MIN_OPS", "0");
+    _putenv_s("APS5_NAN_SPECULATION_MIN_DENSITY", "0");
+#else
+    setenv("ANYPS5_NO_SHADER_CACHE", "1", 1);
+    setenv("APS5_NAN_SPECULATION", "1", 1);
+    setenv("APS5_NAN_SPECULATION_MIN", "1", 1);
+    setenv("APS5_NAN_SPECULATION_MIN_OPS", "0", 1);
+    setenv("APS5_NAN_SPECULATION_MIN_DENSITY", "0", 1);
+#endif
+    try {
+        constexpr std::uint32_t AddF32 = 0x06020300u;
+        constexpr std::uint64_t Failing = 0x1234u;
+        constexpr std::uint64_t Other = 0x5678u;
+        const auto fail = [](const char* message) {
+            std::fprintf(stderr, "nan speculation fallback: %s\n", message);
+            return 1;
+        };
+        const auto first = Translated(ShaderStageKind::Compute, {AddF32}, Failing);
+        if (first.fastOps != 1u) return fail("the region was not speculated before the fallback");
+        if (!first.flagsMaskedByExec) return fail("the NaN flag of a lane that is not active reaches the region branch");
+        const std::array<std::uint32_t, 2> code{AddF32, 0xbf810000u};
+        ShaderRecompiler::RecompileRequest request{
+            {ShaderRecompiler::ShaderStage::Compute, Failing, code, 0, {}},
+            {32, 0, {}, ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u}, std::nullopt, std::nullopt, {}},
+            {},
+            {0, 0, 0, 128}
+        };
+        auto other = request;
+        other.shader.codeAddress = Other;
+        std::vector<std::uint64_t> failingKey;
+        std::vector<std::uint64_t> otherKey;
+        RecompileCacheKey::Build(request, failingKey);
+        RecompileCacheKey::Build(other, otherKey);
+        if (failingKey != otherKey) return fail("the cache key depends on the shader address before any fallback");
+        bool threw = false;
+        request.shader.code = {};
+        try {
+            static_cast<void>(ShaderRecompiler::Recompile(request));
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        request.shader.code = code;
+        if (!threw) return fail("a request without code compiled");
+        if (NanSpeculationFallbacks() != 0u || NanSpeculationSuppressed(Failing)) return fail("a compile that fails without speculation too turned the speculation off for its program");
+        if (!SuppressNanSpeculation(Failing)) return fail("a program that was not suppressed could not be suppressed");
+        if (NanSpeculationFallbacks() != 1u || !NanSpeculationSuppressed(Failing)) return fail("a suppressed program is not counted");
+        if (NanSpeculationSuppressed(Other)) return fail("the suppression reached another program");
+        if (SuppressNanSpeculation(Failing)) return fail("the same program was suppressed twice");
+        if (NanSpeculationStats(static_cast<std::uint32_t>(ShaderRecompiler::ShaderStage::Compute)).fellBack != 0u) return fail("a fallback that did not recover was counted");
+        if (Translated(ShaderStageKind::Compute, {AddF32}, Failing).fastOps != 0u) return fail("a suppressed program was still speculated");
+        if (Translated(ShaderStageKind::Compute, {AddF32}, Other).fastOps != 1u) return fail("a program that did not fail lost its speculation");
+        RecompileCacheKey::Build(request, failingKey);
+        RecompileCacheKey::Build(other, otherKey);
+        if (failingKey == otherKey) return fail("the cache key does not tell a suppressed program from a speculated one");
+        auto prepared = other;
+        prepared.shader.codeAddress = 0x9abcu;
+        prepared.useCache = true;
+        prepared.target.vulkanVersion = 0x00401000u;
+        prepared.target.spirvVersion = 0x00010300u;
+        prepared.target.subgroupSize = 32;
+        static constexpr std::array<std::uint32_t, 6> capabilities{spv::CapabilityShader, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformVote, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic};
+        prepared.target.supportedCapabilities = capabilities;
+        const auto before = PrepareShader(prepared);
+        if (!PreparedShaderInvocation::TryCreate(prepared, before).has_value()) return fail("a prepared shader did not match its own request");
+        const auto beforeCapture = PreparedShaderInvocation::TryCreate(prepared, before)->Capture(SrtRuntime{});
+        if (beforeCapture == nullptr) return fail("a speculated prepared shader did not capture");
+        if (!SuppressNanSpeculation(prepared.shader.codeAddress)) return fail("the prepared program was already suppressed");
+        if (PreparedShaderInvocation::TryCreate(prepared, before).has_value()) return fail("a shader prepared with speculation still matches after the program was suppressed");
+        const auto after = PrepareShader(prepared);
+        const auto retried = PreparedShaderInvocation::TryCreate(prepared, after);
+        if (!retried.has_value()) return fail("a shader prepared again without speculation does not match its request");
+        if (retried->Materialize(*retried->Capture(SrtRuntime{})) == nullptr) return fail("a shader prepared again without speculation did not materialize");
+        const auto stats = [] { return NanSpeculationStats(static_cast<std::uint32_t>(ShaderRecompiler::ShaderStage::Compute)).fellBack; };
+        const auto uncached = [&](std::uint64_t address) {
+            auto copy = prepared;
+            copy.shader.codeAddress = address;
+            copy.useCache = false;
+            return copy;
+        };
+        {
+            const auto fellBackBefore = stats();
+            const auto injected = uncached(0xa001u);
+            InjectNanSpeculationFailures(1u, false);
+            try {
+                static_cast<void>(ShaderRecompiler::Recompile(injected));
+            } catch (const std::exception& error) {
+                InjectNanSpeculationFailures(0u, false);
+                return fail((std::string("a failed speculated compile was not recovered: ") + error.what()).c_str());
+            }
+            InjectNanSpeculationFailures(0u, false);
+            if (!NanSpeculationSuppressed(0xa001u)) return fail("a recovered program is not suppressed");
+            if (stats() != fellBackBefore + 1u) return fail("a recovered program is not counted as fallen back");
+        }
+        {
+            const auto fellBackBefore = stats();
+            const auto failing = uncached(0xa002u);
+            InjectNanSpeculationFailures(2u, true);
+            bool failed = false;
+            try {
+                static_cast<void>(ShaderRecompiler::Recompile(failing));
+            } catch (const std::exception&) {
+                failed = true;
+            }
+            InjectNanSpeculationFailures(0u, false);
+            if (!failed) return fail("a compile that fails without speculation too succeeded");
+            if (NanSpeculationSuppressed(0xa002u)) return fail("a failed retry left the program suppressed");
+            if (stats() != fellBackBefore) return fail("a failed retry was counted as a fallback");
+        }
+        {
+            auto captured = prepared;
+            captured.shader.codeAddress = 0xa003u;
+            static constexpr std::array<std::uint32_t, 3> capturedCode{0x06040300u, 0x06040300u, 0xbf810000u};
+            captured.shader.code = capturedCode;
+            const auto capture = CaptureResources(captured, SrtRuntime{});
+            if (capture == nullptr) return fail("a speculated request did not capture");
+            const auto fellBackBefore = stats();
+            InjectNanSpeculationFailures(1u, false);
+            std::shared_ptr<const RecompileResult> result;
+            try {
+                result = ShaderRecompiler::Recompile(captured, *capture);
+            } catch (const std::exception& error) {
+                InjectNanSpeculationFailures(0u, false);
+                return fail((std::string("a failed speculated captured compile was not recovered: ") + error.what()).c_str());
+            }
+            InjectNanSpeculationFailures(0u, false);
+            if (result == nullptr || !NanSpeculationSuppressed(0xa003u) || stats() != fellBackBefore + 1u) return fail("a recovered captured compile is not suppressed and counted");
+        }
+        {
+            auto first = prepared;
+            first.shader.codeAddress = 0xa004u;
+            static_cast<void>(ShaderRecompiler::Recompile(first));
+            if (!NanSpeculationApplied(0xa004u)) return fail("a compiled speculated program is not marked as speculated");
+            auto second = first;
+            second.shader.codeAddress = 0xa005u;
+            static_cast<void>(ShaderRecompiler::Recompile(second));
+            if (!NanSpeculationApplied(0xa005u)) return fail("a program that reused a speculated variant is not marked as speculated");
+        }
+        {
+            const auto retryCase = [&](std::uint64_t address, std::span<const std::uint32_t> words, bool secondWorks) -> const char* {
+                auto retrying = prepared;
+                retrying.shader.codeAddress = address;
+                retrying.shader.code = words;
+                const auto handle = PrepareShader(retrying);
+                const auto invocation = PreparedShaderInvocation::TryCreate(retrying, handle);
+                if (!invocation.has_value()) return "a shader prepared for the retry does not match its request";
+                const auto fellBackBefore = stats();
+                NanSpeculationRetryScope scope(address, static_cast<std::uint32_t>(retrying.shader.stage));
+                InjectNanSpeculationFailures(1u, false);
+                bool retried = false;
+                try {
+                    static_cast<void>(invocation->Capture(SrtRuntime{}));
+                } catch (const NanSpeculationRetry&) {
+                    retried = true;
+                    scope.Retried();
+                }
+                InjectNanSpeculationFailures(0u, false);
+                if (!retried) return "a failed speculated capture did not ask for a second preparation";
+                if (!NanSpeculationSuppressed(address)) return "the second preparation was not prepared without speculation";
+                if (stats() != fellBackBefore) return "a fallback was counted before the second preparation succeeded";
+                if (secondWorks) {
+                    const auto again = PrepareShader(retrying);
+                    const auto second = PreparedShaderInvocation::TryCreate(retrying, again);
+                    if (!second.has_value() || second->Capture(SrtRuntime{}) == nullptr) return "the shader prepared again without speculation did not capture";
+                    scope.Succeeded();
+                    if (stats() != fellBackBefore + 1u) return "a fallback that recovered was not counted";
+                    if (!NanSpeculationSuppressed(address)) return "a fallback that recovered lost its suppression";
+                } else {
+                    scope.Abandoned();
+                    if (NanSpeculationSuppressed(address)) return "a failed second preparation left the program suppressed";
+                    if (stats() != fellBackBefore) return "a failed second preparation was counted as a fallback";
+                }
+                return nullptr;
+            };
+            static constexpr std::array<std::uint32_t, 3> recoveredCode{0x06080300u, 0x06080300u, 0xbf810000u};
+            static constexpr std::array<std::uint32_t, 3> abandonedCode{0x060a0300u, 0x060a0300u, 0xbf810000u};
+            if (const auto* problem = retryCase(0xb001u, recoveredCode, true)) return fail(problem);
+            if (const auto* problem = retryCase(0xb002u, abandonedCode, false)) return fail(problem);
+        }
+        std::puts("nan speculation fallback tests passed");
+        return 0;
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "%s\n", error.what());
+        return 1;
+    }
+}

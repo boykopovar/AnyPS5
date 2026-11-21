@@ -118,6 +118,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DenormalFlushEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/VectorWindowIndexNarrower.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/NanPayloadEliminator.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/NanFlagPruner.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/VectorWindowStoreEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/RedundantValueEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtAddressArithmetic.cpp
@@ -270,6 +271,15 @@ function(add_shader_recompiler target runtimeTarget)
             HashBytes
             LayoutBarycentricEmulation
             MeshBarycentricLayoutOf
+            NanSpeculation
+            NanSpeculationFallbacks
+            NanSpeculationRetryScope
+            NoteNanSpeculationFallback
+            RestoreNanSpeculation
+            InjectNanSpeculationFailures
+            NanSpeculationRetry
+            NanSpeculationStageCount
+            NanSpeculationStats
             NativeCachePath_nid_no_patch
             ImageTableAbi::PoisonCode
             ImageTableAbi::PoisonReasonName

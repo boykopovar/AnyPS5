@@ -18,6 +18,7 @@ IrValue& IrBuilder::Emit(IrOpcode opcode, IrType type, std::initializer_list<IrV
     if (arguments.size() != IrOpcodeOperandCount(opcode)) {
         throw std::invalid_argument("IrBuilder::Emit argument count mismatch for " + std::string(IrOpcodeName(opcode)));
     }
+    if (opcode == IrOpcode::SetExec || opcode == IrOpcode::SetExecLo || opcode == IrOpcode::SetExecHi) ++program.Metadata().execWrites;
     IrValue& value = program.CreateValue(opcode, type);
     std::size_t index = 0;
     for (IrValue* argument : arguments) {
@@ -41,6 +42,7 @@ IrValue& IrBuilder::Emit(IrOpcode opcode, IrType type, std::initializer_list<IrV
     if (arguments.size() != IrOpcodeOperandCount(opcode)) {
         throw std::invalid_argument("IrBuilder::Emit argument count mismatch for " + std::string(IrOpcodeName(opcode)));
     }
+    if (opcode == IrOpcode::SetExec || opcode == IrOpcode::SetExecLo || opcode == IrOpcode::SetExecHi) ++program.Metadata().execWrites;
     IrValue& value = program.CreateValue(opcode, type, flags);
     std::size_t index = 0;
     for (IrValue* argument : arguments) {

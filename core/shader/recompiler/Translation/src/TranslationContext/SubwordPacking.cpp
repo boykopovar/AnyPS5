@@ -262,7 +262,9 @@ void TranslationContext::writeF16(const RdnaOperand& operand, IrF32 value, std::
     const IrF16 half(ir.Emit(IrOpcode::ConvertF16F32, IrType::F16, {&applyF16ResultModifiers(operand, value, sources).Value()}));
     const IrU16 bits(ir.Emit(IrOpcode::BitCastU16F16, IrType::U16, {&half.Value()}));
     IrU32 word(ir.Emit(IrOpcode::ConvertU32U16, IrType::U32, {&bits.Value()}));
-    if (invalid != nullptr) {
+    if (invalid != nullptr && nanFast) {
+        noteNan(ir.UGreaterThan(ir.BitwiseAnd(word.Value(), ir.Constant(0x7fffu)), ir.Constant(0x7c00u)), word.Value(), NanCheckLowHalf);
+    } else if (invalid != nullptr) {
         const IrU1 nan(ir.UGreaterThan(ir.BitwiseAnd(word.Value(), ir.Constant(0x7fffu)), ir.Constant(0x7c00u)));
         word = IrU32(ir.Select(ir.LogicalAnd(nan.Value(), *invalid), ir.Constant(0xfe00u), word.Value()));
     }
