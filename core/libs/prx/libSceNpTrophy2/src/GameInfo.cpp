@@ -69,16 +69,8 @@ int APS5_VABI sceNpTrophy2GetGameInfo(int context, int handle, NpTrophy2GameDeta
 }
 
 int APS5_VABI sceNpTrophy2GetGameIcon(int context, int handle, void* buffer, size_t* size) {
-    (void)context;
     (void)handle;
-    (void)buffer;
-    if (size != nullptr) {
-        const std::size_t iconSize = NP_TROPHY2_ICON_SIZE_NONE;
-        if (!GuestCopyOut_nid_no_patch(size, &iconSize, sizeof(iconSize))) {
-            APS5_INVALID_ARG_EX;
-        }
-    }
-    throw std::runtime_error(std::string(__func__) + ": icon file not found");
+    return NpTrophy2::CopyIcon(context, NpTrophy2::IconKind::Game, 0, buffer, size, __func__);
 }
 
 int APS5_VABI sceNpTrophy2RegisterUnlockCallback(void* callback, void* userdata) {

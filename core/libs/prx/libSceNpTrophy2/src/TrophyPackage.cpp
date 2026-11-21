@@ -646,6 +646,27 @@ TrophyPackage ParseTrophyPackage(std::string_view ucp, std::string_view language
             if (const auto* value = text.Find(key); value != nullptr && value->kind == Json::Kind::String) *field = value->text;
         }
     }
+    const auto localized = [&files, &candidates](const std::string& stem) -> std::optional<std::string> {
+        for (const auto candidate : candidates) {
+            if (candidate.empty()) continue;
+            if (const auto found = files.find(stem + "_" + std::string(candidate) + ".png"); found != files.end()) return std::string(found->second);
+        }
+        return std::nullopt;
+    };
+    const auto numbered = [](const char* prefix, std::int32_t id) {
+        char name[24];
+        std::snprintf(name, sizeof(name), "%s%04d", prefix, static_cast<int>(id));
+        return std::string(name);
+    };
+    package.gameIcon = localized("icon0");
+    for (const auto& [id, title] : package.groups) {
+        if (id == BaseGroup) continue;
+        if (auto icon = localized(numbered("gr", id))) package.groupIcons.emplace(id, std::move(*icon));
+    }
+    for (const auto& [id, trophy] : package.trophies) {
+        if (const auto found = files.find(numbered("trop", id) + ".png"); found != files.end()) package.trophyIcons.emplace(id, found->second);
+        if (const auto found = files.find(numbered("reward", id) + ".png"); found != files.end()) package.rewardIcons.emplace(id, found->second);
+    }
     return package;
 }
 

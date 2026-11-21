@@ -138,17 +138,8 @@ int APS5_VABI sceNpTrophy2GetTrophyInfoArray(int context, int handle, uint32_t o
 }
 
 int APS5_VABI sceNpTrophy2GetTrophyIcon(int context, int handle, int trophy_id, void* buffer, size_t* size) {
-    (void)context;
     (void)handle;
-    (void)trophy_id;
-    (void)buffer;
-    if (size != nullptr) {
-        const std::size_t iconSize = NP_TROPHY2_ICON_SIZE_NONE;
-        if (!GuestCopyOut_nid_no_patch(size, &iconSize, sizeof(iconSize))) {
-            APS5_INVALID_ARG_EX;
-        }
-    }
-    throw std::runtime_error(std::string(__func__) + ": icon file not found");
+    return NpTrophy2::CopyIcon(context, NpTrophy2::IconKind::Trophy, trophy_id, buffer, size, __func__);
 }
 
 }

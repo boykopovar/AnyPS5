@@ -30,6 +30,10 @@ const TitleTrophies& Title(std::uint32_t serviceLabel);
 const TrophyPackage* Package(std::uint32_t serviceLabel);
 void CopyText(char* destination, std::size_t size, std::string_view text);
 
+enum class IconKind { Game, Group, Trophy, Reward };
+
+int CopyIcon(int context, IconKind kind, std::int32_t id, void* buffer, std::size_t* size, const char* caller);
+
 using UnlockedQuery = std::function<bool(std::int32_t)>;
 
 UnlockedQuery UnlockedBy(std::int32_t userId, std::uint32_t serviceLabel);
