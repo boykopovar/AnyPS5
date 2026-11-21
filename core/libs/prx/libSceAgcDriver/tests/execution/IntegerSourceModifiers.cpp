@@ -204,6 +204,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (device->Target().subgroupSize < Threads) {
+            std::printf("skipped, the device's subgroups are narrower than a wave (%u lanes)\n", device->Target().subgroupSize);
+            return VulkanTestSkipped;
+        }
         Check(*device, DppCode, Names[0], DppExpected);
         Check(*device, SdwaCode, Names[1], SdwaExpected);
         std::puts("integer source modifier tests passed");
