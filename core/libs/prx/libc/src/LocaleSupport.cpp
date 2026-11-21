@@ -462,7 +462,7 @@ std::size_t SignPrefix(const char* text, std::size_t count) {
     return count > 0 && (text[0] == '+' || text[0] == '-') ? 1 : 0;
 }
 
-void InsertSeparators(std::string& text, const std::string& grouping, char separator, std::size_t offset, std::size_t prefix) {
+template<typename Text> void InsertSeparators(std::basic_string<Text>& text, const std::string& grouping, Text separator, std::size_t offset, std::size_t prefix) {
     const char* group = grouping.c_str();
     while (static_cast<signed char>(*group) != CHAR_MAX && static_cast<signed char>(*group) > 0 && static_cast<std::size_t>(*group) < offset - prefix) {
         offset -= static_cast<std::size_t>(*group);
@@ -804,19 +804,376 @@ constexpr char g_sceV2MoneyPutFamily[] = "std::__sce_v2::money_put virtual";
 constexpr char g_sceV2TimeGetFamily[] = "std::__sce_v2::time_get virtual";
 constexpr char g_sceV2TimePutFamily[] = "std::__sce_v2::time_put virtual";
 
-constexpr auto g_sceV2CtypeCharVtable = MakeSceV2FacetVtable<8, g_sceV2CtypeFamily, DestroySceV2CtypeFacet_nid_no_patch>();
-constexpr auto g_sceV2CtypeWideVtable = MakeSceV2FacetVtable<12, g_sceV2CtypeFamily, DestroySceV2WideCtypeFacet_nid_no_patch>();
+template<typename Text> struct SceV2BasicString {
+    static constexpr std::size_t InlineCapacity = 16 / sizeof(Text) - 1;
+    union {
+        Text buffer[InlineCapacity + 1];
+        Text* pointer;
+    };
+    std::size_t size;
+    std::size_t capacity;
+};
+
+using SceV2String = SceV2BasicString<char>;
+using SceV2WideString = SceV2BasicString<char16_t>;
+
+static_assert(sizeof(SceV2String) == 0x20);
+static_assert(sizeof(SceV2WideString) == 0x20);
+
+SceV2String* AssignSceV2String(SceV2String* result, const char* text) {
+    std::memset(result, 0, sizeof(SceV2String));
+    const std::size_t length = std::strlen(text);
+    char* data = result->buffer;
+    std::size_t capacity = GuestLocale::StringInlineCapacity;
+    if (length > GuestLocale::StringInlineCapacity) {
+        capacity = length | GuestLocale::StringCapacityMask;
+        data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
+        result->pointer = data;
+    }
+    std::memcpy(data, text, length);
+    data[length] = 0;
+    result->size = length;
+    result->capacity = capacity;
+    return result;
+}
+
+SceV2WideString* AssignSceV2WideString(SceV2WideString* result, const std::uint16_t* text) {
+    std::memset(result, 0, sizeof(SceV2WideString));
+    const auto* source = reinterpret_cast<const char16_t*>(text);
+    const std::size_t length = std::char_traits<char16_t>::length(source);
+    char16_t* data = result->buffer;
+    std::size_t capacity = SceV2WideString::InlineCapacity;
+    if (length > SceV2WideString::InlineCapacity) {
+        capacity = length | SceV2WideString::InlineCapacity;
+        data = static_cast<char16_t*>(GuestLocale::AllocateStringStorage((capacity + 1) * sizeof(char16_t)));
+        result->pointer = data;
+    }
+    std::memcpy(data, source, length * sizeof(char16_t));
+    data[length] = 0;
+    result->size = length;
+    result->capacity = capacity;
+    return result;
+}
+
+struct SceV2CtypeCharVtable {
+    GuestLocale::FacetVtable facet;
+    char (APS5_VABI *toLower)(const GuestLocale::Facet* self, char character);
+    const char* (APS5_VABI *toLowerRange)(const GuestLocale::Facet* self, char* first, const char* last);
+    char (APS5_VABI *toUpper)(const GuestLocale::Facet* self, char character);
+    const char* (APS5_VABI *toUpperRange)(const GuestLocale::Facet* self, char* first, const char* last);
+    char (APS5_VABI *widen)(const GuestLocale::Facet* self, char character);
+    const char* (APS5_VABI *widenRange)(const GuestLocale::Facet* self, const char* first, const char* last, char* destination);
+    char (APS5_VABI *narrow)(const GuestLocale::Facet* self, char character, char fallback);
+    const char* (APS5_VABI *narrowRange)(const GuestLocale::Facet* self, const char* first, const char* last, char fallback, char* destination);
+};
+
+char APS5_VABI SceV2CtypeToLower_nid_no_patch(const GuestLocale::Facet*, char character) {
+    return static_cast<char>(_Tolower_nid_postfix(static_cast<unsigned char>(character), nullptr));
+}
+
+const char* APS5_VABI SceV2CtypeToLowerRange_nid_no_patch(const GuestLocale::Facet*, char* first, const char* last) {
+    for (; first != last; ++first) *first = static_cast<char>(_Tolower_nid_postfix(static_cast<unsigned char>(*first), nullptr));
+    return first;
+}
+
+char APS5_VABI SceV2CtypeToUpper_nid_no_patch(const GuestLocale::Facet*, char character) {
+    return static_cast<char>(_Toupper_nid_postfix(static_cast<unsigned char>(character), nullptr));
+}
+
+const char* APS5_VABI SceV2CtypeToUpperRange_nid_no_patch(const GuestLocale::Facet*, char* first, const char* last) {
+    for (; first != last; ++first) *first = static_cast<char>(_Toupper_nid_postfix(static_cast<unsigned char>(*first), nullptr));
+    return first;
+}
+
+char APS5_VABI SceV2CtypeWiden_nid_no_patch(const GuestLocale::Facet*, char character) {
+    return character;
+}
+
+const char* APS5_VABI SceV2CtypeWidenRange_nid_no_patch(const GuestLocale::Facet*, const char* first, const char* last, char* destination) {
+    if (first != last) std::memcpy(destination, first, static_cast<std::size_t>(last - first));
+    return last;
+}
+
+char APS5_VABI SceV2CtypeNarrow_nid_no_patch(const GuestLocale::Facet*, char character, char) {
+    return character;
+}
+
+const char* APS5_VABI SceV2CtypeNarrowRange_nid_no_patch(const GuestLocale::Facet*, const char* first, const char* last, char, char* destination) {
+    if (first != last) std::memcpy(destination, first, static_cast<std::size_t>(last - first));
+    return last;
+}
+
+struct SceV2NumpunctCharVtable {
+    GuestLocale::FacetVtable facet;
+    char (APS5_VABI *decimalPoint)(const GuestLocale::NumpunctFacet* self);
+    char (APS5_VABI *thousandsSep)(const GuestLocale::NumpunctFacet* self);
+    SceV2String* (APS5_VABI *grouping)(SceV2String* result, const GuestLocale::NumpunctFacet* self);
+    SceV2String* (APS5_VABI *falsename)(SceV2String* result, const GuestLocale::NumpunctFacet* self);
+    SceV2String* (APS5_VABI *truename)(SceV2String* result, const GuestLocale::NumpunctFacet* self);
+};
+
+char APS5_VABI SceV2NumpunctDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self) {
+    return self->decimalPoint;
+}
+
+char APS5_VABI SceV2NumpunctThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self) {
+    return self->thousandsSep;
+}
+
+SceV2String* APS5_VABI SceV2NumpunctGrouping_nid_no_patch(SceV2String* result, const GuestLocale::NumpunctFacet* self) {
+    return AssignSceV2String(result, self->grouping);
+}
+
+SceV2String* APS5_VABI SceV2NumpunctFalsename_nid_no_patch(SceV2String* result, const GuestLocale::NumpunctFacet* self) {
+    return AssignSceV2String(result, self->falsename);
+}
+
+SceV2String* APS5_VABI SceV2NumpunctTruename_nid_no_patch(SceV2String* result, const GuestLocale::NumpunctFacet* self) {
+    return AssignSceV2String(result, self->truename);
+}
+
+struct SceV2CtypeWideVtable {
+    GuestLocale::FacetVtable facet;
+    bool (APS5_VABI *is)(const GuestLocale::Facet* self, short mask, char16_t character);
+    const char16_t* (APS5_VABI *isRange)(const GuestLocale::Facet* self, const char16_t* first, const char16_t* last, short* destination);
+    const char16_t* (APS5_VABI *scanIs)(const GuestLocale::Facet* self, short mask, const char16_t* first, const char16_t* last);
+    const char16_t* (APS5_VABI *scanNot)(const GuestLocale::Facet* self, short mask, const char16_t* first, const char16_t* last);
+    char16_t (APS5_VABI *toLower)(const GuestLocale::Facet* self, char16_t character);
+    const char16_t* (APS5_VABI *toLowerRange)(const GuestLocale::Facet* self, char16_t* first, const char16_t* last);
+    char16_t (APS5_VABI *toUpper)(const GuestLocale::Facet* self, char16_t character);
+    const char16_t* (APS5_VABI *toUpperRange)(const GuestLocale::Facet* self, char16_t* first, const char16_t* last);
+    char16_t (APS5_VABI *widen)(const GuestLocale::Facet* self, char character);
+    const char* (APS5_VABI *widenRange)(const GuestLocale::Facet* self, const char* first, const char* last, char16_t* destination);
+    char (APS5_VABI *narrow)(const GuestLocale::Facet* self, char16_t character, char fallback);
+    const char16_t* (APS5_VABI *narrowRange)(const GuestLocale::Facet* self, const char16_t* first, const char16_t* last, char fallback, char* destination);
+};
+
+const short* SceV2WideCtypeTable(const GuestLocale::Facet* self) {
+    return reinterpret_cast<const SceV2WideCtypeFacet*>(self)->table;
+}
+
+const void* SceV2WideCtypeInfo(const GuestLocale::Facet* self) {
+    return &reinterpret_cast<const SceV2WideCtypeFacet*>(self)->table;
+}
+
+const SceV2CtypeWideVtable& SceV2WideCtypeVirtuals(const GuestLocale::Facet* self) {
+    return *reinterpret_cast<const SceV2CtypeWideVtable*>(self->vtable);
+}
+
+short SceV2WideCtypeMask(const GuestLocale::Facet* self, char16_t character) {
+    const short* table = SceV2WideCtypeTable(self);
+    return table[static_cast<unsigned char>(SceV2WideCtypeVirtuals(self).narrow(self, character, 0))];
+}
+
+bool APS5_VABI SceV2WideCtypeIs_nid_no_patch(const GuestLocale::Facet* self, short mask, char16_t character) {
+    return (SceV2WideCtypeMask(self, character) & mask) != 0;
+}
+
+const char16_t* APS5_VABI SceV2WideCtypeIsRange_nid_no_patch(const GuestLocale::Facet* self, const char16_t* first, const char16_t* last, short* destination) {
+    for (; first != last; ++first, ++destination) *destination = SceV2WideCtypeMask(self, *first);
+    return first;
+}
+
+const char16_t* APS5_VABI SceV2WideCtypeScanIs_nid_no_patch(const GuestLocale::Facet* self, short mask, const char16_t* first, const char16_t* last) {
+    while (first != last && !SceV2WideCtypeVirtuals(self).is(self, mask, *first)) ++first;
+    return first;
+}
+
+const char16_t* APS5_VABI SceV2WideCtypeScanNot_nid_no_patch(const GuestLocale::Facet* self, short mask, const char16_t* first, const char16_t* last) {
+    while (first != last && SceV2WideCtypeVirtuals(self).is(self, mask, *first)) ++first;
+    return first;
+}
+
+char16_t APS5_VABI SceV2WideCtypeToLower_nid_no_patch(const GuestLocale::Facet* self, char16_t character) {
+    return static_cast<char16_t>(_Towlower_nid_postfix(character, SceV2WideCtypeInfo(self)));
+}
+
+const char16_t* APS5_VABI SceV2WideCtypeToLowerRange_nid_no_patch(const GuestLocale::Facet* self, char16_t* first, const char16_t* last) {
+    for (; first != last; ++first) *first = static_cast<char16_t>(_Towlower_nid_postfix(*first, SceV2WideCtypeInfo(self)));
+    return first;
+}
+
+char16_t APS5_VABI SceV2WideCtypeToUpper_nid_no_patch(const GuestLocale::Facet* self, char16_t character) {
+    return static_cast<char16_t>(_Towupper_nid_postfix(character, SceV2WideCtypeInfo(self)));
+}
+
+const char16_t* APS5_VABI SceV2WideCtypeToUpperRange_nid_no_patch(const GuestLocale::Facet* self, char16_t* first, const char16_t* last) {
+    for (; first != last; ++first) *first = static_cast<char16_t>(_Towupper_nid_postfix(*first, SceV2WideCtypeInfo(self)));
+    return first;
+}
+
+char16_t WidenSceV2Character(char character) {
+    std::uint64_t state[2]{};
+    std::uint16_t wide = 0;
+    return static_cast<int>(mbrtowc_nid_postfix(&wide, &character, 1, state)) < 0 ? char16_t{0xffff} : static_cast<char16_t>(wide);
+}
+
+char NarrowSceV2Character(char16_t character, char fallback) {
+    std::uint64_t state[2]{};
+    char bytes[8]{};
+    return static_cast<int>(wcrtomb_nid_postfix(bytes, character, state)) == 1 ? bytes[0] : fallback;
+}
+
+char16_t APS5_VABI SceV2WideCtypeWiden_nid_no_patch(const GuestLocale::Facet*, char character) {
+    return WidenSceV2Character(character);
+}
+
+const char* APS5_VABI SceV2WideCtypeWidenRange_nid_no_patch(const GuestLocale::Facet*, const char* first, const char* last, char16_t* destination) {
+    for (; first != last; ++first, ++destination) *destination = WidenSceV2Character(*first);
+    return first;
+}
+
+char APS5_VABI SceV2WideCtypeNarrow_nid_no_patch(const GuestLocale::Facet*, char16_t character, char fallback) {
+    return NarrowSceV2Character(character, fallback);
+}
+
+const char16_t* APS5_VABI SceV2WideCtypeNarrowRange_nid_no_patch(const GuestLocale::Facet*, const char16_t* first, const char16_t* last, char fallback, char* destination) {
+    for (; first != last; ++first, ++destination) *destination = NarrowSceV2Character(*first, fallback);
+    return first;
+}
+
+struct SceV2NumpunctWideVtable {
+    GuestLocale::FacetVtable facet;
+    char16_t (APS5_VABI *decimalPoint)(const GuestLocale::WideNumpunctFacet* self);
+    char16_t (APS5_VABI *thousandsSep)(const GuestLocale::WideNumpunctFacet* self);
+    SceV2String* (APS5_VABI *grouping)(SceV2String* result, const GuestLocale::WideNumpunctFacet* self);
+    SceV2WideString* (APS5_VABI *falsename)(SceV2WideString* result, const GuestLocale::WideNumpunctFacet* self);
+    SceV2WideString* (APS5_VABI *truename)(SceV2WideString* result, const GuestLocale::WideNumpunctFacet* self);
+};
+
+char16_t APS5_VABI SceV2WideNumpunctDecimalPoint_nid_no_patch(const GuestLocale::WideNumpunctFacet* self) {
+    return self->decimalPoint;
+}
+
+char16_t APS5_VABI SceV2WideNumpunctThousandsSep_nid_no_patch(const GuestLocale::WideNumpunctFacet* self) {
+    return self->thousandsSep;
+}
+
+SceV2String* APS5_VABI SceV2WideNumpunctGrouping_nid_no_patch(SceV2String* result, const GuestLocale::WideNumpunctFacet* self) {
+    return AssignSceV2String(result, self->grouping);
+}
+
+SceV2WideString* APS5_VABI SceV2WideNumpunctFalsename_nid_no_patch(SceV2WideString* result, const GuestLocale::WideNumpunctFacet* self) {
+    return AssignSceV2WideString(result, self->falsename);
+}
+
+SceV2WideString* APS5_VABI SceV2WideNumpunctTruename_nid_no_patch(SceV2WideString* result, const GuestLocale::WideNumpunctFacet* self) {
+    return AssignSceV2WideString(result, self->truename);
+}
+
+bool APS5_VABI SceV2CodecvtAlwaysNoconv_nid_no_patch(const GuestLocale::Facet*) {
+    return true;
+}
+
+int APS5_VABI SceV2CodecvtOne_nid_no_patch(const GuestLocale::Facet*) {
+    return 1;
+}
+
+int APS5_VABI SceV2CodecvtConvert_nid_no_patch(GuestLocale::Facet*, std::uint64_t*, const char* first1, const char*, const char** next1, char* first3, char*, char** next3) {
+    *next1 = first1;
+    *next3 = first3;
+    return 3;
+}
+
+int APS5_VABI SceV2CodecvtUnshift_nid_no_patch(GuestLocale::Facet*, std::uint64_t*, char* first3, char*, char** next3) {
+    *next3 = first3;
+    return 3;
+}
+
+std::size_t APS5_VABI SceV2CodecvtLength_nid_no_patch(GuestLocale::Facet*, std::uint64_t*, const char* first1, const char* last1, std::size_t count) {
+    constexpr std::int64_t Limit = std::numeric_limits<std::int32_t>::max();
+    const std::int64_t available = reinterpret_cast<std::intptr_t>(last1) - reinterpret_cast<std::intptr_t>(first1);
+    const auto limited = static_cast<std::size_t>(available < Limit ? available : Limit);
+    return limited >= count ? count : limited;
+}
+
+const SceV2CtypeCharVtable g_sceV2CtypeCharVtable{
+    {DestroySceV2CtypeFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2CtypeFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2CtypeToLower_nid_no_patch, SceV2CtypeToLowerRange_nid_no_patch, SceV2CtypeToUpper_nid_no_patch, SceV2CtypeToUpperRange_nid_no_patch,
+    SceV2CtypeWiden_nid_no_patch, SceV2CtypeWidenRange_nid_no_patch, SceV2CtypeNarrow_nid_no_patch, SceV2CtypeNarrowRange_nid_no_patch};
+const SceV2NumpunctCharVtable g_sceV2NumpunctCharVtable{
+    {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2NumpunctDecimalPoint_nid_no_patch, SceV2NumpunctThousandsSep_nid_no_patch, SceV2NumpunctGrouping_nid_no_patch,
+    SceV2NumpunctFalsename_nid_no_patch, SceV2NumpunctTruename_nid_no_patch};
+const GuestLocale::CodecvtVtable g_sceV2CodecvtCharVtable{
+    {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2CodecvtAlwaysNoconv_nid_no_patch, SceV2CodecvtOne_nid_no_patch, SceV2CodecvtOne_nid_no_patch, SceV2CodecvtConvert_nid_no_patch,
+    SceV2CodecvtConvert_nid_no_patch, SceV2CodecvtUnshift_nid_no_patch, SceV2CodecvtLength_nid_no_patch};
+const SceV2CtypeWideVtable g_sceV2CtypeWideVtable{
+    {DestroySceV2WideCtypeFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2WideCtypeFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2WideCtypeIs_nid_no_patch, SceV2WideCtypeIsRange_nid_no_patch, SceV2WideCtypeScanIs_nid_no_patch, SceV2WideCtypeScanNot_nid_no_patch,
+    SceV2WideCtypeToLower_nid_no_patch, SceV2WideCtypeToLowerRange_nid_no_patch, SceV2WideCtypeToUpper_nid_no_patch, SceV2WideCtypeToUpperRange_nid_no_patch,
+    SceV2WideCtypeWiden_nid_no_patch, SceV2WideCtypeWidenRange_nid_no_patch, SceV2WideCtypeNarrow_nid_no_patch, SceV2WideCtypeNarrowRange_nid_no_patch};
 constexpr auto g_sceV2CtypeUshortVtable = MakeSceV2FacetVtable<12, g_sceV2CtypeFamily, DestroySceV2WideCtypeFacet_nid_no_patch>();
-constexpr auto g_sceV2NumGetCharVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
+template<typename Text> struct SceV2InputIterator {
+    GuestLocale::Streambuf* buffer;
+    bool got;
+    Text value;
+};
+
+static_assert(sizeof(SceV2InputIterator<char>) == 0x10);
+
+template<typename Text> struct SceV2NumGetVtable {
+    GuestLocale::FacetVtable facet;
+    SceV2InputIterator<Text> (APS5_VABI *getBool)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, bool* value);
+    SceV2InputIterator<Text> (APS5_VABI *getUnsignedShort)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint16_t* value);
+    SceV2InputIterator<Text> (APS5_VABI *getUnsignedInt)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint32_t* value);
+    SceV2InputIterator<Text> (APS5_VABI *getLong)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::int64_t* value);
+    SceV2InputIterator<Text> (APS5_VABI *getUnsignedLong)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint64_t* value);
+    SceV2InputIterator<Text> (APS5_VABI *getLongLong)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::int64_t* value);
+    SceV2InputIterator<Text> (APS5_VABI *getUnsignedLongLong)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint64_t* value);
+    void (APS5_VABI *getFloating[3])();
+    SceV2InputIterator<Text> (APS5_VABI *getPointer)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, void** value);
+};
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetBool_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, bool* value);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedShort_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint16_t* value);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedInt_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint32_t* value);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetLong_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::int64_t* value);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedLong_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint64_t* value);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetLongLong_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::int64_t* value);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedLongLong_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint64_t* value);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetPointer_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, void** value);
+
+template<typename Text> const SceV2NumGetVtable<Text> g_sceV2NumGetVtable{
+    {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2NumGetBool_nid_no_patch<Text>, SceV2NumGetUnsignedShort_nid_no_patch<Text>, SceV2NumGetUnsignedInt_nid_no_patch<Text>, SceV2NumGetLong_nid_no_patch<Text>,
+    SceV2NumGetUnsignedLong_nid_no_patch<Text>, SceV2NumGetLongLong_nid_no_patch<Text>, SceV2NumGetUnsignedLongLong_nid_no_patch<Text>,
+    {SceV2FacetVirtual_nid_no_patch<g_sceV2NumGetFamily>, SceV2FacetVirtual_nid_no_patch<g_sceV2NumGetFamily>, SceV2FacetVirtual_nid_no_patch<g_sceV2NumGetFamily>},
+    SceV2NumGetPointer_nid_no_patch<Text>};
 constexpr auto g_sceV2NumGetWideVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
 constexpr auto g_sceV2NumGetUshortVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
-constexpr auto g_sceV2NumPutCharVtable = MakeSceV2FacetVtable<8, g_sceV2NumPutFamily>();
-constexpr auto g_sceV2NumPutWideVtable = MakeSceV2FacetVtable<8, g_sceV2NumPutFamily>();
+template<typename Text> struct SceV2NumPutVtable {
+    GuestLocale::FacetVtable facet;
+    GuestLocale::OutputIterator (APS5_VABI *putBool)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, unsigned char value);
+    GuestLocale::OutputIterator (APS5_VABI *putLong)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, std::int64_t value);
+    GuestLocale::OutputIterator (APS5_VABI *putUnsignedLong)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, std::uint64_t value);
+    GuestLocale::OutputIterator (APS5_VABI *putLongLong)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, std::int64_t value);
+    GuestLocale::OutputIterator (APS5_VABI *putUnsignedLongLong)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, std::uint64_t value);
+    GuestLocale::OutputIterator (APS5_VABI *putDouble)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, double value);
+    GuestLocale::OutputIterator (APS5_VABI *putLongDouble)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, long double value);
+    GuestLocale::OutputIterator (APS5_VABI *putPointer)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, const void* value);
+};
+
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutBool_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, unsigned char value);
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutLong_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, std::int64_t value);
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutUnsignedLong_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, std::uint64_t value);
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutLongLong_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, std::int64_t value);
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutUnsignedLongLong_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, std::uint64_t value);
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutDouble_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, double value);
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutLongDouble_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, long double value);
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutPointer_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, const void* value);
+
+template<typename Text> const SceV2NumPutVtable<Text> g_sceV2NumPutVtable{
+    {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2NumPutBool_nid_no_patch<Text>, SceV2NumPutLong_nid_no_patch<Text>, SceV2NumPutUnsignedLong_nid_no_patch<Text>, SceV2NumPutLongLong_nid_no_patch<Text>,
+    SceV2NumPutUnsignedLongLong_nid_no_patch<Text>, SceV2NumPutDouble_nid_no_patch<Text>, SceV2NumPutLongDouble_nid_no_patch<Text>, SceV2NumPutPointer_nid_no_patch<Text>};
 constexpr auto g_sceV2NumPutUshortVtable = MakeSceV2FacetVtable<8, g_sceV2NumPutFamily>();
-constexpr auto g_sceV2NumpunctCharVtable = MakeSceV2FacetVtable<5, g_sceV2NumpunctFamily>();
-constexpr auto g_sceV2NumpunctWideVtable = MakeSceV2FacetVtable<5, g_sceV2NumpunctFamily>();
+const SceV2NumpunctWideVtable g_sceV2NumpunctWideVtable{
+    {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2WideNumpunctDecimalPoint_nid_no_patch, SceV2WideNumpunctThousandsSep_nid_no_patch, SceV2WideNumpunctGrouping_nid_no_patch,
+    SceV2WideNumpunctFalsename_nid_no_patch, SceV2WideNumpunctTruename_nid_no_patch};
 constexpr auto g_sceV2NumpunctUshortVtable = MakeSceV2FacetVtable<5, g_sceV2NumpunctFamily, DestroySceV2UshortNumpunctFacet_nid_no_patch>();
-constexpr auto g_sceV2CodecvtCharVtable = MakeSceV2FacetVtable<7, g_sceV2CodecvtFamily>();
 constexpr auto g_sceV2CodecvtWideVtable = MakeSceV2FacetVtable<7, g_sceV2CodecvtFamily>();
 constexpr auto g_sceV2CodecvtUshortVtable = MakeSceV2FacetVtable<7, g_sceV2CodecvtFamily>();
 constexpr auto g_sceV2CollateCharVtable = MakeSceV2FacetVtable<3, g_sceV2CollateFamily>();
@@ -1855,8 +2212,8 @@ bool InitializeSceV2TimePutFacet(GuestLocale::Facet* self, bool) {
 }
 
 SceV2FacetKind g_sceV2CtypeChar{&_ZNSt8__sce_v25ctypeIcE2idE_nid_postfix, sizeof(SceV2CtypeFacet), &g_sceV2CtypeCharVtable.facet, InitializeSceV2CtypeFacet, nullptr};
-SceV2FacetKind g_sceV2NumGetChar{&_ZNSt8__sce_v27num_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumGetCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
-SceV2FacetKind g_sceV2NumPutChar{&_ZNSt8__sce_v27num_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumPutCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2NumGetChar{&_ZNSt8__sce_v27num_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumGetVtable<char>.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2NumPutChar{&_ZNSt8__sce_v27num_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumPutVtable<char>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2NumpunctChar{&_ZNSt8__sce_v28numpunctIcE2idE_nid_postfix, sizeof(GuestLocale::NumpunctFacet), &g_sceV2NumpunctCharVtable.facet, InitializeSceV2NumpunctFacet, nullptr};
 SceV2FacetKind g_sceV2CodecvtChar{&_ZNSt8__sce_v27codecvtIcc9_MbstatetE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2CodecvtCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2CollateChar{&_ZNSt8__sce_v27collateIcE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2CollateCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
@@ -1869,7 +2226,7 @@ SceV2FacetKind g_sceV2TimeGetChar{&_ZNSt8__sce_v28time_getIcNS_19istreambuf_iter
 SceV2FacetKind g_sceV2TimePutChar{&_ZNSt8__sce_v28time_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(SceV2TimePutFacet), &g_sceV2TimePutCharVtable.facet, InitializeSceV2TimePutFacet, nullptr};
 SceV2FacetKind g_sceV2CtypeWide{&_ZNSt8__sce_v25ctypeIwE2idE_nid_postfix, sizeof(SceV2WideCtypeFacet), &g_sceV2CtypeWideVtable.facet, InitializeSceV2WideCtypeFacet, nullptr};
 SceV2FacetKind g_sceV2NumGetWide{&_ZNSt8__sce_v27num_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumGetWideVtable.facet, InitializeSceV2PlainFacet, nullptr};
-SceV2FacetKind g_sceV2NumPutWide{&_ZNSt8__sce_v27num_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumPutWideVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2NumPutWide{&_ZNSt8__sce_v27num_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumPutVtable<char16_t>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2NumpunctWide{&_ZNSt8__sce_v28numpunctIwE2idE_nid_postfix, sizeof(GuestLocale::WideNumpunctFacet), &g_sceV2NumpunctWideVtable.facet, InitializeSceV2WideNumpunctFacet, nullptr};
 SceV2FacetKind g_sceV2CollateWide{&_ZNSt8__sce_v27collateIwE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2CollateWideVtable.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2MessagesWide{&_ZNSt8__sce_v28messagesIwE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MessagesWideVtable.facet, InitializeSceV2PlainFacet, nullptr};
@@ -2011,6 +2368,525 @@ template<std::size_t Count> void InstallSceV2Facets(const SceV2FacetStep (&steps
             : BuildSceV2Facet(kind, static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(kind.size)), false);
         if (!AddSceV2Facet(self, facet, SceV2FacetId(*kind.id))) _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
     }
+}
+
+constexpr std::int32_t SceV2IosUppercase = 0x4;
+constexpr std::int32_t SceV2IosShowBase = 0x8;
+constexpr std::int32_t SceV2IosShowPoint = 0x10;
+constexpr std::int32_t SceV2IosShowPos = 0x20;
+constexpr std::int32_t SceV2IosLeft = 0x40;
+constexpr std::int32_t SceV2IosInternal = 0x100;
+constexpr std::int32_t SceV2IosAdjustField = 0x1c0;
+constexpr std::int32_t SceV2IosOct = 0x400;
+constexpr std::int32_t SceV2IosHex = 0x800;
+constexpr std::int32_t SceV2IosBaseField = 0xe00;
+constexpr std::int32_t SceV2IosScientific = 0x1000;
+constexpr std::int32_t SceV2IosFixed = 0x2000;
+constexpr std::int32_t SceV2IosFloatField = 0x3000;
+constexpr std::int32_t SceV2IosBoolAlpha = 0x4000;
+
+template<typename Text> struct SceV2TextFacets;
+
+template<> struct SceV2TextFacets<char> {
+    using Ctype = SceV2CtypeCharVtable;
+    using Numpunct = SceV2NumpunctCharVtable;
+    using Punct = GuestLocale::NumpunctFacet;
+    static SceV2FacetKind& CtypeKind() { return g_sceV2CtypeChar; }
+    static SceV2FacetKind& NumpunctKind() { return g_sceV2NumpunctChar; }
+};
+
+template<> struct SceV2TextFacets<char16_t> {
+    using Ctype = SceV2CtypeWideVtable;
+    using Numpunct = SceV2NumpunctWideVtable;
+    using Punct = GuestLocale::WideNumpunctFacet;
+    static SceV2FacetKind& CtypeKind() { return g_sceV2CtypeWide; }
+    static SceV2FacetKind& NumpunctKind() { return g_sceV2NumpunctWide; }
+};
+
+template<typename Text> void PutSceV2Character(GuestLocale::OutputIterator& out, Text character) {
+    GuestLocale::Streambuf* buffer = out.buffer;
+    if (buffer == nullptr) {
+        out.failed = true;
+        return;
+    }
+    auto* next = reinterpret_cast<Text*>(*buffer->putNext);
+    auto* count = static_cast<std::int32_t*>(const_cast<void*>(buffer->reservedCounts[2]));
+    if (next != nullptr && *count > 0) {
+        --*count;
+        *buffer->putNext = reinterpret_cast<char*>(next + 1);
+        *next = character;
+        return;
+    }
+    if (buffer->vtable->overflow(buffer, static_cast<std::make_unsigned_t<Text>>(character)) == -1) out.failed = true;
+}
+
+template<typename Text> GuestLocale::OutputIterator PutSceV2Field(GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, const std::basic_string<Text>& text, std::size_t prefix) {
+    const std::int64_t width = stream->width;
+    std::size_t fillCount = width <= 0 || static_cast<std::size_t>(width) <= text.size() ? 0 : static_cast<std::size_t>(width) - text.size();
+    const std::int32_t adjust = stream->flags & SceV2IosAdjustField;
+    if (adjust != SceV2IosLeft && adjust != SceV2IosInternal) {
+        for (; fillCount != 0; --fillCount) PutSceV2Character(out, fill);
+    }
+    for (std::size_t index = 0; index < prefix; ++index) PutSceV2Character(out, text[index]);
+    if (adjust == SceV2IosInternal) {
+        for (; fillCount != 0; --fillCount) PutSceV2Character(out, fill);
+    }
+    for (std::size_t index = prefix; index < text.size(); ++index) PutSceV2Character(out, text[index]);
+    stream->width = 0;
+    for (; fillCount != 0; --fillCount) PutSceV2Character(out, fill);
+    return out;
+}
+
+template<typename Text, typename Punct> std::basic_string<Text> TakeSceV2String(SceV2BasicString<Text>* (APS5_VABI* method)(SceV2BasicString<Text>*, const Punct*), const GuestLocale::Facet* facet) {
+    SceV2BasicString<Text> value{};
+    method(&value, reinterpret_cast<const Punct*>(facet));
+    const bool onHeap = value.capacity > SceV2BasicString<Text>::InlineCapacity;
+    std::basic_string<Text> text(onHeap ? value.pointer : value.buffer, value.size);
+    if (onHeap) GuestStringStorage::Deallocate(value.pointer, (value.capacity + 1) * sizeof(Text));
+    return text;
+}
+
+template<typename Text> const typename SceV2TextFacets<Text>::Numpunct& SceV2Punctuation(const GuestLocale::Facet* facet) {
+    return *reinterpret_cast<const typename SceV2TextFacets<Text>::Numpunct*>(facet->vtable);
+}
+
+template<typename Text> const typename SceV2TextFacets<Text>::Punct* AsSceV2Punct(const GuestLocale::Facet* facet) {
+    return reinterpret_cast<const typename SceV2TextFacets<Text>::Punct*>(facet);
+}
+
+template<typename Text> std::basic_string<Text> WidenSceV2Digits(const GuestLocale::SceV2IosBase* stream, const char* digits, int count) {
+    if (count < 0) _ZNSt8__sce_v214_Xlength_errorEPKc_nid_postfix("string too long");
+    const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), *stream->locale);
+    std::basic_string<Text> text(static_cast<std::size_t>(count), Text{});
+    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, digits, digits + count, text.data());
+    return text;
+}
+
+template<typename Text> GuestLocale::OutputIterator PutSceV2IntegerDigits(GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, const char* digits, int count) {
+    const std::size_t size = count < 0 ? 0 : static_cast<std::size_t>(count);
+    std::size_t prefix = SignPrefix(digits, size);
+    if ((stream->flags & SceV2IosBaseField) == SceV2IosHex && HexPrefix(digits, prefix, size)) prefix += 2;
+    std::basic_string<Text> text = WidenSceV2Digits<Text>(stream, digits, count);
+    const GuestLocale::Facet* punct = UseSceV2Facet(SceV2TextFacets<Text>::NumpunctKind(), *stream->locale);
+    const std::string grouping = TakeSceV2String(SceV2Punctuation<Text>(punct).grouping, punct);
+    if (static_cast<signed char>(grouping[0]) != CHAR_MAX && static_cast<signed char>(grouping[0]) > 0) InsertSeparators(text, grouping, SceV2Punctuation<Text>(punct).thousandsSep(AsSceV2Punct<Text>(punct)), size, prefix);
+    return PutSceV2Field(out, stream, fill, text, prefix);
+}
+
+template<typename Text, typename Value> GuestLocale::OutputIterator PutSceV2Integer(GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, const char* qualifier, char decimal, Value value) {
+    const std::int32_t flags = stream->flags;
+    const std::int32_t base = flags & SceV2IosBaseField;
+    const char conversion = base == SceV2IosOct ? 'o' : base != SceV2IosHex ? decimal : (flags & SceV2IosUppercase) != 0 ? 'X' : 'x';
+    const std::string format = std::string("%") + ((flags & SceV2IosShowPos) != 0 ? "+" : "") + ((flags & SceV2IosShowBase) != 0 ? "#" : "") + qualifier + conversion;
+    char digits[64];
+    return PutSceV2IntegerDigits(out, stream, fill, digits, sprintf_s_nid_postfix(digits, sizeof(digits), format.c_str(), value));
+}
+
+template<typename Text> GuestLocale::OutputIterator PutSceV2FloatingDigits(GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, const char* digits, int count, bool finite) {
+    const std::size_t size = count < 0 ? 0 : static_cast<std::size_t>(count);
+    const std::size_t sign = SignPrefix(digits, size);
+    const bool hex = (stream->flags & SceV2IosFloatField) == SceV2IosFloatField;
+    const std::size_t prefix = hex && HexPrefix(digits, sign, size) ? sign + 2 : sign;
+    const std::size_t exponent = std::strcspn(digits, hex ? "pP" : "eE");
+    const char point[2] = {localeconv_nid_postfix()->decimal_point[0], '\0'};
+    const std::size_t pointOffset = std::strcspn(digits, point);
+    std::basic_string<Text> text = WidenSceV2Digits<Text>(stream, digits, count);
+    const GuestLocale::Facet* punct = UseSceV2Facet(SceV2TextFacets<Text>::NumpunctKind(), *stream->locale);
+    const std::string grouping = TakeSceV2String(SceV2Punctuation<Text>(punct).grouping, punct);
+    const Text separator = SceV2Punctuation<Text>(punct).thousandsSep(AsSceV2Punct<Text>(punct));
+    if (pointOffset != size) text[pointOffset] = SceV2Punctuation<Text>(punct).decimalPoint(AsSceV2Punct<Text>(punct));
+    if (finite) InsertSeparators(text, grouping, separator, pointOffset != size ? pointOffset : exponent, prefix);
+    return PutSceV2Field(out, stream, fill, text, prefix);
+}
+
+template<typename Text, typename Value> GuestLocale::OutputIterator PutSceV2Floating(GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, const char* qualifier, std::int64_t hexDigits, bool finite, Value value) {
+    const std::int32_t field = stream->flags & SceV2IosFloatField;
+    std::int64_t size = hexDigits;
+    std::int64_t precision = -1;
+    if (field != SceV2IosFloatField) {
+        precision = stream->precision;
+        size = precision > 0 ? static_cast<std::int32_t>(precision) : precision < 0 ? 6 : field == 0 ? 1 : 0;
+        if (field == SceV2IosFixed && std::fabs(value) > Value(1e10)) {
+            int exponent = 0;
+            std::frexp(value, &exponent);
+            size += static_cast<std::int64_t>(std::abs(exponent)) * 30103 / 100000;
+        }
+    }
+    size += 50;
+    if (size < 0) _ZNSt8__sce_v214_Xlength_errorEPKc_nid_postfix("string too long");
+    const std::int32_t flags = finite ? stream->flags : stream->flags & ~SceV2IosShowPoint;
+    const char conversion = field == SceV2IosFloatField ? 'a' : field == SceV2IosFixed ? 'f' : field == SceV2IosScientific ? 'e' : 'g';
+    const bool upper = (flags & SceV2IosUppercase) != 0 && field != SceV2IosFixed;
+    const std::string format = std::string("%") + ((flags & SceV2IosShowPos) != 0 ? "+" : "") + ((flags & SceV2IosShowPoint) != 0 ? "#" : "") + ".*" + qualifier + static_cast<char>(upper ? conversion - 'a' + 'A' : conversion);
+    std::string digits(static_cast<std::size_t>(size), '\0');
+    const int count = sprintf_s_nid_postfix(digits.data(), digits.size(), format.c_str(), static_cast<int>(precision), value);
+    if (count >= size) _ZNSt8__sce_v214_Xlength_errorEPKc_nid_postfix("string too long");
+    return PutSceV2FloatingDigits(out, stream, fill, digits.c_str(), count, finite);
+}
+
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutBool_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, unsigned char value) {
+    if ((stream->flags & SceV2IosBoolAlpha) == 0) return reinterpret_cast<const SceV2NumPutVtable<Text>*>(self->vtable)->putLong(self, out, stream, fill, value);
+    const GuestLocale::Facet* punct = UseSceV2Facet(SceV2TextFacets<Text>::NumpunctKind(), *stream->locale);
+    return PutSceV2Field(out, stream, fill, TakeSceV2String(value != 0 ? SceV2Punctuation<Text>(punct).truename : SceV2Punctuation<Text>(punct).falsename, punct), 0);
+}
+
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutLong_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, std::int64_t value) {
+    return PutSceV2Integer(out, stream, fill, "l", 'd', value);
+}
+
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutUnsignedLong_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, std::uint64_t value) {
+    return PutSceV2Integer(out, stream, fill, "l", 'u', value);
+}
+
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutLongLong_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, std::int64_t value) {
+    return PutSceV2Integer(out, stream, fill, "ll", 'd', value);
+}
+
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutUnsignedLongLong_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, std::uint64_t value) {
+    return PutSceV2Integer(out, stream, fill, "ll", 'u', value);
+}
+
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutDouble_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, double value) {
+    return PutSceV2Floating(out, stream, fill, "", 13, __isfinite_nid_postfix(value) != 0, value);
+}
+
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutLongDouble_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, long double value) {
+    return PutSceV2Floating(out, stream, fill, "L", 16, __isfinitel_nid_postfix(value) != 0, value);
+}
+
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutPointer_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, const void* value) {
+    char digits[64];
+    return PutSceV2IntegerDigits(out, stream, fill, digits, sprintf_s_nid_postfix(digits, sizeof(digits), "%p", value));
+}
+
+constexpr char g_sceV2IntegerAtoms[] = "0123456789ABCDEFabcdef-+Xx";
+constexpr std::size_t SceV2AtomZero = 0;
+constexpr std::size_t SceV2AtomMinus = 22;
+constexpr std::size_t SceV2AtomPlus = 23;
+constexpr std::size_t SceV2AtomUpperX = 24;
+constexpr std::size_t SceV2AtomLowerX = 25;
+constexpr std::size_t SceV2AtomCount = 26;
+constexpr std::size_t SceV2IntegerDigits = 32;
+constexpr std::uint32_t SceV2BadGrouping = 0x100;
+constexpr std::int32_t SceV2IosEofBit = 0x1;
+constexpr std::int32_t SceV2IosFailBit = 0x2;
+
+struct SceV2InputStreambufVtable {
+    const void* reserved[7];
+    int (APS5_VABI *underflow)(GuestLocale::Streambuf* self);
+    int (APS5_VABI *uflow)(GuestLocale::Streambuf* self);
+};
+
+const SceV2InputStreambufVtable& SceV2InputVirtuals(const GuestLocale::Streambuf* buffer) {
+    return *reinterpret_cast<const SceV2InputStreambufVtable*>(buffer->vtable);
+}
+
+char** SceV2GetNext(const GuestLocale::Streambuf* buffer) {
+    return static_cast<char**>(const_cast<void*>(buffer->reserved[6]));
+}
+
+std::int32_t* SceV2GetCount(const GuestLocale::Streambuf* buffer) {
+    return static_cast<std::int32_t*>(const_cast<void*>(buffer->reservedCounts[1]));
+}
+
+template<typename Text> Text PeekSceV2Character(SceV2InputIterator<Text>& in) {
+    if (in.got) return in.value;
+    if (in.buffer != nullptr) {
+        const auto* next = reinterpret_cast<const Text*>(*SceV2GetNext(in.buffer));
+        if (next != nullptr && *SceV2GetCount(in.buffer) > 0) {
+            in.value = *next;
+        } else {
+            const int character = SceV2InputVirtuals(in.buffer).underflow(in.buffer);
+            if (character == -1) in.buffer = nullptr;
+            else in.value = static_cast<Text>(character);
+        }
+    }
+    in.got = true;
+    return in.value;
+}
+
+template<typename Text> void AdvanceSceV2Character(SceV2InputIterator<Text>& in) {
+    if (in.buffer != nullptr) {
+        char** next = SceV2GetNext(in.buffer);
+        std::int32_t* count = SceV2GetCount(in.buffer);
+        if (*next != nullptr && *count > 0) {
+            --*count;
+            *next += sizeof(Text);
+            in.got = false;
+            return;
+        }
+        if (SceV2InputVirtuals(in.buffer).uflow(in.buffer) != -1) {
+            in.got = false;
+            return;
+        }
+        in.buffer = nullptr;
+    }
+    in.got = true;
+}
+
+template<typename Text> bool SceV2InputEnded(SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last) {
+    PeekSceV2Character(first);
+    PeekSceV2Character(last);
+    return (first.buffer == nullptr) == (last.buffer == nullptr);
+}
+
+template<typename Text> SceV2InputIterator<Text> FinishSceV2Get(SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, std::int32_t* state) {
+    if (SceV2InputEnded(first, last)) *state |= SceV2IosEofBit;
+    return first;
+}
+
+template<typename Text> bool SkipSceV2Separators(SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last, Text separator) {
+    bool skipped = false;
+    if (separator == Text{}) return skipped;
+    while (!SceV2InputEnded(first, last) && PeekSceV2Character(first) == separator) {
+        AdvanceSceV2Character(first);
+        skipped = true;
+    }
+    return skipped;
+}
+
+bool SceV2GroupsMatch(const std::string& grouping, const std::string& groups, std::size_t count) {
+    std::size_t next = 0;
+    unsigned char size = 0;
+    for (;;) {
+        if (next != grouping.size()) size = static_cast<unsigned char>(grouping[next++]);
+        if (static_cast<unsigned char>(size - 1) <= 0x7d) {
+            if (count == 1) return static_cast<signed char>(groups[0]) <= static_cast<signed char>(size);
+            if (static_cast<unsigned char>(groups[count - 1]) != size) return false;
+        }
+        if (--count == 0) return true;
+    }
+}
+
+template<typename Text> std::uint32_t GetSceV2IntegerField(char* digits, SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last, std::int32_t flags, const GuestLocale::Implementation* locale) {
+    const GuestLocale::Facet* punct = UseSceV2Facet(SceV2TextFacets<Text>::NumpunctKind(), locale);
+    const std::string grouping = TakeSceV2String(SceV2Punctuation<Text>(punct).grouping, punct);
+    const Text separator = grouping.empty() ? Text{} : SceV2Punctuation<Text>(punct).thousandsSep(AsSceV2Punct<Text>(punct));
+    const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), locale);
+    Text atoms[sizeof(g_sceV2IntegerAtoms)];
+    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, g_sceV2IntegerAtoms, g_sceV2IntegerAtoms + sizeof(g_sceV2IntegerAtoms), atoms);
+    bool bad = SkipSceV2Separators(first, last, separator);
+    std::size_t length = 0;
+    if (!SceV2InputEnded(first, last)) {
+        const Text sign = PeekSceV2Character(first);
+        if (sign == atoms[SceV2AtomPlus] || sign == atoms[SceV2AtomMinus]) {
+            digits[length++] = sign == atoms[SceV2AtomPlus] ? '+' : '-';
+            AdvanceSceV2Character(first);
+        }
+    }
+    bad = SkipSceV2Separators(first, last, separator) || bad;
+    const std::int32_t field = flags & SceV2IosBaseField;
+    const bool prefixAllowed = field == 0 || field == SceV2IosHex;
+    int base = field == 0 ? 0 : field == SceV2IosOct ? 8 : field == SceV2IosHex ? 16 : 10;
+    bool seen = false;
+    if (!SceV2InputEnded(first, last) && PeekSceV2Character(first) == atoms[SceV2AtomZero]) {
+        AdvanceSceV2Character(first);
+        seen = true;
+        if (prefixAllowed && !SceV2InputEnded(first, last) && (PeekSceV2Character(first) == atoms[SceV2AtomLowerX] || PeekSceV2Character(first) == atoms[SceV2AtomUpperX])) {
+            AdvanceSceV2Character(first);
+            base = 16;
+            seen = false;
+        } else if (field == 0) {
+            base = 8;
+        }
+    }
+    const std::size_t digitLimit = base == 8 ? 8 : base == 16 ? 22 : 10;
+    std::string groups(1, static_cast<char>(seen));
+    std::size_t group = 0;
+    bool nonzero = false;
+    while (!SceV2InputEnded(first, last)) {
+        const Text character = PeekSceV2Character(first);
+        const auto index = static_cast<std::size_t>(std::find(atoms, atoms + SceV2AtomCount, character) - atoms);
+        if (index < digitLimit) {
+            digits[length] = g_sceV2IntegerAtoms[index];
+            if ((nonzero || index != SceV2AtomZero) && length < SceV2IntegerDigits - 1) {
+                ++length;
+                nonzero = true;
+            }
+            seen = true;
+            if (groups[group] != CHAR_MAX) ++groups[group];
+        } else if (separator == Text{} || character != separator) {
+            break;
+        } else if (groups[group] == '\0') {
+            bad = true;
+        } else {
+            groups.push_back('\0');
+            ++group;
+        }
+        AdvanceSceV2Character(first);
+    }
+    std::size_t count = 0;
+    if (group != 0) {
+        count = groups[group] > 0 ? group + 1 : group;
+        if (groups[group] <= 0) bad = true;
+    }
+    if (seen && !bad && count != 0) bad = !SceV2GroupsMatch(grouping, groups, count);
+    if (!seen) return static_cast<unsigned char>(~base);
+    if (!nonzero) digits[length++] = '0';
+    digits[length] = '\0';
+    return static_cast<unsigned char>(base) | (bad ? SceV2BadGrouping : 0);
+}
+
+int SceV2FieldBase(std::uint32_t field) {
+    return static_cast<signed char>(field & 0xff);
+}
+
+template<typename Text> int GetSceV2LocaleText(SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last, std::size_t fields, const Text* names) {
+    for (std::size_t offset = 0; names[0] != Text{} && names[offset] != Text{}; ++offset) {
+        if (names[offset] == names[0]) ++fields;
+    }
+    if (fields == 0) return -2;
+    std::string columns(fields, '\0');
+    int answer = -2;
+    for (std::size_t column = 1;; ++column) {
+        const char matched = static_cast<char>(column < 127 ? column : 127);
+        bool prefix = false;
+        std::size_t offset = 0;
+        for (std::size_t field = 0; field < fields; ++field) {
+            while (names[offset] != Text{} && names[offset] != names[0]) ++offset;
+            if (columns[field] != '\0') {
+                offset += static_cast<std::size_t>(static_cast<signed char>(columns[field]));
+            } else if (names[offset += column] == Text{} || names[offset] == names[0]) {
+                columns[field] = matched;
+                answer = static_cast<int>(field);
+            } else if (SceV2InputEnded(first, last) || names[offset] != PeekSceV2Character(first)) {
+                columns[field] = matched;
+            } else {
+                prefix = true;
+            }
+        }
+        if (!prefix || SceV2InputEnded(first, last)) return answer;
+        AdvanceSceV2Character(first);
+        answer = -1;
+    }
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetBool_nid_no_patch(const GuestLocale::Facet*, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, bool* value) {
+    if ((stream->flags & SceV2IosBoolAlpha) == 0) {
+        char digits[SceV2IntegerDigits];
+        const std::uint32_t field = GetSceV2IntegerField(digits, first, last, stream->flags, *stream->locale);
+        if (SceV2FieldBase(field) < 0) {
+            *value = false;
+            *state = SceV2IosFailBit;
+            return FinishSceV2Get(first, last, state);
+        }
+        char* end = nullptr;
+        int error = 0;
+        const std::int64_t parsed = _ZNSt8__sce_v26_StolxEPKcPPciPi_nid_postfix(digits, &end, SceV2FieldBase(field), &error);
+        if ((field & SceV2BadGrouping) != 0 || end == digits || error != 0) {
+            *value = true;
+            *state = SceV2IosFailBit;
+        } else {
+            *value = parsed != 0;
+            if (static_cast<std::uint64_t>(parsed) >= 2) *state = SceV2IosFailBit;
+        }
+        return FinishSceV2Get(first, last, state);
+    }
+    const GuestLocale::Facet* punct = UseSceV2Facet(SceV2TextFacets<Text>::NumpunctKind(), *stream->locale);
+    std::basic_string<Text> names(1, Text{});
+    names += TakeSceV2String(SceV2Punctuation<Text>(punct).falsename, punct);
+    names.push_back(Text{});
+    names += TakeSceV2String(SceV2Punctuation<Text>(punct).truename, punct);
+    const int match = GetSceV2LocaleText(first, last, 2, names.c_str());
+    *value = match == 1;
+    if (match != 0 && match != 1) *state = SceV2IosFailBit;
+    return FinishSceV2Get(first, last, state);
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedShort_nid_no_patch(const GuestLocale::Facet*, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint16_t* value) {
+    char digits[SceV2IntegerDigits];
+    const std::uint32_t field = GetSceV2IntegerField(digits, first, last, stream->flags, *stream->locale);
+    if (SceV2FieldBase(field) < 0) {
+        *state = SceV2IosFailBit;
+        *value = 0;
+        return FinishSceV2Get(first, last, state);
+    }
+    const bool negative = digits[0] == '-';
+    char* start = digits + (negative ? 1 : 0);
+    char* end = nullptr;
+    int error = 0;
+    const std::uint64_t parsed = _ZNSt8__sce_v27_StoulxEPKcPPciPi_nid_postfix(start, &end, SceV2FieldBase(field), &error);
+    if (parsed > 0xffff || end == start || error != 0) {
+        *state = SceV2IosFailBit;
+        *value = 0xffff;
+    } else {
+        *value = static_cast<std::uint16_t>(negative ? 0 - parsed : parsed);
+    }
+    if ((field & SceV2BadGrouping) != 0) *state = SceV2IosFailBit;
+    return FinishSceV2Get(first, last, state);
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedInt_nid_no_patch(const GuestLocale::Facet*, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint32_t* value) {
+    char digits[SceV2IntegerDigits];
+    const std::uint32_t field = GetSceV2IntegerField(digits, first, last, stream->flags, *stream->locale);
+    if (SceV2FieldBase(field) < 0 || (field & SceV2BadGrouping) != 0) digits[0] = '\0';
+    if (digits[0] == '\0') {
+        *state = SceV2IosFailBit;
+        *value = 0;
+        return FinishSceV2Get(first, last, state);
+    }
+    char* end = nullptr;
+    int error = 0;
+    *value = static_cast<std::uint32_t>(_ZNSt8__sce_v27_StoulxEPKcPPciPi_nid_postfix(digits, &end, SceV2FieldBase(field), &error));
+    if (end == digits || error != 0) *state = SceV2IosFailBit;
+    return FinishSceV2Get(first, last, state);
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetLongLong_nid_no_patch(const GuestLocale::Facet*, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::int64_t* value) {
+    char digits[SceV2IntegerDigits];
+    const std::uint32_t field = GetSceV2IntegerField(digits, first, last, stream->flags, *stream->locale);
+    if (SceV2FieldBase(field) < 0) {
+        *state = SceV2IosFailBit;
+        *value = 0;
+        return FinishSceV2Get(first, last, state);
+    }
+    char* end = nullptr;
+    int error = 0;
+    *value = _ZNSt8__sce_v27_StollxEPKcPPciPi_nid_postfix(digits, &end, SceV2FieldBase(field), &error);
+    if ((field & SceV2BadGrouping) != 0 || end == digits || error != 0) *state = SceV2IosFailBit;
+    return FinishSceV2Get(first, last, state);
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedLongLong_nid_no_patch(const GuestLocale::Facet*, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint64_t* value) {
+    char digits[SceV2IntegerDigits];
+    const std::uint32_t field = GetSceV2IntegerField(digits, first, last, stream->flags, *stream->locale);
+    if (SceV2FieldBase(field) < 0) {
+        *state = SceV2IosFailBit;
+        *value = 0;
+        return FinishSceV2Get(first, last, state);
+    }
+    char* end = nullptr;
+    int error = 0;
+    *value = _ZNSt8__sce_v28_StoullxEPKcPPciPi_nid_postfix(digits, &end, SceV2FieldBase(field), &error);
+    if ((field & SceV2BadGrouping) != 0 || end == digits || error != 0) *state = SceV2IosFailBit;
+    return FinishSceV2Get(first, last, state);
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetLong_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::int64_t* value) {
+    return SceV2NumGetLongLong_nid_no_patch<Text>(self, first, last, stream, state, value);
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedLong_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint64_t* value) {
+    return SceV2NumGetUnsignedLongLong_nid_no_patch<Text>(self, first, last, stream, state, value);
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetPointer_nid_no_patch(const GuestLocale::Facet*, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, void** value) {
+    char digits[SceV2IntegerDigits];
+    const std::uint32_t field = GetSceV2IntegerField(digits, first, last, SceV2IosHex, *stream->locale);
+    if (SceV2FieldBase(field) < 0) {
+        *state = SceV2IosFailBit;
+        *value = nullptr;
+        return FinishSceV2Get(first, last, state);
+    }
+    char* end = nullptr;
+    int error = 0;
+    *value = reinterpret_cast<void*>(static_cast<std::uintptr_t>(_ZNSt8__sce_v28_StoullxEPKcPPciPi_nid_postfix(digits, &end, SceV2FieldBase(field), &error)));
+    if (end == digits || error != 0) {
+        *state = SceV2IosFailBit;
+        *value = nullptr;
+    }
+    if ((field & SceV2BadGrouping) != 0) *state = SceV2IosFailBit;
+    return FinishSceV2Get(first, last, state);
 }
 
 }
