@@ -43,12 +43,20 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
 
 namespace {
+
+constexpr std::size_t SharedTailOffset = offsetof(WebRtcVideoFrameBuilder, rotation);
+constexpr std::size_t SharedTailSize = offsetof(WebRtcVideoFrameBuilder, packetInfos) + sizeof(void*) - SharedTailOffset;
+
+static_assert(offsetof(WebRtcVideoFrame, rotation) == SharedTailOffset);
+static_assert(offsetof(WebRtcVideoFrame, packetInfos) == offsetof(WebRtcVideoFrameBuilder, packetInfos));
+static_assert(offsetof(WebRtcVideoFrame, processingTime) == SharedTailOffset + SharedTailSize);
 
 constexpr std::size_t AddRefSlot = 0;
 constexpr std::size_t ReleaseSlot = 1;
@@ -136,6 +144,34 @@ void** APS5_VABI _ZNK6webrtc10VideoFrame18video_frame_bufferEv_nid_postfix(void*
     if (frame->videoFrameBuffer)
         CallReference(frame->videoFrameBuffer, AddRefSlot, "VideoFrame::video_frame_buffer requires a frame buffer with a virtual AddRef");
     *result = frame->videoFrameBuffer;
+    return result;
+}
+
+WebRtcVideoFrame* APS5_VABI _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(WebRtcVideoFrame* result, WebRtcVideoFrameBuilder* builder) {
+    if (!result)
+        throw std::invalid_argument("VideoFrame::Builder::build requires a result");
+    const WebRtcVideoFrameBuilder& checked = Checked(builder, "VideoFrame::Builder::build requires a builder");
+    void* const buffer = checked.videoFrameBuffer;
+    if (!buffer)
+        throw std::invalid_argument("VideoFrame::Builder::build requires a frame buffer");
+    const void* const* vtable;
+    std::memcpy(&vtable, buffer, sizeof(vtable));
+    if (!vtable || !vtable[AddRefSlot])
+        throw std::invalid_argument("VideoFrame::Builder::build requires a frame buffer with a virtual AddRef");
+    if (checked.packetInfos)
+        static_cast<WebRtcRtpPacketInfosData*>(checked.packetInfos)->refCount.fetch_add(1, std::memory_order_relaxed);
+    CallReference(buffer, AddRefSlot, "VideoFrame::Builder::build requires a frame buffer with a virtual AddRef");
+    result->id = checked.id;
+    result->videoFrameBuffer = buffer;
+    result->timestampRtp = checked.timestampRtp;
+    result->ntpTimeMs = checked.ntpTimeMs;
+    result->timestampUs = checked.timestampUs;
+    result->presentationTimestamp = checked.presentationTimestamp;
+    result->referenceTime = checked.referenceTime;
+    std::memcpy(reinterpret_cast<unsigned char*>(result) + SharedTailOffset,
+        reinterpret_cast<const unsigned char*>(&checked) + SharedTailOffset, SharedTailSize);
+    reinterpret_cast<unsigned char*>(result->processingTime)[0] = 0;
+    result->hasProcessingTime = false;
     return result;
 }
 
