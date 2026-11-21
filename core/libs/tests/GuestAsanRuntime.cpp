@@ -201,7 +201,7 @@ void APS5_VABI OnError(const char* report) {
     Require(__asan_get_report_pc() != 0 && __asan_get_report_sp() != 0, "report registers are recorded");
 }
 
-__attribute__((noinline)) void LoadOnce(std::uintptr_t address) {
+[[gnu::noinline]] void LoadOnce(std::uintptr_t address) {
     __asan_load2_noabort(address);
 }
 
@@ -244,6 +244,7 @@ void Recovery() {
     });
     Expect(death, 1, {"ABORTING\ndeath callback ran\n"}, "death callback runs after the report");
     ExpectAbort(Run("halt_on_error=maybe", [] { __asan_poison_memory_region(arena, 8); }), "a malformed option is rejected");
+    ExpectAbort(Run("exitcode=4294967297", [] { __asan_report_load1(reinterpret_cast<std::uintptr_t>(arena)); }), "an out-of-range integer option is rejected");
     ExpectAbort(Run("detect_leaks=1", [] { __asan_poison_memory_region(arena, 8); }), "an unsupported option is rejected");
 }
 

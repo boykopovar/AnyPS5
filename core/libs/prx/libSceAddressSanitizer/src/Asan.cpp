@@ -11,12 +11,14 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -106,8 +108,9 @@ bool ParseBool(std::string_view value, std::string_view name) {
 int ParseInt(std::string_view value, std::string_view name) {
     const std::string text(value);
     char* end = nullptr;
+    errno = 0;
     const long parsed = std::strtol(text.c_str(), &end, 10);
-    if (text.empty() || *end != '\0') throw std::invalid_argument("guest AddressSanitizer: option " + std::string(name) + " expects an integer, got " + text);
+    if (text.empty() || *end != '\0' || errno == ERANGE || parsed < std::numeric_limits<int>::min() || parsed > std::numeric_limits<int>::max()) throw std::invalid_argument("guest AddressSanitizer: option " + std::string(name) + " expects an integer, got " + text);
     return static_cast<int>(parsed);
 }
 
@@ -823,31 +826,31 @@ void CheckSmallRegion(std::uintptr_t address, std::size_t size, bool isWrite, st
     const uptr sp = reinterpret_cast<uptr>(&stackMarker)
 
 #define APS5_ASAN_ACCESS(type, isWrite, size)                                                       \
-    __attribute__((noinline)) void APS5_VABI __asan_##type##size(std::uintptr_t address) {          \
+    [[gnu::noinline]] void APS5_VABI __asan_##type##size(std::uintptr_t address) {          \
         APS5_ASAN_CALLER_PC_BP_SP;                                                                  \
         CheckAccess(address, size, isWrite, true, pc, bp, sp);                                      \
     }                                                                                               \
-    __attribute__((noinline)) void APS5_VABI __asan_exp_##type##size(std::uintptr_t address, std::uint32_t) { \
+    [[gnu::noinline]] void APS5_VABI __asan_exp_##type##size(std::uintptr_t address, std::uint32_t) { \
         APS5_ASAN_CALLER_PC_BP_SP;                                                                  \
         CheckAccess(address, size, isWrite, true, pc, bp, sp);                                      \
     }                                                                                               \
-    __attribute__((noinline)) void APS5_VABI __asan_##type##size##_noabort(std::uintptr_t address) { \
+    [[gnu::noinline]] void APS5_VABI __asan_##type##size##_noabort(std::uintptr_t address) { \
         APS5_ASAN_CALLER_PC_BP_SP;                                                                  \
         CheckAccess(address, size, isWrite, false, pc, bp, sp);                                     \
     }
 
 #define APS5_ASAN_REPORT(type, isWrite, size)                                                              \
-    __attribute__((noinline)) void APS5_VABI __asan_report_##type##size(std::uintptr_t address) {           \
+    [[gnu::noinline]] void APS5_VABI __asan_report_##type##size(std::uintptr_t address) {           \
         APS5_ASAN_CALLER_PC_BP_SP;                                                                         \
         EnsureShadow();                                                                                    \
         ReportGenericError(pc, bp, sp, address, isWrite, size, true);                                      \
     }                                                                                                      \
-    __attribute__((noinline)) void APS5_VABI __asan_report_exp_##type##size(std::uintptr_t address, std::uint32_t) { \
+    [[gnu::noinline]] void APS5_VABI __asan_report_exp_##type##size(std::uintptr_t address, std::uint32_t) { \
         APS5_ASAN_CALLER_PC_BP_SP;                                                                         \
         EnsureShadow();                                                                                    \
         ReportGenericError(pc, bp, sp, address, isWrite, size, true);                                      \
     }                                                                                                      \
-    __attribute__((noinline)) void APS5_VABI __asan_report_##type##size##_noabort(std::uintptr_t address) { \
+    [[gnu::noinline]] void APS5_VABI __asan_report_##type##size##_noabort(std::uintptr_t address) { \
         APS5_ASAN_CALLER_PC_BP_SP;                                                                         \
         EnsureShadow();                                                                                    \
         ReportGenericError(pc, bp, sp, address, isWrite, size, false);                                     \
@@ -877,67 +880,67 @@ APS5_ASAN_REPORT(store, true, 4)
 APS5_ASAN_REPORT(store, true, 8)
 APS5_ASAN_REPORT(store, true, 16)
 
-__attribute__((noinline)) void APS5_VABI __asan_loadN(std::uintptr_t address, std::uintptr_t size) {
+[[gnu::noinline]] void APS5_VABI __asan_loadN(std::uintptr_t address, std::uintptr_t size) {
     APS5_ASAN_CALLER_PC_BP_SP;
     CheckRegion(address, size, false, true, pc, bp, sp);
 }
 
-__attribute__((noinline)) void APS5_VABI __asan_exp_loadN(std::uintptr_t address, std::uintptr_t size, std::uint32_t) {
+[[gnu::noinline]] void APS5_VABI __asan_exp_loadN(std::uintptr_t address, std::uintptr_t size, std::uint32_t) {
     APS5_ASAN_CALLER_PC_BP_SP;
     CheckRegion(address, size, false, true, pc, bp, sp);
 }
 
-__attribute__((noinline)) void APS5_VABI __asan_loadN_noabort(std::uintptr_t address, std::uintptr_t size) {
+[[gnu::noinline]] void APS5_VABI __asan_loadN_noabort(std::uintptr_t address, std::uintptr_t size) {
     APS5_ASAN_CALLER_PC_BP_SP;
     CheckRegion(address, size, false, false, pc, bp, sp);
 }
 
-__attribute__((noinline)) void APS5_VABI __asan_storeN(std::uintptr_t address, std::uintptr_t size) {
+[[gnu::noinline]] void APS5_VABI __asan_storeN(std::uintptr_t address, std::uintptr_t size) {
     APS5_ASAN_CALLER_PC_BP_SP;
     CheckRegion(address, size, true, true, pc, bp, sp);
 }
 
-__attribute__((noinline)) void APS5_VABI __asan_exp_storeN(std::uintptr_t address, std::uintptr_t size, std::uint32_t) {
+[[gnu::noinline]] void APS5_VABI __asan_exp_storeN(std::uintptr_t address, std::uintptr_t size, std::uint32_t) {
     APS5_ASAN_CALLER_PC_BP_SP;
     CheckRegion(address, size, true, true, pc, bp, sp);
 }
 
-__attribute__((noinline)) void APS5_VABI __asan_storeN_noabort(std::uintptr_t address, std::uintptr_t size) {
+[[gnu::noinline]] void APS5_VABI __asan_storeN_noabort(std::uintptr_t address, std::uintptr_t size) {
     APS5_ASAN_CALLER_PC_BP_SP;
     CheckRegion(address, size, true, false, pc, bp, sp);
 }
 
-__attribute__((noinline)) void APS5_VABI __asan_report_load_n(std::uintptr_t address, std::uintptr_t size) {
+[[gnu::noinline]] void APS5_VABI __asan_report_load_n(std::uintptr_t address, std::uintptr_t size) {
     APS5_ASAN_CALLER_PC_BP_SP;
     EnsureShadow();
     ReportGenericError(pc, bp, sp, address, false, size, true);
 }
 
-__attribute__((noinline)) void APS5_VABI __asan_report_exp_load_n(std::uintptr_t address, std::uintptr_t size, std::uint32_t) {
+[[gnu::noinline]] void APS5_VABI __asan_report_exp_load_n(std::uintptr_t address, std::uintptr_t size, std::uint32_t) {
     APS5_ASAN_CALLER_PC_BP_SP;
     EnsureShadow();
     ReportGenericError(pc, bp, sp, address, false, size, true);
 }
 
-__attribute__((noinline)) void APS5_VABI __asan_report_load_n_noabort(std::uintptr_t address, std::uintptr_t size) {
+[[gnu::noinline]] void APS5_VABI __asan_report_load_n_noabort(std::uintptr_t address, std::uintptr_t size) {
     APS5_ASAN_CALLER_PC_BP_SP;
     EnsureShadow();
     ReportGenericError(pc, bp, sp, address, false, size, false);
 }
 
-__attribute__((noinline)) void APS5_VABI __asan_report_store_n(std::uintptr_t address, std::uintptr_t size) {
+[[gnu::noinline]] void APS5_VABI __asan_report_store_n(std::uintptr_t address, std::uintptr_t size) {
     APS5_ASAN_CALLER_PC_BP_SP;
     EnsureShadow();
     ReportGenericError(pc, bp, sp, address, true, size, true);
 }
 
-__attribute__((noinline)) void APS5_VABI __asan_report_exp_store_n(std::uintptr_t address, std::uintptr_t size, std::uint32_t) {
+[[gnu::noinline]] void APS5_VABI __asan_report_exp_store_n(std::uintptr_t address, std::uintptr_t size, std::uint32_t) {
     APS5_ASAN_CALLER_PC_BP_SP;
     EnsureShadow();
     ReportGenericError(pc, bp, sp, address, true, size, true);
 }
 
-__attribute__((noinline)) void APS5_VABI __asan_report_store_n_noabort(std::uintptr_t address, std::uintptr_t size) {
+[[gnu::noinline]] void APS5_VABI __asan_report_store_n_noabort(std::uintptr_t address, std::uintptr_t size) {
     APS5_ASAN_CALLER_PC_BP_SP;
     EnsureShadow();
     ReportGenericError(pc, bp, sp, address, true, size, false);
@@ -1022,7 +1025,7 @@ void APS5_VABI __asan_get_shadow_mapping(std::uintptr_t* shadowScale, std::uintp
         throw std::invalid_argument("guest AddressSanitizer: shadow offset output is not writable");
 }
 
-__attribute__((noinline)) void APS5_VABI __asan_handle_no_return() {
+[[gnu::noinline]] void APS5_VABI __asan_handle_no_return() {
     if (!shadowReady.load(std::memory_order_acquire)) return;
     uptr stackBottom = 0;
     uptr top = 0;
@@ -1209,7 +1212,7 @@ void APS5_VABI __asan_after_dynamic_init() {
     }
 }
 
-__attribute__((noinline)) void* APS5_VABI __asan_memcpy(void* to, const void* from, std::uintptr_t size) {
+[[gnu::noinline]] void* APS5_VABI __asan_memcpy(void* to, const void* from, std::uintptr_t size) {
     APS5_ASAN_CALLER_PC_BP_SP;
     EnsureShadow();
     const uptr destination = reinterpret_cast<uptr>(to);
@@ -1220,14 +1223,14 @@ __attribute__((noinline)) void* APS5_VABI __asan_memcpy(void* to, const void* fr
     return std::memcpy(to, from, size);
 }
 
-__attribute__((noinline)) void* APS5_VABI __asan_memset(void* block, int value, std::uintptr_t size) {
+[[gnu::noinline]] void* APS5_VABI __asan_memset(void* block, int value, std::uintptr_t size) {
     APS5_ASAN_CALLER_PC_BP_SP;
     EnsureShadow();
     AccessMemoryRange(reinterpret_cast<uptr>(block), size, true, pc, bp, sp);
     return std::memset(block, value, size);
 }
 
-__attribute__((noinline)) void* APS5_VABI __asan_memmove(void* to, const void* from, std::uintptr_t size) {
+[[gnu::noinline]] void* APS5_VABI __asan_memmove(void* to, const void* from, std::uintptr_t size) {
     APS5_ASAN_CALLER_PC_BP_SP;
     EnsureShadow();
     AccessMemoryRange(reinterpret_cast<uptr>(from), size, false, pc, bp, sp);
