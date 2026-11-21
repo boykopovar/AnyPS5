@@ -225,6 +225,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_pad_controller_info_capabilities_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>")
     endif()
+    add_test_executable(guest_pad_vibration_tilt_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestPadVibrationTiltBounds.cpp)
+    target_include_directories(guest_pad_vibration_tilt_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_pad_vibration_tilt_bounds_tests PRIVATE libScePad libc)
+    configure_windows_unwind(guest_pad_vibration_tilt_bounds_tests)
+    add_test(NAME guest_pad_vibration_tilt_bounds COMMAND guest_pad_vibration_tilt_bounds_tests)
+    set_tests_properties(guest_pad_vibration_tilt_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_pad_vibration_tilt_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>")
+    endif()
 endif()
 
 if(BUILD_TESTING)
