@@ -399,6 +399,9 @@ void writePixelInfo(Writer& writer, const ShaderPixelStageInfo& info) {
         writer.WriteBool(merge.layered);
         writer.WriteU32(merge.firstSlice);
         writer.WriteU32(merge.lastSlice);
+        if (merge.mask != 0u) {
+            for (const std::uint32_t word : merge.blendConstants) writer.WriteU32(word);
+        }
     }
     if (info.depthExportEnable) {
         writer.WriteU32(std::bit_cast<std::uint32_t>(info.depthExportMin));
@@ -512,6 +515,9 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
             merge.layered = reader.ReadBool();
             merge.firstSlice = reader.ReadU32();
             merge.lastSlice = reader.ReadU32();
+            if (version >= 64u && merge.mask != 0u) {
+                for (std::uint32_t& word : merge.blendConstants) word = reader.ReadU32();
+            }
         } else if (merge.mask != 0u && !merge.blend.enabled) {
             merge.packing = ColorExportPacking::Unorm4_4_4_4;
         }
@@ -927,7 +933,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(63u);
+    writer.WriteU32(64u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -990,7 +996,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 63u || version == 50u || (version >= 58u && version <= 61u)) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 64u || version == 50u || (version >= 58u && version <= 61u)) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
