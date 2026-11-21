@@ -51,6 +51,10 @@ public:
     std::optional<std::u16string> customUserAgent;
     std::optional<std::u16string> customTextEncodingName;
     bool backgroundExtendsBeyondPage = false;
+    float mediaVolume = 1.0f;
+    std::uint32_t mutedState = 0;
+    bool mayStartMediaWhenInWindow = true;
+    std::uint32_t mediaState = 0;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
