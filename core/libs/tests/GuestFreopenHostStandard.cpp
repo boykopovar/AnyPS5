@@ -91,8 +91,8 @@ int main() {
     Check(written == 4);
     Check(Contents(sinkName) == "host");
 
-    errno = 0;
-    Check(fputs_nid_postfix("text", __stdoutp_nid_postfix) == -1 && errno == EBADF);
+    errno = 77;
+    Check(fputs_nid_postfix("text", __stdoutp_nid_postfix) == -1 && errno == 77);
     Check(std::filesystem::remove(sinkName));
 #ifdef _WIN32
     Check(std::filesystem::remove(directoryName));
