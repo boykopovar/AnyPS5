@@ -1,0 +1,5 @@
+# libSceMouse
+
+## change [sceMouseDisconnectAll, sceMouseVirtualDeviceAddDevice, sceMouseVirtualDeviceDeleteDevice and sceMouseVirtualDeviceGetCursor]
+
+- [sceMouseDisconnectAll, sceMouseVirtualDeviceAddDevice, sceMouseVirtualDeviceDeleteDevice and sceMouseVirtualDeviceGetCursor](../../../core/libs/prx/libSceMouse/InventoryExports.cpp) - make firmware 13.42's checks ([reading](https://github.com/boykopovar/AnyPS5/issues/21858#issuecomment-6939995845), disassembly only, not run on a console), then throw where the console sends one `ioctl` to the `/dev/hid` driver, which isn't modelled. All four return `0x80DF0005` before `sceMouseInit` (`DisconnectAll` tests the driver descriptor `sceMouseInit` opens, the same state here). `VirtualDeviceAddDevice(const void* param, void* out)` then returns `0x80DF0001` for a null `param` or `out` and `0x803B0001` when the byte at `param+4` is non-zero; `VirtualDeviceGetCursor(int32_t id, void* cursor)` returns `0x80DF0001` for a null `cursor`; `VirtualDeviceDeleteDevice(int32_t id)` checks nothing else. An unreadable `param` gives `0x80DF0001`, a host-safety fallback
