@@ -1,5 +1,6 @@
 #pragma once
 
+#include "prx/libcairo/include/Surface.hpp"
 #include "prx/libSceNKWebKit/src/Object.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -399,10 +400,16 @@ public:
 
 class Image final : public ObjectOf<ObjectType::Image> {
 public:
-    explicit Image(int width, int height) : width(width), height(height) {}
+    Image(int width, int height, CairoSurface* surface) : width(width), height(height), surface(surface) {}
+    ~Image() override {
+        if (surface) {
+            CairoSurfaceDestroy_nid_no_patch(surface);
+        }
+    }
 
     int width = 0;
     int height = 0;
+    CairoSurface* surface = nullptr;
 };
 
 class NavigationAction final : public ObjectOf<ObjectType::NavigationAction> {

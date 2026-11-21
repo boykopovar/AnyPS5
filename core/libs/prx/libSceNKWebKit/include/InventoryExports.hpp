@@ -288,8 +288,6 @@ int APS5_VABI WKHTTPCookieStoreSetCookieForHostname();
 int APS5_VABI WKHTTPCookieStoreSetHTTPCookieAcceptPolicy();
 int APS5_VABI WKIconDatabaseCopyIconDataForPageURL();
 int APS5_VABI WKIconDatabaseCopyIconURLForPageURL();
-int APS5_VABI WKImageCreateCairoSurface();
-int APS5_VABI WKImageCreateFromCairoSurface();
 
 int APS5_VABI WKInspectorShowMainResourceForFrame();
 int APS5_VABI WKKeyValueStorageManagerDeleteAllEntries();

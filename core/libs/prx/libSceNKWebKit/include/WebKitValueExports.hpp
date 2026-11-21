@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libcairo/include/Surface.hpp"
 #include "prx/libSceJsc/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -195,6 +196,8 @@ std::uint32_t APS5_VABI WKHitTestResultGetTypeID();
 bool APS5_VABI WKHitTestResultIsContentEditable(const void* hitTestResultRef);
 std::uint32_t APS5_VABI WKIconDatabaseGetTypeID();
 const void* APS5_VABI WKImageCreate(NKWebKit::SizeValue size, unsigned options);
+CairoSurface* APS5_VABI WKImageCreateCairoSurface(const void* imageRef);
+const void* APS5_VABI WKImageCreateFromCairoSurface(CairoSurface* surface, unsigned options);
 NKWebKit::SizeValue APS5_VABI WKImageGetSize(const void* imageRef);
 std::uint32_t APS5_VABI WKImageGetTypeID();
 void APS5_VABI WKInspectorAttach(const void* inspectorRef);
