@@ -51,6 +51,11 @@ public:
     std::optional<std::u16string> customUserAgent;
     std::optional<std::u16string> customTextEncodingName;
     bool backgroundExtendsBeyondPage = false;
+    bool maintainsInactiveSelection = false;
+    bool caretVisible = false;
+    bool focusedNodeBlurred = false;
+    bool selectionCleared = false;
+    bool selectionCentered = false;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
