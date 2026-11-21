@@ -619,16 +619,18 @@ void decodeDepthBias(const Registers& cx, std::uint32_t raster, State& result) {
     const bool perFace = front && back && (frontBias != backBias || read(cx, 0x2e0) != read(cx, 0x2e2) || read(cx, 0x2e1) != read(cx, 0x2e3));
     const bool d16 = result.depth->format == VK_FORMAT_D16_UNORM || result.depth->format == VK_FORMAT_D16_UNORM_S8_UINT;
     const auto format = find(cx, 0x2de) == cx.end() ? (d16 ? 0xf0u : 0x1e9u) : read(cx, 0x2de);
-    if (format != (d16 ? 0xf0u : 0x1e9u)) throw std::runtime_error("AGC graphics: " + zeroMessage(0x2de, format, "depth bias in units other than the depth format"));
+    const bool bias16 = format == 0xf0u;
+    if (!bias16 && format != 0x1e9u) throw std::runtime_error("AGC graphics: " + zeroMessage(0x2de, format, "depth bias in units other than the depth format"));
+    const float constantScale = bias16 == d16 ? 1.0f : (d16 ? 1.0f / 256.0f : 256.0f);
     const auto scale = front && frontBias ? 0x2e0u : 0x2e2u;
     result.depthBias = true;
     result.depthBiasSlope = frontBias || !perFace ? readFloat(cx, scale) / 16.0f : 0.0f;
-    result.depthBiasConstant = frontBias || !perFace ? readFloat(cx, scale + 1u) : 0.0f;
+    result.depthBiasConstant = (frontBias || !perFace ? readFloat(cx, scale + 1u) : 0.0f) * constantScale;
     result.depthBiasClamp = readFloat(cx, 0x2df);
     if (!perFace) return;
     result.depthBiasPerFace = true;
     result.backDepthBiasSlope = backBias ? readFloat(cx, 0x2e2) / 16.0f : 0.0f;
-    result.backDepthBiasConstant = backBias ? readFloat(cx, 0x2e3) : 0.0f;
+    result.backDepthBiasConstant = backBias ? readFloat(cx, 0x2e3) * constantScale : 0.0f;
 }
 
 bool depthPassThrough(std::uint32_t depthControl) {
@@ -2603,8 +2605,10 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     }
     Require(color.tileMode != ColorTileMode::D64KBX || (color.pipeBankXor & ~0xcf00u) == 0, "unsupported display color pipe/bank XOR column bits");
     color.arrayAddress = color.arrayLastSlice != 0 ? color.surfaceAddress : 0;
+    std::uint64_t sliceBytes = 0;
     if (slice != 0 && !volume) {
-        color.surfaceAddress += slice * ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
+        sliceBytes = ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
+        color.surfaceAddress += slice * sliceBytes;
         if (color.arrayLastSlice == 0 && ColorTileModeIsXor(color.tileMode)) {
             const auto* equation = FindTextureSwizzleEquation(static_cast<std::uint32_t>(color.tileMode), color.elementBytes);
             Require(equation != nullptr, "a sliced color target has no swizzle equation");
@@ -2683,6 +2687,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
             color.dccAddress = dccBase;
             color.dccAlphaOnMsb = DccAlphaOnMsb(color.format, swap);
             color.dccPipeAligned = ((attrib3 >> 30u) & 1u) != 0;
+            if (sliceBytes != 0) color.dccAddress += slice * (color.dccPipeAligned ? DccKeyCount(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, sliceBytes) : DccKeyBytes(sliceBytes));
             if (color.samples > 1) {
                 if (!allowMultisampleDcc) Require(color.tileMode == ColorTileMode::RenderTarget && color.dccAddress != 0 && color.dccPipeAligned && !volume && color.arrayLastSlice == 0 && slice == 0, "multisampled DCC targets require pipe-aligned single-layer SW_64KB_R_X");
                 color.dccControl = read(cx, 0x31e + stride);
@@ -2799,7 +2804,8 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
         Require(destination.samples == 1, "CB resolve into a multisampled target is unsupported");
         Require(destination.cmaskAddress == 0, "CB resolve into a fast-clear color target is unsupported (the resolve does not update its CMASK)");
         Require(source.format == destination.format && source.extent.width == destination.extent.width && source.extent.height == destination.extent.height, "CB resolve between different formats or extents is unsupported");
-        if (WordPacked(source.packing)) throw std::runtime_error("AGC graphics: CB resolves of " + std::string(PackedColorTargetName(source.packing)) + " color targets are unsupported");
+        if (source.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 || destination.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10) Require(source.packing == destination.packing && source.componentMapping == destination.componentMapping, "CB resolve between 11_11_10 float color targets of different layouts is unsupported");
+        if (WordPacked(source.packing) && source.packing != ShaderRecompiler::ColorExportPacking::Float11_11_10) throw std::runtime_error("AGC graphics: CB resolves of " + std::string(PackedColorTargetName(source.packing)) + " color targets are unsupported");
         requireCovered(destination);
         pass.source = source;
         pass.targets.push_back(destination);

@@ -3,8 +3,6 @@
 
 extern "C" {
 int APS5_VABI u_strToTitle_nid_postfix();
-int APS5_VABI ucol_countAvailable_nid_postfix();
-int APS5_VABI ucol_getAvailable_nid_postfix();
 int APS5_VABI ucol_getStrength_nid_postfix();
 int APS5_VABI ucol_setStrength_nid_postfix();
 int APS5_VABI ucol_strcoll_nid_postfix();

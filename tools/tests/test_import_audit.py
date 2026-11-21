@@ -240,10 +240,10 @@ def build_macho(names, needed=(), trie_command=0x80000033):
         name = library.encode() + b"\0"
         size = (24 + len(name) + 7) // 8 * 8
         commands.append(struct.pack("<IIIIII", 0xc, size, 24, 2, 0, 0) + name.ljust(size - 24, b"\0"))
-    trie_size = 48 if trie_command == 0x80000022 else 16
+    trie_size = 16 if trie_command == 0x80000033 else 48
     size = sum(len(command) for command in commands) + trie_size
     data = 32 + size
-    if trie_command == 0x80000022:
+    if trie_size == 48:
         commands.append(struct.pack("<12I", trie_command, 48, 0, 0, 0, 0, 0, 0, 0, 0, data, len(trie)))
     else:
         commands.append(struct.pack("<IIII", trie_command, 16, data, len(trie)))
@@ -3594,12 +3594,22 @@ class ImportAuditTests(unittest.TestCase):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(build_macho(["AAAAAAAAAAA", "BBBBBBBBBBB#A#A"], ["@rpath/libkernel.prx", "/usr/lib/libSystem.B.dylib"]))
         (work.libs / "libSceB.prx").write_bytes(build_macho(["AAAAAAAAAAA"], trie_command=0x80000022))
+        (work.libs / "libSceC.prx").write_bytes(build_macho(["CCCCCCCCCCC#A#A"], trie_command=0x22))
         exports, libraries = import_audit.built_libraries([work.libs])
-        self.assertEqual(exports, {"AAAAAAAAAAA": ["libSceA.prx", "libSceB.prx"], "BBBBBBBBBBB": ["libSceA.prx"]})
-        self.assertEqual(libraries, {"libSceA.prx", "libSceB.prx"})
+        self.assertEqual(exports, {"AAAAAAAAAAA": ["libSceA.prx", "libSceB.prx"], "BBBBBBBBBBB": ["libSceA.prx"],
+                                   "CCCCCCCCCCC": ["libSceC.prx"]})
+        self.assertEqual(libraries, {"libSceA.prx", "libSceB.prx", "libSceC.prx"})
         direct, windows = import_audit.built_host_dependencies([work.libs])
-        self.assertEqual(direct, {"libSceA.prx": ["libkernel.prx"], "libSceB.prx": []})
+        self.assertEqual(direct, {"libSceA.prx": ["libkernel.prx"], "libSceB.prx": [], "libSceC.prx": []})
         self.assertEqual(windows, set())
+
+    def test_macho_export_range_must_be_in_its_load_command(self):
+        for command, length in ((0x22, 40), (0x80000022, 40), (0x80000033, 8)):
+            with self.subTest(command=command):
+                image = bytearray(build_macho(["AAAAAAAAAAA"], trie_command=command))
+                struct.pack_into("<I", image, 36, length)
+                with self.assertRaisesRegex(import_audit.AuditError, "Mach-O.*command"):
+                    import_audit.read_exports(self.work.libs / "short.prx", bytes(image))
 
     def test_malformed_macho_export_tries_are_audit_errors(self):
         path = self.work.libs / "libSceA.prx"
@@ -3989,6 +3999,45 @@ class LocateAndNamesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(import_audit.AuditError, 'names file not found'):
                 import_audit.load_names(Path(directory) / 'missing.csv')
+
+class ElfSectionsTests(unittest.TestCase):
+    @staticmethod
+    def section(size=0, kind=1):
+        return struct.pack("<IIQQQQIIQQ", 0, kind, 0, 0, 0, size, 0, 0, 0, 0)
+
+    @staticmethod
+    def image(sections, elf_class=2, endian=1, ident_version=1, version=1, offset=64, entry_size=64, count=None):
+        ident = b"\x7fELF" + bytes([elf_class, endian, ident_version]) + bytes(9)
+        header = struct.pack("<16sHHIQQQIHHHHHH", ident, 3, 62, version, 0, 0, offset, 0, 64, 0, 0, entry_size,
+                             len(sections) if count is None else count, 0)
+        return header + b"".join(sections)
+
+    def test_returns_every_section_header(self):
+        sections = import_audit.elf_sections("m.elf", self.image([self.section(kind=0), self.section(size=7, kind=3)]))
+        self.assertEqual([entry[1] for entry in sections], [0, 3])
+        self.assertEqual(sections[1][5], 7)
+
+    def test_unsupported_class_endianness_or_entry_size_is_refused(self):
+        for kwargs in ({"elf_class": 1}, {"endian": 2}, {"entry_size": 40}):
+            with self.subTest(kwargs=kwargs), self.assertRaisesRegex(import_audit.AuditError, "only little-endian ELF64"):
+                import_audit.elf_sections("m.elf", self.image([self.section()], **kwargs))
+
+    def test_unsupported_version_is_refused(self):
+        for kwargs in ({"ident_version": 2}, {"version": 2}):
+            with self.subTest(kwargs=kwargs), self.assertRaisesRegex(import_audit.AuditError, "unsupported ELF version"):
+                import_audit.elf_sections("m.elf", self.image([self.section()], **kwargs))
+
+    def test_missing_section_header_table_is_refused(self):
+        with self.assertRaisesRegex(import_audit.AuditError, "without a section header table"):
+            import_audit.elf_sections("m.elf", self.image([self.section()], offset=0))
+
+    def test_extended_section_count_is_read_from_the_first_section(self):
+        data = self.image([self.section(size=2), self.section()], count=0)
+        self.assertEqual(len(import_audit.elf_sections("m.elf", data)), 2)
+
+    def test_section_table_past_the_end_of_the_file_is_refused(self):
+        with self.assertRaises(import_audit.AuditError):
+            import_audit.elf_sections("m.elf", self.image([self.section()], count=3))
 
 class DynamicSymbolEntriesTests(unittest.TestCase):
     @staticmethod

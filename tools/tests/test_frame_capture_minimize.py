@@ -208,16 +208,33 @@ if command == 'inspect':
                 frame_capture_minimize.Minimizer.validate_entries(entries, "calls")
 
     def test_inspection_entries_accept_nonnegative_integer_indexes(self):
-        self.assertIsNone(frame_capture_minimize.Minimizer.validate_entries([{"index": 0, "kind": "submit"}], "calls"))
+        calls = [{"index": 0, "kind": "submit", "memory_group": None}]
+        self.assertIsNone(frame_capture_minimize.Minimizer.validate_entries(calls, "calls"))
 
     def test_inspection_entries_reject_duplicate_indexes(self):
+        calls = [{"index": 0, "kind": "submit", "memory_group": None},
+                 {"index": 0, "kind": "flip", "memory_group": None}]
         with self.assertRaisesRegex(RuntimeError, "duplicate index 0"):
-            frame_capture_minimize.Minimizer.validate_entries([{"index": 0, "kind": "submit"}, {"index": 0, "kind": "flip"}], "calls")
+            frame_capture_minimize.Minimizer.validate_entries(calls, "calls")
 
     def test_inspection_memory_entries_require_valid_groups(self):
         for entry in ({"index": 0, "kind": "memory"}, {"index": 0, "kind": "memory", "memory_group": -1}, {"index": 0, "kind": "memory", "memory_group": True}):
             with self.subTest(entry=entry), self.assertRaisesRegex(RuntimeError, "invalid memory group"):
                 frame_capture_minimize.Minimizer.validate_entries([entry], "calls")
+
+    def test_inspection_rejects_invalid_non_memory_groups_before_replay(self):
+        for fields in ({}, {"memory_group": 3}):
+            with self.subTest(fields=fields), tempfile.TemporaryDirectory() as directory:
+                calls = [{"index": 0, "kind": "frame-start", **fields}]
+                inspection = json.dumps({"calls": calls, "chunks": []})
+                args, _, _, output = self.empty_cli(Path(directory), filter_source=f"print({inspection!r})\n")
+                stderr = io.StringIO()
+                with patch.object(frame_capture_minimize.Minimizer, "replay_once", return_value=(True, "matched")) as replay:
+                    with contextlib.redirect_stderr(stderr):
+                        self.assertEqual(frame_capture_minimize.main(args), 2)
+                replay.assert_not_called()
+                self.assertIn("capture inspection calls[0] has an invalid memory group", stderr.getvalue())
+                self.assertFalse(output.exists())
 
     def test_inspection_chunks_require_valid_groups(self):
         for entry in ({"index": 0, "kind": "delta"}, {"index": 0, "kind": "range", "group": -1}, {"index": 0, "kind": "snapshot", "group": True}):

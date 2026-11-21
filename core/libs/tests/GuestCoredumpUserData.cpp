@@ -148,6 +148,8 @@ int main() {
 
     Require(sceCoredumpRegisterCoredumpHandler(reinterpret_cast<uint64_t>(&Handler), 16 * 1024, reinterpret_cast<uint64_t>(&handlerContext)) == 0);
     Require(sceCoredumpRegisterCoredumpHandler(0, 0, 0) == static_cast<int>(0x81180002u));
+    Require(sceCoredumpRegisterCoredumpHandler(0, 0x1000, 0) == static_cast<int>(0x81180002u));
+    Require(sceCoredumpRegisterCoredumpHandler(reinterpret_cast<uint64_t>(&Handler), 0x20000000, 0) == static_cast<int>(0x81180002u));
     Require(sceCoredumpAttachUserFile(0x40000000u, "") == InvalidArgument);
     Require(sceCoredumpAttachMemoryRegionAsUserFile(0x40000000u, nullptr, -1, "") == InvalidArgument);
     RequireWritesRefused(region);
@@ -181,6 +183,10 @@ int main() {
     Require(region == original);
     Require(sceCoredumpUnregisterCoredumpHandler() == static_cast<int>(0x81180001u));
     Require(sceCoredumpAttachUserFile(0x40000000u, "") == InvalidArgument);
+    Require(sceCoredumpRegisterCoredumpHandler(reinterpret_cast<std::uint64_t>(&Handler), 0x4001, 0) == 0);
+    Require(sceCoredumpUnregisterCoredumpHandler() == 0);
+    Require(sceCoredumpRegisterCoredumpHandler(reinterpret_cast<std::uint64_t>(&Handler), 0x1fffffff, 0) == 0);
+    Require(sceCoredumpUnregisterCoredumpHandler() == 0);
     for (const std::uint32_t version : {0x064fffffu, 0x06500000u, 0x12000000u}) {
         std::memcpy(process.data() + 16, &version, sizeof(version));
         Require(sceCoredumpRegisterCoredumpHandler(reinterpret_cast<std::uint64_t>(&Handler), 0x4000, 0) == 0);
