@@ -7,6 +7,13 @@
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
+#include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 namespace {
 
@@ -109,6 +116,48 @@ void TestNullArgumentsThrow() {
     Require(Bytes(options) == expected);
 }
 
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        address_ = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_NOACCESS);
+        Require(address_ != nullptr);
+#else
+        void* mapped = mmap(nullptr, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        address_ = mapped;
+#endif
+    }
+    ~GuardedPage() {
+        if (!address_)
+            return;
+#ifdef _WIN32
+        VirtualFree(address_, 0, MEM_RELEASE);
+#else
+        munmap(address_, 4096);
+#endif
+    }
+    template<typename T>
+    T* As() const {
+        return static_cast<T*>(address_);
+    }
+
+private:
+    void* address_ = nullptr;
+};
+
+void TestGuardedArgumentsThrow() {
+    GuardedPage guard;
+    WebRtcPacketOptions options = Filled(0x00);
+    options.packetId = 7;
+    options.batchable = true;
+    const auto expected = Bytes(options);
+    RequireInvalidArgument([&] { _ZN6webrtc13PacketOptionsC1Ev_nid_postfix(guard.As<WebRtcPacketOptions>()); });
+    RequireInvalidArgument([&] { _ZN6webrtc13PacketOptionsC1ERKS0__nid_postfix(guard.As<WebRtcPacketOptions>(), &options); });
+    RequireInvalidArgument([&] { _ZN6webrtc13PacketOptionsC1ERKS0__nid_postfix(&options, guard.As<const WebRtcPacketOptions>()); });
+    Require(Bytes(options) == expected);
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -125,6 +174,7 @@ int main(int argc, char** argv) {
     }
     if (std::strcmp(argv[1], "null") == 0) {
         TestNullArgumentsThrow();
+        TestGuardedArgumentsThrow();
         return 0;
     }
     return 2;

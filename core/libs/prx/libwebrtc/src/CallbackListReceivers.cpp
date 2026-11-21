@@ -41,18 +41,36 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
 #include <stdexcept>
+
+namespace {
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+}
 
 extern "C" {
 
 void APS5_VABI _ZN6webrtc18callback_list_impl21CallbackListReceiversC1Ev_nid_postfix(WebRtcCallbackListReceivers* receivers) {
     if (!receivers)
         throw std::invalid_argument("CallbackListReceivers requires an object");
-    receivers->begin = nullptr;
-    receivers->end = nullptr;
-    receivers->capacity = nullptr;
-    receivers->sendInProgress = false;
+    WebRtcCallbackListReceivers host{};
+    ErrnoGuard guard;
+    if (!GuestWritable_nid_no_patch(receivers, sizeof(*receivers)) ||
+        !GuestPtr<const WebRtcCallbackListReceivers>(receivers).CopyIn(host))
+        throw std::invalid_argument("CallbackListReceivers requires an object");
+    host.begin = nullptr;
+    host.end = nullptr;
+    host.capacity = nullptr;
+    host.sendInProgress = false;
+    if (!GuestPtr<WebRtcCallbackListReceivers>(receivers).CopyOut(host))
+        throw std::invalid_argument("CallbackListReceivers requires an object");
 }
 
 }

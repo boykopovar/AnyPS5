@@ -54,6 +54,12 @@
 #include <source_location>
 #include <stdexcept>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
+
 namespace {
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -300,6 +306,76 @@ void TestOddBucketRounding() {
     Require(tracker.ComputeRateForInterval(3) == 7000.0 / 3.0);
 }
 
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        address_ = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_NOACCESS);
+        Require(address_ != nullptr);
+#else
+        void* mapped = mmap(nullptr, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        address_ = mapped;
+#endif
+    }
+    ~GuardedPage() {
+        if (!address_)
+            return;
+#ifdef _WIN32
+        VirtualFree(address_, 0, MEM_RELEASE);
+#else
+        munmap(address_, 4096);
+#endif
+    }
+    template<typename T>
+    T* As() const {
+        return static_cast<T*>(address_);
+    }
+
+private:
+    void* address_ = nullptr;
+};
+
+template<typename TAction>
+void RequireInvalidArgument(TAction action) {
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    Require(false);
+}
+
+void TestGuardedPointers() {
+    GuardedPage guard;
+    Tracker valid;
+    valid.AddSamples(1);
+    valid.AdvanceTime(150);
+    RequireInvalidArgument([&] { _ZN3rtc11RateTrackerC1Elm_nid_postfix(guard.As<WebRtcRateTracker>(), 100, 10); });
+    RequireInvalidArgument([&] { _ZN3rtc11RateTrackerD1Ev_nid_postfix(guard.As<WebRtcRateTracker>()); });
+    RequireInvalidArgument([&] { _ZN3rtc11RateTracker10AddSamplesEl_nid_postfix(guard.As<WebRtcRateTracker>(), 1); });
+    RequireInvalidArgument([&] { _ZNK3rtc11RateTracker22ComputeRateForIntervalEl_nid_postfix(guard.As<const WebRtcRateTracker>(), 100); });
+
+    auto* const realVtable = valid.object.vtable;
+    valid.object.vtable = guard.As<void* const>();
+    RequireInvalidArgument([&] { _ZN3rtc11RateTracker10AddSamplesEl_nid_postfix(&valid.object, 1); });
+    RequireInvalidArgument([&] { _ZNK3rtc11RateTracker22ComputeRateForIntervalEl_nid_postfix(&valid.object, 100); });
+    valid.object.vtable = realVtable;
+
+    auto* const realBuckets = valid.object.sampleBuckets;
+    valid.object.sampleBuckets = guard.As<std::int64_t>();
+    RequireInvalidArgument([&] { _ZN3rtc11RateTrackerD1Ev_nid_postfix(&valid.object); });
+    RequireInvalidArgument([&] { _ZN3rtc11RateTracker10AddSamplesEl_nid_postfix(&valid.object, 1); });
+    RequireInvalidArgument([&] { _ZNK3rtc11RateTracker22ComputeRateForIntervalEl_nid_postfix(&valid.object, 100); });
+    valid.object.sampleBuckets = realBuckets;
+
+    const std::size_t realBucketCount = valid.object.bucketCount;
+    valid.object.bucketCount = std::numeric_limits<std::size_t>::max();
+    RequireInvalidArgument([&] { _ZN3rtc11RateTracker10AddSamplesEl_nid_postfix(&valid.object, 1); });
+    RequireInvalidArgument([&] { _ZNK3rtc11RateTracker22ComputeRateForIntervalEl_nid_postfix(&valid.object, 100); });
+    valid.object.bucketCount = realBucketCount;
+}
+
 }
 
 int main() {
@@ -319,6 +395,7 @@ int main() {
         TestPartialRounding();
         TestReleaseSamples();
         TestOddBucketRounding();
+        TestGuardedPointers();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "RateTracker exception: %s\n", error.what());
         return 1;

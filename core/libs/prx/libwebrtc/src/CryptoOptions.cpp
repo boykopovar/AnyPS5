@@ -41,8 +41,19 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
 #include <stdexcept>
+
+namespace {
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+}
 
 extern "C" {
 
@@ -51,9 +62,14 @@ void APS5_VABI _ZN6webrtc13CryptoOptionsC1ERKS0__nid_postfix(WebRtcCryptoOptions
         throw std::invalid_argument("CryptoOptions copy constructor requires options");
     if (!other)
         throw std::invalid_argument("CryptoOptions copy constructor requires a source");
-    WebRtcCryptoOptions copy = *other;
-    options->srtp = copy.srtp;
-    options->sframe = copy.sframe;
+    WebRtcCryptoOptions copy{};
+    ErrnoGuard guard;
+    if (!GuestWritable_nid_no_patch(options, sizeof(*options)))
+        throw std::invalid_argument("CryptoOptions copy constructor requires options");
+    if (!GuestPtr<const WebRtcCryptoOptions>(other).CopyIn(copy))
+        throw std::invalid_argument("CryptoOptions copy constructor requires a source");
+    if (!GuestPtr<WebRtcCryptoOptions>(options).CopyOut(copy))
+        throw std::invalid_argument("CryptoOptions copy constructor requires options");
 }
 
 }
