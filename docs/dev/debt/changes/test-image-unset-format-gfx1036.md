@@ -1,0 +1,5 @@
+# shader
+
+## change [T#s with an unset format field]
+
+- [T#s with an unset format field](../../../core/shader/recompiler/Optimization/src/ResourceMaterializer.cpp) (shader recompiler) - `DST_SEL` of 1 reads 0 from `image_load` and `image_load_mip` and 1.0 from `image_sample_lz` here, where RDNA2 (gfx1036, [hardware oracle](../HW_ORACLE.md)) returns the integer 1; every other selector and `image_get_resinfo` return 0 there, as [ImageUnsetFormat](../../../core/libs/prx/libSceAgcDriver/tests/execution/ImageUnsetFormat.cpp) pins. A directly bound sampled read-only T# of an image TYPE the decode implements whose format field names no format (0 or 0x1ff, as in PPSA02721) decodes as null, as does an image-table entry of such an image whose eight words are all ones (PPSA18653); other TYPEs, storage and atomic images and other table entries are rejected. The driver's [IsNullSampledTextureResource](../../../core/libs/prx/libSceAgcDriver/Graphics/src/GuestTextureResource.cpp) applies the direct rule to sampled uses only. gfx1013 is unmeasured.
