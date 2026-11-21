@@ -3,6 +3,7 @@ add_library(libSceFreeTypeOt SHARED EXCLUDE_FROM_ALL Export.cpp ../libSceFreeTyp
         ../libSceFreeType/src/MemoryRecord.cpp)
 target_include_directories(libSceFreeTypeOt PRIVATE ${LIBS_INCLUDE_DIR})
 include("${CMAKE_CURRENT_LIST_DIR}/Stream.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/ModuleService.cmake")
 target_link_libraries(libSceFreeTypeOt PRIVATE freetype)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(libSceFreeTypeOt PRIVATE LINKER:--exclude-libs,ALL)
