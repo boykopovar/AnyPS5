@@ -57,7 +57,6 @@
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libkernel/Socket/include/SocketOptions.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
-#include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
@@ -799,7 +798,7 @@ template <typename TOperation>
 auto native_transfer(const NativeSocketHandle& socket, int flags, bool send, TOperation operation, bool timed = true, int length = 0, bool interruptSend = false) {
 #ifdef _WIN32
     using Result = decltype(operation(0));
-    const bool interruptible = (!send || interruptSend) && ThreadCancel::IoActive();
+    const bool interruptible = (!send || interruptSend) && KernelIoActive_nid_no_patch();
     const bool nonblocking = (flags & NET_MSG_DONTWAIT) != 0 || socket.nonblock.load();
     const int completeLength = send && socket.stream && !nonblocking ? length : 0;
     const int timeout = timed ? (send ? socket.sendTimeout.load() : socket.receiveTimeout.load()) : 0;
@@ -807,7 +806,7 @@ auto native_transfer(const NativeSocketHandle& socket, int flags, bool send, TOp
         : std::chrono::steady_clock::time_point::max();
     int transferred = 0;
     for (;;) {
-        if (interruptible && ThreadCancel::IoInterrupted()) {
+        if (interruptible && KernelIoInterrupted_nid_no_patch()) {
             if (transferred > 0) return static_cast<Result>(transferred);
             WSASetLastError(WSAEINTR);
             return static_cast<Result>(-1);
@@ -841,7 +840,7 @@ auto native_transfer(const NativeSocketHandle& socket, int flags, bool send, TOp
     static_cast<void>(send);
     static_cast<void>(timed);
     static_cast<void>(length);
-    if (interruptSend && ThreadCancel::IoInterrupted()) {
+    if (interruptSend && KernelIoInterrupted_nid_no_patch()) {
         errno = EINTR;
         return static_cast<decltype(operation(0))>(-1);
     }
@@ -923,9 +922,9 @@ int wait_for_datagram(const Sock& socket, std::chrono::steady_clock::time_point 
     WSAPOLLFD descriptor{};
     descriptor.fd = socket.native->value;
     descriptor.events = POLLRDNORM;
-    const bool interruptible = ThreadCancel::IoActive();
+    const bool interruptible = KernelIoActive_nid_no_patch();
     for (;;) {
-        if (interruptible && ThreadCancel::IoInterrupted()) return NET_EINTR;
+        if (interruptible && KernelIoInterrupted_nid_no_patch()) return NET_EINTR;
         const auto remaining = deadline - std::chrono::steady_clock::now();
         if (remaining <= std::chrono::steady_clock::duration::zero()) return NET_EAGAIN;
         const auto milliseconds = std::chrono::ceil<std::chrono::milliseconds>(remaining).count();
@@ -970,10 +969,10 @@ int wait_for_local_address(int s, const Sock& socket, bool empty, int flags) {
     const auto deadline = timeout > 0
         ? std::chrono::steady_clock::now() + std::chrono::microseconds(timeout)
         : std::chrono::steady_clock::time_point::max();
-    const bool interruptible = ThreadCancel::IoActive();
+    const bool interruptible = KernelIoActive_nid_no_patch();
     std::unique_lock lk(g_mutex);
     for (bool waited = false;; waited = true) {
-        if (interruptible && ThreadCancel::IoInterrupted()) return NET_EINTR;
+        if (interruptible && KernelIoInterrupted_nid_no_patch()) return NET_EINTR;
         const auto it = g_socks.find(s);
         if (it == g_socks.end() || it->second.native != socket.native || it->second.aborted) return 0;
         if (named || has_local_address(socket.native->value)) {
@@ -1198,8 +1197,7 @@ int ErrorOf(std::int64_t result) {
 constexpr int KernelWaitAll = 0x40;
 
 std::int64_t ReceiveForKernel(int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength) {
-    const ThreadCancel::NativeIo operation;
-    if (ThreadCancel::IoInterrupted()) return fail(NET_EINTR);
+    if (KernelIoInterrupted_nid_no_patch()) return fail(NET_EINTR);
     const int netFlags = flags & ~KernelWaitAll;
     const auto size = static_cast<size_t>(length);
     if (length == 0 && !IsStreamSocket(descriptor)) {
@@ -1811,7 +1809,7 @@ static int64_t ReceiveFrom(int s, void* buf, size_t len, int flags, void* from, 
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
     }
-    if (socket.native->receiveTimeout.load() != 0) ThreadCancel::IoNoRestart();
+    if (socket.native->receiveTimeout.load() != 0) KernelIoNoRestart_nid_no_patch();
     std::uint32_t capacity = 0;
     if (from && (!GuestCopyIn_nid_no_patch(&capacity, fromlen, sizeof(capacity)) ||
         !GuestCopyOut_nid_no_patch(fromlen, &capacity, sizeof(capacity)))) return fail(NET_EFAULT);
@@ -1823,7 +1821,7 @@ static int64_t ReceiveFrom(int s, void* buf, size_t len, int flags, void* from, 
         return 0;
     }
 #endif
-    if (ThreadCancel::IoInterrupted()) return fail(NET_EINTR);
+    if (KernelIoInterrupted_nid_no_patch()) return fail(NET_EINTR);
     const bool returnAddress = from != nullptr && socket.type == NET_SOCK_DGRAM;
     const auto addressBytes = returnAddress ?
         std::min<std::uint32_t>(capacity, socket.family == NET_AF_INET ? 16u : 28u) : 0u;
@@ -1844,7 +1842,7 @@ static int64_t ReceiveFrom(int s, void* buf, size_t len, int flags, void* from, 
 #endif
     if (result < 0) {
         const int error = native_error();
-        return fail(ThreadCancel::IoInterrupted() ? NET_EINTR : error);
+        return fail(KernelIoInterrupted_nid_no_patch() ? NET_EINTR : error);
     }
     if (from) {
         std::array<std::uint8_t, 28> bytes{};
@@ -1903,12 +1901,8 @@ static std::int64_t NetSendTo(int s, const void* buf, std::size_t len, int flags
     }
     if (IsPeerSocket(socket)) NotImplemented_nid_no_patch("sceNetSendto");
     if (!to && tolen != 0) return fail(NET_EINVAL);
-    const bool interruptible = kernelSend && ThreadCancel::IoActive();
-    std::optional<ThreadCancel::NativeIo> operation;
-    if (interruptible) {
-        if (socket.native->sendTimeout.load() != 0) ThreadCancel::IoNoRestart();
-        operation.emplace();
-    }
+    const bool interruptible = kernelSend && KernelIoActive_nid_no_patch();
+    if (interruptible && socket.native->sendTimeout.load() != 0) KernelIoNoRestart_nid_no_patch();
 #ifdef __APPLE__
     std::int64_t result;
 #else
@@ -1929,7 +1923,7 @@ static std::int64_t NetSendTo(int s, const void* buf, std::size_t len, int flags
     if (!to) {
 #ifdef __APPLE__
         result = send_stream_in_chunks(*socket.native, flags, static_cast<const char*>(buf), len, [&](const char* data, std::size_t size) {
-            if (interruptible && ThreadCancel::IoInterrupted()) {
+            if (interruptible && KernelIoInterrupted_nid_no_patch()) {
                 errno = EINTR;
                 return static_cast<ssize_t>(-1);
             }
@@ -1951,7 +1945,7 @@ static std::int64_t NetSendTo(int s, const void* buf, std::size_t len, int flags
         if (destination.ss_family != (socket.family == NET_AF_INET ? AF_INET : AF_INET6)) return fail(NET_EAFNOSUPPORT);
 #ifdef __APPLE__
         result = send_stream_in_chunks(*socket.native, flags, static_cast<const char*>(buf), len, [&](const char* data, std::size_t size) {
-            if (interruptible && ThreadCancel::IoInterrupted()) {
+            if (interruptible && KernelIoInterrupted_nid_no_patch()) {
                 errno = EINTR;
                 return static_cast<ssize_t>(-1);
             }
@@ -1968,7 +1962,7 @@ static std::int64_t NetSendTo(int s, const void* buf, std::size_t len, int flags
     }
     if (result < 0) {
         const int error = native_error();
-        return fail(interruptible && ThreadCancel::IoInterrupted() ? NET_EINTR : error);
+        return fail(interruptible && KernelIoInterrupted_nid_no_patch() ? NET_EINTR : error);
     }
 #if defined(_WIN32) || defined(__APPLE__)
     note_local_address(s, socket);
