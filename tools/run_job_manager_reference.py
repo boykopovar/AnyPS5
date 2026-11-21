@@ -62,6 +62,14 @@ def stage_libraries(directory, build, toolchain, dependencies):
         pending.extend(read_host_imports(source))
 
 
+def runtime_environment(libraries):
+    environment = os.environ.copy()
+    environment["PATH"] = os.pathsep.join(value for value in (str(libraries), environment.get("PATH")) if value)
+    if sys.platform != "win32":
+        environment["LD_LIBRARY_PATH"] = os.pathsep.join(value for value in (str(libraries), environment.get("LD_LIBRARY_PATH")) if value)
+    return environment
+
+
 def run(args, directory):
     libraries = directory / "libs"
     libraries.mkdir()
@@ -104,10 +112,7 @@ def run(args, directory):
     if args.host:
         dependencies.add("libSceJobManager.prx")
     stage_libraries(libraries, args.build, args.toolchain, dependencies)
-    environment = os.environ.copy()
-    environment["PATH"] = str(libraries) + os.pathsep + environment.get("PATH", "")
-    if sys.platform != "win32":
-        environment["LD_LIBRARY_PATH"] = str(libraries) + os.pathsep + environment.get("LD_LIBRARY_PATH", "")
+    environment = runtime_environment(libraries)
     environment.pop("ANYPS5_JOB_MANAGER_HOST", None)
     if args.host:
         environment["ANYPS5_JOB_MANAGER_HOST"] = "1"

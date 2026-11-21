@@ -201,6 +201,8 @@ static void TestGuestBuffer() {
     Require(rejectsKeepingErrno([&] { ERR_error_string_n_nid_postfix(0xe1abc789, unmappedBuffer, 256); }), "unmapped buffer rejected");
     Require(rejectsKeepingErrno([&] { ERR_error_string_n_nid_postfix(0xe1abc789, readOnlyBuffer, 256); }), "read-only buffer rejected");
     Require(rejectsKeepingErrno([&] { ERR_error_string_n_nid_postfix(0xe1abc789, readOnlyBuffer, 1); }), "read-only terminator rejected");
+    Require(rejectsKeepingErrno([&] { ERR_error_string_n_nid_postfix(0xe1abc789, nullptr, 256); }), "null buffer with a length rejected");
+    Require(rejectsKeepingErrno([&] { ERR_error_string_n_nid_postfix(0xe1abc789, nullptr, 1); }), "null buffer with a one-byte length rejected");
     ERR_error_string_n_nid_postfix(0xe1abc789, readOnlyBuffer, 0);
     for (std::size_t index = 0; index < pageSize; ++index) Require(readOnlyBuffer[index] == '#', "read-only buffer unchanged");
 #ifdef _WIN32

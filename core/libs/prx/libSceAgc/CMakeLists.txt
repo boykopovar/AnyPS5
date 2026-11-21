@@ -10,6 +10,7 @@ add_library(libSceAgc SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Cb/src/Registers.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Cb/src/Sync.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/Memory.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/Memset.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/Control.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/Draw.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/RegisterDefaults.cpp
@@ -58,7 +59,7 @@ add_library(libSceAgc SHARED EXCLUDE_FROM_ALL
 )
 
 target_include_directories(libSceAgc PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(libSceAgc PRIVATE libSceAgcDriver libc)
+target_link_libraries(libSceAgc PRIVATE libSceAgcDriver libkernel libc)
 
 foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
     string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")

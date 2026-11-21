@@ -1,11 +1,11 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
 #include <algorithm>
 #include <chrono>
-#include <thread>
 
 namespace {
 
@@ -67,7 +67,7 @@ bool APS5_VABI _ZN3WTF11setNonBlockEi(int fileDescriptor) {
 void APS5_VABI _ZN3WTF5sleepENS_7SecondsE(WTF::Seconds value) {
     const double deadline = _ZN3WTF13MonotonicTime3nowEv().m_value + value.m_value;
     for (double now = _ZN3WTF13MonotonicTime3nowEv().m_value; now < deadline; now = _ZN3WTF13MonotonicTime3nowEv().m_value) {
-        std::this_thread::sleep_for(std::chrono::duration<double>(std::min(deadline - now, LongestSleepSeconds)));
+        PreciseSleepUs(static_cast<unsigned long long>(std::chrono::ceil<std::chrono::microseconds>(std::chrono::duration<double>(std::min(deadline - now, LongestSleepSeconds))).count()));
     }
 }
 

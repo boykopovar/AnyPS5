@@ -11,6 +11,10 @@ struct Normalizer2;
 extern "C" {
 Icu::Normalizer2* APS5_VABI unorm2_openFiltered_nid_postfix(const Icu::Normalizer2*, const USet*, std::int32_t*);
 void APS5_VABI unorm2_close_nid_postfix(Icu::Normalizer2*);
+const Icu::Normalizer2* APS5_VABI unorm2_getNFKCInstance(std::int32_t*);
+const Icu::Normalizer2* APS5_VABI unorm2_getNFKDInstance(std::int32_t*);
+const Icu::Normalizer2* APS5_VABI unorm2_getNFKCCasefoldInstance_nid_postfix(std::int32_t*);
+std::int32_t APS5_VABI u_getFC_NFKC_Closure_nid_postfix(std::int32_t, char16_t*, std::int32_t, std::int32_t*);
 const Icu::Normalizer2* APS5_VABI unorm2_getNFCInstance_nid_postfix(std::int32_t*);
 const Icu::Normalizer2* APS5_VABI unorm2_getNFDInstance_nid_postfix(std::int32_t*);
 const Icu::Normalizer2* APS5_VABI unorm2_getInstance_nid_postfix(const char*, const char*, std::int32_t, std::int32_t*);

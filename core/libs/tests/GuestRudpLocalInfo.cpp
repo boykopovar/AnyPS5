@@ -118,24 +118,33 @@ int main() {
     std::uint32_t address6Len = 0x40;
     Require(sceRudpGetLocalInfo(context6, nullptr, address6.data(), &address6Len, nullptr, nullptr) == 0);
     Require(address6Len == 0x1c);
-    Require(std::memcmp(address6.data(), expected6.data(), expected6.size()) == 0);
+    Require(std::memcmp(address6.data(), expected6.data(), 16) == 0);
+    for (std::size_t index = 16; index < 0x1c; ++index) {
+        Require(address6[index] == 0);
+    }
 
     int broken = -1;
     Require(sceRudpCreateContext(Handler, nullptr, &broken) == 0);
     Require(sceRudpBind(broken, 12345, 0x2713, 1) == 0);
     {
         std::array<std::uint8_t, 0x20> rejected{};
+        rejected.fill(0x5a);
         std::uint32_t length = 0x20;
-        bool thrown = false;
-        try {
-            sceRudpGetLocalInfo(broken, nullptr, rejected.data(), &length, nullptr, nullptr);
-        } catch (...) {
-            thrown = true;
+        int brokenSocket = -1;
+        std::uint16_t brokenVport = 0;
+        std::uint8_t brokenMuxMode = 0;
+        Require(sceRudpGetLocalInfo(broken, &brokenSocket, rejected.data(), &length, &brokenVport, &brokenMuxMode) == 0);
+        Require(brokenSocket == 12345 && brokenVport == 0x2713 && brokenMuxMode == 1);
+        Require(length == 0x1c);
+        for (std::size_t index = 0; index < rejected.size(); ++index) {
+            Require(rejected[index] == (index < 0x1c ? 0 : 0x5a));
         }
-        Require(thrown);
-        Require(length == 0x20);
-        for (const auto byte : rejected) {
-            Require(byte == 0);
+        std::uint32_t shortLength = 4;
+        rejected.fill(0x5a);
+        Require(sceRudpGetLocalInfo(broken, nullptr, rejected.data(), &shortLength, nullptr, nullptr) == 0);
+        Require(shortLength == 4);
+        for (std::size_t index = 0; index < rejected.size(); ++index) {
+            Require(rejected[index] == (index < 4 ? 0 : 0x5a));
         }
     }
 

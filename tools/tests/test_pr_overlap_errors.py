@@ -142,6 +142,30 @@ class ErrorReportTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         sleep_mock.assert_not_called()
 
+    def test_gh_retries_cancelled_stream_and_truncated_response(self):
+        for message in ("stream error: stream ID 1; CANCEL; received from peer", "unexpected EOF"):
+            with self.subTest(message=message):
+                results = [
+                    subprocess.CompletedProcess([], 1, stdout="partial", stderr=message),
+                    subprocess.CompletedProcess([], 0, stdout='[{"number": 17}]\n', stderr=""),
+                ]
+                with patch.object(pr_overlap.subprocess, "run", side_effect=results) as run_mock, \
+                        patch.object(pr_overlap.time, "sleep") as sleep_mock:
+                    self.assertEqual(pr_overlap.gh("api", "--include", "repos/owner/project/pulls", delay=0.01), '[{"number": 17}]\n')
+                self.assertEqual(run_mock.call_count, 2)
+                sleep_mock.assert_called_once_with(0.01)
+
+    def test_gh_cancelled_stream_still_fails_after_bounded_retries(self):
+        message = "stream error: stream ID 1; CANCEL; received from peer"
+        failed = subprocess.CompletedProcess([], 1, stdout="partial", stderr=message)
+        with patch.object(pr_overlap.subprocess, "run", return_value=failed) as run_mock, \
+                patch.object(pr_overlap.time, "sleep") as sleep_mock:
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                pr_overlap.gh("api", "repos/owner/project/pulls", attempts=3, delay=0.01)
+        self.assertEqual(run_mock.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep_mock.call_args_list], [0.01, 0.02])
+        self.assertEqual(raised.exception.stderr, message)
+
     def test_gh_raises_called_process_error_on_retry_exhaustion(self):
         calls = []
 
