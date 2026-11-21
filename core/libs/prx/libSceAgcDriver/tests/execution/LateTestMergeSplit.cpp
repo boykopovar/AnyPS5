@@ -71,7 +71,7 @@ std::byte* AllocateWatched(std::size_t bytes) {
     const auto begin = reinterpret_cast<std::uintptr_t>(raw);
     const auto aligned = (begin + BlockBytes - 1) & ~static_cast<std::uintptr_t>(BlockBytes - 1);
     if (aligned != begin) munmap(raw, aligned - begin);
-    if (aligned + bytes != begin + bytes + BlockBytes) munmap(reinterpret_cast<void*>(aligned + bytes), begin + BlockBytes - aligned);
+    munmap(reinterpret_cast<void*>(aligned + bytes), begin + BlockBytes - aligned);
     void* block = reinterpret_cast<void*>(aligned);
     GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, bytes);
 #endif
@@ -212,6 +212,8 @@ struct Pass {
     bool counter = false;
     bool second = false;
     std::uint32_t renderControl = 0;
+    std::uint32_t zFormat = 0;
+    std::uint32_t aaMask = 0xffffffffu;
 };
 
 void Submit(const Pass& pass, const char* what) {
@@ -225,10 +227,10 @@ void Submit(const Pass& pass, const char* what) {
         {0x1b3, 0x300}, {0x1b4, 0x300}, {0x1b6, 0}, {0x207, 0}, {0x200, pass.depthControl}, {0x203, pass.shaderControl},
         {0x2dc, 0xaa00}, {0x2f8, 0}, {0x292, 2}, {0x293, 0},
         {0x80, 0}, {0x8d, 0}, {0x83, 0xffff}, {0x8c, 0xa},
-        {0x2f9, 0x2d}, {0x313, 0x6000}, {0x30e, 0xffffffff}, {0x30f, 0xffffffff},
+        {0x2f9, 0x2d}, {0x313, 0x6000}, {0x30e, pass.aaMask}, {0x30f, 0xffffffff},
         {0x206, 0x43f}, {0x204, 0x80000}, {0x205, 0x240},
         {0x8e, pass.targetMask}, {0x8f, 0xf}, {0x202, 0xcc0010},
-        {0x1c4, 0}, {0x1c5, 9}, {0x1c3, 4},
+        {0x1c4, pass.zFormat}, {0x1c5, 9}, {0x1c3, 4},
         {0x318, static_cast<std::uint32_t>(color >> 8u)}, {0x390, static_cast<std::uint32_t>(color >> 40u)},
         {0x31b, 0}, {0x31c, Float11_11_10Info}, {0x31d, 0}, {0x3b0, ((Width - 1u) << 14u) | (Height - 1u)}, {0x3b8, TiledAttrib3},
         {0x1e0, pass.blendControl},
@@ -329,6 +331,38 @@ void RunDepthClear() {
     Require(refused, what + " was split and drawn");
 }
 
+void RunRefusedBeforeDepth(const ColorTargetLayout& layout, bool maskExport) {
+    const auto* killingBoth = PixelProgram(6, {0.5f, 0.25f, 0.125f, 0.5f}, true, false, true);
+    const auto* plain = PixelProgram(1, {0.0f, 0.0f, 0.0f, 1.0f}, false);
+    const std::array<float, 4> probeColor{1.0f, 0.5f, 0.25f, 1.0f};
+    const auto* probe = PixelProgram(2, probeColor, false);
+    const std::string what = std::string("a late-test merge beside an additively blended RGBA8 target whose draw ") + (maskExport ? "exports a sample mask (DB_SHADER_CONTROL MASK_EXPORT_ENABLE, SPI_SHADER_Z_FORMAT 9)" : "runs with a quad pixel mask (PA_SC_AA_MASK_X0Y0_X1Y0 0x0000ffff)");
+    std::vector<std::uint32_t> before(layout.Bytes() / 4u);
+    for (std::size_t index = 0; index < before.size(); ++index) before[index] = (12u << 5u) | (13u << 16u) | (14u << 27u) | static_cast<std::uint32_t>(index & 0x1fu);
+    std::memcpy(ColorMemory, before.data(), layout.Bytes());
+    std::vector<std::uint32_t> secondBefore(layout.Bytes() / 4u);
+    for (std::size_t index = 0; index < secondBefore.size(); ++index) secondBefore[index] = 0x20202020u + static_cast<std::uint32_t>((index * 0x0b070503u) & 0x1f1f1f1fu);
+    std::memcpy(SecondMemory, secondBefore.data(), layout.Bytes());
+    Submit({BackgroundLess, plain, DepthTest | DepthWrite | Always, 0u, 0u, 0u}, (what + ", the background depth").c_str());
+    Pass refusedPass{Middle, killingBoth, DepthTest | DepthWrite | Less, LateKill | (maskExport ? 0x100u : 0u), 0xffu, PremultipliedOver, VertexCode.data(), false, true};
+    if (maskExport) refusedPass.zFormat = 9u;
+    if (!maskExport) refusedPass.aaMask = 0x0000ffffu;
+    Submit(refusedPass, what.c_str());
+    Submit({ProbeLess, probe, DepthTest | Less, 0u, 0xfu, 0u}, (what + ", the depth probe").c_str());
+    const auto stored = ReadBack(layout.Bytes());
+    const auto second = ReadBack(layout.Bytes(), SecondMemory);
+    for (std::uint32_t y = 0; y < Height; ++y) {
+        for (std::uint32_t x = 0; x < Width; ++x) {
+            const auto index = layout.Offset(x, y) / 4u;
+            const auto expected = Written(probeColor, before[index], false);
+            if (stored[index] == expected && second[index] == secondBefore[index]) continue;
+            char detail[256];
+            std::snprintf(detail, sizeof(detail), ": pixel (%u, %u) holds 0x%08x (expected 0x%08x from the probe, so the refused draw %s) and 0x%08x in the second target (it held 0x%08x)", x, y, stored[index], expected, stored[index] == expected ? "kept depth" : "wrote depth", second[index], secondBefore[index]);
+            throw std::runtime_error(what + " changed a target before it was refused" + detail);
+        }
+    }
+}
+
 struct Case {
     const char* name;
     std::uint32_t compare;
@@ -425,6 +459,13 @@ int main(int argc, char** argv) {
             RunDepthClear();
             try { AgcDriverShutdown_nid_postfix(); } catch (const std::exception&) {}
             std::puts("a late-test merge whose draw clears depth was refused before either pass");
+            return 0;
+        }
+        if (argc == 2 && (std::string(argv[1]) == "--mask-export" || std::string(argv[1]) == "--quad-mask")) {
+            const bool maskExport = std::string(argv[1]) == "--mask-export";
+            RunRefusedBeforeDepth(layout, maskExport);
+            try { AgcDriverShutdown_nid_postfix(); } catch (const std::exception&) {}
+            std::printf("a late-test merge whose draw %s was skipped whole, depth and both targets unchanged\n", maskExport ? "exports a sample mask" : "runs with a quad pixel mask");
             return 0;
         }
         const auto* killing = PixelProgram(0, {0.5f, 0.25f, 0.125f, 0.5f}, true);

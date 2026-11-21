@@ -2252,9 +2252,10 @@ bool DepthStencilWrites(const State& state) {
     return state.depthWrite || stencilWrites(state);
 }
 
-std::uint32_t LateTestMergeSplitTargets(const Registers& context, const State& state) {
+std::uint32_t LateTestMergeSplitTargets(const Registers& context, const State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel) {
     if (const auto renderControl = find(context, 0x000); renderControl != context.end() && (renderControl->second & 1u) != 0) return 0;
     if (!state.pixelKill || state.pixelEarlyZ || !state.depth || !state.depthWrite || stencilWrites(state) || state.depthCompare == VK_COMPARE_OP_NEVER || state.alphaToCoverage) return 0;
+    if (pixel.depthExportEnable || pixel.stencilRefExportEnable || pixel.sampleMaskExportEnable || pixel.quadPixelMask != 0xfu || std::ranges::any_of(pixel.quadSampleMask, [](std::uint16_t mask) { return mask != 0xffffu; })) return 0;
     std::uint32_t targets = 0;
     for (const auto& color : state.colors) {
         if (color.partialWriteMask == 0) continue;
