@@ -1,6 +1,7 @@
 #include "PortabilitySubset.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineLinkOptimization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "Triangle_frag_spv.h"
@@ -495,6 +496,8 @@ public:
             function<PFN_vkGetPhysicalDeviceFeatures>("vkGetPhysicalDeviceFeatures")(context.physical, &supported);
             enabled.occlusionQueryPrecise = supported.occlusionQueryPrecise;
             context.occlusionQueryPrecise = supported.occlusionQueryPrecise == VK_TRUE;
+            enabled.sampleRateShading = supported.sampleRateShading;
+            context.sampleRateShading = supported.sampleRateShading == VK_TRUE;
             enabled.shaderStorageImageReadWithoutFormat = supported.shaderStorageImageReadWithoutFormat;
             enabled.shaderStorageImageWriteWithoutFormat = supported.shaderStorageImageWriteWithoutFormat;
             enabled.shaderStorageImageMultisample = supported.shaderStorageImageMultisample;
@@ -10331,6 +10334,129 @@ bool mapGateDisjointTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+std::atomic<int> exclusionStage{0};
+std::atomic<bool> exclusionSelected{false};
+
+void ExclusionSelectedBeforeHook() {
+    exclusionStage.store(1, std::memory_order_release);
+    Require(AwaitGate([] { return FlushExclusion::SelectionExcludedForTest(); }), "(x) the exclusion did not start while a flush held selected images");
+    AwaitGate([] { return exclusionStage.load(std::memory_order_acquire) >= 2; }, 1);
+}
+
+void ExclusionSelectedInsideHook() {
+    exclusionSelected.store(true, std::memory_order_release);
+}
+
+bool flushExclusionTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (GateUnavailable(base, "flush exclusion")) return false;
+    GateFixture fixture(base);
+    auto* block = fixture.Allocate(4 << 20, 65536);
+    if (block == nullptr) return false;
+    constexpr std::uint32_t Side = 512;
+    constexpr std::size_t ImageBytes = Side * Side * 4;
+    const auto range = [&](std::size_t index) { return std::pair<std::uint64_t, std::uint64_t>{block->Address() + index * ImageBytes, block->Address() + (index + 1) * ImageBytes}; };
+    const auto pendingOver = [&](std::size_t index) {
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{range(index)}};
+        return StorageTexture::AnyPendingOverlaps(span);
+    };
+    std::vector<std::shared_ptr<StorageTexture>> images;
+    for (std::size_t index = 0; index < 4; ++index) {
+        images.push_back(fixture.Image(range(index).first, Side));
+        recorder.Keep(images.back());
+        images.back()->MarkDirty();
+        Require(pendingOver(index), "(x) a dirty image is not pending");
+    }
+    Require(GpuMutex().DepthOnThisThread() == 1, "the test thread holds the GPU mutex more than once");
+    struct Released {
+        Released() { GpuMutex().unlock(); }
+        ~Released() { GpuMutex().lock(); }
+    };
+    std::optional<Released> released(std::in_place);
+    {
+        GateWatchdog watchdog("(x) a flush that selected images before the exclusion", 20);
+        exclusionStage.store(0);
+        StorageTexture::SetFlushSelectedHookForTest(&ExclusionSelectedBeforeHook);
+        std::thread flusher([&] { StorageTexture::FlushPending(range(0).first, ImageBytes); });
+        Require(AwaitGate([] { return exclusionStage.load(std::memory_order_acquire) >= 1; }), "(x) the flush did not select the pending image");
+        std::size_t owners = 1;
+        std::exception_ptr failure;
+        {
+            const FlushExclusion exclusion;
+            exclusionStage.store(2, std::memory_order_release);
+            AgcDriverResidentOwnersOver_nid_no_patch(range(0).first, ImageBytes, true, &owners, &failure);
+        }
+        flusher.join();
+        StorageTexture::SetFlushSelectedHookForTest(nullptr);
+        if (failure) std::rethrow_exception(failure);
+        Require(owners == 0, "(x) the exclusion began while a flush that had selected images had not stored them");
+    }
+    {
+        GateWatchdog watchdog("(x) a flush started inside the exclusion", 20);
+        exclusionSelected.store(false);
+        StorageTexture::SetFlushSelectedHookForTest(&ExclusionSelectedInsideHook);
+        bool selectedInside = true;
+        bool pending = true;
+        std::thread flusher;
+        {
+            const FlushExclusion exclusion;
+            flusher = std::thread([&] { StorageTexture::FlushPending(range(1).first, ImageBytes); });
+            AwaitGate([] { return exclusionSelected.load(std::memory_order_acquire); }, 1);
+            selectedInside = exclusionSelected.load(std::memory_order_acquire);
+            StorageTexture::FlushPending(range(1).first, ImageBytes);
+            pending = pendingOver(1);
+        }
+        flusher.join();
+        StorageTexture::SetFlushSelectedHookForTest(nullptr);
+        Require(!selectedInside && !pending, "(x) another thread selected pending images inside the exclusion, so the exclusion's own flush missed them");
+    }
+    {
+        GateWatchdog watchdog("(x) a flush started after the first of two overlapping exclusions ended", 20);
+        exclusionSelected.store(false);
+        StorageTexture::SetFlushSelectedHookForTest(&ExclusionSelectedInsideHook);
+        bool selectedInside = true;
+        std::thread flusher;
+        {
+            std::optional<FlushExclusion> first(std::in_place);
+            const FlushExclusion second;
+            first.reset();
+            flusher = std::thread([&] { StorageTexture::FlushPending(range(3).first, ImageBytes); });
+            AwaitGate([] { return exclusionSelected.load(std::memory_order_acquire); }, 1);
+            selectedInside = exclusionSelected.load(std::memory_order_acquire);
+        }
+        flusher.join();
+        StorageTexture::SetFlushSelectedHookForTest(nullptr);
+        Require(!selectedInside, "(x) another thread selected pending images inside an exclusion after an overlapping exclusion ended");
+    }
+    released.reset();
+    const auto keptBegin = range(2).first;
+    constexpr std::size_t KeptBytes = 65536;
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> keptSpan{{{keptBegin, keptBegin + KeptBytes}}};
+    {
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> owned;
+        std::exception_ptr failure;
+        AgcDriverGpuOwnedRanges_nid_no_patch(keptBegin, KeptBytes, owned, &failure);
+        if (failure) std::rethrow_exception(failure);
+        Require(!owned.empty() && owned.front().first <= keptBegin && keptBegin < owned.front().first + owned.front().second, "(x) a pending storage image is not among the GPU-owned ranges a reset compares");
+    }
+    std::memset(reinterpret_cast<void*>(keptBegin), 0x33, KeptBytes);
+    AgcDriver::GuestMemory::FlushGpuWrites(keptBegin, KeptBytes);
+    Require(StorageTexture::AnyPendingOverlaps(keptSpan), "(x) a memory access the CPU wrote stored the pending image instead of keeping it");
+    std::exception_ptr failure;
+    AgcDriverFlushGuestMemory_nid_no_patch(keptBegin, KeptBytes, &failure);
+    if (failure) std::rethrow_exception(failure);
+    std::size_t owners = 1;
+    AgcDriverResidentOwnersOver_nid_no_patch(keptBegin, KeptBytes, true, &owners, &failure);
+    if (failure) std::rethrow_exception(failure);
+    Require(owners == 0, "(x) " + std::to_string(owners) + " GPU owners hold results over a range the reset flushed");
+    std::size_t elsewhere = 0;
+    AgcDriverResidentOwnersOver_nid_no_patch(keptBegin + KeptBytes, ImageBytes - KeptBytes, true, &elsewhere, &failure);
+    if (failure) std::rethrow_exception(failure);
+    Require(elsewhere != 0, "(x) the kept image holds no pending results outside the flushed range");
+    std::cout << "flush exclusion passed\n";
+    return true;
+}
+
 GateBlock* gateRetryBlock = nullptr;
 std::atomic<int> gateRetryHooks{0};
 
@@ -17772,18 +17898,20 @@ void pipelineLibraryTests(const Device& device) {
     state.colors.front().format = VK_FORMAT_R16G16B16A16_SFLOAT;
     static_cast<void>(lookup());
     Require(counters().built == std::array<std::uint64_t, 4>{2, 2, 3, 3}, "another target format rebuilt more than the fragment output library");
+    const bool narrow = first->NarrowLibraryKeys();
+    const std::uint64_t wide = narrow ? 0u : 1u;
     state.samples = 4;
     state.colors.front().samples = 4;
     const auto multisampled = lookup();
-    Require(counters().built == std::array<std::uint64_t, 4>{2, 2, 4, 4}, "a 4x pipeline shared the 1x fragment shader or fragment output library");
+    Require(counters().built == std::array<std::uint64_t, 4>{2, 2, 3 + wide, 4}, narrow ? "a 4x pipeline did not share the 1x fragment shader library, or shared its fragment output library" : "a 4x pipeline shared the 1x fragment shader or fragment output library");
     state.samples = 1;
     state.colors.front().samples = 1;
-    Require(lookup() != multisampled && counters().built == std::array<std::uint64_t, 4>{2, 2, 4, 4}, "the 1x pipeline after a 4x one built its libraries again");
+    Require(lookup() != multisampled && counters().built == std::array<std::uint64_t, 4>{2, 2, 3 + wide, 4}, "the 1x pipeline after a 4x one built its libraries again");
     state.depth = DepthTarget{0, 0, {64, 64}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
     state.depthTest = true;
     state.depthCompare = VK_COMPARE_OP_LESS;
     static_cast<void>(lookup());
-    Require(counters().built == std::array<std::uint64_t, 4>{2, 3, 5, 5}, "a depth target shared the shader libraries built with no depth format");
+    Require(counters().built == std::array<std::uint64_t, 4>{2, 2 + wide, 3 + 2 * wide, 5}, narrow ? "a depth target rebuilt a shader library, or shared the fragment output library built with no depth format" : "a depth target shared the shader libraries built with no depth format");
     state.depth.reset();
     state.depthTest = false;
     if ((context.sampleLocationSampleCounts & VK_SAMPLE_COUNT_4_BIT) != 0) {
@@ -17795,14 +17923,14 @@ void pipelineLibraryTests(const Device& device) {
         const auto beforePatternChange = counters().built;
         state.sampleLocations[0] = 0x20;
         const auto otherPattern = lookup();
-        Require(otherPattern != pattern && counters().built[2] == beforePatternChange[2] + 1u && counters().built[3] == beforePatternChange[3] + 1u && counters().built[0] == beforePatternChange[0] && counters().built[1] == beforePatternChange[1], "a custom sample pattern did not rebuild exactly the fragment shader and fragment output libraries");
+        Require(otherPattern != pattern && counters().built[2] == beforePatternChange[2] + wide && counters().built[3] == beforePatternChange[3] + 1u && counters().built[0] == beforePatternChange[0] && counters().built[1] == beforePatternChange[1], narrow ? "a custom sample pattern did not rebuild exactly the fragment output library" : "a custom sample pattern did not rebuild exactly the fragment shader and fragment output libraries");
         state.sampleLocations[0] = 0x10;
-        Require(lookup() == pattern && counters().built[2] == beforePatternChange[2] + 1u && counters().built[3] == beforePatternChange[3] + 1u, "a cached custom sample pattern was not reused");
+        Require(lookup() == pattern && counters().built[2] == beforePatternChange[2] + wide && counters().built[3] == beforePatternChange[3] + 1u, "a cached custom sample pattern was not reused");
         if ((context.sampleLocationGridSampleCounts & VK_SAMPLE_COUNT_4_BIT) != 0) {
             state.sampleLocationGrid = true;
             state.sampleLocations[3u * 8u] = 0x20;
             const auto gridPattern = lookup();
-            Require(gridPattern != pattern && counters().built[2] == beforePatternChange[2] + 2u && counters().built[3] == beforePatternChange[3] + 2u, "a pattern varying between pixels shared a uniform pattern's fragment libraries");
+            Require(gridPattern != pattern && counters().built[2] == beforePatternChange[2] + 2 * wide && counters().built[3] == beforePatternChange[3] + 2u, narrow ? "a pattern varying between pixels shared a uniform pattern's fragment output library, or rebuilt the fragment shader library" : "a pattern varying between pixels shared a uniform pattern's fragment libraries");
             state.sampleLocationGrid = false;
             state.sampleLocations[3u * 8u] = 0;
             Require(lookup() == pattern, "the uniform pattern was not reused after a grid pattern");
@@ -17822,9 +17950,22 @@ void pipelineLibraryTests(const Device& device) {
             const auto beforeDepthChange = counters().built;
             state.depth->format = *incompatibleDepth;
             const auto incompatible = lookup();
-            Require(incompatible != compatible && counters().built[2] == beforeDepthChange[2] + 1u && counters().built[3] == beforeDepthChange[3] + 1u, "depth-format sample-location enablement did not rebuild both fragment libraries");
+            Require(incompatible != compatible && counters().built[2] == beforeDepthChange[2] + wide && counters().built[3] == beforeDepthChange[3] + 1u, narrow ? "depth-format sample-location enablement did not rebuild exactly the fragment output library" : "depth-format sample-location enablement did not rebuild both fragment libraries");
         }
         state.customSampleLocations = true;
+    }
+    if (context.sampleRateShading) {
+        state.depth.reset();
+        state.customSampleLocations = false;
+        state.perSampleShading = true;
+        state.samples = 1;
+        state.colors.front().samples = 1;
+        static_cast<void>(lookup());
+        const auto beforePerSample = counters().built;
+        state.samples = 4;
+        state.colors.front().samples = 4;
+        static_cast<void>(lookup());
+        Require(counters().built[2] == beforePerSample[2] + 1u && counters().built[3] == beforePerSample[3] + 1u, "a 4x pipeline that shades per sample shared the 1x per-sample fragment shader or fragment output library");
     }
     WaitForOptimizedPipelines(context.device);
     const auto lto = std::getenv("APS5_NO_PIPELINE_LTO") == nullptr && context.pipelineLinkTimeOptimization;
@@ -18634,6 +18775,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--map-gate-fast-path-only") return mapGateFastPathTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--map-gate-disjoint-only") return mapGateDisjointTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--map-gate-retry-only") return mapGateRetryTests(device, recorder) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--flush-exclusion-only") return flushExclusionTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--command-buffer-release-only") {
             commandBufferReleaseTests(device, recorder);
             return 0;

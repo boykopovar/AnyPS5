@@ -77,8 +77,54 @@ test('built-in conflict catalogue agrees with the current native bindings', () =
 test('setting names and order agree with the current native parser', () => {
     const source = readFileSync(new URL('../../../core/libs/prx/libSceVideoOut/src/InputMapping.cpp', import.meta.url), 'utf8');
     const definitions = [...source.matchAll(/InputSettingName\{"(\w+)", InputSetting::\w+\}/gu)].map(match => match[1]);
-    assert.deepEqual(settings.map(setting => setting.name), definitions);
+    assert.match(source, /if \(upper\(actionName\) == "TOGGLEACTIONS"\) \{/u);
+    assert.deepEqual(settings.map(setting => setting.name), [...definitions, 'ToggleActions']);
     assert.equal(new Set(definitions).size, definitions.length);
+});
+
+test('ToggleActions values follow the current native list parser', () => {
+    const source = readFileSync(new URL('../../../core/libs/prx/libSceVideoOut/src/InputMapping.cpp', import.meta.url), 'utf8');
+    const parser = source.match(/std::uint32_t parseToggleActions[\s\S]*?return mask;/u)[0];
+    assert.match(parser, /value\.find\(',', start\)/u);
+    assert.match(parser, /if \(part\.empty\(\)\) throw/u);
+    assert.match(parser, /findAction\(part\)/u);
+    assert.match(parser, /if \(action->control != Pad::InputControl::Button\)/u);
+});
+
+test('ToggleActions from the documented example imports and round trips', () => {
+    const imported = parseIni('ToggleActions = R2, L1\nR2 = KEY:Z\n');
+    assert.deepEqual(imported.errors, []);
+    assert.deepEqual(imported.entries, [binding('R2', 'KEY', 'Z')]);
+    assert.deepEqual(imported.settings, [{name: 'ToggleActions', value: 'R2, L1'}]);
+    assert.equal(serialize(imported.entries, imported.settings), 'R2 = KEY:Z\nToggleActions = R2, L1\n');
+});
+
+test('ToggleActions accepts every pad button in any case and repeated names', () => {
+    assert.deepEqual(validateSettings([{name: 'ToggleActions', value: [...padButtons].join(',')}]).errors, []);
+    const imported = parseIni('toggleactions = r2 ,cross, R2\n');
+    assert.deepEqual(imported.errors, []);
+    assert.deepEqual(imported.settings, [{name: 'ToggleActions', value: 'r2 ,cross, R2'}]);
+});
+
+test('ToggleActions refuses empty names, unknown actions and actions that are not pad buttons', () => {
+    const cases = {
+        'ToggleActions =': 'ToggleActions has an empty action name.',
+        'ToggleActions = R2,': 'ToggleActions has an empty action name.',
+        'ToggleActions = R2,,L1': 'ToggleActions has an empty action name.',
+        'ToggleActions = R2, Jump': "ToggleActions: unknown action 'Jump'.",
+        'ToggleActions = TouchPad': "ToggleActions: unknown action 'TouchPad'.",
+        'ToggleActions = leftstickup': "ToggleActions only lists pad buttons, not 'LeftStickUp'.",
+        'ToggleActions = R2, ToggleFullscreen': "ToggleActions only lists pad buttons, not 'ToggleFullscreen'."
+    };
+    for (const [line, message] of Object.entries(cases)) {
+        const result = parseIni(line);
+        assert.deepEqual(result.errors, [{line: 1, message}], line);
+        assert.deepEqual(result.settings, [], line);
+        assert.throws(() => serialize([], [{name: 'ToggleActions', value: line.slice(line.indexOf('=') + 1)}]), {message}, line);
+    }
+    const repeated = parseIni('ToggleActions = R2\nToggleActions = L1\n');
+    assert.deepEqual(repeated.errors, [{line: 2, message: 'ToggleActions is set more than once.'}]);
+    assert.deepEqual(repeated.settings, [{name: 'ToggleActions', value: 'R2'}]);
 });
 
 test('settings from a documented configuration import and round trip', () => {

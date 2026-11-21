@@ -1,4 +1,5 @@
 import argparse
+import functools
 import json
 import re
 from collections import Counter
@@ -96,9 +97,19 @@ def checked_argument_dereferences(body, name):
     return found
 
 
+@functools.lru_cache(maxsize=None)
+def parameter_patterns(name):
+    word = re.escape(name)
+    operand = rf"(?<![.>:])(?:\b{word}\b|\b(?:reinterpret|static|const)_cast\s*{CAST_TYPE}\s*\(\s*{word}\s*\))"
+    found = tuple((kind, re.compile(pattern)) for kind, pattern in (
+        ("member", rf"{operand}\s*->"), ("index", rf"{operand}\s*\["),
+        ("dereference", rf"(?:^|[=(,;{{}}!&|?:+\-]|\breturn)\s*\*\s*{operand}")))
+    return re.compile(rf"\(?\s*{word}\b"), found
+
+
 def names_parameter(argument, name):
     argument = argument.strip()
-    pattern = re.compile(rf"\(?\s*{re.escape(name)}\b")
+    pattern = parameter_patterns(name)[0]
     while True:
         if pattern.match(argument):
             return True
@@ -109,12 +120,9 @@ def names_parameter(argument, name):
 
 
 def accesses(body, name):
-    word = re.escape(name)
-    operand = rf"(?<![.>:])(?:\b{word}\b|\b(?:reinterpret|static|const)_cast\s*{CAST_TYPE}\s*\(\s*{word}\s*\))"
     found = []
-    for kind, pattern in (("member", rf"{operand}\s*->"), ("index", rf"{operand}\s*\["),
-                          ("dereference", rf"(?:^|[=(,;{{}}!&|?:+\-]|\breturn)\s*\*\s*{operand}")):
-        found += [(match.end() - 1, kind) for match in re.finditer(pattern, body)]
+    for kind, pattern in parameter_patterns(name)[1]:
+        found += [(match.end() - 1, kind) for match in pattern.finditer(body)]
     for match in RAW_CALL.finditer(body):
         open_paren = match.end() - 1
         arguments = split_top_level(body[open_paren + 1:closing(body, open_paren)], angles=False)
