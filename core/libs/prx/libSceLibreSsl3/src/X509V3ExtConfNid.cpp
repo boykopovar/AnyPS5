@@ -362,21 +362,24 @@ bool ParseBitList(std::string_view text, std::vector<unsigned char>& bytes) {
         bool overflow = false;
         for (const char digit : element) {
             if (digit < '0' || digit > '9') return false;
+            if (overflow) continue;
             const unsigned long long value = static_cast<unsigned long long>(digit - '0');
-            if (bit > (std::numeric_limits<unsigned long long>::max() - value) / 10) overflow = true;
+            if (bit > (std::numeric_limits<unsigned long long>::max() - value) / 10) {
+                overflow = true;
+                continue;
+            }
             bit = bit * 10 + value;
         }
-        const unsigned long long converted =
-            overflow ? std::numeric_limits<unsigned long long>::max() : negative ? 0ULL - bit : bit;
-        if (static_cast<std::int64_t>(converted) < 0) {
+        constexpr unsigned long long signedMax = static_cast<unsigned long long>(std::numeric_limits<std::int64_t>::max());
+        const unsigned long long converted = negative ? 0ULL - bit : bit;
+        if (overflow || converted > signedMax) {
             PutAsn1Error(InvalidNumber);
             return false;
         }
-        if (negative && bit != 0) return false;
-        if (bit > static_cast<unsigned long long>(std::numeric_limits<int>::max())) NotImplemented_nid_no_patch(__func__);
-        const std::size_t index = static_cast<std::size_t>(bit) / 8;
+        if (converted > static_cast<unsigned long long>(std::numeric_limits<int>::max())) NotImplemented_nid_no_patch(__func__);
+        const std::size_t index = static_cast<std::size_t>(converted) / 8;
         if (bytes.size() <= index) bytes.resize(index + 1, 0);
-        bytes[index] |= static_cast<unsigned char>(0x80 >> (static_cast<std::size_t>(bit) % 8));
+        bytes[index] |= static_cast<unsigned char>(0x80 >> (static_cast<std::size_t>(converted) % 8));
         if (comma == std::string_view::npos) return true;
         start = comma + 1;
     }
