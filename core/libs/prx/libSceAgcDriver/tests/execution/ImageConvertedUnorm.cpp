@@ -283,7 +283,7 @@ void CheckRoundTrip(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     }
 }
 
-void CheckStore(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const std::uint32_t> code, std::uint32_t dmask, const std::string& what, bool d16 = false) {
+void CheckStore(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const std::uint32_t> code, std::uint32_t dmask, const std::string& what, bool d16 = false, std::uint32_t swizzle = SwizzleXYZ1) {
     std::fill(texels, texels + Threads * 4u, static_cast<std::uint8_t>(0xa5u));
     Input.fill(0u);
     std::array<std::uint32_t, Threads> expected{};
@@ -302,7 +302,7 @@ void CheckStore(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span
             expected[tid] |= StoreField(d16 ? HalfToFloatBits(values[component]) : values[component], component == 2u ? 1023u : 2047u) << (component * 11u);
         }
     }
-    Run(device, code, TextureDescriptor(texels, UnormFormat, SwizzleXYZ1, Threads), BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)), 1);
+    Run(device, code, TextureDescriptor(texels, UnormFormat, swizzle, Threads), BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)), 1);
     AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(texels), Threads * 4u, nullptr, "test");
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -943,7 +943,7 @@ int main(int argc, char** argv) {
         CheckStore(*device, texels + StoreOffset, StoreD16, 0x7u, "image_store d16 dmask:0x7", true);
         CheckStore(*device, texels + StoreOffset, StoreXzD16, 0x5u, "image_store d16 dmask:0x5", true);
         RequireRefused(*device, LoadXyzw, texels, SwizzleXYZW, {}, "selects a channel the converted image format does not have", "image_load with DST_SEL X Y Z W");
-        RequireRefused(*device, StoreXyz, texels + StoreOffset, SwizzleXYZW, BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)), "selects a channel the converted image format does not have", "image_store with DST_SEL X Y Z W");
+        CheckStore(*device, texels + StoreOffset, StoreXyz, 0x7u, "image_store dmask:0x7 with DST_SEL X Y Z W", false, SwizzleXYZW);
         std::puts("image converted unorm tests passed");
         return 0;
     } catch (const std::exception& error) {
