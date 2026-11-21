@@ -257,6 +257,73 @@ void TestScrollingAndLayerEnums() {
     }
 }
 
+void TestActivityState() {
+    auto dump = [](std::uint32_t flags) {
+        return Dump([&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamENS0_9OptionSetINS_13ActivityState4FlagEEE(s, flags); });
+    };
+    Check(dump(0) == "");
+    const char* names[] = {"active window", "focused", "visible", "visible or occluded", "in-window", "visually idle", "audible", "loading", "capturing media"};
+    std::string all;
+    for (unsigned bit = 0; bit < 9; ++bit) {
+        Check(dump(1u << bit) == names[bit]);
+        if (bit) all += ", ";
+        all += names[bit];
+    }
+    Check(dump(0x1FF) == all);
+    Check(dump(0xFFFFFFFFu) == all);
+    Check(dump((1u << 1) | (1u << 6)) == "focused, audible");
+    Check(dump((1u << 8) | (1u << 0)) == "active window, capturing media");
+    Check(dump(1u << 9) == "");
+    Check(dump((1u << 9) | (1u << 7)) == "loading");
+}
+
+void TestTouchAction() {
+    auto dump = [](unsigned value) {
+        return Dump([&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamENS_11TouchActionE(s, static_cast<WebCore::TouchAction>(value)); });
+    };
+    Check(dump(1) == "auto");
+    Check(dump(2) == "none");
+    Check(dump(4) == "manipulation");
+    Check(dump(8) == "pan-x");
+    Check(dump(16) == "pan-y");
+    Check(dump(32) == "pinch-zoom");
+    for (unsigned value : {0u, 3u, 24u, 64u, 128u, 255u}) Check(dump(value) == "");
+}
+
+void TestRegion() {
+    struct Storage {
+        alignas(alignof(WebCore::Region)) char storage[sizeof(WebCore::Region)];
+        WebCore::Region* ptr() { return reinterpret_cast<WebCore::Region*>(storage); }
+    };
+    auto dump = [](WebCore::Region* region, unsigned flags = 0, bool multiLine = true) {
+        return Dump([&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(s, *region); }, flags, multiLine);
+    };
+    Storage empty;
+    _ZN7WebCore6RegionC1Ev(empty.ptr());
+    Check(dump(empty.ptr()) == "\n");
+    Storage one;
+    WebCore::IntRect rect{{1, 2}, {3, 4}};
+    _ZN7WebCore6RegionC1ERKNS_7IntRectE(one.ptr(), rect);
+    Check(dump(one.ptr()) == "\n  (rect (1,2) width=3 height=4)\n");
+    Check(dump(one.ptr(), SVGStyleRect) == "\n  (rect at (1,2) size 3x4)\n");
+    Check(dump(one.ptr(), 0, false) == "\n(rect (1,2) width=3 height=4)\n");
+    Storage shape;
+    WebCore::IntRect top{{0, 0}, {10, 10}};
+    WebCore::IntRect bottom{{0, 10}, {5, 5}};
+    Storage other;
+    _ZN7WebCore6RegionC1ERKNS_7IntRectE(shape.ptr(), top);
+    _ZN7WebCore6RegionC1ERKNS_7IntRectE(other.ptr(), bottom);
+    _ZN7WebCore6Region5uniteERKS0_(shape.ptr(), *other.ptr());
+    Check(dump(shape.ptr()) == "\n  (rect (0,0) width=10 height=10)\n  (rect (0,10) width=5 height=5)\n");
+    TextStream nested = NewStream();
+    nested.indent = 2;
+    TextStream& returned = _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(nested, *shape.ptr());
+    Check(&returned == &nested);
+    Check(nested.indent == 2);
+    Check(Release(nested) == "\n      (rect (0,0) width=10 height=10)\n      (rect (0,10) width=5 height=5)\n");
+    for (Storage* region : {&empty, &one, &shape, &other}) _ZN7WebCore6RegionD1Ev(region->ptr());
+}
+
 void TestChaining() {
     TextStream stream = NewStream();
     WebCore::IntPoint point{1, 2};
@@ -277,6 +344,9 @@ int main() {
     TestScrollingAndLayerEnums();
     TestLayoutValues();
     TestTransforms();
+    TestActivityState();
+    TestTouchAction();
+    TestRegion();
     TestChaining();
     return 0;
 }

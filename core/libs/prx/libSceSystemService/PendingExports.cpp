@@ -6,7 +6,9 @@
 #include <cerrno>
 #include <cstring>
 #include <filesystem>
+#include <new>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -381,8 +383,15 @@ int APS5_VABI sceLncUtilKillLocalProcess(std::int32_t appId, std::int32_t proces
 }
 
 int APS5_VABI sceLncUtilLaunchApp(const char* titleId, const char* const* argv, const LncLaunchParam* param) {
+    if (titleId == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+    std::string id;
+    const int savedErrno = errno;
+    const int error = CopyGuestString_nid_no_patch(titleId, 10, id);
+    errno = savedErrno;
+    if (error == 14) throw std::logic_error("sceLncUtilLaunchApp: reading a title id where it is not readable faults in firmware 13.60");
+    if (error != 0 && error != 63) throw std::bad_alloc();
+    if (error == 63 || id.size() != 9 || param == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceLncUtilNotifyCoredumpRequestEnd(std::int32_t appId, std::int32_t processId, std::int32_t result) {
