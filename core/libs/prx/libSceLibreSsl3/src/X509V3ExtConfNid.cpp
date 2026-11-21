@@ -418,11 +418,11 @@ struct ListEntry {
 
 bool StripSpaces(std::string_view text, std::string& result) {
     std::size_t begin = 0;
-    std::size_t end = text.size();
-    while (begin < end && IsSpace(text[begin])) ++begin;
-    while (end > begin && IsSpace(text[end - 1])) --end;
-    if (begin == end) return false;
-    result.assign(text.substr(begin, end - begin));
+    while (begin < text.size() && IsSpace(text[begin])) ++begin;
+    if (begin == text.size()) return false;
+    std::size_t last = text.size() - 1;
+    while (last != begin && IsSpace(text[last])) --last;
+    result.assign(text.substr(begin, last == begin ? std::string_view::npos : last + 1 - begin));
     return true;
 }
 
