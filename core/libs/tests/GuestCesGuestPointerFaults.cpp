@@ -225,6 +225,38 @@ int main() {
     Require(unreadableSource(sceCesEucJpToUcs2(eucJp, unreadable, 2, &size, &unit)));
     Require(unreadableSource(sceCesEucJpToUtf8(eucJp, unreadable, 2, &size, utf8, 4, nullptr)));
     Require(unreadableSource(sceCesUtf8ToSbc(unreadable, 1, nullptr, cp1252, &byte)));
+
+    const std::uint8_t* cp864 = sceCesRefersUcsProfileCp864();
+
+    errno = savedErrno;
+    Require(sceCesSbcToUtf16(cp1252, 'A', unmappedU16, 1, &size) == ERR_INVALID_DST_BUFFER);
+    Require(errno == savedErrno);
+
+    errno = savedErrno;
+    Require(sceCesSbcToUtf32(cp1252, 'A', unmappedU32) == ERR_INVALID_DST_BUFFER);
+    Require(errno == savedErrno);
+
+    errno = savedErrno;
+    Require(sceCesSbcToUtf32(cp864, 0x9B, unmappedU32) == ERR_INVALID_DST_BUFFER);
+    Require(errno == savedErrno);
+
+    errno = savedErrno;
+    Require(sceCesUcs2ToSbc('A', cp1252, unmappedU8) == ERR_INVALID_DST_BUFFER);
+    Require(errno == savedErrno);
+
+    unit = 'A';
+    errno = savedErrno;
+    Require(sceCesUtf16ToSbc(&unit, 1, &size, cp1252, unmappedU8) == ERR_INVALID_DST_BUFFER);
+    Require(errno == savedErrno);
+
+    unit = 0xDC00;
+    errno = savedErrno;
+    Require(sceCesUtf16ToSbc(&unit, 1, &size, cp1252, unmappedU8) == ERR_INVALID_DST_BUFFER);
+    Require(errno == savedErrno);
+
+    errno = savedErrno;
+    Require(sceCesUtf16ToSbc(unmappedU16, 1, &size, cp1252, &byte) == ERR_INVALID_SRC_BUFFER);
+    Require(errno == savedErrno);
 #ifdef _WIN32
     SYSTEM_INFO system{};
     GetSystemInfo(&system);

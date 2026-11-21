@@ -114,6 +114,30 @@ bool isSingleByte(const void* profile, SingleByte::Table expected) {
     return singleByteTable(profile, table) && table == expected;
 }
 
+bool isMeasuredUcs2SurrogateProfile(const uint8_t* profile) {
+    return profile == CP1252_PROFILE
+        || isSingleByte(profile, SingleByte::Cp1254)
+        || isSingleByte(profile, SingleByte::Cp1258)
+        || isSingleByte(profile, SingleByte::Iso8859_1)
+        || isSingleByte(profile, SingleByte::Iso8859_15);
+}
+
+bool clearsMeasuredScalarOutput(const uint8_t* profile) {
+    return profile == CP1252_PROFILE
+        || isSingleByte(profile, SingleByte::Iso8859_1)
+        || isSingleByte(profile, SingleByte::Cp864);
+}
+
+bool clearsMeasuredUtf16Output(const uint8_t* profile) {
+    return profile == CP1252_PROFILE
+        || isSingleByte(profile, SingleByte::Iso8859_1);
+}
+
+bool clearsMeasuredSbcDecodeOutput(const uint8_t* profile, bool includeCp864) {
+    return profile == CP1252_PROFILE
+        || (includeCp864 && isSingleByte(profile, SingleByte::Cp864));
+}
+
 bool isSevenBit(const void* profile) {
     SingleByte::Table table;
     return singleByteTable(profile, table) && SingleByte::SEVEN_BIT[table];
@@ -1854,51 +1878,189 @@ int unitTarget(const void*, uint32_t code, Unit* target, uint32_t& length) {
     return length != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
 }
 
-int sbcToUnit(const uint8_t* profile, uint8_t sbc, const void* target, uint32_t& code) {
+template<typename Unit>
+int sbcToUnit(
+    const uint8_t* profile,
+    uint8_t sbc,
+    Unit* target,
+    uint32_t& code,
+    bool measuredNative = false,
+    bool includeCp864 = false
+) {
+    if (measuredNative && profile == nullptr) {
+        if (!target) return CES_ERROR_INVALID_DST_BUFFER;
+        if (!CesGuest::Store(target, Unit{0})) return CES_ERROR_INVALID_DST_BUFFER;
+        code = 0;
+        return CES_ERROR_INVALID_PROFILE;
+    }
+
     if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!target) return CES_ERROR_INVALID_DST_BUFFER;
-    return sbcError(profile, sbc, code);
+
+    const int result = sbcError(profile, sbc, code);
+
+    if (result == CES_ERROR_UNASSIGNED_CODE
+        && measuredNative
+        && clearsMeasuredSbcDecodeOutput(profile, includeCp864)) {
+        if (!CesGuest::Store(target, Unit{0})) return CES_ERROR_INVALID_DST_BUFFER;
+        code = 0;
+    }
+
+    return result;
 }
 
 template<bool BigEndian>
-int sbcToUtf16(const uint8_t* profile, uint8_t sbc, uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len) {
+int sbcToUtf16(
+    const uint8_t* profile,
+    uint8_t sbc,
+    uint16_t* utf16,
+    uint32_t utf16max,
+    uint32_t* utf16Len,
+    bool measuredNative = false
+) {
     uint32_t code = 0;
-    if (const int result = sbcToUnit(profile, sbc, utf16, code); result != 0) return result;
-    if (utf16max < 1) return CES_ERROR_DST_BUFFER_END;
+
+    if (const int result = sbcToUnit(profile, sbc, utf16, code, measuredNative, false); result != 0) {
+        return result;
+    }
+
+    if (utf16max < 1) {
+        if (measuredNative && clearsMeasuredUtf16Output(profile) && utf16Len
+            && !CesGuest::Store(utf16Len, uint32_t{1})) {
+            return CES_ERROR_INVALID_DST_BUFFER;
+        }
+        return CES_ERROR_DST_BUFFER_END;
+    }
+
     if (!storeGuestUnit<uint16_t, BigEndian>(utf16, code)) return CES_ERROR_INVALID_DST_BUFFER;
     if (utf16Len && !CesGuest::Store(utf16Len, uint32_t{1})) return CES_ERROR_INVALID_DST_BUFFER;
+
     return 0;
 }
 
 template<bool BigEndian>
-int sbcToUtf32(const uint8_t* profile, uint8_t sbc, uint32_t* utf32) {
+int sbcToUtf32(
+    const uint8_t* profile,
+    uint8_t sbc,
+    uint32_t* utf32,
+    bool measuredNative = false
+) {
     uint32_t code = 0;
-    if (const int result = sbcToUnit(profile, sbc, utf32, code); result != 0) return result;
+
+    if (const int result = sbcToUnit(profile, sbc, utf32, code, measuredNative, true); result != 0) {
+        return result;
+    }
+
     return storeGuestUnit<uint32_t, BigEndian>(utf32, code) ? 0 : CES_ERROR_INVALID_DST_BUFFER;
 }
 
-int scalarToSbc(uint32_t code, const uint8_t* profile, uint8_t* sbc) {
+int scalarToSbc(
+    uint32_t code,
+    const uint8_t* profile,
+    uint8_t* sbc,
+    bool measuredNative = false,
+    bool ucs2Native = false,
+    bool utf32Native = false
+) {
+    if (measuredNative && profile == nullptr) {
+        if (!sbc) return CES_ERROR_INVALID_DST_BUFFER;
+        if (!CesGuest::Store(sbc, uint8_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
+        return CES_ERROR_INVALID_PROFILE;
+    }
+
     if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!sbc) return CES_ERROR_INVALID_DST_BUFFER;
-    if (!isScalar(code)) return CES_ERROR_INVALID_ENCODE;
+
+    const auto rejected = [&](int error) {
+        if (measuredNative && clearsMeasuredScalarOutput(profile)) {
+            if (!CesGuest::Store(sbc, uint8_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
+        }
+        return error;
+    };
+
+    if (!isScalar(code)) {
+        const bool surrogate = code >= 0xD800 && code <= 0xDFFF;
+
+        if (surrogate
+            && ((ucs2Native && isMeasuredUcs2SurrogateProfile(profile)) || utf32Native)) {
+            return rejected(CES_ERROR_ILLEGAL_CODE);
+        }
+
+        return rejected(CES_ERROR_INVALID_ENCODE);
+    }
+
     uint8_t local = 0;
-    if (!unicodeToSbc(profile, code, local)) return CES_ERROR_UNASSIGNED_CODE;
+
+    if (!unicodeToSbc(profile, code, local)) {
+        return rejected(CES_ERROR_UNASSIGNED_CODE);
+    }
+
     return CesGuest::Store(sbc, local) ? 0 : CES_ERROR_INVALID_DST_BUFFER;
 }
 
 template<bool BigEndian>
-int utf16ToSbc(const uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len, const uint8_t* profile, uint8_t* sbc) {
+int utf16ToSbc(
+    const uint16_t* utf16,
+    uint32_t utf16max,
+    uint32_t* utf16Len,
+    const uint8_t* profile,
+    uint8_t* sbc,
+    bool measuredNative = false
+) {
+    if (measuredNative && profile == nullptr) {
+        if (!sbc) return CES_ERROR_INVALID_DST_BUFFER;
+        if (!CesGuest::Store(sbc, uint8_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
+        return CES_ERROR_INVALID_PROFILE;
+    }
+
     if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!utf16) return CES_ERROR_INVALID_SRC_BUFFER;
     if (utf16max == 0) return CES_ERROR_SRC_BUFFER_END;
     if (!sbc) return CES_ERROR_INVALID_DST_BUFFER;
+
     uint32_t length = 0;
     uint32_t code = 0;
-    if (const int result = decodeGuestSource(utf16, utf16max, length, code, decodeUtf16<BigEndian>); result != 0) return result;
+
+    const int decoded = decodeGuestSource(
+        utf16,
+        utf16max,
+        length,
+        code,
+        decodeUtf16<BigEndian>
+    );
+
+    const bool publishLength = measuredNative && clearsMeasuredUtf16Output(profile);
+
+    if (decoded != 0) {
+        if (publishLength && length != 0) {
+            if (!CesGuest::Store(sbc, uint8_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
+            if (utf16Len && !CesGuest::Store(utf16Len, length)) return CES_ERROR_INVALID_DST_BUFFER;
+        }
+
+        if (measuredNative
+            && decoded == CES_ERROR_INVALID_ENCODE
+            && code >= 0xDC00
+            && code <= 0xDFFF
+            && isMeasuredUcs2SurrogateProfile(profile)) {
+            return CES_ERROR_ILLEGAL_CODE;
+        }
+
+        return decoded;
+    }
+
     uint8_t local = 0;
-    if (!unicodeToSbc(profile, code, local)) return CES_ERROR_UNASSIGNED_CODE;
+
+    if (!unicodeToSbc(profile, code, local)) {
+        if (publishLength) {
+            if (!CesGuest::Store(sbc, uint8_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
+            if (utf16Len && !CesGuest::Store(utf16Len, length)) return CES_ERROR_INVALID_DST_BUFFER;
+        }
+        return CES_ERROR_UNASSIGNED_CODE;
+    }
+
     if (!CesGuest::Store(sbc, local)) return CES_ERROR_INVALID_DST_BUFFER;
     if (utf16Len && !CesGuest::Store(utf16Len, length)) return CES_ERROR_INVALID_DST_BUFFER;
+
     return 0;
 }
 
@@ -2767,43 +2929,43 @@ int APS5_VABI sceCesSbcToUcs2(const uint8_t* profile, uint8_t sbc, uint16_t* ucs
 }
 
 int APS5_VABI sceCesSbcToUtf16(const uint8_t* profile, uint8_t sbc, uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len) {
-    return sbcToUtf16<NATIVE_BIG_ENDIAN>(profile, sbc, utf16, utf16max, utf16Len);
+    return sbcToUtf16<NATIVE_BIG_ENDIAN>(profile, sbc, utf16, utf16max, utf16Len, true);
 }
 
 int APS5_VABI sceCesSbcToUtf16be(const uint8_t* profile, uint8_t sbc, uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len) {
-    return sbcToUtf16<true>(profile, sbc, utf16, utf16max, utf16Len);
+    return sbcToUtf16<true>(profile, sbc, utf16, utf16max, utf16Len, false);
 }
 
 int APS5_VABI sceCesSbcToUtf16le(const uint8_t* profile, uint8_t sbc, uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len) {
-    return sbcToUtf16<false>(profile, sbc, utf16, utf16max, utf16Len);
+    return sbcToUtf16<false>(profile, sbc, utf16, utf16max, utf16Len, false);
 }
 
 int APS5_VABI sceCesSbcToUtf32(const uint8_t* profile, uint8_t sbc, uint32_t* utf32) {
-    return sbcToUtf32<NATIVE_BIG_ENDIAN>(profile, sbc, utf32);
+    return sbcToUtf32<NATIVE_BIG_ENDIAN>(profile, sbc, utf32, true);
 }
 
 int APS5_VABI sceCesSbcToUtf32be(const uint8_t* profile, uint8_t sbc, uint32_t* utf32) {
-    return sbcToUtf32<true>(profile, sbc, utf32);
+    return sbcToUtf32<true>(profile, sbc, utf32, false);
 }
 
 int APS5_VABI sceCesSbcToUtf32le(const uint8_t* profile, uint8_t sbc, uint32_t* utf32) {
-    return sbcToUtf32<false>(profile, sbc, utf32);
+    return sbcToUtf32<false>(profile, sbc, utf32, false);
 }
 
 int APS5_VABI sceCesUcs2ToSbc(uint16_t ucs2, const uint8_t* profile, uint8_t* sbc) {
-    return scalarToSbc(ucs2, profile, sbc);
+    return scalarToSbc(ucs2, profile, sbc, true, true, false);
 }
 
 int APS5_VABI sceCesUtf16ToSbc(const uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len, const uint8_t* profile, uint8_t* sbc) {
-    return utf16ToSbc<NATIVE_BIG_ENDIAN>(utf16, utf16max, utf16Len, profile, sbc);
+    return utf16ToSbc<NATIVE_BIG_ENDIAN>(utf16, utf16max, utf16Len, profile, sbc, true);
 }
 
 int APS5_VABI sceCesUtf16beToSbc(const uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len, const uint8_t* profile, uint8_t* sbc) {
-    return utf16ToSbc<true>(utf16, utf16max, utf16Len, profile, sbc);
+    return utf16ToSbc<true>(utf16, utf16max, utf16Len, profile, sbc, false);
 }
 
 int APS5_VABI sceCesUtf16leToSbc(const uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len, const uint8_t* profile, uint8_t* sbc) {
-    return utf16ToSbc<false>(utf16, utf16max, utf16Len, profile, sbc);
+    return utf16ToSbc<false>(utf16, utf16max, utf16Len, profile, sbc, false);
 }
 
 int APS5_VABI sceCesUtf32ToSbc(uint32_t utf32, const uint8_t* profile, uint8_t* sbc) {

@@ -233,6 +233,7 @@ static void RequireWideDecoding(Utf16Decode utf16le, Utf32Decode utf32be, Utf32D
 
 int main() {
     constexpr int invalidParameter = static_cast<int>(0x805C0001);
+    constexpr int invalidProfile = static_cast<int>(0x805C0004);
     constexpr int invalidSrcBuffer = static_cast<int>(0x805C0010);
     constexpr int srcBufferEnd = static_cast<int>(0x805C0011);
     constexpr int invalidEncode = static_cast<int>(0x805C0014);
@@ -243,6 +244,11 @@ int main() {
 
     const std::uint8_t* cp1252 = sceCesRefersUcsProfileCp1252();
     const std::uint8_t* cp1251 = sceCesRefersUcsProfileCp1251();
+    const std::uint8_t* iso8859_1 = sceCesRefersUcsProfileIso8859_1();
+    const std::uint8_t* iso8859_15 = sceCesRefersUcsProfileIso8859_15();
+    const std::uint8_t* cp1254 = sceCesRefersUcsProfileCp1254();
+    const std::uint8_t* cp1258 = sceCesRefersUcsProfileCp1258();
+    const std::uint8_t* cp864 = sceCesRefersUcsProfileCp864();
     alignas(8) std::uint8_t sjisSheet[64] = {};
     const void* sjis = sceCesUcsProfileInitSJis1997Cp932(sjisSheet);
 
@@ -255,7 +261,8 @@ int main() {
     Require(sceCesSbcToUcs2(static_cast<const std::uint8_t*>(sjis), 0x41, &ucs2) == invalidParameter);
     Require(sceCesSbcToUcs2(cp1252, 0x41, nullptr) == invalidDstBuffer);
     Require(sceCesSbcToUtf16(cp1252, 0x80, &utf16, 1, &length) == 0 && utf16 == 0x20AC && length == 1);
-    Require(sceCesSbcToUtf16(cp1252, 0x80, &utf16, 0, &length) == dstBufferEnd);
+    length = 0;
+    Require(sceCesSbcToUtf16(cp1252, 0x80, &utf16, 0, &length) == dstBufferEnd && length == 1);
     Require(sceCesSbcToUtf16be(cp1252, 0x80, &utf16, 1, &length) == 0 && std::memcmp(&utf16, "\x20\xAC", 2) == 0);
     Require(sceCesSbcToUtf16le(cp1252, 0x80, &utf16, 1, &length) == 0 && std::memcmp(&utf16, "\xAC\x20", 2) == 0);
     Require(sceCesSbcToUtf32(cp1252, 0x9F, &utf32) == 0 && utf32 == 0x0178);
@@ -266,14 +273,20 @@ int main() {
     Require(sceCesUcs2ToSbc(0x20AC, cp1252, &sbc) == 0 && sbc == 0x80);
     Require(sceCesUcs2ToSbc(0x0410, cp1251, &sbc) == 0 && sbc == 0xC0);
     Require(sceCesUcs2ToSbc(0x3042, cp1252, &sbc) == unassignedCode);
-    Require(sceCesUcs2ToSbc(0xD800, cp1252, &sbc) == invalidEncode);
+    sbc = 0x5A;
+    Require(sceCesUcs2ToSbc(0xD800, cp1252, &sbc) == illegalCode && sbc == 0);
     Require(sceCesUcs2ToSbc(0x41, cp1252, nullptr) == invalidDstBuffer);
     Require(sceCesUcs2ToSbc(0x41, static_cast<const std::uint8_t*>(sjis), &sbc) == invalidParameter);
     const std::uint16_t euro[] = {0x20AC};
     const std::uint16_t pair[] = {0xD83D, 0xDE00};
     Require(sceCesUtf16ToSbc(euro, 1, &length, cp1252, &sbc) == 0 && sbc == 0x80 && length == 1);
-    Require(sceCesUtf16ToSbc(pair, 2, &length, cp1252, &sbc) == unassignedCode);
-    Require(sceCesUtf16ToSbc(pair, 1, &length, cp1252, &sbc) == srcBufferEnd);
+    length = 0;
+    sbc = 0x5A;
+    Require(sceCesUtf16ToSbc(pair, 2, &length, cp1252, &sbc) == unassignedCode && sbc == 0 && length == 2);
+
+    length = 0;
+    sbc = 0x5A;
+    Require(sceCesUtf16ToSbc(pair, 1, &length, cp1252, &sbc) == srcBufferEnd && sbc == 0 && length == 1);
     Require(sceCesUtf16ToSbc(euro, 0, &length, cp1252, &sbc) == srcBufferEnd);
     Require(sceCesUtf16ToSbc(nullptr, 1, &length, cp1252, &sbc) == invalidSrcBuffer);
     std::uint16_t euroBe = 0;
@@ -305,6 +318,85 @@ int main() {
         Require(sceCesSbcToUtf32(cp1251, static_cast<std::uint8_t>(value), &utf32) == 0);
         Require(sceCesUtf32ToSbc(utf32, cp1251, &sbc) == 0 && sbc == value);
     }
+
+    const std::uint8_t cp1252Holes[] = {0x81, 0x8D, 0x8F, 0x90, 0x9D};
+
+    for (const std::uint8_t value : cp1252Holes) {
+        utf16 = 0x5A5A;
+        Require(sceCesSbcToUtf16(cp1252, value, &utf16, 1, &length) == unassignedCode && utf16 == 0);
+
+        utf32 = 0x5A5A5A5A;
+        Require(sceCesSbcToUtf32(cp1252, value, &utf32) == unassignedCode && utf32 == 0);
+    }
+
+    const std::uint8_t cp864Holes[] = {0x9B, 0x9C, 0x9F, 0xA6, 0xA7, 0xFF};
+
+    for (const std::uint8_t value : cp864Holes) {
+        utf32 = 0x5A5A5A5A;
+        Require(sceCesSbcToUtf32(cp864, value, &utf32) == unassignedCode && utf32 == 0);
+    }
+
+    Require(sceCesSbcToUtf32(cp864, 0x25, &utf32) == 0 && utf32 == 0x066A);
+    Require(sceCesSbcToUtf32(cp864, 0x80, &utf32) == 0 && utf32 == 0x00B0);
+    Require(sceCesSbcToUtf32(cp864, 0xB0, &utf32) == 0 && utf32 == 0x0660);
+    Require(sceCesSbcToUtf32(cp864, 0xC1, &utf32) == 0 && utf32 == 0xFE80);
+    Require(sceCesSbcToUtf32(cp864, 0xFE, &utf32) == 0 && utf32 == 0x25A0);
+
+    sbc = 0x5A;
+    Require(sceCesUcs2ToSbc('%', cp864, &sbc) == unassignedCode && sbc == 0);
+
+    sbc = 0x5A;
+    Require(sceCesUcs2ToSbc(0xD800, cp1254, &sbc) == illegalCode && sbc == 0x5A);
+
+    sbc = 0x5A;
+    Require(sceCesUcs2ToSbc(0xD800, cp1258, &sbc) == illegalCode && sbc == 0x5A);
+
+    sbc = 0x5A;
+    Require(sceCesUcs2ToSbc(0xD800, iso8859_1, &sbc) == illegalCode && sbc == 0);
+
+    sbc = 0x5A;
+    Require(sceCesUcs2ToSbc(0xD800, iso8859_15, &sbc) == illegalCode && sbc == 0x5A);
+
+    const std::uint16_t lowSurrogate[] = {0xDC00};
+
+    length = 0;
+    sbc = 0x5A;
+    Require(sceCesUtf16ToSbc(lowSurrogate, 1, &length, cp1252, &sbc) == illegalCode && sbc == 0 && length == 1);
+
+    length = 0;
+    sbc = 0x5A;
+    Require(sceCesUtf16ToSbc(lowSurrogate, 1, &length, cp1254, &sbc) == illegalCode);
+
+    length = 0;
+    sbc = 0x5A;
+    Require(sceCesUtf16ToSbc(lowSurrogate, 1, &length, cp1258, &sbc) == illegalCode);
+
+    length = 0;
+    sbc = 0x5A;
+    Require(sceCesUtf16ToSbc(lowSurrogate, 1, &length, iso8859_1, &sbc) == illegalCode && sbc == 0 && length == 1);
+
+    length = 0;
+    sbc = 0x5A;
+    Require(sceCesUtf16ToSbc(lowSurrogate, 1, &length, iso8859_15, &sbc) == illegalCode);
+
+    std::uint16_t lowSurrogateBe = 0;
+    std::memcpy(&lowSurrogateBe, "\xDC\x00", 2);
+    std::uint16_t lowSurrogateLe = 0;
+    std::memcpy(&lowSurrogateLe, "\x00\xDC", 2);
+    Require(sceCesUtf16beToSbc(&lowSurrogateBe, 1, &length, cp1252, &sbc) == invalidEncode);
+    Require(sceCesUtf16leToSbc(&lowSurrogateLe, 1, &length, cp1252, &sbc) == invalidEncode);
+
+    utf16 = 0x5A5A;
+    Require(sceCesSbcToUtf16(nullptr, 'A', &utf16, 1, &length) == invalidProfile && utf16 == 0);
+
+    utf32 = 0x5A5A5A5A;
+    Require(sceCesSbcToUtf32(nullptr, 'A', &utf32) == invalidProfile && utf32 == 0);
+
+    sbc = 0x5A;
+    Require(sceCesUcs2ToSbc('A', nullptr, &sbc) == invalidProfile && sbc == 0);
+
+    sbc = 0x5A;
+    Require(sceCesUtf16ToSbc(euro, 1, &length, nullptr, &sbc) == invalidProfile && sbc == 0);
 
     alignas(8) std::uint8_t context[64] = {};
     Require(sceCesMbcsUcsContextInit(context, sjis) == 0);
