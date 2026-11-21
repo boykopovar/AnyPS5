@@ -3,11 +3,15 @@
 
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4Opcodes.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <cstddef>
 #include <vector>
 #include <optional>
 #include <array>
+#include <atomic>
+#include <cstdint>
 #include <span>
+#include <stdexcept>
 #include <string>
 
 namespace AgcDriver::Pm4 {
@@ -110,6 +114,11 @@ bool WaitSatisfied(std::span<const std::uint32_t> packet);
 // WaitSatisfied for a polling loop: the caller has validated the address once, so the value is read
 // directly instead of through the checked guest memory path.
 bool WaitSatisfiedUnchecked(std::span<const std::uint32_t> packet);
+
+inline std::uint64_t LoadLabel(std::uint64_t address, std::size_t bytes) {
+    return GuestMemory::LoadAlignedLabel(address & ~std::uint64_t{bytes == sizeof(std::uint64_t) ? 7u : 3u}, bytes);
+}
+
 // Whether a WAIT_REG_MEM's compare holds for `value` (the 4 or 8 bytes a label the recorder still
 // holds will store), without reading memory.
 bool WaitComparesValue(std::span<const std::uint32_t> packet, std::uint64_t value);

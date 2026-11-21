@@ -937,6 +937,60 @@ void testMemorySynchronization() {
     check(memory.destination == 42, "failed synchronization changed the destination");
 }
 
+void testLabelLoadWidths() {
+    alignas(8) static std::array<std::uint32_t, 2> label{0x15u, 0x2au};
+    const auto address = reinterpret_cast<std::uint64_t>(label.data());
+    check(AgcDriver::Pm4::LoadLabel(address + 4, 8) == 0x0000002a00000015ull, "an 8-byte label load at a 4-byte-aligned address does not read the 8-byte-aligned label below it");
+    check(AgcDriver::Pm4::LoadLabel(address + 6, 4) == 0x2au, "a 4-byte label load at an unaligned address does not read the 4-byte-aligned label below it");
+    for (const std::size_t bytes : {std::size_t{0}, std::size_t{1}, std::size_t{2}, std::size_t{16}}) {
+        bool rejected = false;
+        try { static_cast<void>(AgcDriver::Pm4::LoadLabel(address, bytes)); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        check(rejected, "a label load of a width other than 4 or 8 bytes was not rejected");
+    }
+}
+
+void testLabelReadRejections() {
+    alignas(8) static std::array<std::uint32_t, 4> label{0x15u, 0x2au, 0x3fu, 0x54u};
+    const auto address = reinterpret_cast<std::uint64_t>(label.data());
+    struct FlushHookReset {
+        ~FlushHookReset() { AgcDriver::GuestMemory::SetFlushHook(nullptr); }
+    } reset;
+    AgcDriver::GuestMemory::SetFlushHook([](std::uint64_t, std::size_t) { throw std::runtime_error("a rejected label read flushed GPU writes"); });
+    const auto rejected = [](std::uint64_t at, std::size_t bytes) {
+        try {
+            static_cast<void>(AgcDriver::GuestMemory::ReadLabel(at, bytes));
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+        return false;
+    };
+    for (const std::size_t bytes : {std::size_t{0}, std::size_t{1}, std::size_t{2}, std::size_t{16}}) check(rejected(address, bytes), "a label read of a width other than 4 or 8 bytes was not rejected before it touched memory");
+    check(rejected(address + 2, 4), "a 4-byte label read at a 2-byte-aligned address was not rejected before it touched memory");
+    check(rejected(address + 4, 8), "an 8-byte label read at a 4-byte-aligned address was not rejected before it touched memory");
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    check(AgcDriver::GuestMemory::ReadLabel(address + 4, 4) == 0x2au, "a 4-byte label read at its own address read another word");
+    check(AgcDriver::GuestMemory::ReadLabel(address + 8, 8) == 0x000000540000003full, "an 8-byte label read at its own address read other words");
+}
+
+void testWrittenLabelPolledAcrossThreads() {
+    struct alignas(8) Shared {
+        std::uint32_t label = 0;
+        std::uint32_t payload = 0;
+    };
+    static Shared shared;
+    std::atomic_ref<std::uint32_t>(shared.label).store(0, std::memory_order_relaxed);
+    std::thread writer([] {
+        AgcDriver::QueueState state;
+        shared.payload = 7;
+        execute(state, makePacket(0x37, {0x100, low(&shared.label), high(&shared.label), 1}));
+    });
+    while (std::atomic_ref<std::uint32_t>(shared.label).load(std::memory_order_acquire) != 1) std::this_thread::yield();
+    const auto seen = shared.payload;
+    writer.join();
+    check(seen == 7, "a label written by WRITE_DATA was seen before the data written ahead of it");
+}
+
 void testConditionalValidation() {
     alignas(4) static std::uint32_t condition = 0;
     const auto valid = makePacket(0x22, {low(&condition), high(&condition), 0, 0x3fff});
@@ -2460,6 +2514,13 @@ void testRewindControlCopy() {
     check(std::atomic_ref<std::uint32_t>(done).load() == 1, "the tail behind the last REWIND did not run");
 }
 
+void testUnreadableLabelTrace() {
+    bool rejected = false;
+    try { static_cast<void>(AgcDriver::GuestMemory::ReadLabel(0x1000, 4)); }
+    catch (const std::runtime_error&) { rejected = true; }
+    check(rejected, "a label read from an unmapped page was not rejected");
+}
+
 void testRewindSize() {
     alignas(8) static std::uint32_t done = 0;
     for (const auto& rewind : {makePacket(0x59, {0x80000000u, 0}), makePacket(0x59, {0x80000000u, 0, 0})}) {
@@ -2751,6 +2812,38 @@ void testUnwrittenUserData() {
     expectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::readRegister(shader, 0x95)); }, "required shader register");
 }
 
+template <typename Label>
+void publishThroughWait(bool checked) {
+    alignas(8) static Label label = 0;
+    alignas(8) static std::array<std::uint64_t, 8> payload{};
+    std::atomic_ref<Label>(label).store(0, std::memory_order_relaxed);
+    payload.fill(0);
+    const auto wide = sizeof(Label) == 8;
+    const auto packet = wide ? makePacket(0x93, {0x13, low(&label), high(&label), 1u, 0u, 0xffffffffu, 0xffffffffu, 0}) : makePacket(0x3c, {0x13, low(&label), high(&label), 1u, 0xffffffffu, 0});
+    std::thread producer([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        payload.fill(0x5a5a5a5a5a5a5a5aull);
+        std::atomic_ref<Label>(label).store(1, std::memory_order_release);
+    });
+    if (checked) {
+        AgcDriver::QueueState state;
+        execute(state, packet);
+    } else {
+        while (!AgcDriver::Pm4::WaitSatisfiedUnchecked(packet)) std::this_thread::yield();
+    }
+    const auto seen = payload;
+    producer.join();
+    const auto message = std::string(checked ? "WAIT_REG_MEM" : "the unchecked wait") + (wide ? " (64-bit)" : " (32-bit)") + " returned before the data published with its label";
+    check(std::all_of(seen.begin(), seen.end(), [](std::uint64_t word) { return word == 0x5a5a5a5a5a5a5a5aull; }), message.c_str());
+}
+
+void testWaitRegMemAcquiresPublishedData() {
+    publishThroughWait<std::uint32_t>(true);
+    publishThroughWait<std::uint64_t>(true);
+    publishThroughWait<std::uint32_t>(false);
+    publishThroughWait<std::uint64_t>(false);
+}
+
 void testWaitRegMemMasking() {
     alignas(8) static std::uint32_t mem32[4] = {0x12345678u, 0x9abcdef0u, 0x55555555u, 0xaaaaaaaau};
     const auto base32 = reinterpret_cast<std::uintptr_t>(&mem32[0]);
@@ -2965,7 +3058,7 @@ int main(int argc, char** argv) {
         const std::pair<const char*, void (*)()> ringModes[]{
             {"ring", testSubmissionRing}, {"ring-empty", testEmptySubmissionRing}, {"ring-disabled", testDisabledSubmissionRing},
             {"ring-invalid", testInvalidSubmissionRing}, {"ring-report", testSubmissionRingFailureReport}, {"stall-watchdog", testStallWatchdog},
-            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"order-signal", testOrderHoldWake}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-zero", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-reentry", testStallPromptOneAtATime}, {"stall-prompt-quit", testStallPromptQuit}, {"stall-prompt-lock", testStallPromptLock}, {"stall-prompt-lock-unavailable", testStallPromptLockUnavailable}, {"rewind-trace", testRewindTailTrace}, {"rewind-copy", testRewindControlCopy}, {"rewind-size", testRewindSize}};
+            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"order-signal", testOrderHoldWake}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-zero", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-reentry", testStallPromptOneAtATime}, {"stall-prompt-quit", testStallPromptQuit}, {"stall-prompt-lock", testStallPromptLock}, {"stall-prompt-lock-unavailable", testStallPromptLockUnavailable}, {"rewind-trace", testRewindTailTrace}, {"rewind-copy", testRewindControlCopy}, {"rewind-size", testRewindSize}, {"written-label-thread", testWrittenLabelPolledAcrossThreads}, {"unreadable-label-trace", testUnreadableLabelTrace}};
         if (argc == 2 && std::string(argv[1]) == "ring-report-heap") {
 #ifdef _WIN32
             testSubmissionRingFailureReportHeap();
@@ -3009,6 +3102,8 @@ int main(int argc, char** argv) {
         testDmaGdsAddressControls();
         testMemoryCopyDecode();
         testMemorySynchronization();
+        testLabelLoadWidths();
+        testLabelReadRejections();
         testConditionalValidation();
         testConditionReadSynchronization();
         testEventWrite();
@@ -3034,6 +3129,7 @@ int main(int argc, char** argv) {
         testNopPadSubmission();
         testBranchSubmission();
         testWaitRegMemMasking();
+        testWaitRegMemAcquiresPublishedData();
         testWaitRegMemPipelineDrain();
         testWaitRegMem64ZeroHighMaskDrain();
         testWaitRegMemMisalignedBehindBusyPipeline();

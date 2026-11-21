@@ -51,6 +51,7 @@ constexpr std::uint32_t WrittenValue = 0x11;
 constexpr std::uint64_t ReleasedValue = 0x0000123400000007ull;
 constexpr std::uint32_t FillValue = 0x5a5a5a5au;
 constexpr std::uint32_t HeldValue = 9;
+constexpr std::uint64_t WideHeldValue = 0x0000002a00000015ull;
 constexpr std::uint32_t CpuValue = 5;
 constexpr std::uint32_t One = 1;
 constexpr std::uint32_t Zero = 0;
@@ -62,6 +63,7 @@ alignas(8) std::uint32_t writtenLabel = 0;
 alignas(8) Label releasedLabel{};
 alignas(16) std::array<std::uint32_t, 4> filled{};
 alignas(8) std::uint32_t heldLabel = 0;
+alignas(8) std::array<std::uint32_t, 2> wideHeldLabel{};
 alignas(8) std::uint32_t cpuLabel = 0;
 alignas(8) std::uint32_t reusedLabel = 0;
 alignas(8) std::uint32_t conditionLabel = 0;
@@ -179,6 +181,7 @@ void writeCapture(const std::filesystem::path& directory, const std::vector<Plan
 
 void testDriverCapture(const std::filesystem::path& directory) {
     heldLabel = HeldValue;
+    std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(wideHeldLabel.data())).store(WideHeldValue);
     conditionLabel = One;
 
     Commands graphicsWrites;
@@ -197,6 +200,9 @@ void testDriverCapture(const std::filesystem::path& directory) {
     sceAgcDcbWaitRegMem(graphicsWaits.Buffer(), Bits64, Equal, 0, 0, &releasedLabel, ReleasedValue, ~0ull, 0);
     sceAgcDcbWaitRegMem(graphicsWaits.Buffer(), Bits32, Equal, 0, 0, &filled[2], FillValue, 0xffffffffu, 0);
     const auto heldWait = waitAt(graphicsWaits, sceAgcDcbWaitRegMem(graphicsWaits.Buffer(), Bits32, Equal, 0, 0, &heldLabel, HeldValue, 0xffffffffu, 0));
+    auto* wideHeldTag = sceAgcDcbWaitRegMem(graphicsWaits.Buffer(), Bits64, Equal, 0, 0, wideHeldLabel.data(), WideHeldValue, ~0ull, 0);
+    wideHeldTag[6] |= 4u;
+    const auto wideHeldWait = waitAt(graphicsWaits, wideHeldTag);
     const auto cpuWait = waitAt(graphicsWaits, sceAgcDcbWaitRegMem(graphicsWaits.Buffer(), Bits32, Equal, 0, 0, &cpuLabel, CpuValue, 0xffffffffu, 0));
     sceAgcDcbWriteData(graphicsWaits.Buffer(), GraphicsMemory, 0, at(&reusedLabel), &One, 1, 0, 1);
     sceAgcDcbWriteData(graphicsWaits.Buffer(), GraphicsMemory, 0, at(&reusedLabel), &Zero, 1, 0, 1);
@@ -240,6 +246,7 @@ void testDriverCapture(const std::filesystem::path& directory) {
     }
     const auto& held = captured[3].heldAtSubmit;
     check(std::find(held.begin(), held.end(), heldWait) != held.end(), "the wait on a label that held its value at submit is not marked held: " + index[5]);
+    check(std::find(held.begin(), held.end(), wideHeldWait) != held.end(), "the 8-byte wait whose packet address is only 4-byte aligned is not marked held, though the 8-byte-aligned label it polls held its value at submit: " + index[5]);
     check(std::find(held.begin(), held.end(), cpuWait) == held.end(), "the wait on a label the CPU stores after the submit is marked held: " + index[5]);
     check(captured[5].serial == captured[4].serial, "the rewind tail does not carry the serial of its submission");
     check(captured[0].commands == graphicsWrites.Words() && captured[1].commands == computeRelease.Words() && captured[2].commands.empty() && captured[3].commands == graphicsWaits.Words(), "captured dwords differ from the submitted ones");
@@ -259,7 +266,7 @@ void testDriverCapture(const std::filesystem::path& directory) {
     check(guarded != waits.end() && guarded->conditional && guarded->stores[0].conditional, "the WRITE_DATA inside the COND_EXEC range is not conditional");
 
     const auto analysis = AgcDriver::Pm4Analysis::Analyze(directory);
-    check(analysis.waits.size() == 8, "expected eight waits, got " + std::to_string(analysis.waits.size()));
+    check(analysis.waits.size() == 9, "expected nine waits, got " + std::to_string(analysis.waits.size()));
     for (const auto* label : {static_cast<const volatile void*>(&writtenLabel), static_cast<const volatile void*>(&releasedLabel)}) {
         const auto& crossQueue = waitOn(analysis, label);
         check((crossQueue.verdict == WaitReport::Verdict::Released && crossQueue.route == WaitReport::Route::HeldAtSubmit) || (crossQueue.verdict == WaitReport::Verdict::Unknown && crossQueue.crossQueue),
@@ -271,6 +278,8 @@ void testDriverCapture(const std::filesystem::path& directory) {
           "the wait inside the fill is not released by the earlier DMA_DATA on its queue: " + verdict(filledWait));
     const auto& heldReport = waitOn(analysis, &heldLabel);
     check(heldReport.verdict == WaitReport::Verdict::Released && heldReport.route == WaitReport::Route::HeldAtSubmit, "the wait whose value held at submit is not released by it: " + verdict(heldReport));
+    const auto& wideHeld = waitOn(analysis, wideHeldLabel.data());
+    check(wideHeld.verdict == WaitReport::Verdict::Released && wideHeld.route == WaitReport::Route::HeldAtSubmit && wideHeld.wait.fields.bytes == 8, "the 8-byte wait at a 4-byte-aligned packet address is not released by the value its 8-byte-aligned label held at submit: " + verdict(wideHeld));
     const auto& cpu = waitOn(analysis, &cpuLabel);
     check(cpu.verdict == WaitReport::Verdict::Unreleased && cpu.writerCount == 0 && cpu.reason.starts_with("unreleased by the GPU; a CPU store could release it"), "the wait on a label the CPU stores after the submit is not unreleased: " + verdict(cpu));
     const auto& reused = waitOn(analysis, &reusedLabel);
@@ -281,7 +290,7 @@ void testDriverCapture(const std::filesystem::path& directory) {
           "the wait on a store inside a COND_EXEC range is not unknown: " + verdict(conditional));
     const auto rewindWait = std::find_if(analysis.waits.begin(), analysis.waits.end(), [](const auto& report) { return report.wait.kind == AgcDriver::Pm4Analysis::MemoryWait::Kind::Rewind; });
     check(rewindWait != analysis.waits.end() && rewindWait->verdict == WaitReport::Verdict::Released && rewindWait->route == WaitReport::Route::RewindTail && rewindWait->at.ordinal == 4, "the REWIND is not released by its captured tail");
-    check(analysis.Count(WaitReport::Verdict::Unreleased) == 1 && analysis.Count(WaitReport::Verdict::Released) + analysis.Count(WaitReport::Verdict::Unknown) == 7, "expected one unreleased wait and seven released or unknown");
+    check(analysis.Count(WaitReport::Verdict::Unreleased) == 1 && analysis.Count(WaitReport::Verdict::Released) + analysis.Count(WaitReport::Verdict::Unknown) == 8, "expected one unreleased wait and eight released or unknown");
     check(report(directory).first == 1, "the report does not fail on an unreleased wait");
 }
 
@@ -296,7 +305,7 @@ void testWriterPresent(const std::filesystem::path& source, const std::filesyste
     submissions.push_back(planned(0x22, submissions.back().serial + 1, cpuWriter));
     writeCapture(directory, submissions);
     const auto analysis = AgcDriver::Pm4Analysis::Analyze(directory);
-    check(analysis.submissions.size() == submissions.size() && analysis.waits.size() == 8, "the rewritten capture does not hold the submissions and their waits");
+    check(analysis.submissions.size() == submissions.size() && analysis.waits.size() == 9, "the rewritten capture does not hold the submissions and their waits");
     check(analysis.Count(WaitReport::Verdict::Unreleased) == 0, "a wait is unreleased although a store in the capture may release it");
     const auto& cpu = waitOn(analysis, &cpuLabel);
     check(cpu.verdict == WaitReport::Verdict::Unknown && cpu.crossQueue && cpu.reason.starts_with("unknown: depends on cross-queue timing (stores on queue 0x22 at #6)") && cpu.writers.front().at.queue == 0x22 && cpu.writers.front().order == WriterMatch::Order::OtherQueue,
