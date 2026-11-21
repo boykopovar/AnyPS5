@@ -50,6 +50,9 @@ constexpr std::uint32_t Format32SInt = 21;
 constexpr std::uint32_t Format32Float = 22;
 constexpr std::uint32_t Format32_32UInt = 62;
 constexpr std::uint32_t Format11_11_10UInt = 34;
+constexpr std::uint32_t Format10_11_11UInt = 41;
+constexpr std::uint32_t Format2_10_10_10UNorm = 44;
+constexpr std::uint32_t Format2_10_10_10UInt = 48;
 constexpr std::uint32_t Format8_8Srgb = 129;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t Type3D = 10;
@@ -1136,6 +1139,20 @@ void RunModeTests(AgcDriver::VulkanDevice& device) {
     SetWideRecord(1, {plain[0], plain[1], plain[2], plain[3]});
     RequireModeEntry(device, ReadTable256Code, ReadDirect256Code, 0, volume, "image table mode: a 3D T# read by a 2D image_load");
     RequireModeEntry(device, ReadTable256Code, ReadDirect256Code, 1, plain, "image table mode: an r256 2D T#");
+    const auto packed32 = [&](std::uint32_t record, std::uint32_t format, bool sampled, const std::string& name) {
+        const auto words = Image(UintTexels.data(), format);
+        SetRecord(record, PointClamp, words);
+        const auto retries = [] { return ShaderRecompiler::UnsignedPacked32ModeRetries(); };
+        auto before = retries();
+        RequireModeEntry(device, ReadTableCode, ReadDirectCode, record, words, "image table mode: " + name + " image_load");
+        Require(retries() > before, "image table mode: " + name + " image_load was prepared without the packed-mode retry");
+        before = retries();
+        if (sampled) RequireModeEntry(device, TableCode, DirectCode, record, words, "image table mode: " + name + " image_sample");
+        if (sampled) Require(retries() > before, "image table mode: " + name + " image_sample was prepared without the packed-mode retry");
+    };
+    packed32(8, Format10_11_11UInt, true, "10_11_11 UINT");
+    packed32(9, Format2_10_10_10UInt, true, "2_10_10_10 UINT");
+    packed32(10, Format2_10_10_10UNorm, false, "2_10_10_10 UNORM");
     SetClassRecords();
 }
 

@@ -167,6 +167,10 @@ bool IsConvertedUnormTextureFormat(IrBufferFormat format) {
     return format == IrBufferFormat::Format11_11_10UNorm || format == IrBufferFormat::Format10_11_11UNorm || format == IrBufferFormat::Format2_10_10_10UNorm;
 }
 
+bool IsUnsignedPacked32TextureFormat(IrBufferFormat format) {
+    return format == IrBufferFormat::Format10_11_11UInt || format == IrBufferFormat::Format2_10_10_10UInt || format == IrBufferFormat::Format10_11_11UNorm || format == IrBufferFormat::Format2_10_10_10UNorm;
+}
+
 IrBufferFormat RemapTextureFormat(IrBufferFormat format) {
     return IsConvertedUnormTextureFormat(format) || format == IrBufferFormat::Format10_11_11UInt || format == IrBufferFormat::Format2_10_10_10UInt || format == IrBufferFormat::Format11_11_10UInt || format == IrBufferFormat::Format11_11_10Float || format == IrBufferFormat::Format10_11_11Float ? IrBufferFormat::Format32UInt : format;
 }

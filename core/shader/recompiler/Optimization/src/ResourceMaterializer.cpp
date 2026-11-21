@@ -532,6 +532,7 @@ struct ColumnContents {
     std::uint32_t poisoned = 0;
     std::uint32_t unmapped = 0;
     std::uint32_t carried = 0;
+    bool unsignedPacked32 = false;
 };
 
 struct ColumnRecords {
@@ -1080,6 +1081,10 @@ private:
             }
             contents.poisoned++;
         }
+        contents.unsignedPacked32 = std::ranges::any_of(records.distinct, [](const DescriptorValue& raw) {
+            const auto value = gcnTableImageWords(raw);
+            return value.dwordCount == 8u && (value.availableDwordMask & 0xau) == 0xau && IsUnsignedPacked32TextureFormat(rawImageFormat(value));
+        });
         contents.codes = SharedValues<std::uint32_t>(std::move(codes));
         contents.words = SharedValues<DescriptorValue>(std::move(records.distinct));
         contents.readRanges = SharedValues<std::pair<std::uint64_t, std::uint64_t>>(std::move(records.readRanges));
@@ -1479,6 +1484,7 @@ private:
         out.codes = records.contents.codes;
         out.words = records.contents.words;
         out.readRanges = records.contents.readRanges;
+        out.unsignedPacked32 = records.contents.unsignedPacked32;
         auto& counters = tableCounters();
         if (records.fault != 0u) counters.poison[records.fault & ~ImageTableAbi::PoisonFlag].fetch_add(1, std::memory_order_relaxed);
         if (records.contents.unmapped != 0u) counters.poison[static_cast<std::size_t>(PoisonReason::Unmapped)].fetch_add(records.contents.unmapped, std::memory_order_relaxed);
@@ -1813,6 +1819,18 @@ bool disabledBufferAccesses(const IrResourcePlan& plan, std::uint32_t index, con
     return accessed;
 }
 
+bool unsignedPacked32Candidate(const ImageResource& image) {
+    return image.table != NoTable && image.tableOperation == TableOperation::Supported && !image.unsignedPacked32Modes && !image.packed && !image.atomic && image.byElements == 0u && !image.depthCompare;
+}
+
+bool tableHoldsUnsignedPacked32(const ImageTableSnapshot& tables, std::uint32_t table) {
+    if (table >= tables.tables.size()) return false;
+    const auto& column = tables.tables[table];
+    if (column.unsignedPacked32) return true;
+    if (!column.nested) return false;
+    return std::ranges::any_of(column.codes.Span(), [&](std::uint32_t code) { return (code & ImageTableAbi::PoisonFlag) == 0u && code < tables.nested.size() && tables.nested[code].unsignedPacked32; });
+}
+
 void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
     for (std::uint32_t i = 0u; i < plan.info.buffers.size(); ++i) {
         const auto& buffer = plan.info.buffers[i];
@@ -1838,7 +1856,10 @@ void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
     if (snapshot.flattenedSrt.size() != plan.srtReads.size()) throw std::runtime_error("runtime SRT size differs from the static interface");
     for (std::uint32_t i = 0u; i < plan.info.images.size(); ++i) {
         const auto& image = plan.info.images[i];
-        if (image.table != NoTable) continue;
+        if (image.table != NoTable) {
+            if (unsignedPacked32Candidate(image) && tableHoldsUnsignedPacked32(snapshot.tables, image.table)) throw UnsignedPacked32ModesRequired("selects a packed 32-bit unsigned image from a table through a shader prepared without packed-mode records");
+            continue;
+        }
         const auto& descriptor = snapshot.images.at(i);
         if (!image.convertedSamples && !image.srgbDecodeCompatible && convertedSampleCompatible(image) && descriptor.dwordCount == 8u && !nullImageDescriptor(image, descriptor)) {
             if (IsConvertedUnormTextureFormat(rawImageFormat(descriptor))) throw ConvertedSampleRequired("samples a converted image through a shader prepared without converted-sample modes");
@@ -2439,11 +2460,16 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
         if (!image.depthCompare) {
             append(IrTextureNumericClass::Uint, IrBufferFormat::Invalid, IrBufferFormat::Invalid, false, false);
             if (!storage) append(IrTextureNumericClass::Sint, IrBufferFormat::Invalid, IrBufferFormat::Invalid, false, false);
+            const bool packed32 = !table || image.unsignedPacked32Modes;
             append(IrTextureNumericClass::Uint, IrBufferFormat::Format11_11_10UInt, IrBufferFormat::Invalid, false, false);
-            append(IrTextureNumericClass::Uint, IrBufferFormat::Format10_11_11UInt, IrBufferFormat::Invalid, false, false);
-            append(IrTextureNumericClass::Uint, IrBufferFormat::Format2_10_10_10UInt, IrBufferFormat::Invalid, false, false);
+            if (packed32) {
+                append(IrTextureNumericClass::Uint, IrBufferFormat::Format10_11_11UInt, IrBufferFormat::Invalid, false, false);
+                append(IrTextureNumericClass::Uint, IrBufferFormat::Format2_10_10_10UInt, IrBufferFormat::Invalid, false, false);
+            }
             if (image.srgbDecodeCompatible || (image.convertedSamples && convertedSampleCompatible(image))) {
-                for (const auto format : {IrBufferFormat::Format11_11_10UNorm, IrBufferFormat::Format10_11_11UNorm, IrBufferFormat::Format2_10_10_10UNorm}) append(IrTextureNumericClass::Uint, format, IrBufferFormat::Invalid, false, false);
+                for (const auto format : {IrBufferFormat::Format11_11_10UNorm, IrBufferFormat::Format10_11_11UNorm, IrBufferFormat::Format2_10_10_10UNorm}) {
+                    if (packed32 || !IsUnsignedPacked32TextureFormat(format)) append(IrTextureNumericClass::Uint, format, IrBufferFormat::Invalid, false, false);
+                }
             }
             if (image.srgbDecodeCompatible) {
                 append(IrTextureNumericClass::Uint, IrBufferFormat::Format11_11_10Float, IrBufferFormat::Invalid, false, false);
@@ -3001,6 +3027,8 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
                 completed = true;
                 break;
             } catch (const ConvertedSampleRequired&) {
+                throw;
+            } catch (const UnsignedPacked32ModesRequired&) {
                 throw;
             } catch (const std::runtime_error&) {
                 if (attempt == 2u) throw;
