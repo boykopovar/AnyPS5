@@ -162,7 +162,7 @@ void TestFourUserLoginLimitsAndTransitions() {
 }
 
 void TestNpAccountIdQueryBounds() {
-    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
     const int invalidIds[] = {
         USER_SERVICE_INITIAL_USER_ID - 1,
@@ -175,14 +175,14 @@ void TestNpAccountIdQueryBounds() {
     };
     for (int id : invalidIds) {
         uint64_t accountId = 0xCAFEBABE;
-        Require(sceUserServiceGetNpAccountId(id, &accountId) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(sceUserServiceGetNpAccountId(id, &accountId) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(accountId == 0xCAFEBABE);
-        Require(sceUserServiceGetNpAccountId(id, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetNpAccountId(id, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     }
 
     uint64_t validAccountId = 0xCAFEBABE;
-    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, &validAccountId) == USER_SERVICE_OK);
-    Require(validAccountId == 0);
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, &validAccountId) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(validAccountId == 0xCAFEBABE);
 }
 
 void TestNullPointerValidation() {
@@ -198,7 +198,7 @@ void TestNullPointerValidation() {
     Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetTraditionalChineseInputType(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
-    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     Require(sceUserServiceGetIsSpartacusEnabled(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
 
     for (int invalidId : {0, -1, USER_SERVICE_USER_ID_INVALID, 123}) {
@@ -208,7 +208,7 @@ void TestNullPointerValidation() {
         Require(sceUserServiceGetKeyboardType(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
         Require(sceUserServiceGetJapaneseInputType(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
         Require(sceUserServiceGetTraditionalChineseInputType(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
-        Require(sceUserServiceGetNpAccountId(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetNpAccountId(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(sceUserServiceGetIsSpartacusEnabled(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     }
 }
