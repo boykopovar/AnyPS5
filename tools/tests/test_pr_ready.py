@@ -285,6 +285,15 @@ class MainTests(unittest.TestCase):
         self.assertEqual(out.strip(), "draft")
         self.assertEqual(calls, [])
 
+    def test_explain_reports_only_the_selected_pr_and_leaves_the_queue_alone(self):
+        calls = []
+        prs = [node(number=1, draft=True), node(number=7, checks=[("conventions", "completed", "failure")],
+                                                changes=["bob"])]
+        code, out, _ = self.run_main(["--explain", "7", "--issue", "3"], prs, calls, closed=[2])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.splitlines(), ["failing: conventions", "change request not answered by a re-request: bob"])
+        self.assertEqual(calls, [])
+
     def test_explain_an_unknown_pull_request_fails(self):
         code, _, err = self.run_main(["--explain", "9"], [node(number=7)], [])
         self.assertEqual(code, 2)
