@@ -63,6 +63,11 @@ std::string CheckedString(const char* source) {
     }
 }
 
+bool SameName(const char* actual, const char* expected) {
+    if (!actual || !expected) return actual == expected;
+    return std::strcmp(actual, expected) == 0;
+}
+
 void CheckParity(const char* alias, std::int32_t initial) {
     UErrorCode nativeStatus = static_cast<UErrorCode>(initial);
     const auto count = ucnv_countAliases(alias, &nativeStatus);
@@ -183,7 +188,7 @@ void NameQueries() {
     const auto available = ucnv_countAvailable();
     Require(ucnv_countAvailable_nid_postfix() == available, "available count matches pinned ICU");
     for (std::int32_t index : {-1, 0, 1, available - 1, available, available + 1})
-        Require(ucnv_getAvailableName_nid_postfix(index) == ucnv_getAvailableName(index),
+        Require(SameName(ucnv_getAvailableName_nid_postfix(index), ucnv_getAvailableName(index)),
                 "available name matches pinned ICU");
     Require(ucnv_countStandards_nid_postfix() == ucnv_countStandards(), "standard count matches pinned ICU");
 
@@ -202,7 +207,7 @@ void NameQueries() {
                 const char* expected = ucnv_getAlias(name, index, &nativeStatus);
                 guestStatus = initial;
                 const char* actual = ucnv_getAlias_nid_postfix(name, index, &guestStatus);
-                Require(actual == expected && guestStatus == static_cast<std::int32_t>(nativeStatus),
+                Require(SameName(actual, expected) && guestStatus == static_cast<std::int32_t>(nativeStatus),
                         "alias matches pinned ICU");
                 if (actual) Require(CheckedString(actual) == actual, "alias storage is guest-readable");
             }
@@ -211,7 +216,7 @@ void NameQueries() {
                 const char* expected = ucnv_getStandardName(name, standard, &nativeStatus);
                 guestStatus = initial;
                 const char* actual = ucnv_getStandardName_nid_postfix(name, standard, &guestStatus);
-                Require(actual == expected && guestStatus == static_cast<std::int32_t>(nativeStatus),
+                Require(SameName(actual, expected) && guestStatus == static_cast<std::int32_t>(nativeStatus),
                         "standard name matches pinned ICU");
                 if (actual) Require(CheckedString(actual) == actual, "standard name storage is guest-readable");
             }
