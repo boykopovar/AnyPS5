@@ -1658,4 +1658,196 @@ int APS5_VABI libSceFsInternalForVshUnknown_ydRWehw26Kk_nid_no_patch() {
 }
 APS5_EXPORT("ydRWehw26Kk", libSceFsInternalForVshUnknown_ydRWehw26Kk_nid_no_patch);
 
+int APS5_VABI sceFsBfsGetCapacityInfoForTelemetry() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsBfsGetBlockStatus() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsBfsUnmount() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsBfsCopyFile() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsBfsGetRwDeactivateStatus() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsBfsGetRwDeactivateStatusForShutdown() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsBfsCreateFakeSpace() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsBfsDeleteFakeSpace() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsNTBCreatePartitionTable() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsNTBVerifyPartitionTable() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsNTBAddDevice() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsNTBRemoveDevice() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsNTBGetDeviceInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsNTBGetAttachedDeviceType() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsNTBInvalidateBlockRange() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsNTBCronosUserPersonalizedKey() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsNTBCreateSavedataSnapshot() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsTransactionPprSaveDataMountEx() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsTransactionPprNoCowSaveDataMountEx() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsTransactionSaveDataReadParamEx() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsTransactionSaveDataReadParamEx2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsTransactionSaveDataWriteParamEx() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsTransactionSaveDataWriteParamEx2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsSaveDataTrimDeviceFile() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsPprSaveDataGetBlkBitmap() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsPs4SaveDataGetBlkBitmap() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsPprSaveDataConvertToCoW() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsPprSaveDataConvertSize() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsSaveDataGetImageType() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsSaveDataGetBlockNumber() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsSaveDataDisableWriteThrottling() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsExfatfsMountForCronos() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsExfatfsUnmount() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsDevpfsAllocateFile2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsUfsMkfsForCronos() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsUfsMountForCronos() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsUfsUnmountForCronos() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsM2StorageLocalSandboxMount() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsM2StorageLocalSandboxUnmount() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsM2StorageGetDeviceInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsM2StorageThermalShutdownTest() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsM2StorageQAC() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsM2StorageGetDebugInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsUpdatePackageMetadataFlexcont() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsFgcEmuInitializeParams() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsFgcEmuSetParams() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsFgcEmuEnable() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFsFgcEmuDisable() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
