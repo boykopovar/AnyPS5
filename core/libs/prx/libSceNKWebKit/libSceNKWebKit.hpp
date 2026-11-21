@@ -39,6 +39,7 @@
 #include "prx/libSceNKWebKit/include/ResourceRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceResponseExports.hpp"
 #include "prx/libSceNKWebKit/include/SecurityOriginExports.hpp"
+#include "prx/libSceNKWebKit/include/TransformOperationExports.hpp"
 #include "prx/libSceNKWebKit/include/SQLiteDatabaseTrackerExports.hpp"
 #include "prx/libSceNKWebKit/include/InternalErrorExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"

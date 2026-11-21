@@ -28,7 +28,7 @@ static WebCore::LegacyLength Legacy(int value, WebCore::LegacyLengthType type, b
 static WebCore::PerspectiveTransformOperation Make(WebCore::LegacyLength p, std::uint32_t type = PerspectiveType) {
     WebCore::PerspectiveTransformOperation op{};
     op.m_base.m_refCount = 1;
-    op.m_base.m_type = type;
+    op.m_base.m_type = static_cast<WebCore::TransformOperation::OperationType>(type);
     op.m_p = p;
     return op;
 }

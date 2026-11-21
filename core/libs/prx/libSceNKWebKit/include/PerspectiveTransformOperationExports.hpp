@@ -10,12 +10,6 @@
 
 namespace WebCore {
 
-struct TransformOperation {
-    void* m_vptr;
-    std::uint32_t m_refCount;
-    std::uint32_t m_type;
-};
-
 struct PerspectiveTransformOperation {
     TransformOperation m_base;
     LegacyLength m_p;
