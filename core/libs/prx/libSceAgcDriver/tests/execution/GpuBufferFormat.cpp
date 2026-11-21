@@ -672,7 +672,7 @@ int main() {
         if (!device) return VulkanTestSkipped;
         GuestBlock guest;
         const auto shader = Compile(*device, guest);
-        const auto privateArrays = PrivateArrays(shader.spirv);
+        const auto privateArrays = PrivateArrays(shader.spirv.Words());
         if (std::getenv("APS5_PRIVATE_BUFFER_FORMAT_TABLE") == nullptr) Require(privateArrays == 0u, "gpu buffer format: a run-time buffer format is looked up through a Private array, which drivers keep in per-invocation local memory");
         else Require(privateArrays == 1u, "gpu buffer format: APS5_PRIVATE_BUFFER_FORMAT_TABLE did not bring the Private format table back");
         for (const auto& test : Cases) {
