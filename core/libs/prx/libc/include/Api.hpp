@@ -118,6 +118,9 @@ struct FutureErrorObject { const void* vtable; GuestLocale::String message; Erro
 
 extern "C" {
 
+void APS5_VABI _ZNSt3__115__thread_structC1Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt3__115__thread_structD1Ev_nid_postfix(void* self);
+PthreadKey* APS5_VABI _ZNSt3__119__thread_local_dataEv_nid_postfix();
 
 int APS5_VABI std_execute_once_nid_postfix(int* flag, int (APS5_VABI *func)(void*, void*, void**), void* arg);
 void APS5_VABI LibcHeapGetTraceInfo_nid_postfix(LibcHeapInfo* info);
