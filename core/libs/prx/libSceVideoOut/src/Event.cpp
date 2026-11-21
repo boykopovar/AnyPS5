@@ -118,19 +118,19 @@ int APS5_VABI sceVideoOutAddFlipEvent(KernelEqueue eq, int handle, void* udata) 
 }
 
 int APS5_VABI sceVideoOutAddVblankEvent(KernelEqueue eq, int handle, void* udata) try {
-    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VBLANK, udata);
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VBLANK, udata, true);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
 
 int APS5_VABI sceVideoOutAddPreVblankStartEvent(KernelEqueue eq, int handle, void* udata) try {
-    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_PRE_VBLANK_START, udata);
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_PRE_VBLANK_START, udata, true);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
 
 int APS5_VABI sceVideoOutAddOutputModeEvent(KernelEqueue eq, int handle, void* udata) try {
-    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, udata);
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, udata, true);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
@@ -142,7 +142,7 @@ int APS5_VABI sceVideoOutAddSetModeEvent(KernelEqueue eq, int handle, void* udat
 }
 
 int APS5_VABI sceVideoOutAddVrrActiveStatusEvent(KernelEqueue eq, int handle, void* udata) try {
-    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VRR_STATUS, udata);
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VRR_STATUS, udata, true);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
@@ -154,7 +154,7 @@ int APS5_VABI sceVideoOutDeleteFlipEvent(KernelEqueue eq, int handle) try {
 }
 
 int APS5_VABI sceVideoOutDeleteOutputModeEvent(KernelEqueue eq, int handle) try {
-    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE);
+    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, true);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
@@ -166,19 +166,19 @@ int APS5_VABI sceVideoOutDeleteSetModeEvent(KernelEqueue eq, int handle) try {
 }
 
 int APS5_VABI sceVideoOutDeleteVblankEvent(KernelEqueue eq, int handle) try {
-    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VBLANK);
+    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VBLANK, true);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
 
 int APS5_VABI sceVideoOutDeletePreVblankStartEvent(KernelEqueue eq, int handle) try {
-    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_PRE_VBLANK_START);
+    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_PRE_VBLANK_START, true);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
 
 int APS5_VABI sceVideoOutDeleteVrrActiveStatusEvent(KernelEqueue eq, int handle) try {
-    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VRR_STATUS);
+    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VRR_STATUS, true);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
