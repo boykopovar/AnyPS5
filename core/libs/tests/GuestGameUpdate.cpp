@@ -97,6 +97,7 @@ static void TestConcurrentRequestCapacity() {
         }
         ready.wait();
         start.count_down();
+        for (auto& caller : callers) caller.join();
     }
     std::ranges::sort(results);
     Require(results.front() == tooManyRequests);
