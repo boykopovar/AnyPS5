@@ -12,8 +12,11 @@
 namespace {
 
 constexpr std::uint32_t OpcodeNop = 0x10;
+constexpr std::uint32_t OpcodeSetUconfigReg = 0x79;
 constexpr std::uint32_t CustomPushMarker = 0x0b;
 constexpr std::uint32_t CustomPopMarker = 0x0c;
+constexpr std::uint32_t MarkerTagRegister = 0x342;
+constexpr std::uint32_t PopMarkerTag = 0xc2000000;
 
 }
 
@@ -48,6 +51,15 @@ std::uint32_t* Pop(CommandBuffer* buf, const char* function) {
     return packet;
 }
 
+std::uint32_t* PopTag(CommandBuffer* buf, std::uint32_t tagFlags, const char* function) {
+    Agc::Command::Require(buf != nullptr, function, "null command buffer");
+    auto* packet = Agc::Command::Allocate(buf, 3, function);
+    packet[0] = Agc::Command::Header(OpcodeSetUconfigReg, 3, tagFlags);
+    packet[1] = MarkerTagRegister;
+    packet[2] = PopMarkerTag;
+    return packet;
+}
+
 }
 
 extern "C" {
@@ -60,7 +72,7 @@ uint32_t* APS5_VABI sceAgcDcbSetMarker(CommandBuffer* buf, const char* str, uint
 }
 
 uint32_t* APS5_VABI sceAgcDcbPopMarker(CommandBuffer* buf) {
-    return Agc::Marker::Pop(buf, __func__);
+    return Agc::Marker::PopTag(buf, 4u, __func__);
 }
 
 uint32_t* APS5_VABI sceAgcDcbPushMarker(CommandBuffer* buf, const char* str, uint32_t color) {

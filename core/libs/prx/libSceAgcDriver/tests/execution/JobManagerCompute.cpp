@@ -106,10 +106,10 @@ void APS5_VABI Nothing(void*, std::uint32_t) {
 
 void SizeCase() {
     Require(SizeFor(0, 0, false) == 0x10d0 && SizeFor(0, 0, true) == 0x14c0, "size without compute sequences");
-    Require(SizeFor(1, 1, false) == 0x29fd8 && SizeFor(1, 1, true) == 0x2a3c8, "size with one compute sequence");
-    Require(SizeFor(2, 3, false) == 0x52de0 && SizeFor(2, 3, true) == 0x531d0, "size with two compute sequences");
-    Require(SizeFor(3, 7, false) == 0x7bb28, "size with three compute sequences");
-    Require(SizeFor(1, 3, true) == 0x53188, "size with two queues for one compute sequence");
+    Require(SizeFor(1, 1, false) == 0x2afd8 && SizeFor(1, 1, true) == 0x2b3c8, "size with one compute sequence");
+    Require(SizeFor(2, 3, false) == 0x54de0 && SizeFor(2, 3, true) == 0x551d0, "size with two compute sequences");
+    Require(SizeFor(3, 7, false) == 0x7eb28, "size with three compute sequences");
+    Require(SizeFor(1, 3, true) == 0x55188, "size with two queues for one compute sequence");
     Require(SizeFor(2, 1, true) == 0, "size with fewer queues than compute sequences");
 }
 
@@ -296,7 +296,7 @@ void BarrierStorageCase() {
         Require(sequence->Wait() == 0, "barrier storage wait failed");
         const auto* firstPacket = std::search(memory, memory + size, first.begin(), first.end());
         const auto* laterPacket = std::search(memory, memory + size, later.begin(), later.end());
-        const std::ptrdiff_t expectedDistance = pattern == 0 ? 304 : pattern == 1 ? 284 : pattern == 2 ? 188 : 492;
+        const std::ptrdiff_t expectedDistance = pattern == 0 ? 308 : pattern == 1 ? 288 : pattern == 2 ? 192 : 500;
         Require(firstPacket != memory + size && laterPacket != memory + size && laterPacket - firstPacket == expectedDistance,
             "GPU barrier command storage differs from the original module");
         Require(Output[0] == Value[0], "barrier storage dispatch did not finish");
@@ -321,6 +321,7 @@ void BarrierCapacityCase(bool overflow) {
     Require(factory->CreateCompute(&sequence, 0, 255, 255, 1, nullptr) == 0, "barrier capacity sequence creation failed");
     const std::string large(65535, 'l');
     const std::string medium(32767, 'm');
+    const std::string small(22, 's');
     alignas(64) std::uint32_t gate = 0;
     alignas(256) std::array<std::uint32_t, 32> gateWords{};
     alignas(256) Label fence{};
@@ -332,14 +333,14 @@ void BarrierCapacityCase(bool overflow) {
     Require(sceAgcDriverSubmitAcb(0x21, &gatePacket) == 0, "barrier capacity gate submission failed");
     Value[0] = 0xbab10000u;
     Output[0] = 0;
-    for (std::uint32_t index = 0; index < 224; ++index) {
-        const char* marker = index == 0 ? large.c_str() : index == 1 ? medium.c_str() : "small";
+    for (std::uint32_t index = 0; index < 223; ++index) {
+        const char* marker = index == 0 ? large.c_str() : index == 1 ? medium.c_str() : small.c_str();
         Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, marker) == 0, "barrier capacity dispatch failed");
         Require(sequence->SyncPoint() == 0, "barrier capacity sync within the native bound failed");
     }
     bool exhausted = false;
     if (overflow) {
-        Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, "small") == 0, "the last fitting barrier capacity dispatch failed");
+        Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, small.c_str()) == 0, "the last fitting barrier capacity dispatch failed");
         try {
             static_cast<void>(sequence->SyncPoint());
         } catch (const std::runtime_error& error) {
