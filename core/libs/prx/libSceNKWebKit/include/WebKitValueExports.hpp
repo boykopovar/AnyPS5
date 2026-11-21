@@ -69,6 +69,14 @@ const void* APS5_VABI WKBundleDOMWindowExtensionCreate(const void* frameRef, con
 const void* APS5_VABI WKBundleDOMWindowExtensionGetFrame(const void* extensionRef);
 const void* APS5_VABI WKBundleDOMWindowExtensionGetScriptWorld(const void* extensionRef);
 std::uint32_t APS5_VABI WKBundleFrameGetTypeID();
+bool APS5_VABI WKBundleFrameIsMainFrame(const void* frameRef);
+const void* APS5_VABI WKBundleFrameGetParentFrame(const void* frameRef);
+const void* APS5_VABI WKBundleFrameCopyChildFrames(const void* frameRef);
+const void* APS5_VABI WKBundleFrameCopyName(const void* frameRef);
+const void* APS5_VABI WKBundleFrameCopyURL(const void* frameRef);
+const void* APS5_VABI WKBundleFrameCopyProvisionalURL(const void* frameRef);
+const void* APS5_VABI WKBundleFrameCopySecurityOrigin(const void* frameRef);
+std::uint32_t APS5_VABI WKBundleFrameGetFrameLoadState(const void* frameRef);
 const void* APS5_VABI WKBundleFrameCreateHitTestResult(const void* frameRef, NKWebKit::PointValue point);
 NKWebKit::RectValue APS5_VABI WKBundleFrameGetContentBounds(const void* frameRef);
 NKWebKit::RectValue APS5_VABI WKBundleFrameGetVisibleContentBounds(const void* frameRef);
