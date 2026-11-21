@@ -4,15 +4,15 @@
 
 extern "C" {
 
-int APS5_VABI sceAcmChain_Audio3dPO1_Clear();
+int APS5_VABI sceAcmChain_Audio3dPO1_Clear(AcmBatchInfo* batch, std::uint32_t mode, const void* chain);
 int APS5_VABI sceAcmChain_Audio3dPO1_RenderObject();
-int APS5_VABI sceAcmChain_Audio3dPO1_Activate();
-int APS5_VABI sceAcmChain_Audio3dPO1_Output();
+int APS5_VABI sceAcmChain_Audio3dPO1_Activate(AcmBatchInfo* batch, std::uint32_t mode, const void* chain);
+int APS5_VABI sceAcmChain_Audio3dPO1_Output(AcmBatchInfo* batch, void* outputBuffer, std::uint32_t mode, const void* chain);
 int APS5_VABI sceAcm_ConvReverb_SharedIr_2();
-int APS5_VABI sceAcmChain_Audio3dPO1_RenderAmbisonicsChannel();
-int APS5_VABI sceAcmChain_Audio3dPO2_Activate();
-int APS5_VABI sceAcmChain_Audio3dPO1_RenderPassthroughObject();
-int APS5_VABI sceAcmChain_Audio3dPO2_RenderDelay();
+int APS5_VABI sceAcmChain_Audio3dPO1_RenderAmbisonicsChannel(AcmBatchInfo* batch, std::uint32_t sourceMode, std::uint32_t outputMode, std::int32_t channelIndex, const void* input, void* state, float gain, std::uint32_t flags, const void* chain);
+int APS5_VABI sceAcmChain_Audio3dPO2_Activate(AcmBatchInfo* batch, std::uint32_t mode, const void* chain);
+int APS5_VABI sceAcmChain_Audio3dPO1_RenderPassthroughObject(AcmBatchInfo* batch, std::uint32_t sourceMode, std::uint32_t outputMode, std::uint32_t passthroughIndex, const void* input, void* state, float gain, std::uint32_t flags, const void* chain);
+int APS5_VABI sceAcmChain_Audio3dPO2_RenderDelay(AcmBatchInfo* batch, std::uint32_t sourceMode, std::uint32_t outputMode, const void* input, void* output, const void* const* delayBuffers, std::uint32_t delayMode, std::uint32_t flags, const void* chain);
 int APS5_VABI sceAcmGetTelemetry();
 int APS5_VABI sceAcm_ConvReverb_SharedInput_2();
 
