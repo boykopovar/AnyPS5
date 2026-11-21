@@ -132,7 +132,7 @@ void StoreGuestVector(CharVector& vector, unsigned grownLength, const std::vecto
 
 extern "C" {
 
-bool APS5_VABI _ZN3WTF15base64URLDecodeERKNS_6StringENS_33SignedOrUnsignedCharVectorAdapterE(const Jsc::WtfAbi::String* in, Jsc::WtfAbi::SignedOrUnsignedCharVectorAdapter out) {
+bool APS5_VABI _ZN3WTF15base64URLDecodeERKNS_6StringENS_33SignedOrUnsignedCharVectorAdapterE(const Jsc::WtfAbi::StringHandle* in, Jsc::WtfAbi::SignedOrUnsignedCharVectorAdapter out) {
     if (!in) throw std::invalid_argument("WTF::base64URLDecode requires a string");
     if (!out.vector) throw std::invalid_argument("WTF::base64URLDecode requires a vector");
 
