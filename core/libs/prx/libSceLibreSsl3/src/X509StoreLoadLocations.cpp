@@ -953,11 +953,6 @@ LibreSslX509Name* DecodeName(const Tlv& sequence) {
             FreeName(name);
             return nullptr;
         }
-        if (rdn.content.empty()) {
-            PutAsn1Error(FieldMissing);
-            FreeName(name);
-            return nullptr;
-        }
         std::span<const unsigned char> attributes = rdn.content;
         while (!attributes.empty()) {
             LibreSslX509NameEntry* entry = DecodeNameEntry(attributes, set);

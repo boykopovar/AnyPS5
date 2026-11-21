@@ -1002,6 +1002,53 @@ void TestLongNameEncoding() {
     Require(remove_nid_postfix(path.c_str()) == 0);
 }
 
+void TestEmptyRelativeNames() {
+    const Bytes none{0x31, 0x00};
+    const Bytes common = Element(0x31, Attribute(3, 0x0c, Bytes(SubjectA, SubjectA + 9)));
+    const Bytes organization = Element(0x31, Attribute(10, 0x13, {'O', 'r', 'g', ' ', ' ', 'O', 'n', 'e'}));
+    const Bytes canonicalCommon(SubjectEncodingA, SubjectEncodingA + sizeof(SubjectEncodingA));
+    const Bytes canonicalBoth = Concat({canonicalCommon,
+        {0x31, 0x10, 0x30, 0x0e, 0x06, 0x03, 0x55, 0x04, 0x0a, 0x0c, 0x07, 'o', 'r', 'g', ' ', 'o', 'n', 'e'}});
+    const struct {
+        Bytes name;
+        std::vector<int> sets;
+        Bytes canonical;
+        const char* hash;
+    } cases[] = {
+        {Element(0x30, none), {}, {}, "37924c444319c3e53f946bfecb9619f49feac82c"},
+        {Element(0x30, Concat({none, common})), {1}, canonicalCommon, "22ede94a470bba1317e6b4a98d741925cf368516"},
+        {Element(0x30, Concat({common, none})), {0}, canonicalCommon, "6c7dd4d99f94b43caf85cd39fa7c26abccb3141e"},
+        {Element(0x30, Concat({common, none, organization})), {0, 2}, canonicalBoth, "759e520c6612c731cd18276e95277b7e974c2def"},
+        {Element(0x30, Concat({none, none, common, none})), {2}, canonicalCommon, "ea7a1f63a224f025bd175bde6003555afb008ef6"},
+        {Element(0x30, Concat({{0x31, 0x81, 0x00}, common})), {1}, canonicalCommon, "09ca2b86422cb3ad68e15b7cf36e105232dec3fb"},
+        {Element(0x30, Concat({{0x31, 0x80, 0x00, 0x00}, common})), {1}, canonicalCommon, "11c7fd83c262201cbd14b24f89c2a248d18bd46c"},
+        {Element(0x30, Concat({common, organization})), {0, 1}, canonicalBoth, "8d4a7f967b9439b425c099af5850cb0cef11e0f1"},
+    };
+    for (const auto& test : cases) {
+        const std::string path = WriteFile("libressl3-load-locations-empty-rdn.pem", CertificatePem(test.name));
+        LibreSslX509Store* store = NewStore();
+        ERR_clear_error_nid_postfix();
+        Require(X509_STORE_load_locations_nid_postfix(store, path.c_str(), nullptr) == 1 && ObjectCount(store) == 1);
+        Require(ERR_get_error_nid_postfix() == 0);
+        for (const bool subject : {false, true}) {
+            const LibreSslX509Name* name = LoadedName(store, subject);
+            RequireNameBytes(name, test.name, 0, test.name.size());
+            const LibreSslStack* entries = name->entries;
+            Require(entries != nullptr && entries->num == static_cast<int>(test.sets.size()));
+            for (std::size_t index = 0; index < test.sets.size(); ++index)
+                Require(reinterpret_cast<const LibreSslX509NameEntry*>(entries->data[index])->set == test.sets[index]);
+            Require(name->canonEnclen == static_cast<int>(test.canonical.size()));
+            Require((name->canonEnc == nullptr) == test.canonical.empty());
+            if (name->canonEnc) Require(std::memcmp(name->canonEnc, test.canonical.data(), test.canonical.size()) == 0);
+        }
+        const auto* certificate = reinterpret_cast<const LibreSsl3Certificate*>(StoredObject(store, 0)->data);
+        const std::string id = std::string(test.hash) + "/7d831708cc9d3366b14ae91cb78aa10e345e96a0";
+        Require(CertificateIdHashes(certificate, certificate) == id);
+        Require(CertificateIdHashes(nullptr, certificate) == id);
+        Require(remove_nid_postfix(path.c_str()) == 0);
+    }
+}
+
 long LiveBlocksAfterLoad(const std::string& contents, int result, int objects, bool release) {
     const std::string path = WriteFile("libressl3-load-locations-live-blocks.pem", contents);
     ERR_clear_error_nid_postfix();
@@ -1286,6 +1333,7 @@ int main() {
     TestExplicitWrapperLengths();
     TestNameEncodings();
     TestLongNameEncoding();
+    TestEmptyRelativeNames();
     TestNameEncodingsReleased();
     TestConvertedNameStrings();
     TestRejectedNameStrings();
