@@ -257,6 +257,13 @@ GLuint AttributeSlotCount(GLenum type) {
     }
 }
 
+std::size_t AttributeTotalSlots(GLenum type, GLint size) {
+    const std::size_t perElem = AttributeSlotCount(type);
+    const std::size_t count = static_cast<std::size_t>(std::max(size, 1));
+    if (perElem == 0 || count > MaxVertexAttribs / perElem) return MaxVertexAttribs + 1;
+    return perElem * count;
+}
+
 std::size_t UniformComponentCount(GLenum type) {
     switch (type) {
     case 0x1406: case 0x1404: case 0x8b56: case 0x8b5e: case 0x8b60: return 1;
@@ -700,19 +707,19 @@ void APS5_VABI glLinkProgram_nid_postfix(GLuint program) {
         for (auto& attr : exec->attributes) {
             auto binding = object->attributes.find(attr.name);
             if (binding == object->attributes.end()) continue;
-            const GLuint base = binding->second;
-            const GLuint slots = AttributeSlotCount(attr.type);
+            const std::size_t base = binding->second;
+            const std::size_t slots = AttributeTotalSlots(attr.type, attr.size);
             if (base >= MaxVertexAttribs || slots > MaxVertexAttribs - base) {
                 fail("ERROR: Bound vertex attribute '" + attr.name + "' exceeds GL_MAX_VERTEX_ATTRIBS.\n");
                 return;
             }
-            for (GLuint s = 0; s < slots; ++s) {
+            for (std::size_t s = 0; s < slots; ++s) {
                 if (usedSlots[base + s]) {
                     fail("ERROR: Aliased vertex attribute location for '" + attr.name + "'.\n");
                     return;
                 }
             }
-            for (GLuint s = 0; s < slots; ++s) usedSlots[base + s] = true;
+            for (std::size_t s = 0; s < slots; ++s) usedSlots[base + s] = true;
             attr.location = static_cast<GLint>(base);
         }
 
@@ -721,21 +728,24 @@ void APS5_VABI glLinkProgram_nid_postfix(GLuint program) {
             if (exec->attributes[i].location < 0) unbound.push_back(i);
         }
         std::stable_sort(unbound.begin(), unbound.end(), [&](std::size_t a, std::size_t b) {
-            return AttributeSlotCount(exec->attributes[a].type) > AttributeSlotCount(exec->attributes[b].type);
+            return AttributeTotalSlots(exec->attributes[a].type, exec->attributes[a].size) >
+                   AttributeTotalSlots(exec->attributes[b].type, exec->attributes[b].size);
         });
         for (std::size_t idx : unbound) {
             auto& attr = exec->attributes[idx];
-            const GLuint slots = AttributeSlotCount(attr.type);
+            const std::size_t slots = AttributeTotalSlots(attr.type, attr.size);
             GLint assigned = -1;
-            for (GLuint base = 0; base + slots <= MaxVertexAttribs; ++base) {
-                bool freeRun = true;
-                for (GLuint s = 0; s < slots; ++s) {
-                    if (usedSlots[base + s]) { freeRun = false; break; }
-                }
-                if (freeRun) {
-                    for (GLuint s = 0; s < slots; ++s) usedSlots[base + s] = true;
-                    assigned = static_cast<GLint>(base);
-                    break;
+            if (slots <= MaxVertexAttribs) {
+                for (std::size_t base = 0; base + slots <= MaxVertexAttribs; ++base) {
+                    bool freeRun = true;
+                    for (std::size_t s = 0; s < slots; ++s) {
+                        if (usedSlots[base + s]) { freeRun = false; break; }
+                    }
+                    if (freeRun) {
+                        for (std::size_t s = 0; s < slots; ++s) usedSlots[base + s] = true;
+                        assigned = static_cast<GLint>(base);
+                        break;
+                    }
                 }
             }
             if (assigned < 0) {

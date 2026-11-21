@@ -175,6 +175,13 @@ void TestShaderCompilation() {
     const GLuint badSyntax = CompileShader(0x8b31, syntaxError, false);
     CHECK(!ShaderInfoLog(badSyntax).empty());
 
+    const char* attribArray =
+        "attribute vec4 aArr[2];\n"
+        "void main() { gl_Position = aArr[0] + aArr[1]; }\n";
+    const GLuint badAttribArray = CompileShader(0x8b31, attribArray, false);
+    CHECK(!ShaderInfoLog(badAttribArray).empty());
+    glDeleteShader_nid_postfix(badAttribArray);
+
     const char* es300 =
         "#version 300 es\n"
         "in vec4 aPos;\n"
