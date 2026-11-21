@@ -75,6 +75,20 @@ static JpegDecDecodeParam DecodeParam(const std::vector<std::uint8_t>& jpeg, std
     return param;
 }
 
+struct StreamFeed {
+    const std::uint8_t* data;
+    std::size_t remaining;
+};
+
+static std::int32_t APS5_VABI FeedStream(JpegDecInputChunk* chunk, void* arg) {
+    auto* feed = static_cast<StreamFeed*>(arg);
+    if (!chunk || !feed) return -1;
+    chunk->data = feed->data;
+    chunk->size = static_cast<std::uint32_t>(feed->remaining);
+    feed->remaining = 0;
+    return 0;
+}
+
 int main() {
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
@@ -181,8 +195,20 @@ int main() {
     Require(sceJpegDecCreate(&param, memory.data(), 0, &handle) == invalidSize);
     Require(sceJpegDecCreate(&param, memory.data(), static_cast<std::uint32_t>(memorySize), nullptr) == invalidAddr);
     Require(sceJpegDecCreate(reinterpret_cast<const JpegDecCreateParam*>(0x10), memory.data(), static_cast<std::uint32_t>(memorySize), &handle) == invalidAddr);
+    errno = 71;
     Require(sceJpegDecCreate(&param, memory.data(), static_cast<std::uint32_t>(memorySize), reinterpret_cast<void**>(0x10)) == invalidAddr);
+    Require(errno == 71);
     Require(sceJpegDecCreate(&param, reinterpret_cast<void*>(0x10), static_cast<std::uint32_t>(memorySize), &handle) == invalidAddr);
+    std::vector<std::uint8_t> unalignedMemory(static_cast<std::size_t>(memorySize) + 64);
+    void* unalignedHandle = nullptr;
+    std::uint8_t* misalignedAddress = unalignedMemory.data();
+    if (reinterpret_cast<std::uintptr_t>(misalignedAddress) % 32 == 0) misalignedAddress += 1;
+    Require(sceJpegDecCreate(&param, misalignedAddress, static_cast<std::uint32_t>(memorySize), &unalignedHandle) == 0);
+    Require(unalignedHandle != nullptr && reinterpret_cast<std::uintptr_t>(unalignedHandle) % 32 == 0);
+    Require(sceJpegDecDelete(unalignedHandle) == 0);
+    unalignedHandle = reinterpret_cast<void*>(0x12345678);
+    Require(sceJpegDecCreate(&param, reinterpret_cast<void*>(UINTPTR_MAX - 16), static_cast<std::uint32_t>(memorySize), &unalignedHandle) == invalidAddr);
+    Require(unalignedHandle == reinterpret_cast<void*>(0x12345678));
     Require(sceJpegDecCreate(&fullParam, memory.data(), static_cast<std::uint32_t>(fullMemorySize), &handle) == 0);
     Require(handle != nullptr && reinterpret_cast<std::uintptr_t>(handle) % 32 == 0);
     Require(sceJpegDecCreate(&param, memory.data(), 0, nullptr) == invalidSize);
@@ -265,6 +291,31 @@ int main() {
     errno = 71;
     Require(sceJpegDecDecode(handle, &decodeParam, &info) == static_cast<std::int32_t>(7 << 16 | 5));
     Require(errno == 71);
+    void* savedHandle = handle;
+    Require(sceJpegDecCreate(&param, reinterpret_cast<void*>(0x20), static_cast<std::uint32_t>(memorySize), &savedHandle) == invalidAddr);
+    Require(savedHandle == handle);
+    StreamFeed feed{jpeg.data(), jpeg.size()};
+    JpegDecInputControlParam streamParam{};
+    streamParam.input = FeedStream;
+    streamParam.input_argument = &feed;
+    streamParam.operation = 0x10;
+    streamParam.down_scale = 1;
+    info = {};
+    Require(sceJpegDecDecodeWithInputControl(handle, &streamParam, &info) == 0);
+    Require(info.image_width == 7 && info.image_height == 5);
+    errno = 71;
+    Require(sceJpegDecCreate(&param, memory.data(), static_cast<std::uint32_t>(memorySize), reinterpret_cast<void**>(0x10)) == invalidAddr);
+    Require(errno == 71);
+    std::vector<std::uint8_t> streamImage(7 * 5 * 4, 0xCC);
+    streamParam.operation = 0x20;
+    streamParam.image_mem_addr = streamImage.data();
+    streamParam.image_mem_size = static_cast<std::uint32_t>(streamImage.size());
+    streamParam.pixel_format = 0;
+    streamParam.alpha_value = 0xFF;
+    streamParam.image_pitch = 7 * 4;
+    Require(sceJpegDecDecodeWithInputControl(handle, &streamParam, nullptr) == static_cast<std::int32_t>(7 << 16 | 5));
+    Require(streamImage[0] == reference->pixels[0] && streamImage[1] == reference->pixels[1] && streamImage[2] == reference->pixels[2] && streamImage[3] == 0xFF);
+    Require(sceJpegDecDecode(handle, &decodeParam, &info) == static_cast<std::int32_t>(7 << 16 | 5));
     Require(info.image_width == 7 && info.image_height == 5);
     Require(info.output_image_width == 7 && info.output_image_height == 5);
     for (std::size_t pixel = 0; pixel < 7 * 5; ++pixel) {
