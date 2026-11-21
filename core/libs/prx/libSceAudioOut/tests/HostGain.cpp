@@ -1,6 +1,7 @@
 #include "prx/libSceAudioOut/include/HostGain.hpp"
 
 #include <cstdint>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -161,6 +162,39 @@ void s16RampUpLandsExactly() {
     require(samples.back() == 10000, "samples return to the title's own values");
 }
 
+void s16SettledGainScalesEveryValue() {
+    for (const std::uint32_t target : {0u, 1u, 32768u, 65535u, 65536u, 262144u, UINT32_MAX}) {
+        for (const unsigned channels : {1u, 2u, 8u}) {
+            HostGainRamp ramp(0);
+            ramp.Apply(static_cast<std::int16_t*>(nullptr), 65536, 0, target);
+            require(ramp.Current() == target, "a ramp with no channels still reaches its target");
+            std::vector<std::int16_t> samples(65536);
+            for (std::size_t index = 0; index < samples.size(); ++index) samples[index] = static_cast<std::int16_t>(static_cast<int>(index) - 32768);
+            ramp.Apply(samples.data(), samples.size() / channels, channels, target);
+            for (std::size_t index = 0; index < samples.size(); ++index) {
+                const double scaled = std::floor((static_cast<double>(static_cast<int>(index) - 32768) * target + 32768.0) / 65536.0);
+                const auto expected = static_cast<std::int16_t>(std::clamp(scaled, -32768.0, 32767.0));
+                require(samples[index] == expected, "settled gain preserves rounding and saturation for every 16-bit input");
+            }
+            require(ramp.Current() == target, "a settled buffer leaves the gain unchanged");
+        }
+    }
+}
+
+void f32SettledGainPreservesSpecialValues() {
+    HostGainRamp ramp(0);
+    ramp.Apply(static_cast<float*>(nullptr), 1, 0, 32768);
+    const auto infinity = std::numeric_limits<float>::infinity();
+    float samples[]{infinity, -infinity, std::numeric_limits<float>::quiet_NaN(), 0.0f, -0.0f, 0.75f, -0.75f, std::numeric_limits<float>::min()};
+    ramp.Apply(samples, 4, 2, 32768);
+    require(samples[0] == infinity && samples[1] == -infinity && std::isnan(samples[2]), "settled nonzero float gain preserves nonfinite samples");
+    require(samples[3] == 0.0f && !std::signbit(samples[3]) && samples[4] == 0.0f && std::signbit(samples[4]), "settled nonzero gain preserves signed zeros");
+    require(samples[5] == 0.375f && samples[6] == -0.375f && samples[7] == std::numeric_limits<float>::min() / 2, "settled float gain scales finite and subnormal results");
+    ramp.Apply(static_cast<float*>(nullptr), 1, 0, 0);
+    ramp.Apply(samples, 4, 2, 0);
+    for (const auto sample : samples) require(sample == 0.0f && !std::signbit(sample), "settled mute replaces every input with positive zero");
+}
+
 std::vector<float> constantF32(std::size_t frames, unsigned channels, float value) {
     return std::vector<float>(frames * channels, value);
 }
@@ -277,6 +311,8 @@ int main() try {
     s16ReturnToUnityBypassesAgain();
     s16RoundsHalfUp();
     s16RampUpLandsExactly();
+    s16SettledGainScalesEveryValue();
+    f32SettledGainPreservesSpecialValues();
     f32BypassAtUnity();
     f32FirstSampleAndLanding();
     f32RampHasNoDiscontinuity();
