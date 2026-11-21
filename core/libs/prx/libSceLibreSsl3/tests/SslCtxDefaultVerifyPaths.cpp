@@ -120,16 +120,6 @@ int APS5_VABI UnexpectedPosixAlign_nid_no_patch(void**, std::size_t, std::size_t
     throw std::runtime_error("unexpected posix_memalign");
 }
 
-template <typename Function>
-bool Throws(Function function) {
-    try {
-        function();
-    } catch (const std::exception&) {
-        return true;
-    }
-    return false;
-}
-
 const std::filesystem::path& TemporaryRoot() {
     static const std::filesystem::path root =
         std::filesystem::temp_directory_path() / "anyps5-libressl3-default-verify-paths";
@@ -291,7 +281,7 @@ void TestDefaultFileCandidate() {
     Require(SSL_CTX_set_default_verify_paths_nid_postfix(&context) == 1);
     Require(HoldsCertificates(store, 2));
     Require(LookupCount(store) == 2);
-    Require(Throws([store] { X509_STORE_free_nid_postfix(store); }));
+    X509_STORE_free_nid_postfix(store);
 }
 
 void TestEnvironmentOverridesCandidates() {
@@ -308,7 +298,7 @@ void TestEnvironmentOverridesCandidates() {
     const unsigned char* subject = StoredSubject(store, 0, length);
     Require(length == static_cast<int>(sizeof(SubjectEncodingB)));
     Require(std::memcmp(subject, SubjectEncodingB, sizeof(SubjectEncodingB)) == 0);
-    Require(Throws([store] { X509_STORE_free_nid_postfix(store); }));
+    X509_STORE_free_nid_postfix(store);
     ClearEnvironment();
 }
 
@@ -366,7 +356,7 @@ void TestEnvironmentDirectory() {
     Require(SSL_CTX_set_default_verify_paths_nid_postfix(&context) == 1);
     Require(HoldsCertificates(store, 1));
     Require(LookupCount(store) == 1);
-    Require(Throws([store] { X509_STORE_free_nid_postfix(store); }));
+    X509_STORE_free_nid_postfix(store);
     ClearEnvironment();
 }
 
@@ -390,7 +380,7 @@ void TestNegativeControl() {
     Require(!HoldsCertificates(store, 1));
     stack->num += 1;
     Require(HoldsCertificates(store, 1));
-    Require(Throws([store] { X509_STORE_free_nid_postfix(store); }));
+    X509_STORE_free_nid_postfix(store);
     ClearEnvironment();
 }
 
