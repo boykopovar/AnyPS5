@@ -169,14 +169,18 @@ int APS5_VABI sceVisionManagerGetStoreCameraImgYPtr() {
 
 int APS5_VABI sceVisionManagerGetWorkingMemorySize(std::uint32_t* first, std::uint32_t* second, std::uint32_t* third) {
     if (first == nullptr || second == nullptr || third == nullptr) return ErrorInvalidArgument;
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(first, sizeof(*first))
+        && GuestWritable_nid_no_patch(second, sizeof(*second))
+        && GuestWritable_nid_no_patch(third, sizeof(*third));
+    errno = savedErrno;
+    if (!writable) return ErrorInvalidArgument;
     const std::uint32_t valFirst = 0;
     const std::uint32_t valSecond = 0x1600000;
     const std::uint32_t valThird = 0x4200000;
-    const int savedErrno = errno;
-    const bool copiedFirst = GuestCopyOut_nid_no_patch(first, &valFirst, sizeof(valFirst));
-    const bool copiedSecond = GuestCopyOut_nid_no_patch(second, &valSecond, sizeof(valSecond));
-    const bool copiedThird = GuestCopyOut_nid_no_patch(third, &valThird, sizeof(valThird));
-    errno = savedErrno;
+    const bool copiedFirst = CopyOut(first, &valFirst, sizeof(valFirst));
+    const bool copiedSecond = CopyOut(second, &valSecond, sizeof(valSecond));
+    const bool copiedThird = CopyOut(third, &valThird, sizeof(valThird));
     if (!copiedFirst || !copiedSecond || !copiedThird) return ErrorInvalidArgument;
     return 0;
 }
@@ -337,6 +341,10 @@ extern "C" {
 
 int APS5_VABI libSceVisionManagerUnknown__minus_R5dI6KjYpY_nid_no_patch(const std::uint32_t* input, std::uint32_t* output) {
     if (input == nullptr || output == nullptr) return ErrorInvalidArgument;
+    const int savedErrno = errno;
+    const bool outputWritable = GuestWritable_nid_no_patch(output, sizeof(std::uint32_t) * 8);
+    errno = savedErrno;
+    if (!outputWritable) return ErrorInvalidArgument;
     std::uint32_t localInput[2] = {};
     if (!CopyIn(localInput, input, sizeof(localInput))) return ErrorInvalidArgument;
     std::uint32_t localOutput[8] = {};

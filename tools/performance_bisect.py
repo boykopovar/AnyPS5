@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 TOOLS_DIR = Path(__file__).resolve().parent
-PLACEHOLDERS = ("worktree", "build_dir", "result_dir", "commit")
+PLACEHOLDER = re.compile(r"\{(worktree|build_dir|result_dir|commit)\}")
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
 RECIPE_FIELDS = {"title_id", "build_commands", "build_dir", "games", "seconds", "repetitions",
                  "regression_pct", "max_spread_pct", "titles", "content"}
@@ -168,12 +168,7 @@ def first_parent_commits(repo, good, bad):
 
 
 def format_command(command, values):
-    result = []
-    for argument in command:
-        for name in PLACEHOLDERS:
-            argument = argument.replace("{" + name + "}", str(values[name]))
-        result.append(argument)
-    return result
+    return [PLACEHOLDER.sub(lambda match: str(values[match[1]]), argument) for argument in command]
 
 
 def reset_build_dir(worktree, build_dir):
@@ -304,7 +299,7 @@ def bisect(repo, good, bad, recipe, output_dir, temp_dir=None):
         raise ValueError(f"report already exists: {output_dir}")
     good_sha, bad_sha, commits = first_parent_commits(repo, good, bad)
     with tempfile.TemporaryDirectory(prefix="anyps5-performance-bisect-", dir=temp_dir) as temporary:
-        root = Path(temporary)
+        root = Path(temporary).resolve()
         worktree = root / "source"
         results = root / "results"
         results.mkdir()

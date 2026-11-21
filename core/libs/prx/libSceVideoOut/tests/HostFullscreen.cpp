@@ -84,6 +84,10 @@ static void RestoreSizeTest() {
     state.Toggle();
     state.Toggle();
     Require(!window.fullscreen && window.sizeCalls == 1 && window.size == HostWindowSize{1280, 720}, "a window that stays at the desktop size was not restored");
+    window.size = {0, 0};
+    state.Toggle();
+    state.Toggle();
+    Require(!window.fullscreen && window.sizeCalls == 2 && window.size == HostWindowSize{1280, 720}, "a minimized toggle overwrote the adopted windowed size");
 }
 
 static void AdoptTest() {
@@ -106,8 +110,10 @@ static void AdoptTest() {
 
 static void FailureTest() {
     FakeWindow window;
+    window.restoresSize = false;
     HostFullscreenState state(window);
     state.Adopt(HostFullscreenMode::Windowed, window.size);
+    window.size = {800, 600};
     window.failTransition = true;
     bool thrown = false;
     try {
@@ -117,8 +123,11 @@ static void FailureTest() {
     }
     Require(thrown && !window.fullscreen, "a refused transition was swallowed");
     window.failTransition = false;
+    window.size = {0, 0};
     state.Toggle();
     Require(window.fullscreen, "toggle did not work after a refused transition");
+    state.Toggle();
+    Require(!window.fullscreen && window.size == HostWindowSize{1280, 720}, "a refused transition overwrote the saved windowed size");
 }
 
 static void CursorTest() {
@@ -196,6 +205,12 @@ static void ParseTest() {
     const std::string warning = HostFullscreenWarning("yes please");
     Require(warning.find("ANYPS5_FULLSCREEN") != std::string::npos && warning.find("'yes please'") != std::string::npos, "the warning did not name the variable and the value");
     Require(warning.find('\n') == std::string::npos, "the warning was not one line");
+    const std::string nullWarning = HostFullscreenWarning(nullptr);
+    Require(nullWarning.find("ANYPS5_FULLSCREEN=''") != std::string::npos, "a null warning did not sanitize to empty");
+    Require(nullWarning.find('\r') == std::string::npos && nullWarning.find('\n') == std::string::npos, "a null warning was not one line");
+    const std::string multilineWarning = HostFullscreenWarning("1\r\nborderless");
+    Require(multilineWarning.find("ANYPS5_FULLSCREEN='1\\r\\nborderless'") != std::string::npos, "the warning did not escape control characters");
+    Require(multilineWarning.find('\r') == std::string::npos && multilineWarning.find('\n') == std::string::npos, "the warning contained raw line breaks");
 }
 
 static bool Fullscreen(const DisplayWindow& window) {
@@ -363,9 +378,33 @@ static int WindowTest() {
 
 #undef main
 
+#ifdef __linux__
+static int WaylandWindowTest(bool expectTimeout) {
+    const int initialized = SDL_InitSubSystem(SDL_INIT_VIDEO);
+    Require(initialized == 0, SDL_GetError());
+    SDL_Window* window = SDL_CreateWindow("Wayland test", 0, 0, 640, 360, SDL_WINDOW_SHOWN);
+    if (expectTimeout) {
+        Require(window == nullptr, "SDL accepted a window that was never configured");
+        Require(std::strstr(SDL_GetError(), "Timed out waiting for Wayland xdg-shell initial configure") != nullptr, SDL_GetError());
+    } else {
+        Require(window != nullptr, SDL_GetError());
+        Require((SDL_GetWindowFlags(window) & SDL_WINDOW_SHOWN) != 0, "SDL did not show the configured window");
+        SDL_DestroyWindow(window);
+    }
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    return 0;
+}
+#endif
+
 int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "window") == 0) return WindowTest();
     if (argc > 1 && std::strcmp(argv[1], "failedcreate") == 0) return FailedCreateTest();
+#ifdef __linux__
+    if (argc > 1 && std::strcmp(argv[1], "server-decoration") == 0) return WaylandWindowTest(false);
+    if (argc > 1 && std::strcmp(argv[1], "configure-timeout") == 0) return WaylandWindowTest(true);
+    if (argc > 1 && std::strcmp(argv[1], "libdecor-configure") == 0) return WaylandWindowTest(false);
+    if (argc > 1 && std::strcmp(argv[1], "libdecor-retry") == 0) return WaylandWindowTest(false);
+#endif
     ParseTest();
     SkipPolicyTest();
     ToggleTest();

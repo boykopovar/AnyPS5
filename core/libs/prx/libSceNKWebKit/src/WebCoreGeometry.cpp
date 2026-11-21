@@ -47,6 +47,7 @@
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
+#include "prx/libSceNKWebKit/src/WebCoreLayoutUnit.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 #include <algorithm>
 #include <array>
@@ -58,28 +59,8 @@ namespace WebCore {
 
 namespace {
 
-int ClampToInteger(float value) {
-    if (value >= static_cast<float>(std::numeric_limits<int>::max())) {
-        return std::numeric_limits<int>::max();
-    }
-    if (!(value > static_cast<float>(std::numeric_limits<int>::min()))) {
-        return std::numeric_limits<int>::min();
-    }
-    return static_cast<int>(value);
-}
-
 int TruncateToIntegerOrMin(float value) {
     if (!(value >= -2147483648.0f && value < 2147483648.0f)) {
-        return std::numeric_limits<int>::min();
-    }
-    return static_cast<int>(value);
-}
-
-int ClampToInteger(double value) {
-    if (value >= static_cast<double>(std::numeric_limits<int>::max())) {
-        return std::numeric_limits<int>::max();
-    }
-    if (!(value > static_cast<double>(std::numeric_limits<int>::min()))) {
         return std::numeric_limits<int>::min();
     }
     return static_cast<int>(value);
@@ -327,14 +308,6 @@ bool APS5_VABI _ZNK7WebCore9FloatRect8containsERKS0_(const WebCore::FloatRect* s
         && self->m_location.m_x + self->m_size.m_width >= other.m_location.m_x + other.m_size.m_width
         && self->m_location.m_y <= other.m_location.m_y
         && self->m_location.m_y + self->m_size.m_height >= other.m_location.m_y + other.m_size.m_height;
-}
-
-WebCore::FloatRect APS5_VABI _ZNK7WebCore9FloatQuad11boundingBoxEv(const WebCore::FloatQuad* self) {
-    float left = std::min({self->m_p1.m_x, self->m_p2.m_x, self->m_p3.m_x, self->m_p4.m_x});
-    float top = std::min({self->m_p1.m_y, self->m_p2.m_y, self->m_p3.m_y, self->m_p4.m_y});
-    float right = std::max({self->m_p1.m_x, self->m_p2.m_x, self->m_p3.m_x, self->m_p4.m_x});
-    float bottom = std::max({self->m_p1.m_y, self->m_p2.m_y, self->m_p3.m_y, self->m_p4.m_y});
-    return WebCore::FloatRect{{left, top}, {right - left, bottom - top}};
 }
 
 bool APS5_VABI _ZNK7WebCore9FloatQuad12containsQuadERKS0_(const WebCore::FloatQuad* self, const WebCore::FloatQuad& other) {

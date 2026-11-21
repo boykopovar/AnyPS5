@@ -1,0 +1,5 @@
+# libSceNKWebKit
+
+## add Unknown function info
+
+- [HTML space trimming](../../../core/libs/prx/libSceNKWebKit/src/HtmlSpaceTrim.cpp) - `stripLeadingAndTrailingHTMLSpaces` follows [HTMLParserIdioms.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/html/parser/HTMLParserIdioms.cpp#L39-L76), [isHTMLSpace](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/html/parser/HTMLParserIdioms.h#L91-L109), [String::substring](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/WTFString.cpp#L309-L313) and [StringImpl::substring](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/StringImpl.cpp#L324-L339). Null stays null; empty/all-space inputs canonicalize, unchanged strings retain, trimmed strings copy and preserve width. Only TAB/LF/FF/CR/SPACE trim; null accessed storage throws. Console String layout and hidden-sret ABI remain unverified.
