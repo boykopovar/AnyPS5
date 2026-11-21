@@ -642,6 +642,19 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(data["symbol_mismatch"], 0)
         self.assertIsNone(data["stops"][0]["nid"])
 
+    def test_converted_macos_guest_modules_provide_their_exports(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(build_macho(["AAAAAAAAAAA"]))
+        (work.modules / "libSceFios2.prx.guest.prx").write_bytes(build_macho(["CCCCCCCCCCC"], ["@rpath/libSceA.prx"]))
+        registry, result = work.root / "game.registry.json", work.root / "audit.json"
+        write_registry(registry, [("AAAAAAAAAAA", ""), ("CCCCCCCCCCC", "")])
+        registry.with_name("game.needed.json").write_text(json.dumps(["libSceA.sprx"]))
+        code, out, err = work.run(registry, "--json", str(result))
+        self.assertEqual((code, err), (0, ""))
+        records = {record["nid"]: record for record in json.loads(result.read_text())["imports"]}
+        self.assertEqual((records["AAAAAAAAAAA"]["class"], records["AAAAAAAAAAA"]["providers"]), ("implemented", ["libSceA.prx"]))
+        self.assertEqual((records["CCCCCCCCCCC"]["class"], records["CCCCCCCCCCC"]["providers"]), ("implemented", ["libSceFios2.prx.guest.prx"]))
+
     def test_unscoped_windows_imports_resolve_only_in_searched_libraries(self):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(build_pe(["AAAAAAAAAAA"]))

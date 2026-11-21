@@ -660,7 +660,7 @@ def module_files(directory):
     for file in directory_files(directory, "*"):
         with file.open("rb") as handle:
             magic = handle.read(4)
-        if magic == b"\x7fELF" or (magic.startswith(b"MZ") and file.name.endswith(".guest.prx")):
+        if magic == b"\x7fELF" or ((magic.startswith(b"MZ") or magic == b"\xcf\xfa\xed\xfe") and file.name.endswith(".guest.prx")):
             yield file
         elif (file.suffix.lower() in (".prx", ".sprx", ".suprx", ".debug_prx", ".elf")
               or magic.startswith(b"MZ")
@@ -685,6 +685,9 @@ def read_modules(directories):
             if data.startswith(b"MZ"):
                 imports[file.name] = ([], [])
                 names = pe_exports(file, data)
+            elif data.startswith(b"\xcf\xfa\xed\xfe"):
+                imports[file.name] = ([], [])
+                names = macho_exports(file, data)
             else:
                 symbols, needed = elf_imports(file, data)
                 imports[file.name] = (sorted(symbols.items()), sorted(needed))
