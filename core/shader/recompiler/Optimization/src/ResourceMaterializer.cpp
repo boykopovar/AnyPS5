@@ -1833,7 +1833,7 @@ void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
             std::snprintf(detail, sizeof(detail), " (buffer %u V# %08x %08x %08x %08x) first used at pc 0x%x", i, words[0], words[1], words[2], words[3], buffer.firstUsePc);
             throw std::runtime_error(std::string("buffer descriptor uses an unsupported type") + detail);
         }
-        if (plan.stage != IrShaderStage::Compute && decoded.AddTid()) throw std::runtime_error("buffer ADD_TID is only valid for compute shaders");
+        if (plan.stage == IrShaderStage::TessellationControl && decoded.AddTid()) throw std::runtime_error("buffer ADD_TID is not implemented in hull shaders");
     }
     if (snapshot.flattenedSrt.size() != plan.srtReads.size()) throw std::runtime_error("runtime SRT size differs from the static interface");
     for (std::uint32_t i = 0u; i < plan.info.images.size(); ++i) {
