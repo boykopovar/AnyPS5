@@ -31,10 +31,14 @@ enum class NodeQuery { Root, DocRoot, FirstChild, Sibling, Parent, LastChild, Fi
 enum class StringQuery { NodeName, Text, SkippedText, AttributeName, AttributeValue, Entity };
 enum class NumberQuery { NodeType, EntityType, HasChildNodes, HasAttributes };
 
+XmlNodeId* GenerationNode(XmlNodeId* result, Generation& generation, NodeQuery query, std::uint64_t offset);
 XmlNodeId* DocumentNode(XmlNodeId* result, const XmlHandle* document, NodeQuery query, XmlNodeId node);
+XmlString* GenerationString(XmlString* result, Generation& generation, StringQuery query, std::uint64_t offset);
 XmlString* DocumentString(XmlString* result, const XmlHandle* document, StringQuery query, XmlNodeId node);
 XmlString* DocumentAttribute(XmlString* result, const XmlHandle* document, XmlNodeId node, const XmlString* name);
 std::uint32_t DocumentNumber(const XmlHandle* document, NumberQuery query, XmlNodeId node);
+int GenerationChildren(Generation& generation, std::uint64_t offset, XmlHandle* list);
+int GenerationAttributes(Generation& generation, std::uint64_t offset, XmlHandle* list);
 int DocumentChildNodes(const XmlHandle* document, XmlNodeId node, XmlHandle* list);
 int DocumentAttributes(const XmlHandle* document, XmlNodeId node, XmlHandle* list);
 XmlNodeId NodeListFindByName(const XmlHandle* list, const std::string& name);
