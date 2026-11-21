@@ -920,6 +920,50 @@ struct PageRun {
     bool writable;
 };
 
+#ifndef _WIN32
+struct MapRange {
+    std::uintptr_t first;
+    std::uintptr_t last;
+    bool readable;
+    bool writable;
+};
+
+struct MapsSnapshot {
+    std::uint64_t generation;
+    std::vector<MapRange> ranges;
+};
+
+std::mutex mapsCacheMutex;
+std::shared_ptr<const MapsSnapshot> mapsCacheSnapshot;
+
+std::shared_ptr<const MapsSnapshot> mapsForGeneration(std::uint64_t generation, bool forceRefresh) {
+    if (!forceRefresh) {
+        std::lock_guard<std::mutex> guard(mapsCacheMutex);
+        if (mapsCacheSnapshot && mapsCacheSnapshot->generation == generation) return mapsCacheSnapshot;
+    }
+    auto snapshot = std::make_shared<MapsSnapshot>();
+    snapshot->generation = generation;
+    std::ifstream maps("/proc/self/maps");
+    if (!maps.is_open()) return nullptr;
+    std::string line;
+    while (std::getline(maps, line)) {
+        std::istringstream fields(line);
+        std::uintptr_t first = 0;
+        std::uintptr_t last = 0;
+        char separator = 0;
+        std::string permissions;
+        if (!(fields >> std::hex >> first >> separator >> last >> permissions) || separator != '-' || first >= last || permissions.size() < 2) return nullptr;
+        snapshot->ranges.push_back(MapRange{first, last, permissions[0] == 'r', permissions[0] == 'r' && permissions[1] == 'w'});
+    }
+    std::lock_guard<std::mutex> guard(mapsCacheMutex);
+    if (!mapsCacheSnapshot || mapsCacheSnapshot->generation < generation || (forceRefresh && mapsCacheSnapshot->generation == generation)) mapsCacheSnapshot = snapshot;
+    return mapsCacheSnapshot->generation == generation ? mapsCacheSnapshot : snapshot;
+}
+
+std::vector<MapRange>::const_iterator findMapRange(const std::vector<MapRange>& ranges, std::uintptr_t cursor) {
+    return std::upper_bound(ranges.begin(), ranges.end(), cursor, [](std::uintptr_t probe, const MapRange& range) { return probe < range.last; });
+}
+#endif
 
 // Calls `emit` with consecutive runs of uniform accessibility covering [address, address + bytes) in
 // order, stopping early when it returns false. Returns false when the address space cannot be queried.
@@ -1045,38 +1089,28 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
             continue;
         }
 #endif
-        std::ifstream maps("/proc/self/maps");
-        if (!maps.is_open()) return false;
-        std::string line;
-        bool found = false;
-        while (std::getline(maps, line)) {
-            std::istringstream fields(line);
-            std::uintptr_t first = 0;
-            std::uintptr_t last = 0;
-            char separator = 0;
-            std::string permissions;
-            if (!(fields >> std::hex >> first >> separator >> last >> permissions) || separator != '-' || first >= last || permissions.size() < 2) return false;
-            if (last <= cursor) continue;
-            if (first > cursor) {
-                const auto gapEnd = std::min(end, first);
-                recordRun(gapEnd, false, false);
-                if (!emit(PageRun{cursor, gapEnd, false, false})) return true;
-                cursor = gapEnd;
-                found = true;
-                break;
-            }
-            const bool readable = permissions[0] == 'r';
-            const bool writable = readable && permissions[1] == 'w';
-            const auto next = std::min(end, last);
-            recordRun(next, readable, writable);
-            if (!emit(PageRun{cursor, next, readable, writable})) return true;
-            cursor = next;
-            found = true;
-            break;
+        auto snapshot = mapsForGeneration(generation, false);
+        if (!snapshot) return false;
+        auto it = findMapRange(snapshot->ranges, cursor);
+        if (it == snapshot->ranges.end() || it->first > cursor) {
+            snapshot = mapsForGeneration(generation, true);
+            if (!snapshot) return false;
+            it = findMapRange(snapshot->ranges, cursor);
         }
-        if (!found) {
+        if (it == snapshot->ranges.end()) {
             static_cast<void>(emit(PageRun{cursor, end, false, false}));
             return true;
+        }
+        if (it->first > cursor) {
+            const auto gapEnd = std::min(end, it->first);
+            recordRun(gapEnd, false, false);
+            if (!emit(PageRun{cursor, gapEnd, false, false})) return true;
+            cursor = gapEnd;
+        } else {
+            const auto next = std::min(end, it->last);
+            recordRun(next, it->readable, it->writable);
+            if (!emit(PageRun{cursor, next, it->readable, it->writable})) return true;
+            cursor = next;
         }
 #endif
     }
