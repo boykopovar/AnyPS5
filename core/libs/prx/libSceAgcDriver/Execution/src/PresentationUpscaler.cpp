@@ -113,13 +113,13 @@ void PresentationUpscaler::release() noexcept {
 }
 
 bool PresentationUpscaler::Upscales(std::uint32_t width, std::uint32_t height, VkExtent2D extent) {
-    const auto rect = ComputeContainRect_nid_postfix(width, height, extent.width, extent.height);
+    const auto rect = ComputePresentationRect_nid_postfix(width, height, extent.width, extent.height);
     return rect.width > width || rect.height > height;
 }
 
 VkExtent2D PresentationUpscaler::StageExtent(std::uint32_t width, std::uint32_t height, VkExtent2D extent) {
     if (Upscales(width, height, extent)) return {width, height};
-    const auto rect = ComputeContainRect_nid_postfix(width, height, extent.width, extent.height);
+    const auto rect = ComputePresentationRect_nid_postfix(width, height, extent.width, extent.height);
     return {rect.width, rect.height};
 }
 
@@ -377,7 +377,7 @@ void PresentationUpscaler::RecordPresent(VkCommandBuffer commands, std::size_t i
     auto& slot = slots[index];
     const auto staged = StageExtent(width, height, extent);
     Graphics::Require(slot.stage.extent.width == staged.width && slot.stage.extent.height == staged.height, "presentation upscaler stage does not match the source and destination");
-    const auto rect = ComputeContainRect_nid_postfix(width, height, extent.width, extent.height);
+    const auto rect = ComputePresentationRect_nid_postfix(width, height, extent.width, extent.height);
     VkImageView sharpened = slot.stage.sampled;
     if (Upscales(width, height, extent)) {
         const VkExtent2D upscaled{rect.width, rect.height};
