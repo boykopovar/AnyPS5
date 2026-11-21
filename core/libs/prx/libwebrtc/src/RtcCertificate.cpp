@@ -42,9 +42,9 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 #include <cstddef>
-#include <cstring>
 #include <stdexcept>
 #include <string>
 
@@ -57,9 +57,23 @@ constexpr std::size_t CertificateExpirationTimeSlot = 7;
 const void* const* VTable(const void* object, const char* function) {
     if (!object) throw std::invalid_argument(std::string(function) + ": required object is null");
     const void* const* vtable = nullptr;
-    std::memcpy(&vtable, object, sizeof(vtable));
+    if (!GuestPtr<const void* const*>(object).CopyIn(vtable)) throw std::invalid_argument(std::string(function) + ": required object is unreadable");
     if (!vtable) throw std::invalid_argument(std::string(function) + ": required vtable is null");
     return vtable;
+}
+
+const void* VirtualFunction(const void* const* vtable, std::size_t slot, const char* message) {
+    const void* function = nullptr;
+    if (!GuestPtr<const void*>(vtable + slot).CopyIn(function) || !function)
+        throw std::invalid_argument(message);
+    return function;
+}
+
+void* Identity(const WebRtcRtcCertificate* certificate, const char* message) {
+    WebRtcRtcCertificate host{};
+    if (!GuestPtr<WebRtcRtcCertificate>(certificate).CopyIn(host))
+        throw std::invalid_argument(message);
+    return host.identity;
 }
 
 }
@@ -69,31 +83,29 @@ extern "C" {
 void APS5_VABI _ZN3rtc14RTCCertificateD1Ev_nid_postfix(WebRtcRtcCertificate* certificate) {
     if (!certificate)
         throw std::invalid_argument("RTCCertificate destructor requires a certificate");
-    void* identity = certificate->identity;
+    void* identity = Identity(certificate, "RTCCertificate destructor requires a readable certificate");
     if (!identity)
         return;
-    const void* const* vtable;
-    std::memcpy(&vtable, identity, sizeof(vtable));
-    if (!vtable || !vtable[DeletingDestructorSlot])
-        throw std::invalid_argument("RTCCertificate destructor requires an identity with a virtual destructor");
+    constexpr const char* message = "RTCCertificate destructor requires an identity with a virtual destructor";
+    const void* const* vtable = nullptr;
+    if (!GuestPtr<const void* const*>(identity).CopyIn(vtable) || !vtable)
+        throw std::invalid_argument(message);
     using Destructor = void(APS5_VABI*)(void*);
-    reinterpret_cast<Destructor>(const_cast<void*>(vtable[DeletingDestructorSlot]))(identity);
+    reinterpret_cast<Destructor>(const_cast<void*>(VirtualFunction(vtable, DeletingDestructorSlot, message)))(identity);
 }
 
 bool APS5_VABI _ZNK3rtc14RTCCertificate10HasExpiredEm_nid_postfix(const WebRtcRtcCertificate* certificate, std::uint64_t now) {
     if (!certificate) throw std::invalid_argument("RTCCertificate::HasExpired requires a certificate");
-    const void* identity = certificate->identity;
+    const void* identity = Identity(certificate, "RTCCertificate::HasExpired requires a readable certificate");
     if (!identity) throw std::invalid_argument("RTCCertificate::HasExpired requires an identity");
     const auto* identityVTable = VTable(identity, __func__);
-    if (!identityVTable[IdentityCertificateSlot])
-        throw std::invalid_argument("RTCCertificate::HasExpired requires an identity certificate method");
+    const void* certificateMethod = VirtualFunction(identityVTable, IdentityCertificateSlot, "RTCCertificate::HasExpired requires an identity certificate method");
     using Certificate = const void*(APS5_VABI*)(const void*);
-    const void* nativeCertificate = reinterpret_cast<Certificate>(const_cast<void*>(identityVTable[IdentityCertificateSlot]))(identity);
+    const void* nativeCertificate = reinterpret_cast<Certificate>(const_cast<void*>(certificateMethod))(identity);
     const auto* certificateVTable = VTable(nativeCertificate, __func__);
-    if (!certificateVTable[CertificateExpirationTimeSlot])
-        throw std::invalid_argument("RTCCertificate::HasExpired requires a certificate expiration method");
+    const void* expirationMethod = VirtualFunction(certificateVTable, CertificateExpirationTimeSlot, "RTCCertificate::HasExpired requires a certificate expiration method");
     using Expiration = std::int64_t(APS5_VABI*)(const void*);
-    const std::int64_t seconds = reinterpret_cast<Expiration>(const_cast<void*>(certificateVTable[CertificateExpirationTimeSlot]))(nativeCertificate);
+    const std::int64_t seconds = reinterpret_cast<Expiration>(const_cast<void*>(expirationMethod))(nativeCertificate);
     const std::uint64_t expiration = seconds == -1 ? 0 : static_cast<std::uint64_t>(seconds) * 1000;
     return expiration <= now;
 }
