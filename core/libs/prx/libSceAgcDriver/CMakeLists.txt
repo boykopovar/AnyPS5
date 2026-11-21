@@ -306,7 +306,7 @@ foreach(agcSampleOrderVariant IN ITEMS "R8;comp;-DTEXEL_FORMAT=r8ui" "R16;comp;-
     )
     list(APPEND agcSampleOrderShaderHeaders ${agcSampleOrderShaderHeader})
 endforeach()
-foreach(agcFirstSampleClass IN ITEMS Float Uint Sint Packed)
+foreach(agcFirstSampleClass IN ITEMS Float Uint Sint Packed Nibble NibbleTruncated)
     string(TOUPPER "${agcFirstSampleClass}" agcFirstSampleSymbol)
     set(agcFirstSampleShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/FirstSample.frag)
     set(agcFirstSampleShaderSpv ${agcTextureDetileGeneratedDir}/FirstSample${agcFirstSampleClass}.spv)

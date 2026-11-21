@@ -47,6 +47,7 @@ constexpr std::uint32_t Height = 128;
 constexpr std::uint32_t ScissorWidth = 128;
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t Unorm4_4_4_4Info = 0x8000u | (19u << 2u) | (2u << 11u);
+constexpr std::uint32_t RoundModeBit = 0x40000u;
 constexpr std::uint32_t TiledAttrib3 = 0x4dc6c000u;
 constexpr std::uint32_t Float32Export = 9;
 constexpr std::uint32_t Float16Export = 4;
@@ -205,17 +206,17 @@ struct Block {
     std::uint8_t* data = nullptr;
 };
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block) {
+AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, bool truncate) {
     AgcDriver::Registers cx;
     cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
     cx[0x31b] = 0;
-    cx[0x31c] = Unorm4_4_4_4Info;
+    cx[0x31c] = Unorm4_4_4_4Info | (truncate ? RoundModeBit : 0u);
     cx[0x31d] = 0;
     cx[0x3b0] = ((Width - 1u) << 14u) | (Height - 1u);
     cx[0x3b8] = TiledAttrib3;
     cx[0x390] = static_cast<std::uint32_t>(block.Address() >> 40u);
     auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
-    Require(color.format == VK_FORMAT_R16_UINT && color.componentMapping == 0x1bu && color.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 && color.tileMode == ColorTileMode::RenderTarget && color.bytes == block.bytes, "the tiled 4_4_4_4 unorm target did not decode as a packed R16_UINT target");
+    Require(color.format == VK_FORMAT_R16_UINT && color.componentMapping == 0x1bu && color.packing == (truncate ? ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4Truncated : ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4) && color.tileMode == ColorTileMode::RenderTarget && color.bytes == block.bytes, "the tiled 4_4_4_4 unorm target did not decode as a packed R16_UINT target");
     return color;
 }
 
@@ -481,7 +482,7 @@ int main() {
         }
         const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 2);
         Block block(layout.Bytes());
-        const auto color = DecodeTarget(block);
+        const auto color = DecodeTarget(block, false);
         Require(AgcDriver::Graphics::PackedWriteMask(color.componentMapping, 1u) == 0xf000u && AgcDriver::Graphics::PackedWriteMask(color.componentMapping, 8u) == 0x000fu && AgcDriver::Graphics::PackedWriteMask(color.componentMapping, 5u) == 0xf0f0u, "the export components did not map to the guest nibbles (X in 15..12, W in 3..0)");
         const std::array<Case, 9> cases{{
             {0x1u, 0xf000u, {1.0f, 0.0f, 0.0f, 0.0f}},
@@ -500,6 +501,14 @@ int main() {
             const auto& [mask, wordMask, rgba] = cases[index];
             DrawCase(*device, color, mask, wordMask, Float32Export, Float32Program(rgba));
             ExpectSurface(*device, block, layout, before, goldens[index], wordMask, "a 32_ABGR " + Describe(mask, rgba) + " into a tiled 4_4_4_4 unorm target");
+            before = ReadBack(*device, block);
+        }
+        const auto truncating = DecodeTarget(block, true);
+        const std::array<std::uint16_t, 9> truncatedGoldens{0xf000u, 0x7fffu, 0x369cu, 0x02ffu, 0xfffbu, 0x0000u, 0x0f73u, 0x1ad4u, 0x0000u};
+        for (std::size_t index = 0; index < cases.size(); ++index) {
+            const auto& [mask, wordMask, rgba] = cases[index];
+            DrawCase(*device, truncating, mask, wordMask, Float32Export, Float32Program(rgba));
+            ExpectSurface(*device, block, layout, before, truncatedGoldens[index], wordMask, "a 32_ABGR " + Describe(mask, rgba) + " into a tiled ROUND_MODE 1 4_4_4_4 unorm target");
             before = ReadBack(*device, block);
         }
         const std::array<float, 4> b{2.0f / 15.0f, 1.0f, 1.0f, 1.0f};

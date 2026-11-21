@@ -794,10 +794,11 @@ public:
         return {shared_from_this(), texture.get()};
     }
 
-    FirstSampleCopy& PackedResolve() {
-        Require(sampleable, "the device cannot sample the multisampled 11_11_10 float color target a CB resolve averages");
-        if (packedResolve == nullptr) packedResolve = std::make_unique<FirstSampleCopy>(context, target.format, target.extent, true);
-        return *packedResolve;
+    FirstSampleCopy& PackedResolve(PackedAverage average) {
+        Require(sampleable, "the device cannot sample the multisampled packed color target a CB resolve averages");
+        auto& resolve = packedResolves[static_cast<std::size_t>(average)];
+        if (resolve == nullptr) resolve = std::make_unique<FirstSampleCopy>(context, target.format, target.extent, average);
+        return *resolve;
     }
 
     VkImageView View(VkFormat format) {
@@ -954,7 +955,7 @@ private:
     std::map<std::array<std::uint32_t, 5>, std::shared_ptr<Texture>> textures;
     std::vector<std::shared_ptr<Texture>> retiredTextures;
     std::unique_ptr<FirstSampleCopy> firstSampleCopy;
-    std::unique_ptr<FirstSampleCopy> packedResolve;
+    std::array<std::unique_ptr<FirstSampleCopy>, 4> packedResolves;
     std::map<std::array<std::uint32_t, 4>, std::shared_ptr<Texture>> firstSampleTextures;
     struct ReinterpretCopy {
         Allocation allocation;
@@ -1180,7 +1181,7 @@ private:
         retiredTextures.clear();
         firstSampleTextures.clear();
         firstSampleCopy.reset();
-        packedResolve.reset();
+        for (auto& resolve : packedResolves) resolve.reset();
         for (auto& [format, copy] : reinterpretCopies) {
             copy.textures.clear();
             destroy(copy.allocation);
@@ -1984,7 +1985,11 @@ void ResolveMultisampleTarget(const Context& context, const ColorTarget& source,
     auto& target = acquire(context, source);
     target.Keep();
     const std::array<VkImageView, 2> views{target.View(source.format), destinationView};
-    auto* averaging = source.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? &target.PackedResolve() : nullptr;
+    const auto average = source.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? PackedAverage::Float11_11_10
+        : source.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 ? PackedAverage::Unorm4_4_4_4
+        : source.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4Truncated ? PackedAverage::Unorm4_4_4_4Truncated
+        : PackedAverage::None;
+    auto* averaging = average != PackedAverage::None ? &target.PackedResolve(average) : nullptr;
     auto framebuffer = averaging != nullptr ? nullptr : std::make_shared<Framebuffer>(context, target.ResolvePass(source.format), views, source.extent);
     std::shared_ptr<void> averaged;
     recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {

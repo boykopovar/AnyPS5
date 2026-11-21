@@ -8,9 +8,11 @@ namespace AgcDriver::Graphics {
 
 class Recorder;
 
+enum class PackedAverage { None, Float11_11_10, Unorm4_4_4_4, Unorm4_4_4_4Truncated };
+
 class FirstSampleCopy {
 public:
-    FirstSampleCopy(const Context& context, VkFormat format, VkExtent2D extent, bool averagePacked = false);
+    FirstSampleCopy(const Context& context, VkFormat format, VkExtent2D extent, PackedAverage average = PackedAverage::None);
     ~FirstSampleCopy();
     FirstSampleCopy(const FirstSampleCopy&) = delete;
     FirstSampleCopy& operator=(const FirstSampleCopy&) = delete;

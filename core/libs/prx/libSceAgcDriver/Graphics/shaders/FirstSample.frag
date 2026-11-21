@@ -6,7 +6,7 @@ layout(location = 0) out uvec4 color;
 #elif defined(SINT_SAMPLES)
 layout(set = 0, binding = 0) uniform isampler2DMS source;
 layout(location = 0) out ivec4 color;
-#elif defined(PACKED_SAMPLES)
+#elif defined(PACKED_SAMPLES) || defined(NIBBLE_SAMPLES) || defined(NIBBLETRUNCATED_SAMPLES)
 layout(set = 0, binding = 0) uniform usampler2DMS source;
 layout(location = 0) out uvec4 color;
 #else
@@ -47,8 +47,25 @@ uint averageField(ivec2 texel, int samples, uint offset, uint mantissaBits) {
 }
 #endif
 
+#if defined(NIBBLE_SAMPLES) || defined(NIBBLETRUNCATED_SAMPLES)
+uint averageNibbles(ivec2 texel, int samples) {
+    uvec4 sum = uvec4(0u);
+    for (int sampleIndex = 0; sampleIndex < samples; ++sampleIndex) {
+        uint raw = texelFetch(source, texel, sampleIndex).x;
+        sum += uvec4(raw & 15u, (raw >> 4u) & 15u, (raw >> 8u) & 15u, (raw >> 12u) & 15u);
+    }
+#if defined(NIBBLE_SAMPLES)
+    sum += uvec4(uint(samples) >> 1u);
+#endif
+    uvec4 average = sum / uint(samples);
+    return average.x | (average.y << 4u) | (average.z << 8u) | (average.w << 12u);
+}
+#endif
+
 void main() {
-#if defined(PACKED_SAMPLES)
+#if defined(NIBBLE_SAMPLES) || defined(NIBBLETRUNCATED_SAMPLES)
+    color = uvec4(averageNibbles(ivec2(gl_FragCoord.xy), textureSamples(source)), 0u, 0u, 0u);
+#elif defined(PACKED_SAMPLES)
     ivec2 texel = ivec2(gl_FragCoord.xy);
     int samples = textureSamples(source);
     color = uvec4(averageField(texel, samples, 0u, 5u) | (averageField(texel, samples, 10u, 6u) << 10u) | (averageField(texel, samples, 21u, 6u) << 21u), 0u, 0u, 0u);
