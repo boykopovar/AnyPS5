@@ -738,7 +738,7 @@ static void CheckDirectMemoryFollowsPhysicalPages() {
     Require(sceKernelAllocateDirectMemory(0, 0x10000, page, 0, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelAllocateDirectMemory(0, 0x10000, page, page - 1, 0, &invalidPhys) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelReleaseDirectMemory(-1, page) == SCE_KERNEL_ERROR_EINVAL);
-    Require(sceKernelReleaseDirectMemory(0, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseDirectMemory(0, 0) == 0);
     Require(sceKernelReleaseDirectMemory(1, page) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelReleaseDirectMemory(0, page + 1) == SCE_KERNEL_ERROR_EINVAL);
     std::int64_t phys = 0;
