@@ -346,6 +346,9 @@ void CheckDecodeArguments() {
     Require(sceVdecCoreTrySyncDecodeWptr(nullptr, &count, &pointers[0], &pointers[1]) == InvalidArgument, "write-pointer try-sync without a decoder");
     Require(sceVdecCoreGetDecodeOutput(nullptr, &frameBuffer, 0, &output, nullptr) == InvalidArgument, "get output without a decoder");
     Require(sceVdecCoreGetDecodeOutput(decoder, &frameBuffer, 0, nullptr, nullptr) == InvalidArgument, "get output without output info");
+    errno = 71;
+    Require(sceVdecCoreGetDecodeOutput(decoder, reinterpret_cast<VdecCoreFrameBuffer*>(0x10), 0, &output, nullptr) == InvalidArgument && errno == 71, "get output with an unmapped frame buffer");
+    Require(sceVdecCoreGetDecodeOutput(decoder, &frameBuffer, 0, reinterpret_cast<VdecCoreOutputInfo*>(0x10), nullptr) == InvalidArgument && errno == 71, "get output with an unwritable output info");
     Require(sceVdecCoreFlushDecodeOutput(nullptr, &count, nullptr) == InvalidArgument, "flush without a decoder");
     Require(count == 7 && pointers[0] == 7 && pointers[1] == 7, "refused calls leave their outputs alone");
 
