@@ -1,5 +1,6 @@
 add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Unimplemented.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/SysExports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Apr/src/Apr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/Equeue.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/src/EdgeWatch.cpp
@@ -1294,6 +1295,18 @@ if(BUILD_TESTING)
         add_test(NAME guest_sleep_wake_coarse COMMAND guest_sleep_wake_tests)
         set_tests_properties(guest_sleep_wake_coarse PROPERTIES TIMEOUT 20 ENVIRONMENT "APS5_COARSE_TIMED_WAITS=1")
         set_tests_properties(guest_sleep_wake guest_sleep_wake_coarse PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_clock_pause_tests ${LIBS_INCLUDE_DIR}/tests/GuestClockPause.cpp)
+    target_include_directories(guest_clock_pause_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_clock_pause_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_clock_pause_tests)
+    add_test(NAME guest_clock_pause COMMAND guest_clock_pause_tests)
+    add_test(NAME guest_clock_pause_scaled COMMAND guest_clock_pause_tests)
+    set_tests_properties(guest_clock_pause guest_clock_pause_scaled PROPERTIES TIMEOUT 20)
+    set_tests_properties(guest_clock_pause_scaled PROPERTIES ENVIRONMENT "APS5_TIME_SCALE=0.5")
+    if(WIN32)
+        set_tests_properties(guest_clock_pause guest_clock_pause_scaled PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_nanosleep_long_request_tests ${LIBS_INCLUDE_DIR}/tests/GuestNanosleepLongRequest.cpp)

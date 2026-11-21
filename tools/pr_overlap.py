@@ -97,6 +97,13 @@ def own(prs, sha):
     return {n: pr for n, pr in prs.items() if pr["sha"] not in ancestors}
 
 
+def without_own_pull_request(prs, name):
+    matching = [number for number, pr in prs.items() if pr.get("branch") == name]
+    if len(matching) == 1:
+        del prs[matching[0]]
+    return prs
+
+
 def gh(*args, attempts=3, delay=0.5):
     for attempt in range(attempts):
         try:
@@ -105,7 +112,8 @@ def gh(*args, attempts=3, delay=0.5):
             raise ValueError("GitHub CLI 'gh' is required on PATH") from error
         if result.returncode == 0:
             return result.stdout
-        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "TLS handshake", "stream error:", "unexpected EOF"))
+        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "TLS handshake", "stream error:", "unexpected EOF",
+                                                          "A connection attempt failed because the connected party did not properly respond"))
         if attempt + 1 == attempts or not transient:
             raise subprocess.CalledProcessError(result.returncode, ["gh", *args], output=result.stdout, stderr=result.stderr)
         time.sleep(delay * (2 ** attempt))
@@ -227,6 +235,7 @@ def open_prs(base):
         prs[pr["number"]] = {
             "ref": f"refs/pr/{pr['number']}",
             "sha": pr["head"]["sha"],
+            "branch": pr["head"]["ref"],
             "author": pr["user"]["login"],
             "title": pr.get("title") or "",
             "depends": depends_on(pr["body"]),
@@ -303,18 +312,23 @@ def unquote_path(path):
     return path
 
 
-def changed_source(diff, prefix):
-    files, current, path = [], [], None
+def changed_hunks(diff, prefix):
+    files, hunks, current, path = [], [], [], None
     in_hunk = False
     for line in diff.split("\n"):
         line = line.removesuffix("\r")
         if line.startswith("diff --git "):
-            if current and path:
-                files.append((path, "\n".join(current)))
+            if current:
+                hunks.append("\n".join(current))
+            if hunks and path:
+                files.append((path, hunks))
             path = line.split(" b/", 1)[1] if " b/" in line else None
-            current = []
+            hunks, current = [], []
             in_hunk = False
         elif line.startswith("@@"):
+            if current:
+                hunks.append("\n".join(current))
+            current = []
             in_hunk = True
         elif not in_hunk and line.startswith("--- " if prefix == "-" else "+++ "):
             path = unquote_path(line[4:])
@@ -324,9 +338,15 @@ def changed_source(diff, prefix):
                 path = path[2:]
         elif line.startswith(prefix) and not line.startswith(prefix * 3):
             current.append(line[1:])
-    if current and path:
-        files.append((path, "\n".join(current)))
+    if current:
+        hunks.append("\n".join(current))
+    if hunks and path:
+        files.append((path, hunks))
     return files
+
+
+def changed_source(diff, prefix):
+    return [(path, "\n".join(hunks)) for path, hunks in changed_hunks(diff, prefix)]
 
 
 def library_for_path(path):
@@ -377,14 +397,15 @@ def source_exports(text, library=""):
 
 def source_changed_exports(diff, prefix):
     found = {}
-    for path, text in changed_source(diff, prefix):
+    for path, hunks in changed_hunks(diff, prefix):
         library = library_for_path(path)
-        for key, names in source_exports(text, library).items():
+        for key, names in source_exports("\n".join(hunks), library).items():
             found.setdefault(key, set()).update(names)
-        file_diff = "\n".join(prefix + line for line in text.splitlines())
-        for name in exports(file_diff, prefix):
-            canonical = nid_names.strip_nid_postfix(name)
-            found.setdefault((library, nid_names.compute_nid(canonical)), set()).add(canonical)
+        for hunk in hunks:
+            hunk_diff = "\n".join(prefix + line for line in hunk.splitlines())
+            for name in exports(hunk_diff, prefix):
+                canonical = nid_names.strip_nid_postfix(name)
+                found.setdefault((library, nid_names.compute_nid(canonical)), set()).add(canonical)
     return found
 
 
@@ -918,7 +939,7 @@ def main(argv=None):
             return 0
         if args.branch:
             sha = branch_sha
-            prs = own(prs, sha)
+            prs = without_own_pull_request(own(prs, sha), args.branch)
             prs[0] = {"ref": sha, "author": None, "depends": set()}
         scan_all(prs, args.jobs)
         current_exports = base_exports(BASE_REF)

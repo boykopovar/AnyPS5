@@ -710,10 +710,6 @@ int APS5_VABI _ZN3JSC12JSLockHolderC1ERNS_2VME() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3JSC4Yarr17RegularExpression7isValidEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN10Deprecated18ScriptFunctionCallC2ERKNS_12ScriptObjectERKN3WTF6StringEPFN3JSC7JSValueEPNS8_14JSGlobalObjectES9_RKNS8_8CallDataES9_RKNS8_7ArgListERNS4_8NakedPtrINS8_9ExceptionEEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1145,14 +1141,6 @@ int APS5_VABI _ZN3JSC4Yarr11YarrPatternC2ERKN3WTF6StringENS2_9OptionSetINS0_5Fla
 }
 
 int APS5_VABI _ZN3JSC4Yarr11byteCompileERNS0_11YarrPatternEPN3WTF20BumpPointerAllocatorERNS0_9ErrorCodeEPNS3_4LockE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC4Yarr17RegularExpressionC1ERKN3WTF6StringENS0_19TextCaseSensitivityENS0_13MultilineModeENS0_11UnicodeModeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC4Yarr17RegularExpressionC2ERKN3WTF6StringENS0_19TextCaseSensitivityENS0_13MultilineModeENS0_11UnicodeModeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1765,14 +1753,6 @@ int APS5_VABI _ZNK3JSC17DebuggerCallFrame29deprecatedVMEntryGlobalObjectEv() {
 }
 
 int APS5_VABI _ZNK3JSC17DebuggerCallFrame4typeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3JSC4Yarr17RegularExpression5matchERKN3WTF6StringEiPi() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3JSC4Yarr17RegularExpression9searchRevERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 

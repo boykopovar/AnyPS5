@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -21,8 +22,12 @@ extern "C" int APS5_VABI OBJ_cmp_nid_postfix(const void* first, const void* seco
     if (!first || !second) throw std::invalid_argument(std::string(__func__) + ": null object");
     const auto* left = static_cast<const Object*>(first);
     const auto* right = static_cast<const Object*>(second);
-    if (left->length < 0 || right->length < 0) throw std::invalid_argument(std::string(__func__) + ": negative encoded length");
-    if (const int difference = left->length - right->length) return difference;
+    const std::int64_t difference = static_cast<std::int64_t>(left->length) - right->length;
+    if (difference < std::numeric_limits<int>::min() || difference > std::numeric_limits<int>::max()) {
+        throw std::overflow_error(std::string(__func__) + ": length difference overflows int");
+    }
+    if (difference != 0) return static_cast<int>(difference);
+    if (left->length < 0) throw std::invalid_argument(std::string(__func__) + ": negative encoded length");
     if (left->length > 0 && (!left->data || !right->data)) throw std::invalid_argument(std::string(__func__) + ": invalid encoded data");
     for (int index = 0; index < left->length; ++index) {
         if (left->data[index] != right->data[index]) return static_cast<int>(left->data[index]) - static_cast<int>(right->data[index]);
