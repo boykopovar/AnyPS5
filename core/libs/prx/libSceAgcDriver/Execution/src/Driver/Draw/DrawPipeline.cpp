@@ -275,6 +275,10 @@ std::size_t DrawPipeline::Depth() {
     return depth;
 }
 
+std::size_t DrawPipeline::ResumeDepth() {
+    return Depth() / 2;
+}
+
 std::size_t DrawPipeline::QueuedItems() {
     auto& pipeline = Queue0();
     std::lock_guard lock(pipeline.mutex);
@@ -383,14 +387,14 @@ void DrawPipeline::enqueue(Item item) {
         item.commit();
         return;
     }
-    if (items.size() >= Depth()) {
+    if (Depth() != 0 && items.size() >= Depth()) {
         if (GuestMemory::GpuMutex().HeldByThisThread()) throw std::runtime_error("draw pipeline full while the enqueuing thread holds the GPU lock");
         const auto start = std::chrono::steady_clock::now();
-        resumeAt = Depth() - 1;
-        ++idleWaiters;
-        idle.wait(lock, [&] { return items.size() <= resumeAt; });
-        --idleWaiters;
-        resumeAt = 0;
+        while (items.size() >= Depth()) {
+            ++producersWaiting;
+            producerWaits.fetch_add(1, std::memory_order_release);
+            idle.wait(lock);
+        }
         fullWaitNs += elapsedNs(start);
         rethrowFailure();
     }
@@ -513,7 +517,11 @@ void DrawPipeline::run() {
         if (failed) ++commitErrors;
         if (fatal != nullptr && failure == nullptr) failure = fatal;
         outstanding.fetch_sub(1, std::memory_order_release);
-        if (idleWaiters != 0 && (items.empty() || items.size() <= resumeAt)) idle.notify_all();
+        if ((producersWaiting != 0 && items.size() <= ResumeDepth()) || (drainersWaiting != 0 && items.empty())) {
+            producersWaiting = 0;
+            drainersWaiting = 0;
+            idle.notify_all();
+        }
     }
     runningCommitters.fetch_sub(1, std::memory_order_acq_rel);
 }
@@ -548,9 +556,11 @@ void DrawPipeline::Drain(DrainReason reason, std::uint32_t opcode) {
     const auto start = std::chrono::steady_clock::now();
     SpinUntil(HandoffSpinWindow() * 2, [&] { return !Busy(); });
     std::unique_lock lock(mutex);
-    ++idleWaiters;
-    idle.wait(lock, [&] { return items.empty(); });
-    --idleWaiters;
+    while (!items.empty()) {
+        ++drainersWaiting;
+        drainWaits.fetch_add(1, std::memory_order_release);
+        idle.wait(lock);
+    }
     const auto index = static_cast<std::size_t>(reason);
     ++drains[index];
     ++drainOpcodes[std::min<std::uint32_t>(opcode, 0x100)];

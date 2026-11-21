@@ -209,8 +209,12 @@ int main() {
     KeyboardCharData charData{};
     bool connected = false;
     std::int32_t deviceId = 0;
+    unsigned char clearedState[sizeof(KeyboardData)]{};
+    clearedState[offsetof(KeyboardData, length)] = 1;
     Require(sceKeyboardReadState(42, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+    std::memset(data, 0xa5, sizeof(data[0]));
     Require(sceKeyboardReadState(42, data) == KEYBOARD_ERROR_NOT_INITIALIZED);
+    Require(std::memcmp(data, clearedState, sizeof(data[0])) == 0);
     Require(sceKeyboardRead(42, nullptr, 0) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardDebugGetDeviceId(KEYBOARD_HANDLE, &deviceId) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_ERROR_NOT_INITIALIZED);
@@ -227,6 +231,9 @@ int main() {
     Require(sceKeyboardSetProcessPrivilege(0) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardInit() == KEYBOARD_OK);
     Require(sceKeyboardInit() == KEYBOARD_OK);
+    std::memset(data, 0xa5, sizeof(data[0]));
+    Require(sceKeyboardReadState(42, data) == KEYBOARD_ERROR_INVALID_HANDLE);
+    Require(std::memcmp(data, clearedState, sizeof(data[0])) == 0);
     CheckInvalidKeys(false);
     Require(sceKeyboardOpen(1, 0, 2, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardOpen(1, 0, -1, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
