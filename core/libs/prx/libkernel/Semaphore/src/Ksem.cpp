@@ -121,6 +121,11 @@ int Wait(std::intptr_t id, bool once, const KernelTimespec* abstime) {
 
 }
 
+bool IsKsemDescriptor(int descriptor) {
+    std::lock_guard lock(g_ksemLock);
+    return g_ksems.count(descriptor) != 0;
+}
+
 void DuplicateKsemDescriptor(int from, int to) {
     std::lock_guard lock(g_ksemLock);
     const auto found = g_ksems.find(from);
