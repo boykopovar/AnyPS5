@@ -883,13 +883,29 @@ void CheckUmount2BackupModes() {
     SaveDataMountInfo info{};
     Check(sceSaveDataGetMountInfo(&mounted.mount_point, &info) == SaveDataErrorNotMounted, "umount2(0x10000) unmounts the save when backup copy fails");
 
-    for (const std::uint32_t unknownMode : {1u, 2u, 0x20000u}) {
+    for (const std::uint32_t unknownMode : {2u, 0x20000u, 0x10002u}) {
         Check(Umount2Throws(unknownMode, &missing), "umount2 throws on unknown mode " + std::to_string(unknownMode));
     }
 
     SaveDataDelete del{};
     del.dir_name = &name;
     Check(sceSaveDataDelete(&del) == 0, "umount2 backup save deletes cleanly");
+
+    SceSaveDataDirName forceName{};
+    std::memcpy(forceName.data, "umount2_force", sizeof("umount2_force"));
+    Check(sceSaveDataUmount2(1u, &missing) == SaveDataErrorNotMounted, "umount2(1) unmounted point is NOT_MOUNTED");
+    SaveDataMountResult created{};
+    Check(MountSave(&forceName, MountReadWrite | MountCreate2, &created), "umount2(1) save mounts with CREATE2");
+    WriteText(std::filesystem::path("_sd") / "umount2_force" / "data.bin", "payload-force");
+    Check(sceSaveDataUmount2(1u, &created.mount_point) == 0, "umount2(1) succeeds");
+    Check(sceSaveDataGetMountInfo(&created.mount_point, &info) == SaveDataErrorNotMounted, "umount2(1) unmounts the save");
+    SaveDataEvent forceEvent{};
+    Check(sceSaveDataGetEventResult(nullptr, &forceEvent) == SaveDataErrorNotFound, "umount2(1) does not post a backup event");
+    Check(!std::filesystem::exists(std::filesystem::path("_sd_backup") / "umount2_force"), "umount2(1) does not back up the save");
+    Check(ReadText(std::filesystem::path("_sd") / "umount2_force" / "data.bin") == "payload-force", "umount2(1) keeps the written data");
+    SaveDataDelete forceDel{};
+    forceDel.dir_name = &forceName;
+    Check(sceSaveDataDelete(&forceDel) == 0, "umount2(1) save deletes cleanly");
 }
 
 void CheckMountCapacityAndLifecycle() {

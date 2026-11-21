@@ -190,6 +190,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DinkumwareAtomics.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DinkumwareInternals.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxNextPrime.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LibcxxSort.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/TimeExtras.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AtomicBuiltins.cpp
@@ -1144,7 +1145,7 @@ if(BUILD_TESTING)
     endif()
     add_test_executable(guest_random_device_seed_tests ${LIBS_INCLUDE_DIR}/tests/GuestRandomDeviceSeed.cpp src/Random.cpp)
     target_include_directories(guest_random_device_seed_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_random_device_seed_tests PRIVATE libc)
+    target_link_libraries(guest_random_device_seed_tests PRIVATE libc libSceLibcInternal)
     configure_windows_unwind(guest_random_device_seed_tests)
     add_test(NAME guest_random_device_seed COMMAND guest_random_device_seed_tests)
     if(WIN32)
@@ -1739,6 +1740,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_thread_callback_abi PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_libcxx_sleep_for_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxSleepFor.cpp)
+    target_include_directories(guest_libcxx_sleep_for_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libcxx_sleep_for_tests PRIVATE libc)
+    configure_windows_unwind(guest_libcxx_sleep_for_tests)
+    add_test(NAME guest_libcxx_sleep_for COMMAND guest_libcxx_sleep_for_tests)
+    set_tests_properties(guest_libcxx_sleep_for PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_libcxx_sleep_for PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_interface_tests ${LIBS_INCLUDE_DIR}/tests/GuestInterfaces.cpp)
     target_include_directories(guest_interface_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_interface_tests PRIVATE libc)
@@ -1775,6 +1786,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_qsort PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_qsort PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_libcxx_sort_unsigned_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxSortUnsigned.cpp)
+    target_include_directories(guest_libcxx_sort_unsigned_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libcxx_sort_unsigned_tests PRIVATE libc)
+    configure_windows_unwind(guest_libcxx_sort_unsigned_tests)
+    add_test(NAME guest_libcxx_sort_unsigned COMMAND guest_libcxx_sort_unsigned_tests)
+    set_tests_properties(guest_libcxx_sort_unsigned PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_libcxx_sort_unsigned PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_cxa_guard_tests ${LIBS_INCLUDE_DIR}/tests/GuestCxaGuard.cpp)

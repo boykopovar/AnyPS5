@@ -1286,10 +1286,6 @@ int APS5_VABI sceIcuLegacyUnknown_6jtnn2CzF7M_nid_no_patch() {
 }
 APS5_EXPORT("6jtnn2CzF7M", sceIcuLegacyUnknown_6jtnn2CzF7M_nid_no_patch);
 
-int APS5_VABI uloc_openAvailableByType_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_6n74pmh0NR0_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1796,10 +1792,6 @@ int APS5_VABI uenum_openFromStringEnumeration_nid_postfix() {
 }
 
 int APS5_VABI _ZN6icu_6817StringEnumeration8setCharsEPKciR10UErrorCode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucnv_getDefaultName_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -4428,10 +4420,6 @@ int APS5_VABI _ZN6icu_6810NormalizerC1ENS_14ConstChar16PtrEi18UNormalizationMode
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI udata_getRawMemory_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_6815MaybeStackArrayIcLi40EE13getArrayLimitEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -5515,10 +5503,6 @@ int APS5_VABI _ZNK6icu_6813ICUServiceKey5getIDEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI udata_getLength_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_6822UCharCharacterIterator9current32Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -6279,10 +6263,6 @@ int APS5_VABI _ZNK6icu_689ErrorCode9errorNameEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucnv_setDefaultName_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_e7ZvEjJf4To_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -6984,10 +6964,6 @@ int APS5_VABI _ZN6icu_6813LocaleBuilder23setUnicodeLocaleKeywordENS_11StringPiec
 }
 
 int APS5_VABI _ZNK6icu_6810UnicodeSeteqERKS0__nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI udata_getMemory_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

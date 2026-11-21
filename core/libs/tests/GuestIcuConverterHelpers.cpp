@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "unicode/ucnv.h"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -68,6 +69,60 @@ void DefaultConverterLifecycle() {
     u_releaseDefaultConverter_nid_postfix(second);
     u_flushDefaultConverter_nid_postfix();
     u_releaseDefaultConverter_nid_postfix(reused);
+    u_flushDefaultConverter_nid_postfix();
+}
+
+UConverter* AcquireDefaultConverter() {
+    std::int32_t status = U_ZERO_ERROR;
+    auto* converter = u_getDefaultConverter_nid_postfix(&status);
+    Require(converter && status <= 0, "acquire the configured default converter");
+    return converter;
+}
+
+void DefaultConverterNames() {
+    const char* initialName = ucnv_getDefaultName_nid_postfix();
+    Require(initialName && *initialName, "initial default converter name");
+    const std::string platformName = initialName;
+    auto* initial = AcquireDefaultConverter();
+    const auto platformType = ucnv_getType(initial);
+    u_releaseDefaultConverter_nid_postfix(initial);
+
+    if constexpr (U_CHARSET_IS_UTF8) {
+        ucnv_setDefaultName_nid_postfix("UTF-16LE");
+        Require(std::strcmp(ucnv_getDefaultName_nid_postfix(), "UTF-8") == 0, "fixed UTF-8 default");
+        auto* fixed = AcquireDefaultConverter();
+        Require(ucnv_getType(fixed) == UCNV_UTF8, "fixed UTF-8 converter");
+        u_releaseDefaultConverter_nid_postfix(fixed);
+        return;
+    }
+
+    ucnv_setDefaultName_nid_postfix("UTF-8");
+    Require(std::strcmp(ucnv_getDefaultName_nid_postfix(), "UTF-8") == 0, "set UTF-8");
+    auto* previous = AcquireDefaultConverter();
+    Require(ucnv_getType(previous) == UCNV_UTF8, "acquire UTF-8");
+
+    const bool useLittleEndian = platformType != UCNV_UTF16_LittleEndian;
+    const char* canonicalName = useLittleEndian ? "UTF-16LE" : "UTF-16BE";
+    const std::string extendedName = std::string(useLittleEndian ? "utf-16le" : "utf-16be") + ",ignored=" + std::string(850, 'x');
+    const auto expectedType = useLittleEndian ? UCNV_UTF16_LittleEndian : UCNV_UTF16_BigEndian;
+    ucnv_setDefaultName_nid_postfix(extendedName.c_str());
+    Require(std::strcmp(ucnv_getDefaultName_nid_postfix(), canonicalName) == 0, "canonicalize the configured name");
+    u_releaseDefaultConverter_nid_postfix(previous);
+    auto* current = AcquireDefaultConverter();
+    Require(ucnv_getType(current) == expectedType, "old checkout cannot repopulate the cache");
+    u_releaseDefaultConverter_nid_postfix(current);
+
+    ucnv_setDefaultName_nid_postfix("anyps5-no-such-converter");
+    Require(std::strcmp(ucnv_getDefaultName_nid_postfix(), canonicalName) == 0, "unknown converter leaves the default name intact");
+    current = AcquireDefaultConverter();
+    Require(ucnv_getType(current) == expectedType, "unknown converter leaves the encoding intact");
+    u_releaseDefaultConverter_nid_postfix(current);
+
+    ucnv_setDefaultName_nid_postfix(nullptr);
+    auto* reset = AcquireDefaultConverter();
+    Require(ucnv_getType(reset) == platformType, "reset discards the cached converter");
+    Require(platformName == ucnv_getDefaultName_nid_postfix(), "reset restores the platform default name");
+    u_releaseDefaultConverter_nid_postfix(reset);
     u_flushDefaultConverter_nid_postfix();
 }
 
@@ -288,6 +343,7 @@ void SignatureGuestPointers() {
 
 int main() {
     DefaultConverterLifecycle();
+    DefaultConverterNames();
     NameMatching();
     Signatures();
     SignatureGuestPointers();

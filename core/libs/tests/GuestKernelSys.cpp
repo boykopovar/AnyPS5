@@ -48,9 +48,19 @@
 #include <unistd.h>
 #endif
 
+#ifdef _WIN32
+std::vector<std::filesystem::path> longTree;
+#endif
+
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
         std::fprintf(stderr, "Kernel sys check failed at line %u (guest errno %d)\n", location.line(), *__error_nid_postfix());
+#ifdef _WIN32
+        for (auto entry = longTree.rbegin(); entry != longTree.rend(); ++entry) {
+            const auto path = LR"(\\?\)" + std::filesystem::absolute(*entry).wstring();
+            if (::RemoveDirectoryW(path.c_str()) == FALSE) ::DeleteFileW(path.c_str());
+        }
+#endif
         std::abort();
     }
 }
@@ -553,6 +563,42 @@ volatile std::uint32_t sigreturnMxcsr = 0;
 std::uint32_t RoundingAndMasks(std::uint32_t mxcsr) {
     return mxcsr & ~0x3fu;
 }
+
+#ifndef _WIN32
+void CheckLinkPreflightPermissions(const std::filesystem::path& root) {
+    if (::geteuid() == 0) return;
+    const auto sourceDirectory = root / "link-source-no-search";
+    Require(std::filesystem::create_directory(sourceDirectory));
+    const auto source = sourceDirectory / "source.txt";
+    std::ofstream(source).put('x');
+    const auto originalPermissions = std::filesystem::status(sourceDirectory).permissions();
+    std::filesystem::permissions(sourceDirectory, std::filesystem::perms::none);
+    if (::access(sourceDirectory.c_str(), X_OK) == 0) {
+        std::filesystem::permissions(sourceDirectory, originalPermissions);
+        Require(std::filesystem::remove(source) && std::filesystem::remove(sourceDirectory));
+        return;
+    }
+    const auto nativeSourceDestination = root / "link-source-native.txt";
+    const auto guestSourceDestination = root / "link-source-guest.txt";
+    Require(::link(source.c_str(), nativeSourceDestination.c_str()) == -1 && errno == EACCES);
+    Require(link_nid_postfix(source.string().c_str(), guestSourceDestination.string().c_str()) == -1 && Error() == 13);
+    std::filesystem::permissions(sourceDirectory, originalPermissions);
+    Require(std::filesystem::remove(source) && std::filesystem::remove(sourceDirectory));
+
+    const auto destinationDirectory = root / "link-destination-no-search";
+    Require(std::filesystem::create_directory(destinationDirectory));
+    const auto accessible = root / "link-accessible.txt";
+    std::ofstream(accessible).put('x');
+    const auto destinationPermissions = std::filesystem::status(destinationDirectory).permissions();
+    std::filesystem::permissions(destinationDirectory, std::filesystem::perms::none);
+    const auto nativeDestination = destinationDirectory / "native.txt";
+    const auto guestDestination = destinationDirectory / "guest.txt";
+    Require(::link(accessible.c_str(), nativeDestination.c_str()) == -1 && errno == EACCES);
+    Require(linkat_nid_postfix(-100, accessible.string().c_str(), -100, guestDestination.string().c_str(), 0) == -1 && Error() == 13);
+    std::filesystem::permissions(destinationDirectory, destinationPermissions);
+    Require(std::filesystem::remove(accessible) && std::filesystem::remove(destinationDirectory));
+}
+#endif
 
 void SetContextMxcsr(UserUcontext& context, std::uint32_t mxcsr) {
     std::memcpy(reinterpret_cast<std::uint8_t*>(context.mcontext.fpstate) + 24, &mxcsr, sizeof(mxcsr));
@@ -1489,6 +1535,37 @@ static void CheckGetfsstat() {
     }
 }
 
+#ifdef _WIN32
+static void LongDirectoryAtCalls(const std::filesystem::path& root) {
+    std::vector<std::filesystem::path> levels{root / "long-at"};
+    for (int level = 0; level < 5; ++level) levels.push_back(levels.back() / std::string(60, 'd'));
+    longTree = levels;
+    for (const char* name : {"file.txt", "moved.txt", "made"}) longTree.push_back(levels.back() / name);
+    const auto verbatim = [](const std::filesystem::path& path) { return LR"(\\?\)" + std::filesystem::absolute(path).wstring(); };
+    for (const auto& level : levels) Require(::CreateDirectoryW(verbatim(level).c_str(), nullptr) != FALSE);
+    const auto& path = levels.back();
+    Require(std::filesystem::absolute(path).native().size() > MAX_PATH);
+    const auto exists = [&](const char* name) { return ::GetFileAttributesW(verbatim(path / name).c_str()) != INVALID_FILE_ATTRIBUTES; };
+    const HANDLE file = ::CreateFileW(verbatim(path / "file.txt").c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr);
+    Require(file != INVALID_HANDLE_VALUE && ::CloseHandle(file) != FALSE);
+    const int directory = sceKernelOpen(path.generic_string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(directory >= 0);
+    Require(mkdirat_nid_postfix(directory, "made", 0755) == 0 && exists("made"));
+    Require(mkdirat_nid_postfix(directory, "made", 0755) == -1 && Error() == 17);
+    char link[16];
+    Require(readlinkat_nid_postfix(directory, "file.txt", link, sizeof(link)) == -1 && Error() == 22);
+    Require(readlinkat_nid_postfix(directory, "missing", link, sizeof(link)) == -1 && Error() == 2);
+    Require(renameat_nid_postfix(directory, "file.txt", directory, "moved.txt") == 0 && !exists("file.txt") && exists("moved.txt"));
+    Require(renameat_nid_postfix(directory, "missing", directory, "other.txt") == -1 && Error() == 2);
+    Require(unlinkat_nid_postfix(directory, "moved.txt", 0) == 0 && !exists("moved.txt"));
+    Require(unlinkat_nid_postfix(directory, "missing", 0) == -1 && Error() == 2);
+    Require(unlinkat_nid_postfix(directory, "made", 0x800) == 0 && !exists("made"));
+    Require(sceKernelClose(directory) == 0);
+    for (auto level = levels.rbegin(); level != levels.rend(); ++level) Require(::RemoveDirectoryW(verbatim(*level).c_str()) != FALSE);
+    longTree.clear();
+}
+#endif
+
 int main() {
 #ifdef _WIN32
     auto hostDirectorySpelling = std::filesystem::current_path().native();
@@ -1528,9 +1605,15 @@ int main() {
     const auto root = std::filesystem::path("anyps5-kernel-sys-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
+#ifdef _WIN32
+    LongDirectoryAtCalls(root);
+#endif
     DirectoryRenameTests(root);
     OwnershipAndLinkTests(root);
     CheckLinkSymbolicLinkLimit(root);
+#ifndef _WIN32
+    CheckLinkPreflightPermissions(root);
+#endif
     const auto file = (root / "file.txt").string();
     std::ofstream(file).put('x');
     CheckPathconf(root, file);

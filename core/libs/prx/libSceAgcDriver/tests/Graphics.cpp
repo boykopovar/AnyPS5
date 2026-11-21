@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
@@ -3541,6 +3542,19 @@ void DepthBoundsBiasTests() {
     state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.depthBias && state.depthBiasSlope == 2.0f && state.depthBiasConstant == 4.0f && state.depthBiasClamp == 0.5f, "depth bias decode changed");
     Require(!state.depthBiasPerFace, "equal front and back depth bias must draw both faces in one pass");
+    auto d16Bias = queue;
+    d16Bias.context[0x010] = (d16Bias.context.at(0x010) & ~3u) | 1u;
+    d16Bias.context[0x011] = 0;
+    d16Bias.context[0x2de] = 0x1e9u;
+    auto scaledBias = AgcDriver::Graphics::DecodeState(d16Bias);
+    Require(scaledBias.depthBias && scaledBias.depthBiasSlope == 2.0f && scaledBias.depthBiasConstant == 4.0f / 256.0f && scaledBias.depthBiasClamp == 0.5f, "a D16 target with float bias units scaled the constant bias the wrong way");
+    d16Bias.context[0x2de] = 0xf0u;
+    scaledBias = AgcDriver::Graphics::DecodeState(d16Bias);
+    Require(scaledBias.depthBias && scaledBias.depthBiasSlope == 2.0f && scaledBias.depthBiasConstant == 4.0f && scaledBias.depthBiasClamp == 0.5f, "a D16 target with 16-bit bias units changed the constant bias");
+    auto downBias = queue;
+    downBias.context[0x2de] = 0xf0u;
+    scaledBias = AgcDriver::Graphics::DecodeState(downBias);
+    Require(scaledBias.depthBias && scaledBias.depthBiasConstant == 1024.0f, "a float target with 16-bit bias units scaled the constant bias the wrong way");
     queue.context[0x2e2] = bits(-64.0f);
     queue.context[0x2e3] = bits(8.0f);
     state = AgcDriver::Graphics::DecodeState(queue);
@@ -6138,6 +6152,9 @@ struct MockVulkan {
     std::map<VkPipelineLayout, VkPipelineLayoutCreateFlags> pipelineLayoutFlags;
     std::map<VkPipelineLayout, std::vector<VkPushConstantRange>> pipelineLayoutPushRanges;
     std::map<VkGraphicsPipelineLibraryFlagsEXT, VkPipelineLayout> libraryLayouts;
+    std::vector<VkFormat> shaderLibraryDepthFormats;
+    std::vector<bool> fragmentLibraryMultisample;
+    std::vector<bool> preRasterizationBiasEnableDynamic;
     std::uint32_t pipelineCreateCount = 0;
     std::vector<std::array<std::uint32_t, 3>> pipelineSpecializations;
     VkPipeline boundPipeline = VK_NULL_HANDLE;
@@ -6403,6 +6420,15 @@ VKAPI_ATTR VkResult VKAPI_CALL mockCreateGraphicsPipelines(VkDevice, VkPipelineC
     const auto* library = static_cast<const VkGraphicsPipelineLibraryCreateInfoEXT*>(infos[0].pNext);
     Require(library != nullptr && library->sType == VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, "missing graphics pipeline library description");
     mock.libraryLayouts[library->flags] = infos[0].layout;
+    if (library->flags == VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT || library->flags == VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT) {
+        auto format = VK_FORMAT_MAX_ENUM;
+        for (auto* next = static_cast<const VkBaseInStructure*>(infos[0].pNext); next != nullptr; next = next->pNext) {
+            if (next->sType == VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR) format = reinterpret_cast<const VkPipelineRenderingCreateInfoKHR*>(next)->depthAttachmentFormat;
+        }
+        mock.shaderLibraryDepthFormats.push_back(format);
+    }
+    if (library->flags == VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT) mock.fragmentLibraryMultisample.push_back(infos[0].pMultisampleState != nullptr);
+    if (library->flags == VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT && infos[0].pDynamicState != nullptr) mock.preRasterizationBiasEnableDynamic.push_back(std::ranges::count(std::span(infos[0].pDynamicState->pDynamicStates, infos[0].pDynamicState->dynamicStateCount), VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE) == 1);
     *pipelines = makeHandle<VkPipeline>();
     ++mock.live;
     return VK_SUCCESS;
@@ -9440,7 +9466,7 @@ void sampleLocationGridFallbackTests() {
         }
         ClearPipelineLibraries(context.device);
         Require(mock.live == 0, "sample location grid fallback tests leaked Vulkan objects");
-        Require(pipelineSampleLocations.size() == (libraries ? 2u : 1u) && passSampleLocations.size() == (libraries ? 0u : depth ? 2u : 1u), "the pipeline or render pass did not take its sample locations once per library or attachment");
+        Require(pipelineSampleLocations.size() == 1u && passSampleLocations.size() == (libraries ? 0u : depth ? 2u : 1u), "the pipeline, its output library or its render pass did not take its sample locations once per pipeline, output library or attachment");
         auto uses = pipelineSampleLocations;
         uses.insert(uses.end(), passSampleLocations.begin(), passSampleLocations.end());
         return uses;
@@ -9960,6 +9986,94 @@ void pipelineLibrarySetTests() {
         ClearPipelineLibraries(context.device);
         Require(mock.live == 0, "shader library tests leaked Vulkan objects");
     }
+}
+
+void pipelineLibraryNarrowKeyTests() {
+    using namespace AgcDriver::Graphics;
+    for (const bool wide : {false, true}) {
+        for (const auto shading : {0u, 1u, 2u}) {
+            const bool perSample = shading != 0u;
+            mock = MockVulkan{};
+            RuntimeSwitches::Assign(RuntimeSwitch::WideLibraryKeys, wide);
+            auto context = mockContext();
+            context.graphicsPipelineLibrary = true;
+            context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT;
+            context.limits.framebufferDepthSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT;
+            ShaderRecompiler::RecompileResult vertex, fragment;
+            vertex.spirv = makeModule({});
+            auto fragmentWords = makeModule({.fragment = true, .rectParameters = true, .sampleId = shading == 1u});
+            if (shading == 2u) {
+                for (std::size_t at = 5; at < fragmentWords.size(); at += fragmentWords[at] >> 16u) {
+                    if (static_cast<spv::Op>(fragmentWords[at] & 0xffffu) != spv::OpDecorate || fragmentWords[at + 2] != spv::DecorationLocation) continue;
+                    const std::array<std::uint32_t, 3> sampled{(3u << 16u) | spv::OpDecorate, fragmentWords[at + 1], spv::DecorationSample};
+                    fragmentWords.insert(fragmentWords.begin() + static_cast<std::ptrdiff_t>(at), sampled.begin(), sampled.end());
+                    break;
+                }
+            }
+            fragment.spirv = fragmentWords;
+            vertex.variantId = 301;
+            fragment.variantId = 302;
+            const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+            const PipelineSetLayouts resources{makeHandle<VkDescriptorSetLayout>(), VK_NULL_HANDLE, false, {}, {}};
+            State guessed{};
+            State drawn{};
+            drawn.samples = 4;
+            drawn.depth = DepthTarget{0, 0, {64, 64}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+            drawn.depth->samples = 4;
+            drawn.depthTest = true;
+            drawn.depthCompare = VK_COMPARE_OP_LESS;
+            for (const auto* state : {&guessed, &drawn, &guessed, &drawn}) Require(Pipeline::Prebuild(context, *state, VertexInputLayout{}, resources, shaders), "graphics pipeline library prebuild was skipped");
+            const auto built = PipelineLibraryCountersOf(context.device).built;
+            const bool narrow = !wide;
+            Require(built[0] == 1 && built[3] == 2, "a depth target and sample count changed the vertex input parts or did not change the output parts");
+            Require(built[1] == (narrow ? 1u : 2u), narrow ? "a depth format split the pre-rasterization library" : "wide library keys stopped keying the pre-rasterization library by depth format");
+            Require(built[2] == (narrow && !perSample ? 1u : 2u), narrow && !perSample ? "a fragment shader that does not shade per sample was keyed by depth format or sample count" : "a fragment shader library that takes the multisample state was shared across sample counts");
+            const bool undefined = std::ranges::all_of(mock.shaderLibraryDepthFormats, [](VkFormat format) { return format == VK_FORMAT_UNDEFINED; });
+            Require(mock.shaderLibraryDepthFormats.size() == built[1] + built[2] && undefined == narrow, narrow ? "a shader library was given the depth format the spec ignores" : "wide library keys dropped the depth format from a shader library");
+            const bool multisample = !narrow || perSample;
+            Require(mock.fragmentLibraryMultisample.size() == built[2] && std::ranges::all_of(mock.fragmentLibraryMultisample, [&](bool given) { return given == multisample; }), multisample ? "a fragment shader library that shades per sample lost its multisample state" : "a fragment shader library that does not shade per sample was given the multisample state");
+            ClearPipelineLibraries(context.device);
+            Require(mock.live == 0, "narrow library key tests leaked Vulkan objects");
+        }
+    }
+    RuntimeSwitches::Assign(RuntimeSwitch::WideLibraryKeys, false);
+}
+
+void pipelineLibraryDynamicDepthBiasTests() {
+    using namespace AgcDriver::Graphics;
+    for (const bool wide : {false, true}) {
+        for (const bool dynamic : {false, true}) {
+            mock = MockVulkan{};
+            RuntimeSwitches::Assign(RuntimeSwitch::WideLibraryKeys, wide);
+            auto context = mockContext();
+            context.graphicsPipelineLibrary = true;
+            context.dynamicDepthBiasEnable = dynamic;
+            context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+            ShaderRecompiler::RecompileResult vertex, fragment;
+            vertex.spirv = makeModule({});
+            fragment.spirv = makeModule({.fragment = true});
+            vertex.variantId = 311;
+            fragment.variantId = 312;
+            const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+            const PipelineSetLayouts resources{makeHandle<VkDescriptorSetLayout>(), VK_NULL_HANDLE, false, {}, {}};
+            State flat{};
+            flat.depth = DepthTarget{0, 0, {64, 64}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+            flat.depthTest = true;
+            flat.depthCompare = VK_COMPARE_OP_LESS;
+            auto biased = flat;
+            biased.depthBias = true;
+            biased.depthBiasConstant = 4.0f;
+            biased.depthBiasSlope = 1.0f;
+            for (const auto* state : {&flat, &biased, &flat, &biased}) Require(Pipeline::Prebuild(context, *state, VertexInputLayout{}, resources, shaders), "graphics pipeline library prebuild was skipped");
+            const auto built = PipelineLibraryCountersOf(context.device).built;
+            const bool shared = !wide && dynamic;
+            Require(built[1] == (shared ? 1u : 2u), shared ? "a depth bias enable split the pre-rasterization library although the device sets it per draw" : "a pre-rasterization library that bakes the depth bias enable was shared across it");
+            Require(mock.preRasterizationBiasEnableDynamic.size() == built[1] && std::ranges::all_of(mock.preRasterizationBiasEnableDynamic, [&](bool given) { return given == shared; }), shared ? "a narrow pre-rasterization library baked the depth bias enable" : "a pre-rasterization library made the depth bias enable dynamic without narrow keys and the device feature");
+            ClearPipelineLibraries(context.device);
+            Require(mock.live == 0, "dynamic depth bias library tests leaked Vulkan objects");
+        }
+    }
+    RuntimeSwitches::Assign(RuntimeSwitch::WideLibraryKeys, false);
 }
 
 void pipelineLibraryClearWaitsForBuildTests() {
@@ -11820,6 +11934,74 @@ void ProvokingVertexTests() {
     ValidateProvokingVertex(supported, rectangle, flatShaders);
     last.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_MAX_ENUM_EXT;
     expectFailure([&] { ValidateProvokingVertex(supported, last); }, "invalid provoking vertex mode");
+}
+
+void LastVertexPatchTests() {
+    using namespace AgcDriver::Graphics;
+    auto base = DecodeState(makeState());
+    base.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
+    base.stages = {};
+    base.stages.path = ShaderPath::Vertex;
+    base.rectList = false;
+    base.primitiveRestart = false;
+    base.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    const auto module = [](std::initializer_list<std::uint32_t> instructions) {
+        std::vector<std::uint32_t> words{spv::MagicNumber, 0x10300u, 0u, 4u, 0u};
+        words.insert(words.end(), instructions);
+        return words;
+    };
+    ShaderRecompiler::RecompileResult vertex{};
+    vertex.spirv = module({});
+    ShaderRecompiler::RecompileResult fragment{};
+    fragment.spirv = module({});
+    fragment.fragmentParameters = {{0, 0, true, false}};
+    const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+    const auto patches = [&](const State& state, bool provokingVertexLast = false, bool tessellation = true, bool primitiveListRestart = false, bool indexed = false) {
+        return LastVertexPatches(state, shaders, provokingVertexLast, tessellation, primitiveListRestart, indexed);
+    };
+    Require(patches(base), "an observed last provoking vertex on a device without provokingVertexLast did not take the tessellation patches");
+    Require(!patches(base, true), "a device with provokingVertexLast took the tessellation patches");
+    Require(!patches(base, false, false), "a device without tessellation took the tessellation patches");
+    auto state = base;
+    state.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
+    Require(!patches(state), "a first provoking vertex took the tessellation patches");
+    fragment.fragmentParameters = {{0, 0, false, false}};
+    Require(!patches(base), "a pixel shader that does not observe the provoking vertex took the tessellation patches");
+    for (std::uint32_t read = 0; read < 4; ++read) {
+        fragment.fragmentParameters = {{0, 0, false, false}, {1, 1, read == 0, read == 1, read == 2, read == 3, false}};
+        Require(patches(base), "a pixel shader input that observes the provoking vertex did not take the tessellation patches");
+    }
+    fragment.fragmentParameters = {{0, 0, true, false}};
+    for (const std::uint32_t builtIn : {static_cast<std::uint32_t>(spv::BuiltInLayer), static_cast<std::uint32_t>(spv::BuiltInViewportIndex)}) {
+        vertex.spirv = module({(4u << 16u) | spv::OpDecorate, 1u, spv::DecorationBuiltIn, builtIn});
+        Require(!patches(base), "a vertex shader that writes the layer or viewport took the tessellation patches");
+    }
+    vertex.spirv = module({});
+    for (const auto topology : {VK_PRIMITIVE_TOPOLOGY_POINT_LIST, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, VK_PRIMITIVE_TOPOLOGY_LINE_STRIP, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, VK_PRIMITIVE_TOPOLOGY_PATCH_LIST}) {
+        state = base;
+        state.topology = topology;
+        Require(!patches(state), "a topology the tessellation patches do not draw took them");
+    }
+    state = base;
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    Require(patches(state) && patches(state, false, true, false, true), "a triangle strip did not take the tessellation patches");
+    state.primitiveRestart = true;
+    Require(patches(state) && !patches(state, false, true, false, true), "primitive restart in a triangle strip took the wrong path");
+    state = base;
+    state.primitiveRestart = true;
+    Require(patches(state) && !patches(state, false, true, true), "primitive restart in a triangle list took the wrong path");
+    state = base;
+    state.rectList = true;
+    Require(!patches(state), "a rect list took the triangle tessellation patches");
+    state = base;
+    state.stages.path = ShaderPath::Geometry;
+    Require(!patches(state), "a mesh path draw took the vertex tessellation patches");
+    state = base;
+    state.stages.tessellation = ShaderRecompiler::TessellationConfiguration{};
+    Require(!patches(state), "a tessellated draw took the barycentric tessellation patches");
+    Require(!LastVertexPatches(base, std::span(shaders).first(1), false, true, false, false), "a draw without a pixel shader took the tessellation patches");
+    const std::array<CompiledShader, 2> missing{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, nullptr, 0}}};
+    Require(!LastVertexPatches(base, missing, false, true, false, false), "a draw without a compiled pixel shader took the tessellation patches");
 }
 
 void UnobservedProvokingVertexTests() {
@@ -14806,7 +14988,10 @@ void commandStateTests() {
     const std::array<VkDynamicState, 1> colorWriteMask{VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT};
     const auto maskSlot = CommandState::DynamicSlots(colorWriteMask);
     Require(maskSlot == CommandState::Mask(Slot::ColorWriteMask), "the color write mask dynamic state mapped to another slot");
-    Require((library | maskSlot) == (1u << CommandState::SlotCount) - 1u && (library & maskSlot) == 0, "the pipeline library's dynamic states and the color write mask do not cover every tracked slot");
+    const std::array<VkDynamicState, 1> depthBiasEnable{VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE};
+    const auto biasEnableSlot = CommandState::DynamicSlots(depthBiasEnable);
+    Require(biasEnableSlot == CommandState::Mask(Slot::DepthBiasEnable), "the depth bias enable dynamic state mapped to another slot");
+    Require((library | maskSlot | biasEnableSlot) == (1u << CommandState::SlotCount) - 1u && (library & (maskSlot | biasEnableSlot)) == 0, "the pipeline library's dynamic states, the color write mask and the depth bias enable do not cover every tracked slot");
     Require(fixed == (CommandState::Mask(Slot::Viewport) | CommandState::Mask(Slot::Scissor)), "the viewport and scissor dynamic states mapped to other slots");
     const std::array<VkDynamicState, 2> unmodelled{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_LINE_WIDTH};
     bool rejected = false;
@@ -14834,6 +15019,21 @@ void commandStateTests() {
         tracker.SetCullMode(context, 1u);
         tracker.SetCullMode(context, 1u);
         expectStateLog({stateLine("cull", 1u)}, "a cull mode after invalidation");
+    }
+
+    {
+        CommandState tracker;
+        tracker.Begin(commands);
+        tracker.BindPipeline(context, pipelineA, library | biasEnableSlot);
+        for (const auto enable : {1u, 1u, 0u, 0u}) tracker.SetDepthBiasEnable(context, enable);
+        tracker.BindPipeline(context, pipelineB, library | biasEnableSlot);
+        tracker.SetDepthBiasEnable(context, 0u);
+        Require(tracker.Known(Slot::DepthBiasEnable), "binding another pipeline with a dynamic depth bias enable forgot it");
+        tracker.BindPipeline(context, pipelineC, library);
+        Require(!tracker.Known(Slot::DepthBiasEnable), "binding a pipeline with a static depth bias enable kept it known");
+        tracker.BindPipeline(context, pipelineA, library | biasEnableSlot);
+        tracker.SetDepthBiasEnable(context, 0u);
+        expectStateLog({stateLine("bind", 0u, pipelineA), stateLine("biasenable", 1u), stateLine("biasenable", 0u), stateLine("bind", 0u, pipelineB), stateLine("bind", 0u, pipelineC), stateLine("bind", 0u, pipelineA), stateLine("biasenable", 0u)}, "depth bias enables across binds of pipelines that make it dynamic or static");
     }
 
     {
@@ -15249,6 +15449,12 @@ int main(int argc, char** argv) {
             std::cout << "pipeline journal recipe, record and replay tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-library-narrow-keys") {
+            pipelineLibraryNarrowKeyTests();
+            pipelineLibraryDynamicDepthBiasTests();
+            std::cout << "shader pipeline libraries are keyed only by the state their subset reads\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-library-clear-waits-for-build") {
             pipelineLibraryClearWaitsForBuildTests();
             std::cout << "pipeline library clear waits for active part builds\n";
@@ -15531,6 +15737,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--unobserved-provoking-vertex") {
             UnobservedProvokingVertexTests();
+            LastVertexPatchTests();
             ProvokingVertexTests();
             std::cout << "Unobserved provoking vertex checks passed\n";
             return 0;
@@ -15597,6 +15804,8 @@ int main(int argc, char** argv) {
         pipelineStoreLazyBufferPoolTests();
         retainedPixelStageTests();
         pipelineLibrarySetTests();
+        pipelineLibraryNarrowKeyTests();
+        pipelineLibraryDynamicDepthBiasTests();
         pipelineLibraryClearWaitsForBuildTests();
         tessellationPipelineLibraryCacheTests();
         framebufferOwnerTests();
