@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <new>
 #include <string>
 #include <utility>
 #include "NpUniversalDataSystem.hpp"
@@ -42,8 +43,9 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetString(
     NpUniversalDataSystemEventPropertyArray* array, const char* value)
 {
     if (array == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_ARRAY;
-    if (value == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE;
-    array->Add(std::string(value));
+    std::string text;
+    if (const int error = Uds::CopyText(value, text, SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE); error != 0) return error;
+    array->Add(std::move(text));
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -108,8 +110,15 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetBinary(
 {
     if (array == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_ARRAY;
     if (value == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE;
-    const auto* bytes = static_cast<const std::uint8_t*>(value);
-    array->Add(Uds::Binary(bytes, bytes + value_size));
+    Uds::Binary bytes;
+    if (value_size > bytes.max_size()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_OUT_OF_MEMORY;
+    try {
+        bytes.resize(value_size);
+    } catch (const std::bad_alloc&) {
+        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_OUT_OF_MEMORY;
+    }
+    if (!GuestCopyIn_nid_no_patch(bytes.data(), value, value_size)) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE;
+    array->Add(std::move(bytes));
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
