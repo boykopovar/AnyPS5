@@ -667,14 +667,6 @@ static std::int64_t PosixResult(std::int64_t result) {
     return result < 0 ? PosixFailure(static_cast<int>(result) & 0xffff) : result;
 }
 
-template <typename TCall>
-static auto RunKernelFileCall(TCall call) {
-    const int saved = *__error_nid_postfix();
-    const auto result = call();
-    *__error_nid_postfix() = result < 0 ? (static_cast<int>(result) & 0xffff) : saved;
-    return result;
-}
-
 static int DeviceFilesystem(KernelStatfs* fs) {
     fs->f_bsize = 512;
     fs->f_iosize = 512;
@@ -1108,7 +1100,7 @@ int APS5_VABI dup_nid_postfix(int d) {
 int APS5_VABI sceKernelRdup(int pid, int fd) {
     if (pid != 0 && pid != getpid_nid_postfix())
         NotImplemented_nid_no_patch("sceKernelRdup: a pid other than the caller's and 0");
-    return RunKernelFileCall([&] {
+    return File::RunKernelFileCall([&] {
         if (fd < 0) return SCE_KERNEL_ERROR_EBADF;
         const int duplicate = dup_nid_postfix(fd);
         return duplicate < 0 ? SceErrorFromErrno(*__error_nid_postfix()) : duplicate;
@@ -1311,7 +1303,7 @@ int APS5_VABI ftruncate_nid_postfix(int d, int64_t length) {
 }
 
 int APS5_VABI sceKernelFtruncate(int d, int64_t length) {
-    return RunKernelFileCall([&] {
+    return File::RunKernelFileCall([&] {
         return ftruncate_nid_postfix(d, length) == 0 ? 0 : SceErrorFromErrno(*__error_nid_postfix());
     });
 }
@@ -1506,7 +1498,7 @@ static int KernelFstat(int d, FileStat* sb) {
 }
 
 int APS5_VABI sceKernelFstat(int d, FileStat* sb) {
-    return RunKernelFileCall([&] { return KernelFstat(d, sb); });
+    return File::RunKernelFileCall([&] { return KernelFstat(d, sb); });
 }
 
 static int KernelFsync(int fd) {
@@ -1522,7 +1514,7 @@ static int KernelFsync(int fd) {
 }
 
 int APS5_VABI sceKernelFsync(int fd) {
-    return RunKernelFileCall([&] { return KernelFsync(fd); });
+    return File::RunKernelFileCall([&] { return KernelFsync(fd); });
 }
 
 static int KernelFdatasync(int fd) {
@@ -1540,7 +1532,7 @@ static int KernelFdatasync(int fd) {
 }
 
 int APS5_VABI sceKernelFdatasync(int fd) {
-    return RunKernelFileCall([&] { return KernelFdatasync(fd); });
+    return File::RunKernelFileCall([&] { return KernelFdatasync(fd); });
 }
 
 int APS5_VABI sceKernelWriteThrottlingStatus(std::uint64_t* status) {
@@ -1742,7 +1734,7 @@ static int KernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep) {
 #endif
 
 int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep) {
-    return RunKernelFileCall([&] { return KernelGetdirentries(fd, buf, nbytes, basep); });
+    return File::RunKernelFileCall([&] { return KernelGetdirentries(fd, buf, nbytes, basep); });
 }
 
 int APS5_VABI sceKernelGetdents(int fd, char* buf, int nbytes) {
@@ -1792,7 +1784,7 @@ static int KernelMkdir(const char* path, uint16_t mode) {
 }
 
 int APS5_VABI sceKernelMkdir(const char* path, uint16_t mode) {
-    return RunKernelFileCall([&] { return KernelMkdir(path, mode); });
+    return File::RunKernelFileCall([&] { return KernelMkdir(path, mode); });
 }
 
 static int CopyIovecs(const KernelIovec* iov, int iovcnt, std::vector<KernelIovec>& vectors) {
@@ -2089,27 +2081,27 @@ static int64_t KernelPwritev(int d, const KernelIovec* guestIov, int iovcnt, int
 #endif
 
 int64_t APS5_VABI sceKernelPread(int d, void* buf, size_t nbytes, int64_t offset) {
-    return RunKernelFileCall([&] { return KernelPread(d, buf, nbytes, offset); });
+    return File::RunKernelFileCall([&] { return KernelPread(d, buf, nbytes, offset); });
 }
 
 int64_t APS5_VABI sceKernelPwrite(int d, const void* buf, size_t nbytes, int64_t offset) {
-    return RunKernelFileCall([&] { return KernelPwrite(d, buf, nbytes, offset); });
+    return File::RunKernelFileCall([&] { return KernelPwrite(d, buf, nbytes, offset); });
 }
 
 int64_t APS5_VABI sceKernelReadv(int d, const KernelIovec* iov, int iovcnt) {
-    return RunKernelFileCall([&] { return KernelReadv(d, iov, iovcnt); });
+    return File::RunKernelFileCall([&] { return KernelReadv(d, iov, iovcnt); });
 }
 
 int64_t APS5_VABI sceKernelWritev(int d, const KernelIovec* iov, int iovcnt) {
-    return RunKernelFileCall([&] { return KernelWritev(d, iov, iovcnt); });
+    return File::RunKernelFileCall([&] { return KernelWritev(d, iov, iovcnt); });
 }
 
 int64_t APS5_VABI sceKernelPreadv(int d, const KernelIovec* iov, int iovcnt, int64_t offset) {
-    return RunKernelFileCall([&] { return KernelPreadv(d, iov, iovcnt, offset); });
+    return File::RunKernelFileCall([&] { return KernelPreadv(d, iov, iovcnt, offset); });
 }
 
 int64_t APS5_VABI sceKernelPwritev(int d, const KernelIovec* iov, int iovcnt, int64_t offset) {
-    return RunKernelFileCall([&] { return KernelPwritev(d, iov, iovcnt, offset); });
+    return File::RunKernelFileCall([&] { return KernelPwritev(d, iov, iovcnt, offset); });
 }
 
 int64_t APS5_VABI preadv_nid_postfix(int d, const KernelIovec* iov, int iovcnt, int64_t offset) {
@@ -2123,7 +2115,7 @@ int64_t APS5_VABI pwritev_nid_postfix(int d, const KernelIovec* iov, int iovcnt,
 }
 
 int APS5_VABI sceKernelRename(const char* from, const char* to) {
-    return RunKernelFileCall([&] {
+    return File::RunKernelFileCall([&] {
         if (!from) return SceErrorFromErrno(GUEST_EFAULT);
         const int result = RenameGuestPath_nid_no_patch(from, to);
         return result == 0 ? 0 : SceKernelError(errno);
@@ -2175,7 +2167,7 @@ static int KernelRmdir(const char* path) {
 }
 
 int APS5_VABI sceKernelRmdir(const char* path) {
-    return RunKernelFileCall([&] { return KernelRmdir(path); });
+    return File::RunKernelFileCall([&] { return KernelRmdir(path); });
 }
 
 int APS5_VABI rmdir_nid_postfix(const char* path) {
@@ -2201,7 +2193,7 @@ static int KernelChmod(const char* path, std::uint16_t mode) {
 }
 
 int APS5_VABI sceKernelChmod_nid_postfix(const char* path, std::uint16_t mode) {
-    return RunKernelFileCall([&] { return KernelChmod(path, mode); });
+    return File::RunKernelFileCall([&] { return KernelChmod(path, mode); });
 }
 
 static int KernelFchmod(int d, std::uint16_t mode) {
@@ -2218,7 +2210,7 @@ static int KernelFchmod(int d, std::uint16_t mode) {
 }
 
 int APS5_VABI sceKernelFchmod(int d, std::uint16_t mode) {
-    return RunKernelFileCall([&] { return KernelFchmod(d, mode); });
+    return File::RunKernelFileCall([&] { return KernelFchmod(d, mode); });
 }
 
 int APS5_VABI fchmod_nid_postfix(int d, int mode) {
@@ -2267,7 +2259,7 @@ static int KernelTruncate(const char* path, std::int64_t length) {
 }
 
 int APS5_VABI sceKernelTruncate_nid_postfix(const char* path, std::int64_t length) {
-    return RunKernelFileCall([&] { return KernelTruncate(path, length); });
+    return File::RunKernelFileCall([&] { return KernelTruncate(path, length); });
 }
 
 int APS5_VABI truncate_nid_postfix(const char* path, std::int64_t length) {
@@ -2293,7 +2285,7 @@ static int KernelUtimes(const char* path, const KernelTimeval* times) {
 }
 
 int APS5_VABI sceKernelUtimes_nid_postfix(const char* path, const KernelTimeval* times) {
-    return RunKernelFileCall([&] { return KernelUtimes(path, times); });
+    return File::RunKernelFileCall([&] { return KernelUtimes(path, times); });
 }
 
 int APS5_VABI utimes_nid_postfix(const char* path, const KernelTimeval* times) {
@@ -2351,7 +2343,7 @@ static int KernelFutimes(int d, const KernelTimeval* times) {
 }
 
 int APS5_VABI sceKernelFutimes(int d, const KernelTimeval* times) {
-    return RunKernelFileCall([&] { return KernelFutimes(d, times); });
+    return File::RunKernelFileCall([&] { return KernelFutimes(d, times); });
 }
 
 int APS5_VABI futimes_nid_postfix(int d, const KernelTimeval* times) {
