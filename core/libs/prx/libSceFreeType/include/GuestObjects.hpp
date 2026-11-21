@@ -29,6 +29,9 @@ constexpr bool InGlyphFormatRange(std::uint32_t format) {
 struct GuestLibrary {
     FT_Library host = nullptr;
     std::list<std::unique_ptr<GuestFace>> faces;
+    std::uint64_t references = 1;
+    GuestMemoryRec* guestMemory = nullptr;
+    std::unique_ptr<FT_MemoryRec_> memory;
 };
 
 extern "C" void UnregisterBitmap_nid_no_patch(const GuestBitmap* bitmap);
@@ -78,6 +81,7 @@ extern "C" int FreeTypeNewGlyph_nid_no_patch(GuestLibrary* library, std::uint32_
 GuestFace* FaceOf(const GuestFaceRec* face);
 GuestFace* FaceOf(const GuestGlyphSlotRec* slot);
 void SyncFace(GuestFace& face);
+void SyncFaceMetrics(GuestFace& face);
 void SyncSize(GuestFace& face);
 void SyncSizePointer_nid_no_patch(GuestFace& face);
 void SyncSizeRecord_nid_no_patch(GuestFace& face, GuestSizeRec& rec, FT_Size host);

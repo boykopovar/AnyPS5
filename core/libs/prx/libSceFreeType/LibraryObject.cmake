@@ -1,0 +1,12 @@
+if(BUILD_TESTING AND NOT ANYPS5_USE_SYSTEM_DEPS)
+    add_test_executable(guest_freetype_library_object_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeLibraryObject.cpp)
+    target_include_directories(guest_freetype_library_object_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_library_object_tests PRIVATE libSceFreeTypeOt libSceFreeTypeOl libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_library_object_tests)
+    add_test(NAME guest_freetype_library_object COMMAND guest_freetype_library_object_tests)
+    set_tests_properties(guest_freetype_library_object PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_freetype_library_object PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+endif()

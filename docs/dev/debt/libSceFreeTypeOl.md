@@ -28,7 +28,7 @@ The FreeType guest bridge owns its guest faces in `GuestLibrary::faces`. Native 
 
 With `ANYPS5_USE_SYSTEM_DEPS=ON`, the `freetype` CMake target is an `INTERFACE` wrapper around the installed library. Bundled GX/OpenType validation C sources, private FreeType headers and module-class objects are not present. In this mode the 67 module-wrapper NIDs compile as explicit throwing stubs and the other 25 remain unchanged, preserving all 92 export aliases without calling unavailable internals. The bundled-only module regression test is omitted; the existing outline-border tests remain registered. The 67-export implementation is built only with bundled FreeType.
 
-The remaining 25 exports deliberately retain `NotImplemented_nid_no_patch` because they require unavailable Sony-specific modules/state or a guest/native bridge that is not yet implemented:
+The remaining 24 exports deliberately retain `NotImplemented_nid_no_patch` because they require unavailable Sony-specific modules/state or a guest/native bridge that is not yet implemented:
 
 - [`FT_Get_Module_Interface`](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp) (`5NYsP564wwY`): native FreeType module interfaces are tables of host function pointers, not guest-callable trampolines.
 - Raster5 add/export/remove/support (`wbyY8kfNfaI`, `6zDeyzjWz-8`, `SKUldaN3e2A`, `Tzm-z36UYKg`): the Sony Raster5 module is absent from the bundled FreeType sources. See its [unimplemented exports](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp).

@@ -13,14 +13,28 @@ GuestFace* FaceOf(const GuestGlyphSlotRec* slot) {
     return slot ? static_cast<GuestFace*>(slot->internal) : nullptr;
 }
 
+void SyncFaceMetrics(GuestFace& face) {
+    const FT_Face host = face.host;
+    auto& rec = face.rec;
+    rec.face_flags = host->face_flags;
+    rec.style_flags = host->style_flags;
+    rec.bbox = {host->bbox.xMin, host->bbox.yMin, host->bbox.xMax, host->bbox.yMax};
+    rec.units_per_EM = host->units_per_EM;
+    rec.ascender = host->ascender;
+    rec.descender = host->descender;
+    rec.height = host->height;
+    rec.max_advance_width = host->max_advance_width;
+    rec.max_advance_height = host->max_advance_height;
+    rec.underline_position = host->underline_position;
+    rec.underline_thickness = host->underline_thickness;
+}
+
 void SyncFace(GuestFace& face) {
     RegisterBitmap_nid_no_patch(face);
     const FT_Face host = face.host;
     auto& rec = face.rec;
     rec.num_faces = host->num_faces;
     rec.face_index = host->face_index;
-    rec.face_flags = host->face_flags;
-    rec.style_flags = host->style_flags;
     rec.num_glyphs = host->num_glyphs;
     rec.family_name = host->family_name;
     rec.style_name = host->style_name;
@@ -42,15 +56,7 @@ void SyncFace(GuestFace& face) {
     }
     rec.num_charmaps = host->num_charmaps;
     rec.charmaps = face.charmapPointers.empty() ? nullptr : face.charmapPointers.data();
-    rec.bbox = {host->bbox.xMin, host->bbox.yMin, host->bbox.xMax, host->bbox.yMax};
-    rec.units_per_EM = host->units_per_EM;
-    rec.ascender = host->ascender;
-    rec.descender = host->descender;
-    rec.height = host->height;
-    rec.max_advance_width = host->max_advance_width;
-    rec.max_advance_height = host->max_advance_height;
-    rec.underline_position = host->underline_position;
-    rec.underline_thickness = host->underline_thickness;
+    SyncFaceMetrics(face);
     rec.glyph = host->glyph ? &face.slot : nullptr;
     rec.internal = &face;
     SyncSize(face);

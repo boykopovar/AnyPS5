@@ -1807,6 +1807,7 @@ endif()
 
 include(prx/libfreetype/NewGlyph.cmake)
 include(prx/libSceFreeType/CurveBounds.cmake)
+include(prx/libSceFreeType/LibraryObject.cmake)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/prx/libwebrtc/src/FileWrapper.cpp)
 
 if(BUILD_TESTING)
