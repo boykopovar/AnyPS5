@@ -1,3 +1,4 @@
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceIcu/Version.hpp"
@@ -20,6 +21,12 @@ const std::array<std::uint8_t, 4>& GetIcuVersion() {
         u_getVersion_nid_postfix(version.data());
     });
     return version;
+}
+
+unsigned char HashCharacter(const char* data, unsigned index) {
+    unsigned char character = 0;
+    if (!GuestCopyIn_nid_no_patch(&character, data + index, sizeof(character))) throw std::invalid_argument("unreadable WTF six-character hash");
+    return character;
 }
 
 }  // namespace
@@ -49,7 +56,7 @@ unsigned APS5_VABI _ZN3WTF31sixCharacterHashStringToIntegerEPKc(const char* data
     if (!data) throw std::invalid_argument("null WTF six-character hash");
     unsigned hash = 0;
     for (unsigned i = 0; i < 6; ++i) {
-        unsigned c = static_cast<unsigned char>(data[i]);
+        unsigned c = HashCharacter(data, i);
         unsigned value;
         if (c >= 'A' && c <= 'Z') value = c - 'A';
         else if (c >= 'a' && c <= 'z') value = c - 'a' + 26;
@@ -57,7 +64,7 @@ unsigned APS5_VABI _ZN3WTF31sixCharacterHashStringToIntegerEPKc(const char* data
         else throw std::invalid_argument("invalid WTF six-character hash");
         hash = hash * 62 + value;
     }
-    if (data[6]) throw std::invalid_argument("WTF hash must contain six characters");
+    if (HashCharacter(data, 6)) throw std::invalid_argument("WTF hash must contain six characters");
     return hash;
 }
 
