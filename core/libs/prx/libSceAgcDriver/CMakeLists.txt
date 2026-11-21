@@ -306,7 +306,7 @@ foreach(agcSampleOrderVariant IN ITEMS "R8;comp;-DTEXEL_FORMAT=r8ui" "R16;comp;-
     )
     list(APPEND agcSampleOrderShaderHeaders ${agcSampleOrderShaderHeader})
 endforeach()
-foreach(agcFirstSampleClass IN ITEMS Float Uint Sint)
+foreach(agcFirstSampleClass IN ITEMS Float Uint Sint Packed)
     string(TOUPPER "${agcFirstSampleClass}" agcFirstSampleSymbol)
     set(agcFirstSampleShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/FirstSample.frag)
     set(agcFirstSampleShaderSpv ${agcTextureDetileGeneratedDir}/FirstSample${agcFirstSampleClass}.spv)
@@ -475,6 +475,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BdaResources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BufferAddress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderValidation.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DescriptorValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/State.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestTextureResource.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestSamplerResource.cpp
