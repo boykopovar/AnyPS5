@@ -149,6 +149,26 @@ class HistoryCsvTests(unittest.TestCase):
                     progress_history.main([str(output), "--csv", "--cache", str(output / "history.csv")])
                 self.assertEqual((output / "history.csv").read_bytes(), original)
 
+    def test_csv_includes_optional_gfx1013_counts(self):
+        import csv
+        metric = {"done": 1, "total": 2, "percent": 50.0}
+        points = [
+            {"date": "2026-01-01", "commit": "a" * 40, "libraries": metric, "shaders": metric},
+            {"date": "2026-01-02", "commit": "b" * 40, "libraries": metric, "shaders": metric,
+             "gfx1013": {"done": 0, "total": 8, "percent": 0.0}},
+            {"date": "2026-01-03", "commit": "c" * 40, "libraries": metric, "shaders": metric,
+             "gfx1013": {"done": 5, "total": 8, "percent": 62.5}},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(progress_history, "collect", return_value=points), contextlib.redirect_stdout(io.StringIO()):
+                progress_history.main([directory, "--csv"])
+            with (Path(directory) / "history.csv").open(newline="", encoding="utf-8") as stream:
+                reader = csv.DictReader(stream)
+                columns = ["gfx1013_done", "gfx1013_total", "gfx1013_percent"]
+                self.assertEqual(reader.fieldnames[-4:], ["shader_metric", *columns])
+                self.assertEqual([[row[column] for column in columns] for row in reader],
+                                 [["", "", ""], ["0", "8", "0.0"], ["5", "8", "62.5"]])
+
 
 class HistoryReportOutputTests(unittest.TestCase):
     def test_report_output_errors_are_usage_errors_and_allow_retry(self):

@@ -131,6 +131,9 @@ public:
     std::vector<std::string> emptyDocumentSchemes;
     std::vector<std::string> secureSchemes;
     std::vector<std::string> fontAllowList;
+    bool initialProcessWarmed = false;
+    bool useSeparateServiceWorkerProcess = false;
+    bool currentModifierStateCleared = false;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
