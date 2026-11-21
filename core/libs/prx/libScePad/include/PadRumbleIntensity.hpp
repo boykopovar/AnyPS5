@@ -27,6 +27,9 @@ struct RumbleCommand {
 };
 
 constexpr RumbleCommand MakeRumbleCommand(std::uint8_t low, std::uint8_t high, unsigned percent, std::uint32_t durationMs) {
+    if (durationMs == 0) {
+        return RumbleCommand{};
+    }
     if (percent >= kRumblePercentFull) {
         return RumbleCommand{static_cast<std::uint16_t>(low * 257), static_cast<std::uint16_t>(high * 257), (low != 0 || high != 0) ? durationMs : 0};
     }
