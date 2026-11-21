@@ -113,6 +113,7 @@ struct ImageResource {
     bool convertedSamples = false;
     bool remappedDepth1D = false;
     bool gathered = false;
+    bool lodQueried = false;
     bool layerRowsCompatible = true;
     bool layerRows = false;
     std::uint32_t maxArrayLayers = 0u;

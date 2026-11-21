@@ -2364,6 +2364,7 @@ private:
         image.written = image.written || write;
         image.atomic = image.atomic || atomic;
         image.gathered = image.gathered || op == IrOpcode::ImageGatherRaw;
+        image.lodQueried = image.lodQueried || op == IrOpcode::ImageQueryLod;
         image.srgbDecodeCompatible = image.srgbDecodeCompatible && !ImageOpcodeInfoOf(op).needsSampler;
         image.fmaskCompatible = image.fmaskCompatible && op == IrOpcode::ImageRead && memory.dataBits == 32u;
         image.singleMipPlaneBiasCompatible = image.singleMipPlaneBiasCompatible && op == IrOpcode::ImageSampleRaw && memory.imageSampleFlags == RdnaImageSampleFlagBias && memory.dataBits == 32u && !memory.imageR128 && !memory.imagePacked && memory.imageByElements == 0u;
