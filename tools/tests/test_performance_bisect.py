@@ -104,12 +104,32 @@ class RecipeTests(unittest.TestCase):
 
 
 class SummaryValidationTests(unittest.TestCase):
+    def test_native_identity_cannot_be_certified_by_source_or_saved_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.json"
+            rejected = [None, {}, {"status": "matched"},
+                {"summary": [{"commit": "2" * 12, "dirty": False}]},
+                {"summary": [{"commit": GOOD[:12], "dirty": True}]},
+                {"summary": [{"commit": GOOD[:12], "dirty": 0}]},
+                {"summary": [{"commit": GOOD[:12], "dirty": False}], "summary_errors": {"malformed_rows": 1}},
+                {"summary": [{"commit": GOOD[:12], "dirty": False}], "summary_errors": {"malformed_rows": False}},
+                {"summary": [{"commit": GOOD[:12], "dirty": False}], "report": {"commit": GOOD, "modified": True}},
+                {"summary": [{"commit": GOOD[:12], "dirty": False}], "report": {"commit": "2" * 40, "modified": False}}]
+            for native in rejected:
+                summary = {"build": {"commit": GOOD[:7], "dirty": False}, "machine": IDENTITY,
+                    "titles": {"PPSA00000": {"name": "Example", "version": "01.00", "runs": [
+                        {"outcome": "rendering", "fps": 60, "native": native}]}}}
+                path.write_text(json.dumps(summary), encoding="utf-8")
+                with self.subTest(native=native), self.assertRaisesRegex(ValueError, "native"):
+                    performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
     def test_sample_requires_clean_expected_commit_and_rendering_result(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "summary.json"
             summary = {"build": {"commit": GOOD[:7], "dirty": False}, "machine": IDENTITY,
                        "titles": {"PPSA00000": {"name": "Example", "version": "01.00",
-                                                   "runs": [{"outcome": "rendering", "fps": 60}]}}}
+                                                   "runs": [{"outcome": "rendering", "fps": 60,
+                                                       "native": {"summary": [{"commit": GOOD[:12], "dirty": False}]}}]}}}
             path.write_text(json.dumps(summary), encoding="utf-8")
             self.assertEqual(performance_bisect.sample_summary(path, "PPSA00000", GOOD)["fps"], 60)
             summary["build"]["commit"] = GOOD[:9]
@@ -127,7 +147,7 @@ class SummaryValidationTests(unittest.TestCase):
             summary = {"build": {"commit": GOOD[:7], "dirty": False}, "machine": IDENTITY,
                        "titles": {"PPSA00000": {"name": "Example", "version": "01.00",
                                                    "runs": [{"outcome": "stalled", "fps": 60}]}}}
-            for outcome, fps in (("stalled", 60), ("rendering", math.inf), ("rendering", 0)):
+            for outcome, fps in (("stalled", 60), ("incomplete", 60), ("rendering", math.inf), ("rendering", 0)):
                 summary["titles"]["PPSA00000"]["runs"] = [{"outcome": outcome, "fps": fps}]
                 path.write_text(json.dumps(summary), encoding="utf-8")
                 with self.subTest(outcome=outcome, fps=fps), self.assertRaisesRegex(ValueError, "did not render"):
@@ -233,7 +253,7 @@ build = pathlib.Path(args[args.index('--build') + 1])
 commit = subprocess.check_output(['git', '-C', str(build.parent), 'rev-parse', '--short', 'HEAD'], text=True).strip()
 target = out / 'run' / 'summary.json'
 target.parent.mkdir(parents=True)
-target.write_text(json.dumps({'build': {'commit': commit, 'dirty': False}, 'machine': {'os': 'Linux', 'gpu': 'GPU', 'driver': 'Driver', 'cpu': 'CPU'}, 'titles': {'PPSA00000': {'name': 'Example', 'version': '01.00', 'runs': [{'outcome': 'rendering', 'fps': 60.0}]}}}))
+target.write_text(json.dumps({'build': {'commit': commit, 'dirty': False}, 'machine': {'os': 'Linux', 'gpu': 'GPU', 'driver': 'Driver', 'cpu': 'CPU'}, 'titles': {'PPSA00000': {'name': 'Example', 'version': '01.00', 'runs': [{'outcome': 'rendering', 'fps': 60.0, 'native': {'summary': [{'commit': commit, 'dirty': False}]}}]}}}))
 """, encoding="utf-8")
             repo = root / "repo"
             repo.mkdir()
@@ -353,7 +373,7 @@ state = (build.parent / 'state').read_text(encoding='utf-8')
 fps = 54.0 if state in ('step-5', 'step-6', 'step-7') else 60.0
 target = out / 'run' / 'summary.json'
 target.parent.mkdir(parents=True)
-target.write_text(json.dumps({'build': {'commit': commit, 'dirty': False}, 'machine': {'os': 'Linux', 'gpu': 'GPU', 'driver': 'Driver', 'cpu': 'CPU'}, 'titles': {'PPSA00000': {'name': 'Example', 'version': '01.00', 'runs': [{'outcome': 'rendering', 'fps': fps}]}}}), encoding='utf-8')
+target.write_text(json.dumps({'build': {'commit': commit, 'dirty': False}, 'machine': {'os': 'Linux', 'gpu': 'GPU', 'driver': 'Driver', 'cpu': 'CPU'}, 'titles': {'PPSA00000': {'name': 'Example', 'version': '01.00', 'runs': [{'outcome': 'rendering', 'fps': fps, 'native': {'summary': [{'commit': commit, 'dirty': False}]}}]}}}), encoding='utf-8')
 """, encoding="utf-8")
         recipe = {"title_id": "PPSA00000", "games": [], "titles": str(root / "titles.json"),
                   "seconds": 20, "content": None, "build_dir": "build", "repetitions": 3,
@@ -626,7 +646,8 @@ class FocusedInputEdgeTests(unittest.TestCase):
         return {"build": {"commit": GOOD[:12], "dirty": False},
                 "machine": {"os": "Linux", "gpu": "GPU", "driver": "Driver", "cpu": "CPU"},
                 "titles": {"PPSA00000": {"name": "Example", "version": "01.00",
-                                         "runs": [{"outcome": "rendering", "fps": 60.0}]}}}
+                                         "runs": [{"outcome": "rendering", "fps": 60.0,
+                                             "native": {"summary": [{"commit": GOOD[:12], "dirty": False}]}}]}}}
 
     def test_sample_rejects_dirty_build_identity(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -852,6 +873,7 @@ class FocusedInputEdgeTests(unittest.TestCase):
                     performance_bisect.bisect(directory, "good", "bad", {}, output)
             history.assert_not_called()
             self.assertEqual(output.read_text(encoding="utf-8"), "owned")
+
 
 
 class GitFailureAndExitTests(unittest.TestCase):
