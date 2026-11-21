@@ -1,4 +1,5 @@
 #include "prx/libSceAudioOut/libSceAudioOut.hpp"
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include "SceTypes.hpp"
 
 #include <array>
@@ -136,12 +137,39 @@ void CheckArguments() {
     Require(Encode(2, 1, {0, 0, 1}, out) == ErrorInvalidParam && Untouched(out, 0), "kind 2 was accepted");
 }
 
+void CheckUserSupportedAttributes() {
+    AudioOut2UserHandle user = 0;
+    Require(sceAudioOut2UserCreate(0, &user) == 0 && user != 0, "failed to create AudioOut2 user handle");
+
+    std::uint32_t contextAttr = 0xdeadbeefu;
+    errno = 71;
+    Require(
+        sceAudioOut2UserGetSupportedAttributes(user, &contextAttr, reinterpret_cast<std::uint32_t*>(0x10)) == ErrorInvalidParam,
+        "an unwritable portAttributes pointer was accepted");
+    Require(contextAttr == 0xdeadbeefu, "contextAttributes was partially overwritten on portAttributes failure");
+    Require(errno == 71, "errno was changed by an unwritable portAttributes pointer");
+
+    std::uint32_t portAttr = 0xcafebabeu;
+    errno = 71;
+    Require(
+        sceAudioOut2UserGetSupportedAttributes(user, reinterpret_cast<std::uint32_t*>(0x10), &portAttr) == ErrorInvalidParam,
+        "an unwritable contextAttributes pointer was accepted");
+    Require(portAttr == 0xcafebabeu, "portAttributes was modified on contextAttributes failure");
+    Require(errno == 71, "errno was changed by an unwritable contextAttributes pointer");
+
+    Require(sceAudioOut2UserGetSupportedAttributes(user, &contextAttr, &portAttr) == 0, "valid supported attributes query failed");
+    Require(contextAttr == 0 && portAttr == 3, "valid supported attributes query returned unexpected masks");
+
+    Require(sceAudioOut2UserDestroy(user) == 0, "failed to destroy AudioOut2 user handle");
+}
+
 }
 
 int main() {
     CheckAcn();
     CheckFuma();
     CheckArguments();
+    CheckUserSupportedAttributes();
     std::puts("AudioOut2 ambisonics encode tests passed");
     return 0;
 }
