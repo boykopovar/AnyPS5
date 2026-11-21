@@ -8,6 +8,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
+#include <stdexcept>
+#include <string>
 #include <type_traits>
 
 namespace {
@@ -132,6 +135,98 @@ void CheckAbsentData(std::uint16_t requested) {
     }
 }
 
+using OpenedData = std::unique_ptr<UDataMemory, decltype(&udata_close_nid_postfix)>;
+
+void CheckOpenedData(UDataMemory* data) {
+    Require(data != nullptr, "native data handle");
+    Icu::DataInfo info{};
+    info.size = sizeof(info);
+    udata_getInfo_nid_postfix(reinterpret_cast<Icu::DataMemory*>(data), &info);
+    Require(info.size == sizeof(info) && std::memcmp(info.dataFormat, "Nrm2", 4) == 0, "normalization metadata");
+    Require(udata_getMemory(data) != nullptr, "normalization payload");
+}
+
+void CheckDataOpen() {
+    std::int32_t status = U_ZERO_ERROR;
+    OpenedData data(udata_open_nid_postfix(nullptr, "nrm", "nfkc", &status), udata_close_nid_postfix);
+    Require(status == U_ZERO_ERROR, "open built-in data");
+    CheckOpenedData(data.get());
+    data.reset();
+
+    status = U_USING_DEFAULT_WARNING;
+    data.reset(udata_open_nid_postfix("ICUDATA", nullptr, "nfkc.nrm", &status));
+    Require(status == U_USING_DEFAULT_WARNING, "open by full item name preserves warning");
+    CheckOpenedData(data.get());
+
+    for (const std::int32_t incoming : {std::int32_t{-129}, INT32_MIN}) {
+        status = incoming;
+        data.reset(udata_open_nid_postfix(nullptr, "nrm", "nfkc", &status));
+        Require(status == incoming, "open keeps a status below the warning range");
+        CheckOpenedData(data.get());
+    }
+
+    status = U_ZERO_ERROR;
+    const std::string missingName(600, 'x');
+    Require(!udata_open_nid_postfix(nullptr, "nrm", missingName.c_str(), &status)
+            && status == U_FILE_ACCESS_ERROR, "missing item");
+
+    const auto* unreadable = reinterpret_cast<const char*>(std::uintptr_t{1});
+    Require(!udata_open_nid_postfix(unreadable, unreadable, unreadable, &status)
+            && status == U_FILE_ACCESS_ERROR, "preexisting failure skips strings");
+    Require(!udata_open_nid_postfix(unreadable, unreadable, unreadable, nullptr), "null status skips strings");
+
+    status = U_ZERO_ERROR;
+    Require(!udata_open_nid_postfix(unreadable, unreadable, "", &status)
+            && status == U_ILLEGAL_ARGUMENT_ERROR, "empty name skips path and type");
+}
+
+struct ChoiceContext {
+    const char* type;
+    const char* name;
+    bool accept;
+    int calls = 0;
+};
+
+std::int8_t APS5_VABI SelectData(void* context, const char* type, const char* name, const Icu::DataInfo* info) {
+    auto& choice = *static_cast<ChoiceContext*>(context);
+    Require(type == choice.type && name == choice.name, "callback receives original guest strings");
+    Require(info && info->size == sizeof(*info) && std::memcmp(info->dataFormat, "Nrm2", 4) == 0,
+            "callback sees normalization metadata");
+    ++choice.calls;
+    return choice.accept;
+}
+
+std::int8_t APS5_VABI ThrowFromChoice(void*, const char*, const char*, const Icu::DataInfo*) {
+    throw std::runtime_error("data filter failed");
+}
+
+void CheckDataChoice() {
+    ChoiceContext choice{nullptr, "nfkc.nrm", true};
+    std::int32_t status = U_ZERO_ERROR;
+    OpenedData data(udata_openChoice_nid_postfix(nullptr, choice.type, choice.name, SelectData, &choice, &status),
+                    udata_close_nid_postfix);
+    Require(status == U_ZERO_ERROR && choice.calls == 1, "callback accepts data");
+    CheckOpenedData(data.get());
+    data.reset();
+
+    choice.accept = false;
+    Require(!udata_openChoice_nid_postfix(nullptr, choice.type, choice.name, SelectData, &choice, &status)
+            && status == U_INVALID_FORMAT_ERROR && choice.calls > 1, "callback rejects data");
+
+    status = U_ZERO_ERROR;
+    Require(!udata_openChoice_nid_postfix(nullptr, choice.type, choice.name, nullptr, nullptr, &status)
+            && status == U_ILLEGAL_ARGUMENT_ERROR, "null callback");
+
+    status = U_ZERO_ERROR;
+    bool caught = false;
+    try {
+        data.reset(udata_openChoice_nid_postfix(nullptr, choice.type, choice.name, ThrowFromChoice, nullptr, &status));
+    } catch (const std::runtime_error&) {
+        caught = true;
+    }
+    Require(caught && status == U_ZERO_ERROR, "callback exception returns to the guest caller");
+}
+
 }
 
 int main() {
@@ -147,4 +242,7 @@ int main() {
         for (std::uint16_t sourceSize : {std::uint16_t{20}, std::uint16_t{32}})
             for (std::uint16_t requested : capacities)
                 CompareValid(sourceSize, sourceBigEndian, requested);
+
+    CheckDataOpen();
+    CheckDataChoice();
 }
