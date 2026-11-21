@@ -50,6 +50,29 @@ def excessively_nested_json(test):
             test.fail("the JSON decoder accepts every probed nesting depth")
 
 
+class SharedTargetTests(unittest.TestCase):
+    def test_shared_target_keeps_argument_and_registration_matches_per_test(self):
+        graph = {"closures": {"shared": ["src/engine.cpp"]}, "tests": {
+            name: {"target": "shared", "arguments": [f"data/{name}.txt"],
+                   "registered": [f"{name}/CMakeLists.txt"], "sets": [], "requires": [], "depends": []}
+            for name in ("alpha", "beta")}}
+        cases = [
+            ("src/engine.cpp", {"alpha", "beta"}, "input: src/engine.cpp"),
+            ("src/new.cpp", {"alpha", "beta"}, "directory: src/"),
+            ("data/alpha.txt", {"alpha"}, "input: data/alpha.txt"),
+            ("alpha/CMakeLists.txt", {"alpha"}, "registration: alpha/CMakeLists.txt"),
+            ("data/new.txt", {"alpha", "beta"}, "directory: data/"),
+        ]
+        for path, expected, reason in cases:
+            with self.subTest(path=path):
+                reasons = {}
+                self.assertEqual(select_tests.select(graph, [path]), (expected, []))
+                self.assertEqual(select_tests.select(graph, [path], reasons), (expected, []))
+                self.assertEqual(set(reasons), expected)
+                for entries in reasons.values():
+                    self.assertIn(reason, entries)
+
+
 @unittest.skipUnless(shutil.which("ninja") and (shutil.which("gcc") or shutil.which("cc")), "needs ninja and a C compiler")
 class SelectFixture(unittest.TestCase):
     @classmethod
