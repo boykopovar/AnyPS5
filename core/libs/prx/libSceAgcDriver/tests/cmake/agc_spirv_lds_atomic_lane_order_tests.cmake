@@ -1,0 +1,13 @@
+add_test_executable(agc_spirv_lds_atomic_lane_order_tests EXCLUDE_FROM_ALL tests/SpirvLdsAtomicLaneOrder.cpp)
+target_link_libraries(agc_spirv_lds_atomic_lane_order_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_spirv_lds_atomic_lane_order_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_spirv_lds_atomic_lane_order_tests)
+
+if(BUILD_TESTING)
+    set_target_properties(agc_spirv_lds_atomic_lane_order_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_spirv_lds_atomic_lane_order COMMAND agc_spirv_lds_atomic_lane_order_tests)
+    set_tests_properties(agc_spirv_lds_atomic_lane_order PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1")
+    if(WIN32)
+        set_tests_properties(agc_spirv_lds_atomic_lane_order PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
