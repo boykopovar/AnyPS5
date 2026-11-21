@@ -155,7 +155,10 @@ int APS5_VABI sceVideoOutGetDeviceCapabilityInfo_(int handle, void* info, std::u
     if (!VideoOutDriver::Get().HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
     if (info == nullptr || size != sizeof(std::uint64_t)) return VIDEO_OUT_ERROR_INVALID_VALUE;
     const std::uint64_t capabilities = 1;
-    std::memcpy(info, &capabilities, sizeof(capabilities));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &capabilities, sizeof(capabilities));
+    errno = savedErrno;
+    if (!copied) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
@@ -165,8 +168,16 @@ void APS5_VABI sceVideoOutModeSetAny_(void* mode, std::uint32_t size) {
     if (mode == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
-    std::memcpy(mode, &size, sizeof(size));
-    if (size > sizeof(size)) std::memset(static_cast<std::byte*>(mode) + sizeof(size), 0xFF, size - sizeof(size));
+    std::vector<std::byte> buffer(size, std::byte{0xFF});
+    if (size >= sizeof(size)) {
+        std::memcpy(buffer.data(), &size, sizeof(size));
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(mode, buffer.data(), size);
+    errno = savedErrno;
+    if (!copied) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
 }
 
 int APS5_VABI sceVideoOutAllowOutputResolutionWqhdDetection(int handle) try {
@@ -204,13 +215,18 @@ int APS5_VABI sceVideoOutGetFlipStatus(int handle, VideoOutFlipStatus* status) t
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
+    const int savedErrno = errno;
+    bool copied = false;
     if (cfg->ps4) {
         const auto& current = cfg->flipStatus;
-        VideoOutFlipStatusPs4 legacy{current.count, current.processTime, 0, current.flipArg, 0, 0, current.gcQueueNum, current.flipPendingNum, current.currentBuffer, 0};
-        *reinterpret_cast<VideoOutFlipStatusPs4*>(status) = legacy;
+        const VideoOutFlipStatusPs4 legacy{current.count, current.processTime, 0, current.flipArg, 0, 0, current.gcQueueNum, current.flipPendingNum, current.currentBuffer, 0};
+        copied = GuestCopyOut_nid_no_patch(status, &legacy, sizeof(legacy));
     } else {
-        *status = cfg->flipStatus;
+        const auto localStatus = cfg->flipStatus;
+        copied = GuestCopyOut_nid_no_patch(status, &localStatus, sizeof(localStatus));
     }
+    errno = savedErrno;
+    if (!copied) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
@@ -226,12 +242,19 @@ int APS5_VABI sceVideoOutGetVblankStatus(int handle, VideoOutVblankStatus* statu
     }
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
+    const int savedErrno = errno;
+    bool copied = false;
     if (cfg->ps4) {
         const auto& current = cfg->vblankStatus;
-        VideoOutVblankStatusPs4 legacy{current.count, current.processTime, 0, current.flags};
-        *reinterpret_cast<VideoOutVblankStatusPs4*>(status) = legacy;
+        const VideoOutVblankStatusPs4 legacy{current.count, current.processTime, 0, current.flags};
+        copied = GuestCopyOut_nid_no_patch(status, &legacy, sizeof(legacy));
     } else {
-        *status = cfg->vblankStatus;
+        const auto localStatus = cfg->vblankStatus;
+        copied = GuestCopyOut_nid_no_patch(status, &localStatus, sizeof(localStatus));
+    }
+    errno = savedErrno;
+    if (!copied) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
     return 0;
 } catch (const ProcessShutdown&) {
@@ -248,7 +271,13 @@ int APS5_VABI sceVideoOutGetOutputStatus(int handle, VideoOutOutputStatus* statu
     }
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
-    *status = outputStatus(*cfg);
+    const auto localStatus = outputStatus(*cfg);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &localStatus, sizeof(localStatus));
+    errno = savedErrno;
+    if (!copied) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
@@ -266,7 +295,10 @@ int APS5_VABI sceVideoOutGetOutputStatusWithVrr(int handle, void* status) try {
     std::array<std::byte, 80> bytes{};
     const auto output = outputStatus(*cfg);
     std::memcpy(bytes.data(), &output, sizeof(output));
-    std::memcpy(status, bytes.data(), bytes.size());
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, bytes.data(), bytes.size());
+    errno = savedErrno;
+    if (!copied) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
@@ -282,12 +314,18 @@ int APS5_VABI sceVideoOutGetResolutionStatus(int handle, VideoOutResolutionStatu
     }
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
-    *status = VideoOutResolutionStatus{};
-    status->fullWidth = cfg->width;
-    status->fullHeight = cfg->height;
-    status->paneWidth = cfg->width;
-    status->paneHeight = cfg->height;
-    status->refreshRate = (cfg->outputMode == VIDEO_OUT_OUTPUT_MODE_119_88HZ) ? VIDEO_OUT_REFRESH_RATE_119_88HZ : VIDEO_OUT_REFRESH_RATE_59_94HZ;
+    VideoOutResolutionStatus localStatus{};
+    localStatus.fullWidth = cfg->width;
+    localStatus.fullHeight = cfg->height;
+    localStatus.paneWidth = cfg->width;
+    localStatus.paneHeight = cfg->height;
+    localStatus.refreshRate = (cfg->outputMode == VIDEO_OUT_OUTPUT_MODE_119_88HZ) ? VIDEO_OUT_REFRESH_RATE_119_88HZ : VIDEO_OUT_REFRESH_RATE_59_94HZ;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &localStatus, sizeof(localStatus));
+    errno = savedErrno;
+    if (!copied) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
