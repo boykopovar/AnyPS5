@@ -397,34 +397,33 @@ const ClosedDescriptorRegistration g_closedDescriptorRegistration;
 extern "C" {
 
 int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
-    return File::RunKernelFileCall([&]() -> int {
-        if (File::InvalidOpenFlags(flags)) return SCE_KERNEL_ERROR_EINVAL;
-        std::string copy;
-        if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceKernelError(error);
-        path = copy.c_str();
-        if (copy.empty()) return SCE_KERNEL_ERROR_ENOENT;
-        APS5_LOG_OUT("path=%s flags=0x%X nativeFlags=0x%X mode=0%o", path, flags, MapFlags(flags), mode);
-        if (path != nullptr && File::IsRandomDevicePath(path)) {
-            if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY) throw std::runtime_error(std::string("sceKernelOpen") + ": writing to " + path + " is not implemented");
-            const int fd = File::OpenRandomDevice();
-            if (fd < 0) return SceErrorFromErrno(errno);
-            File::RememberDescriptor(fd, flags);
-            return fd;
-        }
-        std::filesystem::path native;
-        const bool module = (flags & (SCE_KERNEL_O_ACCMODE | SCE_KERNEL_O_CREAT)) == SCE_KERNEL_O_RDONLY;
-        if (const int error = ResolvePathError_nid_no_patch(path, native, module, true)) {
-            const int result = SceKernelError(error);
-            APS5_LOG_ERR("open failed path=%s resolveError=%d result=0x%08X", path != nullptr ? path : "<null>", error, static_cast<unsigned>(result));
-            return result;
-        }
-        const int result = OpenNative(native, flags, mode);
-        if (result < 0) {
-            const auto resolved = native.u8string();
-            APS5_LOG_ERR("open failed path=%s resolvedPath=%s result=0x%08X", path != nullptr ? path : "<null>", reinterpret_cast<const char*>(resolved.c_str()), static_cast<unsigned>(result));
-        }
-        return result;
-    });
+    const int savedErrno = *__error_nid_postfix();
+    if (File::InvalidOpenFlags(flags)) return File::KernelFileResult(savedErrno, SCE_KERNEL_ERROR_EINVAL);
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return File::KernelFileResult(savedErrno, SceKernelError(error));
+    path = copy.c_str();
+    if (copy.empty()) return File::KernelFileResult(savedErrno, SCE_KERNEL_ERROR_ENOENT);
+    APS5_LOG_OUT("path=%s flags=0x%X nativeFlags=0x%X mode=0%o", path, flags, MapFlags(flags), mode);
+    if (path != nullptr && File::IsRandomDevicePath(path)) {
+        if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY) throw std::runtime_error(std::string(__func__) + ": writing to " + path + " is not implemented");
+        const int fd = File::OpenRandomDevice();
+        if (fd < 0) return File::KernelFileResult(savedErrno, SceErrorFromErrno(errno));
+        File::RememberDescriptor(fd, flags);
+        return File::KernelFileResult(savedErrno, fd);
+    }
+    std::filesystem::path native;
+    const bool module = (flags & (SCE_KERNEL_O_ACCMODE | SCE_KERNEL_O_CREAT)) == SCE_KERNEL_O_RDONLY;
+    if (const int error = ResolvePathError_nid_no_patch(path, native, module, true)) {
+        const int result = SceKernelError(error);
+        APS5_LOG_ERR("open failed path=%s resolveError=%d result=0x%08X", path != nullptr ? path : "<null>", error, static_cast<unsigned>(result));
+        return File::KernelFileResult(savedErrno, result);
+    }
+    const int result = OpenNative(native, flags, mode);
+    if (result < 0) {
+        const auto resolved = native.u8string();
+        APS5_LOG_ERR("open failed path=%s resolvedPath=%s result=0x%08X", path != nullptr ? path : "<null>", reinterpret_cast<const char*>(resolved.c_str()), static_cast<unsigned>(result));
+    }
+    return File::KernelFileResult(savedErrno, result);
 }
 
 int OpenInDirectory_nid_no_patch(int directory, const char* path, int flags, std::uint16_t mode) {

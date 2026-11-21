@@ -39,12 +39,18 @@ std::int64_t NativePositioned_nid_no_patch(int descriptor, void* buf, std::size_
 extern "C" bool DescriptorIsOpen_nid_no_patch(int descriptor);
 
 namespace File {
+inline int KernelFileResult(int saved, int result) {
+    *__error_nid_postfix() = result < 0 ? (result & 0xffff) : saved;
+    return result;
+}
+inline std::int64_t KernelFileResult(int saved, std::int64_t result) {
+    *__error_nid_postfix() = result < 0 ? (static_cast<int>(result) & 0xffff) : saved;
+    return result;
+}
 template <typename TCall>
 auto RunKernelFileCall(TCall call) {
     const int saved = *__error_nid_postfix();
-    const auto result = call();
-    *__error_nid_postfix() = result < 0 ? (static_cast<int>(result) & 0xffff) : saved;
-    return result;
+    return KernelFileResult(saved, call());
 }
 #ifdef _WIN32
 std::optional<std::filesystem::path> WindowsDescriptorPath_nid_no_patch(int descriptor);
