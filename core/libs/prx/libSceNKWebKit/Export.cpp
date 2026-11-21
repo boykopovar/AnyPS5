@@ -9696,30 +9696,6 @@ int APS5_VABI WKFrameInfoCreateFrameHandleRef() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKFramePolicyListenerDownload() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFramePolicyListenerIgnore() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFramePolicyListenerUseInNewProcess() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFramePolicyListenerUseInNewProcessWithPolicies() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFramePolicyListenerUse() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFramePolicyListenerUseWithPolicies() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKFrameStopLoading() {
     NotImplemented_nid_no_patch(__func__);
 }
