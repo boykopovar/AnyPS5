@@ -31,6 +31,7 @@
 #include "prx/libSceNKWebKit/include/ExceptionDataExports.hpp"
 #include "prx/libSceNKWebKit/include/InspectorExports.hpp"
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
+#include "prx/libSceNKWebKit/include/StringPrintStreamExports.hpp"
 #include "prx/libSceNKWebKit/include/JscExports.hpp"
 #include "prx/libSceNKWebKit/include/NoOpExports.hpp"
 #include "prx/libSceNKWebKit/include/ProtoCallFrameExports.hpp"
