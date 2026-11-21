@@ -3,10 +3,12 @@
  * See https://llvm.org/LICENSE.txt for license information.
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception */
 #include "prx/libSceAddressSanitizer/src/Asan.hpp"
+#include "prx/libSceAddressSanitizer/src/AsanRuntime.hpp"
 #include "prx/libSceAddressSanitizer/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Shutdown.hpp"
-#include "prx/libkernel/include/Api.hpp"
+
+#include <filesystem>
 
 #include <algorithm>
 #include <array>
@@ -46,58 +48,7 @@
 #define APS5_GUEST_ASAN_HOST_SANITIZED 1
 #endif
 
-namespace {
-
-using uptr = std::uintptr_t;
-using u8 = std::uint8_t;
-using s8 = std::int8_t;
-
-constexpr uptr ShadowScale = 3;
-constexpr uptr Granularity = uptr{1} << ShadowScale;
-constexpr uptr ShadowOffset = uptr{1} << 40;
-constexpr uptr MemoryEnd = uptr{1} << 47;
-constexpr uptr ShadowBegin = ShadowOffset;
-constexpr uptr ShadowEnd = ShadowOffset + (MemoryEnd >> ShadowScale);
-constexpr uptr ChunkBytes = uptr{1} << 30;
-constexpr std::size_t ChunkCount = (ShadowEnd - ShadowBegin) / ChunkBytes;
-constexpr uptr AllocaRedzoneSize = 32;
-constexpr uptr AllocaRedzoneMask = AllocaRedzoneSize - 1;
-constexpr uptr MaxExpectedCleanupSize = uptr{64} << 20;
-constexpr uptr StackPageSize = 0x4000;
-constexpr std::size_t BuggyPcPoolSize = 25;
-constexpr std::size_t GlobalsPerDescription = 4;
-constexpr std::size_t GuestStringMaximum = 4096;
-
-constexpr u8 HeapLeftRedzoneMagic = 0xfa;
-constexpr u8 HeapFreeMagic = 0xfd;
-constexpr u8 StackLeftRedzoneMagic = 0xf1;
-constexpr u8 StackMidRedzoneMagic = 0xf2;
-constexpr u8 StackRightRedzoneMagic = 0xf3;
-constexpr u8 StackAfterReturnMagic = 0xf5;
-constexpr u8 InitializationOrderMagic = 0xf6;
-constexpr u8 UserPoisonedMemoryMagic = 0xf7;
-constexpr u8 ContiguousContainerOOBMagic = 0xfc;
-constexpr u8 StackUseAfterScopeMagic = 0xf8;
-constexpr u8 GlobalRedzoneMagic = 0xf9;
-constexpr u8 InternalHeapMagic = 0xfe;
-constexpr u8 ArrayCookieMagic = 0xac;
-constexpr u8 IntraObjectRedzone = 0xbb;
-constexpr u8 AllocaLeftMagic = 0xca;
-constexpr u8 AllocaRightMagic = 0xcb;
-
-struct Flags {
-    bool haltOnError = true;
-    bool allowUserPoisoning = true;
-    bool poisonPartial = true;
-    bool printLegend = true;
-    bool poisonArrayCookie = true;
-    bool checkInitializationOrder = false;
-    bool strictInitOrder = false;
-    bool suppressEqualPcs = true;
-    bool printSummary = true;
-    int reportGlobals = 1;
-    int exitCode = 1;
-};
+namespace Asan::Runtime {
 
 bool ParseBool(std::string_view value, std::string_view name) {
     if (value == "1" || value == "true" || value == "yes") return true;
@@ -139,8 +90,31 @@ Flags ReadFlags() {
         else if (name == "print_summary") flags.printSummary = ParseBool(value, name);
         else if (name == "report_globals") flags.reportGlobals = ParseInt(value, name);
         else if (name == "exitcode") flags.exitCode = ParseInt(value, name);
+        else if (name == "poison_heap") flags.poisonHeap = ParseBool(value, name);
+        else if (name == "check_malloc_usable_size") flags.checkMallocUsableSize = ParseBool(value, name);
+        else if (name == "allocator_may_return_null") flags.allocatorMayReturnNull = ParseBool(value, name);
+        else if (name == "allocator_frees_and_returns_null_on_realloc_zero") flags.allocatorFreesAndReturnsNullOnReallocZero = ParseBool(value, name);
+        else if (name == "detect_container_overflow") flags.detectContainerOverflow = ParseBool(value, name);
+        else if (name == "detect_stack_use_after_return") flags.detectStackUseAfterReturn = ParseBool(value, name);
+        else if (name == "quarantine_size_mb") flags.quarantineSizeMb = ParseInt(value, name);
+        else if (name == "redzone") flags.redzone = ParseInt(value, name);
+        else if (name == "max_redzone") flags.maxRedzone = ParseInt(value, name);
+        else if (name == "max_malloc_fill_size") flags.maxMallocFillSize = ParseInt(value, name);
+        else if (name == "malloc_fill_byte") flags.mallocFillByte = ParseInt(value, name);
+        else if (name == "max_free_fill_size") flags.maxFreeFillSize = ParseInt(value, name);
+        else if (name == "free_fill_byte") flags.freeFillByte = ParseInt(value, name);
+        else if (name == "min_uar_stack_size_log") flags.minUarStackSizeLog = ParseInt(value, name);
+        else if (name == "max_uar_stack_size_log") flags.maxUarStackSizeLog = ParseInt(value, name);
+        else if (name == "max_allocation_size_mb") flags.maxAllocationSizeMb = ParseInt(value, name);
         else throw std::invalid_argument("guest AddressSanitizer: unsupported option " + std::string(name));
     }
+    const auto powerOfTwo = [](int value) { return value > 0 && (value & (value - 1)) == 0; };
+    if (flags.redzone < 16 || flags.redzone > 2048 || !powerOfTwo(flags.redzone)) throw std::invalid_argument("guest AddressSanitizer: redzone must be a power of two in [16, 2048]");
+    if (flags.maxRedzone < 16 || flags.maxRedzone > 2048 || !powerOfTwo(flags.maxRedzone)) throw std::invalid_argument("guest AddressSanitizer: max_redzone must be a power of two in [16, 2048]");
+    if (flags.maxRedzone < flags.redzone) throw std::invalid_argument("guest AddressSanitizer: max_redzone is smaller than redzone");
+    if (flags.minUarStackSizeLog > flags.maxUarStackSizeLog) throw std::invalid_argument("guest AddressSanitizer: min_uar_stack_size_log exceeds max_uar_stack_size_log");
+    if (flags.mallocFillByte < 0 || flags.mallocFillByte > 255 || flags.freeFillByte < 0 || flags.freeFillByte > 255) throw std::invalid_argument("guest AddressSanitizer: fill bytes must be in [0, 255]");
+    if (flags.maxMallocFillSize < 0 || flags.maxFreeFillSize < 0 || flags.maxAllocationSizeMb < 0) throw std::invalid_argument("guest AddressSanitizer: sizes must not be negative");
     return flags;
 }
 
@@ -207,6 +181,10 @@ void MapShadow() {
 #endif
     shadowReady.store(true, std::memory_order_release);
 #endif
+}
+
+bool ShadowReady() {
+    return shadowReady.load(std::memory_order_acquire);
 }
 
 void EnsureShadow() {
@@ -334,12 +312,63 @@ int ProcessId() {
 #endif
 }
 
+std::mutex reportPathMutex;
+std::string reportPrefix;
+std::filesystem::path reportHostPrefix;
+std::string reportFullPath;
+std::FILE* reportFile = nullptr;
+bool reportToStdout = false;
+
+std::FILE* ReportSinkLocked() {
+    if (reportToStdout) return stdout;
+    if (reportPrefix.empty()) return stderr;
+    if (reportFile == nullptr) {
+        const std::string suffix = "." + std::to_string(ProcessId());
+        std::filesystem::path host = reportHostPrefix;
+        host += suffix;
+        std::error_code error;
+        if (host.has_parent_path()) std::filesystem::create_directories(host.parent_path(), error);
+        reportFile = std::fopen(host.string().c_str(), "w");
+        if (reportFile == nullptr) throw std::runtime_error("guest AddressSanitizer: cannot open report file " + host.string());
+        reportFullPath = reportPrefix + suffix;
+    }
+    return reportFile;
+}
+
+void Emit(const std::string& text) {
+    std::lock_guard lock(reportPathMutex);
+    std::FILE* const sink = ReportSinkLocked();
+    std::fwrite(text.data(), 1, text.size(), sink);
+    std::fflush(sink);
+}
+
+void SetReportPath(const char* path) {
+    Require(path != nullptr, "guest AddressSanitizer: null report path");
+    std::string text;
+    if (CopyGuestString_nid_no_patch(path, GuestStringMaximum, text) != 0) throw std::invalid_argument("guest AddressSanitizer: report path is not readable");
+    std::lock_guard lock(reportPathMutex);
+    if (reportFile != nullptr) std::fclose(reportFile);
+    reportFile = nullptr;
+    reportFullPath.clear();
+    reportToStdout = text == "stdout";
+    if (text == "stdout" || text == "stderr") {
+        reportPrefix.clear();
+        reportHostPrefix.clear();
+        return;
+    }
+    reportPrefix = text;
+    reportHostPrefix = ResolvePath_nid_no_patch(text.c_str());
+}
+
+const char* GetReportPath() {
+    std::lock_guard lock(reportPathMutex);
+    ReportSinkLocked();
+    return reportFullPath.c_str();
+}
+
 std::string ReportLine(const std::string& text) {
     return Format("==%d==", ProcessId()) + text;
 }
-
-using ErrorReportCallback = void(APS5_VABI*)(const char*);
-using DeathCallback = void(APS5_VABI*)();
 
 std::atomic<ErrorReportCallback> errorReportCallback{nullptr};
 std::atomic<DeathCallback> deathCallback{nullptr};
@@ -359,18 +388,6 @@ bool SuppressErrorReport(uptr pc) {
     }
     Die();
 }
-
-struct CurrentError {
-    bool present = false;
-    bool generic = false;
-    uptr pc = 0;
-    uptr bp = 0;
-    uptr sp = 0;
-    uptr address = 0;
-    int isWrite = 0;
-    uptr accessSize = 0;
-    const char* description = "";
-};
 
 CurrentError currentError;
 std::mutex reportMutex;
@@ -448,21 +465,43 @@ std::string DescribeRelativeToGlobal(uptr address, uptr accessSize, const Global
     return text + GlobalNameIfAscii(global);
 }
 
-std::string DescribeAccessedAddress(uptr address, uptr accessSize) {
-    const auto globals = GlobalsForAddress(address);
-    if (globals.empty())
-        return Format("Address %s is a wild pointer inside of access range of size %s.\n", Pointer(address).c_str(), Pointer(accessSize).c_str());
+std::string DescribeGlobals(uptr address, uptr accessSize, const std::vector<Global>& globals) {
     std::string text;
     for (const auto& global : globals) text += DescribeRelativeToGlobal(address, accessSize, global);
     return text;
 }
 
+std::string DescribeAccessedAddress(uptr address, uptr accessSize) {
+    std::string text;
+    if (DescribeHeapAddress(address, accessSize, &text)) return text;
+    if (DescribeStackAddress(address, accessSize, &text)) return text;
+    const auto globals = GlobalsForAddress(address);
+    if (!globals.empty()) return DescribeGlobals(address, accessSize, globals);
+    return Format("Address %s is a wild pointer inside of access range of size %s.\n", Pointer(address).c_str(), Pointer(accessSize).c_str());
+}
+
 std::string DescribeAddress(uptr address) {
     const auto globals = GlobalsForAddress(address);
-    if (globals.empty()) return "AddressSanitizer can not describe address in more detail (wild memory access suspected).\n";
+    if (!globals.empty()) return DescribeGlobals(address, 1, globals);
     std::string text;
-    for (const auto& global : globals) text += DescribeRelativeToGlobal(address, 1, global);
-    return text;
+    if (DescribeStackAddress(address, 1, &text)) return text;
+    if (DescribeHeapAddress(address, 1, &text)) return text;
+    return "AddressSanitizer can not describe address in more detail (wild memory access suspected).\n";
+}
+
+bool GlobalRegionForAddress(uptr address, char* name, uptr nameSize, uptr* begin, uptr* size) {
+    const auto globals = GlobalsForAddress(address);
+    if (globals.empty()) return false;
+    const Global& global = globals.front();
+    if (name != nullptr && nameSize > 0) {
+        const std::string text = GuestString(global.name);
+        const std::size_t count = std::min<std::size_t>(text.size(), nameSize - 1);
+        std::memcpy(name, text.data(), count);
+        name[count] = '\0';
+    }
+    *begin = global.beg;
+    *size = global.size;
+    return true;
 }
 
 std::string StackLine(uptr pc) {
@@ -525,47 +564,29 @@ std::string ShadowMemoryForAddress(uptr address) {
     return text;
 }
 
-class ScopedErrorReport {
-public:
-    explicit ScopedErrorReport(bool fatal) : halt(fatal || GetFlags().haltOnError) {
-        if (reportingOnThisThread) {
-            const std::string nested = ReportLine("AddressSanitizer: nested bug in the same thread, aborting.\n");
-            std::fwrite(nested.data(), 1, nested.size(), stderr);
-            std::fflush(stderr);
-            Die();
-        }
-        reportingOnThisThread = true;
-        lock = std::unique_lock(reportMutex);
-        text = "=================================================================\n";
+ScopedErrorReport::ScopedErrorReport(bool fatal) : halt(fatal || GetFlags().haltOnError) {
+    if (reportingOnThisThread) {
+        Emit(ReportLine("AddressSanitizer: nested bug in the same thread, aborting.\n"));
+        Die();
     }
+    reportingOnThisThread = true;
+    lock = std::unique_lock(reportMutex);
+    text = "=================================================================\n";
+}
 
-    ScopedErrorReport(const ScopedErrorReport&) = delete;
-    ScopedErrorReport& operator=(const ScopedErrorReport&) = delete;
+void ScopedErrorReport::Finish() {
+    if (halt) text += ReportLine("ABORTING\n");
+    Emit(text);
+    if (const ErrorReportCallback callback = errorReportCallback.load(std::memory_order_acquire)) callback(text.c_str());
+    if (halt) Die();
+    currentError = CurrentError{};
+    lock.unlock();
+    reportingOnThisThread = false;
+}
 
-    void Append(const std::string& more) { text += more; }
-
-    void Record(const CurrentError& error) { currentError = error; }
-
-    void Finish() {
-        if (halt) text += ReportLine("ABORTING\n");
-        std::fwrite(text.data(), 1, text.size(), stderr);
-        std::fflush(stderr);
-        if (const ErrorReportCallback callback = errorReportCallback.load(std::memory_order_acquire)) callback(text.c_str());
-        if (halt) Die();
-        currentError = CurrentError{};
-        lock.unlock();
-        reportingOnThisThread = false;
-    }
-
-    ~ScopedErrorReport() {
-        reportingOnThisThread = false;
-    }
-
-private:
-    bool halt;
-    std::unique_lock<std::mutex> lock;
-    std::string text;
-};
+ScopedErrorReport::~ScopedErrorReport() {
+    reportingOnThisThread = false;
+}
 
 const char* GenericBugType(uptr address, uptr accessSize, u8* shadowValue) {
     *shadowValue = 0;
@@ -783,29 +804,15 @@ void UnpoisonStack(uptr bottom, uptr top) {
                                                       "False positive error reports may follow\n"
                                                       "For details see https://github.com/google/sanitizers/issues/189\n",
                                                       Pointer(top).c_str(), Pointer(bottom).c_str(), Pointer(top - bottom).c_str(), static_cast<std::ptrdiff_t>(top - bottom)));
-        std::fwrite(warning.data(), 1, warning.size(), stderr);
-        std::fflush(stderr);
+        Emit(warning);
         return;
     }
     PoisonShadow(bottom, RoundUp(top - bottom, Granularity), 0);
 }
 
-bool CurrentGuestStack(uptr* bottom, uptr* top) {
-    const Pthread self = scePthreadSelf();
-    if (self == nullptr) return false;
-    PthreadAttr attribute = nullptr;
-    if (scePthreadAttrInit(&attribute) != 0) return false;
-    void* address = nullptr;
-    std::size_t bytes = 0;
-    const bool known = scePthreadAttrGet(self, &attribute) == 0 && scePthreadAttrGetstack(&attribute, &address, &bytes) == 0;
-    scePthreadAttrDestroy(&attribute);
-    if (!known || address == nullptr || bytes == 0) return false;
-    *bottom = reinterpret_cast<uptr>(address);
-    *top = *bottom + bytes;
-    return true;
 }
 
-}
+using namespace Asan::Runtime;
 
 namespace Asan {
 
@@ -837,6 +844,10 @@ void CheckSmallRegion(std::uintptr_t address, std::size_t size, bool isWrite, st
     [[gnu::noinline]] void APS5_VABI __asan_##type##size##_noabort(std::uintptr_t address) { \
         APS5_ASAN_CALLER_PC_BP_SP;                                                                  \
         CheckAccess(address, size, isWrite, false, pc, bp, sp);                                     \
+    } \
+    [[gnu::noinline]] void APS5_VABI __asan_exp_##type##size##_noabort(std::uintptr_t address, std::uint32_t) { \
+        APS5_ASAN_CALLER_PC_BP_SP;                                                                  \
+        CheckAccess(address, size, isWrite, false, pc, bp, sp);                                     \
     }
 
 #define APS5_ASAN_REPORT(type, isWrite, size)                                                              \
@@ -851,6 +862,11 @@ void CheckSmallRegion(std::uintptr_t address, std::size_t size, bool isWrite, st
         ReportGenericError(pc, bp, sp, address, isWrite, size, true);                                      \
     }                                                                                                      \
     [[gnu::noinline]] void APS5_VABI __asan_report_##type##size##_noabort(std::uintptr_t address) { \
+        APS5_ASAN_CALLER_PC_BP_SP;                                                                         \
+        EnsureShadow();                                                                                    \
+        ReportGenericError(pc, bp, sp, address, isWrite, size, false);                                     \
+    } \
+    [[gnu::noinline]] void APS5_VABI __asan_report_exp_##type##size##_noabort(std::uintptr_t address, std::uint32_t) { \
         APS5_ASAN_CALLER_PC_BP_SP;                                                                         \
         EnsureShadow();                                                                                    \
         ReportGenericError(pc, bp, sp, address, isWrite, size, false);                                     \
@@ -895,6 +911,11 @@ APS5_ASAN_REPORT(store, true, 16)
     CheckRegion(address, size, false, false, pc, bp, sp);
 }
 
+[[gnu::noinline]] void APS5_VABI __asan_exp_loadN_noabort(std::uintptr_t address, std::uintptr_t size, std::uint32_t) {
+    APS5_ASAN_CALLER_PC_BP_SP;
+    CheckRegion(address, size, false, false, pc, bp, sp);
+}
+
 [[gnu::noinline]] void APS5_VABI __asan_storeN(std::uintptr_t address, std::uintptr_t size) {
     APS5_ASAN_CALLER_PC_BP_SP;
     CheckRegion(address, size, true, true, pc, bp, sp);
@@ -906,6 +927,11 @@ APS5_ASAN_REPORT(store, true, 16)
 }
 
 [[gnu::noinline]] void APS5_VABI __asan_storeN_noabort(std::uintptr_t address, std::uintptr_t size) {
+    APS5_ASAN_CALLER_PC_BP_SP;
+    CheckRegion(address, size, true, false, pc, bp, sp);
+}
+
+[[gnu::noinline]] void APS5_VABI __asan_exp_storeN_noabort(std::uintptr_t address, std::uintptr_t size, std::uint32_t) {
     APS5_ASAN_CALLER_PC_BP_SP;
     CheckRegion(address, size, true, false, pc, bp, sp);
 }
@@ -928,6 +954,12 @@ APS5_ASAN_REPORT(store, true, 16)
     ReportGenericError(pc, bp, sp, address, false, size, false);
 }
 
+[[gnu::noinline]] void APS5_VABI __asan_report_exp_load_n_noabort(std::uintptr_t address, std::uintptr_t size, std::uint32_t) {
+    APS5_ASAN_CALLER_PC_BP_SP;
+    EnsureShadow();
+    ReportGenericError(pc, bp, sp, address, false, size, false);
+}
+
 [[gnu::noinline]] void APS5_VABI __asan_report_store_n(std::uintptr_t address, std::uintptr_t size) {
     APS5_ASAN_CALLER_PC_BP_SP;
     EnsureShadow();
@@ -941,6 +973,12 @@ APS5_ASAN_REPORT(store, true, 16)
 }
 
 [[gnu::noinline]] void APS5_VABI __asan_report_store_n_noabort(std::uintptr_t address, std::uintptr_t size) {
+    APS5_ASAN_CALLER_PC_BP_SP;
+    EnsureShadow();
+    ReportGenericError(pc, bp, sp, address, true, size, false);
+}
+
+[[gnu::noinline]] void APS5_VABI __asan_report_exp_store_n_noabort(std::uintptr_t address, std::uintptr_t size, std::uint32_t) {
     APS5_ASAN_CALLER_PC_BP_SP;
     EnsureShadow();
     ReportGenericError(pc, bp, sp, address, true, size, false);
@@ -993,9 +1031,7 @@ void APS5_VABI __sanitizer_set_death_callback(void(APS5_VABI* callback)()) {
 
 void APS5_VABI __asan_describe_address(std::uintptr_t address) {
     EnsureShadow();
-    const std::string text = DescribeAddress(address);
-    std::fwrite(text.data(), 1, text.size(), stderr);
-    std::fflush(stderr);
+    Emit(DescribeAddress(address));
 }
 
 void APS5_VABI __asan_init() {
@@ -1029,10 +1065,12 @@ void APS5_VABI __asan_get_shadow_mapping(std::uintptr_t* shadowScale, std::uintp
     if (!shadowReady.load(std::memory_order_acquire)) return;
     uptr stackBottom = 0;
     uptr top = 0;
-    if (!CurrentGuestStack(&stackBottom, &top)) return;
-    volatile char localStack = 0;
-    const uptr bottom = (reinterpret_cast<uptr>(&localStack) - StackPageSize) & ~(StackPageSize - 1);
-    UnpoisonStack(bottom, top);
+    if (CurrentStackBounds(&stackBottom, &top)) {
+        volatile char localStack = 0;
+        const uptr bottom = (reinterpret_cast<uptr>(&localStack) - StackPageSize) & ~(StackPageSize - 1);
+        UnpoisonStack(bottom, top);
+    }
+    FakeStackHandleNoReturn();
 }
 
 void APS5_VABI __asan_poison_memory_region(const volatile void* address, std::uintptr_t size) {
@@ -1144,8 +1182,7 @@ std::uintptr_t APS5_VABI __asan_load_cxx_array_cookie(std::uintptr_t* pointer) {
     if (value == ArrayCookieMagic) return cookie;
     if (value == HeapFreeMagic) {
         const std::string warning = ReportLine("AddressSanitizer: loaded array cookie from free-d memory; expect a double-free report\n");
-        std::fwrite(warning.data(), 1, warning.size(), stderr);
-        std::fflush(stderr);
+        Emit(warning);
         return 0;
     }
     return cookie;
@@ -1237,5 +1274,28 @@ void APS5_VABI __asan_after_dynamic_init() {
     AccessMemoryRange(reinterpret_cast<uptr>(to), size, true, pc, bp, sp);
     return std::memmove(to, from, size);
 }
+
+
+void APS5_VABI __sanitizer_set_report_path(const char* path) {
+    SetReportPath(path);
+}
+
+const char* APS5_VABI __sanitizer_get_report_path() {
+    return GetReportPath();
+}
+
+[[gnu::noinline]] void APS5_VABI __sanitizer_print_stack_trace() {
+    Emit(StackLine(reinterpret_cast<uptr>(__builtin_return_address(0))));
+}
+
+void APS5_VABI __sanitizer_sandbox_on_notify(void*) {}
+
+void APS5_VABI __sanitizer_ptr_cmp(void*, void*) {}
+
+void APS5_VABI __sanitizer_ptr_sub(void*, void*) {}
+
+void APS5_VABI __sanitizer_malloc_hook(const volatile void*, std::size_t) {}
+
+void APS5_VABI __sanitizer_free_hook(const volatile void*) {}
 
 }
