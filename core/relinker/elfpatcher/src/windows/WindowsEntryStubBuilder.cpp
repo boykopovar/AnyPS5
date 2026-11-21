@@ -179,8 +179,12 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const bool unscopedImports = std::any_of(imports.begin(), imports.end(), [](const auto& import) { return import.Library.empty(); });
     for (const auto& import : imports) {
         const auto library = Domain::NeededLibraryName(import.Library);
+        const auto* scope = import.Library.empty() && import.TargetModule >= 0 && static_cast<std::size_t>(import.TargetModule) < guestModules.size()
+            ? &guestModules[import.TargetModule].ImportScope : nullptr;
         std::vector<std::uint32_t> order;
         for (std::size_t index = 0; index < libraries.size(); ++index) {
+            if (scope != nullptr && !scope->empty() && index < guestModules.size() &&
+                std::find(scope->begin(), scope->end(), guestModules[index].Path) == scope->end()) continue;
             auto name = std::filesystem::path(libraries[index]).filename().string();
             if (name.ends_with(".guest.prx")) name.resize(name.size() - 10);
             const bool guestName = index < guestModules.size() &&

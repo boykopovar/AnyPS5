@@ -203,11 +203,11 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     };
     for (const auto& name : missingNeeded) resolveIdentity(name);
     for (const auto& image : images) for (const auto& name : image.Dependencies) resolveIdentity(name);
-    const auto rejectSharedImport = [&](const std::string& name, const std::string& importer) {
+    const auto rejectSharedImport = [&](const std::string& name, const std::string& importer, const std::set<std::size_t>* scope = nullptr) {
         const auto shared = sharedExports.find(name);
         if (shared == sharedExports.end()) return;
         std::string providers;
-        for (const auto provider : shared->second) providers += " " + Io::Utf8Path(images[provider].SourcePath);
+        for (const auto provider : shared->second) if (scope == nullptr || scope->contains(provider)) providers += " " + Io::Utf8Path(images[provider].SourcePath);
         throw Domain::RelinkerException("Ambiguous guest import " + name + " in " + importer + ": exported by" + providers);
     };
     const auto rename = [](std::vector<std::uint8_t>& symbols, std::vector<std::uint8_t>& strings, std::size_t index, const std::string& name) {
@@ -292,6 +292,29 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             const auto found = findGuest(name);
             if (found != guestNames.end() && found->second != index) dependencies[index].insert(found->second);
         }
+    }
+    const auto standardDirectory = [&](const std::size_t index) {
+        const auto directory = images[index].SourcePath.parent_path().lexically_normal();
+        return directory == (root / "sce_module").lexically_normal() || directory == (root / "sce_modules").lexically_normal() || directory == (root / "prx").lexically_normal();
+    };
+    const auto isRuntime = [&](const std::size_t index) {
+        return (executableLoadsModules && standardDirectory(index)) ||
+            std::find(runtimeDirectories.begin(), runtimeDirectories.end(), images[index].SourcePath.parent_path().lexically_normal()) != runtimeDirectories.end();
+    };
+    std::vector<std::set<std::size_t>> importScopes(images.size());
+    for (std::size_t index = 0; index < images.size(); ++index) {
+        auto& scope = importScopes[index];
+        std::vector<std::size_t> pending{index};
+        for (std::size_t global = 0; global < images.size(); ++global)
+            if (standardDirectory(index) || !isRuntime(index) || standardDirectory(global) || !isRuntime(global)) pending.push_back(global);
+        while (!pending.empty()) {
+            const auto dependency = pending.back();
+            pending.pop_back();
+            if (!scope.insert(dependency).second) continue;
+            pending.insert(pending.end(), dependencies[dependency].begin(), dependencies[dependency].end());
+        }
+    }
+    for (std::size_t index = 0; index < images.size(); ++index) {
         std::set<std::size_t> referencedSymbols;
         for (const auto* table : {&images[index].Dynamic.RelaData, &images[index].Dynamic.RelaPltData}) {
             for (std::size_t offset = 0; offset < table->size(); offset += 24) {
@@ -306,24 +329,32 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 systemImports[index].insert(symbolIndex);
                 continue;
             }
+            const bool scopedImport = symbol.Library.empty() && symbol.QualifiedName == symbol.Name;
             const auto declared = symbol.Library.empty() ? guestNames.end() : findGuest(symbol.Library);
             const auto shared = sharedExports.find(symbol.Name);
-            if (shared == sharedExports.end() || declared == guestNames.end() || !shared->second.contains(declared->second))
+            if (!scopedImport && (shared == sharedExports.end() || declared == guestNames.end() || !shared->second.contains(declared->second)))
                 rejectSharedImport(symbol.Name, Io::Utf8Path(images[index].SourcePath));
             const auto found = exports.find(symbol.Name);
             const GuestExport* provider = nullptr;
             if (found != exports.end()) {
                 for (const auto& candidate : found->second) {
                     if (!symbol.Library.empty() && (declared == guestNames.end() || declared->second != candidate.Provider)) continue;
-                    if (provider != nullptr) throw Domain::RelinkerException("Ambiguous guest import after stripping #: " + symbol.Name);
+                    if (scopedImport && !importScopes[index].contains(candidate.Provider)) continue;
+                    if (provider != nullptr) {
+                        rejectSharedImport(symbol.Name, Io::Utf8Path(images[index].SourcePath), &importScopes[index]);
+                        throw Domain::RelinkerException("Ambiguous guest import after stripping #: " + symbol.Name);
+                    }
                     provider = &candidate;
                 }
             }
             if (provider != nullptr) {
+                if (macos && scopedImport) rejectSharedImport(symbol.Name, Io::Utf8Path(images[index].SourcePath));
+                if (windows && symbol.Library.empty() && !scopedImport)
+                    images[index].Symbols[symbolIndex].Library = Io::Utf8Path(images[provider->Provider].SourcePath.filename());
                 if ((symbol.Info & 15) != 0 && (symbol.Info & 15) != provider->Type) throw Domain::RelinkerException("Guest import/export type mismatch: " + symbol.Name);
                 if (provider->Type == 6 && (symbol.Info & 15) == 0 && referencedSymbols.contains(symbolIndex)) throw Domain::RelinkerException("Non-TLS relocation against guest TLS export: " + symbol.Name);
                 if (provider->Provider != index && referencedSymbols.contains(symbolIndex)) dependencies[index].insert(provider->Provider);
-                if (!windows && !macos && declared != guestNames.end() && sharedExports.contains(symbol.Name))
+                if (!windows && !macos && sharedExports.contains(symbol.Name))
                     importBindings[index].emplace(symbolIndex, bindingName(symbol.Name, provider->Provider));
             } else if (windows && (symbol.Info & 15) == 6) throw Domain::RelinkerException("Windows guest TLS import requires a guest TLS export: " + symbol.Name);
             if (provider == nullptr) systemImports[index].insert(symbolIndex);
@@ -334,14 +365,6 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         if (required[index]) return;
         required[index] = true;
         for (const auto dependency : dependencies[index]) require(dependency);
-    };
-    const auto standardDirectory = [&](const std::size_t index) {
-        const auto directory = images[index].SourcePath.parent_path().lexically_normal();
-        return directory == (root / "sce_module").lexically_normal() || directory == (root / "sce_modules").lexically_normal() || directory == (root / "prx").lexically_normal();
-    };
-    const auto isRuntime = [&](const std::size_t index) {
-        return (executableLoadsModules && standardDirectory(index)) ||
-            std::find(runtimeDirectories.begin(), runtimeDirectories.end(), images[index].SourcePath.parent_path().lexically_normal()) != runtimeDirectories.end();
     };
     for (const auto& name : neededNames) {
         const auto found = findGuest(name);
@@ -548,6 +571,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         runtime.UsePlatformTlsResolver = image.UsePlatformTlsResolver;
         runtime.Path = relativeDirectory + "/" + image.OutputName;
         runtime.Names = {Io::Utf8Path(image.SourcePath.filename()), image.Soname};
+        if (windows) for (const auto dependency : importScopes[index])
+            runtime.ImportScope.push_back(appDirectory(images[dependency]) + "/" + images[dependency].OutputName);
         runtime.DeferInitialization = deferred(index);
         if (runtime.DeferInitialization) runtime.DeferredSweep = deferredSweep;
         if (runtime.DeferInitialization) for (const auto dependency : dependencies[index]) if (deferred(dependency)) runtime.DeferredDependencies.push_back(images[dependency].OutputName);
