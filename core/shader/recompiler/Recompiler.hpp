@@ -733,6 +733,7 @@ struct DescriptorBinding {
     ElementFlags imageUnnormalizedBaseLevel;
     std::vector<std::uint64_t> imageSamplers;
     ElementFlags bufferRead;
+    ElementFlags bufferAtomicOnly;
     std::vector<std::uint32_t> bufferExtent;
 };
 
