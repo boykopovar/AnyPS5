@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceJxr/libSceJxr.hpp"
 #include "prx/libSceJxr/Factory.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -15,6 +16,10 @@ namespace {
 
 constexpr std::int64_t OutOfMemory = -101;
 constexpr std::int64_t UnsupportedFormat = -106;
+constexpr std::int64_t FileError = -102;
+constexpr const char* FilePath = "guest_jxr_factory_file.bin";
+constexpr const char* MissingPath = "guest_jxr_factory_missing.bin";
+constexpr const char* DecoderPath = "guest_jxr_factory_decoder.Jxr";
 
 bool failAllocation = false;
 int liveBlocks = 0;
@@ -117,6 +122,7 @@ void Codecs() {
     Require(PKCreateCodecFactory_nid_postfix(&raw, 0x0101) == 0 && raw, "codec factory creation fails");
     auto* factory = static_cast<Jxr::CodecFactory*>(raw);
     Require(factory->createCodec != nullptr, "CreateCodec slot");
+    Require(factory->createDecoderFromFile != nullptr, "CreateDecoderFromFile slot");
     Require(factory->createFormatConverter != nullptr, "CreateFormatConverter slot");
     Require(factory->release != nullptr, "Release slot");
     Require(reinterpret_cast<void* const*>(factory)[3] == nullptr && reinterpret_cast<void* const*>(factory)[4] == reinterpret_cast<void*>(factory->release), "Release is not at offset 0x20 behind an empty slot");
@@ -151,12 +157,132 @@ void Codecs() {
     Require(factory->release(&factory) == 0 && !factory, "codec factory release fails");
 }
 
+bool HasFileSlots(const Jxr::Stream* stream) {
+    return stream->end && stream->read && stream->write && stream->setPosition && stream->getPosition && stream->close;
+}
+
+void FileStreams() {
+    void* raw = nullptr;
+    Require(PKCreateFactory_nid_postfix(&raw, 0x0101) == 0 && raw, "factory creation fails");
+    auto* factory = static_cast<Jxr::Factory*>(raw);
+    const int blocks = liveBlocks;
+    std::remove(FilePath);
+    std::remove(MissingPath);
+
+    auto* stream = reinterpret_cast<Jxr::Stream*>(1);
+    Require(factory->createStreamFromFilename(&stream, FilePath, "w+b") == 0 && stream, "file stream creation fails");
+    Require(liveBlocks == blocks + 1, "file stream is not one guest block");
+    Require(stream->state[0] != 0 && stream->state[1] == 0 && stream->state[2] == 0 && stream->state[3] == 0, "file stream state");
+    Require(stream->memory == 0, "file stream is marked as memory");
+    Require(HasFileSlots(stream), "file stream slots");
+    const std::array<std::uint8_t, 6> data{9, 8, 7, 6, 5, 4};
+    std::array<std::uint8_t, 6> read{};
+    std::size_t position = 99;
+    Require(stream->write(stream, data.data(), data.size()) == 0, "file stream write");
+    Require(stream->getPosition(stream, &position) == 0 && position == 6, "file stream position after write");
+    Require(stream->setPosition(stream, 2) == 0 && stream->read(stream, read.data(), 4) == 0, "file stream read");
+    Require(std::memcmp(read.data(), data.data() + 2, 4) == 0, "file stream read data");
+    Require(stream->end(stream) == 0, "file stream end before EOF");
+    Require(stream->read(stream, read.data(), 1) == FileError && stream->end(stream) != 0, "file stream end at EOF");
+    Require(stream->close(&stream) == 0 && !stream, "file stream close");
+    Require(liveBlocks == blocks, "file stream close leaks");
+
+    stream = nullptr;
+    Require(factory->createStreamFromFilename(&stream, FilePath, "rb") == 0 && stream && HasFileSlots(stream), "file stream reopen fails");
+    read = {};
+    Require(stream->read(stream, read.data(), read.size()) == 0 && read == data, "file stream content is not kept");
+    Require(stream->write(stream, data.data(), 1) == FileError, "read-only file stream writes");
+    Require(stream->close(&stream) == 0 && !stream && liveBlocks == blocks, "read-only file stream close");
+
+    stream = reinterpret_cast<Jxr::Stream*>(1);
+    Require(factory->createStreamFromFilename(&stream, MissingPath, "rb") == FileError, "missing file code");
+    Require(stream && stream != reinterpret_cast<Jxr::Stream*>(1) && stream->state[0] == 0 && HasFileSlots(stream), "missing file stream");
+    Require(liveBlocks == blocks + 1, "missing file stream is not kept");
+    Require(stream->close(&stream) == 0 && !stream && liveBlocks == blocks, "missing file stream close");
+    Require(factory->createStreamFromFilename(&stream, FilePath, "z") == FileError && stream && stream->state[0] == 0, "invalid mode code");
+    Require(stream->close(&stream) == 0 && !stream && liveBlocks == blocks, "invalid mode stream close");
+
+    failAllocation = true;
+    stream = reinterpret_cast<Jxr::Stream*>(1);
+    Require(factory->createStreamFromFilename(&stream, MissingPath, "wb") == OutOfMemory && !stream, "file stream allocation failure code");
+    failAllocation = false;
+    Require(std::remove(MissingPath) != 0, "file is opened after the allocation fails");
+
+    RequireInvalidArgument([&] { factory->createStreamFromFilename(nullptr, FilePath, "rb"); }, "null file stream pointer is accepted");
+    Require(liveBlocks == blocks, "null file stream pointer allocates");
+    Require(factory->createStreamFromFilename(&stream, FilePath, "rb") == 0 && stream, "file stream for close checks");
+    auto* close = stream->close;
+    RequireInvalidArgument([&] { close(nullptr); }, "null close pointer is accepted");
+    Jxr::Stream* empty = nullptr;
+    RequireInvalidArgument([&] { close(&empty); }, "null stream is closed");
+    Require(close(&stream) == 0 && !stream && liveBlocks == blocks, "file stream close after checks");
+
+    Require(std::remove(FilePath) == 0, "file stream file is missing");
+    Require(factory->release(&factory) == 0 && !factory, "factory release fails");
+}
+
+void DecoderFromFile() {
+    void* raw = nullptr;
+    Require(PKCreateCodecFactory_nid_postfix(&raw, 0x0101) == 0 && raw, "codec factory creation fails");
+    auto* factory = static_cast<Jxr::CodecFactory*>(raw);
+    const int blocks = liveBlocks;
+    void* const untouched = reinterpret_cast<void*>(1);
+    void* decoder = untouched;
+
+    for (const char* name : {"guest_jxr_factory_decoder", "guest_jxr_factory.png", "guest_jxr_factory.jx", ".bmp"}) {
+        Require(factory->createDecoderFromFile(name, &decoder) == UnsupportedFormat, "unsupported extension code");
+    }
+    Require(decoder == untouched, "unsupported extension writes the decoder");
+    Require(factory->createDecoderFromFile("guest_jxr_factory_decoder", nullptr) == UnsupportedFormat,
+            "a name without an extension reads the decoder pointer");
+    Require(liveBlocks == blocks, "unsupported extension allocates");
+
+    for (const char* name : {"guest_jxr_factory_missing.WDP", "guest_jxr_factory_missing.hdp", "guest_jxr_factory_missing.jxrx",
+                             "guest_jxr_factory.jxr/missing"}) {
+        Require(factory->createDecoderFromFile(name, &decoder) == FileError, "missing file code");
+        Require(liveBlocks == blocks + 1, "missing file does not keep its stream");
+        liveBlocks = blocks;
+    }
+    Require(decoder == untouched, "missing file writes the decoder");
+
+    const auto missingCalls = NotImplementedCalls_nid_no_patch();
+    Require(factory->createDecoderFromFile("guest_jxr_factory_missing.jxr", nullptr) == FileError,
+            "missing .jxr with a null decoder is not a file-open error");
+    Require(NotImplementedCalls_nid_no_patch() == missingCalls, "missing .jxr reaches PKImageDecode_Create_WMP");
+    Require(liveBlocks == blocks + 1, "missing .jxr does not keep its stream");
+    liveBlocks = blocks;
+
+    auto* file = std::fopen(DecoderPath, "wb");
+    Require(file != nullptr && std::fputs("II", file) >= 0 && std::fclose(file) == 0, "decoder file setup");
+    const auto calls = NotImplementedCalls_nid_no_patch();
+    bool threw = false;
+    try {
+        factory->createDecoderFromFile(DecoderPath, &decoder);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && NotImplementedCalls_nid_no_patch() == calls + 1, "existing file does not reach PKImageDecode_Create_WMP");
+    Require(decoder == untouched, "unimplemented decoder creation writes the decoder");
+    Require(liveBlocks == blocks + 1, "stream is not opened before the decoder is created");
+    liveBlocks = blocks;
+    RequireInvalidArgument([&] { factory->createDecoderFromFile(DecoderPath, nullptr); }, "null decoder pointer is accepted");
+    Require(liveBlocks == blocks + 1, "null decoder pointer is rejected before the stream is opened");
+    liveBlocks = blocks;
+    RequireInvalidArgument([&] { factory->createDecoderFromFile(nullptr, &decoder); }, "null file name is accepted");
+    Require(liveBlocks == blocks && decoder == untouched, "null file name allocates or writes");
+    static_cast<void>(std::remove(DecoderPath));
+
+    Require(factory->release(&factory) == 0 && !factory, "codec factory release fails");
+}
+
 }
 
 int main() {
     InitializeHeap();
     Factory();
     Codecs();
+    FileStreams();
+    DecoderFromFile();
     Require(liveBlocks == 0, "blocks leaked");
     return 0;
 }

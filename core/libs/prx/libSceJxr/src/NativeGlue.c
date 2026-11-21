@@ -35,6 +35,9 @@ _Static_assert(offsetof(PKImageEncode, guidPixFormat) == 17 * sizeof(void*), "en
 _Static_assert(offsetof(PKImageEncode, uWidth) == 19 * sizeof(void*), "encoder width offset");
 _Static_assert(offsetof(PKImageEncode, bWMP) == 520, "encoder WMP flag offset");
 _Static_assert(offsetof(PKFormatConverter, pDecoder) == 9 * sizeof(void*), "converter decoder offset");
+_Static_assert(offsetof(PKImageDecode, Initialize) == 0, "decoder Initialize offset");
+_Static_assert(offsetof(PKImageDecode, pStream) == 88, "decoder stream offset");
+_Static_assert(offsetof(PKImageDecode, fStreamOwner) == 96, "decoder stream owner offset");
 _Static_assert(offsetof(PKImageDecode, WMP) == 19 * sizeof(void*), "decoder WMP offset");
 _Static_assert(offsetof(PKImageDecode, WMP.wmiI.cROILeftX) == 288, "decoder ROI left offset");
 _Static_assert(offsetof(PKImageDecode, WMP.wmiI.cROITopY) == 304, "decoder ROI top offset");
