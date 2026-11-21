@@ -1535,15 +1535,14 @@ std::uint32_t ImageTexelLockIndex(SpirvEmitterState& state, std::uint32_t coord,
     return Binary(state, spv::OpBitwiseXor, TypeU32(state), hash, Binary(state, spv::OpShiftRightLogical, TypeU32(state), hash, ConstantU32(state, 16u)));
 }
 
-std::uint32_t ImageAtomicNext64(SpirvEmitterState& state, IrOpcode opcode, std::uint32_t old, std::uint32_t value, std::uint32_t comparator) {
+std::uint32_t ImageAtomicNextScalar64(SpirvEmitterState& state, IrOpcode opcode, std::uint32_t current, std::uint32_t data, std::uint32_t comparator) {
     const auto u64 = TypeScalarU64(state);
-    const auto current = Unary(state, spv::OpBitcast, u64, old);
-    const auto data = Unary(state, spv::OpBitcast, u64, value);
+    const auto constant = [&](std::uint32_t low) { return state.module.Constant(spv::OpConstant, u64, low, 0u); };
     const auto pick = [&](spv::Op compare) { return Select(state, u64, Binary(state, compare, TypeBool(state), data, current), data, current); };
     std::uint32_t next = 0;
     switch (opcode) {
     case IrOpcode::ImageAtomicSwap64: next = data; break;
-    case IrOpcode::ImageAtomicCmpSwap64: next = Select(state, u64, Binary(state, spv::OpIEqual, TypeBool(state), current, Unary(state, spv::OpBitcast, u64, comparator)), data, current); break;
+    case IrOpcode::ImageAtomicCmpSwap64: next = Select(state, u64, Binary(state, spv::OpIEqual, TypeBool(state), current, comparator), data, current); break;
     case IrOpcode::ImageAtomicIAdd64: next = Binary(state, spv::OpIAdd, u64, current, data); break;
     case IrOpcode::ImageAtomicISub64: next = Binary(state, spv::OpISub, u64, current, data); break;
     case IrOpcode::ImageAtomicSMin64: next = pick(spv::OpSLessThan); break;
@@ -1553,9 +1552,20 @@ std::uint32_t ImageAtomicNext64(SpirvEmitterState& state, IrOpcode opcode, std::
     case IrOpcode::ImageAtomicAnd64: next = Binary(state, spv::OpBitwiseAnd, u64, current, data); break;
     case IrOpcode::ImageAtomicOr64: next = Binary(state, spv::OpBitwiseOr, u64, current, data); break;
     case IrOpcode::ImageAtomicXor64: next = Binary(state, spv::OpBitwiseXor, u64, current, data); break;
+    case IrOpcode::ImageAtomicInc64: next = Select(state, u64, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), current, data), constant(0u), Binary(state, spv::OpIAdd, u64, current, constant(1u))); break;
+    case IrOpcode::ImageAtomicDec64:
+        next = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, u64, next, GlslStd450(state), GLSLstd450UMin, Binary(state, spv::OpISub, u64, current, constant(1u)), data);
+        break;
     default: throw std::runtime_error("opcode is not a 64-bit image atomic");
     }
-    return Unary(state, spv::OpBitcast, TypeU64(state), next);
+    return next;
+}
+
+std::uint32_t ImageAtomicNext64(SpirvEmitterState& state, IrOpcode opcode, std::uint32_t old, std::uint32_t value, std::uint32_t comparator) {
+    const auto u64 = TypeScalarU64(state);
+    const auto scalarComparator = opcode == IrOpcode::ImageAtomicCmpSwap64 ? Unary(state, spv::OpBitcast, u64, comparator) : 0u;
+    return Unary(state, spv::OpBitcast, TypeU64(state), ImageAtomicNextScalar64(state, opcode, Unary(state, spv::OpBitcast, u64, old), Unary(state, spv::OpBitcast, u64, value), scalarComparator));
 }
 
 std::uint32_t LockedImageAtomic64(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
@@ -1604,6 +1614,10 @@ void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
             const auto pointer = state.module.AllocateId();
             state.module.AddFunction(spv::OpImageTexelPointer, TypePointer(state, spv::StorageClassImage, scalar), pointer, StorageImageDescriptorPointer(state, access.mem.resource), CoordU32(ctx, access), ConstantU32(state, 0));
             const auto value = Unary(state, spv::OpBitcast, scalar, ctx.Arg(access.inst, 2));
+            if (opcode == IrOpcode::ImageAtomicInc64 || opcode == IrOpcode::ImageAtomicDec64) {
+                const auto updated = AtomicUpdateTyped(state, pointer, ResourceKind::Image, scalar, [&](std::uint32_t current) { return ImageAtomicNextScalar64(state, opcode, current, value, 0u); });
+                return Unary(state, spv::OpBitcast, TypeU64(state), updated);
+            }
             const auto old = state.module.AllocateId();
             EmitImageAtomicOrdering(state);
             if (opcode == IrOpcode::ImageAtomicCmpSwap64) {
@@ -2882,6 +2896,14 @@ void EmitImageAtomicOr64(SpirvValueEmitContext& ctx, const IrValue& inst) {
 }
 
 void EmitImageAtomicXor64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    EmitImage(ctx, inst);
+}
+
+void EmitImageAtomicInc64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    EmitImage(ctx, inst);
+}
+
+void EmitImageAtomicDec64(SpirvValueEmitContext& ctx, const IrValue& inst) {
     EmitImage(ctx, inst);
 }
 
