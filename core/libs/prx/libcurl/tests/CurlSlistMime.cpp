@@ -134,6 +134,13 @@ int main() {
         Require(serialized.find("name=\"second\"") < serialized.find("name=\"array\""));
         Require(serialized.ends_with("--\r\n"));
         Require(curl_formget_nid_postfix(form, nullptr, RefuseForm) == CURLE_READ_ERROR);
+        Require(curl_formget_nid_postfix(form, nullptr, nullptr) == CURLE_BAD_FUNCTION_ARGUMENT);
+        tail->next = form;
+        Require(curl_formget_nid_postfix(form, &serialized, AppendForm) == CURLE_BAD_FUNCTION_ARGUMENT);
+        tail->next = nullptr;
+        tail->more = tail;
+        Require(curl_formget_nid_postfix(form, &serialized, AppendForm) == CURLE_BAD_FUNCTION_ARGUMENT);
+        tail->more = nullptr;
         FreeGuestForms(form);
     }
     {

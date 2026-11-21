@@ -26,6 +26,7 @@
 #include <mutex>
 #include <iterator>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #ifdef _WIN32
@@ -223,11 +224,21 @@ long HostLong(int64_t value) {
     return static_cast<long>(value);
 }
 
-curl_httppost* HostFormFromGuest(const guest_curl_httppost* guest, std::deque<curl_httppost>& nodes) {
+struct HostForm {
+    std::deque<curl_httppost> nodes;
+    std::unordered_set<const guest_curl_httppost*> visited;
+    bool cyclic = false;
+};
+
+curl_httppost* HostFormFromGuest(const guest_curl_httppost* guest, HostForm& form) {
     if (!guest) return nullptr;
-    auto& host = nodes.emplace_back();
-    host.more = HostFormFromGuest(guest->more, nodes);
-    host.next = HostFormFromGuest(guest->next, nodes);
+    if (!form.visited.insert(guest).second) {
+        form.cyclic = true;
+        return nullptr;
+    }
+    auto& host = form.nodes.emplace_back();
+    host.more = HostFormFromGuest(guest->more, form);
+    host.next = HostFormFromGuest(guest->next, form);
     host.name = guest->name;
     host.namelength = HostLong(guest->namelength);
     host.contents = guest->contents;
@@ -1085,9 +1096,12 @@ std::int32_t APS5_VABI curl_formadd_nid_postfix(struct guest_curl_httppost** htt
 }
 
 int APS5_VABI curl_formget_nid_postfix(struct guest_curl_httppost* form, void* arg, guest_curl_formget_callback append) {
-    std::deque<curl_httppost> nodes;
+    if (!append) return CURLE_BAD_FUNCTION_ARGUMENT;
+    HostForm host;
+    auto* const first = HostFormFromGuest(form, host);
+    if (host.cyclic) return CURLE_BAD_FUNCTION_ARGUMENT;
     FormGetTarget target{append, arg};
-    return ::curl_formget(HostFormFromGuest(form, nodes), &target, FormGetAppend);
+    return ::curl_formget(first, &target, FormGetAppend);
 }
 
 std::int32_t APS5_VABI curl_multi_socket_action_nid_postfix(CURLM* multi_handle, int s, int ev_bitmask, int* running_handles) {
