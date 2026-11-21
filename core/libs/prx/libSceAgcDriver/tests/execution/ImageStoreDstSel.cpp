@@ -467,14 +467,23 @@ void Check(const std::uint8_t* texels, std::uint32_t formatIndex, std::uint32_t 
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        std::uint32_t first = 0;
+        std::uint32_t count = 3;
+        if (argc == 4 && std::string(argv[1]) == "--formats") {
+            first = static_cast<std::uint32_t>(std::stoul(argv[2]));
+            count = static_cast<std::uint32_t>(std::stoul(argv[3]));
+        } else {
+            Require(argc == 1, "image store dst_sel: usage: [--formats <first> <count>]");
+        }
+        Require(first < FormatCount && count != 0u && count <= FormatCount - first, "image store dst_sel: the format range is outside the table");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         GuestBlock block;
         auto* texels = block.Data();
         const std::string pixelShader = device->Target().registrationModules ? "pixel shader, registration module" : "pixel shader, specialized module";
-        for (std::uint32_t format = 0; format < FormatCount; ++format) {
+        for (std::uint32_t format = first; format < first + count; ++format) {
             for (std::uint32_t tuple = 0; tuple < TupleCount; ++tuple) {
                 Store(*device, texels, Formats[format], Swizzles[tuple]);
                 Check(texels, format, tuple, "compute shader, specialized module");
@@ -482,7 +491,7 @@ int main() {
                 Check(texels, format, tuple, pixelShader);
             }
         }
-        std::printf("image store dst_sel tests passed (compute shader, specialized module; %s)\n", pixelShader.c_str());
+        std::printf("image store dst_sel tests passed for formats %u to %u of %u (compute shader, specialized module; %s)\n", first, first + count - 1u, FormatCount, pixelShader.c_str());
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
