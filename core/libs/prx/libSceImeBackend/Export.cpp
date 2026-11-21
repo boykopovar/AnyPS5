@@ -83,13 +83,15 @@ int APS5_VABI sceImeBackendOpen(const SceImeBackendParam* param, void* reserved)
     if (g_state != nullptr) return kAlreadyInitialized;
     if (param == nullptr) return kNullArgument;
     if (reserved != nullptr) return kInvalidReservedArgument;
-    const int result = ValidateParam(*param);
+    SceImeBackendParam localParam;
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) return kNullArgument;
+    const int result = ValidateParam(localParam);
     if (result != 0) return result;
     auto state = std::make_unique<State>();
-    state->maxLength = param->maxLength;
-    state->type = param->type;
-    if ((param->type & 2) != 0 && param->initialString != nullptr) {
-        state->text.assign(param->initialString);
+    state->maxLength = localParam.maxLength;
+    state->type = localParam.type;
+    if ((localParam.type & 2) != 0 && localParam.initialString != nullptr) {
+        state->text.assign(localParam.initialString);
     }
     state->caret = state->text.size();
     g_state = std::move(state);
@@ -247,8 +249,12 @@ int APS5_VABI sceImeBackendGetCandidateList(std::uint16_t* selected, char16_t* o
     if (state == nullptr) return kNotInitialized;
     if (selected == nullptr || output == nullptr) return kNullArgument;
     if (state->status >= 2) return kNotAvailable;
-    *selected = 0;
-    output[0] = 0;
+    const std::uint16_t zeroSelected = 0;
+    const char16_t zeroOutput = 0;
+    if (!GuestCopyOut_nid_no_patch(selected, &zeroSelected, sizeof(zeroSelected)) ||
+        !GuestCopyOut_nid_no_patch(output, &zeroOutput, sizeof(zeroOutput))) {
+        return kNullArgument;
+    }
     return 0;
 }
 
@@ -266,7 +272,8 @@ int APS5_VABI sceImeBackendGetCandidateSelect(std::uint16_t* selected) {
     if (state == nullptr) return kNotInitialized;
     if (selected == nullptr) return kNullArgument;
     if (state->status >= 2) return kNotAvailable;
-    *selected = 0;
+    const std::uint16_t zeroSelected = 0;
+    if (!GuestCopyOut_nid_no_patch(selected, &zeroSelected, sizeof(zeroSelected))) return kNullArgument;
     return 0;
 }
 
@@ -275,7 +282,8 @@ int APS5_VABI sceImeBackendGetConvertMode(int* mode) {
     State* state = CurrentState();
     if (state == nullptr) return kNotInitialized;
     if (mode == nullptr) return kNullArgument;
-    *mode = state->convertMode;
+    const int value = state->convertMode;
+    if (!GuestCopyOut_nid_no_patch(mode, &value, sizeof(value))) return kNullArgument;
     return 0;
 }
 
