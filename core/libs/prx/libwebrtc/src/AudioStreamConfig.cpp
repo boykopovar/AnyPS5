@@ -132,6 +132,18 @@ void ValidateString(const WebRtcGuestString& string, const char* message) {
     }
 }
 
+template<typename TValue>
+TValue ReadChecked(const TValue* object, const char* message) {
+    TValue host{};
+    CopyInChecked(&host, object, sizeof(host), message);
+    return host;
+}
+
+template<typename TField, typename TObject>
+TField* GuestField(TObject* object, std::size_t offset) {
+    return reinterpret_cast<TField*>(reinterpret_cast<std::uintptr_t>(object) + offset);
+}
+
 void ReleaseString(WebRtcGuestString& string) {
     if (string.capacity > WebRtcGuestStringInlineCapacity)
         GuestStringStorage::Deallocate(string.pointer, string.capacity + 1);
@@ -148,9 +160,7 @@ std::size_t Count(const TValue* begin, const TValue* end, const TValue* capacity
     return (last - first) / elementSize;
 }
 
-void ValidateReference(const void* object, const char* message) {
-    if (!object)
-        return;
+ReleaseFunction ReadRelease(const void* object, const char* message) {
     const void* const* vtable = nullptr;
     CopyInChecked(&vtable, object, sizeof(vtable), message);
     if (!vtable)
@@ -159,13 +169,17 @@ void ValidateReference(const void* object, const char* message) {
     CopyInChecked(&release, vtable + ReleaseSlot, sizeof(release), message);
     if (!release)
         throw std::invalid_argument(message);
+    return reinterpret_cast<ReleaseFunction>(const_cast<void*>(release));
 }
 
-void ReleaseReference(void* object) {
-    if (!object)
-        return;
-    const auto* vtable = *static_cast<const void* const* const*>(object);
-    reinterpret_cast<ReleaseFunction>(const_cast<void*>(vtable[ReleaseSlot]))(object);
+void ValidateReference(const void* object, const char* message) {
+    if (object)
+        ReadRelease(object, message);
+}
+
+void ReleaseReference(void* object, const char* message) {
+    if (object)
+        ReadRelease(object, message)(object);
 }
 
 std::size_t ValidateExtensions(const WebRtcRtpExtensionVector& extensions, const char* message) {
@@ -178,13 +192,8 @@ std::size_t ValidateExtensions(const WebRtcRtpExtensionVector& extensions, const
     return count;
 }
 
-WebRtcAudioDecoderMapNode* EndNode(WebRtcAudioDecoderMap& map) {
-    return reinterpret_cast<WebRtcAudioDecoderMapNode*>(&map.root);
-}
-
-std::vector<WebRtcAudioDecoderMapNode*> CollectDecoderNodes(WebRtcAudioDecoderMap& map, const char* message) {
+std::vector<WebRtcAudioDecoderMapNode*> CollectDecoderNodes(const WebRtcAudioDecoderMap& map, WebRtcAudioDecoderMapNode* end, const char* message) {
     std::vector<WebRtcAudioDecoderMapNode*> nodes;
-    WebRtcAudioDecoderMapNode* const end = EndNode(map);
     if (map.size == 0) {
         if (map.root || map.beginNode != end)
             throw std::invalid_argument(message);
@@ -202,12 +211,11 @@ std::vector<WebRtcAudioDecoderMapNode*> CollectDecoderNodes(WebRtcAudioDecoderMa
         pending.pop_back();
         if (nodes.size() >= map.size)
             throw std::invalid_argument(message);
-        WebRtcAudioDecoderMapLinks links{};
-        CopyInChecked(&links, current.node, sizeof(links), message);
+        const WebRtcAudioDecoderMapLinks links = ReadChecked<WebRtcAudioDecoderMapLinks>(&current.node->links, message);
         if (links.parent != current.expectedParent)
             throw std::invalid_argument(message);
         RequireWritable(current.node, sizeof(WebRtcAudioDecoderMapNode), message);
-        WebRtcValidateSdpAudioFormat_nid_no_patch(&current.node->format, message);
+        WebRtcValidateSdpAudioFormat_nid_no_patch(GuestField<const WebRtcSdpAudioFormat>(current.node, offsetof(WebRtcAudioDecoderMapNode, format)), message);
         nodes.push_back(current.node);
         if (links.right)
             pending.push_back({links.right, current.node});
@@ -217,15 +225,11 @@ std::vector<WebRtcAudioDecoderMapNode*> CollectDecoderNodes(WebRtcAudioDecoderMa
     if (nodes.size() != map.size)
         throw std::invalid_argument(message);
     const WebRtcAudioDecoderMapNode* leftmost = map.root;
-    while (leftmost->links.left)
-        leftmost = leftmost->links.left;
+    for (WebRtcAudioDecoderMapNode* left = ReadChecked(&leftmost->links, message).left; left; left = ReadChecked(&leftmost->links, message).left)
+        leftmost = left;
     if (leftmost != map.beginNode)
         throw std::invalid_argument(message);
     return nodes;
-}
-
-void ValidateSendCodecSpec(WebRtcAudioSendCodecSpec* spec, const char* message) {
-    WebRtcValidateSdpAudioFormat_nid_no_patch(&spec->format, message);
 }
 
 }
@@ -236,30 +240,33 @@ void APS5_VABI _ZN6webrtc15AudioSendStream6Config13SendCodecSpecC1EiRKNS_14SdpAu
     WebRtcAudioSendCodecSpec* spec, std::int32_t payloadType, const WebRtcSdpAudioFormat* format) {
     constexpr const char* message = "AudioSendStream::Config::SendCodecSpec constructor requires valid objects";
     RequireWritable(spec, sizeof(*spec), message);
-    spec->payloadType = payloadType;
-    _ZN6webrtc14SdpAudioFormatC1ERKS0__nid_postfix(&spec->format, format);
-    for (bool& flag : spec->flags)
+    CopyOutChecked(GuestField<std::int32_t>(spec, offsetof(WebRtcAudioSendCodecSpec, payloadType)), &payloadType, sizeof(payloadType), message);
+    _ZN6webrtc14SdpAudioFormatC1ERKS0__nid_postfix(GuestField<WebRtcSdpAudioFormat>(spec, offsetof(WebRtcAudioSendCodecSpec, format)), format);
+    WebRtcAudioSendCodecSpec host = ReadChecked(spec, message);
+    for (bool& flag : host.flags)
         flag = false;
-    for (WebRtcAudioStreamOptionalInt* optional : {&spec->cngPayloadType, &spec->redPayloadType, &spec->targetBitrateBps}) {
+    for (WebRtcAudioStreamOptionalInt* optional : {&host.cngPayloadType, &host.redPayloadType, &host.targetBitrateBps}) {
         reinterpret_cast<unsigned char*>(&optional->value)[0] = 0;
         optional->engaged = false;
     }
+    CopyOutChecked(spec, &host, sizeof(host), message);
 }
 
 void APS5_VABI _ZN6webrtc15AudioSendStream6Config13SendCodecSpecD1Ev_nid_postfix(WebRtcAudioSendCodecSpec* spec) {
     constexpr const char* message = "AudioSendStream::Config::SendCodecSpec destructor requires a valid object";
     RequireWritable(spec, sizeof(*spec), message);
-    _ZN6webrtc14SdpAudioFormatD1Ev_nid_postfix(&spec->format);
+    _ZN6webrtc14SdpAudioFormatD1Ev_nid_postfix(GuestField<WebRtcSdpAudioFormat>(spec, offsetof(WebRtcAudioSendCodecSpec, format)));
 }
 
 void APS5_VABI _ZN6webrtc15AudioSendStream5StatsD1Ev_nid_postfix(WebRtcAudioSendStreamStats* stats) {
     constexpr const char* message = "AudioSendStream::Stats destructor requires a valid object";
     RequireWritable(stats, sizeof(*stats), message);
-    ValidateString(stats->codecName, message);
-    Count(stats->reportBlockDatas.begin, stats->reportBlockDatas.end, stats->reportBlockDatas.capacityEnd, alignof(std::uint64_t), message);
-    if (stats->reportBlockDatas.begin)
-        _ZdlPv_nid_postfix(stats->reportBlockDatas.begin);
-    ReleaseString(stats->codecName);
+    WebRtcAudioSendStreamStats host = ReadChecked(stats, message);
+    ValidateString(host.codecName, message);
+    Count(host.reportBlockDatas.begin, host.reportBlockDatas.end, host.reportBlockDatas.capacityEnd, alignof(std::uint64_t), message);
+    if (host.reportBlockDatas.begin)
+        _ZdlPv_nid_postfix(host.reportBlockDatas.begin);
+    ReleaseString(host.codecName);
 }
 
 void APS5_VABI _ZN6webrtc15AudioSendStream6ConfigC1EPNS_9TransportE_nid_postfix(
@@ -283,41 +290,43 @@ void APS5_VABI _ZN6webrtc15AudioSendStream6ConfigC1EPNS_9TransportE_nid_postfix(
 void APS5_VABI _ZN6webrtc15AudioSendStream6ConfigD1Ev_nid_postfix(WebRtcAudioSendStreamConfig* config) {
     constexpr const char* message = "AudioSendStream::Config destructor requires a valid object";
     RequireWritable(config, sizeof(*config), message);
-    ValidateString(config->rtp.rid, message);
-    ValidateString(config->rtp.mid, message);
-    const std::size_t extensionCount = ValidateExtensions(config->rtp.extensions, message);
-    ValidateString(config->rtp.cName, message);
-    if (config->audioNetworkAdaptorConfig.engaged)
-        ValidateString(config->audioNetworkAdaptorConfig.value, message);
-    if (config->sendCodecSpec.engaged)
-        ValidateSendCodecSpec(&config->sendCodecSpec.value, message);
-    ValidateReference(config->encoderFactory, message);
-    ValidateString(config->trackId, message);
-    ValidateReference(config->frameEncryptor, message);
-    ValidateReference(config->frameTransformer, message);
+    WebRtcAudioSendStreamConfig host = ReadChecked(config, message);
+    ValidateString(host.rtp.rid, message);
+    ValidateString(host.rtp.mid, message);
+    const std::size_t extensionCount = ValidateExtensions(host.rtp.extensions, message);
+    ValidateString(host.rtp.cName, message);
+    if (host.audioNetworkAdaptorConfig.engaged)
+        ValidateString(host.audioNetworkAdaptorConfig.value, message);
+    if (host.sendCodecSpec.engaged)
+        WebRtcValidateSdpAudioFormat_nid_no_patch(GuestField<const WebRtcSdpAudioFormat>(config, offsetof(WebRtcAudioSendStreamConfig, sendCodecSpec.value.format)), message);
+    ValidateReference(host.encoderFactory, message);
+    ValidateString(host.trackId, message);
+    ValidateReference(host.frameEncryptor, message);
+    ValidateReference(host.frameTransformer, message);
 
-    ReleaseReference(config->frameTransformer);
-    ReleaseReference(config->frameEncryptor);
-    ReleaseString(config->trackId);
-    ReleaseReference(config->encoderFactory);
-    if (config->sendCodecSpec.engaged)
-        _ZN6webrtc15AudioSendStream6Config13SendCodecSpecD1Ev_nid_postfix(&config->sendCodecSpec.value);
-    if (config->audioNetworkAdaptorConfig.engaged)
-        ReleaseString(config->audioNetworkAdaptorConfig.value);
-    ReleaseString(config->rtp.cName);
+    ReleaseReference(host.frameTransformer, message);
+    ReleaseReference(host.frameEncryptor, message);
+    ReleaseString(host.trackId);
+    ReleaseReference(host.encoderFactory, message);
+    if (host.sendCodecSpec.engaged)
+        _ZN6webrtc15AudioSendStream6Config13SendCodecSpecD1Ev_nid_postfix(GuestField<WebRtcAudioSendCodecSpec>(config, offsetof(WebRtcAudioSendStreamConfig, sendCodecSpec.value)));
+    if (host.audioNetworkAdaptorConfig.engaged)
+        ReleaseString(host.audioNetworkAdaptorConfig.value);
+    ReleaseString(host.rtp.cName);
     for (std::size_t i = extensionCount; i > 0; --i)
-        _ZN6webrtc12RtpExtensionD1Ev_nid_postfix(config->rtp.extensions.begin + (i - 1));
-    if (config->rtp.extensions.begin)
-        _ZdlPv_nid_postfix(config->rtp.extensions.begin);
-    ReleaseString(config->rtp.mid);
-    ReleaseString(config->rtp.rid);
+        _ZN6webrtc12RtpExtensionD1Ev_nid_postfix(host.rtp.extensions.begin + (i - 1));
+    if (host.rtp.extensions.begin)
+        _ZdlPv_nid_postfix(host.rtp.extensions.begin);
+    ReleaseString(host.rtp.mid);
+    ReleaseString(host.rtp.rid);
 }
 
 void APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface5StatsD1Ev_nid_postfix(WebRtcAudioReceiveStreamStatsPrefix* stats) {
     constexpr const char* message = "AudioReceiveStreamInterface::Stats destructor requires a valid object";
     RequireWritable(stats, sizeof(*stats), message);
-    ValidateString(stats->codecName, message);
-    ReleaseString(stats->codecName);
+    WebRtcAudioReceiveStreamStatsPrefix host = ReadChecked(stats, message);
+    ValidateString(host.codecName, message);
+    ReleaseString(host.codecName);
 }
 
 void APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface6ConfigC1Ev_nid_postfix(WebRtcAudioReceiveStreamConfig* config) {
@@ -337,20 +346,22 @@ void APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface6ConfigC1Ev_nid_postfix(We
 void APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface6ConfigD1Ev_nid_postfix(WebRtcAudioReceiveStreamConfig* config) {
     constexpr const char* message = "AudioReceiveStreamInterface::Config destructor requires a valid object";
     RequireWritable(config, sizeof(*config), message);
-    ValidateString(config->syncGroup, message);
-    const std::vector<WebRtcAudioDecoderMapNode*> nodes = CollectDecoderNodes(config->decoderMap, message);
-    ValidateReference(config->decoderFactory, message);
-    ValidateReference(config->frameDecryptor, message);
-    ValidateReference(config->frameTransformer, message);
+    WebRtcAudioReceiveStreamConfig host = ReadChecked(config, message);
+    ValidateString(host.syncGroup, message);
+    WebRtcAudioDecoderMapNode* const end = GuestField<WebRtcAudioDecoderMapNode>(config, offsetof(WebRtcAudioReceiveStreamConfig, decoderMap.root));
+    const std::vector<WebRtcAudioDecoderMapNode*> nodes = CollectDecoderNodes(host.decoderMap, end, message);
+    ValidateReference(host.decoderFactory, message);
+    ValidateReference(host.frameDecryptor, message);
+    ValidateReference(host.frameTransformer, message);
 
-    ReleaseReference(config->frameTransformer);
-    ReleaseReference(config->frameDecryptor);
-    ReleaseReference(config->decoderFactory);
+    ReleaseReference(host.frameTransformer, message);
+    ReleaseReference(host.frameDecryptor, message);
+    ReleaseReference(host.decoderFactory, message);
     for (WebRtcAudioDecoderMapNode* node : nodes) {
-        _ZN6webrtc14SdpAudioFormatD1Ev_nid_postfix(&node->format);
+        _ZN6webrtc14SdpAudioFormatD1Ev_nid_postfix(GuestField<WebRtcSdpAudioFormat>(node, offsetof(WebRtcAudioDecoderMapNode, format)));
         _ZdlPv_nid_postfix(node);
     }
-    ReleaseString(config->syncGroup);
+    ReleaseString(host.syncGroup);
 }
 
 }

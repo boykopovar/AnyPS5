@@ -9,6 +9,13 @@
 #include <stdexcept>
 #include <string>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -25,6 +32,49 @@ template<typename TException, typename TAction> void RequireThrows(TAction actio
     }
     Require(false, location);
 }
+
+enum class Access { ReadOnly, None };
+
+struct GuardedPage {
+    std::size_t size = 0;
+    unsigned char* base = nullptr;
+
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        base = mapped == MAP_FAILED ? nullptr : static_cast<unsigned char*>(mapped);
+#endif
+        Require(base != nullptr);
+    }
+
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, size);
+#endif
+    }
+
+    GuardedPage(const GuardedPage&) = delete;
+    GuardedPage& operator=(const GuardedPage&) = delete;
+
+    template<typename T> T* As() const { return reinterpret_cast<T*>(base); }
+
+    void Protect(Access access) const {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(base, size, access == Access::ReadOnly ? PAGE_READONLY : PAGE_NOACCESS, &previous) != 0);
+#else
+        Require(mprotect(base, size, access == Access::ReadOnly ? PROT_READ : PROT_NONE) == 0);
+#endif
+    }
+};
 
 struct FakeEncoder {
     const void* const* vtable;
@@ -62,6 +112,11 @@ void* APS5_VABI EncodeImpl(void* info, WebRtcAudioEncoder* encoder, std::uint32_
     fake->encoded = encoded;
     encoded->size += fake->written;
     std::memcpy(info, &fake->reported, sizeof(fake->reported));
+    return info;
+}
+
+void* APS5_VABI EncodeImplWithoutInfo(void* info, WebRtcAudioEncoder* encoder, std::uint32_t, const std::int16_t*, std::size_t, WebRtcBuffer*) {
+    reinterpret_cast<FakeEncoder*>(encoder)->calls += 'e';
     return info;
 }
 
@@ -144,11 +199,34 @@ void TestNullArgumentsThrow() {
 
 }
 
+void TestInaccessibleGuestPointersThrow() {
+    auto vtable = Vtable();
+    FakeEncoder fake {vtable.data(), 8000, 1, 0, 0};
+    std::array<std::int16_t, 80> audio {};
+    WebRtcBuffer encoded {3, 16, nullptr};
+    alignas(8) unsigned char info[64] {};
+    GuardedPage none;
+    none.Protect(Access::None);
+    RequireThrows<std::invalid_argument>([&] {
+        _ZN6webrtc12AudioEncoder6EncodeEjN3rtc9ArrayViewIKsLln4711EEEPNS1_7BufferTIhLb0EEE_nid_postfix(info, none.As<WebRtcAudioEncoder>(), 0, audio.data(), audio.size(), &encoded);
+    });
+    FakeEncoder hiddenVtable {none.As<const void*>(), 8000, 1, 0, 0};
+    RequireThrows<std::invalid_argument>([&] { Encode(info, hiddenVtable, 0, audio.data(), audio.size(), &encoded); });
+    Require(hiddenVtable.calls.empty());
+    RequireThrows<std::invalid_argument>([&] { Encode(info, fake, 0, audio.data(), audio.size(), none.As<WebRtcBuffer>()); });
+    Require(fake.calls == "cr");
+    vtable[29] = reinterpret_cast<const void*>(&EncodeImplWithoutInfo);
+    fake.calls.clear();
+    RequireThrows<std::invalid_argument>([&] { Encode(none.As<void>(), fake, 0, audio.data(), audio.size(), &encoded); });
+    Require(fake.calls == "cre" && encoded.size == 3);
+}
+
 int main() {
     TestEncodeForwardsToEncodeImpl();
     TestEncodeAcceptsAnEmptyPacket();
     TestWrongSampleCountThrowsBeforeEncoding();
     TestMismatchedEncodedSizeThrows();
     TestNullArgumentsThrow();
+    TestInaccessibleGuestPointersThrow();
     return 0;
 }

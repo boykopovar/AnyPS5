@@ -106,6 +106,17 @@ struct ReadOnlyPage {
     }
 };
 
+struct InaccessiblePage : ReadOnlyPage {
+    InaccessiblePage() {
+#ifdef _WIN32
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(address, size, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+        Require(mprotect(address, size, PROT_NONE) == 0);
+#endif
+    }
+};
+
 struct FakeReference {
     const void* const* vtable;
     char name;
@@ -543,6 +554,54 @@ void TestReceiveConfigConstructor() {
     Require(errno == 41);
 }
 
+void TestInaccessibleObjects() {
+    InaccessiblePage hidden;
+    WebRtcSdpAudioFormat format;
+    InitFormat(format, "opus", 48000, 2);
+    WebRtcAudioSendCodecSpec spec;
+    std::memset(&spec, 0xcd, sizeof(spec));
+    const auto liveBaseline = live;
+    releases.clear();
+    errno = 38;
+    Require(ThrowsInvalid([&] {
+        _ZN6webrtc15AudioSendStream6Config13SendCodecSpecC1EiRKNS_14SdpAudioFormatE_nid_postfix(static_cast<WebRtcAudioSendCodecSpec*>(hidden.address), 111, &format);
+    }));
+    Require(ThrowsInvalid([&] {
+        _ZN6webrtc15AudioSendStream6Config13SendCodecSpecC1EiRKNS_14SdpAudioFormatE_nid_postfix(&spec, 111, static_cast<WebRtcSdpAudioFormat*>(hidden.address));
+    }));
+    Require(ThrowsInvalid([&] { _ZN6webrtc15AudioSendStream6Config13SendCodecSpecD1Ev_nid_postfix(static_cast<WebRtcAudioSendCodecSpec*>(hidden.address)); }));
+    Require(ThrowsInvalid([&] { _ZN6webrtc15AudioSendStream5StatsD1Ev_nid_postfix(static_cast<WebRtcAudioSendStreamStats*>(hidden.address)); }));
+    Require(ThrowsInvalid([&] { _ZN6webrtc15AudioSendStream6ConfigD1Ev_nid_postfix(static_cast<WebRtcAudioSendStreamConfig*>(hidden.address)); }));
+    Require(ThrowsInvalid([&] { _ZN6webrtc27AudioReceiveStreamInterface5StatsD1Ev_nid_postfix(static_cast<WebRtcAudioReceiveStreamStatsPrefix*>(hidden.address)); }));
+    Require(ThrowsInvalid([&] { _ZN6webrtc27AudioReceiveStreamInterface6ConfigD1Ev_nid_postfix(static_cast<WebRtcAudioReceiveStreamConfig*>(hidden.address)); }));
+
+    FakeReference factory{FakeVtable, 'f'};
+    FakeReference hiddenVtable{static_cast<const void* const*>(hidden.address), 'h'};
+    WebRtcAudioSendStreamConfig sendConfig;
+    InitSendConfig(sendConfig);
+    sendConfig.encoderFactory = &factory;
+    sendConfig.frameTransformer = &hiddenVtable;
+    Require(ThrowsInvalid([&] { _ZN6webrtc15AudioSendStream6ConfigD1Ev_nid_postfix(&sendConfig); }));
+    sendConfig.frameTransformer = static_cast<FakeReference*>(hidden.address);
+    Require(ThrowsInvalid([&] { _ZN6webrtc15AudioSendStream6ConfigD1Ev_nid_postfix(&sendConfig); }));
+
+    WebRtcAudioReceiveStreamConfig receiveConfig;
+    InitReceiveConfig(receiveConfig);
+    receiveConfig.decoderMap.root = static_cast<WebRtcAudioDecoderMapNode*>(hidden.address);
+    receiveConfig.decoderMap.beginNode = receiveConfig.decoderMap.root;
+    receiveConfig.decoderMap.size = 1;
+    Require(ThrowsInvalid([&] { _ZN6webrtc27AudioReceiveStreamInterface6ConfigD1Ev_nid_postfix(&receiveConfig); }));
+    Require(errno == 38);
+    Require(releases.empty());
+    Require(live == liveBaseline);
+
+    sendConfig.frameTransformer = nullptr;
+    _ZN6webrtc15AudioSendStream6ConfigD1Ev_nid_postfix(&sendConfig);
+    Require(releases == "f");
+    _ZN6webrtc14SdpAudioFormatD1Ev_nid_postfix(&format);
+    Require(live.empty());
+}
+
 }
 
 int main() {
@@ -561,6 +620,7 @@ int main() {
     TestReceiveConfig();
     TestReceiveConfigInvalid();
     TestReceiveConfigConstructor();
+    TestInaccessibleObjects();
     std::puts("libwebrtc AudioStreamConfig tests passed");
     return 0;
 }

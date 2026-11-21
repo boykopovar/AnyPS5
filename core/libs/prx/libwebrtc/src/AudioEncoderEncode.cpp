@@ -41,10 +41,10 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <stdexcept>
 
 namespace {
@@ -58,11 +58,21 @@ using NumChannels = std::size_t(APS5_VABI*)(const WebRtcAudioEncoder*);
 using EncodeImpl = void*(APS5_VABI*)(void*, WebRtcAudioEncoder*, std::uint32_t, const std::int16_t*, std::size_t, WebRtcBuffer*);
 
 template<typename TFunction> TFunction Virtual(const WebRtcAudioEncoder* encoder, std::size_t slot) {
-    const void* const* vtable;
-    std::memcpy(&vtable, encoder, sizeof(vtable));
-    if (!vtable || !vtable[slot])
-        throw std::invalid_argument("AudioEncoder::Encode requires an encoder virtual function");
-    return reinterpret_cast<TFunction>(const_cast<void*>(vtable[slot]));
+    constexpr const char* message = "AudioEncoder::Encode requires an encoder virtual function";
+    const void* const* vtable = nullptr;
+    if (!GuestPtr<const void* const*>(encoder).CopyIn(vtable) || !vtable)
+        throw std::invalid_argument(message);
+    const void* function = nullptr;
+    if (!GuestPtr<const void*>(vtable + slot).CopyIn(function) || !function)
+        throw std::invalid_argument(message);
+    return reinterpret_cast<TFunction>(const_cast<void*>(function));
+}
+
+std::uint64_t BufferSize(const WebRtcBuffer* buffer) {
+    WebRtcBuffer host{};
+    if (!GuestPtr<WebRtcBuffer>(buffer).CopyIn(host))
+        throw std::invalid_argument("AudioEncoder::Encode requires a readable output buffer");
+    return host.size;
 }
 
 }
@@ -80,11 +90,12 @@ void* APS5_VABI _ZN6webrtc12AudioEncoder6EncodeEjN3rtc9ArrayViewIKsLln4711EEEPNS
         throw std::runtime_error("AudioEncoder::Encode: the audio is not 10 ms of every channel");
     if (!encoded)
         throw std::invalid_argument("AudioEncoder::Encode requires an output buffer");
-    const std::uint64_t oldSize = encoded->size;
+    const std::uint64_t oldSize = BufferSize(encoded);
     Virtual<EncodeImpl>(encoder, EncodeImplSlot)(info, encoder, rtpTimestamp, audio, samples, encoded);
-    std::uint64_t encodedBytes;
-    std::memcpy(&encodedBytes, info, sizeof(encodedBytes));
-    if (encoded->size - oldSize != encodedBytes)
+    std::uint64_t encodedBytes = 0;
+    if (!GuestPtr<std::uint64_t>(info).CopyIn(encodedBytes))
+        throw std::invalid_argument("AudioEncoder::Encode requires a readable result");
+    if (BufferSize(encoded) - oldSize != encodedBytes)
         throw std::runtime_error("AudioEncoder::Encode: EncodeImpl wrote a different size than it reported");
     return info;
 }
