@@ -927,7 +927,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(63u);
+    writer.WriteU32(64u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -981,6 +981,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteU32(request.target.maxImageArrayLayers);
     writer.WriteBool(request.target.fixedPushSlots);
     writer.WriteBool(request.target.spannedAnySubgroup);
+    writer.WriteU32(request.context.pixel.has_value() ? request.context.pixel->pointSpriteControl : 0u);
     if (request.graphics.has_value() && request.graphics->emulateBarycentrics) writer.WriteBool(true);
     return base64Encode(buffer);
 }
@@ -990,7 +991,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 63u || version == 50u || (version >= 58u && version <= 61u)) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 64u || version == 50u || (version >= 58u && version <= 61u)) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -1066,6 +1067,11 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         result.request.target.fixedPushSlots = reader.ReadBool();
     }
     if (version >= 62u) result.request.target.spannedAnySubgroup = reader.ReadBool();
+    if (version >= 64u) {
+        const auto pointSpriteControl = reader.ReadU32();
+        if (result.request.context.pixel.has_value()) result.request.context.pixel->pointSpriteControl = pointSpriteControl;
+        else if (pointSpriteControl != 0u) throw std::runtime_error("RequestSerializer: point sprite control without pixel info");
+    }
     if (version >= 63u && reader.Remaining() != 0u) {
         if (!reader.ReadBool()) throw std::runtime_error("RequestSerializer: a written emulated barycentrics flag is clear");
         if (!result.request.graphics.has_value()) throw std::runtime_error("RequestSerializer: emulated barycentrics without a graphics context");
