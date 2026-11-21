@@ -58,8 +58,10 @@ int main() {
     Require(!_ZNK3JSC18PropertyDescriptor10enumerableEv(&descriptor));
 
     descriptor = {0, 0, 0, 0, 0};
+    Require(_ZNK3JSC18PropertyDescriptor12configurableEv(&descriptor));
     _ZN3JSC18PropertyDescriptor15setConfigurableEb(&descriptor, false);
     Require(descriptor.attributes == 0x8 && descriptor.seenAttributes == 0x4);
+    Require(!_ZNK3JSC18PropertyDescriptor12configurableEv(&descriptor));
     _ZN3JSC18PropertyDescriptor15setConfigurableEb(&descriptor, true);
     Require(descriptor.attributes == 0 && descriptor.seenAttributes == 0x4);
     Require(descriptor.value == 0 && descriptor.getter == 0 && descriptor.setter == 0);
@@ -93,11 +95,20 @@ int main() {
     descriptor = {0, 0, 0, 0x2 | 0x4, 0};
     Require(!_ZNK3JSC18PropertyDescriptor8writableEv(&descriptor));
     Require(!_ZNK3JSC18PropertyDescriptor10enumerableEv(&descriptor));
+    Require(_ZNK3JSC18PropertyDescriptor12configurableEv(&descriptor));
     descriptor = {0, 0, 0, ~0x6u, 0};
     Require(_ZNK3JSC18PropertyDescriptor8writableEv(&descriptor));
     Require(_ZNK3JSC18PropertyDescriptor10enumerableEv(&descriptor));
+    Require(!_ZNK3JSC18PropertyDescriptor12configurableEv(&descriptor));
+    descriptor = {0, 0, 0, 0x8, 0};
+    Require(!_ZNK3JSC18PropertyDescriptor12configurableEv(&descriptor));
+    Require(_ZNK3JSC18PropertyDescriptor8writableEv(&descriptor));
+    Require(_ZNK3JSC18PropertyDescriptor10enumerableEv(&descriptor));
+    descriptor = {0, 0, 0, ~0x8u, 0};
+    Require(_ZNK3JSC18PropertyDescriptor12configurableEv(&descriptor));
 
     Require(Throws([] { _ZNK3JSC18PropertyDescriptor8writableEv(nullptr); }));
+    Require(Throws([] { _ZNK3JSC18PropertyDescriptor12configurableEv(nullptr); }));
     Require(Throws([] { _ZNK3JSC18PropertyDescriptor16isDataDescriptorEv(nullptr); }));
     Require(Throws([] { _ZN3JSC18PropertyDescriptor12setUndefinedEv(nullptr); }));
     Require(Throws([] { _ZN3JSC18PropertyDescriptor9setGetterENS_7JSValueE(nullptr, 1); }));

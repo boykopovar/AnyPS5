@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -93,6 +94,14 @@ int main() {
         "a coefficient count other than the speaker count was accepted for the speaker array");
     Require(RejectsArgument([&] { sceAudioOut2GetSpeakerArrayCoefficients(notArray, square[0], 0.0f, coefficients, 4, 0, 0.0f); }),
         "memory that holds no array was accepted for the speaker array");
+    errno = 71;
+    Require(RejectsArgument([&] { sceAudioOut2GetSpeakerArrayCoefficients(array, square[0], 0.0f, reinterpret_cast<float*>(0x10), 4, 0, 0.0f); }) && errno == 71,
+        "unwritable speaker-array coefficients were accepted");
+    static const float readOnlyCoefficients[4] = {3.0f, 3.0f, 3.0f, 3.0f};
+    errno = 71;
+    Require(RejectsArgument([&] { sceAudioOut2GetSpeakerArrayCoefficients(array, square[0], 0.0f, const_cast<float*>(readOnlyCoefficients), 4, 0, 0.0f); }) &&
+        errno == 71 && Near(readOnlyCoefficients[0], 3.0f),
+        "read-only speaker-array coefficients were accepted");
     Require(sceAudioOut2GetSpeakerArrayCoefficients(array, square[0], 1.0f, speakerCoefficients, 4, 0, 0.0f) == 0,
         "the speaker-array coefficients failed");
     Require(Near(speakerCoefficients[0], 1.0f) && Near(speakerCoefficients[1], 1.0f), "the front pair is not at full gain");

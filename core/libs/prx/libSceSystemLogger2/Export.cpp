@@ -150,11 +150,10 @@ int APS5_VABI sceSystemLogger2TerminateWithResourceRelease(void) {
 
 int APS5_VABI sceSystemLogger2GetTimestamp(SceSystemLogger2Timestamp* timestamp) {
     std::lock_guard lock(loggerMutex);
-    if (!loggerInitialized) return NOT_INITIALIZED;
     if (!timestamp) return INVALID_ARGUMENT;
     SceSystemLogger2Timestamp value{};
-    value.tick = currentNetworkTick();
-    std::memcpy(value.clockSource, "networkClock", sizeof("networkClock"));
+    value.tick = currentNetworkTick() / 1000000ull * 1000000ull;
+    std::memcpy(value.clockSource, "secureClock", sizeof("secureClock"));
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(timestamp, &value, sizeof(value));
     errno = savedErrno;
