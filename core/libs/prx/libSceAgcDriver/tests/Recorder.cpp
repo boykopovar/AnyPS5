@@ -6809,7 +6809,7 @@ bool DmaBufDeviceOpens() {
 void vertexWindowMirrorTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
     using Use = Recorder::SnapshotUse;
-    if (!Recorder::DrawInputMirrors() || !WriteWatched()) return;
+    if (!Recorder::DrawInputMirrors() || !device.GetContext().HostMemoryType(~0u) || !WriteWatched()) return;
     if (SkipOnCpuVulkan(device, "a kept vertex window was not mirrored in device memory")) return;
     constexpr std::size_t bytes = 65536;
     void* block = AllocateWatched(bytes, 65536);
@@ -6875,7 +6875,7 @@ void drawInputMirrorTests(const Device& device) {
     const auto registry = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const auto generation = CollectWrites(address, bytes);
     Require(generation != 0, "the watched block has no generation");
-    const bool mirrors = Recorder::DrawInputMirrors();
+    const bool mirrors = Recorder::DrawInputMirrors() && context.HostMemoryType(~0u);
     State plain;
     State mesh;
     mesh.stages.mesh.emplace();
@@ -6900,7 +6900,7 @@ void drawInputMirrorTests(const Device& device) {
     cache.KeepDrawSnapshot(second, half, generation, registry, secondHost, Use::Vertex);
     const auto firstMirror = reuse(first);
     if (!mirrors) {
-        Require(firstMirror == firstHost && reuse(second) == secondHost && use(2 * half + 4096, 0), "a draw input was mirrored with APS5_NO_INPUT_MIRRORS set");
+        Require(firstMirror == firstHost && reuse(second) == secondHost && use(2 * half + 4096, 0), "a draw input was mirrored with APS5_NO_INPUT_MIRRORS set or on a device whose memory is all device-local");
         Require(drawInputHolds(context, cache, firstMirror, first, held), "a reused draw input lost the bytes of its snapshot");
         cache.Sync();
         return;
@@ -6974,7 +6974,7 @@ void drawInputReuseTests(const Device& device, Recorder& recorder) {
         const auto contents = copy.buffer->Bytes();
         return contents.size() == size && std::memcmp(contents.data(), block, size) == 0;
     };
-    const bool mirrors = Recorder::DrawInputMirrors();
+    const bool mirrors = Recorder::DrawInputMirrors() && context.HostMemoryType(~0u);
     const auto servedFrom = [&](const DrawInputCopy& copy, const std::shared_ptr<Buffer>& host, std::uint64_t at, std::size_t read) {
         const bool kind = mirrors ? copy.buffer != host && !copy.buffer->Mapped() : copy.buffer == host;
         return copy.reused && kind && drawInputHolds(context, recorder, copy.buffer, at, read);
@@ -18562,6 +18562,10 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--draw-input-mirrors-only") {
             if (!DmaBufDeviceOpens()) {
                 std::cout << "skipped, host imports are unavailable: /dev/udmabuf cannot be opened\n";
+                return 77;
+            }
+            if (Recorder::DrawInputMirrors() && !device.GetContext().HostMemoryType(~0u)) {
+                std::cout << "skipped, the device has no memory type outside its device-local heaps, so draw inputs get no device-local mirror\n";
                 return 77;
             }
             drawInputMirrorTests(device);
