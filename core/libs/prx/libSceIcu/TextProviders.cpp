@@ -103,7 +103,11 @@ Text* APS5_VABI StringClone_nid_no_patch(Text* destination, const Text* source, 
     if (deep && *status <= 0) {
         const auto& string = Context(source);
         auto* copy = static_cast<String*>(Icu::Abi::Allocate_nid_no_patch(sizeof(String)));
-        if (copy) _ZN6icu_6813UnicodeStringC1ERKS0__nid_postfix(copy, &string);
+        if (!copy) {
+            *status = MemoryAllocationError;
+            return destination;
+        }
+        _ZN6icu_6813UnicodeStringC1ERKS0__nid_postfix(copy, &string);
         destination->context = copy;
         destination->providerProperties |= OwnsText;
         destination->providerProperties |= Writable;

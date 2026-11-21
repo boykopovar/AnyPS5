@@ -225,6 +225,16 @@ void UChars() {
     Require(status == Success && clone->context == units && !(clone->providerProperties & 32), "shallow clone shares the string");
     Close(clone);
 
+    Text target = Initializer();
+    const auto blocks = heap.live.size();
+    heap.exhausted = true;
+    status = Success;
+    Require(utext_clone_nid_postfix(&target, text, 1, 0, &status) == &target && status == MemoryAllocationError, "deep clone allocation failure");
+    heap.exhausted = false;
+    Require(target.context == units && !(target.providerProperties & 32) && heap.live.size() == blocks, "failed deep clone keeps a shallow clone");
+    Close(&target);
+    Require(heap.live.size() == blocks, "closing a failed deep clone frees nothing");
+
     Text reused = Initializer();
     status = Success;
     Require(utext_openUChars_nid_postfix(&reused, units, -1, &status) == &reused && status == Success, "open terminated UChars in place");

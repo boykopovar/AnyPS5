@@ -445,16 +445,4 @@ std::int8_t APS5_VABI uhash_compareIChars_nid_postfix(Icu::UHashTok left, Icu::U
     return Equal<char>(left, right, true);
 }
 
-std::int32_t APS5_VABI ustr_hashUCharsN_nid_postfix(const char16_t* text, std::int32_t length) {
-    return Hash(text, length);
-}
-
-std::int32_t APS5_VABI ustr_hashCharsN_nid_postfix(const char* text, std::int32_t length) {
-    return Hash(reinterpret_cast<const std::uint8_t*>(text), length);
-}
-
-std::int32_t APS5_VABI ustr_hashICharsN_nid_postfix(const char* text, std::int32_t length) {
-    return Hash(reinterpret_cast<const std::uint8_t*>(text), length, true);
-}
-
 }

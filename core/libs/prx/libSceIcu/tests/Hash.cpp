@@ -44,23 +44,12 @@ std::int8_t APS5_VABI Noncanonical_nid_no_patch(UHashTok first, UHashTok second)
 }
 
 void Strings() {
-    Require(ustr_hashCharsN_nid_postfix("abc", 3) == 136518);
-    Require(ustr_hashUCharsN_nid_postfix(u"abc", 3) == 136518);
-    Require(ustr_hashICharsN_nid_postfix("ABC", 3) == 136518);
-    Require(ustr_hashCharsN_nid_postfix("a\0b", 3) == 132891);
-    Require(ustr_hashUCharsN_nid_postfix(std::array<char16_t, 2>{0xffff, 0xd800}.data(), 2) == 2480091);
-    Require(ustr_hashCharsN_nid_postfix("\xff", 1) == 255);
-    Require(ustr_hashICharsN_nid_postfix("\xff", 1) == 255);
-    Require(ustr_hashUCharsN_nid_postfix(nullptr, -2147483647) == 0);
-    Require(ustr_hashCharsN_nid_postfix("a", -1) == 0);
-    Require(ustr_hashICharsN_nid_postfix("a", 0) == 0);
-    Invalid([] { ustr_hashCharsN_nid_postfix("a", std::numeric_limits<std::int32_t>::min()); });
     for (const auto length : {31, 32, 33, 63, 64, 65, 95, 96, 127, 128, 2048}) {
         std::string text(length, 'a');
         std::uint32_t expected = 0;
         const auto stride = (length - 32) / 32 + 1;
         for (int i = 0; i < length; i += stride) expected = expected * 37 + 97;
-        Require(ustr_hashCharsN_nid_postfix(text.data(), length) == std::bit_cast<std::int32_t>(expected));
+        Require(uhash_hashChars_nid_postfix(Token(text.c_str())) == std::bit_cast<std::int32_t>(expected));
     }
     Require(uhash_hashChars_nid_postfix(Token("abc")) == 136518);
     Require(uhash_hashIChars_nid_postfix(Token("ABC")) == 136518);
