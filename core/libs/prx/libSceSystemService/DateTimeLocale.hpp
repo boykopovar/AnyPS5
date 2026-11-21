@@ -72,7 +72,7 @@ inline std::optional<int> DateFormatOfStrftime(std::string_view pattern) {
     for (std::size_t index = 0; index < pattern.size(); ++index) {
         if (pattern[index] != '%') continue;
         ++index;
-        while (index < pattern.size() && (pattern[index] == '-' || pattern[index] == '_' || pattern[index] == '0' || pattern[index] == '^' || pattern[index] == '#')) ++index;
+        while (index < pattern.size() && (pattern[index] == '-' || pattern[index] == '_' || pattern[index] == '0' || pattern[index] == '^' || pattern[index] == '#' || pattern[index] == '+')) ++index;
         while (index < pattern.size() && pattern[index] >= '0' && pattern[index] <= '9') ++index;
         while (index < pattern.size() && (pattern[index] == 'E' || pattern[index] == 'O')) ++index;
         if (index >= pattern.size()) return std::nullopt;
@@ -83,6 +83,7 @@ inline std::optional<int> DateFormatOfStrftime(std::string_view pattern) {
             case 'y': case 'Y': unique = Detail::AppendField(order, Detail::YEAR); break;
             case 'D': unique = Detail::AppendField(order, Detail::MONTH) && Detail::AppendField(order, Detail::DAY) && Detail::AppendField(order, Detail::YEAR); break;
             case 'F': unique = Detail::AppendField(order, Detail::YEAR) && Detail::AppendField(order, Detail::MONTH) && Detail::AppendField(order, Detail::DAY); break;
+            case 'v': unique = Detail::AppendField(order, Detail::DAY) && Detail::AppendField(order, Detail::MONTH) && Detail::AppendField(order, Detail::YEAR); break;
             case 'c': case 'x': case 'X': return std::nullopt;
             default: break;
         }
@@ -97,7 +98,7 @@ inline std::optional<int> TimeFormatOfStrftime(std::string_view pattern) {
     for (std::size_t index = 0; index < pattern.size(); ++index) {
         if (pattern[index] != '%') continue;
         ++index;
-        while (index < pattern.size() && (pattern[index] == '-' || pattern[index] == '_' || pattern[index] == '0' || pattern[index] == '^' || pattern[index] == '#')) ++index;
+        while (index < pattern.size() && (pattern[index] == '-' || pattern[index] == '_' || pattern[index] == '0' || pattern[index] == '^' || pattern[index] == '#' || pattern[index] == '+')) ++index;
         while (index < pattern.size() && pattern[index] >= '0' && pattern[index] <= '9') ++index;
         while (index < pattern.size() && (pattern[index] == 'E' || pattern[index] == 'O')) ++index;
         if (index >= pattern.size()) return std::nullopt;

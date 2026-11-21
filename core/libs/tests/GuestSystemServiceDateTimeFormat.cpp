@@ -1,6 +1,7 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "prx/libSceSystemService/DateTimeLocale.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -107,6 +108,20 @@ void RequireNeighbours() {
     SetBoth(nullptr, nullptr);
 }
 
+void RequireStrftimeExtensions() {
+    using namespace SystemServiceDateTime;
+    Require(DateFormatOfStrftime("%+4Y-%m-%d") == DATE_FORMAT_YYYYMMDD, "plus flag on YMD strftime date pattern");
+    Require(DateFormatOfStrftime("%d/%m/%+4Y") == DATE_FORMAT_DDMMYYYY, "plus flag on DMY strftime date pattern");
+    Require(DateFormatOfStrftime("%v") == DATE_FORMAT_DDMMYYYY, "BSD %v composite date specifier");
+    Require(TimeFormatOfStrftime("%+2H:%M:%S") == TIME_FORMAT_24HOUR, "plus flag on 24-hour strftime time pattern");
+    Require(TimeFormatOfStrftime("%+2I:%M %p") == TIME_FORMAT_12HOUR, "plus flag on 12-hour strftime time pattern");
+    Require(DateFormatOfStrftime("%v %d") == std::nullopt, "duplicate day after %v is rejected");
+    Require(DateFormatOfStrftime("%+4Y-%m") == std::nullopt, "incomplete date pattern with plus flag is rejected");
+    Require(DateFormatOfStrftime("%+") == std::nullopt, "dangling plus flag in date pattern is rejected");
+    Require(TimeFormatOfStrftime("%+2H:%M %p") == std::nullopt, "ambiguous 12/24-hour pattern with plus flag is rejected");
+    Require(TimeFormatOfStrftime("%+") == std::nullopt, "dangling plus flag in time pattern is rejected");
+}
+
 #ifdef __linux__
 int Notices(const std::string& path) {
     std::ifstream stream(path);
@@ -158,6 +173,7 @@ int main(int argc, char** argv) {
         RequireExplicitValues();
         RequireRefusedValues();
         RequireNeighbours();
+        RequireStrftimeExtensions();
         return 0;
     }
 #ifdef __linux__
