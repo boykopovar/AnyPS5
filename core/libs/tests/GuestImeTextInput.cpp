@@ -64,7 +64,8 @@ void EditExtended(const char* utf8, std::int32_t start, std::int32_t length, uns
     event.editExt.start = start;
     event.editExt.length = length;
     g_window.HandleEvent(event, WindowId);
-    Require(SDL_GetNumAllocations() == allocations, "extended preedit allocation leaked");
+    Require(SDL_GetNumAllocations() == allocations + 1 && std::strcmp(event.editExt.text, utf8) == 0, "the extended preedit handler released or changed text its caller owns");
+    SDL_free(event.editExt.text);
 }
 
 void Type(const char* utf8) {
@@ -236,7 +237,8 @@ void CheckExtendedEditingFailure() {
         threw = true;
     }
     ImeSetHostPreeditSink_nid_no_patch(nullptr);
-    Require(threw && SDL_GetNumAllocations() == allocations, "extended preedit allocation leaked when its sink threw");
+    Require(threw && SDL_GetNumAllocations() == allocations + 1, "the extended preedit handler released text its caller owns when its sink threw");
+    SDL_free(event.editExt.text);
 }
 
 void CheckNothingCaptured() {
