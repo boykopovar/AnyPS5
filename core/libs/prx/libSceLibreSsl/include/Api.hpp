@@ -662,7 +662,8 @@ struct LibreSslCert {
 };
 
 struct LibreSslSession {
-    unsigned char beforeCipher[168];
+    unsigned char beforeReferences[160];
+    int references;
     const void* cipher;
     unsigned char rest[56];
 };
