@@ -808,7 +808,7 @@ void Draw(AgcDriver::VulkanDevice& device, const Context& context, const Pass& p
     std::vector<AgcDriver::Graphics::CompiledShader> shaders{{ShaderStage::Vertex, &vertexResult, 0}};
     ShaderRecompiler::RecompileResult geometry;
     if (pixelResult.barycentricEmulation.active) {
-        geometry = ShaderRecompiler::BuildBarycentricGeometryShader(vertexResult, pixelResult, target, device.GeometryLimits());
+        geometry = ShaderRecompiler::BuildBarycentricGeometryShader(vertexResult, pixelResult, target, device.GeometryLimits(), 0u);
         shaders.push_back({ShaderStage::Geometry, &geometry, 0});
     }
     shaders.push_back({ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)});
