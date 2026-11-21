@@ -2521,12 +2521,14 @@ static void TestFrame() {
     Require(!WKFrameIsDisplayingMarkupDocument(ref));
     Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
     Require(!WKFrameIsMainFrame(ref));
+    Require(!WKFrameIsFrameSet(ref));
 
     frame->isDisplayingMarkupDocument = true;
     Require(WKFrameCanProvideSource(ref));
     Require(WKFrameIsDisplayingMarkupDocument(ref));
     Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
     Require(!WKFrameIsMainFrame(ref));
+    Require(!WKFrameIsFrameSet(ref));
 
     frame->isDisplayingMarkupDocument = false;
     frame->isDisplayingStandaloneImageDocument = true;
@@ -2534,6 +2536,7 @@ static void TestFrame() {
     Require(!WKFrameIsDisplayingMarkupDocument(ref));
     Require(WKFrameIsDisplayingStandaloneImageDocument(ref));
     Require(!WKFrameIsMainFrame(ref));
+    Require(!WKFrameIsFrameSet(ref));
 
     frame->isDisplayingStandaloneImageDocument = false;
     frame->isMainFrame = true;
@@ -2541,10 +2544,27 @@ static void TestFrame() {
     Require(!WKFrameIsDisplayingMarkupDocument(ref));
     Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
     Require(WKFrameIsMainFrame(ref));
+    Require(!WKFrameIsFrameSet(ref));
+
+    frame->isMainFrame = false;
+    frame->isFrameSet = true;
+    Require(!WKFrameCanProvideSource(ref));
+    Require(!WKFrameIsDisplayingMarkupDocument(ref));
+    Require(!WKFrameIsDisplayingStandaloneImageDocument(ref));
+    Require(!WKFrameIsMainFrame(ref));
+    Require(WKFrameIsFrameSet(ref));
 
     bool caught = false;
     try {
         WKFrameIsMainFrame(nullptr);
+    } catch (const std::invalid_argument&) {
+        caught = true;
+    }
+    Require(caught);
+
+    caught = false;
+    try {
+        WKFrameIsFrameSet(nullptr);
     } catch (const std::invalid_argument&) {
         caught = true;
     }

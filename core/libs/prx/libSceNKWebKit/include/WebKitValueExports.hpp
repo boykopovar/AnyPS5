@@ -173,6 +173,7 @@ std::uint32_t APS5_VABI WKFrameGetFrameLoadState(const void* frameRef);
 bool APS5_VABI WKFrameIsDisplayingMarkupDocument(const void* frameRef);
 bool APS5_VABI WKFrameIsDisplayingStandaloneImageDocument(const void* frameRef);
 bool APS5_VABI WKFrameIsMainFrame(const void* frameRef);
+bool APS5_VABI WKFrameIsFrameSet(const void* frameRef);
 std::uint32_t APS5_VABI WKFrameHandleGetTypeID();
 std::uint32_t APS5_VABI WKFrameInfoGetTypeID();
 std::uint32_t APS5_VABI WKFramePolicyListenerGetTypeID();
