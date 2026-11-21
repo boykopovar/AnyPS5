@@ -115,9 +115,9 @@ void FillInput() {
     }
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::uint32_t opcodeWord, std::uint32_t destination, std::uint32_t unused, std::uint32_t selector, bool signExtend) {
+void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::uint32_t opcodeWord, std::uint32_t destination, std::uint32_t unused, std::uint32_t selector, bool signExtend, std::uint32_t sourceModifiers = 0u) {
     SdwaCode[7] = opcodeWord;
-    SdwaCode[8] = 4u | (destination << 8u) | (unused << 11u) | (selector << 16u) | (signExtend ? (1u << 19u) : 0u);
+    SdwaCode[8] = 4u | (destination << 8u) | (unused << 11u) | (selector << 16u) | (signExtend ? (1u << 19u) : 0u) | (sourceModifiers << 20u);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
@@ -207,10 +207,8 @@ void CheckRejections() {
     }
     expectInvalid(CvtOffOpcodeWord, 4u | (7u << 8u) | (0u << 11u) | (6u << 16u));
 
-    for (const auto opWord : {SatPkOpcodeWord, CvtOffOpcodeWord}) {
-        expectInvalid(opWord, 4u | (6u << 8u) | (0u << 11u) | (6u << 16u) | (1u << 20u));
-        expectInvalid(opWord, 4u | (6u << 8u) | (0u << 11u) | (6u << 16u) | (1u << 21u));
-    }
+    expectInvalid(SatPkOpcodeWord, 4u | (6u << 8u) | (0u << 11u) | (6u << 16u) | (1u << 20u));
+    expectInvalid(SatPkOpcodeWord, 4u | (6u << 8u) | (0u << 11u) | (6u << 16u) | (1u << 21u));
 }
 
 }
@@ -226,10 +224,12 @@ int main(int argc, char** argv) {
         constexpr std::uint32_t CvtOffOpcodeWord = 0x7e141cf9u;
         constexpr std::uint32_t SatPkOpcodeWord = 0x7e14c4f9u;
 
-        for (const bool signExtend : {false, true}) {
-            for (std::uint32_t selector = 0; selector < Selectors; ++selector) {
-                Run(*device, waveSize, CvtOffOpcodeWord, 6u, 0u, selector, signExtend);
-                CheckCvtOff(waveSize, 6u, 0u, selector, signExtend);
+        for (const std::uint32_t sourceModifiers : {0u, 1u, 2u, 3u}) {
+            for (const bool signExtend : {false, true}) {
+                for (std::uint32_t selector = 0; selector < Selectors; ++selector) {
+                    Run(*device, waveSize, CvtOffOpcodeWord, 6u, 0u, selector, signExtend, sourceModifiers);
+                    CheckCvtOff(waveSize, 6u, 0u, selector, signExtend);
+                }
             }
         }
         for (std::uint32_t destination = 0; destination < 6; ++destination) {
