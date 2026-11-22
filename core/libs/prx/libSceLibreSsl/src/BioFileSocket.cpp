@@ -17,6 +17,14 @@ namespace {
 using LibreSsl::Bio;
 using LibreSsl::BioMethod;
 
+constexpr int BioRetryFlags = 0xf;
+constexpr int BioRetryRead = 0x9;
+constexpr int BioRetryWrite = 0xa;
+constexpr int NetInterrupted = 4;
+constexpr int NetWouldBlock = 35;
+constexpr int NetInProgress = 36;
+constexpr int NetAlready = 37;
+constexpr int NetNotConnected = 57;
 constexpr int BioClose = 0x01;
 constexpr int BioFileRead = 0x02;
 constexpr int BioFileWrite = 0x04;
@@ -183,15 +191,37 @@ int APS5_VABI FileDestroy(Bio* bio) {
     return 1;
 }
 
+bool SocketShouldRetry(std::int64_t result, int error) {
+    if (result > 0) return false;
+    switch (error) {
+    case NetInterrupted:
+    case NetWouldBlock:
+    case NetInProgress:
+    case NetAlready:
+    case NetNotConnected:
+        return true;
+    default:
+        return false;
+    }
+}
+
 int APS5_VABI SocketWrite(Bio* bio, const char* data, int size) {
     if (bio->number < 0 || size < 0 || (size && !data)) return -1;
+    int* error = sceNetErrnoLoc();
+    *error = 0;
     const auto result = sceNetSend(bio->number, data, static_cast<std::size_t>(size), 0);
+    bio->flags &= ~BioRetryFlags;
+    if (SocketShouldRetry(result, *error)) bio->flags |= BioRetryWrite;
     return result >= 0 && result <= INT_MAX ? static_cast<int>(result) : -1;
 }
 
 int APS5_VABI SocketRead(Bio* bio, char* data, int size) {
     if (bio->number < 0 || size < 0 || (size && !data)) return -1;
+    int* error = sceNetErrnoLoc();
+    *error = 0;
     const auto result = sceNetRecv(bio->number, data, static_cast<std::size_t>(size), 0);
+    bio->flags &= ~BioRetryFlags;
+    if (SocketShouldRetry(result, *error)) bio->flags |= BioRetryRead;
     return result >= 0 && result <= INT_MAX ? static_cast<int>(result) : -1;
 }
 
