@@ -24,6 +24,8 @@ IrValue& IrBuilder::ReadRegister(const GuestRegister& reg) {
         return GetThreadBitScalarReg(static_cast<ScalarReg>(reg.index));
     case RegisterBank::ScalarMaskTag:
         return GetScalarMaskTag(static_cast<ScalarReg>(reg.index));
+    case RegisterBank::ScalarWaveMaskTag:
+        return GetScalarWaveMaskTag(static_cast<ScalarReg>(reg.index));
     case RegisterBank::GotoVariable:
         return GetGotoVariable(reg.index);
     case RegisterBank::M0:
@@ -59,6 +61,9 @@ void IrBuilder::WriteRegister(const GuestRegister& reg, IrValue& value) {
         return;
     case RegisterBank::ScalarMaskTag:
         SetScalarMaskTag(static_cast<ScalarReg>(reg.index), value);
+        return;
+    case RegisterBank::ScalarWaveMaskTag:
+        SetScalarWaveMaskTag(static_cast<ScalarReg>(reg.index), value);
         return;
     case RegisterBank::GotoVariable:
         SetGotoVariable(reg.index, value);
@@ -106,6 +111,16 @@ IrValue& IrBuilder::GetScalarMaskTag(ScalarReg reg) {
 void IrBuilder::SetScalarMaskTag(ScalarReg reg, IrValue& value) {
     IrValue& operand = createRegisterOperand(program, RegisterBank::ScalarMaskTag, RegIndex(reg), IrType::ScalarReg);
     (void)Emit(IrOpcode::SetScalarMaskTag, IrType::Void, {&operand, &value});
+}
+
+IrValue& IrBuilder::GetScalarWaveMaskTag(ScalarReg reg) {
+    IrValue& operand = createRegisterOperand(program, RegisterBank::ScalarWaveMaskTag, RegIndex(reg), IrType::ScalarReg);
+    return Emit(IrOpcode::GetScalarWaveMaskTag, IrType::Bool, {&operand});
+}
+
+void IrBuilder::SetScalarWaveMaskTag(ScalarReg reg, IrValue& value) {
+    IrValue& operand = createRegisterOperand(program, RegisterBank::ScalarWaveMaskTag, RegIndex(reg), IrType::ScalarReg);
+    (void)Emit(IrOpcode::SetScalarWaveMaskTag, IrType::Void, {&operand, &value});
 }
 
 IrValue* IrBuilder::vectorWindowIndex(VectorReg reg) {

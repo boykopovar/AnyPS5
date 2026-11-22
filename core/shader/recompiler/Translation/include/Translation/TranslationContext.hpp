@@ -18,6 +18,7 @@ public:
     void TranslateEmbeddedFetch(const RdnaInstruction& instruction, std::uint32_t attribute, std::uint32_t components);
     void TranslateInstruction(const RdnaInstruction& instruction);
     void SetBufferLdsSize(std::uint32_t bytes) { bufferLdsBytes = bytes; }
+    void SetNarrowWave32Host(bool enabled) { narrowWave32Host = enabled; }
     void SetPixelInput(const ShaderPixelInputInfo* info, bool barycentricEnabled) { pixelInput = info; fragmentShaderBarycentricEnabled = barycentricEnabled; }
     void SetFloatMode(const std::optional<ShaderFloatMode>& mode) {
         declaredFloatMode = mode;
@@ -67,7 +68,8 @@ private:
     IrU32 readScalarCode(std::uint32_t code);
     IrU32 applyBitSourceModifiers(const RdnaOperand& operand, IrU32 value);
     IrValue* readOperand(const RdnaOperand& operand, IrType type);
-    IrU1 threadBit(const std::array<IrU32, 2>& mask);
+    IrU1 threadBit(const std::array<IrU32, 2>& mask, bool guestWaveLane = false);
+    IrU1 waveMaskComplete(const RdnaOperand& operand);
     void writeRawU32(const RdnaOperand& operand, IrU32 value);
     bool sharedVectorRegister(std::uint32_t reg) const { return reg >= sharedVectorBase && reg - sharedVectorBase < sharedVectorCount; }
     IrU32 shareVectorWrite(const RdnaOperand& operand, IrU32 merged, IrU32 written, bool readByInstruction);
@@ -436,6 +438,7 @@ private:
     bool relativeVectorRead = false;
     bool execLowInactive = false;
     bool execHighInactive = false;
+    bool narrowWave32Host = false;
 };
 
 // Debug aid: APS5_PROBE=<pc hex>:<vgpr>[:<shift>] copies VGPR <vgpr> into v255 right after the

@@ -135,6 +135,8 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("SetThreadBitScalarRegister", Void, ScalarReg, U1),
     makeMeta("GetScalarMaskTag", U1, ScalarReg),
     makeMeta("SetScalarMaskTag", Void, ScalarReg, U1),
+    makeMeta("GetScalarWaveMaskTag", U1, ScalarReg),
+    makeMeta("SetScalarWaveMaskTag", Void, ScalarReg, U1),
     makeMeta("GetScalarRegister", U32, ScalarReg),
     makeMeta("SetScalarRegister", Void, ScalarReg, U32),
     makeMeta("GetVectorRegister", U32, VectorReg),
@@ -155,6 +157,8 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("SetExecHi", Void, U32),
     makeMeta("GetVcc", U1),
     makeMeta("SetVcc", Void, U1),
+    makeMeta("GetVccWaveMaskTag", U1),
+    makeMeta("SetVccWaveMaskTag", Void, U1),
     makeMeta("GetVccLo", U32),
     makeMeta("SetVccLo", Void, U32),
     makeMeta("GetVccHi", U32),
@@ -925,6 +929,7 @@ static constexpr bool computeHasSideEffects(IrOpcode opcode) {
         case IrOpcode::InterpolateHostP2:
         case IrOpcode::SetThreadBitScalarRegister:
         case IrOpcode::SetScalarMaskTag:
+        case IrOpcode::SetScalarWaveMaskTag:
         case IrOpcode::SetScalarRegister:
         case IrOpcode::SetVectorRegister:
         case IrOpcode::StoreVectorWindow:
@@ -935,6 +940,7 @@ static constexpr bool computeHasSideEffects(IrOpcode opcode) {
         case IrOpcode::SetExecLo:
         case IrOpcode::SetExecHi:
         case IrOpcode::SetVcc:
+        case IrOpcode::SetVccWaveMaskTag:
         case IrOpcode::SetVccLo:
         case IrOpcode::SetVccHi:
         case IrOpcode::SetM0:

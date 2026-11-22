@@ -20,6 +20,7 @@ enum class RegisterBank {
     Memory,
     ThreadBitScalar,
     ScalarMaskTag,
+    ScalarWaveMaskTag,
     GotoVariable,
     M0,
     UserData

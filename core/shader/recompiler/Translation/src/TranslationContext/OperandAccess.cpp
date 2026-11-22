@@ -718,6 +718,7 @@ void TranslationContext::writeRawU32(const RdnaOperand& operand, IrU32 value) {
             const ScalarReg reg = static_cast<ScalarReg>(operand.reg);
             ir.SetScalarReg(reg, value.Value());
             ir.SetScalarMaskTag(reg, ir.ConstantBool(false));
+            ir.SetScalarWaveMaskTag(reg, ir.ConstantBool(false));
             if (RegIndex(reg) > 0u) {
                 ir.SetScalarMaskTag(static_cast<ScalarReg>(RegIndex(reg) - 1u), ir.ConstantBool(false));
             }
@@ -743,10 +744,12 @@ void TranslationContext::writeRawU32(const RdnaOperand& operand, IrU32 value) {
         case RdnaOperandKind::VccLo:
             ir.SetVccLo(value.Value());
             ir.SetVcc(threadBit({value, IrU32(ir.GetVccHi())}).Value());
+            ir.SetVccWaveMaskTag(ir.ConstantBool(false));
             break;
         case RdnaOperandKind::VccHi:
             ir.SetVccHi(value.Value());
             ir.SetVcc(threadBit({IrU32(ir.GetVccLo()), value}).Value());
+            ir.SetVccWaveMaskTag(ir.ConstantBool(false));
             break;
         case RdnaOperandKind::M0: ir.SetM0(value.Value()); break;
         case RdnaOperandKind::ExecLo:

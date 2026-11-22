@@ -64,6 +64,8 @@ bool isRegisterStatePseudo(IrOpcode opcode) {
         case IrOpcode::SetThreadBitScalarRegister:
         case IrOpcode::GetScalarMaskTag:
         case IrOpcode::SetScalarMaskTag:
+        case IrOpcode::GetScalarWaveMaskTag:
+        case IrOpcode::SetScalarWaveMaskTag:
         case IrOpcode::GetScalarRegister:
         case IrOpcode::SetScalarRegister:
         case IrOpcode::GetVectorRegister:
@@ -80,6 +82,8 @@ bool isRegisterStatePseudo(IrOpcode opcode) {
         case IrOpcode::SetExecHi:
         case IrOpcode::GetVcc:
         case IrOpcode::SetVcc:
+        case IrOpcode::GetVccWaveMaskTag:
+        case IrOpcode::SetVccWaveMaskTag:
         case IrOpcode::GetVccLo:
         case IrOpcode::SetVccLo:
         case IrOpcode::GetVccHi:

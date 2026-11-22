@@ -35,6 +35,8 @@ public:
     void SetThreadBitScalarReg(ScalarReg reg, IrValue& value);
     IrValue& GetScalarMaskTag(ScalarReg reg);
     void SetScalarMaskTag(ScalarReg reg, IrValue& value);
+    IrValue& GetScalarWaveMaskTag(ScalarReg reg);
+    void SetScalarWaveMaskTag(ScalarReg reg, IrValue& value);
     IrValue& GetVectorReg(VectorReg reg);
     void SetVectorReg(VectorReg reg, IrValue& value);
     void SetVectorWindowActive(bool active) { vectorWindowActive = active; }
@@ -51,6 +53,8 @@ public:
     void SetExecHi(IrValue& value);
     IrValue& GetVcc();
     void SetVcc(IrValue& value);
+    IrValue& GetVccWaveMaskTag();
+    void SetVccWaveMaskTag(IrValue& value);
     IrValue& GetVccLo();
     void SetVccLo(IrValue& value);
     IrValue& GetVccHi();

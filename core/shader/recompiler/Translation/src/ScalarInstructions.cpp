@@ -11,7 +11,21 @@ bool TranslationContext::sU32Mask(const RdnaInstruction& inst, IrOpcode logicalO
     const auto execOrVcc = [](const RdnaOperand& operand) { return operand.kind == RdnaOperandKind::ExecLo || operand.kind == RdnaOperandKind::VccLo; };
     const bool involved = program.Resources().stage == IrShaderStage::Pixel || execOrVcc(destination) || execOrVcc(sourceAt(inst, 0u)) || (binary && execOrVcc(sourceAt(inst, 1u)));
     const bool exact = maskLanesExact(sourceAt(inst, 0u)) && (!binary || maskLanesExact(sourceAt(inst, 1u)));
-    if (program.WaveSize() != 32u || !involved || !exact || (destination.kind != RdnaOperandKind::ScalarRegister && !execOrVcc(destination))) return word();
+    IrU1 complete = waveMaskComplete(sourceAt(inst, 0u));
+    if (binary) complete = IrU1(ir.LogicalAnd(complete.Value(), waveMaskComplete(sourceAt(inst, 1u)).Value()));
+    const auto markComplete = [&] {
+        if (!narrowWave32Host) return;
+        if (destination.kind == RdnaOperandKind::ScalarRegister) {
+            ir.SetScalarWaveMaskTag(static_cast<ScalarReg>(destination.reg), complete.Value());
+        } else if (destination.kind == RdnaOperandKind::VccLo) {
+            ir.SetVccWaveMaskTag(complete.Value());
+        }
+    };
+    if (program.WaveSize() != 32u || !involved || !exact || (destination.kind != RdnaOperandKind::ScalarRegister && !execOrVcc(destination))) {
+        const bool result = word();
+        markComplete();
+        return result;
+    }
     IrU1 lane = binary ? u64MaskBinary(inst, logicalOpcode, negateRhs, negateResult) : readMask(sourceAt(inst, 0u));
     if (!binary && negateResult) lane = IrU1(ir.LogicalNot(lane.Value()));
     IrU1 valid = readMaskValid(sourceAt(inst, 0u));
@@ -31,6 +45,7 @@ bool TranslationContext::sU32Mask(const RdnaInstruction& inst, IrOpcode logicalO
         break;
     }
     }
+    markComplete();
     return result;
 }
 

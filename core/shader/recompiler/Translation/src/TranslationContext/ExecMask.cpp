@@ -18,7 +18,7 @@ IrU32 TranslationContext::hostExecWord(std::uint32_t half) {
     return IrU32(ir.BitwiseAnd(word.Value(), ballotMask(IrU1(ir.ConstantBool(true)))[half].Value()));
 }
 
-IrU1 TranslationContext::threadBit(const std::array<IrU32, 2>& mask) {
+IrU1 TranslationContext::threadBit(const std::array<IrU32, 2>& mask, bool guestWaveLane) {
     const bool wide = program.WaveSize() == 64u;
     if (mask[0].Value().HasImmediate() && (!wide || mask[1].Value().HasImmediate())) {
         const std::uint32_t low = mask[0].Value().ImmediateU32();
@@ -26,10 +26,26 @@ IrU1 TranslationContext::threadBit(const std::array<IrU32, 2>& mask) {
         if (low == 0u && high == 0u) return IrU1(ir.ConstantBool(false));
         if (low == 0xffffffffu && high == 0xffffffffu) return IrU1(ir.ConstantBool(true));
     }
-    const IrU32 lane(ir.Emit(IrOpcode::LaneId, IrType::U32, {}));
+    IrValue* laneValue = &ir.Emit(IrOpcode::LaneId, IrType::U32, {});
+    if (guestWaveLane && narrowWave32Host) {
+        laneValue = &ir.Emit(IrOpcode::GetBuiltin, IrType::U32, {&ir.Constant(static_cast<std::uint32_t>(StageInputKind::LocalInvocationIndex)), &ir.Constant(0u)});
+    }
+    const IrU32 lane(*laneValue);
     const IrU32 word = program.WaveSize() == 64u ? IrU32(ir.Select(ir.ULessThan(lane.Value(), ir.Constant(32u)), mask[0].Value(), mask[1].Value())) : mask[0];
     const IrU32 bit(ir.BitwiseAnd(lane.Value(), ir.Constant(31u)));
     return IrU1(ir.INotEqual(ir.BitwiseAnd(ir.ShiftRightLogical(word.Value(), bit.Value()), ir.Constant(1u)), ir.Constant(0u)));
+}
+
+IrU1 TranslationContext::waveMaskComplete(const RdnaOperand& operand) {
+    if (!narrowWave32Host) return IrU1(ir.ConstantBool(false));
+    switch (operand.kind) {
+        case RdnaOperandKind::LiteralConstant:
+        case RdnaOperandKind::IntegerInlineConstant:
+        case RdnaOperandKind::FloatInlineConstant: return IrU1(ir.ConstantBool(true));
+        case RdnaOperandKind::ScalarRegister: return IrU1(ir.GetScalarWaveMaskTag(static_cast<ScalarReg>(operand.reg)));
+        case RdnaOperandKind::VccLo: return IrU1(ir.GetVccWaveMaskTag());
+        default: return IrU1(ir.ConstantBool(false));
+    }
 }
 
 IrU32 TranslationContext::conditionBit(const RdnaOperand& operand) {
@@ -38,20 +54,26 @@ IrU32 TranslationContext::conditionBit(const RdnaOperand& operand) {
 
 IrU1 TranslationContext::readMask(const RdnaOperand& operand) {
     if (operand.kind == RdnaOperandKind::LiteralConstant || operand.kind == RdnaOperandKind::IntegerInlineConstant || operand.kind == RdnaOperandKind::FloatInlineConstant) {
-        return threadBit(readU32Pair(operand));
+        return threadBit(readU32Pair(operand), true);
     }
     switch (operand.kind) {
         case RdnaOperandKind::ScalarRegister: {
             const ScalarReg reg = static_cast<ScalarReg>(operand.reg);
             const std::array<IrU32, 2> mask = program.WaveSize() == 64u ? readU32Pair(operand) : std::array<IrU32, 2>{readRawU32(operand), IrU32(ir.Constant(0u))};
-            return IrU1(ir.Emit(IrOpcode::SelectU1, IrType::U1, {&ir.GetScalarMaskTag(reg), &ir.GetThreadBitScalarReg(reg), &threadBit(mask).Value()}));
+            IrU1 rawBit = threadBit(mask);
+            if (narrowWave32Host) rawBit = IrU1(ir.Select(ir.GetScalarWaveMaskTag(reg), threadBit(mask, true).Value(), rawBit.Value()));
+            return IrU1(ir.Emit(IrOpcode::SelectU1, IrType::U1, {&ir.GetScalarMaskTag(reg), &ir.GetThreadBitScalarReg(reg), &rawBit.Value()}));
         }
         case RdnaOperandKind::ExecLo:
         case RdnaOperandKind::ExecHi: return IrU1(ir.GetExec());
         case RdnaOperandKind::VccLo: return IrU1(ir.GetVcc());
         case RdnaOperandKind::VccHi: return program.WaveSize() == 32u ? threadBit({readRawU32(operand), IrU32(ir.Constant(0u))}) : IrU1(ir.GetVcc());
         case RdnaOperandKind::Scc: return IrU1(ir.GetScc());
-        case RdnaOperandKind::VccZ: return IrU1(ir.LogicalNot(ir.GetVcc()));
+        case RdnaOperandKind::VccZ: {
+            IrU1 nonzero(ir.GetVcc());
+            if (narrowWave32Host) nonzero = IrU1(ir.Select(ir.GetVccWaveMaskTag(), ir.INotEqual(ir.GetVccLo(), ir.Constant(0u)), nonzero.Value()));
+            return IrU1(ir.LogicalNot(nonzero.Value()));
+        }
         case RdnaOperandKind::ExecZ: return IrU1(ir.LogicalNot(ir.GetExec()));
         case RdnaOperandKind::SrcSharedBase:
         case RdnaOperandKind::SrcSharedLimit:
@@ -102,6 +124,7 @@ std::array<IrU32, 2> TranslationContext::writeMask(const RdnaOperand& operand, I
             const ScalarReg reg = static_cast<ScalarReg>(operand.reg);
             ir.SetThreadBitScalarReg(reg, value.Value());
             ir.SetScalarMaskTag(reg, ir.ConstantBool(true));
+            ir.SetScalarWaveMaskTag(reg, ir.ConstantBool(false));
             if (RegIndex(reg) > 0u) {
                 ir.SetScalarMaskTag(static_cast<ScalarReg>(RegIndex(reg) - 1u), ir.ConstantBool(false));
             }
@@ -129,9 +152,11 @@ std::array<IrU32, 2> TranslationContext::writeMask(const RdnaOperand& operand, I
                 }
                 ir.SetVccLo(mask[0].Value());
                 ir.SetVcc(value.Value());
+                ir.SetVccWaveMaskTag(ir.ConstantBool(false));
                 return mask;
             }
             ir.SetVcc(value.Value());
+            ir.SetVccWaveMaskTag(ir.ConstantBool(false));
             ir.SetVccLo(mask[0].Value());
             ir.SetVccHi(mask[1].Value());
             return mask;
@@ -151,10 +176,14 @@ void TranslationContext::writeMaskLanes(const RdnaOperand& operand, IrU1 lane, I
             const ScalarReg reg = static_cast<ScalarReg>(operand.reg);
             ir.SetThreadBitScalarReg(reg, lane.Value());
             ir.SetScalarMaskTag(reg, valid.Value());
+            ir.SetScalarWaveMaskTag(reg, ir.ConstantBool(false));
             break;
         }
         case RdnaOperandKind::ExecLo: ir.SetExec(lane.Value()); break;
-        case RdnaOperandKind::VccLo: ir.SetVcc(lane.Value()); break;
+        case RdnaOperandKind::VccLo:
+            ir.SetVcc(lane.Value());
+            ir.SetVccWaveMaskTag(ir.ConstantBool(false));
+            break;
         default: break;
     }
 }
@@ -193,8 +222,16 @@ void TranslationContext::AddBranchCondition(const BasicBlock& source, BlockInfo&
         case BranchCondition::Always: condition = IrU1(ir.ConstantBool(true)); break;
         case BranchCondition::SccZero: condition = IrU1(ir.LogicalNot(ir.GetScc())); break;
         case BranchCondition::SccNonZero: condition = IrU1(ir.GetScc()); break;
-        case BranchCondition::VccZero: condition = IrU1(ir.LogicalNot(ir.GetVcc())); break;
-        case BranchCondition::VccNonZero: condition = IrU1(ir.GetVcc()); break;
+        case BranchCondition::VccZero:
+        case BranchCondition::VccNonZero: {
+            IrU1 nonzero(ir.GetVcc());
+            if (narrowWave32Host) {
+                IrValue& rawNonzero = ir.INotEqual(ir.GetVccLo(), ir.Constant(0u));
+                nonzero = IrU1(ir.Select(ir.GetVccWaveMaskTag(), rawNonzero, nonzero.Value()));
+            }
+            condition = source.terminator.condition == BranchCondition::VccZero ? IrU1(ir.LogicalNot(nonzero.Value())) : nonzero;
+            break;
+        }
         case BranchCondition::ExecZero: condition = IrU1(ir.LogicalNot(ir.GetExec())); break;
         case BranchCondition::ExecNonZero: condition = IrU1(ir.GetExec()); break;
         case BranchCondition::IndirectTarget: {

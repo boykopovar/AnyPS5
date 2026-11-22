@@ -17,6 +17,8 @@ public:
     void Set(IrBlock& block, ThreadBitScalarReg variable, IrValue* value);
     [[nodiscard]] IrValue* Get(IrBlock& block, ScalarMaskTag variable) const;
     void Set(IrBlock& block, ScalarMaskTag variable, IrValue* value);
+    [[nodiscard]] IrValue* Get(IrBlock& block, ScalarWaveMaskTag variable) const;
+    void Set(IrBlock& block, ScalarWaveMaskTag variable, IrValue* value);
     [[nodiscard]] IrValue* Get(IrBlock& block, VectorReg reg) const;
     void Set(IrBlock& block, VectorReg reg, IrValue* value);
     [[nodiscard]] IrValue* Get(IrBlock& block, GotoVariable variable) const;
@@ -31,6 +33,8 @@ public:
     void Set(IrBlock& block, ExecHiTag variable, IrValue* value);
     [[nodiscard]] IrValue* Get(IrBlock& block, VccTag variable) const;
     void Set(IrBlock& block, VccTag variable, IrValue* value);
+    [[nodiscard]] IrValue* Get(IrBlock& block, VccWaveMaskTag variable) const;
+    void Set(IrBlock& block, VccWaveMaskTag variable, IrValue* value);
     [[nodiscard]] IrValue* Get(IrBlock& block, VccLoTag variable) const;
     void Set(IrBlock& block, VccLoTag variable, IrValue* value);
     [[nodiscard]] IrValue* Get(IrBlock& block, VccHiTag variable) const;
@@ -44,6 +48,7 @@ private:
     std::unordered_map<IrBlock*, IrValue*> _execLo;
     std::unordered_map<IrBlock*, IrValue*> _execHi;
     std::unordered_map<IrBlock*, IrValue*> _vcc;
+    std::unordered_map<IrBlock*, IrValue*> _vccWaveMask;
     std::unordered_map<IrBlock*, IrValue*> _vccLo;
     std::unordered_map<IrBlock*, IrValue*> _vccHi;
     std::unordered_map<IrBlock*, IrValue*> _m0;

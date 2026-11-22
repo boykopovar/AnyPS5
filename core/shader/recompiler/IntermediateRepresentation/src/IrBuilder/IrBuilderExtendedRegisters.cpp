@@ -52,6 +52,14 @@ void IrBuilder::SetVcc(IrValue& value) {
     (void)Emit(IrOpcode::SetVcc, IrType::Void, {&value});
 }
 
+IrValue& IrBuilder::GetVccWaveMaskTag() {
+    return Emit(IrOpcode::GetVccWaveMaskTag, IrType::Bool, {});
+}
+
+void IrBuilder::SetVccWaveMaskTag(IrValue& value) {
+    (void)Emit(IrOpcode::SetVccWaveMaskTag, IrType::Void, {&value});
+}
+
 IrValue& IrBuilder::GetVccLo() {
     return Emit(IrOpcode::GetVccLo, IrType::U32, {});
 }

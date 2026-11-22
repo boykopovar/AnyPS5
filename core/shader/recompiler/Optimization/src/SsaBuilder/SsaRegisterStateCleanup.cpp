@@ -7,6 +7,7 @@ bool IsRegisterStateWrite(IrOpcode opcode) {
         case IrOpcode::SetScalarRegister:
         case IrOpcode::SetThreadBitScalarRegister:
         case IrOpcode::SetScalarMaskTag:
+        case IrOpcode::SetScalarWaveMaskTag:
         case IrOpcode::SetVectorRegister:
         case IrOpcode::SetGotoVariable:
         case IrOpcode::SetScc:
@@ -14,6 +15,7 @@ bool IsRegisterStateWrite(IrOpcode opcode) {
         case IrOpcode::SetExecLo:
         case IrOpcode::SetExecHi:
         case IrOpcode::SetVcc:
+        case IrOpcode::SetVccWaveMaskTag:
         case IrOpcode::SetVccLo:
         case IrOpcode::SetVccHi:
         case IrOpcode::SetM0:

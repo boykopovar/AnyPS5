@@ -8,6 +8,7 @@ struct VariableTypeVisitor {
     IrType operator()(ScalarReg) const { return IrType::U32; }
     IrType operator()(ThreadBitScalarReg) const { return IrType::Bool; }
     IrType operator()(ScalarMaskTag) const { return IrType::Bool; }
+    IrType operator()(ScalarWaveMaskTag) const { return IrType::Bool; }
     IrType operator()(VectorReg) const { return IrType::U32; }
     IrType operator()(GotoVariable) const { return IrType::Bool; }
     IrType operator()(SccTag) const { return IrType::Bool; }
@@ -15,6 +16,7 @@ struct VariableTypeVisitor {
     IrType operator()(ExecLoTag) const { return IrType::U32; }
     IrType operator()(ExecHiTag) const { return IrType::U32; }
     IrType operator()(VccTag) const { return IrType::Bool; }
+    IrType operator()(VccWaveMaskTag) const { return IrType::Bool; }
     IrType operator()(VccLoTag) const { return IrType::U32; }
     IrType operator()(VccHiTag) const { return IrType::U32; }
     IrType operator()(M0Tag) const { return IrType::U32; }

@@ -51,6 +51,22 @@ void DefTable::Set(IrBlock& block, ScalarMaskTag variable, IrValue* value) {
     block.ssaScalarMaskTags[index] = value;
 }
 
+IrValue* DefTable::Get(IrBlock& block, ScalarWaveMaskTag variable) const {
+    const auto index = RegIndex(variable.reg);
+    if (index >= NumScalarRegs) {
+        throw std::out_of_range("DefTable::Get scalar wave mask tag index is out of range");
+    }
+    return block.ssaScalarWaveMaskTags[index];
+}
+
+void DefTable::Set(IrBlock& block, ScalarWaveMaskTag variable, IrValue* value) {
+    const auto index = RegIndex(variable.reg);
+    if (index >= NumScalarRegs) {
+        throw std::out_of_range("DefTable::Set scalar wave mask tag index is out of range");
+    }
+    block.ssaScalarWaveMaskTags[index] = value;
+}
+
 IrValue* DefTable::Get(IrBlock& block, VectorReg reg) const {
     return block.ssaVectorValues[RegIndex(reg)];
 }
@@ -118,6 +134,15 @@ IrValue* DefTable::Get(IrBlock& block, VccTag) const {
 
 void DefTable::Set(IrBlock& block, VccTag, IrValue* value) {
     _vcc[&block] = value;
+}
+
+IrValue* DefTable::Get(IrBlock& block, VccWaveMaskTag) const {
+    const auto found = _vccWaveMask.find(&block);
+    return found == _vccWaveMask.end() ? nullptr : found->second;
+}
+
+void DefTable::Set(IrBlock& block, VccWaveMaskTag, IrValue* value) {
+    _vccWaveMask[&block] = value;
 }
 
 IrValue* DefTable::Get(IrBlock& block, VccLoTag) const {

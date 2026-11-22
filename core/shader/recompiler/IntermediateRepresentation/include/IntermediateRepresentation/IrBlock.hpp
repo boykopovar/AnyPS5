@@ -63,6 +63,7 @@ public:
     IrSsaValues<NumScalarRegs> ssaScalarValues{};
     IrSsaValues<NumScalarRegs> ssaThreadBitScalarValues{};
     IrSsaValues<NumScalarRegs> ssaScalarMaskTags{};
+    IrSsaValues<NumScalarRegs> ssaScalarWaveMaskTags{};
     IrSsaValues<NumVectorRegs> ssaVectorValues{};
 
     [[nodiscard]] const std::vector<IrBlock*>& Predecessors() const;

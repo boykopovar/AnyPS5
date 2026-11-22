@@ -34,6 +34,9 @@ void VisitInstruction(Pass& pass, IrBlock& block, IrValue& inst) {
         case IrOpcode::SetScalarMaskTag:
             pass.Write(ScalarMaskTag{expectScalarRegister(*inst.Argument(0), RegisterBank::ScalarMaskTag)}, &block, inst.Argument(1));
             break;
+        case IrOpcode::SetScalarWaveMaskTag:
+            pass.Write(ScalarWaveMaskTag{expectScalarRegister(*inst.Argument(0), RegisterBank::ScalarWaveMaskTag)}, &block, inst.Argument(1));
+            break;
         case IrOpcode::SetVectorRegister:
             pass.Write(expectVectorRegister(*inst.Argument(0), RegisterBank::Vector), &block, inst.Argument(1));
             break;
@@ -45,6 +48,7 @@ void VisitInstruction(Pass& pass, IrBlock& block, IrValue& inst) {
         case IrOpcode::SetExecLo: pass.Write(ExecLoTag{}, &block, inst.Argument(0)); break;
         case IrOpcode::SetExecHi: pass.Write(ExecHiTag{}, &block, inst.Argument(0)); break;
         case IrOpcode::SetVcc: pass.Write(VccTag{}, &block, inst.Argument(0)); break;
+        case IrOpcode::SetVccWaveMaskTag: pass.Write(VccWaveMaskTag{}, &block, inst.Argument(0)); break;
         case IrOpcode::SetVccLo: pass.Write(VccLoTag{}, &block, inst.Argument(0)); break;
         case IrOpcode::SetVccHi: pass.Write(VccHiTag{}, &block, inst.Argument(0)); break;
         case IrOpcode::SetM0: pass.Write(M0Tag{}, &block, inst.Argument(0)); break;
@@ -57,6 +61,9 @@ void VisitInstruction(Pass& pass, IrBlock& block, IrValue& inst) {
         case IrOpcode::GetScalarMaskTag:
             inst.ReplaceUsesWith(pass.Read(ScalarMaskTag{expectScalarRegister(*inst.Argument(0), RegisterBank::ScalarMaskTag)}, &block), true);
             break;
+        case IrOpcode::GetScalarWaveMaskTag:
+            inst.ReplaceUsesWith(pass.Read(ScalarWaveMaskTag{expectScalarRegister(*inst.Argument(0), RegisterBank::ScalarWaveMaskTag)}, &block), true);
+            break;
         case IrOpcode::GetVectorRegister:
             inst.ReplaceUsesWith(pass.Read(expectVectorRegister(*inst.Argument(0), RegisterBank::Vector), &block), true);
             break;
@@ -68,6 +75,7 @@ void VisitInstruction(Pass& pass, IrBlock& block, IrValue& inst) {
         case IrOpcode::GetExecLo: inst.ReplaceUsesWith(pass.Read(ExecLoTag{}, &block), true); break;
         case IrOpcode::GetExecHi: inst.ReplaceUsesWith(pass.Read(ExecHiTag{}, &block), true); break;
         case IrOpcode::GetVcc: inst.ReplaceUsesWith(pass.Read(VccTag{}, &block), true); break;
+        case IrOpcode::GetVccWaveMaskTag: inst.ReplaceUsesWith(pass.Read(VccWaveMaskTag{}, &block), true); break;
         case IrOpcode::GetVccLo: inst.ReplaceUsesWith(pass.Read(VccLoTag{}, &block), true); break;
         case IrOpcode::GetVccHi: inst.ReplaceUsesWith(pass.Read(VccHiTag{}, &block), true); break;
         case IrOpcode::GetM0: inst.ReplaceUsesWith(pass.Read(M0Tag{}, &block), true); break;

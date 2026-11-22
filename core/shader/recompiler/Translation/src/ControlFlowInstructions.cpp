@@ -470,6 +470,9 @@ void TranslationContext::vReadfirstlaneB32(const RdnaInstruction& inst) {
     const IrU32 value = readU32(sourceAt(inst, 0u));
     const IrU32 result(ir.Emit(IrOpcode::ReadFirstLane, IrType::U32, {&value.Value(), &ir.GetExec()}));
     writeRawU32(inst.destination, result);
+    if (inst.destination.kind == RdnaOperandKind::ScalarRegister) {
+        ir.SetScalarWaveMaskTag(static_cast<ScalarReg>(inst.destination.reg), ir.ConstantBool(narrowWave32Host));
+    }
 }
 
 void TranslationContext::vReadlaneB32(const RdnaInstruction& inst) {

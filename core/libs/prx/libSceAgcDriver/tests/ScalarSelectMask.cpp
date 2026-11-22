@@ -28,7 +28,8 @@ struct Value {
 
 class Evaluator {
 public:
-    Evaluator(const IrProgram& program, std::uint32_t waveSize) : lanes(waveSize), exec(waveSize >= 64u ? ~0ull : (1ull << waveSize) - 1ull) {
+    Evaluator(const IrProgram& program, std::uint32_t waveSize, std::uint32_t hostSubgroup = 0u)
+        : lanes(waveSize), hostSubgroup(hostSubgroup == 0u ? waveSize : hostSubgroup), exec(waveSize >= 64u ? ~0ull : (1ull << waveSize) - 1ull) {
         for (std::uint32_t lane = 0; lane < Lanes; ++lane) vector[0][lane] = lane;
         for (const auto& block : program.Blocks()) {
             for (const auto* inst : block->Instructions()) run(*inst);
@@ -38,17 +39,28 @@ public:
     LaneWords output{};
     bool exported = false;
     std::map<std::uint32_t, bool> maskTag;
+    std::map<std::uint32_t, bool> waveMaskTag;
     std::map<std::uint32_t, const IrValue*> threadBitValue;
+
+    LaneWords vectorRegister(std::uint32_t index) const {
+        return vector.at(index);
+    }
 
 private:
     std::unordered_map<const IrValue*, Value> values;
     std::array<LaneWords, 256> vector{};
-    std::array<std::uint32_t, 128> scalar{};
+    std::array<LaneWords, 128> scalar{};
     std::map<std::uint32_t, LaneWords> threadBit;
+    Value execLo{};
+    Value execHi{};
+    Value vccLo{};
+    Value vccHi{};
     std::uint32_t lanes;
+    std::uint32_t hostSubgroup;
     std::uint64_t exec;
     std::uint64_t vcc = 0;
-    bool scc = false;
+    bool vccWaveMaskTag = false;
+    Value scc{};
 
     static std::uint32_t registerIndex(const IrValue& inst) {
         return inst.Argument(0)->Register().index;
@@ -113,25 +125,38 @@ private:
     void run(const IrValue& inst) {
         switch (inst.Opcode()) {
         case IrOpcode::SetExec: exec = toBits(operand(inst.Argument(0))); return;
-        case IrOpcode::SetExecLo: exec = (exec & ~0xffffffffull) | uniformWord(operand(inst.Argument(0))); return;
-        case IrOpcode::SetExecHi: exec = (exec & 0xffffffffull) | (static_cast<std::uint64_t>(uniformWord(operand(inst.Argument(0)))) << 32); return;
+        case IrOpcode::SetExecLo: execLo = operand(inst.Argument(0)); return;
+        case IrOpcode::SetExecHi: execHi = operand(inst.Argument(0)); return;
         case IrOpcode::GetExec: values[&inst] = fromBits(exec); return;
-        case IrOpcode::GetExecLo: values[&inst] = uniform(static_cast<std::uint32_t>(exec)); return;
-        case IrOpcode::GetExecHi: values[&inst] = uniform(static_cast<std::uint32_t>(exec >> 32)); return;
+        case IrOpcode::GetExecLo: values[&inst] = execLo; return;
+        case IrOpcode::GetExecHi: values[&inst] = execHi; return;
         case IrOpcode::SetVcc: vcc = toBits(operand(inst.Argument(0))); return;
-        case IrOpcode::SetVccLo: vcc = (vcc & ~0xffffffffull) | uniformWord(operand(inst.Argument(0))); return;
-        case IrOpcode::SetVccHi: vcc = (vcc & 0xffffffffull) | (static_cast<std::uint64_t>(uniformWord(operand(inst.Argument(0)))) << 32); return;
+        case IrOpcode::SetVccWaveMaskTag: vccWaveMaskTag = (uniformWord(operand(inst.Argument(0))) & 1u) != 0u; return;
+        case IrOpcode::SetVccLo: vccLo = operand(inst.Argument(0)); return;
+        case IrOpcode::SetVccHi: vccHi = operand(inst.Argument(0)); return;
         case IrOpcode::GetVcc: values[&inst] = fromBits(vcc); return;
-        case IrOpcode::GetVccLo: values[&inst] = uniform(static_cast<std::uint32_t>(vcc)); return;
-        case IrOpcode::GetVccHi: values[&inst] = uniform(static_cast<std::uint32_t>(vcc >> 32)); return;
-        case IrOpcode::SetScc: scc = (uniformWord(operand(inst.Argument(0))) & 1u) != 0u; return;
-        case IrOpcode::GetScc: values[&inst] = uniform(scc ? 1u : 0u); return;
-        case IrOpcode::SetScalarRegister: scalar.at(registerIndex(inst)) = uniformWord(operand(inst.Argument(1))); return;
-        case IrOpcode::GetScalarRegister: values[&inst] = uniform(scalar.at(registerIndex(inst))); return;
+        case IrOpcode::GetVccWaveMaskTag: values[&inst] = uniform(vccWaveMaskTag ? 1u : 0u); return;
+        case IrOpcode::GetVccLo: values[&inst] = vccLo; return;
+        case IrOpcode::GetVccHi: values[&inst] = vccHi; return;
+        case IrOpcode::SetScc: scc = operand(inst.Argument(0)); return;
+        case IrOpcode::GetScc: values[&inst] = scc; return;
+        case IrOpcode::SetScalarRegister: scalar.at(registerIndex(inst)) = operand(inst.Argument(1)).component[0]; return;
+        case IrOpcode::GetScalarRegister: {
+            Value result{};
+            result.component[0] = scalar.at(registerIndex(inst));
+            values[&inst] = result;
+            return;
+        }
         case IrOpcode::SetScalarMaskTag: maskTag[registerIndex(inst)] = (uniformWord(operand(inst.Argument(1))) & 1u) != 0u; return;
         case IrOpcode::GetScalarMaskTag: {
             const auto found = maskTag.find(registerIndex(inst));
             values[&inst] = uniform(found != maskTag.end() && found->second ? 1u : 0u);
+            return;
+        }
+        case IrOpcode::SetScalarWaveMaskTag: waveMaskTag[registerIndex(inst)] = (uniformWord(operand(inst.Argument(1))) & 1u) != 0u; return;
+        case IrOpcode::GetScalarWaveMaskTag: {
+            const auto found = waveMaskTag.find(registerIndex(inst));
+            values[&inst] = uniform(found != waveMaskTag.end() && found->second ? 1u : 0u);
             return;
         }
         case IrOpcode::SetThreadBitScalarRegister:
@@ -152,18 +177,34 @@ private:
             values[&inst] = result;
             return;
         }
-        case IrOpcode::GetBuiltin: values[&inst] = uniform(0u); return;
+        case IrOpcode::GetBuiltin: {
+            const auto kind = static_cast<StageInputKind>(inst.Argument(0)->ImmediateU32());
+            const std::uint32_t component = inst.Argument(1)->ImmediateU32();
+            Value result{};
+            if (kind == StageInputKind::LocalInvocationIndex || (kind == StageInputKind::LocalInvocationId && component == 0u)) {
+                for (std::uint32_t lane = 0; lane < Lanes; ++lane) result.component[0][lane] = lane;
+            }
+            values[&inst] = result;
+            return;
+        }
         case IrOpcode::LaneId: {
             Value result{};
-            for (std::uint32_t lane = 0; lane < Lanes; ++lane) result.component[0][lane] = lane;
+            for (std::uint32_t lane = 0; lane < Lanes; ++lane) result.component[0][lane] = lane % hostSubgroup;
             values[&inst] = result;
             return;
         }
         case IrOpcode::Ballot: {
-            const std::uint64_t bits = toBits(operand(inst.Argument(0)));
+            const Value predicate = operand(inst.Argument(0));
             Value result{};
-            result.component[0].fill(static_cast<std::uint32_t>(bits));
-            result.component[1].fill(static_cast<std::uint32_t>(bits >> 32));
+            for (std::uint32_t lane = 0; lane < lanes; ++lane) {
+                const std::uint32_t base = (lane / hostSubgroup) * hostSubgroup;
+                std::uint64_t bits = 0;
+                for (std::uint32_t offset = 0; offset < hostSubgroup && base + offset < lanes; ++offset) {
+                    bits |= static_cast<std::uint64_t>(predicate.component[0][base + offset] & 1u) << offset;
+                }
+                result.component[0][lane] = static_cast<std::uint32_t>(bits);
+                result.component[1][lane] = static_cast<std::uint32_t>(bits >> 32);
+            }
             values[&inst] = result;
             return;
         }
@@ -186,6 +227,8 @@ private:
         case IrOpcode::INotEqual32: values[&inst] = lanewise(inst, [](std::uint32_t a, std::uint32_t b) { return a != b ? 1u : 0u; }); return;
         case IrOpcode::LogicalAnd: values[&inst] = lanewise(inst, [](std::uint32_t a, std::uint32_t b) { return (a & b) & 1u; }); return;
         case IrOpcode::BitwiseAnd32: values[&inst] = lanewise(inst, [](std::uint32_t a, std::uint32_t b) { return a & b; }); return;
+        case IrOpcode::BitwiseOr32: values[&inst] = lanewise(inst, [](std::uint32_t a, std::uint32_t b) { return a | b; }); return;
+        case IrOpcode::BitwiseXor32: values[&inst] = lanewise(inst, [](std::uint32_t a, std::uint32_t b) { return a ^ b; }); return;
         case IrOpcode::ShiftRightLogical32: values[&inst] = lanewise(inst, [](std::uint32_t a, std::uint32_t b) { return a >> (b & 31u); }); return;
         case IrOpcode::SelectU1:
         case IrOpcode::SelectU32: values[&inst] = select(inst); return;
@@ -217,8 +260,16 @@ std::uint32_t sCselectB64(std::uint32_t destination, std::uint32_t trueSource, s
     return 0x85800000u | (destination << 16) | (falseSource << 8) | trueSource;
 }
 
+std::uint32_t sMovB32(std::uint32_t destination, std::uint32_t source) {
+    return 0xbe800300u | (destination << 16) | source;
+}
+
 std::uint32_t sMovB64(std::uint32_t destination, std::uint32_t source) {
     return 0xbe800400u | (destination << 16) | source;
+}
+
+std::uint32_t sXorB32(std::uint32_t destination, std::uint32_t left, std::uint32_t right) {
+    return 0x89000000u | (destination << 16) | (right << 8) | left;
 }
 
 std::array<std::uint32_t, 2> vCndmaskV1(std::uint32_t mask) {
@@ -260,6 +311,76 @@ Outcome run(const std::vector<std::uint32_t>& body, std::uint32_t mask, std::uin
         outcome.constantSources = bit->second->Argument(1)->Resolve()->HasImmediate() && bit->second->Argument(2)->Resolve()->HasImmediate();
     }
     return outcome;
+}
+
+Outcome runNarrowCompute(const std::vector<std::uint32_t>& body, std::uint32_t mask) {
+    constexpr std::uint32_t WaveSize = 32u;
+    constexpr std::uint32_t HostSubgroup = 8u;
+    std::vector<std::uint32_t> code = body;
+    const auto select = vCndmaskV1(mask);
+    code.insert(code.end(), {select[0], select[1], 0xbf810000u});
+    const auto decoded = RdnaInstructionDecoder{}.Decode(code);
+    auto cfg = GraphBuilder{}.Build(decoded);
+    Structurizer{}.Structurize(cfg);
+    GuestContext context{};
+    context.waveSize = WaveSize;
+    context.compute = ShaderComputeStageInfo{{WaveSize, 1u, 1u}, 0u, {false, false, false}, false, 1};
+    TranslateOptions options{};
+    options.stage = ShaderStageKind::Compute;
+    options.waveSize = WaveSize;
+    options.userDataCount = 0;
+    options.inputInfo = BuildShaderStageInputInfo(ShaderStageKind::Compute, context, HostSubgroup);
+    const auto program = InstructionTranslator{}.Translate(decoded, cfg, options);
+    bool usesGuestLane = false;
+    for (const auto& block : program.Blocks()) {
+        for (const IrValue* inst : block->Instructions()) {
+            usesGuestLane |= inst->Opcode() == IrOpcode::GetBuiltin && inst->Arguments().size() >= 1u &&
+                inst->Argument(0)->Resolve()->HasImmediate() &&
+                inst->Argument(0)->Resolve()->ImmediateU32() == static_cast<std::uint32_t>(StageInputKind::LocalInvocationIndex);
+        }
+    }
+    if (!usesGuestLane) throw std::runtime_error("narrow Wave32 mask translation did not request the guest lane index");
+    const Evaluator evaluator(program, WaveSize, HostSubgroup);
+    Outcome outcome;
+    outcome.lanes = evaluator.vectorRegister(1u);
+    outcome.waveSize = WaveSize;
+    const auto tag = evaluator.maskTag.find(S4);
+    outcome.maskTagS4 = tag != evaluator.maskTag.end() && tag->second;
+    return outcome;
+}
+
+void expectNarrowVccBranchReadsRawWord() {
+    constexpr std::uint32_t WaveSize = 32u;
+    constexpr std::uint32_t HostSubgroup = 8u;
+    const std::vector<std::uint32_t> code{
+        sMovB32(Vcc, Literal), 1u,
+        0xbf860001u,
+        0xbf800000u,
+        0xbf810000u,
+    };
+    const auto decoded = RdnaInstructionDecoder{}.Decode(code);
+    auto cfg = GraphBuilder{}.Build(decoded);
+    Structurizer{}.Structurize(cfg);
+    GuestContext context{};
+    context.waveSize = WaveSize;
+    context.compute = ShaderComputeStageInfo{{WaveSize, 1u, 1u}, 0u, {false, false, false}, false, 1};
+    TranslateOptions options{};
+    options.stage = ShaderStageKind::Compute;
+    options.waveSize = WaveSize;
+    options.userDataCount = 0;
+    options.inputInfo = BuildShaderStageInputInfo(ShaderStageKind::Compute, context, HostSubgroup);
+    const auto program = InstructionTranslator{}.Translate(decoded, cfg, options);
+    bool readsCompleteTag = false;
+    bool readsRawVcc = false;
+    for (const auto& block : program.Blocks()) {
+        for (const IrValue* inst : block->Instructions()) {
+            readsCompleteTag |= inst->Opcode() == IrOpcode::GetVccWaveMaskTag;
+            readsRawVcc |= inst->Opcode() == IrOpcode::GetVccLo;
+        }
+    }
+    if (!readsCompleteTag || !readsRawVcc) {
+        throw std::runtime_error("narrow Wave32 VCCZ branch did not consult complete-mask provenance and the raw VCC word");
+    }
 }
 
 int failures = 0;
@@ -312,6 +433,15 @@ void selectCase(const char* name, std::vector<std::uint32_t> setup, std::uint32_
 
 int main() {
     try {
+        constexpr std::uint32_t NarrowMask = 0x96a596a5u;
+        expectNarrowVccBranchReadsRawWord();
+        expectLanes("wave32 subgroup8 literal vcc",
+            runNarrowCompute({sMovB32(Vcc, Literal), NarrowMask}, Vcc), NarrowMask);
+        expectLanes("wave32 subgroup8 scalar xor",
+            runNarrowCompute({sMovB32(S4, Literal), NarrowMask, sXorB32(S4, S4, Zero), sMovB32(Vcc, S4)}, Vcc), NarrowMask);
+        expectLanes("wave32 subgroup8 compare round trip",
+            runNarrowCompute({vcmpLanesBelow(9u), sMovB32(S4, Vcc), sXorB32(S4, S4, Zero), sMovB32(Vcc, S4)}, Vcc), below(9u));
+
         selectCase("vcc, exec", {vcmpLanesBelow(4)}, Vcc, Exec, below(4), AllLanes, true);
         selectCase("exec, vcc", {vcmpLanesBelow(4)}, Exec, Vcc, AllLanes, below(4), true);
         selectCase("wave64 halves, vcc, exec", {vcmpLanesBelow(40)}, Vcc, Exec, below(40), AllLanes, true);

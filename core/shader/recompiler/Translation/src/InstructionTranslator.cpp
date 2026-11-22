@@ -232,11 +232,14 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         return entryIr.Emit(IrOpcode::GetTessellationAttribute, IrOpcodeType(IrOpcode::GetTessellationAttribute), {&entryIr.Constant(static_cast<std::uint32_t>(TessellationAttribute::ControlInput)), &address, &entryIr.ConstantBool(true)});
     };
 
+    const auto* workgroup = shaderWorkgroupInput(options.stage, options.inputInfo);
+    const bool narrowWave32Host = options.stage == ShaderStageKind::Compute && options.waveSize == 32u && workgroup != nullptr && workgroup->hostSubgroupSize < 32u;
     for (std::uint32_t index = 0; index < options.userDataCount; index++) {
         const auto reg = static_cast<ScalarReg>(options.userDataBaseRegister + index);
         IrValue& value = entryIr.GetUserData(reg);
         entryIr.SetScalarReg(reg, value);
         entryIr.SetScalarMaskTag(reg, entryIr.ConstantBool(false));
+        entryIr.SetScalarWaveMaskTag(reg, entryIr.ConstantBool(narrowWave32Host));
     }
 
     IrValue* initialExec = &entryIr.ConstantBool(true);
@@ -244,7 +247,6 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         initialExec = &entryIr.IEqual(builtin(StageInputKind::HelperInvocation), entryIr.Constant(0u));
     }
     std::uint32_t totalThreads = 0;
-    const auto* workgroup = shaderWorkgroupInput(options.stage, options.inputInfo);
     if (workgroup != nullptr) {
         totalThreads = std::max(workgroup->threadsNum[0], 1u) * std::max(workgroup->threadsNum[1], 1u) * std::max(workgroup->threadsNum[2], 1u);
         if (options.waveSize == 64u && workgroup->hostSubgroupSize == 32u && totalThreads % 64u != 0u) {
@@ -257,6 +259,7 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         }
     }
     entryIr.SetExec(*initialExec);
+    entryIr.SetVccWaveMaskTag(entryIr.ConstantBool(false));
     IrValue& initialMask = entryIr.Emit(IrOpcode::Ballot, IrOpcodeType(IrOpcode::Ballot), {initialExec});
     entryIr.SetExecLo(entryIr.CompositeExtract(initialMask, 0u));
     entryIr.SetExecHi(options.waveSize == 64u ? entryIr.CompositeExtract(initialMask, 1u) : entryIr.Constant(0u));
@@ -689,7 +692,10 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
     for (const auto& cfgBlock : cfg.blocks) {
         const auto typedIndex = blockIndices.at(cfgBlock.id);
         TranslationContext context(program, *blocks[typedIndex], vectorLimit);
-        if (const auto* workgroup = shaderWorkgroupInput(options.stage, options.inputInfo)) context.SetBufferLdsSize(workgroup->ldsSizeDwords * 4u);
+        if (const auto* workgroup = shaderWorkgroupInput(options.stage, options.inputInfo)) {
+            context.SetNarrowWave32Host(options.stage == ShaderStageKind::Compute && options.waveSize == 32u && workgroup->hostSubgroupSize < 32u);
+            context.SetBufferLdsSize(workgroup->ldsSizeDwords * 4u);
+        }
         context.SetPixelInput(options.inputInfo.pixel, options.fragmentShaderBarycentricEnabled);
         context.SetFloatMode(options.floatMode);
         context.SetNativeFloat16(options.nativeFloat16, options.nativeFloat16Fma, options.float16HostNans);

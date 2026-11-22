@@ -12,17 +12,19 @@ namespace ShaderRecompiler::Detail {
 struct SccTag { auto operator<=>(const SccTag&) const = default; };
 struct ThreadBitScalarReg { ScalarReg reg{}; auto operator<=>(const ThreadBitScalarReg&) const = default; };
 struct ScalarMaskTag { ScalarReg reg{}; auto operator<=>(const ScalarMaskTag&) const = default; };
+struct ScalarWaveMaskTag { ScalarReg reg{}; auto operator<=>(const ScalarWaveMaskTag&) const = default; };
 struct ExecTag { auto operator<=>(const ExecTag&) const = default; };
 struct ExecLoTag { auto operator<=>(const ExecLoTag&) const = default; };
 struct ExecHiTag { auto operator<=>(const ExecHiTag&) const = default; };
 struct VccTag { auto operator<=>(const VccTag&) const = default; };
+struct VccWaveMaskTag { auto operator<=>(const VccWaveMaskTag&) const = default; };
 struct VccLoTag { auto operator<=>(const VccLoTag&) const = default; };
 struct VccHiTag { auto operator<=>(const VccHiTag&) const = default; };
 struct M0Tag { auto operator<=>(const M0Tag&) const = default; };
 struct GotoVariable { std::uint32_t index = 0; auto operator<=>(const GotoVariable&) const = default; };
 
-using Variable = std::variant<ScalarReg, ThreadBitScalarReg, ScalarMaskTag, VectorReg,
-    GotoVariable, SccTag, ExecTag, ExecLoTag, ExecHiTag, VccTag, VccLoTag, VccHiTag, M0Tag>;
+using Variable = std::variant<ScalarReg, ThreadBitScalarReg, ScalarMaskTag, ScalarWaveMaskTag, VectorReg,
+    GotoVariable, SccTag, ExecTag, ExecLoTag, ExecHiTag, VccTag, VccWaveMaskTag, VccLoTag, VccHiTag, M0Tag>;
 
 [[nodiscard]] IrType VariableType(const Variable& variable);
 
