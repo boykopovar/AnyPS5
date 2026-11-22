@@ -18,6 +18,7 @@
 #include <stdexcept>
 #include <cstdio>
 #include <memory>
+#include <utility>
 #include "prx/libScePad/include/InputScript.hpp"
 
 namespace {
@@ -409,8 +410,24 @@ std::filesystem::path EnvironmentPath(const wchar_t* wide, const char* narrow) {
 }
 
 void ApplyRecording(PadData& data, std::uint64_t now) {
-    static Pad::RecordingPlayer player(EnvironmentPath(L"APS5_PAD_REPLAY", "APS5_PAD_REPLAY"));
-    static Pad::RecordingWriter writer(EnvironmentPath(L"APS5_PAD_RECORD", "APS5_PAD_RECORD"));
+    static auto [player, replayPath] = [] {
+        auto path = EnvironmentPath(L"APS5_PAD_REPLAY", "APS5_PAD_REPLAY");
+        if (!path.empty()) path = std::filesystem::absolute(path);
+        return std::pair{Pad::RecordingPlayer(path), std::move(path)};
+    }();
+    static Pad::RecordingWriter writer([] {
+        auto path = EnvironmentPath(L"APS5_PAD_RECORD", "APS5_PAD_RECORD");
+        if (!replayPath.empty() && !path.empty()) {
+            std::error_code error;
+            if (std::filesystem::exists(path, error) && std::filesystem::equivalent(path, replayPath, error)) {
+                throw std::runtime_error("APS5_PAD_RECORD and APS5_PAD_REPLAY refer to the same file: '" + path.string() + "'");
+            }
+            if (error) {
+                throw std::runtime_error("APS5_PAD_RECORD: cannot compare '" + path.string() + "' with APS5_PAD_REPLAY: " + error.message());
+            }
+        }
+        return path;
+    }());
     if (const auto replayed = player.At(now)) {
         data.buttons = replayed->buttons;
         data.left_stick_x = replayed->sticks[0];

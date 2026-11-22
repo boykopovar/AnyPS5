@@ -61,7 +61,8 @@ int main() {
     std::filesystem::create_directories(directory);
     const auto replay = directory / "replay.aps5pad";
     const auto record = directory / "record.aps5pad";
-    std::ofstream(replay, std::ios::binary) << "APS5_PAD_RECORDING 1\n0 4000 255 0 128 128 0 200\n150 0 128 128 128 128 0 0\n";
+    const std::string replayText = "APS5_PAD_RECORDING 1\n0 4000 255 0 128 128 0 200\n150 0 128 128 128 128 0 0\n";
+    std::ofstream(replay, std::ios::binary) << replayText;
 
     Require(scePadInit_nid_postfix() == PAD_OK, "scePadInit failed");
     const int handle = scePadOpen_nid_postfix(0x10000000, 0, 0, nullptr);
@@ -77,6 +78,23 @@ int main() {
     SetPath("APS5_PAD_REPLAY", replay);
     SetPath("APS5_PAD_RECORD", directory / "missing-directory" / "record.aps5pad");
     Require(ReadRefused(), "an unwritable APS5_PAD_RECORD path did not stop the controller read");
+    const auto hardLink = directory / "hard-link.aps5pad";
+    std::filesystem::create_hard_link(replay, hardLink);
+    const auto checkAlias = [&](const std::filesystem::path& alias) {
+        SetPath("APS5_PAD_RECORD", alias);
+        Require(ReadRefused(), "a recording path aliasing the replay did not stop the controller read");
+        std::stringstream contents;
+        contents << std::ifstream(replay, std::ios::binary).rdbuf();
+        Require(contents.str() == replayText, "the replay was overwritten");
+    };
+    checkAlias(replay);
+    checkAlias(hardLink);
+#ifndef _WIN32
+    const auto symlink = directory / "symlink.aps5pad";
+    std::filesystem::create_symlink(replay, symlink);
+    checkAlias(symlink);
+#endif
+    std::ofstream(record, std::ios::binary) << "previous recording";
     SetPath("APS5_PAD_RECORD", record);
 
     PadInputState pressed = live;
