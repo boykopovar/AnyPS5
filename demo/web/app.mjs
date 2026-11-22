@@ -21,7 +21,8 @@ let downloadUrl;
 let logs = [];
 let release;
 const canSaveZip = typeof window.showSaveFilePicker === "function" && window.isSecureContext;
-const canStream = typeof window.showDirectoryPicker === "function" && window.isSecureContext;
+const folderLocks = window.navigator?.locks;
+const canStream = typeof window.showDirectoryPicker === "function" && typeof folderLocks?.request === "function" && window.isSecureContext;
 const supported = window.isSecureContext && window.Worker && window.WebAssembly && window.ReadableStream && window.WritableStream && window.crypto?.subtle;
 $("save").querySelector('[value="disk"]').disabled = !canStream;
 $("save").querySelector('[value="zip"]').disabled = !canSaveZip;
@@ -437,7 +438,7 @@ $("convert").onclick = async () => {
       const name = selectedInputs[0].name.replace(/\.zip$/iu, "") + "-" + target;
       const parent = await window.showDirectoryPicker({ mode: "readwrite" });
       if (currentWorker !== worker) return;
-      const transaction = await OutputDirectoryTransaction.create(parent, name, locale);
+      const transaction = await OutputDirectoryTransaction.create(parent, name, folderLocks, locale);
       if (currentWorker !== worker) {
         await transaction.discard();
         return;

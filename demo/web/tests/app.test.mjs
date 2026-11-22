@@ -51,7 +51,8 @@ async function setup(t, name, overrides = {}) {
       },
       querySelectorAll: () => []
     },
-    window: { isSecureContext: true, Worker, WebAssembly, ReadableStream, WritableStream, crypto: { subtle: {} }, ...overrides },
+    window: { isSecureContext: true, Worker, WebAssembly, ReadableStream, WritableStream, crypto: { subtle: {} },
+      navigator: { locks: { request: (_name, acquire) => acquire() } }, ...overrides },
     Worker,
     fetch: overrides.fetch ?? (async () => ({
       ok: true,
@@ -643,3 +644,14 @@ test("cancelling the ZIP picker does not report a failure", async t => {
   assert.equal(get("selection").hidden, false);
   assert.equal(get("convert").disabled, false);
 });
+
+for (const supported of [false, true]) {
+  test(`Folder output requires Web Locks (${supported})`, async t => {
+    const { get } = await setup(t, `folder-locks-${supported}`, {
+      showDirectoryPicker() {},
+      navigator: supported ? { locks: { request() {} } } : {}
+    });
+    assert.equal(get("save").querySelector('[value="disk"]').disabled, !supported);
+    assert.equal(get("save").querySelector('[value="memory"]').disabled, false);
+  });
+}
