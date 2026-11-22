@@ -139,8 +139,14 @@ bool ItemByIndex(const std::uint8_t* root, std::uint32_t resource, std::int32_t 
     return false;
 }
 
+void Terminated(std::int32_t* status, std::int32_t incoming, int savedErrno, const char* caller) {
+    if (incoming != StringNotTerminated) return;
+    const std::int32_t zero = 0;
+    CopyOut(status, &zero, sizeof(zero), savedErrno, caller);
+}
+
 const char* ToUtf8(const std::vector<char16_t>& units, char* dest, std::int32_t* length, std::int8_t forceCopy,
-    std::int32_t* status, int savedErrno, const char* caller) {
+    std::int32_t* status, std::int32_t incoming, int savedErrno, const char* caller) {
     std::int32_t capacity = 0;
     if (length) CopyIn(&capacity, length, sizeof(capacity), savedErrno, caller);
     if (capacity < 0 || (capacity > 0 && !dest)) return Fail(status, IllegalArgument, savedErrno, caller);
@@ -151,6 +157,7 @@ const char* ToUtf8(const std::vector<char16_t>& units, char* dest, std::int32_t*
         if (capacity > 0) {
             const char terminator = 0;
             CopyOut(dest, &terminator, sizeof(terminator), savedErrno, caller);
+            Terminated(status, incoming, savedErrno, caller);
         } else {
             CopyOut(status, &StringNotTerminated, sizeof(StringNotTerminated), savedErrno, caller);
         }
@@ -187,6 +194,8 @@ const char* ToUtf8(const std::vector<char16_t>& units, char* dest, std::int32_t*
     if (hostStatus != U_ZERO_ERROR) {
         const std::int32_t code = static_cast<std::int32_t>(hostStatus);
         CopyOut(status, &code, sizeof(code), savedErrno, caller);
+    } else {
+        Terminated(status, incoming, savedErrno, caller);
     }
     return dest + offset;
 }
@@ -215,7 +224,7 @@ const char* APS5_VABI ures_getUTF8String_nid_postfix(const UResourceBundle* resB
     if (!ReadString(root, resource, units, savedErrno, __func__)) {
         return Fail(status, ResourceTypeMismatch, savedErrno, __func__);
     }
-    return ToUtf8(units, dest, length, forceCopy, status, savedErrno, __func__);
+    return ToUtf8(units, dest, length, forceCopy, status, currentStatus, savedErrno, __func__);
 }
 
 const char* APS5_VABI ures_getUTF8StringByIndex_nid_postfix(const UResourceBundle* resB, std::int32_t index, char* dest,
@@ -249,7 +258,7 @@ const char* APS5_VABI ures_getUTF8StringByIndex_nid_postfix(const UResourceBundl
     if (!ReadString(root, item, units, savedErrno, __func__)) {
         return Fail(status, ResourceTypeMismatch, savedErrno, __func__);
     }
-    return ToUtf8(units, dest, length, forceCopy, status, savedErrno, __func__);
+    return ToUtf8(units, dest, length, forceCopy, status, currentStatus, savedErrno, __func__);
 }
 
 const char* APS5_VABI ures_getUTF8StringByKey_nid_postfix(const UResourceBundle* resB, const char* key, char* dest,
@@ -277,7 +286,7 @@ const char* APS5_VABI ures_getUTF8StringByKey_nid_postfix(const UResourceBundle*
     if (!ReadString(root, item, units, savedErrno, __func__)) {
         return Fail(status, ResourceTypeMismatch, savedErrno, __func__);
     }
-    return ToUtf8(units, dest, length, forceCopy, status, savedErrno, __func__);
+    return ToUtf8(units, dest, length, forceCopy, status, currentStatus, savedErrno, __func__);
 }
 
 }

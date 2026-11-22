@@ -139,6 +139,50 @@ int main() {
     Require(result != nullptr && *result == 0 && status == 0 && length == 0,
         "ures_getUTF8String did not return the empty string");
 
+    status = -124;
+    length = 8;
+    char reused[8] = {};
+    result = ures_getUTF8String_nid_postfix(stringResource, reused, &length, 1, &status);
+    Require(result == reused && status == 0 && length == 2 && std::memcmp(reused, "hi", 3) == 0,
+        "ures_getUTF8String kept the not-terminated warning after terminating the string");
+
+    status = -124;
+    length = 16;
+    result = ures_getUTF8String_nid_postfix(stringResource, wide, &length, 0, &status);
+    Require(result == wide + 9 && status == 0 && length == 2,
+        "ures_getUTF8String kept the not-terminated warning after terminating the tail-placed string");
+
+    status = -124;
+    length = 4;
+    result = ures_getUTF8String_nid_postfix(emptyResource, empty, &length, 1, &status);
+    Require(result == empty && status == 0 && length == 0 && empty[0] == 0,
+        "ures_getUTF8String kept the not-terminated warning after terminating the empty string");
+
+    status = -124;
+    length = 4;
+    result = ures_getUTF8String_nid_postfix(emptyResource, empty, &length, 0, &status);
+    Require(result != nullptr && *result == 0 && status == -124 && length == 0,
+        "ures_getUTF8String changed the status for the read-only empty string");
+
+    status = -124;
+    length = 2;
+    result = ures_getUTF8String_nid_postfix(stringResource, exact, &length, 1, &status);
+    Require(result == exact && status == -124 && length == 2,
+        "ures_getUTF8String cleared the warning for an unterminated buffer");
+
+    status = -127;
+    length = 8;
+    result = ures_getUTF8String_nid_postfix(stringResource, reused, &length, 1, &status);
+    Require(result == reused && status == -127 && length == 2,
+        "ures_getUTF8String cleared a warning other than the not-terminated one");
+
+    status = -124;
+    length = 8;
+    char reusedKey[8] = {};
+    result = ures_getUTF8StringByKey_nid_postfix(tableResource, "a", reusedKey, &length, 1, &status);
+    Require(result == reusedKey && status == 0 && length == 1 && reusedKey[0] == 'a' && reusedKey[1] == 0,
+        "ures_getUTF8StringByKey kept the not-terminated warning after terminating the string");
+
     status = 0;
     length = 8;
     result = ures_getUTF8String_nid_postfix(arrayResource, destination, &length, 1, &status);
