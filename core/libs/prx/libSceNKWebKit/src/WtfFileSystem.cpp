@@ -112,6 +112,7 @@ bool WriteToFile(int handle, const char* data, int length) {
             if (*__error_nid_postfix() == GuestEintr) continue;
             return false;
         }
+        if (bytesWritten == 0) return false;
         offset += static_cast<int>(bytesWritten);
     }
     return true;
@@ -136,7 +137,7 @@ bool CopyFileContents(const String& targetPath, const String& linkPath) {
             _ZN3WTF14FileSystemImpl10deleteFileERKNS_6StringE(linkPath);
             return false;
         }
-        if (bytesRead < CopyBufferSize) return true;
+        if (bytesRead == 0) return true;
     }
 }
 
