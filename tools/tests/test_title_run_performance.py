@@ -205,6 +205,7 @@ class PerformancePhaseTests(PerformanceFixture, unittest.TestCase):
 
 class PadPhaseReadinessTests(PerformanceFixture, unittest.TestCase):
     def run_phase(self, ready_after, recording=None):
+        self.console.stderr = io.BytesIO()
         clock = [0.0]
         state = {"closed": False, "recorded": False}
         self.phase_index = getattr(self, "phase_index", 0) + 1
@@ -241,10 +242,12 @@ class PadPhaseReadinessTests(PerformanceFixture, unittest.TestCase):
         result, env = self.run_phase(0.5)
         self.assertGreaterEqual(result["pad_queued_s"], 0.5)
         self.assertTrue(Path(env["APS5_PAD_RECORD"]).is_file())
+        self.assertNotIn(b"timeline not queued", self.console.stderr.getvalue())
 
     def test_phase_without_a_controller_read_queues_nothing(self):
         result, _ = self.run_phase(None)
         self.assertIsNone(result["pad_queued_s"])
+        self.assertIn(b"no fresh controller sample observed", self.console.stderr.getvalue())
 
     def test_restart_does_not_reuse_the_warmup_recording(self):
         recording = self.work / "shared-record.txt"

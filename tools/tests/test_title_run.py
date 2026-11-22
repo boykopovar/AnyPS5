@@ -1311,6 +1311,7 @@ class PadTests(unittest.TestCase):
         result, _ = self.run_with({"after_s": 30, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]})
         self.assertIsNone(result["pad_queued_s"])
         self.assertFalse((self.work / "pad-input.txt").exists())
+        self.assertIn("minimum input delay not reached", (self.work.parent / f"run{self.run_index}" / "stderr.log").read_text())
 
     def test_delayed_first_read_does_not_lose_the_timeline(self):
         result, _ = self.run_with({"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]}, ready_after=0.5)
@@ -1324,6 +1325,7 @@ class PadTests(unittest.TestCase):
         result, _ = self.run_with({"after_s": 0, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]}, ready_after=None)
         self.assertIsNone(result["pad_queued_s"])
         self.assertFalse((self.work / "pad-input.txt").exists())
+        self.assertIn("no fresh controller sample observed", (self.work.parent / f"run{self.run_index}" / "stderr.log").read_text())
 
     def test_incomplete_and_malformed_recordings_do_not_signal_readiness(self):
         for record in ["APS5_PAD_RECORDING 1\n", "APS5_PAD_RECORDING 1\n0 0 128 128 128 128 0 0",
