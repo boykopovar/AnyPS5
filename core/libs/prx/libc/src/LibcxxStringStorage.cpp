@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cstring>
 #include <memory>
 #include <new>
+#include <vector>
 
 namespace {
 
@@ -24,6 +26,7 @@ constexpr std::uint64_t AllocationAlignment = 16u;
 constexpr std::uint64_t MaxSize = UINT64_MAX - AllocationAlignment - 1u;
 constexpr char AppendInaccessible[] = "basic_string::append: inaccessible string storage";
 constexpr char AssignInaccessible[] = "basic_string::assign: inaccessible string storage";
+constexpr char ReplaceInaccessible[] = "basic_string::replace: inaccessible string storage";
 using GuestAllocation = std::unique_ptr<void, decltype(&_ZdlPv_nid_postfix)>;
 
 Representation ReadString(const void* string) {
@@ -152,6 +155,104 @@ void* Assign(void* string, const char* source, std::uint64_t count, char value =
     return string;
 }
 
+bool RangesOverlap(const char* first, std::size_t firstSize, const char* second, std::size_t secondSize) {
+    const auto a = reinterpret_cast<std::uintptr_t>(first);
+    const auto b = reinterpret_cast<std::uintptr_t>(second);
+    if (!firstSize || !secondSize) return false;
+    return a <= b ? b - a < firstSize : a - b < secondSize;
+}
+
+void WriteReplacePayload(char* destination, const char* source, std::size_t count, char value) {
+    if (source) CopyLongStorage(destination, source, count, ReplaceInaccessible);
+    else FillLongStorage(destination, count, value, ReplaceInaccessible);
+}
+
+void* ReplaceRange(void* string, std::uint64_t position, std::uint64_t removed,
+    const char* source, std::uint64_t count, char value = '\0') {
+    auto representation = ReadString(string);
+    const bool isLong = (representation[0] & LongFlag) != 0;
+    auto fields = isLong ? ReadLongString(representation) : LongString{};
+    const std::uint64_t size = isLong ? fields.size : representation[0] >> 1u;
+    if (!isLong && size > InlineCapacity) {
+        _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string: invalid short size");
+    }
+    if (position > size) _ZSt14_Xout_of_rangePKc_nid_postfix("basic_string");
+    const auto erased = std::min(removed, size - position);
+    const auto remaining = size - erased;
+    if (remaining > MaxSize || count > MaxSize - remaining) _ZSt14_Xlength_errorPKc_nid_postfix("basic_string");
+    if (!erased && !count) return string;
+    const auto nextSize = remaining + count;
+    if (nextSize >= SIZE_MAX) throw std::bad_alloc();
+
+    const auto offset = static_cast<std::size_t>(position);
+    const auto bytes = static_cast<std::size_t>(count);
+    const auto suffixStart = static_cast<std::size_t>(position + erased);
+    const auto suffixSize = static_cast<std::size_t>(size - suffixStart);
+    const auto newSuffixStart = offset + bytes;
+    const auto capacity = isLong ? (fields.taggedCapacity & ~LongFlag) - 1u : InlineCapacity;
+    auto* previous = reinterpret_cast<char*>(static_cast<std::uintptr_t>(fields.address));
+
+    if (!isLong && nextSize <= InlineCapacity) {
+        auto* data = representation.data() + 1;
+        std::memmove(data + newSuffixStart, data + suffixStart, suffixSize);
+        if (source && bytes) {
+            if (!GuestCopyIn_nid_no_patch(data + offset, source, bytes)) {
+                _ZSt18_Xinvalid_argumentPKc_nid_postfix(ReplaceInaccessible);
+            }
+        } else {
+            std::fill_n(data + offset, bytes, static_cast<unsigned char>(value));
+        }
+        representation[0] = static_cast<unsigned char>(nextSize << 1u);
+        data[nextSize] = 0;
+        if (!GuestCopyOut_nid_no_patch(string, representation.data(), representation.size())) {
+            _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string::replace: unwritable representation");
+        }
+        return string;
+    }
+
+    const bool needsAllocation = nextSize > capacity;
+    auto allocated = fields.taggedCapacity & ~LongFlag;
+    GuestAllocation allocation(nullptr, &_ZdlPv_nid_postfix);
+    auto* data = previous;
+    if (needsAllocation) {
+        const auto grown = capacity <= MaxSize / 2u ? capacity * 2u : MaxSize;
+        allocated = AllocationSize(std::max(grown, nextSize));
+        allocation = AllocateLongStorage(allocated);
+        data = static_cast<char*>(allocation.get());
+        const auto* original = isLong ? previous : reinterpret_cast<const char*>(string) + 1;
+        CopyLongStorage(data, original, offset, ReplaceInaccessible);
+        CopyLongStorage(data + newSuffixStart, original + suffixStart, suffixSize, ReplaceInaccessible);
+    } else if (nextSize >= UINTPTR_MAX - fields.address || !GuestWritable_nid_no_patch(string, representation.size())) {
+        _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string::replace: unwritable representation");
+    }
+
+    std::vector<char> savedSource;
+    if (!needsAllocation && suffixSize && newSuffixStart != suffixStart) {
+        if (source && RangesOverlap(source, bytes, data + newSuffixStart, suffixSize)) {
+            savedSource.resize(bytes);
+            if (!GuestCopyIn_nid_no_patch(savedSource.data(), source, bytes)) {
+                _ZSt18_Xinvalid_argumentPKc_nid_postfix(ReplaceInaccessible);
+            }
+            source = savedSource.data();
+        }
+        CopyLongStorage(data + newSuffixStart, data + suffixStart, suffixSize, ReplaceInaccessible);
+    }
+    WriteReplacePayload(data + offset, source, bytes, value);
+    constexpr char terminator = '\0';
+    if (!GuestCopyOut_nid_no_patch(data + nextSize, &terminator, sizeof(terminator))) {
+        _ZSt18_Xinvalid_argumentPKc_nid_postfix(ReplaceInaccessible);
+    }
+    const LongString replacement{allocated | LongFlag, nextSize, reinterpret_cast<std::uintptr_t>(data)};
+    if (!GuestCopyOut_nid_no_patch(string, &replacement, sizeof(replacement))) {
+        _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string::replace: unwritable representation");
+    }
+    if (needsAllocation) {
+        allocation.release();
+        _ZdlPv_nid_postfix(previous);
+    }
+    return string;
+}
+
 void* Append(void* string, const char* source, std::uint64_t count, char value = '\0') {
     if (!count) return string;
     auto representation = ReadString(string);
@@ -271,6 +372,17 @@ extern "C" void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allo
 extern "C" void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6assignEmc_nid_postfix(
     void* string, std::uint64_t count, char value) {
     return Assign(string, nullptr, count, value);
+}
+
+extern "C" void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE7replaceEmmPKcm_nid_postfix(
+    void* string, std::uint64_t position, std::uint64_t removed, const char* source, std::uint64_t count) {
+    if (count && !source) _ZSt18_Xinvalid_argumentPKc_nid_postfix("basic_string::replace: null source");
+    return ReplaceRange(string, position, removed, source, count);
+}
+
+extern "C" void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE7replaceEmmmc_nid_postfix(
+    void* string, std::uint64_t position, std::uint64_t removed, std::uint64_t count, char value) {
+    return ReplaceRange(string, position, removed, nullptr, count, value);
 }
 
 extern "C" void* APS5_VABI _ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6appendEPKc_nid_postfix(
