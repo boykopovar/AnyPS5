@@ -14,6 +14,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -114,11 +115,59 @@ static std::uint64_t ClockOrigin() {
     return origin;
 }
 
+namespace {
+
+struct GuestClockPause {
+    std::mutex mutex;
+    unsigned depth = 0;
+    std::atomic<std::uint64_t> sequence{0};
+    std::atomic<bool> paused{false};
+    std::atomic<std::uint64_t> pausedAt{0};
+    std::atomic<std::uint64_t> pausedNanos{0};
+};
+
+GuestClockPause& ClockPause() {
+    static GuestClockPause pause;
+    return pause;
+}
+
+}
+
+static std::uint64_t PausedRawMonotonicNanos() {
+    auto& pause = ClockPause();
+    for (;;) {
+        const auto sequence = pause.sequence.load();
+        if ((sequence & 1u) != 0) continue;
+        const auto now = pause.paused.load() ? pause.pausedAt.load() : RawMonotonicNanos() - pause.pausedNanos.load();
+        if (pause.sequence.load() == sequence) return now;
+    }
+}
+
 static std::uint64_t GetMonotonicNanos() {
-    if (TimeScale() == 1.0) return RawMonotonicNanos();
+    if (TimeScale() == 1.0) return PausedRawMonotonicNanos();
     const auto origin = ClockOrigin();
-    const auto raw = RawMonotonicNanos();
+    const auto raw = PausedRawMonotonicNanos();
     return origin + static_cast<std::uint64_t>(static_cast<double>(raw - origin) * TimeScale());
+}
+
+extern "C" void KernelPauseGuestClock_nid_no_patch() {
+    auto& pause = ClockPause();
+    std::lock_guard lock(pause.mutex);
+    if (pause.depth++ != 0) return;
+    pause.sequence.fetch_add(1);
+    pause.pausedAt.store(RawMonotonicNanos() - pause.pausedNanos.load());
+    pause.paused.store(true);
+    pause.sequence.fetch_add(1);
+}
+
+extern "C" void KernelResumeGuestClock_nid_no_patch() {
+    auto& pause = ClockPause();
+    std::lock_guard lock(pause.mutex);
+    if (pause.depth == 0 || --pause.depth != 0) return;
+    pause.sequence.fetch_add(1);
+    pause.pausedNanos.store(RawMonotonicNanos() - pause.pausedAt.load());
+    pause.paused.store(false);
+    pause.sequence.fetch_add(1);
 }
 
 static std::uint64_t GetStartNanos() {
@@ -127,8 +176,16 @@ static std::uint64_t GetStartNanos() {
 }
 
 static const std::uint64_t g_processStart = GetStartNanos();
+#ifdef _WIN32
+static std::uint64_t APS5_VABI LibcMonotonicNanos() {
+    return GetMonotonicNanos();
+}
+#endif
 static const bool g_clockSourceInstalled = [] {
     LibcSetProcessTimeSource_nid_no_patch(&sceKernelGetProcessTime);
+#ifdef _WIN32
+    LibcSetMonotonicTimeSource_nid_no_patch(&LibcMonotonicNanos);
+#endif
     return true;
 }();
 
@@ -624,6 +681,12 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
         return 0;
     }
 #endif
+    if (nativeId == CLOCK_MONOTONIC) {
+        const std::uint64_t nanos = PausedRawMonotonicNanos();
+        tp->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
+        tp->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
+        return 0;
+    }
     struct timespec ts{};
     if (clock_gettime(nativeId, &ts) != 0) {
         return -1;
@@ -652,7 +715,13 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
         return -1;
     }
     KernelTimespec value{};
-    if (ReadClock(clockId, &value) != 0) return -1;
+    if (clockId == GUEST_CLOCK_PROCESS_CPUTIME_ID) {
+        const auto elapsed = GetMonotonicNanos() - GetStartNanos();
+        value.tv_sec = static_cast<std::int64_t>(elapsed / 1000000000ULL);
+        value.tv_nsec = static_cast<std::int64_t>(elapsed % 1000000000ULL);
+    } else if (ReadClock(clockId, &value) != 0) {
+        return -1;
+    }
     if (tp == nullptr) {
         *__error_nid_postfix() = GUEST_EFAULT;
         return -1;

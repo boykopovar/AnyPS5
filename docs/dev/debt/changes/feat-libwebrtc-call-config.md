@@ -1,0 +1,5 @@
+# libwebrtc
+
+## add Public source implementations
+
+- [webrtc::CallConfig constructor and destructor](../../../core/libs/prx/libwebrtc/src/CallConfig.cpp) (libwebrtc) - layout, refcount layout and vtable dispatch are unverified on the console. Adapted from [call_config.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/call/call_config.cc), whose notice and BSD licence head the file: 168 bytes (`env` at 0, `bitrate_config` at 40, `audio_state` at 56, `per_call_network_controller_factory` at 88, `network_task_queue_` at 112, `pacer_burst_interval` at 144, `enable_send_packet_batching` at 160, identical in M132–M134). Constructor copies `env`, increments `RefCountedBase` refcount at 8, defaults bitrates to `{0, 300000, -1}` and stores `network_task_queue`; destructor deletes the factory (slot 1), releases `audio_state` (slot 1) and decrements/deletes `env.storage` (slot 1). Invalid pointers, alignment, refcounts or vtables throw, preserving `errno`. Closes when: compared with the console.

@@ -108,6 +108,20 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertEqual(found["APS5_POOL_CONSTANT_MIB"], [(source.as_posix(), 4, "integer", "")])
         self.assertNotIn("APS5_NOT_A_MEBIBYTE_READ", found)
 
+    def test_captured_environment_key_comparison_is_a_read(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        source.write_text(
+            'const bool allPhases = std::any_of(summary.environment.begin(), summary.environment.end(),'
+            ' [](const auto& entry) { return entry.first == "APS5_TRACE_ALL_PHASES" && entry.second == "1"; });\n'
+            'auto key = summary.environment[index].first == "ANYPS5_CAPTURED_KEY";\n'
+            'auto other = pair.first == "NOT_AN_ENV";\n',
+            encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        self.assertEqual(found["APS5_TRACE_ALL_PHASES"], [(source.as_posix(), 1, "string", "")])
+        self.assertEqual(found["ANYPS5_CAPTURED_KEY"], [(source.as_posix(), 2, "string", "")])
+        self.assertNotIn("NOT_AN_ENV", found)
+
     def test_environment_path_reads_use_the_wide_literal_name(self):
         root = self.fixture()
         source = root / "core" / "Sample.cpp"

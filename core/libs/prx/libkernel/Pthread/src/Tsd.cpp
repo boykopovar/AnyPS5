@@ -3,6 +3,7 @@
 #include "../include/ThreadLifecycle.hpp"
 #include "../include/WindowsThreadLocal.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -39,7 +40,7 @@ struct ThreadValues {
     bool destroyed = false;
 
     ~ThreadValues() {
-        RunDestructors();
+        if (!LibcExitStarted_nid_no_patch()) RunDestructors();
     }
 
     void RunDestructors() {
