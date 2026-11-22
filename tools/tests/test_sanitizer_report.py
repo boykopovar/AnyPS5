@@ -68,6 +68,15 @@ class SanitizerReportTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("4 tests: 0 passed, 2 skipped, 2 failed.", stdout)
 
+    def test_unknown_ctest_status_is_not_counted_as_passed(self):
+        for status in ("garbage", "RUN", "", "skippedd"):
+            with self.subTest(status=status):
+                path = self.write(suite(case("untrusted", status)))
+                code, stdout, stderr = self.run_main(path)
+                self.assertEqual(code, 2)
+                self.assertEqual(stdout, "")
+                self.assertIn("invalid testcase status", stderr)
+
     def test_a_test_listed_twice_is_rejected(self):
         summary = self.write("", "summary.md")
         for cases in ((case("fiber", "fail", "<failure/>"), case("fiber")),
@@ -253,6 +262,17 @@ class SanitizerReportTests(unittest.TestCase):
         self.assertEqual(sanitizer_report.first_report("start\n/src/Copy.cpp:35:16: runtime error: null pointer passed as argument 2\n"),
                          "/src/Copy.cpp:35:16: runtime error: null pointer passed as argument 2")
         self.assertEqual(sanitizer_report.first_report("FAIL: plain assertion\n"), "")
+
+    def test_fatal_thread_sanitizer_startup_report(self):
+        line = 'FATAL: ThreadSanitizer: unexpected memory mapping 0x1000-0x2000'
+        self.assertEqual(sanitizer_report.first_report(line + '\n'), line)
+
+    def test_a_bare_deadly_signal_is_reported_after_the_other_diagnostics(self):
+        self.assertEqual(sanitizer_report.first_report("AddressSanitizer:DEADLYSIGNAL\r\nAddressSanitizer:DEADLYSIGNAL\r\n"),
+                         "AddressSanitizer:DEADLYSIGNAL")
+        self.assertEqual(sanitizer_report.first_report("AddressSanitizer:DEADLYSIGNAL\n"
+                                                       "SUMMARY: AddressSanitizer: stack-overflow\n"),
+                         "SUMMARY: AddressSanitizer: stack-overflow")
 
     def test_first_report_keeps_source_paths_with_spaces(self):
         locations = (r"D:\build folder\src\value.cpp:12:3", "/build folder/src/value.cpp:12:3",
