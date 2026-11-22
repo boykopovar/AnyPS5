@@ -147,6 +147,9 @@ struct OpaqueJSContext {
     JSContext* qctx = nullptr;
     OpaqueJSValue* globalObject = nullptr;
     JSValue globalExoticInterceptor = JS_UNDEFINED;
+    JSValue dateConstructor = JS_UNDEFINED;
+    JSValue errorConstructor = JS_UNDEFINED;
+    JSValue regExpConstructor = JS_UNDEFINED;
     std::unordered_map<OpaqueJSClass*, OpaqueJSValue*> classPrototypes;
     OpaqueJSValue* unhandledRejectionCallback = nullptr;
     std::vector<std::pair<JSValue, JSValue>> pendingUnhandledRejections;
@@ -235,5 +238,9 @@ void RunClassFinalize(CallbackObjectData* data);
 OpaqueJSValue* GetOrCreateClassPrototype(OpaqueJSContext* ctx, OpaqueJSClass* jsClass);
 OpaqueJSValue* MakeCallbackObject(OpaqueJSContext* ctx, OpaqueJSClass* jsClass, void* data);
 bool IsObjectCallable(const OpaqueJSContext* ctx, OpaqueJSValue* object);
+
+inline JSValueConst ValueOrNull(const OpaqueJSValue* value) {
+    return value ? value->qval : JS_NULL;
+}
 
 }  // namespace NKWebKit

@@ -3811,7 +3811,7 @@ using UnalignedGuestWord [[gnu::aligned(1), gnu::may_alias]] = std::uint64_t;
 }
 
 #if defined(ANYPS5_ENABLE_ASAN) || defined(ANYPS5_ENABLE_TSAN)
-[[gnu::no_sanitize("address", "thread")]] void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
+[[gnu::no_sanitize_address, gnu::no_sanitize_thread]] void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
     auto* to = static_cast<unsigned char*>(destination);
     const auto* from = static_cast<const unsigned char*>(source);
     std::size_t index = 0;
@@ -3828,7 +3828,7 @@ void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
 #endif
 
 #ifdef ANYPS5_ENABLE_TSAN
-[[gnu::no_sanitize("thread")]] void CopyToGuestBytes(void* destination, const void* source, std::size_t bytes) {
+[[gnu::no_sanitize_thread]] void CopyToGuestBytes(void* destination, const void* source, std::size_t bytes) {
     auto* to = static_cast<unsigned char*>(destination);
     const auto* from = static_cast<const unsigned char*>(source);
     std::size_t index = 0;
@@ -3840,7 +3840,7 @@ void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
     for (; index < bytes; ++index) static_cast<volatile unsigned char*>(destination)[index] = from[index];
 }
 
-[[gnu::no_sanitize("thread")]] bool GuestBytesEqual(const void* guest, const void* expected, std::size_t bytes) {
+[[gnu::no_sanitize_thread]] bool GuestBytesEqual(const void* guest, const void* expected, std::size_t bytes) {
     const auto* from = static_cast<const unsigned char*>(guest);
     const auto* other = static_cast<const unsigned char*>(expected);
     std::size_t index = 0;

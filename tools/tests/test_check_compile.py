@@ -87,6 +87,16 @@ class CheckCompileTests(CheckCompileFixture):
         self.assertIn("1 translation units compile", result.stdout)
 
 
+class CheckCompileDatabaseNulTests(unittest.TestCase):
+    def test_rejects_embedded_nul_in_command_fields(self):
+        import check_compile
+        for record in ({"directory": "build", "file": "unit.c", "command": "cc\0 unit.c"},
+                       {"directory": "build", "file": "unit.c", "arguments": ["cc", "unit\0.c"]}):
+            with self.subTest(record=record):
+                with self.assertRaisesRegex(ValueError, "NUL"):
+                    check_compile.compilation_database(json.dumps([record]), "compile_commands.json")
+
+
 class CheckCompileRecordedCommandTests(CheckCompileFixture):
     def test_the_command_is_rewritten_to_syntax_only_without_object_or_dependency_files(self):
         source = self.source("unit.cpp")
@@ -578,6 +588,16 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
                 result = self.tool("--jobs", jobs, "first.c")
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("positive integer", result.stderr)
+
+
+class CheckCompileDuplicateCompilationDatabaseKeysTests(unittest.TestCase):
+    def test_rejects_duplicate_keys_in_compilation_records(self):
+        import check_compile
+        for content in ('[{"directory":"a","directory":"b","file":"a.c","command":"cc a.c"}]',
+                        '[{"directory":"a","file":"a.c","command":"cc a.c","command":"cc b.c"}]'):
+            with self.subTest(content=content):
+                with self.assertRaisesRegex(ValueError, "duplicate"):
+                    check_compile.compilation_database(content, "compile_commands.json")
 
 
 class CheckCompileDatabaseTests(CheckCompileFixture):

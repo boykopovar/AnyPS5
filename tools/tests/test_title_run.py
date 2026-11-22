@@ -1,4 +1,5 @@
 import copy
+import ctypes
 import errno
 import json
 import os
@@ -879,6 +880,20 @@ class PreparationTests(unittest.TestCase):
             title_run.stage_inputs(source, entry, target)
             self.assertEqual(sorted(path.relative_to(target).as_posix() for path in target.rglob("*.*")), expected)
 
+    def test_plural_module_dir_is_staged_without_singular_fallback(self):
+        package_root = package(self.root / "pkg", "PPSA00001")
+        modules = package_root / "sce_modules"
+        modules.mkdir()
+        elf = b"\x7fELF" + bytes(60)
+        (package_root / "eboot.bin").write_bytes(elf)
+        (modules / "helper.prx").write_bytes(elf)
+        staged = self.root / "input"
+
+        title_run.stage_inputs(package_root, {}, staged)
+
+        self.assertEqual((staged / "sce_modules/helper.prx").read_bytes(), elf)
+        self.assertFalse((staged / "sce_module").exists())
+
     def test_module_dirs_keep_every_module_and_empty_directories(self):
         source = package(self.root / "pkg", "PPSA00001")
         elf = b"\x7fELF" + bytes(60)
@@ -1298,6 +1313,29 @@ class SessionTests(unittest.TestCase):
         self.assertTrue(wait_until(lambda: not session.alive()))
         self.assertEqual(session.exit_code(), 3)
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "child subreapers are Linux-specific")
+    def test_exited_members_nobody_reaped_do_not_keep_it_alive(self):
+        prctl = ctypes.CDLL(None, use_errno=True).prctl
+        self.assertEqual(prctl(36, 1, 0, 0, 0), 0)
+        self.addCleanup(prctl, 36, 0, 0, 0, 0)
+        session = self.start("import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])")
+        self.addCleanup(self.reap, session)
+        self.assertTrue(wait_until(lambda: session.exit_code() == 0))
+        self.assertTrue(session.alive())
+        session.kill()
+        self.assertTrue(wait_until(lambda: not session.alive()))
+        os.killpg(session.process.pid, 0)
+        with patch.object(title_run.os, "readlink", return_value="0"):
+            self.assertTrue(session.alive())
+
+    def reap(self, session):
+        session.kill()
+        try:
+            while True:
+                os.waitid(os.P_PGID, session.process.pid, os.WEXITED)
+        except ChildProcessError:
+            pass
+
     @unittest.skipUnless(os.name == "nt", "LoadExec hand-over is Windows-specific")
     @unittest.skipIf(ALIAS_INTERPRETER, ALIAS_REASON)
     def test_exit_code_of_the_last_process(self):
@@ -1639,6 +1677,15 @@ class RunReportTests(unittest.TestCase):
         self.assertIsNone(report["shaders"])
         self.assertIsNone(report["missing"])
         self.assertIsNone(report["unsupported"])
+
+    def test_non_boolean_coverage_flags_are_not_collected(self):
+        for flag in ("missing", "shaders", "unsupported"):
+            for value in ("false", "true", 0, 1, None, []):
+                with self.subTest(flag=flag, value=value):
+                    coverage = {"milestones": True, "missing": True, "shaders": True, "unsupported": True, "imageFormats": True, "descriptors": True}
+                    coverage[flag] = value
+                    report = self.read(self.report(coverage=coverage))
+                    self.assertIsNone(report[flag], f"coverage.{flag}={value!r} should not be collected")
 
     def test_null_fps_is_kept_as_null(self):
         document = self.report()
