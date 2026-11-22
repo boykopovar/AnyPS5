@@ -37,6 +37,10 @@ alignas(256) std::array<std::uint32_t, TableOffset / 4 + 4> Block{};
 alignas(256) std::array<std::uint32_t, 4> Arguments{Groups, 1, 1, 0};
 alignas(256) std::array<std::uint32_t, 4> ThreadArguments{};
 
+constexpr std::uint32_t TexelWidth = 64;
+alignas(256) std::array<std::array<std::uint32_t, TexelWidth * 4>, 2> Texels{};
+alignas(256) std::array<std::array<std::uint32_t, 8>, 2> Images{};
+
 const std::vector<ShaderRecompiler::TableCallee>& Callees() {
     static const std::vector<ShaderRecompiler::TableCallee> callees{
         {0x10000u, {0xbf068000u, 0x4a020285u, 0xbe80200eu}},
@@ -72,6 +76,15 @@ std::vector<std::uint32_t> FullExecCaller() {
     return code;
 }
 
+std::vector<std::uint32_t> HeapCaller() {
+    auto code = Caller();
+    code.insert(code.end() - 3, {
+        0xf4080606u, 0xfa000000u, 0x7e380503u, Lanes == 64u ? 0x901c861cu : 0x901c851cu, 0x871c811cu, 0x8f1c851cu, 0xbf8cc07fu,
+        0xf42c080cu, 0x38000000u, 0xbf8cc07fu, 0x7e080280u, 0x7e0a0280u, 0xf0000108u, 0x00080604u, 0xbf8c3f70u, 0x4a020306u,
+    });
+    return code;
+}
+
 std::vector<std::uint32_t> LoopCaller() {
     std::vector<std::uint32_t> code{Lanes == 64u ? 0x8f15860eu : 0x8f15850eu, 0x4a060015u, 0x34040682u, 0xe0301000u, 0x80000102u, 0xbf8c3f70u, 0xbeaa047eu, 0xbe960380u, 0x36080083u, 0x4a080881u};
     const auto loop = static_cast<std::int32_t>(code.size());
@@ -91,6 +104,10 @@ std::uint32_t Served(std::uint32_t value, std::uint32_t callee) {
 
 std::uint32_t Expected(std::uint32_t index) {
     return Served(Input[index], index % Lanes);
+}
+
+std::uint32_t ExpectedHeap(std::uint32_t index) {
+    return Expected(index) + Texels[(index / Lanes) & 1u][0];
 }
 
 std::uint32_t ExpectedLoop(std::uint32_t index) {
@@ -127,14 +144,23 @@ void Prepare() {
     const auto table = BufferDescriptor(Table.data(), static_cast<std::uint32_t>(Table.size() * 4u));
     std::copy(table.begin(), table.end(), Block.begin() + TableOffset / 4u);
     Output.fill(0xdeadbeefu);
+    for (std::uint32_t image = 0; image < Images.size(); ++image) {
+        Texels[image].fill(0x1000u * (image + 1u));
+        const auto address = reinterpret_cast<std::uintptr_t>(Texels[image].data());
+        Images[image] = {static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (20u << 20u) | (((TexelWidth - 1u) & 3u) << 30u),
+            ((TexelWidth - 1u) >> 2u) | (3u << 14u), 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u};
+    }
+    const auto images = BufferDescriptor(Images.data(), static_cast<std::uint32_t>(sizeof(Images)));
+    std::copy(images.begin(), images.end(), Block.begin());
 }
 
 ShaderRecompiler::RecompileResult Compile(std::span<const std::uint32_t> code, std::span<const std::uint32_t> fallbacks, std::span<const std::uint32_t> plan, std::uint64_t address, const ShaderRecompiler::SpirvTarget& target, bool threadDimensions = false) {
     const auto userData = UserDataWords();
-    const std::array<ShaderRecompiler::MemoryRegion, 3> memory{{
+    const std::array<ShaderRecompiler::MemoryRegion, 4> memory{{
         {address, std::as_bytes(code)},
         {reinterpret_cast<std::uintptr_t>(Block.data()), std::as_bytes(std::span(Block))},
         {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
+        {reinterpret_cast<std::uintptr_t>(Images.data()), std::as_bytes(std::span(Images))},
     }};
     ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {true, false, false}, false, 1};
     if (threadDimensions) compute.partialThreads = {~0u, ~0u, ~0u};
@@ -238,7 +264,7 @@ void RunContinued(AgcDriver::VulkanDevice& device, const ShaderRecompiler::Spirv
     Check("continued", ExpectedLoop);
 }
 
-void RunSplit(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, const ShaderRecompiler::SplitTableCallPrograms& programs, bool indirect, bool stuck = false, std::uint32_t threads = 0, bool fullExec = false) {
+void RunSplit(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, const ShaderRecompiler::SplitTableCallPrograms& programs, bool indirect, bool stuck = false, std::uint32_t threads = 0, bool fullExec = false, bool heap = false) {
     Prepare();
     std::vector<const ShaderRecompiler::SplitTableCallProgram*> parts{&programs.entry};
     for (const auto& callee : programs.callees) parts.push_back(&callee);
@@ -248,6 +274,7 @@ void RunSplit(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarg
         results.push_back(Compile(parts[part]->code, {}, parts[part]->plan, 0x710000u + part * 0x1000u, target, threads != 0));
         Require(results.back().splitStateLanes == Lanes, "split part " + std::to_string(part) + " reports " + std::to_string(results.back().splitStateLanes) + " lanes per workgroup");
     }
+    Require(!heap || results.back().bindlessHeap, "the split resume program does not read the bindless heap");
     const auto slices = indirect ? (Groups + SliceGroups - 1u) / SliceGroups + 1u : (Groups + SliceGroups - 1u) / SliceGroups;
     for (std::uint32_t slice = 0; slice < slices; ++slice) {
         for (std::size_t part = 0; part < results.size(); ++part) {
@@ -264,7 +291,7 @@ void RunSplit(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarg
         return;
     }
     if (threads == 0) {
-        Check(indirect ? "split indirect" : "split");
+        Check(indirect ? "split indirect" : "split", heap ? ExpectedHeap : Expected);
         return;
     }
     for (std::uint32_t index = 0; index < Lanes * Groups; ++index) {
@@ -273,12 +300,38 @@ void RunSplit(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarg
     }
 }
 
+int RunBindless(AgcDriver::VulkanDevice& device) {
+    if (device.BindlessService() == nullptr) {
+        std::puts("split table call bindless run skipped, the device lacks the bindless image heap");
+        return VulkanTestSkipped;
+    }
+    for (const auto [lanes, hostWave] : {std::pair{32u, 32u}, std::pair{64u, 32u}, std::pair{64u, 64u}}) {
+        Lanes = lanes;
+        Prepare();
+        const auto target = device.ComputeTarget(hostWave);
+        const auto caller = HeapCaller();
+        const auto program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(caller);
+        const auto calls = ShaderRecompiler::FindTableCalls(program, ShaderRecompiler::SwappcInfo{false, 0u, UserData, Lanes});
+        Require(calls.size() == 1u, "the heap caller holds " + std::to_string(calls.size()) + " table calls");
+        std::string refusal;
+        const auto split = ShaderRecompiler::SplitTableCall(program, calls[0], Callees(), Lanes, refusal);
+        Require(split.has_value(), "the heap caller cannot split: " + refusal);
+        const auto programs = ShaderRecompiler::BuildSplitTableCallPrograms(program, calls[0], Callees(), *split, Vectors);
+        RunSplit(device, target, programs, false, false, 0, false, true);
+        RunSplit(device, target, programs, true, false, 0, false, true);
+        std::printf("bindless wave%u on host subgroup %u passed\n", lanes, target.subgroupSize);
+    }
+    std::puts("split table call bindless run tests passed");
+    return 0;
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc == 2 && std::strcmp(argv[1], "--bindless") == 0) return RunBindless(*device);
         for (const auto [lanes, hostWave] : {std::pair{32u, 32u}, std::pair{64u, 32u}, std::pair{64u, 64u}}) {
             Lanes = lanes;
             const auto target = device->ComputeTarget(hostWave);
