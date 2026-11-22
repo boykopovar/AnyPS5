@@ -16,8 +16,55 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
+
+class GuardPage {
+public:
+    GuardPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        if (!memory) std::abort();
+        DWORD previous = 0;
+        if (VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) == 0) std::abort();
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        if (size <= 0) std::abort();
+        page = static_cast<std::size_t>(size);
+        memory = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        if (memory == MAP_FAILED) std::abort();
+        if (mprotect(memory + page, page, PROT_NONE) != 0) std::abort();
+#endif
+    }
+
+    ~GuardPage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, 2 * page);
+#endif
+    }
+
+    GuardPage(const GuardPage&) = delete;
+    GuardPage& operator=(const GuardPage&) = delete;
+
+    char* RW() const { return memory; }
+    std::size_t PageSize() const { return page; }
+    void* Unwritable() const { return memory + page; }
+
+private:
+    char* memory = nullptr;
+    std::size_t page = 0;
+};
 
 constexpr int GUEST_EDEADLK = 11;
 constexpr int GUEST_EFAULT = 14;
@@ -288,6 +335,17 @@ void TestAttr() {
         }
         void* pair[2] = {nullptr};
         if (pthread_get_specificarray_np_nid_postfix(key1, 2, pair) != 0 || pair[0] != &val1 || pair[1] != &val2) {
+            for (auto k : createdKeys) scePthreadKeyDelete(k);
+            return false;
+        }
+        GuardPage guard;
+        auto* boundary = reinterpret_cast<void**>(guard.RW() + guard.PageSize() - sizeof(void*));
+        void* sentinel = reinterpret_cast<void*>(0x1234);
+        boundary[0] = sentinel;
+        errno = 71;
+        if (pthread_get_specificarray_np_nid_postfix(key1, 1, reinterpret_cast<void**>(0x10)) != GUEST_EFAULT || errno != 71 ||
+            pthread_get_specificarray_np_nid_postfix(key1, 2, static_cast<void**>(guard.Unwritable())) != GUEST_EFAULT || errno != 71 ||
+            pthread_get_specificarray_np_nid_postfix(key1, 2, boundary) != GUEST_EFAULT || boundary[0] != sentinel || errno != 71) {
             for (auto k : createdKeys) scePthreadKeyDelete(k);
             return false;
         }

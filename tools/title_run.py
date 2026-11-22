@@ -93,7 +93,7 @@ def load_titles(path):
             fields[name] = value
         return fields
 
-    titles = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=unique_fields)
+    titles = json.loads(Path(path).read_text(encoding="utf-8-sig"), object_pairs_hook=unique_fields)
     for title_id, entry in titles.items():
         if not TITLE_ID.fullmatch(title_id):
             raise ValueError(f"{path}: {title_id} is not a title ID")
@@ -376,6 +376,11 @@ def names(entries):
     return ", ".join(label(entry) for entry in entries)
 
 
+def markdown_cell(value):
+    escaped = value.replace("\\", "\\\\").replace("|", "\\|")
+    return " ".join(escaped.splitlines())
+
+
 def render_compare(compared):
     columns = ["Title", "ID", "Measure", "Before", "Now"]
     lines = ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
@@ -408,7 +413,8 @@ def render_compare(compared):
                 details.append(f"{title['name']} ({title_id}), {label.lower()} {unit}: "
                                f"only before: {before}; only now: {now}; in both: {both}")
         for label, values in measures:
-            lines.append("| " + " | ".join([title["name"], title_id, label, display(values["before"]), display(values["now"])]) + " |")
+            row = [title["name"], title_id, label, display(values["before"]), display(values["now"])]
+            lines.append("| " + " | ".join(map(markdown_cell, row)) + " |")
     return lines + [""] + details
 
 
@@ -445,11 +451,11 @@ def render_markdown(summary, previous=None):
         runs = title["runs"]
         error = next((entry["first_error"] for entry in runs if entry["outcome"] != "rendering" and entry["first_error"]), "")
         row = [title["name"], title_id, title["version"], cell(runs, "cold"), cell(runs, "warm"), f"{runs[-1]['fps']:.1f}",
-               error[:120].replace("|", "\\|")]
+               error[:120]]
         if previous:
             old = previous["titles"].get(title_id)
             row.append(worst(old["runs"]) if old else "new")
-        lines.append("| " + " | ".join(row) + " |")
+        lines.append("| " + " | ".join(map(markdown_cell, row)) + " |")
     if previous and (compared := compare_runs(summary, previous)):
         lines += ["", *render_compare(compared)]
     return "\n".join(lines + [""])
