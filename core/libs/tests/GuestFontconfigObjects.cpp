@@ -437,6 +437,7 @@ static void GuestPointerChecks() {
     EXPECT_REJECTED(FcPatternAddMatrix(pattern, "matrix", reinterpret_cast<const FcMatrix*>(std::uintptr_t{0x10})));
 
     void* roPage = nullptr;
+    void* guardedPages = nullptr;
     std::size_t pageSize = 0;
 #ifdef _WIN32
     SYSTEM_INFO info{};
@@ -446,6 +447,9 @@ static void GuestPointerChecks() {
     CHECK(roPage != nullptr);
     DWORD previous = 0;
     CHECK(VirtualProtect(roPage, pageSize, PAGE_READONLY, &previous) != 0);
+    guardedPages = VirtualAlloc(nullptr, pageSize * 2, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    CHECK(guardedPages != nullptr);
+    CHECK(VirtualProtect(static_cast<char*>(guardedPages) + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0);
 #else
     const long size = sysconf(_SC_PAGESIZE);
     CHECK(size > 0);
@@ -453,7 +457,94 @@ static void GuestPointerChecks() {
     roPage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     CHECK(roPage != MAP_FAILED);
     CHECK(mprotect(roPage, pageSize, PROT_READ) == 0);
+    guardedPages = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(guardedPages != MAP_FAILED);
+    CHECK(mprotect(static_cast<char*>(guardedPages) + pageSize, pageSize, PROT_NONE) == 0);
 #endif
+    auto* guardedBase = static_cast<char*>(guardedPages);
+    auto* noAccessPage = guardedBase + pageSize;
+    auto* badString = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    auto* badText = reinterpret_cast<const FcChar8*>(std::uintptr_t{0x10});
+
+    char* validBoundary = noAccessPage - 7;
+    std::memcpy(validBoundary, "family", 7);
+    FcChar8* boundaryOut = nullptr;
+    CHECK(FcPatternGetString_nid_postfix(pattern, validBoundary, 0, &boundaryOut) == FcResultMatch);
+    CHECK(std::strcmp(reinterpret_cast<const char*>(boundaryOut), "Mono") == 0);
+    const char* boundaryEntryPtrs[] = {validBoundary};
+    FcObjectSet boundaryEntrySet{1, 1, boundaryEntryPtrs};
+    auto* boundaryFiltered = FcPatternFilter(pattern, &boundaryEntrySet);
+    CHECK(boundaryFiltered != nullptr);
+    FcChar8* filteredFamily = nullptr;
+    CHECK(FcPatternGetString_nid_postfix(boundaryFiltered, "family", 0, &filteredFamily) == FcResultMatch);
+    CHECK(std::strcmp(reinterpret_cast<const char*>(filteredFamily), "Mono") == 0);
+    FcPatternDestroy_nid_postfix(boundaryFiltered);
+
+    auto* testLang = FcLangSetCreate();
+    CHECK(testLang != nullptr);
+    char* validLang = noAccessPage - 3;
+    std::memcpy(validLang, "en", 3);
+    CHECK(FcLangSetAdd(testLang, reinterpret_cast<const FcChar8*>(validLang)) == 1);
+    CHECK(FcLangSetHasLang(testLang, reinterpret_cast<const FcChar8*>(validLang)) == FcLangEqual);
+
+    char* unterminated = noAccessPage - 4;
+    std::memcpy(unterminated, "fami", 4);
+
+    EXPECT_REJECTED(FcLangSetAdd(testLang, badText));
+    EXPECT_REJECTED(FcLangSetAdd(testLang, reinterpret_cast<const FcChar8*>(noAccessPage)));
+    EXPECT_REJECTED(FcLangSetAdd(testLang, reinterpret_cast<const FcChar8*>(unterminated)));
+    EXPECT_REJECTED(FcLangSetHasLang(testLang, badText));
+    EXPECT_REJECTED(FcLangSetHasLang(testLang, reinterpret_cast<const FcChar8*>(noAccessPage)));
+    EXPECT_REJECTED(FcLangSetHasLang(testLang, reinterpret_cast<const FcChar8*>(unterminated)));
+
+    EXPECT_REJECTED(FcPatternAddInteger_nid_postfix(pattern, badString, 1));
+    EXPECT_REJECTED(FcPatternAddInteger_nid_postfix(pattern, unterminated, 1));
+    EXPECT_REJECTED(FcPatternAddBool_nid_postfix(pattern, badString, 1));
+    EXPECT_REJECTED(FcPatternAddBool_nid_postfix(pattern, unterminated, 1));
+    EXPECT_REJECTED(FcPatternAddDouble(pattern, badString, 1.5));
+    EXPECT_REJECTED(FcPatternAddDouble(pattern, unterminated, 1.5));
+    EXPECT_REJECTED(FcPatternAddString(pattern, badString, Text("x")));
+    EXPECT_REJECTED(FcPatternAddString(pattern, unterminated, Text("x")));
+    EXPECT_REJECTED(FcPatternAddString(pattern, "family", badText));
+    EXPECT_REJECTED(FcPatternAddString(pattern, "family", reinterpret_cast<const FcChar8*>(unterminated)));
+    auto* tempCharSet = FcCharSetCreate();
+    CHECK(tempCharSet != nullptr);
+    EXPECT_REJECTED(FcPatternAddCharSet(pattern, badString, tempCharSet));
+    EXPECT_REJECTED(FcPatternAddCharSet(pattern, unterminated, tempCharSet));
+    FcCharSetDestroy(tempCharSet);
+    EXPECT_REJECTED(FcPatternAddLangSet(pattern, badString, testLang));
+    EXPECT_REJECTED(FcPatternAddLangSet(pattern, unterminated, testLang));
+    FcLangSetDestroy(testLang);
+    EXPECT_REJECTED(FcPatternAddMatrix(pattern, badString, &matrix));
+    EXPECT_REJECTED(FcPatternAddMatrix(pattern, unterminated, &matrix));
+
+    FcValue foundValue{};
+    int foundInt = 0;
+    EXPECT_REJECTED(FcPatternGet_nid_postfix(pattern, badString, 0, &foundValue));
+    EXPECT_REJECTED(FcPatternGet_nid_postfix(pattern, unterminated, 0, &foundValue));
+    EXPECT_REJECTED(FcPatternGet_nid_postfix(nullptr, badString, 0, &foundValue));
+    EXPECT_REJECTED(FcPatternGetInteger_nid_postfix(pattern, badString, 0, &foundInt));
+    EXPECT_REJECTED(FcPatternGetInteger_nid_postfix(pattern, unterminated, 0, &foundInt));
+    EXPECT_REJECTED(FcPatternDel_nid_postfix(pattern, badString));
+    EXPECT_REJECTED(FcPatternDel_nid_postfix(pattern, unterminated));
+    EXPECT_REJECTED(FcPatternRemove(pattern, badString, 0));
+    EXPECT_REJECTED(FcPatternRemove(pattern, unterminated, 0));
+
+    EXPECT_REJECTED(FcPatternFilter(pattern, reinterpret_cast<const FcObjectSet*>(std::uintptr_t{0x10})));
+    EXPECT_REJECTED(FcPatternFilter(pattern, reinterpret_cast<const FcObjectSet*>(noAccessPage)));
+    FcObjectSet negativeSet{-1, 0, nullptr};
+    EXPECT_REJECTED(FcPatternFilter(pattern, &negativeSet));
+    FcObjectSet nullArraySet{1, 1, nullptr};
+    EXPECT_REJECTED(FcPatternFilter(pattern, &nullArraySet));
+    FcObjectSet badArraySet{1, 1, reinterpret_cast<const char**>(noAccessPage)};
+    EXPECT_REJECTED(FcPatternFilter(pattern, &badArraySet));
+    const char* badEntryPtrs[] = {unterminated};
+    FcObjectSet badEntrySet{1, 1, badEntryPtrs};
+    EXPECT_REJECTED(FcPatternFilter(pattern, &badEntrySet));
+    const char* nullEntryPtrs[] = {nullptr};
+    FcObjectSet nullEntrySet{1, 1, nullEntryPtrs};
+    EXPECT_REJECTED(FcPatternFilter(pattern, &nullEntrySet));
+
     EXPECT_REJECTED(FcPatternGet_nid_postfix(pattern, "weight", 0, reinterpret_cast<FcValue*>(std::uintptr_t{0x10})));
     EXPECT_REJECTED(FcPatternGet_nid_postfix(pattern, "weight", 0, static_cast<FcValue*>(roPage)));
     EXPECT_REJECTED(FcPatternGetInteger_nid_postfix(pattern, "weight", 0, reinterpret_cast<int*>(std::uintptr_t{0x10})));
@@ -464,8 +555,10 @@ static void GuestPointerChecks() {
     EXPECT_REJECTED(FcPatternGetCharSet(pattern, "charset", 0, static_cast<FcCharSet**>(roPage)));
     EXPECT_REJECTED(FcPatternGetLangSet(pattern, "lang", 0, static_cast<FcLangSet**>(roPage)));
 #ifdef _WIN32
+    VirtualFree(guardedPages, 0, MEM_RELEASE);
     VirtualFree(roPage, 0, MEM_RELEASE);
 #else
+    munmap(guardedPages, pageSize * 2);
     munmap(roPage, pageSize);
 #endif
     FcPatternDestroy_nid_postfix(pattern);

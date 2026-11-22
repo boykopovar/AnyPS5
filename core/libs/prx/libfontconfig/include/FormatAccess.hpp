@@ -7,3 +7,4 @@
 
 std::vector<std::string> FontconfigLanguages_nid_no_patch(const FcLangSet* set, bool enumerate = false);
 std::string FontconfigDowncase_nid_no_patch(std::string_view text);
+std::string FontconfigReadGuestCString_nid_no_patch(const char* source, const char* caller);
