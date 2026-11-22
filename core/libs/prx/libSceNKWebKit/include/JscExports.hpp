@@ -2,6 +2,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libSceNKWebKit/src/JscApi.hpp"
+#include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -130,11 +131,13 @@ NKWebKit::JSObjectRef APS5_VABI JSWeakGetObject(NKWebKit::JSWeakRef weak);
 NKWebKit::JSObjectRef APS5_VABI JSWeakObjectMapGet(NKWebKit::JSContextRef ctx, NKWebKit::JSWeakObjectMapRef map, void* key);
 bool APS5_VABI JSWeakObjectMapRemove(NKWebKit::JSContextRef ctx, NKWebKit::JSWeakObjectMapRef map, void* key);
 void APS5_VABI JSWeakObjectMapSet(NKWebKit::JSContextRef ctx, NKWebKit::JSWeakObjectMapRef map, void* key, NKWebKit::JSObjectRef object);
-void APS5_VABI JSWeakRelease(NKWebKit::JSWeakRef weak);
-void APS5_VABI JSWeakRetain(NKWebKit::JSWeakRef weak);
+void APS5_VABI JSWeakRelease(NKWebKit::JSContextGroupRef group, NKWebKit::JSWeakRef weak);
+void APS5_VABI JSWeakRetain(NKWebKit::JSContextGroupRef group, NKWebKit::JSWeakRef weak);
 void APS5_VABI _ZN13OpaqueJSClassD1Ev(NKWebKit::OpaqueJSClass* self);
 void APS5_VABI _ZN13OpaqueJSClassD2Ev(NKWebKit::OpaqueJSClass* self);
 void APS5_VABI _ZN14OpaqueJSStringD1Ev(GuestJSString* self);
 void APS5_VABI _ZN14OpaqueJSStringD2Ev(GuestJSString* self);
+NKWebKit::OpaqueJSStringPtr APS5_VABI _ZN14OpaqueJSString9tryCreateERKN3WTF6StringE(const NKWebKit::WtfAbi::String* string);
+NKWebKit::OpaqueJSStringPtr APS5_VABI _ZN14OpaqueJSString9tryCreateEON3WTF6StringE(NKWebKit::WtfAbi::String* string);
 
 }

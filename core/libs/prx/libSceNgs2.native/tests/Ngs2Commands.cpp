@@ -3,6 +3,7 @@
 #include "prx/libSceNgs2.native/include/Ngs2Types.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <exception>
@@ -23,6 +24,27 @@ struct CommandRecord {
         const void* ptr;
     } value;
 };
+
+struct ModuleQueueRecord {
+    const void* buffer;
+    std::uint64_t reserved;
+    std::uint64_t count;
+    std::uint64_t first;
+};
+
+struct ModuleQueue {
+    const void* reservedPointer;
+    ModuleQueueRecord rings[2];
+    std::uint32_t lock;
+    std::uint8_t currentRing;
+    std::uint8_t padding[3];
+    std::uint32_t itemSize;
+    std::uint32_t ringLength;
+};
+static_assert(sizeof(ModuleQueueRecord) == 0x20);
+static_assert(sizeof(ModuleQueue) == 0x58);
+static_assert(offsetof(ModuleQueue, rings) == 8);
+static_assert(offsetof(ModuleQueue, lock) == 0x48);
 
 struct StreamOption {
     std::uint64_t size;
@@ -330,8 +352,39 @@ void TestModuleEnumerations() {
     Require(sceNgs2ModuleArrayEnumItems(nullptr, nullptr, 0) == 0);
     Require(sceNgs2ModuleArrayEnumItems(reinterpret_cast<const void*>(0x10), nullptr, 0) == 0);
     Require(sceNgs2ModuleQueueEnumItems(nullptr, nullptr, 0) == 0);
-    std::uint8_t dummyQ[16]{};
-    AssertThrows([&] { sceNgs2ModuleQueueEnumItems(dummyQ, nullptr, 0); });
+    Require(sceNgs2ModuleQueueEnumItems(reinterpret_cast<const void*>(0x10), nullptr, 0) == 0);
+
+    ModuleQueue queue{};
+    const std::uint32_t queueItems[] = {0x11111111, 0x22222222, 0x33333333, 0x44444444};
+    queue.rings[0].buffer = queueItems;
+    queue.rings[0].count = 3;
+    queue.rings[0].first = 3;
+    queue.itemSize = sizeof(queueItems[0]);
+    queue.ringLength = 4;
+    std::uint32_t queueOutput[4] = {};
+    Require(sceNgs2ModuleQueueEnumItems(&queue, queueOutput, 3) == 3);
+    Require(queueOutput[0] == queueItems[3]);
+    Require(queueOutput[1] == queueItems[0]);
+    Require(queueOutput[2] == queueItems[1]);
+    Require(queueOutput[3] == 0);
+    Require(queue.lock == 0);
+    queueOutput[0] = queueOutput[1] = queueOutput[2] = queueOutput[3] = 0;
+    Require(sceNgs2ModuleQueueEnumItems(&queue, queueOutput, 2) == 3);
+    Require(queueOutput[0] == queueItems[3]);
+    Require(queueOutput[1] == queueItems[0]);
+    Require(queueOutput[2] == 0);
+    Require(queueOutput[3] == 0);
+    queue.currentRing = 1;
+    queue.rings[1] = queue.rings[0];
+    queueOutput[0] = queueOutput[1] = queueOutput[2] = 0;
+    Require(sceNgs2ModuleQueueEnumItems(&queue, queueOutput, 0) == 3);
+    Require(queueOutput[0] == 0);
+    Require(sceNgs2ModuleQueueEnumItems(&queue, queueOutput, 3) == 3);
+    Require(queueOutput[0] == queueItems[3]);
+    Require(queueOutput[1] == queueItems[0]);
+    Require(queueOutput[2] == queueItems[1]);
+    Require(sceNgs2ModuleQueueEnumItems(&queue, reinterpret_cast<void*>(0x10), 1) == 3);
+    Require(queue.lock == 0);
 
     alignas(8) std::uint8_t arrayData[64] = {};
     const std::uint32_t itemSize = 4;

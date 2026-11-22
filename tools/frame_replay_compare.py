@@ -193,6 +193,8 @@ def execute_replay_trial(command, directory, environment, timeout, log_bytes):
     interrupted = False
     started = time.monotonic()
     try:
+        if os.name == "nt":
+            processes.guard()
         process = subprocess.Popen(command, cwd=directory, env=environment, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    **({"creationflags": processes.CREATE_SUSPENDED} if os.name == "nt"
@@ -470,6 +472,9 @@ def _offline_report(directory):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Run and compare pinned native frame replays; retain limitations and every attempt.")
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run")
