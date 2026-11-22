@@ -284,6 +284,7 @@ async function onMessage({ data }, currentWorker) {
       await sink.write(data.bytes);
       if (currentWorker === worker) currentWorker.postMessage({ type: "written" });
     } else if (data.type === "complete") {
+      const focusDownload = data.blob && document.activeElement === $("cancel");
       $("cancel").hidden = true;
       if (sink) {
         await sink.close();
@@ -320,6 +321,7 @@ async function onMessage({ data }, currentWorker) {
       worker = null;
       lock(false);
       update();
+      if (focusDownload) $("download").focus();
     } else if (data.type === "error") await fail(data.message);
   } catch (error) {
     if (currentWorker === worker) await fail(error);
@@ -430,6 +432,7 @@ $("convert").onclick = async () => {
   try {
     const target = document.querySelector('input[name="target"]:checked').value;
     if ($("save").value === "zip") {
+      $("cancel").hidden = false;
       const name = selectedInputs.length > 1 ? `anyps5-${target}-apps.zip` : `${selectedInputs[0].name.replace(/\.zip$/iu, "")}-${target}.zip`;
       const writable = await createZipSink(name, () => currentWorker === worker);
       if (writable === null) return;
@@ -452,8 +455,12 @@ $("convert").onclick = async () => {
     currentWorker.postMessage({ type: "convert", target, toIntel: $("intel").checked, mode: $("save").value, locale });
   } catch (error) {
     if (currentWorker !== worker) return;
-    if (error.name === "AbortError") { working = false; lock(false); update(); }
-    else await fail(error);
+    if (error.name === "AbortError") {
+      $("cancel").hidden = true;
+      working = false;
+      lock(false);
+      update();
+    } else await fail(error);
   }
 };
 $("theme").onclick = () => {

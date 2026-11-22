@@ -379,6 +379,28 @@ for (const [name, bad] of [
   });
 }
 
+for (const focused of ["cancel", "locale"]) {
+  test("memory ZIP completion handles focus from " + focused, async t => {
+    const { get, workers } = await setup(t, "complete-focus-" + focused);
+    const worker = await selected(get, workers, "first.zip");
+    await get("convert").onclick();
+    assert.equal(get("cancel").hidden, false);
+    document.activeElement = get(focused);
+    get("download").focus = () => {
+      assert.equal(get("done").hidden, false);
+      assert.equal(get("download").hidden, false);
+      assert.match(get("download").href, /^blob:/u);
+      document.activeElement = get("download");
+    };
+    await worker.onmessage({ data: {
+      type: "complete", mode: "memory", blob: new Blob(["zip"]), outputName: "program.elf", size: 3, release: "v1-test", apps: 1
+    } });
+    assert.equal(get("cancel").hidden, true);
+    assert.equal(document.activeElement, get(focused === "cancel" ? "download" : "locale"));
+    get("change").onclick();
+  });
+}
+
 test("changing the input returns keyboard focus to the ZIP picker", async t => {
   const { get, workers } = await setup(t, "change-focus");
   await selected(get, workers, "first.zip");
@@ -634,12 +656,43 @@ test("a browser that denies direct ZIP writes explains how to continue", async t
   assert.equal(get("convert").disabled, true);
 });
 
+test("Cancel is available while a selected ZIP destination opens", async t => {
+  const opening = deferred();
+  const pending = deferred();
+  let aborted = 0;
+  const { get, workers } = await setup(t, "cancel-pending-zip-destination", {
+    showSaveFilePicker: async () => ({
+      createWritable() {
+        opening.resolve();
+        return pending.promise;
+      }
+    })
+  });
+  const original = await selected(get, workers, "first.zip");
+  const converting = get("convert").onclick();
+  try {
+    await opening.promise;
+    assert.equal(get("cancel").hidden, false);
+    await get("cancel").onclick();
+    assert.equal(original.terminated, true);
+    const replacement = await selected(get, workers, "replacement.zip");
+    assert.equal(replacement.terminated, false);
+  } finally {
+    pending.resolve({ async abort() { aborted++; } });
+    await converting;
+  }
+  assert.equal(aborted, 1);
+  assert.equal(original.messages.some(message => message.type === "convert"), false);
+  assert.equal(get("archive-name").textContent, "replacement.zip");
+});
+
 test("cancelling the ZIP picker does not report a failure", async t => {
   const { get, workers } = await setup(t, "write-cancelled", {
     showSaveFilePicker: async () => { throw Object.assign(new Error("cancelled"), { name: "AbortError" }); }
   });
   await selected(get, workers, "first.zip");
   await get("convert").onclick();
+  assert.equal(get("cancel").hidden, true);
   assert.equal(get("error").hidden, true);
   assert.equal(get("selection").hidden, false);
   assert.equal(get("convert").disabled, false);
