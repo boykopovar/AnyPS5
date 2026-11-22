@@ -2669,12 +2669,7 @@ private:
     }
 
     bool LoweredImage(const ImageResource& image) const {
-        const auto stage = m_program.Resources().stage;
-        return image.table != NoTable && DynamicLoweringStage(stage) && image.resourceClass == ImageResourceClass::Sampled && image.tableOperation == TableOperation::Supported;
-    }
-
-    static bool DynamicLoweringStage(IrShaderStage stage) {
-        return stage != IrShaderStage::Unknown && stage != IrShaderStage::Fetch;
+        return ResourceMaterializer::BindlessCandidate(image, m_program.Resources().stage);
     }
 
     [[noreturn]] void FailRuntimeAddress(std::uint32_t source) {

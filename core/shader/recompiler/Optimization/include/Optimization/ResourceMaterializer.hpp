@@ -92,6 +92,7 @@ public:
     static std::shared_ptr<const ResolvedImageTables> ResolveImageTablesShared(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey);
     static bool NullImageDescriptor(const ImageResource& image, const DescriptorValue& descriptor);
     static ResolvedImageTables ResolveImageTables(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey = 0);
+    static bool BindlessCandidate(const ImageResource& image, IrShaderStage stage);
     static bool BindlessImage(const ShaderInfo& info, IrShaderStage stage, std::uint32_t resource);
     static bool UsesBindlessImages(const ShaderInfo& info, IrShaderStage stage);
     static bool RequiresPointSampler(const ImageResource& mode);

@@ -2436,10 +2436,13 @@ BindlessInterfaceRegistry& bindlessInterfaces() {
 
 }
 
+bool ResourceMaterializer::BindlessCandidate(const ImageResource& image, IrShaderStage stage) {
+    if (stage == IrShaderStage::Unknown || stage == IrShaderStage::Fetch || stage == IrShaderStage::Mesh) return false;
+    return image.table != NoTable && !image.nestedTable && !image.packed && image.byElements == 0u && image.resourceClass == ImageResourceClass::Sampled && image.tableOperation == TableOperation::Supported;
+}
+
 bool ResourceMaterializer::BindlessImage(const ShaderInfo& info, IrShaderStage stage, std::uint32_t resource) {
-    if (stage == IrShaderStage::Unknown || stage == IrShaderStage::Fetch || stage == IrShaderStage::Mesh || resource >= info.images.size() || resource >= info.runtimeImageModes.size()) return false;
-    const auto& image = info.images[resource];
-    return image.table != NoTable && !image.nestedTable && !image.packed && image.byElements == 0u && image.resourceClass == ImageResourceClass::Sampled && image.tableOperation == TableOperation::Supported && !info.runtimeImageModes[resource].empty();
+    return resource < info.images.size() && resource < info.runtimeImageModes.size() && BindlessCandidate(info.images[resource], stage) && !info.runtimeImageModes[resource].empty();
 }
 
 bool ResourceMaterializer::UsesBindlessImages(const ShaderInfo& info, IrShaderStage stage) {

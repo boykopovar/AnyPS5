@@ -7297,6 +7297,19 @@ void verifyBindlessHeapLowering() {
     require(nestedPlan->info.images.size() == 1u && nestedPlan->info.images[0].nestedTable, "bindless heap fallback: nested test program was not classified as nestedTable");
     const auto nested = CompileTable(nestedRequest);
     require(nested.result && !nested.result->bindlessHeap && nested.result->bindlessTables.empty() && TableBinding(*nested.result, DescriptorRole::ImageTable) != nullptr, "bindless heap fallback: nested table lowered to the bindless heap");
+
+    auto runtimeSamplerCode = nestedCode;
+    runtimeSamplerCode.insert(runtimeSamplerCode.begin() + 21, {0x361c0081u, 0x341c1c83u, 0xe0341020u, 0x80020c0eu, 0xbf8c0070u, 0x7e60050cu, 0x7e62050du, 0xf4080818u, 0xfa000000u, 0xbf8cc07fu});
+    auto runtimeSamplerRequest = TableRequest(runtimeSamplerCode, nestedUserData);
+    runtimeSamplerRequest.context.compute = nestedRequest.context.compute;
+    runtimeSamplerRequest.target.bindlessImages = true;
+    std::string refusal;
+    try {
+        static_cast<void>(CompileTable(runtimeSamplerRequest));
+    } catch (const std::exception& error) {
+        refusal = error.what();
+    }
+    require(refusal.find("its descriptor address is known only at run time") != std::string::npos, ("bindless heap fallback: a runtime S# address on a nested table was not refused by the resource analysis: " + refusal).c_str());
 }
 
 void verifyDescriptorPhis() {
