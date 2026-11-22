@@ -1837,7 +1837,8 @@ void ConcurrentCache() {
     constexpr int Workers = 4;
     auto run = [&](const char* pem, int rounds, bool requireRaceAndPkeyShape) {
         int roundsWithSeveralCandidates = 0;
-        for (int round = 0; round < rounds; ++round) {
+        const int maxRounds = (requireRaceAndPkeyShape && rounds < 256) ? 256 : rounds;
+        for (int round = 0; round < maxRounds && (round < rounds || roundsWithSeveralCandidates == 0); ++round) {
             auto* certificate = ReadCertificate(pem);
             Require(certificate && certificate->certificateInfo && certificate->certificateInfo->key, "the concurrent certificate decodes");
             std::array<void*, Workers> returned{};
