@@ -20,7 +20,7 @@ private:
     std::vector<Cookie> m_cookies;
 };
 
-SessionCookieJar& SessionCookies();
+SessionCookieJar& SessionCookies(const void* session);
 
 WtfAbi::StringView View(const WtfAbi::String& string);
 bool HostMatchesDomain(const WtfAbi::StringView& domain, const WtfAbi::StringView& host);
