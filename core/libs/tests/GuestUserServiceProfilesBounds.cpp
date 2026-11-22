@@ -138,9 +138,9 @@ void TestInvalidUserIdRejection() {
         };
         for (auto fn : a11yFunctions) {
             int32_t val = 0x5A5A;
-            Require(fn(invalidId, &val) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+            Require(fn(invalidId, &val) == USER_SERVICE_ERROR_NOT_INITIALIZED);
             Require(val == 0x5A5A);
-            Require(fn(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+            Require(fn(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         }
     }
 }

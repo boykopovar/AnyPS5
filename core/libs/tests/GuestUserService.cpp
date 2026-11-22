@@ -127,6 +127,7 @@ int main() {
     Require(sceUserServiceGetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     Require(sceUserServiceGetTraditionalChineseInputType(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, 32) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetAccessibilityVibration(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
     const UserServiceInitParam init_param{USER_SERVICE_THREAD_PRIORITY_MIN};
     Require(sceUserServiceInitialize(&init_param) == USER_SERVICE_OK);
 

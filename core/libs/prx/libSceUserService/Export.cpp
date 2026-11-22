@@ -55,6 +55,9 @@ bool IsUserLoggedIn(int userId) {
 }
 
 int ReportAccessibilitySetting(int user_id, int32_t* setting, int32_t value) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
  if (!IsUserLoggedIn(user_id)) {
   return USER_SERVICE_ERROR_NOT_LOGGED_IN;
  }
