@@ -217,6 +217,46 @@ class LibraryStatusScanTests(unittest.TestCase):
             self.assertEqual(pr_overlap.main_status(["first"], "base-two")["first"], {first: "stub", second: "stub"})
             self.assertEqual(scan.call_count, 2)
 
+    def test_library_scan_extracts_on_tarfiles_without_a_data_filter(self):
+        seed = tempfile.TemporaryDirectory()
+        self.addCleanup(seed.cleanup)
+        original_directory = os.getcwd()
+        self.addCleanup(os.chdir, original_directory)
+        os.chdir(seed.name)
+        run("init", "-q")
+        run("config", "core.safecrlf", "false")
+        write("core/libs/prx/libSceExample/Export.cpp", BASE_SOURCE)
+        run("add", "-A")
+        run("commit", "-q", "-m", "base")
+        run("update-ref", "refs/pr/base", run("rev-parse", "HEAD"))
+
+        real_tarfile = pr_overlap.tarfile
+
+        class OldTar:
+            def __init__(self, handle):
+                self._handle = handle
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, kind, value, trace):
+                return self._handle.__exit__(kind, value, trace)
+
+            def extractall(self, destination, **kwargs):
+                if "filter" in kwargs:
+                    raise TypeError("extractall() got an unexpected keyword argument 'filter'")
+                return self._handle.extractall(destination, **kwargs)
+
+        class OldTarfile:
+            @staticmethod
+            def open(*args, **kwargs):
+                return OldTar(real_tarfile.open(*args, **kwargs))
+
+        library = "core/libs/prx/libSceExample"
+        with patch.object(pr_overlap, "tarfile", OldTarfile):
+            status = pr_overlap.library_status("refs/pr/base", library)
+        self.assertEqual(status, {"done": "implemented", "pending": "stub", "legacyHelper_nid_no_patch": "stub"})
+
 
 if __name__ == "__main__":
     unittest.main()
