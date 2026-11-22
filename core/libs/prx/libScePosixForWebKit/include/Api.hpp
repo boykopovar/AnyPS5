@@ -74,4 +74,7 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service, con
 int APS5_VABI getnameinfo_nid_postfix(const void* address, std::uint32_t length, char* host, std::uint32_t hostLength, char* service, std::uint32_t serviceLength, int flags);
 const char* APS5_VABI gai_strerror_nid_postfix(int error);
 
+struct PosixForWebKitTms;
+std::int32_t APS5_VABI times_nid_postfix(PosixForWebKitTms* output);
+
 }
