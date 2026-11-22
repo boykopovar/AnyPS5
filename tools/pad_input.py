@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import sys
 import tempfile
 import time
 
@@ -140,6 +141,9 @@ def button_mask(value):
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Queue a controller pulse for APS5_PAD_INPUT_FILE.")
     parser.add_argument("path", type=Path)
     parser.add_argument("button", help=f"a button name ({', '.join(BUTTONS)}), or several joined by '+' to press them together (for example l1+r1); release must be used alone")
