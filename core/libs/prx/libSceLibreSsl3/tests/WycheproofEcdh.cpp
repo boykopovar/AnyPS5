@@ -1,3 +1,27 @@
+/* The test vectors are adapted for AnyPS5 from Project Wycheproof,
+ * testvectors_v1/ecdh_secp256r1_test.json, ecdh_secp384r1_test.json at commit
+ * 65ca494727a52944c204441c860b039e6786b99b
+ * (https://github.com/C2SP/wycheproof/tree/65ca494727a52944c204441c860b039e6786b99b/testvectors_v1).
+ * Altered: all 1659 tests of both files are derived; valid tests must give the listed shared secret
+ * and invalid tests must fail with an error queued. The 460 acceptable tests (public keys with a
+ * non-DER ASN.1 encoding, a compressed point or explicit curve parameters) may be rejected with an
+ * error queued, but if the derivation succeeds it must give the listed shared secret.
+ *
+ * Copyright 2016-2026 The Wycheproof Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl3/include/PkeyMethod.hpp"
 #include "prx/libSceLibreSsl3/include/PkeyState.hpp"
