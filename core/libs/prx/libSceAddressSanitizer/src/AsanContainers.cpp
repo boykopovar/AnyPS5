@@ -16,13 +16,14 @@ namespace {
 
 constexpr uptr MaxContainerBytes = uptr{1} << 40;
 
-[[noreturn]] void ReportBadParams(const std::string& text, const char* bugType, uptr pc) {
+[[noreturn]] void ReportBadParams(const std::string& text, const char* bugType, uptr pc, uptr bp) {
     {
         ScopedErrorReport report(false);
         report.Record(CurrentError{true, false, pc, 0, 0, 0, 0, 0, bugType});
         report.Append(text);
-        report.Append(StackLine(pc));
-        report.Append(Summary(bugType));
+        const Trace trace = UnwindFrom(pc, bp, StackTraceMax);
+        report.Append(RenderStack(trace));
+        report.Append(SummaryFor(bugType, trace));
         report.Finish();
     }
     throw std::invalid_argument("guest AddressSanitizer: bad parameters to a container annotation");
@@ -100,7 +101,8 @@ extern "C" {
 [[gnu::noinline]] void APS5_VABI __sanitizer_annotate_contiguous_container(const void* beginPointer, const void* endPointer, const void* oldMiddlePointer, const void* newMiddlePointer) {
     if (!GetFlags().detectContainerOverflow) return;
     EnsureShadow();
-    const uptr pc = reinterpret_cast<uptr>(__builtin_return_address(0));
+    const uptr pc = CurrentPc();
+    const uptr bp = reinterpret_cast<uptr>(__builtin_frame_address(0));
     const uptr storageBegin = reinterpret_cast<uptr>(beginPointer);
     const uptr storageEnd = reinterpret_cast<uptr>(endPointer);
     uptr oldEnd = reinterpret_cast<uptr>(oldMiddlePointer);
@@ -115,7 +117,7 @@ extern "C" {
                                              "      new_mid : %s\n",
                                              Pointer(storageBegin).c_str(), Pointer(storageEnd).c_str(), Pointer(oldEnd).c_str(), Pointer(newEnd).c_str()));
         if (!Aligned(storageBegin)) text += ReportLine(Format("ERROR: beg is not aligned by %zu\n", static_cast<std::size_t>(Granularity)));
-        ReportBadParams(text, "bad-__sanitizer_annotate_contiguous_container", pc);
+        ReportBadParams(text, "bad-__sanitizer_annotate_contiguous_container", pc, bp);
     }
     Require(storageEnd - storageBegin <= MaxContainerBytes, "guest AddressSanitizer: container is larger than 1 << 40 bytes");
     if (oldEnd == newEnd) return;
@@ -136,7 +138,8 @@ extern "C" {
                                                                                       const void* oldEndPointer, const void* newBeginPointer, const void* newEndPointer) {
     if (!GetFlags().detectContainerOverflow) return;
     EnsureShadow();
-    const uptr pc = reinterpret_cast<uptr>(__builtin_return_address(0));
+    const uptr pc = CurrentPc();
+    const uptr bp = reinterpret_cast<uptr>(__builtin_frame_address(0));
     const uptr storageBegin = reinterpret_cast<uptr>(storageBeginPointer);
     const uptr storageEnd = reinterpret_cast<uptr>(storageEndPointer);
     uptr oldBegin = reinterpret_cast<uptr>(oldBeginPointer);
@@ -154,7 +157,7 @@ extern "C" {
                                              Pointer(storageBegin).c_str(), Pointer(storageEnd).c_str(), Pointer(oldBegin).c_str(), Pointer(oldEnd).c_str(), Pointer(newBegin).c_str(),
                                              Pointer(newEnd).c_str()));
         if (!Aligned(storageBegin)) text += ReportLine(Format("ERROR: storage_beg is not aligned by %zu\n", static_cast<std::size_t>(Granularity)));
-        ReportBadParams(text, "bad-__sanitizer_annotate_double_ended_contiguous_container", pc);
+        ReportBadParams(text, "bad-__sanitizer_annotate_double_ended_contiguous_container", pc, bp);
     }
     Require(storageEnd - storageBegin <= MaxContainerBytes, "guest AddressSanitizer: container is larger than 1 << 40 bytes");
     if ((oldBegin == oldEnd && newBegin == newEnd) || (oldBegin == newBegin && oldEnd == newEnd)) return;

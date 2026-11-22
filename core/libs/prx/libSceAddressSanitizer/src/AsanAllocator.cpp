@@ -20,6 +20,7 @@
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace Asan::Runtime {
 
@@ -43,8 +44,10 @@ struct Chunk {
     uptr size = 0;
     uptr userAlignment = 0;
     ChunkState state = ChunkState::Allocated;
-    uptr allocPc = 0;
-    uptr freePc = 0;
+    std::uint32_t allocStack = 0;
+    std::uint32_t freeStack = 0;
+    int allocTid = -1;
+    int freeTid = -1;
     bool freed = false;
 
     uptr End() const { return userBegin + size; }
@@ -157,36 +160,40 @@ void HintAllocatorCannotReturnNull(ScopedErrorReport& report) {
     report.Append(ReportLine("HINT: if you don't care about these errors you may set allocator_may_return_null=1\n"));
 }
 
-[[noreturn]] void FatalAllocatorReport(const std::string& line, const char* bugType, uptr pc) {
+[[noreturn]] void FatalAllocatorReport(const std::string& line, const char* bugType, const CallSite& site) {
     ScopedErrorReport report(true);
-    report.Record(CurrentError{true, false, pc, 0, 0, 0, 0, 0, bugType});
+    report.Record(CurrentError{true, false, site.here, site.bp, 0, 0, 0, 0, bugType});
     report.Append(ReportLine(line));
-    report.Append(StackLine(pc));
+    const Trace trace = MallocTrace(site.here, site.caller, site.bp);
+    report.Append(RenderStack(trace));
     HintAllocatorCannotReturnNull(report);
-    report.Append(Summary(bugType));
+    report.Append(SummaryFor(bugType, trace));
     report.Finish();
     Die();
 }
 
-void ReportFreeError(uptr pointer, bool doubleFree, uptr pc) {
+void ReportFreeError(uptr pointer, bool doubleFree, const CallSite& site) {
     ScopedErrorReport report(false);
     const char* const bugType = doubleFree ? "double-free" : "bad-free";
-    report.Record(CurrentError{true, false, pc, 0, 0, pointer, 0, 0, bugType});
-    if (doubleFree) report.Append(ReportLine(Format("ERROR: AddressSanitizer: attempting double-free on %s in thread T-1:\n", Pointer(pointer).c_str())));
-    else report.Append(ReportLine(Format("ERROR: AddressSanitizer: attempting free on address which was not malloc()-ed: %s in thread T-1\n", Pointer(pointer).c_str())));
-    report.Append(StackLine(pc));
+    report.Record(CurrentError{true, false, site.here, site.bp, 0, pointer, 0, 0, bugType});
+    const std::string thread = ThreadIdAndName(CurrentThreadId());
+    if (doubleFree) report.Append(ReportLine(Format("ERROR: AddressSanitizer: attempting double-free on %s in thread %s:\n", Pointer(pointer).c_str(), thread.c_str())));
+    else report.Append(ReportLine(Format("ERROR: AddressSanitizer: attempting free on address which was not malloc()-ed: %s in thread %s\n", Pointer(pointer).c_str(), thread.c_str())));
+    const Trace trace = UnwindFrom(site.here, site.bp, StackTraceMax);
+    report.Append(RenderStack(trace));
     report.Append(DescribeAccessedAddress(pointer, 1));
-    report.Append(Summary(bugType));
+    report.Append(SummaryFor(bugType, trace));
     report.Finish();
 }
 
-void ReportNotOwned(uptr pointer, const char* function, uptr pc) {
+void ReportNotOwned(uptr pointer, const char* function, uptr pc, uptr bp) {
     ScopedErrorReport report(false);
-    report.Record(CurrentError{true, false, pc, 0, 0, pointer, 0, 0, "bad-malloc_usable_size"});
+    report.Record(CurrentError{true, false, pc, bp, 0, pointer, 0, 0, "bad-malloc_usable_size"});
     report.Append(ReportLine(Format("ERROR: AddressSanitizer: attempting to call %s for pointer which is not owned: %s\n", function, Pointer(pointer).c_str())));
-    report.Append(StackLine(pc));
+    const Trace trace = UnwindFrom(pc, bp, StackTraceMax);
+    report.Append(RenderStack(trace));
     report.Append(DescribeAccessedAddress(pointer, 1));
-    report.Append(Summary(std::strcmp(function, "malloc_usable_size()") == 0 ? "bad-malloc_usable_size" : "bad-__sanitizer_get_allocated_size"));
+    report.Append(SummaryFor(std::strcmp(function, "malloc_usable_size()") == 0 ? "bad-malloc_usable_size" : "bad-__sanitizer_get_allocated_size", trace));
     report.Finish();
 }
 
@@ -221,7 +228,7 @@ void DrainQuarantine(uptr limit) {
     }
 }
 
-void* Allocate(uptr size, uptr alignment, uptr pc, bool canFill) {
+void* Allocate(uptr size, uptr alignment, const CallSite& site, bool canFill) {
     EnsureShadow();
     const Flags& flags = GetFlags();
     const uptr requestedAlignment = UserRequestedAlignment(alignment);
@@ -238,9 +245,9 @@ void* Allocate(uptr size, uptr alignment, uptr pc, bool canFill) {
             Emit(ReportLine(Format("WARNING: AddressSanitizer failed to allocate 0x%zx bytes\n", static_cast<std::size_t>(size))));
             return nullptr;
         }
-        FatalAllocatorReport(Format("ERROR: AddressSanitizer: requested allocation size 0x%zx (0x%zx after adjustments for alignment, red zones etc.) exceeds maximum supported size of 0x%zx (thread T-1)\n",
-                                    static_cast<std::size_t>(size), static_cast<std::size_t>(neededSize), static_cast<std::size_t>(limit)),
-                             "allocation-size-too-big", pc);
+        FatalAllocatorReport(Format("ERROR: AddressSanitizer: requested allocation size 0x%zx (0x%zx after adjustments for alignment, red zones etc.) exceeds maximum supported size of 0x%zx (thread %s)\n",
+                                    static_cast<std::size_t>(size), static_cast<std::size_t>(neededSize), static_cast<std::size_t>(limit), ThreadIdAndName(CurrentThreadId()).c_str()),
+                             "allocation-size-too-big", site);
     }
     void* block = nullptr;
     try {
@@ -253,11 +260,12 @@ void* Allocate(uptr size, uptr alignment, uptr pc, bool canFill) {
     if (block == nullptr) {
         if (flags.allocatorMayReturnNull) return nullptr;
         ScopedErrorReport report(true);
-        report.Record(CurrentError{true, false, pc, 0, 0, 0, 0, 0, "out-of-memory"});
+        report.Record(CurrentError{true, false, site.here, site.bp, 0, 0, 0, 0, "out-of-memory"});
         report.Append(ReportLine(Format("ERROR: AddressSanitizer: out of memory: allocator is trying to allocate 0x%zx bytes\n", static_cast<std::size_t>(size))));
-        report.Append(StackLine(pc));
+        const Trace trace = MallocTrace(site.here, site.caller, site.bp);
+        report.Append(RenderStack(trace));
         HintAllocatorCannotReturnNull(report);
-        report.Append(Summary("out-of-memory"));
+        report.Append(SummaryFor("out-of-memory", trace));
         report.Finish();
         Die();
     }
@@ -279,7 +287,8 @@ void* Allocate(uptr size, uptr alignment, uptr pc, bool canFill) {
     chunk.userBegin = userBegin;
     chunk.size = size;
     chunk.userAlignment = requestedAlignment;
-    chunk.allocPc = pc;
+    chunk.allocStack = StackDepotPut(MallocTrace(site.here, site.caller, site.bp));
+    chunk.allocTid = CurrentThreadId();
     chunks[allocBegin] = chunk;
     stats.mallocs += 1;
     stats.malloced += size;
@@ -293,7 +302,7 @@ void* Allocate(uptr size, uptr alignment, uptr pc, bool canFill) {
     return reinterpret_cast<void*>(userBegin);
 }
 
-void Deallocate(void* pointer, uptr pc) {
+void Deallocate(void* pointer, const CallSite& site) {
     const uptr address = reinterpret_cast<uptr>(pointer);
     if (address == 0) return;
     EnsureShadow();
@@ -301,16 +310,17 @@ void Deallocate(void* pointer, uptr pc) {
     Chunk* const chunk = ChunkContaining(address);
     if (chunk == nullptr || chunk->userBegin != address) {
         lock.unlock();
-        ReportFreeError(address, false, pc);
+        ReportFreeError(address, false, site);
         return;
     }
     if (chunk->state != ChunkState::Allocated) {
         lock.unlock();
-        ReportFreeError(address, true, pc);
+        ReportFreeError(address, true, site);
         return;
     }
     chunk->state = ChunkState::Quarantine;
-    chunk->freePc = pc;
+    chunk->freeStack = StackDepotPut(MallocTrace(site.here, site.caller, site.bp));
+    chunk->freeTid = CurrentThreadId();
     chunk->freed = true;
     const Flags& flags = GetFlags();
     if (flags.maxFreeFillSize > 0) std::memset(pointer, flags.freeFillByte, std::min<uptr>(chunk->size, static_cast<uptr>(flags.maxFreeFillSize)));
@@ -323,14 +333,14 @@ void Deallocate(void* pointer, uptr pc) {
     DrainQuarantine(QuarantineLimit());
 }
 
-void* Reallocate(void* oldPointer, uptr newSize, uptr alignment, uptr pc) {
+void* Reallocate(void* oldPointer, uptr newSize, uptr alignment, const CallSite& site) {
     const uptr address = reinterpret_cast<uptr>(oldPointer);
     {
         std::lock_guard lock(heapMutex);
         stats.reallocs += 1;
         stats.realloced += newSize;
     }
-    void* const newPointer = Allocate(newSize, alignment, pc, true);
+    void* const newPointer = Allocate(newSize, alignment, site, true);
     if (newPointer == nullptr) return nullptr;
     uptr copySize = 0;
     bool valid = false;
@@ -344,22 +354,22 @@ void* Reallocate(void* oldPointer, uptr newSize, uptr alignment, uptr pc) {
             copySize = std::min(newSize, chunk->size);
         }
     }
-    if (!valid) ReportFreeError(address, quarantined, pc);
+    if (!valid) ReportFreeError(address, quarantined, site);
     std::memcpy(newPointer, oldPointer, copySize);
-    Deallocate(oldPointer, pc);
+    Deallocate(oldPointer, site);
     return newPointer;
 }
 
-void* Realloc(void* pointer, uptr size, uptr alignment, uptr pc) {
-    if (pointer == nullptr) return SetErrnoOnNull(Allocate(size, alignment, pc, true));
+void* Realloc(void* pointer, uptr size, uptr alignment, const CallSite& site) {
+    if (pointer == nullptr) return SetErrnoOnNull(Allocate(size, alignment, site, true));
     if (size == 0) {
         if (GetFlags().allocatorFreesAndReturnsNullOnReallocZero) {
-            Deallocate(pointer, pc);
+            Deallocate(pointer, site);
             return nullptr;
         }
         size = 1;
     }
-    return SetErrnoOnNull(Reallocate(pointer, size, alignment, pc));
+    return SetErrnoOnNull(Reallocate(pointer, size, alignment, site));
 }
 
 std::string HeapChunkAccess(uptr address, uptr accessSize, const Chunk& chunk) {
@@ -388,12 +398,12 @@ bool DescribeHeapAddress(uptr address, uptr accessSize, std::string* text) {
     if (chunk == nullptr) return false;
     *text = HeapChunkAccess(address, accessSize, *chunk);
     if (chunk->freed) {
-        *text += "freed by thread T-1 here:\n" + StackLine(chunk->freePc);
-        *text += "previously allocated by thread T-1 here:\n";
+        *text += "freed by thread " + ThreadIdAndName(chunk->freeTid) + " here:\n" + RenderStack(StackDepotGet(chunk->freeStack));
+        *text += "previously allocated by thread " + ThreadIdAndName(chunk->allocTid) + " here:\n";
     } else {
-        *text += "allocated by thread T-1 here:\n";
+        *text += "allocated by thread " + ThreadIdAndName(chunk->allocTid) + " here:\n";
     }
-    *text += StackLine(chunk->allocPc);
+    *text += RenderStack(StackDepotGet(chunk->allocStack));
     return true;
 }
 
@@ -410,26 +420,39 @@ bool HeapRegionForAddress(uptr address, uptr* begin, uptr* size) {
 
 using namespace Asan::Runtime;
 
-#define APS5_ASAN_CALLER_PC const uptr pc = reinterpret_cast<uptr>(__builtin_return_address(0))
+#define APS5_ASAN_CALL_SITE                                                                  \
+    const uptr pc = reinterpret_cast<uptr>(__builtin_return_address(0));                     \
+    const CallSite site{CurrentPc(), pc, reinterpret_cast<uptr>(__builtin_frame_address(0))}
 
 namespace {
 
 uptr HeapStack(uptr address, uptr* trace, uptr size, std::uint32_t* threadId, bool allocation) {
-    uptr frame = 0;
+    Trace stack;
+    int tid = -1;
     {
         std::lock_guard lock(heapMutex);
         const Chunk* const chunk = FindHeapChunkByAddress(address);
         if (chunk == nullptr) return 0;
-        if (!allocation && !chunk->freed) return 0;
-        frame = (allocation ? chunk->allocPc : chunk->freePc) - 1;
+        if (allocation) {
+            if (chunk->allocStack == 0) return 0;
+            stack = StackDepotGet(chunk->allocStack);
+            tid = chunk->allocTid;
+        } else {
+            if (!chunk->freed) return 0;
+            stack = StackDepotGet(chunk->freeStack);
+            tid = chunk->freeTid;
+        }
     }
     if (threadId != nullptr) {
-        const std::uint32_t tid = ~std::uint32_t{0};
-        if (!GuestCopyOut_nid_no_patch(threadId, &tid, sizeof(tid))) throw std::invalid_argument("guest AddressSanitizer: thread id output is not writable");
+        const auto value = static_cast<std::uint32_t>(tid);
+        if (!GuestCopyOut_nid_no_patch(threadId, &value, sizeof(value))) throw std::invalid_argument("guest AddressSanitizer: thread id output is not writable");
     }
     if (trace == nullptr || size == 0) return 0;
-    if (!GuestCopyOut_nid_no_patch(trace, &frame, sizeof(frame))) throw std::invalid_argument("guest AddressSanitizer: trace output is not writable");
-    return 1;
+    const std::size_t count = std::min<std::size_t>({static_cast<std::size_t>(size), stack.size(), StackTraceMax});
+    std::vector<uptr> frames(count);
+    for (std::size_t index = 0; index < count; ++index) frames[index] = PreviousInstructionPc(stack[index]);
+    if (count && !GuestCopyOut_nid_no_patch(trace, frames.data(), count * sizeof(uptr))) throw std::invalid_argument("guest AddressSanitizer: trace output is not writable");
+    return count;
 }
 
 }
@@ -437,91 +460,91 @@ uptr HeapStack(uptr address, uptr* trace, uptr size, std::uint32_t* threadId, bo
 extern "C" {
 
 [[gnu::noinline]] void* APS5_VABI __asan_malloc(std::size_t size) {
-    APS5_ASAN_CALLER_PC;
-    return SetErrnoOnNull(Allocate(size, 8, pc, true));
+    APS5_ASAN_CALL_SITE;
+    return SetErrnoOnNull(Allocate(size, 8, site, true));
 }
 
 [[gnu::noinline]] void APS5_VABI __asan_free(void* pointer) {
-    APS5_ASAN_CALLER_PC;
-    Deallocate(pointer, pc);
+    APS5_ASAN_CALL_SITE;
+    Deallocate(pointer, site);
 }
 
 [[gnu::noinline]] void* APS5_VABI __asan_calloc(std::size_t count, std::size_t size) {
-    APS5_ASAN_CALLER_PC;
+    APS5_ASAN_CALL_SITE;
     if (size != 0 && count > std::numeric_limits<std::size_t>::max() / size) {
         if (GetFlags().allocatorMayReturnNull) {
             SetErrno(ErrnoEnomem);
             return nullptr;
         }
         EnsureShadow();
-        FatalAllocatorReport(Format("ERROR: AddressSanitizer: calloc parameters overflow: count * size (%zd * %zd) cannot be represented in type size_t (thread T-1)\n",
-                                    static_cast<std::ptrdiff_t>(count), static_cast<std::ptrdiff_t>(size)),
-                             "calloc-overflow", pc);
+        FatalAllocatorReport(Format("ERROR: AddressSanitizer: calloc parameters overflow: count * size (%zd * %zd) cannot be represented in type size_t (thread %s)\n",
+                                    static_cast<std::ptrdiff_t>(count), static_cast<std::ptrdiff_t>(size), ThreadIdAndName(CurrentThreadId()).c_str()),
+                             "calloc-overflow", site);
     }
-    void* const pointer = Allocate(count * size, 8, pc, false);
+    void* const pointer = Allocate(count * size, 8, site, false);
     if (pointer != nullptr) std::memset(pointer, 0, count * size);
     return SetErrnoOnNull(pointer);
 }
 
 [[gnu::noinline]] void* APS5_VABI __asan_realloc(void* pointer, std::size_t size) {
-    APS5_ASAN_CALLER_PC;
-    return Realloc(pointer, size, 8, pc);
+    APS5_ASAN_CALL_SITE;
+    return Realloc(pointer, size, 8, site);
 }
 
 [[gnu::noinline]] void* APS5_VABI __asan_memalign(std::size_t alignment, std::size_t size) {
-    APS5_ASAN_CALLER_PC;
+    APS5_ASAN_CALL_SITE;
     if (!IsPowerOfTwo(alignment)) {
         SetErrno(ErrnoEinval);
         if (GetFlags().allocatorMayReturnNull) return nullptr;
         EnsureShadow();
-        FatalAllocatorReport(Format("ERROR: AddressSanitizer: invalid allocation alignment: %zd, alignment must be a power of two (thread T-1)\n", static_cast<std::ptrdiff_t>(alignment)),
-                             "invalid-allocation-alignment", pc);
+        FatalAllocatorReport(Format("ERROR: AddressSanitizer: invalid allocation alignment: %zd, alignment must be a power of two (thread %s)\n", static_cast<std::ptrdiff_t>(alignment), ThreadIdAndName(CurrentThreadId()).c_str()),
+                             "invalid-allocation-alignment", site);
     }
-    return SetErrnoOnNull(Allocate(size, alignment, pc, true));
+    return SetErrnoOnNull(Allocate(size, alignment, site, true));
 }
 
 [[gnu::noinline]] void* APS5_VABI __asan_aligned_alloc(std::size_t alignment, std::size_t size) {
-    APS5_ASAN_CALLER_PC;
+    APS5_ASAN_CALL_SITE;
     if (!IsPowerOfTwo(alignment) || (size & (alignment - 1)) != 0) {
         SetErrno(ErrnoEinval);
         if (GetFlags().allocatorMayReturnNull) return nullptr;
         EnsureShadow();
-        FatalAllocatorReport(Format("ERROR: AddressSanitizer: invalid alignment requested in aligned_alloc: %zd, alignment must be a power of two and the requested size 0x%zx must be a multiple of alignment (thread T-1)\n",
-                                    static_cast<std::ptrdiff_t>(alignment), static_cast<std::size_t>(size)),
-                             "invalid-aligned-alloc-alignment", pc);
+        FatalAllocatorReport(Format("ERROR: AddressSanitizer: invalid alignment requested in aligned_alloc: %zd, alignment must be a power of two and the requested size 0x%zx must be a multiple of alignment (thread %s)\n",
+                                    static_cast<std::ptrdiff_t>(alignment), static_cast<std::size_t>(size), ThreadIdAndName(CurrentThreadId()).c_str()),
+                             "invalid-aligned-alloc-alignment", site);
     }
-    return SetErrnoOnNull(Allocate(size, alignment, pc, true));
+    return SetErrnoOnNull(Allocate(size, alignment, site, true));
 }
 
 [[gnu::noinline]] int APS5_VABI __asan_posix_memalign(void** pointer, std::size_t alignment, std::size_t size) {
-    APS5_ASAN_CALLER_PC;
+    APS5_ASAN_CALL_SITE;
     if (!IsPowerOfTwo(alignment) || alignment % sizeof(void*) != 0) {
         if (GetFlags().allocatorMayReturnNull) return ErrnoEinval;
         EnsureShadow();
-        FatalAllocatorReport(Format("ERROR: AddressSanitizer: invalid alignment requested in posix_memalign: %zd, alignment must be a power of two and a multiple of sizeof(void*) == %zd (thread T-1)\n",
-                                    static_cast<std::ptrdiff_t>(alignment), static_cast<std::ptrdiff_t>(sizeof(void*))),
-                             "invalid-posix-memalign-alignment", pc);
+        FatalAllocatorReport(Format("ERROR: AddressSanitizer: invalid alignment requested in posix_memalign: %zd, alignment must be a power of two and a multiple of sizeof(void*) == %zd (thread %s)\n",
+                                    static_cast<std::ptrdiff_t>(alignment), static_cast<std::ptrdiff_t>(sizeof(void*)), ThreadIdAndName(CurrentThreadId()).c_str()),
+                             "invalid-posix-memalign-alignment", site);
     }
-    void* const allocated = Allocate(size, alignment, pc, true);
+    void* const allocated = Allocate(size, alignment, site, true);
     if (allocated == nullptr) return ErrnoEnomem;
     if (!GuestCopyOut_nid_no_patch(pointer, &allocated, sizeof(allocated))) throw std::invalid_argument("guest AddressSanitizer: posix_memalign output is not writable");
     return 0;
 }
 
 [[gnu::noinline]] void* APS5_VABI __asan_reallocalign(void* pointer, std::size_t size, std::size_t alignment) {
-    APS5_ASAN_CALLER_PC;
+    APS5_ASAN_CALL_SITE;
     if (!IsPowerOfTwo(alignment)) {
         SetErrno(ErrnoEinval);
         if (GetFlags().allocatorMayReturnNull) return nullptr;
         EnsureShadow();
-        FatalAllocatorReport(Format("ERROR: AddressSanitizer: invalid allocation alignment: %zd, alignment must be a power of two (thread T-1)\n", static_cast<std::ptrdiff_t>(alignment)),
-                             "invalid-allocation-alignment", pc);
+        FatalAllocatorReport(Format("ERROR: AddressSanitizer: invalid allocation alignment: %zd, alignment must be a power of two (thread %s)\n", static_cast<std::ptrdiff_t>(alignment), ThreadIdAndName(CurrentThreadId()).c_str()),
+                             "invalid-allocation-alignment", site);
     }
-    return Realloc(pointer, size, alignment, pc);
+    return Realloc(pointer, size, alignment, site);
 }
 
 [[gnu::noinline]] std::size_t APS5_VABI __asan_malloc_usable_size(const void* pointer) {
-    APS5_ASAN_CALLER_PC;
+    APS5_ASAN_CALL_SITE;
     if (pointer == nullptr) return 0;
     EnsureShadow();
     uptr size = 0;
@@ -529,7 +552,7 @@ extern "C" {
         std::lock_guard lock(heapMutex);
         size = AllocationSize(reinterpret_cast<uptr>(pointer));
     }
-    if (GetFlags().checkMallocUsableSize && size == 0) ReportNotOwned(reinterpret_cast<uptr>(pointer), "malloc_usable_size()", pc);
+    if (GetFlags().checkMallocUsableSize && size == 0) ReportNotOwned(reinterpret_cast<uptr>(pointer), "malloc_usable_size()", pc, site.bp);
     return size;
 }
 
@@ -577,7 +600,7 @@ int APS5_VABI __sanitizer_get_ownership(const void* pointer) {
 }
 
 [[gnu::noinline]] std::size_t APS5_VABI __sanitizer_get_allocated_size(const void* pointer) {
-    APS5_ASAN_CALLER_PC;
+    APS5_ASAN_CALL_SITE;
     if (pointer == nullptr) return 0;
     uptr size = 0;
     {
@@ -586,7 +609,7 @@ int APS5_VABI __sanitizer_get_ownership(const void* pointer) {
     }
     if (size == 0) {
         EnsureShadow();
-        ReportNotOwned(reinterpret_cast<uptr>(pointer), "__sanitizer_get_allocated_size()", pc);
+        ReportNotOwned(reinterpret_cast<uptr>(pointer), "__sanitizer_get_allocated_size()", site.here, site.bp);
     }
     return size;
 }
@@ -633,11 +656,12 @@ void APS5_VABI __sanitizer_purge_allocator() {
 }
 
 [[gnu::noinline]] int APS5_VABI __asan_update_allocation_context(void* address) {
-    APS5_ASAN_CALLER_PC;
+    APS5_ASAN_CALL_SITE;
     std::lock_guard lock(heapMutex);
     Chunk* const chunk = ChunkContaining(reinterpret_cast<uptr>(address));
     if (chunk == nullptr || chunk->state != ChunkState::Allocated) return 0;
-    chunk->allocPc = pc;
+    chunk->allocStack = StackDepotPut(MallocTrace(site.here, site.caller, site.bp));
+    chunk->allocTid = CurrentThreadId();
     return 1;
 }
 

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace Asan::Runtime {
 
@@ -76,6 +77,12 @@ struct Flags {
     int minUarStackSizeLog = 16;
     int maxUarStackSizeLog = 20;
     int maxAllocationSizeMb = 0;
+    int mallocContextSize = 30;
+    bool symbolize = true;
+    bool coverage = false;
+    std::string coverageDir = ".";
+    std::string stackTraceFormat = "DEFAULT";
+    std::string stripPathPrefix;
 };
 
 struct CurrentError {
@@ -120,8 +127,29 @@ uptr RegionIsPoisoned(uptr begin, uptr size);
 std::string Format(const char* format, ...);
 std::string Pointer(uptr value);
 std::string ReportLine(const std::string& text);
-std::string StackLine(uptr pc);
-std::string Summary(const char* bugType);
+using Trace = std::vector<uptr>;
+
+uptr PreviousInstructionPc(uptr pc);
+Trace UnwindFrom(uptr pc, uptr bp, uptr maxDepth);
+Trace MallocTrace(uptr here, uptr caller, uptr bp);
+std::string RenderStack(const Trace& trace);
+std::string SummaryFor(const char* bugType, const Trace& trace);
+std::uint32_t StackDepotPut(const Trace& trace);
+Trace StackDepotGet(std::uint32_t id);
+std::size_t StackDepotSize();
+int CurrentThreadId();
+std::string ThreadIdAndName(int tid);
+bool ModuleAndOffsetForPc(uptr pc, std::string* module, uptr* offset);
+void InitializeCoverage();
+void DumpGuardCoverage();
+inline constexpr uptr StackTraceMax = 255;
+uptr CurrentPc();
+
+struct CallSite {
+    uptr here;
+    uptr caller;
+    uptr bp;
+};
 std::string ShadowMemoryForAddress(uptr address);
 std::string GuestString(uptr address);
 std::string DescribeAccessedAddress(uptr address, uptr accessSize);

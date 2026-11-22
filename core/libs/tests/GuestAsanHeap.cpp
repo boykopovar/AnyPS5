@@ -1,4 +1,5 @@
 #include "prx/libSceAddressSanitizer/include/Api.hpp"
+#include "SceTypes.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libc/include/MallocManagedSize.hpp"
 
@@ -15,7 +16,15 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+extern "C" int APS5_VABI scePthreadGetthreadid(void);
+extern "C" int APS5_VABI scePthreadRename(Pthread thread, const char* name);
+extern "C" Pthread APS5_VABI scePthreadSelf();
+
 namespace {
+
+std::string ThreadTag() {
+    return "T" + std::to_string(scePthreadGetthreadid());
+}
 
 void Require(bool value, const char* what) {
     if (value) return;
@@ -146,7 +155,7 @@ void HeapReports() {
                Load1(p + 10);
            }),
            1,
-           {"ERROR: AddressSanitizer: heap-buffer-overflow on address ", "READ of size 1 at ", " is located 0 bytes after 10-byte region [", "allocated by thread T-1 here:\n    #0 0x",
+           {"ERROR: AddressSanitizer: heap-buffer-overflow on address ", "READ of size 1 at ", " is located 0 bytes after 10-byte region [", "allocated by thread " + ThreadTag() + " here:\n    #0 0x",
             "SUMMARY: AddressSanitizer: heap-buffer-overflow", "  Heap left redzone:       fa\n"},
            "heap overflow");
     Expect(Run(nullptr, [] {
@@ -159,14 +168,14 @@ void HeapReports() {
                __asan_free(p);
                __asan_load8(reinterpret_cast<std::uintptr_t>(p + 8));
            }),
-           1, {"heap-use-after-free on address ", " is located 8 bytes inside of 32-byte region [", "freed by thread T-1 here:\n    #0 0x", "previously allocated by thread T-1 here:\n    #0 0x"},
+           1, {"heap-use-after-free on address ", " is located 8 bytes inside of 32-byte region [", "freed by thread " + ThreadTag() + " here:\n    #0 0x", "previously allocated by thread " + ThreadTag() + " here:\n    #0 0x"},
            "use after free");
     Expect(Run(nullptr, [] {
                p = Bytes(__asan_malloc(16));
                __asan_free(p);
                __asan_free(p);
            }),
-           1, {"ERROR: AddressSanitizer: attempting double-free on 0x", " in thread T-1:\n", "SUMMARY: AddressSanitizer: double-free"}, "double free");
+           1, {"ERROR: AddressSanitizer: attempting double-free on 0x", " in thread " + ThreadTag() + ":\n", "SUMMARY: AddressSanitizer: double-free"}, "double free");
     Expect(Run(nullptr, [] {
                p = Bytes(__asan_malloc(16));
                __asan_free(p + 4);
@@ -185,7 +194,7 @@ void HeapReports() {
                p = Bytes(__asan_malloc(24));
                __asan_describe_address(reinterpret_cast<std::uintptr_t>(p + 30));
            }),
-           0, {" is located 6 bytes after 24-byte region [", "allocated by thread T-1 here:"}, "describe heap address");
+           0, {" is located 6 bytes after 24-byte region [", "allocated by thread " + ThreadTag() + " here:"}, "describe heap address");
 }
 
 void Reallocation() {
@@ -242,16 +251,16 @@ void Alignment() {
                 }),
                 "aligned allocation");
     Expect(Run(nullptr, [] { __asan_memalign(3, 8); }), 1,
-           {"ERROR: AddressSanitizer: invalid allocation alignment: 3, alignment must be a power of two (thread T-1)\n", "HINT: if you don't care about these errors you may set allocator_may_return_null=1\n",
+           {"ERROR: AddressSanitizer: invalid allocation alignment: 3, alignment must be a power of two (thread " + ThreadTag() + ")\n", "HINT: if you don't care about these errors you may set allocator_may_return_null=1\n",
             "SUMMARY: AddressSanitizer: invalid-allocation-alignment"},
            "memalign alignment");
     Expect(Run(nullptr, [] { __asan_aligned_alloc(16, 20); }), 1,
-           {"invalid alignment requested in aligned_alloc: 16, alignment must be a power of two and the requested size 0x14 must be a multiple of alignment (thread T-1)\n"}, "aligned_alloc size");
+           {"invalid alignment requested in aligned_alloc: 16, alignment must be a power of two and the requested size 0x14 must be a multiple of alignment (thread " + ThreadTag() + ")\n"}, "aligned_alloc size");
     Expect(Run(nullptr, [] {
                void* r = nullptr;
                __asan_posix_memalign(&r, 4, 8);
            }),
-           1, {"invalid alignment requested in posix_memalign: 4, alignment must be a power of two and a multiple of sizeof(void*) == 8 (thread T-1)\n"}, "posix_memalign alignment");
+           1, {"invalid alignment requested in posix_memalign: 4, alignment must be a power of two and a multiple of sizeof(void*) == 8 (thread " + ThreadTag() + ")\n"}, "posix_memalign alignment");
     Expect(Run(nullptr, [] { __asan_reallocalign(nullptr, 8, 12); }), 1, {"invalid allocation alignment: 12"}, "reallocalign alignment");
     ExpectClean(Run("allocator_may_return_null=1", [] {
                     *__error_nid_postfix() = 0;
@@ -267,10 +276,10 @@ void Alignment() {
 
 void Limits() {
     Expect(Run(nullptr, [] { __asan_calloc(~std::size_t{0} / 2, 3); }), 1,
-           {"ERROR: AddressSanitizer: calloc parameters overflow: count * size (9223372036854775807 * 3) cannot be represented in type size_t (thread T-1)\n", "SUMMARY: AddressSanitizer: calloc-overflow"},
+           {"ERROR: AddressSanitizer: calloc parameters overflow: count * size (9223372036854775807 * 3) cannot be represented in type size_t (thread " + ThreadTag() + ")\n", "SUMMARY: AddressSanitizer: calloc-overflow"},
            "calloc overflow");
     Expect(Run(nullptr, [] { __asan_malloc(std::size_t{1} << 41); }), 1,
-           {"ERROR: AddressSanitizer: requested allocation size 0x20000000000 (0x", " after adjustments for alignment, red zones etc.) exceeds maximum supported size of 0x10000000000 (thread T-1)\n",
+           {"ERROR: AddressSanitizer: requested allocation size 0x20000000000 (0x", " after adjustments for alignment, red zones etc.) exceeds maximum supported size of 0x10000000000 (thread " + ThreadTag() + ")\n",
             "SUMMARY: AddressSanitizer: allocation-size-too-big"},
            "too big");
     Expect(Run("max_allocation_size_mb=1", [] { __asan_malloc(std::size_t{2} << 20); }), 1, {"requested allocation size 0x200000 ", "exceeds maximum supported size of 0x100000"},
@@ -363,15 +372,15 @@ void Debugging() {
     static std::uint32_t thread = 0;
     ExpectClean(Run(nullptr, [] {
                     auto* p = Bytes(__asan_malloc(24));
-                    Require(__asan_get_alloc_stack(reinterpret_cast<std::uintptr_t>(p), trace, 4, &thread) == 1 && trace[0] != 0 && thread == ~std::uint32_t{0}, "alloc stack");
+                    Require(__asan_get_alloc_stack(reinterpret_cast<std::uintptr_t>(p), trace, 4, &thread) == 4 && trace[0] != 0 && trace[1] != 0 && trace[3] != 0 && trace[0] != trace[1] && trace[1] != trace[2] && thread == static_cast<std::uint32_t>(scePthreadGetthreadid()), "alloc stack holds four frames and the thread");
                     Require(__asan_get_free_stack(reinterpret_cast<std::uintptr_t>(p), trace, 4, &thread) == 0, "no free stack before free");
                     __asan_free(p);
                     const std::uintptr_t allocationFrame = trace[0];
                     trace[0] = 0;
-                    Require(__asan_get_free_stack(reinterpret_cast<std::uintptr_t>(p + 4), trace, 4, nullptr) == 1 && trace[0] != 0, "free stack");
+                    Require(__asan_get_free_stack(reinterpret_cast<std::uintptr_t>(p + 4), trace, 4, nullptr) == 4 && trace[0] != 0, "free stack");
                     Require(trace[0] != allocationFrame, "the free stack is the free site, not the allocation site");
                     trace[0] = 0;
-                    Require(__asan_get_alloc_stack(reinterpret_cast<std::uintptr_t>(p), trace, 4, nullptr) == 1 && trace[0] == allocationFrame, "the allocation stack survives the free");
+                    Require(__asan_get_alloc_stack(reinterpret_cast<std::uintptr_t>(p), trace, 4, nullptr) == 4 && trace[0] == allocationFrame, "the allocation stack survives the free");
                     Require(__asan_get_alloc_stack(reinterpret_cast<std::uintptr_t>(global), trace, 4, nullptr) == 0, "no stack for non-heap memory");
                     char name[16] = "x";
                     std::uintptr_t begin = 1;
@@ -462,7 +471,7 @@ void FakeStack() {
                __asan_load2(frame + 50);
            }),
            1,
-           {"ERROR: AddressSanitizer: stack-use-after-return on address ", " is located in stack of thread T-1 at offset 50 in frame\n    #0 0x000000001234\n",
+           {"ERROR: AddressSanitizer: stack-use-after-return on address ", " is located in stack of thread " + ThreadTag() + " at offset 50 in frame\n    #0 0x1233  (<unknown module>)\n\n",
             "  This frame has 2 object(s):\n", "    [32, 36) 'a'\n", "    [48, 56) 'buffer' (line 12) <== Memory access at offset 50 is inside this variable\n",
             "HINT: this may be a false positive if your program uses some custom stack unwind mechanism, swapcontext or vfork\n"},
            "stack use after return description");
@@ -488,14 +497,14 @@ void RealStack() {
                __asan_set_shadow_f3(ShadowAddress(frame + 6), 2);
                __asan_load4(reinterpret_cast<std::uintptr_t>(frame + 6));
            }),
-           1, {"stack-buffer-overflow on address ", " is located in stack of thread T-1 at offset 48 in frame\n    #0 0x000000005678\n", "    [32, 48) 'x' <== Memory access at offset 48 overflows this variable\n"},
+           1, {"stack-buffer-overflow on address ", " is located in stack of thread " + ThreadTag() + " at offset 48 in frame\n    #0 0x5677  (<unknown module>)\n\n", "    [32, 48) 'x' <== Memory access at offset 48 overflows this variable\n"},
            "real stack frame description");
     Expect(Run(nullptr, [] {
                alignas(64) std::uintptr_t frame[8] = {};
                __asan_set_shadow_f8(ShadowAddress(frame), 1);
                __asan_load1(reinterpret_cast<std::uintptr_t>(frame));
            }),
-           1, {"stack-use-after-scope on address ", " is located in stack of thread T-1\n"}, "stack address without a frame");
+           1, {"stack-use-after-scope on address ", " is located in stack of thread " + ThreadTag()}, "stack address without a frame");
     ExpectClean(Run(nullptr, [] {
                     alignas(64) static unsigned char fiber[4096];
                     void* save = reinterpret_cast<void*>(1);

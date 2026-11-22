@@ -153,6 +153,7 @@ struct ThreadState {
     std::atomic<bool> stackSwitching{false};
     FakeStack* fakeStack = nullptr;
     bool fakeStackClaimed = false;
+    int tid = -1;
 
     struct Bounds {
         uptr bottom;
@@ -209,6 +210,7 @@ thread_local ThreadState currentThread;
 ThreadState& CurrentThread() {
     if (!currentThread.initialized) {
         currentThread.initialized = true;
+        currentThread.tid = CurrentThreadId();
         uptr bottom = 0;
         uptr top = 0;
         if (GuestStackOfCurrentThread(&bottom, &top)) {
@@ -425,13 +427,13 @@ void FakeStackHandleNoReturn() {
 bool DescribeStackAddress(uptr address, uptr accessSize, std::string* text) {
     StackAccess access;
     if (!StackAccessForAddress(address, &access)) return false;
-    *text = Format("Address %s is located in stack of thread T-1", Pointer(address).c_str());
+    *text = Format("Address %s is located in stack of thread %s", Pointer(address).c_str(), ThreadIdAndName(access.thread->tid).c_str());
     if (!access.hasFrame) {
         *text += "\n";
         return true;
     }
     *text += Format(" at offset %zu in frame\n", static_cast<std::size_t>(access.offset));
-    *text += StackLine(access.framePc);
+    *text += RenderStack(Trace{access.framePc});
     const std::string description = GuestString(access.frameDescription);
     std::vector<StackVariable> variables;
     if (!ParseFrameDescription(description, &variables)) {

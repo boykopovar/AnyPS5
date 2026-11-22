@@ -36,47 +36,7 @@ int APS5_VABI __asan_unregister_image_globals() {
     return 0;
 }
 
-int APS5_VABI __sancov_default_options() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __sanitizer_cov_dump() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __sanitizer_cov_trace_pc_guard() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __sanitizer_cov_trace_pc_guard_init() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __sanitizer_dump_coverage() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __sanitizer_dump_trace_pc_guard_coverage() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI __sanitizer_set_report_fd() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __sanitizer_symbolize_global() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI __sanitizer_symbolize_pc() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

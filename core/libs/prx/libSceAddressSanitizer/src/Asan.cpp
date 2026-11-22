@@ -106,6 +106,12 @@ Flags ReadFlags() {
         else if (name == "min_uar_stack_size_log") flags.minUarStackSizeLog = ParseInt(value, name);
         else if (name == "max_uar_stack_size_log") flags.maxUarStackSizeLog = ParseInt(value, name);
         else if (name == "max_allocation_size_mb") flags.maxAllocationSizeMb = ParseInt(value, name);
+        else if (name == "malloc_context_size") flags.mallocContextSize = ParseInt(value, name);
+        else if (name == "symbolize") flags.symbolize = ParseBool(value, name);
+        else if (name == "coverage") flags.coverage = ParseBool(value, name);
+        else if (name == "coverage_dir") flags.coverageDir = std::string(value);
+        else if (name == "stack_trace_format") flags.stackTraceFormat = std::string(value);
+        else if (name == "strip_path_prefix") flags.stripPathPrefix = std::string(value);
         else throw std::invalid_argument("guest AddressSanitizer: unsupported option " + std::string(name));
     }
     const auto powerOfTwo = [](int value) { return value > 0 && (value & (value - 1)) == 0; };
@@ -114,6 +120,7 @@ Flags ReadFlags() {
     if (flags.maxRedzone < flags.redzone) throw std::invalid_argument("guest AddressSanitizer: max_redzone is smaller than redzone");
     if (flags.minUarStackSizeLog > flags.maxUarStackSizeLog) throw std::invalid_argument("guest AddressSanitizer: min_uar_stack_size_log exceeds max_uar_stack_size_log");
     if (flags.mallocFillByte < 0 || flags.mallocFillByte > 255 || flags.freeFillByte < 0 || flags.freeFillByte > 255) throw std::invalid_argument("guest AddressSanitizer: fill bytes must be in [0, 255]");
+    if (flags.mallocContextSize < 0 || flags.mallocContextSize > static_cast<int>(StackTraceMax)) throw std::invalid_argument("guest AddressSanitizer: malloc_context_size must be in [0, 255]");
     if (flags.maxMallocFillSize < 0 || flags.maxFreeFillSize < 0 || flags.maxAllocationSizeMb < 0) throw std::invalid_argument("guest AddressSanitizer: sizes must not be negative");
     return flags;
 }
@@ -376,6 +383,7 @@ std::array<std::atomic<uptr>, BuggyPcPoolSize> buggyPcs{};
 
 [[noreturn]] void Die() {
     if (const DeathCallback callback = deathCallback.load(std::memory_order_acquire)) callback();
+    DumpGuardCoverage();
     LibcExitWithoutHandlers_nid_no_patch(GetFlags().exitCode);
 }
 
@@ -504,13 +512,8 @@ bool GlobalRegionForAddress(uptr address, char* name, uptr nameSize, uptr* begin
     return true;
 }
 
-std::string StackLine(uptr pc) {
-    return Format("    #0 %s\n\n", Pointer(pc).c_str());
-}
-
-std::string Summary(const char* bugType) {
-    if (!GetFlags().printSummary) return {};
-    return Format("SUMMARY: AddressSanitizer: %s (<unknown module>)\n", bugType);
+[[gnu::noinline]] uptr CurrentPc() {
+    return reinterpret_cast<uptr>(__builtin_return_address(0));
 }
 
 std::string ShadowByte(const char* before, u8 value, const char* after = "\n") {
@@ -623,14 +626,15 @@ void ReportGenericError(uptr pc, uptr bp, uptr sp, uptr address, bool isWrite, u
     report.Record(CurrentError{true, true, pc, bp, sp, address, isWrite ? 1 : 0, accessSize, bugType});
     report.Append(ReportLine(Format("ERROR: AddressSanitizer: %s on address %s at pc %s bp %s sp %s\n", bugType, Pointer(address).c_str(), Pointer(pc).c_str(),
                                     Pointer(bp).c_str(), Pointer(sp).c_str())));
-    report.Append(Format("%s of size %zu at %s thread T-1\n", accessSize ? (isWrite ? "WRITE" : "READ") : "ACCESS", static_cast<std::size_t>(accessSize),
-                         Pointer(address).c_str()));
-    report.Append(StackLine(pc));
+    report.Append(Format("%s of size %zu at %s thread %s\n", accessSize ? (isWrite ? "WRITE" : "READ") : "ACCESS", static_cast<std::size_t>(accessSize),
+                         Pointer(address).c_str(), ThreadIdAndName(CurrentThreadId()).c_str()));
+    const Trace trace = UnwindFrom(pc, bp, StackTraceMax);
+    report.Append(RenderStack(trace));
     report.Append(DescribeAccessedAddress(address, accessSize));
     if (shadowValue == ContiguousContainerOOBMagic)
         report.Append("HINT: if you don't care about these errors you may set ASAN_OPTIONS=detect_container_overflow=0.\n"
                       "If you suspect a false positive see also: https://github.com/google/sanitizers/wiki/AddressSanitizerContainerOverflow.\n");
-    report.Append(Summary(bugType));
+    report.Append(SummaryFor(bugType, trace));
     report.Append(ShadowMemoryForAddress(address));
     report.Finish();
 }
@@ -643,10 +647,11 @@ void ReportRangesOverlap(const char* function, uptr first, uptr firstLength, upt
     report.Record(CurrentError{true, false, pc, bp, sp, first, 0, 0, description.c_str()});
     report.Append(ReportLine(Format("ERROR: AddressSanitizer: %s: memory ranges [%s,%s) and [%s, %s) overlap\n", bugType.c_str(), Pointer(first).c_str(),
                                     Pointer(first + firstLength).c_str(), Pointer(second).c_str(), Pointer(second + secondLength).c_str())));
-    report.Append(StackLine(pc));
+    const Trace trace = UnwindFrom(pc, bp, StackTraceMax);
+    report.Append(RenderStack(trace));
     report.Append(DescribeAccessedAddress(first, firstLength));
     report.Append(DescribeAccessedAddress(second, secondLength));
-    report.Append(Summary(bugType.c_str()));
+    report.Append(SummaryFor(bugType.c_str(), trace));
     report.Finish();
 }
 
@@ -654,9 +659,10 @@ void ReportSizeOverflow(uptr offset, uptr size, uptr pc, uptr bp, uptr sp) {
     ScopedErrorReport report(false);
     report.Record(CurrentError{true, false, pc, bp, sp, offset, 0, 0, "negative-size-param"});
     report.Append(ReportLine(Format("ERROR: AddressSanitizer: negative-size-param: (size=%zd)\n", static_cast<std::ptrdiff_t>(size))));
-    report.Append(StackLine(pc));
+    const Trace trace = UnwindFrom(pc, bp, StackTraceMax);
+    report.Append(RenderStack(trace));
     report.Append(DescribeAccessedAddress(offset, size));
-    report.Append(Summary("negative-size-param"));
+    report.Append(SummaryFor("negative-size-param", trace));
     report.Finish();
 }
 
@@ -1036,10 +1042,12 @@ void APS5_VABI __asan_describe_address(std::uintptr_t address) {
 
 void APS5_VABI __asan_init() {
     EnsureShadow();
+    InitializeCoverage();
 }
 
 void APS5_VABI __asan_init_v5() {
     EnsureShadow();
+    InitializeCoverage();
 }
 
 void APS5_VABI __asan_version_mismatch_check_v6() {
@@ -1251,27 +1259,33 @@ void APS5_VABI __asan_after_dynamic_init() {
 
 [[gnu::noinline]] void* APS5_VABI __asan_memcpy(void* to, const void* from, std::uintptr_t size) {
     APS5_ASAN_CALLER_PC_BP_SP;
+    static_cast<void>(pc);
+    const uptr here = CurrentPc();
     EnsureShadow();
     const uptr destination = reinterpret_cast<uptr>(to);
     const uptr source = reinterpret_cast<uptr>(from);
-    if (to != from && RangesOverlap(destination, size, source, size)) ReportRangesOverlap("memcpy", destination, size, source, size, pc, bp, sp);
-    AccessMemoryRange(source, size, false, pc, bp, sp);
-    AccessMemoryRange(destination, size, true, pc, bp, sp);
+    if (to != from && RangesOverlap(destination, size, source, size)) ReportRangesOverlap("memcpy", destination, size, source, size, here, bp, sp);
+    AccessMemoryRange(source, size, false, here, bp, sp);
+    AccessMemoryRange(destination, size, true, here, bp, sp);
     return std::memcpy(to, from, size);
 }
 
 [[gnu::noinline]] void* APS5_VABI __asan_memset(void* block, int value, std::uintptr_t size) {
     APS5_ASAN_CALLER_PC_BP_SP;
+    static_cast<void>(pc);
+    const uptr here = CurrentPc();
     EnsureShadow();
-    AccessMemoryRange(reinterpret_cast<uptr>(block), size, true, pc, bp, sp);
+    AccessMemoryRange(reinterpret_cast<uptr>(block), size, true, here, bp, sp);
     return std::memset(block, value, size);
 }
 
 [[gnu::noinline]] void* APS5_VABI __asan_memmove(void* to, const void* from, std::uintptr_t size) {
     APS5_ASAN_CALLER_PC_BP_SP;
+    static_cast<void>(pc);
+    const uptr here = CurrentPc();
     EnsureShadow();
-    AccessMemoryRange(reinterpret_cast<uptr>(from), size, false, pc, bp, sp);
-    AccessMemoryRange(reinterpret_cast<uptr>(to), size, true, pc, bp, sp);
+    AccessMemoryRange(reinterpret_cast<uptr>(from), size, false, here, bp, sp);
+    AccessMemoryRange(reinterpret_cast<uptr>(to), size, true, here, bp, sp);
     return std::memmove(to, from, size);
 }
 
@@ -1285,7 +1299,7 @@ const char* APS5_VABI __sanitizer_get_report_path() {
 }
 
 [[gnu::noinline]] void APS5_VABI __sanitizer_print_stack_trace() {
-    Emit(StackLine(reinterpret_cast<uptr>(__builtin_return_address(0))));
+    Emit(RenderStack(UnwindFrom(CurrentPc(), reinterpret_cast<uptr>(__builtin_frame_address(0)), StackTraceMax)));
 }
 
 void APS5_VABI __sanitizer_sandbox_on_notify(void*) {}

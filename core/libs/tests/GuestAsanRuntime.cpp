@@ -1,4 +1,5 @@
 #include "prx/libSceAddressSanitizer/include/Api.hpp"
+#include "SceTypes.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -10,7 +11,15 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+extern "C" int APS5_VABI scePthreadGetthreadid(void);
+extern "C" int APS5_VABI scePthreadRename(Pthread thread, const char* name);
+extern "C" Pthread APS5_VABI scePthreadSelf();
+
 namespace {
+
+std::string ThreadTag() {
+    return "T" + std::to_string(scePthreadGetthreadid());
+}
 
 void Require(bool value, const char* what) {
     if (value) return;
@@ -157,8 +166,8 @@ void Accesses() {
            }),
            1,
            {"=================================================================\n", "ERROR: AddressSanitizer: unknown-crash on address " + Hex(arena + 10) + " at pc 0x",
-            "READ of size 4 at " + Hex(arena + 10) + " thread T-1\n", "    #0 0x", "Address " + Hex(arena + 10) + " is a wild pointer inside of access range of size 0x000000000004.\n",
-            "SUMMARY: AddressSanitizer: unknown-crash (<unknown module>)\n", "Shadow bytes around the buggy address:\n", "=>", "[05]", "Shadow byte legend (one shadow byte represents 8 application bytes):\n",
+            "READ of size 4 at " + Hex(arena + 10) + " thread " + ThreadTag(), "    #0 0x", "Address " + Hex(arena + 10) + " is a wild pointer inside of access range of size 0x000000000004.\n",
+            "SUMMARY: AddressSanitizer: unknown-crash (", "Shadow bytes around the buggy address:\n", "=>", "[05]", "Shadow byte legend (one shadow byte represents 8 application bytes):\n",
             "  Poisoned by user:        f7\n", "ABORTING\n"},
            "partial granule load");
     Expect(Run(nullptr, [] {
