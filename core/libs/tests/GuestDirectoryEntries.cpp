@@ -220,6 +220,23 @@ int main() {
 
     const int file = sceKernelOpen((root / "data.bin").string().c_str(), SCE_KERNEL_O_RDWR, 0);
     Require(file >= 0);
+    int pipe[2] = {-1, -1};
+    Require(pipe_nid_postfix(pipe) == 0);
+    for (const int descriptor : {file, pipe[0], pipe[1], -1}) {
+        const int expected = descriptor < 0 ? 9 : 22;
+        *__error_nid_postfix() = 0;
+        Require(getdents_nid_postfix(descriptor, nullptr, 64) == -1 && *__error_nid_postfix() == expected);
+        *__error_nid_postfix() = 0;
+        Require(getdirentries_nid_postfix(descriptor, nullptr, 64, nullptr) == -1 && *__error_nid_postfix() == expected);
+        Require(sceKernelGetdents(descriptor, nullptr, 64) == static_cast<int>(0x80020000u | expected));
+    }
+    for (const int length : {0, -1}) {
+        *__error_nid_postfix() = 0;
+        Require(getdirentries_nid_postfix(-1, small.data(), length, nullptr) == -1 && *__error_nid_postfix() == 9);
+        *__error_nid_postfix() = 0;
+        Require(getdirentries_nid_postfix(file, small.data(), length, nullptr) == -1 && *__error_nid_postfix() == 22);
+    }
+    Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
     Require(sceKernelLseek(file, 2, 0) == 2);
     char bytes[16] = {};
     Require(sceKernelPread(file, bytes, 4, 5) == 4 && std::memcmp(bytes, "5678", 4) == 0);

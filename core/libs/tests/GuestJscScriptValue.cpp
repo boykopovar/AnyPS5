@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <type_traits>
 
 namespace {
@@ -131,6 +132,23 @@ int main() {
     const auto holdingEmpty = ValueHolding(&emptySlot);
     Require(_ZNK10Deprecated11ScriptValue10hasNoValueEv(holdingEmpty.data()));
     Require(_ZNK10Deprecated11ScriptValue7jsValueEv(holdingEmpty.data()) == 0);
+
+    const auto unreadableSlot = ValueHolding(reinterpret_cast<const std::uint64_t*>(std::uintptr_t{0x10}));
+    for (const void* self : {reinterpret_cast<const void*>(std::uintptr_t{0x10}), static_cast<const void*>(unreadableSlot.data())}) {
+        bool hasNoValueThrew = false;
+        bool jsValueThrew = false;
+        try {
+            static_cast<void>(_ZNK10Deprecated11ScriptValue10hasNoValueEv(self));
+        } catch (const std::invalid_argument&) {
+            hasNoValueThrew = true;
+        }
+        try {
+            static_cast<void>(_ZNK10Deprecated11ScriptValue7jsValueEv(self));
+        } catch (const std::invalid_argument&) {
+            jsValueThrew = true;
+        }
+        Require(hasNoValueThrew && jsValueThrew);
+    }
 
     TestDestroyEmpty();
     TestCopyEmpty();
