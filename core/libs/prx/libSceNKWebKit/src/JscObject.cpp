@@ -26,6 +26,25 @@ JSValueConst ArgumentValue(const JSValueRef arguments[], std::size_t index) {
     return arguments ? StoredValue(arguments[index]) : JS_UNDEFINED;
 }
 
+enum class SetRefusal {
+    NotExtensible,
+    ReadOnly,
+    NoSetter,
+};
+
+int RefuseSetAsTheEngineDoes(JSContext* qctx, JSAtom prop, JSValueConst value, int flags, SetRefusal refusal) {
+    JSValue model = JS_NewObjectProto(qctx, JS_NULL);
+    if (refusal == SetRefusal::ReadOnly) {
+        JS_DefineProperty(qctx, model, prop, JS_UNDEFINED, JS_UNDEFINED, JS_UNDEFINED, JS_PROP_HAS_VALUE | JS_PROP_HAS_WRITABLE);
+    } else if (refusal == SetRefusal::NoSetter) {
+        JS_DefineProperty(qctx, model, prop, JS_UNDEFINED, JS_UNDEFINED, JS_UNDEFINED, JS_PROP_HAS_GET | JS_PROP_HAS_SET);
+    }
+    JS_PreventExtensions(qctx, model);
+    const int result = JS_SetPropertyValue(qctx, model, JS_AtomToValue(qctx, prop), JS_DupValue(qctx, value), flags);
+    JS_FreeValue(qctx, model);
+    return result;
+}
+
 OpaqueJSValue* CoerceThisToObject(OpaqueJSContext* ctx, JSValueConst thisVal) {
     if (JS_IsUndefined(thisVal) || JS_IsNull(thisVal)) {
         return ctx->globalObject;
@@ -484,12 +503,7 @@ int CallbackExoticSetProperty(JSContext* qctx, JSValueConst obj, JSAtom prop, JS
                     JS_FreeValue(qctx, protoDesc.value);
                     JS_FreeValue(qctx, curProto);
                     if (JS_IsUndefined(setter)) {
-                        JS_FreeValue(qctx, setter);
-                        if (flags & JS_PROP_THROW) {
-                            JS_ThrowTypeError(qctx, "Cannot set property which has only a getter");
-                            return -1;
-                        }
-                        return 0;
+                        return RefuseSetAsTheEngineDoes(qctx, prop, value, flags, SetRefusal::NoSetter);
                     }
                     JSValueConst arg = value;
                     JSValue res = JS_Call(qctx, setter, targetHandle->qval, 1, &arg);
@@ -503,13 +517,7 @@ int CallbackExoticSetProperty(JSContext* qctx, JSValueConst obj, JSAtom prop, JS
                 JS_FreeValue(qctx, protoDesc.setter);
                 JS_FreeValue(qctx, protoDesc.value);
                 JS_FreeValue(qctx, curProto);
-                if (!writable) {
-                    if (flags & JS_PROP_THROW) {
-                        JS_ThrowTypeError(qctx, "Cannot assign to read only property");
-                        return -1;
-                    }
-                    return 0;
-                }
+                if (!writable) return RefuseSetAsTheEngineDoes(qctx, prop, value, flags, SetRefusal::ReadOnly);
                 break;
             }
             JSValue nextProto = JS_GetPrototype(qctx, curProto);
@@ -517,6 +525,7 @@ int CallbackExoticSetProperty(JSContext* qctx, JSValueConst obj, JSAtom prop, JS
             curProto = nextProto;
         }
         JS_FreeValue(qctx, curProto);
+        if (JS_IsExtensible(qctx, obj) == 0) return RefuseSetAsTheEngineDoes(qctx, prop, value, flags, SetRefusal::NotExtensible);
         return JS_SetPropertyValue(qctx, data->propStore, JS_AtomToValue(qctx, prop), JS_DupValue(qctx, value), flags);
     }
     return 0;
@@ -583,6 +592,17 @@ int CallbackExoticDefineOwnProperty(JSContext* qctx, JSValueConst thisObj, JSAto
     if (!group || group->shuttingDown) return -1;
     CallbackObjectData* data = group->FindCallbackDataByPtr(JS_VALUE_GET_PTR(thisObj));
     if (!data || JS_IsUndefined(data->propStore)) return -1;
+    if (JS_IsExtensible(qctx, thisObj) == 0) {
+        const int present = JS_GetOwnProperty(qctx, nullptr, thisObj, prop);
+        if (present < 0) return -1;
+        if (present == 0) {
+            JSValue model = JS_NewObjectProto(qctx, JS_NULL);
+            JS_PreventExtensions(qctx, model);
+            const int result = JS_DefineProperty(qctx, model, prop, val, getter, setter, flags);
+            JS_FreeValue(qctx, model);
+            return result;
+        }
+    }
     return JS_DefineProperty(qctx, data->propStore, prop, val, getter, setter, flags);
 }
 
