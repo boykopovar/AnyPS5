@@ -39,43 +39,72 @@ std::map<Domain::VirtualAddress, std::uint64_t> ReadRelrRelocations(
             || header.MemorySize > std::numeric_limits<std::uint64_t>::max() - header.MappedAddress)
             throw Domain::RelinkerException("Invalid RELR load segment", header.Offset);
     }
-    const auto loadAt = [&](const std::uint64_t target, const std::uint64_t extent, const bool file) -> const Domain::ProgramHeader& {
+    const auto memorySegmentAt = [&](const std::uint64_t vaddr) -> const Domain::ProgramHeader* {
         const Domain::ProgramHeader* found = nullptr;
         for (const auto& header : headers) {
-            const auto limit = file ? header.FileSize : header.MemorySize;
-            if (header.Type != PT_LOAD || target < header.MappedAddress || target - header.MappedAddress > limit
-                || extent > limit - (target - header.MappedAddress)) continue;
-            if (found) throw Domain::RelinkerException("Ambiguous RELR load mapping", target);
+            if (header.Type != PT_LOAD || vaddr < header.MappedAddress || vaddr - header.MappedAddress >= header.MemorySize) continue;
+            if (found) throw Domain::RelinkerException("Ambiguous RELR load mapping", vaddr);
             found = &header;
         }
-        if (!found) throw Domain::RelinkerException(file ? "RELR table exceeds file-backed load segment" : "RELR target exceeds load segment", target);
-        return *found;
+        return found;
     };
-    const auto& table = loadAt(*address, *size, true);
-    const auto tableOffset = table.Offset + (*address - table.MappedAddress);
-    const auto readWord = [&](const std::uint64_t offset) {
+    const auto fileSegmentAt = [&](const std::uint64_t vaddr) -> const Domain::ProgramHeader* {
+        const Domain::ProgramHeader* found = nullptr;
+        for (const auto& header : headers) {
+            if (header.Type != PT_LOAD || vaddr < header.MappedAddress || vaddr - header.MappedAddress >= header.FileSize) continue;
+            if (found) throw Domain::RelinkerException("Ambiguous RELR load mapping", vaddr);
+            found = &header;
+        }
+        return found;
+    };
+    if (*address > std::numeric_limits<std::uint64_t>::max() - *size)
+        throw Domain::RelinkerException("RELR table exceeds file-backed load segment", *address);
+    std::uint64_t covered = *address;
+    const std::uint64_t tableEnd = *address + *size;
+    bool progress = true;
+    while (progress && covered < tableEnd) {
+        progress = false;
+        for (const auto& header : headers) {
+            if (header.Type != PT_LOAD) continue;
+            if (header.MappedAddress <= covered && covered < header.MappedAddress + header.FileSize) {
+                covered = header.MappedAddress + header.FileSize;
+                progress = true;
+            }
+        }
+    }
+    if (covered < tableEnd)
+        throw Domain::RelinkerException("RELR table exceeds file-backed load segment", covered);
+    const auto readWord = [&](const std::uint64_t vaddr) {
         std::uint64_t result = 0;
-        for (std::size_t index = 0; index < 8; ++index)
-            result |= static_cast<std::uint64_t>(bytes[offset + index]) << (index * 8);
+        for (std::size_t index = 0; index < 8; ++index) {
+            const auto* segment = fileSegmentAt(vaddr + index);
+            if (!segment) throw Domain::RelinkerException("RELR table exceeds file-backed load segment", vaddr + index);
+            result |= static_cast<std::uint64_t>(bytes[segment->Offset + (vaddr + index - segment->MappedAddress)]) << (index * 8);
+        }
         return result;
     };
 
     std::map<Domain::VirtualAddress, std::uint64_t> result;
     const auto append = [&](const std::uint64_t target) {
-        const auto& load = loadAt(target, 8, false);
         const auto next = result.lower_bound(target);
         if ((next != result.end() && next->first - target < 8)
             || (next != result.begin() && target - std::prev(next)->first < 8))
             throw Domain::RelinkerException("Overlapping RELR targets", target);
-        const auto relative = target - load.MappedAddress;
+        if (target > std::numeric_limits<std::uint64_t>::max() - 7)
+            throw Domain::RelinkerException("RELR target exceeds load segment", target);
         std::uint64_t addend = 0;
-        for (std::size_t index = 0; index < 8 && relative + index < load.FileSize; ++index)
-            addend |= static_cast<std::uint64_t>(bytes[load.Offset + relative + index]) << (index * 8);
+        for (std::size_t index = 0; index < 8; ++index) {
+            const auto* segment = memorySegmentAt(target + index);
+            if (!segment) throw Domain::RelinkerException("RELR target exceeds load segment", target + index);
+            const auto relative = target + index - segment->MappedAddress;
+            if (relative < segment->FileSize)
+                addend |= static_cast<std::uint64_t>(bytes[segment->Offset + relative]) << (index * 8);
+        }
         result.emplace_hint(next, target, addend);
     };
     std::optional<std::uint64_t> cursor;
     for (std::uint64_t offset = 0; offset < *size; offset += 8) {
-        const auto entry = readWord(tableOffset + offset);
+        const auto entry = readWord(*address + offset);
         if ((entry & 1) == 0) {
             append(entry);
             cursor = entry + 8;
