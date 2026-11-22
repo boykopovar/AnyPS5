@@ -315,6 +315,25 @@ class BenchmarkCompareTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     benchmark_compare.compare_benchmark_runs(path, require_matching_context=True)
 
+    def test_trace_output_directory_is_not_comparison_context(self):
+        for directories in (("baseline", "candidate"), (None, "candidate"), ("baseline", None)):
+            with self.subTest(directories=directories):
+                runs = self.abba()[:2]
+                environments = []
+                for run, directory in zip(runs, directories):
+                    capture = self.root / run["capture"]
+                    data = json.loads(gzip.decompress(capture.read_bytes()))
+                    if directory is not None:
+                        data["env"]["APS5_TRACE_DIR"] = directory
+                    environments.append(data["env"])
+                    self.write_capture(capture.name, data)
+                result = self.cli("compare", self.write_series(runs), "--require-matching-context", "--json")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                report = json.loads(result.stdout)
+                self.assertEqual(report["configuration_differences"], [])
+                self.assertEqual(report["aggregate"]["complete_pairs"], 1)
+                self.assertEqual([run["summary"]["metadata"]["env"] for run in report["runs"]], environments)
+
     def test_same_context_different_arm_commits_is_allowed_but_arm_drift_is_reported(self):
         path = self.write_series(self.abba())
         self.assertEqual(benchmark_compare.compare_benchmark_runs(path, True)["configuration_differences"], [])
@@ -382,6 +401,19 @@ class BenchmarkCompareTests(unittest.TestCase):
         runs[1]["capture"] = alias.name
         with self.assertRaises(ValueError):
             benchmark_compare.compare_benchmark_runs(self.write_series(runs))
+
+    def test_missing_inode_uses_capture_hashes(self):
+        runs = self.abba()[:2]
+        path = self.write_series(runs)
+        captures = [benchmark_compare.load_benchmark(self.root / run["capture"]) for run in runs]
+        for capture in captures:
+            capture["source"]["_identity"] = (1, 0)
+        with patch.object(benchmark_compare, "load_benchmark", side_effect=captures):
+            report = benchmark_compare.compare_benchmark_runs(path)
+        self.assertEqual(report["aggregate"]["complete_pairs"], 1)
+        with patch.object(benchmark_compare, "load_benchmark", side_effect=[captures[0]] * 2):
+            with self.assertRaisesRegex(ValueError, "duplicate capture evidence"):
+                benchmark_compare.compare_benchmark_runs(path)
 
     def test_expected_raw_hash_is_verified_and_retained(self):
         runs = self.abba()[:2]
@@ -632,6 +664,28 @@ class BenchmarkMetricsTests(unittest.TestCase):
         metrics = benchmark_compare.benchmark_metrics([interval])
         self.assertIsNone(metrics["fps"])
         self.assertEqual(metrics["zero_frames"], 1)
+
+
+class BenchmarkContextTests(unittest.TestCase):
+    def test_collects_identity_environment_and_selection(self):
+        summary = {
+            "metadata": {"gpu": "g", "driver": "d", "os": "o", "cpu": "c", "title_id": "T", "title": "t",
+                         "content_version": "1.0", "cpu_threads": 8, "memory_mib": 16000, "env": {"A": "1", "B": "2"}},
+            "intervals": [{"ordinal": 1, "resolution": "1080p"}, {"ordinal": 3, "resolution": "4k"}],
+        }
+        self.assertEqual(benchmark_compare.benchmark_context(summary), {
+            "gpu": "g", "driver": "d", "os": "o", "cpu": "c", "title_id": "T", "title": "t",
+            "content_version": "1.0", "cpu_threads": 8, "memory_mib": 16000,
+            "env.A": "1", "env.B": "2",
+            "selection.ordinals": [1, 3], "selection.resolutions": ["1080p", "4k"],
+        })
+
+    def test_missing_identity_fields_are_none(self):
+        context = benchmark_compare.benchmark_context({"metadata": {"env": {}}, "intervals": []})
+        self.assertIsNone(context["gpu"])
+        self.assertIsNone(context["memory_mib"])
+        self.assertEqual(context["selection.ordinals"], [])
+        self.assertFalse([key for key in context if key.startswith("env.")])
 
 
 if __name__ == "__main__":

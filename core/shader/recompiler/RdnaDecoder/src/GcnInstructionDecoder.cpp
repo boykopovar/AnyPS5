@@ -17,6 +17,7 @@ namespace {
 std::atomic<bool> g_gcnGuestShaders{false};
 
 constexpr std::uint32_t LiteralSource = 0xffu;
+constexpr std::uint32_t SdwaSource = 0xf9u;
 constexpr std::uint32_t VccSdst = 106u;
 constexpr std::uint32_t NullSoffset = 0x7du;
 constexpr std::uint32_t MaxSmemByteOffset = 0xfffffu;
@@ -42,6 +43,15 @@ std::uint32_t replaceBits(std::uint32_t word, std::uint32_t shift, std::uint32_t
 
 bool hasLiteral(std::uint32_t source) {
     return source == LiteralSource;
+}
+
+bool hasSdwa(std::uint32_t source) {
+    return source == SdwaSource;
+}
+
+std::uint32_t sdwaAt(std::span<const std::uint32_t> code, std::uint32_t index, std::uint32_t programCounter) {
+    if (index >= code.size()) throw std::out_of_range("GCN SDWA word at program counter " + std::to_string(programCounter) + " is past the end of the code");
+    return code[index];
 }
 
 struct Encoded {
@@ -221,9 +231,13 @@ Encoded encodeVop2(std::span<const std::uint32_t> code, std::uint32_t index, std
         if (hasLiteral(src0) || constantK) {
             out.words[1] = literalAt(code, index + 1, programCounter);
             out.rdnaWords = out.gcnWords = 2;
+        } else if (hasSdwa(src0)) {
+            out.words[1] = sdwaAt(code, index + 1, programCounter);
+            out.rdnaWords = out.gcnWords = 2;
         }
         return out;
     }
+    if (hasSdwa(src0)) unsupported("VOP2_SDWA", opcode, programCounter);
     const auto vdst = (word >> 17u) & 0xffu;
     const auto vsrc1 = (word >> 9u) & 0xffu;
     const bool laneSelect = opcode == 0x01u || opcode == 0x02u;
@@ -242,6 +256,9 @@ Encoded encodeVop1(std::span<const std::uint32_t> code, std::uint32_t index, std
         if (hasLiteral(src0)) {
             out.words[1] = literalAt(code, index + 1, programCounter);
             out.rdnaWords = out.gcnWords = 2;
+        } else if (hasSdwa(src0)) {
+            out.words[1] = sdwaAt(code, index + 1, programCounter);
+            out.rdnaWords = out.gcnWords = 2;
         }
         return out;
     }
@@ -256,11 +273,15 @@ Encoded encodeVopc(std::span<const std::uint32_t> code, std::uint32_t index, std
     Encoded out;
     out.words[0] = replaceBits(word, 17, 8, *mapped);
     out.rdnaWords = out.gcnWords = 1;
+    const bool sdwa = hasSdwa(word & 0x1ffu);
     if (hasLiteral(word & 0x1ffu)) {
         out.words[1] = literalAt(code, index + 1, programCounter);
         out.rdnaWords = out.gcnWords = 2;
+    } else if (sdwa) {
+        out.words[1] = sdwaAt(code, index + 1, programCounter);
+        out.rdnaWords = out.gcnWords = 2;
     }
-    if (compareWritesExec(opcode)) out.compareDestination = VccSdst;
+    if (compareWritesExec(opcode)) out.compareDestination = sdwa && (out.words[1] & 0x8000u) != 0u ? (out.words[1] >> 8u) & 0x7fu : VccSdst;
     return out;
 }
 
