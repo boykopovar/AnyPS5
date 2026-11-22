@@ -10,7 +10,8 @@ using namespace NKWebKit;
 
 JSType APS5_VABI JSValueGetType(JSContextRef ctx, JSValueRef value) {
     (void)ctx;
-    if (!value || !value->alive) throw std::invalid_argument("JSValueGetType: null or released value");
+    if (!value) return kJSTypeNull;
+    if (!value->alive) throw std::invalid_argument("JSValueGetType: released value");
     const int tag = JS_VALUE_GET_NORM_TAG(value->qval);
     switch (tag) {
     case JS_TAG_UNDEFINED:
@@ -27,10 +28,8 @@ JSType APS5_VABI JSValueGetType(JSContextRef ctx, JSValueRef value) {
         return kJSTypeString;
     case JS_TAG_SYMBOL:
         return kJSTypeSymbol;
-    case JS_TAG_OBJECT:
-        return kJSTypeObject;
     default:
-        return kJSTypeUndefined;
+        return kJSTypeObject;
     }
 }
 
@@ -92,13 +91,13 @@ bool APS5_VABI JSValueIsSymbol(JSContextRef ctx, JSValueRef value) {
 }
 
 bool APS5_VABI JSValueIsObject(JSContextRef ctx, JSValueRef value) {
-    return JSValueGetType(ctx, value) == kJSTypeObject;
+    return JSValueGetType(ctx, value) == kJSTypeObject && JS_IsObject(value->qval);
 }
 
 bool APS5_VABI JSValueIsObjectOfClass(JSContextRef ctx, JSValueRef value, JSClassRef jsClass) {
     if (!ctx || !value || !jsClass || !value->alive || !value->isObjectHandle) return false;
     CallbackObjectData* data = ctx->group->FindCallbackData(value);
-    if (!data) return false;
+    if (!data || data->isDirectConstructor) return false;
     for (OpaqueJSClass* cls = data->jsClass; cls; cls = cls->parentClass) {
         if (cls == jsClass) return true;
     }
@@ -107,19 +106,7 @@ bool APS5_VABI JSValueIsObjectOfClass(JSContextRef ctx, JSValueRef value, JSClas
 
 bool APS5_VABI JSValueIsArray(JSContextRef ctx, JSValueRef value) {
     if (!ctx || !value || !value->alive || !value->isObjectHandle) return false;
-    JSValue cur = JS_DupValue(ctx->qctx, value->qval);
-    while (JS_IsProxy(cur)) {
-        JSValue next = JS_GetProxyTarget(ctx->qctx, cur);
-        JS_FreeValue(ctx->qctx, cur);
-        if (JS_IsException(next)) {
-            JS_FreeValue(ctx->qctx, JS_GetException(ctx->qctx));
-            return false;
-        }
-        cur = next;
-    }
-    const bool result = JS_IsArray(cur);
-    JS_FreeValue(ctx->qctx, cur);
-    return result;
+    return JS_IsArray(value->qval);
 }
 
 bool APS5_VABI JSValueIsDate(JSContextRef ctx, JSValueRef value) {
@@ -129,9 +116,9 @@ bool APS5_VABI JSValueIsDate(JSContextRef ctx, JSValueRef value) {
 }
 
 bool APS5_VABI JSValueIsEqual(JSContextRef ctx, JSValueRef a, JSValueRef b, JSValueRef* exception) {
-    if (!ctx || !a || !b || !a->alive || !b->alive) return false;
+    if (!ctx || (a && !a->alive) || (b && !b->alive)) return false;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
-    const int res = JS_IsEqual(mutCtx->qctx, a->qval, b->qval);
+    const int res = JS_IsEqual(mutCtx->qctx, ValueOrNull(a), ValueOrNull(b));
     if (res < 0) {
         CapturePendingException(mutCtx, exception);
         return false;
@@ -140,15 +127,28 @@ bool APS5_VABI JSValueIsEqual(JSContextRef ctx, JSValueRef a, JSValueRef b, JSVa
 }
 
 bool APS5_VABI JSValueIsStrictEqual(JSContextRef ctx, JSValueRef a, JSValueRef b) {
-    if (!a || !b || !a->alive || !b->alive) return false;
+    if ((a && !a->alive) || (b && !b->alive)) return false;
+    if (!ctx && (!a || !b)) return false;
     JSContext* qctx = ctx ? ctx->qctx : (a->ctx ? a->ctx->qctx : (a->group ? a->group->utilityCtx : nullptr));
-    return JS_IsStrictEqual(qctx, a->qval, b->qval);
+    return JS_IsStrictEqual(qctx, ValueOrNull(a), ValueOrNull(b));
 }
 
 bool APS5_VABI JSValueIsInstanceOfConstructor(JSContextRef ctx, JSValueRef value, JSObjectRef constructor, JSValueRef* exception) {
-    if (!ctx || !value || !constructor || !value->alive || !constructor->alive) return false;
+    if (!ctx || !constructor || (value && !value->alive) || !constructor->alive) return false;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
-    const int res = JS_IsInstanceOf(mutCtx->qctx, value->qval, constructor->qval);
+    const CallbackObjectData* data = mutCtx->group->FindCallbackData(constructor);
+    if (!data && !JS_IsFunction(mutCtx->qctx, constructor->qval)) return false;
+    if (data && data->jsClass && !data->isDirectFunction && !data->isDirectConstructor) {
+        JSValue method = JS_GetProperty(mutCtx->qctx, constructor->qval, mutCtx->group->hasInstanceAtom);
+        if (JS_IsException(method)) {
+            CapturePendingException(mutCtx, exception);
+            return false;
+        }
+        const bool absent = JS_IsUndefined(method) || JS_IsNull(method);
+        JS_FreeValue(mutCtx->qctx, method);
+        if (absent) return false;
+    }
+    const int res = JS_IsInstanceOf(mutCtx->qctx, ValueOrNull(value), constructor->qval);
     if (res < 0) {
         CapturePendingException(mutCtx, exception);
         return false;
@@ -208,11 +208,12 @@ JSValueRef APS5_VABI JSValueMakeFromJSONString(JSContextRef ctx, JSStringRef str
 }
 
 JSStringRef APS5_VABI JSValueCreateJSONString(JSContextRef ctx, JSValueRef value, unsigned indent, JSValueRef* exception) {
-    if (!ctx || !value || !value->alive) return nullptr;
+    if (!ctx || (value && !value->alive)) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
     JSValue space = JS_NewInt32(mutCtx->qctx, static_cast<std::int32_t>(std::min(indent, 10u)));
-    JSValue strVal = JS_JSONStringify(mutCtx->qctx, value->qval, JS_UNDEFINED, space);
+    JSValue strVal = JS_JSONStringify(mutCtx->qctx, ValueOrNull(value), JS_UNDEFINED, space);
     JS_FreeValue(mutCtx->qctx, space);
+    if (exception) *exception = nullptr;
     if (JS_IsException(strVal)) {
         CapturePendingException(mutCtx, exception);
         return nullptr;
@@ -232,10 +233,10 @@ bool APS5_VABI JSValueToBoolean(JSContextRef ctx, JSValueRef value) {
 }
 
 double APS5_VABI JSValueToNumber(JSContextRef ctx, JSValueRef value, JSValueRef* exception) {
-    if (!ctx || !value || !value->alive) return std::numeric_limits<double>::quiet_NaN();
+    if (!ctx || (value && !value->alive)) return std::numeric_limits<double>::quiet_NaN();
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
     double num = std::numeric_limits<double>::quiet_NaN();
-    if (JS_ToFloat64(mutCtx->qctx, &num, value->qval) < 0) {
+    if (JS_ToFloat64(mutCtx->qctx, &num, ValueOrNull(value)) < 0) {
         CapturePendingException(mutCtx, exception);
         return std::numeric_limits<double>::quiet_NaN();
     }
@@ -243,9 +244,9 @@ double APS5_VABI JSValueToNumber(JSContextRef ctx, JSValueRef value, JSValueRef*
 }
 
 JSStringRef APS5_VABI JSValueToStringCopy(JSContextRef ctx, JSValueRef value, JSValueRef* exception) {
-    if (!ctx || !value || !value->alive) return nullptr;
+    if (!ctx || (value && !value->alive)) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
-    JSValue strVal = JS_ToString(mutCtx->qctx, value->qval);
+    JSValue strVal = JS_ToString(mutCtx->qctx, ValueOrNull(value));
     if (JS_IsException(strVal)) {
         CapturePendingException(mutCtx, exception);
         return nullptr;
@@ -256,12 +257,12 @@ JSStringRef APS5_VABI JSValueToStringCopy(JSContextRef ctx, JSValueRef value, JS
 }
 
 JSObjectRef APS5_VABI JSValueToObject(JSContextRef ctx, JSValueRef value, JSValueRef* exception) {
-    if (!ctx || !value || !value->alive) return nullptr;
+    if (!ctx || (value && !value->alive)) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
-    if (value->isObjectHandle) {
+    if (value && value->isObjectHandle) {
         return const_cast<JSObjectRef>(value);
     }
-    JSValue objVal = JS_ToObject(mutCtx->qctx, value->qval);
+    JSValue objVal = JS_ToObject(mutCtx->qctx, ValueOrNull(value));
     if (JS_IsException(objVal)) {
         CapturePendingException(mutCtx, exception);
         return nullptr;

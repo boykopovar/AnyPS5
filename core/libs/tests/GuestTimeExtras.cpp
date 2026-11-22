@@ -164,6 +164,15 @@ static void CheckXtime() {
     const Xtime unnormalized{7, -3};
     const Xtime copied = _Xtime_to_ts_nid_postfix(&unnormalized);
     Require(copied.sec == 7 && copied.nsec == -3, "_Xtime_to_ts changed the time");
+    for (const Xtime* unreadable : {static_cast<const Xtime*>(nullptr), reinterpret_cast<const Xtime*>(0x10)}) {
+        bool rejected = false;
+        try {
+            _Xtime_to_ts_nid_postfix(unreadable);
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        Require(rejected, "_Xtime_to_ts read an unreadable time");
+    }
 
     Xtime now{};
     Require(xtime_get_nid_postfix(&now, 1) == 1, "xtime_get rejected TIME_UTC");
