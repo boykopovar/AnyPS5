@@ -590,6 +590,7 @@ void RunUniformFillClear(AgcDriver::VulkanDevice& device, std::uint8_t* block, b
     const std::uint32_t other = 0x55667788u;
     for (std::size_t offset = 0; offset < SurfaceBytes; offset += 4) std::memcpy(texels + offset, &color, 4);
     if (!uniform) std::memcpy(texels + SurfaceBytes - 4, &other, 4);
+    static_cast<void>(AgcDriver::Graphics::HostImportFor(device.graphicsContext(), surface, SurfaceBytes));
     AgcDriver::GuestMemory::BumpCollectEpoch();
     const auto texture = TextureDescriptor(texels, nullptr);
     std::vector<std::uint32_t> writeData(16, 0u);

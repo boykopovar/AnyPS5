@@ -3566,7 +3566,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         static const bool enabled = std::getenv("APS5_NO_FILL_UPLOAD_CLEAR") == nullptr;
         if (!enabled || layers != nullptr || uploadedKeys != DccKeys::Uncompressed || guestBytes < 16 || guestBytes % 16 != 0 || descriptor.baseAddress % 16 != 0) return false;
         const auto bytes = static_cast<std::size_t>(guestBytes);
-        if (HostImportFor(context, descriptor.baseAddress, bytes) == nullptr && (!blockUnits || importSegments().empty())) return false;
+        if (ExistingHostImportFor(context, descriptor.baseAddress, bytes) == nullptr) return false;
         if (!ResidentGuestMemory(descriptor.baseAddress, bytes)) return false;
         const auto pendingWrites = Recorder::PendingWriteSnapshot();
         const auto* recorder = Recorder::Active();
