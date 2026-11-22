@@ -181,6 +181,10 @@ public:
     }
 };
 
+class Bundle final : public ObjectOf<ObjectType::Bundle> {
+public:
+};
+
 class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
 public:
     RectValue contentBounds{{0.0, 0.0}, {0.0, 0.0}};
@@ -189,6 +193,8 @@ public:
     SizeValue scrollOffset{0.0, 0.0};
     bool hasHorizontalScrollbar = false;
     bool hasVerticalScrollbar = false;
+    int numberOfPages = 1;
+    std::vector<bool> pageBoxVisibility;
 };
 
 class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
@@ -206,6 +212,12 @@ public:
     Retained<BundleNodeHandle> document;
     Retained<BundleFrame> documentFrame;
     Retained<BundleFrame> htmlIFrameElementContentFrame;
+    Retained<String> htmlInputElementValue;
+    bool htmlInputElementAutoFilled = false;
+    bool htmlInputElementAutoFilledAndViewable = false;
+    bool htmlInputElementSpellcheckEnabled = true;
+    bool htmlInputElementLastChangeWasUserEdit = false;
+    bool htmlTextAreaElementLastChangeWasUserEdit = false;
 };
 
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {

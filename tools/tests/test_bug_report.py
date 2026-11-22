@@ -135,6 +135,15 @@ class BundleTests(unittest.TestCase):
             for secret in ("/home/ana", "serverfestivo", "192.168.1.20", "10.0.0.7"):
                 self.assertNotIn(secret, text, f"{secret} leaked into {name}")
 
+    def test_bundle_keeps_an_unpaired_character_in_runtime_settings(self):
+        out = self.root / "runtime-settings.zip"
+        names = bug_report.make_bundle(self.report, out, environ={"APS5_TRACE_DIR": "capture\udcff"},
+                                       **self.identity)
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(sorted(bundle.namelist()), names)
+            self.assertEqual(bundle.read("anyps5-settings.txt").decode("utf-8"),
+                             "APS5_TRACE_DIR=capture\\udcff\n")
+
     def test_escaped_home_paths_are_redacted_in_nested_json(self):
         cases = (
             ("windows", r"C:\Profiles\example", r"\games\title.elf"),

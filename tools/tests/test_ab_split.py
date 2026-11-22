@@ -132,6 +132,27 @@ class AbSplitTests(unittest.TestCase):
         result = ab_split.split(lines[start:])
         self.assertEqual([phase["index"] for phase in result["phases"]], [1, 2, 3])
 
+    def test_corrupt_phase_markers_cannot_disappear_from_the_report(self):
+        invalid = (
+            ("A 0 begins", "C 0 begins"),
+            ("A 0 begins", "A -1 begins"),
+            ("A 0 begins at present 100", "A 0 begins at present -100"),
+            ("t 10.000 s)", "t -10.000 s)"),
+            ("t 12.000 s)", "t 12.000)"),
+            ("t 12.000 s)", "t 12.000 s"),
+            ("t 12.000 s)", "t 12.000 s) corrupt"),
+            ("A 0 settled at present", "A 0 settling at present"),
+            ("B 1 begins at present", "B 1 begins present"),
+        )
+        original = log()
+        for before, after in invalid:
+            index = next(i for i, line in enumerate(original) if before in line)
+            with self.subTest(after=after):
+                lines = original[:]
+                lines[index] = lines[index].replace(before, after, 1)
+                with self.assertRaisesRegex(ValueError, rf"line {index + 1}: invalid A/B phase marker"):
+                    ab_split.split(lines)
+
     def test_settled_phase_requires_matching_kind_and_index(self):
         lines = [
             "[ab] phase A 0 begins at present 100 (t 10.000 s)\n",

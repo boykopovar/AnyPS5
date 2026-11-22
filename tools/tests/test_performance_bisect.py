@@ -189,6 +189,10 @@ class MeasurementStabilityTests(unittest.TestCase):
         self.assertFalse(performance_bisect.is_regression(58, 60, 5))
         self.assertTrue(performance_bisect.is_regression(57, 60, 5))
 
+    def test_regression_counts_a_decimal_value_at_the_threshold(self):
+        self.assertTrue(performance_bisect.is_regression(43.7, 46.0, 5.0))
+        self.assertFalse(performance_bisect.is_regression(43.7000000001, 46.0, 5.0))
+
     def test_candidate_identity_must_match_baseline(self):
         with self.assertRaisesRegex(ValueError, "identity changed"):
             performance_bisect.require_same_identity({"identity": IDENTITY}, {"identity": dict(IDENTITY, driver="Other")})
