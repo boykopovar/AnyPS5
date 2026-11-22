@@ -725,7 +725,7 @@ int32_t APS5_VABI sceFiberGetInfo(FiberObject* object, FiberInfo* fiber_info) {
     auto* fiber = AsFiber(object);
     if (!fiber || !fiber_info) return object && fiber_info ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
     uint64_t infoSize = 0;
-    if (!CopyGuestIn(&infoSize, &fiber_info->size, sizeof(infoSize))) return SCE_FIBER_ERROR_INVALID;
+    if (!CopyGuestIn(&infoSize, fiber_info, sizeof(infoSize))) return SCE_FIBER_ERROR_INVALID;
     if (infoSize != sizeof(FiberInfo)) return SCE_FIBER_ERROR_INVALID;
     FiberInfo localInfo{};
     localInfo.size = sizeof(FiberInfo);

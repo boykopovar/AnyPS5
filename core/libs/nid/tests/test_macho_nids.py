@@ -286,6 +286,18 @@ def check_deep_trie(patcher, directory):
     assert result.returncode != 0 and "export trie nesting too deep" in result.stdout + result.stderr, (result.returncode, result.stdout, result.stderr)
 
 
+def check_short_chained_fixups_command(patcher, directory):
+    image = bytearray(build_dylib([], [("_sceKernelFoo", 1)]))
+    fixups = command_fields(image)[LC_DYLD_CHAINED_FIXUPS][0]
+    struct.pack_into("<I", image, fixups + 4, 8)
+    struct.pack_into("<I", image, 16, 4)
+    struct.pack_into("<I", image, 20, fixups + 8 - 32)
+    path = Path(directory) / "short-fixups-command.dylib"
+    path.write_bytes(image)
+    result = subprocess.run([str(patcher), "--exec", str(path)], capture_output=True, text=True, timeout=30)
+    assert result.returncode != 0 and "load command" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    assert path.read_bytes() == image
+
 def check_short_imports(patcher, directory):
     imports = [("_sceXy", 1), ("_malloc", 2), ("_sceKernelFoo", 1), ("_sceNetRecv", 1)]
     result, path = patch(patcher, directory, "short.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], imports))
@@ -309,6 +321,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="anyps5-macho-nid-a\u00e7\u00e3o-\u65e5\u672c-") as directory:
         check_shrinking(patcher, directory)
         check_growing(patcher, directory)
+        check_short_chained_fixups_command(patcher, directory)
         check_short_imports(patcher, directory)
         check_preserved(patcher, directory)
         check_export_list(patcher, directory)
