@@ -80,7 +80,7 @@ The Release workflow builds the web converter and the Linux and Windows librarie
 
 Pages downloads the converter and both library archives from one release selected through GitHub's latest-release API. `release.json` records the same tag and commit. Missing, corrupt or mismatched assets fail the Pages job before deployment. Releases made before the web asset was added need a new release; Pages does not combine them with a converter built from `main`.
 
-Changes to the converter or its frontend reach Pages through a release. Progress reports still come from `main`. For local development, build `relinker_web` with Emscripten and run `python3 tools/test_web.py --build build-wasm`. To stage a complete published release without compiling, run `python3 tools/build_web.py --build build-wasm --release`; `--libraries` is an alias for this mode.
+Changes to the converter or its frontend reach Pages through a release. Progress reports still come from `main`. For local development, build `relinker_web` with Emscripten and run `python3 tools/test_web.py --build build-wasm`. To stage a complete published release without compiling, run `python3 tools/build_web.py --build build-web-release --release`. Release staging replaces the selected build directory's `web/` directory. `--libraries` is an alias for `--release`.
 
 `tools/prepare_release_notes.py --input <notes> --body <body> --full <full>` prepares GitHub release notes that fit GitHub's release-body size limit (`BODY_LIMIT` bytes in the script): the short body goes to `--body` and the full notes to `--full`. With `--check` it writes nothing and exits with status 1 when either output is missing or stale.
 
