@@ -1824,6 +1824,32 @@ class SampleFileLoadTests(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return path
 
+    def test_load_rejects_numbers_outside_the_sampler_record_widths(self):
+        fields = (
+            ("# module A 0x{value:x} 0x0", "module image size", 32),
+            ("# module A 0x1 0x{value:x}", "module timestamp", 32),
+            ("# {value} samples", "sample total", 64),
+            ("thread {value} samples 0", "thread ID", 32),
+            ("thread 1 samples {value}", "thread sample count", 64),
+            ("main;work {value}", "stack sample count", 64),
+        )
+        for template, field, bits in fields:
+            for value in (1 << bits, 10**400):
+                with self.subTest(field=field, value=value):
+                    path = self.write("# sampler\n" + template.format(value=value) + "\n")
+                    with self.assertRaisesRegex(ValueError, rf"samples\.txt:2: {field} must fit in unsigned {bits} bits"):
+                        symbolize_samples.load(path)
+
+    def test_load_accepts_maximum_width_values(self):
+        samples = symbolize_samples.load(self.write(
+            "# module A 0xffffffff 0xFFFFFFFF\n"
+            "thread 4294967295 samples 18446744073709551615\n"
+            "A 0xffffffffffffffff 18446744073709551615 18446744073709551615\n"
+        ))
+        self.assertEqual(samples.headers["a"], (2**32 - 1, 2**32 - 1))
+        self.assertEqual(samples.total["threads"], 2**64 - 1)
+        self.assertEqual(samples.self_counts[("A", "0xffffffffffffffff")], 2**64 - 1)
+
     def test_load_reads_collapsed_stacks_and_their_format(self):
         samples = symbolize_samples.load(self.write("main;work 3\nmain;idle 1\n"))
         self.assertEqual(samples.stacks, collections.Counter({"main;work": 3, "main;idle": 1}))

@@ -308,18 +308,32 @@ def is_hex(value):
     return re.fullmatch(r"(?:0[xX])?[0-9a-fA-F]+", value) is not None
 
 
+def unsigned_field(value, base, bits, field, location):
+    if base == 16 and value[:2].lower() == "0x":
+        value = value[2:]
+    digits = value.lstrip("0") or "0"
+    limit = 1 << bits
+    max_digits = bits // 4 if base == 16 else len(str(limit - 1))
+    if len(digits) <= max_digits:
+        number = int(digits, base)
+        if number < limit:
+            return number
+    raise ValueError(f"{location}: {field} must fit in unsigned {bits} bits")
+
+
 def read_headers(lines, path=None):
     headers = {}
     for number, line in enumerate(lines, 1):
         parts = line.split(None, 2)
         if len(parts) < 2 or parts[:2] != ["#", "module"]:
             continue
+        location = f"{path}:{number}" if path is not None else f"line {number}"
         fields = parts[2].rsplit(None, 2) if len(parts) == 3 else []
         if len(fields) != 3 or not (is_hex(fields[1]) and is_hex(fields[2])):
-            location = f"{path}:{number}" if path is not None else f"line {number}"
             raise ValueError(f"{location}: expected '# module <name> <size> <timestamp>'")
         name = fields[0].lower()
-        identity = (int(fields[1], 16), int(fields[2], 16))
+        identity = (unsigned_field(fields[1], 16, 32, "module image size", location),
+                    unsigned_field(fields[2], 16, 32, "module timestamp", location))
         headers[name] = False if name in headers else identity
     return headers
 
@@ -348,10 +362,11 @@ def load(path, thread=None):
 
     for number, line in enumerate(lines, 1):
         parts = line.split()
+        location = f"{path}:{number}"
         if len(parts) == 3 and parts[0] == "#" and parts[2] == "samples":
             if not is_ascii_digits(parts[1]):
                 raise ValueError(f"{path}:{number}: expected '# <n> samples'")
-            samples.total["samples"] += int(parts[1])
+            samples.total["samples"] += unsigned_field(parts[1], 10, 64, "sample total", location)
             continue
         if line.startswith("#") or not line.strip():
             continue
@@ -359,10 +374,12 @@ def load(path, thread=None):
             if not (is_ascii_digits(parts[1]) and is_ascii_digits(parts[3])):
                 raise ValueError(f"{path}:{number}: expected 'thread <id> samples <n>'")
             record_format("address", number)
+            unsigned_field(parts[1], 10, 32, "thread ID", location)
+            count = unsigned_field(parts[3], 10, 64, "thread sample count", location)
             current = parts[1]
             samples.threads.add(current)
             if thread is None or current == thread:
-                samples.total["threads"] += int(parts[3])
+                samples.total["threads"] += count
             continue
         fields = line.strip().rsplit(None, 3)
         if len(fields) == 4 and ((fields[2].isdigit() and fields[3].isdigit()) or re.fullmatch(r"0x[0-9a-fA-F]+", fields[1]) is not None):
@@ -385,7 +402,7 @@ def load(path, thread=None):
         record_format("collapsed", number)
         if thread is not None:
             raise ValueError(f"{path}:{number}: thread filtering requires an address capture; collapsed stacks have no thread IDs")
-        samples.stacks[frames] += int(count)
+        samples.stacks[frames] += unsigned_field(count, 10, 64, "stack sample count", location)
     return samples
 
 
