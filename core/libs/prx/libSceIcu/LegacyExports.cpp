@@ -1475,12 +1475,6 @@ APS5_EXPORT("7sukzrX-FQ4", sceIcuLegacyUnknown_7sukzrX_minus_FQ4_nid_no_patch);
 void APS5_VABI ures_getVersion_nid_postfix(const UResourceBundle* resB, std::uint8_t* versionInfo) {
     if (!resB) return;
     if (!versionInfo) NotImplemented_nid_no_patch(__func__);
-    const int savedErrno = errno;
-    if (!GuestWritable_nid_no_patch(versionInfo, 4)) {
-        errno = savedErrno;
-        NotImplemented_nid_no_patch(__func__);
-    }
-    errno = savedErrno;
     const char* version = ures_getVersionNumberInternal_nid_postfix(resB);
     char versionStr[32]{};
     for (std::size_t i = 0; i < sizeof(versionStr); ++i) {
@@ -1493,7 +1487,14 @@ void APS5_VABI ures_getVersion_nid_postfix(const UResourceBundle* resB, std::uin
         if (versionStr[i] == '\0') break;
     }
     versionStr[sizeof(versionStr) - 1] = '\0';
-    u_versionFromString(versionInfo, versionStr);
+    std::uint8_t parsedVersion[4]{};
+    u_versionFromString(parsedVersion, versionStr);
+    const int copyOutErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(versionInfo, parsedVersion, sizeof(parsedVersion));
+    errno = copyOutErrno;
+    if (!copied) {
+        NotImplemented_nid_no_patch(__func__);
+    }
 }
 
 int APS5_VABI uprv_getStaticCurrencyName_nid_postfix() {
@@ -8993,11 +8994,12 @@ void APS5_VABI ures_getVersionByKey_nid_postfix(const UResourceBundle* res, cons
     errno = savedErrno;
     if (!statusReadable) APS5_INVALID_ARG_EX;
     if (currentStatus > 0) return;
-    const bool statusWritable = GuestWritable_nid_no_patch(status, sizeof(*status));
-    errno = savedErrno;
-    if (!statusWritable) APS5_INVALID_ARG_EX;
     if (!res) {
-        *status = U_ILLEGAL_ARGUMENT_ERROR;
+        const std::int32_t errorVal = U_ILLEGAL_ARGUMENT_ERROR;
+        const int copyOutErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(status, &errorVal, sizeof(errorVal));
+        errno = copyOutErrno;
+        if (!copied) APS5_INVALID_ARG_EX;
         return;
     }
     (void)key;
