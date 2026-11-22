@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/GuestWords.hpp"
 #include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceLibcInternal/include/PendingExports.hpp"
@@ -195,18 +196,6 @@ int APS5_VABI _ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE8_P
     return 0;
 }
 
-int APS5_VABI sceLibcInternalPending4_103_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("6ZDv6ZusiFg", sceLibcInternalPending4_103_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_104_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("tJU-ttrsXsk", sceLibcInternalPending4_104_nid_no_patch);
-
 int APS5_VABI sceLibcInternalPending4_105_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -218,17 +207,6 @@ int APS5_VABI sceLibcInternalPending4_106_nid_no_patch() {
     return 0;
 }
 APS5_EXPORT("nk+0yTWvoRE", sceLibcInternalPending4_106_nid_no_patch);
-
-int APS5_VABI _ZNSoD0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLibcInternalPending4_108_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("HpCeP12cuNY", sceLibcInternalPending4_108_nid_no_patch);
 
 int APS5_VABI sceLibcInternalPending4_109_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -248,9 +226,9 @@ int APS5_VABI sceLibcInternalPending4_120_nid_no_patch() {
 }
 APS5_EXPORT("Yl10kSufa5k", sceLibcInternalPending4_120_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending4_123_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+[[noreturn]] void APS5_VABI sceLibcInternalPending4_123_nid_no_patch(const char* message, const GuestLocale::String* path1,
+    const GuestLocale::String* path2, LibcException::ErrorCode code) {
+    FilesystemErrorTwoPaths_nid_no_patch(message, path1, path2, code);
 }
 APS5_EXPORT("Wut42WAe7Rw", sceLibcInternalPending4_123_nid_no_patch);
 
@@ -640,14 +618,16 @@ int APS5_VABI _CStrftime_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _CStrxfrm_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+size_t APS5_VABI _CStrxfrm_nid_postfix(char* destination, const char* source, size_t count) {
+    size_t result = 0;
+    result = strxfrm_nid_postfix(destination, source, count);
+    return result;
 }
 
-int APS5_VABI _CWcsxfrm_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+size_t APS5_VABI _CWcsxfrm_nid_postfix(char16_t* destination, const char16_t* source, size_t count) {
+    size_t result = 0;
+    result = wcsxfrm_nid_postfix(destination, source, count);
+    return result;
 }
 
 int APS5_VABI _Closreg_nid_postfix() {
@@ -665,11 +645,6 @@ int APS5_VABI _Daysto_nid_postfix(int year, int month) {
     else if (year <= -4) leapDays = ((4u - bits) >> 2) + 1u;
     const bool common = (bits & 3u) != 0 || year == 0;
     return static_cast<int>(leapDays + static_cast<std::uint32_t>(common ? DaysBeforeMonth[month] : LeapDaysBeforeMonth[month]));
-}
-
-int APS5_VABI _Deletegloballocale_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 double APS5_VABI _Erfc_nid_postfix(double x) {
@@ -695,11 +670,6 @@ int APS5_VABI _FQuadph_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _FRint_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _FTgamma_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -707,13 +677,18 @@ int APS5_VABI _FTgamma_nid_postfix() {
 
 float APS5_VABI _FXp_getw_nid_postfix(const float* parts, int count) {
     if (count == 0) return 0.0f;
-    if (count == 1 || parts[0] == 0.0f || parts[1] == 0.0f) return parts[0];
-    if (count == 2 || parts[2] == 0.0f) return parts[0] + parts[1];
-    const float head = parts[0] + parts[1];
-    float tail = parts[2];
-    if (count >= 4) tail += parts[3];
-    if (head - parts[0] == parts[1]) return head + tail;
-    return parts[0] + (parts[1] + tail);
+    const float first = ExtendedPrecisionWords::ReadWord(parts, 0, "_FXp_getw");
+    if (count == 1 || first == 0.0f) return first;
+    const float second = ExtendedPrecisionWords::ReadWord(parts, 1, "_FXp_getw");
+    if (second == 0.0f) return first;
+    if (count == 2) return first + second;
+    const float third = ExtendedPrecisionWords::ReadWord(parts, 2, "_FXp_getw");
+    if (third == 0.0f) return first + second;
+    const float head = first + second;
+    float tail = third;
+    if (count >= 4) tail += ExtendedPrecisionWords::ReadWord(parts, 3, "_FXp_getw");
+    if (head - first == second) return head + tail;
+    return first + (second + tail);
 }
 
 int APS5_VABI _Fac_tidy_nid_postfix() {
@@ -1102,11 +1077,6 @@ int APS5_VABI _LQuad_nid_postfix() {
 }
 
 int APS5_VABI _LQuadph_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LRint_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -99,11 +99,24 @@ static void TestContextConfiguration() {
 
     const void* copiedLangs = WKContextConfigurationCopyOverrideLanguages(config);
     Require(copiedLangs != nullptr);
-    const auto* copiedArray = static_cast<const NKWebKit::Array*>(copiedLangs);
-    Require(copiedArray->elements.size() == 2);
-    Require(static_cast<const NKWebKit::String*>(copiedArray->elements[0].Get())->Utf8() == "en-US");
-    Require(static_cast<const NKWebKit::String*>(copiedArray->elements[1].Get())->Utf8() == "ja-JP");
+    Require(WKGetTypeID(copiedLangs) == static_cast<std::uint32_t>(NKWebKit::ObjectType::Array));
+    Require(static_cast<const NKWebKit::Array*>(copiedLangs)->elements.empty());
+    const void* otherLangs = WKContextConfigurationCopyOverrideLanguages(nullptr);
+    Require(otherLangs != nullptr);
+    Require(otherLangs != copiedLangs);
+    Require(static_cast<const NKWebKit::Array*>(otherLangs)->elements.empty());
+    WKRelease(otherLangs);
     WKRelease(copiedLangs);
+    Require(langArray->elements.size() == 2);
+    WKContextConfigurationSetOverrideLanguages(nullptr, NKWebKit::ToRef(langArray));
+    WKContextConfigurationSetOverrideLanguages(config, nullptr);
+    bool rejectedLangs = false;
+    try {
+        WKContextConfigurationSetOverrideLanguages(config, config);
+    } catch (const std::invalid_argument&) {
+        rejectedLangs = true;
+    }
+    Require(rejectedLangs);
 
     const void* bundleStr = NKWebKit::ToRef(NKWebKit::String::FromUtf8("/app0/bundle.prx"));
     WKContextConfigurationSetInjectedBundlePath(config, bundleStr);
@@ -482,7 +495,32 @@ static void TestPageGroup() {
     Require(group != nullptr);
     Require(WKGetTypeID(group) == static_cast<std::uint32_t>(NKWebKit::ObjectType::PageGroup));
 
-    Require(WKPageGroupGetPreferences(group) == nullptr);
+    const void* prefs = WKPageGroupGetPreferences(group);
+    Require(prefs != nullptr);
+    Require(WKGetTypeID(prefs) == static_cast<std::uint32_t>(NKWebKit::ObjectType::Preferences));
+    Require(WKPageGroupGetPreferences(group) == prefs);
+    Require(WKPreferencesGetPluginsEnabled(prefs));
+    Require(WKPreferencesGetStorageBlockingPolicy(prefs) == kWKAllowAllStorage);
+    Require(WKPreferencesGetJavaScriptEnabled(prefs));
+    {
+        const void* other = WKPageGroupCreateWithIdentifier(nullptr);
+        const void* otherPrefs = WKPageGroupGetPreferences(other);
+        Require(otherPrefs != nullptr);
+        Require(otherPrefs != prefs);
+        Require(WKPreferencesGetPluginsEnabled(otherPrefs));
+        WKPreferencesSetPluginsEnabled(otherPrefs, false);
+        Require(!WKPreferencesGetPluginsEnabled(otherPrefs));
+        Require(WKPreferencesGetPluginsEnabled(prefs));
+        WKRelease(other);
+    }
+    {
+        const void* replacement = WKPreferencesCreate();
+        WKPreferencesSetJavaScriptEnabled(replacement, false);
+        WKPageGroupSetPreferences(group, replacement);
+        WKRelease(replacement);
+        Require(WKPageGroupGetPreferences(group) == replacement);
+        Require(!WKPreferencesGetJavaScriptEnabled(WKPageGroupGetPreferences(group)));
+    }
 
     const void* ucc = WKPageGroupGetUserContentController(group);
     Require(ucc != nullptr);
