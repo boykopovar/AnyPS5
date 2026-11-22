@@ -47,10 +47,10 @@ int main() {
             "select accepted an invalid timeout");
     }
     const GuestTimeval zero{};
-    for (const int count : {-1, 1025}) {
-        Require(select_nid_postfix(count, nullptr, nullptr, nullptr, &zero) == -1 && *__error_nid_postfix() == 22,
-            "select accepted an invalid descriptor limit");
-    }
+    Require(select_nid_postfix(-1, nullptr, nullptr, nullptr, &zero) == -1 && *__error_nid_postfix() == 22,
+        "select accepted a negative descriptor limit");
+    Require(select_nid_postfix(1025, nullptr, nullptr, nullptr, &zero) == 0,
+        "select without sets refused a descriptor limit above 1024");
     std::array<std::uint64_t, 16> read{};
     read[0] = 1 | (std::uint64_t{1} << 63);
     read[1] = 1;

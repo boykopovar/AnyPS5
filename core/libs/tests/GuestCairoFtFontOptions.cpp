@@ -14,14 +14,14 @@ void Require(bool condition, const char* message) {
 
 void Integer(FcPattern* pattern, const char* name, int expected) {
     int value = -1;
-    Require(FcPatternGetInteger(pattern, name, 0, &value) == FcResultMatch && value == expected, name);
+    Require(FcPatternGetInteger_nid_postfix(pattern, name, 0, &value) == FcResultMatch && value == expected, name);
     FcValue extra{};
     Require(FcPatternGet_nid_postfix(pattern, name, 1, &extra) == FcResultNoId, "duplicate integer property");
 }
 
 void Boolean(FcPattern* pattern, const char* name, int expected) {
     FcBool value = -1;
-    Require(FcPatternGetBool(pattern, name, 0, &value) == FcResultMatch && value == expected, name);
+    Require(FcPatternGetBool_nid_postfix(pattern, name, 0, &value) == FcResultMatch && value == expected, name);
     FcValue extra{};
     Require(FcPatternGet_nid_postfix(pattern, name, 1, &extra) == FcResultNoId, "duplicate bool property");
 }
@@ -54,7 +54,7 @@ int main() {
     Integer(pattern, "rgba", 2);
     Boolean(pattern, "hinting", 1);
     Integer(pattern, "hintstyle", 1);
-    FcPatternDestroy(pattern);
+    FcPatternDestroy_nid_postfix(pattern);
 
     for (int aa = -1; aa <= 7; ++aa) {
         for (int order = -1; order <= 5; ++order) {
@@ -82,7 +82,7 @@ int main() {
                         Integer(pattern, "hintstyle", style >= 1 && style <= 4 ? style - 1 : 3);
                     }
                     Missing(pattern, "lcdfilter");
-                    FcPatternDestroy(pattern);
+                    FcPatternDestroy_nid_postfix(pattern);
                 }
             }
         }
@@ -108,7 +108,7 @@ int main() {
             Boolean(pattern, "hinting", 0);
             Double(pattern, "hintstyle", 2.5);
             Integer(pattern, "lcdfilter", 42);
-            FcPatternDestroy(pattern);
+            FcPatternDestroy_nid_postfix(pattern);
         }
     }
 
@@ -124,7 +124,7 @@ int main() {
     Integer(pattern, "rgba", 2);
     Boolean(pattern, "hinting", 0);
     Integer(pattern, "hintstyle", 1);
-    FcPatternDestroy(pattern);
+    FcPatternDestroy_nid_postfix(pattern);
 
     pattern = FcPatternCreate();
     Require(pattern != nullptr, "pattern allocation");
@@ -133,7 +133,7 @@ int main() {
     for (const auto* name : {"antialias", "rgba", "hinting", "hintstyle", "lcdfilter"}) Missing(pattern, name);
     cairo_ft_font_options_substitute(nil, nullptr);
     cairo_ft_font_options_substitute(nullptr, nullptr);
-    FcPatternDestroy(pattern);
+    FcPatternDestroy_nid_postfix(pattern);
     cairo_font_options_destroy(options);
     cairo_font_options_destroy(nil);
     std::puts("cairo ft font options tests passed");

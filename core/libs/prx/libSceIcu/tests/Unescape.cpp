@@ -1,9 +1,11 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <limits>
 #include <source_location>
@@ -12,7 +14,14 @@
 #include <string_view>
 #include <utility>
 #include <vector>
-
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -209,6 +218,92 @@ void NegativeCapacity() {
     }
 }
 
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(memory + size, size, PAGE_NOACCESS, &previous) != 0);
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        memory = static_cast<char*>(mmap(nullptr, 2 * size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+        Require(mprotect(memory + size, size, PROT_NONE) == 0);
+#endif
+    }
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, 2 * size);
+#endif
+    }
+    GuardedPage(const GuardedPage&) = delete;
+    GuardedPage& operator=(const GuardedPage&) = delete;
+    char* Tail(std::size_t bytes) const { return memory + size - bytes; }
+    void ReadOnly() const {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(memory, size, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(memory, size, PROT_READ) == 0);
+#endif
+    }
+
+private:
+    char* memory = nullptr;
+    std::size_t size = 0;
+};
+
+template<typename TAction>
+void RequireRejected(TAction action, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    RequireInvalidArgument(action, location);
+    Require(errno == 71, location);
+}
+
+void GuestPointers() {
+    auto* unmapped = reinterpret_cast<char*>(std::uintptr_t{0x10});
+    char16_t output[4] = {0xa55a, 0xa55a, 0xa55a, 0xa55a};
+    RequireRejected([&] { u_unescape_nid_postfix(unmapped, output, 4); });
+    RequireRejected([&] { u_unescape_nid_postfix("ab", reinterpret_cast<char16_t*>(unmapped), 4); });
+    RequireRejected([&] { u_unescape_nid_postfix("a\\u12", reinterpret_cast<char16_t*>(unmapped), 4); });
+    Require(output[0] == 0xa55a);
+
+    GuardedPage source;
+    std::memcpy(source.Tail(8), "a\\u0042", 8);
+    const char* terminated = source.Tail(8);
+    source.ReadOnly();
+    Require(terminated[7] == 0);
+    errno = 71;
+    Require(u_unescape_nid_postfix(terminated, output, 4) == 2 && errno == 71);
+    Require(output[0] == u'a' && output[1] == u'B' && output[2] == 0 && output[3] == 0xa55a);
+    Require(u_unescape_nid_postfix(terminated, nullptr, 0) == 2);
+
+    GuardedPage unterminated;
+    std::memcpy(unterminated.Tail(4), "abcd", 4);
+    RequireRejected([&] { u_unescape_nid_postfix(unterminated.Tail(4), output, 4); });
+    Require(output[0] == u'a' && output[1] == u'B');
+
+    GuardedPage readOnly;
+    auto* destination = reinterpret_cast<char16_t*>(readOnly.Tail(8));
+    auto* offset = reinterpret_cast<std::int32_t*>(readOnly.Tail(16));
+    readOnly.ReadOnly();
+    RequireRejected([&] { u_unescape_nid_postfix("ab", destination, 4); });
+    errno = 71;
+    Require(u_unescape_nid_postfix("ab", destination, 0) == 2 && errno == 71);
+
+    Input input{u"u0041", {}};
+    RequireRejected([&] { u_unescapeAt_nid_postfix(Read_nid_no_patch, reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10}), 5, &input); });
+    RequireRejected([&] { u_unescapeAt_nid_postfix(Read_nid_no_patch, offset, 5, &input); });
+    Require(input.positions.empty());
+}
+
 } // namespace
 
 int main() {
@@ -216,5 +311,6 @@ int main() {
     CallbackOrder();
     Strings();
     NegativeCapacity();
+    GuestPointers();
     std::puts("ICU escape decoding tests passed");
 }

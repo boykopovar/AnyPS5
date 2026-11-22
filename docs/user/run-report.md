@@ -8,7 +8,13 @@ Print a readable summary of a report with:
 python3 tools/run_report_summary.py path/to/anyps5-report.json
 ```
 
-The summary includes the run result, the furthest observed stage, rendering counts, system details, and available missing-function and shader diagnostics. It says when a section was not collected or a list was truncated. The output is UTF-8, including when redirected. It reads the local report and does not upload it.
+The summary includes the run result, the furthest observed stage, rendering counts, system details, and available missing-function and shader diagnostics. It says when a section was not collected or a list was truncated. The tool writes UTF-8 to stdout. It reads the local report and does not upload it.
+
+Windows PowerShell 5.1 writes UTF-16LE by default when you redirect a command with `>`. To save the summary as UTF-8, let `cmd` redirect the output.
+
+```powershell
+cmd /d /c 'python tools/run_report_summary.py "path to/anyps5-report.json" > summary.txt'
+```
 
 The file stays on your machine. Nothing is uploaded unless you share it.
 
@@ -18,7 +24,13 @@ The report is written by default. Turn it off with the launch flag `--aps5-repor
 
 ## Where it goes
 
-`anyps5-report.json` is written next to the game's executable. If that folder can't be written, it goes to the AnyPS5 data folder under `reports/<run id>/` and the runtime prints where. `run.id` is that same id: 32 lowercase hex characters, random per run.
+`anyps5-report.json` is written next to the game's executable. If the report can't be written there, look under `reports/<run id>/` in the AnyPS5 data directory for your operating system.
+
+- Windows uses `%LOCALAPPDATA%\AnyPS5`.
+- Linux uses `$XDG_DATA_HOME/AnyPS5` when `XDG_DATA_HOME` is an absolute path, otherwise `$HOME/.local/share/AnyPS5`.
+- macOS uses `~/Library/Application Support/AnyPS5`.
+
+On a clean exit, the success message shows only the report filename. The fallback folder name is the report's `run.id`, a random string of 32 lowercase hex characters.
 
 The report is written once, when the run ends through the guest's `exit` or `_exit`, and on Linux and macOS also when the entry returns or the host calls `std::exit`. On Windows only `exit` and `_exit` write a report: a return from the entry writes none, because exit handlers of a DLL run inside the loader lock. The Windows and macOS code and the junction test have not been run. A run that stops on an exception nothing catches (`std::terminate`), such as a call to a function that is not implemented, writes the report with exit `abort` before the terminate handler runs, or after it when the game installed its own handler. A run that is killed or crashes writes no report.
 

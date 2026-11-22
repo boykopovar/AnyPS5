@@ -20,6 +20,16 @@
 static void Require(bool value) { if (!value) std::abort(); }
 
 template <typename TCall>
+static bool ThrowsWithMessage(const char* message, TCall call) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == message;
+    }
+    return false;
+}
+
+template <typename TCall>
 static bool ReportsNotImplemented(const char* name, TCall call) {
     try {
         call();
@@ -175,10 +185,33 @@ static void CheckStringLengthCap() {
     Require(sceRegMgrIsChange(0x2013, 0x0d010001u) == 0);
 }
 
+static void CheckZeroLengthCalls() {
+    char text[8] = {};
+    std::uint8_t bytes[4] = {};
+    const std::uint8_t payload[] = {0x11, 0x22};
+    Require(sceRegMgrSetStr(0x2050, "keep", 5) == 0);
+    std::strcpy(text, "CANARY");
+    Require(sceRegMgrGetStr(0x2050, text, 0) == static_cast<int>(0x80820004));
+    Require(std::strcmp(text, "CANARY") == 0);
+    Require(sceRegMgrSetBin(0x2051, payload, sizeof(payload)) == 0);
+    bytes[0] = 0x77;
+    Require(sceRegMgrGetBin(0x2051, bytes, 0) == static_cast<int>(0x80820004));
+    Require(bytes[0] == 0x77);
+    Require(sceRegMgrGetStr(0x2052, text, 0) == static_cast<int>(0x80820002));
+    Require(sceRegMgrGetBin(0x2052, bytes, 0) == static_cast<int>(0x80820002));
+    Require(ThrowsWithMessage("sceRegMgrSetStr: a zero-length write is unmeasured",
+        [&] { sceRegMgrSetStr(0x2050, "gone", 0); }));
+    Require(ThrowsWithMessage("sceRegMgrSetBin: a zero-length write is unmeasured",
+        [&] { sceRegMgrSetBin(0x2051, payload, 0); }));
+    Require(sceRegMgrGetStr(0x2050, text, sizeof(text)) == 0 && std::strcmp(text, "keep") == 0);
+    Require(sceRegMgrGetBin(0x2051, bytes, sizeof(bytes)) == 0 && bytes[0] == 0x11 && bytes[1] == 0x22);
+}
+
 int main() {
     CheckRemovedRangeKeys();
     CheckStringPageBoundary();
     CheckStringLengthCap();
+    CheckZeroLengthCalls();
     int32_t intVal = 0;
     char strBuf[64] = {};
     uint8_t binBuf[32] = {};

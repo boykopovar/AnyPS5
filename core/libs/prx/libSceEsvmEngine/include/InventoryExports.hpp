@@ -23,12 +23,12 @@ int APS5_VABI sceEsvmEngineParseAndLoadServerCertificateResponse();
 int APS5_VABI sceEsvmEnginePause();
 int APS5_VABI sceEsvmEnginePlay();
 int APS5_VABI sceEsvmEnginePushAccessUnit();
-int APS5_VABI sceEsvmEngineQueryVideoMemory();
+int APS5_VABI sceEsvmEngineQueryVideoMemory(void* argument1);
 int APS5_VABI sceEsvmEngineRemoveDecoder();
 int APS5_VABI sceEsvmEngineSetPlaybackRate();
 int APS5_VABI sceEsvmEngineSetServerCertificate2();
 int APS5_VABI sceEsvmEngineTerminate();
 int APS5_VABI libSceEsvmEngineUnknown_TLCfQqZ_minus_6AU_nid_no_patch();
-int APS5_VABI libSceEsvmEngineUnknown_Y6Rtwfuj0Bw_nid_no_patch();
+int APS5_VABI libSceEsvmEngineUnknown_Y6Rtwfuj0Bw_nid_no_patch(void* argument1);
 
 }
