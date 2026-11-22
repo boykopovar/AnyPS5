@@ -436,6 +436,8 @@ def syntax_arguments(arguments, directory, source):
         if not positional and (argument in (*DROP, *PREPROCESSING) or argument.startswith(("-MT", "-MF", "-MQ", "-MJ"))):
             index += 1
             continue
+        if not positional and argument in ("-fdiagnostics-format=json-file", "-fdiagnostics-format=sarif-file"):
+            argument = argument.removesuffix("-file") + "-stderr"
         query, _, value = argument.partition("=")
         if query.startswith("--print-"):
             query = query[1:]
