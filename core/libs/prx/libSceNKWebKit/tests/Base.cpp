@@ -1462,6 +1462,73 @@ static void TestBundleFrameScroll() {
     Require(threw);
 }
 
+static void TestBundlePagination() {
+    auto bundle = NKWebKit::Make<NKWebKit::Bundle>();
+    auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    const void* bundleRef = bundle.Get();
+    const void* frameRef = frame.Get();
+
+    Require(WKBundleNumberOfPages(bundleRef, frameRef, 800.0, 600.0) == 1);
+    Require(WKBundleNumberOfPages(bundleRef, frameRef, 0.0, 600.0) == 0);
+    Require(WKBundleNumberOfPages(bundleRef, frameRef, -10.0, 600.0) == 0);
+    Require(WKBundleNumberOfPages(bundleRef, frameRef, 800.0, 0.0) == 0);
+    Require(WKBundleNumberOfPages(bundleRef, frameRef, 800.0, -5.0) == 0);
+
+    frame->numberOfPages = 7;
+    Require(WKBundleNumberOfPages(bundleRef, frameRef, 1024.0, 768.0) == 7);
+
+    Require(!WKBundleIsPageBoxVisible(bundleRef, frameRef, 0));
+    Require(!WKBundleIsPageBoxVisible(bundleRef, frameRef, -1));
+    Require(!WKBundleIsPageBoxVisible(bundleRef, frameRef, 100));
+
+    frame->pageBoxVisibility = {true, false, true};
+    Require(WKBundleIsPageBoxVisible(bundleRef, frameRef, 0));
+    Require(!WKBundleIsPageBoxVisible(bundleRef, frameRef, 1));
+    Require(WKBundleIsPageBoxVisible(bundleRef, frameRef, 2));
+    Require(!WKBundleIsPageBoxVisible(bundleRef, frameRef, 3));
+    Require(!WKBundleIsPageBoxVisible(bundleRef, frameRef, -1));
+
+    bool threw = false;
+    try {
+        WKBundleNumberOfPages(nullptr, frameRef, 800.0, 600.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleNumberOfPages(bundleRef, nullptr, 800.0, 600.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleIsPageBoxVisible(nullptr, frameRef, 0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleIsPageBoxVisible(bundleRef, nullptr, 0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleNumberOfPages(frameRef, bundleRef, 800.0, 600.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestBundleHitTestResult() {
     Require(WKBundleHitTestResultGetTypeID() == 120);
     auto hit = NKWebKit::Make<NKWebKit::BundleHitTestResult>();
@@ -3533,6 +3600,7 @@ int main() {
     TestBundleHitTestResult();
     TestBundleNodeHandle();
     TestBundleFrameScroll();
+    TestBundlePagination();
     TestDownload();
     TestAXObject();
     TestPopupMenuItem();
