@@ -115,8 +115,6 @@ __asm__(APS5_ASM_FUNCTION("X509_get_issuer_name") "jmp *__imp_X509_get_issuer_na
 
 __asm__(APS5_ASM_FUNCTION("MD4_Final") "jmp *__imp_MD4_Final_nid_postfix(%rip)\n");
 
-__asm__(APS5_ASM_FUNCTION("EVP_EncryptFinal_ex") "jmp *__imp_EVP_EncryptFinal_ex_nid_postfix(%rip)\n");
-
 __asm__(APS5_ASM_FUNCTION("PEM_write_bio_X509") "jmp *__imp_PEM_write_bio_X509_nid_postfix(%rip)\n");
 
 __asm__(APS5_ASM_FUNCTION("SSL_get_verify_result") "jmp *__imp_SSL_get_verify_result_nid_postfix(%rip)\n");
@@ -177,8 +175,6 @@ __asm__(APS5_ASM_FUNCTION("SHA384_Init") "jmp *__imp_SHA384_Init_nid_postfix(%ri
 __asm__(APS5_ASM_FUNCTION("SSL_get_rbio") "jmp *__imp_SSL_get_rbio_nid_postfix(%rip)\n");
 
 __asm__(APS5_ASM_FUNCTION("ERR_remove_thread_state") "jmp *__imp_ERR_remove_thread_state_nid_postfix(%rip)\n");
-
-__asm__(APS5_ASM_FUNCTION("EVP_CipherFinal_ex") "jmp *__imp_EVP_CipherFinal_ex_nid_postfix(%rip)\n");
 
 __asm__(APS5_ASM_FUNCTION("CRYPTO_cleanup_all_ex_data") "jmp *__imp_CRYPTO_cleanup_all_ex_data_nid_postfix(%rip)\n");
 
@@ -894,9 +890,6 @@ APS5_EXPORT("ufDDnJvofro", libreSsl3Forward_OBJ_cleanup_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("libreSsl3Forward_SHA1_Final_nid_no_patch") "jmp *__imp_SHA1_Final_nid_postfix(%rip)\n");
 APS5_EXPORT("ukPQnpBeU2k", libreSsl3Forward_SHA1_Final_nid_no_patch);
-
-__asm__(APS5_ASM_FUNCTION("libreSsl3Forward_EVP_DecryptFinal_ex_nid_no_patch") "jmp *__imp_EVP_DecryptFinal_ex_nid_postfix(%rip)\n");
-APS5_EXPORT("urpDB9rHb4s", libreSsl3Forward_EVP_DecryptFinal_ex_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("libreSsl3Forward_SSL_get_session_nid_no_patch") "jmp *__imp_SSL_get_session_nid_postfix(%rip)\n");
 APS5_EXPORT("usdM3+ti5Tw", libreSsl3Forward_SSL_get_session_nid_no_patch);

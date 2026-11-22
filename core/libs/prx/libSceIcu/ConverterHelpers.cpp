@@ -118,7 +118,6 @@ UConverter* APS5_VABI u_getDefaultConverter_nid_postfix(std::int32_t* errorCode)
     if (!errorCode) APS5_INVALID_ARG_EX;
     std::int32_t incoming = 0;
     CopyIn(&incoming, errorCode, sizeof(incoming), __func__);
-    if (incoming > 0) return nullptr;
     const std::int32_t entered = incoming < U_ERROR_WARNING_START ? 0 : incoming;
     auto status = static_cast<UErrorCode>(entered);
 

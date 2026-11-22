@@ -2,6 +2,7 @@
 
 #include <CairoBackend.h>
 
+#include <array>
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
@@ -41,6 +42,40 @@ void APS5_VABI Reenter(void* pointer) {
     rejectAllocation = false;
 }
 
+std::array<void*, 4> events{};
+std::size_t eventCount{};
+
+void APS5_VABI Record(void* pointer) {
+    assert(eventCount < events.size());
+    events[eventCount++] = pointer;
+}
+
+void CheckReplacementOom() {
+    auto* surface = cairo_image_surface_create(0, 1, 1);
+    assert(surface && cairo_surface_status(surface) == CAIRO_STATUS_SUCCESS);
+    CairoUserDataKey replacementKey{};
+    int first{};
+    int second{};
+
+    assert(cairo_surface_set_user_data(surface, &replacementKey, &first, Record) == CAIRO_STATUS_SUCCESS);
+    assert(eventCount == 0);
+
+    const unsigned before = rejectedAllocations;
+    rejectAllocation = true;
+    assert(cairo_surface_set_user_data(surface, &replacementKey, &second, Record) == CAIRO_STATUS_NO_MEMORY);
+    rejectAllocation = false;
+    assert(rejectedAllocations == before + 1);
+    assert(eventCount == 0);
+
+    assert(cairo_surface_set_user_data(surface, &replacementKey, &second, Record) == CAIRO_STATUS_SUCCESS);
+    assert(eventCount == 1);
+    assert(events[0] == &first);
+
+    cairo_surface_destroy(surface);
+    assert(eventCount == 2);
+    assert(events[1] == &second);
+}
+
 }
 
 int main() {
@@ -63,4 +98,6 @@ int main() {
     assert(cairo_surface_set_user_data(finishingSurface, &key, &data, Reenter) == CAIRO_STATUS_SUCCESS);
     cairo_surface_destroy(finishingSurface);
     assert(callbacks == 1);
+
+    CheckReplacementOom();
 }

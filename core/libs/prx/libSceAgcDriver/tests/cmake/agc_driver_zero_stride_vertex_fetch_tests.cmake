@@ -1,0 +1,18 @@
+if(BUILD_TESTING AND TARGET agc_driver_zero_stride_vertex_fetch_tests)
+    foreach(agcZeroMode IN ITEMS default verify_plan)
+        if(agcZeroMode STREQUAL "default")
+            set(agcZeroName agc_driver_zero_vertex_fetch_ranges)
+            set(agcZeroEnvironment "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_PIPELINE_JOURNAL=1")
+        else()
+            set(agcZeroName agc_driver_zero_vertex_fetch_ranges_verify_plan)
+            set(agcZeroEnvironment "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_PIPELINE_JOURNAL=1;APS5_VERIFY_DRAW_PLAN=1")
+        endif()
+        add_test(NAME ${agcZeroName} COMMAND agc_driver_zero_stride_vertex_fetch_tests --ranges)
+        set_tests_properties(${agcZeroName} PROPERTIES ENVIRONMENT "${agcZeroEnvironment}"
+                SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        if(WIN32)
+            set_tests_properties(${agcZeroName} PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+endif()

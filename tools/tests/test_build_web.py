@@ -181,7 +181,10 @@ class LibraryPublicationTests(unittest.TestCase):
         with patch.object(build_web, "MAX_EXPANDED_BYTES", 4096, create=True):
             self.publish(payload, payload)
         report = json.loads(self.manifest.read_text(encoding="utf-8"))
-        self.assertTrue(all(asset["expandedBytes"] == 4096 for asset in report["platforms"].values()))
+        self.assertEqual(
+            {platform: asset["expandedBytes"] for platform, asset in report["platforms"].items()},
+            {"windows": 4096, "linux": 4096},
+        )
 
     def test_file_ancestors_are_rejected_before_publication(self):
         valid = library_zip([("libs/libc.prx", b"valid")])
