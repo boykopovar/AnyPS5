@@ -1899,25 +1899,27 @@ struct DecodeMemo {
     std::unordered_map<DecodeMemoKey, std::uint32_t, DecodeMemoHash> entries;
 };
 
-DecodeMemo& decodeMemo() {
-    static DecodeMemo memo;
-    return memo;
+constexpr std::size_t DecodeMemoShards = 64u;
+
+DecodeMemo& decodeMemo(const DecodeMemoKey& key) {
+    static std::array<DecodeMemo, DecodeMemoShards> memos;
+    return memos[DecodeMemoHash{}(key) % DecodeMemoShards];
 }
 
-constexpr std::uint32_t DecodeMemoEntries = 1u << 20u;
+constexpr std::uint32_t DecodeMemoEntries = (1u << 20u) / DecodeMemoShards;
 constexpr std::uint32_t DecodeFailed = 0x80000000u;
 
 std::uint32_t decodeTableEntry(const ImageResource& image, std::span<const ImageResource> modes, const DescriptorValue& words, std::uint64_t memoKey, std::uint32_t resource) {
     DecodeMemoKey key{memoKey, resource, words.dwords};
     if (memoKey != 0u) {
-        auto& memo = decodeMemo();
+        auto& memo = decodeMemo(key);
         std::lock_guard lock(memo.mutex);
         if (const auto found = memo.entries.find(key); found != memo.entries.end()) return found->second;
     }
     const auto match = ResourceMaterializer::TryRuntimeImageMode(image, words, modes);
     const auto value = match.mode.has_value() ? *match.mode : DecodeFailed | static_cast<std::uint32_t>(match.reason);
     if (memoKey != 0u) {
-        auto& memo = decodeMemo();
+        auto& memo = decodeMemo(key);
         std::lock_guard lock(memo.mutex);
         if (memo.entries.size() >= DecodeMemoEntries) memo.entries.clear();
         memo.entries.emplace(key, value);
