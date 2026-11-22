@@ -1,17 +1,26 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libSceIcu/Status.hpp"
+#include "prx/libSceIcu/Utf8.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include <algorithm>
 #include <array>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
 constexpr std::int32_t IllegalArgument = 1;
-constexpr std::int32_t InvalidCharacter = 10;
 constexpr std::int32_t BufferOverflow = 15;
 constexpr std::int32_t NotTerminated = -124;
+
+constexpr std::int32_t NoSubstitution = -1;
 
 template<class T>
 class OutputAccess {
@@ -31,6 +40,25 @@ private:
     GuestArena::HostWrite lengthAccess;
     GuestArena::HostWrite substitutionsAccess;
     GuestArena::HostWrite destinationAccess;
+};
+
+class OutputGuard {
+public:
+    OutputGuard(void* destination, std::int32_t capacity, std::size_t width, std::int32_t* destinationLength,
+                std::int32_t* substitutions, std::int32_t* status, const std::string& caller)
+        : destinationAccess(capacity > 0 ? destination : nullptr, static_cast<std::size_t>(capacity) * width),
+          lengthAccess(destinationLength, destinationLength ? sizeof(*destinationLength) : 0),
+          substitutionsAccess(substitutions, substitutions ? sizeof(*substitutions) : 0),
+          statusAccess(status, sizeof(*status)) {
+        if (!destinationAccess.Open() || !lengthAccess.Open() || !substitutionsAccess.Open() || !statusAccess.Open())
+            throw std::invalid_argument(caller + ": unwritable output");
+    }
+
+private:
+    GuestArena::HostWrite destinationAccess;
+    GuestArena::HostWrite lengthAccess;
+    GuestArena::HostWrite substitutionsAccess;
+    GuestArena::HostWrite statusAccess;
 };
 
 bool Surrogate(std::int32_t value) { return value >= 0xd800 && value <= 0xdfff; }
@@ -71,98 +99,207 @@ void Finish(T* destination, std::int32_t capacity, std::int64_t count, std::int3
     }
 }
 
-std::int32_t Decode(const char* source, std::int32_t length, std::int32_t& position) {
-    const auto lead = static_cast<std::uint8_t>(source[position++]);
-    if (lead < 0x80) return lead;
-    unsigned trailing = 0;
-    std::uint32_t value = 0;
-    if (lead >= 0xc2 && lead <= 0xdf) { trailing = 1; value = lead & 0x1f; }
-    else if (lead >= 0xe0 && lead <= 0xef) { trailing = 2; value = lead & 0x0f; }
-    else if (lead >= 0xf0 && lead <= 0xf4) { trailing = 3; value = lead & 7; }
-    else return -1;
-    for (unsigned index = 0; index < trailing; ++index) {
-        if (position == length) return -1;
-        const auto next = static_cast<std::uint8_t>(source[position]);
-        if (next < 0x80 || next > 0xbf) return -1;
-        if (index == 0 && ((lead == 0xe0 && next < 0xa0) || (lead == 0xed && next >= 0xa0) ||
-                          (lead == 0xf0 && next < 0x90) || (lead == 0xf4 && next >= 0x90))) return -1;
-        value = (value << 6) | (next & 0x3f);
-        ++position;
+bool CopyIn(void* destination, const void* source, std::size_t bytes) {
+    const int saved = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = saved;
+    return copied;
+}
+
+void CopyOut(void* destination, const void* source, std::size_t bytes, const std::string& caller, const char* what) {
+    const int saved = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = saved;
+    if (!copied) throw std::invalid_argument(caller + ": unwritable " + what);
+}
+
+std::int32_t ReadStatus(const std::int32_t* status, const std::string& caller) {
+    Icu::RequireStatus(status);
+    std::int32_t value = 0;
+    if (!CopyIn(&value, status, sizeof(value))) throw std::invalid_argument(caller + ": unreadable status");
+    return value;
+}
+
+void WriteStatus(std::int32_t* status, std::int32_t incoming, std::int32_t outgoing, const std::string& caller) {
+    if (outgoing != incoming) CopyOut(status, &outgoing, sizeof(outgoing), caller, "status");
+}
+
+template<class T>
+std::vector<T> ReadSource(const T* source, std::int32_t length, const std::string& caller) {
+    constexpr std::uintptr_t Chunk = 0x1000;
+    std::vector<unsigned char> bytes;
+    const auto address = reinterpret_cast<std::uintptr_t>(source);
+    if (length >= 0) {
+        const auto total = static_cast<std::size_t>(length) * sizeof(T);
+        while (bytes.size() < total) {
+            const std::size_t offset = bytes.size();
+            const std::size_t count = (std::min)(Chunk - (address + offset) % Chunk, total - offset);
+            bytes.resize(offset + count);
+            if (!CopyIn(bytes.data() + offset, reinterpret_cast<const void*>(address + offset), count))
+                throw std::invalid_argument(caller + ": unreadable source");
+        }
+    } else {
+        bool terminated = false;
+        for (std::size_t offset = 0, scanned = 0; !terminated;) {
+            const std::size_t start = bytes.size();
+            const std::size_t count = Chunk - (address + offset) % Chunk;
+            bytes.resize(start + count);
+            if (!CopyIn(bytes.data() + start, reinterpret_cast<const void*>(address + offset), count))
+                throw std::invalid_argument(caller + ": unreadable source");
+            offset += count;
+            for (; scanned + sizeof(T) <= bytes.size(); scanned += sizeof(T)) {
+                T unit{};
+                std::memcpy(&unit, bytes.data() + scanned, sizeof(T));
+                if (unit != 0) continue;
+                bytes.resize(scanned);
+                terminated = true;
+                break;
+            }
+        }
     }
-    return static_cast<std::int32_t>(value);
+    std::vector<T> units(bytes.size() / sizeof(T));
+    if (!bytes.empty()) std::memcpy(units.data(), bytes.data(), bytes.size());
+    return units;
+}
+
+template<class T>
+void CopyOutput(T* destination, const std::vector<T>& output, const std::string& caller) {
+    if (!output.empty()) CopyOut(destination, output.data(), output.size() * sizeof(T), caller, "destination");
+}
+
+template<class T>
+void Complete(std::vector<T>& output, T* destination, std::int32_t capacity, std::int32_t required, std::int32_t replaced,
+              std::int32_t* destinationLength, std::int32_t* substitutions, std::int32_t* status, std::int32_t incoming,
+              const std::string& caller) {
+    if (substitutions) CopyOut(substitutions, &replaced, sizeof(replaced), caller, "substitution count");
+    if (destinationLength) CopyOut(destinationLength, &required, sizeof(required), caller, "destination length");
+    auto current = incoming;
+    if (substitutions == status) current = replaced;
+    if (destinationLength == status) current = required;
+    auto outgoing = current;
+    if (current <= 0 && required < capacity) output.push_back(0);
+    Icu::Terminate(output.data(), capacity, required, &outgoing);
+    CopyOutput(destination, output, caller);
+    if (outgoing != current) CopyOut(status, &outgoing, sizeof(outgoing), caller, "status");
+}
+
+std::int32_t Decode(const std::uint8_t* text, std::int32_t length, std::int32_t& index) {
+    const std::int32_t lead = text[index++];
+    if (lead <= 0x7f) return lead;
+    return utf8_nextCharSafeBody_nid_postfix(text, &index, length, lead, -1);
 }
 
 char16_t* FromUtf8(char16_t* destination, std::int32_t capacity, std::int32_t* destinationLength,
                    const char* source, std::int32_t sourceLength, std::int32_t substitution,
-                   std::int32_t* substitutions, std::int32_t* error) {
-    if (!Validate(destination, capacity, source, sourceLength, substitution, error)) return nullptr;
-    const OutputAccess access(destination, capacity, destinationLength, substitutions, error);
-    if (substitutions) *substitutions = 0;
-    const auto length = Length(source, sourceLength);
-    std::int64_t count = 0;
-    std::int32_t replacements = 0;
-    const auto emit = [&](char16_t unit) {
-        if (count < capacity) destination[count] = unit;
-        ++count;
-    };
-    for (std::int32_t position = 0; position < length;) {
-        auto value = Decode(source, length, position);
+                   std::int32_t* substitutions, std::int32_t* status, const std::string& caller) {
+    const auto incoming = ReadStatus(status, caller);
+    if (incoming > 0) return nullptr;
+    if ((!source && sourceLength != 0) || sourceLength < -1 || (!destination && capacity > 0) || capacity < 0 ||
+        substitution > 0x10ffff || Icu::Surrogate(substitution)) {
+        WriteStatus(status, incoming, Icu::IllegalArgument, caller);
+        return nullptr;
+    }
+    const OutputGuard guard(destination, capacity, sizeof(char16_t), destinationLength, substitutions, status, caller);
+    constexpr std::int32_t none = 0;
+    if (substitutions) CopyOut(substitutions, &none, sizeof(none), caller, "substitution count");
+    const auto bytes = ReadSource(reinterpret_cast<const std::uint8_t*>(source), sourceLength, caller);
+    const auto length = static_cast<std::int32_t>(bytes.size());
+    std::vector<char16_t> output;
+    output.reserve(static_cast<std::size_t>(length));
+    bool writing = true;
+    std::int64_t extra = 0;
+    std::int32_t replaced = 0;
+    for (std::int32_t index = 0; index < length;) {
+        auto value = Decode(bytes.data(), length, index);
         if (value < 0) {
-            if (substitution < 0) { *error = InvalidCharacter; return nullptr; }
+            if (substitution < 0) {
+                CopyOutput(destination, output, caller);
+                WriteStatus(status, incoming, Icu::InvalidCharacter, caller);
+                return nullptr;
+            }
             value = substitution;
-            ++replacements;
+            ++replaced;
         }
-        if (value <= 0xffff) emit(static_cast<char16_t>(value));
-        else {
+        const auto emit = [&](char16_t unit) {
+            if (writing && static_cast<std::int64_t>(output.size()) < capacity) output.push_back(unit);
+            else {
+                writing = false;
+                ++extra;
+            }
+        };
+        if (value <= 0xffff) {
+            emit(static_cast<char16_t>(value));
+        } else {
             emit(static_cast<char16_t>(0xd7c0 + (value >> 10)));
             emit(static_cast<char16_t>(0xdc00 + (value & 0x3ff)));
         }
     }
-    if (substitutions) *substitutions = replacements;
-    Finish(destination, capacity, count, destinationLength, error);
+    const auto required = Icu::Checked(static_cast<std::int64_t>(output.size()) + extra);
+    Complete(output, destination, capacity, required, replaced, destinationLength, substitutions, status, incoming, caller);
     return destination;
 }
 
 char* ToUtf8(char* destination, std::int32_t capacity, std::int32_t* destinationLength,
              const char16_t* source, std::int32_t sourceLength, std::int32_t substitution,
-             std::int32_t* substitutions, std::int32_t* error) {
-    if (!Validate(destination, capacity, source, sourceLength, substitution, error)) return nullptr;
-    const OutputAccess access(destination, capacity, destinationLength, substitutions, error);
-    if (substitutions) *substitutions = 0;
-    const auto length = Length(source, sourceLength);
-    std::int64_t count = 0;
-    std::int32_t replacements = 0;
-    bool writing = true;
-    for (std::int32_t position = 0; position < length;) {
-        std::int32_t value = source[position++];
-        if (Surrogate(value)) {
-            if (value < 0xdc00 && position < length && source[position] >= 0xdc00 && source[position] <= 0xdfff) {
-                value = 0x10000 + ((value - 0xd800) << 10) + source[position++] - 0xdc00;
-            } else {
-                if (substitution < 0) { *error = InvalidCharacter; return nullptr; }
-                value = substitution;
-                ++replacements;
-            }
-        }
-        std::array<std::uint8_t, 4> encoded{};
-        unsigned units;
-        if (value < 0x80) { units = 1; encoded[0] = value; }
-        else {
-            units = value < 0x800 ? 2 : value < 0x10000 ? 3 : 4;
-            auto remaining = static_cast<std::uint32_t>(value);
-            for (unsigned index = units - 1; index > 0; --index) {
-                encoded[index] = 0x80 | (remaining & 0x3f);
-                remaining >>= 6;
-            }
-            encoded[0] = (units == 2 ? 0xc0 : units == 3 ? 0xe0 : 0xf0) | remaining;
-        }
-        if (writing && count + units <= capacity) {
-            for (unsigned index = 0; index < units; ++index) destination[count + index] = static_cast<char>(encoded[index]);
-        } else writing = false;
-        count += units;
+             std::int32_t* substitutions, std::int32_t* status, const std::string& caller) {
+    const auto incoming = ReadStatus(status, caller);
+    if (incoming > 0) return nullptr;
+    if ((!source && sourceLength != 0) || sourceLength < -1 || (!destination && capacity > 0) || capacity < 0 ||
+        substitution > 0x10ffff || Icu::Surrogate(substitution)) {
+        WriteStatus(status, incoming, Icu::IllegalArgument, caller);
+        return nullptr;
     }
-    if (substitutions) *substitutions = replacements;
-    Finish(destination, capacity, count, destinationLength, error);
+    const OutputGuard guard(destination, capacity, sizeof(char), destinationLength, substitutions, status, caller);
+    constexpr std::int32_t none = 0;
+    if (substitutions) CopyOut(substitutions, &none, sizeof(none), caller, "substitution count");
+    const auto units = ReadSource(source, sourceLength, caller);
+    const auto length = static_cast<std::int64_t>(units.size());
+    std::vector<char> output;
+    output.reserve(static_cast<std::size_t>(length));
+    bool writing = true;
+    std::int64_t extra = 0;
+    std::int32_t replaced = 0;
+    for (std::int64_t index = 0; index < length; ++index) {
+        std::int32_t value = units[index];
+        if (Icu::Surrogate(value)) {
+            if (value < 0xdc00 && index + 1 < length && units[index + 1] >= 0xdc00 && units[index + 1] <= 0xdfff) {
+                value = 0x10000 + ((value - 0xd800) << 10) + units[index + 1] - 0xdc00;
+                ++index;
+            } else if (substitution >= 0) {
+                value = substitution;
+                ++replaced;
+            } else {
+                CopyOutput(destination, output, caller);
+                WriteStatus(status, incoming, Icu::InvalidCharacter, caller);
+                return nullptr;
+            }
+        }
+        std::array<char, 4> encoded{};
+        unsigned width;
+        if (value < 0x80) {
+            width = 1;
+            encoded[0] = static_cast<char>(value);
+        } else if (value < 0x800) {
+            width = 2;
+            encoded[0] = static_cast<char>(0xc0 | (value >> 6));
+        } else if (value < 0x10000) {
+            width = 3;
+            encoded[0] = static_cast<char>(0xe0 | (value >> 12));
+        } else {
+            width = 4;
+            encoded[0] = static_cast<char>(0xf0 | (value >> 18));
+        }
+        for (unsigned trail = 1; trail < width; ++trail)
+            encoded[trail] = static_cast<char>(0x80 | ((value >> (6 * (width - 1 - trail))) & 0x3f));
+        if (writing && static_cast<std::int64_t>(output.size()) + width <= capacity) {
+            output.insert(output.end(), encoded.begin(), encoded.begin() + width);
+        } else {
+            writing = false;
+            extra += width;
+        }
+    }
+    const auto required = Icu::Checked(static_cast<std::int64_t>(output.size()) + extra);
+    Complete(output, destination, capacity, required, replaced, destinationLength, substitutions, status, incoming, caller);
     return destination;
 }
 
@@ -172,22 +309,22 @@ extern "C" {
 
 char16_t* APS5_VABI u_strFromUTF8_nid_postfix(char16_t* destination, std::int32_t capacity, std::int32_t* destinationLength,
     const char* source, std::int32_t sourceLength, std::int32_t* error) {
-    return FromUtf8(destination, capacity, destinationLength, source, sourceLength, -1, nullptr, error);
+    return FromUtf8(destination, capacity, destinationLength, source, sourceLength, NoSubstitution, nullptr, error, __func__);
 }
 
 char* APS5_VABI u_strToUTF8_nid_postfix(char* destination, std::int32_t capacity, std::int32_t* destinationLength,
     const char16_t* source, std::int32_t sourceLength, std::int32_t* error) {
-    return ToUtf8(destination, capacity, destinationLength, source, sourceLength, -1, nullptr, error);
+    return ToUtf8(destination, capacity, destinationLength, source, sourceLength, NoSubstitution, nullptr, error, __func__);
 }
 
 char16_t* APS5_VABI u_strFromUTF8WithSub_nid_postfix(char16_t* destination, std::int32_t capacity, std::int32_t* destinationLength,
     const char* source, std::int32_t sourceLength, std::int32_t substitution, std::int32_t* substitutions, std::int32_t* error) {
-    return FromUtf8(destination, capacity, destinationLength, source, sourceLength, substitution, substitutions, error);
+    return FromUtf8(destination, capacity, destinationLength, source, sourceLength, substitution, substitutions, error, __func__);
 }
 
 char* APS5_VABI u_strToUTF8WithSub_nid_postfix(char* destination, std::int32_t capacity, std::int32_t* destinationLength,
     const char16_t* source, std::int32_t sourceLength, std::int32_t substitution, std::int32_t* substitutions, std::int32_t* error) {
-    return ToUtf8(destination, capacity, destinationLength, source, sourceLength, substitution, substitutions, error);
+    return ToUtf8(destination, capacity, destinationLength, source, sourceLength, substitution, substitutions, error, __func__);
 }
 
 char16_t* APS5_VABI u_strFromUTF8Lenient_nid_postfix(char16_t* destination, std::int32_t capacity, std::int32_t* destinationLength,

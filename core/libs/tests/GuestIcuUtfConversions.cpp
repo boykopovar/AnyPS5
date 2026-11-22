@@ -149,6 +149,74 @@ void Status() {
     Require(u_strFromUTF8_nid_postfix(output.data(), 8, nullptr, nullptr, 0, &error) == output.data() && error == 0 && output[0] == 0, "null empty source");
 }
 
+void SubstitutionGeometry() {
+    std::array<char16_t, 8> wide;
+    wide.fill(0x5555);
+    std::int32_t length = 77, substitutions = 77, error = 0;
+    Require(u_strFromUTF8WithSub_nid_postfix(wide.data(), 1, &length, "\x80", 1, 0x1f642, &substitutions, &error) == wide.data(), "supplementary substitution overflow return");
+    Require(error == 15 && length == 2 && substitutions == 1 && wide[0] == 0xd83d && wide[1] == 0x5555, "supplementary substitution overflow");
+    wide.fill(0x5555);
+    error = 0;
+    Require(u_strFromUTF8WithSub_nid_postfix(wide.data(), 2, &length, "\x80", 1, 0x1f642, &substitutions, &error) == wide.data(), "supplementary substitution terminator return");
+    Require(error == -124 && length == 2 && substitutions == 1 && wide[0] == 0xd83d && wide[1] == 0xde42, "supplementary substitution fills the buffer exactly");
+    wide.fill(0x5555);
+    length = 77;
+    substitutions = 77;
+    error = 0;
+    Require(u_strFromUTF8WithSub_nid_postfix(wide.data(), 4, &length, "\x80" "a", 2, 0, &substitutions, &error) == wide.data(), "nul substitution return");
+    Require(error == 0 && length == 2 && substitutions == 1 && wide[0] == 0 && wide[1] == u'a' && wide[2] == 0 && wide[3] == 0x5555, "nul substitution");
+    const char16_t lone[]{0xd800};
+    std::array<char, 8> narrow;
+    narrow.fill('X');
+    length = 77;
+    substitutions = 77;
+    error = 0;
+    Require(u_strToUTF8WithSub_nid_postfix(narrow.data(), 3, &length, lone, 1, 0x1f642, &substitutions, &error) == narrow.data(), "encode supplementary overflow return");
+    Require(error == 15 && length == 4 && substitutions == 1 && narrow[0] == 'X' && narrow[1] == 'X', "encode supplementary overflow");
+    error = 0;
+    Require(u_strToUTF8WithSub_nid_postfix(narrow.data(), 4, &length, lone, 1, 0x1f642, &substitutions, &error) == narrow.data(), "encode supplementary terminator return");
+    Require(error == -124 && length == 4 && substitutions == 1 && static_cast<unsigned char>(narrow[0]) == 0xf0 && narrow[4] == 'X', "encode supplementary fills the buffer exactly");
+}
+
+void Empty() {
+    std::array<char16_t, 4> wide{0x5555, 0x5555, 0x5555, 0x5555};
+    std::int32_t length = 77, error = 0;
+    Require(u_strFromUTF8_nid_postfix(wide.data(), 0, &length, "", 0, &error) == wide.data() && error == -124 && length == 0 && wide[0] == 0x5555, "empty result without room");
+    error = 0;
+    Require(u_strFromUTF8_nid_postfix(wide.data(), 1, &length, "", -1, &error) == wide.data() && error == 0 && length == 0 && wide[0] == 0 && wide[1] == 0x5555, "empty result with room");
+    std::array<char, 4> narrow{'X', 'X', 'X', 'X'};
+    length = 77;
+    error = 0;
+    Require(u_strToUTF8_nid_postfix(narrow.data(), 0, &length, u"", 0, &error) == narrow.data() && error == -124 && length == 0 && narrow[0] == 'X', "empty encode without room");
+}
+
+void LongStrings() {
+    std::u16string units;
+    std::string bytes;
+    for (int index = 0; index < 3000; ++index) {
+        units += u"a";
+        units += u"\u20ac";
+        units += u"\U0001f642";
+        bytes += "a";
+        bytes += Utf8(0x20ac);
+        bytes += Utf8(0x1f642);
+    }
+    std::vector<char16_t> wide(units.size() + 1, 0x5555);
+    std::int32_t length = -1, error = 0;
+    Require(u_strFromUTF8_nid_postfix(wide.data(), static_cast<std::int32_t>(wide.size()), &length, bytes.c_str(), -1, &error) == wide.data(), "long UTF-8 decode return");
+    Require(error == 0 && length == static_cast<std::int32_t>(units.size()) && std::memcmp(wide.data(), units.data(), units.size() * 2) == 0 && wide[units.size()] == 0, "long UTF-8 decode");
+    error = 0;
+    Require(u_strFromUTF8_nid_postfix(wide.data(), static_cast<std::int32_t>(wide.size()), &length, bytes.data(), static_cast<std::int32_t>(bytes.size()), &error) == wide.data(), "long counted UTF-8 decode return");
+    Require(error == 0 && length == static_cast<std::int32_t>(units.size()) && std::memcmp(wide.data(), units.data(), units.size() * 2) == 0, "long counted UTF-8 decode");
+    std::vector<char> narrow(bytes.size() + 1, 'X');
+    error = 0;
+    Require(u_strToUTF8_nid_postfix(narrow.data(), static_cast<std::int32_t>(narrow.size()), &length, units.c_str(), -1, &error) == narrow.data(), "long UTF-16 encode return");
+    Require(error == 0 && length == static_cast<std::int32_t>(bytes.size()) && std::memcmp(narrow.data(), bytes.data(), bytes.size()) == 0 && narrow[bytes.size()] == 0, "long UTF-16 encode");
+    error = 0;
+    Require(u_strToUTF8_nid_postfix(narrow.data(), static_cast<std::int32_t>(bytes.size()) - 1, &length, units.data(), static_cast<std::int32_t>(units.size()), &error) == narrow.data(), "long UTF-16 overflow return");
+    Require(error == 15 && length == static_cast<std::int32_t>(bytes.size()), "long UTF-16 overflow");
+}
+
 } // namespace
 
 int main() {
@@ -156,4 +224,7 @@ int main() {
     Capacity();
     Malformed();
     Status();
+    SubstitutionGeometry();
+    Empty();
+    LongStrings();
 }
