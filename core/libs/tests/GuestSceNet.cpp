@@ -717,6 +717,27 @@ static void CheckIfFlags() {
     Require(sceNetConfigGetIfFlags(0, nullptr) == static_cast<int>(0x8041130Eu));
     Require(sceNetConfigGetIfFlags(0, reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(0x8041130Eu));
     Require(sceNetConfigGetIfFlags(10, nullptr) == static_cast<int>(0x8041130Eu));
+    struct ScopedLoopbackRestore {
+        ~ScopedLoopbackRestore() {
+            sceNetConfigUpInterface(0);
+        }
+    } restore;
+    Require(sceNetConfigDownInterface(0) == 0);
+    Require(sceNetConfigGetIfFlags(0, &flags) == 0);
+    Require(flags == 0x8048);
+    Require(sceNetConfigDownInterface(0) == 0);
+    Require(sceNetConfigGetIfFlags(0, &flags) == 0);
+    Require(flags == 0x8048);
+    Require(sceNetConfigUpInterface(0) == 0);
+    Require(sceNetConfigGetIfFlags(0, &flags) == 0);
+    Require(flags == 0x8049);
+    Require(sceNetConfigUpInterface(0) == 0);
+    Require(sceNetConfigGetIfFlags(0, &flags) == 0);
+    Require(flags == 0x8049);
+    for (const int interfaceId : {1, 4, 10, -1, std::numeric_limits<int>::min()}) {
+        Require(Throws([interfaceId] { sceNetConfigDownInterface(interfaceId); }));
+        Require(Throws([interfaceId] { sceNetConfigUpInterface(interfaceId); }));
+    }
 }
 
 static void CheckNetMemory() {
