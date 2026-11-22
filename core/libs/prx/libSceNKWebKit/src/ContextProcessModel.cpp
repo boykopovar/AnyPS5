@@ -35,7 +35,12 @@ void APS5_VABI WKContextSetCanHandleHTTPSServerTrustEvaluation(const void* conte
 
 void APS5_VABI WKContextSetCustomWebContentServiceBundleIdentifier(const void* contextRef, const void* bundleIdentifierRef) {
     auto* pool = NKWebKit::Cast<NKWebKit::ProcessPool>(contextRef, __func__);
-    pool->customWebContentServiceBundleIdentifier = NKWebKit::CastOrNull<NKWebKit::String>(bundleIdentifierRef, __func__);
+    if (!bundleIdentifierRef) {
+        pool->customWebContentServiceBundleIdentifier = nullptr;
+        return;
+    }
+    pool->customWebContentServiceBundleIdentifier = NKWebKit::Retained<NKWebKit::String>::Share(
+        NKWebKit::Cast<NKWebKit::String>(bundleIdentifierRef, __func__));
 }
 
 void APS5_VABI WKContextTerminateNetworkProcess(const void* contextRef) {

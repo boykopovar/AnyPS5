@@ -73,7 +73,7 @@ int main() {
 
     const void* bundleId = WKStringCreateWithUTF8CString("com.playstation.webcontent");
     WKContextSetCustomWebContentServiceBundleIdentifier(contextRef, bundleId);
-    Require(pool->customWebContentServiceBundleIdentifier != nullptr);
+    Require(pool->customWebContentServiceBundleIdentifier.Get() != nullptr);
     Require(pool->customWebContentServiceBundleIdentifier->Utf8() == "com.playstation.webcontent");
 
     WKContextSetCustomWebContentServiceBundleIdentifier(contextRef, nullptr);
