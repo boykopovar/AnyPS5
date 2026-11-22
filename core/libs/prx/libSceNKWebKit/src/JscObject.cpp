@@ -727,6 +727,30 @@ void CallbackClassGcMark(JSRuntime* rt, JSValueConst val, JS_MarkFunc* markFunc)
     }
 }
 
+bool IsGlobalObjectOfTheGroup(const OpaqueJSContextGroup* group, JSValueConst object) {
+    for (const OpaqueJSContext* ctx : group->contexts) {
+        if (ctx->globalObject && JS_VALUE_GET_PTR(ctx->globalObject->qval) == JS_VALUE_GET_PTR(object)) return true;
+    }
+    return false;
+}
+
+bool AdoptDerivedPrototype(JSContext* qctx, const OpaqueJSContextGroup* group, JSValueConst constructor, JSValueConst made, JSValueConst derivedPrototype) {
+    JSValue constructorPrototype = JS_GetPropertyStr(qctx, constructor, "prototype");
+    if (JS_IsException(constructorPrototype)) return false;
+    bool samePrototype = false;
+    if (!JS_IsProxy(made)) {
+        JSValue current = JS_GetPrototype(qctx, made);
+        samePrototype = !JS_IsException(current) && JS_IsStrictEqual(qctx, current, constructorPrototype);
+        JS_FreeValue(qctx, current);
+    }
+    JS_FreeValue(qctx, constructorPrototype);
+    if (!samePrototype || IsGlobalObjectOfTheGroup(group, made)) return true;
+    if (JS_SetPrototype(qctx, made, derivedPrototype) < 0) {
+        JS_FreeValue(qctx, JS_GetException(qctx));
+    }
+    return true;
+}
+
 JSValue CallbackClassCall(JSContext* qctx, JSValueConst funcObj, JSValueConst thisVal, int argc, JSValueConst* argv, int flags) {
     auto* group = static_cast<OpaqueJSContextGroup*>(JS_GetRuntimeOpaque(JS_GetRuntime(qctx)));
     if (!group || group->shuttingDown) return JS_UNDEFINED;
@@ -747,14 +771,25 @@ JSValue CallbackClassCall(JSContext* qctx, JSValueConst funcObj, JSValueConst th
     if (flags & JS_CALL_FLAG_CONSTRUCTOR) {
         if (data->isDirectConstructor) {
             if (data->directConstructorCallback) {
+                const bool derived = JS_IsObject(thisVal) && JS_VALUE_GET_PTR(thisVal) != JS_VALUE_GET_PTR(funcObj);
+                JSValue derivedPrototype = JS_UNDEFINED;
+                if (derived) {
+                    derivedPrototype = JS_GetPropertyStr(qctx, thisVal, "prototype");
+                    if (JS_IsException(derivedPrototype)) return JS_EXCEPTION;
+                }
                 JSValueRef exc = nullptr;
                 JSObjectRef res = data->directConstructorCallback(ctx, funcHandle, args.size(), args.empty() ? nullptr : args.data(), &exc);
                 if (exc) {
+                    JS_FreeValue(qctx, derivedPrototype);
                     return JS_Throw(qctx, JS_DupValue(qctx, exc->qval));
                 }
-                if (!res) return JS_ThrowTypeError(qctx, "Type error");
-                if (!res->alive) return JS_UNDEFINED;
-                return JS_DupValue(qctx, res->qval);
+                if (!res || !res->alive) {
+                    JS_FreeValue(qctx, derivedPrototype);
+                    return res ? JS_UNDEFINED : JS_ThrowTypeError(qctx, "Type error");
+                }
+                const bool adopted = !derived || AdoptDerivedPrototype(qctx, group, funcObj, res->qval, derivedPrototype);
+                JS_FreeValue(qctx, derivedPrototype);
+                return adopted ? JS_DupValue(qctx, res->qval) : JS_EXCEPTION;
             }
             OpaqueJSValue* instance = MakeCallbackObject(ctx, data->jsClass, nullptr);
             if (!instance || !instance->alive) return JS_UNDEFINED;
