@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <cerrno>
@@ -14,4 +15,10 @@ extern "C" int APS5_VABI gethostname_nid_postfix(char* name, std::size_t length)
     if (length < sizeof(hostname)) { errno = 63; return -1; }
     errno = savedError;
     return 0;
+}
+
+extern "C" int APS5_VABI sethostname_nid_postfix(const char* name, std::size_t length) {
+    (void)name;
+    (void)length;
+    NotImplemented_nid_no_patch(__func__);
 }

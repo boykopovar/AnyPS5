@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -53,4 +54,11 @@ int main() {
     });
     worker.join();
     Check(*__error_nid_postfix() == 22);
+    bool notImplemented = false;
+    try {
+        sethostname_nid_postfix("guest", 5);
+    } catch (const std::runtime_error&) {
+        notImplemented = true;
+    }
+    Check(notImplemented);
 }
