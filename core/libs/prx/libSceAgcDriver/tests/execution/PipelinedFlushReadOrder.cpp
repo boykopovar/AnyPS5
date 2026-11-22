@@ -215,17 +215,14 @@ void TestCommitterFlushesPastFutureQueuedRead() {
 void TestMultisampledSingleClearDrainsDrawPipeline() {
     constexpr std::uintptr_t FixedBase = 0x20f7f0000ull;
     constexpr std::size_t FixedBytes = 65536;
-#ifdef _WIN32
+#if defined(_WIN32) || !defined(MAP_FIXED_NOREPLACE)
+    constexpr std::uint32_t ReadWriteProtection = 0x04;
     auto* mapped = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocateFromHint_nid_postfix(FixedBase, FixedBytes, FixedBytes));
     Require(mapped == reinterpret_cast<std::uint8_t*>(FixedBase), "pipelined flush read order: the guest arena did not place the multisampled clear's descriptor block at its fixed address");
-    GuestArena::GuestArenaCommit_nid_postfix(mapped, FixedBytes, PAGE_READWRITE, FixedBytes);
+    GuestArena::GuestArenaCommit_nid_postfix(mapped, FixedBytes, ReadWriteProtection, FixedBytes);
 #else
-#ifdef MAP_FIXED_NOREPLACE
     auto* mapped = static_cast<std::uint8_t*>(mmap(reinterpret_cast<void*>(FixedBase), FixedBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0));
     if (mapped == MAP_FAILED) return;
-#else
-    return;
-#endif
 #endif
     struct FixedGuard {
         std::uint8_t* base;
@@ -235,7 +232,7 @@ void TestMultisampledSingleClearDrainsDrawPipeline() {
                 GuestAllocations::Mutation mutation;
                 mutation.Remove(base);
             }
-#ifdef _WIN32
+#if defined(_WIN32) || !defined(MAP_FIXED_NOREPLACE)
             GuestArena::GuestArenaReset_nid_postfix(base, bytes);
             GuestArena::GuestArenaRelease_nid_postfix(base, bytes);
 #else
