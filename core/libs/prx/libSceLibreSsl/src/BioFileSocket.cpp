@@ -21,7 +21,13 @@ constexpr int BioClose = 0x01;
 constexpr int BioFileRead = 0x02;
 constexpr int BioFileWrite = 0x04;
 constexpr int BioFileAppend = 0x08;
+constexpr int BioControlInfo = 3;
+constexpr int BioControlSetDescriptor = 104;
+constexpr int BioControlGetDescriptor = 105;
+constexpr int BioControlSetFilePointer = 106;
 constexpr int BioControlSetFilename = 108;
+constexpr int BioControlFileSeek = 128;
+constexpr int BioControlFileTell = 133;
 
 bool CopyGuestInPreservingErrno(void* destination, const void* source, std::size_t size) {
     const int savedErrno = errno;
@@ -106,7 +112,11 @@ std::int64_t APS5_VABI FileControl(Bio* bio, int command, std::int64_t argument,
     auto* stream = static_cast<FileStream*>(bio->data);
     switch (command) {
     case 1:
-        return stream ? fseek_nid_postfix(stream, 0, SEEK_SET) : -1;
+    case BioControlFileSeek:
+        return stream ? fseek_nid_postfix(stream, argument, SEEK_SET) : -1;
+    case BioControlInfo:
+    case BioControlFileTell:
+        return stream ? ftell_nid_postfix(stream) : -1;
     case 2:
         return stream ? feof_nid_postfix(stream) : 1;
     case 8:
@@ -117,7 +127,8 @@ std::int64_t APS5_VABI FileControl(Bio* bio, int command, std::int64_t argument,
     case 10:
         return 0;
     case 11:
-        return stream && fflush_nid_postfix(stream) == 0;
+        fflush_nid_postfix(stream);
+        return 1;
     case 12:
         return 1;
     case BioControlSetFilename: {
@@ -150,6 +161,12 @@ std::int64_t APS5_VABI FileControl(Bio* bio, int command, std::int64_t argument,
         bio->initialized = 1;
         return 1;
     }
+    case BioControlSetFilePointer:
+        FileFree(bio);
+        bio->shutdown = static_cast<int>(argument) & BioClose;
+        bio->data = pointer;
+        bio->initialized = 1;
+        return 1;
     case 107:
         if (pointer && !CopyGuestOutPreservingErrno(pointer, &stream, sizeof(stream))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return 1;
@@ -186,8 +203,27 @@ int APS5_VABI SocketPuts(Bio* bio, const char* data) {
     return SocketWrite(bio, text.data(), static_cast<int>(text.size()));
 }
 
-std::int64_t APS5_VABI SocketControl(Bio* bio, int command, std::int64_t argument, void*) {
+std::int64_t APS5_VABI SocketControl(Bio* bio, int command, std::int64_t argument, void* pointer) {
     switch (command) {
+    case BioControlSetDescriptor: {
+        int descriptor = 0;
+        if (!pointer || !CopyGuestInPreservingErrno(&descriptor, pointer, sizeof(descriptor)))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        if (bio->shutdown) {
+            if (bio->initialized && bio->number >= 0) sceNetSocketClose(bio->number);
+            bio->initialized = 0;
+            bio->flags = 0;
+        }
+        bio->number = descriptor;
+        bio->shutdown = static_cast<int>(argument);
+        bio->initialized = 1;
+        return 1;
+    }
+    case BioControlGetDescriptor:
+        if (!bio->initialized) return -1;
+        if (pointer && !CopyGuestOutPreservingErrno(pointer, &bio->number, sizeof(bio->number)))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        return bio->number;
     case 1:
         return 0;
     case 2:
@@ -237,7 +273,6 @@ LibreSsl::Bio* APS5_VABI BIO_new_fp_nid_postfix(void* value, int closeFlag) {
 }
 
 LibreSsl::Bio* APS5_VABI BIO_new_socket_nid_postfix(int socket, int closeFlag) {
-    if (socket < 0) return nullptr;
     auto* bio = BIO_new_nid_postfix(&SocketMethod);
     if (!bio) return nullptr;
     bio->number = socket;

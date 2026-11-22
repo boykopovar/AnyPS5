@@ -19,8 +19,8 @@ FORCED = {"ANYPS5_REQUIRE_VULKAN": "1", "ANYPS5_NO_SHADER_CACHE": "1",
           "VK_INSTANCE_LAYERS": "VK_LAYER_KHRONOS_validation", "VK_LOADER_DEBUG": "layer"}
 PUBLIC_ENV = ("ANYPS5_GPU", "VK_ICD_FILENAMES", "VK_DRIVER_FILES", "VK_LAYER_PATH")
 DIAGNOSTIC = re.compile(r"\b(VUID-[A-Za-z0-9_-]+|SYNC-HAZARD-[A-Za-z0-9_-]+)")
-UNASSIGNED = re.compile(r"\[\s*(UNASSIGNED-[^]\r\n]+?)\s*\]|Validation (?:Error|Warning):\s*\[\s*((?!\s|VUID-|SYNC-HAZARD-|UNASSIGNED-)[^]\r\n]+?)\s*\]")
-MESSAGE = re.compile(r"Validation (?:Error|Warning):|(?:VUID-|SYNC-HAZARD-)[\w-]+\s*\((?:ERROR|WARNING)\s*/")
+UNASSIGNED = re.compile(r"\[\s*(UNASSIGNED-[^]\r\n]+?)\s*\]|Validation (?:Error|(?:Performance )?Warning):\s*\[\s*((?!\s|VUID-|SYNC-HAZARD-|UNASSIGNED-)[^]\r\n]+?)\s*\]")
+MESSAGE = re.compile(r"Validation (?:Error|(?:Performance )?Warning):|(?:VUID-|SYNC-HAZARD-)[\w-]+\s*\((?:ERROR|WARNING)\s*/")
 MISSING_LAYER = "was not found but was requested by env var VK_INSTANCE_LAYERS"
 INSERTED_LAYER = 'Insert instance layer "VK_LAYER_KHRONOS_validation"'
 
@@ -272,7 +272,14 @@ def artifact_hashes(build, tests, runtime):
             paths.update(p.resolve() for p in path.rglob("*") if p.is_file())
         else:
             paths.add(path)
-    return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(paths)}
+    hashes = {}
+    for path in sorted(paths):
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            while block := source.read(1024 * 1024):
+                digest.update(block)
+        hashes[str(path)] = digest.hexdigest()
+    return hashes
 
 
 def check_timeouts(tests, limit):
@@ -423,6 +430,8 @@ def main(argv=None):
                     if prop["name"] in ("ENVIRONMENT", "ENVIRONMENT_MODIFICATION"):
                         for setting in prop["value"]:
                             key, _, value = setting.partition("=")
+                            if os.name == "nt":
+                                key = key.upper()
                             if key in (*FORCED, *PUBLIC_ENV) and (prop["name"] == "ENVIRONMENT_MODIFICATION" or value != environment.get(key)):
                                 raise GateError(f"{test['name']}: test property overrides required environment {key}")
             listings[side] = tests
