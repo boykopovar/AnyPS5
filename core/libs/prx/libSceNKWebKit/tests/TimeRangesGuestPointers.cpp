@@ -132,6 +132,19 @@ int main() {
     Require(split.m_ranges.m_buffer == splitBuffer && split.m_ranges.m_capacity == 4 && split.m_ranges.m_size == 1);
     UnmapPages(splitPages, 2);
 
+    WebCore::PlatformTimeRanges::Range spareBuffer[4]{};
+    spareBuffer[0] = WebCore::PlatformTimeRanges::Range{Seconds(10), Seconds(20)};
+    WebCore::PlatformTimeRanges spare;
+    spare.m_ranges = VectorRange{spareBuffer, 4, 1};
+    _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(&spare, Seconds(50), Seconds(60));
+    Require(spare.m_ranges.m_buffer == spareBuffer && spare.m_ranges.m_capacity == 4 && spare.m_ranges.m_size == 2);
+    Require(Same(_ZNK7WebCore18PlatformTimeRanges5startEj(&spare, 1), 50));
+    _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(&spare, Seconds(15), Seconds(55));
+    Require(spare.m_ranges.m_buffer == spareBuffer && spare.m_ranges.m_capacity == 4 && spare.m_ranges.m_size == 1);
+    Require(Same(_ZNK7WebCore18PlatformTimeRanges5startEj(&spare, 0), 10) && Same(_ZNK7WebCore18PlatformTimeRanges8durationEj(&spare, 0), 50));
+    _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(&spare, Seconds(70), Seconds(80));
+    Require(spare.m_ranges.m_buffer == spareBuffer && spare.m_ranges.m_capacity == 4 && spare.m_ranges.m_size == 2);
+
     Require(FaultsAsNotImplemented([&] { _ZN7WebCore18PlatformTimeRangesC1Ev(unreadable); return 0; }, "_ZN7WebCore18PlatformTimeRangesC1Ev"));
     Require(FaultsAsNotImplemented([&] { _ZN7WebCore18PlatformTimeRangesC2Ev(readOnly); return 0; }, "_ZN7WebCore18PlatformTimeRangesC1Ev"));
     Require(FaultsAsNotImplemented([&] { _ZN7WebCore18PlatformTimeRangesD1Ev(readOnly); return 0; }, "_ZN7WebCore18PlatformTimeRangesD1Ev"));
