@@ -552,11 +552,11 @@ double APS5_VABI _ZNK3WTF7CPUTime23percentageCPUUsageSinceERKS0_(const WTF::CPUT
 }
 
 static std::int64_t localOffsetSeconds(const GuestTm& local, std::int64_t time) {
-    GuestTm fields = local;
-    fields.tm_isdst = 0;
-    const std::int64_t asUtc = timegm_nid_postfix(&fields);
-    if (asUtc == -1 && time != -1) throw std::overflow_error("localOffsetSeconds: timegm failed");
-    return asUtc - time;
+    GuestTm utc{};
+    if (gmtime_r_nid_postfix(&time, &utc) == nullptr) throw std::overflow_error("localOffsetSeconds: gmtime_r failed");
+    std::int64_t days = local.tm_yday - utc.tm_yday;
+    if (local.tm_year != utc.tm_year) days = local.tm_year < utc.tm_year ? -1 : 1;
+    return ((days * 24 + (local.tm_hour - utc.tm_hour)) * 60 + (local.tm_min - utc.tm_min)) * 60 + (local.tm_sec - utc.tm_sec);
 }
 
 void APS5_VABI _ZN3WTF17GregorianDateTime21setToCurrentLocalTimeEv(WTF::GregorianDateTime* self) {
