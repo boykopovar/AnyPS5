@@ -2061,9 +2061,6 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bo
         return;
     }
     if (isNativeVop3AlignOpcode(opcode)) {
-        if (abs != 0u || omod != 0u || neg != 0u) {
-            throw std::invalid_argument("VOP3 source modifiers are not implemented");
-        }
         return;
     }
     if (isNativeVop3B16BinaryOpcode(opcode)) {
@@ -2493,6 +2490,7 @@ RdnaInstruction DecodeRdnaVop3(std::uint32_t programCounter, std::span<const std
         applyNativeVop3I16TernarySelectors(instruction, opSel);
     } else if (isNativeVop3AlignOpcode(instruction.op)) {
         applyNativeVop3AlignSelectors(instruction, opSel);
+        applyNativeVop3SourceModifiers(instruction, abs, neg);
     } else if (isNativeVop3B16BinaryOpcode(instruction.op)) {
         applyNativeVop3B16BinaryModifiers(instruction, opSel);
     } else if (isNativeVop3F16PackOpcode(instruction.op)) {
