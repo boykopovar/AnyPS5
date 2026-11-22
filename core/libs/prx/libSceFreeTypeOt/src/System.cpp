@@ -158,7 +158,7 @@ int APS5_VABI FT_Stream_New_nid_postfix(GuestRaccessLibrary* library, const Gues
     GuestStreamOpenArgs open{};
     CopyIn(&open, args, sizeof(open), __func__);
     int error = 0;
-    stream = static_cast<GuestStreamRec*>(ft_mem_alloc_nid_postfix(memory, sizeof(GuestStreamRec), &error));
+    stream = static_cast<GuestStreamRec*>(OtMemAlloc(memory, sizeof(GuestStreamRec), &error));
     if (error) return error;
     CopyOut(&stream->memory, &memory, sizeof(memory), __func__);
     if (open.flags & OpenMemory) {
@@ -167,18 +167,18 @@ int APS5_VABI FT_Stream_New_nid_postfix(GuestRaccessLibrary* library, const Gues
         try {
             error = FT_Stream_Open_nid_postfix(stream, open.pathname);
         } catch (...) {
-            ft_mem_free_nid_postfix(memory, stream);
+            OtMemFree(memory, stream);
             throw;
         }
         CopyOut(&stream->pathname, &open.pathname, sizeof(open.pathname), __func__);
     } else if ((open.flags & OpenStream) && open.stream) {
-        ft_mem_free_nid_postfix(memory, stream);
+        OtMemFree(memory, stream);
         stream = open.stream;
     } else {
         error = InvalidArgument;
     }
     if (error) {
-        ft_mem_free_nid_postfix(memory, stream);
+        OtMemFree(memory, stream);
         stream = nullptr;
     } else {
         CopyOut(&stream->memory, &memory, sizeof(memory), __func__);

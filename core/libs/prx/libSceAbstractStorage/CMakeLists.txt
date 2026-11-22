@@ -1,0 +1,15 @@
+add_library(libSceAbstractStorage SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceAbstractStorage PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceAbstractStorage)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_abstract_storage_consts_tests ${LIBS_INCLUDE_DIR}/tests/GuestAbstractStorageConsts.cpp)
+    target_include_directories(guest_abstract_storage_consts_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_abstract_storage_consts_tests PRIVATE libSceAbstractStorage libc)
+    configure_windows_unwind(guest_abstract_storage_consts_tests)
+    add_test(NAME guest_abstract_storage_consts COMMAND guest_abstract_storage_consts_tests)
+    if(WIN32)
+        set_tests_properties(guest_abstract_storage_consts PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAbstractStorage>")
+    endif()
+endif()

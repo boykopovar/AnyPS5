@@ -187,7 +187,7 @@ int GuestError(int error) {
     if (error == EAI_BADFLAGS) return 3;
     if (error == EAI_FAMILY) return 5;
     if (error == EAI_MEMORY) return 6;
-    if (error == EAI_NONAME) return 8;
+    if (error == EAI_NONAME || error == EAI_NODATA) return 8;
     if (error == EAI_SERVICE) return 9;
     if (error == EAI_SOCKTYPE) return 10;
 #ifdef _WIN32
@@ -198,6 +198,7 @@ int GuestError(int error) {
         return 11;
     }
     if (error == EAI_OVERFLOW) return 14;
+    if (error == EAI_ADDRFAMILY) return 8;
 #endif
     return 4;
 }

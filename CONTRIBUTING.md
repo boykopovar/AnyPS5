@@ -22,7 +22,9 @@
 
 Toolchains are listed in the [build instructions](docs/dev/BUILD.md).
 
-For relinker changes, use the [relinker-only build](docs/dev/BUILD.md#relinker-only) to build and test without third-party submodules, system libraries or a GPU. It also works on macOS. Changes to system libraries or shaders still need the full build and relevant runtime tests.
+For relinker changes, use the [relinker-only build](docs/dev/BUILD.md#relinker-only) to build and test without third-party submodules, system libraries or a GPU; it adds `-DANYPS5_RELINKER_ONLY=ON` to the first command below. It also works on macOS. Changes to system libraries or shaders still need the full build and relevant runtime tests.
+
+The full build needs the submodules (`git submodule update --init --recursive`):
 
 ```
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
@@ -58,13 +60,13 @@ The [pull request template](.github/pull_request_template.md) is the checklist f
 
 - One branch per topic, based on current `main`. Follow-up work goes in a new pull request, not into an open one.
 - Open pull requests per author are limited by how many of theirs are merged into `main`: 1 with none merged, 20 with at least 1, no limit from 20. A pull request opened or reopened over the limit is closed automatically; reopen it once another one is merged or closed.
-- Before starting, check that no open pull request already implements the same functions: `python3 tools/pr_overlap.py --names <function>...` prints, for each name, whether `main` implements it or still stubs it and which open pull requests add it.
+- Before starting, check that no open pull request already implements the same functions: `python3 tools/pr_overlap.py --names <function>...` checks exported PS5 functions and prints whether `main` implements each export or still stubs it and which open pull requests add it or edit its body. It does not check internal functions, shared helpers or instruction opcodes; inspect candidate pull requests directly for those changes. Run `python3 tools/pr_overlap.py --branch <branch>` before opening a pull request to check file and line overlaps.
 - Technical debt entries are added, changed and removed through a fragment in `docs/dev/debt/changes/`, not by editing the debt files; the format is in [technical debt](docs/dev/TechnicalDebt.md#fragments).
 - Keep the branch up to date with `main` and resolve conflicts yourself; rebasing and force-pushing is fine.
 - An AGC test executable and its tests are registered in `core/libs/prx/libSceAgcDriver/tests/cmake/<executable>.cmake`; the tests of an execution test in `tests/execution/` go in the fragment of its `agc_driver_<name>_tests` executable. `CMakeLists.txt` includes the fragments in sorted order, so a fragment uses nothing another fragment defines. A pull request whose change to `libSceAgcDriver/CMakeLists.txt` conflicts after the split rebases and runs `python3 tools/agc_test_split.py resolve` during the stopped rebase, which moves its registrations to their fragments and leaves conflict markers where `main` changed the same lines.
 - A new libc or libkernel test executable and its tests are registered in `core/libs/prx/libc/tests/cmake/<executable>.cmake` or `core/libs/prx/libkernel/tests/cmake/<executable>.cmake`. That library's `CMakeLists.txt` includes the fragments in sorted order after its own registrations, so a fragment can use what `CMakeLists.txt` defines but nothing another fragment defines. Tests already registered in `CMakeLists.txt` stay there.
 - A pull request that conflicts with `main` and has no activity for 7 days is labeled `stale` with a reminder. It is not closed.
-- An hourly job gives the `review queue` label to the oldest 30 pull requests that need no more work from their author, `unblocks title` ones first, and lists them in the review queue issue. A pull request needs more work while it is a draft, conflicts with `main`, has a `perf numbers missing` or `open PR limit` label, has a failing or unfinished check other than Intake, Labels, Eligibility and the progress report, or has a change request whose reviewer was not asked again; pushing alone does not answer a change request. `python3 tools/pr_ready.py --explain <number>` prints what blocks a pull request.
+- An hourly job gives the `review queue` label to the oldest 30 pull requests that need no more work from their author, `unblocks title` ones first, and lists them in the review queue issue. A pull request needs more work while it is a draft, conflicts with `main`, has a `perf numbers missing` or `open PR limit` label, has a failing or unfinished check other than Intake, Labels, Eligibility and the progress report, or has a change request whose reviewer was not asked again; pushing alone does not answer a change request. `python3 tools/pr_ready.py --explain <number>` prints what blocks a pull request, and `--author <login>` prints it for each open pull request of one author.
 - A pull request whose merge would not change `main` is labeled `already in main` with one comment, checked hourly: GitHub's test merge has the same files as its `main` commit, and no file the pull request touches has changed in `main` since. It is not closed. Close it if it is superseded, or push what is missing.
 - If a pull request needs another one first, say so on the checklist line (`Depends on: #N`; `none` otherwise).
 - If a pull request fixes a reported issue, write `Fixes #N` on its checklist line (`none` otherwise). GitHub closes the issue on merge, and the `fix error` label is added within the hour.
@@ -81,6 +83,8 @@ The [pull request template](.github/pull_request_template.md) is the checklist f
 ## Documentation
 
 Text in the repository is dry, strict and concise. Record known gaps, unknown NIDs and signatures in [technical debt](docs/dev/TechnicalDebt.md) instead of new files. An entry states the gap first (what differs from the console, what is unverified, what throws) and describes the implemented behaviour only as far as the gap needs it. A pull request that closes a gap removes its entry, or cuts it to what is still open, instead of rewriting it to describe the corrected behaviour. An entry goes in `docs/dev/debt/<name>.md`, named after the first `core/` path it links (`<name>` for `core/libs/prx/<name>/...`, otherwise for `core/<name>/...`), under the same `###` sections as the index; entries that link neither stay in the index. A pull request whose `TechnicalDebt.md` change conflicts after the split rebases and runs `python3 tools/debt_split.py resolve` during the stopped rebase, which moves its added, edited and removed entries to their files; `python3 tools/debt_split.py split` moves entries left in the index.
+
+A link to a Markdown file with a `#fragment` must name a heading of that file, as GitHub writes its anchor: the text of the heading in lowercase, with punctuation removed and spaces turned into hyphens. The check reports a fragment that matches no heading (`doc-anchor`) in the lines a pull request adds; it does not check fragments that were already there.
 
 ## Maintainer scripts
 

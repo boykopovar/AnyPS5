@@ -22,7 +22,7 @@ import pad_input
 import pad_timeline
 import unwrap_self
 from audit_dump import comparison_path
-from package_release import windows_runtime
+from package_release import native_auxiliary_runtimes, windows_runtime
 OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "frame-unreadable", "blank", "rendering")
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
 TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "pad": dict, "files": dict, "smoke": bool}
@@ -68,19 +68,32 @@ def stage_files(files, work, content):
     missing = []
     for destination, source in files.items():
         target = work / destination
+        content_name = source.get("content")
+        content_file = content / content_name if content is not None and content_name is not None else None
+        if content_name is not None and (content_file is None or not content_file.is_file()):
+            if not target.is_file():
+                missing.append(content_name)
+            continue
         target.parent.mkdir(parents=True, exist_ok=True)
         target.unlink(missing_ok=True)
-        if "text" in source:
-            target.write_text(source["text"], encoding="utf-8", newline="\n")
-        elif content and (content / source["content"]).is_file():
-            shutil.copyfile(content / source["content"], target)
+        if content_file is None:
+            with target.open("w", encoding="utf-8", newline="\n") as output:
+                output.write(source["text"])
         else:
-            missing.append(source["content"])
+            shutil.copyfile(content_file, target)
     return missing
 
 
 def load_titles(path):
-    titles = json.loads(Path(path).read_text(encoding="utf-8"))
+    def unique_fields(pairs):
+        fields = {}
+        for name, value in pairs:
+            if name in fields:
+                raise ValueError(f"{path}: duplicate field {name!r}")
+            fields[name] = value
+        return fields
+
+    titles = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=unique_fields)
     for title_id, entry in titles.items():
         if not TITLE_ID.fullmatch(title_id):
             raise ValueError(f"{path}: {title_id} is not a title ID")
@@ -104,9 +117,22 @@ def load_titles(path):
     return titles
 
 
-def relink_args(entry, platform):
+def host_is_intel():
+    if os.name == "nt":
+        return os.environ.get("PROCESSOR_IDENTIFIER", "").strip().lower().startswith("intel")
+    if sys.platform == "darwin":
+        return os.uname().machine == "x86_64"
+    try:
+        return "GenuineIntel" in Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+
+
+def relink_args(entry, platform, intel_host=False):
     args = ["--windows"] if platform == "windows" else []
     args += entry.get("relink", [])
+    if intel_host and not any(flag in args for flag in ("--to-intel", "--to-rosetta", "--to-avx")):
+        args.append("--to-intel")
     if "fixed_base" in entry:
         if platform not in FIXED_BASE_FLAGS:
             raise ValueError(f"fixed_base is not supported on {platform}")
@@ -133,7 +159,7 @@ def warning_counts(text):
 
 def read_summary(path):
     lines = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if path.is_file() else []:
+    for line in path.read_text(encoding="utf-8", errors="replace").split("\n") if path.is_file() else []:
         try:
             decoded = json.loads(line)
         except ValueError:
@@ -447,6 +473,8 @@ def discover(directories, wanted=(), packages=None):
             if wanted and title_id not in wanted:
                 continue
             if title_id in found:
+                if package.samefile(found[title_id]["package"]):
+                    continue
                 raise ValueError(f"{title_id} found more than once: {found[title_id]['package']} and {package}")
             localized = data.get("localizedParameters", {})
             name = localized.get(localized.get("defaultLanguage", "en-US"), {}).get("titleName", title_id)
@@ -471,6 +499,20 @@ def link_file(source, target):
         shutil.copy2(source, target)
 
 
+def copy_asset(source, target):
+    if sys.platform == "linux" and source.is_file():
+        try:
+            import fcntl
+            with source.open("rb") as original, target.open("xb") as cloned:
+                fcntl.ioctl(cloned.fileno(), getattr(fcntl, "FICLONE", 0x40049409), original.fileno())
+        except (ImportError, OSError):
+            pass
+        else:
+            shutil.copystat(source, target)
+            return
+    shutil.copy2(source, target)
+
+
 def link_tree(source, target, skip):
     for path in sorted(source.rglob("*")):
         relative = path.relative_to(source)
@@ -480,7 +522,7 @@ def link_tree(source, target, skip):
             (target / relative).mkdir(parents=True, exist_ok=True)
         else:
             (target / relative).parent.mkdir(parents=True, exist_ok=True)
-            link_file(path, target / relative)
+            copy_asset(path, target / relative)
 
 
 def lock_work(path):
@@ -515,7 +557,8 @@ def is_module(path):
 
 
 def stage_inputs(package, entry, source):
-    (source / "sce_module").mkdir(parents=True)
+    if not (package / "sce_modules").is_dir():
+        (source / "sce_module").mkdir(parents=True)
     unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
     executables = [path for path in (package / "eboot.bin", *(package / name for name in entry.get("executables", []))) if path.is_file()]
     for directory in dict.fromkeys([*STANDARD_MODULE_DIRS, *module_dirs(entry)]):
@@ -696,6 +739,7 @@ def validate_layout(args, found, ids, titles, source, platform, packages=None):
                 if directory:
                     pending.append((path, package))
     trees.extend(build_trees)
+    files.extend(native_auxiliary_runtimes(platform, args.build))
     if platform == "windows":
         try:
             runtime = windows_runtime(args.build)
@@ -739,11 +783,18 @@ def validate_layout(args, found, ids, titles, source, platform, packages=None):
         check_work_directories(work, args.out, protected_directories, checks)
 
 
+def remove_read_only(function, path, error):
+    if os.name != "nt" or linked_path(Path(path)):
+        raise error[1] if isinstance(error, tuple) else error
+    os.chmod(path, stat.S_IWRITE)
+    function(path)
+
+
 def reset_work(work):
     if linked_path(work):
         raise OSError(f"unsafe linked work directory: {work}")
     if work.exists():
-        shutil.rmtree(work)
+        shutil.rmtree(work, **{"onexc" if sys.version_info >= (3, 12) else "onerror": remove_read_only})
     work.mkdir(parents=True)
 
 
@@ -754,14 +805,14 @@ def prepare(title_id, found, entry, platform, build, work):
     executable = work / (title_id + (".exe" if platform == "windows" else ""))
     relinker = build / "core/relinker" / ("relinker.exe" if platform == "windows" else "relinker")
     with (work / "relink.log").open("w", encoding="utf-8") as log:
-        relinked = subprocess.run([str(relinker), *relink_args(entry, platform), str(source / "eboot.elf"), str(executable)],
+        relinked = subprocess.run([str(relinker), *relink_args(entry, platform, host_is_intel()), str(source / "eboot.elf"), str(executable)],
                                   stdout=log, stderr=subprocess.STDOUT)
     if relinked.returncode != 0:
         return None
     link_tree(package, work / "app0", {"sce_module"})
     libs = work / "libs"
     libs.mkdir()
-    for library in sorted((build / "core/libs/libs").glob("*.prx")):
+    for library in sorted((build / "core/libs/libs").glob("*.prx")) + native_auxiliary_runtimes(platform, build):
         link_file(library, libs / library.name)
     if platform == "windows":
         runtime = windows_runtime(build)
@@ -935,7 +986,9 @@ FRAME_ENV = {"APS5_DUMP_FRAMES": "100000", "APS5_DUMP_FRAMES_EVERY": "30", "APS5
 
 
 def collect_frames(work, destination):
-    frames = sorted(work.glob("frame_*.bmp"), key=lambda path: int(path.stem.split("_")[1]))
+    numbered = (path for path in work.glob("frame_*.bmp")
+                if re.fullmatch(r"frame_[0-9]+", path.stem) and path.is_file())
+    frames = sorted(numbered, key=lambda path: int(path.stem.split("_")[1]))
     keep = {frames[0], frames[len(frames) // 2], frames[-1]} if frames else set()
     destination.mkdir(parents=True, exist_ok=True)
     kept = []
@@ -1169,7 +1222,20 @@ def last_line(text):
 
 
 def write_summary(output, summary):
-    (output / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+    text = json.dumps(summary, indent=2, default=str)
+    target = output / "summary.json"
+    try:
+        metadata = target.lstat()
+    except FileNotFoundError:
+        mode = None
+    else:
+        mode = stat.S_IMODE(metadata.st_mode) if stat.S_ISREG(metadata.st_mode) else None
+    with tempfile.TemporaryDirectory(prefix=".summary-", dir=output) as directory:
+        staged = Path(directory) / "summary.json"
+        staged.write_text(text, encoding="utf-8")
+        if mode is not None:
+            staged.chmod(mode)
+        staged.replace(target)
 
 
 def run_cli(argv, capture_resources):
@@ -1184,7 +1250,7 @@ def run_cli(argv, capture_resources):
     parser.add_argument("--runs", type=positive, help="runs per title (default: 2 smoke, 1 performance)")
     parser.add_argument("--seconds", type=positive, help="run length for every title (default: the title's, else 60)")
     parser.add_argument("--note", default="", help="free text for the report, e.g. 'main + #6814'")
-    parser.add_argument("--compare", type=Path, help="summary.json of an earlier run; the comparison uses the last run of each title in both")
+    parser.add_argument("--compare", type=Path, help="summary.json of an earlier smoke run; the comparison uses the last run of each title in both")
     parser.add_argument("--json", action="store_true", help="with --compare, print the comparison as JSON instead of the table")
     parser.add_argument("--titles", type=Path, default=ROOT / "tools/titles.json")
     parser.add_argument("--content", type=Path, help="directory holding the files that titles.json names with \"content\"")
@@ -1197,6 +1263,7 @@ def run_cli(argv, capture_resources):
     parser.add_argument("--warmup-seconds", type=positive, help="warm-up duration before each capture (default: 60)")
     args = parser.parse_args(argv)
     validate_performance_args(parser, args)
+    args.ids = list(dict.fromkeys(args.ids))
     args.runs = args.runs or (1 if args.profile == "performance" else 2)
     if args.smoke and args.ids:
         parser.error("--smoke takes no title IDs")
@@ -1207,6 +1274,8 @@ def run_cli(argv, capture_resources):
         previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
     except (OSError, ValueError) as error:
         parser.error(f"--compare: {error}")
+    if isinstance(previous, dict) and previous.get("format") == "anyps5-performance-capture/1":
+        parser.error(f"--compare requires a smoke-run summary, got a performance capture summary: {args.compare}")
     platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
     try:
         titles = load_titles(args.titles)
@@ -1219,6 +1288,8 @@ def run_cli(argv, capture_resources):
     packages = []
     found = discover(args.games, args.ids, packages=packages)
     ids = args.ids or sorted(found)
+    if not ids:
+        raise SystemExit(f"no title package under --games: {', '.join(str(directory) for directory in args.games)}")
     missing = [title_id for title_id in ids if title_id not in found]
     if missing:
         raise SystemExit(f"not found under --games: {', '.join(missing)}")
@@ -1227,7 +1298,10 @@ def run_cli(argv, capture_resources):
         validate_layout(args, found, ids, titles, source, platform, packages=packages)
     except (OSError, RuntimeError, ValueError) as error:
         parser.error(f"unsafe title-run layout: {error}")
-    locks = {title_id: lock_work(args.out.resolve() / "work" / f"{title_id}.lock") for title_id in ids}
+    locks = {}
+    for title_id in ids:
+        handle = lock_work(args.out.resolve() / "work" / f"{title_id}.lock")
+        locks[title_id] = capture_resources.enter_context(handle) if handle is not None else None
     busy = [title_id for title_id, handle in locks.items() if handle is None]
     if busy:
         raise SystemExit(f"already running in {args.out.resolve() / 'work'}: {', '.join(busy)}")
