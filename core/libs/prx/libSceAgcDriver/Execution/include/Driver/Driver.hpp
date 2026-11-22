@@ -409,6 +409,7 @@ private:
     static bool labelTryEachPacket();
     static std::chrono::microseconds labelFlushDeadline();
     static bool labelFlushDue();
+    bool labelWaitersPresent() const;
     static bool completionsPending();
     static bool reapEachPacket();
     static std::uint64_t batchCap();

@@ -16,6 +16,7 @@ extern "C" {
 
 void KernelWakeSleepers_nid_no_patch();
 void KernelNoteGpuSubmit_nid_no_patch();
+std::uint32_t KernelWakeableSleepers_nid_no_patch();
 
 }
 

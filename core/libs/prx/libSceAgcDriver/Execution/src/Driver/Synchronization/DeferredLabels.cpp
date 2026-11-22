@@ -1,9 +1,11 @@
+#include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
 #include "ThreadOwned.hpp"
+#include <algorithm>
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
@@ -70,10 +72,18 @@ std::chrono::microseconds Driver::labelFlushDeadline() {
     return value;
 }
 
+bool Driver::labelWaitersPresent() const {
+    if (KernelWakeableSleepers_nid_no_patch() != 0) return true;
+    return std::any_of(awaitedSlots.begin(), awaitedSlots.end(), [](const auto& slot) { return slot.address.load(std::memory_order_acquire) != 0; });
+}
+
 bool Driver::labelFlushDue() {
     if (QueuedLabelTable() && !deferredLabels().labels.empty()) Get().recordQueuedLabelsByTry(GuestMemory::GpuLockThreadTag(), pollLabelRecords);
     const auto since = Graphics::Recorder::PendingLabelSince();
-    return since.has_value() && std::chrono::steady_clock::now() - *since >= labelFlushDeadline();
+    if (!since.has_value()) return false;
+    static const bool fixed = std::getenv("APS5_LABEL_FLUSH_US") != nullptr || !LabelBatchSubmit();
+    const auto deadline = fixed || !Get().labelWaitersPresent() ? labelFlushDeadline() : std::chrono::microseconds(100);
+    return std::chrono::steady_clock::now() - *since >= deadline;
 }
 
 bool Driver::completionsPending() {

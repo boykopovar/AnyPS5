@@ -25,6 +25,7 @@ ThreadState& State() {
 }
 
 std::atomic<std::uint64_t> completions{0};
+std::atomic<std::uint32_t> wakeableSleepers{0};
 
 bool Enabled() {
     static const bool enabled = std::getenv("APS5_NO_SLEEP_WAKE") == nullptr;
@@ -40,7 +41,9 @@ void Sleep(std::uint64_t nanos) {
         if (TimedWait::NowNanos() - state.lastSleepEndNanos >= nanos) state.earlyWakes = 0;
         if (state.earlyWakes < EARLY_WAKES_PER_RUN) {
             state.sleeping = true;
+            wakeableSleepers.fetch_add(1, std::memory_order_seq_cst);
             const bool early = TimedWait::SleepNanosUnlessChanged(nanos, completions, completions.load(std::memory_order_seq_cst));
+            wakeableSleepers.fetch_sub(1, std::memory_order_seq_cst);
             state.sleeping = false;
             if (early) ++state.earlyWakes;
             woken = true;
@@ -59,6 +62,9 @@ void KernelWakeSleepers_nid_no_patch() {
     TimedWait::WakeChangeSleepers();
 }
 
+std::uint32_t KernelWakeableSleepers_nid_no_patch() {
+    return SleepWake::wakeableSleepers.load(std::memory_order_seq_cst);
+}
 void KernelNoteGpuSubmit_nid_no_patch() {
     SleepWake::State().earlyWakes = 0;
 }

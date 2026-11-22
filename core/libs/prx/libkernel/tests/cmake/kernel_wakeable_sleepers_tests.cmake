@@ -1,0 +1,7 @@
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT EMSCRIPTEN)
+    add_test_executable(kernel_wakeable_sleepers_tests ${LIBS_INCLUDE_DIR}/tests/KernelWakeableSleepers.cpp)
+    target_include_directories(kernel_wakeable_sleepers_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(kernel_wakeable_sleepers_tests PRIVATE libkernel libc)
+    add_test(NAME kernel_wakeable_sleepers COMMAND kernel_wakeable_sleepers_tests)
+    set_tests_properties(kernel_wakeable_sleepers PROPERTIES TIMEOUT 20)
+endif()
