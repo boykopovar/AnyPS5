@@ -51,7 +51,8 @@ async function setup(t, name, overrides = {}) {
       },
       querySelectorAll: () => []
     },
-    window: { isSecureContext: true, Worker, WebAssembly, ReadableStream, WritableStream, crypto: { subtle: {} }, ...overrides },
+    window: { isSecureContext: true, Worker, WebAssembly, ReadableStream, WritableStream, crypto: { subtle: {} },
+      navigator: { locks: { request: (_name, acquire) => acquire() } }, ...overrides },
     Worker,
     fetch: overrides.fetch ?? (async () => ({
       ok: true,
@@ -354,7 +355,13 @@ test("a late successful release request cannot hide a replacement request failur
 
 for (const [name, bad] of [
   ["HTTP error", { ok: false, status: 503 }],
-  ["invalid manifest", { ok: true, json: async () => ({ tag: "bad" }) }]
+  ["invalid manifest", { ok: true, json: async () => ({ tag: "bad" }) }],
+  ["negative Linux library size", { ok: true, json: async () => ({
+    tag: "v1-test", platforms: { linux: { expandedBytes: -1 }, windows: { expandedBytes: 1024 } }
+  }) }],
+  ["oversized Windows library size", { ok: true, json: async () => ({
+    tag: "v1-test", platforms: { linux: { expandedBytes: 1024 }, windows: { expandedBytes: 512 * 1024 * 1024 + 1 } }
+  }) }]
 ]) {
   test(`selecting an input retries release information after ${name}`, async t => {
     let calls = 0;
@@ -637,3 +644,14 @@ test("cancelling the ZIP picker does not report a failure", async t => {
   assert.equal(get("selection").hidden, false);
   assert.equal(get("convert").disabled, false);
 });
+
+for (const supported of [false, true]) {
+  test(`Folder output requires Web Locks (${supported})`, async t => {
+    const { get } = await setup(t, `folder-locks-${supported}`, {
+      showDirectoryPicker() {},
+      navigator: supported ? { locks: { request() {} } } : {}
+    });
+    assert.equal(get("save").querySelector('[value="disk"]').disabled, !supported);
+    assert.equal(get("save").querySelector('[value="memory"]').disabled, false);
+  });
+}
