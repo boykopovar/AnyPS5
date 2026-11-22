@@ -28,6 +28,12 @@ PYTHON = probe_command()
 
 
 class ReportTests(unittest.TestCase):
+
+    def test_oversized_timeouts_are_configuration_errors(self):
+        for value in (10 ** 400, -(10 ** 400)):
+            with self.subTest(value=value), self.assertRaisesRegex(gate.GateError, "probe: TIMEOUT"):
+                gate.check_timeouts([{"name": "probe", "properties": [{"name": "TIMEOUT", "value": value}]}], 1)
+
     def test_effective_timeouts_cannot_override_the_requested_limit(self):
         for value in (0, 2, -1, float("inf"), float("nan"), "1", True):
             with self.subTest(value=value), self.assertRaisesRegex(gate.GateError, "probe: TIMEOUT"):
