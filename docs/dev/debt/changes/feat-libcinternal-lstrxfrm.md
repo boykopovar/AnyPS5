@@ -1,0 +1,5 @@
+# libSceLibcInternal
+
+## add Additional callable exports
+
+- [_ZSt9_LStrxfrmIcEmPT_S1_PKS0_S3_PKSt8_Collvec and _ZSt9_LStrxfrmIwEmPT_S1_PKS0_S3_PKSt8_Collvec](../../../core/libs/prx/libSceLibcInternal/InventoryExports.cpp) (libSceLibcInternal, NIDs `V62E2Q8bJVY` and `BloPUt1HCH0`) - not checked against `libSceLibcInternal.sprx` or on a console, and no title was seen calling them. They ignore the `const _Collvec*` parameter, so non-C locale collation tables are not supported, and transform as the C-locale branches of [_Strxfrm](https://github.com/microsoft/STL/blob/54d74d7a58e828857a73f979eccc2ba1c02e256d/stl/src/xstrxfrm.cpp#L71-L75) and [_Wcsxfrm](https://github.com/microsoft/STL/blob/54d74d7a58e828857a73f979eccc2ba1c02e256d/stl/src/xwcsxfrm.cpp#L61-L65) do: a source that fits is copied unchanged and the source length in characters is returned. A null or inverted range, and a source or buffer that `GuestCopyIn_nid_no_patch` or `GuestCopyOut_nid_no_patch` cannot reach, throw `std::invalid_argument`, where the console faults

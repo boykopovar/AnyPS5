@@ -343,6 +343,12 @@ bool NearestExport(Word pc, const char*& name, Word& address) {
     return name != nullptr;
 }
 
+Word NativeFunctionStart(Word pc) {
+    DWORD64 imageBase = 0;
+    const auto* function = RtlLookupFunctionEntry(pc, &imageBase, nullptr);
+    return function ? imageBase + function->BeginAddress : 0;
+}
+
 bool VirtualUnwind(_Unwind_Context& context, Frame& frame) {
     const Word pc = context.registers[16];
     const Byte* base = nullptr;
@@ -384,6 +390,8 @@ bool VirtualUnwind(_Unwind_Context& context, Frame& frame) {
     caller.signalFrame = false;
     context.cfa = caller.registers[7];
     context.region = frame.start;
+    context.regionEnd = imageBase + function->EndAddress;
+    context.segment = imageBase;
     context.lsda = frame.lsda;
     context.personality = frame.personality;
     context.textBase = imageBase;
@@ -1018,8 +1026,12 @@ _Unwind_Ptr APS5_VABI _Unwind_FindEnclosingFunction_nid_postfix(void* pc) {
     _Unwind_Context context {};
     context.registers[16] = reinterpret_cast<std::uintptr_t>(pc);
     LibcUnwind::Frame frame {};
-    if (!LibcUnwind::DecodeFrame(context, frame)) return 0;
-    return frame.start;
+    if (LibcUnwind::DecodeFrame(context, frame)) return frame.start;
+#ifdef _WIN32
+    return LibcUnwind::NativeFunctionStart(context.registers[16] - 1);
+#else
+    return 0;
+#endif
 }
 
 _Unwind_Reason_Code APS5_VABI _Unwind_ForcedUnwind_nid_postfix(_Unwind_Exception* exception, _Unwind_Stop_Fn stop, void* argument) {

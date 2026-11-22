@@ -501,8 +501,12 @@ void APS5_VABI sceNpWebApiCheckTimeout() {
     }
 }
 
-int APS5_VABI sceNpWebApiClearAllUnusedConnection() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpWebApiClearAllUnusedConnection(int titleUserCtxId, bool keep) {
+    std::lock_guard lock(contextsMutex);
+    const auto lookup = findUserContext(titleUserCtxId);
+    if (lookup.error != 0) return lookup.error;
+    (void)keep;
+    return 0;
 }
 
 int APS5_VABI sceNpWebApiClearUnusedConnection(int titleUserCtxId, const void* target, bool keep) {
@@ -510,7 +514,8 @@ int APS5_VABI sceNpWebApiClearUnusedConnection(int titleUserCtxId, const void* t
     std::lock_guard lock(contextsMutex);
     const auto lookup = findUserContext(titleUserCtxId);
     if (lookup.error != 0) return lookup.error;
-    NotImplemented_nid_no_patch(__func__);
+    (void)keep;
+    return 0;
 }
 
 int APS5_VABI sceNpWebApiCreateMultipartRequest(int titleUserCtxId, const char* apiGroup, const char* path, int method, std::int64_t* requestId) {

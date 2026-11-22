@@ -3,6 +3,7 @@
 #include "prx/libSceSystemLogger2/include/InventoryExports.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <cerrno>
 #include <chrono>
@@ -155,7 +156,9 @@ int APS5_VABI sceSystemLogger2GetTimestamp(SceSystemLogger2Timestamp* timestamp)
     value.tick = currentNetworkTick() / 1000000ull * 1000000ull;
     std::memcpy(value.clockSource, "secureClock", sizeof("secureClock"));
     const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(timestamp, &value, sizeof(value));
+    const GuestArena::HostWrite guard(timestamp, sizeof(value));
+    const bool copied = guard.Open() && GuestWritable_nid_no_patch(timestamp, sizeof(value)) &&
+        GuestCopyOut_nid_no_patch(timestamp, &value, sizeof(value));
     errno = savedErrno;
     if (!copied) return INVALID_ARGUMENT;
     return 0;
