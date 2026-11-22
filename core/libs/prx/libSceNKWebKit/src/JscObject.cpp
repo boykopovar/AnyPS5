@@ -1686,11 +1686,9 @@ JSValueRef APS5_VABI JSObjectCallAsFunction(JSContextRef ctx, JSObjectRef object
     JSValue res = JS_Call(mutCtx->qctx, object->qval, thisVal, static_cast<int>(argumentCount), args.empty() ? nullptr : args.data());
     if (JS_IsException(res)) {
         CapturePendingException(mutCtx, exception);
-        mutCtx->group->DrainMicrotasks(mutCtx);
         return nullptr;
     }
     OpaqueJSValue* handle = mutCtx->group->ToHandle(mutCtx, res);
-    mutCtx->group->DrainMicrotasks(mutCtx);
     return handle;
 }
 
@@ -1716,11 +1714,9 @@ JSObjectRef APS5_VABI JSObjectCallAsConstructor(JSContextRef ctx, JSObjectRef ob
     JSValue res = JS_CallConstructor(mutCtx->qctx, object->qval, static_cast<int>(argumentCount), args.empty() ? nullptr : args.data());
     if (JS_IsException(res)) {
         CapturePendingException(mutCtx, exception);
-        mutCtx->group->DrainMicrotasks(mutCtx);
         return nullptr;
     }
     OpaqueJSValue* handle = mutCtx->group->ToHandle(mutCtx, res);
-    mutCtx->group->DrainMicrotasks(mutCtx);
     return handle;
 }
 

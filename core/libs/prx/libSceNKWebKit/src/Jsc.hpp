@@ -139,7 +139,7 @@ struct OpaqueJSContextGroup {
     CallbackObjectData* FindCallbackDataByPtr(void* ptr) const;
     void NotifyObjectFinalized(void* ptr, OpaqueJSValue* handle);
     void CollectGarbage();
-    void DrainMicrotasks(OpaqueJSContext* ctx);
+    void DrainMicrotasks();
     void RefreshDeadline();
     void EnterVm();
     void ExitVm();
