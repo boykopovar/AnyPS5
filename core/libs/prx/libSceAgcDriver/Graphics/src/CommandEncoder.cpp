@@ -379,6 +379,7 @@ void install(DeviceFunctions& table) {
     APS5_CUSTOM(cmdPushConstants, pushConstants);
     APS5_PLAIN(cmdDispatch);
     APS5_PLAIN(cmdDispatchIndirect);
+    APS5_PLAIN(cmdDispatchBase);
     APS5_CUSTOM(cmdBeginRenderPass, beginRenderPass);
     APS5_PLAIN(cmdEndRenderPass);
     APS5_CUSTOM(cmdBeginRendering, beginRendering);
@@ -391,6 +392,7 @@ void install(DeviceFunctions& table) {
     APS5_PLAIN(cmdSetCullMode);
     APS5_PLAIN(cmdSetFrontFace);
     APS5_PLAIN(cmdSetDepthTestEnable);
+    APS5_PLAIN(cmdSetDepthBiasEnable);
     APS5_PLAIN(cmdSetDepthWriteEnable);
     APS5_PLAIN(cmdSetDepthCompareOp);
     APS5_PLAIN(cmdSetDepthBoundsTestEnable);
