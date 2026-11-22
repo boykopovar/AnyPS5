@@ -1276,13 +1276,11 @@ JSObjectRef APS5_VABI JSObjectMakeArray(JSContextRef ctx, std::size_t argumentCo
 JSObjectRef APS5_VABI JSObjectMakeDate(JSContextRef ctx, std::size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception) {
     if (!ctx) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
-    JSValue dateCtor = JS_GetPropertyStr(mutCtx->qctx, mutCtx->globalObject->qval, "Date");
     std::vector<JSValueConst> args(argumentCount);
     for (std::size_t i = 0; i < argumentCount; ++i) {
         args[i] = ArgumentValue(arguments, i);
     }
-    JSValue dateObj = JS_CallConstructor(mutCtx->qctx, dateCtor, static_cast<int>(argumentCount), args.empty() ? nullptr : args.data());
-    JS_FreeValue(mutCtx->qctx, dateCtor);
+    JSValue dateObj = JS_CallConstructor(mutCtx->qctx, mutCtx->dateConstructor, static_cast<int>(argumentCount), args.empty() ? nullptr : args.data());
     if (JS_IsException(dateObj)) {
         CapturePendingException(mutCtx, exception);
         return nullptr;
@@ -1293,13 +1291,11 @@ JSObjectRef APS5_VABI JSObjectMakeDate(JSContextRef ctx, std::size_t argumentCou
 JSObjectRef APS5_VABI JSObjectMakeError(JSContextRef ctx, std::size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception) {
     if (!ctx) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
-    JSValue errCtor = JS_GetPropertyStr(mutCtx->qctx, mutCtx->globalObject->qval, "Error");
     std::vector<JSValueConst> args(argumentCount);
     for (std::size_t i = 0; i < argumentCount; ++i) {
         args[i] = ArgumentValue(arguments, i);
     }
-    JSValue errObj = JS_CallConstructor(mutCtx->qctx, errCtor, static_cast<int>(argumentCount), args.empty() ? nullptr : args.data());
-    JS_FreeValue(mutCtx->qctx, errCtor);
+    JSValue errObj = JS_CallConstructor(mutCtx->qctx, mutCtx->errorConstructor, static_cast<int>(argumentCount), args.empty() ? nullptr : args.data());
     if (JS_IsException(errObj)) {
         CapturePendingException(mutCtx, exception);
         return nullptr;
@@ -1310,13 +1306,11 @@ JSObjectRef APS5_VABI JSObjectMakeError(JSContextRef ctx, std::size_t argumentCo
 JSObjectRef APS5_VABI JSObjectMakeRegExp(JSContextRef ctx, std::size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception) {
     if (!ctx) return nullptr;
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
-    JSValue regExpCtor = JS_GetPropertyStr(mutCtx->qctx, mutCtx->globalObject->qval, "RegExp");
     std::vector<JSValueConst> args(argumentCount);
     for (std::size_t i = 0; i < argumentCount; ++i) {
         args[i] = ArgumentValue(arguments, i);
     }
-    JSValue regExpObj = JS_CallConstructor(mutCtx->qctx, regExpCtor, static_cast<int>(argumentCount), args.empty() ? nullptr : args.data());
-    JS_FreeValue(mutCtx->qctx, regExpCtor);
+    JSValue regExpObj = JS_CallConstructor(mutCtx->qctx, mutCtx->regExpConstructor, static_cast<int>(argumentCount), args.empty() ? nullptr : args.data());
     if (JS_IsException(regExpObj)) {
         CapturePendingException(mutCtx, exception);
         return nullptr;
