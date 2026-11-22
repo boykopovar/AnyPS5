@@ -107,3 +107,4 @@
 #include "prx/libSceNKWebKit/include/BasicFilterOperationExports.hpp"
 #include "prx/libSceNKWebKit/include/MarkingConstraintExports.hpp"
 #include "prx/libSceNKWebKit/include/EmptyLoaderLegacyCallbackExports.hpp"
+#include "prx/libSceNKWebKit/include/SQLiteExports.hpp"
