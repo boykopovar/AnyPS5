@@ -1,6 +1,6 @@
 [English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md) | **Français** | [Català](README.ca.md) | [Italiano](README.it.md) | [简体中文](README.zh-CN.md) | [Русский](README.ru.md) | [Bahasa Indonesia](README.id.md) | [Polski](README.pl.md) | [日本語](README.ja.md) | [العربية](README.ar.md) | [Ελληνικά](README.el.md) | [Türkçe](README.tr.md)
 
-# A propos
+# À propos
 
 Outil pour le portage automatique des exécutables vers Linux et Windows.
 
