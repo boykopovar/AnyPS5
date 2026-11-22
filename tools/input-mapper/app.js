@@ -1,4 +1,4 @@
-import {actions, actionsForInput, chordButtons, defaults, groups, inputFilename, mouseValues, typesForAction, wheelValues} from './mapping.js';
+import {actions, actionsForInput, chordButtons, defaults, groups, inputFilename, inputTitleId, mouseValues, typesForAction, wheelValues} from './mapping.js';
 import {exportableKeys} from './keys.js';
 import {captureKey} from './capture.js';
 import {parseIni, serialize, validate} from './validation.js';
@@ -76,7 +76,9 @@ function renderHelp() {
 function renderImportReport() {
     if (!importReport) return;
     const report = byId('import-report');
-    report.replaceChildren(element('h2', t(importReport.errors.length ? 'importRejected' : 'importRead')));
+    const heading = element('h2', t(importReport.errors.length ? 'importRejected' : 'importRead'));
+    heading.id = 'import-report-title';
+    report.replaceChildren(heading);
     const messages = [...importReport.errors, ...importReport.warnings];
     if (messages.length) {
         const list = element('ul');
@@ -447,6 +449,8 @@ byId('file').addEventListener('change', async event => {
         if (!await confirmReplacement() || request !== replacementRequest) return;
         importReport = result;
         renderImportReport();
+        const titleId = inputTitleId(file.name);
+        if (titleId !== undefined) byId('profile-title-id').value = titleId;
         entries = result.entries;
         settings = result.settings;
         controllerRemaps = result.controllerRemaps;

@@ -176,6 +176,17 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(laid["bars"][0]["ms"], 6.0)
         self.assertEqual(laid["left_out"], 2)
 
+    def test_layout_preserves_tied_slice_order_at_the_limit(self):
+        items = [complete(1, f"slice {index}", index * 100, duration)
+                 for index, duration in enumerate((2000, 5000, 3000, 5000, 3000, 5000))]
+        slices = trace_timeline_slices(items)
+        for limit in (0, 1, 2, 3, 4, 6, 8):
+            with self.subTest(limit=limit):
+                laid = trace_timeline.layout(slices, 0, 10000, 1000, max_slices=limit)
+                expected = sorted(slices, key=lambda entry: -entry["dur"])[:limit]
+                self.assertEqual([bar["name"] for bar in laid["bars"]], [entry["name"] for entry in expected])
+                self.assertEqual(laid["left_out"], len(slices) - len(expected))
+
     def test_svg_escapes_slice_names(self):
         laid = trace_timeline.layout(trace_timeline_slices([complete(1, "<script>", 0, 1000)]), 0, 2000, 1000)
         text = trace_timeline.svg(laid)

@@ -28,6 +28,39 @@ PYTHON = probe_command()
 
 
 class ReportTests(unittest.TestCase):
+    def test_oversized_ctest_listing_retains_incomplete_report(self):
+        for value in (10 ** 400, -(10 ** 400)):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                source, output = root / "source", root / "evidence"
+                source.mkdir()
+                arguments = ["--baseline", str(source), "a" * 40, "--candidate", str(source), "a" * 40,
+                             "--output", str(output), "--target", "fixture", "--tests", ".*", "--gpu", "fixture"]
+
+                def run(command, log, environment, timeout):
+                    if command[0] == "ctest":
+                        log.write_text(json.dumps({"tests": [{"name": "probe", "properties": [
+                            {"name": "TIMEOUT", "value": value}]}]}), encoding="utf-8")
+                    return 0
+
+                with unittest.mock.patch.object(gate, "identity", return_value={}), \
+                        unittest.mock.patch.object(gate, "cache_values", return_value={"CMAKE_HOME_DIRECTORY": str(source)}), \
+                        unittest.mock.patch.object(gate, "run", side_effect=run) as execute, \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(gate.main(arguments), 2)
+                saved = json.loads((output / "report.json").read_text(encoding="utf-8"))
+                self.assertEqual(saved["status"], "incomplete")
+                self.assertEqual(saved["exit_code"], 2)
+                self.assertIn("probe: TIMEOUT", saved["error"])
+                self.assertEqual(saved["iterations"], [])
+                self.assertEqual(execute.call_count, 3)
+                self.assertEqual(execute.call_args.args[0][-1], "--show-only=json-v1")
+
+    def test_oversized_timeouts_are_configuration_errors(self):
+        for value in (10 ** 400, -(10 ** 400)):
+            with self.subTest(value=value), self.assertRaisesRegex(gate.GateError, "probe: TIMEOUT"):
+                gate.check_timeouts([{"name": "probe", "properties": [{"name": "TIMEOUT", "value": value}]}], 1)
+
     def test_effective_timeouts_cannot_override_the_requested_limit(self):
         for value in (0, 2, -1, float("inf"), float("nan"), "1", True):
             with self.subTest(value=value), self.assertRaisesRegex(gate.GateError, "probe: TIMEOUT"):

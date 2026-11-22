@@ -218,6 +218,22 @@ test('cancelling replacement keeps the previous import report hidden and preserv
     assert.equal(app.get('preview').value, '');
 });
 
+test('the import report is named by its translated heading', async t => {
+    const app = await setup(t, 'report-name');
+    const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+    const section = /<section\b[^>]*\bid="import-report"[^>]*>/u.exec(html)[0];
+    assert.doesNotMatch(section, /\saria-label=/u);
+    const labelledBy = /\saria-labelledby="([^"]+)"/u.exec(section)?.[1];
+    assert.ok(labelledBy);
+    for (const [text, heading] of [['NotAnAction = KEY:Space\n', 'Import rejected'], ['Cross = KEY:Space\n', 'Import read successfully']]) {
+        await app.importFile('report.ini', text);
+        const title = app.get('import-report').children[0];
+        assert.equal(title.tagName, 'H2');
+        assert.equal(title.textContent, heading);
+        assert.equal(title.id, labelledBy);
+    }
+});
+
 test('cancelling replacement preserves an earlier import report until replacement is confirmed', async t => {
     const app = await setup(t, 'cancel-existing');
     app.get('mappings').querySelector('.add-binding').click();
@@ -238,6 +254,31 @@ test('cancelling replacement preserves an earlier import report until replacemen
     assert.equal(app.dialogOpens(), 2);
     assert.equal(app.get('import-report').children[0].textContent, 'Import read successfully');
     assert.equal(app.get('preview').value, 'Cross = KEY:Space\n');
+});
+
+test('successful imports use the destination from a recognized profile filename', async t => {
+    const app = await setup(t, 'import-profile');
+    const titleId = app.get('profile-title-id');
+    const preview = app.get('preview-name');
+    const binding = 'Cross = KEY:X\n';
+    await app.importFile('anyps5-input.PPSA00001.ini', binding);
+    assert.equal(titleId.value, 'PPSA00001');
+    assert.equal(preview.textContent, 'anyps5-input.PPSA00001.ini');
+
+    await app.importFile('anyps5-input.PPSA00002.ini', 'Cross = invalid\n');
+    assert.equal(titleId.value, 'PPSA00001');
+    await app.importFile('anyps5-input.PPSA00003.backup.ini', binding);
+    assert.equal(titleId.value, 'PPSA00001');
+
+    app.get('mappings').querySelector('.add-binding').click();
+    await app.importFile('anyps5-input.PPSA00004.ini', binding);
+    assert.equal(app.dialogOpens(), 1);
+    assert.equal(titleId.value, 'PPSA00001');
+
+    app.setDialogDecision('discard');
+    await app.importFile('anyps5-input.ini', binding);
+    assert.equal(titleId.value, '');
+    assert.equal(preview.textContent, 'anyps5-input.ini');
 });
 
 test('replacing a built-in search result keeps the new binding reachable until it has a value', async t => {
