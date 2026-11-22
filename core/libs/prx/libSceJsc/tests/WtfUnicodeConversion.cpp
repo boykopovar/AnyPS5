@@ -8,6 +8,13 @@
 #include <stdexcept>
 #include <string>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 using Jsc::WtfAbi::ConversionResult;
 
 namespace {
@@ -256,6 +263,143 @@ void TestLatin1ToUtf8() {
     Check(Throws<std::invalid_argument>([&] { _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(&source, input + 5, nullptr, buffer + 16); }), __LINE__);
 }
 
+void SetPageProtection(void* address, std::size_t size, bool readable, bool writable) {
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    const DWORD protect = !readable ? PAGE_NOACCESS : (writable ? PAGE_READWRITE : PAGE_READONLY);
+    Check(VirtualProtect(address, size, protect, &oldProtect) != 0, __LINE__);
+#else
+    const int prot = !readable ? PROT_NONE : (writable ? (PROT_READ | PROT_WRITE) : PROT_READ);
+    Check(mprotect(address, size, prot) == 0, __LINE__);
+#endif
+}
+
+struct GuardedPages {
+    std::size_t pageSize = 0;
+    void* unmapped = nullptr;
+    void* readOnly = nullptr;
+    void* boundary = nullptr;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        unmapped = VirtualAlloc(nullptr, pageSize, MEM_RESERVE, PAGE_NOACCESS);
+        Check(unmapped != nullptr, __LINE__);
+        readOnly = VirtualAlloc(nullptr, pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Check(readOnly != nullptr, __LINE__);
+        std::memset(readOnly, 0, pageSize);
+        boundary = VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Check(boundary != nullptr, __LINE__);
+        std::memset(boundary, 0, pageSize * 2);
+        SetPageProtection(static_cast<std::byte*>(boundary) + pageSize, pageSize, false, false);
+#else
+        pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        unmapped = mmap(nullptr, pageSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Check(unmapped != MAP_FAILED, __LINE__);
+        readOnly = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Check(readOnly != MAP_FAILED, __LINE__);
+        std::memset(readOnly, 0, pageSize);
+        boundary = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Check(boundary != MAP_FAILED, __LINE__);
+        std::memset(boundary, 0, pageSize * 2);
+        SetPageProtection(static_cast<std::byte*>(boundary) + pageSize, pageSize, false, false);
+#endif
+    }
+
+    ~GuardedPages() {
+#ifdef _WIN32
+        VirtualFree(unmapped, 0, MEM_RELEASE);
+        VirtualFree(readOnly, 0, MEM_RELEASE);
+        VirtualFree(boundary, 0, MEM_RELEASE);
+#else
+        munmap(unmapped, pageSize);
+        munmap(readOnly, pageSize);
+        munmap(boundary, pageSize * 2);
+#endif
+    }
+};
+
+void TestGuestPointers() {
+    GuardedPages pages;
+    const unsigned char latinInput[] = {'a', 0xE9};
+    const char16_t utf16Input[] = {u'a', u'\u00E9'};
+    const char utf8Input[] = "a\xC3\xA9";
+    char utf8Out[16]{};
+    char16_t utf16Out[16]{};
+
+    auto** badLatinCursor = static_cast<const unsigned char**>(pages.unmapped);
+    auto** badUtf16Cursor = static_cast<const char16_t**>(pages.unmapped);
+    auto** badCharTargetCursor = static_cast<char**>(pages.unmapped);
+    auto** badUtf16TargetCursor = static_cast<char16_t**>(pages.unmapped);
+    auto* badBool = static_cast<bool*>(pages.unmapped);
+
+    const unsigned char* latinSrc = latinInput;
+    const char16_t* utf16Src = utf16Input;
+    char* charDst = utf8Out;
+    char16_t* utf16Dst = utf16Out;
+    bool allAscii = false;
+
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(badLatinCursor, latinInput + 2, &charDst, utf8Out + 16); }), __LINE__);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(&latinSrc, latinInput + 2, badCharTargetCursor, utf8Out + 16); }), __LINE__);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(badUtf16Cursor, utf16Input + 2, &charDst, utf8Out + 16, true); }), __LINE__);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&utf16Src, utf16Input + 2, badCharTargetCursor, utf8Out + 16, true); }), __LINE__);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb(utf8Input, utf8Input + 3, badUtf16TargetCursor, utf16Out + 16, &allAscii); }), __LINE__);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb(utf8Input, utf8Input + 3, &utf16Dst, utf16Out + 16, badBool); }), __LINE__);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode43convertUTF8ToUTF16ReplacingInvalidSequencesEPKcS2_PPDsS3_Pb(utf8Input, utf8Input + 3, badUtf16TargetCursor, utf16Out + 16, &allAscii); }), __LINE__);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode43convertUTF8ToUTF16ReplacingInvalidSequencesEPKcS2_PPDsS3_Pb(utf8Input, utf8Input + 3, &utf16Dst, utf16Out + 16, badBool); }), __LINE__);
+
+    SetPageProtection(pages.readOnly, pages.pageSize, true, true);
+    auto** roLatinCursor = static_cast<const unsigned char**>(pages.readOnly);
+    *roLatinCursor = latinInput;
+    auto** roUtf16Cursor = reinterpret_cast<const char16_t**>(static_cast<std::byte*>(pages.readOnly) + 16);
+    *roUtf16Cursor = utf16Input;
+    auto** roCharTargetCursor = reinterpret_cast<char**>(static_cast<std::byte*>(pages.readOnly) + 32);
+    *roCharTargetCursor = utf8Out;
+    auto** roUtf16TargetCursor = reinterpret_cast<char16_t**>(static_cast<std::byte*>(pages.readOnly) + 48);
+    *roUtf16TargetCursor = utf16Out;
+    auto* roBool = reinterpret_cast<bool*>(static_cast<std::byte*>(pages.readOnly) + 64);
+    *roBool = false;
+    auto* roCharOut = reinterpret_cast<char*>(static_cast<std::byte*>(pages.readOnly) + 128);
+    auto* roUtf16Out = reinterpret_cast<char16_t*>(static_cast<std::byte*>(pages.readOnly) + 256);
+    SetPageProtection(pages.readOnly, pages.pageSize, true, false);
+
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(roLatinCursor, latinInput + 2, &charDst, utf8Out + 16); }), __LINE__);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(&latinSrc, latinInput + 2, roCharTargetCursor, utf8Out + 16); }), __LINE__);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(roUtf16Cursor, utf16Input + 2, &charDst, utf8Out + 16, true); }), __LINE__);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&utf16Src, utf16Input + 2, roCharTargetCursor, utf8Out + 16, true); }), __LINE__);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb(utf8Input, utf8Input + 3, roUtf16TargetCursor, utf16Out + 16, &allAscii); }), __LINE__);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb(utf8Input, utf8Input + 3, &utf16Dst, utf16Out + 16, roBool); }), __LINE__);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode43convertUTF8ToUTF16ReplacingInvalidSequencesEPKcS2_PPDsS3_Pb(utf8Input, utf8Input + 3, &utf16Dst, utf16Out + 16, roBool); }), __LINE__);
+
+    charDst = roCharOut;
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(&latinSrc, latinInput + 2, &charDst, roCharOut + 16); }), __LINE__);
+    Check(latinSrc == latinInput && charDst == roCharOut, __LINE__);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&utf16Src, utf16Input + 2, &charDst, roCharOut + 16, true); }), __LINE__);
+    Check(utf16Src == utf16Input && charDst == roCharOut, __LINE__);
+    utf16Dst = roUtf16Out;
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb(utf8Input, utf8Input + 3, &utf16Dst, roUtf16Out + 16, &allAscii); }), __LINE__);
+    Check(utf16Dst == roUtf16Out, __LINE__);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode43convertUTF8ToUTF16ReplacingInvalidSequencesEPKcS2_PPDsS3_Pb(utf8Input, utf8Input + 3, &utf16Dst, roUtf16Out + 16, &allAscii); }), __LINE__);
+    Check(utf16Dst == roUtf16Out, __LINE__);
+
+    auto* boundaryBytes = static_cast<unsigned char*>(pages.boundary) + pages.pageSize - 2;
+    boundaryBytes[0] = 'a';
+    boundaryBytes[1] = 'b';
+    const unsigned char* partialLatin = boundaryBytes;
+    charDst = utf8Out;
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(&partialLatin, boundaryBytes + 4, &charDst, utf8Out + 16); }), __LINE__);
+    Check(partialLatin == boundaryBytes && charDst == utf8Out, __LINE__);
+
+    auto* partialUtf16 = reinterpret_cast<const char16_t*>(static_cast<std::byte*>(pages.boundary) + pages.pageSize - 2);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&partialUtf16, partialUtf16 + 2, &charDst, utf8Out + 16, true); }), __LINE__);
+    utf16Dst = utf16Out;
+    auto* partialUtf8 = reinterpret_cast<const char*>(boundaryBytes);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb(partialUtf8, partialUtf8 + 4, &utf16Dst, utf16Out + 16, &allAscii); }), __LINE__);
+    Check(Throws<std::exception>([&] { _ZN3WTF7Unicode43convertUTF8ToUTF16ReplacingInvalidSequencesEPKcS2_PPDsS3_Pb(partialUtf8, partialUtf8 + 4, &utf16Dst, utf16Out + 16, &allAscii); }), __LINE__);
+}
+
 }
 
 int main() {
@@ -263,5 +407,6 @@ int main() {
     TestUtf16ToUtf8();
     TestUtf16ToUtf8SurrogateResume();
     TestLatin1ToUtf8();
+    TestGuestPointers();
     return 0;
 }
