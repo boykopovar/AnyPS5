@@ -468,10 +468,11 @@ class MainTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         sleep_mock.assert_called_once_with(0.01)
 
-    def test_gh_retries_broken_responses_and_windows_connection_timeouts(self):
+    def test_gh_retries_broken_responses_and_connection_timeouts(self):
         for message in ("stream error: stream ID 1; CANCEL; received from peer", "unexpected EOF",
                         "connectex: A connection attempt failed because the connected party "
-                        "did not properly respond after a period of time"):
+                        "did not properly respond after a period of time",
+                        'Post "https://api.github.com/graphql": dial tcp 192.0.2.1:443: i/o timeout'):
             with self.subTest(message=message):
                 failed = subprocess.CompletedProcess([], 1, stdout="", stderr=message)
                 success = subprocess.CompletedProcess([], 0, stdout="success\n", stderr="")
