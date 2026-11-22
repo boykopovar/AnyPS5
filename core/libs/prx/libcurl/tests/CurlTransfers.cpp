@@ -10,6 +10,7 @@
 #endif
 #include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libcurl/libcurl.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
@@ -322,6 +323,100 @@ static std::vector<std::string> SplitMultipartParts(const std::string& httpBody,
     return parts;
 }
 
+static void WriteGuestFile(const std::string& path, const std::string& text) {
+    auto* file = fopen_nid_postfix(path.c_str(), "wb");
+    Require(file != nullptr);
+    Require(fwrite_nid_postfix(text.data(), 1, text.size(), file) == text.size());
+    Require(fclose_nid_postfix(file) == 0);
+}
+
+static std::string ReadGuestFile(const std::string& path) {
+    auto* file = fopen_nid_postfix(path.c_str(), "rb");
+    if (file == nullptr) return {};
+    std::string text;
+    char buffer[256];
+    while (const auto count = fread_nid_postfix(buffer, 1, sizeof(buffer), file)) text.append(buffer, count);
+    Require(fclose_nid_postfix(file) == 0);
+    return text;
+}
+
+static CURLcode PerformTlsWithCaFile(const std::string& caFile) {
+    auto* easy = curl_easy_init_nid_postfix();
+    Require(easy != nullptr);
+    Server server;
+    const std::string url = "https://127.0.0.1:" + std::to_string(server.port) + "/";
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_URL, url.c_str()) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_NOPROXY, "*") == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_CAINFO, caFile.c_str()) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_TIMEOUT_MS, static_cast<std::int64_t>(500)) == CURLE_OK);
+    const auto result = static_cast<CURLcode>(curl_easy_perform_nid_postfix(easy));
+    curl_easy_cleanup_nid_postfix(easy);
+    return result;
+}
+
+static void TestGuestFileOptions() {
+    const std::string directory = "/anyps5-curl-files-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    Require(mkdir_nid_postfix(directory.c_str(), 0755) == 0);
+    const std::string cookies = directory + "/cookies.txt";
+    const std::string netrc = directory + "/netrc";
+    const std::string jar = directory + "/jar.txt";
+    const std::string ca = directory + "/ca.pem";
+    WriteGuestFile(cookies, "127.0.0.1\tFALSE\t/\tFALSE\t0\tguest\tcookie\n");
+    WriteGuestFile(netrc, "machine 127.0.0.1 login guest password secret\n");
+    WriteGuestFile(ca,
+        "-----BEGIN CERTIFICATE-----\n"
+        "MIIBjDCCATOgAwIBAgIUJTITjGabd7w+NEvUhe6a72xPtSQwCgYIKoZIzj0EAwIw\n"
+        "GzEZMBcGA1UEAwwQYW55cHM1LWN1cmwtdGVzdDAgFw0yNjExMjAyMDM5MDZaGA8y\n"
+        "MTI2MTAyNzIwMzkwNlowGzEZMBcGA1UEAwwQYW55cHM1LWN1cmwtdGVzdDBZMBMG\n"
+        "ByqGSM49AgEGCCqGSM49AwEHA0IABDr+cTAWtUCNcXKv290JZBGDYv2yux/VNEVu\n"
+        "MMqJbYeVH8+TAU8XTI4CK2genbyM8CBDwd+DXKxhwgxHhtT9ulWjUzBRMB0GA1Ud\n"
+        "DgQWBBRAKdeiE2w3h4+DwCZ4hSoxFqazIjAfBgNVHSMEGDAWgBRAKdeiE2w3h4+D\n"
+        "wCZ4hSoxFqazIjAPBgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIBA5\n"
+        "l4vQXZ+bne6vDMVWtFscwgmhm6PSGzs4R16mgUUaAiATobfFR+KRSzNwnyp82urt\n"
+        "DJ+4B2KsL1vGfpZv9qJJ0Q==\n"
+        "-----END CERTIFICATE-----\n");
+
+    {
+        auto* easy = curl_easy_init_nid_postfix();
+        Require(easy != nullptr);
+        Server server;
+        const std::string url = "http://127.0.0.1:" + std::to_string(server.port) + "/";
+        std::string responseBody;
+        Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_URL, url.c_str()) == CURLE_OK);
+        Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_NOPROXY, "*") == CURLE_OK);
+        Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_HTTP_VERSION, static_cast<std::int64_t>(CURL_HTTP_VERSION_1_0)) == CURLE_OK);
+        Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_TIMEOUT, static_cast<std::int64_t>(10)) == CURLE_OK);
+        Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_COOKIEFILE, cookies.c_str()) == CURLE_OK);
+        Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_NETRC, static_cast<std::int64_t>(CURL_NETRC_REQUIRED)) == CURLE_OK);
+        Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_NETRC_FILE, netrc.c_str()) == CURLE_OK);
+        Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_WRITEFUNCTION, Write) == CURLE_OK);
+        Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_WRITEDATA, &responseBody) == CURLE_OK);
+        Require(curl_easy_perform_nid_postfix(easy) == CURLE_OK);
+        curl_easy_cleanup_nid_postfix(easy);
+        const std::string& request = server.Request();
+        const auto headers = SplitLinesCrlf(request.substr(0, request.find("\r\n\r\n")));
+        Require(HasExactHeader(headers, "Cookie: guest=cookie"));
+        Require(HasExactHeader(headers, "Authorization: Basic Z3Vlc3Q6c2VjcmV0"));
+    }
+
+    {
+        auto* easy = curl_easy_init_nid_postfix();
+        Require(easy != nullptr);
+        Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_COOKIEJAR, jar.c_str()) == CURLE_OK);
+        Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_COOKIELIST, "127.0.0.1\tFALSE\t/\tFALSE\t0\tjar\tvalue") == CURLE_OK);
+        Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_COOKIELIST, "FLUSH") == CURLE_OK);
+        Require(ReadGuestFile(jar).find("127.0.0.1\tFALSE\t/\tFALSE\t0\tjar\tvalue") != std::string::npos);
+        curl_easy_cleanup_nid_postfix(easy);
+    }
+
+    Require(PerformTlsWithCaFile(directory + "/missing.pem") == CURLE_SSL_CACERT_BADFILE);
+    const auto trusted = PerformTlsWithCaFile(ca);
+    Require(trusted != CURLE_OK && trusted != CURLE_SSL_CACERT_BADFILE);
+
+    for (const auto& file : {cookies, netrc, jar, ca}) Require(remove_nid_postfix(file.c_str()) == 0);
+    Require(rmdir_nid_postfix(directory.c_str()) == 0);
+}
+
 static std::string MakeBinaryPayload(std::size_t length, unsigned char seed) {
     std::string bytes;
     bytes.reserve(length);
@@ -510,6 +605,7 @@ int main() {
     }
     auto url = FileUrl(path);
     TestHstsThroughDuplicates(url);
+    TestGuestFileOptions();
     auto* easy = curl_easy_init_nid_postfix();
     Require(easy);
     std::string output;
