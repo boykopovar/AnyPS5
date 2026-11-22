@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [Multisampled stencil shadow copies]
+
+- [Multisampled stencil shadow copies](../../../core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp) (libSceAgcDriver) - an image-to-image copy of a multisampled stencil-bearing depth image can lose the stencil plane on some hosts without the format's feature bits saying so. Whether a copy carries stencil is probed once per (host format, sample count) on a scratch image, whose destination is cleared to a stencil value outside the probe's pattern first, before the shadow is first used; a failing probe keeps attachment rendering with direct depth and stencil sampling instead of the shadow, and a stencil clear falls back to a render pass over the depth image's stencil aspect. Intel UHD Graphics 630 (#16883) and UHD Graphics `8086:a7a8` (driver 101.7084) on Windows drop the stencil plane of a multisampled D32S8 copy; NVIDIA RTX 3070 (driver 617.42) keeps it. Other vendors, formats and sample counts are unmeasured, and whether the console copy has an analogue is not measured.
