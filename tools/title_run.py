@@ -159,7 +159,7 @@ def warning_counts(text):
 
 def read_summary(path):
     lines = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if path.is_file() else []:
+    for line in path.read_text(encoding="utf-8", errors="replace").split("\n") if path.is_file() else []:
         try:
             decoded = json.loads(line)
         except ValueError:
@@ -557,7 +557,8 @@ def is_module(path):
 
 
 def stage_inputs(package, entry, source):
-    (source / "sce_module").mkdir(parents=True)
+    if not (package / "sce_modules").is_dir():
+        (source / "sce_module").mkdir(parents=True)
     unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
     executables = [path for path in (package / "eboot.bin", *(package / name for name in entry.get("executables", []))) if path.is_file()]
     for directory in dict.fromkeys([*STANDARD_MODULE_DIRS, *module_dirs(entry)]):
@@ -1249,7 +1250,7 @@ def run_cli(argv, capture_resources):
     parser.add_argument("--runs", type=positive, help="runs per title (default: 2 smoke, 1 performance)")
     parser.add_argument("--seconds", type=positive, help="run length for every title (default: the title's, else 60)")
     parser.add_argument("--note", default="", help="free text for the report, e.g. 'main + #6814'")
-    parser.add_argument("--compare", type=Path, help="summary.json of an earlier run; the comparison uses the last run of each title in both")
+    parser.add_argument("--compare", type=Path, help="summary.json of an earlier smoke run; the comparison uses the last run of each title in both")
     parser.add_argument("--json", action="store_true", help="with --compare, print the comparison as JSON instead of the table")
     parser.add_argument("--titles", type=Path, default=ROOT / "tools/titles.json")
     parser.add_argument("--content", type=Path, help="directory holding the files that titles.json names with \"content\"")
@@ -1273,6 +1274,8 @@ def run_cli(argv, capture_resources):
         previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
     except (OSError, ValueError) as error:
         parser.error(f"--compare: {error}")
+    if isinstance(previous, dict) and previous.get("format") == "anyps5-performance-capture/1":
+        parser.error(f"--compare requires a smoke-run summary, got a performance capture summary: {args.compare}")
     platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
     try:
         titles = load_titles(args.titles)

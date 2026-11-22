@@ -271,6 +271,26 @@ void run() {
         same(*get(generated, ctx, 1 + i, input), BuildVertexInputLayout(ctx, input));
     }
     {
+        VertexInputCache zeros(ctx);
+        std::array input{attribute()};
+        input[0].resource.fields[3] |= 2u << 28u;
+        const auto original = get(zeros, ctx, 1901, input);
+        input[0].resource.fields[2] = 0;
+        const auto zero = get(zeros, ctx, 1901, input);
+        Require(VertexBufferReadSize(input[0], 0xffffffffu, 1) == 16 && VertexBufferExtent(input[0]) == 16, "a zero fetch was sized from a vertex index or guest address");
+        Require(zero->bindings[0].stride == 0 && zero->attributes[0].format == VK_FORMAT_R32G32B32A32_SFLOAT, "a strided zero fetch retained a stepping host binding");
+        Require(original->bindings[0].stride == 32, "a zero fetch mutated a retained vertex input layout");
+        input[0].resource.fields[2] = 128;
+        Require(get(zeros, ctx, 1901, input)->bindings[0].stride == 32, "returning to live records retained the zero binding");
+        input[0].resource.fields[3] = (74u << 12u) | (3u << 28u);
+        input[0].formatComponents = 3;
+        input[0].resource.fields[2] = 11;
+        const auto narrowZero = get(zeros, ctx, 1902, input);
+        Require(narrowZero->bindings[0].stride == 0 && narrowZero->attributes[0].format == VK_FORMAT_R32G32B32A32_SFLOAT, "a narrow zero fetch would acquire Vulkan's default W");
+        input[0].resource.fields[2] = 12;
+        Require(get(zeros, ctx, 1902, input)->attributes[0].format == VK_FORMAT_R32G32B32_SFLOAT, "a valid narrow fetch retained the zero format");
+    }
+    {
         VertexInputCache live(ctx);
         std::array input{attribute()};
         const auto stored = live.TryGet(100, input);

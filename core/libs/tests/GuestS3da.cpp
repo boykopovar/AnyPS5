@@ -4,7 +4,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <initializer_list>
+#include <latch>
 #include <string>
+#include <thread>
 
 #ifndef _WIN32
 extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* name) {
@@ -64,6 +66,24 @@ int main() {
     Require(sceS3daClose(1) == 0);
     Require(sceS3daOpen(0) == ERROR_ALREADY_OPEN);
     Require(sceS3daClose(0) == 0);
+
+    for (const std::uint32_t port : {0u, 1u}) {
+        std::latch start(2);
+        int workerResult = ERROR_INVALID_ARGUMENT;
+        std::jthread worker([&] {
+            start.arrive_and_wait();
+            workerResult = sceS3daOpen(port);
+        });
+        start.arrive_and_wait();
+        const int callerResult = sceS3daOpen(port);
+        worker.join();
+        const int success = static_cast<int>(port);
+        Require((callerResult == success && workerResult == ERROR_ALREADY_OPEN) ||
+                (workerResult == success && callerResult == ERROR_ALREADY_OPEN));
+        Require(sceS3daClose(port) == 0);
+        Require(sceS3daOpen(port) == success);
+        Require(sceS3daClose(port) == 0);
+    }
 
     for (const std::uint32_t port : {0u, 1u}) {
         Require(sceS3daSendData(port, nullptr, sizeof(dataBuffer)) == ERROR_INVALID_ARGUMENT);

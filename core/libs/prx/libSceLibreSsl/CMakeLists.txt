@@ -83,6 +83,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 
+    add_test_executable(guest_libressl_rsa_error_queue_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslRsaErrorQueue.cpp)
+    target_include_directories(guest_libressl_rsa_error_queue_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_rsa_error_queue_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_rsa_error_queue_tests)
+    add_test(NAME guest_libressl_rsa_error_queue COMMAND guest_libressl_rsa_error_queue_tests)
+    set_tests_properties(guest_libressl_rsa_error_queue PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_rsa_error_queue PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
     add_test_executable(guest_libressl_rsa_sign_errors_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslRsaSignErrors.cpp)
     target_include_directories(guest_libressl_rsa_sign_errors_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libressl_rsa_sign_errors_tests PRIVATE libSceLibreSsl libc)

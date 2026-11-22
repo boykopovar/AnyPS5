@@ -98,7 +98,8 @@ buffer did not, so the export still throws. A silent stub is allowed only when i
    disassembly for every executable segment and writes `<prefix>.asm`, `<prefix>.imports.txt` and
    `<prefix>.exports.txt`. It names each import call, PLT stub, GOT reference and export entry from the module's NIDs
    through the database of `tools/nid_names.py`, which is downloaded on first use unless `--db` names a CSV or
-   `--no-names` prints the NIDs instead. It needs binutils `objdump`.
+   `--no-names` prints the NIDs instead. Disassembly requires GNU binutils `objdump` with x86-64 support. On ARM Linux,
+   put `x86_64-linux-gnu-objdump` on `PATH` if the host `objdump` cannot disassemble x86-64.
 
    To name symbols in Ghidra without disassembling or downloading a database:
 

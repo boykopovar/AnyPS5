@@ -64,6 +64,23 @@ class GhidraSymbolsTests(unittest.TestCase):
         self.assertEqual(set(self.root.iterdir()), set(before))
         self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}, before)
 
+    def test_tlsdesc_plt_marks_only_file_backed_code_and_preserves_export_names(self):
+        source = self.root / "tlsdesc.prx"
+        database = self.root / "names.csv"
+        database.write_text(f"{nid(EXPORT_NAME)} {EXPORT_NAME}\n", encoding="utf-8")
+        for address, flags, expected in ((CODE_ADDRESS, 5, ["elf_tlsdesc_plt 0x1000 f"]),
+                                         (EXPORT_ADDRESS, 5, []), (DATA_ADDRESS, 5, []),
+                                         (CODE_ADDRESS + len(code_bytes()), 5, []), (CODE_ADDRESS, 4, [])):
+            with self.subTest(address=address, flags=flags):
+                source.write_bytes(append_dynamic_tags(build_module(code_flags=flags), [(0x6ffffef6, address),
+                                                                                         (0x6ffffef7, DATA_ADDRESS)]))
+                result = self.cli(source, "--db", database)
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                rows = result.stdout.splitlines()
+                self.assertEqual([row for row in rows if "tlsdesc" in row], expected)
+                if address == EXPORT_ADDRESS:
+                    self.assertIn(f"{EXPORT_NAME} {EXPORT_ADDRESS:#x} f", rows)
+
     def test_header_entry_point_without_symbols(self):
         source = self.root / "stripped.elf"
         for address, flags, file_size, expected in ((CODE_ADDRESS, 5, 12, ["elf_entry 0x1000 f"]),

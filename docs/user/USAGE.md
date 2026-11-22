@@ -10,6 +10,8 @@ The online converter can save Linux output as an uncompressed folder in supporte
 
 Select or drop multiple app ZIP archives to convert them into one ZIP bundle. The converter inspects each app separately and puts its executable, libraries and `app0/` files in a numbered folder, so archives with the same filename remain separate. Batch output uses ZIP mode; saving to an uncompressed folder remains available for one Linux app at a time. The 256 MiB memory-download limit applies to the whole bundle, so use **Save ZIP to disk** for larger batches. If a batch is cancelled or any app fails, the converter aborts the incomplete bundle; any cleanup failure is reported instead of offering it as a completed result.
 
+For **Save ZIP to disk**, Cancel is available until the browser starts committing the completed ZIP.
+
 ## Verify a release download
 
 Download the file from the [official AnyPS5 releases](https://github.com/boykopovar/AnyPS5/releases). Under **Assets** for that release, copy the `sha256:` digest next to the exact file name. If the file downloaded successfully, calculate its SHA-256 hash before opening it:
@@ -780,6 +782,7 @@ ANYPS5_LOG_FILE=run.log ./app.elf
 `python3 tools/bug_report.py` gathers what a bug report needs into one zip file: the run report `anyps5-report.json`, the log, and the input mapping, with your personal details redacted. It also writes `host.txt` with the operating system, machine and Python version, and a `README.txt` that says what was redacted.
 
 - By default it reads `./anyps5-report.json`, the log named by `ANYPS5_LOG_FILE` and the input mapping named by `ANYPS5_INPUT_CONFIG` (or `./anyps5-input.ini`), and writes `bug-report.zip`. Use `--report`, `--log`, `--input-config` and `--out` to choose other files.
+- If the report names a title, the tool looks for `anyps5-input.<TITLEID>.ini` beside the shared mapping, even if the shared file is absent. The bundle includes that title's overrides as `anyps5-input-profile.ini`.
 - Redaction replaces your home directory with `~`, your user and host names with `<user>` and `<host>`, and IPv4 addresses with `<ip>`. It matches whole words only, so a user name inside another word is not changed. It does not know other personal details, such as a name typed into a title, a file name that contains your name, or an IPv6 address; open the bundle and check it before you attach it.
 - A missing log or input mapping is left out of the bundle. The run report must be valid JSON. An existing bundle is never overwritten: the command exits with status 1 and names the file.
 
