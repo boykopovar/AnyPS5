@@ -87,14 +87,18 @@ void ReadPath(const GuestString& path, std::string& text) {
     if (error != 0) throw std::invalid_argument("GvMp4 parser: unreadable path text");
 }
 
-bool SupportedExtension(std::string_view path) {
+enum class ExtensionGate { Supported, Unsupported, Unmeasured };
+
+ExtensionGate ClassifyExtension(std::string_view path) {
     const auto dot = path.rfind('.');
     if (dot == std::string_view::npos) throw std::out_of_range("GvMp4 parser: path has no extension");
     std::string extension(path.substr(dot + 1));
     for (char& byte : extension) {
         if (byte >= 'a' && byte <= 'z') byte = static_cast<char>(byte - 'a' + 'A');
     }
-    return extension == "MP4" || extension == "M4V" || extension == "MGV" || extension == "MNV" || extension == "ETS";
+    if (extension == "MP4" || extension == "M4V" || extension == "MGV" || extension == "MNV") return ExtensionGate::Supported;
+    if (extension == "MOV") return ExtensionGate::Unsupported;
+    return ExtensionGate::Unmeasured;
 }
 
 int Gate(const void* pathObject, const char* name) {
@@ -113,9 +117,11 @@ int ReadGate(const void* pathObject, const char* name) {
     const int saved = errno;
     const int statResult = sceKernelStat(text.c_str(), &stat);
     errno = saved;
-    if (statResult == SCE_KERNEL_ERROR_ENOENT || statResult == SCE_KERNEL_ERROR_ENOTDIR) return kMissingPath;
+    if (statResult == SCE_KERNEL_ERROR_ENOENT) return kMissingPath;
     if (statResult != 0) NotImplemented_nid_no_patch(name);
-    if (!SupportedExtension(text)) return kUnsupportedFormat;
+    const auto extension = ClassifyExtension(text);
+    if (extension == ExtensionGate::Unsupported) return kUnsupportedFormat;
+    if (extension == ExtensionGate::Unmeasured) NotImplemented_nid_no_patch(name);
     NotImplemented_nid_no_patch(name);
     return 0;
 }
