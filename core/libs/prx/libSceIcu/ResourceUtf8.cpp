@@ -12,9 +12,11 @@
 #include "prx/libSceIcu/ResourceBundleBackend.hpp"
 #include "prx/libc/include/General.hpp"
 #include "unicode/ustring.h"
+#include <algorithm>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -140,6 +142,11 @@ bool ItemByIndex(const std::uint8_t* root, std::uint32_t resource, std::int32_t 
     return false;
 }
 
+std::int32_t Utf8Offset(std::size_t unitCount, std::int32_t capacity, std::int8_t forceCopy) {
+    if (forceCopy || unitCount == 0 || unitCount > 0x2aaaaaaa) return 0;
+    return std::max(0, capacity - (3 * static_cast<std::int32_t>(unitCount) + 1));
+}
+
 const char* ToUtf8(const std::vector<char16_t>& units, char* dest, std::int32_t* length, std::int8_t forceCopy,
     std::int32_t* status, int savedErrno, const char* caller) {
     std::int32_t capacity = 0;
@@ -165,15 +172,8 @@ const char* ToUtf8(const std::vector<char16_t>& units, char* dest, std::int32_t*
         if (length) CopyOut(length, &utf8Length, sizeof(utf8Length), savedErrno, caller);
         return Fail(status, BufferOverflow, savedErrno, caller);
     }
-    std::int32_t writeCapacity = capacity;
-    std::size_t offset = 0;
-    if (!forceCopy && units.size() <= 0x2aaaaaaa) {
-        const std::int32_t maximum = 3 * static_cast<std::int32_t>(units.size()) + 1;
-        if (capacity > maximum) {
-            offset = static_cast<std::size_t>(capacity - maximum);
-            writeCapacity = maximum;
-        }
-    }
+    const auto offset = Utf8Offset(units.size(), capacity, forceCopy);
+    const auto writeCapacity = capacity - offset;
     std::vector<char> buffer(static_cast<std::size_t>(writeCapacity));
     std::int32_t utf8Length = 0;
     UErrorCode hostStatus = U_ZERO_ERROR;
@@ -202,7 +202,39 @@ std::optional<const char*> OwnedUtf8(const UResourceBundle* bundle, IcuResourceB
     if (!owned) return std::nullopt;
     if (after != currentStatus) CopyOut(status, &after, sizeof(after), savedErrno, caller);
     if (after > 0) return nullptr;
-    return ToUtf8(units, dest, length, forceCopy, status, savedErrno, caller);
+    std::int32_t capacity = 0;
+    if (length) CopyIn(&capacity, length, sizeof(capacity), savedErrno, caller);
+    if (capacity < 0 || (capacity > 0 && !dest)) return Fail(status, IllegalArgument, savedErrno, caller);
+    if (units.empty() && !forceCopy) {
+        const std::int32_t zero = 0;
+        if (length) CopyOut(length, &zero, sizeof(zero), savedErrno, caller);
+        return "";
+    }
+    const bool preflight = static_cast<std::size_t>(capacity) < units.size();
+    const auto offset = Utf8Offset(units.size(), capacity, forceCopy);
+    const auto maximum = 3 * static_cast<std::int64_t>(units.size()) + 1;
+    const auto writeCapacity = preflight ? 0 : static_cast<std::int32_t>(std::min<std::int64_t>(capacity, maximum));
+    constexpr char unwritten = static_cast<char>(0xff);
+    char emptyDestination = unwritten;
+    try {
+        std::vector<char> buffer(static_cast<std::size_t>(writeCapacity), unwritten);
+        char* target = buffer.empty() ? &emptyDestination : buffer.data();
+        if (preflight || !dest) target = nullptr;
+        auto hostStatus = static_cast<UErrorCode>(after);
+        std::int32_t count = -1;
+        const auto* result = u_strToUTF8(target, writeCapacity, &count, units.data(),
+                                          static_cast<std::int32_t>(units.size()), &hostStatus);
+        const auto written = std::find(buffer.begin(), buffer.end(), unwritten) - buffer.begin();
+        if (written > 0) CopyOut(dest + offset, buffer.data(), static_cast<std::size_t>(written), savedErrno, caller);
+        if (length && count >= 0) CopyOut(length, &count, sizeof(count), savedErrno, caller);
+        if (hostStatus != after) {
+            const auto outgoing = static_cast<std::int32_t>(hostStatus);
+            CopyOut(status, &outgoing, sizeof(outgoing), savedErrno, caller);
+        }
+        return result ? dest + offset : nullptr;
+    } catch (const std::bad_alloc&) {
+        return Fail(status, U_MEMORY_ALLOCATION_ERROR, savedErrno, caller);
+    }
 }
 
 }
