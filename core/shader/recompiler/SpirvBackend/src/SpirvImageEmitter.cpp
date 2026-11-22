@@ -2409,7 +2409,7 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
                 }
                 if (spatial) {
                     auto extent = size;
-                    if (components != 1u) {
+                    if (total != 1u) {
                         extent = state.module.AllocateId();
                         state.module.AddFunction(spv::OpCompositeExtract, u32, extent, size, index);
                     }
