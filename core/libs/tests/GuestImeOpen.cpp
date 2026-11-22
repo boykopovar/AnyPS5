@@ -689,6 +689,42 @@ void CheckHostEvents() {
     Require(sceImeClose_nid_postfix() == 0, "host events close");
 }
 
+void CheckMultilineHostNavigation() {
+    Buffers buffers;
+    Param param = MakeParam(buffers, 16);
+    param.option = 1;
+    Require(sceImeOpen_nid_postfix(&param, nullptr) == 0, "host navigation open");
+    Drain();
+
+    ImeTextInput input;
+    SDL_Event key{};
+    key.type = SDL_KEYDOWN;
+    key.key.windowID = 7;
+    SDL_Event text{};
+    text.type = SDL_TEXTINPUT;
+    text.text.windowID = 7;
+    std::strcpy(text.text.text, "X");
+
+    const auto check = [&](SDL_Scancode scancode, uint16_t mods, const char16_t* expected, const char* message) {
+        Require(sceImeSetText(u"a\r\nbc\nd", 7) == 0, "host navigation set text");
+        Caret caret{};
+        caret.index = 4;
+        Require(sceImeSetCaret(&caret) == 0, "host navigation set caret");
+        key.key.keysym.scancode = scancode;
+        key.key.keysym.mod = mods;
+        input.HandleEvent(key, 7);
+        input.HandleEvent(text, 7);
+        Drain();
+        Require(std::u16string(buffers.text) == expected, message);
+    };
+
+    check(SDL_SCANCODE_HOME, KMOD_NONE, u"a\r\nXbc\nd", "Home moves to the start of the current line");
+    check(SDL_SCANCODE_END, KMOD_NONE, u"a\r\nbcX\nd", "End moves to the end of the current line");
+    check(SDL_SCANCODE_HOME, KMOD_LCTRL, u"Xa\r\nbc\nd", "Ctrl+Home moves to the start of the buffer");
+    check(SDL_SCANCODE_END, KMOD_RCTRL, u"a\r\nbc\ndX", "Ctrl+End moves to the end of the buffer");
+    Require(sceImeClose_nid_postfix() == 0, "host navigation close");
+}
+
 void CheckMalformedHostText() {
     Buffers buffers;
     Param param = MakeParam(buffers, 16);
@@ -727,5 +763,6 @@ int main() {
     CheckCaretSurrogateBoundary();
     CheckTextFilter();
     CheckHostEvents();
+    CheckMultilineHostNavigation();
     CheckMalformedHostText();
 }
