@@ -348,6 +348,22 @@ int main() {
     Require(sceAmprMbstowcs(wide, "ABC", 2) == 2);
     Require(mbstowcs_nid_postfix(wide, "ABC", 8) == 3);
 
+    const SonyLconv* const initialLocale = SonyLocaleconv_nid_no_patch();
+    Require(initialLocale != nullptr);
+    Require(SonyLocaleconv_nid_no_patch() == initialLocale);
+    Require(sceAmprLocaleconv() == initialLocale);
+    Require(initialLocale->decimal_point != nullptr && std::strcmp(initialLocale->decimal_point, ".") == 0);
+    Require(initialLocale->grouping != nullptr && std::strcmp(initialLocale->grouping, "") == 0);
+    Require(initialLocale->thousands_sep != nullptr && std::strcmp(initialLocale->thousands_sep, "") == 0);
+    Require(initialLocale->frac_grouping != nullptr && std::strcmp(initialLocale->frac_grouping, "") == 0);
+    Require(initialLocale->frac_sep != nullptr && std::strcmp(initialLocale->frac_sep, "") == 0);
+    Require(initialLocale->false_text != nullptr && std::strcmp(initialLocale->false_text, "false") == 0);
+    Require(initialLocale->true_text != nullptr && std::strcmp(initialLocale->true_text, "true") == 0);
+    Require(initialLocale->no_text != nullptr && std::strcmp(initialLocale->no_text, "") == 0);
+    Require(initialLocale->yes_text != nullptr && std::strcmp(initialLocale->yes_text, "") == 0);
+    for (const auto byte : initialLocale->chars) Require(byte == CHAR_MAX);
+    for (const auto* pointer : initialLocale->monetary) Require(pointer != nullptr && std::strcmp(pointer, "") == 0);
+
     const unsigned int firstRandom = _ZSt14_Random_devicev_nid_postfix();
     bool randomChanged = false;
     for (int draw = 0; draw < 8; ++draw) randomChanged |= _ZSt14_Random_devicev_nid_postfix() != firstRandom;
