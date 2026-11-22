@@ -397,6 +397,7 @@ public:
     bool isDisplayingMarkupDocument = false;
     bool isDisplayingStandaloneImageDocument = false;
     bool isMainFrame = false;
+    bool isFrameSet = false;
     std::uint64_t frameID = 0;
     std::uint32_t loadState = 2;
     Retained<URL> url;
