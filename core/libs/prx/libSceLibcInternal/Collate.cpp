@@ -89,22 +89,27 @@ void APS5_VABI _ZNSt7collateIcED0Ev_nid_postfix(GuestLocale::CollateFacet* self)
 int APS5_VABI _ZNKSt7collateIcE10do_compareEPKcS2_S2_S2_(const GuestLocale::CollateFacet* self, const char* first1, const char* last1, const char* first2, const char* last2) {
     return BaseCollate().compare(self, first1, last1, first2, last2);
 }
+APS5_EXPORT("1eEXfeW6wrI", _ZNKSt7collateIcE10do_compareEPKcS2_S2_S2_);
 
 GuestLocale::String* APS5_VABI _ZNKSt7collateIcE12do_transformEPKcS2_(GuestLocale::String* result, const GuestLocale::CollateFacet* self, const char* first, const char* last) {
     return BaseCollate().transform(result, self, first, last);
 }
+APS5_EXPORT("gYlF567r3-A", _ZNKSt7collateIcE12do_transformEPKcS2_);
 
 std::int64_t APS5_VABI _ZNKSt7collateIcE7do_hashEPKcS2_(const GuestLocale::CollateFacet* self, const char* first, const char* last) {
     return BaseCollate().hash(self, first, last);
 }
+APS5_EXPORT("GSAXi4F1SlM", _ZNKSt7collateIcE7do_hashEPKcS2_);
 
 int APS5_VABI _ZNKSt7collateIcE7compareEPKcS2_S2_S2_(const GuestLocale::CollateFacet* self, const char* first1, const char* last1, const char* first2, const char* last2) {
     return FacetCollate(self, "collate::compare").compare(self, first1, last1, first2, last2);
 }
+APS5_EXPORT("Q-8lQCGMj4g", _ZNKSt7collateIcE7compareEPKcS2_S2_S2_);
 
 std::int64_t APS5_VABI _ZNKSt7collateIcE4hashEPKcS2_(const GuestLocale::CollateFacet* self, const char* first, const char* last) {
     return FacetCollate(self, "collate::hash").hash(self, first, last);
 }
+APS5_EXPORT("6vYXzFD-mrk", _ZNKSt7collateIcE4hashEPKcS2_);
 
 int APS5_VABI _ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(const char* first1, const char* last1, const char* first2, const char* last2, const void* collvec) {
     (void)collvec;

@@ -65,6 +65,7 @@ int APS5_VABI _ZNKSt8messagesIcE4openERKSsRKSt6locale_nid_postfix(const void* se
 void APS5_VABI _ZNKSt8messagesIcE5closeEi(const void* self, int catalog) {
     MessagesSlot(self, &GuestLocale::MessagesVtable::close, "messages<char>::close")(static_cast<const GuestLocale::Facet*>(self), catalog);
 }
+APS5_EXPORT("EeBQ7253LkE", _ZNKSt8messagesIcE5closeEi);
 
 void* APS5_VABI _ZNKSt8messagesIcE6do_getEiiiRKSs(void* result, const void* self, int catalog, int set, int message, const void* fallback) {
     (void)self;
@@ -73,6 +74,7 @@ void* APS5_VABI _ZNKSt8messagesIcE6do_getEiiiRKSs(void* result, const void* self
     (void)message;
     return LibcCopyString_nid_no_patch(static_cast<GuestLocale::String*>(result), static_cast<const GuestLocale::String*>(fallback));
 }
+APS5_EXPORT("vbgCuYKySLI", _ZNKSt8messagesIcE6do_getEiiiRKSs);
 
 int APS5_VABI _ZNKSt8messagesIcE7do_openERKSsRKSt6locale(const void* self, const void* name, const void* locale) {
     (void)self;
@@ -80,23 +82,28 @@ int APS5_VABI _ZNKSt8messagesIcE7do_openERKSsRKSt6locale(const void* self, const
     (void)locale;
     return -1;
 }
+APS5_EXPORT("HeBwePMtuFs", _ZNKSt8messagesIcE7do_openERKSsRKSt6locale);
 
 void APS5_VABI _ZNKSt8messagesIcE8do_closeEi(const void* self, int catalog) {
     (void)self;
     (void)catalog;
 }
+APS5_EXPORT("rRmMX83UL1E", _ZNKSt8messagesIcE8do_closeEi);
 
 void* APS5_VABI _ZNKSt8messagesIwE3getEiiiRKSbIwSt11char_traitsIwESaIwEE(void* result, const void* self, int catalog, int set, int message, const void* fallback) {
     return MessagesSlot(self, &GuestLocale::MessagesVtable::get, "messages<wchar_t>::get")(static_cast<GuestLocale::String*>(result), static_cast<const GuestLocale::Facet*>(self), catalog, set, message, static_cast<const GuestLocale::String*>(fallback));
 }
+APS5_EXPORT("Ea+awuQ5Bm8", _ZNKSt8messagesIwE3getEiiiRKSbIwSt11char_traitsIwESaIwEE);
 
 int APS5_VABI _ZNKSt8messagesIwE4openERKSsRKSt6locale(const void* self, const void* name, const void* locale) {
     return MessagesSlot(self, &GuestLocale::MessagesVtable::open, "messages<wchar_t>::open")(static_cast<const GuestLocale::Facet*>(self), static_cast<const GuestLocale::String*>(name), locale);
 }
+APS5_EXPORT("TPq0HfoACeI", _ZNKSt8messagesIwE4openERKSsRKSt6locale);
 
 void APS5_VABI _ZNKSt8messagesIwE5closeEi(const void* self, int catalog) {
     MessagesSlot(self, &GuestLocale::MessagesVtable::close, "messages<wchar_t>::close")(static_cast<const GuestLocale::Facet*>(self), catalog);
 }
+APS5_EXPORT("GGoH7e6SZSY", _ZNKSt8messagesIwE5closeEi);
 
 void* APS5_VABI _ZNKSt8messagesIwE6do_getEiiiRKSbIwSt11char_traitsIwESaIwEE(void* result, const void* self, int catalog, int set, int message, const void* fallback) {
     (void)self;
@@ -105,6 +112,7 @@ void* APS5_VABI _ZNKSt8messagesIwE6do_getEiiiRKSbIwSt11char_traitsIwESaIwEE(void
     (void)message;
     return LibcCopyWideString_nid_no_patch(static_cast<GuestLocale::String*>(result), static_cast<const GuestLocale::String*>(fallback));
 }
+APS5_EXPORT("UM6rGQxnEMg", _ZNKSt8messagesIwE6do_getEiiiRKSbIwSt11char_traitsIwESaIwEE);
 
 int APS5_VABI _ZNKSt8messagesIwE7do_openERKSsRKSt6locale(const void* self, const void* name, const void* locale) {
     (void)self;
@@ -112,11 +120,13 @@ int APS5_VABI _ZNKSt8messagesIwE7do_openERKSsRKSt6locale(const void* self, const
     (void)locale;
     return -1;
 }
+APS5_EXPORT("zSehLdHI0FA", _ZNKSt8messagesIwE7do_openERKSsRKSt6locale);
 
 void APS5_VABI _ZNKSt8messagesIwE8do_closeEi(const void* self, int catalog) {
     (void)self;
     (void)catalog;
 }
+APS5_EXPORT("AjkxQBlsOOY", _ZNKSt8messagesIwE8do_closeEi);
 
 GuestLocale::OutputIterator APS5_VABI sceLibcInternalTimePutDoPut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, char format, char modifier) {
     return LibcTimePutDoPut_nid_no_patch(self, out, stream, fill, time, format, modifier);

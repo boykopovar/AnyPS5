@@ -23,42 +23,52 @@ extern "C" {
 char APS5_VABI _ZNKSt8numpunctIcE16do_decimal_pointEv(const GuestLocale::NumpunctFacet* self) {
     return NumpunctDoDecimalPoint_nid_no_patch(self);
 }
+APS5_EXPORT("JXzQGOtumdM", _ZNKSt8numpunctIcE16do_decimal_pointEv);
 
 char APS5_VABI _ZNKSt8numpunctIcE16do_thousands_sepEv(const GuestLocale::NumpunctFacet* self) {
     return NumpunctDoThousandsSep_nid_no_patch(self);
 }
+APS5_EXPORT("zv1EMhI7R1c", _ZNKSt8numpunctIcE16do_thousands_sepEv);
 
 GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE11do_groupingEv(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return NumpunctDoGrouping_nid_no_patch(result, self);
 }
+APS5_EXPORT("cnNz2ftNwEU", _ZNKSt8numpunctIcE11do_groupingEv);
 
 GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE12do_falsenameEv(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return NumpunctDoFalsename_nid_no_patch(result, self);
 }
+APS5_EXPORT("ozLi0i4r6ds", _ZNKSt8numpunctIcE12do_falsenameEv);
 
 GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE11do_truenameEv(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return NumpunctDoTruename_nid_no_patch(result, self);
 }
+APS5_EXPORT("nRf0VQ++OEw", _ZNKSt8numpunctIcE11do_truenameEv);
 
 char APS5_VABI _ZNKSt8numpunctIcE13decimal_pointEv(const GuestLocale::NumpunctFacet* self) {
     return NumpunctDecimalPoint_nid_no_patch(self);
 }
+APS5_EXPORT("klWxQ2nKAHY", _ZNKSt8numpunctIcE13decimal_pointEv);
 
 char APS5_VABI _ZNKSt8numpunctIcE13thousands_sepEv(const GuestLocale::NumpunctFacet* self) {
     return NumpunctThousandsSep_nid_no_patch(self);
 }
+APS5_EXPORT("QGSIlqfIU2c", _ZNKSt8numpunctIcE13thousands_sepEv);
 
 GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8groupingEv(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return NumpunctGrouping_nid_no_patch(result, self);
 }
+APS5_EXPORT("JWplGh2O0Rs", _ZNKSt8numpunctIcE8groupingEv);
 
 GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE9falsenameEv(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return NumpunctFalsename_nid_no_patch(result, self);
 }
+APS5_EXPORT("3+VwUA8-QPI", _ZNKSt8numpunctIcE9falsenameEv);
 
 GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8truenameEv(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return NumpunctTruename_nid_no_patch(result, self);
 }
+APS5_EXPORT("fXUuZEw7C24", _ZNKSt8numpunctIcE8truenameEv);
 
 std::uint16_t APS5_VABI sceLibcInternalWideNumpunctDoDecimalPoint_nid_no_patch(const GuestLocale::WideNumpunctFacet* self) {
     return RequireWideNumpunct(self)->decimalPoint;

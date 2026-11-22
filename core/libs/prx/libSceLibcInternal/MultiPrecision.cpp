@@ -111,12 +111,14 @@ unsigned long long APS5_VABI _ZSt7_MP_GetPy(unsigned long long* value) {
     RequireValue(value, "_MP_Get");
     return (value[1] << DigitBits) + value[0];
 }
+APS5_EXPORT("lrQSsTRMMr4", _ZSt7_MP_GetPy);
 
 void APS5_VABI _ZSt7_MP_AddPyy(unsigned long long* value, unsigned long long addend) {
     RequireValue(value, "_MP_Add");
     const unsigned long long digits[2] = {addend & DigitMask, addend >> DigitBits};
     AddDigits(value, ValueWords, digits, 2);
 }
+APS5_EXPORT("QfPuSqhub7o", _ZSt7_MP_AddPyy);
 
 void APS5_VABI _ZSt7_MP_MulPyyy(unsigned long long* product, unsigned long long left, unsigned long long right) {
     RequireValue(product, "_MP_Mul");
@@ -134,10 +136,12 @@ void APS5_VABI _ZSt7_MP_MulPyyy(unsigned long long* product, unsigned long long 
         product[column + 2] = carry;
     }
 }
+APS5_EXPORT("Gav1Xt1Ce+c", _ZSt7_MP_MulPyyy);
 
 void APS5_VABI _ZSt7_MP_RemPyy(unsigned long long* value, unsigned long long divisor) {
     RequireValue(value, "_MP_Rem");
     Reduce(value, divisor);
 }
+APS5_EXPORT("Ozk+Z6QnlTY", _ZSt7_MP_RemPyy);
 
 }

@@ -9,9 +9,11 @@ extern "C" {
 void* APS5_VABI _ZnamSt11align_val_tRKSt9nothrow_t(std::size_t size, std::size_t alignment, const void* tag) noexcept {
     return AlignedArrayNewNothrow_nid_no_patch(size, alignment, tag);
 }
+APS5_EXPORT("s2eGsgUF9vk", _ZnamSt11align_val_tRKSt9nothrow_t);
 
 void APS5_VABI _ZdaPvSt11align_val_t(void* pointer, std::size_t alignment) {
     AlignedArrayDelete_nid_no_patch(pointer, alignment);
 }
+APS5_EXPORT("v09ZcAhZzSc", _ZdaPvSt11align_val_t);
 
 }
