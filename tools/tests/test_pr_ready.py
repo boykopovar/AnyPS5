@@ -68,6 +68,13 @@ class BlockerTests(unittest.TestCase):
         checks = PASSING + [("intake", "completed", "failure"), ("labels", "in_progress", None), ("eligibility", "queued", None)]
         self.assertEqual(pr_ready.blockers(make(checks=checks)), [])
 
+    def test_the_conflict_label_job_does_not_block(self):
+        for state, conclusion in (("in_progress", None), ("completed", "cancelled"), ("completed", "failure")):
+            with self.subTest(conclusion=conclusion):
+                self.assertEqual(pr_ready.blockers(make(checks=PASSING + [("pr", state, conclusion)])), [])
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/conflict-label-pr.yml").read_text(encoding="utf-8")
+        self.assertIn("\njobs:\n  pr:\n", workflow)
+
     def test_a_failing_progress_report_does_not_block(self):
         self.assertEqual(pr_ready.blockers(make(checks=PASSING + [("report", "completed", "failure")])), [])
 
