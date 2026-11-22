@@ -1055,6 +1055,31 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(json.loads(report.read_text())["references"], 4)
 
+    def test_named_windows_stub_is_not_hidden_by_other_providers(self):
+        work = self.work
+        name = "sceSynthetic"
+        nid = nid_names.compute_nid(name)
+        stub = "libSceStub.prx"
+        other = "libSceOther.prx"
+        write_source(work.source, "libSceStub", STUB_SOURCE.format(name=name))
+        registry = work.root / "game.registry.json"
+        report = work.root / "audit.json"
+        import_audit.needed_registry_path(registry).write_text(json.dumps([stub, other]), encoding="utf-8")
+        for format_name, image, named_class in (
+                ("Windows", build_pe([nid]), "stub"),
+                ("Linux", exporting(nid), "implemented")):
+            for provider in (stub, other):
+                (work.libs / provider).write_bytes(image)
+            for library, expected in ((stub, named_class), ("libSceStub.sprx", named_class), ("", "implemented")):
+                with self.subTest(format=format_name, library=library):
+                    write_registry(registry, [(nid, library)])
+                    code, _, err = work.run(registry, "--strict-stubs", "--json", str(report))
+                    self.assertEqual((code, err), (int(expected == "stub"), ""))
+                    record, = json.loads(report.read_text(encoding="utf-8"))["imports"]
+                    self.assertEqual(record["class"], expected)
+                    self.assertEqual(record["providers"], [other, stub])
+                    self.assertEqual(record["name"], name if expected == "stub" else None)
+
     def test_guest_collision_requires_export_and_dependency_or_self(self):
         nid, library = "AAAAAAAAAAA", "libSceSynthetic.prx"
         stubs = {(library, nid): "sceSynthetic"}

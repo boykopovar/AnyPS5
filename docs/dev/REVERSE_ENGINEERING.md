@@ -19,7 +19,7 @@ one settles, and how to cite it.
 
 When sources disagree, say so in the pull request and in the debt entry.
 
-[prosper](https://github.com/mattias800/prosper)'s console oracle has published such measurements for libSceRtc, libc, libSceHttp, libSceNet, libSceUserService, libkernel and libSceAgc's packet builders. `python3 tools/library-oracle/library_oracle.py` replays them against the built modules, after `cmake --build build --target library_oracle_replay`: it downloads the measurements from a pinned commit, checks their digest and fails on a result that is not in [known.tsv](../../tools/library-oracle/known.tsv). A pull request that fixes a listed case removes its line, and one that adds a difference explains it there.
+[prosper](https://github.com/mattias800/prosper)'s console oracle has published such measurements for libSceRtc, libc, libSceHttp, libSceNet, libSceUserService, libkernel and libSceAgc's packet builders. `python3 tools/library-oracle/library_oracle.py` replays them against the built modules, after `cmake --build build --target library_oracle_replay libs`, which builds the replay executable and the unpatched modules it loads from `build/core/libs/libs/unpatched`: it downloads the measurements from a pinned commit, checks their digest and fails on a result that is not in [known.tsv](../../tools/library-oracle/known.tsv). A pull request that fixes a listed case removes its line, and one that adds a difference explains it there.
 
 ## Public source baselines
 
@@ -160,8 +160,8 @@ debt entry, never in code or test names.
 
 ## Export and NID tools
 
-- `tools/export_gap.py --module <name> --export-table <file> --nids <file> --db <nid-db>` lists the console exports an AnyPS5 library does not provide.
-- `tools/stubgen.py --module <name> --nids <file> --db <nid-db> --out <dir>` writes an `Export.cpp` skeleton and the matching technical-debt lines for the exports it is given.
+- `tools/export_gap.py --module <name> --nids <file> --db <nid-db>` lists the console exports an AnyPS5 library does not provide. To read a genstub export table, replace `--nids <file>` with `--export-table <dir>`, where `<dir>` contains `<name>.c`.
+- `tools/stubgen.py --module <name> --nids <file> --db <nid-db> --out <file>` writes an `Export.cpp` skeleton to the named file and prints the matching technical-debt lines. Pass `--td-out <file>` to save those lines separately.
 - `tools/audit_nid_names.py <database>` audits the hash consistency of a local NID/name database with the stub generator's first-record policy.
 - `tools/pe_symbol_inventory.py <module>` inventories the code symbols and identity metadata of a PE module without reading samples.
 - `tools/inspect_self.py <input>` prints the SELF record and inner ELF header metadata as JSON. It does not validate a conversion or decrypt segments.
