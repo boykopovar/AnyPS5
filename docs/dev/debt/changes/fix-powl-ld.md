@@ -2,7 +2,7 @@
 
 ## change [powl]
 
-- [ldexpl, truncl, logb and remainder](../../../core/libs/prx/libc/src/Math.cpp) (libc) - `ldexpl` and `truncl` are exact operations and give the console's result; `logb` and `remainder` give the console's value too, but on Linux glibc sets `errno` (`ERANGE` for `logb(0)`, `EDOM` for `remainder` by zero or of an infinity) where msun only raises the floating-point exception
+- [ldexpl, truncl, logb and remainder](../../../core/libs/prx/libc/src/Math.cpp) (libc) - `ldexpl` is `scalbnl`, one address (0x12630) in the `libc.prx` bundled with PPSA10122 01.101.000, and like that module leaves `errno` alone when the result overflows or underflows; `truncl` is an exact operation and gives the console's result; `logb` and `remainder` give the console's value too, but on Linux glibc sets `errno` (`ERANGE` for `logb(0)`, `EDOM` for `remainder` by zero or of an infinity) where msun only raises the floating-point exception
 
 ## add Functional
 

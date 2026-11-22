@@ -10,8 +10,11 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 import unittest.mock
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import title_run
@@ -199,6 +202,18 @@ class AnalysisTests(unittest.TestCase):
             with self.subTest(capture_position=rows.index(capture)):
                 path.write_text("\n".join(map(json.dumps, rows)), encoding="utf-8")
                 self.assertEqual(title_run.read_summary(path), dict(identity, presents=400, fps=20.0))
+
+    def test_unicode_separators_inside_title_names_keep_periodic_measurements(self):
+        path = self.root / "aps5-summary.jsonl"
+        identity = {"gpu": "GPU", "driver": "Driver", "os": "OS"}
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            with self.subTest(separator=repr(separator)):
+                title = f"Main title{separator}Subtitle"
+                intervals = [dict(identity, title=title, interval_start_s=start, interval_end_s=start + 10,
+                                  presents=presents, window={"ms": 10000})
+                             for start, presents in ((0, 300), (10, 500))]
+                path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in intervals), encoding="utf-8")
+                self.assertEqual(title_run.read_summary(path), dict(identity, presents=800, fps=40.0))
 
     def test_empty_periodic_window_does_not_fall_back_to_capture_frames(self):
         path = self.root / "aps5-summary.jsonl"
@@ -617,6 +632,15 @@ class PreparationTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
 
+    def test_reset_work_removes_a_read_only_file(self):
+        work = self.root / "work"
+        (work / "cert_cache").mkdir(parents=True)
+        cached = work / "cert_cache" / "CA_LIST.cer"
+        cached.write_bytes(b"list")
+        cached.chmod(stat.S_IREAD)
+        title_run.reset_work(work)
+        self.assertEqual(list(work.iterdir()), [])
+
     def test_a_running_title_is_left_alone(self):
         package(self.root / "games/PPSA00001", "PPSA00001")
         out = self.root / "out"
@@ -633,6 +657,84 @@ class PreparationTests(unittest.TestCase):
         again = title_run.lock_work(out / "work/PPSA00001.lock")
         self.assertIsNotNone(again)
         again.close()
+
+    def test_work_lock_is_released_with_a_retained_failure_traceback(self):
+        title_id = "PPSA00001"
+        package(self.root / "games" / title_id, title_id)
+        out = self.root / "out"
+        lock = out / "work" / f"{title_id}.lock"
+        failure = SystemExit("git failed")
+
+        def fail(*args):
+            self.assertIsNone(title_run.lock_work(lock))
+            raise failure
+
+        try:
+            with patch.object(title_run, "git", side_effect=fail):
+                try:
+                    title_run.main(["--games", str(self.root / "games"), "--out", str(out), title_id])
+                except SystemExit as error:
+                    self.assertIs(error, failure)
+                else:
+                    self.fail("the Git failure was not propagated")
+            self.assertIsNotNone(failure.__traceback__)
+            again = title_run.lock_work(lock)
+            if again is not None:
+                again.close()
+            self.assertIsNotNone(again)
+        finally:
+            failure.__traceback__ = None
+
+    def test_busy_title_releases_the_other_work_locks(self):
+        first, second = "PPSA00001", "PPSA00002"
+        for title_id in (first, second):
+            package(self.root / "games" / title_id, title_id)
+        out = self.root / "out"
+        failure = None
+        with title_run.lock_work(out / "work" / f"{second}.lock"):
+            try:
+                try:
+                    title_run.main(["--games", str(self.root / "games"), "--out", str(out), first, second])
+                except SystemExit as error:
+                    failure = error
+                self.assertIsNotNone(failure)
+                self.assertIn(f": {second}", str(failure))
+                again = title_run.lock_work(out / "work" / f"{first}.lock")
+                if again is not None:
+                    again.close()
+                self.assertIsNotNone(again)
+                self.assertIsNone(title_run.lock_work(out / "work" / f"{second}.lock"))
+            finally:
+                if failure is not None:
+                    failure.__traceback__ = None
+
+    def test_lock_acquisition_error_releases_the_earlier_work_lock(self):
+        first, second = "PPSA00001", "PPSA00002"
+        for title_id in (first, second):
+            package(self.root / "games" / title_id, title_id)
+        out = self.root / "out"
+        lock_work = title_run.lock_work
+        failure = OSError("cannot open the second lock")
+
+        def acquire(path):
+            if path.stem == second:
+                raise failure
+            return lock_work(path)
+
+        try:
+            with patch.object(title_run, "lock_work", side_effect=acquire):
+                try:
+                    title_run.main(["--games", str(self.root / "games"), "--out", str(out), first, second])
+                except OSError as error:
+                    self.assertIs(error, failure)
+                else:
+                    self.fail("the lock acquisition error was not propagated")
+            again = lock_work(out / "work" / f"{first}.lock")
+            if again is not None:
+                again.close()
+            self.assertIsNotNone(again)
+        finally:
+            failure.__traceback__ = None
 
     def test_unreadable_catalog_and_comparison_files_are_reported_without_a_traceback(self):
         import contextlib
@@ -777,6 +879,20 @@ class PreparationTests(unittest.TestCase):
             title_run.stage_inputs(source, entry, target)
             self.assertEqual(sorted(path.relative_to(target).as_posix() for path in target.rglob("*.*")), expected)
 
+    def test_plural_module_dir_is_staged_without_singular_fallback(self):
+        package_root = package(self.root / "pkg", "PPSA00001")
+        modules = package_root / "sce_modules"
+        modules.mkdir()
+        elf = b"\x7fELF" + bytes(60)
+        (package_root / "eboot.bin").write_bytes(elf)
+        (modules / "helper.prx").write_bytes(elf)
+        staged = self.root / "input"
+
+        title_run.stage_inputs(package_root, {}, staged)
+
+        self.assertEqual((staged / "sce_modules/helper.prx").read_bytes(), elf)
+        self.assertFalse((staged / "sce_module").exists())
+
     def test_module_dirs_keep_every_module_and_empty_directories(self):
         source = package(self.root / "pkg", "PPSA00001")
         elf = b"\x7fELF" + bytes(60)
@@ -909,6 +1025,7 @@ class PreparationTests(unittest.TestCase):
         source = package(self.root / "pkg", "PPSA00001")
         (source / "id1").mkdir()
         (source / "id1/autoexec.cfg").write_text("old\n", encoding="utf-8")
+        (source / "id1/pak0.pak").write_bytes(b"bundled data")
         work = self.root / "work"
         title_run.link_tree(source, work / "app0", {"sce_module"})
         content = self.root / "content"
@@ -920,8 +1037,26 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual((work / "app0/id1/autoexec.cfg").read_bytes(), b"r_rtshadows 0\n")
         self.assertEqual((source / "id1/autoexec.cfg").read_text(encoding="utf-8"), "old\n")
         self.assertEqual((work / "app0/id1/pak0.pak").read_bytes(), b"PACK")
+        self.assertEqual((source / "id1/pak0.pak").read_bytes(), b"bundled data")
         self.assertFalse((work / "data/media/clip.mp4").exists())
-        self.assertEqual(title_run.stage_files({"app0/id1/pak0.pak": {"content": "quake/pak0.pak"}}, work, None), ["quake/pak0.pak"])
+
+    def test_missing_external_content_preserves_the_staged_package_file(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        (source / "id1").mkdir()
+        (source / "id1/pak0.pak").write_bytes(b"bundled data")
+        content = self.root / "content"
+        content.mkdir()
+        files = {"app0/id1/pak0.pak": {"content": "quake/pak0.pak"},
+                 "data/clip.mp4": {"content": "media/clip.mp4"}}
+        for index, content_dir in enumerate((None, content)):
+            with self.subTest(content=content_dir):
+                work = self.root / f"work-{index}"
+                title_run.link_tree(source, work / "app0", {"sce_module"})
+                missing = title_run.stage_files(files, work, content_dir)
+                target = work / "app0/id1/pak0.pak"
+                self.assertTrue(target.is_file(), "the run must retain the package's data file")
+                self.assertEqual(target.read_bytes(), b"bundled data")
+                self.assertEqual(missing, ["media/clip.mp4"])
 
     def test_a_non_ascii_title_name_is_reported_as_utf8(self):
         package(self.root / "games/PPSA00001", "PPSA00001", name="テスト")
@@ -935,6 +1070,32 @@ class PreparationTests(unittest.TestCase):
         stdout = done.stdout.decode("utf-8")
         self.assertIn("| テスト | PPSA00001 |", stdout)
         self.assertIn(f"written to {out.resolve()}", stdout)
+
+    def test_repeated_title_ids_run_once_in_request_order(self):
+        first, second = "PPSA00002", "PPSA00001"
+        games = self.root / "games"
+        out = self.root / "out"
+        for title_id in (first, second):
+            package(games / title_id, title_id)
+
+        def prepare(title_id, found, entry, platform, build, work):
+            (work / "relink.log").write_text("", encoding="utf-8")
+            return work / title_id
+
+        with patch.object(title_run, "prepare", side_effect=prepare) as prepared, \
+                patch.object(title_run, "Session") as session, patch("sys.stdout"):
+            session.return_value.alive.return_value = False
+            session.return_value.exit_code.return_value = 0
+            result = title_run.main(["--games", str(games), "--out", str(out), "--runs", "2", first, second, first])
+
+        self.assertEqual(result, 0)
+        self.assertEqual([call.args[0] for call in prepared.call_args_list], [first, second])
+        self.assertEqual(session.call_count, 4)
+        [report] = out.glob("*/summary.json")
+        self.assertTrue(report.with_suffix(".md").is_file())
+        titles = json.loads(report.read_text(encoding="utf-8"))["titles"]
+        self.assertEqual({title_id: [run["cache"] for run in title["runs"]] for title_id, title in titles.items()},
+                         {first: ["cold", "warm"], second: ["cold", "warm"]})
 
     def test_json_comparison_is_the_only_output_on_stdout(self):
         package(self.root / "games/PPSA00001", "PPSA00001")
@@ -1650,6 +1811,127 @@ class ModuleFileTests(unittest.TestCase):
             text.write_text('hello', encoding='utf-8')
             self.assertTrue(title_run.is_module(module))
             self.assertFalse(title_run.is_module(text))
+
+class PadTextTests(unittest.TestCase):
+    def test_repeat_and_gap_default_when_the_pad_omits_them(self):
+        with patch.object(title_run.pad_timeline, "compile_timeline", return_value="timeline") as compile_timeline:
+            self.assertEqual(title_run.pad_text({"events": [1, 2]}, "seq"), "timeline")
+        compile_timeline.assert_called_once_with({"version": 1, "events": [1, 2]}, "seq", 1, 200)
+
+    def test_repeat_and_gap_are_forwarded_from_the_pad(self):
+        with patch.object(title_run.pad_timeline, "compile_timeline", return_value="t") as compile_timeline:
+            title_run.pad_text({"events": [], "repeat": 3, "gap_ms": 50, "ignored": True}, "seq")
+        compile_timeline.assert_called_once_with({"version": 1, "events": []}, "seq", 3, 50)
+
+
+class CheckFilesTests(unittest.TestCase):
+    def test_valid_text_and_content_entries_pass(self):
+        title_run.check_files({"app0/a.txt": {"text": "hello"}, "data/b.bin": {"content": "sub/b.bin"}})
+        title_run.check_files({})
+
+    def test_destination_must_be_a_relative_path_under_a_file_root(self):
+        for destination in ("a.txt", "other/a.txt", "../app0/a.txt", "/app0/a.txt", "app0\\a.txt"):
+            with self.subTest(destination=destination), self.assertRaisesRegex(ValueError, "must be a relative path under"):
+                title_run.check_files({destination: {"text": "x"}})
+
+    def test_source_must_be_a_single_text_or_content_string(self):
+        for source in ("text", {}, {"text": 1}, {"other": "x"}, {"text": "x", "content": "y"}):
+            with self.subTest(source=source), self.assertRaisesRegex(ValueError, "must be"):
+                title_run.check_files({"app0/a.txt": source})
+
+    def test_content_must_stay_inside_the_content_directory(self):
+        for content in ("../x", "/x", "a\\b", "c:x"):
+            with self.subTest(content=content), self.assertRaisesRegex(ValueError, "content must be a relative path inside --content"):
+                title_run.check_files({"app0/a.txt": {"content": content}})
+
+
+class CollectFramesTests(unittest.TestCase):
+    def test_keeps_first_middle_and_last_frames_in_numeric_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory) / "work"
+            work.mkdir()
+            for index in (0, 1, 2, 10, 11):
+                (work / f"frame_{index}.bmp").write_bytes(b"x")
+            (work / "other.txt").write_text("keep")
+            destination = Path(directory) / "out" / "frames"
+            kept = title_run.collect_frames(work, destination)
+            self.assertEqual(kept, ["frame_0.bmp", "frame_2.bmp", "frame_11.bmp"])
+            self.assertEqual(sorted(path.name for path in destination.iterdir()), sorted(kept))
+            self.assertEqual(sorted(path.name for path in work.iterdir()), ["other.txt"])
+
+    def test_no_frames_still_creates_the_destination(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "frames"
+            self.assertEqual(title_run.collect_frames(Path(directory), destination), [])
+            self.assertTrue(destination.is_dir())
+
+    def test_only_collects_numbered_bitmap_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            for name in ("frame_005.bmp", "frame_preview.bmp", "frame_5_preview.bmp"):
+                (work / name).write_bytes(b"x")
+            (work / "frame_006.bmp").mkdir()
+            self.assertEqual(title_run.collect_frames(work, work / "out"), ["frame_005.bmp"])
+            self.assertEqual(sorted(path.name for path in work.iterdir()),
+                             ["frame_006.bmp", "frame_5_preview.bmp", "frame_preview.bmp", "out"])
+
+    def test_single_frame_is_kept(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory) / "work"
+            work.mkdir()
+            (work / "frame_5.bmp").write_bytes(b"x")
+            self.assertEqual(title_run.collect_frames(work, Path(directory) / "out"), ["frame_5.bmp"])
+
+
+class DiffEntriesTests(unittest.TestCase):
+    def test_splits_entries_into_before_only_now_only_and_both(self):
+        before = [{"a": 1, "b": 2, "n": 3}, {"a": 1, "b": 2, "n": 4}, {"a": 1, "b": 3, "n": 1}]
+        now = [{"a": 1, "b": 2, "n": 5}, {"a": 9, "b": 9, "n": 2}]
+        diff = title_run.diff_entries(before, now, ["a", "b"], "n")
+        self.assertEqual(diff["onlyBefore"], [{"a": 1, "b": 3, "n": 1}])
+        self.assertEqual(diff["onlyNow"], [{"a": 9, "b": 9, "n": 2}])
+        self.assertEqual(diff["both"], [{"a": 1, "b": 2, "before": 7, "now": 5}])
+
+    def test_missing_side_gives_no_diff(self):
+        self.assertIsNone(title_run.diff_entries(None, [], ["a"], "n"))
+        self.assertIsNone(title_run.diff_entries([], None, ["a"], "n"))
+
+    def test_non_integer_counts_add_nothing(self):
+        diff = title_run.diff_entries([{"a": 1, "n": "x"}], [{"a": 1, "n": 2.5}], ["a"], "n")
+        self.assertEqual(diff["both"], [{"a": 1, "before": 0, "now": 0}])
+
+    def test_empty_inputs_give_empty_lists(self):
+        self.assertEqual(title_run.diff_entries([], [], ["a"], "n"), {"onlyBefore": [], "onlyNow": [], "both": []})
+
+
+class HostIsIntelTests(unittest.TestCase):
+    def check(self, system, **replaced):
+        with patch.object(title_run, "os", system), patch.object(title_run, "sys", SimpleNamespace(platform=replaced.get("platform", "linux"))):
+            return title_run.host_is_intel()
+
+    def test_windows_reads_the_processor_identifier(self):
+        for identifier, expected in (("Intel64 Family 6", True), ("  INTEL64", True), ("AMD64 Family 25", False), ("", False)):
+            with self.subTest(identifier=identifier):
+                self.assertIs(self.check(SimpleNamespace(name="nt", environ={"PROCESSOR_IDENTIFIER": identifier})), expected)
+        self.assertIs(self.check(SimpleNamespace(name="nt", environ={})), False)
+
+    def test_macos_is_intel_only_on_x86_64(self):
+        for machine, expected in (("x86_64", True), ("arm64", False)):
+            system = SimpleNamespace(name="posix", uname=lambda machine=machine: SimpleNamespace(machine=machine))
+            self.assertIs(self.check(system, platform="darwin"), expected)
+
+    def test_linux_reads_proc_cpuinfo(self):
+        system = SimpleNamespace(name="posix")
+        for text, expected in (("vendor_id\t: GenuineIntel\n", True), ("vendor_id\t: AuthenticAMD\n", False)):
+            with self.subTest(text=text), patch.object(title_run, "Path") as path:
+                path.return_value.read_text.return_value = text
+                self.assertIs(self.check(system), expected)
+                path.assert_called_once_with("/proc/cpuinfo")
+
+    def test_unreadable_cpuinfo_is_not_intel(self):
+        with patch.object(title_run, "Path") as path:
+            path.return_value.read_text.side_effect = OSError("missing")
+            self.assertIs(self.check(SimpleNamespace(name="posix")), False)
 
 
 if __name__ == "__main__":

@@ -53,7 +53,7 @@ struct Settings {
     std::vector<std::pair<std::string, std::string>> headers;
     std::uint64_t contentLength = 0;
     bool noContentLength = false;
-    bool inflateGzip = false;
+    bool inflateGzip = true;
     bool stripGzipHeaders = false;
     bool auth = true;
     int redirect = 1;
@@ -91,7 +91,7 @@ public:
     int Headers(char** header, std::size_t* size);
     int TrailingHeaders(char** header, std::size_t* size);
     void Cancel();
-    void Stop();
+    void Stop(bool terminated);
 private:
     struct State;
     std::unique_ptr<State> state;

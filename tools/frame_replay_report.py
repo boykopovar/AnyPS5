@@ -23,6 +23,7 @@ NUMBER_FIELDS = (
     "replay_s", "fps", "delta_mib", "pace_wait_s", "skipped_mib", "pixels_identical",
     "load_s", "journal_s",
 )
+HOST_ENVIRONMENT_PREFIXES = ("APS5_", "ANYPS5_", "VK_", "SDL_")
 HOST_KEYS = {
     "system": {"os", "cpu", "cpu_threads", "memory_mib", "cpu_gate"},
     "sdl": {"linked", "compiled"},
@@ -31,6 +32,8 @@ HOST_KEYS = {
             "device_local_mib", "candidates", "present_modes", "present_mode_requested"},
     "shader_cache": {"state", "size_mib"},
 }
+HOST_SOURCES = {"redactions", "os", "cpu", "cpu_threads", "memory", "cpu_gate",
+                "sdl_linked", "sdl_compiled", "shader_cache", "environment"}
 LIMITATIONS = (
     "Replay throughput is not title FPS or a measurement of unrecorded title work.",
     "Replay times are printed to 0.001 s; per-frame each values are truncated whole milliseconds.",
@@ -120,7 +123,7 @@ def parse_replay_host_report(stderr, expected_commit=None):
             if section is None:
                 raise ValueError("host report has text before its first section")
             if section == "unavailable":
-                if not re.fullmatch(r"[A-Za-z0-9_]+", line):
+                if not re.fullmatch(r"[A-Za-z0-9_]+", line) and line.partition(": ")[0] not in HOST_SOURCES:
                     break
                 report[section].append(line)
             elif section == "environment" and line == "none":
@@ -131,9 +134,11 @@ def parse_replay_host_report(stderr, expected_commit=None):
                 if ": " not in line:
                     break
                 key, value = line.split(": ", 1)
+                if section == "environment" and not key.startswith(HOST_ENVIRONMENT_PREFIXES):
+                    break
                 if section in HOST_KEYS and key not in HOST_KEYS[section]:
                     raise ValueError(f"unknown host report {section} field: {key}")
-                if not re.fullmatch(r"[A-Za-z0-9_]+", key) or not value or len(value) > 16384:
+                if not re.fullmatch(r"[A-Za-z0-9_]+", key) or (not value and section != "environment") or len(value) > 16384:
                     break
                 if key in report[section] or "none" in report[section]:
                     raise ValueError(f"duplicate host report field: {section}.{key}")
