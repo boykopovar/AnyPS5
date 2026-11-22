@@ -560,6 +560,9 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     group->contexts.push_back(this);
 
     JSValue rawGlobal = JS_GetGlobalObject(qctx);
+    dateConstructor = JS_GetPropertyStr(qctx, rawGlobal, "Date");
+    errorConstructor = JS_GetPropertyStr(qctx, rawGlobal, "Error");
+    regExpConstructor = JS_GetPropertyStr(qctx, rawGlobal, "RegExp");
     JSValue objCtor = JS_GetPropertyStr(qctx, rawGlobal, "Object");
     JSValue objProto = JS_GetPropertyStr(qctx, objCtor, "prototype");
     JS_FreeValue(qctx, objCtor);
@@ -632,6 +635,9 @@ OpaqueJSContext::~OpaqueJSContext() {
         group->contexts.erase(it);
     }
     if (qctx) {
+        JS_FreeValue(qctx, dateConstructor);
+        JS_FreeValue(qctx, errorConstructor);
+        JS_FreeValue(qctx, regExpConstructor);
         JS_FreeContext(qctx);
         qctx = nullptr;
     }
