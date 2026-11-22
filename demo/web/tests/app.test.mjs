@@ -51,7 +51,8 @@ async function setup(t, name, overrides = {}) {
       },
       querySelectorAll: () => []
     },
-    window: { isSecureContext: true, Worker, WebAssembly, ReadableStream, WritableStream, crypto: { subtle: {} }, ...overrides },
+    window: { isSecureContext: true, Worker, WebAssembly, ReadableStream, WritableStream, crypto: { subtle: {} },
+      navigator: { locks: { request: (_name, acquire) => acquire() } }, ...overrides },
     Worker,
     fetch: overrides.fetch ?? (async () => ({
       ok: true,
@@ -306,9 +307,9 @@ test("a late rejected release request does not affect an active replacement work
   } });
   get("file").files = [{ name: "old.zip" }];
   get("file").onchange();
-  await inspect(workers[0], 1);
-  get("cancel").onclick();
-  await setImmediate();
+  assert.equal(get("cancel").hidden, false);
+  await get("cancel").onclick();
+  assert.equal(workers[0].terminated, true);
   get("file").files = [{ name: "new.zip" }];
   get("file").onchange();
   const current = workers[1];
@@ -336,9 +337,9 @@ test("a late successful release request cannot hide a replacement request failur
   } });
   get("file").files = [{ name: "old.zip" }];
   get("file").onchange();
-  await inspect(workers[0], 1);
-  get("cancel").onclick();
-  await setImmediate();
+  assert.equal(get("cancel").hidden, false);
+  await get("cancel").onclick();
+  assert.equal(workers[0].terminated, true);
   get("file").files = [{ name: "new.zip" }];
   get("file").onchange();
   replacement.reject(new TypeError("replacement failure"));
@@ -354,7 +355,13 @@ test("a late successful release request cannot hide a replacement request failur
 
 for (const [name, bad] of [
   ["HTTP error", { ok: false, status: 503 }],
-  ["invalid manifest", { ok: true, json: async () => ({ tag: "bad" }) }]
+  ["invalid manifest", { ok: true, json: async () => ({ tag: "bad" }) }],
+  ["negative Linux library size", { ok: true, json: async () => ({
+    tag: "v1-test", platforms: { linux: { expandedBytes: -1 }, windows: { expandedBytes: 1024 } }
+  }) }],
+  ["oversized Windows library size", { ok: true, json: async () => ({
+    tag: "v1-test", platforms: { linux: { expandedBytes: 1024 }, windows: { expandedBytes: 512 * 1024 * 1024 + 1 } }
+  }) }]
 ]) {
   test(`selecting an input retries release information after ${name}`, async t => {
     let calls = 0;
@@ -443,7 +450,11 @@ for (const type of ["write", "close-file", "complete"]) {
       get("save").listeners.get("change")();
       await get("convert").onclick();
       const request = old.onmessage({ data: { type, bytes: new Uint8Array([1]), mode: "zip", outputName: "old.elf", size: 1 } });
-      await get("cancel").onclick();
+      if (type === "complete") await old.onerror({ message: "old worker stopped" });
+      else {
+        assert.equal(get("cancel").hidden, false);
+        await get("cancel").onclick();
+      }
       get("file").files = [{ name: "replacement.zip" }];
       get("file").onchange();
       const replacement = workers.at(-1);
@@ -456,6 +467,33 @@ for (const type of ["write", "close-file", "complete"]) {
       assert.equal(get("convert").disabled, true);
     });
   }
+}
+
+for (const outcome of ["saved", "failed"]) {
+  test(`final ZIP close reports ${outcome} even if a late Cancel click arrives`, async t => {
+    const pending = deferred();
+    const sink = new WritableStream({ close: () => pending.promise }).getWriter();
+    const { get, workers } = await setup(t, `final-zip-close-${outcome}`, {
+      showSaveFilePicker: async () => ({ createWritable: async () => sink })
+    });
+    const current = await selected(get, workers, "app.zip");
+    await get("convert").onclick();
+    assert.equal(get("cancel").hidden, false);
+    const complete = current.onmessage({ data: {
+      type: "complete", mode: "zip", outputName: "app.elf", size: 1, apps: 1, release: "v1-test"
+    } });
+    await setImmediate();
+    const cancelWasHidden = get("cancel").hidden;
+    const cancel = get("cancel").onclick();
+    if (outcome === "failed") pending.reject(new Error("Cannot commit ZIP"));
+    else pending.resolve();
+    await Promise.all([complete, cancel]);
+
+    assert.equal(get("done").hidden, outcome === "failed");
+    assert.equal(get("error").hidden, outcome === "saved");
+    if (outcome === "failed") assert.equal(get("error").children[0].textContent, "Cannot commit ZIP");
+    assert.equal(cancelWasHidden, true);
+  });
 }
 
 for (const stage of ["picker", "writable", "root"]) {
@@ -531,6 +569,22 @@ for (const stage of ["picker", "writable"]) {
   });
 }
 
+test("selected batch details follow a language switch", async t => {
+  const { get, workers } = await setup(t, "locale-selected-batch");
+  const names = ["first.zip", "second.zip"];
+  get("file").files = names.map(name => ({ name }));
+  get("file").onchange();
+  await inspect(workers[0], names.length);
+  const rows = () => get("app-list").children.map(row => row.children.map(cell => cell.textContent));
+  assert.equal(get("archive-name").textContent, "2 app ZIPs");
+  assert.deepEqual(rows(), names.map(name => [name, "1 files · 1.0 KiB expanded · 0 modules"]));
+
+  get("locale").onclick();
+  assert.equal(document.documentElement.lang, "de");
+  assert.equal(get("archive-name").textContent, "2 App-ZIPs");
+  assert.deepEqual(rows(), names.map(name => [name, "1 Dateien · 1.0 KiB entpackt · 0 Module"]));
+});
+
 test("a visible error follows a language switch", async t => {
   const { get } = await setup(t, "locale-error", { fetch: async () => ({ ok: false, status: 404 }) });
   assert.equal(get("error").hidden, false);
@@ -580,13 +634,55 @@ test("a browser that denies direct ZIP writes explains how to continue", async t
   assert.equal(get("convert").disabled, true);
 });
 
+test("Cancel is available while a selected ZIP destination opens", async t => {
+  const opening = deferred();
+  const pending = deferred();
+  let aborted = 0;
+  const { get, workers } = await setup(t, "cancel-pending-zip-destination", {
+    showSaveFilePicker: async () => ({
+      createWritable() {
+        opening.resolve();
+        return pending.promise;
+      }
+    })
+  });
+  const original = await selected(get, workers, "first.zip");
+  const converting = get("convert").onclick();
+  try {
+    await opening.promise;
+    assert.equal(get("cancel").hidden, false);
+    await get("cancel").onclick();
+    assert.equal(original.terminated, true);
+    const replacement = await selected(get, workers, "replacement.zip");
+    assert.equal(replacement.terminated, false);
+  } finally {
+    pending.resolve({ async abort() { aborted++; } });
+    await converting;
+  }
+  assert.equal(aborted, 1);
+  assert.equal(original.messages.some(message => message.type === "convert"), false);
+  assert.equal(get("archive-name").textContent, "replacement.zip");
+});
+
 test("cancelling the ZIP picker does not report a failure", async t => {
   const { get, workers } = await setup(t, "write-cancelled", {
     showSaveFilePicker: async () => { throw Object.assign(new Error("cancelled"), { name: "AbortError" }); }
   });
   await selected(get, workers, "first.zip");
   await get("convert").onclick();
+  assert.equal(get("cancel").hidden, true);
   assert.equal(get("error").hidden, true);
   assert.equal(get("selection").hidden, false);
   assert.equal(get("convert").disabled, false);
 });
+
+for (const supported of [false, true]) {
+  test(`Folder output requires Web Locks (${supported})`, async t => {
+    const { get } = await setup(t, `folder-locks-${supported}`, {
+      showDirectoryPicker() {},
+      navigator: supported ? { locks: { request() {} } } : {}
+    });
+    assert.equal(get("save").querySelector('[value="disk"]').disabled, !supported);
+    assert.equal(get("save").querySelector('[value="memory"]').disabled, false);
+  });
+}

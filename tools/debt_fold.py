@@ -37,7 +37,7 @@ class Operation:
 
 def _parse_file(path, name, root, existing_files=None):
     operations, library, current, body_lines = [], None, None, None
-    for number, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
+    for number, line in enumerate(path.read_text(encoding="utf-8-sig").split("\n"), 1):
         if line.startswith("# "):
             library, current, body_lines = line[2:].strip(), None, None
             try:
@@ -260,8 +260,11 @@ def fold(root, write):
             except FoldError as error:
                 problems.append(str(error))
                 continue
-            if key in claimed and claimed[key].fragment != operation.fragment:
-                problems.append(f"{operation.fragment}:{operation.line} and {claimed[key].fragment}:{claimed[key].line} both {operation.kind} the same {operation.library} entry; merge them into one fragment")
+            previous = claimed.get(key)
+            if previous is not None and previous.fragment == operation.fragment:
+                problems.append(f"{previous.fragment}:{previous.line} and {operation.fragment}:{operation.line} both target the same {operation.library} entry; name each entry once per fragment")
+            elif previous is not None:
+                problems.append(f"{operation.fragment}:{operation.line} and {previous.fragment}:{previous.line} both target the same {operation.library} entry; merge them into one fragment")
             claimed[key] = operation
     if problems:
         raise FoldError("\n".join(problems))

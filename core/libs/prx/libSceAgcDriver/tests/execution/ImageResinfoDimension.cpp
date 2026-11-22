@@ -8,7 +8,9 @@
 #include <cstdio>
 #include <iostream>
 #include <span>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -103,7 +105,12 @@ int main() {
         Check(*device, Query2DArray, Descriptor(Type2DArray, 3u), "2D array", {Size, Size, 3u, 1u}, {Size, Size, 0u, 1u});
         for (std::uint32_t log2Fragments = 1; log2Fragments <= 3; ++log2Fragments) {
             const auto msaa = Descriptor(Type2DMsaa, 1u, log2Fragments);
-            Check(*device, Query2DMsaa, msaa, "2D MSAA", {Size, Size, 0u, 1u}, {Size, Size, 0u, 1u});
+            try {
+                Check(*device, Query2DMsaa, msaa, "2D MSAA", {Size, Size, 0u, 1u}, {Size, Size, 0u, 1u});
+            } catch (const std::runtime_error& error) {
+                if (std::string_view(error.what()) != "AGC graphics: the device cannot render color with the target's sample count") throw;
+                std::printf("%u-fragment 2D MSAA resinfo skipped, the device lacks %u-sample color attachments\n", 1u << log2Fragments, 1u << log2Fragments);
+            }
         }
         std::puts("image resinfo dimension tests passed");
         return 0;
