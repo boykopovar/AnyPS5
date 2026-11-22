@@ -40,7 +40,7 @@ std::vector<char16_t> ReadOperand(const char16_t* operand, std::int32_t count, c
             done = bytes.size() == limit;
             continue;
         }
-        for (std::size_t scanned = offset; scanned + sizeof(char16_t) <= bytes.size(); scanned += sizeof(char16_t)) {
+        for (std::size_t scanned = offset & ~std::size_t{1}; scanned + sizeof(char16_t) <= bytes.size(); scanned += sizeof(char16_t)) {
             char16_t unit = 0;
             std::memcpy(&unit, bytes.data() + scanned, sizeof(unit));
             if (unit != 0) continue;
