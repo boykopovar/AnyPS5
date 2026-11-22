@@ -205,12 +205,12 @@ std::string SerializeVersion63(const ShaderRecompiler::RecompileRequest& request
     Require(bytes[4] == 65u);
     const auto tail = request.graphics.has_value() && request.graphics->emulateBarycentrics ? 1u : 0u;
     const auto mesh = request.graphics.has_value() && request.graphics->mesh.has_value() ? 8u : 0u;
-    bytes.erase(bytes.end() - tail - 11u - mesh, bytes.end() - tail);
+    bytes.erase(bytes.end() - tail - mesh - 11u, bytes.end() - tail);
     bytes[4] = 63u;
     return EncodeBase64(bytes);
 }
 
-void VerifyMeshReuseLimits() {
+void VerifyMeshReplayTailCompatibility() {
     const ShaderRecompiler::RequestSerializer serializer;
     for (const bool emulated : {false, true}) {
         ShaderRecompiler::RecompileRequest request{};
@@ -299,6 +299,35 @@ void VerifyPublishedVersion64Layouts() {
         catch (const std::runtime_error&) { rejected = true; }
         Require(rejected);
     }
+}
+
+void VerifyMeshReuseLimits() {
+    const ShaderRecompiler::RequestSerializer serializer;
+    ShaderRecompiler::RecompileRequest request{};
+    request.graphics.emplace();
+    ShaderRecompiler::MeshConfiguration mesh{};
+    mesh.inputPrimitive = 4u;
+    mesh.primitivesPerGroup = 4u;
+    mesh.verticesPerGroup = 12u;
+    mesh.reuseVertexLimit = 14u;
+    mesh.reusePrimitiveLimit = 13u;
+    request.graphics->mesh = mesh;
+    request.target.meshInlineFunctions = true;
+    const auto encoded = serializer.Serialize(request);
+    const auto replay = serializer.Deserialize(encoded);
+    Require(replay.request.graphics.has_value() && replay.request.graphics->mesh.has_value());
+    Require(replay.request.graphics->mesh->reuseVertexLimit == 14u && replay.request.graphics->mesh->reusePrimitiveLimit == 13u);
+    Require(serializer.Serialize(replay.request) == encoded);
+    auto bytes = DecodeBase64(encoded);
+    Require(bytes[4] == 65u);
+    bytes.resize(bytes.size() - 8u);
+    bytes[4] = 64u;
+    const auto version64 = serializer.Deserialize(EncodeBase64(bytes));
+    Require(version64.request.graphics->mesh->reuseVertexLimit == 0u && version64.request.graphics->mesh->reusePrimitiveLimit == 0u);
+    Require(version64.request.graphics->mesh->verticesPerGroup == 12u && version64.request.target.meshInlineFunctions);
+    const auto version63 = serializer.Deserialize(SerializeVersion63(request));
+    Require(version63.request.graphics->mesh->reuseVertexLimit == 0u && version63.request.graphics->mesh->reusePrimitiveLimit == 0u);
+    Require(version63.request.graphics->mesh->verticesPerGroup == 12u && !version63.request.target.meshInlineFunctions);
 }
 
 void VerifySampleContexts() {
@@ -1413,7 +1442,7 @@ void VerifySingleSampleVersion63() {
             Require(replay.request.target.maxImageArrayLayers == (version >= 57u ? 4097u : 0u) && replay.request.target.fixedPushSlots == (version >= 57u) && replay.request.target.spannedAnySubgroup == (version >= 62u));
         }
     }
-    for (const auto [version, dither] : {std::pair{63u, 5u}, std::pair{66u, 3u}}) {
+    for (const auto [version, dither] : {std::pair{63u, 5u}, std::pair{64u, 5u}, std::pair{65u, 5u}, std::pair{66u, 3u}}) {
         auto invalid = first;
         invalid[4] = version;
         invalid[ditherByte] = dither;
@@ -1428,8 +1457,9 @@ void VerifySingleSampleVersion63() {
 }
 
 int main() {
-    VerifyMeshReuseLimits();
+    VerifyMeshReplayTailCompatibility();
     VerifyPublishedVersion64Layouts();
+    VerifyMeshReuseLimits();
     VerifySampleContexts();
     VerifyReplayOptions();
     VerifySingleSampleVersion63();

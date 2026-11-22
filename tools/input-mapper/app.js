@@ -1,7 +1,7 @@
-import {actions, actionsForInput, chordButtons, defaults, groups, inputFilename, mouseValues, typesForAction, wheelValues} from './mapping.js';
+import {actions, actionsForInput, chordButtons, defaults, groups, inputFilename, inputTitleId, mouseValues, typesForAction, wheelValues} from './mapping.js';
 import {exportableKeys} from './keys.js';
 import {captureKey} from './capture.js';
-import {parseIni, serialize, validate} from './validation.js';
+import {controllerDestinations, parseIni, sdlControllerButtons, serialize, validate} from './validation.js';
 import {diagnostic, initialLocale, locales, translate} from './i18n.js';
 import {createDropdown} from './dropdown.js';
 
@@ -76,7 +76,9 @@ function renderHelp() {
 function renderImportReport() {
     if (!importReport) return;
     const report = byId('import-report');
-    report.replaceChildren(element('h2', t(importReport.errors.length ? 'importRejected' : 'importRead')));
+    const heading = element('h2', t(importReport.errors.length ? 'importRejected' : 'importRead'));
+    heading.id = 'import-report-title';
+    report.replaceChildren(heading);
     const messages = [...importReport.errors, ...importReport.warnings];
     if (messages.length) {
         const list = element('ul');
@@ -101,6 +103,7 @@ function applyLocale() {
     byId('categories').replaceChildren();
     renderCategories();
     renderHelp();
+    renderControllerRemaps();
     render();
     renderImportReport();
     if (currentStatus) setStatus(currentStatus.key, currentStatus.values);
@@ -270,6 +273,31 @@ function renderBinding(entry, position) {
     return row;
 }
 
+function renderControllerRemaps() {
+    byId('controller-remaps').replaceChildren(...sdlControllerButtons.map(button => {
+        const row = element('label');
+        const source = element('span', `SDLButton:${button}`);
+        source.dir = 'ltr';
+        const select = element('select');
+        for (const destination of ['', ...controllerDestinations]) {
+            const option = element('option', destination || t('noOverride'));
+            option.value = destination;
+            select.append(option);
+        }
+        select.value = controllerRemaps.find(remap => remap.button === button)?.destination || '';
+        select.addEventListener('change', () => {
+            const destination = select.value;
+            const remap = controllerRemaps.find(item => item.button === button);
+            if (!destination) controllerRemaps = controllerRemaps.filter(item => item.button !== button);
+            else if (remap) remap.destination = destination;
+            else controllerRemaps.push({button, destination});
+            updateOutput();
+        });
+        row.append(source, select);
+        return row;
+    }));
+}
+
 function render(focusEntry) {
     const container = byId('mappings');
     container.replaceChildren();
@@ -422,6 +450,7 @@ byId('reset').addEventListener('click', async () => {
     importReport = undefined;
     byId('import-report').hidden = true;
     byId('profile-title-id').value = '';
+    renderControllerRemaps();
     render();
     setStatus('resetDone');
 });
@@ -447,10 +476,13 @@ byId('file').addEventListener('change', async event => {
         if (!await confirmReplacement() || request !== replacementRequest) return;
         importReport = result;
         renderImportReport();
+        const titleId = inputTitleId(file.name);
+        if (titleId !== undefined) byId('profile-title-id').value = titleId;
         entries = result.entries;
         settings = result.settings;
         controllerRemaps = result.controllerRemaps;
         savedConfiguration = snapshot();
+        renderControllerRemaps();
         render();
         setStatus('imported', {name: file.name});
     } catch (error) {
