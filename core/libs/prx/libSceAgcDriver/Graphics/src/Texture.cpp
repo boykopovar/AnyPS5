@@ -31,6 +31,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/KeptUnits.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#ifdef _WIN32
+#include "prx/libc/include/GuestArena.hpp"
+#endif
 #include "prx/libkernel/include/Api.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
@@ -235,6 +238,23 @@ void reportStorageTraffic(StorageTraffic& traffic) {
     traffic.drawnStores.clear();
     traffic.evictions.clear();
     traffic.directWriteBacks = 0;
+}
+
+bool ResidentGuestMemory(std::uint64_t address, std::size_t bytes) {
+#ifdef _WIN32
+    constexpr std::uint64_t block = 65536;
+    const auto end = address + bytes;
+    for (auto at = address; at < end; at = (at / block + 1) * block) {
+        std::uintptr_t runBegin = 0;
+        std::uintptr_t runEnd = 0;
+        if (!GuestArena::GuestArenaResidentSpan_nid_postfix(static_cast<std::uintptr_t>(at), 1, &runBegin, &runEnd) || runBegin > at || runEnd < std::min(end, (at / block + 1) * block)) return false;
+    }
+    return true;
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    return false;
+#endif
 }
 
 void countStorageUpload(std::size_t path, std::uint64_t bytes) {
@@ -4135,13 +4155,16 @@ std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segme
     std::vector<Fill> fills;
     std::shared_ptr<DeviceBuffer> fillBuffer;
     static const bool fillUnits = std::getenv("APS5_NO_FILL_UPLOAD_UNITS") == nullptr;
-    if (fillUnits && uploadedKeys == DccKeys::Uncompressed) {
+    const auto pendingWrites = Recorder::PendingWriteSnapshot();
+    const auto* active = Recorder::Active();
+    const bool settled = (pendingWrites == nullptr || pendingWrites->empty()) && (active == nullptr || !active->HasQueuedStores());
+    if (fillUnits && settled && uploadedKeys == DccKeys::Uncompressed) {
         VkDeviceSize total = 0;
         for (auto& source : read) {
             const auto bytes = source.end - source.begin;
             const auto address = descriptor.baseAddress + source.begin;
             if (source.shadow || bytes < 4 || bytes % 4 != 0 || address % 4 != 0) continue;
-            if (Recorder::SnapshotWriteOverlaps(address, static_cast<std::size_t>(bytes)) || otherPendingInside(address, static_cast<std::size_t>(bytes))) continue;
+            if (otherPendingInside(address, static_cast<std::size_t>(bytes)) || !ResidentGuestMemory(address, static_cast<std::size_t>(bytes))) continue;
             const auto* words = reinterpret_cast<const std::uint32_t*>(static_cast<std::uintptr_t>(address));
             if (!GuestMemory::Accessible(words, static_cast<std::size_t>(bytes))) continue;
             const auto value = words[0];

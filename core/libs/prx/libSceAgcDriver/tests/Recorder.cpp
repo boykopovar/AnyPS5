@@ -11092,8 +11092,20 @@ void uploadBlockTests(const Device& device, Recorder& recorder) {
         const auto surfaceBytes = static_cast<std::size_t>(DescribeSurface(resource).guestBytes);
         Require(surfaceBytes == (4u << 20u) && test.offset + surfaceBytes <= test.registeredEnd, std::string(test.name) + ": the surface does not fit its pieces");
 #ifdef _WIN32
-        void* reserved = VirtualAlloc(nullptr, 2 * window, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        const bool resident = test.uniformHead;
+        void* reserved = nullptr;
+        if (resident) {
+            reserved = GuestArena::GuestArenaAllocate_nid_postfix(2 * window, window);
+            Require(reserved != nullptr, "cannot reserve the resident upload block");
+            const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, static_cast<DWORD>(2 * window), nullptr);
+            Require(section != nullptr, "cannot create the resident upload block");
+            GuestArena::GuestArenaMapDirect_nid_postfix(reserved, 2 * window, section, 0, PAGE_READWRITE);
+            CloseHandle(section);
+        } else {
+            reserved = VirtualAlloc(nullptr, 2 * window, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        }
 #else
+        const bool resident = false;
         void* reserved = std::aligned_alloc(window, 2 * window);
 #endif
         Require(reserved != nullptr, "cannot allocate the upload block");
@@ -11133,7 +11145,7 @@ void uploadBlockTests(const Device& device, Recorder& recorder) {
         const auto segments = after.requesters[static_cast<std::size_t>(ImportRequester::Segment)].made - before.requesters[static_cast<std::size_t>(ImportRequester::Segment)].made;
         std::printf("%s: %zu segment imports, %s upload, %zu of %zu bytes kept through the round trip\n", test.name, static_cast<std::size_t>(segments), direct ? "GPU-direct" : "CPU", kept, surfaceBytes);
         if (!direct) failures += std::string(test.name) + ": the upload took the CPU path\n";
-        if (test.uniformHead && headRead) failures += std::string(test.name) + ": the upload read a piece holding one repeated word from guest memory instead of filling it on the GPU\n";
+        if (test.uniformHead && resident && headRead) failures += std::string(test.name) + ": the upload read a piece holding one repeated word from guest memory instead of filling it on the GPU\n";
         if (segments != test.segments) failures += std::string(test.name) + ": " + std::to_string(segments) + " segment imports, expected " + std::to_string(test.segments) + "\n";
         if (kept != surfaceBytes) failures += std::string(test.name) + ": the upload and write-back changed " + std::to_string(surfaceBytes - kept) + " guest bytes\n";
         {
@@ -11143,7 +11155,12 @@ void uploadBlockTests(const Device& device, Recorder& recorder) {
         ClearHostImports(base.device);
         recorder.Sync();
 #ifdef _WIN32
-        VirtualFree(reserved, 0, MEM_RELEASE);
+        if (resident) {
+            GuestArena::GuestArenaReset_nid_postfix(reserved, 2 * window);
+            GuestArena::GuestArenaRelease_nid_postfix(reserved, 2 * window);
+        } else {
+            VirtualFree(reserved, 0, MEM_RELEASE);
+        }
 #else
         std::free(reserved);
 #endif
