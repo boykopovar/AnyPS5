@@ -1,4 +1,5 @@
 #include "prx/libSceIme/include/Api.hpp"
+#include "prx/libSceIme/include/ImeInput.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <cstdio>
@@ -201,9 +202,11 @@ static void CheckKeyboardResourceIds() {
 }
 
 static void CheckConsecutiveClauseConversion() {
+    Require(ImeConsecutiveClauseConversionEnabled_nid_postfix() == 0, "the flag starts cleared");
     const std::uint8_t values[] = {0, 1, 2, 0xff};
     for (const std::uint8_t value : values) {
         Require(sceImeSetConsecutiveClauseConversionEnabled(value) == 0, "any value must succeed");
+        Require(ImeConsecutiveClauseConversionEnabled_nid_postfix() == value, "the flag must persist");
     }
 }
 

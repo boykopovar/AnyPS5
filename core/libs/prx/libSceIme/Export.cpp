@@ -101,6 +101,7 @@ std::atomic<ImeHostTextSink> g_textSink{nullptr};
 std::atomic<ImeHostPreeditSink> g_preeditSink{nullptr};
 std::atomic<ImeHostPadSink> g_padSink{nullptr};
 std::atomic<ImeKeyboardViewProvider> g_viewProvider{nullptr};
+std::atomic<std::uint8_t> g_consecutiveClauseConversionEnabled{0};
 std::uint64_t g_nextSessionId = 0;
 
 void PanelSize(const Param& param, uint32_t* width, uint32_t* height) {
@@ -515,6 +516,10 @@ bool ImeCapturesKeyboard_nid_postfix() {
     return g_session.has_value() || g_textSink.load() != nullptr;
 }
 
+std::uint8_t ImeConsecutiveClauseConversionEnabled_nid_postfix() {
+    return g_consecutiveClauseConversionEnabled.load();
+}
+
 void ImeSetHostTextSink_nid_no_patch(ImeHostTextSink sink) {
     g_textSink = sink;
 }
@@ -694,7 +699,7 @@ int APS5_VABI sceImeSetCaret(const Caret* caret) {
 }
 
 int APS5_VABI sceImeSetConsecutiveClauseConversionEnabled(std::uint8_t enabled) {
-    (void)enabled;
+    g_consecutiveClauseConversionEnabled = enabled;
     return 0;
 }
 
