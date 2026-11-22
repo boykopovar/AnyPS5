@@ -135,6 +135,8 @@ class PackageHeadersFilteringTests(unittest.TestCase):
         with zipfile.ZipFile(self.output / "prx-headers-v1.0.0.zip") as archive:
             self.assertIn("include/anyps5/prx/libSample/Api.hpp", archive.namelist())
             self.assertNotIn("include/anyps5/prx/libSample/MissingComment.hpp", archive.namelist())
+            self.assertNotIn("include/anyps5/prx/libSample/MissingBlockComment.hpp", archive.namelist())
+            self.assertNotIn("include/anyps5/prx/libSample/MissingRaw.hpp", archive.namelist())
 
     def test_forbidden_include_paths_raise_runtime_error(self):
         for bad_include in ('"3rdparty/foo.hpp"', '"sub\\\\bad.hpp"', '"/abs/path.hpp"', '":bad.hpp"'):
