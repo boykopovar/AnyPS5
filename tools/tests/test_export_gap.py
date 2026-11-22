@@ -251,6 +251,10 @@ class ExportGapTests(unittest.TestCase):
         for source in sources:
             with self.subTest(source=source):
                 self.assertFalse(provides_with(source, nid_of("Missing")))
+                self.assertTrue(provides_with(
+                    source + '\nextern "C" int After_nid_postfix() { return 1; }',
+                    nid_of("After"),
+                ))
 
     def test_trailing_visibility_attributes_do_not_hide_real_gaps(self):
         sources = [
