@@ -556,6 +556,32 @@ time.sleep(60)
         self.assert_qualification(summary, "matched")
         self.assertFalse(run["native"].get("summary_errors"))
 
+    def test_damaged_summary_prefix_cannot_certify_matching_native_identity(self):
+        import performance_bisect
+        rows = ['x{"commit":"bbbbbbbbbbbb","dirty":false}',
+                'x{"format":"aps5-bench/1","commit":"bbbbbbbbbbbb","dirty":false}']
+        summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
+            {"commit": self.commit, "modified": False}, summary_rows=rows)
+        self.assert_qualification(summary, "unknown")
+        self.assertEqual(run["native"]["summary_errors"], {"malformed_rows": 2})
+        self.assertNotIn("bbbbbbbbbbbb", json.dumps(run["native"]))
+        self.assertIn("unknown", markdown)
+        with self.assertRaisesRegex(ValueError, "native.*unknown"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
+
+    def test_truncated_ordinary_json_logs_do_not_taint_matching_native_identity(self):
+        import performance_bisect
+        rows = ['{"level":"info","message":',
+                '{"format":"aps5-log/1","commit":"bbbbbbbbbbbb","dirty":false,',
+                '{"level":"info","details":{"commit":"bbbbbbbbbbbb","dirty":false},"message":',
+                'x{"format":"application-log","commit":"bbbbbbbbbbbb","dirty":false,']
+        summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
+            {"commit": self.commit, "modified": False}, summary_rows=rows)
+        self.assert_qualification(summary, "matched")
+        self.assertFalse(run["native"].get("summary_errors"))
+        self.assertIn("matched", markdown)
+        self.assertEqual(performance_bisect.sample_summary(path, "PPSA00001", self.commit)["fps"], 60.0)
+
     def test_malformed_report_does_not_qualify_from_clean_trace_alone(self):
         import performance_bisect
         summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
@@ -619,7 +645,7 @@ class ReportTests(unittest.TestCase):
                                      "runs": [run("crashed", error="shader | unavailable")]}})
         report = title_run.render_markdown(now, now)
         self.assertIn(r"| Game \| Deluxe | PPSA85300 | 1 \| preview |", report)
-        self.assertIn(r"| shader \| unavailable | crashed |", report)
+        self.assertIn(r"| shader \| unavailable | unknown | crashed |", report)
         self.assertIn(r"| Game \| Deluxe | PPSA85300 | FPS |", report)
 
     def test_render_markdown_states_the_run_length_of_the_titles(self):
