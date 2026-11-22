@@ -12,8 +12,9 @@ CTEST_SKIP = re.compile(r"SKIP_RETURN_CODE=\d+|SKIP_REGULAR_EXPRESSION_MATCHED",
 SANITIZERS = ("address", "undefined", "thread")
 REPORT_LINES = (
     re.compile(r"SUMMARY: \w+Sanitizer: .*"),
-    re.compile(r"(?:ERROR|WARNING): \w+Sanitizer: .*"),
+    re.compile(r"(?:ERROR|WARNING|FATAL): \w+Sanitizer: .*"),
     re.compile(r"^.*runtime error: .*", re.MULTILINE),
+    re.compile(r"^\w+Sanitizer:DEADLYSIGNAL\b", re.MULTILINE),
 )
 REPORT_LENGTH = 200
 
@@ -30,6 +31,8 @@ def results(path):
         if name in found:
             raise ValueError(f"{path}: testcase {name} is listed more than once")
         skipped, status = case.find("skipped"), case.get("status")
+        if status is not None and status not in ("run", "fail", "notrun", "disabled", "None"):
+            raise ValueError(f"{path}: invalid testcase status {status!r} for {name}")
         reason = (skipped.get("message") or "").strip() if skipped is not None else ""
         if case.find("failure") is not None or case.find("error") is not None:
             outcome = "failed"

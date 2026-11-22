@@ -80,6 +80,23 @@ class RunReportSummaryTests(unittest.TestCase):
         self.assertIn("Shaders: compilation data was not collected", summary)
         self.assertIn("Unsupported shader instructions: not collected", summary)
 
+    def test_cli_rejects_malformed_collected_diagnostic_lists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            for section, key in (("missing", "functions"), ("shaders", "unsupported")):
+                for value in ("abc", {}, None, [{}] * 5 + [None]):
+                    with self.subTest(field=f"{section}.{key}", value=value):
+                        report = self.report("stop-none.json")
+                        report[section][key] = value
+                        path.write_text(json.dumps(report), encoding="utf-8")
+                        result = subprocess.run(
+                            [sys.executable, str(ROOT / "tools/run_report_summary.py"), str(path)],
+                            capture_output=True, text=True, timeout=15,
+                        )
+                        self.assertEqual(result.returncode, 2)
+                        self.assertEqual(result.stdout, "")
+                        self.assertIn(f"{section}.{key}", result.stderr)
+
     def test_summary_reports_recovery_incomplete_data_and_truncation(self):
         report = self.report("killed-recovered.json")
         report["truncated"]["functions"] = 2
@@ -117,6 +134,15 @@ class RunReportSummaryTests(unittest.TestCase):
         self.assertIn("Missing functions: unknown calls across 2 functions", summary)
         self.assertIn("Unsupported shader instructions: unknown occurrences across 2 instructions", summary)
         self.assertNotIn("\x1b", summary)
+
+    def test_rejects_non_boolean_coverage_flags(self):
+        for flag in ("milestones", "missing", "shaders", "unsupported"):
+            for value in ("false", "true", 0, 1, None, []):
+                with self.subTest(flag=flag, value=value):
+                    report = self.report("stop-none.json")
+                    report["coverage"][flag] = value
+                    with self.assertRaisesRegex(ValueError, f"coverage\\.{flag}"):
+                        render(report)
 
     def test_rejects_other_report_formats(self):
         with self.assertRaisesRegex(ValueError, "AnyPS5 run report"):
