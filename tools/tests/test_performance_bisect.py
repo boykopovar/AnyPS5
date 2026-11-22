@@ -66,6 +66,25 @@ class RecipeTests(unittest.TestCase):
                         with self.assertRaisesRegex(ValueError, "recipe." + name):
                             performance_bisect.load_recipe(path)
 
+    def test_cli_reports_oversized_percentages_before_bisection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            recipe = self.make_recipe(root)
+            path = root / "recipe.json"
+            output = root / "report.json"
+            for name in ("regression_pct", "max_spread_pct"):
+                with self.subTest(name=name):
+                    path.write_text(json.dumps(dict(recipe, **{name: 10 ** 400})), encoding="utf-8")
+                    result = subprocess.run([sys.executable, performance_bisect.__file__, "--recipe", str(path),
+                                             "--repo", str(root / "not-a-repository"), "--good", "good", "--bad", "bad",
+                                             "--output", str(output)], capture_output=True, timeout=10)
+                    error = result.stderr.decode("utf-8")
+                    self.assertEqual(result.returncode, 2, error)
+                    self.assertIn("recipe." + name, error)
+                    self.assertNotIn("Traceback", error)
+                    self.assertEqual(result.stdout, b"")
+                    self.assertFalse(output.exists())
+
     def test_resolves_relative_paths_from_the_recipe_file(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
