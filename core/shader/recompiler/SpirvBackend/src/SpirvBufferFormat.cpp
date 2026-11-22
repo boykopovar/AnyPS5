@@ -284,9 +284,12 @@ std::uint32_t StoreChannelClass(std::uint32_t code) {
         case SpirvFormatComponentType::Snorm:
         case SpirvFormatComponentType::Float:
             return info.componentCount;
-        default:
+        case SpirvFormatComponentType::Uscaled:
+        case SpirvFormatComponentType::Sscaled:
+        case SpirvFormatComponentType::Unknown:
             return 0u;
     }
+    return 0u;
 }
 
 }
