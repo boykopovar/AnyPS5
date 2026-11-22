@@ -11,6 +11,7 @@ namespace {
 
 constexpr int Allocated = 1;
 constexpr int StaticData = 2;
+constexpr int ConstTime = 4;
 
 bool CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
     const int saved = errno;
@@ -72,10 +73,30 @@ void ValidateReplacement_nid_no_patch(void* previous, const LibreSsl3Bignum* rep
     Validate_nid_no_patch(static_cast<LibreSsl3Bignum*>(previous), guestNumber, dataBytes, caller);
 }
 
+void ValidatePrivateReplacement_nid_no_patch(void* previous, LibreSsl3Bignum* replacement, const char* caller) {
+    ValidateReplacement_nid_no_patch(previous, replacement, caller);
+    if (!replacement) return;
+    LibreSsl3Bignum guestNumber{};
+    if (!CopyInPreservingErrno(&guestNumber, replacement, sizeof(guestNumber)) ||
+        !WritablePreservingErrno(replacement, sizeof(guestNumber)))
+        NotImplemented_nid_no_patch(caller);
+}
+
 void Replace_nid_no_patch(void*& previous, LibreSsl3Bignum* replacement) {
     if (!replacement) return;
     BN_clear_free_nid_postfix(static_cast<LibreSsl3Bignum*>(previous));
     previous = replacement;
+}
+
+void ReplacePrivate_nid_no_patch(void*& previous, LibreSsl3Bignum* replacement, const char* caller) {
+    if (!replacement) return;
+    Replace_nid_no_patch(previous, replacement);
+    LibreSsl3Bignum guestNumber{};
+    if (!CopyInPreservingErrno(&guestNumber, replacement, sizeof(guestNumber)))
+        NotImplemented_nid_no_patch(caller);
+    guestNumber.flags |= ConstTime;
+    if (!CopyOutPreservingErrno(replacement, &guestNumber, sizeof(guestNumber)))
+        NotImplemented_nid_no_patch(caller);
 }
 
 }
@@ -104,10 +125,10 @@ int APS5_VABI RSA_set0_key_nid_postfix(LibreSsl3Rsa* rsa, LibreSsl3Bignum* n, Li
     if (!WritablePreservingErrno(rsa, sizeof(guestRsa))) NotImplemented_nid_no_patch(__func__);
     ValidateReplacement_nid_no_patch(guestRsa.n, n, __func__);
     ValidateReplacement_nid_no_patch(guestRsa.e, e, __func__);
-    ValidateReplacement_nid_no_patch(guestRsa.d, d, __func__);
+    ValidatePrivateReplacement_nid_no_patch(guestRsa.d, d, __func__);
     Replace_nid_no_patch(guestRsa.n, n);
     Replace_nid_no_patch(guestRsa.e, e);
-    Replace_nid_no_patch(guestRsa.d, d);
+    ReplacePrivate_nid_no_patch(guestRsa.d, d, __func__);
     if (!CopyOutPreservingErrno(rsa, &guestRsa, sizeof(guestRsa))) NotImplemented_nid_no_patch(__func__);
     return 1;
 }
@@ -118,10 +139,10 @@ int APS5_VABI RSA_set0_factors_nid_postfix(LibreSsl3Rsa* rsa, LibreSsl3Bignum* p
     if (!CopyInPreservingErrno(&guestRsa, rsa, sizeof(guestRsa))) NotImplemented_nid_no_patch(__func__);
     if ((!guestRsa.p && !p) || (!guestRsa.q && !q)) return 0;
     if (!WritablePreservingErrno(rsa, sizeof(guestRsa))) NotImplemented_nid_no_patch(__func__);
-    ValidateReplacement_nid_no_patch(guestRsa.p, p, __func__);
-    ValidateReplacement_nid_no_patch(guestRsa.q, q, __func__);
-    Replace_nid_no_patch(guestRsa.p, p);
-    Replace_nid_no_patch(guestRsa.q, q);
+    ValidatePrivateReplacement_nid_no_patch(guestRsa.p, p, __func__);
+    ValidatePrivateReplacement_nid_no_patch(guestRsa.q, q, __func__);
+    ReplacePrivate_nid_no_patch(guestRsa.p, p, __func__);
+    ReplacePrivate_nid_no_patch(guestRsa.q, q, __func__);
     if (!CopyOutPreservingErrno(rsa, &guestRsa, sizeof(guestRsa))) NotImplemented_nid_no_patch(__func__);
     return 1;
 }
@@ -132,12 +153,12 @@ int APS5_VABI RSA_set0_crt_params_nid_postfix(LibreSsl3Rsa* rsa, LibreSsl3Bignum
     if (!CopyInPreservingErrno(&guestRsa, rsa, sizeof(guestRsa))) NotImplemented_nid_no_patch(__func__);
     if ((!guestRsa.dmp1 && !dmp1) || (!guestRsa.dmq1 && !dmq1) || (!guestRsa.iqmp && !iqmp)) return 0;
     if (!WritablePreservingErrno(rsa, sizeof(guestRsa))) NotImplemented_nid_no_patch(__func__);
-    ValidateReplacement_nid_no_patch(guestRsa.dmp1, dmp1, __func__);
-    ValidateReplacement_nid_no_patch(guestRsa.dmq1, dmq1, __func__);
-    ValidateReplacement_nid_no_patch(guestRsa.iqmp, iqmp, __func__);
-    Replace_nid_no_patch(guestRsa.dmp1, dmp1);
-    Replace_nid_no_patch(guestRsa.dmq1, dmq1);
-    Replace_nid_no_patch(guestRsa.iqmp, iqmp);
+    ValidatePrivateReplacement_nid_no_patch(guestRsa.dmp1, dmp1, __func__);
+    ValidatePrivateReplacement_nid_no_patch(guestRsa.dmq1, dmq1, __func__);
+    ValidatePrivateReplacement_nid_no_patch(guestRsa.iqmp, iqmp, __func__);
+    ReplacePrivate_nid_no_patch(guestRsa.dmp1, dmp1, __func__);
+    ReplacePrivate_nid_no_patch(guestRsa.dmq1, dmq1, __func__);
+    ReplacePrivate_nid_no_patch(guestRsa.iqmp, iqmp, __func__);
     if (!CopyOutPreservingErrno(rsa, &guestRsa, sizeof(guestRsa))) NotImplemented_nid_no_patch(__func__);
     return 1;
 }
