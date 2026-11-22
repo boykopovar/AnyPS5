@@ -1,4 +1,5 @@
 import argparse
+import codecs
 import json
 import math
 import re
@@ -254,6 +255,15 @@ def program_key(value):
     return "0x" + value[2:].lower().lstrip("0").rjust(1, "0")
 
 
+def open_log(path):
+    with Path(path).open("rb") as raw:
+        bom = raw.read(2)
+    if bom in (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE):
+        raise ValueError(f"{path} is UTF-16, as Windows PowerShell 5.1 writes a redirected 2>, which also wraps long lines; "
+                         'capture the run with cmd /d /c "<command> 2> run.log" instead')
+    return Path(path).open(encoding="utf-8-sig", errors="replace")
+
+
 def main(arguments=None):
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("log", help="the run's standard error log with the [ab] lines")
@@ -261,7 +271,7 @@ def main(arguments=None):
     parser.add_argument("--class", dest="classes", action="append", default=[], help="also report this [gputime] command class per present (repeatable)")
     parser.add_argument("--json", action="store_true", help="print the phases and metrics as JSON")
     options = parser.parse_args(arguments)
-    with Path(options.log).open(encoding="utf-8-sig", errors="replace") as source:
+    with open_log(options.log) as source:
         result = split(source, options.program, options.classes)
     sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else text_report(result))
     return 0
