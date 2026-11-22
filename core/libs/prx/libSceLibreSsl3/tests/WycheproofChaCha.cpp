@@ -101,20 +101,12 @@ private:
     LibreSslEvpCipherCtx* context;
 };
 
-Bytes Update(LibreSslEvpCipherCtx* ctx, bool encrypt, const Bytes& input, std::size_t offset, std::size_t length) {
-    Bytes output(length);
+int Update(LibreSslEvpCipherCtx* ctx, bool encrypt, const Bytes& input, Bytes& output) {
+    output.resize(input.size());
     int written = -1;
-    const int ok = encrypt ? EVP_EncryptUpdate_nid_postfix(ctx, output.data(), &written, input.data() + offset, static_cast<int>(length))
-                           : EVP_DecryptUpdate_nid_postfix(ctx, output.data(), &written, input.data() + offset, static_cast<int>(length));
-    Require(ok == 1 && written == static_cast<int>(length));
-    return output;
-}
-
-void Aad(LibreSslEvpCipherCtx* ctx, bool encrypt, const Bytes& aad, std::size_t offset, std::size_t length) {
-    int written = -1;
-    const int ok = encrypt ? EVP_EncryptUpdate_nid_postfix(ctx, nullptr, &written, aad.data() + offset, static_cast<int>(length))
-                           : EVP_DecryptUpdate_nid_postfix(ctx, nullptr, &written, aad.data() + offset, static_cast<int>(length));
-    Require(ok == 1 && written == static_cast<int>(length));
+    const int ok = encrypt ? EVP_EncryptUpdate_nid_postfix(ctx, output.data(), &written, input.data(), static_cast<int>(input.size()))
+                           : EVP_DecryptUpdate_nid_postfix(ctx, output.data(), &written, input.data(), static_cast<int>(input.size()));
+    return ok == 1 && written == static_cast<int>(input.size()) ? 1 : 0;
 }
 
 void CheckWycheproofVector(const LibreSsl3WycheproofChaCha::Vector& vector) {
@@ -147,7 +139,7 @@ void CheckWycheproofVector(const LibreSsl3WycheproofChaCha::Vector& vector) {
     int updateOk = 1;
     Bytes ciphertext;
     if (!msg.empty()) {
-        ciphertext = Update(encryptCtx.get(), true, msg, 0, msg.size());
+        updateOk = Update(encryptCtx.get(), true, msg, ciphertext);
     }
 
     int written = -1;
@@ -195,7 +187,7 @@ void CheckWycheproofVector(const LibreSsl3WycheproofChaCha::Vector& vector) {
     int updateDecOk = 1;
     Bytes plaintext;
     if (!expectedCt.empty()) {
-        plaintext = Update(decryptCtx.get(), false, expectedCt, 0, expectedCt.size());
+        updateDecOk = Update(decryptCtx.get(), false, expectedCt, plaintext);
     }
 
     unsigned char tailDec[1];
