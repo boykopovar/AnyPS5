@@ -534,8 +534,9 @@ void APS5_VABI libSceLibcInternalInventory_132_nid_no_patch(void* self) {
 }
 APS5_EXPORT("WoCt9o2SYHw", libSceLibcInternalInventory_132_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_133_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_133_nid_no_patch(void* self, const void* info, std::size_t refs) {
+    _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix(
+        static_cast<GuestLocale::Facet*>(self), static_cast<const GuestLocale::LocinfoStorage*>(info), refs);
 }
 APS5_EXPORT("Ky+C-qbKcX0", libSceLibcInternalInventory_133_nid_no_patch);
 
