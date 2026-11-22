@@ -1056,13 +1056,13 @@ JSWeakRef APS5_VABI JSWeakCreate(JSContextGroupRef group, JSObjectRef object) {
     return weak;
 }
 
-void APS5_VABI JSWeakRetain(JSWeakRef weak) {
-    if (!weak) return;
+void APS5_VABI JSWeakRetain(JSContextGroupRef group, JSWeakRef weak) {
+    if (!group || !weak) return;
     weak->refCount.fetch_add(1, std::memory_order_relaxed);
 }
 
-void APS5_VABI JSWeakRelease(JSWeakRef weak) {
-    if (!weak) return;
+void APS5_VABI JSWeakRelease(JSContextGroupRef group, JSWeakRef weak) {
+    if (!group || !weak) return;
     if (weak->refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
         if (weak->group && !weak->group->shuttingDown) {
             auto& vec = weak->group->weakRefs;
