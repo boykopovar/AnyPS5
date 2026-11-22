@@ -808,7 +808,7 @@ int RunAsPs4Process(const char* program) {
     const std::wstring command = L"\"cd /d \"" + directory.wstring() + L"\" && \"" + executable + L"\" ps4-process\"";
     const int status = _wsystem(command.c_str());
 #else
-    const std::string command = "cd \"" + directory.string() + "\" && \"" + program + "\" ps4-process";
+    const std::string command = "cd \"" + directory.string() + "\" && \"" + std::filesystem::absolute(program).string() + "\" ps4-process";
     const int status = std::system(command.c_str());
 #endif
     std::filesystem::remove_all(directory);
@@ -818,6 +818,11 @@ int RunAsPs4Process(const char* program) {
 }
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    _putenv_s("SDL_AUDIODRIVER", "dummy");
+#else
+    setenv("SDL_AUDIODRIVER", "dummy", 1);
+#endif
     if (argc == 2 && std::string_view(argv[1]) == "ps4-process") {
         CheckPs4Process();
         return 0;

@@ -996,13 +996,13 @@ void SignalInterruptsBlockingRead() {
 #endif
 
 void ConsultsNativeOwnerTransfer() {
-    Gate release;
+    Gate first;
+    Gate second;
     Scenario scenario;
     scenario.server = [&](Connection& tls, int) {
-        release.Wait("the client never opened the gate");
+        first.Wait("the client never opened the first gate");
         WriteAll(tls, "one", 3);
-        release.open = false;
-        release.Wait("the client never reopened the gate");
+        second.Wait("the client never opened the second gate");
         WriteAll(tls, "two", 3);
         std::array<std::uint8_t, 4> ping{};
         ReadExact(tls, ping.data(), ping.size());
@@ -1018,10 +1018,9 @@ void ConsultsNativeOwnerTransfer() {
         Require(fake->calls > 0 && fake->sendCalls > 0, "the engine moved the handshake through NativeOwner::transfer, not the raw socket");
         std::array<char, 8> out{};
         std::size_t transferred = 0;
-        release.Open();
+        first.Open();
         Require(Retry([&] { return tls.Read(out.data(), out.size(), transferred, false); }) == Result::Done && transferred == 3, "the first read");
         const int callsAfterFirstRead = fake->calls;
-        release.open = false;
 
         fake->failNext = HostInterruptedCode;
         transferred = 1;
@@ -1037,7 +1036,7 @@ void ConsultsNativeOwnerTransfer() {
         Require(tls.SystemError() == HostInterruptedCode && tls.LastDirection() == LibreSslTls::Direction::Write, "the interrupted send is visible as errno EINTR");
         Require(Retry([&] { return tls.Write(payload.data(), payload.size(), transferred); }) == Result::Done && transferred == payload.size(), "the interrupted write completes when retried");
 
-        release.Open();
+        second.Open();
         Require(Retry([&] { return tls.Read(out.data(), out.size(), transferred, false); }) == Result::Done && transferred == 3 && std::memcmp(out.data(), "two", 3) == 0,
             "the read completes when retried");
         bool complete = false;
@@ -1268,19 +1267,24 @@ int main(int argc, char** argv) {
             AbruptClose();
         }
         if (transport) {
-            NonBlockingRead();
-            WriteBackPressure();
-            BlockingTransport();
-            NonBlockingTransport();
-            ReceiveTimeout();
-            SendTimeout();
-            LargeRecordSendTimeout();
+            const auto run = [](const char* name, void (*test)()) {
+                std::fprintf(stderr, "running TLS transport case %s\n", name);
+                std::fflush(stderr);
+                test();
+            };
+            run("NonBlockingRead", NonBlockingRead);
+            run("WriteBackPressure", WriteBackPressure);
+            run("BlockingTransport", BlockingTransport);
+            run("NonBlockingTransport", NonBlockingTransport);
+            run("ReceiveTimeout", ReceiveTimeout);
+            run("SendTimeout", SendTimeout);
+            run("LargeRecordSendTimeout", LargeRecordSendTimeout);
 #ifndef _WIN32
-            SignalInterruptsBlockingRead();
+            run("SignalInterruptsBlockingRead", SignalInterruptsBlockingRead);
 #endif
-            ConsultsNativeOwnerTransfer();
-            ClosedDescriptor();
-            ReassignedSocket();
+            run("ConsultsNativeOwnerTransfer", ConsultsNativeOwnerTransfer);
+            run("ClosedDescriptor", ClosedDescriptor);
+            run("ReassignedSocket", ReassignedSocket);
         }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "failed: %s\n", error.what());

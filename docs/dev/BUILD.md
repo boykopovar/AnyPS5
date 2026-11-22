@@ -47,7 +47,11 @@ git submodule update --init --recursive
 git diff --name-only -z --output=changed.txt origin/main...HEAD
 python3 tools/select_tests.py dump build test-graph.json
 python3 tools/select_tests.py select build test-graph.json changed.txt
-ninja -C build -f select.ninja selected
+if [ -f build/select.ninja ]; then
+  ninja -C build -f select.ninja selected
+else
+  cmake --build build
+fi
 python3 tools/select_tests.py ctest build --output-on-failure
 ```
 
@@ -76,7 +80,7 @@ The Release workflow builds the web converter and the Linux and Windows librarie
 
 Pages downloads the converter and both library archives from one release selected through GitHub's latest-release API. `release.json` records the same tag and commit. Missing, corrupt or mismatched assets fail the Pages job before deployment. Releases made before the web asset was added need a new release; Pages does not combine them with a converter built from `main`.
 
-Changes to the converter or its frontend reach Pages through a release. Progress reports still come from `main`. For local development, build `relinker_web` with Emscripten and run `python3 tools/test_web.py --build build-wasm`. To stage a complete published release without compiling, run `python3 tools/build_web.py --build build-wasm --release`; `--libraries` is an alias for this mode.
+Changes to the converter or its frontend reach Pages through a release. Progress reports still come from `main`. For local development, build `relinker_web` with Emscripten and run `python3 tools/test_web.py --build build-wasm`. To stage a complete published release without compiling, run `python3 tools/build_web.py --build build-web-release --release`. Release staging replaces the selected build directory's `web/` directory. `--libraries` is an alias for `--release`.
 
 `tools/prepare_release_notes.py --input <notes> --body <body> --full <full>` prepares GitHub release notes that fit GitHub's release-body size limit (`BODY_LIMIT` bytes in the script): the short body goes to `--body` and the full notes to `--full`. With `--check` it writes nothing and exits with status 1 when either output is missing or stale.
 
@@ -211,7 +215,7 @@ A ThreadSanitizer build runs its tests with `TSAN_OPTIONS=suppressions=$PWD/tool
 After configuring a build directory, use `tools/check_compile.py` to check the given source files. The tool reads their compile commands from `compile_commands.json` or Ninja, preserving compilation options while dropping object and dependency output options. It handles `-MF`, `-MT`, `-MQ` and `-MJ` with separate or attached values so that unused output options do not cause false failures under `-Werror`.
 
 ```sh
-python3 tools/check_compile.py --build build-relinker core/relinker/main.cpp
+python3 tools/check_compile.py --build build-relinker core/relinker/cli/src/CliArgs.cpp
 ```
 
 Real compile errors still fail. Syntax checks do not replace a full build and test run.

@@ -107,6 +107,21 @@ class BundleTests(unittest.TestCase):
         names = bug_report.make_bundle(self.report, out, log=kwargs.pop("log", self.log), input_config=kwargs.pop("input_config", self.ini), **self.identity)
         return out, names
 
+    def test_ambiguous_or_nonfinite_report_does_not_create_bundle(self):
+        cases = (
+            ('{"run":{},"run":{"frames":5}}', "duplicate JSON"),
+            ('{"run":{"frames":0,"frames":5}}', "duplicate JSON"),
+            ('{"run":{"averageFps":NaN}}', "Out of range float"),
+            ('{"run":{"averageFps":1e999}}', "Out of range float"),
+        )
+        for index, (text, error) in enumerate(cases):
+            with self.subTest(text=text):
+                out = self.root / f"invalid-{index}.zip"
+                self.report.write_text(text, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, error):
+                    bug_report.make_bundle(self.report, out, **self.identity)
+                self.assertFalse(out.exists())
+
     def test_members_are_redacted_and_no_identity_text_remains(self):
         out, names = self.bundle()
         self.assertEqual(names, ["README.txt", "anyps5-input.ini", "anyps5-report.json", "anyps5.log", "host.txt"])
@@ -119,6 +134,15 @@ class BundleTests(unittest.TestCase):
         for name, text in contents.items():
             for secret in ("/home/ana", "serverfestivo", "192.168.1.20", "10.0.0.7"):
                 self.assertNotIn(secret, text, f"{secret} leaked into {name}")
+
+    def test_bundle_keeps_an_unpaired_character_in_runtime_settings(self):
+        out = self.root / "runtime-settings.zip"
+        names = bug_report.make_bundle(self.report, out, environ={"APS5_TRACE_DIR": "capture\udcff"},
+                                       **self.identity)
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(sorted(bundle.namelist()), names)
+            self.assertEqual(bundle.read("anyps5-settings.txt").decode("utf-8"),
+                             "APS5_TRACE_DIR=capture\\udcff\n")
 
     def test_escaped_home_paths_are_redacted_in_nested_json(self):
         cases = (
