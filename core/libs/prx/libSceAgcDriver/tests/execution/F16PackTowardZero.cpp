@@ -38,11 +38,14 @@ std::vector<std::uint32_t> Inputs() {
         0x7f800000u, 0x7fc00000u, 0x7f800001u, 0x7fffe000u, 0x7fbfffffu, 0x7f802000u,
         0x80000000u, 0x80000001u, 0x807fffffu, 0x80800000u, 0x837fffffu, 0x83800000u, 0xff800001u,
     };
+    for (std::uint32_t payload = 0; payload < 0x400u; ++payload) {
+        inputs.push_back(0x7f800001u | (payload << 13u));
+    }
     for (std::uint32_t half = 0; half < 0x7c00u; ++half) {
         const std::uint32_t exact = HalfToFloatBits(half);
         const std::uint32_t next = HalfToFloatBits(half + 1u);
         const std::uint32_t middle = exact + (next - exact) / 2u;
-        for (const std::uint32_t value : {exact, exact + 1u, middle - 1u, middle, middle + 1u}) inputs.push_back(value);
+        for (const std::uint32_t value : {exact, exact + 1u, middle - 1u, middle, middle + 1u, next - 1u}) inputs.push_back(value);
     }
     while (inputs.size() % Threads != 0u) inputs.push_back(0u);
     if (inputs.size() > Capacity) throw std::runtime_error("f16 pack toward zero: too many inputs");

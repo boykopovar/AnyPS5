@@ -1715,55 +1715,27 @@ std::uint32_t EmitCompareU32Constant(SpirvEmitterState& state, std::uint32_t opc
     return result;
 }
 
-std::uint32_t EmitSubConstantMinusU32(SpirvEmitterState& state, std::uint32_t constant, std::uint32_t value) {
-    const auto result = state.module.AllocateId();
-    state.module.AddFunction(spv::OpISub, TypeU32(state), result, ConstantU32(state, constant), value);
-    return result;
-}
-
 std::uint32_t EmitF32ToF16RtzBits(SpirvEmitterState& state, std::uint32_t f32) {
-    const auto bits = state.module.AllocateId();
-    state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, f32);
-
+    const auto u32 = TypeU32(state);
+    const auto bits = Unary(state, spv::OpBitcast, u32, f32);
+    const auto magnitude = EmitAndConstant(state, bits, 0x7fffffffu);
     const auto sign = EmitAndConstant(state, EmitShiftRightConstant(state, bits, 16u), 0x8000u);
-    const auto exponent = EmitAndConstant(state, EmitShiftRightConstant(state, bits, 23u), 0xffu);
-    const auto mantissa = EmitAndConstant(state, bits, 0x007fffffu);
+    const auto top = EmitShiftRightConstant(state, magnitude, 13u);
+    const auto rebased = Binary(state, spv::OpISub, u32, top, ConstantU32(state, (127u - 15u) << 10u));
+    const auto normal = EmitUMin32(state, rebased, ConstantU32(state, 0x7bffu));
 
-    const auto halfExponent = state.module.AllocateId();
-    const auto normalExponent = state.module.AllocateId();
-    const auto normalMantissa = EmitShiftRightConstant(state, mantissa, 13u);
-    const auto normalPayload = state.module.AllocateId();
-    const auto normal = state.module.AllocateId();
-    state.module.AddFunction(spv::OpISub, TypeU32(state), halfExponent, exponent, ConstantU32(state, 112u));
-    state.module.AddFunction(spv::OpShiftLeftLogical, TypeU32(state), normalExponent, halfExponent, ConstantU32(state, 10u));
-    state.module.AddFunction(spv::OpBitwiseOr, TypeU32(state), normalPayload, normalExponent, normalMantissa);
-    state.module.AddFunction(spv::OpBitwiseOr, TypeU32(state), normal, sign, normalPayload);
+    const auto minNormal = ConstantU32(state, 0x38800000u);
+    const auto belowNormal = Binary(state, spv::OpULessThan, TypeBool(state), magnitude, minNormal);
+    const auto bounded = Unary(state, spv::OpBitcast, TypeF32(state), Select(state, u32, belowNormal, magnitude, minNormal));
+    const auto units = Binary(state, spv::OpFMul, TypeF32(state), bounded, ConstantF32Value(state, 0x1p24f));
+    const auto subnormal = Unary(state, spv::OpConvertFToU, u32, units);
+    const auto finite = Select(state, u32, belowNormal, subnormal, normal);
 
-    const auto mantissaWithHidden = Binary(state, spv::OpBitwiseOr, TypeU32(state), mantissa, ConstantU32(state, 0x00800000u));
-    const auto rawSubShift = EmitSubConstantMinusU32(state, 126u, exponent);
-    const auto exponentLt103 = EmitCompareU32Constant(state, spv::OpULessThan, exponent, 103u);
-    const auto exponentGt112 = EmitCompareU32Constant(state, spv::OpUGreaterThan, exponent, 112u);
-    const auto subShiftLow = Select(state, TypeU32(state), exponentLt103, ConstantU32(state, 31u), rawSubShift);
-    const auto subShift = Select(state, TypeU32(state), exponentGt112, ConstantU32(state, 14u), subShiftLow);
-    const auto subMantissa = state.module.AllocateId();
-    const auto subnormal = state.module.AllocateId();
-    state.module.AddFunction(spv::OpShiftRightLogical, TypeU32(state), subMantissa, mantissaWithHidden, subShift);
-    state.module.AddFunction(spv::OpBitwiseOr, TypeU32(state), subnormal, sign, subMantissa);
-
-    const auto nanPayload = Binary(state, spv::OpBitwiseOr, TypeU32(state), EmitShiftRightConstant(state, mantissa, 13u), ConstantU32(state, 0x0200u));
-    const auto nan = Binary(state, spv::OpBitwiseOr, TypeU32(state), sign, Binary(state, spv::OpBitwiseOr, TypeU32(state), ConstantU32(state, 0x7c00u), nanPayload));
-    const auto inf = Binary(state, spv::OpBitwiseOr, TypeU32(state), sign, ConstantU32(state, 0x7c00u));
-    const auto maxFinite = Binary(state, spv::OpBitwiseOr, TypeU32(state), sign, ConstantU32(state, 0x7bffu));
-    const auto mantissaZero = EmitCompareU32Constant(state, spv::OpIEqual, mantissa, 0u);
-    const auto special = Select(state, TypeU32(state), mantissaZero, inf, nan);
-
-    const auto exponentLe112 = EmitCompareU32Constant(state, spv::OpULessThanEqual, exponent, 112u);
-    const auto exponentGe143 = EmitCompareU32Constant(state, spv::OpUGreaterThanEqual, exponent, 143u);
-    const auto exponentEq255 = EmitCompareU32Constant(state, spv::OpIEqual, exponent, 255u);
-    const auto finite0 = Select(state, TypeU32(state), exponentLe112, subnormal, normal);
-    const auto finite1 = Select(state, TypeU32(state), exponentLt103, sign, finite0);
-    const auto finite2 = Select(state, TypeU32(state), exponentGe143, maxFinite, finite1);
-    return EmitAndConstant(state, Select(state, TypeU32(state), exponentEq255, special, finite2), 0xffffu);
+    const auto nan = Binary(state, spv::OpBitwiseOr, u32, EmitAndConstant(state, top, 0x1ffu), ConstantU32(state, 0x7e00u));
+    const auto infinity = ConstantU32(state, 0x7f800000u);
+    const auto special = Select(state, u32, Binary(state, spv::OpIEqual, TypeBool(state), magnitude, infinity), ConstantU32(state, 0x7c00u), nan);
+    const auto result = Select(state, u32, Binary(state, spv::OpULessThan, TypeBool(state), magnitude, infinity), finite, special);
+    return Binary(state, spv::OpBitwiseOr, u32, sign, result);
 }
 
 std::uint32_t EmitMinMaxU32Value(SpirvEmitterState& state, std::uint32_t lhs, std::uint32_t rhs, bool maxValue) {
