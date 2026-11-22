@@ -147,7 +147,7 @@ def load_cache(path, signature):
     if not path.exists():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=progress.unique_json_keys)
+        data = json.loads(path.read_text(encoding="utf-8-sig"), object_pairs_hook=progress.unique_json_keys)
     except RecursionError as error:
         raise ValueError(f"{path}: history cache JSON is too deeply nested") from error
     except ValueError as error:

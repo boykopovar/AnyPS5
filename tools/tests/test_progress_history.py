@@ -513,6 +513,15 @@ class ProgressHistoryTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "cached metric"):
                         progress_history.load_cache(path, "rules")
 
+    def test_history_cache_accepts_a_utf8_byte_order_mark(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "history.json"
+            payload = {"schema_version": 2, "rules": "rules", "commits": {"a" * 40: None}}
+            path.write_text(json.dumps(payload), encoding="utf-8-sig")
+            before = path.read_bytes()
+            self.assertEqual(progress_history.load_cache(path, "rules"), payload["commits"])
+            self.assertEqual(path.read_bytes(), before)
+
     def test_profile_inventory_and_parser_changes_invalidate_cached_measurements(self):
         record = {"libraries": {"done": 1, "total": 1, "percent": 100.0},
                   "shaders": {"done": 3, "total": 4, "percent": 75.0}, "shader_metric": "decoded",
