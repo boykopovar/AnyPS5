@@ -3459,7 +3459,7 @@ static void TestContext() {
     Require(dlResumeWithBundle != nullptr);
     Require(WKGetTypeID(dlResumeWithBundle) == WKDownloadGetTypeID());
     Require(static_cast<const NKWebKit::Download*>(dlResumeWithBundle)->bundlePath.Get() != nullptr);
-    Require(static_cast<const NKWebKit::Download*>(dlResumeWithBundle)->bundlePath->value == u"/tmp/download.bundle");
+    Require(static_cast<const NKWebKit::Download*>(dlResumeWithBundle)->bundlePath->characters == u"/tmp/download.bundle");
     WKRelease(dlResumeWithBundle);
 
     auto bundleUrl = NKWebKit::Make<NKWebKit::URL>("https://example.com/bundle");
@@ -3470,6 +3470,7 @@ static void TestContext() {
         threw = true;
     }
     Require(threw);
+    threw = false;
     try {
         WKContextDownloadURLRequest(nullptr, request.Get());
     } catch (const std::invalid_argument&) {
