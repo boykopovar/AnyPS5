@@ -151,7 +151,11 @@ static int DecryptTest(const LibreSsl3WycheproofAesGcm::Vector& v) {
         if (EVP_DecryptUpdate_nid_postfix(ctx.get(), msg.data(), &outl, ct.data(), static_cast<int>(ct.size())) != 1) return 0;
     }
     int finalOutl = 0;
-    return EVP_DecryptFinal_ex_nid_postfix(ctx.get(), msg.data() + outl, &finalOutl);
+    const int finalResult = EVP_DecryptFinal_ex_nid_postfix(ctx.get(), msg.data() + outl, &finalOutl);
+    if (finalResult == 1 && v.expectedValid == 1) {
+        Require(outl + finalOutl == static_cast<int>(ct.size()) && msg == HexToBytes(v.msgHex), v.tcId);
+    }
+    return finalResult;
 }
 
 int main() {
