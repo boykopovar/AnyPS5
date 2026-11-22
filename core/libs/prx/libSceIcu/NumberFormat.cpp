@@ -41,6 +41,15 @@ std::int32_t APS5_VABI unum_formatDouble_nid_postfix(const UNumberFormat*, doubl
     NotImplemented_nid_no_patch(__func__);
 }
 
+std::int32_t APS5_VABI unum_formatDoubleForFields_nid_postfix(const UNumberFormat*, double, char16_t* result, std::int32_t resultLength, UFieldPositionIterator*, std::int32_t* status) {
+    if (Icu::Failure(status)) return -1;
+    if (result == nullptr ? resultLength != 0 : resultLength < 0) {
+        *status = Icu::IllegalArgument;
+        return -1;
+    }
+    NotImplemented_nid_no_patch(__func__);
+}
+
 std::int32_t APS5_VABI unum_getSymbol_nid_postfix(const UNumberFormat* format, std::int32_t symbol, char16_t*, std::int32_t, std::int32_t* status) {
     if (status == nullptr) return 0;
     if (Icu::Failure(status)) return 0;

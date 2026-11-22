@@ -64,6 +64,44 @@ class GhidraSymbolsTests(unittest.TestCase):
         self.assertEqual(set(self.root.iterdir()), set(before))
         self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}, before)
 
+    def test_tlsdesc_plt_marks_only_file_backed_code_and_preserves_export_names(self):
+        source = self.root / "tlsdesc.prx"
+        database = self.root / "names.csv"
+        database.write_text(f"{nid(EXPORT_NAME)} {EXPORT_NAME}\n", encoding="utf-8")
+        for address, flags, expected in ((CODE_ADDRESS, 5, ["elf_tlsdesc_plt 0x1000 f"]),
+                                         (EXPORT_ADDRESS, 5, []), (DATA_ADDRESS, 5, []),
+                                         (CODE_ADDRESS + len(code_bytes()), 5, []), (CODE_ADDRESS, 4, [])):
+            with self.subTest(address=address, flags=flags):
+                source.write_bytes(append_dynamic_tags(build_module(code_flags=flags), [(0x6ffffef6, address),
+                                                                                         (0x6ffffef7, DATA_ADDRESS)]))
+                result = self.cli(source, "--db", database)
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                rows = result.stdout.splitlines()
+                self.assertEqual([row for row in rows if "tlsdesc" in row], expected)
+                if address == EXPORT_ADDRESS:
+                    self.assertIn(f"{EXPORT_NAME} {EXPORT_ADDRESS:#x} f", rows)
+
+    def test_header_entry_point_without_symbols(self):
+        source = self.root / "stripped.elf"
+        for address, flags, file_size, expected in ((CODE_ADDRESS, 5, 12, ["elf_entry 0x1000 f"]),
+                                                   (0, 5, 12, []), (DATA_ADDRESS, 5, 12, []),
+                                                   (CODE_ADDRESS, 4, 12, []), (EXPORT_ADDRESS, 5, 11, [])):
+            with self.subTest(address=address, flags=flags, file_size=file_size):
+                image = bytearray(build_module(symbols=[], relocations=(), code_flags=flags))
+                struct.pack_into("<Q", image, 24, address)
+                struct.pack_into("<Q", image, 64 + 32, file_size)
+                source.write_bytes(image)
+                result = self.cli(source, "--no-names")
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                self.assertEqual(result.stdout.splitlines(), expected)
+
+    def test_header_entry_point_keeps_named_functions(self):
+        image = bytearray(append_dynamic_tags(build_module(), [(12, CODE_ADDRESS)]))
+        for address in (CODE_ADDRESS, EXPORT_ADDRESS):
+            struct.pack_into("<Q", image, 24, address)
+            rows = annotate_module.ghidra_symbols(annotate_module.Module(image), annotate_module.Namer({nid(EXPORT_NAME): EXPORT_NAME}))
+            self.assertEqual([row for row in rows if row.endswith(" f")], ["elf_init 0x1000 f", "sceKernelUsleep 0x100b f"])
+
     def test_lifecycle_functions_without_exports_are_named_offline(self):
         source = self.root / "lifecycle.prx"
         for kind in ("sysv", "gnu"):

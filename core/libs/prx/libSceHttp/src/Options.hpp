@@ -12,6 +12,7 @@ struct HttpOptions {
     bool nonblock = false;
     bool acceptEncodingGzip = false;
     bool delayBuildRequest = false;
+    int epollId = -1;
     HttpEpollHandle epoll = nullptr;
     void* epollArgument = nullptr;
 };
@@ -26,6 +27,7 @@ void RemoveHttpObject(int id);
 std::optional<HttpOptions> FindHttpOptions(int id);
 bool SetHttpOption(int id, bool HttpOptions::*option, bool enable);
 bool SetHttpCookieEnabled(int id, int enable);
+bool SetHttpEpollId(int id, int epollId);
 bool SetHttpContextAcceptEncodingGzip(int contextId, bool enable);
 bool SetHttpEpollBinding(int id, HttpEpollHandle epoll, void* argument);
 

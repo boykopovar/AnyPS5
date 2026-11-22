@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <source_location>
 #include <stdexcept>
 #include <string>
 #ifdef _WIN32
@@ -21,9 +22,9 @@
 
 extern "C" char* suboptarg_nid_postfix;
 
-static void Require(bool condition) {
+static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
-        std::fputs("Guest string check failed\n", stderr);
+        std::fprintf(stderr, "%s:%u: guest string check failed in %s\n", location.file_name(), static_cast<unsigned>(location.line()), location.function_name());
         std::abort();
     }
 }
