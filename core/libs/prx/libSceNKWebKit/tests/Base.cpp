@@ -1498,6 +1498,125 @@ static void TestBundleNodeHandle() {
     Require(threw);
 }
 
+static void TestBundleNavigationAction() {
+    Require(WKBundleNavigationActionGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::BundleNavigationAction));
+    auto action = NKWebKit::Make<NKWebKit::BundleNavigationAction>();
+    const void* ref = action.Get();
+    Require(WKGetTypeID(ref) == WKBundleNavigationActionGetTypeID());
+
+    Require(WKBundleNavigationActionGetNavigationType(ref) == 0);
+    Require(WKBundleNavigationActionGetEventModifiers(ref) == 0);
+    Require(WKBundleNavigationActionGetEventMouseButton(ref) == -1);
+    Require(WKBundleNavigationActionCopyHitTestResult(ref) == nullptr);
+    Require(WKBundleNavigationActionCopyFormElement(ref) == nullptr);
+    auto* unsetDownloadAttr = WKBundleNavigationActionCopyDownloadAttribute(ref);
+    Require(unsetDownloadAttr != nullptr);
+    Require(WKStringIsEqualToUTF8CString(unsetDownloadAttr, ""));
+    WKRelease(unsetDownloadAttr);
+    Require(!WKBundleNavigationActionGetShouldOpenExternalURLs(ref));
+    Require(!WKBundleNavigationActionGetShouldTryAppLinks(ref));
+
+    auto hit = NKWebKit::Make<NKWebKit::BundleHitTestResult>();
+    auto form = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
+    action->navigationType = 2;
+    action->eventModifiers = 1;
+    action->eventMouseButton = 1;
+    action->hitTestResult = hit;
+    action->formElement = form;
+    action->downloadAttribute = NKWebKit::String::FromUtf8("download.bin");
+    action->shouldOpenExternalURLs = true;
+    action->shouldTryAppLinks = true;
+
+    Require(WKBundleNavigationActionGetNavigationType(ref) == 2);
+    Require(WKBundleNavigationActionGetEventModifiers(ref) == 1);
+    Require(WKBundleNavigationActionGetEventMouseButton(ref) == 1);
+    Require(WKBundleNavigationActionGetShouldOpenExternalURLs(ref));
+    Require(WKBundleNavigationActionGetShouldTryAppLinks(ref));
+
+    auto* copiedHit = WKBundleNavigationActionCopyHitTestResult(ref);
+    Require(copiedHit == hit.Get());
+    Require(WKGetTypeID(copiedHit) == WKBundleHitTestResultGetTypeID());
+    WKRelease(copiedHit);
+
+    auto* copiedForm = WKBundleNavigationActionCopyFormElement(ref);
+    Require(copiedForm == form.Get());
+    Require(WKGetTypeID(copiedForm) == WKBundleNodeHandleGetTypeID());
+    WKRelease(copiedForm);
+
+    auto* copiedDownloadAttr = WKBundleNavigationActionCopyDownloadAttribute(ref);
+    Require(copiedDownloadAttr != nullptr);
+    Require(WKGetTypeID(copiedDownloadAttr) == WKStringGetTypeID());
+    Require(WKStringIsEqualToUTF8CString(copiedDownloadAttr, "download.bin"));
+    WKRelease(copiedDownloadAttr);
+
+    auto wrongObj = NKWebKit::Make<NKWebKit::BundleFrame>();
+    for (const auto* invalidRef : {static_cast<const void*>(nullptr), static_cast<const void*>(wrongObj.Get())}) {
+        bool threw = false;
+        try {
+            WKBundleNavigationActionGetNavigationType(invalidRef);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+
+        threw = false;
+        try {
+            WKBundleNavigationActionGetEventModifiers(invalidRef);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+
+        threw = false;
+        try {
+            WKBundleNavigationActionGetEventMouseButton(invalidRef);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+
+        threw = false;
+        try {
+            WKBundleNavigationActionCopyHitTestResult(invalidRef);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+
+        threw = false;
+        try {
+            WKBundleNavigationActionCopyFormElement(invalidRef);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+
+        threw = false;
+        try {
+            WKBundleNavigationActionCopyDownloadAttribute(invalidRef);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+
+        threw = false;
+        try {
+            WKBundleNavigationActionGetShouldOpenExternalURLs(invalidRef);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+
+        threw = false;
+        try {
+            WKBundleNavigationActionGetShouldTryAppLinks(invalidRef);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+    }
+}
+
 static void TestBundleFrameScroll() {
     Require(WKBundleFrameGetTypeID() == 119);
     auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
@@ -3982,6 +4101,7 @@ int main() {
     TestBundleDOMWindowExtension();
     TestBundleHitTestResult();
     TestBundleNodeHandle();
+    TestBundleNavigationAction();
     TestBundleFrameScroll();
     TestBundlePagination();
     TestBundleFrameForms();

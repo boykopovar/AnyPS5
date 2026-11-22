@@ -74,38 +74,6 @@ int APS5_VABI WKBundleFrameHandlesPageScaleGesture() {
     return 0;
 }
 
-int APS5_VABI WKBundleNavigationActionCopyDownloadAttribute() {
-    return 0;
-}
-
-int APS5_VABI WKBundleNavigationActionCopyFormElement() {
-    return 0;
-}
-
-int APS5_VABI WKBundleNavigationActionCopyHitTestResult() {
-    return 0;
-}
-
-int APS5_VABI WKBundleNavigationActionGetEventModifiers() {
-    return 0;
-}
-
-int APS5_VABI WKBundleNavigationActionGetEventMouseButton() {
-    return 0;
-}
-
-int APS5_VABI WKBundleNavigationActionGetNavigationType() {
-    return 0;
-}
-
-int APS5_VABI WKBundleNavigationActionGetShouldOpenExternalURLs() {
-    return 0;
-}
-
-int APS5_VABI WKBundleNavigationActionGetShouldTryAppLinks() {
-    return 0;
-}
-
 int APS5_VABI WKBundleNodeHandleCopyHTMLFrameElementContentFrame() {
     return 0;
 }

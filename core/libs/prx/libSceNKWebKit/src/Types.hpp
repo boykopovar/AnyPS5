@@ -297,6 +297,18 @@ public:
     std::uint64_t paintedObjectsCounterThreshold = 0;
 };
 
+class BundleNavigationAction final : public ObjectOf<ObjectType::BundleNavigationAction> {
+public:
+    std::int32_t navigationType = 0;
+    std::uint32_t eventModifiers = 0;
+    std::int32_t eventMouseButton = -1;
+    Retained<BundleHitTestResult> hitTestResult;
+    Retained<BundleNodeHandle> formElement;
+    Retained<String> downloadAttribute;
+    bool shouldOpenExternalURLs = false;
+    bool shouldTryAppLinks = false;
+};
+
 class Download final : public ObjectOf<ObjectType::Download> {
 public:
     Retained<Object> request;

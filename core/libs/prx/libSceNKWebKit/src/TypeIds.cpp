@@ -63,7 +63,7 @@ std::uint32_t APS5_VABI WKBundleInspectorGetTypeID() {
 }
 
 std::uint32_t APS5_VABI WKBundleNavigationActionGetTypeID() {
-    return 0;
+    return NKWebKit::TypeID(NKWebKit::ObjectType::BundleNavigationAction);
 }
 
 std::uint32_t APS5_VABI WKBundleNodeHandleGetTypeID() {

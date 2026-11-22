@@ -128,6 +128,14 @@ void APS5_VABI WKBundleInspectorEvaluateScriptForTest(const void* inspectorRef, 
 void APS5_VABI WKBundleInspectorSetPageProfilingEnabled(const void* inspectorRef, bool enabled);
 void APS5_VABI WKBundleInspectorShow(const void* inspectorRef);
 std::uint32_t APS5_VABI WKBundleNavigationActionGetTypeID();
+std::int32_t APS5_VABI WKBundleNavigationActionGetNavigationType(const void* navigationActionRef);
+std::uint32_t APS5_VABI WKBundleNavigationActionGetEventModifiers(const void* navigationActionRef);
+std::int32_t APS5_VABI WKBundleNavigationActionGetEventMouseButton(const void* navigationActionRef);
+const void* APS5_VABI WKBundleNavigationActionCopyHitTestResult(const void* navigationActionRef);
+const void* APS5_VABI WKBundleNavigationActionCopyFormElement(const void* navigationActionRef);
+const void* APS5_VABI WKBundleNavigationActionCopyDownloadAttribute(const void* navigationActionRef);
+bool APS5_VABI WKBundleNavigationActionGetShouldOpenExternalURLs(const void* navigationActionRef);
+bool APS5_VABI WKBundleNavigationActionGetShouldTryAppLinks(const void* navigationActionRef);
 std::uint32_t APS5_VABI WKBundleNodeHandleGetTypeID();
 const void* APS5_VABI WKBundleNodeHandleCopyDocument(const void* nodeHandleRef);
 const void* APS5_VABI WKBundleNodeHandleCopyDocumentFrame(const void* nodeHandleRef);

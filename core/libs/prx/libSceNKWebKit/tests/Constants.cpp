@@ -32,14 +32,6 @@ int main() {
     Require(WKBundleFrameCopyWebArchiveFilteringSubframes() == 0);
     Require(WKBundleFrameGetJavaScriptWrapperForFileForWorld() == 0);
     Require(WKBundleFrameHandlesPageScaleGesture() == 0);
-    Require(WKBundleNavigationActionCopyDownloadAttribute() == 0);
-    Require(WKBundleNavigationActionCopyFormElement() == 0);
-    Require(WKBundleNavigationActionCopyHitTestResult() == 0);
-    Require(WKBundleNavigationActionGetEventModifiers() == 0);
-    Require(WKBundleNavigationActionGetEventMouseButton() == 0);
-    Require(WKBundleNavigationActionGetNavigationType() == 0);
-    Require(WKBundleNavigationActionGetShouldOpenExternalURLs() == 0);
-    Require(WKBundleNavigationActionGetShouldTryAppLinks() == 0);
     Require(WKBundleNodeHandleCopyHTMLFrameElementContentFrame() == 0);
     Require(WKBundleNodeHandleCopyHTMLTableCellElementCellAbove() == 0);
     Require(WKBundleNodeHandleCopyVisibleRange() == 0);
