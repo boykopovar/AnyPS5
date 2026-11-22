@@ -3,12 +3,25 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/TemporaryFile.hpp"
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 extern "C" {
 
@@ -178,6 +191,114 @@ void FreeBsdGetoptLongCases() {
     ArgumentVector arguments("foo --list");
     ExpectText(RunGetoptLong("fgl", lists, arguments), "-list|0", "exact match among prefixes");
     Expect(flags[0] == 0 && flags[1] == 0 && flags[2] == 'l', "flag set by an exact match");
+}
+
+class GuardedPages {
+public:
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        memory = static_cast<std::byte*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Expect(memory != nullptr, "guarded allocation succeeds");
+        DWORD previous = 0;
+        Expect(VirtualProtect(memory + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0, "guard page protection succeeds");
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Expect(size > 0, "host page size is available");
+        pageSize = static_cast<std::size_t>(size);
+        void* allocation = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Expect(allocation != MAP_FAILED, "guarded allocation succeeds");
+        memory = static_cast<std::byte*>(allocation);
+        Expect(mprotect(memory + pageSize, pageSize, PROT_NONE) == 0, "guard page protection succeeds");
+#endif
+    }
+
+    ~GuardedPages() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, pageSize * 2);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    template<typename TElement>
+    TElement* Last(std::size_t count) { return reinterpret_cast<TElement*>(memory + pageSize) - count; }
+
+    void Revoke() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Expect(VirtualProtect(memory, pageSize, PAGE_NOACCESS, &previous) != 0, "page revocation succeeds");
+#else
+        Expect(mprotect(memory, pageSize, PROT_NONE) == 0, "page revocation succeeds");
+#endif
+    }
+
+private:
+    std::byte* memory = nullptr;
+    std::size_t pageSize = 0;
+};
+
+template<typename TCall>
+void ExpectInvalid(TCall call, const char* text, const std::string& what) {
+    bool threw = false;
+    errno = 71;
+    try {
+        call();
+    } catch (const std::invalid_argument& error) {
+        threw = std::strstr(error.what(), text) != nullptr;
+    }
+    Expect(threw && errno == 71, what);
+}
+
+char* Place(GuardedPages& pages, const char* text, std::size_t length) {
+    char* place = pages.Last<char>(length);
+    std::memcpy(place, text, length);
+    return place;
+}
+
+void GuardedMemory() {
+    GuardedPages optionPages;
+    ArgumentVector arguments("foo -b -x");
+    const char* options = Place(optionPages, "ab", 3);
+    Reset();
+    opterr_nid_postfix = 0;
+    Expect(getopt_nid_postfix(arguments.Count(), arguments.Values(), options) == 'b', "an option string ending at a guard page is read");
+    Expect(getopt_nid_postfix(arguments.Count(), arguments.Values(), options) == '?' && optopt_nid_postfix == 'x', "an unknown option scans to the terminator before a guard page");
+    const char* unterminated = Place(optionPages, "ab", 2);
+    Reset();
+    ExpectInvalid([&] { getopt_nid_postfix(arguments.Count(), arguments.Values(), unterminated); }, "getopt: unreadable string", "an option string running into a guard page throws");
+
+    GuardedPages argumentPages;
+    char* argument = Place(argumentPages, "-ab", 3);
+    char* vector[] = {arguments.Values()[0], argument, nullptr};
+    Reset();
+    Expect(getopt_nid_postfix(2, vector, "ab") == 'a', "an argument running into a guard page yields the options before it");
+    ExpectInvalid([&] { getopt_nid_postfix(2, vector, "ab"); }, "getopt: unreadable string", "an argument running into a guard page throws");
+    Place(argumentPages, "-a", 3);
+    Reset();
+    Expect(getopt_nid_postfix(2, vector, "ab") == 'a' && getopt_nid_postfix(2, vector, "ab") == -1 && optind_nid_postfix == 2, "a terminated argument before a guard page ends the parse");
+
+    GuardedPages stalePages;
+    char* stale[] = {arguments.Values()[0], Place(stalePages, "-ab", 4), nullptr};
+    Reset();
+    Expect(getopt_nid_postfix(2, stale, "ab") == 'a' && getopt_nid_postfix(2, stale, "ab") == 'b' && optind_nid_postfix == 2, "grouped options before an exhausted argument list");
+    stalePages.Revoke();
+    Expect(getopt_nid_postfix(2, stale, "ab") == -1 && optind_nid_postfix == 2, "an exhausted argument list returns -1 without reading the stale option position");
+
+    GuardedPages vectorPages;
+    char** guardedVector = vectorPages.Last<char*>(2);
+    guardedVector[0] = arguments.Values()[0];
+    guardedVector[1] = Place(argumentPages, "-c", 3);
+    Reset();
+    ExpectInvalid([&] { getopt_nid_postfix(3, guardedVector, "c:"); }, "getopt: unreadable argument vector", "an option argument past the end of the vector throws");
+    Reset();
+    ExpectInvalid([&] { getopt_nid_postfix(2, reinterpret_cast<char* const*>(std::uintptr_t{0x10}), "c"); }, "getopt: unreadable argument vector", "an unreadable argument vector throws");
+    Reset();
 }
 
 void ShortOptions() {
@@ -432,4 +553,5 @@ int main() {
     ShortOptions();
     LongOptions();
     LongOnlyOptions();
+    GuardedMemory();
 }

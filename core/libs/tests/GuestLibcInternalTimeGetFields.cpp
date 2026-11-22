@@ -8,18 +8,25 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/CommandLineArgument.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 extern "C" {
@@ -89,17 +96,17 @@ HMODULE g_library = nullptr;
 void* g_library = nullptr;
 #endif
 
-void* APS5_VABI HeapAllocate(std::size_t size) { return std::malloc(size); }
+void* APS5_VABI TestHeapAllocate(std::size_t size) { return std::malloc(size); }
 void APS5_VABI TestHeapFree(void* pointer) {
     g_lastFreed = pointer;
     ++g_freeCount;
     std::free(pointer);
 }
-void* APS5_VABI HeapCalloc(std::size_t count, std::size_t size) { return std::calloc(count, size); }
-void* APS5_VABI HeapReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
-void* APS5_VABI HeapAlign(std::size_t, std::size_t size) { return std::malloc(size); }
-void* APS5_VABI HeapRealign(void* pointer, std::size_t size, std::size_t) { return std::realloc(pointer, size); }
-int APS5_VABI HeapPosixAlign(void** pointer, std::size_t, std::size_t size) {
+void* APS5_VABI TestHeapCalloc(std::size_t count, std::size_t size) { return std::calloc(count, size); }
+void* APS5_VABI TestHeapReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
+void* APS5_VABI TestHeapAlign(std::size_t, std::size_t size) { return std::malloc(size); }
+void* APS5_VABI TestHeapRealign(void* pointer, std::size_t size, std::size_t) { return std::realloc(pointer, size); }
+int APS5_VABI TestHeapPosixAlign(void** pointer, std::size_t, std::size_t size) {
     *pointer = std::malloc(size);
     return *pointer != nullptr ? 0 : 12;
 }
@@ -1273,7 +1280,227 @@ void CheckGroup5RemainingTimeGet(bool hasLibrary) {
     Require(NotImplementedCalls_nid_no_patch() > before, "Group 5 error paths reported");
 }
 
-void CheckGroup6Getloctxt(bool hasLibrary) {
+template<typename TCall>
+void RequireInvalid(TCall call, const char* text) {
+    bool threw = false;
+    errno = 71;
+    try {
+        call();
+    } catch (const std::invalid_argument& error) {
+        threw = std::strstr(error.what(), text) != nullptr;
+    }
+    Require(threw && errno == 71, text);
+}
+
+class GuardedPages {
+public:
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        memory = static_cast<std::byte*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr, "guarded allocation succeeds");
+        DWORD previous = 0;
+        Require(VirtualProtect(memory + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0, "guard page protection succeeds");
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0, "host page size is available");
+        pageSize = static_cast<std::size_t>(size);
+        void* allocation = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(allocation != MAP_FAILED, "guarded allocation succeeds");
+        memory = static_cast<std::byte*>(allocation);
+        Require(mprotect(memory + pageSize, pageSize, PROT_NONE) == 0, "guard page protection succeeds");
+#endif
+    }
+
+    ~GuardedPages() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, pageSize * 2);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    template<typename TElement>
+    TElement* Last(std::size_t count) { return reinterpret_cast<TElement*>(memory + pageSize) - count; }
+
+    void ReadOnly() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(memory, pageSize, PAGE_READONLY, &previous) != 0, "read-only protection succeeds");
+#else
+        Require(mprotect(memory, pageSize, PROT_READ) == 0, "read-only protection succeeds");
+#endif
+    }
+
+private:
+    std::byte* memory = nullptr;
+    std::size_t pageSize = 0;
+};
+
+template<typename TPointer>
+TPointer Inaccessible() {
+    return reinterpret_cast<TPointer>(std::uintptr_t{0x10});
+}
+
+void CheckGroup6GuestMemory() {
+    constexpr auto getInt = _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetintERS3_S5_iiRiRKSt5ctypeIwE_nid_postfix;
+    constexpr auto getTime = _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11do_get_timeES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix;
+    constexpr auto getYear = _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11do_get_yearES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix;
+    constexpr auto getMonth = _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE16do_get_monthnameES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix;
+    constexpr auto get = _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE3getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKwSE__nid_postfix;
+    constexpr auto getFmt = _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetfmtES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKc_nid_postfix;
+    WideTimeGetStorage facet{};
+    _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1EPKcm_nid_postfix(&facet.base, "C", 0);
+    WideCtypeFixture ctype = MakeWideCtype();
+    InputStreambuf<char16_t> sb{};
+    GuestLocale::IosBase ios{};
+    GuestTm tm{};
+    std::int32_t state = 0;
+    int val = -1;
+
+    sb.Setup(u"42", true);
+    auto first = sb.Begin();
+    auto last = EndIter();
+    RequireInvalid([&] { getInt(&facet.base, Inaccessible<GuestLocale::InputIterator*>(), &last, 0, 99, &val, &ctype.base); }, "unreadable iterator");
+    RequireInvalid([&] { getInt(&facet.base, &first, Inaccessible<GuestLocale::InputIterator*>(), 0, 99, &val, &ctype.base); }, "unreadable iterator");
+    RequireInvalid([&] { getInt(&facet.base, &first, &last, 0, 99, Inaccessible<int*>(), &ctype.base); }, "unwritable value");
+    sb.Setup(u"xyz", true);
+    first = sb.Begin();
+    Require(getInt(&facet.base, &first, &last, 0, 99, Inaccessible<int*>(), &ctype.base) == 2, "_Getint leaves an unwritable value alone when it fails");
+    GuardedPages iteratorPages;
+    auto* guardedLast = iteratorPages.Last<GuestLocale::InputIterator>(1);
+    *guardedLast = EndIter();
+    iteratorPages.ReadOnly();
+    sb.Setup(u"42", true);
+    first = sb.Begin();
+    Require(getInt(&facet.base, &first, guardedLast, 0, 99, &val, &ctype.base) == 1 && val == 42, "_Getint accepts an end iterator it does not change in read-only memory");
+    sb.Setup(u"42", true);
+    first = sb.Begin();
+    val = 5;
+    Require(getInt(&facet.base, &first, &first, 0, 99, &val, &ctype.base) == 3 && val == 5, "_Getint treats an aliased first and last as one iterator");
+
+    sb.Setup(u"12:34:56", true);
+    RequireInvalid([&] { getTime(&facet.base, sb.Begin(), EndIter(), &ios, Inaccessible<std::int32_t*>(), &tm); }, "unreadable state");
+    sb.Setup(u"12:34:56", true);
+    RequireInvalid([&] { getTime(&facet.base, sb.Begin(), EndIter(), &ios, &state, Inaccessible<GuestTm*>()); }, "unwritable time");
+    sb.Setup(u"xx", true);
+    state = 0;
+    getTime(&facet.base, sb.Begin(), EndIter(), &ios, &state, Inaccessible<GuestTm*>());
+    Require(state == 2, "do_get_time leaves an unwritable tm alone when the hour fails");
+    GuardedPages statePages;
+    auto* readOnlyState = statePages.Last<std::int32_t>(1);
+    statePages.ReadOnly();
+    sb.Setup(u"2026", true);
+    RequireInvalid([&] { getYear(&facet.base, sb.Begin(), EndIter(), &ios, readOnlyState, &tm); }, "unwritable state");
+    sb.Setup(u"Feb", true);
+    RequireInvalid([&] { getMonth(Inaccessible<GuestLocale::Facet*>(), sb.Begin(), EndIter(), &ios, &state, &tm); }, "unreadable facet vtable");
+    sb.Setup(u"Feb", true);
+    RequireInvalid([&] { getMonth(&facet.base, sb.Begin(), EndIter(), &ios, &state, Inaccessible<GuestTm*>()); }, "unwritable time");
+    sb.Setup(u"Feb", true);
+    tm = {};
+    Require(getMonth(&facet.base, sb.Begin(), EndIter(), &ios, &state, &tm).words[0] == 0 && tm.tm_mon == 1, "do_get_monthname reads the months table of a constructed facet");
+
+    DispatchFacet dispatch{{&g_mockWideTimeGetVtable.facet, 1, 0}, {}, false};
+    GuardedPages formatPages;
+    auto* format = formatPages.Last<std::uint16_t>(2);
+    format[0] = u'a';
+    format[1] = u'b';
+    sb.Setup(u"ab", true);
+    state = 0;
+    get(&dispatch.base, sb.Begin(), EndIter(), &ios, &state, &tm, format, format + 2);
+    Require(state == 0, "get reads a format that ends at a guard page");
+    sb.Setup(u"abc", true);
+    RequireInvalid([&] { get(&dispatch.base, sb.Begin(), EndIter(), &ios, &state, &tm, format, format + 3); }, "unreadable format");
+    sb.Setup(u"a", true);
+    state = 0;
+    get(&dispatch.base, sb.Begin(), EndIter(), &ios, &state, &tm, format, format + (std::size_t{1} << 40));
+    Require(state == 3, "get with an oversized format reads only what it matches");
+    sb.Setup(u"ab", true);
+    RequireInvalid([&] { get(Inaccessible<GuestLocale::Facet*>(), sb.Begin(), EndIter(), &ios, &state, &tm, format, format + 2); }, "unreadable facet vtable");
+    RequireInvalid([&] { get(&dispatch.base, sb.Begin(), EndIter(), &ios, Inaccessible<std::int32_t*>(), &tm, format, format + 2); }, "unwritable state");
+    const GuestLocale::Facet broken{Inaccessible<const GuestLocale::FacetVtable*>(), 1, 0};
+    const std::u16string directive = u"%H";
+    sb.Setup(u"12", true);
+    RequireInvalid([&] { get(&broken, sb.Begin(), EndIter(), &ios, &state, &tm, reinterpret_cast<const std::uint16_t*>(directive.data()), reinterpret_cast<const std::uint16_t*>(directive.data() + directive.size())); }, "unreadable facet vtable");
+
+    auto* narrow = formatPages.Last<char>(2);
+    narrow[0] = 'a';
+    narrow[1] = '\0';
+    sb.Setup(u"a", true);
+    state = 0;
+    getFmt(&dispatch.base, sb.Begin(), EndIter(), &ios, &state, &tm, narrow);
+    Require(state == 1, "_Getfmt reads a format whose terminator ends at a guard page");
+    narrow[1] = 'b';
+    sb.Setup(u"ab", true);
+    RequireInvalid([&] { getFmt(&dispatch.base, sb.Begin(), EndIter(), &ios, &state, &tm, narrow); }, "unreadable format");
+    sb.Setup(u"x", true);
+    RequireInvalid([&] { getFmt(&dispatch.base, sb.Begin(), EndIter(), &ios, Inaccessible<std::int32_t*>(), &tm, "a"); }, "unreadable state");
+    sb.Setup(u"a", true);
+    state = 0;
+    getFmt(&broken, sb.Begin(), EndIter(), &ios, &state, &tm, "a");
+    Require(state == 1, "_Getfmt reads no vtable slot for a literal format");
+    sb.Setup(u"12", true);
+    RequireInvalid([&] { getFmt(&broken, sb.Begin(), EndIter(), &ios, &state, &tm, "%H"); }, "unreadable facet vtable");
+
+    RequireInvalid([&] { _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC1Em_nid_postfix(Inaccessible<GuestLocale::Facet*>(), 1); }, "unwritable facet");
+
+    constexpr auto charGetInt = _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetintERS3_S5_iiRiRKSt5ctypeIcE_nid_postfix;
+    constexpr auto charWeekday = _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE14do_get_weekdayES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix;
+    constexpr auto wideDate = _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11do_get_dateES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix;
+    constexpr auto wideDoGet = _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc_nid_postfix;
+    GuestLocale::CtypeFacet charCtype{{nullptr, 1, 0}, _Getpctype_nid_postfix(), nullptr, nullptr, 0, 0};
+    InputStreambuf<char> narrowSb{};
+    narrowSb.Setup("42", true);
+    auto narrowFirst = narrowSb.Begin();
+    RequireInvalid([&] { charGetInt(&facet.base, Inaccessible<GuestLocale::InputIterator*>(), &last, 0, 99, &val, &charCtype.base); }, "unreadable iterator");
+    RequireInvalid([&] { charGetInt(&facet.base, &narrowFirst, &last, 0, 99, Inaccessible<int*>(), &charCtype.base); }, "unwritable value");
+    narrowSb.Setup("Tue", true);
+    RequireInvalid([&] { charWeekday(&facet.base, narrowSb.Begin(), EndIter(), &ios, &state, Inaccessible<GuestTm*>()); }, "unwritable time");
+    narrowSb.Setup("Xyz", true);
+    RequireInvalid([&] { charWeekday(&facet.base, narrowSb.Begin(), EndIter(), &ios, Inaccessible<std::int32_t*>(), &tm); }, "unreadable state");
+
+    sb.Setup(u"2/3/2026", true);
+    RequireInvalid([&] { wideDate(&facet.base, sb.Begin(), EndIter(), &ios, &state, Inaccessible<GuestTm*>()); }, "unreadable time");
+    sb.Setup(u"2/3/2026", true);
+    RequireInvalid([&] { wideDate(&facet.base, sb.Begin(), EndIter(), &ios, Inaccessible<std::int32_t*>(), &tm); }, "unreadable state");
+    sb.Setup(u"2/3/2026", true);
+    RequireInvalid([&] { wideDate(&broken, sb.Begin(), EndIter(), &ios, &state, &tm); }, "unreadable facet vtable");
+    sb.Setup(u"2/3/2026", true);
+    tm = {};
+    state = 0;
+    wideDate(&facet.base, sb.Begin(), EndIter(), &ios, &state, &tm);
+    Require(state == 1 && tm.tm_mon == 1 && tm.tm_mday == 3 && tm.tm_year == 126, "do_get_date parses through the guest-memory helpers");
+
+    sb.Setup(u"12", true);
+    RequireInvalid([&] { wideDoGet(&facet.base, sb.Begin(), EndIter(), &ios, &state, Inaccessible<GuestTm*>(), 'H', '\0'); }, "unwritable time");
+    sb.Setup(u"12", true);
+    RequireInvalid([&] { wideDoGet(&facet.base, sb.Begin(), EndIter(), &ios, Inaccessible<std::int32_t*>(), &tm, 'H', '\0'); }, "unwritable state");
+    sb.Setup(u"PM", true);
+    RequireInvalid([&] { wideDoGet(&facet.base, sb.Begin(), EndIter(), &ios, &state, Inaccessible<GuestTm*>(), 'p', '\0'); }, "unreadable time");
+    sb.Setup(u"Feb", true);
+    RequireInvalid([&] { wideDoGet(&broken, sb.Begin(), EndIter(), &ios, &state, &tm, 'b', '\0'); }, "unreadable facet vtable");
+
+    WideTimeGetStorage unreadableTables{};
+    _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1EPKcm_nid_postfix(&unreadableTables.base, "C", 0);
+    unreadableTables.months = Inaccessible<const char16_t*>();
+    sb.Setup(u"Feb", true);
+    RequireInvalid([&] { getMonth(&unreadableTables.base, sb.Begin(), EndIter(), &ios, &state, &tm); }, "unreadable facet table");
+    RequireInvalid([&] { _ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1EPKcm_nid_postfix(Inaccessible<GuestLocale::Facet*>(), "C", 0); }, "unwritable facet");
+}
+
+void WarmUpHostExceptionRuntime() {
+    try {
+        throw std::runtime_error("warm-up");
+    } catch (const std::runtime_error&) {
+    }
+}
+
+void CheckGroup7Getloctxt(bool hasLibrary) {
     using GetloctxtFn = int (APS5_VABI*)(GuestLocale::InputIterator*, GuestLocale::InputIterator*, std::size_t, const char*);
     GetloctxtFn fn = &_ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT0_S5_mPKT__nid_postfix;
     if (hasLibrary) {
@@ -1542,6 +1769,46 @@ void CheckGroup6Getloctxt(bool hasLibrary) {
         GuestLocale::InputIterator first = sb.Begin();
         Require(Throws([&] { fn(&first, &endIter, SIZE_MAX, ":Jan"); }), "SIZE_MAX throws length_error");
     }
+
+    {
+        InputStreambuf<char> sb{};
+        sb.Setup("Jan", true);
+        RequireInvalid([&] { fn(Inaccessible<GuestLocale::InputIterator*>(), &endIter, 0, monthsTable); }, "unreadable iterator");
+        GuestLocale::InputIterator first = sb.Begin();
+        RequireInvalid([&] { fn(&first, Inaccessible<GuestLocale::InputIterator*>(), 0, monthsTable); }, "unreadable iterator");
+        GuardedPages iteratorPages;
+        auto* readOnlyFirst = iteratorPages.Last<GuestLocale::InputIterator>(1);
+        *readOnlyFirst = sb.Begin();
+        iteratorPages.ReadOnly();
+        RequireInvalid([&] { fn(readOnlyFirst, &endIter, 0, monthsTable); }, "unwritable iterator");
+    }
+
+    {
+        GuardedPages tablePages;
+        constexpr std::string_view terminatedTable{":Jan:Feb", 9};
+        char* tableAtGuard = tablePages.Last<char>(terminatedTable.size());
+        std::memcpy(tableAtGuard, terminatedTable.data(), terminatedTable.size());
+        InputStreambuf<char> sb{};
+        sb.Setup("Feb", true);
+        GuestLocale::InputIterator first = sb.Begin();
+        Require(fn(&first, &endIter, 0, tableAtGuard) == 1, "_Getloctxt reads a table that ends at a guard page");
+        char* unterminatedTable = tablePages.Last<char>(4);
+        std::memcpy(unterminatedTable, ":Jan", 4);
+        sb.Setup("Jan", true);
+        first = sb.Begin();
+        RequireInvalid([&] { fn(&first, &endIter, 0, unterminatedTable); }, "unreadable facet table");
+        constexpr std::string_view markedTable{"\0false\0true", 12};
+        char* markedAtGuard = tablePages.Last<char>(markedTable.size());
+        std::memcpy(markedAtGuard, markedTable.data(), markedTable.size());
+        sb.Setup("true", true);
+        first = sb.Begin();
+        Require(fn(&first, &endIter, 2, markedAtGuard) == 1, "_Getloctxt reads a NUL-marked table that ends at a guard page");
+        char* unterminatedMarked = tablePages.Last<char>(10);
+        std::memcpy(unterminatedMarked, markedTable.data(), 10);
+        sb.Setup("true", true);
+        first = sb.Begin();
+        RequireInvalid([&] { fn(&first, &endIter, 2, unterminatedMarked); }, "unreadable facet table");
+    }
 }
 
 void CheckGroup6WideGetloctxt(bool hasLibrary) {
@@ -1641,13 +1908,13 @@ int main(int argc, char** argv) {
         hasLibrary = true;
     }
     std::array<void*, 10> api{
-        reinterpret_cast<void*>(&HeapAllocate),
+        reinterpret_cast<void*>(&TestHeapAllocate),
         reinterpret_cast<void*>(&TestHeapFree),
-        reinterpret_cast<void*>(&HeapCalloc),
-        reinterpret_cast<void*>(&HeapReallocate),
-        reinterpret_cast<void*>(&HeapAlign),
-        reinterpret_cast<void*>(&HeapRealign),
-        reinterpret_cast<void*>(&HeapPosixAlign),
+        reinterpret_cast<void*>(&TestHeapCalloc),
+        reinterpret_cast<void*>(&TestHeapReallocate),
+        reinterpret_cast<void*>(&TestHeapAlign),
+        reinterpret_cast<void*>(&TestHeapRealign),
+        reinterpret_cast<void*>(&TestHeapPosixAlign),
     };
     ApplicationHeapRegister_nid_no_patch(api.data());
     CheckGroup1ConstructionAndLifetime();
@@ -1656,7 +1923,9 @@ int main(int argc, char** argv) {
     CheckGroup3Fields();
     CheckGroup4GetAndGetFmt();
     CheckGroup5RemainingTimeGet(hasLibrary);
-    CheckGroup6Getloctxt(hasLibrary);
+    WarmUpHostExceptionRuntime();
+    CheckGroup6GuestMemory();
+    CheckGroup7Getloctxt(hasLibrary);
     CheckGroup6WideGetloctxt(hasLibrary);
     return 0;
 }
