@@ -109,14 +109,8 @@ void Mapping() {
     guarded.data.length = 4096;
     udata_close_nid_postfix(&guarded.data);
 
-    MEMORY_BASIC_INFORMATION information{};
-    Require(VirtualQuery(view, &information, sizeof(information)) == sizeof(information));
-    Require(information.State == MEM_COMMIT);
     RequireInitialized(guarded.data);
     RequireGuards(guarded);
-
-    UnmapViewOfFile(view);
-    CloseHandle(mapping);
 }
 #else
 void Mapping() {
@@ -133,15 +127,16 @@ void Mapping() {
     guarded.data.length = static_cast<std::int32_t>(pageSize);
     udata_close_nid_postfix(&guarded.data);
 
+    errno = 0;
 #if defined(__APPLE__)
-    Require(msync(mapping, pageSize, MS_ASYNC) != -1);
+    Require(msync(mapping, pageSize, MS_ASYNC) == -1);
 #else
     unsigned char residency = 0;
-    Require(mincore(mapping, pageSize, &residency) == 0);
+    Require(mincore(mapping, pageSize, &residency) == -1);
 #endif
+    Require(errno == ENOMEM);
     RequireInitialized(guarded.data);
     RequireGuards(guarded);
-    Require(munmap(mapping, pageSize) == 0);
 }
 #endif
 
@@ -246,11 +241,16 @@ void ForgedMapping() {
 
     udata_close_nid_postfix(&guarded.data);
 
+    errno = 0;
+#if defined(__APPLE__)
+    Require(msync(mapping, pageSize, MS_ASYNC) == -1);
+#else
     unsigned char residency = 0;
-    Require(mincore(mapping, pageSize, &residency) == 0);
+    Require(mincore(mapping, pageSize, &residency) == -1);
+#endif
+    Require(errno == ENOMEM);
     RequireInitialized(guarded.data);
     RequireGuards(guarded);
-    Require(munmap(mapping, pageSize) == 0);
 }
 #else
 void ForgedMapping() {
@@ -270,14 +270,8 @@ void ForgedMapping() {
 
     udata_close_nid_postfix(&guarded.data);
 
-    MEMORY_BASIC_INFORMATION information{};
-    Require(VirtualQuery(view, &information, sizeof(information)) == sizeof(information));
-    Require(information.State == MEM_COMMIT);
     RequireInitialized(guarded.data);
     RequireGuards(guarded);
-
-    UnmapViewOfFile(view);
-    CloseHandle(mapping);
 }
 #endif
 

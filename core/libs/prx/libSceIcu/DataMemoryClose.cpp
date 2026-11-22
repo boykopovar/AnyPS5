@@ -51,6 +51,18 @@ void APS5_VABI udata_close_nid_postfix(UDataMemory* data) {
         return;
     }
 
+#if defined(_WIN32)
+    if (local.map && local.pHeader) {
+        UnmapViewOfFile(local.pHeader);
+        CloseHandle(local.map);
+    }
+#else
+    if (local.map && local.mapAddr) {
+        const auto length = static_cast<char*>(local.map) - static_cast<char*>(local.mapAddr);
+        if (length > 0) munmap(local.mapAddr, static_cast<std::size_t>(length));
+    }
+#endif
+
     UDataMemory cleared{};
     cleared.length = -1;
     const int savedCopyErrno = errno;
