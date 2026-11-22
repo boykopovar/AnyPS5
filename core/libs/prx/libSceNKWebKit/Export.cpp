@@ -23289,10 +23289,6 @@ int APS5_VABI _ZN9Inspector15InspectorTarget5pauseEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector15InspectorTarget6resumeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector15InspectorTargetC2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }

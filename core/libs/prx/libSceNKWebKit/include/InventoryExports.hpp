@@ -3965,7 +3965,6 @@ int APS5_VABI _ZN9Inspector14InspectorAgentdlEPv();
 int APS5_VABI _ZN9Inspector14InspectorAgentnwEm();
 int APS5_VABI _ZN9Inspector15InspectorTarget17setResumeCallbackEON3WTF8FunctionIFvvEEE();
 int APS5_VABI _ZN9Inspector15InspectorTarget5pauseEv();
-int APS5_VABI _ZN9Inspector15InspectorTarget6resumeEv();
 int APS5_VABI _ZN9Inspector15InspectorTargetC2Ev();
 int APS5_VABI _ZN9Inspector15InspectorTargetD1Ev();
 int APS5_VABI _ZN9Inspector15InspectorTargetD2Ev();
