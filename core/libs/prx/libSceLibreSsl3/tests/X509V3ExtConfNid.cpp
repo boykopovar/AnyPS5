@@ -387,6 +387,47 @@ void TestPlainFailures() {
     Require(allocations.empty());
 }
 
+void TestMethodTable() {
+    ERR_clear_error_nid_postfix();
+    for (const int nid : {143, 369, 663}) {
+        RequireQueue(Conf(nid, "NULL"), {0x22fff081});
+        RequireQueue(Conf(nid, ""), {0x22fff081});
+        RequireQueue(Conf(nid, "critical,x"), {0x22fff081});
+        LibreSsl3X509Extension* generic = Conf(nid, "DER:0500");
+        Require(generic != nullptr);
+        Require(X509V3_EXT_d2i_nid_postfix(generic) == nullptr);
+        Require(ERR_get_error_nid_postfix() == 0);
+        CheckValue(generic, nid, 0, {0x05, 0x00});
+    }
+    for (const int nid : {1018, 1021}) {
+        RequireQueue(Conf(nid, "NULL"), {0x22fff067});
+        RequireQueue(Conf(nid, ""), {0x22fff067});
+        RequireQueue(Conf(nid, "critical,"), {0x22fff067});
+        LibreSsl3X509Extension* generic = Conf(nid, "DER:0400");
+        Require(generic != nullptr);
+        RequireNotImplemented([generic] { X509V3_EXT_d2i_nid_postfix(generic); });
+        Require(ERR_get_error_nid_postfix() == 0);
+        CheckValue(generic, nid, 0, {0x04, 0x00});
+    }
+    void* const present = reinterpret_cast<void*>(std::uintptr_t{1});
+    for (const char* value : {"NULL", "", "anything", "@section", "1,2"}) {
+        LibreSsl3X509Extension* poison = Conf(1019, value);
+        Require(poison != nullptr);
+        Require(X509V3_EXT_d2i_nid_postfix(poison) == present);
+        Require(ERR_get_error_nid_postfix() == 0);
+        CheckValue(poison, 1019, 0, {0x05, 0x00});
+    }
+    CheckValue(Conf(1019, "critical,NULL"), 1019, 1, {0x05, 0x00});
+    CheckValue(Conf(1019, "critical,"), 1019, 1, {0x05, 0x00});
+    CheckValue(Conf(1019, "DER:0101ff"), 1019, 0, {0x01, 0x01, 0xff});
+    RequireQueue(Conf(13, "NULL"), {0x22fff081});
+    RequireQueue(Conf(1020, "NULL"), {0x22fff081});
+    RequireQueue(Conf(0, "NULL"), {0x22fff082});
+    CheckValue(Conf(83, "digitalSignature"), 83, 0, {0x03, 0x02, 0x07, 0x80});
+    Require(ERR_get_error_nid_postfix() == 0);
+    Require(allocations.empty());
+}
+
 void TestAllocationFailures() {
     allocationsUntilFailure = 0;
     Require(Conf(83, "DER:0102") == nullptr);
@@ -419,6 +460,7 @@ int main() {
     TestPlain();
     TestPlainLineBreaks();
     TestPlainFailures();
+    TestMethodTable();
     TestAllocationFailures();
     Require(allocations.empty());
     std::puts("libSceLibreSsl3 X509V3_EXT_conf_nid tests passed");

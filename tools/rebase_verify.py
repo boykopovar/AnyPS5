@@ -41,7 +41,7 @@ def changed_lines(root, base, tip):
     deleted = collections.defaultdict(collections.Counter)
     old_path, new_path, in_hunk = None, None, False
     diff = git(root, "diff", "-U0", "--no-renames", "--no-relative", "--no-color", "--no-ext-diff", "--no-textconv",
-               "--src-prefix=a/", "--dst-prefix=b/", base, tip, raw=True)
+               "--ignore-submodules=none", "--submodule=short", "--src-prefix=a/", "--dst-prefix=b/", base, tip, raw=True)
     lines = diff.decode("utf-8", "replace").split("\n")
     for index, line in enumerate(lines):
         if line.startswith("diff --git "):

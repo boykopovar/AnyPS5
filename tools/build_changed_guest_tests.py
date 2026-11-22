@@ -55,7 +55,7 @@ def script_test_patterns(changed):
 def script_test_indices(build_dir, patterns):
     result = subprocess.run(
         ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1"],
-        capture_output=True, text=True, check=True)
+        capture_output=True, text=True, encoding="utf-8", check=True)
     names = [test["name"] for test in json.loads(result.stdout).get("tests", [])]
     indices = set()
     for pattern in patterns:
@@ -78,7 +78,7 @@ def registered_test_commands(build_dir):
 def script_test_owners(build_dir, targets_by_name, patterns):
     listing = subprocess.run(
         ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1"],
-        capture_output=True, text=True, check=True)
+        capture_output=True, text=True, encoding="utf-8", check=True)
     registered = registered_test_commands(build_dir)
     owners = set()
     for test in json.loads(listing.stdout).get("tests", []):
@@ -164,7 +164,7 @@ def test_owner(command, targets_by_name):
 def ctest_resolutions(build_dir, targets_by_name, selected=None):
     result = subprocess.run(
         ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1"],
-        capture_output=True, text=True, check=True)
+        capture_output=True, text=True, encoding="utf-8", check=True)
     document = json.loads(result.stdout)
     resolutions = {}
     for index, test in enumerate(document.get("tests", []), 1):
