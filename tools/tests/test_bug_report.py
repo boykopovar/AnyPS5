@@ -25,8 +25,8 @@ class RedactTests(unittest.TestCase):
         self.assertEqual(out, "~\\AppData")
 
     def test_user_is_matched_as_a_whole_word(self):
-        out = bug_report.redact("banana ana ana.txt ana-dir", home="", user="ana", host="")
-        self.assertEqual(out, "banana <user> <user>.txt ana-dir")
+        out = bug_report.redact("banana ana ana.txt ana-dir ANA", home="/home/ana", user="ana", host="")
+        self.assertEqual(out, "banana <user> <user>.txt ana-dir ANA")
 
     def test_windows_home_matches_mixed_case_and_separators(self):
         out = bug_report.redact(
@@ -136,6 +136,16 @@ class BundleTests(unittest.TestCase):
                     archived = json.loads(bundle.read("anyps5-report.json"))
                 details["path"] = f"opened ~{suffix}"
                 self.assertEqual(archived, report)
+
+    def test_windows_username_case_is_redacted_in_report_and_log(self):
+        identity = {"home": r"C:\Profiles\Example", "user": "Example", "host": ""}
+        self.report.write_text(json.dumps({"run": {"note": "opened by EXAMPLE"}}), encoding="utf-8")
+        self.log.write_text("account eXaMpLe; sibling EXAMPLE-backup\n", encoding="utf-8")
+        out = self.root / "bundle.zip"
+        bug_report.make_bundle(self.report, out, log=self.log, **identity)
+        with zipfile.ZipFile(out) as bundle:
+            self.assertEqual(json.loads(bundle.read("anyps5-report.json")), {"run": {"note": "opened by <user>"}})
+            self.assertEqual(bundle.read("anyps5.log").decode("utf-8"), "account <user>; sibling EXAMPLE-backup\n")
 
     def test_json_object_keys_are_redacted(self):
         report = {

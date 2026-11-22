@@ -15,15 +15,17 @@ IPV4 = re.compile(rf"\b(?:{IPV4_OCTET}\.){{3}}{IPV4_OCTET}\b")
 
 
 def redact(text, *, home, user, host):
+    windows_home = re.match(r"^(?:[a-zA-Z]:[\\/]|\\\\)", home or "") is not None
     if home and len(home) >= 3:
-        if re.match(r"^(?:[a-zA-Z]:[\\/]|\\\\)", home):
+        if windows_home:
             parts = re.split(r"[\\/]", home.rstrip("\\/"))
             pattern = r"[\\/]".join(re.escape(part) for part in parts)
             text = re.sub(pattern + r"(?![\w-]|\.+[\w-])", "~", text, flags=re.IGNORECASE)
         elif home.rstrip("/"):
             text = re.sub(re.escape(home.rstrip("/")) + r"(?![\w-]|\.+[\w-])", "~", text)
     if user and len(user) >= 2:
-        text = re.sub(r"(?<![\w-])" + re.escape(user) + r"(?![\w-])", "<user>", text)
+        text = re.sub(r"(?<![\w-])" + re.escape(user) + r"(?![\w-])", "<user>", text,
+                      flags=re.IGNORECASE if windows_home else 0)
     if host and len(host) >= 2:
         text = re.sub(r"(?<![\w-])" + re.escape(host) + r"(?![\w-])", "<host>", text, flags=re.IGNORECASE)
     return IPV4.sub("<ip>", text)
