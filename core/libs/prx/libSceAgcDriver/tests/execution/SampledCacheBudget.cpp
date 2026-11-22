@@ -1525,6 +1525,124 @@ bool pendingFailCountTests(Context context) {
     return true;
 }
 
+constexpr std::uint64_t JoinWindow = 1ull << 20u;
+constexpr std::size_t SplitHeadBytes = JoinWindow / 2u;
+constexpr std::size_t SplitTailBytes = 4u * JoinWindow;
+constexpr std::size_t SplitBytes = 2u * SplitHeadBytes + SplitTailBytes;
+constexpr std::size_t SplitSurfaceOffset = SplitHeadBytes / 2u;
+constexpr std::uint32_t SplitSide = 1024;
+constexpr std::uint32_t SplitViewSide = 512;
+
+class SplitSurface {
+public:
+    explicit SplitSurface(const Context& context) : context(context) {
+#ifdef _WIN32
+        reserved = VirtualAlloc(nullptr, SplitBytes + JoinWindow, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(reserved != nullptr, "cannot allocate the split surface");
+        base = (reinterpret_cast<std::uintptr_t>(reserved) + JoinWindow - 1u) & ~(JoinWindow - 1u);
+#else
+        reserved = std::aligned_alloc(JoinWindow, SplitBytes);
+        Require(reserved != nullptr, "cannot allocate the split surface");
+        base = reinterpret_cast<std::uintptr_t>(reserved);
+#endif
+        std::memset(reinterpret_cast<void*>(base), 0x5a, SplitBytes);
+        for (const auto& [offset, bytes] : Pieces()) GuestAllocations::Mutation().Add(reinterpret_cast<void*>(base + offset), bytes, true, true, true);
+    }
+
+    ~SplitSurface() {
+        ClearCachedTextures(context.device);
+        for (const auto& [offset, bytes] : Pieces()) GuestAllocations::Mutation().Remove(reinterpret_cast<void*>(base + offset));
+        HostImportFor(context, base, SplitBytes);
+#ifdef _WIN32
+        VirtualFree(reserved, 0, MEM_RELEASE);
+#else
+        std::free(reserved);
+#endif
+    }
+
+    SplitSurface(const SplitSurface&) = delete;
+    SplitSurface& operator=(const SplitSurface&) = delete;
+
+    std::uint64_t Base() const { return base; }
+    std::uint64_t Tail() const { return base + 2u * SplitHeadBytes; }
+    std::uint64_t Surface() const { return base + SplitSurfaceOffset; }
+
+private:
+    static std::array<std::pair<std::size_t, std::size_t>, 3> Pieces() { return {{{0u, SplitHeadBytes}, {SplitHeadBytes, SplitHeadBytes}, {2u * SplitHeadBytes, SplitTailBytes}}}; }
+
+    const Context& context;
+    void* reserved = nullptr;
+    std::uintptr_t base = 0;
+};
+
+bool surfaceImportTests(Context context) {
+    if (context.hostImportAlignment == 0 || JoinWindow % context.hostImportAlignment != 0 || SplitSurfaceOffset % context.hostImportAlignment != 0) {
+        Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "the sampled surface import test requires host imports");
+        std::puts("skipped, host imports are unavailable");
+        return false;
+    }
+    const bool importing = std::getenv("APS5_NO_SAMPLED_SURFACE_IMPORT") == nullptr && std::getenv("APS5_NO_SAMPLED_FROM_STORAGE") == nullptr;
+    const auto surfaceBytes = DescribeSurface(Resource(JoinWindow, SplitSide)).guestBytes;
+    const auto viewBytes = DescribeSurface(Resource(JoinWindow, SplitViewSide)).guestBytes;
+    Require(SplitSurfaceOffset + surfaceBytes <= SplitBytes && SplitSurfaceOffset + surfaceBytes > 2u * SplitHeadBytes, "the split surface does not end inside the tail allocation");
+    Require(SplitSurfaceOffset + viewBytes > 2u * SplitHeadBytes && SplitBytes > viewBytes + 2u * JoinWindow, "the short view does not reach the tail allocation or its allocation run is not longer than two join windows past it");
+    SetHostImportWindow(JoinWindow);
+    struct WindowReset {
+        ~WindowReset() { SetHostImportWindow(0); }
+    } windowReset;
+    const auto joinedOverSurface = [&](const SplitSurface& split) {
+        const auto* entry = ExistingHostImportFor(context, split.Surface(), static_cast<std::size_t>(surfaceBytes));
+        return entry != nullptr && entry->joined && entry->base == split.Base() && entry->bytes == SplitBytes && entry->ranges.size() == 3u;
+    };
+    {
+        SplitSurface split(context);
+        ClearCachedTextures(context.device);
+        auto snapshot = Sampled(context, split.Surface(), SplitSide);
+        Require(snapshot != nullptr && !snapshot->ViewsStorageImage(), "a split surface without a GPU write or an import over it was not sampled through a snapshot");
+        Require(!HostImportOverlaps(context, split.Surface(), static_cast<std::size_t>(surfaceBytes)), "sampling a split surface without a GPU write or an import over it imported some of it");
+        snapshot.reset();
+        Require(HostImportFor(context, split.Tail(), 16) != nullptr, "the tail allocation of the split surface was not imported");
+        Require(HostImportOverlaps(context, split.Surface(), static_cast<std::size_t>(surfaceBytes)) && !HostImportCovers(context, split.Surface(), static_cast<std::size_t>(surfaceBytes)), "the tail import does not cover part of the split surface only");
+        ClearCachedTextures(context.device);
+        auto view = Sampled(context, split.Surface(), SplitViewSide);
+        Require(view != nullptr && !view->ViewsStorageImage() && !HostImportCovers(context, split.Surface(), static_cast<std::size_t>(viewBytes)), "a short view whose allocation run is more than two join windows longer was imported");
+        view.reset();
+        ClearCachedTextures(context.device);
+        auto whole = Sampled(context, split.Surface(), SplitSide);
+        Require(whole != nullptr, "the partly imported split surface was not sampled");
+        if (importing) {
+            Require(whole->ViewsStorageImage(), "a split surface that an import partly covers is not a view of its storage image");
+            Require(joinedOverSurface(split), "a split surface that an import partly covers was not imported as one joined run of its three allocations");
+            whole.reset();
+            ClearCachedTextures(context.device);
+            view = Sampled(context, split.Surface(), SplitViewSide);
+            Require(view != nullptr && view->ViewsStorageImage(), "a short view inside the joined import is not a view of its storage image");
+        } else {
+            Require(!whole->ViewsStorageImage() && !HostImportCovers(context, split.Surface(), static_cast<std::size_t>(surfaceBytes)), "a split surface was imported with the sampled surface import off");
+        }
+    }
+    ClearCachedTextures(context.device);
+    {
+        SplitSurface split(context);
+        Recorder recorder(context);
+        recorder.Activate();
+        recorder.Commands();
+        recorder.NotePendingWrite(split.Surface(), static_cast<std::size_t>(surfaceBytes));
+        Require(Recorder::SnapshotWriteOverlaps(split.Surface(), static_cast<std::size_t>(surfaceBytes)), "the recorded write over the split surface is not pending");
+        Require(!HostImportOverlaps(context, split.Surface(), static_cast<std::size_t>(surfaceBytes)), "the second split surface started with an import over it");
+        ClearCachedTextures(context.device);
+        auto written = Sampled(context, split.Surface(), SplitSide);
+        Require(written != nullptr, "the split surface with a pending write was not sampled");
+        if (importing) Require(written->ViewsStorageImage() && joinedOverSurface(split), "a split surface with a pending GPU write was not imported as one joined run and viewed through its storage image");
+        else Require(!written->ViewsStorageImage() && !HostImportCovers(context, split.Surface(), static_cast<std::size_t>(surfaceBytes)), "a split surface with a pending GPU write was imported with the sampled surface import off");
+        written.reset();
+        recorder.Sync();
+        ClearCachedTextures(context.device);
+    }
+    std::puts(importing ? "sampled surface import: split surfaces imported whole from a partial import and from a pending write, short view refused" : "sampled surface import off: split surfaces stayed snapshots");
+    return true;
+}
+
 int main(int argc, char** argv) {
     try {
         const bool memory = argc > 1 && std::string(argv[1]) == "memory";
@@ -1543,11 +1661,12 @@ int main(int argc, char** argv) {
         const bool resources = mode == "resource-admission" || mode == "resource-oversized" || mode == "resource-clear";
         const bool disableStorageImageMultisample = mode == "without-storage-image-multisample";
         const bool recover = mode == "recover-sampled" || mode == "recover-storage" || mode == "recover-srgb" || mode == "recover-repack";
+        const bool largeSurfaces = recover || mode == "surface-import";
 #ifdef _WIN32
-        if (!memory && mode != "budget-report-age") _putenv_s("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1");
+        if (!memory && mode != "budget-report-age") _putenv_s("APS5_TEXTURE_CACHE_MIB", largeSurfaces ? "16" : "1");
         if (std::getenv("APS5_TEMPLATE_AUDIT_MS") == nullptr) _putenv_s("APS5_TEMPLATE_AUDIT_MS", "250");
 #else
-        if (!memory && mode != "budget-report-age") setenv("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1", 1);
+        if (!memory && mode != "budget-report-age") setenv("APS5_TEXTURE_CACHE_MIB", largeSurfaces ? "16" : "1", 1);
         setenv("APS5_TEMPLATE_AUDIT_MS", "250", 0);
 #endif
         std::unique_ptr<Device> device;
@@ -1619,6 +1738,16 @@ int main(int argc, char** argv) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             if (!pendingFailCountTests(context)) return VulkanTestSkipped;
             std::puts("resource cache pending fast-fail count tests passed");
+            return 0;
+        }
+        if (mode == "surface-import") {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            PlaceholderImages placeholders(context);
+            context.placeholderImages = &placeholders;
+            TextureCache textures(context);
+            context.textureCache = &textures;
+            if (!surfaceImportTests(context)) return VulkanTestSkipped;
+            std::puts("sampled surface import tests passed");
             return 0;
         }
         if (memory) {
