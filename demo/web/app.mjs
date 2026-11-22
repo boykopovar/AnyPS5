@@ -284,6 +284,7 @@ async function onMessage({ data }, currentWorker) {
       await sink.write(data.bytes);
       if (currentWorker === worker) currentWorker.postMessage({ type: "written" });
     } else if (data.type === "complete") {
+      const focusDownload = data.blob && document.activeElement === $("cancel");
       $("cancel").hidden = true;
       if (sink) {
         await sink.close();
@@ -320,6 +321,7 @@ async function onMessage({ data }, currentWorker) {
       worker = null;
       lock(false);
       update();
+      if (focusDownload) $("download").focus();
     } else if (data.type === "error") await fail(data.message);
   } catch (error) {
     if (currentWorker === worker) await fail(error);

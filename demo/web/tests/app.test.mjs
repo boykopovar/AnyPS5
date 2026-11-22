@@ -379,6 +379,28 @@ for (const [name, bad] of [
   });
 }
 
+for (const focused of ["cancel", "locale"]) {
+  test("memory ZIP completion handles focus from " + focused, async t => {
+    const { get, workers } = await setup(t, "complete-focus-" + focused);
+    const worker = await selected(get, workers, "first.zip");
+    await get("convert").onclick();
+    assert.equal(get("cancel").hidden, false);
+    document.activeElement = get(focused);
+    get("download").focus = () => {
+      assert.equal(get("done").hidden, false);
+      assert.equal(get("download").hidden, false);
+      assert.match(get("download").href, /^blob:/u);
+      document.activeElement = get("download");
+    };
+    await worker.onmessage({ data: {
+      type: "complete", mode: "memory", blob: new Blob(["zip"]), outputName: "program.elf", size: 3, release: "v1-test", apps: 1
+    } });
+    assert.equal(get("cancel").hidden, true);
+    assert.equal(document.activeElement, get(focused === "cancel" ? "download" : "locale"));
+    get("change").onclick();
+  });
+}
+
 test("changing the input returns keyboard focus to the ZIP picker", async t => {
   const { get, workers } = await setup(t, "change-focus");
   await selected(get, workers, "first.zip");
