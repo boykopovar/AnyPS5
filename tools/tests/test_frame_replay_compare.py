@@ -384,6 +384,17 @@ class RunnerTests(ReplayFixture):
             self.assertEqual(runner.main(["report", str(self.root / "evidence"), "--json"]), 2)
         self.assertEqual(len(json.loads(output.getvalue())["runs"]), 4)
 
+    def test_report_prints_a_path_outside_the_ansi_code_page_as_utf8(self):
+        self.recipe["warmups"] = 0
+        self.recipe["capture"] = "测-capture"
+        (self.root / "capture").rename(self.root / self.recipe["capture"])
+        self.run_comparison()
+        stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(runner.main(["report", str(self.root / "evidence"), "--json"]), 0)
+            stdout.flush()
+        self.assertIn("测-capture", stdout.buffer.getvalue().decode("utf-8"))
+
     def test_offline_recomputes_assessments_from_original_logs(self):
         self.recipe["warmups"] = 0
         self.run_comparison()
@@ -506,6 +517,16 @@ class ProcessTests(unittest.TestCase):
                                                 self.root / "containment", dict(os.environ), 1, 1024)
         self.assertTrue(any("synthetic containment failure" in error for error in result["io_errors"]))
         self.assertTrue((self.root / "containment" / "process.json").is_file())
+
+    @unittest.skipUnless(os.name == "nt", "Windows process containment")
+    def test_guard_failure_stops_before_launch_and_retains_process_receipt(self):
+        with mock.patch.object(runner.processes, "guard", side_effect=runner.processes.GateError("synthetic guard failure")):
+            with mock.patch.object(runner.subprocess, "Popen", side_effect=AssertionError("replay started before guard")) as launch:
+                result = runner.execute_replay_trial(["replay"], self.root / "guard-failure", dict(os.environ), 1, 1024)
+        launch.assert_not_called()
+        self.assertIsNone(result["returncode"])
+        self.assertIn("synthetic guard failure", result["io_errors"])
+        self.assertTrue((self.root / "guard-failure" / "process.json").is_file())
 
     def test_wait_interrupt_cleans_owned_child_and_retains_receipt(self):
         sleep = time.sleep

@@ -41,6 +41,13 @@ class PrepareInputTests(ReleaseNotesCase):
                 self.assertFalse(self.body.exists())
                 self.assertFalse(self.full.exists())
 
+    def test_duplicate_json_keys_are_rejected_without_outputs(self):
+        for payload, key in (('{"body":"first","body":"second"}', "body"),
+                             ('{"body":"notes","extra":{"item":1,"item":2}}', "item")):
+            with self.subTest(key=key):
+                self.write_source(payload)
+                self.assertRejectedWithoutOutputs(f"duplicate JSON key.*{key}")
+
     def test_payload_must_be_an_object_with_a_body_field(self):
         for payload in ("[1]", '"notes"', '{"notes": "text"}'):
             with self.subTest(payload=payload):

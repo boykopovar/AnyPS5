@@ -23,6 +23,9 @@ EXPORT = re.compile(r"^[+-].*\bAPS5_VABI\s+(\w+)\s*\(")
 NID_DISAMBIG = re.compile(r"_nid_disambig[0-9]+$")
 DEPENDS = re.compile(r'Depends on:[ \t]*((?:#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)#\d+\b)*|none\b)?(?:\r?\n[ \t]*[-*][ \t]*#\d+\b[^\r\n]*)*)')
 PLAIN_DEPENDS = re.compile(r'Depends on[ \t]+(#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)#\d+\b)*)')
+CLOSING = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
+CLOSES = re.compile(rf"(?<![\w-]){CLOSING}:?[ \t]+#(\d+)\b", re.IGNORECASE)
+FIXES = re.compile(rf"(?<![\w-])Fixes:[ \t]*((?:{CLOSING}[ \t]+)?#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)(?:{CLOSING}[ \t]+)?#\d+\b)*)", re.IGNORECASE)
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))?", re.M)
 MARKER = "<!-- pr-overlap -->"
 FETCH_REFS = 100
@@ -97,6 +100,38 @@ def own(prs, sha):
     return {n: pr for n, pr in prs.items() if pr["sha"] not in ancestors}
 
 
+def without_own_pull_request(prs, name, repository=None):
+    if repository is None:
+        return prs
+    matching = [number for number, pr in prs.items()
+                if pr.get("branch") == name and pr.get("head_repo", "").casefold() == repository.casefold()]
+    if len(matching) == 1:
+        del prs[matching[0]]
+    return prs
+
+
+def push_head(name):
+    ref = f"refs/heads/{name}"
+    try:
+        rows = git("for-each-ref", "--format=%(refname)%09%(push:remotename)%09%(push:remoteref)", ref)
+        for row in rows.splitlines():
+            fields = row.split("\t")
+            if len(fields) != 3:
+                return name, None
+            local, remote, destination = fields
+            if local != ref or not remote or not destination.startswith("refs/heads/"):
+                continue
+            urls = git("remote", "get-url", "--push", "--all", remote).splitlines()
+            if len(urls) == 1:
+                match = re.fullmatch(r"(?:https?://github\.com/|git@github\.com:|ssh://git@github\.com(?::22)?/)"
+                                     r"([\w.-]+/[\w.-]+?)(?:\.git)?/?", urls[0], re.IGNORECASE)
+                if match:
+                    return destination.removeprefix("refs/heads/"), match[1]
+    except subprocess.CalledProcessError:
+        pass
+    return name, None
+
+
 def gh(*args, attempts=3, delay=0.5):
     for attempt in range(attempts):
         try:
@@ -105,7 +140,8 @@ def gh(*args, attempts=3, delay=0.5):
             raise ValueError("GitHub CLI 'gh' is required on PATH") from error
         if result.returncode == 0:
             return result.stdout
-        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "TLS handshake", "stream error:", "unexpected EOF"))
+        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "TLS handshake", "stream error:", "unexpected EOF",
+                                                          "A connection attempt failed because the connected party did not properly respond"))
         if attempt + 1 == attempts or not transient:
             raise subprocess.CalledProcessError(result.returncode, ["gh", *args], output=result.stdout, stderr=result.stderr)
         time.sleep(delay * (2 ** attempt))
@@ -125,6 +161,19 @@ def depends_on(body):
     body = re.sub(rf"https?://(?:www\.)?github\.com/{repo_pattern}/pull/(\d+)\b(?:/[^\s]*)?", r"#\1", body, flags=re.IGNORECASE)
     match = next((match for match in DEPENDS.finditer(body) if match.group(1).strip()), None) or PLAIN_DEPENDS.search(body)
     return {int(n) for n in re.findall(r"#(\d+)", match.group(1))} if match else set()
+
+
+def fixes(body):
+    body = re.sub(r"<!--.*?-->", "", body or "", flags=re.S)
+    repo = re.escape(globals().get("REPO", "boykopovar/AnyPS5"))
+    repo_pattern = rf"(?:{repo}|boykopovar/AnyPS5)"
+    body = re.sub(rf"\[([^\]]*)\]\(https?://(?:www\.)?github\.com/{repo_pattern}/issues/(\d+)(?:[#/?][^)\s]*)?\)", r"#\2", body, flags=re.IGNORECASE)
+    body = re.sub(rf"https?://(?:www\.)?github\.com/{repo_pattern}/issues/(\d+)\b(?:[#/?][^\s]*)?", r"#\1", body, flags=re.IGNORECASE)
+    found = {int(n) for n in CLOSES.findall(body)}
+    for match in FIXES.finditer(body):
+        found.update(int(n) for n in re.findall(r"#(\d+)", match.group(1)))
+    return found
+
 
 def progress(message):
     print(f"pr_overlap: {message}", file=sys.stderr, flush=True)
@@ -227,9 +276,12 @@ def open_prs(base):
         prs[pr["number"]] = {
             "ref": f"refs/pr/{pr['number']}",
             "sha": pr["head"]["sha"],
+            "branch": pr["head"]["ref"],
+            **({"head_repo": head_repo["full_name"]} if (head_repo := pr["head"].get("repo")) else {}),
             "author": pr["user"]["login"],
             "title": pr.get("title") or "",
             "depends": depends_on(pr["body"]),
+            "fixes": fixes(pr["body"]),
         }
     progress(f"{len(prs)} open pull requests against {base}")
     return prs
@@ -297,37 +349,78 @@ def exports(diff, prefix="+"):
     return found
 
 
-def changed_source(diff, prefix):
-    files, current, path = [], [], None
+def unquote_path(path):
+    if path.startswith('"') and path.endswith('"'):
+        return codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", errors="replace")
+    return path
+
+
+def changed_hunks(diff, prefix):
+    files, hunks, current, path = [], [], [], None
     in_hunk = False
     for line in diff.split("\n"):
         line = line.removesuffix("\r")
         if line.startswith("diff --git "):
-            if current and path:
-                files.append((path, "\n".join(current)))
+            if current:
+                hunks.append("\n".join(current))
+            if hunks and path:
+                files.append((path, hunks))
             path = line.split(" b/", 1)[1] if " b/" in line else None
-            current = []
+            hunks, current = [], []
             in_hunk = False
         elif line.startswith("@@"):
+            if current:
+                hunks.append("\n".join(current))
+            current = []
             in_hunk = True
         elif not in_hunk and line.startswith("--- " if prefix == "-" else "+++ "):
-            path = line[4:]
-            if path.startswith('"') and path.endswith('"'):
-                path = codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", errors="replace")
+            path = unquote_path(line[4:])
             if path == "/dev/null":
                 path = None
             elif path.startswith(("a/", "b/")):
                 path = path[2:]
         elif line.startswith(prefix) and not line.startswith(prefix * 3):
             current.append(line[1:])
-    if current and path:
-        files.append((path, "\n".join(current)))
+    if current:
+        hunks.append("\n".join(current))
+    if hunks and path:
+        files.append((path, hunks))
     return files
+
+
+def changed_source(diff, prefix):
+    return [(path, "\n".join(hunks)) for path, hunks in changed_hunks(diff, prefix)]
 
 
 def library_for_path(path):
     parts = Path(path).parts
     return "/".join(parts[:4]) if len(parts) > 3 and parts[:3] == ("core", "libs", "prx") else ""
+
+
+def production_source(path):
+    path = Path(path)
+    return path.suffix == ".cpp" and not any(part.lower() in {"test", "tests"} for part in path.parts[2:-1])
+
+
+def export_diff(old, new):
+    diff = git("diff", "-U0", "--no-color", old, new, "--", *EXPORT_PATHS)
+    source, in_hunk, relocated = None, False, set()
+    for line in diff.split("\n"):
+        line = line.removesuffix("\r")
+        if line.startswith("diff --git "):
+            source, in_hunk = None, False
+        elif line.startswith("@@"):
+            in_hunk = True
+        elif not in_hunk and line.startswith("rename from "):
+            source = unquote_path(line[12:])
+        elif not in_hunk and source is not None and line.startswith("rename to "):
+            destination = unquote_path(line[10:])
+            if library_for_path(source) != library_for_path(destination):
+                relocated.update(path for path in (source, destination) if library_for_path(path) and production_source(path))
+    if relocated:
+        diff += "\n" + git("diff", "--no-renames", "-U0", "--no-color", old, new, "--",
+                           *(f":(literal){path}" for path in sorted(relocated)), *EXPORT_PATHS[1:])
+    return diff
 
 
 def source_exports(text, library=""):
@@ -347,14 +440,15 @@ def source_exports(text, library=""):
 
 def source_changed_exports(diff, prefix):
     found = {}
-    for path, text in changed_source(diff, prefix):
+    for path, hunks in changed_hunks(diff, prefix):
         library = library_for_path(path)
-        for key, names in source_exports(text, library).items():
+        for key, names in source_exports("\n".join(hunks), library).items():
             found.setdefault(key, set()).update(names)
-        file_diff = "\n".join(prefix + line for line in text.splitlines())
-        for name in exports(file_diff, prefix):
-            canonical = nid_names.strip_nid_postfix(name)
-            found.setdefault((library, nid_names.compute_nid(canonical)), set()).add(canonical)
+        for hunk in hunks:
+            hunk_diff = "\n".join(prefix + line for line in hunk.splitlines())
+            for name in exports(hunk_diff, prefix):
+                canonical = nid_names.strip_nid_postfix(name)
+                found.setdefault((library, nid_names.compute_nid(canonical)), set()).add(canonical)
     return found
 
 
@@ -393,8 +487,7 @@ def base_sources(root, ref):
         info, name = entry.split("\t", 1)
         mode, kind, blob = info.split()
         path = Path(name)
-        if kind != "blob" or mode == "120000" or path.suffix != ".cpp" or any(
-                part.lower() in {"test", "tests"} for part in path.parts[2:-1]):
+        if kind != "blob" or mode == "120000" or not production_source(path):
             continue
         sources.append((blob, name))
     return sources
@@ -455,7 +548,7 @@ def scan(pr):
         pr["files"].add(path)
         if status == "A":
             pr["added"].add(path)
-    diff = git("diff", "-U0", "--no-color", old, new, "--", *EXPORT_PATHS)
+    diff = export_diff(old, new)
     pr["exports"] = exports(diff)
     pr["added_exports"] = source_changed_exports(diff, "+")
     pr["removed_exports"] = source_changed_exports(diff, "-")
@@ -471,7 +564,7 @@ def probe(pr):
             existing.add(path)
     if not any(path.startswith("core/libs/prx/") and path.endswith(".cpp") for path in files):
         return files, (set(), {}), existing
-    diff = git("diff", "-U0", "--no-color", base, pr["ref"], "--", *EXPORT_PATHS)
+    diff = export_diff(base, pr["ref"])
     return files, (exports(diff), source_changed_exports(diff, "+")), existing
 
 
@@ -557,6 +650,8 @@ def overlaps(prs, a, b):
             same_exports.update(pa["added_exports"][key])
             same_exports.update(pb["added_exports"][key])
         found["exports"] = same_exports
+        if same_issues := pa.get("fixes", set()) & pb.get("fixes", set()):
+            found["issues"] = same_issues
         if not (pa["tree"] and pb["tree"]):
             uncompared = pa.get("files", set()) & pb.get("files", set())
             if uncompared:
@@ -595,6 +690,10 @@ def pull(blob, number):
     return f'[PR {number}]({blob.split("/blob/", 1)[0].replace("https://github.com/", "https://www.github.com/", 1)}/pull/{number})'
 
 
+def issue(blob, number):
+    return f'[issue {number}]({blob.split("/blob/", 1)[0].replace("https://github.com/", "https://www.github.com/", 1)}/issues/{number})'
+
+
 def report(rows, blob, main_exports=None):
     if not rows:
         if not main_exports:
@@ -602,6 +701,7 @@ def report(rows, blob, main_exports=None):
     confirmed = {number: found for number, found in rows.items()
                  if found.get("conflicts") or found.get("exports") or found["added"]}
     uncompared = {number: found["uncompared"] for number, found in rows.items() if found.get("uncompared")}
+    issues = {number: found["issues"] for number, found in rows.items() if found.get("issues")}
     lines = [MARKER]
     if confirmed:
         lines.extend([
@@ -613,8 +713,15 @@ def report(rows, blob, main_exports=None):
         ])
         for number, found in sorted(confirmed.items()):
             lines.append(f'| {pull(blob, number)} | {spans(found.get("conflicts"), blob)} | {cell(found.get("exports"))} | {cell(found["added"])} |')
-    if main_exports:
+    if issues:
         if confirmed:
+            lines.append("")
+        lines.append("Other open pull requests say they fix the same issue, so they may implement the same thing:")
+        lines.append("")
+        for number, numbers in sorted(issues.items()):
+            lines.append(f"- {pull(blob, number)}: " + ", ".join(issue(blob, n) for n in sorted(numbers)))
+    if main_exports:
+        if confirmed or issues:
             lines.append("")
         lines.append("Exports with a name or library/NID already present in `main`:")
         lines.append("")
@@ -627,7 +734,7 @@ def report(rows, blob, main_exports=None):
             if other_libraries:
                 lines.append(f"- {code_span(name)} (also exported by another library in `main`: {cell(other_libraries)}; may be intentional)")
     if uncompared:
-        if confirmed or main_exports:
+        if confirmed or issues or main_exports:
             lines.append("")
         lines.extend([
             "Some comparisons could not be completed because a pull request conflicts with the base branch. "
@@ -818,7 +925,11 @@ def main_status(names, ref):
 
 
 def lookup_report(names, found, status, prs, blob):
-    lines = []
+    lines = [
+        "PS5 exports only. Internal functions and instruction opcodes are not checked.",
+        "Inspect candidate pull requests and run --branch <branch> to check file and line overlaps.",
+        "",
+    ]
     for requested in names:
         name = canonical(requested)
         lines.append(name)
@@ -826,12 +937,12 @@ def lookup_report(names, found, status, prs, blob):
         if libraries:
             lines.extend(f"  main: {library} ({state})" for library, state in sorted(libraries.items()))
         else:
-            lines.append("  main: not declared")
+            lines.append("  main: no matching PS5 export")
         numbers = sorted(found.get(name, ()))
         if numbers:
             lines.extend(f"  open: {pull(blob, number)} by {prs[number]['author']}: {prs[number].get('title', '')}" for number in numbers)
         else:
-            lines.append("  open: none")
+            lines.append("  open: no matching PS5 export changes")
     return "\n".join(lines) + "\n"
 
 
@@ -865,9 +976,12 @@ def main(argv=None):
                         help="before writing code, show whether each function is implemented on the base and which open pull requests add it or edit its body")
     parser.add_argument("--repo", help="owner/name; defaults to the upstream of the current checkout")
     parser.add_argument("--jobs", type=int, default=8, help="number of pull request comparisons to run at once")
+    parser.add_argument("--head-repo", help="head repository owner/name for --branch with the same branch name; must be the correct fork because its matching pull request is excluded")
     args = parser.parse_args(argv)
     if sum(map(bool, (args.out, args.branch, args.names))) != 1:
         parser.error("pass exactly one of --out, --branch or --names")
+    if args.head_repo is not None and (not args.branch or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+", args.head_repo) or args.head_repo.split("/", 1)[1] in (".", "..")):
+        parser.error("--head-repo needs --branch and a GitHub owner/name")
     if args.jobs < 1:
         parser.error("--jobs must be at least 1")
     global REPO
@@ -885,7 +999,8 @@ def main(argv=None):
             return 0
         if args.branch:
             sha = branch_sha
-            prs = own(prs, sha)
+            head_branch, head_repo = (args.branch, args.head_repo) if args.head_repo else push_head(args.branch)
+            prs = without_own_pull_request(own(prs, sha), head_branch, head_repo)
             prs[0] = {"ref": sha, "author": None, "depends": set()}
         scan_all(prs, args.jobs)
         current_exports = base_exports(BASE_REF)

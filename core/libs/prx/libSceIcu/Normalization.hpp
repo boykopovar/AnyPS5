@@ -38,4 +38,5 @@ std::int8_t APS5_VABI unorm2_hasBoundaryAfter_nid_postfix(const Icu::Normalizer2
 std::int8_t APS5_VABI unorm2_isInert_nid_postfix(const Icu::Normalizer2*, std::int32_t);
 std::int32_t APS5_VABI unorm_compare_nid_postfix(const char16_t*, std::int32_t, const char16_t*, std::int32_t, std::uint32_t,
                                                  std::int32_t*);
+std::int32_t APS5_VABI _ZN6icu_6815Normalizer2Impl7combineEPKti_nid_postfix(const std::uint16_t*, std::int32_t);
 }
