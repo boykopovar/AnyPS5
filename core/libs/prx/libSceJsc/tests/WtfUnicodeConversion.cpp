@@ -366,12 +366,18 @@ void TestGuestPointers() {
     SetPageProtection(pages.readOnly, pages.pageSize, true, false);
 
     Check(Throws<std::exception>([&] { _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(roLatinCursor, latinInput + 2, &charDst, utf8Out + 16); }), __LINE__);
+    Check(charDst == utf8Out, __LINE__);
     Check(Throws<std::exception>([&] { _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(&latinSrc, latinInput + 2, roCharTargetCursor, utf8Out + 16); }), __LINE__);
+    Check(latinSrc == latinInput, __LINE__);
     Check(Throws<std::exception>([&] { _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(roUtf16Cursor, utf16Input + 2, &charDst, utf8Out + 16, true); }), __LINE__);
+    Check(charDst == utf8Out, __LINE__);
     Check(Throws<std::exception>([&] { _ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&utf16Src, utf16Input + 2, roCharTargetCursor, utf8Out + 16, true); }), __LINE__);
+    Check(utf16Src == utf16Input, __LINE__);
     Check(Throws<std::exception>([&] { _ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb(utf8Input, utf8Input + 3, roUtf16TargetCursor, utf16Out + 16, &allAscii); }), __LINE__);
     Check(Throws<std::exception>([&] { _ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb(utf8Input, utf8Input + 3, &utf16Dst, utf16Out + 16, roBool); }), __LINE__);
+    Check(utf16Dst == utf16Out, __LINE__);
     Check(Throws<std::exception>([&] { _ZN3WTF7Unicode43convertUTF8ToUTF16ReplacingInvalidSequencesEPKcS2_PPDsS3_Pb(utf8Input, utf8Input + 3, &utf16Dst, utf16Out + 16, roBool); }), __LINE__);
+    Check(utf16Dst == utf16Out, __LINE__);
 
     charDst = roCharOut;
     Check(Throws<std::exception>([&] { _ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(&latinSrc, latinInput + 2, &charDst, roCharOut + 16); }), __LINE__);
@@ -398,6 +404,45 @@ void TestGuestPointers() {
     auto* partialUtf8 = reinterpret_cast<const char*>(boundaryBytes);
     Check(Throws<std::exception>([&] { _ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb(partialUtf8, partialUtf8 + 4, &utf16Dst, utf16Out + 16, &allAscii); }), __LINE__);
     Check(Throws<std::exception>([&] { _ZN3WTF7Unicode43convertUTF8ToUTF16ReplacingInvalidSequencesEPKcS2_PPDsS3_Pb(partialUtf8, partialUtf8 + 4, &utf16Dst, utf16Out + 16, &allAscii); }), __LINE__);
+
+    const char invalidUtf8[] = {static_cast<char>(0xFF)};
+    Check(!_ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb(invalidUtf8, invalidUtf8 + 1, roUtf16TargetCursor, utf16Out + 16, roBool), __LINE__);
+    Check(!_ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_(roLatinCursor, latinInput + 2, roCharTargetCursor, utf8Out + 2), __LINE__);
+
+    auto* wideUtf16Start = reinterpret_cast<char16_t*>(static_cast<std::byte*>(pages.boundary) + pages.pageSize - 16);
+    wideUtf16Start[0] = u'a';
+    wideUtf16Start[1] = u'\u00E9';
+    wideUtf16Start[2] = u'\u00E9';
+    wideUtf16Start[3] = u'\u00E9';
+    const char16_t* resumeSrc = wideUtf16Start;
+    char smallOut[3]{};
+    char* resumeDst = smallOut;
+    Check(_ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&resumeSrc, wideUtf16Start + 1000000, &resumeDst, smallOut + 2, true) == ConversionResult::TargetExhausted, __LINE__);
+    Check(resumeSrc == wideUtf16Start + 1 && resumeDst == smallOut + 1 && smallOut[0] == 'a', __LINE__);
+
+    std::u16string chunkSurrogate(2047, u'a');
+    chunkSurrogate.push_back(char16_t(0xD83D));
+    chunkSurrogate.push_back(char16_t(0xDE00));
+    chunkSurrogate.push_back(u'z');
+    std::string chunkUtf8Out(4096, '\0');
+    const char16_t* surSrc = chunkSurrogate.data();
+    char* surDst = chunkUtf8Out.data();
+    Check(_ZN3WTF7Unicode18convertUTF16ToUTF8EPPKDsS2_PPcS4_b(&surSrc, chunkSurrogate.data() + chunkSurrogate.size(), &surDst, chunkUtf8Out.data() + chunkUtf8Out.size(), true) == ConversionResult::ConversionOK, __LINE__);
+    Check(surSrc == chunkSurrogate.data() + chunkSurrogate.size(), __LINE__);
+    Check(std::string(chunkUtf8Out.data(), surDst) == std::string(2047, 'a') + "\xF0\x9F\x98\x80" + "z", __LINE__);
+
+    std::string chunkUtf8In(4094, 'b');
+    chunkUtf8In += "\xF0\x9F\x98\x80z";
+    std::u16string chunkUtf16Out(4097, u'\0');
+    char16_t* u16ChunkDst = chunkUtf16Out.data();
+    bool chunkAscii = true;
+    Check(_ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb(chunkUtf8In.data(), chunkUtf8In.data() + chunkUtf8In.size(), &u16ChunkDst, chunkUtf16Out.data() + chunkUtf16Out.size(), &chunkAscii), __LINE__);
+    Check(!chunkAscii, __LINE__);
+    std::u16string expectedU16(4094, u'b');
+    expectedU16.push_back(char16_t(0xD83D));
+    expectedU16.push_back(char16_t(0xDE00));
+    expectedU16.push_back(u'z');
+    Check(std::u16string(chunkUtf16Out.data(), u16ChunkDst) == expectedU16, __LINE__);
 }
 
 }
