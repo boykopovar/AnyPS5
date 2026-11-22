@@ -1032,6 +1032,16 @@ public:
     DepthSurface(const DepthSurface&) = delete;
     DepthSurface& operator=(const DepthSurface&) = delete;
 
+    bool clearedHtilePlane(const GuestMemory::UnchangedQuery& range) const {
+        if (!target.htileDepthOnly || range.bytes < 4u || clearPending || clearGeneration != 0u || stencilClearGeneration != 0u || pendingClear != 0u) return false;
+        for (std::uint64_t offset = 0u; offset + 4u <= range.bytes; offset += 4u) {
+            std::uint32_t word;
+            std::memcpy(&word, reinterpret_cast<const void*>(range.address + offset), sizeof(word));
+            if (!htileProvesClear(word, true, target.clearDepth)) return false;
+        }
+        return true;
+    }
+
     bool expandedHtilePlane(const GuestMemory::UnchangedQuery& range) const {
         for (std::uint64_t offset = 0u; offset + 4u <= range.bytes; offset += 4u) {
             std::uint32_t word;
@@ -1070,7 +1080,8 @@ public:
                 if (recorder->PendingStoreOverlaps(range.address, range.bytes)) {
                     Require(index == 1u, "external GPU writes over native multisample depth are not implemented");
                     RecorderFor(context)->SyncThrough(range.address, range.bytes);
-                    if (!expandedHtilePlane(range)) sampling.refusal = "external GPU writes over native multisample depth are not implemented";
+                    if (clearedHtilePlane(range)) RecordClearValue(VK_IMAGE_ASPECT_DEPTH_BIT, target.clearDepth, 0u);
+                    else if (!expandedHtilePlane(range)) sampling.refusal = "external GPU writes over native multisample depth are not implemented";
                     Require(sampling.refusal.empty(), sampling.refusal);
                     sampling.initial[index].generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
                     RebasePublication(1u);
