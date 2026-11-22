@@ -30,6 +30,11 @@ def number(value, name):
     return value
 
 
+def unsigned_count(value, name, bits=64, minimum=0):
+    if type(value) is not int or not minimum <= value < 1 << bits:
+        raise ValueError(f"{name} must be an unsigned {bits}-bit integer of at least {minimum}")
+
+
 def validate(summary):
     for key in ("commit", "trace", *CONTEXT):
         if not isinstance(summary.get(key), str):
@@ -38,8 +43,8 @@ def validate(summary):
         if key in summary and not isinstance(summary[key], str):
             raise ValueError(f"{key} must be a string")
     for key in OPTIONAL_INTEGERS:
-        if key in summary and (type(summary[key]) is not int or summary[key] < 0):
-            raise ValueError(f"{key} must be a non-negative integer")
+        if key in summary:
+            unsigned_count(summary[key], key, 32 if key == "cpu_threads" else 64)
     if type(summary.get("trace_dropped")) is not bool:
         raise ValueError("trace_dropped must be a boolean")
     if "trace_dropped_threads" in summary:
@@ -63,11 +68,8 @@ def validate(summary):
         raise ValueError("window must contain a string spec")
     if number(window.get("ms"), "window.ms") == 0:
         raise ValueError("window.ms must be positive")
-    if type(window.get("first_present")) is not int or window["first_present"] < 0:
-        raise ValueError("window.first_present must be a non-negative integer")
-    if type(summary.get("presents")) is not int or summary["presents"] <= 0:
-        raise ValueError("presents must be a positive integer")
-    number(summary["presents"], "presents")
+    unsigned_count(window.get("first_present"), "window.first_present")
+    unsigned_count(summary.get("presents"), "presents", minimum=1)
     frames = summary.get("frame_ms")
     if not isinstance(frames, dict):
         raise ValueError("frame_ms must be an object")
@@ -85,9 +87,12 @@ def validate(summary):
         raise ValueError("top_phases_ms_per_frame must be an object")
     for name, value in phases.items():
         number(value, f"top_phases_ms_per_frame.{name}")
-    graphics = summary.get("graphics_track", {})
-    if not isinstance(graphics, dict) or any(not isinstance(name, str) or type(value) is not int or value < 0 for name, value in graphics.items()):
-        raise ValueError("graphics_track must map names to non-negative integers")
+    for field in ("graphics_track", "owned_draw_counts"):
+        counters = summary.get(field, {})
+        if not isinstance(counters, dict) or any(not isinstance(name, str) for name in counters):
+            raise ValueError(f"{field} must map names to unsigned 64-bit integers")
+        for name, value in counters.items():
+            unsigned_count(value, f"{field}.{name}")
     return summary
 
 
