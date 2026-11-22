@@ -45,7 +45,7 @@ const void* APS5_VABI WKPageCopyApplicationNameForUserAgent(const void* pageRef)
 }
 
 void APS5_VABI WKPageSetApplicationNameForUserAgent(const void* pageRef, const void* applicationNameRef) {
-    auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    auto* page = NKWebKit::MutablePage(pageRef, __func__);
     page->applicationNameForUserAgent = NullableString(applicationNameRef, __func__);
 }
 
@@ -54,7 +54,7 @@ const void* APS5_VABI WKPageCopyCustomUserAgent(const void* pageRef) {
 }
 
 void APS5_VABI WKPageSetCustomUserAgent(const void* pageRef, const void* userAgentRef) {
-    auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    auto* page = NKWebKit::MutablePage(pageRef, __func__);
     page->customUserAgent = NullableString(userAgentRef, __func__);
 }
 
@@ -63,12 +63,12 @@ const void* APS5_VABI WKPageCopyCustomTextEncodingName(const void* pageRef) {
 }
 
 void APS5_VABI WKPageSetCustomTextEncodingName(const void* pageRef, const void* encodingNameRef) {
-    auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
+    auto* page = NKWebKit::MutablePage(pageRef, __func__);
     page->customTextEncodingName = NullableString(encodingNameRef, __func__);
 }
 
 void APS5_VABI WKPageSetBackgroundExtendsBeyondPage(const void* pageRef, bool backgroundExtendsBeyondPage) {
-    NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__)->backgroundExtendsBeyondPage = backgroundExtendsBeyondPage;
+    NKWebKit::MutablePage(pageRef, __func__)->backgroundExtendsBeyondPage = backgroundExtendsBeyondPage;
 }
 
 bool APS5_VABI WKPageBackgroundExtendsBeyondPage(const void* pageRef) {
