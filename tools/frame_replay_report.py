@@ -191,6 +191,21 @@ def parse_replay_host_report(stderr, expected_commit=None):
     return host
 
 
+def validate_replay_diagnostics(native, passes):
+    if "kept_words" in native and (type(native["kept_words"]) is not int or not 0 <= native["kept_words"] < 1 << 64):
+        raise ValueError("native replay kept_words must be an unsigned 64-bit integer")
+    counters = ("rewritten_bytes", "rewritten_owned_bytes", "compared_bytes", "flushed_bytes",
+                "range_bytes", "reset_workers", "retired_color", "retired_depth_owners",
+                "retired_depth_surfaces", "discarded_depth_planes")
+    for index, entry in enumerate(passes):
+        for field in counters:
+            if field in entry and (type(entry[field]) is not int or not 0 <= entry[field] < 1 << 64):
+                raise ValueError(f"passes[{index}].{field} must be an unsigned 64-bit integer")
+        for field in ("reset_ms", "verify_ms"):
+            if field in entry and (type(entry[field]) not in (int, float) or not 0 <= entry[field] <= MAX_REPLAY_MEASUREMENT):
+                raise ValueError(f"passes[{index}].{field} must be a finite nonnegative duration")
+
+
 def parse_replay_result(stdout, stderr="", expected_commit=None):
     result = {"native": None, "host": None, "issues": [], "unknowns": list(LIMITATIONS)}
     try:
@@ -246,6 +261,7 @@ def parse_replay_result(stdout, stderr="", expected_commit=None):
                     raise ValueError(f"pass.{key} must be a finite nonnegative number")
         if len(passes) == 1 and (passes[0]["frames"] != native["frames"] or len(each) != max(0, native["frames"] - 1)):
             raise ValueError("native replay pass/frame counts disagree")
+        validate_replay_diagnostics(native, passes)
         result["native"] = native
         for key in ("stale_registrations", "failed_registrations", "pace_timeouts", "of_them_synthesized", "unfinished"):
             if native[key]:

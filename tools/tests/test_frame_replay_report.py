@@ -167,6 +167,27 @@ class FrameReplayReportTests(unittest.TestCase):
                 self.assertEqual(len(parsed["issues"]), 2)
                 self.assertTrue(any("Vulkan validation diagnostics" in issue for issue in parsed["issues"]))
 
+    def test_native_diagnostic_fields_are_validated_when_present(self):
+        counts = ("rewritten_bytes", "rewritten_owned_bytes", "compared_bytes", "flushed_bytes",
+                  "range_bytes", "reset_workers", "retired_color", "retired_depth_owners",
+                  "retired_depth_surfaces", "discarded_depth_planes")
+        for field in (*counts, "kept_words", "reset_ms", "verify_ms"):
+            is_time = field in ("reset_ms", "verify_ms")
+            bad_values = (True, None, "1", -1, [], 1e16) if is_time else (True, None, "1", -1, 0.5, 2**64)
+            for value in bad_values:
+                with self.subTest(field=field, value=value):
+                    native = copy.deepcopy(NATIVE)
+                    target = native if field == "kept_words" else native["passes"][0]
+                    target[field] = value
+                    parsed = report.parse_replay_result(json.dumps(native), HOST)
+                    self.assertIsNone(parsed["native"])
+                    self.assertTrue(any(field in issue for issue in parsed["issues"]), parsed["issues"])
+
+        native = copy.deepcopy(NATIVE)
+        native["kept_words"] = 2**64 - 1
+        native["passes"][0].update(dict.fromkeys(counts, 2**64 - 1), reset_ms=0, verify_ms=3.5)
+        self.assertEqual(report.parse_replay_result(json.dumps(native), HOST)["native"], native)
+
     def test_contract(self):
         with self.subTest("bounded strict JSON"):
             self.assertEqual(report.load_replay_json(b'{"a":1}'), {"a": 1})
