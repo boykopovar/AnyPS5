@@ -136,4 +136,9 @@ int main(int argc, char** argv) {
     Require(RefusesKeepingErrno([bad] { sceNpTrophy2GetTrophyInfoArray(1, 1, 0, 1, nullptr, nullptr, static_cast<std::uint32_t*>(bad)); }));
     Require(count == 99);
     Require(sceNpTrophy2GetTrophyInfoArray(1, 1, 0, 1, nullptr, nullptr, &count) == SCE_NP_TROPHY2_OK && count == 1);
+
+    Require(RefusesKeepingErrno([bad] { sceNpTrophy2GetRewardIcon(1, 1, 1, nullptr, static_cast<std::size_t*>(bad)); }));
+    Require(RefusesKeepingErrno([bad] { sceNpTrophy2GetGameIcon(1, 1, nullptr, static_cast<std::size_t*>(bad)); }));
+    Require(RefusesKeepingErrno([bad] { sceNpTrophy2GetGroupIcon(1, 1, 0, nullptr, static_cast<std::size_t*>(bad)); }));
+    Require(RefusesKeepingErrno([bad] { sceNpTrophy2GetTrophyIcon(1, 1, 0, nullptr, static_cast<std::size_t*>(bad)); }));
 }

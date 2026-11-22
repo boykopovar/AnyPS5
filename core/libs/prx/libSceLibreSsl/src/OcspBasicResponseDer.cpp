@@ -696,6 +696,7 @@ constexpr int SequenceType = 16;
 constexpr int SetType = 17;
 constexpr int UniversalStringType = 28;
 constexpr int BmpStringType = 30;
+constexpr int IA5StringType = 22;
 constexpr int GeneralizedTimeType = 24;
 constexpr int BitsLeftFlag = 0x08;
 
@@ -756,9 +757,11 @@ static_assert(sizeof(Extension) == 24 && offsetof(Extension, critical) == 8 && o
 static_assert(sizeof(LibreSslOcspRevokedInfo) == 16 && sizeof(LibreSslOcspCertStatus) == 16);
 static_assert(sizeof(LibreSslOcspSingleResponse) == 40 && sizeof(LibreSslOcspResponseData) == 40);
 static_assert(sizeof(LibreSslOcspResponderId) == 16 && sizeof(LibreSslOcspBasicResponse) == 32);
+static_assert(sizeof(LibreSslOcspCrlId) == 24 && offsetof(LibreSslOcspCrlId, crlTime) == 16);
 
 extern const Item ObjectItem;
 extern const Item OctetStringItem;
+extern const Item IA5StringItem;
 extern const Item IntegerItem;
 extern const Item EnumeratedItem;
 extern const Item BitStringItem;
@@ -777,6 +780,7 @@ extern const Item SingleResponseItem;
 extern const Item ResponderIdItem;
 extern const Item ResponseDataItem;
 extern const Item BasicResponseItem;
+extern const Item CrlIdItem;
 
 constexpr Template AlgorithmTemplates[] {
     {0, 0, offsetof(Algorithm, algorithm), &ObjectItem},
@@ -835,12 +839,19 @@ constexpr Template BasicResponseTemplates[] {
     {ExplicitTag | Context | SequenceOf | Optional, 0, offsetof(LibreSslOcspBasicResponse, certs), &CertificateItem},
 };
 
+constexpr Template CrlIdTemplates[] {
+    {ExplicitTag | Context | Optional, 0, offsetof(LibreSslOcspCrlId, crlUrl), &IA5StringItem},
+    {ExplicitTag | Context | Optional, 1, offsetof(LibreSslOcspCrlId, crlNum), &IntegerItem},
+    {ExplicitTag | Context | Optional, 2, offsetof(LibreSslOcspCrlId, crlTime), &GeneralizedTimeItem},
+};
+
 template<std::size_t TCount> constexpr int Count(const Template (&)[TCount]) {
     return static_cast<int>(TCount);
 }
 
 constexpr Item ObjectItem {Kind::Primitive, ObjectType, nullptr, 0, 0, "ASN1_OBJECT"};
 constexpr Item OctetStringItem {Kind::Primitive, OctetStringType, nullptr, 0, 0, "ASN1_OCTET_STRING"};
+constexpr Item IA5StringItem {Kind::Primitive, IA5StringType, nullptr, 0, 0, "ASN1_IA5STRING"};
 constexpr Item IntegerItem {Kind::Primitive, IntegerType, nullptr, 0, 0, "ASN1_INTEGER"};
 constexpr Item EnumeratedItem {Kind::Primitive, EnumeratedType, nullptr, 0, 0, "ASN1_ENUMERATED"};
 constexpr Item BitStringItem {Kind::Primitive, BitStringType, nullptr, 0, 0, "ASN1_BIT_STRING"};
@@ -859,6 +870,7 @@ constexpr Item SingleResponseItem {Kind::Sequence, SequenceType, SingleResponseT
 constexpr Item ResponderIdItem {Kind::Choice, 0, ResponderIdTemplates, Count(ResponderIdTemplates), sizeof(LibreSslOcspResponderId), "OCSP_RESPID"};
 constexpr Item ResponseDataItem {Kind::Sequence, SequenceType, ResponseDataTemplates, Count(ResponseDataTemplates), sizeof(LibreSslOcspResponseData), "OCSP_RESPDATA"};
 constexpr Item BasicResponseItem {Kind::Sequence, SequenceType, BasicResponseTemplates, Count(BasicResponseTemplates), sizeof(LibreSslOcspBasicResponse), "OCSP_BASICRESP"};
+constexpr Item CrlIdItem {Kind::Sequence, SequenceType, CrlIdTemplates, Count(CrlIdTemplates), sizeof(LibreSslOcspCrlId), "OCSP_CRLID"};
 
 struct Tagged {
     std::int64_t length;
@@ -1458,6 +1470,32 @@ int ItemDecode(void** value, const unsigned char*& in, std::int64_t length, cons
     return 0;
 }
 
+const Item& ExtensionValueItem(LibreSslExtensionValue type) {
+    switch (type) {
+    case LibreSslExtensionValue::GeneralizedTime:
+        return GeneralizedTimeItem;
+    case LibreSslExtensionValue::Null:
+        return NullItem;
+    case LibreSslExtensionValue::Object:
+        return ObjectItem;
+    case LibreSslExtensionValue::CrlId:
+        return CrlIdItem;
+    }
+    throw std::invalid_argument("LibreSslExtensionValue: unknown item");
+}
+
+}
+
+void* LibreSslExtensionValueDecode_nid_no_patch(LibreSslExtensionValue type, const unsigned char* data, std::int64_t length) {
+    const Item& item = ExtensionValueItem(type);
+    const unsigned char* p = data;
+    void* value = nullptr;
+    if (ItemDecode(&value, p, length, item, -1, 0, false) > 0) return value;
+    return nullptr;
+}
+
+void LibreSslExtensionValueFree_nid_no_patch(LibreSslExtensionValue type, void* value) {
+    ItemFree(&value, ExtensionValueItem(type));
 }
 
 extern "C" {

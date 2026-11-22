@@ -39,7 +39,6 @@ void testDrawQueueCopy() {
     check(packet == storage.words.data() && std::equal(expected.begin(), expected.end(), packet), "DCB COPY_DATA packet mismatch");
     check(storage.buffer.cursor_up == storage.words.data() + expected.size(), "DCB COPY_DATA cursor advance mismatch");
     check(sceAgcDcbCopyDataGetSize() == expected.size() * sizeof(std::uint32_t), "DCB COPY_DATA size differs from its packet");
-    expectFailure(storage, [&] { sceAgcDcbCopyData(&storage.buffer, 2, 4, 0x1000, 4, 0, 0x2000, 0, 0); }, "a DCB destination cache policy above 3 was accepted");
     expectFailure(storage, [&] { sceAgcDcbCopyData(&storage.buffer, 2, 0, 0x1000, 4, 0, 0x2000, 2, 0); }, "a DCB item size above 1 was accepted");
     expectFailure(storage, [&] { sceAgcDcbCopyData(&storage.buffer, 2, 0, 0x1000, 10, 0, 0x100000000ull, 0, 0); }, "a DCB 32-bit immediate wider than 32 bits was accepted");
 }
@@ -55,6 +54,24 @@ void testComputeQueueCopy() {
     check(wide == storage.words.data() + expected.size() && wide[1] == 0x10105u && wide[2] == 0 && wide[3] == 1, "ACB 64-bit immediate COPY_DATA packet mismatch");
     expectFailure(storage, [&] { sceAgcAcbCopyData(&storage.buffer, 1, 0, 0x1000, 5, 0, 0x100000000ull, 0, 0); }, "an ACB 32-bit immediate wider than 32 bits was accepted");
     expectFailure(storage, [&] { sceAgcAcbCopyData(&storage.buffer, 1, 0, 0x1000, 5, 0, 0, 0, 2); }, "an ACB write confirm above 1 was accepted");
+}
+
+template <typename TWriter>
+void expectConsolePacket(TWriter writer, const std::array<std::uint32_t, 5>& body) {
+    Storage storage;
+    const auto* packet = writer(&storage.buffer);
+    check(packet == storage.words.data() && packet[0] == 0xc0044000u, "console COPY_DATA arguments were refused");
+    check(std::equal(body.begin(), body.end(), packet + 1), "console COPY_DATA packet mismatch");
+    check(storage.buffer.cursor_up == packet + 6, "console COPY_DATA cursor advance mismatch");
+}
+
+void testConsoleArguments() {
+    expectConsolePacket([](CommandBuffer* buffer) { return sceAgcAcbCopyData(buffer, 0x11, 0x22, 0x33333333u, 0x44, 0x55, 0, 1, 0); }, {0x04012104u, 0, 0, 0x33333333u, 0});
+    expectConsolePacket([](CommandBuffer* buffer) { return sceAgcAcbCopyData(buffer, 1, 2, 3, 4, 5, 0, 1, 0); }, {0x04012104u, 0, 0, 3, 0});
+    expectConsolePacket([](CommandBuffer* buffer) { return sceAgcAcbCopyData(buffer, 0x22, 0x44, 0, 0, 0, 0, 1, 0); }, {0x00010200u, 0, 0, 0, 0});
+    expectConsolePacket([](CommandBuffer* buffer) { return sceAgcDcbCopyData(buffer, 0x11, 0x22, 0x33333333u, 0x44, 0x55, 0, 1, 0); }, {0x04012802u, 0, 0, 0x33333333u, 0});
+    expectConsolePacket([](CommandBuffer* buffer) { return sceAgcDcbCopyData(buffer, 1, 2, 3, 4, 5, 0, 1, 0); }, {0x04012002u, 0, 0, 3, 0});
+    expectConsolePacket([](CommandBuffer* buffer) { return sceAgcDcbCopyData(buffer, 0x22, 0x44, 0, 0, 0, 0, 1, 0); }, {0x00010100u, 0, 0, 0, 0});
 }
 
 void testWriteDataSize() {
@@ -106,6 +123,7 @@ int main() {
     try {
         testDrawQueueCopy();
         testComputeQueueCopy();
+        testConsoleArguments();
         testWriteDataSize();
         testWriteDataReadsPayloadBeforeCallback();
     } catch (const std::exception& error) {

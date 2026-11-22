@@ -9,6 +9,7 @@ from test_windows_import_modules import consumer
 
 from test_guest_intel_trampolines import PLAIN_SITE, guest_fixture, main_fixture
 from test_guest_module_directories import module_with_soname, module_with_symbol, needed_libraries
+from test_macos_output import MachO
 
 
 NEEDED = b"needed.prx"
@@ -199,7 +200,7 @@ def check_needed_outside(relinker, work):
 def check_unavailable_unused(relinker, work):
     kernel, plugin = b"libkernel.prx", b"missingPlugin.prx"
 
-    def convert(label, files, options, module):
+    def convert(label, files, options, module, run_path="$ORIGIN/libs"):
         case = work / f"unavailable-{label}"
         (case / "prx").mkdir(parents=True)
         if files is not None:
@@ -210,7 +211,7 @@ def check_unavailable_unused(relinker, work):
         source.write_bytes(main_fixture())
         (case / "prx" / "consumer.prx").write_bytes(module)
         output = case / "output.elf"
-        result = subprocess.run([str(relinker), "--rpath", "$ORIGIN/libs", *options, str(source), str(output)],
+        result = subprocess.run([str(relinker), "--rpath", run_path, *options, str(source), str(output)],
                                 capture_output=True, text=True, encoding="utf-8", timeout=30)
         assert result.returncode == 0, (label, result.stdout, result.stderr)
         artifact = needed_libraries((case / "app0" / "prx" / "consumer.prx.guest.prx").read_bytes())
@@ -228,6 +229,31 @@ def check_unavailable_unused(relinker, work):
         artifact, hosts, output = convert(label, files, options, unused)
         assert artifact == expected and hosts == expected, (label, artifact, hosts)
         assert (message is not None and message in output) or (message is None and "missingPlugin.prx, which" not in output), (label, output)
+    for label, first_exists, second_exists, expected_plugin in (
+            ("both-runpaths", True, True, False),
+            ("missing-first-runpath", False, True, True),
+            ("missing-second-runpath", True, False, True)):
+        case = work / f"unavailable-{label}"
+        (case / "prx").mkdir(parents=True)
+        first, second = case / "first", case / "second"
+        if first_exists:
+            first.mkdir()
+        if second_exists:
+            second.mkdir()
+        provider_directory = first if first_exists else second
+        (provider_directory / "libkernel.prx").write_bytes(b"provider")
+        source = case / "input.elf"
+        source.write_bytes(main_fixture())
+        (case / "prx" / "consumer.prx").write_bytes(unused)
+        run_path = "$ORIGIN/first:$ORIGIN/second"
+        output_path = case / "output.elf"
+        result = subprocess.run([str(relinker), "--rpath", run_path, *omit, str(source), str(output_path)],
+                                capture_output=True, text=True, encoding="utf-8", timeout=30)
+        assert result.returncode == 0, (label, result.stdout, result.stderr)
+        artifact = needed_libraries((case / "app0" / "prx" / "consumer.prx.guest.prx").read_bytes())
+        hosts = [name for name in needed_libraries(output_path.read_bytes()) if not name.startswith("$ORIGIN")]
+        assert (plugin.decode() in artifact) == expected_plugin, (label, artifact)
+        assert (plugin.decode() in hosts) == expected_plugin, (label, hosts)
     imported = consumer(plugin.decode(), symbol="CCCCCCCCCCC#A#B", module_name="missingPlugin")
     artifact, hosts, output = convert("imported", (), omit, imported)
     assert plugin.decode() in artifact and plugin.decode() in hosts, ("imported", artifact, hosts)
@@ -371,6 +397,17 @@ def main():
         result = subprocess.run([str(relinker), "--macos", str(source), str(case / "output")],
                                 capture_output=True, text=True, encoding="utf-8", timeout=30)
         assert result.returncode == 0, (result.stdout, result.stderr)
+        for needed in (b"libkernel.sprx", b"libkernel.suprx", b"libkernel.debug_prx"):
+            case = work / ("macos-console-suffix-" + needed.decode().split(".")[1])
+            (case / "sce_module").mkdir(parents=True)
+            source = case / "input.elf"
+            source.write_bytes(executable_with_needed(needed))
+            result = subprocess.run([str(relinker), "--macos", str(source), str(case / "output")],
+                                    capture_output=True, text=True, encoding="utf-8", timeout=30)
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            dylibs = MachO((case / "output").read_bytes()).dylibs
+            assert "@rpath/libkernel.prx" in dylibs and "@rpath/libkernel_sys.prx" in dylibs, (needed, dylibs)
+            assert not any(name.endswith((".sprx", ".suprx", ".debug_prx")) for name in dylibs), (needed, dylibs)
     print("Guest needed module tests passed")
 
 

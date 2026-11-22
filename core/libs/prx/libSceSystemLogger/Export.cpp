@@ -47,8 +47,9 @@ int APS5_VABI sceSystemLoggerSetLogData(const char* tag, uint32_t count, const S
     if (!tag) return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
     const int savedErrno = errno;
     std::string localTag;
-    if (CopyGuestString_nid_no_patch(tag, MAX_TAG_LENGTH + 1, localTag) != 0) {
-        errno = savedErrno;
+    const int tagCopyStatus = CopyGuestString_nid_no_patch(tag, MAX_TAG_LENGTH + 1, localTag);
+    errno = savedErrno;
+    if (tagCopyStatus != 0) {
         return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
     }
     const std::size_t length = localTag.size();
@@ -59,8 +60,9 @@ int APS5_VABI sceSystemLoggerSetLogData(const char* tag, uint32_t count, const S
     if (count > MAX_ENTRY_COUNT) return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
     if (count != 0 && !data) return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
     std::array<SystemLoggerLogData, MAX_ENTRY_COUNT> entries;
-    if (!GuestCopyIn_nid_no_patch(entries.data(), data, static_cast<std::size_t>(count) * sizeof(SystemLoggerLogData))) {
-        errno = savedErrno;
+    const bool entriesCopied = GuestCopyIn_nid_no_patch(entries.data(), data, static_cast<std::size_t>(count) * sizeof(SystemLoggerLogData));
+    errno = savedErrno;
+    if (!entriesCopied) {
         return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
     }
     for (std::uint32_t index = 0; index < count; ++index) {

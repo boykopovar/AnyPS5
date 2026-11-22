@@ -932,5 +932,29 @@ class NidEncodingTests(unittest.TestCase):
                 self.assertEqual(nid_names.compute_nid(name), expected)
 
 
+    def test_strip_nid_postfix_removes_postfix_and_disambig(self):
+        self.assertEqual(nid_names.strip_nid_postfix("foo_nid_postfix"), "foo")
+        self.assertEqual(nid_names.strip_nid_postfix("foo_nid_disambig3"), "foo")
+        self.assertEqual(nid_names.strip_nid_postfix("foo"), "foo")
+
+
+    def test_read_db_keeps_first_name_and_skips_comments(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nids.txt"
+            path.write_text("\ufeff# header\nAAAAAAAAAAA first # note\nAAAAAAAAAAA second\nBBBBBBBBBBB\nCCCCCCCCCCC third\n", encoding="utf-8")
+            db = nid_names.read_db(path)
+            self.assertEqual(db, {"AAAAAAAAAAA": "first", "CCCCCCCCCCC": "third"})
+
+    def test_read_db_prefers_a_verified_duplicate_in_either_order(self):
+        symbol = "sceKernelUsleep"
+        nid = nid_names.compute_nid(symbol)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nids.txt"
+            for names in ((symbol, "guess"), ("guess", symbol, "later_guess")):
+                with self.subTest(names=names):
+                    path.write_text("".join(f"{nid}#A#A {name}#A#A\n" for name in names), encoding="utf-8")
+                    self.assertEqual(nid_names.read_db(path), {nid: symbol})
+
+
 if __name__ == "__main__":
     unittest.main()

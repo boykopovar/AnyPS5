@@ -520,42 +520,32 @@ static int ParseWaveform(const RiffChunks& chunks, std::size_t size, Ngs2Wavefor
     return SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT;
 }
 
-template <typename T>
-static bool ReadGuest(const T* guest, T& local) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&local, guest, sizeof(local));
-    errno = savedErrno;
-    return copied;
-}
-
-template <typename T>
-static bool WriteGuest(T* guest, const T& local) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(guest, &local, sizeof(local));
-    errno = savedErrno;
-    return copied;
-}
-
 #pragma GCC visibility push(default)
 
 extern "C" {
 
 int APS5_VABI sceNgs2ParseWaveformData(const void* data, size_t data_size, Ngs2WaveformInfo* info) {
     if (info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    *info = {};
+    Ngs2WaveformInfo local{};
+    if (!WriteGuest(info, local)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     if (data == nullptr) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
     const auto* bytes = static_cast<const std::uint8_t*>(data);
     const auto readBytes = [bytes](std::size_t at, std::size_t) { return bytes + at; };
-    if (IsVag(data_size, bytes)) return ParseVag(data_size, readBytes, *info);
-    RiffChunks chunks;
-    const int result = ReadChunks(data_size, readBytes, chunks);
-    if (result != SCE_NGS2_OK) return result;
-    return ParseWaveform(chunks, data_size, *info);
+    int result;
+    if (IsVag(data_size, bytes)) {
+        result = ParseVag(data_size, readBytes, local);
+    } else {
+        RiffChunks chunks;
+        result = ReadChunks(data_size, readBytes, chunks);
+        if (result == SCE_NGS2_OK) result = ParseWaveform(chunks, data_size, local);
+    }
+    return WriteGuest(info, local) ? result : SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
 }
 
 int APS5_VABI sceNgs2ParseWaveformFile(const char* path, uint32_t offset, Ngs2WaveformInfo* info) {
     if (info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    *info = {};
+    Ngs2WaveformInfo local{};
+    if (!WriteGuest(info, local)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     if (path == nullptr) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
     const auto host = ResolvePath_nid_no_patch(path);
     std::ifstream file(host, std::ios::binary | std::ios::ate);
@@ -573,16 +563,17 @@ int APS5_VABI sceNgs2ParseWaveformFile(const char* path, uint32_t offset, Ngs2Wa
     };
     int result;
     if (IsVag(length, length >= 4 ? readBytes(0, 4) : nullptr)) {
-        result = ParseVag(length, readBytes, *info);
+        result = ParseVag(length, readBytes, local);
     } else {
         RiffChunks chunks;
         result = ReadChunks(length, readBytes, chunks);
-        if (result == SCE_NGS2_OK) result = ParseWaveform(chunks, length, *info);
+        if (result == SCE_NGS2_OK) result = ParseWaveform(chunks, length, local);
     }
-    if (result != SCE_NGS2_OK) return result;
-    info->data_offset += offset;
-    for (std::uint32_t i = 0; i < info->num_blocks; i++) info->block[i].data_offset += offset;
-    return SCE_NGS2_OK;
+    if (result == SCE_NGS2_OK) {
+        local.data_offset += offset;
+        for (std::uint32_t i = 0; i < local.num_blocks; i++) local.block[i].data_offset += offset;
+    }
+    return WriteGuest(info, local) ? result : SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
 }
 
 int APS5_VABI sceNgs2CalcWaveformBlock(const Ngs2WaveformFormat* format, uint32_t sample_pos, uint32_t num_samples, Ngs2WaveformBlock* block) {

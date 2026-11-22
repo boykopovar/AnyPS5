@@ -505,6 +505,44 @@ class TargetOverrideTests(unittest.TestCase):
             self.assertEqual(probe.call_count, 2)
 
 
+class HsaIdentityTests(unittest.TestCase):
+    def test_hsa_identity_parses_selected_agent(self):
+        hw_oracle.hsa_identity.cache_clear()
+        output = ("name\tgfx1013\nvendor\tAMD\nproduct\tPlayStation 5 GPU\n"
+                  "chip_id\t5116\nasic_revision\t1\ncompute_units\t36\n")
+        reply = subprocess.CompletedProcess([], 0, output, "")
+        with patch.object(hw_oracle.subprocess, "run", return_value=reply) as run, \
+                patch.dict(os.environ, {"ROCR_VISIBLE_DEVICES": "0"}):
+            identity = hw_oracle.hsa_identity(Path("oracle"), "1")
+        self.assertEqual(identity, {
+            "name": "gfx1013",
+            "vendor": "AMD",
+            "product": "PlayStation 5 GPU",
+            "chip_id": 0x13fc,
+            "asic_revision": 1,
+            "compute_units": 36,
+        })
+        self.assertEqual(run.call_args.args[0], [Path("oracle"), "--identity"])
+        self.assertEqual(run.call_args.kwargs["env"]["ROCR_VISIBLE_DEVICES"], "1")
+        hw_oracle.hsa_identity.cache_clear()
+
+    def test_hsa_identity_rejects_malformed_output(self):
+        valid = ("name\tgfx1013\nvendor\tAMD\nproduct\tPlayStation 5 GPU\n"
+                 "chip_id\t5116\nasic_revision\t1\ncompute_units\t36\n")
+        malformed = (
+            valid.replace("compute_units\t36\n", ""),
+            valid + "name\tgfx1013\n",
+            valid.replace("vendor\tAMD", "maker\tAMD"),
+            valid.replace("chip_id\t5116", "chip_id\tnot-a-number"),
+            valid.replace("compute_units\t36", "compute_units\t-1"),
+        )
+        for index, output in enumerate(malformed):
+            reply = subprocess.CompletedProcess([], 0, output, "")
+            with self.subTest(index=index), patch.object(hw_oracle.subprocess, "run", return_value=reply), \
+                    self.assertRaisesRegex(ValueError, "HSA identity"):
+                hw_oracle.hsa_identity(Path(f"oracle-{index}"), None)
+
+
 class OracleConfigurationTests(unittest.TestCase):
     @unittest.skipIf(os.name == "nt", "POSIX executable compiler fixture")
     def test_path_selecting_another_compiler_invalidates_the_cache(self):
@@ -929,6 +967,26 @@ class VulkanRuntimeTests(unittest.TestCase):
         with patch.object(hw_oracle, "assemble", side_effect=AssertionError("assembler called")), \
                 self.assertRaisesRegex(ValueError, "coarse"):
             hw_oracle.run("s_nop 0", [(0, 0, 0, 0)], coarse=True, **MODES)
+
+    def test_cli_reports_rejected_runtime_settings_as_usage_errors(self):
+        os.environ["HW_ORACLE_VULKAN_RUNNER"] = str(self.runner)
+        body, rows = self.root / "body.s", self.root / "rows.txt"
+        body.write_text("s_nop 0", encoding="utf-8")
+        rows.write_text("1 2 3 4\n", encoding="utf-8")
+        argv = ["hw_oracle.py", str(body), str(rows)]
+        argv += [item for name, value in MODES.items() for item in ["--" + name.replace("_", "-"), str(value)]]
+        for selected, options, message in (("vulkan", ["--coarse"], "coarse has no meaning for the vulkan runtime"),
+                                           ("rocm", [], "HW_ORACLE_RUNTIME must be one of hsa, hip, vulkan")):
+            with self.subTest(runtime=selected):
+                with patch.dict(os.environ, {"HW_ORACLE_RUNTIME": selected}), patch("sys.argv", argv + options), \
+                        patch.object(hw_oracle, "assemble", side_effect=AssertionError("assembler called")), \
+                        contextlib.redirect_stdout(io.StringIO()) as output, \
+                        contextlib.redirect_stderr(io.StringIO()) as errors, \
+                        self.assertRaises(SystemExit) as exited:
+                    hw_oracle.main()
+                self.assertEqual(exited.exception.code, 2)
+                self.assertIn(f"error: {message}", errors.getvalue())
+                self.assertEqual(output.getvalue(), "")
 
     def test_target_needs_override_off_windows_and_probes_hip_on_windows(self):
         with patch.object(hw_oracle.os, "name", "posix"), \

@@ -1,12 +1,15 @@
 #include "prx/libSceNpManager/include/Api.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -17,6 +20,24 @@ constexpr int NP_ERROR_ONLINE_ID_TOO_LONG = static_cast<int>(0x80559E11);
 constexpr int NP_ERROR_USER_INVALID = static_cast<int>(0x80559E2A);
 constexpr int NP_ERROR_ACCOUNT_ID_MISSING = static_cast<int>(0x80559E2B);
 constexpr std::size_t NP_ONLINE_ID_SIZE = 16;
+
+template <typename T>
+bool ReadGuest(const T* source, T& destination) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&destination, source, sizeof(destination));
+    errno = savedErrno;
+    return copied;
+}
+
+template <typename T>
+bool ProbeGuestWritable(T* destination) {
+    T value{};
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&value, destination, sizeof(value)) &&
+        GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    return ok;
+}
 
 bool SameOnlineId(const char* lhs, const char* rhs) {
     return std::strncmp(lhs, rhs, NP_ONLINE_ID_SIZE) == 0;
@@ -93,11 +114,13 @@ void APS5_VABI _ZN3sce2np10NpOnlineId5ClearEv(NpOnlineIdObject* self) {
 
 int APS5_VABI _ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(NpOnlineIdObject* self, const char* text) {
     if (text == nullptr) return NP_ERROR_INVALID_ARGUMENT;
-    const std::size_t length = std::strlen(text);
-    if (length > NP_ONLINE_ID_SIZE) return NP_ERROR_ONLINE_ID_TOO_LONG;
+    std::string copy;
+    const int error = CopyGuestString_nid_no_patch(text, NP_ONLINE_ID_SIZE + 1, copy);
+    if (error == 63) return NP_ERROR_ONLINE_ID_TOO_LONG;
+    if (error != 0) return NP_ERROR_INVALID_ARGUMENT;
     std::memset(self->data, 0, sizeof(self->data));
     self->term = 0;
-    std::memcpy(self->data, text, length);
+    std::memcpy(self->data, copy.data(), copy.size());
     return 0;
 }
 
@@ -107,13 +130,19 @@ bool APS5_VABI _ZNK3sce2np10NpOnlineId7IsEmptyEv(const NpOnlineIdObject* self) {
 
 int APS5_VABI _ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(const UserObject* user, SceNpOnlineId* out) {
     if (user == nullptr || out == nullptr) return NP_ERROR_INVALID_ARGUMENT;
-    if (user->userId == USER_SERVICE_USER_ID_INVALID) return NP_ERROR_USER_NOT_FOUND;
+    UserObject localUser{};
+    if (!ReadGuest(user, localUser)) return NP_ERROR_INVALID_ARGUMENT;
+    if (!ProbeGuestWritable(out)) return NP_ERROR_INVALID_ARGUMENT;
+    if (localUser.userId == USER_SERVICE_USER_ID_INVALID) return NP_ERROR_USER_NOT_FOUND;
     return NP_ERROR_SIGNED_OUT;
 }
 
 int APS5_VABI _ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(const UserObject* user, NpOnlineIdObject* out) {
     if (user == nullptr || out == nullptr) return NP_ERROR_INVALID_ARGUMENT;
-    if (user->userId == USER_SERVICE_USER_ID_INVALID) return NP_ERROR_USER_NOT_FOUND;
+    UserObject localUser{};
+    if (!ReadGuest(user, localUser)) return NP_ERROR_INVALID_ARGUMENT;
+    if (!ProbeGuestWritable(out)) return NP_ERROR_INVALID_ARGUMENT;
+    if (localUser.userId == USER_SERVICE_USER_ID_INVALID) return NP_ERROR_USER_NOT_FOUND;
     return NP_ERROR_SIGNED_OUT;
 }
 
@@ -223,10 +252,12 @@ bool APS5_VABI _ZNK3sce2np4User7IsGuestEv(const UserObject* self) {
 
 int APS5_VABI _ZNK3sce2np4User12GetAccountIdEPm(const UserObject* self, std::uint64_t* accountId) {
     if (accountId == nullptr) return NP_ERROR_INVALID_ARGUMENT;
-    *accountId = 0;
-    const int result = sceUserServiceGetNpAccountId(self->userId, accountId);
+    std::uint64_t value = 0;
+    if (!GuestCopyOut_nid_no_patch(accountId, &value, sizeof(value))) return NP_ERROR_INVALID_ARGUMENT;
+    const int result = sceUserServiceGetNpAccountId(self->userId, &value);
     if (result < 0) return result;
-    if (*accountId == 0) return NP_ERROR_ACCOUNT_ID_MISSING;
+    if (!GuestCopyOut_nid_no_patch(accountId, &value, sizeof(value))) return NP_ERROR_INVALID_ARGUMENT;
+    if (value == 0) return NP_ERROR_ACCOUNT_ID_MISSING;
     return 0;
 }
 
@@ -235,7 +266,8 @@ int APS5_VABI _ZNK3sce2np4User12HasAccountIdEPb(const UserObject* self, bool* ha
     std::uint64_t accountId = 0;
     const int result = sceUserServiceGetNpAccountId(self->userId, &accountId);
     if (result < 0) return result;
-    *hasAccountId = accountId != 0;
+    const bool has = accountId != 0;
+    if (!GuestCopyOut_nid_no_patch(hasAccountId, &has, sizeof(has))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -253,7 +285,7 @@ int APS5_VABI _ZN3sce2np4User7GetUserEiPS1_(int userId, UserObject* out) {
     if (std::find(std::begin(users.user_id), std::end(users.user_id), userId) == std::end(users.user_id)) {
         return NP_ERROR_USER_INVALID;
     }
-    out->userId = userId;
+    if (!GuestCopyOut_nid_no_patch(&out->userId, &userId, sizeof(userId))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

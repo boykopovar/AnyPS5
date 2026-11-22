@@ -73,6 +73,46 @@ void SuccessfulBytes() {
     Check(std::fclose(file) == 0, "BMP test close failed");
 }
 
+void InvalidInputs() {
+    struct Case {
+        std::uint32_t width;
+        std::uint32_t height;
+        std::size_t pixelBytes;
+        const char* operation;
+        int error;
+    };
+    const Case cases[]{
+        {0, 1, 0, "dimensions", EINVAL},
+        {1, 0, 0, "dimensions", EINVAL},
+        {0x80000000, 1, 0, "dimensions", EINVAL},
+        {1, 0x80000000, 0, "dimensions", EINVAL},
+        {0xffffffff, 0xffffffff, 0, "dimensions", EINVAL},
+        {0x3ffffff3, 1, 0, "dimensions", EOVERFLOW},
+        {0x40000000, 1, 0, "dimensions", EOVERFLOW},
+        {65536, 65536, 0, "dimensions", EOVERFLOW},
+        {0x7fffffff, 0x7fffffff, 0, "dimensions", EOVERFLOW},
+        {0x3ffffff2, 1, 0, "pixels", EINVAL},
+        {1, 0x3ffffff2, 0, "pixels", EINVAL},
+        {1, 1, 0, "pixels", EINVAL},
+        {1, 1, 3, "pixels", EINVAL},
+        {1, 1, 5, "pixels", EINVAL},
+        {2, 2, 15, "pixels", EINVAL},
+        {2, 2, 17, "pixels", EINVAL}};
+    const std::array<std::byte, 17> pixels{};
+    for (const auto& test : cases) {
+        auto* file = TemporaryFile::Open();
+        Check(file != nullptr, "cannot create invalid BMP test file");
+        const auto failure = AgcDriver::WriteBmpStream_nid_no_patch(file, test.width, test.height, std::span(pixels).first(test.pixelBytes));
+        if (!failure || std::strcmp(failure.operation, test.operation) != 0 || failure.error != test.error) {
+            std::fprintf(stderr, "BMP input %ux%u with %zu pixel bytes: expected %s/errno=%d\n", test.width, test.height, test.pixelBytes, test.operation, test.error);
+            Check(false, "invalid BMP input was not rejected correctly");
+        }
+        Check(std::fflush(file) == 0, "invalid BMP test flush failed");
+        Check(std::fseek(file, 0, SEEK_END) == 0 && std::ftell(file) == 0, "invalid BMP input wrote partial output");
+        Check(std::fclose(file) == 0, "invalid BMP test close failed");
+    }
+}
+
 void HeaderFailure() {
     int reader;
     auto* file = Pipe(reader);
@@ -140,6 +180,7 @@ int main() {
     const auto previous = std::signal(SIGPIPE, SIG_IGN);
 #endif
     SuccessfulBytes();
+    InvalidInputs();
     HeaderFailure();
     PixelFailure();
     CloseFailure();
@@ -147,6 +188,6 @@ int main() {
 #ifndef _WIN32
     std::signal(SIGPIPE, previous);
 #endif
-    std::puts("frame dump I/O tests passed: bytes/header/pixels/close/disable");
+    std::puts("frame dump I/O tests passed: bytes/inputs/header/pixels/close/disable");
     return 0;
 }

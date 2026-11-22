@@ -213,9 +213,10 @@ std::vector<std::uint32_t> Run(VulkanDevice& device, const ShaderRecompiler::Spi
 }
 
 void Compare(FloatFlushProbeResult& result, const std::vector<std::uint32_t>& expected, const std::vector<std::uint32_t>& actual) {
+    const bool nanBits = ShaderRecompiler::ExactF32Arithmetic();
     for (std::size_t index = 0; index < expected.size(); ++index) {
         ++result.compared;
-        if (expected[index] != actual[index] && !(IsNan(expected[index]) && IsNan(actual[index]))) ++result.mismatches;
+        if (expected[index] != actual[index] && (nanBits || !(IsNan(expected[index]) && IsNan(actual[index])))) ++result.mismatches;
     }
 }
 

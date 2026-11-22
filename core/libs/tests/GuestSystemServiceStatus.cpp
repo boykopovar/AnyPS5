@@ -124,6 +124,12 @@ void TestShell() {
     });
     Case("sceSystemStateMgrIsShellUIShutdownInProgress", [] { return !sceSystemStateMgrIsShellUIShutdownInProgress(); });
     Case("sceShellCoreUtilGetSocialScreenStatus", [] { return ReportsInactive(sceShellCoreUtilGetSocialScreenStatus); });
+    Case("sceShellCoreUtilGetSocialScreenStatus null output", [] {
+        return RejectsNullOutput(sceShellCoreUtilGetSocialScreenStatus, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+    });
+    Case("sceShellCoreUtilGetSocialScreenStatus unwritable output", [] {
+        return RejectsUnwritableOutput(sceShellCoreUtilGetSocialScreenStatus, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+    });
     Case("sceShellCoreUtilIsEyeToEyeDistanceAdjusted", [] { return ReportsNotAdjusted(sceShellCoreUtilIsEyeToEyeDistanceAdjusted); });
     Case("sceSystemServiceIsEyeToEyeDistanceAdjusted", [] {
         return ReportsNotAdjusted(sceSystemServiceIsEyeToEyeDistanceAdjusted) &&

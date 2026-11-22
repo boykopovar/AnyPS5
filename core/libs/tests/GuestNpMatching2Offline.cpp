@@ -117,6 +117,8 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     Require(getWorldInfoList(context, nullptr, nullptr, &requestId) == InvalidArgument, "sceNpMatching2GetWorldInfoList", "a null request was taken");
     Require(getWorldInfoList(context, serverRequest, nullptr, nullptr) == InvalidArgument, "sceNpMatching2GetWorldInfoList", "a null request id was taken");
     for (const RequestFn request : {getWorldInfoList, setUserInfo}) {
+        errno = 71;
+        Require(request(99, reinterpret_cast<const void*>(std::uintptr_t{0x10}), nullptr, &requestId) == InvalidArgument && errno == 71, "server request", "an unreadable request did not return INVALID_ARGUMENT");
         Require(request(context, zeroed, nullptr, &requestId) == InvalidServerId, "server request", "server id 0 did not return INVALID_SERVER_ID");
         Require(request(99, zeroed, nullptr, &requestId) == InvalidServerId, "server request", "the server id was not checked before the context");
         Require(request(99, highServerByte, nullptr, &requestId) == InvalidServerId, "server request", "the server id was read past its 16 bits");
@@ -128,7 +130,11 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     Require(getUserInfoList(99, zeroed, nullptr, &requestId) == ContextNotFound, "sceNpMatching2GetUserInfoList", "an unknown context did not return CONTEXT_NOT_FOUND");
     Require(getUserInfoList(contextA, zeroed, nullptr, &requestId) == InvalidContext, "sceNpMatching2GetUserInfoList", "an A context did not return 0x80550C3B");
     Require(getUserInfoList(context, zeroed, nullptr, &requestId) == InvalidServerId, "sceNpMatching2GetUserInfoList", "server id 0 did not return INVALID_SERVER_ID");
+    errno = 71;
+    Require(getUserInfoList(context, reinterpret_cast<const void*>(0x10), nullptr, &requestId) == InvalidArgument && errno == 71, "sceNpMatching2GetUserInfoList", "an unreadable request did not return INVALID_ARGUMENT with errno preserved");
     for (const RequestFn request : {setRoomDataExternal, setRoomDataInternal, getRoomDataInternal, getPingInfo, leaveRoom}) {
+        errno = 71;
+        Require(request(99, reinterpret_cast<const void*>(std::uintptr_t{0x10}), nullptr, &requestId) == InvalidArgument && errno == 71, "room request", "an unreadable request did not return INVALID_ARGUMENT");
         Require(request(context, zeroed, nullptr, &requestId) == InvalidRoomId, "room request", "room id 0 did not return INVALID_ROOM_ID");
         Require(request(99, zeroed, nullptr, &requestId) == InvalidRoomId, "room request", "the room id was not checked before the context");
         Require(request(99, roomRequest, nullptr, &requestId) == ContextNotFound, "room request", "an unknown context did not return CONTEXT_NOT_FOUND");

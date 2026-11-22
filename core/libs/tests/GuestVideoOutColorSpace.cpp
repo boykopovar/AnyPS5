@@ -3,6 +3,7 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -32,12 +33,18 @@ int main() {
     std::memset(&settings, 0x5A, sizeof(settings));
 
     ExpectFailure([] { sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion(nullptr); });
+    errno = 71;
+    ExpectFailure([] { sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion(reinterpret_cast<VideoOutColorSpaceConversionSettings*>(0x10)); });
+    Require(errno == 71);
     Require(sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion(&settings) == 0);
     for (std::size_t index = 0; index < 8; ++index) {
         Require(settings.internalData[index] == 0);
     }
 
     ExpectFailure([] { sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion(nullptr, 1.0f, 0); });
+    errno = 71;
+    ExpectFailure([] { sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion(reinterpret_cast<VideoOutColorSpaceConversionSettings*>(0x10), 1.0f, 0); });
+    Require(errno == 71);
     Require(sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion(&settings, 1.0f, 0) == 0);
 
     ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion(0, nullptr); });
@@ -58,6 +65,16 @@ int main() {
     ExpectFailure([] { sceVideoOutSetGlobalBlendSpace(0, 0, 0); });
     ExpectFailure([] { sceVideoOutSetGlobalBlendSpace(1, 0, 0); });
 
+    VideoOutColorSettings colorSettings{};
+    ExpectFailure([] { sceVideoOutColorSettingsSetGamma(nullptr, 1.0f); });
+    ExpectFailure([&] { sceVideoOutColorSettingsSetGamma(&colorSettings, 0.05f); });
+    ExpectFailure([&] { sceVideoOutColorSettingsSetGamma(&colorSettings, 2.5f); });
+    errno = 71;
+    ExpectFailure([] { sceVideoOutColorSettingsSetGamma(reinterpret_cast<VideoOutColorSettings*>(0x10), 1.0f); });
+    Require(errno == 71);
+    Require(sceVideoOutColorSettingsSetGamma(&colorSettings, 1.2f) == 0);
+    Require(colorSettings.gamma == 1.2f);
+
     int handle = 0;
     try {
         handle = sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, nullptr);
@@ -75,6 +92,12 @@ int main() {
     Require(colorOut.dynamicRange == 1 || colorOut.dynamicRange == 2);
 
     Require(sceVideoOutAdjustColorSpaceConversion(handle, &settings) == 0);
+    errno = 71;
+    ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion(handle, reinterpret_cast<const VideoOutColorSpaceConversionSettings*>(0x10)); });
+    Require(errno == 71);
+    errno = 71;
+    ExpectFailure([&] { sceVideoOutAdjustColor(handle, reinterpret_cast<const VideoOutColorSettings*>(0x10)); });
+    Require(errno == 71);
     Require(sceVideoOutAdjustColorSpaceConversion_(handle, &settings, sizeof(settings)) == 0);
     Require(sceVideoOutSetGlobalBlendSpace(handle, 0, 0) == 0);
 

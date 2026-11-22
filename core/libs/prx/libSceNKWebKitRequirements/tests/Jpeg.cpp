@@ -68,13 +68,16 @@ void GenerateJpeg(std::vector<uint8_t>& outJpeg, int width, int height, int comp
     std::free(memBuf);
 }
 
-std::vector<uint8_t> DecompressHost(const std::vector<uint8_t>& jpegData, int& outWidth, int& outHeight, int& outComps) {
+std::vector<uint8_t> DecompressHost(const std::vector<uint8_t>& jpegData, int& outWidth, int& outHeight, int& outComps,
+    int inputColorSpace = -1, int outputColorSpace = -1) {
     jpeg_decompress_struct cinfo{};
     jpeg_error_mgr jerr{};
     cinfo.err = jpeg_std_error(&jerr);
     jpeg_create_decompress(&cinfo);
     jpeg_mem_src(&cinfo, jpegData.data(), jpegData.size());
     jpeg_read_header(&cinfo, TRUE);
+    if (inputColorSpace >= 0) cinfo.jpeg_color_space = static_cast<J_COLOR_SPACE>(inputColorSpace);
+    if (outputColorSpace >= 0) cinfo.out_color_space = static_cast<J_COLOR_SPACE>(outputColorSpace);
     jpeg_start_decompress(&cinfo);
 
     outWidth = cinfo.output_width;
@@ -232,11 +235,12 @@ void TestHeaderDiagnostics(int traceLevel, bool defaultOutput, bool promote = fa
     jpeg_destroy_decompress(&host);
 }
 
-void TestDecode(const std::vector<uint8_t>& jpegData, const uint8_t* expectedMarkerData, size_t expectedMarkerLen) {
+void TestDecode(const std::vector<uint8_t>& jpegData, const uint8_t* expectedMarkerData, size_t expectedMarkerLen,
+    int inputColorSpace = -1, int outputColorSpace = -1) {
     int hostWidth = 0;
     int hostHeight = 0;
     int hostComps = 0;
-    std::vector<uint8_t> hostPixels = DecompressHost(jpegData, hostWidth, hostHeight, hostComps);
+    std::vector<uint8_t> hostPixels = DecompressHost(jpegData, hostWidth, hostHeight, hostComps, inputColorSpace, outputColorSpace);
 
     NKWebKit::GuestJpegErrorMgr jerr{};
     auto* errRet = jpeg_std_error_nid_postfix(&jerr);
@@ -262,6 +266,8 @@ void TestDecode(const std::vector<uint8_t>& jpegData, const uint8_t* expectedMar
 
     int headerRet = jpeg_read_header_nid_postfix(&guest_cinfo, 1);
     AssertTrue(headerRet == 1, "jpeg_read_header failed");
+    if (inputColorSpace >= 0) guest_cinfo.jpeg_color_space = inputColorSpace;
+    if (outputColorSpace >= 0) guest_cinfo.out_color_space = outputColorSpace;
 
     jpeg_calc_output_dimensions_nid_postfix(&guest_cinfo);
     AssertTrue(guest_cinfo.output_width == static_cast<uint32_t>(hostWidth), "width mismatch");
@@ -292,6 +298,7 @@ void TestDecode(const std::vector<uint8_t>& jpegData, const uint8_t* expectedMar
 
     AssertTrue(jerr.num_warnings == 0, "the decode should not warn about corrupt data");
     AssertTrue(guestPixels == hostPixels, "decoded pixels differ from host libjpeg output");
+    if (inputColorSpace >= 0) std::printf("JPEG input/output color spaces %d/%d match native pixels.\n", inputColorSpace, outputColorSpace);
 }
 
 void TestProgressiveBuffered(const std::vector<uint8_t>& jpegData) {
@@ -664,6 +671,17 @@ int main(int argc, char** argv) {
     GenerateJpeg(progJpeg, 32, 32, 3, JCS_RGB, true, 0, nullptr, 0);
     TestDecode(progJpeg, nullptr, 0);
     TestProgressiveBuffered(progJpeg);
+
+    TestDecode(baselineJpeg, nullptr, 0, JCS_RGB, JCS_RGB);
+    TestDecode(baselineJpeg, nullptr, 0, JCS_YCbCr, JCS_RGB);
+    TestDecode(baselineJpeg, nullptr, 0, JCS_UNKNOWN, JCS_UNKNOWN);
+    TestDecode(grayJpeg, nullptr, 0, JCS_UNKNOWN, JCS_UNKNOWN);
+    TestDecode(progJpeg, nullptr, 0, JCS_RGB, JCS_RGB);
+    std::vector<uint8_t> cmykJpeg;
+    GenerateJpeg(cmykJpeg, 17, 13, 4, JCS_CMYK, false, 0, nullptr, 0);
+    TestDecode(cmykJpeg, nullptr, 0);
+    TestDecode(cmykJpeg, nullptr, 0, JCS_YCCK, JCS_CMYK);
+    TestDecode(cmykJpeg, nullptr, 0, JCS_UNKNOWN, JCS_UNKNOWN);
 
     std::printf("Jpeg tests passed.\n");
     return 0;

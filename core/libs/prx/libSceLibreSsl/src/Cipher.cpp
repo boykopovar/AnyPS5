@@ -1,9 +1,26 @@
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 
 namespace {
+
+template <typename T>
+void CopyGuestInPreservingErrno(const void* guestAddress, T& hostValue, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&hostValue, guestAddress, sizeof(T));
+    errno = savedErrno;
+    if (!ok) NotImplemented_nid_no_patch(caller);
+}
+
+template <typename T>
+void CopyGuestOutPreservingErrno(void* guestAddress, const T& hostValue, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(guestAddress, &hostValue, sizeof(T));
+    errno = savedErrno;
+    if (!ok) NotImplemented_nid_no_patch(caller);
+}
 
 struct Cipher {
     std::int32_t valid;
@@ -34,26 +51,26 @@ int APS5_VABI SSL_CIPHER_get_bits_nid_postfix(const void* cipher, std::int32_t* 
     if (!cipher) return 0;
     const auto* bytes = static_cast<const std::byte*>(cipher);
     if (algorithmBits) {
-        std::int32_t bits;
-        std::memcpy(&bits, bytes + offsetof(Cipher, algorithmBits), sizeof(bits));
-        *algorithmBits = bits;
+        std::int32_t bits = 0;
+        CopyGuestInPreservingErrno(bytes + offsetof(Cipher, algorithmBits), bits, __func__);
+        CopyGuestOutPreservingErrno(algorithmBits, bits, __func__);
     }
-    std::int32_t strength;
-    std::memcpy(&strength, bytes + offsetof(Cipher, strengthBits), sizeof(strength));
+    std::int32_t strength = 0;
+    CopyGuestInPreservingErrno(bytes + offsetof(Cipher, strengthBits), strength, __func__);
     return strength;
 }
 
 const char* APS5_VABI SSL_CIPHER_get_name_nid_postfix(const void* cipher) {
     if (!cipher) return "(NONE)";
-    const char* name;
-    std::memcpy(&name, static_cast<const std::byte*>(cipher) + offsetof(Cipher, name), sizeof(name));
+    const char* name = nullptr;
+    CopyGuestInPreservingErrno(static_cast<const std::byte*>(cipher) + offsetof(Cipher, name), name, __func__);
     return name;
 }
 
 char* APS5_VABI SSL_CIPHER_get_version_nid_postfix(const void* cipher) {
     if (!cipher) return const_cast<char*>("(NONE)");
-    std::uint64_t id;
-    std::memcpy(&id, static_cast<const std::byte*>(cipher) + offsetof(Cipher, id), sizeof(id));
+    std::uint64_t id = 0;
+    CopyGuestInPreservingErrno(static_cast<const std::byte*>(cipher) + offsetof(Cipher, id), id, __func__);
     return const_cast<char*>((id >> 24) == 3 ? "TLSv1/SSLv3" : "unknown");
 }
 
