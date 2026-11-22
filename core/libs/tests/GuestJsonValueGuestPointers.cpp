@@ -315,6 +315,13 @@ int main() {
     CHECK_THROWS(_ZNK3sce4Json5Value8toStringERNS0_6StringE(&validInt, badString));
     CHECK_THROWS(_ZNK3sce4Json5Value8toStringERNS0_6StringE(&validInt, &corruptTextStr));
     CHECK_THROWS(_ZNK3sce4Json5Value8toStringERNS0_6StringE(&validInt, &roTextStr));
+    auto* roString = static_cast<String*>(pages.readOnly);
+    CHECK_THROWS(_ZN3sce4Json5Value9serializeERNS0_6StringE(&validInt, roString));
+    CHECK_THROWS(_ZNK3sce4Json5Value8toStringERNS0_6StringE(&validInt, roString));
+    Text roCharsText{static_cast<char*>(pages.readOnly), 0, 64, 0};
+    String roCharsStr{&roCharsText};
+    CHECK_THROWS(_ZN3sce4Json5Value9serializeERNS0_6StringE(&validInt, &roCharsStr));
+    CHECK_THROWS(_ZNK3sce4Json5Value8toStringERNS0_6StringE(&validInt, &roCharsStr));
 
     _ZN3sce4Json5Value5clearEv(nullptr);
     CHECK_THROWS(_ZN3sce4Json5Value5clearEv(badValue));

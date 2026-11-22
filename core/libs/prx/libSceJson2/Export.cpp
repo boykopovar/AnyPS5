@@ -1605,11 +1605,6 @@ int InitializeResources(void* self, const void* parameter, std::int32_t format, 
     return 0;
 }
 
-void RequireGuestValueWritable(Value* destination, const char* function) {
-    if (!destination || !GuestWritable_nid_no_patch(destination, sizeof(Value)))
-        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-}
-
 void RequireGuestValueReadableWritable(Value* destination, const char* function) {
     static_cast<void>(LoadGuest<Value>(destination, function));
     if (!GuestWritable_nid_no_patch(destination, sizeof(Value)))
@@ -1645,10 +1640,19 @@ String LoadGuestValueString(const String* source, const char* function) {
     return value;
 }
 
-void ValidateGuestValueOutputString(String* destination, const char* function) {
+String ValidateGuestValueOutputString(String* destination, const char* function) {
     const auto value = LoadGuestValueString(destination, function);
-    if (value.text && !GuestWritable_nid_no_patch(value.text, sizeof(Text)))
+    if (!GuestWritable_nid_no_patch(destination, sizeof(String)))
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (value.text) {
+        const auto text = LoadGuest<Text>(value.text, function);
+        if (!GuestWritable_nid_no_patch(value.text, sizeof(Text)))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        if (text.characters != emptyCharacters && text.capacity > 0 &&
+            !GuestWritable_nid_no_patch(text.characters, text.capacity))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    return value;
 }
 
 const Node& Typed(const Value* self, ValueType requested, bool* usedDefault = nullptr) {
@@ -2350,8 +2354,9 @@ int SerializeCallbackValue(Value* value, String* destination, SerializationCallb
     }
     if (!callback || (collect && !destination)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     if (collect) {
-        ValidateGuestValueOutputString(destination, __func__);
-        if (GuestValueRangesOverlap(value, sizeof(Value), destination, sizeof(String)))
+        const auto loadedDestination = ValidateGuestValueOutputString(destination, __func__);
+        if (GuestValueRangesOverlap(value, sizeof(Value), destination, sizeof(String)) ||
+            (loadedDestination.text && GuestValueRangesOverlap(value, sizeof(Value), loadedDestination.text, sizeof(Text))))
             NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
     ScopedString buffer(std::string_view{});
@@ -3048,34 +3053,34 @@ void APS5_VABI _ZN3sce4Json6Object5eraseERKNS0_6StringE(Object* self, const Stri
 }
 
 void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value* self) {
-    RequireGuestValueWritable(self, __func__);
+    RequireGuestValueReadableWritable(self, __func__);
     Construct(*self);
 }
 void APS5_VABI _ZN3sce4Json5ValueC1Eb(Value* self, bool value) {
-    RequireGuestValueWritable(self, __func__);
+    RequireGuestValueReadableWritable(self, __func__);
     Construct(*self);
     self->type = TypeBoolean;
     self->boolean = value;
 }
 void APS5_VABI _ZN3sce4Json5ValueC1El(Value* self, std::int64_t value) {
-    RequireGuestValueWritable(self, __func__);
+    RequireGuestValueReadableWritable(self, __func__);
     Construct(*self);
     self->type = TypeInteger;
     self->integer = value;
 }
 void APS5_VABI _ZN3sce4Json5ValueC1Em(Value* self, std::uint64_t value) {
-    RequireGuestValueWritable(self, __func__);
+    RequireGuestValueReadableWritable(self, __func__);
     Construct(*self);
     self->type = TypeUInteger;
     self->uinteger = value;
 }
 void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value* self, double value) {
-    RequireGuestValueWritable(self, __func__);
+    RequireGuestValueReadableWritable(self, __func__);
     Construct(*self);
     AssignReal(*self, value);
 }
 void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value* self, const char* text) {
-    RequireGuestValueWritable(self, __func__);
+    RequireGuestValueReadableWritable(self, __func__);
     std::size_t length = 0;
     if (text && !GuestTextLength(text, length)) text = nullptr;
     if (text && GuestValueRangesOverlap(self, sizeof(Value), text, length + 1))
@@ -3091,7 +3096,7 @@ void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6StringE(Value* self, const String* te
     if (GuestValueRangesOverlap(self, sizeof(Value), text, sizeof(String)) ||
         (loaded.text && GuestValueRangesOverlap(self, sizeof(Value), loaded.text, sizeof(Text))))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    RequireGuestValueWritable(self, __func__);
+    RequireGuestValueReadableWritable(self, __func__);
     Construct(*self);
     if (!loaded.text) return;
     SetType(*self, TypeString);
@@ -3101,7 +3106,7 @@ void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(Value* self, const Array* arra
     const auto loaded = LoadGuest<Array>(array, __func__);
     if (GuestValueRangesOverlap(self, sizeof(Value), array, sizeof(Array)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    RequireGuestValueWritable(self, __func__);
+    RequireGuestValueReadableWritable(self, __func__);
     Construct(*self);
     if (!loaded.items) return;
     SetType(*self, TypeArray);
@@ -3111,7 +3116,7 @@ void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6ObjectE(Value* self, const Object* ob
     const auto loaded = LoadGuest<Object>(object, __func__);
     if (GuestValueRangesOverlap(self, sizeof(Value), object, sizeof(Object)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    RequireGuestValueWritable(self, __func__);
+    RequireGuestValueReadableWritable(self, __func__);
     Construct(*self);
     if (!loaded.items) return;
     SetType(*self, TypeObject);
@@ -3121,7 +3126,7 @@ void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value* self, const Value* other) {
     static_cast<void>(LoadGuest<Value>(other, __func__));
     if (GuestValueRangesOverlap(self, sizeof(Value), other, sizeof(Value)))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    RequireGuestValueWritable(self, __func__);
+    RequireGuestValueReadableWritable(self, __func__);
     CopyInto(*self, *other);
 }
 void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value* self) {
@@ -3292,7 +3297,7 @@ const Value* APS5_VABI _ZNK3sce4Json5ValueixEm(const Value* self, std::size_t in
     return &MissingElement(self, static_cast<int>(error), nullptr, &index);
 }
 void APS5_VABI _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(Value* self, ValueType type) {
-    RequireGuestValueWritable(self, __func__);
+    RequireGuestValueReadableWritable(self, __func__);
     Construct(*self);
     SetType(*self, type);
 }
@@ -3351,12 +3356,15 @@ int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value* self, String* ou
 }
 void APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value* self, String* out) {
     const auto loaded = LoadGuest<Value>(self, __func__);
-    ValidateGuestValueOutputString(out, __func__);
-    if (GuestValueRangesOverlap(self, sizeof(Value), out, sizeof(String)))
+    const auto loadedOut = ValidateGuestValueOutputString(out, __func__);
+    if (GuestValueRangesOverlap(self, sizeof(Value), out, sizeof(String)) ||
+        (loadedOut.text && GuestValueRangesOverlap(self, sizeof(Value), loadedOut.text, sizeof(Text))))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     std::string text;
-    if (loaded.type == TypeString) AppendText(*out, Characters(*loaded.string));
-    else {
+    if (loaded.type == TypeString) {
+        const auto loadedStr = LoadGuestValueString(loaded.string, __func__);
+        AppendText(*out, Characters(loadedStr));
+    } else {
         if (loaded.type == TypeArray) text = "array";
         else if (loaded.type == TypeObject) text = "object";
         else if (loaded.type == TypeReal) {
