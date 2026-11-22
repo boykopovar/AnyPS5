@@ -1,4 +1,5 @@
 import gzip
+import argparse
 import json
 import os
 import subprocess
@@ -155,7 +156,8 @@ class TimelineTests(unittest.TestCase):
         items = names + [complete(tid, "Shader.Prepare", 0, 8000) for tid in (1, 2)]
         laid = trace_timeline.layout(trace_timeline.window_slices(trace_digest.Trace(items), 0, 10000), 0, 10000, 1000)
         self.assertEqual(laid["threads"], ["shader prepare", "shader prepare"])
-        self.assertEqual(sorted(bar["y"] for bar in laid["bars"]), [0, trace_timeline.ROW_HEIGHT])
+        self.assertEqual(sorted((bar["tid"], bar["y"]) for bar in laid["bars"]),
+                         [(1, 0), (2, trace_timeline.ROW_HEIGHT)])
         path = Path(self.tmp.name) / "a.json"
         path.write_text(json.dumps(items), encoding="utf-8")
         out = Path(self.tmp.name) / "a.html"
@@ -165,12 +167,25 @@ class TimelineTests(unittest.TestCase):
         text = out.read_text(encoding="utf-8")
         self.assertIn("2 threads, 2 bars", text)
         self.assertEqual(text.count(">shader prepare</text>"), 2)
+        for tid in (1, 2):
+            self.assertIn(f"<title>Shader.Prepare (8.000 ms), tid {tid}</title>", text)
 
     def test_layout_keeps_the_longest_slices_and_counts_the_rest(self):
         laid = trace_timeline.layout(trace_timeline_slices(self.items), 0, 10000, 1000, max_slices=1)
         self.assertEqual(len(laid["bars"]), 1)
         self.assertEqual(laid["bars"][0]["ms"], 6.0)
         self.assertEqual(laid["left_out"], 2)
+
+    def test_layout_preserves_tied_slice_order_at_the_limit(self):
+        items = [complete(1, f"slice {index}", index * 100, duration)
+                 for index, duration in enumerate((2000, 5000, 3000, 5000, 3000, 5000))]
+        slices = trace_timeline_slices(items)
+        for limit in (0, 1, 2, 3, 4, 6, 8):
+            with self.subTest(limit=limit):
+                laid = trace_timeline.layout(slices, 0, 10000, 1000, max_slices=limit)
+                expected = sorted(slices, key=lambda entry: -entry["dur"])[:limit]
+                self.assertEqual([bar["name"] for bar in laid["bars"]], [entry["name"] for entry in expected])
+                self.assertEqual(laid["left_out"], len(slices) - len(expected))
 
     def test_svg_escapes_slice_names(self):
         laid = trace_timeline.layout(trace_timeline_slices([complete(1, "<script>", 0, 1000)]), 0, 2000, 1000)
@@ -320,6 +335,29 @@ class TimelineTests(unittest.TestCase):
 
 def trace_timeline_slices(items):
     return trace_timeline.window_slices(trace_of(items), 0, 10**12)
+
+
+class ArgumentValueTests(unittest.TestCase):
+    def test_nonnegative_number_accepts_values_from_zero_below_1e300(self):
+        self.assertEqual(trace_timeline.nonnegative_number('0.5'), 0.5)
+        self.assertEqual(trace_timeline.nonnegative_number('1'), 1.0)
+        for value in ('-1', 'abc', '1e300', 'nan', 'inf'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                trace_timeline.nonnegative_number(value)
+
+    def test_positive_integer_accepts_one_and_up(self):
+        self.assertEqual(trace_timeline.positive_integer('3'), 3)
+        for value in ('0', '-2', 'x', '1.5'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                trace_timeline.positive_integer(value)
+
+
+class PageTests(unittest.TestCase):
+    def test_page_escapes_title_and_notes_and_keeps_the_svg(self):
+        text = trace_timeline.page('<svg id="s"></svg>', '<b>T</b>', ['a < b'])
+        self.assertIn('<title>&lt;b&gt;T&lt;/b&gt;</title>', text)
+        self.assertIn('<li>a &lt; b</li>', text)
+        self.assertIn('<svg id="s"></svg></body>', text)
 
 
 if __name__ == "__main__":
