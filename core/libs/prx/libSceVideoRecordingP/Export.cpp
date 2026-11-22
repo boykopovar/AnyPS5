@@ -30,6 +30,7 @@ static_assert(offsetof(VideoRecordingParam2, format) == 36);
 
 namespace {
 constexpr int SceVideoRecordingStatusNone = 0;
+constexpr int ErrorNotPresent = static_cast<int>(0x80a80001);
 constexpr int ErrorInvalidArgument = static_cast<int>(0x80a80003);
 constexpr int ErrorNotOpen = static_cast<int>(0x80a80006);
 constexpr int ErrorNoVideoFormat = static_cast<int>(0x80a80008);
@@ -302,10 +303,8 @@ int APS5_VABI sceVideoRecordingQueryMemSize2(const VideoRecordingParam2* param) 
     return static_cast<int>(duration * 0x278 + extra + (lateOffsets ? 0x45220 : 0x35220));
 }
 
-int APS5_VABI sceVideoRecordingRestModeProcessGetStatus(void* status) {
- (void)status;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceVideoRecordingRestModeProcessGetStatus(void) {
+ return static_cast<int>(0x80a80002);
 }
 
 int APS5_VABI sceVideoRecordingRestModeProcessStart(void* param) {
@@ -352,8 +351,20 @@ int APS5_VABI videoRecordingUnknown_iQS6DUtLybE(void) {
  return 0;
 }
 
-int APS5_VABI sceVideoRecordingGetCopyrightImageMemory() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoRecordingGetCopyrightImageMemory(void** addr, std::size_t* size) {
+    if (addr == nullptr || size == nullptr) {
+        return ErrorInvalidArgument;
+    }
+    const int savedErrno = errno;
+    void* outAddr = nullptr;
+    std::size_t outSize = 0;
+    if (!GuestCopyOut_nid_no_patch(addr, &outAddr, sizeof(outAddr)) ||
+        !GuestCopyOut_nid_no_patch(size, &outSize, sizeof(outSize))) {
+        errno = savedErrno;
+        return ErrorInvalidArgument;
+    }
+    errno = savedErrno;
+    return ErrorNotPresent;
 }
 
 int APS5_VABI sceVideoRecordingCloseWithTruncationByHandle() {

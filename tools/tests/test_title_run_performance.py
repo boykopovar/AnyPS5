@@ -4,6 +4,7 @@ import importlib.util
 import io
 import itertools
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -63,6 +64,11 @@ def run_main(runner, root, extra=(), performance_result=None, smoke_result=None,
 
 class PerformanceFixture:
     def setUp(self):
+        environment = mock.patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        for name in ("ANYPS5_NO_SHADER_CACHE", "MESA_SHADER_CACHE_DISABLE", "__GL_SHADER_DISK_CACHE"):
+            os.environ.pop(name, None)
         temporary = tempfile.TemporaryDirectory(prefix="anyps5-performance-integration-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
@@ -382,6 +388,19 @@ class PerformanceMainTests(PerformanceFixture, unittest.TestCase):
             self.runner.main(["--games", str(self.root), "--profile", "performance", "--trace-frames", "2:0", "--scene", "scene"])
         self.assertEqual(stopped.exception.code, 2)
         prepare.assert_not_called()
+
+    def test_smoke_comparison_rejects_a_performance_summary_before_discovery(self):
+        capture = run_main(self.runner, self.root, ["--profile", "performance", "--trace-frames", "2:5", "--scene", "scene"])
+        baseline = capture["report_directory"] / "summary.json"
+        for options in ([], ["--json"]):
+            with self.subTest(options=options):
+                stderr = io.StringIO()
+                with mock.patch.object(self.runner, "discover", return_value={}) as discover, \
+                        contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as stopped:
+                    self.runner.main(["--games", str(self.root / "games"), "--compare", str(baseline), *options, "PPSA00001"])
+                self.assertEqual(stopped.exception.code, 2)
+                self.assertIn("--compare requires a smoke-run summary, got a performance capture summary", stderr.getvalue())
+                discover.assert_not_called()
 
     def test_invalid_runtime_capture_is_retained_as_invalid(self):
         for index, (capture_error, console_error) in enumerate(((ValueError("bad native capture"), None),

@@ -3,6 +3,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "mbedtls/bignum.h"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -12,6 +13,13 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 struct TestBignum {
     std::uint64_t* d;
@@ -279,7 +287,7 @@ static Bytes StandardKey() {
     return RsaKey(Concat({{0x00}, Hex(CavpModulus)}), CavpExponent);
 }
 
-static LibreSslRsa* Decode(const Bytes& der, long length, long* consumed = nullptr) {
+static LibreSslRsa* Decode(const Bytes& der, std::int64_t length, long* consumed = nullptr) {
     const unsigned char* data = der.data();
     auto* rsa = d2i_RSA_PUBKEY_nid_postfix(nullptr, &data, length);
     if (consumed) *consumed = data - der.data();
@@ -334,6 +342,10 @@ static void TestPublicKeyInfo() {
     Require(Decode(published, 293, &consumed) == nullptr && consumed == 0);
     RequireRefused(Bytes(published.begin(), published.end() - 1));
     Require(Decode(published, 0) == nullptr && Decode(published, -1) == nullptr);
+    constexpr std::int64_t FourGiB = std::int64_t{1} << 32;
+    Require((rsa = Decode(published, FourGiB + 100, &consumed)) != nullptr && consumed == 294);
+    RSA_free_nid_postfix(rsa);
+    Require(Decode(published, FourGiB, &consumed) == nullptr && consumed == 0);
     RequireThrows([&] { d2i_RSA_PUBKEY_nid_postfix(nullptr, nullptr, 294); });
     RequireThrows([&] {
         const unsigned char* none = nullptr;
@@ -811,7 +823,12 @@ static void TestVerify() {
     for (const auto& parameter : {Bytes {0x04, 0x00}, Bytes {0x05, 0x01, 0x00}, Bytes {0x30, 0x00}, Bytes {0x80, 0x00}, Bytes {0x01, 0x01, 0x00}, Concat({Null, Null})})
         Require(Verify(DigestSha256, digest, Sign(DigestInfo(sha256, parameter, digest)), rsa) == 0);
     const auto algorithm = Encode(0x30, Concat({Encode(0x06, sha256), Null}));
-    Require(Verify(DigestSha256, digest, Sign(Concat({DigestInfo(sha256, Null, digest), {0x00}})), rsa) == 0);
+    for (const auto& excess : {Bytes {0x00}, Bytes {0x05, 0x00}, Bytes(8, 0xFF)}) {
+        ERR_clear_error_nid_postfix();
+        Require(Verify(DigestSha256, digest, Sign(Concat({DigestInfo(sha256, Null, digest), excess})), rsa) == 0);
+        Require(ERR_get_error_nid_postfix() == 0x04fff068);
+        Require(ERR_get_error_nid_postfix() == 0);
+    }
     Require(Verify(DigestSha256, digest, Sign(Encode(0x30, Concat({algorithm, Encode(0x04, digest), Null}))), rsa) == 0);
     Require(Verify(DigestSha256, digest, Sign(Encode(0x30, algorithm)), rsa) == 0);
     Require(Verify(DigestSha256, digest, Sign(Encode(0x30, Concat({algorithm, Encode(0x03, digest)}))), rsa) == 0);
@@ -1070,6 +1087,58 @@ static void TestGenerateKey() {
     for (TestBignum* number : {exponent, even, one, three}) BN_free_nid_postfix(reinterpret_cast<Bignum*>(number));
 }
 
+template<typename TAction> static bool Rejected(TAction action) {
+    errno = 71;
+    bool rejected = false;
+    try { action(); } catch (const std::invalid_argument&) { rejected = true; }
+    return rejected && errno == 71;
+}
+
+static unsigned char* MapReadOnlyPage(const void* contents, std::size_t size) {
+#ifdef _WIN32
+    auto* page = static_cast<unsigned char*>(VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(page != nullptr);
+    std::memcpy(page, contents, size);
+    DWORD previous = 0;
+    Require(VirtualProtect(page, 4096, PAGE_READONLY, &previous) != 0);
+#else
+    void* mapped = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Require(mapped != MAP_FAILED);
+    auto* page = static_cast<unsigned char*>(mapped);
+    std::memcpy(page, contents, size);
+    Require(mprotect(page, 4096, PROT_READ) == 0);
+#endif
+    return page;
+}
+
+static void UnmapPage(unsigned char* page) {
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(page, 4096) == 0);
+#endif
+}
+
+static void TestGenerateKeyGuestPointers() {
+    auto* exponent = reinterpret_cast<Bignum*>(AllocatedBignum(65537));
+    Require(Rejected([&] { RSA_generate_key_ex_nid_postfix(reinterpret_cast<LibreSslRsa*>(std::uintptr_t{0x10}), 512, exponent, nullptr); }));
+
+    auto* rsa = RSA_new_nid_postfix();
+    const LibreSslRsaMethod* defaultMethod = rsa->meth;
+    rsa->meth = reinterpret_cast<const LibreSslRsaMethod*>(std::uintptr_t{0x10});
+    Require(Rejected([&] { RSA_generate_key_ex_nid_postfix(rsa, 512, exponent, nullptr); }));
+    rsa->meth = defaultMethod;
+
+    unsigned char* page = MapReadOnlyPage(rsa, sizeof(*rsa));
+    auto* readOnly = reinterpret_cast<LibreSslRsa*>(page);
+    Require(Rejected([&] { RSA_generate_key_ex_nid_postfix(readOnly, 512, exponent, nullptr); }));
+    Require(readOnly->n == nullptr && readOnly->e == nullptr && readOnly->p == nullptr);
+    UnmapPage(page);
+
+    RSA_free_nid_postfix(rsa);
+    BN_free_nid_postfix(exponent);
+}
+
 int main() {
     InitializeHeap();
     TestFlags();
@@ -1087,5 +1156,6 @@ int main() {
     TestVerify();
     TestAddedDigestObjects();
     TestGenerateKey();
+    TestGenerateKeyGuestPointers();
     std::puts("libSceLibreSsl RSA tests passed");
 }

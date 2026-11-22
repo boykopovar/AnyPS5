@@ -14,7 +14,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/ioctl.h>
-#include <sys/select.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #ifdef __linux__
@@ -704,6 +704,7 @@ static bool ProbeStunServer(StunSocket descriptor, const sockaddr_in& server, in
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline) return false;
         const auto remainingUs = std::chrono::duration_cast<std::chrono::microseconds>(deadline - now).count();
+#ifdef _WIN32
         fd_set readSet;
         FD_ZERO(&readSet);
         FD_SET(descriptor, &readSet);
@@ -711,10 +712,10 @@ static bool ProbeStunServer(StunSocket descriptor, const sockaddr_in& server, in
         tv.tv_sec = static_cast<long>(remainingUs / 1000000);
         tv.tv_usec = static_cast<long>(remainingUs % 1000000);
         if (tv.tv_sec == 0 && tv.tv_usec == 0) tv.tv_usec = 1000;
-#ifdef _WIN32
         const int ready = select(0, &readSet, nullptr, nullptr, &tv);
 #else
-        const int ready = select(descriptor + 1, &readSet, nullptr, nullptr, &tv);
+        pollfd entry{descriptor, POLLIN, 0};
+        const int ready = poll(&entry, 1, static_cast<int>((remainingUs + 999) / 1000));
 #endif
         if (ready <= 0) return false;
         std::uint8_t buffer[512];

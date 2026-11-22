@@ -3,12 +3,14 @@
 #include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceLibcInternal/include/PendingExports.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
 #include "prx/libc/include/HeapDiagnostics.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstddef>
@@ -18,6 +20,9 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#include <immintrin.h>
+#endif
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -27,6 +32,13 @@
 extern "C" const char* __progname_nid_postfix;
 
 namespace {
+
+template<typename T, typename Evaluate>
+T ErfcTail(T x, Evaluate evaluate, const char* caller) {
+    constexpr auto tailStart = static_cast<T>(1.523L);
+    if (!std::isfinite(x) || x < tailStart) NotImplemented_nid_no_patch(caller);
+    return evaluate(x);
+}
 
 template<typename Slot>
 Slot MessagesSlot(const void* self, Slot GuestLocale::MessagesVtable::*member, const char* function) {
@@ -40,11 +52,6 @@ Slot MessagesSlot(const void* self, Slot GuestLocale::MessagesVtable::*member, c
 }
 
 extern "C" {
-
-int APS5_VABI _ZNKSt8ios_base7failure8_DoraiseEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 void* APS5_VABI _ZNKSt8messagesIcE3getEiiiRKSs_nid_postfix(void* result, const void* self, int catalog, int set, int message, const void* fallback) {
     return MessagesSlot(self, &GuestLocale::MessagesVtable::get, "messages<char>::get")(static_cast<GuestLocale::String*>(result), static_cast<const GuestLocale::Facet*>(self), catalog, set, message, static_cast<const GuestLocale::String*>(fallback));
@@ -188,23 +195,6 @@ int APS5_VABI _ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE8_P
     return 0;
 }
 
-int APS5_VABI _ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLibcInternalPending4_103_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("6ZDv6ZusiFg", sceLibcInternalPending4_103_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_104_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("tJU-ttrsXsk", sceLibcInternalPending4_104_nid_no_patch);
-
 int APS5_VABI sceLibcInternalPending4_105_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -216,17 +206,6 @@ int APS5_VABI sceLibcInternalPending4_106_nid_no_patch() {
     return 0;
 }
 APS5_EXPORT("nk+0yTWvoRE", sceLibcInternalPending4_106_nid_no_patch);
-
-int APS5_VABI _ZNSoD0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLibcInternalPending4_108_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("HpCeP12cuNY", sceLibcInternalPending4_108_nid_no_patch);
 
 int APS5_VABI sceLibcInternalPending4_109_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -246,9 +225,9 @@ int APS5_VABI sceLibcInternalPending4_120_nid_no_patch() {
 }
 APS5_EXPORT("Yl10kSufa5k", sceLibcInternalPending4_120_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending4_123_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+[[noreturn]] void APS5_VABI sceLibcInternalPending4_123_nid_no_patch(const char* message, const GuestLocale::String* path1,
+    const GuestLocale::String* path2, LibcException::ErrorCode code) {
+    FilesystemErrorTwoPaths_nid_no_patch(message, path1, path2, code);
 }
 APS5_EXPORT("Wut42WAe7Rw", sceLibcInternalPending4_123_nid_no_patch);
 
@@ -623,11 +602,6 @@ unsigned int APS5_VABI alarm_nid_postfix(unsigned int seconds) {
 }
 
 
-int APS5_VABI _Atan_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Atqexit_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -670,32 +644,15 @@ int APS5_VABI _Daysto_nid_postfix(int year, int month) {
     return static_cast<int>(leapDays + static_cast<std::uint32_t>(common ? DaysBeforeMonth[month] : LeapDaysBeforeMonth[month]));
 }
 
-int APS5_VABI _Deletegloballocale_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+double APS5_VABI _Erfc_nid_postfix(double x) {
+    return ErfcTail(x, erfc_nid_postfix, __func__);
 }
 
-int APS5_VABI _Erfc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FAtan_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FErfc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+float APS5_VABI _FErfc_nid_postfix(float x) {
+    return ErfcTail(x, erfcf_nid_postfix, __func__);
 }
 
 int APS5_VABI _FHypot_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FLogpoly_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -706,21 +663,6 @@ int APS5_VABI _FQuad_nid_postfix() {
 }
 
 int APS5_VABI _FQuadph_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FRint_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FSincos_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FTan_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -902,9 +844,144 @@ int APS5_VABI _Getctyptab_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Getdst_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const char* APS5_VABI _Getdst_nid_postfix(const char* s) {
+    if (s == nullptr || *s == '\0') {
+        return nullptr;
+    }
+    const char sep = *s;
+    ++s;
+    if (*s == '\0') {
+        return nullptr;
+    }
+
+    struct Rule {
+        std::uint8_t suffix;
+        std::uint8_t hour;
+        std::uint8_t day;
+        std::uint8_t month;
+        std::uint8_t year;
+    };
+
+    std::vector<Rule> rules;
+    std::uint8_t lastYear = 0;
+
+    while (*s != '\0') {
+        if (*s == sep) {
+            return nullptr;
+        }
+
+        std::uint8_t ruleYear = lastYear;
+        if (*s == '(') {
+            ++s;
+            int yearVal = 0;
+            int digits = 0;
+            while (*s >= '0' && *s <= '9') {
+                yearVal = yearVal * 10 + (*s - '0');
+                ++digits;
+                ++s;
+                if (digits > 4) {
+                    return nullptr;
+                }
+            }
+            if (digits != 4 || *s != ')' || yearVal < 1900) {
+                return nullptr;
+            }
+            ++s;
+            ruleYear = static_cast<std::uint8_t>((yearVal - 1900) & 0xff);
+            lastYear = ruleYear;
+        }
+
+        int dateDigits = 0;
+        char dateBuf[7] = {};
+        while (*s >= '0' && *s <= '9') {
+            if (dateDigits < 6) {
+                dateBuf[dateDigits] = *s;
+            }
+            ++dateDigits;
+            ++s;
+        }
+
+        if (dateDigits != 4 && dateDigits != 6) {
+            return nullptr;
+        }
+
+        int mm = (dateBuf[0] - '0') * 10 + (dateBuf[1] - '0');
+        int dd = (dateBuf[2] - '0') * 10 + (dateBuf[3] - '0');
+        int hh = 0;
+        if (dateDigits == 6) {
+            hh = (dateBuf[4] - '0') * 10 + (dateBuf[5] - '0');
+        }
+
+        if (mm < 1 || mm > 12) {
+            return nullptr;
+        }
+        if (dd < 1 || dd > 99) {
+            return nullptr;
+        }
+
+        std::uint8_t suffixByte = 0;
+        if (*s == '+' || *s == '-') {
+            char sign = *s;
+            ++s;
+            if (*s < '0' || *s > '6') {
+                return nullptr;
+            }
+            int w = *s - '0';
+            ++s;
+            int v = (w == 0) ? 7 : w;
+            if (sign == '+') {
+                suffixByte = static_cast<std::uint8_t>(v + 7);
+            } else {
+                suffixByte = static_cast<std::uint8_t>(v);
+            }
+        }
+
+        if (*s != '\0' && *s != sep) {
+            return nullptr;
+        }
+
+        Rule r;
+        r.suffix = suffixByte;
+        r.hour = static_cast<std::uint8_t>(hh);
+        r.day = static_cast<std::uint8_t>(dd - 1);
+        r.month = static_cast<std::uint8_t>(mm - 1);
+        r.year = ruleYear;
+        rules.push_back(r);
+
+        if (*s == sep) {
+            ++s;
+            if (*s == '\0') {
+                return nullptr;
+            }
+        }
+    }
+
+    if (rules.empty()) {
+        return nullptr;
+    }
+
+    std::size_t totalBytes = (rules.size() + 1) * 5;
+    char* buf = static_cast<char*>(std::malloc(totalBytes));
+    if (buf == nullptr) {
+        return nullptr;
+    }
+
+    for (std::size_t i = 0; i < rules.size(); ++i) {
+        buf[i * 5 + 0] = static_cast<char>(rules[i].suffix);
+        buf[i * 5 + 1] = static_cast<char>(rules[i].hour);
+        buf[i * 5 + 2] = static_cast<char>(rules[i].day);
+        buf[i * 5 + 3] = static_cast<char>(rules[i].month);
+        buf[i * 5 + 4] = static_cast<char>(rules[i].year);
+    }
+
+    std::size_t termOffset = rules.size() * 5;
+    buf[termOffset + 0] = static_cast<char>(0xff);
+    buf[termOffset + 1] = 0;
+    buf[termOffset + 2] = 0;
+    buf[termOffset + 3] = 0;
+    buf[termOffset + 4] = static_cast<char>(lastYear);
+
+    return buf;
 }
 
 int APS5_VABI _Getfld_nid_postfix() {
@@ -932,14 +1009,40 @@ int APS5_VABI _Getstr_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Gettime_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const char* APS5_VABI _Gettime_nid_postfix(const char* s, int n, int* len) {
+    if (s == nullptr) {
+        if (len != nullptr) *len = 0;
+        return "";
+    }
+    const char sep = *s;
+    if (sep == '\0' || n < 0) {
+        while (*s != '\0') ++s;
+        if (len != nullptr) *len = 0;
+        return s;
+    }
+    ++s;
+    for (; 0 < n; --n) {
+        while (*s != '\0' && *s != sep) {
+            ++s;
+        }
+        if (*s == '\0') {
+            if (len != nullptr) *len = 0;
+            return s;
+        }
+        ++s;
+    }
+    const char* start = s;
+    while (*s != '\0' && *s != sep) {
+        ++s;
+    }
+    if (len != nullptr) {
+        *len = static_cast<int>(s - start);
+    }
+    return start;
 }
 
-int APS5_VABI _Getzone_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const char* APS5_VABI _Getzone_nid_postfix() {
+    return ":";
 }
 
 int APS5_VABI _Hypot_nid_postfix() {
@@ -951,22 +1054,11 @@ int APS5_VABI _Isdst_nid_postfix() {
     return -1;
 }
 
-int APS5_VABI _LAtan_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LErfc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+long double APS5_VABI _LErfc_nid_postfix(long double x) {
+    return ErfcTail(x, erfcl_nid_postfix, __func__);
 }
 
 int APS5_VABI _LHypot_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LLogpoly_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -977,21 +1069,6 @@ int APS5_VABI _LQuad_nid_postfix() {
 }
 
 int APS5_VABI _LQuadph_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LRint_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LSincos_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LTan_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1011,9 +1088,13 @@ int APS5_VABI _Litob_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Lock_spin_lock_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _Lock_spin_lock_nid_postfix(volatile char* lock, int mode) {
+    if (lock == nullptr) return;
+    while (__atomic_exchange_n(lock, 1, __ATOMIC_ACQUIRE) != 0) {
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+        _mm_pause();
+#endif
+    }
 }
 
 int APS5_VABI _Locsum_nid_postfix() {
@@ -1027,11 +1108,6 @@ int APS5_VABI _Locterm_nid_postfix() {
 }
 
 int APS5_VABI _Locvar_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Logpoly_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

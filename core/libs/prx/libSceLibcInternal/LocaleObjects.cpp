@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
@@ -45,6 +46,13 @@ void APS5_VABI _ZNSt8_LocinfoC1EiPKc_nid_postfix(GuestLocale::LocinfoStorage* se
         throw std::invalid_argument("_Locinfo: invalid locale category");
     }
     _ZNSt8_LocinfoC1EPKc_nid_postfix(self, localeName);
+}
+
+void APS5_VABI _Deletegloballocale_nid_postfix(void* pointer) {
+    if (pointer == nullptr) throw std::invalid_argument("_Deletegloballocale: null locale reference");
+    auto* locale = *static_cast<GuestLocale::Implementation**>(pointer);
+    if (locale == nullptr) return;
+    if (auto* released = locale->base.vtable->release(&locale->base)) released->vtable->deleteObject(released);
 }
 
 }

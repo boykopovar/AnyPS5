@@ -4,6 +4,7 @@
 #include "prx/libSceXml/src/DomParser.hpp"
 
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace XmlDom {
@@ -23,6 +24,7 @@ void DocumentDestroy(XmlHandle* document);
 int DocumentTerminate(XmlHandle* document);
 bool DocumentIsAvailable(const XmlHandle* document);
 int DocumentGetStatus(const XmlHandle* document);
+void DocumentResetStatus(const XmlHandle* document);
 bool DocumentIsReadOnly(const XmlHandle* document);
 
 enum class NodeQuery { Root, DocRoot, FirstChild, Sibling, Parent, LastChild, FirstAttribute, NextAttribute };
@@ -35,6 +37,7 @@ XmlString* DocumentAttribute(XmlString* result, const XmlHandle* document, XmlNo
 std::uint32_t DocumentNumber(const XmlHandle* document, NumberQuery query, XmlNodeId node);
 int DocumentChildNodes(const XmlHandle* document, XmlNodeId node, XmlHandle* list);
 int DocumentAttributes(const XmlHandle* document, XmlNodeId node, XmlHandle* list);
+XmlNodeId NodeListFindByName(const XmlHandle* list, const std::string& name);
 int DocumentElementsByTagName(const XmlHandle* document, XmlNodeId node, const XmlString* name, XmlHandle* list);
 
 }
