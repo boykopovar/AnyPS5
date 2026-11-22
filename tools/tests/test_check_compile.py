@@ -580,7 +580,7 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
                 self.assertIn("positive integer", result.stderr)
 
 
-class DuplicateCompilationDatabaseKeys(unittest.TestCase):
+class CheckCompileDuplicateCompilationDatabaseKeysTests(unittest.TestCase):
     def test_rejects_duplicate_keys_in_compilation_records(self):
         import check_compile
         for content in ('[{"directory":"a","directory":"b","file":"a.c","command":"cc a.c"}]',
