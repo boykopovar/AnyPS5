@@ -55,6 +55,7 @@ public:
     std::vector<std::string> loadedSubresourceDomains;
     bool userMediaStateCleared = false;
     bool wheelEventTestMonitorCleared = false;
+    bool pointerLockAllowed = false;
     bool isTerminated = false;
     std::int32_t processIdentifier = 1000;
     std::vector<Retained<Object>> relatedPages;

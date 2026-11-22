@@ -646,14 +646,22 @@ test("a browser that denies direct ZIP writes explains how to continue", async t
     showSaveFilePicker: async () => ({ createWritable: async () => { throw denied; } })
   });
   assert.equal(get("save").value, "zip");
-  await selected(get, workers, "first.zip");
+  const current = await selected(get, workers, "first.zip");
   assert.equal(get("convert").disabled, false);
   await get("convert").onclick();
   const message = get("error").children[0]?.textContent ?? get("error").textContent;
   assert.match(message, /desktop Chrome or Edge/);
   assert.doesNotMatch(message, /createWritable/);
-  assert.equal(get("selection").hidden, true);
-  assert.equal(get("convert").disabled, true);
+  assert.equal(get("selection").hidden, false);
+  assert.equal(get("convert").disabled, false);
+  assert.equal(current.terminated, false);
+
+  get("save").value = "memory";
+  get("save").listeners.get("change")();
+  await get("convert").onclick();
+  assert.equal(get("error").hidden, true);
+  assert.deepEqual(current.messages.map(message => message.type), ["inspect", "convert"]);
+  assert.equal(current.messages.at(-1).mode, "memory");
 });
 
 test("Cancel is available while a selected ZIP destination opens", async t => {
@@ -696,6 +704,57 @@ test("cancelling the ZIP picker does not report a failure", async t => {
   assert.equal(get("error").hidden, true);
   assert.equal(get("selection").hidden, false);
   assert.equal(get("convert").disabled, false);
+});
+
+test("an existing output folder permits retrying with the same inspected input", async t => {
+  let pickers = 0;
+  const existingParent = {
+    async getDirectoryHandle(name, options) {
+      assert.equal(name, "first-linux");
+      assert.equal(options?.create, undefined);
+      return {};
+    }
+  };
+  const newParent = {
+    async getDirectoryHandle(name, options) {
+      assert.equal(name, "first-linux");
+      if (!options?.create) throw new DOMException("Folder not found", "NotFoundError");
+      return {};
+    }
+  };
+  const { get, workers } = await setup(t, "retry-output-folder", {
+    showDirectoryPicker: async () => ++pickers === 1 ? existingParent : newParent
+  });
+  const current = await selected(get, workers, "first.zip");
+  get("save").value = "disk";
+  get("save").listeners.get("change")();
+  await get("convert").onclick();
+  assert.match(get("error").children[0].textContent, /first-linux already exists/);
+  assert.equal(get("selection").hidden, false);
+  assert.equal(get("acknowledge").checked, true);
+  assert.equal(get("convert").disabled, false);
+  assert.equal(current.terminated, false);
+  assert.deepEqual(current.messages.map(message => message.type), ["inspect"]);
+
+  await get("convert").onclick();
+  assert.equal(get("error").hidden, true);
+  assert.deepEqual(current.messages.map(message => message.type), ["inspect", "convert"]);
+  assert.equal(current.messages.at(-1).mode, "disk");
+});
+
+test("failure to start conversion still aborts the prepared output", async t => {
+  let aborted = 0;
+  const { get, workers } = await setup(t, "failed-convert-message", {
+    showSaveFilePicker: async () => ({ async createWritable() { return { async abort() { aborted++; } }; } })
+  });
+  const current = await selected(get, workers, "first.zip");
+  current.postMessage = () => { throw new DOMException("Could not start conversion", "DataCloneError"); };
+  await get("convert").onclick();
+  assert.equal(aborted, 1);
+  assert.equal(current.terminated, true);
+  assert.equal(get("selection").hidden, true);
+  assert.equal(get("cancel").hidden, true);
+  assert.match(get("error").children[0].textContent, /Could not start conversion/);
 });
 
 for (const supported of [false, true]) {

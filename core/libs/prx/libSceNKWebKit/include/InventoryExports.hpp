@@ -300,8 +300,6 @@ int APS5_VABI WKPageCopySessionState();
 int APS5_VABI WKPageCopyStandardUserAgentWithApplicationName();
 int APS5_VABI WKPageCopyUserAgent();
 int APS5_VABI WKPageCountStringMatches();
-int APS5_VABI WKPageDidAllowPointerLock();
-int APS5_VABI WKPageDidDenyPointerLock();
 int APS5_VABI WKPageEndPrinting();
 int APS5_VABI WKPageExecuteCommand();
 int APS5_VABI WKPageFindString();
