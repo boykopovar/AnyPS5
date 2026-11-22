@@ -233,6 +233,7 @@ static void RequireWideDecoding(Utf16Decode utf16le, Utf32Decode utf32be, Utf32D
 
 int main() {
     constexpr int invalidParameter = static_cast<int>(0x805C0001);
+    constexpr int invalidProfile = static_cast<int>(0x805C0004);
     constexpr int invalidSrcBuffer = static_cast<int>(0x805C0010);
     constexpr int srcBufferEnd = static_cast<int>(0x805C0011);
     constexpr int invalidEncode = static_cast<int>(0x805C0014);
@@ -266,7 +267,7 @@ int main() {
     Require(sceCesUcs2ToSbc(0x20AC, cp1252, &sbc) == 0 && sbc == 0x80);
     Require(sceCesUcs2ToSbc(0x0410, cp1251, &sbc) == 0 && sbc == 0xC0);
     Require(sceCesUcs2ToSbc(0x3042, cp1252, &sbc) == unassignedCode);
-    Require(sceCesUcs2ToSbc(0xD800, cp1252, &sbc) == invalidEncode);
+    Require(sceCesUcs2ToSbc(0xD800, cp1252, &sbc) == illegalCode && sbc == 0);
     Require(sceCesUcs2ToSbc(0x41, cp1252, nullptr) == invalidDstBuffer);
     Require(sceCesUcs2ToSbc(0x41, static_cast<const std::uint8_t*>(sjis), &sbc) == invalidParameter);
     const std::uint16_t euro[] = {0x20AC};
@@ -296,7 +297,7 @@ int main() {
     Require(sceCesUtf32beToSbc(nullptr, cp1252, &sbc) == invalidSrcBuffer);
     Require(sceCesUtf16beToSbc(nullptr, 1, &length, cp1252, &sbc) == invalidSrcBuffer);
     Require(sceCesUtf16leToSbc(nullptr, 1, &length, cp1252, &sbc) == invalidSrcBuffer);
-    Require(sceCesUtf32ToSbc(0x0178, nullptr, &sbc) == invalidParameter);
+    Require(sceCesUtf32ToSbc(0x0178, nullptr, &sbc) == invalidProfile && sbc == 0);
     for (int value = 0; value < 256; ++value) {
         if (value == 0x98) {
             Require(sceCesSbcToUtf32(cp1251, static_cast<std::uint8_t>(value), &utf32) == unassignedCode);

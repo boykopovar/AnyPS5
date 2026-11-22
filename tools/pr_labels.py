@@ -37,7 +37,8 @@ def gh(*args, attempts=3, delay=0.5):
             raise ValueError("GitHub CLI 'gh' is required on PATH") from error
         if result.returncode == 0:
             return result.stdout
-        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "TLS handshake"))
+        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "TLS handshake", "stream error:", "unexpected EOF",
+                                                          "A connection attempt failed because the connected party did not properly respond"))
         if attempt + 1 == attempts or not transient:
             raise subprocess.CalledProcessError(result.returncode, ["gh", *args], output=result.stdout, stderr=result.stderr)
         time.sleep(delay * (2 ** attempt))
@@ -63,8 +64,13 @@ def is_perf(title):
 
 
 def needs_capture(title):
+    if not is_perf(title):
+        return False
     scope = PERF_SCOPE.match(title or "")
-    return is_perf(title) and not (scope and scope.group(1).strip().lower() in UNCAPTURED_SCOPES)
+    if not scope:
+        return True
+    parts = [part.strip().lower() for part in scope.group(1).split(",")]
+    return not (parts and all(part in UNCAPTURED_SCOPES for part in parts))
 
 
 def has_numbers(body):

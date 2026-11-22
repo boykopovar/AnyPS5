@@ -1,5 +1,6 @@
+// Derived from Source/WebCore/platform/graphics/HEVCUtilities.h@c55364d53f971f63a709976f168d932d558b8909
 /*
- * Copyright (C) 2018-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,87 +24,65 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-/*
- *  Copyright (C) 2005-2022 Apple Inc. All rights reserved.
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Library General Public
- *  License as published by the Free Software Foundation; either
- *  version 2 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Library General Public License for more details.
- *
- *  You should have received a copy of the GNU Library General Public License
- *  along with this library; see the file COPYING.LIB.  If not, write to
- *  the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
- *  Boston, MA 02110-1301, USA.
- *
- */
-
 #pragma once
 
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
+#include "prx/libSceNKWebKit/src/WtfVector.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
-#include <algorithm>
-#include <optional>
+#include <cstddef>
+#include <cstdint>
+#include <new>
+#include <type_traits>
+#include <utility>
 
-namespace NKWebKit::HEVCAbi {
+namespace WebCore {
 
-struct ConstraintFlags {
-    unsigned char* buffer = inlineStorage;
-    unsigned capacity = 6;
-    unsigned size = 6;
-    unsigned char inlineStorage[6] {};
-
-    ConstraintFlags() = default;
-    ConstraintFlags(const ConstraintFlags& other) : size(other.size) {
-        std::copy_n(other.buffer, size, inlineStorage);
-    }
-    ConstraintFlags(ConstraintFlags&& other) noexcept : ConstraintFlags(other) { other.size = 0; }
-    ConstraintFlags& operator=(const ConstraintFlags& other) {
-        std::copy_n(other.buffer, other.size, inlineStorage);
-        size = other.size;
-        return *this;
-    }
-    ~ConstraintFlags() {}
-};
-
-struct HEVCParameters {
-    enum class Codec { Hev1, Hvc1 } codec { Codec::Hvc1 };
-    uint16_t generalProfileSpace { 0 };
-    uint16_t generalProfileIDC { 0 };
+struct HEVCParameterSet {
+    NKWebKit::WtfAbi::String codecName;
+    unsigned short generalProfileSpace { 0 };
+    unsigned short generalProfileIDC { 0 };
     uint32_t generalProfileCompatibilityFlags { 0 };
-    uint8_t generalTierFlag { 0 };
-    ConstraintFlags generalConstraintIndicatorFlags;
-    uint16_t generalLevelIDC { 0 };
+    bool generalTierFlag { false };
+    unsigned short generalLevelIDC { 0 };
+    NKWebKit::WtfAbi::Vector<unsigned short> constraintFlags;
 };
 
-static_assert(sizeof(ConstraintFlags) == 24);
-static_assert(alignof(ConstraintFlags) == 8);
-static_assert(offsetof(ConstraintFlags, buffer) == 0);
-static_assert(offsetof(ConstraintFlags, capacity) == 8);
-static_assert(offsetof(ConstraintFlags, size) == 12);
-static_assert(offsetof(ConstraintFlags, inlineStorage) == 16);
-static_assert(sizeof(HEVCParameters::Codec) == 4);
-static_assert(sizeof(HEVCParameters) == 48);
-static_assert(alignof(HEVCParameters) == 8);
-static_assert(offsetof(HEVCParameters, codec) == 0);
-static_assert(offsetof(HEVCParameters, generalProfileSpace) == 4);
-static_assert(offsetof(HEVCParameters, generalProfileIDC) == 6);
-static_assert(offsetof(HEVCParameters, generalProfileCompatibilityFlags) == 8);
-static_assert(offsetof(HEVCParameters, generalTierFlag) == 12);
-static_assert(offsetof(HEVCParameters, generalConstraintIndicatorFlags) == 16);
-static_assert(offsetof(HEVCParameters, generalLevelIDC) == 40);
-static_assert(sizeof(std::optional<HEVCParameters>) == 56);
-static_assert(!std::is_trivially_copyable_v<std::optional<HEVCParameters>>);
-static_assert(!std::is_trivially_destructible_v<std::optional<HEVCParameters>>);
+struct HEVCOptionalParameterSet {
+    bool engaged;
+    union {
+        unsigned char dummy;
+        HEVCParameterSet value;
+    };
+    HEVCOptionalParameterSet() : engaged(false), dummy(0) {}
+    explicit HEVCOptionalParameterSet(HEVCParameterSet&& parameters) : engaged(true), value(std::move(parameters)) {}
+    HEVCOptionalParameterSet(const HEVCOptionalParameterSet&) = delete;
+    HEVCOptionalParameterSet(HEVCOptionalParameterSet&& other) noexcept : engaged(other.engaged), dummy(0) {
+        if (engaged) new (&value) HEVCParameterSet(std::move(other.value));
+    }
+    ~HEVCOptionalParameterSet() {
+        if (engaged) value.~HEVCParameterSet();
+    }
+};
+
+static_assert(sizeof(HEVCParameterSet) == 40);
+static_assert(alignof(HEVCParameterSet) == 8);
+static_assert(offsetof(HEVCParameterSet, codecName) == 0);
+static_assert(offsetof(HEVCParameterSet, generalProfileSpace) == 8);
+static_assert(offsetof(HEVCParameterSet, generalProfileIDC) == 10);
+static_assert(offsetof(HEVCParameterSet, generalProfileCompatibilityFlags) == 12);
+static_assert(offsetof(HEVCParameterSet, generalTierFlag) == 16);
+static_assert(offsetof(HEVCParameterSet, generalLevelIDC) == 18);
+static_assert(offsetof(HEVCParameterSet, constraintFlags) == 24);
+static_assert(sizeof(NKWebKit::WtfAbi::Vector<unsigned short>) == 16);
+static_assert(sizeof(HEVCOptionalParameterSet) == 48);
+static_assert(offsetof(HEVCOptionalParameterSet, engaged) == 0);
+static_assert(offsetof(HEVCOptionalParameterSet, value) == 8);
+static_assert(!std::is_trivially_copyable_v<HEVCOptionalParameterSet>);
+static_assert(!std::is_trivially_destructible_v<HEVCOptionalParameterSet>);
 
 }
 
 extern "C" {
-std::optional<NKWebKit::HEVCAbi::HEVCParameters> APS5_VABI _ZN7WebCore24parseHEVCCodecParametersERKN3WTF6StringE(const NKWebKit::WtfAbi::String& string);
+WebCore::HEVCOptionalParameterSet APS5_VABI _ZN7WebCore24parseHEVCCodecParametersERKN3WTF6StringE(const NKWebKit::WtfAbi::String& string);
 }

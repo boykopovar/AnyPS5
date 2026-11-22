@@ -7,6 +7,8 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdarg>
+#include <algorithm>
+#include <iterator>
 #include <cstdint>
 #include <thread>
 #include <vector>
@@ -462,6 +464,19 @@ int main() {
     Require(sceAudioPropagationSourceGetAudioPath(source, AudioPropagation::MaxPaths, &repeated) == AudioPropagation::ErrorInvalidArgument, "out of range path slot");
     Require(repeated == path, "rejected path lookup changed the output");
     Require(sceAudioPropagationSourceGetAudioPath(source, 0, nullptr) == AudioPropagation::ErrorNullPointer, "null path output");
+    {
+        std::uint64_t queried[AudioPropagation::MaxPaths + 2];
+        std::fill(std::begin(queried), std::end(queried), 0x5a5a5a5a5a5a5a5aull);
+        Require(sceAudioPropagationSourceQueryAudioPaths(0, queried, sizeof(queried)) == AudioPropagation::ErrorInvalidHandle, "query on handle 0");
+        Require(sceAudioPropagationSourceQueryAudioPaths(0, nullptr, 0) == AudioPropagation::ErrorInvalidHandle, "query handle checked before the null output");
+        Require(sceAudioPropagationSourceQueryAudioPaths(source, nullptr, 0) == AudioPropagation::ErrorNullPointer, "query with a null output");
+        for (const std::size_t size : {std::size_t{0}, 3 * sizeof(std::uint64_t) + 7, sizeof(queried)}) {
+            Require(sceAudioPropagationSourceQueryAudioPaths(source, queried, size) == 0, "a source with no paths set did not report 0");
+        }
+        Require(std::all_of(std::begin(queried), std::end(queried), [](std::uint64_t value) { return value == 0x5a5a5a5a5a5a5a5aull; }), "a query of a source with no paths wrote a handle");
+        errno = 71;
+        Require(sceAudioPropagationSourceQueryAudioPaths(source, reinterpret_cast<std::uint64_t*>(0x10), sizeof(queried)) == 0 && errno == 71, "a query with nothing to write touched an unwritable buffer");
+    }
     errno = 71;
     Require(sceAudioPropagationSourceGetAudioPath(source, 0, reinterpret_cast<AudioPropagationHandle*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable path output");
     Require(errno == 71, "errno preserved on unwritable path output");
