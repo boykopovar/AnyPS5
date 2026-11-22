@@ -569,6 +569,7 @@ bool NamesFile(CURLoption option) {
     case CURLOPT_NETRC_FILE:
     case CURLOPT_HSTS:
     case CURLOPT_ALTSVC:
+    case CURLOPT_UNIX_SOCKET_PATH:
         return true;
     default:
         return false;
