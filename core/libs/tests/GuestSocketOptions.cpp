@@ -480,6 +480,23 @@ void MulticastMembership() {
     const std::array<std::uint8_t, 12> negativeIndex{0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff};
     Require(SetFails(datagram, 0, IpMulticastInterface, negativeIndex.data(), negativeIndex.size(), ErrorInvalid), "a negative ip_mreqn index must fail with EINVAL (22)");
     Require(SetFails(datagram, 0, IpMulticastInterface, loopback.data(), 2, ErrorInvalid), "a short IP_MULTICAST_IF must fail with EINVAL (22)");
+    for (const std::array<std::uint8_t, 4> indexAddress : {
+             std::array<std::uint8_t, 4>{0, 0, 0, 1},
+             std::array<std::uint8_t, 4>{0, 0, 0, 2},
+             std::array<std::uint8_t, 4>{0, 1, 0, 0},
+             std::array<std::uint8_t, 4>{0, 255, 255, 255},
+         }) {
+        Require(SetFails(datagram, 0, IpMulticastInterface, indexAddress.data(), indexAddress.size(), ErrorAddressNotAvailable),
+            "a 0.0.0.0/8 address other than INADDR_ANY must fail IP_MULTICAST_IF with EADDRNOTAVAIL (49)");
+        const std::array<std::uint8_t, 8> membership{224, 0, 0, 251, indexAddress[0], indexAddress[1], indexAddress[2], indexAddress[3]};
+        Require(SetFails(datagram, 0, IpAddMembership, membership.data(), membership.size(), ErrorAddressNotAvailable),
+            "a 0.0.0.0/8 interface address other than INADDR_ANY must fail IP_ADD_MEMBERSHIP with EADDRNOTAVAIL (49)");
+        Require(SetFails(datagram, 0, IpDropMembership, membership.data(), membership.size(), ErrorAddressNotAvailable),
+            "a 0.0.0.0/8 interface address other than INADDR_ANY must fail IP_DROP_MEMBERSHIP with EADDRNOTAVAIL (49)");
+    }
+    size = address.size();
+    Require(getsockopt_nid_postfix(datagram, 0, IpMulticastInterface, address.data(), &size) == 0 && size == 4 && address == std::array<std::uint8_t, 4>{},
+        "rejected IP_MULTICAST_IF addresses leave the selected interface unchanged");
     Require(close_nid_postfix(datagram) == 0 && close_nid_postfix(stream) == 0, "close failed");
 }
 

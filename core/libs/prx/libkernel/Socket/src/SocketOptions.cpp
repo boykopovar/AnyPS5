@@ -437,6 +437,14 @@ bool MulticastOption(int option) {
         option == GuestIpAddMembership || option == GuestIpDropMembership;
 }
 
+#ifdef _WIN32
+bool ZeroNetworkAddress(const in_addr& address) {
+    std::uint32_t bits;
+    std::memcpy(&bits, &address, sizeof(bits));
+    return bits != 0 && reinterpret_cast<const unsigned char*>(&address)[0] == 0;
+}
+#endif
+
 int SetIpLevelOption(std::uintptr_t native, SocketOptionState& state, bool ipv4, bool datagram, int option, const void* value, std::uint32_t length) {
     if (!ipv4) return ErrorInvalid;
     if (MulticastOption(option) && !datagram) return ErrorNotSupported;
@@ -462,6 +470,9 @@ int SetIpLevelOption(std::uintptr_t native, SocketOptionState& state, bool ipv4,
             const auto joinedInterface = static_cast<std::uint32_t>(*found);
             std::memcpy(&request.imr_interface, &joinedInterface, sizeof(joinedInterface));
         }
+#ifdef _WIN32
+        if (ZeroNetworkAddress(request.imr_interface)) return ErrorAddressNotAvailable;
+#endif
         if (::setsockopt(handle, IPPROTO_IP, join ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, reinterpret_cast<NativeOptionValue>(&request), sizeof(request))) {
 #ifndef _WIN32
             if (errno == ENODEV) return ErrorAddressNotAvailable;
@@ -485,6 +496,9 @@ int SetIpLevelOption(std::uintptr_t native, SocketOptionState& state, bool ipv4,
         } else {
             if (const int fault = ReadValue(&address, value, sizeof(address))) return fault;
         }
+#ifdef _WIN32
+        if (ZeroNetworkAddress(address)) return ErrorAddressNotAvailable;
+#endif
         if (::setsockopt(handle, IPPROTO_IP, IP_MULTICAST_IF, reinterpret_cast<NativeOptionValue>(&address), sizeof(address))) return HostError();
         std::memcpy(&state.multicastInterface, &address, sizeof(address));
         return 0;
