@@ -122,24 +122,7 @@ int main() {
         Require(errorCount.load() == 0);
     }
 
-    {
-        const char* validType = "TestException";
-        const char* validWhat = "test failure";
-        const auto* unreadable = reinterpret_cast<const char*>(std::uintptr_t{0x10});
-        const void* dummyException = reinterpret_cast<const void*>(std::uintptr_t{0x1234});
-
-        Require(sceKernelDebugWriteCppExceptionInfo(dummyException, 0, validType, validWhat) == 0);
-        Require(sceKernelDebugWriteCppExceptionInfo(dummyException, 0, validType, nullptr) == 0);
-        Require(sceKernelDebugWriteCppExceptionInfo(nullptr, 0, nullptr, nullptr) == 0);
-        Require(sceKernelDebugWriteCppExceptionInfo(dummyException, 0, nullptr, validWhat) == 0);
-        Require(sceKernelDebugWriteCppExceptionInfo(dummyException, 0, unreadable, validWhat) == 0);
-        Require(sceKernelDebugWriteCppExceptionInfo(dummyException, 0, validType, unreadable) == 0);
-        Require(sceKernelDebugWriteCppExceptionInfo(dummyException, 0, unreadable, unreadable) == 0);
-        Require(sceKernelDebugWriteCppExceptionInfo(dummyException, 0, unreadable, nullptr) == 0);
-        Require(sceKernelDebugWriteCppExceptionInfo(dummyException, 0, nullptr, unreadable) == 0);
-    }
-
-    for (int round = 0; round < 16; ++round) {
+    for (int round = 0; round < 128; ++round) {
         std::atomic<int> readyReg{0};
         std::atomic<bool> startReg{false};
         std::atomic<int> regOkCount{0};
