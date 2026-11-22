@@ -88,19 +88,6 @@ void APS5_VABI MarkerMark(JSMarker* baseMarker, JSObjectRef object) {
     }
 }
 
-int ParseErrorLineFromStack(const std::string& stack, int fallbackLine) {
-    const auto colon2 = stack.rfind(':');
-    if (colon2 == std::string::npos || colon2 == 0) return fallbackLine;
-    const auto colon1 = stack.rfind(':', colon2 - 1);
-    if (colon1 == std::string::npos || colon1 + 1 >= colon2) return fallbackLine;
-    int line = 0;
-    for (std::size_t i = colon1 + 1; i < colon2; ++i) {
-        if (stack[i] < '0' || stack[i] > '9') return fallbackLine;
-        line = line * 10 + (stack[i] - '0');
-    }
-    return line > 0 ? line : fallbackLine;
-}
-
 JSScriptRef CreateScriptInternal(OpaqueJSContextGroup* group, JSStringRef url, int startingLineNumber, const char* source, std::size_t length, JSStringRef* errorMessage, int* errorLine) {
     if (!group) return nullptr;
     const int clampedLine = startingLineNumber <= 0 ? 1 : startingLineNumber;
@@ -125,16 +112,10 @@ JSScriptRef CreateScriptInternal(OpaqueJSContextGroup* group, JSStringRef url, i
             JS_FreeValue(qctx, msgVal);
         }
         if (errorLine) {
-            int parsedLine = clampedLine;
-            JSValue stackVal = JS_GetPropertyStr(qctx, exc, "stack");
-            if (JS_IsString(stackVal)) {
-                const char* stackStr = JS_ToCString(qctx, stackVal);
-                if (stackStr) {
-                    parsedLine = ParseErrorLineFromStack(stackStr, clampedLine);
-                    JS_FreeCString(qctx, stackStr);
-                }
-            }
-            JS_FreeValue(qctx, stackVal);
+            std::int32_t parsedLine = clampedLine;
+            JSValue lineVal = JS_GetPropertyStr(qctx, exc, "line");
+            if (JS_IsNumber(lineVal)) JS_ToInt32(qctx, &parsedLine, lineVal);
+            JS_FreeValue(qctx, lineVal);
             *errorLine = parsedLine;
         }
         JS_FreeValue(qctx, exc);
@@ -251,6 +232,7 @@ OpaqueJSContextGroup::OpaqueJSContextGroup() {
 
     utilityCtx = JS_NewContext(rt);
     JSValue globalObj = JS_GetGlobalObject(utilityCtx);
+    InstallErrorInfo(utilityCtx, globalObj);
     weakRefCtor = JS_GetPropertyStr(utilityCtx, globalObj, "WeakRef");
     JSValue weakRefProto = JS_GetPropertyStr(utilityCtx, weakRefCtor, "prototype");
     weakRefDerefFunc = JS_GetPropertyStr(utilityCtx, weakRefProto, "deref");
@@ -571,6 +553,7 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     group->contexts.push_back(this);
 
     JSValue rawGlobal = JS_GetGlobalObject(qctx);
+    InstallErrorInfo(qctx, rawGlobal);
     dateConstructor = JS_GetPropertyStr(qctx, rawGlobal, "Date");
     errorConstructor = JS_GetPropertyStr(qctx, rawGlobal, "Error");
     regExpConstructor = JS_GetPropertyStr(qctx, rawGlobal, "RegExp");
