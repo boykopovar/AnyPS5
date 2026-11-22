@@ -429,6 +429,22 @@ void TestRefCounting() {
 
 }  // namespace
 
+void TestSingularBlend() {
+    WebCore::TransformationMatrix singular;
+    const double rows[3][3] = {{-0.2, -0.1, 0.2}, {-0.2 * 0.1, -0.1 * 0.1, 0.2 * 0.1}, {0.08375367045258075, -0.42697962014309576, -0.0412259181509671}};
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) singular.m_matrix[i][j] = rows[i][j];
+    WebCore::TransformationMatrix from;
+    from.m_matrix[3][0] = 7.0;
+    WebCore::TransformationMatrix late = singular;
+    _ZN7WebCore20TransformationMatrix6blend4ERKS0_d(&late, from, 0.75);
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j) Check(late.m_matrix[i][j] == singular.m_matrix[i][j]);
+    WebCore::TransformationMatrix early = singular;
+    _ZN7WebCore20TransformationMatrix6blend4ERKS0_d(&early, from, 0.25);
+    Check(early.m_matrix[3][0] == 7.0 && early.m_matrix[1][1] == 1.0);
+}
+
 int main() {
     TestIdentity();
     TestRotateBasics();
@@ -438,5 +454,6 @@ int main() {
     TestMatrix();
     TestMatrix3D();
     TestRefCounting();
+    TestSingularBlend();
     return 0;
 }

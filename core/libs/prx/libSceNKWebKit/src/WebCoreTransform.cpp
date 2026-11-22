@@ -475,6 +475,9 @@ bool Decompose4(const TransformationMatrix& tm, Decomposed4& result) {
     result.skewXY = V3Dot(row[0], row[1]);
     V3Combine(row[1], row[0], row[1], 1.0, -result.skewXY);
     result.scaleY = V3Length(row[1]);
+    if (result.scaleY == 0.0) {
+        return false;
+    }
     V3Scale(row[1], 1.0);
     result.skewXY /= result.scaleY;
     result.skewXZ = V3Dot(row[0], row[2]);
@@ -482,6 +485,9 @@ bool Decompose4(const TransformationMatrix& tm, Decomposed4& result) {
     result.skewYZ = V3Dot(row[1], row[2]);
     V3Combine(row[2], row[1], row[2], 1.0, -result.skewYZ);
     result.scaleZ = V3Length(row[2]);
+    if (result.scaleZ == 0.0) {
+        return false;
+    }
     V3Scale(row[2], 1.0);
     result.skewXZ /= result.scaleZ;
     result.skewYZ /= result.scaleZ;
