@@ -119,8 +119,10 @@ def sample_summary(path, title_id, commit):
         raise ValueError(f"{path}: title did not render with a finite positive FPS measurement")
     identity = {key: machine.get(key, "") for key in ("os", "gpu", "driver", "cpu")}
     identity.update(title_id=title_id, title=title.get("name", ""), content_version=title.get("version", ""))
-    if any(not identity[key] for key in ("os", "gpu", "driver", "title")):
-        raise ValueError(f"{path}: measurement is missing machine, title, or content identity")
+    invalid = [key for key in ("os", "gpu", "driver", "cpu", "title")
+               if not isinstance(identity[key], str) or not identity[key].strip()]
+    if invalid:
+        raise ValueError(f"{path}: measurement is missing machine or title identity text for {', '.join(invalid)}")
     content_version = identity["content_version"]
     if not isinstance(content_version, str) or not content_version.strip():
         raise ValueError(f"{path}: measurement is missing a valid content version")

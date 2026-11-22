@@ -794,6 +794,35 @@ class FocusedInputEdgeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "missing machine"):
                 performance_bisect.sample_summary(path, "PPSA00000", GOOD)
 
+    def test_sample_requires_cpu_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for value in (None, "", " \t"):
+                with self.subTest(value=value):
+                    summary = self.sample_fixture()
+                    if value is None:
+                        del summary["machine"]["cpu"]
+                    else:
+                        summary["machine"]["cpu"] = value
+                    path = self.write_summary(root, summary)
+                    with self.assertRaisesRegex(ValueError, "identity.*cpu"):
+                        performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
+    def test_sample_requires_text_for_machine_and_title_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for field in ("os", "gpu", "driver", "cpu", "title"):
+                for value in (True, 1, ["Example"], " \t"):
+                    with self.subTest(field=field, value=value):
+                        summary = self.sample_fixture()
+                        if field == "title":
+                            summary["titles"]["PPSA00000"]["name"] = value
+                        else:
+                            summary["machine"][field] = value
+                        path = self.write_summary(root, summary)
+                        with self.assertRaisesRegex(ValueError, f"identity.*{field}"):
+                            performance_bisect.sample_summary(path, "PPSA00000", GOOD)
+
     def test_sample_requires_content_version(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
