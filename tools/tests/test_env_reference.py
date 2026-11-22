@@ -693,6 +693,88 @@ class LiteralStartTests(unittest.TestCase):
         self.assertIsNotNone(pattern.search('x = "A.B_Z"'))
         self.assertIsNone(pattern.search('x = "AxB_Z"'))
 
+    def test_kind_of_by_reader_and_window(self):
+        import env_reference
+        self.assertEqual(env_reference.kind_of("IsEnvironmentSet", ""), "presence")
+        self.assertEqual(env_reference.kind_of("EnvInt", ""), "integer")
+        self.assertEqual(env_reference.kind_of("GetEnvironmentVariableA", ""), "string")
+        self.assertEqual(env_reference.kind_of("getenv", "p != nullptr"), "presence")
+        self.assertEqual(env_reference.kind_of("getenv", "strtol(v, 0, 10)"), "integer")
+        self.assertEqual(env_reference.kind_of("getenv", "use(v)"), "string")
+
+
+class DefaultOfTests(unittest.TestCase):
+    def test_default_of_prefers_explicit_then_ternary(self):
+        import re
+        import env_reference
+        explicit = re.compile(r"(?P<default>\d+)").match("42")
+        self.assertEqual(env_reference.default_of(explicit, ""), "42")
+        plain = re.compile(r"x").match("x")
+        self.assertEqual(env_reference.default_of(plain, "v ? 1 : 7"), "7")
+        self.assertEqual(env_reference.default_of(plain, "no ternary"), "")
+class SourceFilesTests(unittest.TestCase):
+    def test_source_files_is_empty_for_a_missing_root(self):
+        import env_reference
+        self.assertEqual(list(env_reference.source_files(Path("/no/such/env/root"))), [])
+
+
+class SourceFileFilterTests(unittest.TestCase):
+    def test_source_files_keeps_sources_outside_skipped_folders(self):
+        import env_reference
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src").mkdir()
+            (root / "build").mkdir()
+            (root / "a.cpp").write_text("x", encoding="utf-8")
+            (root / "c.txt").write_text("x", encoding="utf-8")
+            (root / "build" / "b.cpp").write_text("x", encoding="utf-8")
+            (root / "src" / "d.hpp").write_text("x", encoding="utf-8")
+            names = [path.name for path in env_reference.source_files(root)]
+            self.assertEqual(names, ["a.cpp", "d.hpp"])
+class HelperTests(unittest.TestCase):
+    def test_library_of_names_the_library_or_core_component(self):
+        self.assertEqual(env_reference.library_of("core/libs/prx/libSceFoo/Export.cpp"), "libSceFoo")
+        self.assertEqual(env_reference.library_of("core/kernel/x.cpp"), "core/kernel")
+        self.assertEqual(env_reference.library_of("tools/env_reference.py"), "tools")
+
+    def test_uncommented_blanks_comments_and_keeps_code_width(self):
+        text = 'x = getenv("ANYPS5_A"); // ANYPS5_B\n'
+        blanked = env_reference.uncommented(text)
+        self.assertEqual(len(blanked), len(text))
+        self.assertIn('getenv("ANYPS5_A")', blanked)
+        self.assertNotIn("ANYPS5_B", blanked)
+
+    def test_list_names_writes_sorted_tab_separated_rows(self):
+        found = {"ANYPS5_B": [("core/a.cpp", 3, "getenv", "1")],
+                 "ANYPS5_A": [("core/b.cpp", 7, "IsEnvironmentSet", "")]}
+        out = io.StringIO()
+        env_reference.list_names(found, out)
+        self.assertEqual(out.getvalue(),
+                         "ANYPS5_A\tIsEnvironmentSet\tcore/b.cpp:7\t\n"
+                         "ANYPS5_B\tgetenv\tcore/a.cpp:3\t1\n")
+
+    def test_literal_start_matches_only_string_assignments_with_a_known_prefix(self):
+        pattern = env_reference.literal_start(("ANYPS5_",))
+        self.assertIsNotNone(pattern.search('name = "ANYPS5_FOO"'))
+        self.assertIsNotNone(pattern.search('name = u8"ANYPS5_FOO"'))
+        self.assertIsNone(pattern.search('name = "OTHER"'))
+class ConstantTableTests(unittest.TestCase):
+    def test_declared_constants_maps_identifiers_to_prefixed_names(self):
+        text = 'static const char* kName = "ANYPS5_FOO";\nconst char* kBar = u8"APS5_BAR";\nx = "OTHER";\n'
+        self.assertEqual(env_reference.declared_constants(text),
+                         {"kName": {"ANYPS5_FOO"}, "kBar": {"APS5_BAR"}})
+
+    def test_shadowed_names_lists_locals_but_not_constant_declarations(self):
+        self.assertIn("count", env_reference.shadowed_names("int count = 3;\n"))
+        self.assertEqual(env_reference.shadowed_names('const char* kName = "ANYPS5_A";\n'), set())
+        self.assertEqual(env_reference.shadowed_names("constexpr int kX = 1;\n"), set())
+
+    def test_identifier_reads_resolves_a_single_known_constant_only(self):
+        reads = env_reference.identifier_reads("getenv(kName)", {"kName": {"ANYPS5_A"}}, set())
+        self.assertEqual([kind for kind, _ in reads], ["getenv"])
+        self.assertEqual(env_reference.identifier_reads("getenv(kName)", {"kName": {"ANYPS5_A", "ANYPS5_B"}}, set()), [])
+        self.assertEqual(env_reference.identifier_reads("getenv(kName)", {"kName": {"ANYPS5_A"}}, {"kName"}), [])
+
 
 if __name__ == "__main__":
     unittest.main()
