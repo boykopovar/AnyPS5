@@ -98,10 +98,9 @@ bool RecordMatch(JSContext* qctx, JSValueConst state, JSValueConst result) {
     return true;
 }
 
-JSValue Capture(JSContext* qctx, JSValueConst state, std::int64_t index, bool last) {
+JSValue Capture(JSContext* qctx, JSValueConst state, std::int64_t index) {
     std::int64_t count = 0;
     if (!Int64Of(qctx, JS_GetPropertyUint32(qctx, state, kCaptureCount), &count)) return JS_EXCEPTION;
-    if (last) index = count > 1 ? count - 1 : count;
     if (index < count) {
         JSValue captures = JS_GetPropertyUint32(qctx, state, kCaptures);
         JSValue capture = JS_GetPropertyUint32(qctx, captures, static_cast<std::uint32_t>(index));
@@ -109,6 +108,13 @@ JSValue Capture(JSContext* qctx, JSValueConst state, std::int64_t index, bool la
         if (!JS_IsUndefined(capture)) return capture;
     }
     return JS_NewString(qctx, "");
+}
+
+JSValue LastGroup(JSContext* qctx, JSValueConst state) {
+    std::int64_t count = 0;
+    if (!Int64Of(qctx, JS_GetPropertyUint32(qctx, state, kCaptureCount), &count)) return JS_EXCEPTION;
+    const std::int64_t groups = count - 1;
+    return groups > 0 ? Capture(qctx, state, groups) : JS_NewString(qctx, "");
 }
 
 JSValue Context(JSContext* qctx, JSValueConst* data, bool left) {
@@ -135,8 +141,8 @@ JSValue LegacyGetter(JSContext* qctx, JSValueConst thisVal, int argc, JSValueCon
         const char* name = magic == kMultilineProperty ? "multiline" : magic == kLastMatch ? "lastMatch" : magic == kLastParen ? "lastParen" : magic == kLeftContextProperty ? "leftContext" : "rightContext";
         return JS_ThrowTypeError(qctx, "RegExp.%s getter require RegExp constructor as |this|", name);
     }
-    if (magic <= kLastBackref) return Capture(qctx, data[kState], magic, false);
-    if (magic == kLastParen) return Capture(qctx, data[kState], 0, true);
+    if (magic <= kLastBackref) return Capture(qctx, data[kState], magic);
+    if (magic == kLastParen) return LastGroup(qctx, data[kState]);
     if (magic == kLeftContextProperty) return Context(qctx, data, true);
     if (magic == kRightContextProperty) return Context(qctx, data, false);
     return JS_GetPropertyUint32(qctx, data[kState], magic == kInputProperty ? kInput : kMultiline);
