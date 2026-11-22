@@ -21,6 +21,25 @@ Game-controller bindings are enabled automatically. Keyboard and mouse overrides
 
 Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`, `LeftStickLeft`, `LeftStickRight`, `LeftStickUp`, `LeftStickDown`, `RightStickLeft`, `RightStickRight`, `RightStickUp`, `RightStickDown`, `TouchLeft`, `TouchRight`, `StickModifier`, `Shake`, `ToggleMouse`, `ToggleFullscreen` (F11), `TogglePerformanceOverlay` (F10, the [performance overlay](USAGE.md#performance-overlay)), `Screenshot` (F12, saves the next displayed frame as described in [screenshots](USAGE.md#screenshots)), and `ShowPadStatus` (F9, shows the [controller status panel](USAGE.md#controller-status-panel) for a few seconds). `ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot` and `ShowPadStatus` also accept `PAD:` chords.
 
+### SDL controller detection and layout
+
+If SDL sees a joystick but the game shows `NO CONTROLLER`, or the D-pad or buttons report the wrong inputs, supply an SDL2 mapping for the controller's GUID and operating system. USB and Bluetooth can use different mappings. Download `gamecontrollerdb.txt` from [SDL GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB), or save the mapping line from SDL2's `controllermap` tool in a plain text file, including its `platform:` field.
+
+With `gamecontrollerdb.txt` beside the converted game, start the game from that directory. On Windows, the setting applies to programs launched from the same PowerShell session until it closes.
+
+```powershell
+$env:SDL_GAMECONTROLLERCONFIG_FILE = (Resolve-Path -LiteralPath '.\gamecontrollerdb.txt').Path
+.\app.exe
+```
+
+On Linux, set the variable for the game process.
+
+```sh
+SDL_GAMECONTROLLERCONFIG_FILE="$PWD/gamecontrollerdb.txt" ./app.elf
+```
+
+Press F9 to check the [controller status panel](USAGE.md#controller-status-panel). SDL loads the file at startup. A matching file entry overrides SDL's built-in mapping, and a mapping set directly in `SDL_GAMECONTROLLERCONFIG` takes priority over the file. The `SDLButton:` entries in `anyps5-input.ini` then assign the resulting SDL buttons to PlayStation buttons.
+
 ### Controller button remapping
 
 Use `SDLButton:button = Button` to assign an SDL controller button to a PlayStation button. For example, this swaps Cross and Circle, then disables the Back button.
@@ -45,7 +64,7 @@ Three more actions control the host's output volume: `VolumeDown` (F5), `VolumeU
 
 ### Default bindings
 
-Without an `anyps5-input.ini`, or for actions the file does not mention, these bindings apply:
+Each action keeps its built-in bindings unless the shared file or the current title's [per-game profile](#per-game-profiles) overrides it.
 
 | Action | Keyboard and mouse |
 |--------|--------------------|
@@ -105,6 +124,7 @@ The same file also accepts these settings, each at most once, in the form `Setti
 | `StickModifierScale` | Number from 0.05 to 1, the tilt of keyboard stick bindings while a `StickModifier` binding is held. | `0.5` |
 | `KeyboardRampMs` | Number from 0 to 2000, the milliseconds a keyboard stick binding takes to move the stick from the center to full tilt. 0 tilts at once. | `0` |
 | `TriggerRampMs` | Number from 0 to 2000, the milliseconds a key or mouse button bound to `L2` or `R2` takes to press the trigger from 0 to full. 0 presses it fully at once. | `0` |
+| `ToggleActions` | Comma-separated pad buttons (`Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`), each toggled by the keys and mouse buttons bound to it. Stick directions and emulator actions are refused. See [Toggled buttons](#toggled-buttons). | none |
 
 ```ini
 LeftStickDeadzone = 12
@@ -145,6 +165,18 @@ Vibration is not part of the input mapping file. The host-side strength of a con
 
 The identification pulse that tells players' controllers apart is set with `ANYPS5_PAD_IDENTIFY`, described in [Controller identification pulse](USAGE.md#controller-identification-pulse).
 
+## Stable player assignment
+
+By default, connected controllers fill the first free player slot in SDL's discovery order. To keep a controller on the same player after reconnecting or restarting, set `ANYPS5_PAD_PLAYER_1_SERIAL` through `ANYPS5_PAD_PLAYER_4_SERIAL` to the exact SDL serial for each player. Set `ANYPS5_PAD_LOG_CONTROLLER_SERIAL=1` to include serials in the connection log while configuring this; serial logging is off by default. SDL may not expose a serial for every controller or backend. Such controllers, and controllers whose serial is not configured, use the first free unreserved player slot. A configured slot stays reserved while its controller is disconnected, so other controllers do not take that player's place. Assigning the same serial to multiple players stops startup with an error.
+
+For example, to bind two controllers and leave the other player slots automatic:
+
+```sh
+ANYPS5_PAD_PLAYER_1_SERIAL=ABC123 ANYPS5_PAD_PLAYER_2_SERIAL=XYZ789 ./AnyPS5
+```
+
+Serials may differ when a controller is connected through another transport or exposed by a different SDL backend. Check the connection log for the exact value reported by the current host.
+
 ## Analog keyboard input
 
 `StickModifier` has no built-in binding. While a key or mouse button bound to it is held, the keyboard stick bindings tilt the stick by `StickModifierScale` of its range instead of fully, for walking or fine aim. Controller sticks and the mouse stick are not affected, and opposite keys still cancel each other.
@@ -158,13 +190,26 @@ With `KeyboardRampMs` above 0, keyboard stick bindings move the stick toward the
 
 With `TriggerRampMs` above 0, a key or mouse button bound to `L2` or `R2` presses the analog trigger gradually and lets it go the same way, for throttle and brake in racing titles. A pressed controller trigger is not slowed, and the larger of the two values is passed on.
 
+## Toggled buttons
+
+A pad button listed in `ToggleActions` latches instead of being held: the first press of a key or mouse button bound to it presses the button, and the button stays pressed after the key or mouse button is released. The next press releases it. Every key and mouse button bound to the same action shares that one state, so pressing either one toggles it. Buttons not listed keep the normal behavior, pressed while the key is held. Losing focus releases every toggled button.
+
+Mouse wheel bindings are not toggled; they still press the button for a short moment as before.
+
+```ini
+ToggleActions = R2, L1
+R2 = KEY:Z
+```
+
+Here Z presses R2 on the first press and off on the second, and Q (bound to L1 by default) does the same for L1. A listed action with no binding is ignored. A per-game profile that sets `ToggleActions` replaces the list from the shared file, and an empty value or an unknown action is an error.
+
 ## Shake
 
 While the `Shake` input is held (X by default), the controller reports its acceleration and angular velocity swinging back and forth every 50 ms, for titles that ask the player to shake the controller. A controller's own motion sensors are used otherwise.
 
 ## Per-game profiles
 
-A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA00001.ini`. The profile has the same format and overrides only the actions, settings and SDL controller buttons it lists. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`. An invalid line in a profile reports the profile's file and line number.
+A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA00001.ini`. With `ANYPS5_INPUT_CONFIG` unset, you can use the profile beside the game executable without creating `anyps5-input.ini`. The profile has the same format and overrides only the actions, settings and SDL controller buttons it lists. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`. An invalid line in a profile reports the profile's file and line number.
 
 For example, a profile that gives one title a lower mouse sensitivity and Cross on F:
 
@@ -195,7 +240,7 @@ MouseCurve = 1.3
 
 Earlier versions sampled the mouse every 33 ms and tilted the stick at least halfway for any movement. `MouseDeadzoneOffset = 0.5`, `MouseSmoothingMs = 0` and `MouseDecayMs = 33` come close to that behavior.
 
-An invalid line stops the game when video output starts, with an error that names the file and line number. If the file named by `ANYPS5_INPUT_CONFIG` does not exist, or the configuration file cannot be read, the game stops with an error. With no `anyps5-input.ini` and no `ANYPS5_INPUT_CONFIG`, the built-in mapping is used.
+An invalid line stops the game when video output starts, with an error that names the file and line number. If the file named by `ANYPS5_INPUT_CONFIG` does not exist, or the configuration file cannot be read, the game stops with an error.
 
 ## Web configurator
 
@@ -203,9 +248,9 @@ The [input mapper](../../tools/input-mapper/index.html) edits keyboard, mouse, w
 
 For an emulator action such as `ToggleFullscreen`, add a binding, choose `PAD` as the input type and select one or more controller buttons in the binding value. Open an imported `PAD:` binding the same way to edit its buttons.
 
-On the Configuration page, enter the game's exact title ID to download a [per-game profile](#per-game-profiles), such as `anyps5-input.PPSA00001.ini`. Leave the field blank to download the shared `anyps5-input.ini`.
+On the Configuration page, enter the game's exact title ID to download a [per-game profile](#per-game-profiles), such as `anyps5-input.PPSA00001.ini`. Leave the field blank to download the shared `anyps5-input.ini`. Importing `anyps5-input.<TITLEID>.ini` fills the field from the filename. Importing `anyps5-input.ini` clears it.
 
-Add `SDLButton:` lines by hand. The configurator validates them on import and preserves them in the INI preview, in copied text and in the downloaded file. Invalid or duplicate controller entries are reported with their line number.
+Add settings, such as `MouseSensitivity` or `ToggleActions`, and `SDLButton:` lines by hand. The configurator validates them on import and preserves them in the INI preview, in copied text and in the downloaded file. Invalid or duplicate settings and controller entries are reported with their line number.
 
 From the repository root, with Node.js 22 or later:
 

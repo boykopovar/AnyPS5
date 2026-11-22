@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import subprocess
@@ -236,6 +237,17 @@ class AbSplitTests(unittest.TestCase):
         row = ab_split.parse_report("present", present(90.0, 10.0, presents=30, dropped=10))
         self.assertEqual(row, {"frames": 40, "busy": 90.0, "gaps": 10.0})
 
+    def test_missing_completion_records_only_refuse_counted_present_reports(self):
+        lines = log()
+        early = next(i for i, line in enumerate(lines) if line.startswith("[present]"))
+        lines[early] = lines[early].replace("0 batches without", "2 batches without")
+        self.assertTrue(ab_split.split(lines)["metrics"])
+        settled = next(i for i, line in enumerate(lines) if line.startswith("[ab] phase B 1 settled"))
+        counted = [i for i in range(settled, len(lines)) if lines[i].startswith("[present]")][1]
+        lines[counted] = lines[counted].replace("0 batches without", "2 batches without")
+        with self.assertRaisesRegex(ValueError, "completion records"):
+            ab_split.split(lines)
+
     def test_dropped_gpu_ranges_in_a_counted_report_refuse_the_comparison(self):
         lines = log()
         index = next(i for i, line in enumerate(lines) if line.startswith("[ab] phase B 1 settled"))
@@ -424,5 +436,70 @@ class AbSplitTests(unittest.TestCase):
                         self.assertEqual(run.stdout, "")
                         self.assertIn("settled does not match active phase", run.stderr)
                         self.assertNotIn("Traceback", run.stderr)
+
+
+class FiniteHelperTests(unittest.TestCase):
+    def test_finite_returns_finite_values_unchanged(self):
+        self.assertEqual(ab_split.finite({"a": [1.5, 2.0], "b": (3,)}), {"a": [1.5, 2.0], "b": (3,)})
+
+    def test_finite_refuses_non_finite_values_inside_containers(self):
+        with self.assertRaisesRegex(ValueError, "non-finite"):
+            ab_split.finite({"a": [1.0, float("inf")]})
+        with self.assertRaisesRegex(ValueError, "non-finite"):
+            ab_split.finite((float("nan"),))
+
+    def test_finite_sum_adds_finite_values_and_refuses_an_overflowing_total(self):
+        self.assertEqual(ab_split.finite_sum([1.5, 2.5]), 4.0)
+        with self.assertRaisesRegex(ValueError, "non-finite"):
+            ab_split.finite_sum([1e308, 1e308])
+
+    def test_number_returns_the_first_captured_float(self):
+        self.assertEqual(ab_split.number(r"busy ([\d.]+) ms", "busy 12.5 ms, busy 3 ms"), 12.5)
+
+    def test_number_returns_none_when_the_pattern_is_absent(self):
+        self.assertIsNone(ab_split.number(r"busy ([\d.]+) ms", "idle only"))
+
+
+class ProgramKeyTests(unittest.TestCase):
+    def test_program_key_lowercases_and_strips_leading_zeros(self):
+        self.assertEqual(ab_split.program_key("0x1000"), "0x1000")
+        self.assertEqual(ab_split.program_key("0xABC"), "0xabc")
+        self.assertEqual(ab_split.program_key("0x0000"), "0x0")
+
+    def test_program_key_refuses_a_value_without_the_hex_prefix(self):
+        with self.assertRaises(argparse.ArgumentTypeError):
+            ab_split.program_key("1000")
+class TextReportTests(unittest.TestCase):
+    def result(self, config="[ab] cfg", rate=5.0, rows=None):
+        phase = {"kind": "A", "index": 1, "begin_present": 10, "settled_present": None, "end_present": 20,
+                 "clean_reports": {"present": 1, "gputime": 2, "draw": 3, "syncwait": 4},
+                 "metrics": {"presents/10s": rate}}
+        return {"config": config, "phases": [phase], "metrics": rows or []}
+
+    def test_text_report_prints_the_phase_row_with_counts_and_rate(self):
+        lines = ab_split.text_report(self.result()).split("\n")
+        phase_line = next(line for line in lines if line.startswith("A 1"))
+        self.assertIn("10 /       - /      20", phase_line)
+        self.assertIn("1/2/3/4", phase_line)
+        self.assertTrue(phase_line.endswith("5.00"))
+
+    def test_text_report_formats_a_metric_row_without_noise(self):
+        lines = ab_split.text_report(self.result(rows=[{"metric": "m", "a": 1.0, "b": 2.0, "change": 1.0,
+                                                        "change_pct": 100.0, "noise": None}])).split("\n")
+        metric_line = next(line for line in lines if line.startswith("m "))
+        self.assertIn("+1.00", metric_line)
+        self.assertIn("+100.0%", metric_line)
+        self.assertTrue(metric_line.endswith("-"))
+
+    def test_text_report_names_a_missing_configuration_and_unfinished_phases(self):
+        text = ab_split.text_report(self.result(config=None, rate=None))
+        self.assertTrue(text.startswith("[ab] configuration line missing"))
+        self.assertIn("unfinished", text)
+class ReadLogRefusalTests(unittest.TestCase):
+    def test_read_log_refuses_two_runs_in_one_log(self):
+        with self.assertRaisesRegex(ValueError, 'multiple A/B runs in one log'):
+            ab_split.read_log(['[ab] in-run A/B: first', '[ab] in-run A/B: second'])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -47,7 +47,9 @@ def read_db(path):
             if len(parts) >= 2 and not parts[0].startswith("#"):
                 nid, name = (part.split("#", 1)[0] for part in parts[:2])
                 if nid and name:
-                    db.setdefault(nid, name)
+                    previous = db.setdefault(nid, name)
+                    if previous != name and compute_nid(name) == nid and compute_nid(previous) != nid:
+                        db[nid] = name
     return db
 
 
