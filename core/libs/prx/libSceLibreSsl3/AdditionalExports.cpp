@@ -12,10 +12,6 @@ int APS5_VABI SSL_CTX_set0_chain_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI SSL_do_handshake_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI SSL_set_accept_state_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -61,10 +57,6 @@ int APS5_VABI SSL_CTX_set_max_early_data_nid_postfix(void* ctx, std::uint32_t ma
 void APS5_VABI SSL_set_quic_use_legacy_codepoint_nid_postfix(void* ssl, int useLegacy) {
     (void)ssl;
     (void)useLegacy;
-}
-
-int APS5_VABI SSL_CTX_set_default_verify_paths_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI RSAPublicKey_dup_nid_postfix() {

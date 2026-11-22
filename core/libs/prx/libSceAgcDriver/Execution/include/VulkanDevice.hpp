@@ -74,6 +74,9 @@ public:
     bool ReplayComputePipeline(const ShaderRecompiler::RecompileResult& shader, bool pushConstants);
     bool HasComputePipeline(const ShaderRecompiler::RecompileResult& shader) const;
     void PrebuildComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress = 0);
+    enum class PipelineAhead { Built, Building, Start, Unavailable };
+    PipelineAhead ComputePipelineAhead(const ShaderRecompiler::RecompileResult& shader);
+    void AbandonComputePipelineAhead(const ShaderRecompiler::RecompileResult& shader);
     // Starts the journal replay if the device has not (a headless device starts it at its first
     // draw or dispatch) and joins it (tests; the teardown joins it anyway).
     void WaitForPipelineJournalReplay();
@@ -229,7 +232,7 @@ public:
     };
     static CopyAliasing CopyAliasCounts();
     struct ComputePipelineCreation {
-        std::uint64_t created, underGpuMutex;
+        std::uint64_t created, underGpuMutex, ahead;
     };
     static ComputePipelineCreation ComputePipelineCounts();
     struct DispatchMoveCount {

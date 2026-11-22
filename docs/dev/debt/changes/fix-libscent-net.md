@@ -1,0 +1,5 @@
+# libSceNet
+
+## add Unknown function info
+
+- [sceNetGetSystemMemInfo, sceNetGetAppMemInfo, sceNetGetIfListOnce, sceNetGetRouteInfo, sceNetGetArpInfo, sceNetAllocateAllRouteInfo, sceNetAllocateAllRouteInfo6, sceNetGetIfListEx](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - the signatures in `Export.cpp` are real; the unverified detail is struct layout: `NetSystemMemoryInfo`, `NetAppMemoryInfo`, `NetInterfaceStatistics`, `NetRouteInfo` and `NetArpInfo` are forward-declared only in [Net.hpp](../../../core/libs/prx/libSceNet/include/Net.hpp), with no field size, offset or stride, and `sceNetGetIfListEx`'s non-zero `flags` is unknown. The PS4 10.71 notes above already cover the argument checks of `sceNetGetIfListOnce`, `sceNetGetRouteInfo`, `sceNetAllocateAllRouteInfo` and `sceNetGetArpInfo`, and record the other four as absent from PS4 10.71/11.00; only the PS5 record layouts, counts and strides remain unknown. Closing needs a PS5 `libSceNet.sprx` writer disassembly and a payload probe.

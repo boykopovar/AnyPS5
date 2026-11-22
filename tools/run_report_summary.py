@@ -23,6 +23,13 @@ def count_text(value, noun):
     return f"{number_text(value)} {noun}{'' if value == 1 else 's'}"
 
 
+def diagnostic_entries(report, section, key):
+    entries = report[section].get(key, [])
+    if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
+        raise ValueError(f"report field '{section}.{key}' must be an array of objects")
+    return entries
+
+
 def total_count(items, key):
     counts = [item.get(key, 0) for item in items if isinstance(item, dict)]
     if any(not is_finite_number(count) for count in counts):
@@ -41,12 +48,14 @@ def render(report):
     for key in ("game", "system", "run", "coverage", "missing", "shaders", "truncated", "stop"):
         if not isinstance(report.get(key), dict):
             raise ValueError(f"report field {key!r} must be an object")
+    for key in ("milestones", "missing", "shaders", "unsupported"):
+        if type(report["coverage"].get(key)) is not bool:
+            raise ValueError(f"report field 'coverage.{key}' must be a boolean")
 
     game = report["game"]
     system = report["system"]
     run = report["run"]
     coverage = report["coverage"]
-    missing = report["missing"]
     shaders = report["shaders"]
     truncated = report["truncated"]
     stop = report["stop"]
@@ -95,13 +104,12 @@ def render(report):
     lines.append(f"Stop: {stop_summary}")
 
     if coverage.get("missing"):
-        functions = missing.get("functions", [])
+        functions = diagnostic_entries(report, "missing", "functions")
         calls = total_count(functions, "calls")
         lines.append(f"Missing functions: {count_text(calls, 'call')} across {count_text(len(functions), 'function')}")
         for item in functions[:5]:
-            if isinstance(item, dict):
-                library = text(item.get("library"))
-                lines.append(f"  - {library}::{text(item.get('name'))} ({count_text(item.get('calls', 0), 'call')})")
+            library = text(item.get("library"))
+            lines.append(f"  - {library}::{text(item.get('name'))} ({count_text(item.get('calls', 0), 'call')})")
         if truncated.get("functions", 0):
             lines.append(f"  - {count_text(truncated['functions'], 'additional function')} omitted")
     else:
@@ -112,14 +120,13 @@ def render(report):
     else:
         lines.append("Shaders: compilation data was not collected")
     if coverage.get("unsupported"):
-        unsupported = shaders.get("unsupported", [])
+        unsupported = diagnostic_entries(report, "shaders", "unsupported")
         total = total_count(unsupported, "count")
         lines.append(f"Unsupported shader instructions: {count_text(total, 'occurrence')} across {count_text(len(unsupported), 'instruction')}")
         for item in unsupported[:5]:
-            if isinstance(item, dict):
-                opcode_value = item.get("opcodeValue")
-                instruction = item.get("opcode") or (opcode_value if opcode_value is not None else "unknown instruction")
-                lines.append(f"  - {text(item.get('encoding'))}: {text(str(instruction))} ({count_text(item.get('count', 0), 'occurrence')})")
+            opcode_value = item.get("opcodeValue")
+            instruction = item.get("opcode") or (opcode_value if opcode_value is not None else "unknown instruction")
+            lines.append(f"  - {text(item.get('encoding'))}: {text(str(instruction))} ({count_text(item.get('count', 0), 'occurrence')})")
         if truncated.get("unsupported", 0):
             lines.append(f"  - {count_text(truncated['unsupported'], 'additional instruction')} omitted")
     else:

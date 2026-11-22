@@ -22,7 +22,7 @@ std::size_t FindSectionOffsetByRva(const std::vector<std::uint8_t>& pe, std::uin
         if (sectionOffset + sizeof(PeSectionHeader) > pe.size()) throw std::runtime_error("section header out of bounds");
         const auto section = Internal::Read<PeSectionHeader>(pe, sectionOffset);
         const std::uint32_t effectiveSize = section.VirtualSize != 0u ? section.VirtualSize : section.SizeOfRawData;
-        if (rva >= section.VirtualAddress && rva < section.VirtualAddress + effectiveSize)
+        if (rva >= section.VirtualAddress && std::uint64_t{rva} < std::uint64_t{section.VirtualAddress} + effectiveSize)
             return sectionOffset;
     }
     throw std::runtime_error("rva not mapped to any section");
@@ -31,7 +31,11 @@ std::size_t FindSectionOffsetByRva(const std::vector<std::uint8_t>& pe, std::uin
 std::size_t RvaToOffset(const std::vector<std::uint8_t>& pe, std::uint32_t rva, std::uint32_t peHeaderOffset, std::uint16_t numberOfSections, std::uint32_t sizeOfOptionalHeader) {
     const std::size_t sectionOffset = FindSectionOffsetByRva(pe, rva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
     const auto section = Internal::Read<PeSectionHeader>(pe, sectionOffset);
-    return static_cast<std::size_t>(section.PointerToRawData) + (rva - section.VirtualAddress);
+    const auto relative = rva - section.VirtualAddress;
+    if (relative >= section.SizeOfRawData) throw std::runtime_error("rva is not backed by section file data");
+    const auto offset = std::uint64_t{section.PointerToRawData} + relative;
+    if (offset >= pe.size()) throw std::runtime_error("rva maps outside the file");
+    return static_cast<std::size_t>(offset);
 }
 
 }
