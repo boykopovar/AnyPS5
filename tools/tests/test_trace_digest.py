@@ -1179,6 +1179,31 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual(trace_digest.load_stacks(self.stacks), [(["worker", "draw"], 10)])
 
 
+    def test_stack_records_preserve_embedded_unicode_line_separators(self):
+        separators = ("\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "worker.txt"
+            for separator in separators:
+                for in_comment in (False, True):
+                    with self.subTest(separator=repr(separator), in_comment=in_comment):
+                        comment = f"# capture{separator}notes" if in_comment else "# capture notes"
+                        frame = "module" if in_comment else f"mod{separator}ule"
+                        path.write_text(f"{comment}\r\n{frame};leaf 2", encoding="utf-8-sig")
+                        self.assertEqual(trace_digest.load_stacks(path), [([frame, "leaf"], 2)])
+
+    def test_stack_counts_validate_uint64_without_converting_padding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "worker.txt"
+            for digits, count in ((4400, 42), (5000, 2**64 - 1)):
+                with self.subTest(padded_digits=digits):
+                    path.write_text(f"module;leaf {'0' * digits}{count}\n", encoding="utf-8")
+                    self.assertEqual(trace_digest.load_stacks(path), [(["module", "leaf"], count)])
+            for count in (str(2**64), str(2**64 + 1), "1" + "0" * 400, "9" * 4500):
+                with self.subTest(count_digits=len(count), prefix=count[:24]):
+                    path.write_text(f"# stacks\nmodule;leaf {count}\n", encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, r"worker\.txt:2: sample count exceeds uint64"):
+                        trace_digest.load_stacks(path)
+
     def test_stacks_self_and_total(self):
         stacks = self.result()["stacks"]
         self.assertEqual(stacks["samples"], 5)
