@@ -8939,14 +8939,6 @@ int APS5_VABI WKBundlePageCreateSnapshotWithOptions() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageDidEnterFullScreen() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageDidExitFullScreen() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageDumpHistoryForTesting() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9180,14 +9172,6 @@ int APS5_VABI WKBundlePageUninstallPageOverlay() {
 }
 
 int APS5_VABI WKBundlePageUninstallPageOverlayWithAnimation() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageWillEnterFullScreen() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageWillExitFullScreen() {
     NotImplemented_nid_no_patch(__func__);
 }
 

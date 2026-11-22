@@ -258,6 +258,7 @@ public:
     bool isSuspended = false;
     bool usesEphemeralSession = false;
     std::uint64_t renderTreeSize = 0;
+    bool isFullScreen = false;
     bool hasComposition = false;
 };
 
