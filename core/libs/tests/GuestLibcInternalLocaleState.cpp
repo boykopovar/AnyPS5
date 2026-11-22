@@ -413,6 +413,50 @@ void CheckGlobalLocaleConcurrentSwapConsumer() {
     if (auto* releasedPut = numPut->vtable->release(numPut)) releasedPut->vtable->deleteObject(releasedPut);
 }
 
+void CheckGlobalFacetHeldAcrossSwap() {
+    GlobalLocaleGuard guard;
+    g_liveAllocations.clear();
+    g_freedAllocations.clear();
+    g_doubleFreeDetected = false;
+
+    GuestLocale::NumpunctFacet commaPunct{{&g_testNumpunctVtable.facet, 1, 0}, "", ',', ',', "false", "true"};
+    GuestLocale::NumpunctFacet semicolonPunct{{&g_testNumpunctVtable.facet, 1, 0}, "", ';', ',', "false", "true"};
+
+    GuestLocale::Implementation* impA = AllocateLocimp(false);
+    _ZNSt6locale7_Locimp7_AddfacEPNS_5facetEm_nid_postfix(impA, &commaPunct.base, _ZNSt8numpunctIcE2idE_nid_postfix);
+    void* facetsA = impA->facets;
+
+    GuestLocale::Implementation* impB = AllocateLocimp(false);
+    _ZNSt6locale7_Locimp7_AddfacEPNS_5facetEm_nid_postfix(impB, &semicolonPunct.base, _ZNSt8numpunctIcE2idE_nid_postfix);
+
+    GuestLocaleFacade locA{impA};
+    GuestLocaleFacade prev1{};
+    _ZNSt6locale6globalERKS__nid_postfix(&prev1, &locA);
+    ReleaseLocaleFacade(prev1);
+    ReleaseLocaleFacade(locA);
+    Require(_ZNSt6locale16_GetgloballocaleEv_nid_postfix() == impA, "held facet test installs A as global");
+
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* held = hold.Find(_ZNSt8numpunctIcE2idE_nid_postfix);
+    Require(held == &commaPunct.base, "hold finds the global facet");
+
+    GuestLocaleFacade locB{impB};
+    GuestLocaleFacade prev2{};
+    _ZNSt6locale6globalERKS__nid_postfix(&prev2, &locB);
+    Require(prev2.implementation == impA, "swap to B returns A");
+    ReleaseLocaleFacade(locB);
+    ReleaseLocaleFacade(prev2);
+    Require(_ZNSt6locale16_GetgloballocaleEv_nid_postfix() == impB, "held facet test installs B as global");
+    Require(CountFreedPointer(impA) == 0, "held global locale A must not be freed after the swap");
+    Require(CountFreedPointer(facetsA) == 0, "held global locale A facets must not be freed after the swap");
+    Require(reinterpret_cast<const GuestLocale::NumpunctFacet*>(held)->decimalPoint == ',', "held facet still reads its expected value");
+
+    hold = GuestLocale::GlobalLocaleHold();
+    Require(CountFreedPointer(impA) == 1, "releasing the hold frees A exactly once");
+    Require(CountFreedPointer(facetsA) == 1, "releasing the hold frees A facets exactly once");
+    Require(!g_doubleFreeDetected, "releasing the hold must not trigger a double-free");
+}
+
 void CheckGlobalLocaleNegativeInputs() {
     GlobalLocaleGuard guard;
     GuestLocale::Implementation* impA = AllocateLocimp(false);
@@ -458,6 +502,7 @@ int main() {
     CheckLocinfoWithCategoryConstructor();
     CheckGlobalLocaleLifecycle();
     CheckGlobalLocaleConcurrentSwapConsumer();
+    CheckGlobalFacetHeldAcrossSwap();
     CheckGlobalLocaleNegativeInputs();
     Require(NotImplementedCalls_nid_no_patch() == beforeNotImplemented, "tests must not hit NotImplemented stubs");
     return 0;

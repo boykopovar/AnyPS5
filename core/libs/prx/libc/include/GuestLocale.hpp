@@ -457,6 +457,43 @@ extern "C" void APS5_VABI CtypeDestroy_nid_no_patch(GuestLocale::CtypeFacet* sel
 extern "C" void APS5_VABI CtypeDelete_nid_no_patch(GuestLocale::CtypeFacet* self);
 extern "C" const GuestLocale::FacetVtable* LibcLocimpVtable_nid_no_patch();
 extern "C" GuestLocale::Implementation* LibcSwapGlobalLocale_nid_no_patch(GuestLocale::Implementation* next);
-extern "C" const GuestLocale::Facet* LibcFindGlobalFacet_nid_no_patch(std::uint64_t index);
+extern "C" GuestLocale::Implementation* LibcAcquireGlobalLocale_nid_no_patch();
+extern "C" void LibcReleaseLocale_nid_no_patch(GuestLocale::Implementation* locale);
+
+namespace GuestLocale {
+
+class GlobalLocaleHold {
+public:
+    GlobalLocaleHold() = default;
+
+    GlobalLocaleHold(const GlobalLocaleHold&) = delete;
+    GlobalLocaleHold& operator=(const GlobalLocaleHold&) = delete;
+
+    GlobalLocaleHold(GlobalLocaleHold&& other) noexcept : locale(other.locale) {
+        other.locale = nullptr;
+    }
+
+    GlobalLocaleHold& operator=(GlobalLocaleHold&& other) noexcept {
+        if (this != &other) {
+            LibcReleaseLocale_nid_no_patch(locale);
+            locale = other.locale;
+            other.locale = nullptr;
+        }
+        return *this;
+    }
+
+    ~GlobalLocaleHold() {
+        LibcReleaseLocale_nid_no_patch(locale);
+    }
+
+    const Facet* Find(std::uint64_t index) {
+        if (locale == nullptr) locale = LibcAcquireGlobalLocale_nid_no_patch();
+        return locale != nullptr && locale->facets != nullptr && index < locale->facetCount ? locale->facets[index] : nullptr;
+    }
+
+    Implementation* locale = nullptr;
+};
+
+}
 
 #endif

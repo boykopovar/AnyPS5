@@ -419,7 +419,7 @@ constexpr std::int32_t IosFixed = 0x1000;
 constexpr std::int32_t IosHexFloat = 0x1800;
 constexpr std::int32_t IosBoolAlpha = 0x8000;
 
-const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uint64_t& id) {
+const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uint64_t& id, GuestLocale::GlobalLocaleHold& hold) {
     std::atomic_ref<std::uint64_t> slot(id);
     if (slot.load() == 0) {
         _Locksyslock_nid_postfix();
@@ -430,11 +430,11 @@ const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uin
     const GuestLocale::Implementation* locale = *stream->locale;
     const GuestLocale::Facet* facet = index < locale->facetCount ? locale->facets[index] : nullptr;
     if (facet != nullptr || !locale->transparent) return facet;
-    return LibcFindGlobalFacet_nid_no_patch(index);
+    return hold.Find(index);
 }
 
-const GuestLocale::Facet* StreamNumpunct(const GuestLocale::IosBase* stream) {
-    if (const GuestLocale::Facet* facet = FindFacet(stream, _ZNSt8numpunctIcE2idE_nid_postfix)) return facet;
+const GuestLocale::Facet* StreamNumpunct(const GuestLocale::IosBase* stream, GuestLocale::GlobalLocaleHold& hold) {
+    if (const GuestLocale::Facet* facet = FindFacet(stream, _ZNSt8numpunctIcE2idE_nid_postfix, hold)) return facet;
     static GuestLocale::Facet* const fallback = [] {
         GuestLocale::Facet* created = nullptr;
         _ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&created, nullptr);
@@ -467,7 +467,8 @@ std::string TakeString(GuestLocale::String* (APS5_VABI* method)(GuestLocale::Str
 
 std::string Widen(const GuestLocale::IosBase* stream, const char* text, std::size_t count) {
     std::string result(text, count);
-    if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix)) reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->widenRange(ctype, text, text + count, result.data());
+    GuestLocale::GlobalLocaleHold hold;
+    if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix, hold)) reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->widenRange(ctype, text, text + count, result.data());
     return result;
 }
 
@@ -509,7 +510,8 @@ GuestLocale::OutputIterator PutInteger(GuestLocale::OutputIterator out, GuestLoc
     std::size_t prefix = SignPrefix(digits, count);
     if ((stream->flags & IosBaseField) == IosHex && HexPrefix(digits, prefix, count)) prefix += 2;
     std::string text = Widen(stream, digits, count);
-    const GuestLocale::Facet* punct = StreamNumpunct(stream);
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* punct = StreamNumpunct(stream, hold);
     const std::string grouping = TakeString(Punctuation(punct).grouping, punct);
     if (static_cast<signed char>(grouping[0]) != CHAR_MAX && static_cast<signed char>(grouping[0]) > 0) InsertSeparators(text, grouping, Punctuation(punct).thousandsSep(AsNumpunct(punct)), count, prefix);
     return PutField(out, stream, fill, text, prefix);
@@ -523,7 +525,8 @@ GuestLocale::OutputIterator PutFloating(GuestLocale::OutputIterator out, GuestLo
     const char point[2] = {localeconv_nid_postfix()->decimal_point[0], '\0'};
     const std::size_t pointOffset = std::strcspn(digits, point);
     std::string text = Widen(stream, digits, count);
-    const GuestLocale::Facet* punct = StreamNumpunct(stream);
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* punct = StreamNumpunct(stream, hold);
     const std::string grouping = TakeString(Punctuation(punct).grouping, punct);
     const char separator = Punctuation(punct).thousandsSep(AsNumpunct(punct));
     std::size_t offset = exponent;
@@ -569,7 +572,8 @@ template<typename Value> GuestLocale::OutputIterator PutFormattedFloating(GuestL
 
 GuestLocale::OutputIterator APS5_VABI NumPutBool(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, bool value) {
     if ((stream->flags & IosBoolAlpha) == 0) return reinterpret_cast<const GuestLocale::NumPutVtable*>(self->vtable)->putLong(self, out, stream, fill, value ? 1 : 0);
-    const GuestLocale::Facet* punct = StreamNumpunct(stream);
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* punct = StreamNumpunct(stream, hold);
     return PutField(out, stream, fill, TakeString(value ? Punctuation(punct).truename : Punctuation(punct).falsename, punct), 0);
 }
 
@@ -921,7 +925,8 @@ extern "C" GuestLocale::String* LibcCopyWideString_nid_no_patch(GuestLocale::Str
 }
 
 extern "C" GuestLocale::OutputIterator LibcWideTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, const std::uint16_t* first, const std::uint16_t* last) {
-    const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIwE2idE_nid_postfix);
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIwE2idE_nid_postfix, hold);
     const auto put = reinterpret_cast<const GuestLocale::WideTimePutVtable*>(self->vtable)->put;
     for (; first != last; ++first) {
         if (NarrowWideElement(ctype, *first) != '%') {
@@ -984,7 +989,8 @@ extern "C" GuestLocale::OutputIterator LibcNumPutInteger_nid_no_patch(GuestLocal
 }
 
 extern "C" GuestLocale::OutputIterator LibcTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, const char* first, const char* last) {
-    const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix);
+    GuestLocale::GlobalLocaleHold hold;
+    const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix, hold);
     const auto narrow = [ctype](char character) { return ctype != nullptr ? reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->narrow(ctype, character, '\0') : character; };
     const auto put = reinterpret_cast<const GuestLocale::TimePutVtable*>(self->vtable)->put;
     for (; first != last; ++first) {
@@ -2076,10 +2082,17 @@ const GuestLocale::FacetVtable* LibcLocimpVtable_nid_no_patch() {
     return &g_locimpVtable;
 }
 
-const GuestLocale::Facet* LibcFindGlobalFacet_nid_no_patch(std::uint64_t index) {
+GuestLocale::Implementation* LibcAcquireGlobalLocale_nid_no_patch() {
     std::lock_guard<std::mutex> lock(g_localeInitMutex);
-    const GuestLocale::Implementation* global = g_globalLocale.load();
-    return global != nullptr && global->facets != nullptr && index < global->facetCount ? global->facets[index] : nullptr;
+    GuestLocale::Implementation* global = g_globalLocale.load();
+    if (global != nullptr) global->base.vtable->retain(&global->base);
+    return global;
+}
+
+void LibcReleaseLocale_nid_no_patch(GuestLocale::Implementation* locale) {
+    if (locale == nullptr) return;
+    auto* base = &locale->base;
+    if (auto* released = base->vtable->release(base)) released->vtable->deleteObject(released);
 }
 
 GuestLocale::Implementation* LibcSwapGlobalLocale_nid_no_patch(GuestLocale::Implementation* next) {
