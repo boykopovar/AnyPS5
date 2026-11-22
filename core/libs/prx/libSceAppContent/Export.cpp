@@ -341,11 +341,21 @@ int APS5_VABI sceAppContentInitialize(const AppContentInitParam* initParam, AppC
     if (sdkVersion >= 0x01500000) {
         if (initialized.load()) return SCE_APP_CONTENT_ERROR_BUSY;
         if (initParam == nullptr || bootParam == nullptr) return SCE_APP_CONTENT_ERROR_PARAMETER;
-        if (!std::all_of(std::begin(initParam->reserved), std::end(initParam->reserved), [](char value) { return value == 0; }) || !std::all_of(std::begin(bootParam->reserved1), std::end(bootParam->reserved1), [](char value) { return value == 0; }) || !std::all_of(std::begin(bootParam->reserved2), std::end(bootParam->reserved2), [](char value) { return value == 0; })) return SCE_APP_CONTENT_ERROR_PARAMETER;
+        AppContentInitParam init{};
+        AppContentBootParam boot{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&init, initParam, sizeof(init)) && GuestCopyIn_nid_no_patch(&boot, bootParam, sizeof(boot));
+        errno = savedErrno;
+        if (!copied) return SCE_APP_CONTENT_ERROR_PARAMETER;
+        if (!std::all_of(std::begin(init.reserved), std::end(init.reserved), [](char value) { return value == 0; }) || !std::all_of(std::begin(boot.reserved1), std::end(boot.reserved1), [](char value) { return value == 0; }) || !std::all_of(std::begin(boot.reserved2), std::end(boot.reserved2), [](char value) { return value == 0; })) return SCE_APP_CONTENT_ERROR_PARAMETER;
     }
     if (bootParam == nullptr) return SCE_APP_CONTENT_ERROR_PARAMETER;
     Temporary();
-    std::memset(bootParam, 0, sizeof(*bootParam));
+    const AppContentBootParam output{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(bootParam, &output, sizeof(output));
+    errno = savedErrno;
+    if (!copied) return SCE_APP_CONTENT_ERROR_PARAMETER;
     initialized = true;
     return 0;
 }

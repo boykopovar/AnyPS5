@@ -93,6 +93,13 @@ int main() {
     AppContentBootParam boot{};
     Require(sceAppContentInitialize(nullptr, &boot) == ErrorParameter);
     Require(sceAppContentInitialize(&init, nullptr) == ErrorParameter);
+    boot.attr = 0x5a5a5a5au;
+    errno = 71;
+    Require(sceAppContentInitialize(reinterpret_cast<const AppContentInitParam*>(std::uintptr_t{0x10}), &boot) == ErrorParameter);
+    Require(errno == 71 && boot.attr == 0x5a5a5a5au);
+    Require(sceAppContentInitialize(&init, reinterpret_cast<AppContentBootParam*>(std::uintptr_t{0x10})) == ErrorParameter);
+    Require(errno == 71);
+    boot.attr = 0;
     init.reserved[31] = 1;
     Require(sceAppContentInitialize(&init, &boot) == ErrorParameter);
     init.reserved[31] = 0;
