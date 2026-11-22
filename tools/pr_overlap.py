@@ -27,6 +27,9 @@ CLOSING = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
 CLOSES = re.compile(rf"(?<![\w-]){CLOSING}:?[ \t]+#(\d+)\b", re.IGNORECASE)
 FIXES = re.compile(rf"(?<![\w-])Fixes:[ \t]*((?:{CLOSING}[ \t]+)?#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)(?:{CLOSING}[ \t]+)?#\d+\b)*)", re.IGNORECASE)
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))?", re.M)
+HUNK_CONTEXT = re.compile(r"^@@ [^@\n]*@@[ \t]*(.*)$", re.M)
+CALL = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
+NOT_A_FUNCTION = frozenset({"alignof", "decltype", "for", "if", "return", "sizeof", "static_assert", "switch", "void", "while"})
 MARKER = "<!-- pr-overlap -->"
 FETCH_REFS = 100
 PR_PAGE_SIZE = 100
@@ -428,6 +431,15 @@ def exports(diff, prefix="+"):
     return found
 
 
+def diff_functions(diff):
+    found = set()
+    for context in HUNK_CONTEXT.findall(diff):
+        name = next((name for name in CALL.findall(context) if name not in NOT_A_FUNCTION), None)
+        if name is not None:
+            found.add(name)
+    return found
+
+
 def unquote_path(path):
     if path.startswith('"') and path.endswith('"'):
         return codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", errors="replace")
@@ -630,6 +642,7 @@ def scan(pr):
             pr["added"].add(path)
     diff, identity_diff = export_diffs(old, new)
     pr["exports"] = exports(diff)
+    pr["functions"] = diff_functions(diff)
     pr["added_exports"] = source_changed_exports(identity_diff, "+")
     pr["removed_exports"] = source_changed_exports(identity_diff, "-")
 
@@ -736,6 +749,9 @@ def overlaps(prs, a, b):
             uncompared = pa.get("files", set()) & pb.get("files", set())
             if uncompared:
                 found["uncompared"] = uncompared
+                shared_functions = pa.get("functions", set()) & pb.get("functions", set())
+                if shared_functions:
+                    found["uncompared_functions"] = shared_functions
     return found if any(found.values()) else None
 
 
@@ -801,8 +817,8 @@ def report(rows, blob, main_exports=None):
             return ""
     confirmed = {number: found for number, found in rows.items()
                  if found.get("conflicts") or found.get("exports") or found["added"]}
-    uncompared = {number: found["uncompared"] for number, found in rows.items() if found.get("uncompared")}
     issues = {number: found["issues"] for number, found in rows.items() if found.get("issues")}
+    uncompared = {number: found for number, found in rows.items() if found.get("uncompared")}
     lines = [MARKER]
     if confirmed:
         lines.extend([
@@ -839,13 +855,14 @@ def report(rows, blob, main_exports=None):
             lines.append("")
         lines.extend([
             "Some comparisons could not be completed because a pull request conflicts with the base branch. "
-            "Review these shared files manually before concluding that there is no overlap.",
+            "Review these shared files and the functions each diff names before concluding that there is no overlap.",
             "",
-            "| Pull request | Shared files not compared |",
-            "|---|---|",
+            "| Pull request | Shared files not compared | Same functions (from the diff) |",
+            "|---|---|---|",
         ])
-        for number, files in sorted(uncompared.items()):
-            lines.append(f"| {pull(blob, number)} | {cell(files)} |")
+        for number, found in sorted(uncompared.items()):
+            shared = cell(found.get("uncompared_functions"))
+            lines.append(f"| {pull(blob, number)} | {cell(found['uncompared'])} | {shared} |")
     body = "\n".join(lines) + "\n"
     return body if len(body) <= MAX_REPORT_CHARS else truncated(lines)
 
@@ -1028,7 +1045,7 @@ def main_status(names, ref):
 def lookup_report(names, found, status, prs, blob):
     lines = [
         "PS5 exports only. Internal functions and instruction opcodes are not checked.",
-        "Inspect candidate pull requests and run --branch <branch> to check file and line overlaps.",
+        "Inspect candidate pull requests and run --branch <branch> to check file and line overlaps; an edit inside a function exported under another name is matched only by --branch, so run it on a placeholder commit before writing code.",
         "",
     ]
     for requested in names:
@@ -1118,7 +1135,11 @@ def main(argv=None):
         unresolved = unverified_overlaps(rows[0])
         if unresolved:
             for number, files in sorted(unresolved.items()):
-                progress(f"cannot confirm overlap with PR {number}: {', '.join(sorted(files))}")
+                shared = sorted(rows[0][number].get("uncompared_functions", ()))
+                detail = ", ".join(sorted(files))
+                if shared:
+                    detail += f"; same functions: {', '.join(shared)}"
+                progress(f"cannot confirm overlap with PR {number}: {detail}")
             progress("overlap check failed closed; manually compare every reported PR branch before opening this one")
             return 2
         return 0
