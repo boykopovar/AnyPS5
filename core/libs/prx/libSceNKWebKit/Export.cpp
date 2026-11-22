@@ -2252,10 +2252,6 @@ int APS5_VABI _ZN7WebCore20throwGetterTypeErrorERN3JSC14JSGlobalObjectERNS0_10Th
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore11DisplayList10DrawGlyphsD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore8Document28searchForElementByIdentifierERKN3WTF16ObjectIdentifierINS_21ElementIdentifierTypeEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4794,10 +4790,6 @@ int APS5_VABI _ZNK7WebCore17CSSPrimitiveValue14getStringValueEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore11DisplayList10DrawGlyphsC2ERKNS_4FontEON3WTF6VectorItLm128ENS5_15CrashOnOverflowELm16ENS5_10FastMallocEEEONS6_INS_9FloatSizeELm128ES7_Lm16ES8_EERKNS_10FloatPointERKSB_NS_17FontSmoothingModeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore28DisplayRefreshMonitorManager17displayWasUpdatedEj() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -5909,10 +5901,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_ha_plus_LsDS43YA_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("ha+LsDS43YA", libSceNKWebKitLegacyUnknown_ha_plus_LsDS43YA_nid_no_patch);
-
-int APS5_VABI _ZN7WebCore11DisplayList10DrawGlyphsC1ERKNS_4FontEON3WTF6VectorItLm128ENS5_15CrashOnOverflowELm16ENS5_10FastMallocEEEONS6_INS_9FloatSizeELm128ES7_Lm16ES8_EERKNS_10FloatPointERKSB_NS_17FontSmoothingModeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZNK7WebCore7Element24computeInheritedLanguageEv() {
     NotImplemented_nid_no_patch(__func__);
@@ -7718,10 +7706,6 @@ int APS5_VABI _ZN7WebCore13JSDOMRectList6createEPN3JSC9StructureEPNS_17JSDOMGlob
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore11DisplayList10DrawGlyphsD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore16HTMLMediaElement19isVisibleInViewportEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8499,10 +8483,6 @@ int APS5_VABI _ZN7WebCore6Editor16pasteAsPlainTextENS0_20FromMenuOrKeyBindingE()
 }
 
 int APS5_VABI _ZNK7WebCore6Quirks47shouldAvoidScrollingWhenFocusedContentIsVisibleEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore11DisplayList10DrawGlyphsD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
