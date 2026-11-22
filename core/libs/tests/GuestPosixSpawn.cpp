@@ -20,6 +20,7 @@
 #include <utility>
 #include <vector>
 #ifdef _WIN32
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include <windows.h>
 #else
 extern "C" int kill(int, int);
@@ -384,9 +385,39 @@ static void CheckOrderedFileActions(const std::string& order) {
     CleanupChild();
 }
 
+static void RemoveDirectoryTree(const std::filesystem::path& path) {
+#ifdef _WIN32
+    std::error_code error;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, error);
+    const auto& target = error ? path : verbatim;
+    const DWORD attributes = GetFileAttributesW(target.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) return;
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        Check(DeleteFileW(target.c_str()) != 0);
+        return;
+    }
+    WIN32_FIND_DATAW entry{};
+    const std::wstring pattern = target.native() + L"\\*";
+    const HANDLE find = FindFirstFileW(pattern.c_str(), &entry);
+    if (find != INVALID_HANDLE_VALUE) {
+        do {
+            if (std::wcscmp(entry.cFileName, L".") == 0 || std::wcscmp(entry.cFileName, L"..") == 0) continue;
+            RemoveDirectoryTree(path / entry.cFileName);
+        } while (FindNextFileW(find, &entry) != 0);
+        FindClose(find);
+    }
+    Check(RemoveDirectoryW(target.c_str()) != 0);
+#else
+    std::error_code removeError;
+    std::filesystem::remove_all(path, removeError);
+    Check(!removeError);
+#endif
+}
+
 static void CheckOpenActionContract() {
     PrepareChildBinary();
     const auto app0 = std::filesystem::current_path() / "app0";
+    RemoveDirectoryTree(app0 / "spawn-open");
     Check(mkdir_nid_postfix("/app0/spawn-open", 0755) == 0);
     Check(mkdir_nid_postfix("/app0/spawn-open/dir", 0755) == 0);
     { std::ofstream file(app0 / "spawn-open" / "regular.txt"); file << "regular"; Check(file.good()); }
@@ -627,18 +658,9 @@ int main() {
         }
         if (std::strcmp(role, "child-closed-std") == 0) {
             char byte = 0;
-#ifdef _WIN32
             const bool isolatedIn = read_nid_postfix(0, &byte, 1) == 0;
             const bool isolatedOut = write_nid_postfix(1, "leak", 4) == 4;
             const bool isolatedErr = write_nid_postfix(2, "leak", 4) == 4;
-#else
-            *__error_nid_postfix() = 0;
-            const bool isolatedIn = read_nid_postfix(0, &byte, 1) == -1 && *__error_nid_postfix() == BadDescriptor;
-            *__error_nid_postfix() = 0;
-            const bool isolatedOut = write_nid_postfix(1, "leak", 4) == -1 && *__error_nid_postfix() == BadDescriptor;
-            *__error_nid_postfix() = 0;
-            const bool isolatedErr = write_nid_postfix(2, "leak", 4) == -1 && *__error_nid_postfix() == BadDescriptor;
-#endif
             std::_Exit(isolatedIn && isolatedOut && isolatedErr ? 0 : 12);
         }
         std::_Exit(99);

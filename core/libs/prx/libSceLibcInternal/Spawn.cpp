@@ -63,6 +63,16 @@ constexpr std::uint32_t SpawnFlagSetGroup = 0x02;
 constexpr std::uint32_t SpawnFlagSetSigDef = 0x10;
 constexpr std::uint32_t SpawnFlagSetSigMask = 0x20;
 
+struct ErrorGuard {
+    int* slot = __error_nid_postfix();
+    int guest = *slot;
+    int host = errno;
+    ~ErrorGuard() {
+        *slot = guest;
+        errno = host;
+    }
+};
+
 template <typename T>
 T LoadSpawnValue(const T* source, const char* function, const char* what) {
     T value{};
@@ -214,15 +224,7 @@ int ApplyChildRedirection(ChildStreams& streams, const PosixSpawnFileAction& act
         if (action.descriptor < 0) return BadDescriptor;
         if (action.descriptor > 2)
             NotImplemented_nid_no_patch(("posix_spawn: a child descriptor " + std::to_string(action.descriptor) + " beyond the standard streams").c_str());
-        struct ErrorGuard {
-            int* slot = __error_nid_postfix();
-            int guest = *slot;
-            int host = errno;
-            ~ErrorGuard() {
-                *slot = guest;
-                errno = host;
-            }
-        } guard;
+        ErrorGuard guard;
         const int fd = open_nid_postfix(action.path.c_str(), action.openFlags, action.mode);
         if (fd < 0) return *guard.slot;
         const auto closeOpened = [&] { close_nid_postfix(fd); };
@@ -472,15 +474,16 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
                 result = HostSpawnError(posix_spawn_file_actions_adddup2(usedActions, action.descriptor, action.newDescriptor));
                 break;
             case PosixSpawnFileActionKind::Open: {
+                int hostFlags = 0;
+                try {
+                    hostFlags = HostOpenFlags(action.openFlags);
+                } catch (const std::invalid_argument&) {
+                    result = InvalidArgument;
+                    break;
+                }
                 std::filesystem::path native;
                 if (const int error = ResolvePathError_nid_no_patch(action.path.c_str(), native)) result = error;
-                else {
-                    try {
-                        result = HostSpawnError(posix_spawn_file_actions_addopen(usedActions, action.descriptor, native.c_str(), HostOpenFlags(action.openFlags), action.mode));
-                    } catch (const std::invalid_argument&) {
-                        result = InvalidArgument;
-                    }
-                }
+                else result = HostSpawnError(posix_spawn_file_actions_addopen(usedActions, action.descriptor, native.c_str(), hostFlags, action.mode));
                 break;
             }
             }
@@ -641,6 +644,7 @@ int APS5_VABI posix_spawn_file_actions_addclose_nid_postfix(PosixSpawnFileAction
 
 int SpawnProgram(const char* function, const char* file, bool searchesPath, PosixSpawnFileActions* const* actions,
     PosixSpawnAttributes* const* attributes, std::int32_t* processId, char* const* arguments, char* const* environment) {
+    ErrorGuard guard;
     if (file == nullptr) throw std::invalid_argument(std::string(function) + ": null path");
     if (actions != nullptr) FileActions(actions, function);
     if (attributes != nullptr) Attributes(attributes, function);
