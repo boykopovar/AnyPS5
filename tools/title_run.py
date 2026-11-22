@@ -943,7 +943,7 @@ class Session:
                     if self.process.poll() is None:
                         self.process.kill()
                 finally:
-                    self.kill()
+                    finish_session(self)
                 raise
         else:
             self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
@@ -1108,6 +1108,7 @@ class Session:
     def kill(self):
         if os.name == "nt":
             self.watch_stop.set()
+            terminated = False
             try:
                 error = None
                 with self.lock:
@@ -1118,6 +1119,7 @@ class Session:
                 self.process.wait(timeout=5)
                 if error is not None:
                     raise error
+                terminated = True
             finally:
                 try:
                     if self.watcher is not None:
@@ -1128,13 +1130,26 @@ class Session:
                     if self.watch_error is not None:
                         raise self.watch_error
                 finally:
-                    self._release_windows()
+                    if terminated:
+                        self._release_windows()
             return
         try:
             os.killpg(self.process.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
         self.process.wait()
+
+
+def finish_session(session):
+    try:
+        session.kill()
+    except BaseException:
+        if os.name == "nt" and (session.job is not None or session.handles):
+            try:
+                session.kill()
+            finally:
+                session._release_windows()
+        raise
 
 
 CLOSE_SECONDS = 15
@@ -1190,7 +1205,7 @@ def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
                 while session.alive() and time.monotonic() < deadline:
                     time.sleep(0.5)
         finally:
-            session.kill()
+            finish_session(session)
     text = "".join((run_dir / name).read_text(encoding="utf-8", errors="replace") for name in ("stdout.log", "stderr.log"))
     summary_path = run_dir / "aps5-summary.jsonl"
     summary = read_summary(summary_path)
@@ -1256,7 +1271,7 @@ def performance_phase(executable, work, env, console, seconds, pad=None, capture
             if not forced:
                 exit_code = session.exit_code()
     finally:
-        session.kill()
+        finish_session(session)
     if capture:
         if os.name == "nt":
             for process, image in session.images.items():

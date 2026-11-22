@@ -267,15 +267,61 @@ class WindowsSessionLifetimeTests(unittest.TestCase):
         self.assertTrue(native.process.reaped)
         self.assertEqual(set(native.closed), native.allocated)
 
-    def test_wait_failure_still_releases_every_raw_handle(self):
+    def test_wait_failure_keeps_job_for_retry(self):
+        for terminate_ok in (False, True):
+            with self.subTest(terminate_ok=terminate_ok):
+                native = WindowsSessionNative()
+                native.terminate_ok = terminate_ok
+                with native.installed():
+                    session = native.session()
+                    session.process_ids()
+                    job = session.job
+                    native.process.wait_error = subprocess.TimeoutExpired("title.exe", 5)
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        session.kill()
+                    self.assertTrue(native.process.reaped)
+                    self.assertEqual(session.job, job)
+                    self.assertNotIn(job, native.closed)
+                    if not terminate_ok:
+                        self.assertIn(20, native.live)
+                    native.terminate_ok = True
+                    native.process.wait_error = None
+                    session.kill()
+                    self.assertFalse(native.live)
+                    self.assertEqual(set(native.closed), native.allocated)
+                    self.assertEqual(len(native.closed), len(set(native.closed)))
+
+    def test_final_cleanup_retries_and_reports_the_first_wait_error(self):
+        for error in (OSError("wait failed"), KeyboardInterrupt()):
+            with self.subTest(error=type(error)):
+                native = WindowsSessionNative()
+                native.process.wait = unittest.mock.Mock(side_effect=[error, 1])
+                with native.installed():
+                    session = native.session()
+                    session.process_ids()
+                    with self.assertRaises(type(error)):
+                        title_run.finish_session(session)
+                    self.assertEqual(native.process.wait.call_count, 2)
+                    self.assertEqual(set(native.closed), native.allocated)
+                    self.assertEqual(len(native.closed), len(set(native.closed)))
+
+    def test_failed_construction_retries_wait_before_releasing_job(self):
         native = WindowsSessionNative()
-        with native.installed():
-            session = native.session()
-            session.process_ids()
-            native.process.wait_error = RuntimeError("wait failed")
-            with self.assertRaisesRegex(RuntimeError, "wait failed"):
-                session.kill()
-            self.assertEqual(set(native.closed), native.allocated)
+        native.assign_ok = False
+        native.process.wait = unittest.mock.Mock(side_effect=[OSError("wait failed"), 1])
+        with native.installed(), self.assertRaises(OSError):
+            native.session()
+        self.assertEqual(native.process.wait.call_count, 2)
+        self.assertEqual(set(native.closed), native.allocated)
+
+    def test_failed_construction_releases_resources_after_last_wait(self):
+        native = WindowsSessionNative()
+        native.assign_ok = False
+        native.process.wait = unittest.mock.Mock(side_effect=OSError("wait failed"))
+        with native.installed(), self.assertRaisesRegex(OSError, "wait failed"):
+            native.session()
+        self.assertEqual(native.process.wait.call_count, 2)
+        self.assertEqual(set(native.closed), native.allocated)
 
     def test_failed_handle_release_attempts_other_resources_and_allows_retry(self):
         for handle in (100, 1010):
@@ -294,7 +340,7 @@ class WindowsSessionLifetimeTests(unittest.TestCase):
                     self.assertEqual(set(native.closed), native.allocated)
                     self.assertEqual(len(native.closed), len(set(native.closed)))
 
-    def test_failed_job_termination_reaps_parent_and_releases_handles(self):
+    def test_failed_job_termination_reaps_parent_and_can_retry_surviving_children(self):
         native = WindowsSessionNative()
         native.terminate_ok = False
         with native.installed():
@@ -304,6 +350,12 @@ class WindowsSessionLifetimeTests(unittest.TestCase):
                 session.kill()
             self.assertTrue(native.process.killed)
             self.assertTrue(native.process.reaped)
+            self.assertIn(20, native.live)
+            self.assertNotIn(session.job, native.closed)
+            self.assertIsNotNone(session.job)
+            native.terminate_ok = True
+            session.kill()
+            self.assertFalse(native.live)
             self.assertEqual(set(native.closed), native.allocated)
 
     def test_watcher_loop_error_unhooks_and_releases_handles(self):
