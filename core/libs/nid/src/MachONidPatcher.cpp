@@ -40,6 +40,7 @@ constexpr std::uint32_t kImportFormatAddend = 2;
 constexpr std::uint32_t kImportFormatAddend64 = 3;
 
 constexpr std::uint64_t kPageSize = 0x1000;
+constexpr std::size_t kDylibCommandSize = 24;
 
 struct MachHeader64 {
     std::uint32_t Magic;
@@ -159,7 +160,30 @@ Image ParseImage(const std::vector<std::uint8_t>& binary) {
     for (std::uint32_t index = 0; index < image.Header.CommandCount; ++index) {
         if (cursor + sizeof(LoadCommand) > end) throw std::runtime_error("load command out of bounds");
         const auto command = Read<LoadCommand>(binary, cursor);
-        if (command.Size < sizeof(LoadCommand) || command.Size % 8 != 0 || command.Size > end - cursor) throw std::runtime_error("invalid load command size");
+        std::size_t minimumSize = sizeof(LoadCommand);
+        switch (command.Cmd) {
+        case kLcSegment64:
+            minimumSize = sizeof(SegmentCommand64);
+            break;
+        case kLcDyldExportsTrie:
+        case kLcDyldChainedFixups:
+            minimumSize = sizeof(LinkeditDataCommand);
+            break;
+        case kLcDyldInfo:
+        case kLcDyldInfoOnly:
+            minimumSize = sizeof(DyldInfoCommand);
+            break;
+        case kLcLoadDylib:
+        case kLcLoadWeakDylib:
+        case kLcReexportDylib:
+        case kLcLazyLoadDylib:
+        case kLcLoadUpwardDylib:
+            minimumSize = kDylibCommandSize;
+            break;
+        default:
+            break;
+        }
+        if (command.Size < minimumSize || command.Size % 8 != 0 || command.Size > end - cursor) throw std::runtime_error("invalid load command size");
         image.Commands.push_back(cursor);
         cursor += command.Size;
     }
