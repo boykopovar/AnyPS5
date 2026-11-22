@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <barrier>
 #include <cstdint>
@@ -163,7 +164,7 @@ void CheckTrap(unsigned bit) {
 int main(int argc,char** argv) {
     Require(argc==2 || argc==3,"expected library path and optional trap bit");
 #ifdef _WIN32
-    const auto library=LoadLibraryA(argv[1]);
+    const auto library=LoadLibraryW(ArgumentPath(argv,1).c_str());
     Require(library!=nullptr,"load libc");
     raiseFlags=reinterpret_cast<Raise>(GetProcAddress(library,"feraiseexcept_nid_postfix"));
 #else
