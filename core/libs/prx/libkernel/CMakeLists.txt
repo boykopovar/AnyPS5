@@ -1,5 +1,6 @@
 add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Unimplemented.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/SysExports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Apr/src/Apr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/Equeue.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/src/EdgeWatch.cpp
@@ -1296,6 +1297,18 @@ if(BUILD_TESTING)
         set_tests_properties(guest_sleep_wake guest_sleep_wake_coarse PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_clock_pause_tests ${LIBS_INCLUDE_DIR}/tests/GuestClockPause.cpp)
+    target_include_directories(guest_clock_pause_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_clock_pause_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_clock_pause_tests)
+    add_test(NAME guest_clock_pause COMMAND guest_clock_pause_tests)
+    add_test(NAME guest_clock_pause_scaled COMMAND guest_clock_pause_tests)
+    set_tests_properties(guest_clock_pause guest_clock_pause_scaled PROPERTIES TIMEOUT 20)
+    set_tests_properties(guest_clock_pause_scaled PROPERTIES ENVIRONMENT "APS5_TIME_SCALE=0.5")
+    if(WIN32)
+        set_tests_properties(guest_clock_pause guest_clock_pause_scaled PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_nanosleep_long_request_tests ${LIBS_INCLUDE_DIR}/tests/GuestNanosleepLongRequest.cpp)
     target_include_directories(guest_nanosleep_long_request_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_nanosleep_long_request_tests PRIVATE libkernel libc)
@@ -1525,9 +1538,13 @@ if(BUILD_TESTING)
     target_link_libraries(guest_pthread_destructor_lifetime_tests PRIVATE libkernel libc)
     configure_windows_unwind(guest_pthread_destructor_lifetime_tests)
     add_test(NAME guest_pthread_destructor_lifetime COMMAND guest_pthread_destructor_lifetime_tests)
-    set_tests_properties(guest_pthread_destructor_lifetime PROPERTIES TIMEOUT 20)
+    add_test(NAME guest_pthread_destructor_process_exit COMMAND guest_pthread_destructor_lifetime_tests process-exit)
+    add_test(NAME guest_pthread_destructor_thread_exit COMMAND guest_pthread_destructor_lifetime_tests thread-exit)
+    set_tests_properties(guest_pthread_destructor_lifetime guest_pthread_destructor_process_exit guest_pthread_destructor_thread_exit
+        PROPERTIES TIMEOUT 20)
     if(WIN32)
-        set_tests_properties(guest_pthread_destructor_lifetime PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_pthread_destructor_lifetime guest_pthread_destructor_process_exit
+            guest_pthread_destructor_thread_exit PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_kernel_pthread_key_dtor_order_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelPthreadKeyDtorOrder.cpp)
@@ -2108,6 +2125,16 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
     set_tests_properties(guest_kernel_sigpending_mask PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_kernel_sigpending_mask PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_kernel_socket_creation_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelSocketCreationBounds.cpp)
+    target_include_directories(guest_kernel_socket_creation_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_socket_creation_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_socket_creation_bounds_tests)
+    add_test(NAME guest_kernel_socket_creation_bounds COMMAND guest_kernel_socket_creation_bounds_tests)
+    set_tests_properties(guest_kernel_socket_creation_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_socket_creation_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_getrlimit_tests ${LIBS_INCLUDE_DIR}/tests/GuestGetrlimit.cpp)

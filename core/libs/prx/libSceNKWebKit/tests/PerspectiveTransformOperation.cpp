@@ -15,7 +15,7 @@ static void Check(bool value, int line) {
 }
 #define Require(value) Check((value), __LINE__)
 
-constexpr std::uint32_t PerspectiveType = 19;
+constexpr WebCore::TransformOperation::OperationType PerspectiveType = WebCore::TransformOperation::OperationType::Perspective;
 
 static WebCore::LegacyLength Legacy(int value, WebCore::LegacyLengthType type, bool quirk = false) {
     WebCore::LegacyLength length{};
@@ -25,7 +25,7 @@ static WebCore::LegacyLength Legacy(int value, WebCore::LegacyLengthType type, b
     return length;
 }
 
-static WebCore::PerspectiveTransformOperation Make(WebCore::LegacyLength p, std::uint32_t type = PerspectiveType) {
+static WebCore::PerspectiveTransformOperation Make(WebCore::LegacyLength p, std::uint32_t type = static_cast<std::uint32_t>(PerspectiveType)) {
     WebCore::PerspectiveTransformOperation op{};
     op.m_base.m_refCount = 1;
     op.m_base.m_type = static_cast<WebCore::TransformOperation::OperationType>(type);

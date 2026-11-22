@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -463,6 +464,57 @@ void CheckLStrcoll() {
     Reject([&] { (void)_ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(alpha, alpha + 5, beta + 2, beta, nullptr); }, "_LStrcoll<char> rejects inverted second range");
 }
 
+void CheckLStrxfrm() {
+    static_assert(std::is_same_v<decltype(&libSceLibcInternalInventory_252_nid_no_patch),
+                                 std::size_t (APS5_VABI*)(char*, char*, const char*, const char*, const void*)>);
+    static_assert(std::is_same_v<decltype(&libSceLibcInternalInventory_253_nid_no_patch),
+                                 std::size_t (APS5_VABI*)(char16_t*, char16_t*, const char16_t*, const char16_t*, const void*)>);
+    const char source[] = {'b', '\0', 'a', '\xff'};
+    std::array<char, 6> output{'x', 'x', 'x', 'x', 'x', 'x'};
+    Require(libSceLibcInternalInventory_252_nid_no_patch(output.data(), output.data() + output.size(), source, source + 4, nullptr) == 4, "_LStrxfrm<char> returns the source length");
+    Require(std::memcmp(output.data(), source, 4) == 0 && output[4] == 'x' && output[5] == 'x', "_LStrxfrm<char> copies the source unchanged, embedded nul and high bytes included, and writes nothing more");
+    output.fill('x');
+    Require(libSceLibcInternalInventory_252_nid_no_patch(output.data(), output.data() + 4, source, source + 4, &output) == 4 && std::memcmp(output.data(), source, 4) == 0,
+        "_LStrxfrm<char> fills an exact-size buffer");
+    Require(output[4] == 'x', "_LStrxfrm<char> stays within an exact-size buffer");
+    output.fill('x');
+    Require(libSceLibcInternalInventory_252_nid_no_patch(output.data(), output.data() + 3, source, source + 4, nullptr) == 4, "_LStrxfrm<char> reports the length a short buffer needs");
+    Require(output == std::array<char, 6>{'x', 'x', 'x', 'x', 'x', 'x'}, "_LStrxfrm<char> leaves a short buffer untouched");
+    Require(libSceLibcInternalInventory_252_nid_no_patch(nullptr, nullptr, source, source + 4, nullptr) == 4, "_LStrxfrm<char> measures with an empty buffer");
+    Require(libSceLibcInternalInventory_252_nid_no_patch(output.data(), output.data() + output.size(), source, source, nullptr) == 0, "_LStrxfrm<char> transforms an empty source to nothing");
+    Require(libSceLibcInternalInventory_252_nid_no_patch(nullptr, nullptr, nullptr, nullptr, nullptr) == 0, "_LStrxfrm<char> accepts null empty ranges");
+    Require(output == std::array<char, 6>{'x', 'x', 'x', 'x', 'x', 'x'}, "_LStrxfrm<char> writes nothing for an empty source");
+    Reject([&] { (void)libSceLibcInternalInventory_252_nid_no_patch(nullptr, output.data(), source, source + 4, nullptr); }, "_LStrxfrm<char> rejects a null buffer start");
+    Reject([&] { (void)libSceLibcInternalInventory_252_nid_no_patch(output.data() + 2, output.data(), source, source + 4, nullptr); }, "_LStrxfrm<char> rejects an inverted buffer");
+    Reject([&] { (void)libSceLibcInternalInventory_252_nid_no_patch(output.data(), output.data() + 6, nullptr, source + 4, nullptr); }, "_LStrxfrm<char> rejects a null source start");
+    Reject([&] { (void)libSceLibcInternalInventory_252_nid_no_patch(output.data(), output.data() + 6, source + 2, source, nullptr); }, "_LStrxfrm<char> rejects an inverted source");
+    auto* const unmapped = reinterpret_cast<char*>(std::uintptr_t{0x10});
+    Require(libSceLibcInternalInventory_252_nid_no_patch(output.data(), output.data() + 3, unmapped, unmapped + 4, nullptr) == 4, "_LStrxfrm<char> does not read a source that does not fit");
+    Reject([&] { (void)libSceLibcInternalInventory_252_nid_no_patch(output.data(), output.data() + 6, unmapped, unmapped + 4, nullptr); }, "_LStrxfrm<char> rejects an unreadable source");
+    Reject([&] { (void)libSceLibcInternalInventory_252_nid_no_patch(unmapped, unmapped + 6, source, source + 4, nullptr); }, "_LStrxfrm<char> rejects an unwritable buffer");
+
+    const char16_t wideSource[] = {u'b', u'\0', u'a', u'\xffff'};
+    std::array<char16_t, 6> wideOutput{u'x', u'x', u'x', u'x', u'x', u'x'};
+    Require(libSceLibcInternalInventory_253_nid_no_patch(wideOutput.data(), wideOutput.data() + wideOutput.size(), wideSource, wideSource + 4, nullptr) == 4, "_LStrxfrm<wchar_t> returns the source length in characters");
+    Require(std::memcmp(wideOutput.data(), wideSource, sizeof(wideSource)) == 0 && wideOutput[4] == u'x' && wideOutput[5] == u'x', "_LStrxfrm<wchar_t> copies the source unchanged and writes nothing more");
+    wideOutput.fill(u'x');
+    Require(libSceLibcInternalInventory_253_nid_no_patch(wideOutput.data(), wideOutput.data() + 4, wideSource, wideSource + 4, nullptr) == 4
+            && std::memcmp(wideOutput.data(), wideSource, sizeof(wideSource)) == 0,
+        "_LStrxfrm<wchar_t> fills an exact-size buffer");
+    Require(wideOutput[4] == u'x', "_LStrxfrm<wchar_t> stays within an exact-size buffer");
+    wideOutput.fill(u'x');
+    Require(libSceLibcInternalInventory_253_nid_no_patch(wideOutput.data(), wideOutput.data() + 3, wideSource, wideSource + 4, nullptr) == 4, "_LStrxfrm<wchar_t> reports the length a short buffer needs");
+    Require(wideOutput == std::array<char16_t, 6>{u'x', u'x', u'x', u'x', u'x', u'x'}, "_LStrxfrm<wchar_t> leaves a short buffer untouched");
+    Require(libSceLibcInternalInventory_253_nid_no_patch(nullptr, nullptr, wideSource, wideSource + 4, nullptr) == 4, "_LStrxfrm<wchar_t> measures with an empty buffer");
+    Require(libSceLibcInternalInventory_253_nid_no_patch(nullptr, nullptr, nullptr, nullptr, nullptr) == 0, "_LStrxfrm<wchar_t> accepts null empty ranges");
+    Reject([&] { (void)libSceLibcInternalInventory_253_nid_no_patch(wideOutput.data() + 2, wideOutput.data(), wideSource, wideSource + 4, nullptr); }, "_LStrxfrm<wchar_t> rejects an inverted buffer");
+    Reject([&] { (void)libSceLibcInternalInventory_253_nid_no_patch(wideOutput.data(), wideOutput.data() + 6, wideSource + 2, wideSource, nullptr); }, "_LStrxfrm<wchar_t> rejects an inverted source");
+    auto* const wideUnmapped = reinterpret_cast<char16_t*>(std::uintptr_t{0x10});
+    Require(libSceLibcInternalInventory_253_nid_no_patch(wideOutput.data(), wideOutput.data() + 3, wideUnmapped, wideUnmapped + 4, nullptr) == 4, "_LStrxfrm<wchar_t> does not read a source that does not fit");
+    Reject([&] { (void)libSceLibcInternalInventory_253_nid_no_patch(wideOutput.data(), wideOutput.data() + 6, wideUnmapped, wideUnmapped + 4, nullptr); }, "_LStrxfrm<wchar_t> rejects an unreadable source");
+    Reject([&] { (void)libSceLibcInternalInventory_253_nid_no_patch(wideUnmapped, wideUnmapped + 6, wideSource, wideSource + 4, nullptr); }, "_LStrxfrm<wchar_t> rejects an unwritable buffer");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -482,6 +534,7 @@ int main(int argc, char** argv) {
     CheckConstructorsAndLifetime();
     CheckErrorBranches();
     CheckLStrcoll();
+    CheckLStrxfrm();
     if (argc >= 2) CheckLibraryDispatch(argv[1], argc >= 3 && std::strcmp(argv[2], "patched") == 0);
 
     std::puts("libc internal collate<char> member and constructor checks passed");

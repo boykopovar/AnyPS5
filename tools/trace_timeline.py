@@ -1,4 +1,5 @@
 import argparse
+import heapq
 import html
 import math
 import sys
@@ -38,7 +39,7 @@ def layout(slices, start_us, end_us, width_px, max_slices=5000):
     span = max(end_us - start_us, 1e-9)
     rows = sorted({(slice_["thread"], slice_["tid"]) for slice_ in slices})
     row_of = {thread: row for row, thread in enumerate(rows)}
-    kept = sorted(slices, key=lambda slice_: -slice_["dur"])[:max_slices]
+    kept = heapq.nlargest(max_slices, slices, key=lambda slice_: slice_["dur"])
     bars = []
     for slice_ in kept:
         x = LABEL_WIDTH + (slice_["ts"] - start_us) / span * width_px
@@ -88,6 +89,13 @@ def positive_integer(value):
     return number
 
 
+def pixel_width(value):
+    number = positive_integer(value)
+    if number > sys.float_info.max:
+        raise argparse.ArgumentTypeError("width must fit in a finite floating-point number")
+    return number
+
+
 def main(arguments=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -99,7 +107,7 @@ def main(arguments=None):
     parser.add_argument("--to-ms", type=nonnegative_number, help="end of the window, in ms (default: the end of the trace)")
     parser.add_argument("--thread", action="append", default=[], metavar="NAME", help="draw only threads with this name; repeat to select several")
     parser.add_argument("--max-slices", type=positive_integer, default=5000, help="bars to draw, longest first (default 5000)")
-    parser.add_argument("--width", type=positive_integer, default=1000, help="width of the time axis in pixels (default 1000)")
+    parser.add_argument("--width", type=pixel_width, default=1000, help="width of the time axis in pixels (default 1000)")
     options = parser.parse_args(arguments)
     trace = trace_digest.load_trace(options.trace)
     end_of_trace = max(chain(
