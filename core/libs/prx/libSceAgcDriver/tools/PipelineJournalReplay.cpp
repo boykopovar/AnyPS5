@@ -66,12 +66,26 @@ void Environment(const char* name, const char* value) {
 
 }
 
-int main(int argc, char** argv) {
+template <typename TChar>
+std::string Ascii(const TChar* text) {
+    std::string result;
+    for (; *text != TChar(0); ++text) {
+        if (static_cast<unsigned long>(*text) > 0x7fu) throw std::runtime_error("numeric argument is not ASCII");
+        result.push_back(static_cast<char>(*text));
+    }
+    return result;
+}
+
+template <typename TChar>
+int run(int argc, TChar** argv) {
     try {
         if (argc != 6) throw std::runtime_error("usage: agc_pipeline_journal_replay JOURNAL NEW_CACHE_ROOT GRAPHICS COMPUTE THREADS");
-        const auto graphics = Bound(argv[3]);
-        const auto compute = Bound(argv[4]);
-        const auto threads = Bound(argv[5]);
+        const auto graphicsText = Ascii(argv[3]);
+        const auto computeText = Ascii(argv[4]);
+        const auto threadsText = Ascii(argv[5]);
+        const auto graphics = Bound(graphicsText.c_str());
+        const auto compute = Bound(computeText.c_str());
+        const auto threads = Bound(threadsText.c_str());
         if (threads == 0 || threads > 32) throw std::runtime_error("threads must be 1 to 32");
         const std::filesystem::path source(argv[1]), root(argv[2]);
         if (std::filesystem::exists(root)) throw std::runtime_error("private cache root already exists");
@@ -89,9 +103,9 @@ int main(int argc, char** argv) {
 #endif
         Environment("ANYPS5_NO_SHADER_CACHE", "0");
         Environment("APS5_NO_PIPELINE_JOURNAL", "0");
-        Environment("APS5_PIPELINE_JOURNAL_ENTRIES", argv[3]);
-        Environment("APS5_PIPELINE_JOURNAL_COMPUTE_ENTRIES", argv[4]);
-        Environment("APS5_PIPELINE_JOURNAL_THREADS", argv[5]);
+        Environment("APS5_PIPELINE_JOURNAL_ENTRIES", graphicsText.c_str());
+        Environment("APS5_PIPELINE_JOURNAL_COMPUTE_ENTRIES", computeText.c_str());
+        Environment("APS5_PIPELINE_JOURNAL_THREADS", threadsText.c_str());
         const auto properties = PhysicalPropertiesQuery();
         const auto begin = std::chrono::steady_clock::now();
         auto device = std::make_unique<AgcDriver::VulkanDevice>();
@@ -150,3 +164,13 @@ int main(int argc, char** argv) {
         return 1;
     }
 }
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t** argv) {
+    return run(argc, argv);
+}
+#else
+int main(int argc, char** argv) {
+    return run(argc, argv);
+}
+#endif

@@ -1100,6 +1100,9 @@ target_include_directories(agc_pipeline_journal_replay PRIVATE
 )
 target_link_libraries(agc_pipeline_journal_replay PRIVATE libSceAgcDriver libc ${CMAKE_DL_LIBS})
 set_target_properties(agc_pipeline_journal_replay PROPERTIES CXX_EXTENSIONS OFF)
+if(MINGW)
+    target_link_options(agc_pipeline_journal_replay PRIVATE -municode)
+endif()
 configure_windows_unwind(agc_pipeline_journal_replay)
 
 add_library(agc_oracle_support STATIC tools/OracleCodeObject.cpp tools/OracleDispatch.cpp)
