@@ -27,6 +27,13 @@ class RecipeTests(unittest.TestCase):
                 "build_dir": "build", "games": [str(game)], "titles": str(titles), "seconds": 20,
                 "repetitions": 3, "regression_pct": 5, "max_spread_pct": 3}
 
+    def test_loads_bom_prefixed_utf8_recipe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "recipe.json"
+            path.write_text(json.dumps(self.make_recipe(root)), encoding="utf-8-sig")
+            self.assertEqual(performance_bisect.load_recipe(path)["title_id"], "PPSA00000")
+
     def test_loads_valid_recipe_and_normalizes_external_paths(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -53,6 +60,37 @@ class RecipeTests(unittest.TestCase):
                     path.write_text(json.dumps(bad), encoding="utf-8")
                     with self.assertRaises(ValueError):
                         performance_bisect.load_recipe(path)
+
+    def test_rejects_oversized_percentage_integers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            recipe = self.make_recipe(root)
+            path = root / "recipe.json"
+            for name in ("regression_pct", "max_spread_pct"):
+                for value in (10 ** 400, -(10 ** 400), math.inf, -math.inf, math.nan):
+                    with self.subTest(name=name, value=value):
+                        path.write_text(json.dumps(dict(recipe, **{name: value})), encoding="utf-8")
+                        with self.assertRaisesRegex(ValueError, "recipe." + name):
+                            performance_bisect.load_recipe(path)
+
+    def test_cli_reports_oversized_percentages_before_bisection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            recipe = self.make_recipe(root)
+            path = root / "recipe.json"
+            output = root / "report.json"
+            for name in ("regression_pct", "max_spread_pct"):
+                with self.subTest(name=name):
+                    path.write_text(json.dumps(dict(recipe, **{name: 10 ** 400})), encoding="utf-8")
+                    result = subprocess.run([sys.executable, performance_bisect.__file__, "--recipe", str(path),
+                                             "--repo", str(root / "not-a-repository"), "--good", "good", "--bad", "bad",
+                                             "--output", str(output)], capture_output=True, timeout=10)
+                    error = result.stderr.decode("utf-8")
+                    self.assertEqual(result.returncode, 2, error)
+                    self.assertIn("recipe." + name, error)
+                    self.assertNotIn("Traceback", error)
+                    self.assertEqual(result.stdout, b"")
+                    self.assertFalse(output.exists())
 
     def test_resolves_relative_paths_from_the_recipe_file(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -150,6 +188,10 @@ class MeasurementStabilityTests(unittest.TestCase):
     def test_regression_requires_the_declared_slowdown_threshold(self):
         self.assertFalse(performance_bisect.is_regression(58, 60, 5))
         self.assertTrue(performance_bisect.is_regression(57, 60, 5))
+
+    def test_regression_counts_a_decimal_value_at_the_threshold(self):
+        self.assertTrue(performance_bisect.is_regression(43.7, 46.0, 5.0))
+        self.assertFalse(performance_bisect.is_regression(43.7000000001, 46.0, 5.0))
 
     def test_candidate_identity_must_match_baseline(self):
         with self.assertRaisesRegex(ValueError, "identity changed"):

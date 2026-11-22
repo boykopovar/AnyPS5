@@ -19,6 +19,7 @@ RAW_CALLS = {
     "snprintf": (0, 2), "sprintf": (0, 1), "copy": (0, 1, 2), "copy_n": (0, 2), "fill": (0, 1), "fill_n": (0,),
 }
 PARAMETER = re.compile(r"([A-Za-z_][\w:<>,\s]*?(?:[*&]+\s*(?:const\b\s*)?)+)\s*(\w+)\s*$")
+ARRAY_PARAMETER = re.compile(r"[A-Za-z_][\w:<>,\s*]*[\s*](\w+)\s*\[[^\]]*\]$")
 RAW_CALL = re.compile(rf"\b(?:std::|::)?({'|'.join(RAW_CALLS)})\s*\(")
 QUIET_CALL = re.compile(rf"\b({'|'.join((*SAFE, *UNEVALUATED))})\s*\(")
 CAST = re.compile(r"^(?:\(\s*[\w\s:*<>]+\)(?=\s*\S)|(?:reinterpret|static|const)_cast\s*<[^>]*>|\()\s*")
@@ -84,12 +85,15 @@ def closing(text, open_paren):
 
 
 def pointer_parameters(signature):
-    if "*" not in signature:
+    if "*" not in signature and "[" not in signature:
         return []
     names = []
     for _, part in split_top_level(signature):
         part = part.split("=")[0].strip()
         if "(" in part or "&" in part:
+            continue
+        if array := ARRAY_PARAMETER.match(part):
+            names.append(array.group(1))
             continue
         match = PARAMETER.match(part)
         if match and "*" in match.group(1):
