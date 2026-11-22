@@ -191,7 +191,7 @@ std::size_t V6ToText(const std::uint8_t* bytes, char* out) {
 }
 
 extern "C" {
-int APS5_VABI __inet_pton_nid_postfix(int family, const char* text, void* destination) {
+int APS5_VABI __inet_pton_nid_no_patch(int family, const char* text, void* destination) {
     if (family != kGuestInet && family != kGuestInet6) { *__error_nid_postfix() = 47; return -1; }
     if (!text) throw std::runtime_error("inet_pton: null text");
     std::string localText;
@@ -211,8 +211,12 @@ int APS5_VABI __inet_pton_nid_postfix(int family, const char* text, void* destin
     if (!GuestCopyOut_nid_no_patch(destination, address, sizeof(address))) { *__error_nid_postfix() = 14; return -1; }
     return 1;
 }
+int APS5_VABI __inet_pton_nid_postfix(int family, const char* text, void* destination) {
+    return __inet_pton_nid_no_patch(family, text, destination);
+}
 
-const char* APS5_VABI __inet_ntop_nid_postfix(int family, const void* source,
+
+const char* APS5_VABI __inet_ntop_nid_no_patch(int family, const void* source,
                                             char* destination, std::uint32_t capacity) {
     if (family != kGuestInet && family != kGuestInet6) { *__error_nid_postfix() = 47; return nullptr; }
     if (!source) throw std::runtime_error("inet_ntop: null source");
@@ -234,20 +238,40 @@ const char* APS5_VABI __inet_ntop_nid_postfix(int family, const void* source,
     }
     return destination;
 }
+const char* APS5_VABI __inet_ntop_nid_postfix(int family, const void* source, char* destination, std::uint32_t capacity) {
+    return __inet_ntop_nid_no_patch(family, source, destination, capacity);
+}
 
+
+std::uint32_t APS5_VABI htonl_nid_no_patch(std::uint32_t value) {
+    return __builtin_bswap32(value);
+}
 std::uint32_t APS5_VABI htonl_nid_postfix(std::uint32_t value) {
-    return __builtin_bswap32(value);
+    return htonl_nid_no_patch(value);
 }
 
+
+std::uint32_t APS5_VABI ntohl_nid_no_patch(std::uint32_t value) {
+    return __builtin_bswap32(value);
+}
 std::uint32_t APS5_VABI ntohl_nid_postfix(std::uint32_t value) {
-    return __builtin_bswap32(value);
+    return ntohl_nid_no_patch(value);
 }
 
+
+std::uint16_t APS5_VABI htons_nid_no_patch(std::uint16_t value) {
+    return __builtin_bswap16(value);
+}
 std::uint16_t APS5_VABI htons_nid_postfix(std::uint16_t value) {
-    return __builtin_bswap16(value);
+    return htons_nid_no_patch(value);
 }
 
-std::uint16_t APS5_VABI ntohs_nid_postfix(std::uint16_t value) {
+
+std::uint16_t APS5_VABI ntohs_nid_no_patch(std::uint16_t value) {
     return __builtin_bswap16(value);
 }
+std::uint16_t APS5_VABI ntohs_nid_postfix(std::uint16_t value) {
+    return ntohs_nid_no_patch(value);
+}
+
 }

@@ -141,28 +141,52 @@ void APS5_VABI sceKernelSetThreadDtors(thread_dtors_func_t dtors) {
 
 extern "C" {
 
-void APS5_VABI _sceKernelRtldSetApplicationHeapAPI_nid_postfix(void* api[]) {
+void APS5_VABI _sceKernelRtldSetApplicationHeapAPI_nid_no_patch(void* api[]) {
     registerApplicationHeapApi(api);
 }
+void APS5_VABI _sceKernelRtldSetApplicationHeapAPI_nid_postfix(void* api[]) {
+    _sceKernelRtldSetApplicationHeapAPI_nid_no_patch(api);
+}
 
-int APS5_VABI _sceKernelRtldThreadAtexitDecrement_nid_postfix(const void* dsoSymbol) {
+
+int APS5_VABI _sceKernelRtldThreadAtexitDecrement_nid_no_patch(const void* dsoSymbol) {
     return releaseThreadAtexitImage(dsoSymbol, "_sceKernelRtldThreadAtexitDecrement");
 }
+int APS5_VABI _sceKernelRtldThreadAtexitDecrement_nid_postfix(const void* dsoSymbol) {
+    return _sceKernelRtldThreadAtexitDecrement_nid_no_patch(dsoSymbol);
+}
 
-int APS5_VABI _sceKernelRtldThreadAtexitIncrement_nid_postfix(const void* dsoSymbol) {
+
+int APS5_VABI _sceKernelRtldThreadAtexitIncrement_nid_no_patch(const void* dsoSymbol) {
     return referenceThreadAtexitImage(dsoSymbol, "_sceKernelRtldThreadAtexitIncrement");
 }
+int APS5_VABI _sceKernelRtldThreadAtexitIncrement_nid_postfix(const void* dsoSymbol) {
+    return _sceKernelRtldThreadAtexitIncrement_nid_no_patch(dsoSymbol);
+}
 
-void APS5_VABI _sceKernelSetThreadAtexitCount_nid_postfix(get_thread_atexit_count_func_t callback) {
+
+void APS5_VABI _sceKernelSetThreadAtexitCount_nid_no_patch(get_thread_atexit_count_func_t callback) {
     ThreadLifecycle::SetThreadAtexitCount(callback);
 }
+void APS5_VABI _sceKernelSetThreadAtexitCount_nid_postfix(get_thread_atexit_count_func_t callback) {
+    _sceKernelSetThreadAtexitCount_nid_no_patch(callback);
+}
 
-void APS5_VABI _sceKernelSetThreadAtexitReport_nid_postfix(thread_atexit_report_func_t callback) {
+
+void APS5_VABI _sceKernelSetThreadAtexitReport_nid_no_patch(thread_atexit_report_func_t callback) {
     ThreadLifecycle::SetThreadAtexitReport(callback);
 }
+void APS5_VABI _sceKernelSetThreadAtexitReport_nid_postfix(thread_atexit_report_func_t callback) {
+    _sceKernelSetThreadAtexitReport_nid_no_patch(callback);
+}
 
-void APS5_VABI _sceKernelSetThreadDtors_nid_postfix(thread_dtors_func_t callback) {
+
+void APS5_VABI _sceKernelSetThreadDtors_nid_no_patch(thread_dtors_func_t callback) {
     ThreadLifecycle::SetThreadDtors(callback);
 }
+void APS5_VABI _sceKernelSetThreadDtors_nid_postfix(thread_dtors_func_t callback) {
+    _sceKernelSetThreadDtors_nid_no_patch(callback);
+}
+
 
 }

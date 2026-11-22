@@ -369,7 +369,7 @@ std::uint64_t MutexYieldsForTest_nid_no_patch() {
     return g_mutexYields.load(std::memory_order_relaxed);
 }
 
-int APS5_VABI pthread_mutex_setname_np_nid_postfix(PthreadMutex* mutex, const char* name) {
+int APS5_VABI pthread_mutex_setname_np_nid_no_patch(PthreadMutex* mutex, const char* name) {
     if (!mutex)
         throw std::invalid_argument("pthread_mutex_setname_np: null mutex");
     PthreadMutex probe = nullptr;
@@ -390,5 +390,9 @@ int APS5_VABI pthread_mutex_setname_np_nid_postfix(PthreadMutex* mutex, const ch
     current->_named = true;
     return 0;
 }
+int APS5_VABI pthread_mutex_setname_np_nid_postfix(PthreadMutex* mutex, const char* name) {
+    return pthread_mutex_setname_np_nid_no_patch(mutex, name);
+}
+
 
 }

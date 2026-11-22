@@ -38,17 +38,25 @@ void initializeStatic(PthreadRwlock* rwlock, const char* funcName) {
 
 extern "C" {
 
-int APS5_VABI pthread_rwlock_destroy_nid_postfix(PthreadRwlock* rwlock) {
+int APS5_VABI pthread_rwlock_destroy_nid_no_patch(PthreadRwlock* rwlock) {
     if (!rwlock) throw std::runtime_error("pthread_rwlock_destroy: null rwlock");
     if (*rwlock == nullptr) return 0;
     return toPosix(scePthreadRwlockDestroy(rwlock));
 }
-
-int APS5_VABI pthread_rwlock_init_nid_postfix(PthreadRwlock* rwlock, const PthreadRwlockattr* attr) {
-    return toPosix(scePthreadRwlockInit(rwlock, attr, nullptr));
+int APS5_VABI pthread_rwlock_destroy_nid_postfix(PthreadRwlock* rwlock) {
+    return pthread_rwlock_destroy_nid_no_patch(rwlock);
 }
 
-int APS5_VABI pthread_rwlockattr_destroy_nid_postfix(PthreadRwlockattr* attr) {
+
+int APS5_VABI pthread_rwlock_init_nid_no_patch(PthreadRwlock* rwlock, const PthreadRwlockattr* attr) {
+    return toPosix(scePthreadRwlockInit(rwlock, attr, nullptr));
+}
+int APS5_VABI pthread_rwlock_init_nid_postfix(PthreadRwlock* rwlock, const PthreadRwlockattr* attr) {
+    return pthread_rwlock_init_nid_no_patch(rwlock, attr);
+}
+
+
+int APS5_VABI pthread_rwlockattr_destroy_nid_no_patch(PthreadRwlockattr* attr) {
     if (attr) {
         PthreadRwlockattr handle = nullptr;
         if (!RwlockOperations::LoadAttribute(attr, handle)) return PosixThread::GUEST_EFAULT;
@@ -60,16 +68,28 @@ int APS5_VABI pthread_rwlockattr_destroy_nid_postfix(PthreadRwlockattr* attr) {
     if (!GuestCopyOut_nid_no_patch(attr, &destroyed, sizeof(destroyed))) return PosixThread::GUEST_EFAULT;
     return result;
 }
+int APS5_VABI pthread_rwlockattr_destroy_nid_postfix(PthreadRwlockattr* attr) {
+    return pthread_rwlockattr_destroy_nid_no_patch(attr);
+}
 
-int APS5_VABI pthread_rwlockattr_init_nid_postfix(PthreadRwlockattr* attr) {
+
+int APS5_VABI pthread_rwlockattr_init_nid_no_patch(PthreadRwlockattr* attr) {
     return toPosix(scePthreadRwlockattrInit(attr));
 }
-
-int APS5_VABI pthread_rwlockattr_settype_np_nid_postfix(PthreadRwlockattr* attr, int type) {
-    return toPosix(scePthreadRwlockattrSettype(attr, type));
+int APS5_VABI pthread_rwlockattr_init_nid_postfix(PthreadRwlockattr* attr) {
+    return pthread_rwlockattr_init_nid_no_patch(attr);
 }
 
-int APS5_VABI pthread_rwlockattr_getpshared_nid_postfix(const PthreadRwlockattr* attr, int* pshared) {
+
+int APS5_VABI pthread_rwlockattr_settype_np_nid_no_patch(PthreadRwlockattr* attr, int type) {
+    return toPosix(scePthreadRwlockattrSettype(attr, type));
+}
+int APS5_VABI pthread_rwlockattr_settype_np_nid_postfix(PthreadRwlockattr* attr, int type) {
+    return pthread_rwlockattr_settype_np_nid_no_patch(attr, type);
+}
+
+
+int APS5_VABI pthread_rwlockattr_getpshared_nid_no_patch(const PthreadRwlockattr* attr, int* pshared) {
     if (!attr) throw std::runtime_error("pthread_rwlockattr_getpshared: null attr");
     PthreadRwlockattr handle = nullptr;
     if (!RwlockOperations::LoadAttribute(attr, handle)) return PosixThread::GUEST_EFAULT;
@@ -78,8 +98,12 @@ int APS5_VABI pthread_rwlockattr_getpshared_nid_postfix(const PthreadRwlockattr*
     if (!GuestCopyOut_nid_no_patch(pshared, &value, sizeof(value))) return PosixThread::GUEST_EFAULT;
     return 0;
 }
+int APS5_VABI pthread_rwlockattr_getpshared_nid_postfix(const PthreadRwlockattr* attr, int* pshared) {
+    return pthread_rwlockattr_getpshared_nid_no_patch(attr, pshared);
+}
 
-int APS5_VABI pthread_rwlockattr_setpshared_nid_postfix(PthreadRwlockattr* attr, int pshared) {
+
+int APS5_VABI pthread_rwlockattr_setpshared_nid_no_patch(PthreadRwlockattr* attr, int pshared) {
     if (pshared != PROCESS_PRIVATE) return PosixThread::GUEST_EINVAL;
     if (!attr) throw std::runtime_error("pthread_rwlockattr_setpshared: null attr");
     PthreadRwlockattr handle = nullptr;
@@ -87,8 +111,12 @@ int APS5_VABI pthread_rwlockattr_setpshared_nid_postfix(PthreadRwlockattr* attr,
     if (!handle) throw std::runtime_error("pthread_rwlockattr_setpshared: null attr");
     return 0;
 }
+int APS5_VABI pthread_rwlockattr_setpshared_nid_postfix(PthreadRwlockattr* attr, int pshared) {
+    return pthread_rwlockattr_setpshared_nid_no_patch(attr, pshared);
+}
 
-int APS5_VABI pthread_rwlockattr_gettype_np_nid_postfix(const PthreadRwlockattr* attr, int* type) {
+
+int APS5_VABI pthread_rwlockattr_gettype_np_nid_no_patch(const PthreadRwlockattr* attr, int* type) {
     if (!attr) throw std::runtime_error("pthread_rwlockattr_gettype_np: null attr");
     PthreadRwlockattr handle = nullptr;
     if (!RwlockOperations::LoadAttribute(attr, handle)) return PosixThread::GUEST_EFAULT;
@@ -97,6 +125,10 @@ int APS5_VABI pthread_rwlockattr_gettype_np_nid_postfix(const PthreadRwlockattr*
     if (!GuestCopyOut_nid_no_patch(type, &value, sizeof(value))) return PosixThread::GUEST_EFAULT;
     return 0;
 }
+int APS5_VABI pthread_rwlockattr_gettype_np_nid_postfix(const PthreadRwlockattr* attr, int* type) {
+    return pthread_rwlockattr_gettype_np_nid_no_patch(attr, type);
+}
+
 
 int APS5_VABI scePthreadRwlockattrGettype(const PthreadRwlockattr* attr, int* type) {
     return PosixThread::ToSce(pthread_rwlockattr_gettype_np_nid_postfix(attr, type));
@@ -110,12 +142,16 @@ int APS5_VABI scePthreadRwlockattrGetpshared(const PthreadRwlockattr* attr, int*
     return PosixThread::ToSce(pthread_rwlockattr_getpshared_nid_postfix(attr, pshared));
 }
 
-int APS5_VABI pthread_rwlock_rdlock_nid_postfix(PthreadRwlock* rwlock) {
+int APS5_VABI pthread_rwlock_rdlock_nid_no_patch(PthreadRwlock* rwlock) {
     initializeStatic(rwlock, __func__);
     return toPosix(scePthreadRwlockRdlock(rwlock));
 }
+int APS5_VABI pthread_rwlock_rdlock_nid_postfix(PthreadRwlock* rwlock) {
+    return pthread_rwlock_rdlock_nid_no_patch(rwlock);
+}
 
-int APS5_VABI pthread_rwlock_timedrdlock_nid_postfix(PthreadRwlock* rwlock, const KernelTimespec* abstime) {
+
+int APS5_VABI pthread_rwlock_timedrdlock_nid_no_patch(PthreadRwlock* rwlock, const KernelTimespec* abstime) {
     if (!abstime) return pthread_rwlock_rdlock_nid_postfix(rwlock);
     initializeStatic(rwlock, __func__);
     if (scePthreadRwlockTryrdlock(rwlock) == 0) return 0;
@@ -123,8 +159,12 @@ int APS5_VABI pthread_rwlock_timedrdlock_nid_postfix(PthreadRwlock* rwlock, cons
     if (!PosixThread::RelativeMicroseconds(GUEST_REALTIME_CLOCK, abstime, &usec)) return PosixThread::GUEST_EINVAL;
     return toPosix(scePthreadRwlockTimedrdlock(rwlock, usec));
 }
+int APS5_VABI pthread_rwlock_timedrdlock_nid_postfix(PthreadRwlock* rwlock, const KernelTimespec* abstime) {
+    return pthread_rwlock_timedrdlock_nid_no_patch(rwlock, abstime);
+}
 
-int APS5_VABI pthread_rwlock_timedwrlock_nid_postfix(PthreadRwlock* rwlock, const KernelTimespec* abstime) {
+
+int APS5_VABI pthread_rwlock_timedwrlock_nid_no_patch(PthreadRwlock* rwlock, const KernelTimespec* abstime) {
     if (!abstime) return pthread_rwlock_wrlock_nid_postfix(rwlock);
     initializeStatic(rwlock, __func__);
     if (scePthreadRwlockTrywrlock(rwlock) == 0) return 0;
@@ -132,35 +172,63 @@ int APS5_VABI pthread_rwlock_timedwrlock_nid_postfix(PthreadRwlock* rwlock, cons
     if (!PosixThread::RelativeMicroseconds(GUEST_REALTIME_CLOCK, abstime, &usec)) return PosixThread::GUEST_EINVAL;
     return toPosix(scePthreadRwlockTimedwrlock(rwlock, usec));
 }
+int APS5_VABI pthread_rwlock_timedwrlock_nid_postfix(PthreadRwlock* rwlock, const KernelTimespec* abstime) {
+    return pthread_rwlock_timedwrlock_nid_no_patch(rwlock, abstime);
+}
 
-int APS5_VABI pthread_rwlock_reltimedrdlock_np_nid_postfix(PthreadRwlock* rwlock, KernelUseconds usec) {
+
+int APS5_VABI pthread_rwlock_reltimedrdlock_np_nid_no_patch(PthreadRwlock* rwlock, KernelUseconds usec) {
     initializeStatic(rwlock, __func__);
     return toPosix(scePthreadRwlockTimedrdlock(rwlock, usec));
 }
+int APS5_VABI pthread_rwlock_reltimedrdlock_np_nid_postfix(PthreadRwlock* rwlock, KernelUseconds usec) {
+    return pthread_rwlock_reltimedrdlock_np_nid_no_patch(rwlock, usec);
+}
 
-int APS5_VABI pthread_rwlock_reltimedwrlock_np_nid_postfix(PthreadRwlock* rwlock, KernelUseconds usec) {
+
+int APS5_VABI pthread_rwlock_reltimedwrlock_np_nid_no_patch(PthreadRwlock* rwlock, KernelUseconds usec) {
     initializeStatic(rwlock, __func__);
     return toPosix(scePthreadRwlockTimedwrlock(rwlock, usec));
 }
+int APS5_VABI pthread_rwlock_reltimedwrlock_np_nid_postfix(PthreadRwlock* rwlock, KernelUseconds usec) {
+    return pthread_rwlock_reltimedwrlock_np_nid_no_patch(rwlock, usec);
+}
 
-int APS5_VABI pthread_rwlock_tryrdlock_nid_postfix(PthreadRwlock* rwlock) {
+
+int APS5_VABI pthread_rwlock_tryrdlock_nid_no_patch(PthreadRwlock* rwlock) {
     initializeStatic(rwlock, __func__);
     return toPosix(scePthreadRwlockTryrdlock(rwlock));
 }
+int APS5_VABI pthread_rwlock_tryrdlock_nid_postfix(PthreadRwlock* rwlock) {
+    return pthread_rwlock_tryrdlock_nid_no_patch(rwlock);
+}
 
-int APS5_VABI pthread_rwlock_trywrlock_nid_postfix(PthreadRwlock* rwlock) {
+
+int APS5_VABI pthread_rwlock_trywrlock_nid_no_patch(PthreadRwlock* rwlock) {
     initializeStatic(rwlock, __func__);
     return toPosix(scePthreadRwlockTrywrlock(rwlock));
 }
+int APS5_VABI pthread_rwlock_trywrlock_nid_postfix(PthreadRwlock* rwlock) {
+    return pthread_rwlock_trywrlock_nid_no_patch(rwlock);
+}
 
-int APS5_VABI pthread_rwlock_unlock_nid_postfix(PthreadRwlock* rwlock) {
+
+int APS5_VABI pthread_rwlock_unlock_nid_no_patch(PthreadRwlock* rwlock) {
     initializeStatic(rwlock, __func__);
     return toPosix(scePthreadRwlockUnlock(rwlock));
 }
+int APS5_VABI pthread_rwlock_unlock_nid_postfix(PthreadRwlock* rwlock) {
+    return pthread_rwlock_unlock_nid_no_patch(rwlock);
+}
 
-int APS5_VABI pthread_rwlock_wrlock_nid_postfix(PthreadRwlock* rwlock) {
+
+int APS5_VABI pthread_rwlock_wrlock_nid_no_patch(PthreadRwlock* rwlock) {
     initializeStatic(rwlock, __func__);
     return toPosix(scePthreadRwlockWrlock(rwlock));
 }
+int APS5_VABI pthread_rwlock_wrlock_nid_postfix(PthreadRwlock* rwlock) {
+    return pthread_rwlock_wrlock_nid_no_patch(rwlock);
+}
+
 
 }

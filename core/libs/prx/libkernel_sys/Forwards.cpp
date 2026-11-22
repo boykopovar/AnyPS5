@@ -337,9 +337,6 @@ const char** APS5_VABI getargv_nid_disambig2_nid_postfix(void) {
     return getargv_nid_no_patch();
 }
 
-int APS5_VABI getcontext_nid_disambig2_nid_postfix(UserUcontext* context) {
-    return getcontext_nid_no_patch(context);
-}
 
 int APS5_VABI getdents_nid_disambig2_nid_postfix(int fd, char* buf, int nbytes) {
     return getdents_nid_no_patch(fd, buf, nbytes);
@@ -2545,9 +2542,6 @@ int APS5_VABI sigismember_nid_disambig2_nid_postfix(const GuestSignalSet* set, i
     return sigismember_nid_no_patch(set, signal);
 }
 
-void APS5_VABI siglongjmp_nid_disambig2_nid_postfix(std::uint64_t* buffer, int value) {
-    siglongjmp_nid_no_patch(buffer, value);
-}
 
 GuestHandler APS5_VABI signal_nid_disambig2_nid_postfix(int guest, GuestHandler handler) {
     return signal_nid_no_patch(guest, handler);
@@ -2561,9 +2555,6 @@ int APS5_VABI sigprocmask_nid_disambig2_nid_postfix(int how, const void* set, vo
     return sigprocmask_nid_no_patch(how, set, previousSet);
 }
 
-int APS5_VABI sigsetjmp_nid_disambig2_nid_postfix(std::uint64_t* buffer, int saveMask) {
-    return sigsetjmp_nid_no_patch(buffer, saveMask);
-}
 
 int APS5_VABI sigsuspend_nid_disambig2_nid_postfix(const GuestSignalSet* set) {
     return sigsuspend_nid_no_patch(set);
@@ -2597,9 +2588,6 @@ int APS5_VABI stat_nid_disambig2_nid_postfix(const char* path, FileStat* sb) {
     return stat_nid_no_patch(path, sb);
 }
 
-int APS5_VABI swapcontext_nid_disambig2_nid_postfix(UserUcontext* oucp, const UserUcontext* ucp) {
-    return swapcontext_nid_no_patch(oucp, ucp);
-}
 
 void APS5_VABI sync_nid_disambig2_nid_postfix(void) {
     sync_nid_no_patch();

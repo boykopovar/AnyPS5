@@ -234,11 +234,15 @@ void* FindSymbol(Module& module, const char* name) {
 }
 
 extern "C" {
-char* APS5_VABI dlerror_nid_postfix() {
+char* APS5_VABI dlerror_nid_no_patch() {
     if (!pendingError) return nullptr;
     pendingError = false;
     return LoaderError().data();
 }
+char* APS5_VABI dlerror_nid_postfix(void) {
+    return dlerror_nid_no_patch();
+}
+
 #ifdef __linux__
 static void InitializeLinuxGuestModule(void* native) {
     auto* table = static_cast<std::uint64_t*>(::dlsym(native, "__aps5_guest_lifecycle_nid_no_patch"));
@@ -476,7 +480,7 @@ static void InitializeDeferredModule(HMODULE native, const std::string& reason) 
 }
 #endif
 
-void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
+void* APS5_VABI dlopen_nid_no_patch(const char* path, int flags) {
     if ((flags & ~0x3103) || (flags & 3) == 0 || (flags & 3) == 3) {
         Error("dlopen: unsupported flags"); return nullptr;
     }
@@ -558,7 +562,11 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
         return reinterpret_cast<void*>(handle);
     } catch (const std::exception& error) { Error(error.what()); return nullptr; }
 }
-void* APS5_VABI dlsym_nid_postfix(void* handle, const char* guestName) {
+void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
+    return dlopen_nid_no_patch(path, flags);
+}
+
+void* APS5_VABI dlsym_nid_no_patch(void* handle, const char* guestName) {
     std::string copied;
     if (guestName && CopyGuestString_nid_no_patch(guestName, 65536, copied) != 0) { Error("dlsym: unreadable symbol name"); return nullptr; }
     const char* const name = guestName ? copied.c_str() : nullptr;
@@ -601,7 +609,11 @@ void* APS5_VABI dlsym_nid_postfix(void* handle, const char* guestName) {
         return nullptr;
     } catch (const std::exception& error) { Error(error.what()); return nullptr; }
 }
-int APS5_VABI dlclose_nid_postfix(void* handle) {
+void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name) {
+    return dlsym_nid_no_patch(handle, name);
+}
+
+int APS5_VABI dlclose_nid_no_patch(void* handle) {
     const auto key = reinterpret_cast<std::uintptr_t>(handle);
     std::shared_ptr<Module> module;
     bool lastReference = true;
@@ -637,6 +649,10 @@ int APS5_VABI dlclose_nid_postfix(void* handle) {
     module.reset();
     return 0;
 }
+int APS5_VABI dlclose_nid_postfix(void* handle) {
+    return dlclose_nid_no_patch(handle);
+}
+
 std::int32_t ModuleIdForImage_nid_no_patch(const void* native) {
     std::lock_guard lock(modulesMutex);
     for (const auto& [handle, module] : modules) {

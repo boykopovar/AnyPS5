@@ -25,7 +25,7 @@ extern "C" void* __tls_get_addr(void* index);
 
 extern "C" {
 
-void* APS5_VABI __tls_get_addr_nid_postfix(const KernelTlsIndex* index) {
+void* APS5_VABI __tls_get_addr_nid_no_patch(const KernelTlsIndex* index) {
     if (index == nullptr) throw std::invalid_argument("__tls_get_addr: null TLS index or module");
     KernelTlsIndex host{};
     if (!GuestCopyInUnsynced_nid_no_patch(&host, index, sizeof(host)) || host.module == 0) throw std::invalid_argument("__tls_get_addr: null TLS index or module");
@@ -41,5 +41,9 @@ void* APS5_VABI __tls_get_addr_nid_postfix(const KernelTlsIndex* index) {
     return nullptr;
 #endif
 }
+void* APS5_VABI __tls_get_addr_nid_postfix(const KernelTlsIndex* index) {
+    return __tls_get_addr_nid_no_patch(index);
+}
+
 
 }
