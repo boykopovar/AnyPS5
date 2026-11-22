@@ -1560,11 +1560,13 @@ JSValueRef APS5_VABI JSObjectGetPrototype(JSContextRef ctx, JSObjectRef object) 
 
 void APS5_VABI JSObjectSetPrototype(JSContextRef ctx, JSObjectRef object, JSValueRef value) {
     if (!ctx || !object || !object->alive || (value && !value->alive)) return;
+    for (const OpaqueJSContext* context : ctx->group->contexts) {
+        if (context && context->globalObject == object) return;
+    }
     auto* mutCtx = const_cast<OpaqueJSContext*>(ctx);
     VmEntryScope vmScope(mutCtx->group);
     JSValueConst protoVal = (value && value->isObjectHandle) ? value->qval : JS_NULL;
-    JSValue target = (object == mutCtx->globalObject && !JS_IsUndefined(mutCtx->globalExoticInterceptor)) ? mutCtx->globalExoticInterceptor : object->qval;
-    if (JS_SetPrototype(mutCtx->qctx, target, protoVal) < 0) {
+    if (JS_SetPrototype(mutCtx->qctx, object->qval, protoVal) < 0) {
         JS_FreeValue(mutCtx->qctx, JS_GetException(mutCtx->qctx));
     }
 }
