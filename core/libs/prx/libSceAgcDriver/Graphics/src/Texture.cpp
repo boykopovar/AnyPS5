@@ -31,6 +31,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/KeptUnits.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#ifdef _WIN32
+#include "prx/libc/include/GuestArena.hpp"
+#endif
 #include "prx/libkernel/include/Api.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
@@ -235,6 +238,23 @@ void reportStorageTraffic(StorageTraffic& traffic) {
     traffic.drawnStores.clear();
     traffic.evictions.clear();
     traffic.directWriteBacks = 0;
+}
+
+bool ResidentGuestMemory(std::uint64_t address, std::size_t bytes) {
+#ifdef _WIN32
+    constexpr std::uint64_t block = 65536;
+    const auto end = address + bytes;
+    for (auto at = address; at < end; at = (at / block + 1) * block) {
+        std::uintptr_t runBegin = 0;
+        std::uintptr_t runEnd = 0;
+        if (!GuestArena::GuestArenaResidentSpan_nid_postfix(static_cast<std::uintptr_t>(at), 1, &runBegin, &runEnd) || runBegin > at || runEnd < std::min(end, (at / block + 1) * block)) return false;
+    }
+    return true;
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    return false;
+#endif
 }
 
 void countStorageUpload(std::size_t path, std::uint64_t bytes) {
@@ -3546,7 +3566,12 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         static const bool enabled = std::getenv("APS5_NO_FILL_UPLOAD_CLEAR") == nullptr;
         if (!enabled || layers != nullptr || uploadedKeys != DccKeys::Uncompressed || guestBytes < 16 || guestBytes % 16 != 0 || descriptor.baseAddress % 16 != 0) return false;
         const auto bytes = static_cast<std::size_t>(guestBytes);
-        if (otherPendingOverlaps() || AnyShadowedOverlaps(descriptor.baseAddress, bytes) || Recorder::SnapshotWriteOverlaps(descriptor.baseAddress, bytes)) return false;
+        if (HostImportFor(context, descriptor.baseAddress, bytes) == nullptr && (!blockUnits || importSegments().empty())) return false;
+        if (!ResidentGuestMemory(descriptor.baseAddress, bytes)) return false;
+        const auto pendingWrites = Recorder::PendingWriteSnapshot();
+        const auto* recorder = Recorder::Active();
+        if ((pendingWrites != nullptr && !pendingWrites->empty()) || (recorder != nullptr && recorder->HasQueuedStores())) return false;
+        if (otherPendingOverlaps() || AnyShadowedOverlaps(descriptor.baseAddress, bytes)) return false;
         const auto* words = reinterpret_cast<const std::uint64_t*>(static_cast<std::uintptr_t>(descriptor.baseAddress));
         if (!GuestMemory::Accessible(words, bytes)) return false;
         const auto first = words[0];
@@ -3558,17 +3583,19 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         std::memcpy(pattern.data(), words, sizeof(pattern));
         return FillClearColor(storageFormat, elementBytes, pattern, clearValue) || (ClearKeepsDenormals(context, storageFormat) && FillClearColor(storageFormat, elementBytes, pattern, clearValue, true));
     };
-    if ((fastClear && (ClearColorFor(storageFormat, uploadedKeys, clearValue) || SingleKeyColorFor(descriptor, guestBytes, now, singleProof, storageFormat, uploadedKeys, clearValue))) || (!fastClear && filledUniformly())) {
+    const bool filled = !fastClear && filledUniformly();
+    if ((fastClear && (ClearColorFor(storageFormat, uploadedKeys, clearValue) || SingleKeyColorFor(descriptor, guestBytes, now, singleProof, storageFormat, uploadedKeys, clearValue))) || filled) {
         // A fast-cleared surface is cleared on the GPU; its texel memory is neither read nor filled.
         // The clear is recorded into the open batch like a direct upload (the image kept by it): a
         // batch of its own submitted the recorder's work first and waited for all of it, 25-40 ms
         // under the GPU mutex at the movie stage. APS5_NO_RECORDED_CLEAR=1 waits as before.
         static_cast<void>(HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)));
+        if (filled) now = GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
         if (GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) {
             layerOriginal.assign(trackedLayers, false);
             cancelStoredSaves();
             releaseUnheldOriginal();
-        } else if (!guestBytesStillHeld()) {
+        } else if (filled || !guestBytesStillHeld()) {
             captureGuestBytes(nullptr);
         }
         forgetBorrowed(0, trackedLayers);
