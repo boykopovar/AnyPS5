@@ -33,10 +33,9 @@ int APS5_VABI libScePadUnknown_Ql4q5ePNaw0_nid_no_patch() {
 }
 APS5_EXPORT("Ql4q5ePNaw0", libScePadUnknown_Ql4q5ePNaw0_nid_no_patch);
 
-int APS5_VABI libScePadUnknown_UeUUvNOgXKU_nid_no_patch() {
+int APS5_VABI scePadIsChargingCableConnected() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("UeUUvNOgXKU", libScePadUnknown_UeUUvNOgXKU_nid_no_patch);
 
 int APS5_VABI libScePadUnknown_XFqNcPu1meI_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);

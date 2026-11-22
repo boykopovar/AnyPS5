@@ -11,7 +11,7 @@
 | `Unknown` | `7xA+hFtvBCA` |
 | `Unknown` | `KY0hSB+Uyfo` |
 | `Unknown` | `Ql4q5ePNaw0` |
-| `Unknown` | `UeUUvNOgXKU` |
+| `scePadIsChargingCableConnected` | `UeUUvNOgXKU` |
 | `Unknown` | `XFqNcPu1meI` |
 | `Unknown` | `eqldkyw7GAo` |
 | `Unknown` | `ickjfjk9okM` |
