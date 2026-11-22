@@ -236,4 +236,8 @@ OpaqueJSValue* GetOrCreateClassPrototype(OpaqueJSContext* ctx, OpaqueJSClass* js
 OpaqueJSValue* MakeCallbackObject(OpaqueJSContext* ctx, OpaqueJSClass* jsClass, void* data);
 bool IsObjectCallable(const OpaqueJSContext* ctx, OpaqueJSValue* object);
 
+inline JSValueConst ValueOrNull(const OpaqueJSValue* value) {
+    return value ? value->qval : JS_NULL;
+}
+
 }  // namespace NKWebKit

@@ -19,7 +19,7 @@ class OpenPullRequestsTests(unittest.TestCase):
     def test_collects_pull_requests_beyond_the_previous_limit(self):
         pull_requests = [
             {"number": number, "user": {"login": f"author{number}"},
-             "head": {"sha": f"sha{number}"}, "body": None}
+             "head": {"sha": f"sha{number}", "ref": f"branch{number}"}, "body": None}
             for number in range(1, 202)
         ]
         pull_requests[-1]["body"] = "Depends on: #12\n- #34\n"
@@ -38,7 +38,8 @@ class OpenPullRequestsTests(unittest.TestCase):
             found = pr_overlap.open_prs("main")
         self.assertEqual(set(found), set(range(1, 202)))
         self.assertEqual(found[201], {
-            "ref": "refs/pr/201", "sha": "sha201", "author": "author201", "title": "", "depends": {12, 34},
+            "ref": "refs/pr/201", "sha": "sha201", "branch": "branch201", "author": "author201", "title": "",
+            "depends": {12, 34},
         })
         self.assertEqual(found[1]["depends"], set())
 
@@ -52,19 +53,20 @@ class OpenPullRequestsTests(unittest.TestCase):
         )
 
     def test_single_page_preserves_author_head_and_dependencies(self):
-        pull_requests = [{"number": 7, "user": {"login": "contributor"}, "head": {"sha": "head-sha"},
+        pull_requests = [{"number": 7, "user": {"login": "contributor"}, "head": {"sha": "head-sha", "ref": "contrib/topic"},
                           "body": "Depends on: none\nUnrelated issue #42"}]
         with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
                 patch.object(pr_overlap, "gh", return_value=json.dumps(pull_requests)):
             found = pr_overlap.open_prs("main")
         self.assertEqual(found, {
-            7: {"ref": "refs/pr/7", "sha": "head-sha", "author": "contributor", "title": "", "depends": set()},
+            7: {"ref": "refs/pr/7", "sha": "head-sha", "branch": "contrib/topic", "author": "contributor", "title": "",
+                "depends": set()},
         })
 
     def test_collects_concatenated_json_pages_from_paginated_gh_output(self):
         pull_requests = [
             {"number": number, "user": {"login": f"author{number}"},
-             "head": {"sha": f"sha{number}"}, "body": None}
+             "head": {"sha": f"sha{number}", "ref": f"branch{number}"}, "body": None}
             for number in range(1, 4)
         ]
         pages = [pull_requests[:2], pull_requests[2:]]
@@ -418,7 +420,7 @@ class SubdirectoryTests(unittest.TestCase):
                 git("add", ".")
                 git("commit", "-qm", "fix: change value")
                 heads[branch] = git("rev-parse", "HEAD")
-            pulls = [{"number": 7, "user": {"login": "someone"}, "head": {"sha": heads["theirs"]}, "body": "Depends on: none"}]
+            pulls = [{"number": 7, "user": {"login": "someone"}, "head": {"sha": heads["theirs"], "ref": "theirs"}, "body": "Depends on: none"}]
             (fake / "pulls.json").write_text(json.dumps(pulls), encoding="utf-8")
             (fake / "gh").write_text(f"#!/bin/sh\ncat '{fake / 'pulls.json'}'\n", encoding="utf-8")
             (fake / "gh").chmod(0o755)
