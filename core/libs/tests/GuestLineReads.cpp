@@ -10,6 +10,10 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#ifndef _WIN32
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -84,6 +88,42 @@ int main(int argc, char** argv) {
     Require(getline_nid_postfix(&line, &capacity, stream) == 4);
     Require(std::memcmp(line, embedded, sizeof(embedded)) == 0);
     Require(fclose_nid_postfix(stream) == 0);
+
+#ifndef _WIN32
+    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* lineStorage = static_cast<std::byte*>(mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    auto* capacityStorage = static_cast<std::byte*>(mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(lineStorage != MAP_FAILED && capacityStorage != MAP_FAILED);
+    auto** linePointer = reinterpret_cast<char**>(lineStorage);
+    auto* capacityPointer = reinterpret_cast<std::size_t*>(capacityStorage);
+    char* kept = static_cast<char*>(realloc_nid_postfix(nullptr, 4));
+    Require(kept != nullptr);
+    std::memcpy(kept, "old", 4);
+    *linePointer = kept;
+    *capacityPointer = 4;
+    const std::string growPath = base + ".grow";
+    stream = fopen_nid_postfix(growPath.c_str(), "w+b");
+    Require(stream != nullptr && fwrite_nid_postfix("longer line\n", 1, 12, stream) == 12);
+    Require(fseek_nid_postfix(stream, 0, SEEK_SET) == 0);
+
+    Require(mprotect(lineStorage, page, PROT_READ) == 0);
+    errno = 0;
+    Require(getline_nid_postfix(linePointer, capacityPointer, stream) == -1 && errno == EFAULT);
+    Require(*linePointer == kept && *capacityPointer == 4 && std::memcmp(kept, "old", 4) == 0);
+
+    Require(mprotect(lineStorage, page, PROT_READ | PROT_WRITE) == 0);
+    Require(mprotect(capacityStorage, page, PROT_READ) == 0);
+    Require(fseek_nid_postfix(stream, 0, SEEK_SET) == 0);
+    errno = 0;
+    Require(getline_nid_postfix(linePointer, capacityPointer, stream) == -1 && errno == EFAULT);
+    Require(*linePointer == kept && *capacityPointer == 4 && std::memcmp(kept, "old", 4) == 0);
+
+    Require(mprotect(capacityStorage, page, PROT_READ | PROT_WRITE) == 0);
+    Require(fclose_nid_postfix(stream) == 0);
+    Require(std::filesystem::remove(growPath));
+    Require(munmap(lineStorage, page) == 0 && munmap(capacityStorage, page) == 0);
+    free_nid_postfix(kept);
+#endif
 
     free_nid_postfix(line);
     Require(std::filesystem::remove(path));

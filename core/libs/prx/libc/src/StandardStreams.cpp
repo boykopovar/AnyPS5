@@ -265,14 +265,29 @@ std::int64_t APS5_VABI getdelim_nid_postfix(char** lineptr, std::size_t* n, int 
     if (line.empty()) return -1;
 
     const std::size_t needed = line.size() + 1;
-    if (buffer == nullptr || capacity < needed) {
-        auto* grown = static_cast<char*>(realloc_nid_postfix(buffer, needed));
-        if (grown == nullptr) { errno = 12; return -1; }
-        buffer = grown;
-        capacity = needed;
+    if (buffer != nullptr && capacity >= needed) {
+        if (!GuestCopyOut_nid_no_patch(buffer, line.c_str(), needed)) { errno = 14; return -1; }
+        return static_cast<std::int64_t>(line.size());
     }
-    if (!GuestCopyOut_nid_no_patch(buffer, line.c_str(), needed)) { errno = 14; return -1; }
-    if (!GuestCopyOut_nid_no_patch(lineptr, &buffer, sizeof(buffer)) || !GuestCopyOut_nid_no_patch(n, &capacity, sizeof(capacity))) { errno = 14; return -1; }
+    auto* grown = static_cast<char*>(realloc_nid_postfix(nullptr, needed));
+    if (grown == nullptr) { errno = 12; return -1; }
+    if (!GuestCopyOut_nid_no_patch(grown, line.c_str(), needed)) {
+        free_nid_postfix(grown);
+        errno = 14;
+        return -1;
+    }
+    if (!GuestCopyOut_nid_no_patch(n, &needed, sizeof(needed))) {
+        free_nid_postfix(grown);
+        errno = 14;
+        return -1;
+    }
+    if (!GuestCopyOut_nid_no_patch(lineptr, &grown, sizeof(grown))) {
+        GuestCopyOut_nid_no_patch(n, &capacity, sizeof(capacity));
+        free_nid_postfix(grown);
+        errno = 14;
+        return -1;
+    }
+    if (buffer != nullptr) free_nid_postfix(buffer);
     return static_cast<std::int64_t>(line.size());
 }
 std::int64_t APS5_VABI getline_nid_postfix(char** lineptr, std::size_t* n, FileStream* stream) {
