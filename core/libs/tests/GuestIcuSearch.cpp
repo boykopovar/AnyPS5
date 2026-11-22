@@ -183,6 +183,40 @@ void Substrings() {
     std::u16string longNeedle(100000, u'a');
     Require(u_strFindFirst_nid_postfix(u"", -1, longNeedle.data(), -1) == nullptr);
     Require(u_strFindFirst_nid_postfix(u"b", -1, longNeedle.data(), -1) == nullptr);
+    Require(u_strFindFirst_nid_postfix(longNeedle.c_str(), -1, longText.c_str() + 1, 2) == nullptr);
+    Require(u_strFindFirst_nid_postfix(longText.c_str(), 100000, u"ba", -1) == nullptr);
+    Require(u_strFindLast_nid_postfix(longText.c_str(), 100000, u"xa", 2) == longText.data() + 99998);
+}
+
+void MappedSubstrings() {
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t bytes = 2 * page;
+    constexpr std::size_t unitsPerPage = page / sizeof(char16_t);
+    std::int64_t physical = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, 0, 0, &physical) == 0);
+    void* mapping = nullptr;
+    Require(sceKernelMapDirectMemory(&mapping, bytes, 3, 0, physical, 0) == 0 && mapping);
+    auto* data = static_cast<char16_t*>(mapping);
+    const std::size_t start = unitsPerPage - 3;
+    {
+        const GuestArena::HostWrite access(data, bytes);
+        Require(access.Open());
+        for (std::size_t index = 0; index < 40; ++index) data[start + index] = static_cast<char16_t>(u'a' + index % 3);
+        data[start + 20] = 0xd83d;
+        data[start + 21] = 0xde42;
+    }
+    Require(u_strFindFirst_nid_postfix(data + start, 40, u"bc", 2) == data + start + 1);
+    Require(u_strFindLast_nid_postfix(data + start, 40, u"ca", -1) == data + start + 38);
+    Require(u_strFindFirst_nid_postfix(data + start, 40, u"\U0001f642", 2) == data + start + 20);
+    Require(u_strFindFirst_nid_postfix(data + start, 19, u"\U0001f642", 2) == nullptr);
+    Require(u_strFindFirst_nid_postfix(data + start, 40, data + start + 1, 2) == data + start + 1);
+    Require(u_strFindLast_nid_postfix(data + start, 40, data + start + 1, 2) == data + start + 37);
+    Require(sceKernelMprotect(mapping, page, 1) == 0);
+    Require(u_strFindFirst_nid_postfix(data + start, 40, data + start + 1, 2) == data + start + 1);
+    Require(u_strFindLast_nid_postfix(data + start, 40, u"ca", -1) == data + start + 38);
+    Require(sceKernelMprotect(mapping, page, 3) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), bytes) == 0);
+    Require(sceKernelReleaseDirectMemory(physical, bytes) == 0);
 }
 
 void Comparisons() {
@@ -250,5 +284,6 @@ int main() {
     MappedMemory();
     Characters();
     Substrings();
+    MappedSubstrings();
     Comparisons();
 }

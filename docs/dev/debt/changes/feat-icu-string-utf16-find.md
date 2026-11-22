@@ -1,0 +1,5 @@
+# libSceIcu
+
+## change [UTF-16 search, comparison and memory helpers]
+
+- [UTF-16 search, comparison and memory helpers](../../../core/libs/prx/libSceIcu/Utf16Search.cpp) have no console verification. Their public signatures and behavior follow ICU 78.1's [ustring.h](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/unicode/ustring.h) and [ustring.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ustring.cpp). `u_strFindFirst` and `u_strFindLast` copy both operands in through `GuestCopyIn` in page-sized chunks and run the linked ICU search on the copies, so no length is narrowed and an unreadable operand throws `std::invalid_argument`; they return offsets into the guest string. The remaining helpers keep their undefined null reads and writes as throws, and their defined null and zero-count shortcuts. Streaming reference paths retain their early returns. Closes when: compared with the console.
