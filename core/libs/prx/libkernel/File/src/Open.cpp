@@ -251,6 +251,7 @@ static int CreationThroughSeparatorError(const std::filesystem::path& native, in
 #endif
 
 static int OpenNative(const std::filesystem::path& native, int flags, std::uint16_t mode) {
+    if ((flags & SCE_KERNEL_O_DIRECTORY) != 0) flags &= ~SCE_KERNEL_O_CREAT;
     if (AppArchiveHasDirectory_nid_no_patch(native)) {
         std::error_code error;
         const auto status = std::filesystem::status(native, error);
