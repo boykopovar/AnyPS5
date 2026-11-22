@@ -30,9 +30,24 @@ namespace AgcDriver::DriverDetail {
 
 namespace {
 
-void noteIndirectSegment(Submission& submission, std::size_t start, const std::uint32_t* target, std::size_t words) {
+bool pendingWriteOver(const std::uint32_t* target, std::size_t words) {
+    const auto address = reinterpret_cast<std::uint64_t>(target);
+    const auto bytes = words * sizeof(std::uint32_t);
+    return Graphics::Recorder::SnapshotWriteOverlaps(address, bytes) || (DrawPipeline::Active() && DrawPipeline::Queue0().Busy() && DrawPipeline::Queue0().Overlaps(address, bytes));
+}
+
+struct SegmentCopyStart {
+    std::uint64_t generation;
+    bool underWrite;
+};
+
+SegmentCopyStart startSegmentCopy(const std::uint32_t* target, std::size_t words) {
+    return {GuestMemory::TrackerGeneration(), pendingWriteOver(target, words)};
+}
+
+void noteIndirectSegment(Submission& submission, std::size_t start, const std::uint32_t* target, std::size_t words, const SegmentCopyStart& copied) {
     if (submission.commands.size() - start != words || !std::equal(submission.commands.begin() + static_cast<std::ptrdiff_t>(start), submission.commands.end(), target)) return;
-    submission.indirectSegments.push_back({start, target, words});
+    submission.indirectSegments.push_back({start, target, words, nullptr, copied.generation, copied.underWrite || pendingWriteOver(target, words)});
 }
 
 void collectLabelDwords(std::span<const std::uint32_t> packet, std::set<std::uint64_t>& dwords) {
@@ -234,11 +249,12 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
             if (targetWords != 0) {
                 GuestMemory::CheckRange(target, targetWords * sizeof(std::uint32_t), alignof(std::uint32_t));
                 const auto start = submission.commands.size();
+                const auto copied = startSegmentCopy(target, targetWords);
                 if (copySegment(submission, target, targetWords, budget, depth + 1)) {
                     require(guarded.empty(), "a REWIND inside a conditional execution range is not implemented");
                     return true;
                 }
-                noteIndirectSegment(submission, start, target, targetWords);
+                noteIndirectSegment(submission, start, target, targetWords, copied);
                 if (guarded.empty()) return false;
             }
             cursor += count;
@@ -270,11 +286,12 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
                 return false;
             }
             const auto start = submission.commands.size();
+            const auto copied = startSegmentCopy(target, targetWords);
             if (copySegment(submission, target, targetWords, budget, depth + 1)) {
                 require(guarded.empty(), "a REWIND inside a conditional execution range is not implemented");
                 return true;
             }
-            noteIndirectSegment(submission, start, target, targetWords);
+            noteIndirectSegment(submission, start, target, targetWords, copied);
             cursor += count;
             continue;
         }
@@ -308,7 +325,7 @@ bool Driver::refreshIndirectSegment(Submission& submission, std::size_t index) {
         const auto* recorder = Graphics::Recorder::Active();
         return recorder != nullptr && recorder->PendingWriterSerial(address, bytes) != 0;
     }();
-    if (!pipelineWrites && !finisherWrites && !recordedWrites) return false;
+    if (!pipelineWrites && !finisherWrites && !recordedWrites && !segment.copiedUnderWrite && !GuestMemory::DriverStoredOver(address, bytes, segment.copiedAt)) return false;
     if (pipelineWrites) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x3f);
     if (finisherWrites) DrawFinisher::Get().Drain();
     std::vector<std::uint32_t> words(segment.words);
