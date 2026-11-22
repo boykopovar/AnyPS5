@@ -1,4 +1,5 @@
 import argparse
+import errno
 import json
 import math
 import os
@@ -235,6 +236,16 @@ def measure_commit(repo, worktree, results_root, recipe, commit):
     return result
 
 
+def _hardlinks_unavailable(error):
+    if isinstance(error, NotImplementedError):
+        return True
+    unsupported = {
+        getattr(errno, name, None)
+        for name in ("EPERM", "EACCES", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "EMLINK")
+    } - {None}
+    return error.errno in unsupported or getattr(error, "winerror", None) in (1, 5)
+
+
 def write_report(path, report):
     output = Path(path)
     if output.exists():
@@ -246,7 +257,15 @@ def write_report(path, report):
                                          prefix=output.name + ".", suffix=".tmp", delete=False) as file:
             temporary = Path(file.name)
             file.write(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n")
-        os.link(temporary, output)
+        try:
+            os.link(temporary, output)
+        except (OSError, NotImplementedError) as error:
+            if not _hardlinks_unavailable(error):
+                raise
+            if output.exists():
+                raise ValueError(f"report already exists: {output}") from error
+            os.replace(temporary, output)
+            temporary = None
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
