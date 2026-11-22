@@ -1,6 +1,7 @@
 #pragma once
 
 #include "prx/libSceNKWebKit/src/Object.hpp"
+#include "prx/libSceNKWebKit/src/Preferences.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include <cstdint>
 #include <optional>
@@ -51,8 +52,10 @@ public:
     std::optional<std::u16string> customUserAgent;
     std::optional<std::u16string> customTextEncodingName;
     bool backgroundExtendsBeyondPage = false;
+    std::vector<std::string> loadedSubresourceDomains;
+    bool userMediaStateCleared = false;
+    bool wheelEventTestMonitorCleared = false;
 };
-class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
 
@@ -83,7 +86,6 @@ public:
     bool clientWouldBenefitFromAutomaticProcessPrewarming = false;
     bool usesWebProcessCache = false;
     bool shouldConfigureJSCForTesting = false;
-    std::vector<std::u16string> overrideLanguages;
 
     Retained<ProcessPoolConfiguration> Duplicate() const {
         auto copy = Make<ProcessPoolConfiguration>();
@@ -102,7 +104,6 @@ public:
         copy->clientWouldBenefitFromAutomaticProcessPrewarming = clientWouldBenefitFromAutomaticProcessPrewarming;
         copy->usesWebProcessCache = usesWebProcessCache;
         copy->shouldConfigureJSCForTesting = shouldConfigureJSCForTesting;
-        copy->overrideLanguages = overrideLanguages;
         return copy;
     }
 };
@@ -114,7 +115,6 @@ public:
 
     Retained<ProcessPoolConfiguration> configuration;
     bool usesSingleWebProcess = false;
-    std::uint32_t cacheModel = 0;
     bool accessibilityEnabled = false;
     bool processTerminationEnabled = true;
     std::vector<std::string> visitedLinks;
@@ -132,6 +132,9 @@ public:
     std::vector<std::string> emptyDocumentSchemes;
     std::vector<std::string> secureSchemes;
     std::vector<std::string> fontAllowList;
+    bool initialProcessWarmed = false;
+    bool useSeparateServiceWorkerProcess = false;
+    bool currentModifierStateCleared = false;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
@@ -148,15 +151,15 @@ public:
 
 class WebsiteDataStoreConfiguration final : public ObjectOf<ObjectType::WebsiteDataStoreConfiguration> {
 public:
-    std::optional<std::u16string> applicationCacheDirectory;
-    std::optional<std::u16string> networkCacheDirectory;
-    std::optional<std::u16string> indexedDBDatabaseDirectory;
-    std::optional<std::u16string> localStorageDirectory;
-    std::optional<std::u16string> webSQLDatabaseDirectory;
-    std::optional<std::u16string> cacheStorageDirectory;
-    std::optional<std::u16string> mediaKeysStorageDirectory;
-    std::optional<std::u16string> resourceLoadStatisticsDirectory;
-    std::optional<std::u16string> serviceWorkerRegistrationDirectory;
+    std::optional<std::u16string> applicationCacheDirectory = u"/app0/applications";
+    std::optional<std::u16string> networkCacheDirectory = u"/app0/WebKitCache";
+    std::optional<std::u16string> indexedDBDatabaseDirectory = u"/app0/indexeddb";
+    std::optional<std::u16string> localStorageDirectory = u"/app0/local";
+    std::optional<std::u16string> webSQLDatabaseDirectory = u"/app0/websql";
+    std::optional<std::u16string> cacheStorageDirectory = u"/app0/CacheStorage";
+    std::optional<std::u16string> mediaKeysStorageDirectory = u"/app0/mediakeys";
+    std::optional<std::u16string> resourceLoadStatisticsDirectory = u"/app0/itp";
+    std::optional<std::u16string> serviceWorkerRegistrationDirectory = u"/app0/serviceworkers";
     std::optional<std::u16string> cookieStorageFile;
     std::uint64_t perOriginStorageQuota = 1000ULL * 1024ULL * 1024ULL;
     bool networkCacheSpeculativeValidationEnabled = false;
@@ -247,7 +250,9 @@ public:
 class PageGroup final : public ObjectOf<ObjectType::PageGroup> {
 public:
     explicit PageGroup(std::u16string identifier)
-        : identifier(std::move(identifier)), userContentController(Make<UserContentController>()) {}
+        : identifier(std::move(identifier)),
+          preferences(Make<Preferences>(this->identifier)),
+          userContentController(Make<UserContentController>()) {}
 
     std::u16string identifier;
     Retained<Object> preferences;
