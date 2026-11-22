@@ -117,3 +117,4 @@
 #include "prx/libSceNKWebKit/include/MarkingConstraintExports.hpp"
 #include "prx/libSceNKWebKit/include/EmptyLoaderLegacyCallbackExports.hpp"
 #include "prx/libSceNKWebKit/include/SQLiteExports.hpp"
+#include "prx/libSceNKWebKit/include/SQLiteFileSystemDatabaseExports.hpp"

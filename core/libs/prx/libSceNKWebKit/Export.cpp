@@ -1772,10 +1772,6 @@ int APS5_VABI _ZN7WebCore9FrameView30graphicsLayerForPlatformWidgetEPv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore16SQLiteFileSystem20databaseCreationTimeERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore21JSCSSStyleDeclarationC2EPN3JSC9StructureERNS_17JSDOMGlobalObjectEON3WTF3RefINS_19CSSStyleDeclarationENS6_13DumbPtrTraitsIS8_EEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -16955,10 +16951,6 @@ int APS5_VABI _ZN7WebCore16NetworkSendQueueD1Ev() {
 }
 
 int APS5_VABI _ZN7WebCore16NetworkSendQueueD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16SQLiteFileSystem18deleteDatabaseFileERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
