@@ -56,5 +56,6 @@ double LifetimeSeconds(const WtfAbi::String& maxAge);
 Creation Create(WebCoreAbi::StoredCredentialsPolicy storedCredentialsPolicy, const WebCoreAbi::ResourceResponseBase& response);
 std::optional<WtfAbi::String> ValidateMethodAndHeaders(const Item& item, const WtfAbi::String& method, const HttpAbi::HTTPHeaderMap& requestHeaders);
 void Append(const WtfAbi::String& origin, const WtfAbi::URL& url, std::unique_ptr<Item> item);
+WtfAbi::String UnsafeRequestHeaderNames(const HttpAbi::HTTPHeaderMap& requestHeaders);
 
 }  // namespace NKWebKit::PreflightCache
