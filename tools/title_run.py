@@ -33,7 +33,6 @@ PAD_FIELDS = {"events", "after_s", "repeat", "gap_ms"}
 PAD_AFTER_SECONDS = 5
 REPORT_FILE = "anyps5-report.json"
 SUMMARY_FIELDS = {"commit", "dirty", "presents", "window", "interval_start_s", "interval_end_s", "trace"}
-SUMMARY_JSON = re.compile(r'^\s*(?:\{\s*(?:["}]|$)|\[\s*(?:[\[{"\]0-9-]|true\b|false\b|null\b|$)|")')
 FRAME_PERCENTILES = ("p50", "p90", "p99")
 SHADER_COUNTS = ("compiled", "failed", "cacheHits")
 UNSUPPORTED_KEYS = ("encoding", "opcode", "opcodeValue", "modifiers")
@@ -210,8 +209,6 @@ def warning_counts(text):
 def summary_protocol_prefix(line):
     whitespace = re.compile(r"[ \t\r\n]*")
     index = whitespace.match(line).end()
-    if line[index:index + 1] in ("[", '"'):
-        return SUMMARY_JSON.match(line) is not None
     start = line.find("{", index)
     if start < 0:
         return False

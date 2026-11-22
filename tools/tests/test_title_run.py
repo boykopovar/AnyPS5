@@ -574,11 +574,12 @@ time.sleep(60)
     def test_damaged_summary_prefix_cannot_certify_matching_native_identity(self):
         import performance_bisect
         rows = ['x{"commit":"bbbbbbbbbbbb","dirty":false}',
-                'x{"format":"aps5-bench/1","commit":"bbbbbbbbbbbb","dirty":false}']
+                'x{"format":"aps5-bench/1","commit":"bbbbbbbbbbbb","dirty":false}',
+                '[INFO] {"format":"aps5-bench/1","commit":"bbbbbbbbbbbb","dirty":false}']
         summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
             {"commit": self.commit, "modified": False}, summary_rows=rows)
         self.assert_qualification(summary, "unknown")
-        self.assertEqual(run["native"]["summary_errors"], {"malformed_rows": 2})
+        self.assertEqual(run["native"]["summary_errors"], {"malformed_rows": 3})
         self.assertNotIn("bbbbbbbbbbbb", json.dumps(run["native"]))
         self.assertIn("unknown", markdown)
         with self.assertRaisesRegex(ValueError, "native.*unknown"):
@@ -589,7 +590,11 @@ time.sleep(60)
         rows = ['{"level":"info","message":',
                 '{"format":"aps5-log/1","commit":"bbbbbbbbbbbb","dirty":false,',
                 '{"level":"info","details":{"commit":"bbbbbbbbbbbb","dirty":false},"message":',
-                'x{"format":"application-log","commit":"bbbbbbbbbbbb","dirty":false,']
+                'x{"format":"application-log","commit":"bbbbbbbbbbbb","dirty":false,',
+                '[2026-11-22 20:12:00] renderer ready', '[1/4] loading modules',
+                '[1, 2,', '"ordinary truncated log',
+                '[2026-11-22 20:12:00] {"format":"other/1","commit":"bbbbbbbbbbbb"}',
+                '[INFO] {"level":"info","details":{"commit":"bbbbbbbbbbbb"},"message":']
         summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
             {"commit": self.commit, "modified": False}, summary_rows=rows)
         self.assert_qualification(summary, "matched")
