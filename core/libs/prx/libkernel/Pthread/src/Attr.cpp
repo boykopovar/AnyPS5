@@ -22,7 +22,7 @@ std::size_t GetDefaultStackSize_nid_no_patch() {
 }
 
 bool SetDefaultStackSize_nid_no_patch(std::size_t size) {
-    if (size <= MIN_STACK_SIZE) return false;
+    if (size < MIN_STACK_SIZE) return false;
     defaultStackSize.store(size, std::memory_order_relaxed);
     return true;
 }

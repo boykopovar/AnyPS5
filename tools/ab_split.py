@@ -15,7 +15,8 @@ drains from [draw] pipelined, unlocked hook waits from [syncwait] (APS5_PROFILE_
 each B phase with the mean of its neighbouring A phases, which cancels a linear drift: mean difference, standard
 error, standard deviation and count. A counted GPU timing report that dropped ranges refuses the comparison.
 A requested program's phase metric is omitted if a report lists 12 programs
-without it: the list may be truncated, so the program's time is unknown."""
+without it: the list may be truncated, so the program's time is unknown.
+A counted present report with missing batch completion records also refuses the comparison."""
 
 PHASE = re.compile(r"^\[ab\] phase ([AB]) (\d+) (begins|settled) at present (\d+) \(t ([\d.]+) s\)")
 KINDS = (("present", re.compile(r"\[present\] \d+ presents")), ("gputime", re.compile(r"\[gputime\] [\d.]+ ms of GPU time")),
@@ -49,6 +50,9 @@ def parse_report(kind, text):
         busy, gaps = number(r"GPU busy ([\d.]+) ms", text), number(r"idle gaps ([\d.]+) ms", text)
         if None in (presents, dropped, busy, gaps):
             return None
+        missing = re.search(r"\((\d+) batches without a completion record\)", text)
+        if missing and int(missing.group(1)):
+            raise ValueError("missing batch completion records in a settled A/B phase; GPU busy and idle timing is incomplete")
         return {"frames": presents + dropped, "busy": busy, "gaps": gaps}
     if kind == "gputime":
         total, presents = number(r"^\[gputime\] ([\d.]+) ms of GPU time", text), number(r"; (\d+) presents;", text)

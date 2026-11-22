@@ -8,6 +8,10 @@
 #include <limits>
 #include <stdexcept>
 
+#ifndef _WIN32
+#include <csignal>
+#endif
+
 namespace {
 
 constexpr int guestEperm = 1;
@@ -203,6 +207,9 @@ void AuditCloseOnExecDescriptorFlags() {
 } // namespace
 
 int main() {
+#ifndef _WIN32
+    std::signal(SIGPIPE, SIG_IGN);
+#endif
     AuditPipeParameterValidation();
     AuditDescriptorAllocationAndRecycling();
     AuditPipePayloadAndEofBounds();

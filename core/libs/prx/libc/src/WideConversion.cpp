@@ -21,6 +21,7 @@ extern "C" void* APS5_VABI set_constraint_handler_s_nid_postfix(void* handler) {
 }
 
 extern "C" std::size_t APS5_VABI wcstombs_nid_postfix(char* destination, const std::uint16_t* source, std::size_t capacity) {
+    if (destination && capacity == 0) return 0;
     std::size_t count = 0;
     for (;; ++source) {
         char bytes[MB_LEN_MAX];
