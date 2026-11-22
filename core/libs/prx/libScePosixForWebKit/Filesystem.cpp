@@ -49,3 +49,15 @@ extern "C" int APS5_VABI isatty_nid_postfix(int descriptor) {
 #endif
     return 0;
 }
+
+extern "C" char* APS5_VABI ttyname_nid_postfix(int descriptor) {
+    (void)descriptor;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+extern "C" int APS5_VABI ttyname_r_nid_postfix(int descriptor, char* buffer, std::size_t length) {
+    (void)descriptor;
+    (void)buffer;
+    (void)length;
+    NotImplemented_nid_no_patch(__func__);
+}

@@ -165,3 +165,15 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libScePosixForWebKit PRIVATE UserDatabase.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_posix_ttyname_tests ${LIBS_INCLUDE_DIR}/tests/GuestPosixTtyname.cpp)
+    target_include_directories(guest_posix_ttyname_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_posix_ttyname_tests PRIVATE libScePosixForWebKit libc)
+    configure_windows_unwind(guest_posix_ttyname_tests)
+    add_test(NAME guest_posix_ttyname COMMAND guest_posix_ttyname_tests)
+    if(WIN32)
+        set_tests_properties(guest_posix_ttyname PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePosixForWebKit>")
+    endif()
+endif()

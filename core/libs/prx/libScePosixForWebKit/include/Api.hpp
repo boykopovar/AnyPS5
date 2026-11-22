@@ -66,6 +66,8 @@ int APS5_VABI scePosixForWebKit_sysinfo(PosixForWebKitSysinfo* info);
 int APS5_VABI mkostemp_nid_postfix(char* pattern, int flags);
 int APS5_VABI mkstemp_nid_postfix(char* pattern);
 int APS5_VABI isatty_nid_postfix(int descriptor);
+char* APS5_VABI ttyname_nid_postfix(int descriptor);
+int APS5_VABI ttyname_r_nid_postfix(int descriptor, char* buffer, std::size_t length);
 GuestResolver::HostEntry* APS5_VABI gethostbyname_nid_postfix(const char* name);
 int APS5_VABI scePosixForWebKit_gethostbyname_r(const char* name, GuestResolver::HostEntry* entry, char* buffer, std::size_t length, GuestResolver::HostEntry** result, int* hostError);
 GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char* name, const char* protocol);
