@@ -326,3 +326,34 @@ test('a chord search result stays visible while changing its buttons in the open
     assert.equal(action.hidden, true);
     assert.equal(document.activeElement, search);
 });
+
+test('controller overrides can be added, edited, disabled and inherited alongside imported settings', async t => {
+    const app = await setup(t, 'controller-remaps');
+    const control = name => {
+        const row = app.get('controller-remaps').children.find(item => item.querySelector('span').textContent === `SDLButton:${name}`);
+        assert.ok(row, name);
+        return row.querySelector('select');
+    };
+    const assign = (name, destination) => {
+        const select = control(name);
+        select.value = destination;
+        select.dispatchEvent(new Event('change'));
+    };
+    const settings = 'Square = KEY:J\nMouseSensitivity = 2\n';
+    await app.importFile('game.ini', settings + 'SDLButton:b = Cross\n');
+    assert.equal(control('b').value, 'Cross');
+    assert.equal(control('a').value, '');
+    assign('a', 'Circle');
+    assign('b', 'None');
+    assert.equal(app.get('preview').value, settings + 'SDLButton:b = None\nSDLButton:a = Circle\n');
+    assign('b', '');
+    assert.equal(app.get('preview').value, settings + 'SDLButton:a = Circle\n');
+    await app.importFile('empty.ini', '');
+    assert.equal(app.dialogOpens(), 1);
+    assert.equal(control('a').value, 'Circle');
+    app.setDialogDecision('discard');
+    app.get('reset').click();
+    await setImmediate();
+    assert.equal(control('a').value, '');
+    assert.equal(app.get('preview').value, '');
+});

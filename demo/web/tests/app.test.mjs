@@ -51,7 +51,8 @@ async function setup(t, name, overrides = {}) {
       },
       querySelectorAll: () => []
     },
-    window: { isSecureContext: true, Worker, WebAssembly, ReadableStream, WritableStream, crypto: { subtle: {} }, ...overrides },
+    window: { isSecureContext: true, Worker, WebAssembly, ReadableStream, WritableStream, crypto: { subtle: {} },
+      navigator: { locks: { request: (_name, acquire) => acquire() } }, ...overrides },
     Worker,
     fetch: overrides.fetch ?? (async () => ({
       ok: true,
@@ -633,13 +634,55 @@ test("a browser that denies direct ZIP writes explains how to continue", async t
   assert.equal(get("convert").disabled, true);
 });
 
+test("Cancel is available while a selected ZIP destination opens", async t => {
+  const opening = deferred();
+  const pending = deferred();
+  let aborted = 0;
+  const { get, workers } = await setup(t, "cancel-pending-zip-destination", {
+    showSaveFilePicker: async () => ({
+      createWritable() {
+        opening.resolve();
+        return pending.promise;
+      }
+    })
+  });
+  const original = await selected(get, workers, "first.zip");
+  const converting = get("convert").onclick();
+  try {
+    await opening.promise;
+    assert.equal(get("cancel").hidden, false);
+    await get("cancel").onclick();
+    assert.equal(original.terminated, true);
+    const replacement = await selected(get, workers, "replacement.zip");
+    assert.equal(replacement.terminated, false);
+  } finally {
+    pending.resolve({ async abort() { aborted++; } });
+    await converting;
+  }
+  assert.equal(aborted, 1);
+  assert.equal(original.messages.some(message => message.type === "convert"), false);
+  assert.equal(get("archive-name").textContent, "replacement.zip");
+});
+
 test("cancelling the ZIP picker does not report a failure", async t => {
   const { get, workers } = await setup(t, "write-cancelled", {
     showSaveFilePicker: async () => { throw Object.assign(new Error("cancelled"), { name: "AbortError" }); }
   });
   await selected(get, workers, "first.zip");
   await get("convert").onclick();
+  assert.equal(get("cancel").hidden, true);
   assert.equal(get("error").hidden, true);
   assert.equal(get("selection").hidden, false);
   assert.equal(get("convert").disabled, false);
 });
+
+for (const supported of [false, true]) {
+  test(`Folder output requires Web Locks (${supported})`, async t => {
+    const { get } = await setup(t, `folder-locks-${supported}`, {
+      showDirectoryPicker() {},
+      navigator: supported ? { locks: { request() {} } } : {}
+    });
+    assert.equal(get("save").querySelector('[value="disk"]').disabled, !supported);
+    assert.equal(get("save").querySelector('[value="memory"]').disabled, false);
+  });
+}
