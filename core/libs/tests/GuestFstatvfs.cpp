@@ -14,6 +14,11 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
+#ifdef _WIN32
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
+#include <windows.h>
+#endif
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -127,6 +132,54 @@ int main() {
 
     Require(close_nid_postfix(file) == 0);
     RequireFailure(file, 9);
+
+#ifdef _WIN32
+    const int nulFile = sceKernelOpen("/anyps5-fstatvfs-test/nul", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_RDWR, 0666);
+    Require(nulFile >= 0);
+    RequireVolume(nulFile, root);
+    Require(close_nid_postfix(nulFile) == 0);
+    std::error_code nulError;
+    const auto verbatimNul = NativeVerbatimPath_nid_no_patch(root / "nul", nulError, WindowsMaxPathLength);
+    Require(!nulError && DeleteFileW(verbatimNul.c_str()) != 0);
+#endif
+    std::string deepGuest = "/anyps5-fstatvfs-test";
+    std::filesystem::path deepHost = root;
+    std::vector<std::filesystem::path> createdDirs;
+    for (int i = 0; i < 6; ++i) {
+        const std::string segment(40, static_cast<char>('a' + i));
+        deepGuest += '/' + segment;
+        deepHost /= segment;
+#ifdef _WIN32
+        std::error_code dirError;
+        const auto verbatimDir = NativeVerbatimPath_nid_no_patch(deepHost, dirError);
+        Require(!dirError && CreateDirectoryW(verbatimDir.c_str(), nullptr) != 0);
+#else
+        Require(std::filesystem::create_directory(deepHost));
+#endif
+        createdDirs.push_back(deepHost);
+    }
+    const int deepDir = sceKernelOpen(deepGuest.c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(deepDir >= 0);
+    RequireVolume(deepDir, root);
+    Require(close_nid_postfix(deepDir) == 0);
+    const int deepFile = sceKernelOpen((deepGuest + "/deep.txt").c_str(), SCE_KERNEL_O_CREAT | SCE_KERNEL_O_RDWR, 0666);
+    Require(deepFile >= 0);
+    RequireVolume(deepFile, root);
+    Require(close_nid_postfix(deepFile) == 0);
+#ifdef _WIN32
+    std::error_code fileError;
+    const auto verbatimDeepFile = NativeVerbatimPath_nid_no_patch(deepHost / "deep.txt", fileError, WindowsMaxPathLength);
+    Require(!fileError && DeleteFileW(verbatimDeepFile.c_str()) != 0);
+    for (auto it = createdDirs.rbegin(); it != createdDirs.rend(); ++it) {
+        std::error_code removeError;
+        const auto verbatimDir = NativeVerbatimPath_nid_no_patch(*it, removeError);
+        Require(!removeError && RemoveDirectoryW(verbatimDir.c_str()) != 0);
+    }
+#else
+    Require(std::filesystem::remove(deepHost / "deep.txt"));
+    for (auto it = createdDirs.rbegin(); it != createdDirs.rend(); ++it)
+        Require(std::filesystem::remove(*it));
+#endif
 
     RemovePathAlias_nid_no_patch("/anyps5-fstatvfs-test");
     Require(std::filesystem::remove(filePath));
