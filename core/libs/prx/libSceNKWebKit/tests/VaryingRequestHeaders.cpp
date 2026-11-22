@@ -413,7 +413,30 @@ static void TestVerify() {
     headers.buffer = storage;
 }
 
+static void TestSameSiteInfo() {
+    for (unsigned disposition = 0; disposition < 4; ++disposition) {
+        for (bool topSite : {false, true}) {
+            for (const char* method : {"GET", "head", "Options", "TRACE", "POST", "GETS", ""}) {
+                Request request("https://a.example/page", method);
+                request.base.sameSiteDisposition = static_cast<std::uint8_t>(disposition);
+                request.base.isTopSite = topSite;
+                request.base.resourceRequestUpdated = false;
+                const LegacySameSiteInfo info = _ZN7WebCore12SameSiteInfo6createERKNS_15ResourceRequestE(&request.base);
+                const std::string_view name(method);
+                const bool safe = name == "GET" || name == "head" || name == "Options" || name == "TRACE";
+                Require(info.isSameSite == (disposition == 1) && info.isTopSite == topSite && info.isSafeHTTPMethod == safe);
+                Require(request.base.resourceRequestUpdated);
+            }
+        }
+    }
+    Request request;
+    request.base.httpMethod = String();
+    Require(!_ZN7WebCore12SameSiteInfo6createERKNS_15ResourceRequestE(&request.base).isSafeHTTPMethod);
+    Require(Throws([] { _ZN7WebCore12SameSiteInfo6createERKNS_15ResourceRequestE(nullptr); }));
+}
+
 int main() {
+    TestSameSiteInfo();
     TestVerify();
     TestNames();
     TestStrings();

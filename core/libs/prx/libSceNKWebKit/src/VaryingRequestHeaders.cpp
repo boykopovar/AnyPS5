@@ -165,12 +165,16 @@ bool IsSafeMethod(const String& method) {
     return false;
 }
 
+LegacySameSiteInfo SameSiteInfoOf(const LegacyResourceRequestBase& request) {
+    request.resourceRequestUpdated = true;
+    return {request.sameSiteDisposition == kSameSiteDispositionSameSite, request.isTopSite, IsSafeMethod(request.httpMethod)};
+}
+
 String CookieRequestHeaderFieldValue(const LegacyCookieJar* cookieJar, const LegacyResourceRequestBase& request) {
     if (!cookieJar) return String();
     if (!cookieJar->vptr || !cookieJar->vptr->cookieRequestHeaderFieldValue)
         throw std::invalid_argument("WebCore::CookieJar without a virtual table");
-    request.resourceRequestUpdated = true;
-    const LegacySameSiteInfo sameSiteInfo{request.sameSiteDisposition == kSameSiteDispositionSameSite, request.isTopSite, IsSafeMethod(request.httpMethod)};
+    const LegacySameSiteInfo sameSiteInfo = SameSiteInfoOf(request);
     const LegacyOptionalIdentifier frame{};
     const LegacyOptionalIdentifier page{};
     LegacyCookieRequestHeaderFieldValue result = cookieJar->vptr->cookieRequestHeaderFieldValue(
@@ -217,4 +221,9 @@ extern "C" bool APS5_VABI _ZN7WebCore27verifyVaryingRequestHeadersEPKNS_9CookieJ
         if (!_ZN3WTF5equalEPKNS_10StringImplES2_(headerValue.impl, header.value.impl)) return false;
     }
     return true;
+}
+
+extern "C" LegacySameSiteInfo APS5_VABI _ZN7WebCore12SameSiteInfo6createERKNS_15ResourceRequestE(const LegacyResourceRequestBase* request) {
+    if (!request) throw std::invalid_argument("null WebCore::ResourceRequest");
+    return SameSiteInfoOf(*request);
 }
