@@ -2873,13 +2873,16 @@ VkDeviceSize depthPlaneCopyBudget(const Context& context) {
 
 bool evictPlaneCopies(const Context& context, const std::tuple<VkDevice, std::uint64_t, std::uint32_t, std::uint32_t, VkFormat>& keep) {
     auto& copies = planeCopies();
-    if (copies.size() <= 1) return false;
-    const auto budget = depthPlaneCopyBudget(context);
-    if (budget == 0) return false;
+    bool evictable = false;
     VkDeviceSize total = 0;
     for (const auto& entry : copies) {
-        if (std::get<0>(entry.first) == context.device) total += entry.second->HeldBytes();
+        if (std::get<0>(entry.first) != context.device) continue;
+        total += entry.second->HeldBytes();
+        if (entry.first != keep) evictable = true;
     }
+    if (!evictable) return false;
+    const auto budget = depthPlaneCopyBudget(context);
+    if (budget == 0) return false;
     const auto present = Recorder::Presents();
     const auto ceiling = budget + std::min(budget, std::numeric_limits<VkDeviceSize>::max() - budget);
     bool evicted = false;
