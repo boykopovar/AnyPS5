@@ -77,6 +77,7 @@ static_assert(offsetof(GazeObjectSelectionMemoryInfo, alignment) == 8);
 namespace {
 
 constexpr std::int32_t DeviceHandle = 0x0e010000;
+constexpr std::int32_t ReprojectionDisplayTimeUnavailable = static_cast<std::int32_t>(0x8a720019);
 constexpr Hmd2::FieldOfView DefaultFieldOfView{1.84177089f, 0.947190642f, 1.32898104f, 1.32898104f};
 
 std::mutex stateMutex;
@@ -314,13 +315,10 @@ Hmd2::SizeAlign APS5_VABI sceHmd2ReprojectionGetMirroringWorkMemorySizeAlign() {
 }
 
 int APS5_VABI sceHmd2ReprojectionGetPredictedDisplayTime(std::uint64_t frameId, std::uint64_t* time) {
-    {
-        std::lock_guard lock(reprojectionMutex);
-        if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
-    }
+    std::lock_guard lock(reprojectionMutex);
+    if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
     if (time == nullptr) return Hmd2::ParameterNull;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ReprojectionDisplayTimeUnavailable;
 }
 
 int APS5_VABI sceHmd2ReprojectionInitialize(const Hmd2::ReprojectionInitializeParameter* parameter, const void* reserved) {
