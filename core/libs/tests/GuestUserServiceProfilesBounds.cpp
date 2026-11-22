@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -178,6 +179,15 @@ void TestUserNameBufferOverflowGuards() {
     }
 }
 
+void TestEapHomePathGuestWrite() {
+    errno = 71;
+    Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(
+                USER_SERVICE_INITIAL_USER_ID,
+                reinterpret_cast<char*>(static_cast<std::uintptr_t>(0x10)), 38) ==
+            USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+}
+
 void TestLoginStateTransitions() {
     Require(sceUserServiceIsLoggedIn(USER_SERVICE_INITIAL_USER_ID) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
@@ -316,6 +326,7 @@ int main() {
     TestUserIdRangeBounds();
     TestInvalidUserIdRejection();
     TestUserNameBufferOverflowGuards();
+    TestEapHomePathGuestWrite();
     TestLoginStateTransitions();
     return 0;
 }

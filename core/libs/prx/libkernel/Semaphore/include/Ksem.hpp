@@ -9,4 +9,9 @@ bool IsKsemDescriptor(int descriptor);
 extern "C" unsigned KsemWaiterCountForTests_nid_no_patch(std::intptr_t id);
 #endif
 
+struct FileStat;
+extern "C" bool IsKsemDescriptor_nid_no_patch(int descriptor);
+bool KsemStat(int descriptor, FileStat& status);
+bool KsemChangeMode(int descriptor, std::uint16_t mode);
+
 #endif
