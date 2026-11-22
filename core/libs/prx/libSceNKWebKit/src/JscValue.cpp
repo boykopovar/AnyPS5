@@ -98,7 +98,7 @@ bool APS5_VABI JSValueIsObject(JSContextRef ctx, JSValueRef value) {
 bool APS5_VABI JSValueIsObjectOfClass(JSContextRef ctx, JSValueRef value, JSClassRef jsClass) {
     if (!ctx || !value || !jsClass || !value->alive || !value->isObjectHandle) return false;
     CallbackObjectData* data = ctx->group->FindCallbackData(value);
-    if (!data) return false;
+    if (!data || data->isDirectConstructor) return false;
     for (OpaqueJSClass* cls = data->jsClass; cls; cls = cls->parentClass) {
         if (cls == jsClass) return true;
     }
