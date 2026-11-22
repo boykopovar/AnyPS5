@@ -984,6 +984,14 @@ int main() {
     for (const char* openMode : {"w", "wb", "r+", "a"}) {
         Require(fopen_nid_postfix(root.string().c_str(), openMode) == nullptr && *__error_nid_postfix() == 21);
     }
+    for (const char* openMode : {"r", "rb", "w", "r+", "a"}) {
+        *__error_nid_postfix() = 0;
+        Require(fopen_nid_postfix("", openMode) == nullptr && *__error_nid_postfix() == 2);
+    }
+    {
+        FileStream* emptyNameStream = nullptr;
+        Require(fopen_s_nid_postfix(&emptyNameStream, "", "r") == 2 && emptyNameStream == nullptr);
+    }
     {
         const auto listed = root / "listed.txt";
         std::ofstream(listed, std::ios::binary) << "listed";
