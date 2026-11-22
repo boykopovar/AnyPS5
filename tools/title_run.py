@@ -210,37 +210,38 @@ def warning_counts(text):
 
 
 def summary_protocol_prefix(line):
-    stripped = line.lstrip()
-    if stripped.startswith(("[", '"')):
+    whitespace = re.compile(r"[ \t\r\n]*")
+    index = whitespace.match(line).end()
+    if line[index:index + 1] in ("[", '"'):
         return SUMMARY_JSON.match(line) is not None
-    start = line.find("{")
+    start = line.find("{", index)
     if start < 0:
         return False
-    remaining = line[start + 1:].lstrip()
+    index = whitespace.match(line, start + 1).end()
     decoder = json.JSONDecoder()
-    fields, declared_format = set(), None
-    while remaining:
+    summary_field, declared_format = False, None
+    while index < len(line):
         try:
-            key, end = decoder.raw_decode(remaining)
+            key, index = decoder.raw_decode(line, index)
         except ValueError:
             break
-        remaining = remaining[end:].lstrip()
-        if not isinstance(key, str) or not remaining.startswith(":"):
+        index = whitespace.match(line, index).end()
+        if not isinstance(key, str) or line[index:index + 1] != ":":
             break
-        fields.add(key)
-        remaining = remaining[1:].lstrip()
+        summary_field |= key in SUMMARY_FIELDS
+        index = whitespace.match(line, index + 1).end()
         try:
-            value, end = decoder.raw_decode(remaining)
+            value, index = decoder.raw_decode(line, index)
         except ValueError:
             break
         if key == "format":
             declared_format = value
-        remaining = remaining[end:].lstrip()
-        if not remaining.startswith(","):
+        index = whitespace.match(line, index).end()
+        if line[index:index + 1] != ",":
             break
-        remaining = remaining[1:].lstrip()
+        index = whitespace.match(line, index + 1).end()
     compatible = not isinstance(declared_format, str) or declared_format in ("", "aps5-bench/1")
-    return declared_format == "aps5-bench/1" or bool(compatible and SUMMARY_FIELDS.intersection(fields))
+    return declared_format == "aps5-bench/1" or bool(compatible and summary_field)
 
 
 def read_summary(path):
