@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -334,7 +335,86 @@ static void TestUpdatedFlagAndArguments() {
     }));
 }
 
+struct Expected {
+    std::optional<std::string_view> name;
+    std::optional<std::string_view> value;
+    bool wideValue = false;
+};
+
+static bool Verify(const LegacyCookieJar* jar, Request& request, std::initializer_list<Expected> expected) {
+    Vector<LegacyVaryingRequestHeader> headers(static_cast<unsigned>(expected.size()));
+    for (const Expected& pair : expected) {
+        String value;
+        if (pair.value) value = pair.wideValue ? Wide(std::u16string(pair.value->begin(), pair.value->end())) : Text(*pair.value);
+        headers.append(LegacyVaryingRequestHeader{pair.name ? Text(*pair.name) : String(), value});
+    }
+    return _ZN7WebCore27verifyVaryingRequestHeadersEPKNS_9CookieJarERKN3WTF6VectorISt4pairINS3_6StringES6_ELm0ENS3_15CrashOnOverflowELm16ENS3_10FastMallocEEERKNS_15ResourceRequestE(
+        jar, &headers, &request.base);
+}
+
+static void TestVerify() {
+    Request request;
+    request.Set("Accept", "text/html").Set("X-Custom", "c").Set("X-Empty", "").Set("Cookie", "from-request=1");
+    request.base.resourceRequestUpdated = false;
+    Require(Verify(nullptr, request, {}));
+    Require(!Verify(nullptr, request, {{"*", std::nullopt}}));
+    Require(!Verify(nullptr, request, {{"*", "text/html"}}));
+    Require(!request.base.resourceRequestUpdated);
+    Require(Verify(nullptr, request, {{"Accept", "text/html"}}));
+    Require(request.base.resourceRequestUpdated);
+    Require(Verify(nullptr, request, {{"accept", "text/html"}, {"X-CUSTOM", "c"}}));
+    Require(Verify(nullptr, request, {{"Accept", "text/html", true}}));
+    Require(!Verify(nullptr, request, {{"Accept", "text/HTML"}}));
+    Require(!Verify(nullptr, request, {{"Accept", "text/htm"}}));
+    Require(!Verify(nullptr, request, {{"Accept", "text/html "}}));
+    Require(!Verify(nullptr, request, {{" Accept", "text/html"}}));
+    Require(!Verify(nullptr, request, {{"Accept", "text/html"}, {"X-Custom", "other"}}));
+    Require(!Verify(nullptr, request, {{"X-Custom", "other"}, {"Accept", "text/html"}}));
+    Require(!Verify(nullptr, request, {{"Accept", "text/html"}, {"*", std::nullopt}}));
+    Require(Verify(nullptr, request, {{"X-Absent", std::nullopt}}));
+    Require(!Verify(nullptr, request, {{"X-Absent", ""}}));
+    Require(Verify(nullptr, request, {{"X-Empty", ""}}));
+    Require(!Verify(nullptr, request, {{"X-Empty", std::nullopt}}));
+    Require(!Verify(nullptr, request, {{"Accept", std::nullopt}}));
+    Require(Verify(nullptr, request, {{std::nullopt, std::nullopt}}));
+    Require(Verify(nullptr, request, {{"", std::nullopt}}));
+    Require(Verify(nullptr, request, {{"**", std::nullopt}}));
+
+    const LegacyCookieJar jar{&jarVtable, 1, nullptr};
+    const String answer = Text("jar=1");
+    jarAnswer = answer.impl;
+    jarCalls = 0;
+    Require(Verify(&jar, request, {{"Cookie", "jar=1"}}) && jarCalls == 1);
+    Require(lastCall.url == "https://a.example/page" && lastCall.includeSecureCookies);
+    Require(!Verify(&jar, request, {{"Cookie", "from-request=1"}}) && jarCalls == 2);
+    Require(Verify(&jar, request, {{"cookie", "from-request=1"}}) && jarCalls == 2);
+    Require(Verify(&jar, request, {{"Accept", "text/html"}, {"Cookie", "jar=1"}, {"Cookie", "jar=1"}}) && jarCalls == 4);
+    Require(!Verify(&jar, request, {{"Accept", "other"}, {"Cookie", "jar=1"}}) && jarCalls == 4);
+    Require(!Verify(&jar, request, {{"*", std::nullopt}, {"Cookie", "jar=1"}}) && jarCalls == 4);
+    Require(Verify(nullptr, request, {{"Cookie", std::nullopt}}));
+    Require(!Verify(nullptr, request, {{"Cookie", "jar=1"}}));
+    jarAnswer = nullptr;
+    Require(Verify(&jar, request, {{"Cookie", std::nullopt}}) && jarCalls == 5);
+    Require(!Verify(&jar, request, {{"Cookie", ""}}) && jarCalls == 6);
+    Require(answer.impl->refCount == 2);
+
+    Vector<LegacyVaryingRequestHeader> headers(1);
+    headers.append(LegacyVaryingRequestHeader{Text("Accept"), Text("text/html")});
+    constexpr auto verify = &_ZN7WebCore27verifyVaryingRequestHeadersEPKNS_9CookieJarERKN3WTF6VectorISt4pairINS3_6StringES6_ELm0ENS3_15CrashOnOverflowELm16ENS3_10FastMallocEEERKNS_15ResourceRequestE;
+    Require(verify(nullptr, &headers, &request.base));
+    Require(headers.buffer[0].name.impl->refCount == 2 && headers.buffer[0].value.impl->refCount == 2);
+    Require(Throws([&] { verify(nullptr, nullptr, &request.base); }));
+    Require(Throws([&] { verify(nullptr, &headers, nullptr); }));
+    headers.capacity = 0;
+    Require(Throws([&] { verify(nullptr, &headers, &request.base); }));
+    headers.capacity = 1;
+    LegacyVaryingRequestHeader* storage = std::exchange(headers.buffer, nullptr);
+    Require(Throws([&] { verify(nullptr, &headers, &request.base); }));
+    headers.buffer = storage;
+}
+
 int main() {
+    TestVerify();
     TestNames();
     TestStrings();
     TestCookieJar();
