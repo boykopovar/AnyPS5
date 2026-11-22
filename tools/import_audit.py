@@ -458,7 +458,8 @@ def pe_imports(path, data):
     raise AuditError(f"{path}: PE import table is not NUL-terminated")
 
 
-MACHO_LOAD_DYLIB = (0xc, 0x20, 0x80000018, 0x8000001f, 0x80000023)
+LC_LOAD_WEAK_DYLIB = 0x80000018
+MACHO_LOAD_DYLIB = (0xc, 0x20, LC_LOAD_WEAK_DYLIB, 0x8000001f, 0x80000023)
 
 
 def macho_commands(path, data):
@@ -535,7 +536,7 @@ def macho_exports(path, data):
     return names
 
 
-def macho_imports(path, data):
+def macho_imports(path, data, available=None):
     needed = set()
     for kind, offset, length in macho_commands(path, data):
         if kind not in MACHO_LOAD_DYLIB:
@@ -543,11 +544,13 @@ def macho_imports(path, data):
         name = unpack("<I", data, offset + 8, path, "Mach-O dylib command")[0]
         if name < 24 or name >= length:
             raise AuditError(f"{path}: Mach-O dylib name offset {name} lies outside its {length}-byte command")
-        needed.add(cstring(data, offset + name, offset + length, path, "needed library name").rsplit("/", 1)[-1])
+        library = cstring(data, offset + name, offset + length, path, "needed library name").rsplit("/", 1)[-1]
+        if kind != LC_LOAD_WEAK_DYLIB or available is None or library in available:
+            needed.add(library)
     return needed
 
 
-def read_host_imports(path, data=None):
+def read_host_imports(path, data=None, *, available=None):
     if data is None:
         data = path.read_bytes()
     if data[:2] == b"MZ":
@@ -555,7 +558,7 @@ def read_host_imports(path, data=None):
     if data[:4] == b"\x7fELF":
         return elf_imports(path, data)[1]
     if data[:4] == b"\xcf\xfa\xed\xfe":
-        return macho_imports(path, data)
+        return macho_imports(path, data, available)
     raise AuditError(f"{path}: neither ELF, PE nor Mach-O (first bytes {data[:4]!r})")
 
 
@@ -601,7 +604,7 @@ def built_libraries(directories):
     return {name: sorted(files) for name, files in exports.items()}, libraries
 
 
-def built_host_dependencies(directories):
+def built_host_dependencies(directories, *, available=None):
     """Map each built .prx to its imported .prx names and identify PE importers.
 
     The loader resolves these host-to-host dependencies with LoadLibrary, so a
@@ -621,7 +624,8 @@ def built_host_dependencies(directories):
                     raise AuditError(f"ambiguous built library {file.name}: {previous} and {file} have different contents")
                 continue
             images[file.name] = (file, digest)
-            direct[file.name] = sorted({name for name in read_host_imports(file, data) if name.lower().endswith(".prx")})
+            imports = read_host_imports(file, data, available=available)
+            direct[file.name] = sorted({name for name in imports if name.lower().endswith(".prx")})
             if data[:2] == b"MZ":
                 windows.add(file.name)
     return direct, windows
@@ -1376,12 +1380,12 @@ def main(argv=None):
         imports = [entry for _, entries in registries for entry in entries]
         needed = sorted({library for path in dependency_registries for library in read_needed_registry(path)})
         exports, libraries = built_libraries(args.libs)
-        host_dependencies, windows = built_host_dependencies(args.libs)
         module_imports, module_exports = read_modules(args.modules)
         for module in modules_with_registries(args.registries, module_imports):
             module_imports[module] = ([], module_imports[module][1])
         modules = set(module_imports)
         modules |= {name.removesuffix(".guest.prx") for name in modules if name.endswith(".guest.prx")}
+        host_dependencies, windows = built_host_dependencies(args.libs, available=libraries | modules)
         modules = ModuleNames(modules, fold=bool(windows))
         stubs, partial = source_stub_classes(args.source)
         records, missing = audit(imports, exports, stubs, libraries, modules, module_imports, module_exports, needed_libraries=needed, windows_libraries=windows, partial=partial)

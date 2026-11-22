@@ -3303,6 +3303,27 @@ class ImportAuditTests(unittest.TestCase):
         code, out, err = work.run(registry)
         self.assertEqual((code, err), (0, ""), out)
 
+    def test_macho_absent_weak_library_is_optional_but_present_library_is_traversed(self):
+        work = self.work
+        root = work.libs / "root.prx"
+        image = bytearray(build_macho([], ["@rpath/optional.prx"]))
+        struct.pack_into("<I", image, 32, 0x80000018)
+        root.write_bytes(image)
+        self.assertEqual(import_audit.read_host_imports(root), {"optional.prx"})
+        registry, report = work.root / "game.json", work.root / "audit.json"
+        write_registry(registry, [])
+        code, out, err = work.run(registry, "--json", str(report))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(json.loads(report.read_text())["missing_host_dependencies"], [])
+
+        (work.libs / "optional.prx").write_bytes(build_macho([], ["@rpath/required.prx"]))
+        code, out, err = work.run(registry, "--json", str(report))
+        self.assertEqual((code, err), (1, ""), out)
+        self.assertEqual(json.loads(report.read_text())["missing_host_dependencies"], [
+            {"importer": "optional.prx", "chain": ["optional.prx", "required.prx"]},
+            {"importer": "root.prx", "chain": ["root.prx", "optional.prx", "required.prx"]},
+        ])
+
     def test_pe_host_dependency_can_find_a_converted_pe_module_with_different_case(self):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(build_pe_with_imports(["LIBSCEIME.PRX"]))
