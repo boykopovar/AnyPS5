@@ -20,6 +20,7 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -592,7 +593,10 @@ int APS5_VABI sceHttpGetLastErrno(int request_id, int* errno_out) {
     if (errno_out == nullptr) {
         return ERROR_INVALID_VALUE;
     }
-    *errno_out = 0;
+    const int zeroErrno = 0;
+    if (!HttpGuest::Store(errno_out, zeroErrno)) {
+        return ERROR_INVALID_VALUE;
+    }
     return 0;
 }
 
@@ -792,10 +796,12 @@ int APS5_VABI sceHttpSetDefaultAcceptEncodingGZIPEnabled(int http_ctx_id, int en
     return SetHttpContextAcceptEncodingGzip(http_ctx_id, enable != 0) ? 0 : ERROR_INVALID_ID;
 }
 
-int APS5_VABI sceHttpSetProxy(int id, int, int, const char* hostname, std::uint16_t) {
+int APS5_VABI sceHttpSetProxy(int id, int httpProxyConf, int wlanProxyConf, const char* hostname, std::uint16_t port) {
     if (!HttpInitialised()) return ERROR_BEFORE_INIT;
     if (!hostname) return ERROR_INVALID_VALUE;
-    return FindHttpOptions(id) ? 0 : ERROR_INVALID_ID;
+    std::string host;
+    if (!HttpGuest::CopyText(hostname, std::numeric_limits<std::size_t>::max(), host)) return ERROR_INVALID_VALUE;
+    return SetHttpProxy(id, httpProxyConf, wlanProxyConf, std::move(host), port) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttpSetHttp09Enabled(int id, int enabled) {

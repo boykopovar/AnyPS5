@@ -1,0 +1,5 @@
+# libSceJpegDec
+
+## change pixel values: a PS5 payload process
+
+- [sceJpegDecDecode](../../../core/libs/prx/libSceJpegDec/Export.cpp) pixel values differ from [two 16x16 PS5 firmware 11.60 payload measurements](https://github.com/boykopovar/AnyPS5/pull/20166#issuecomment-6882628188). At full resolution stb and TurboJPEG produce identical pixels on both inputs. Four grayscale samples in row 8 round differently on the console: the inverse DCT of the stored coefficients gives 15.5022 and 96.4978 (and each plus 128 in the second block), which both host decoders round to 16 and 96, the console to 15 and 97. The difference is present before Y8 conversion; the console's transform is unknown. Colour RGB channels differ by up to 2. At the eight pixels with both console outputs, Y8 matches rounded luma from the console's RGB; the host's truncating formula gives 1 less for the green pixels. Whether the console returns decoded Y or derives it from RGB is unresolved. A title process was not measured.
