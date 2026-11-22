@@ -149,7 +149,7 @@ void TestVmicLifecycleAndHandleBoundaries() {
 
         Require(sceAudioInGetSilentState(vmicHandle) == audioInErrorInvalidHandle);
         Require(sceAudioInGetRerouteCount(vmicHandle) == audioInErrorInvalidHandle);
-        Require(sceAudioInIsPadEmbeddedMic(vmicHandle) == audioInErrorInvalidHandle);
+        Require(sceAudioInIsPadEmbeddedMic(vmicHandle) == audioInErrorInvalidState);
         Require(sceAudioInGetHandleStatusInfo(vmicHandle, nullptr) == audioInErrorInvalidHandle);
     }
 
